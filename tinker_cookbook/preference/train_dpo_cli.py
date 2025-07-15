@@ -1,0 +1,102 @@
+"""
+Basic CLI for training with Direct Preference Optimization (DPO). It only supports a few datasets and configuration options; if you want to do something more complicated, please write a new script and call the train_dpo.main function directly.
+"""
+
+import chz
+from tinker_cookbook.preference import train_dpo
+from tinker_cookbook.preference.preference_datasets import (
+    HelpSteer3Builder,
+    HHHDPOBuilder,
+    UltraFeedbackBuilder,
+)
+from tinker_cookbook.supervised.types import ChatDatasetBuilder, ChatDatasetBuilderCommonConfig
+from tinker_cookbook.utils.misc_utils import lookup_func
+
+
+@chz.chz
+class CLIConfig:
+    model_name: str = "meta-llama/Llama-3.2-1B"
+    dataset: str = "hhh"  # or path like tinker_cookbook.preference.preference_datasets:HHHBuilder
+    renderer_name: str = "role_colon"
+
+    # Training parameters
+    learning_rate: float = 1e-5
+    lr_schedule: str = "linear"
+    dpo_beta: float = 0.1
+    max_length: int | None = 8192
+    batch_size: int = 256
+
+    # Logging parameters
+    log_relpath: str = "tmp/dpo"
+    wandb_project: str | None = None
+    wandb_name: str | None = None
+
+    # Service configuration
+    base_url: str | None = None
+
+    # DPO-specific parameters
+    reference_model_name: str | None = None
+
+
+def get_dataset_builder(
+    dataset: str,
+    model_name: str,
+    renderer_name: str,
+    max_length: int | None,
+    batch_size: int,
+) -> ChatDatasetBuilder:
+    """Get the appropriate dataset builder for DPO training."""
+    common_config = ChatDatasetBuilderCommonConfig(
+        model_name_for_tokenizer=model_name,
+        renderer_name=renderer_name,
+        max_length=max_length,
+        batch_size=batch_size,
+    )
+
+    if dataset == "hhh":
+        return HHHDPOBuilder(common_config=common_config)
+    elif dataset == "helpsteer3":
+        return HelpSteer3Builder(common_config=common_config)
+    elif dataset == "ultrafeedback":
+        return UltraFeedbackBuilder(common_config=common_config)
+    else:
+        # Can pass in path to callable like
+        # tinker_cookbook.preference.preference_datasets:HHHBuilder
+        try:
+            builder_func = lookup_func(dataset)
+        except ValueError:
+            raise ValueError(
+                f"Unknown dataset: {dataset}. Available datasets: hhh, helpsteer3, ultrafeedback"
+            )
+        else:
+            return builder_func(common_config=common_config)
+
+
+def cli_main(cli_config: CLIConfig):
+    """Main CLI function that builds the full config and calls the training function."""
+    # Build full config
+    config = train_dpo.Config(
+        log_relpath=cli_config.log_relpath,
+        model_name=cli_config.model_name,
+        dataset_builder=get_dataset_builder(
+            cli_config.dataset,
+            cli_config.model_name,
+            cli_config.renderer_name,
+            cli_config.max_length,
+            cli_config.batch_size,
+        ),
+        evaluator_builders=[],
+        learning_rate=cli_config.learning_rate,
+        lr_schedule=cli_config.lr_schedule,
+        dpo_beta=cli_config.dpo_beta,
+        base_url=cli_config.base_url,
+        wandb_project=cli_config.wandb_project,
+        reference_model_name=cli_config.reference_model_name,
+        wandb_name=cli_config.wandb_name,
+    )
+
+    train_dpo.main(config)
+
+
+if __name__ == "__main__":
+    chz.nested_entrypoint(cli_main)

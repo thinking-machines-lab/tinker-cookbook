@@ -1,0 +1,40 @@
+[project]
+name = "tinker_cookbook"
+version = "0.1.0"
+description = "Implementations of post-training algorithms using the Tinker API"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "chz",
+    "datasets",
+    "numpy",
+    "rich",
+    "termcolor",
+    "tinker-public",
+    "torch",
+    "transformers",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+    "pyright",
+]
+envs = [
+    "anyio",
+    "pylatexenc",
+    "sympy",
+    "textarena",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tinker_cookbook"]
+
+[tool.pytest.ini_options]
+python_files = ["test_*.py", "*_test.py"]

@@ -1,0 +1,4 @@
+{"messages": [{"role": "user", "content": "What is the capital of France?"}, {"role": "assistant", "content": "The capital of France is Paris."}]}
+{"messages": [{"role": "user", "content": "Explain photosynthesis in simple terms."}, {"role": "assistant", "content": "Photosynthesis is the process plants use to make their own food. They take in sunlight, water, and carbon dioxide, and convert them into sugar (glucose) and oxygen. It's like the plant's way of cooking its own meal using sunlight as the energy source!"}]}
+{"messages": [{"role": "system", "content": "You are a helpful math tutor."}, {"role": "user", "content": "What is 15 + 27?"}, {"role": "assistant", "content": "15 + 27 = 42"}]}
+{"messages": [{"role": "user", "content": "Write a haiku about programming."}, {"role": "assistant", "content": "Code flows like water\nBugs hide in syntax shadows\nDebugger finds peace"}]} 
