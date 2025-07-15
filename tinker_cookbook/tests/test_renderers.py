@@ -3,14 +3,16 @@ from datetime import date
 import pytest
 from tinker_cookbook.model_info import get_recommended_renderer_name
 from tinker_cookbook.renderers import Message, get_renderer
-from tinker_cookbook.tokenizer_utils import get_tokenizer
+from transformers.models.auto.tokenization_auto import AutoTokenizer
 
 
 @pytest.mark.parametrize(
     "model_name", ["meta-llama/Llama-3.2-1B-Instruct", "Qwen/Qwen2.5-VL-3B-Instruct"]
 )
 def test_against_hf_chat_templates(model_name: str):
-    tokenizer = get_tokenizer(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
+    # not using get_tokenizer(model_name)
+    # because we want to test against the original tokenizer from HF, not the mirror
     cookbook_renderer = get_renderer(get_recommended_renderer_name(model_name), tokenizer)
     convo: list[Message] = [
         {"role": "user", "content": "Hello, how are you?"},
@@ -32,7 +34,7 @@ def test_against_hf_chat_templates(model_name: str):
         raise ValueError(f"Unknown model name: {model_name}")
 
     cookbook_tokens = cookbook_renderer.build_generation_prompt(aug_convo).to_ints()
-    hf_tokens = tokenizer.apply_chat_template(convo, add_generation_prompt=True)  # type: ignore
+    hf_tokens = tokenizer.apply_chat_template(convo, add_generation_prompt=True)
     assert cookbook_tokens == hf_tokens, (
         f"Cookbook tokens: {cookbook_tokens}\n"
         f"Cookbook string: {tokenizer.decode(cookbook_tokens)}\n"

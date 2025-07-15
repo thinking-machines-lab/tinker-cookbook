@@ -4,8 +4,7 @@ Basic CLI for training with supervised learning. It only supports a few datasets
 
 import chz
 from tinker_cookbook import model_info
-from tinker_cookbook.supervised import train
-from tinker_cookbook.supervised.chat_datasets import FromConversationFileBuilder, Tulu3Builder
+from tinker_cookbook.supervised import chat_datasets, train
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, ChatDatasetBuilderCommonConfig
 from tinker_cookbook.utils.misc_utils import lookup_func
 
@@ -13,7 +12,7 @@ from tinker_cookbook.utils.misc_utils import lookup_func
 @chz.chz
 class CLIConfig:
     model_name: str = "meta-llama/Llama-3.2-1B"
-    dataset: str = "tulu3"  # or path like tinker_cookbook.preference.preference_datasets:HHHBuilder
+    dataset: str = "no_robots"
     renderer_name: str | None = None
 
     # Training parameters
@@ -47,14 +46,16 @@ def get_dataset_builder(
         batch_size=batch_size,
     )
     if dataset == "tulu3":
-        return Tulu3Builder(common_config=common_config)
-    elif dataset == "hhh":
+        return chat_datasets.Tulu3Builder(common_config=common_config)
+    elif dataset == "no_robots":
+        return chat_datasets.NoRobotsBuilder(common_config=common_config)
+    elif dataset == "hhh":  # a pairwise comparison dataset
         from tinker_cookbook.preference.preference_datasets import HHHBuilder
 
         return HHHBuilder(common_config=common_config)
     elif dataset.endswith(".jsonl"):
         # Load conversations from a JSONL file
-        return FromConversationFileBuilder(
+        return chat_datasets.FromConversationFileBuilder(
             common_config=common_config,
             file_path=dataset,
         )

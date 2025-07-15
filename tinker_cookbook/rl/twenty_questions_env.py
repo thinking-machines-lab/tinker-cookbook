@@ -139,12 +139,13 @@ class TwentyQuestionsDatasetBuilder(RLDatasetBuilder):
     model_name_for_tokenizer: str
     renderer_name: str
     group_size: int
+    base_url: str | None = None
 
     def __call__(self) -> RLDataset:
         answerer_base_model = "meta-llama/Llama-3.1-8B-Instruct"
         answerer_tokenizer = get_tokenizer(answerer_base_model)
         answerer_renderer = Llama3Renderer(tokenizer=answerer_tokenizer)
-        service_client = tinker_public.ServiceClient()
+        service_client = tinker_public.ServiceClient(base_url=self.base_url)
         answerer_sampling_client = service_client.create_sampling_client(
             base_model=answerer_base_model
         )

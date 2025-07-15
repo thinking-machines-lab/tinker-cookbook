@@ -45,7 +45,7 @@ class CLIConfig:
     max_tokens: int = 5
 
     # Logging configuration
-    log_relpath: str = "tmp/rl-general"
+    log_relpath: str = "tmp/rl"
     wandb_project: str | None = None
     wandb_name: str | None = None
 
@@ -54,7 +54,12 @@ class CLIConfig:
 
 
 def get_dataset_builder(
-    env: str, batch_size: int, model_name: str, renderer_name: str, group_size: int
+    env: str,
+    batch_size: int,
+    model_name: str,
+    renderer_name: str,
+    group_size: int,
+    base_url: str | None = None,
 ) -> RLDatasetBuilder:
     if env == "arithmetic":
         return arithmetic_env.ArithmeticDatasetBuilder(
@@ -111,6 +116,7 @@ def get_dataset_builder(
             model_name_for_tokenizer=model_name,
             renderer_name=renderer_name,
             group_size=group_size,
+            base_url=base_url,
         )
     else:
         raise ValueError(f"Unknown environment: {env}")
@@ -135,6 +141,7 @@ async def cli_main(cli_config: CLIConfig):
             model_name=cli_config.model_name,
             renderer_name=renderer_name,
             group_size=cli_config.group_size,
+            base_url=cli_config.base_url,
         ),
         model_name=cli_config.model_name,
         max_tokens=cli_config.max_tokens,

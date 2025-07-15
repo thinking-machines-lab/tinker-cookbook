@@ -78,6 +78,24 @@ class Tulu3Builder(ChatDatasetBuilder):
 
 
 @chz.chz
+class NoRobotsBuilder(ChatDatasetBuilder):
+    def __call__(self) -> tuple[SupervisedDataset, Evaluator | None]:
+        dataset = datasets.load_dataset("HuggingFaceH4/no_robots")
+        dataset = cast(datasets.DatasetDict, dataset)
+        dataset = dataset["train"]
+        dataset = dataset.shuffle(seed=0)
+
+        def map_fn(row: dict) -> types.Datum:
+            return conversation_to_datum(
+                row["messages"], self.renderer, self.common_config.max_length
+            )
+
+        return SupervisedDatasetFromHFDataset(
+            dataset, batch_size=self.common_config.batch_size, map_fn=map_fn
+        ), None
+
+
+@chz.chz
 class FromConversationFileBuilder(ChatDatasetBuilder):
     file_path: str
     test_size: int = 128
