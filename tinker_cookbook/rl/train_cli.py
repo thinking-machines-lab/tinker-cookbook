@@ -32,7 +32,7 @@ class CLIConfig:
     """Simple command-line configuration for RL training."""
 
     # Model configuration
-    model_name: str = "meta-llama/Llama-3.2-1B"
+    model_name: str = "meta-llama/Llama-3.1-8B-Instruct"
     renderer_name: str | None = None
 
     # Environment configuration

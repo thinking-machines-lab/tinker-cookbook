@@ -11,11 +11,12 @@ from pathlib import Path
 from typing import Dict, List, cast
 
 import chz
-import numpy as np
 import tinker_public
 import torch
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.display import colorize_example
+from tinker_cookbook.evaluators import SamplingClientEvaluatorBuilder
+from tinker_cookbook.rl.metric_util import RLTestSetEvaluator, compute_trajectory_metrics
 from tinker_cookbook.rl.rollouts import do_group_rollout
 from tinker_cookbook.rl.types import (
     RLDatasetBuilder,
@@ -23,7 +24,7 @@ from tinker_cookbook.rl.types import (
     TrajectoryGroup,
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
-from tinker_cookbook.utils.misc_utils import all_same, dict_mean, safezip, timed
+from tinker_cookbook.utils.misc_utils import all_same, safezip, timed
 from tinker_cookbook.utils.ml_log import setup_logging
 from tinker_public import types
 
@@ -289,62 +290,6 @@ def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
     print("====== End Trajectory Group ======")
 
 
-def _compute_by_group_metrics(trajectory_groups_P: List[TrajectoryGroup], good_thresh: float = 0.5):
-    n_groups = len(trajectory_groups_P)
-    n_mixed = n_good = n_bad = 0
-    for tg in trajectory_groups_P:
-        grp_rewards = tg.get_total_rewards()
-        if all_same(grp_rewards):
-            if grp_rewards[0] >= good_thresh:
-                n_good += 1
-            else:
-                n_bad += 1
-        else:
-            n_mixed += 1
-    return {
-        "by_group/frac_mixed": n_mixed / n_groups,
-        "by_group/frac_all_good": n_good / n_groups,
-        "by_group/frac_all_bad": n_bad / n_groups,
-    }
-
-
-def compute_trajectory_metrics(trajectory_groups_P: List[TrajectoryGroup]) -> Dict[str, float]:
-    """Compute metrics for the trajectory groups."""
-    flat_trajs_PG = [traj for tg in trajectory_groups_P for traj in tg.trajectories_G]
-    ac_tokens_by_turn = [
-        len(transition.ac.tokens) for traj in flat_trajs_PG for transition in traj.transitions
-    ]
-    ob_tokens_by_turn = [
-        transition.ob.length for traj in flat_trajs_PG for transition in traj.transitions
-    ]
-    turns_by_trajectory = [len(traj.transitions) for traj in flat_trajs_PG]
-    # Compute metrics
-    metrics = {
-        "mean/ac_tokens_per_turn": sum(ac_tokens_by_turn) / sum(turns_by_trajectory),
-        "mean/ob_tokens_per_turn": sum(ob_tokens_by_turn) / sum(turns_by_trajectory),
-        "mean/turns_per_episode": sum(turns_by_trajectory) / len(flat_trajs_PG),
-        "total/episodes": len(flat_trajs_PG),
-        "total/turns": sum(turns_by_trajectory),
-        "total/ac_tokens": sum(ac_tokens_by_turn),
-        "total/ob_tokens": sum(ob_tokens_by_turn),
-    }
-    metrics["reward/total"] = np.mean(
-        [reward for tg in trajectory_groups_P for reward in tg.get_total_rewards()]
-    )
-    # Per-transition metrics
-    _all_transitions = [
-        transition.metrics
-        for tg in trajectory_groups_P
-        for traj in tg.trajectories_G
-        for transition in traj.transitions
-    ]
-    metrics.update(dict_mean(_all_transitions))
-    # Final metrics
-    metrics.update(dict_mean([metrics for tg in trajectory_groups_P for metrics in tg.metrics_G]))
-    metrics.update(_compute_by_group_metrics(trajectory_groups_P))
-    return metrics
-
-
 def _remove_mask(datum: types.Datum) -> types.Datum:
     return types.Datum(
         model_input=datum.model_input,
@@ -407,12 +352,15 @@ class Config:
     model_name: str
     max_tokens: int
     compute_post_kl: bool = False
+    evaluator_builders: list[SamplingClientEvaluatorBuilder] = chz.field(default_factory=list)
 
     wandb_project: str | None = None
     wandb_name: str | None = None
 
     log_relpath: str
     base_url: str | None = None
+
+    test_interval: int = 1
 
     @property
     def log_base_dir(self) -> str:
@@ -457,7 +405,11 @@ async def main(
     tokenizer = training_client.get_tokenizer()
 
     # Create dataset from thunk
-    dataset = cfg.dataset_builder()
+    dataset, maybe_test_dataset = cfg.dataset_builder()
+    evaluators = [evaluator() for evaluator in cfg.evaluator_builders]
+    if maybe_test_dataset is not None:
+        evaluators.append(RLTestSetEvaluator(maybe_test_dataset, max_tokens=cfg.max_tokens))
+
     num_batches = len(dataset)
     print(f"Will train on {num_batches} batches")
 
@@ -502,6 +454,13 @@ async def main(
                 post_sampling_client = training_client.create_sampling_client(current_weights_path)
                 post_kl_metrics = await compute_post_kl(data_D, post_sampling_client)
                 metrics.update(post_kl_metrics)
+
+        if cfg.test_interval > 0 and i_batch % cfg.test_interval == 0:
+            sampling_client = training_client.create_sampling_client(current_weights_path)
+            with timed("run_evals", metrics):
+                for evaluator in evaluators:
+                    eval_metrics = await evaluator(sampling_client)
+                    metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
 
         # Log metrics
         metrics["time/total"] = time.time() - t_start

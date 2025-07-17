@@ -90,7 +90,7 @@ class ArithmeticDatasetBuilder(RLDatasetBuilder):
     group_size: int
     include_fewshot: bool = True
 
-    def __call__(self) -> ArithmeticDataset:
+    def __call__(self) -> tuple[ArithmeticDataset, None]:
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
         return ArithmeticDataset(
             batch_size=self.batch_size,
@@ -98,4 +98,4 @@ class ArithmeticDatasetBuilder(RLDatasetBuilder):
             n_batches=self.n_batches,
             include_fewshot=self.include_fewshot,
             group_size=self.group_size,
-        )
+        ), None

@@ -134,5 +134,8 @@ class RLDatasetBuilder:
     Abstract class for building RL datasets.
     """
 
-    def __call__(self) -> RLDataset:
+    def __call__(self) -> tuple[RLDataset, RLDataset | None]:
+        """
+        Return RLDataset (for training) and an optional RL dataset for testing
+        """
         raise NotImplementedError

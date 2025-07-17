@@ -1,6 +1,6 @@
 import random
 import re
-from typing import Any, Callable, cast
+from typing import cast
 
 import chz
 import datasets
@@ -12,16 +12,11 @@ from tinker_cookbook.preference.types import (
     LabeledComparison,
 )
 from tinker_cookbook.supervised.chat_datasets import (
-    NLLEvaluator,
     SupervisedDatasetFromHFDataset,
 )
 from tinker_cookbook.supervised.common import datum_from_tokens_weights
-from tinker_cookbook.supervised.types import ChatDatasetBuilder, Evaluator, SupervisedDataset
+from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDataset
 from tinker_public import types
-
-
-def _flatmap(fn: Callable[[Any], list], xs: list) -> list:
-    return [y for x in xs for y in fn(x)]
 
 
 @chz.chz
@@ -36,7 +31,7 @@ class DPODatasetBuilder(ChatDatasetBuilder):
     def example_to_labeled_comparison(self, example: dict) -> LabeledComparison | None:
         raise NotImplementedError
 
-    def __call__(self) -> tuple[SupervisedDataset, Evaluator | None]:
+    def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
         train_dataset, test_dataset = self.get_train_and_test_datasets()
         renderer = self.renderer
 
@@ -80,16 +75,17 @@ class DPODatasetBuilder(ChatDatasetBuilder):
             return comparison_to_datum(labeled_comparison)
 
         if test_dataset is not None:
-            test_examples = list(_flatmap(example_to_data, test_dataset.to_list()))
-            evaluator = NLLEvaluator(test_examples)
+            test_supervised_dataset = SupervisedDatasetFromHFDataset(
+                test_dataset,
+                batch_size=self.common_config.batch_size,
+                flatmap_fn=example_to_data,
+            )
         else:
-            evaluator = None
+            test_supervised_dataset = None
 
         return SupervisedDatasetFromHFDataset(
-            train_dataset,
-            batch_size=self.common_config.batch_size,
-            flatmap_fn=example_to_data,
-        ), evaluator
+            train_dataset, batch_size=self.common_config.batch_size
+        ), test_supervised_dataset
 
 
 @chz.chz
@@ -110,7 +106,7 @@ class PairwiseComparisonDatasetBuilder(ChatDatasetBuilder):
     def example_to_labeled_comparison(self, example: dict) -> LabeledComparison | None:
         raise NotImplementedError
 
-    def __call__(self) -> tuple[SupervisedDataset, Evaluator | None]:
+    def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
         train_dataset, test_dataset = self.get_train_and_test_datasets()
         comparison_renderer = self.comparison_renderer
         rng = random.Random(0)
@@ -136,16 +132,19 @@ class PairwiseComparisonDatasetBuilder(ChatDatasetBuilder):
                 return [comparison_to_datum(labeled_comparison)]
 
         if test_dataset is not None:
-            test_examples = list(_flatmap(example_to_data, test_dataset.to_list()))
-            evaluator = NLLEvaluator(test_examples)
+            test_supervised_dataset = SupervisedDatasetFromHFDataset(
+                test_dataset,
+                batch_size=self.common_config.batch_size,
+                flatmap_fn=example_to_data,
+            )
         else:
-            evaluator = None
+            test_supervised_dataset = None
 
         return SupervisedDatasetFromHFDataset(
             train_dataset,
             batch_size=self.common_config.batch_size,
             flatmap_fn=example_to_data,
-        ), evaluator
+        ), test_supervised_dataset
 
 
 def _hhh_parse_conversation(text: str) -> list[renderers.Message]:

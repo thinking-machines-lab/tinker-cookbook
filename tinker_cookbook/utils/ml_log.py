@@ -123,7 +123,7 @@ class PrettyPrintLogger(Logger):
         config_dict = chz.asdict(config)
         self.console.print("[bold cyan]Configuration:[/bold cyan]")
         for key, value in config_dict.items():
-            self.console.print(f"  {key}: {value}")
+            self.console.print(f"  {key}: {_maybe_truncate_repr(value)}")
 
     def log_metrics(self, metrics: Dict[str, Any], step: int | None = None) -> None:
         """Display metrics in console."""
@@ -145,6 +145,13 @@ class PrettyPrintLogger(Logger):
             table.add_row(key, value_str)
 
         self.console.print(table)
+
+
+def _maybe_truncate_repr(value: Any) -> str:
+    repr_value = repr(value)
+    if len(repr_value) > 256:
+        return repr_value[:128] + " ... " + repr_value[-128:]
+    return repr_value
 
 
 class WandbLogger(Logger):

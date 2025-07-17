@@ -101,10 +101,10 @@ class MathDatasetBuilder(RLDatasetBuilder):
     renderer_name: str
     group_size: int
 
-    def __call__(self) -> MathDataset:
+    def __call__(self) -> tuple[MathDataset, None]:
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
         return MathDataset(
             batch_size=self.batch_size,
             group_size=self.group_size,
             renderer=renderers.get_renderer(self.renderer_name, tokenizer=tokenizer),
-        )
+        ), None

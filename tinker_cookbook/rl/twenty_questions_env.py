@@ -1,4 +1,5 @@
 import functools
+import random
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -6,7 +7,11 @@ from typing import Sequence
 
 import chz
 import tinker_public
-from tinker_cookbook.completers import MessageCompleter, StopCondition, TinkerMessageCompleter
+from tinker_cookbook.completers import (
+    MessageCompleter,
+    StopCondition,
+    TinkerMessageCompleter,
+)
 from tinker_cookbook.renderers import Llama3Renderer, Message, Renderer, get_renderer
 from tinker_cookbook.rl.types import (
     Action,
@@ -86,8 +91,12 @@ class TwentyQuestionsEnv(Env):
 def get_words() -> list[str]:
     module_dir = Path(__file__).parent
     file_path = module_dir / "common_english_nouns.txt"
+
+    rng = random.Random(0)
     with open(file_path, "r") as f:
-        return [line.strip() for line in f.readlines()]
+        words = [line.strip() for line in f.readlines()]
+    rng.shuffle(words)
+    return words
 
 
 @dataclass(frozen=True)
@@ -130,9 +139,6 @@ class TwentyQuestionsDataset(RLDataset):
         return len(self.answers) // self.batch_size
 
 
-# The DatasetBuilder creates a dataset based on some parameters.
-
-
 @chz.chz
 class TwentyQuestionsDatasetBuilder(RLDatasetBuilder):
     batch_size: int
@@ -141,7 +147,7 @@ class TwentyQuestionsDatasetBuilder(RLDatasetBuilder):
     group_size: int
     base_url: str | None = None
 
-    def __call__(self) -> RLDataset:
+    def __call__(self) -> tuple[RLDataset, RLDataset]:
         answerer_base_model = "meta-llama/Llama-3.1-8B-Instruct"
         answerer_tokenizer = get_tokenizer(answerer_base_model)
         answerer_renderer = Llama3Renderer(tokenizer=answerer_tokenizer)
@@ -152,14 +158,25 @@ class TwentyQuestionsDatasetBuilder(RLDatasetBuilder):
         answerer = TinkerMessageCompleter(
             sampling_client=answerer_sampling_client, renderer=answerer_renderer, max_tokens=5
         )
-        words = get_words() * 100
+        words = get_words()
+        num_test = min(len(words) // 5, 100)
+        train_words = words[:-num_test]
+        test_words = words[-num_test:]
         player_renderer = get_renderer(
             self.renderer_name, get_tokenizer(self.model_name_for_tokenizer)
         )
-        return TwentyQuestionsDataset(
+        training_dataset = TwentyQuestionsDataset(
             answerer=answerer,
-            answers=words,
+            answers=train_words,
             renderer=player_renderer,
             batch_size=self.batch_size,
             group_size=self.group_size,
         )
+        test_dataset = TwentyQuestionsDataset(
+            answerer=answerer,
+            answers=test_words,
+            renderer=player_renderer,
+            batch_size=self.batch_size,
+            group_size=self.group_size,
+        )
+        return training_dataset, test_dataset

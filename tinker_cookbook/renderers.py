@@ -25,6 +25,7 @@ class TrainOnWhat(StrEnum):
     ALL_ASSISTANT_MESSAGES = "all_assistant_messages"
     ALL_MESSAGES = "all_messages"
     ALL_TOKENS = "all_tokens"
+    ALL_USER_AND_SYSTEM_MESSAGES = "all_user_and_system_messages"
 
 
 class Renderer:
@@ -107,6 +108,10 @@ def build_supervised_example(
             tokens_weights += [(token, 1) for token in action_part]
         elif train_on_what == TrainOnWhat.ALL_TOKENS:
             tokens_weights += [(token, 1) for token in ob_part + action_part]
+        elif train_on_what == TrainOnWhat.ALL_USER_AND_SYSTEM_MESSAGES:
+            tokens_weights += [(token, 0) for token in ob_part]
+            is_user_or_system = message["role"] in ["user", "system"]
+            tokens_weights += [(token, int(is_user_or_system)) for token in action_part]
         else:
             raise ValueError(f"Unknown train_on_what: {train_on_what}")
     ob_part, action_part, action_tail = render_message(len(messages) - 1, messages[-1])
@@ -177,7 +182,7 @@ class RoleColonRenderer(Renderer):
         splitted = str_response.split("\n\nUser:")
         if len(splitted) == 1:
             logger.debug(f"Response is not a valid assistant response: {str_response}")
-            return Message(role="assistant", content=str_response), False
+            return Message(role="assistant", content=str_response.strip()), False
         elif len(splitted) == 2:
             before, _after = splitted
             return Message(role="assistant", content=before.strip()), True

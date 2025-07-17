@@ -39,14 +39,16 @@ class SinglePlayerEnv(rl_types.Env):
     async def step(self, action: rl_types.Action) -> rl_types.StepResult:
         """Take a step in the environment."""
         action_text = self.tokenizer.decode(action).strip()
+        state = self.env.state  # type: ignore
         self.env.step(action_text)
-        if self.env.state.done:  # type: ignore
+        if state.done:
             self.env.close()
         observation = self.get_observation()
         return rl_types.StepResult(
-            reward=self.env.state.rewards[self.player_id] if self.env.state.rewards else 0.0,  # type: ignore
-            episode_done=self.env.state.done,  # type: ignore
+            reward=state.rewards[self.player_id] if state.rewards else 0.0,
+            episode_done=state.done,
             next_observation=observation,
+            next_stop_condition=self.stop_condition,
             metrics={},
         )
 
@@ -211,5 +213,5 @@ class TextArenaDatasetBuilder(rl_types.RLDatasetBuilder):
     batch_size: int
     builder: TextArenaEnvGroupBuilder
 
-    def __call__(self) -> TextArenaDataset:
-        return TextArenaDataset(batch_size=self.batch_size, builder=self.builder)
+    def __call__(self) -> tuple[TextArenaDataset, None]:
+        return TextArenaDataset(batch_size=self.batch_size, builder=self.builder), None

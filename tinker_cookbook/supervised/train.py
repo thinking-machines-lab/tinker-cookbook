@@ -2,6 +2,7 @@
 Supervised fine-tuning (SFT)
 """
 
+import asyncio
 import logging
 import os
 import time
@@ -9,8 +10,13 @@ import time
 import chz
 import tinker_public
 from tinker_cookbook.display import colorize_example
-from tinker_cookbook.evaluators import EvaluatorBuilder
+from tinker_cookbook.evaluators import (
+    EvaluatorBuilder,
+    SamplingClientEvaluator,
+    TrainingClientEvaluator,
+)
 from tinker_cookbook.supervised.common import compute_mean_nll
+from tinker_cookbook.supervised.nll_evaluator import NLLEvaluator
 from tinker_cookbook.supervised.types import SupervisedDatasetBuilder
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils.ml_log import setup_logging
@@ -60,13 +66,37 @@ class Config:
         return os.path.expanduser("~/experiments")
 
 
+async def run_evals(
+    evaluators: list[TrainingClientEvaluator | SamplingClientEvaluator],
+    training_client: tinker_public.TrainingClient,
+    step: int,
+) -> dict[str, float]:
+    """Run all evaluators and return metrics with test/ prefix."""
+    metrics = {}
+    sampling_client = None
+
+    for evaluator in evaluators:
+        if isinstance(evaluator, TrainingClientEvaluator):
+            eval_metrics = await evaluator(training_client)
+        elif isinstance(evaluator, SamplingClientEvaluator):
+            # Create sampling client lazily, only when needed
+            if sampling_client is None:
+                sampling_client = await training_client.save_weights_and_get_sampling_client_async(
+                    f"evals_step_{step}"
+                )
+            eval_metrics = await evaluator(sampling_client)
+        else:
+            raise ValueError(f"Unknown evaluator type: {type(evaluator)}")
+
+        # Add test/ prefix to all metrics
+        metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+
+    return metrics
+
+
 def main(config: Config):
     """Main training function that runs the complete training process."""
     logging.basicConfig(level=logging.INFO)
-    logger.info("Starting supervised fine-tuning")
-
-    # Validate config
-    # Warn if we got an unexpected renderer
 
     # Setup
     ml_logger = setup_logging(
@@ -81,12 +111,12 @@ def main(config: Config):
     )
 
     # Training setup
-    dataset, maybe_evaluator = config.dataset_builder()
+    dataset, maybe_test_dataset = config.dataset_builder()
     n_batches = len(dataset)
 
     evaluators = [evaluator() for evaluator in config.evaluator_builders]
-    if maybe_evaluator is not None:
-        evaluators.append(maybe_evaluator)
+    if maybe_test_dataset is not None:
+        evaluators.append(NLLEvaluator.from_dataset(maybe_test_dataset))
     logger.info(f"Training for {n_batches} batches")
 
     # Training loop
@@ -139,10 +169,9 @@ def main(config: Config):
 
         # Evaluation
         if config.test_interval > 0 and batch_idx % config.test_interval == 0:
-            for evaluator in evaluators:
-                eval_metrics = evaluator(training_client)
-                metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
-                # TODO make sure evaluators have different names
+            eval_metrics = asyncio.run(run_evals(evaluators, training_client, batch_idx))
+            metrics.update(eval_metrics)
+
         # Log metrics
         ml_logger.log_metrics(metrics=metrics, step=batch_idx)
     # Save final checkpoint

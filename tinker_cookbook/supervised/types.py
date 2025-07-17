@@ -4,7 +4,6 @@ Basic interfaces and types for supervised training.
 
 import chz
 from tinker_cookbook import renderers
-from tinker_cookbook.evaluators import Evaluator
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 from tinker_public import types
 
@@ -27,7 +26,7 @@ class SupervisedDatasetBuilder:
     A config class that knows how to construct a supervised dataset. This dataset is usually a chat dataset but doesn't need to be; it could just be tokens.
     """
 
-    def __call__(self) -> tuple[SupervisedDataset, Evaluator | None]:
+    def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
         raise NotImplementedError
 
 
@@ -53,7 +52,7 @@ class ChatDatasetBuilder(SupervisedDatasetBuilder):
 
     common_config: ChatDatasetBuilderCommonConfig
 
-    def __call__(self) -> tuple[SupervisedDataset, Evaluator | None]:
+    def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
         raise NotImplementedError
 
     @property

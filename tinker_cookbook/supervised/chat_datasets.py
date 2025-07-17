@@ -10,19 +10,21 @@ from typing import Any, Callable, cast
 import chz
 import datasets
 import tinker_public.types as types
-from tinker_cookbook.renderers import Message, Renderer
+from tinker_cookbook.renderers import Message, Renderer, TrainOnWhat
 from tinker_cookbook.supervised.common import datum_from_tokens_weights
-from tinker_cookbook.supervised.nll_evaluator import NLLEvaluator
-from tinker_cookbook.supervised.types import ChatDatasetBuilder, Evaluator, SupervisedDataset
+from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDataset
 
 logger = logging.getLogger(__name__)
 
 
 def conversation_to_datum(
-    conversation: list[Message], renderer: Renderer, max_length: int | None
+    conversation: list[Message],
+    renderer: Renderer,
+    max_length: int | None,
+    train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_MESSAGE,
 ) -> types.Datum:
     """Common function to process a list of messages into a Datum."""
-    tokens, weights = renderer.build_supervised_example(conversation)
+    tokens, weights = renderer.build_supervised_example(conversation, train_on_what=train_on_what)
     return datum_from_tokens_weights(tokens, weights, max_length)
 
 
@@ -58,7 +60,9 @@ class SupervisedDatasetFromHFDataset(SupervisedDataset):
 
 @chz.chz
 class Tulu3Builder(ChatDatasetBuilder):
-    def __call__(self) -> tuple[SupervisedDataset, Evaluator | None]:
+    train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_MESSAGE
+
+    def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset]:
         dataset = datasets.load_dataset("allenai/tulu-3-sft-mixture")
         dataset = cast(datasets.DatasetDict, dataset)
         dataset = dataset["train"]
@@ -69,17 +73,19 @@ class Tulu3Builder(ChatDatasetBuilder):
         # take the last 1000 as test, the rest as train
         def map_fn(row: dict) -> types.Datum:
             return conversation_to_datum(
-                row["messages"], self.renderer, self.common_config.max_length
+                row["messages"], self.renderer, self.common_config.max_length, self.train_on_what
             )
 
         return SupervisedDatasetFromHFDataset(
             train_ds, batch_size=self.common_config.batch_size, map_fn=map_fn
-        ), NLLEvaluator(list(map(map_fn, test_ds.to_list())))
+        ), SupervisedDatasetFromHFDataset(
+            test_ds, batch_size=self.common_config.batch_size, map_fn=map_fn
+        )
 
 
 @chz.chz
 class NoRobotsBuilder(ChatDatasetBuilder):
-    def __call__(self) -> tuple[SupervisedDataset, Evaluator | None]:
+    def __call__(self) -> tuple[SupervisedDataset, None]:
         dataset = datasets.load_dataset("HuggingFaceH4/no_robots")
         dataset = cast(datasets.DatasetDict, dataset)
         dataset = dataset["train"]
@@ -101,7 +107,7 @@ class FromConversationFileBuilder(ChatDatasetBuilder):
     test_size: int = 128
     shuffle_seed: int = 0
 
-    def __call__(self) -> tuple[SupervisedDataset, Evaluator | None]:
+    def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
         # Load conversations from JSONL file
         conversations = []
         with open(self.file_path, "r") as f:
@@ -141,8 +147,11 @@ class FromConversationFileBuilder(ChatDatasetBuilder):
         )
 
         # Create evaluator if we have test data
-        evaluator = None
         if test_ds is not None:
-            evaluator = NLLEvaluator(list(map(map_fn, test_ds.to_list())))
+            test_dataset = SupervisedDatasetFromHFDataset(
+                test_ds, batch_size=self.common_config.batch_size, map_fn=map_fn
+            )
+        else:
+            test_dataset = None
 
-        return supervised_dataset, evaluator
+        return supervised_dataset, test_dataset

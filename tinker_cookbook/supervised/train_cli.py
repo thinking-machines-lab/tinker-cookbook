@@ -2,9 +2,12 @@
 Basic CLI for training with supervised learning. It only supports a few datasets and configuration options; if you want to do something more complicated, please write a new script and call the train.main function directly.
 """
 
+import asyncio
+
 import chz
 from tinker_cookbook import model_info
-from tinker_cookbook.supervised import chat_datasets, train
+from tinker_cookbook.renderers import TrainOnWhat
+from tinker_cookbook.supervised import chat_datasets, train, train_pipelined
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, ChatDatasetBuilderCommonConfig
 from tinker_cookbook.utils.misc_utils import lookup_func
 
@@ -21,6 +24,7 @@ class CLIConfig:
     max_length: int | None = 8192
     batch_size: int = 256
     lora_rank: int = 32
+    pipelined: bool = False  # Use faster pipelined
 
     # Logging parameters
     log_relpath: str = "tmp/supervised"
@@ -47,6 +51,8 @@ def get_dataset_builder(
     )
     if dataset == "tulu3":
         return chat_datasets.Tulu3Builder(common_config=common_config)
+    elif dataset == "tulu3_user_sim":
+        return chat_datasets.Tulu3Builder(common_config=common_config, train_on_what=TrainOnWhat.ALL_USER_AND_SYSTEM_MESSAGES)
     elif dataset == "no_robots":
         return chat_datasets.NoRobotsBuilder(common_config=common_config)
     elif dataset == "hhh":  # a pairwise comparison dataset
@@ -92,8 +98,10 @@ def cli_main(cli_config: CLIConfig):
         wandb_name=cli_config.wandb_name,
         lora_rank=cli_config.lora_rank,
     )
-
-    train.main(config)
+    if cli_config.pipelined:
+        asyncio.run(train_pipelined.main(config))
+    else:
+        train.main(config)
 
 
 if __name__ == "__main__":

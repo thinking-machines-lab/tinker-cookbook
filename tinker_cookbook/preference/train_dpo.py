@@ -2,15 +2,20 @@
 Direct Preference Optimization (DPO) training
 """
 
+import asyncio
 import logging
 import os
 import time
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, cast
 
 import chz
 import tinker_public
 import torch
-from tinker_cookbook.evaluators import EvaluatorBuilder
+from tinker_cookbook.evaluators import (
+    EvaluatorBuilder,
+)
+from tinker_cookbook.supervised.nll_evaluator import NLLEvaluator
+from tinker_cookbook.supervised.train import run_evals
 from tinker_cookbook.supervised.types import ChatDatasetBuilder
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 from tinker_cookbook.torch_style import forward, forward_with_autograd
@@ -168,12 +173,13 @@ def main(config: Config):
     tokenizer = get_tokenizer(config.model_name)
 
     # Training setup
-    dataset, maybe_evaluator = config.dataset_builder()
+    dataset, maybe_test_dataset = config.dataset_builder()
     n_batches = len(dataset)
 
     evaluators = [evaluator() for evaluator in config.evaluator_builders]
-    if maybe_evaluator is not None:
-        evaluators.append(maybe_evaluator)
+    if maybe_test_dataset is not None:
+        evaluators.append(NLLEvaluator.from_dataset(maybe_test_dataset))
+        # XXX I don't think we want this NLLEvaluator
     logger.info(f"Training for {n_batches} batches")
 
     # Training loop
@@ -278,9 +284,8 @@ def main(config: Config):
 
         # Evaluation
         if config.test_interval > 0 and batch_idx % config.test_interval == 0:
-            for evaluator in evaluators:
-                eval_metrics = evaluator(training_client)
-                metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+            eval_metrics = asyncio.run(run_evals(evaluators, training_client, batch_idx))
+            metrics.update(eval_metrics)
 
         # Log metrics
         ml_logger.log_metrics(metrics=metrics, step=batch_idx)
@@ -298,7 +303,7 @@ def print_example(datum: types.Datum, tokenizer: Tokenizer, label: str = ""):
     int_tokens = list(datum.model_input.to_ints())
     weights = datum.loss_fn_inputs["weights"].data
     print(f"\n{label} Example:")
-    print(format_colorized(int_tokens, weights, tokenizer))  # type: ignore
+    print(format_colorized(int_tokens, cast(list[float], weights), tokenizer))
 
 
 if __name__ == "__main__":

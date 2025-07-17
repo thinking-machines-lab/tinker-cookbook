@@ -59,11 +59,11 @@ class PolarisDatasetBuilder(RLDatasetBuilder):
     group_size: int
     difficulty_filter: int | None = None
 
-    def __call__(self) -> PolarisDataset:
+    def __call__(self) -> tuple[PolarisDataset, None]:
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
         return PolarisDataset(
             batch_size=self.batch_size,
             group_size=self.group_size,
             renderer=renderers.get_renderer(self.renderer_name, tokenizer=tokenizer),
             easiness_filter=self.difficulty_filter,
-        )
+        ), None

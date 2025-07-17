@@ -180,7 +180,7 @@ class PairwisePreferenceRLDatasetBuilder(RLDatasetBuilder):
     model_path: str
     group_size: int
 
-    def __call__(self) -> PairwisePreferenceDataset:
+    def __call__(self) -> tuple[PairwisePreferenceDataset, None]:
         return PairwisePreferenceDataset(
             comparison_dataset_builder=self.comparison_dataset_builder,
             batch_size=self.batch_size,
@@ -192,4 +192,4 @@ class PairwisePreferenceRLDatasetBuilder(RLDatasetBuilder):
             ),
             tournament_pattern=self.tournament_pattern,
             group_size=self.group_size,
-        )
+        ), None
