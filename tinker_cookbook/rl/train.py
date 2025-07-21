@@ -392,10 +392,11 @@ async def main(
         checkpoint_name = f"{save_index:04d}"
         save_sampler_future = await training_client.save_weights_for_sampler_async(checkpoint_name)
         save_state_future = await training_client.save_state_async(checkpoint_name)
-        # XXX saving state due to bug
-        _ = await save_state_future.result_async()
         save_sampler_result = await save_sampler_future.result_async()
-        logger.info(f"Saved weights to {save_sampler_result.path}")
+        save_state_result = await save_state_future.result_async()
+        logger.info(f"Saved sampler weights to {save_sampler_result.path}")
+        logger.info(f"Saved state to {save_state_result.path}")
+        # XXX saving state due to bug
         return save_sampler_result.path
 
     current_weights_path = await save_weights(training_client, save_index)

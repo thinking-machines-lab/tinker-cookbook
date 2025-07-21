@@ -3,6 +3,7 @@ import logging
 import time
 from functools import cache
 
+import chz
 import httpx
 import pandas as pd
 import tinker_public
@@ -78,16 +79,33 @@ async def get_row(
     #     return {"model_name": model_name, "mse": None, "error": type(e).__name__}
 
 
-async def main():
+@chz.chz
+class Config:
+    base_url: str | None = None
+    print_models: bool = False
+    model_names: list[str] | None = None
+    model_name_filter: list[str] | None = chz.field(default_factory=lambda: ["loadtest"])
+
+
+async def main(config: Config):
     logging.basicConfig(level=logging.INFO)
-    service_client = tinker_public.ServiceClient()
-    server_capabilities = await service_client.get_server_capabilities_async()
-    model_names = []
-    for model_info in server_capabilities.supported_models:
-        model_names.append(model_info.model_name)
+    service_client = tinker_public.ServiceClient(base_url=config.base_url)
+
+    if config.model_names is None:
+        server_capabilities = await service_client.get_server_capabilities_async()
+        model_names = [model_info.model_name for model_info in server_capabilities.supported_models if model_info.model_name is not None]
+        if config.print_models:
+            print("Available models:")
+            for model_name in model_names:
+                print(f"- {model_name}")
+            return
+    else:
+        model_names = list(config.model_names)
 
     def should_do_model(model_name: str) -> bool:
-        return not any(x in model_name for x in ["loadtest", "lifecycle"])
+        if not config.model_name_filter:
+            return True
+        return not any(x in model_name for x in config.model_name_filter)
 
     model_names = [x for x in sorted(model_names) if should_do_model(x)]
     print(f"Model names: {model_names}")
@@ -109,4 +127,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(chz.nested_entrypoint(main))
