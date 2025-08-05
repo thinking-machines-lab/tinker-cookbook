@@ -6,9 +6,9 @@ from typing import Sequence
 
 import chz
 import textarena as ta
+from tinker import types
 from tinker_cookbook.completers import StopCondition
 from tinker_cookbook.tokenizer_utils import Tokenizer
-from tinker_public import types
 
 from . import types as rl_types
 

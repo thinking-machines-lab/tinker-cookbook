@@ -4,8 +4,8 @@ from typing import Sequence, cast
 
 import datasets
 import numpy as np
+import tinker
 import tinker_cookbook.renderers as renderers
-import tinker_public
 from tinker_cookbook.completers import MessageCompleter
 from tinker_cookbook.preference.preference_datasets import hhh_example_to_comparison
 from tinker_cookbook.preference.types import (
@@ -49,7 +49,7 @@ class ComparisonEvaluator:
 
 def make_comparison_evaluator(
     renderer_name: str,
-    sampling_client: tinker_public.SamplingClient,
+    sampling_client: tinker.SamplingClient,
     tmp_model_name_for_tokenizer: str,
     dataset_size: int = 512,
 ) -> ComparisonEvaluator:

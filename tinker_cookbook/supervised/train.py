@@ -8,7 +8,8 @@ import os
 import time
 
 import chz
-import tinker_public
+import tinker
+from tinker import types
 from tinker_cookbook.display import colorize_example
 from tinker_cookbook.evaluators import (
     EvaluatorBuilder,
@@ -21,7 +22,6 @@ from tinker_cookbook.supervised.types import SupervisedDatasetBuilder
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils.ml_log import setup_logging
 from tinker_cookbook.utils.training_utils import compute_schedule_lr_multiplier, save_checkpoint
-from tinker_public import types
 
 logger = logging.getLogger(__name__)
 
@@ -33,12 +33,14 @@ class Config:
     # Required parameters
     log_relpath: str
     model_name: str
+    load_checkpoint_path: str | None = None
     dataset_builder: SupervisedDatasetBuilder
     # dataset_builder optionally returns an evaluator (test set)
 
     # Training parameters
     learning_rate: float = 1e-5
     lr_schedule: str = "linear"
+    num_epochs: int = 1
 
     # Model parameters
     lora_rank: int = 32
@@ -68,7 +70,7 @@ class Config:
 
 async def run_evals(
     evaluators: list[TrainingClientEvaluator | SamplingClientEvaluator],
-    training_client: tinker_public.TrainingClient,
+    training_client: tinker.TrainingClient,
     step: int,
 ) -> dict[str, float]:
     """Run all evaluators and return metrics with test/ prefix."""
@@ -105,10 +107,14 @@ def main(config: Config):
         config=config,
         wandb_name=config.wandb_name,
     )
-    service_client = tinker_public.ServiceClient(base_url=config.base_url)
+    service_client = tinker.ServiceClient(base_url=config.base_url)
     training_client = service_client.create_lora_training_client(
         base_model=config.model_name, rank=config.lora_rank
     )
+
+    if config.load_checkpoint_path:
+        training_client.load_state(config.load_checkpoint_path)
+        logger.info(f"Loaded weights from {config.load_checkpoint_path}")
 
     # Training setup
     dataset, maybe_test_dataset = config.dataset_builder()

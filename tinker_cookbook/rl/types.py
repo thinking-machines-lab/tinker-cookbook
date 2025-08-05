@@ -6,9 +6,9 @@ from dataclasses import dataclass, field
 from typing import Sequence
 
 import chz
+from tinker import types
 from tinker_cookbook.completers import StopCondition, TokensWithLogprobs
 from tinker_cookbook.utils.misc_utils import safezip
-from tinker_public import types
 
 type Action = list[int]
 type Observation = types.ModelInput

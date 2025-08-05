@@ -8,7 +8,7 @@ from enum import StrEnum
 from typing import Callable, TypedDict
 
 import torch
-from tinker_public import types
+from tinker import types
 
 from tinker_cookbook.tokenizer_utils import Tokenizer
 

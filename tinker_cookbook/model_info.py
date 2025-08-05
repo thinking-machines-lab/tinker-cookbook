@@ -72,9 +72,9 @@ def get_recommended_renderer_name(model_name: str) -> str:
 
 
 def main():
-    import tinker_public
+    import tinker
 
-    sc = tinker_public.ServiceClient()
+    sc = tinker.ServiceClient()
     for sm in sc.get_server_capabilities().supported_models:
         name = cast(str, sm.model_name)  # TODO remove cast after fixing type
         try:

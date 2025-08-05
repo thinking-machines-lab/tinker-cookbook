@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Dict, List, cast
 
 import chz
-import tinker_public
+import tinker
 import torch
+from tinker import types
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.display import colorize_example
 from tinker_cookbook.evaluators import SamplingClientEvaluatorBuilder
@@ -26,7 +27,6 @@ from tinker_cookbook.rl.types import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils.misc_utils import all_same, safezip, timed
 from tinker_cookbook.utils.ml_log import setup_logging
-from tinker_public import types
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +222,7 @@ def compute_kl_sample_train(
 
 
 async def compute_post_kl(
-    data_D: List[types.Datum], post_sampling_client: tinker_public.SamplingClient
+    data_D: List[types.Datum], post_sampling_client: tinker.SamplingClient
 ) -> Dict[str, float]:
     """Compute post-update KL divergence metrics."""
     # Compute logprobs at all data items
@@ -310,7 +310,7 @@ def _remove_uniform_rewards(trajectory_groups_P: List[TrajectoryGroup]) -> List[
 
 async def train_step(
     trajectory_groups_P: List[TrajectoryGroup],
-    training_client: tinker_public.TrainingClient,
+    training_client: tinker.TrainingClient,
     learning_rate: float,
     remove_uniform_rewards: bool = True,
 ) -> tuple[List[torch.Tensor], List[types.Datum]]:
@@ -381,13 +381,13 @@ async def main(
         config=cfg,
         wandb_name=cfg.wandb_name,
     )
-    service_client = tinker_public.ServiceClient(base_url=cfg.base_url)
+    service_client = tinker.ServiceClient(base_url=cfg.base_url)
     training_client = await service_client.create_lora_training_client_async(cfg.model_name)
 
     # Initial weight save
     save_index = 0
 
-    async def save_weights(training_client: tinker_public.TrainingClient, save_index: int) -> str:
+    async def save_weights(training_client: tinker.TrainingClient, save_index: int) -> str:
         """Save current weights and return the path."""
         checkpoint_name = f"{save_index:04d}"
         save_sampler_future = await training_client.save_weights_for_sampler_async(checkpoint_name)

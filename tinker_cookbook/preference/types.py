@@ -10,9 +10,9 @@ from dataclasses import dataclass
 from typing import Literal
 
 import torch
+from tinker import SamplingClient, types
 from tinker_cookbook import renderers
 from tinker_cookbook.tokenizer_utils import Tokenizer
-from tinker_public import SamplingClient, types
 
 logger = logging.getLogger(__name__)
 

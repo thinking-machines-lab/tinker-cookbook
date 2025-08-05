@@ -3,6 +3,7 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Callable, Sequence
 
+from tinker import types
 from tinker_cookbook import renderers
 from tinker_cookbook.completers import StopCondition
 from tinker_cookbook.rl.types import (
@@ -14,7 +15,6 @@ from tinker_cookbook.rl.types import (
     StepResult,
     Trajectory,
 )
-from tinker_public import types
 
 logger = logging.getLogger(__name__)
 

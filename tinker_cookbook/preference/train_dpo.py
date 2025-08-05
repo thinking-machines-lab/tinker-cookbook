@@ -9,8 +9,9 @@ import time
 from typing import Dict, List, Tuple, cast
 
 import chz
-import tinker_public
+import tinker
 import torch
+from tinker import types
 from tinker_cookbook.evaluators import (
     EvaluatorBuilder,
 )
@@ -25,7 +26,6 @@ from tinker_cookbook.utils.training_utils import (
     compute_schedule_lr_multiplier,
     save_checkpoint,
 )
-from tinker_public import types
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,7 @@ class Config:
     log_relpath: str
     model_name: str
     dataset_builder: ChatDatasetBuilder
+    load_checkpoint_path: str | None = None
     # dataset_builder optionally returns an evaluator (test set)
 
     # Training parameters
@@ -83,7 +84,7 @@ class Config:
 
 def create_dpo_clients(
     config: Config,
-) -> Tuple[tinker_public.TrainingClient, tinker_public.TrainingClient]:
+) -> Tuple[tinker.TrainingClient, tinker.TrainingClient]:
     """Create and configure the training clients for DPO.
 
     Creates both the main training client and the reference client.
@@ -97,7 +98,7 @@ def create_dpo_clients(
         Tuple of (main training client, reference client)
     """
     # Create shared service client for both training and reference clients
-    service_client = tinker_public.ServiceClient(base_url=config.base_url)
+    service_client = tinker.ServiceClient(base_url=config.base_url)
     training_client = service_client.create_lora_training_client(
         base_model=config.model_name, rank=config.lora_rank
     )
@@ -105,6 +106,10 @@ def create_dpo_clients(
         base_model=config.reference_model_name or config.model_name, rank=config.lora_rank
     )
 
+    if config.load_checkpoint_path:
+        reference_client.load_state(config.load_checkpoint_path)
+        training_client.load_state(config.load_checkpoint_path)
+        logger.info(f"Loaded weights from {config.load_checkpoint_path}")
     return training_client, reference_client
 
 

@@ -7,9 +7,9 @@ At the cost of an extra forward pass, this lets you use any custom loss function
 import logging
 from typing import List, Tuple
 
-import tinker_public
+import tinker
 import torch
-from tinker_public import types
+from tinker import types
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class PlaceholderFunction(torch.autograd.Function):
     @staticmethod
     def forward(
         ctx: torch.autograd.function.FunctionCtx,
-        client: tinker_public.TrainingClient,
+        client: tinker.TrainingClient,
         data: List[types.Datum],
         *output_tensor_list: torch.Tensor,
     ) -> Tuple[torch.Tensor, ...]:
@@ -68,7 +68,7 @@ class PlaceholderFunction(torch.autograd.Function):
 
 
 def forward_with_autograd(
-    client: tinker_public.TrainingClient,
+    client: tinker.TrainingClient,
     data: List[types.Datum],
 ) -> Tuple[torch.Tensor, ...]:
     """
@@ -99,7 +99,7 @@ def forward_with_autograd(
 
 
 def forward(
-    client: tinker_public.TrainingClient,
+    client: tinker.TrainingClient,
     data: List[types.Datum],
 ) -> Tuple[torch.Tensor, ...]:
     """

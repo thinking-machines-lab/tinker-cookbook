@@ -56,4 +56,3 @@ Examples:
 - `rewards_G`: Rewards for each attempt within a group
 - `tokens_P_G_T`: Tokens with problem, group, and time dimensions
 - `data_D`: A list of training data items
-

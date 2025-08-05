@@ -17,6 +17,7 @@ from tinker_cookbook.utils.misc_utils import lookup_func
 class CLIConfig:
     model_name: str = "meta-llama/Llama-3.2-1B"
     dataset: str = "hhh"  # or path like tinker_cookbook.preference.preference_datasets:HHHBuilder
+    load_checkpoint_path: str | None = None
     renderer_name: str = "role_colon"
 
     # Training parameters
@@ -85,6 +86,7 @@ def cli_main(cli_config: CLIConfig):
             cli_config.max_length,
             cli_config.batch_size,
         ),
+        load_checkpoint_path=cli_config.load_checkpoint_path,
         evaluator_builders=[],
         learning_rate=cli_config.learning_rate,
         lr_schedule=cli_config.lr_schedule,

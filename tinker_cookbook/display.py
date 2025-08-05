@@ -1,7 +1,7 @@
 import io
 
 from termcolor import colored
-from tinker_public import types
+from tinker import types
 
 from tinker_cookbook.rl.types import Trajectory
 from tinker_cookbook.tokenizer_utils import Tokenizer

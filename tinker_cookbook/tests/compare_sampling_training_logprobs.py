@@ -6,10 +6,10 @@ from functools import cache
 import chz
 import httpx
 import pandas as pd
-import tinker_public
+import tinker
 import torch
+from tinker.types import AdamParams, ModelInput
 from tinker_cookbook.supervised.common import datum_from_tokens_weights
-from tinker_public.types import AdamParams, ModelInput
 
 
 @cache
@@ -22,7 +22,11 @@ def get_reference_document():
 
 
 async def get_row(
-    model_name: str, service_client: tinker_public.ServiceClient, timeout_sec: float
+    model_name: str,
+    service_client: tinker.ServiceClient,
+    timeout_sec: float,
+    saved_path_for_trainer: str | None = None,
+    saved_path_for_sampler: str | None = None,
 ) -> dict:
     async def _inner():
         tstart = time.time()
@@ -30,13 +34,15 @@ async def get_row(
         training_client = await service_client.create_lora_training_client_async(
             base_model=model_name
         )
+        if saved_path_for_trainer is not None:
+            await training_client.load_state_async(saved_path_for_trainer)
         # First sample something
         tokenizer = training_client.get_tokenizer()
         tokens = torch.tensor(tokenizer.encode(get_reference_document()))
         weights = torch.ones_like(tokens)
         weights[0] = 0.0
         datum = datum_from_tokens_weights(tokens, weights)
-        num_updates = 3
+        num_updates = 3 if saved_path_for_trainer is None else 0
         for iteration in range(num_updates + 1):
             fwd_bwd_future = await training_client.forward_backward_async(
                 [datum], loss_fn="cross_entropy"
@@ -50,9 +56,16 @@ async def get_row(
             fwd_bwd_result = await fwd_bwd_future.result_async()
             _optim_step_result = await optim_step_future.result_async()
         training_logprobs = fwd_bwd_result.loss_fn_outputs[0]["logprobs"].to_torch()  # pyright: ignore[reportPossiblyUnboundVariable]
-        sampling_client = await training_client.save_weights_and_get_sampling_client_async(
-            name="tmp-checkpoint"
-        )
+        if saved_path_for_sampler is None:
+            state_for_trainer = await training_client.save_state_async(name="tmp-checkpoint")
+            print(f"Saved state for trainer: {state_for_trainer.result().path}")
+            sampling_client = await training_client.save_weights_and_get_sampling_client_async(
+                name="tmp-checkpoint"
+            )
+        else:
+            sampling_client = training_client.create_sampling_client(
+                model_path=saved_path_for_sampler
+            )
         logprobs_response = await sampling_client.compute_logprobs_async(
             ModelInput.from_ints(tokens.tolist())
         )
@@ -74,9 +87,6 @@ async def get_row(
     except asyncio.TimeoutError:
         print(f"ERROR: Timeout after {timeout_sec} seconds for model {model_name}")
         return {"model_name": model_name, "error": "TimeoutError"}
-    # except Exception as e:
-    #     print(f"ERROR: Failed to process model {model_name}: {e}")
-    #     return {"model_name": model_name, "mse": None, "error": type(e).__name__}
 
 
 @chz.chz
@@ -85,15 +95,21 @@ class Config:
     print_models: bool = False
     model_names: list[str] | None = None
     model_name_filter: list[str] | None = chz.field(default_factory=lambda: ["loadtest"])
+    state_for_trainer: str | None = None
+    state_for_sampler: str | None = None
 
 
 async def main(config: Config):
     logging.basicConfig(level=logging.INFO)
-    service_client = tinker_public.ServiceClient(base_url=config.base_url)
+    service_client = tinker.ServiceClient(base_url=config.base_url)
 
     if config.model_names is None:
         server_capabilities = await service_client.get_server_capabilities_async()
-        model_names = [model_info.model_name for model_info in server_capabilities.supported_models if model_info.model_name is not None]
+        model_names = [
+            model_info.model_name
+            for model_info in server_capabilities.supported_models
+            if model_info.model_name is not None
+        ]
         if config.print_models:
             print("Available models:")
             for model_name in model_names:
@@ -111,7 +127,16 @@ async def main(config: Config):
     print(f"Model names: {model_names}")
     timeout_sec = 150.0
     rows = await asyncio.gather(
-        *[get_row(model_name, service_client, timeout_sec) for model_name in model_names]
+        *[
+            get_row(
+                model_name,
+                service_client,
+                timeout_sec,
+                config.state_for_trainer,
+                config.state_for_sampler,
+            )
+            for model_name in model_names
+        ]
     )
 
     df = pd.DataFrame(rows)

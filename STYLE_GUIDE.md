@@ -6,7 +6,7 @@ Here are some principles for the how the code is designed and organized. The cod
 
 We're designing the codebase with the following goals:
 
-1. Low barrier to entry: it should be dead simple to run something and see numbers go up. 
+1. Low barrier to entry: it should be dead simple to run something and see numbers go up.
 2. Extensible: it should be possible to pass in custom datasets and evals and control all the hyperparameters.
 3. Science-friendly: it should be easy to run sweeps, and analyze the results.
 

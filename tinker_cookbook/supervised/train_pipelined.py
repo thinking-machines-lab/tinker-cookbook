@@ -9,7 +9,8 @@ import time
 from dataclasses import dataclass
 
 import chz
-import tinker_public
+import tinker
+from tinker.lib.public_interfaces import APIFuture
 from tinker_cookbook.display import colorize_example
 from tinker_cookbook.supervised.common import compute_mean_nll
 from tinker_cookbook.supervised.nll_evaluator import NLLEvaluator
@@ -17,21 +18,20 @@ from tinker_cookbook.supervised.train import Config, run_evals
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils.ml_log import setup_logging
 from tinker_cookbook.utils.training_utils import compute_schedule_lr_multiplier
-from tinker_public.lib.public_interfaces import APIFuture
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class SubmitBatchResult:
-    fwd_bwd_future: APIFuture[tinker_public.types.ForwardBackwardOutput]
-    optim_step_future: APIFuture[tinker_public.types.OptimStepResponse]
+    fwd_bwd_future: APIFuture[tinker.types.ForwardBackwardOutput]
+    optim_step_future: APIFuture[tinker.types.OptimStepResponse]
     metrics: dict[str, float | str]
     data: list
     batch_idx: int
 
 
-async def save_checkpoint_async(training_client: tinker_public.TrainingClient, name: str) -> str:
+async def save_checkpoint_async(training_client: tinker.TrainingClient, name: str) -> str:
     """Save model checkpoint asynchronously.
     Args:
         training_client: Training client to save from
@@ -60,7 +60,7 @@ async def main(config: Config):
         config=config,
         wandb_name=config.wandb_name,
     )
-    service_client = tinker_public.ServiceClient(base_url=config.base_url)
+    service_client = tinker.ServiceClient(base_url=config.base_url)
     training_client = await service_client.create_lora_training_client_async(
         base_model=config.model_name, rank=config.lora_rank
     )
@@ -81,7 +81,7 @@ async def main(config: Config):
             )
             * config.learning_rate
         )
-        adam_params = tinker_public.types.AdamParams(
+        adam_params = tinker.types.AdamParams(
             learning_rate=learning_rate,
             beta1=config.adam_beta1,
             beta2=config.adam_beta2,

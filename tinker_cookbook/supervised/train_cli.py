@@ -15,6 +15,7 @@ from tinker_cookbook.utils.misc_utils import lookup_func
 @chz.chz
 class CLIConfig:
     model_name: str = "meta-llama/Llama-3.2-1B"
+    load_checkpoint_path: str | None = None
     dataset: str = "no_robots"
     renderer_name: str | None = None
 
@@ -52,7 +53,9 @@ def get_dataset_builder(
     if dataset == "tulu3":
         return chat_datasets.Tulu3Builder(common_config=common_config)
     elif dataset == "tulu3_user_sim":
-        return chat_datasets.Tulu3Builder(common_config=common_config, train_on_what=TrainOnWhat.ALL_USER_AND_SYSTEM_MESSAGES)
+        return chat_datasets.Tulu3Builder(
+            common_config=common_config, train_on_what=TrainOnWhat.ALL_USER_AND_SYSTEM_MESSAGES
+        )
     elif dataset == "no_robots":
         return chat_datasets.NoRobotsBuilder(common_config=common_config)
     elif dataset == "hhh":  # a pairwise comparison dataset
@@ -82,6 +85,7 @@ def cli_main(cli_config: CLIConfig):
     config = train.Config(
         log_relpath=cli_config.log_relpath,
         model_name=cli_config.model_name,
+        load_checkpoint_path=cli_config.load_checkpoint_path,
         dataset_builder=get_dataset_builder(
             cli_config.dataset,
             cli_config.model_name,

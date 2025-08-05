@@ -8,8 +8,8 @@ Evals and other code should use the appropriate interface.
 
 from dataclasses import dataclass
 
-import tinker_public
-from tinker_public import types
+import tinker
+from tinker import types
 
 from tinker_cookbook import renderers
 
@@ -49,10 +49,10 @@ class MessageCompleter:
 @dataclass
 class TinkerTokenCompleter(TokenCompleter):
     """
-    The most standard TokenCompleter, which uses a tinker_public.SamplingClient to sample actions.
+    The most standard TokenCompleter, which uses a tinker.SamplingClient to sample actions.
     """
 
-    sampling_client: tinker_public.SamplingClient
+    sampling_client: tinker.SamplingClient
     max_tokens: int
 
     async def __call__(
@@ -63,9 +63,7 @@ class TinkerTokenCompleter(TokenCompleter):
         sample_result = await self.sampling_client.sample_async(
             prompt=model_input,
             num_samples=1,
-            sampling_params=tinker_public.types.SamplingParams(
-                stop=stop, max_tokens=self.max_tokens
-            ),
+            sampling_params=tinker.types.SamplingParams(stop=stop, max_tokens=self.max_tokens),
         )
 
         # Extract tokens and logprobs from the first (and only) sample
@@ -81,7 +79,7 @@ class TinkerMessageCompleter(MessageCompleter):
 
     def __init__(
         self,
-        sampling_client: tinker_public.SamplingClient,
+        sampling_client: tinker.SamplingClient,
         renderer: renderers.Renderer,
         max_tokens: int,
     ):
@@ -97,7 +95,7 @@ class TinkerMessageCompleter(MessageCompleter):
         response = await self.sampling_client.sample_async(
             model_input,
             num_samples=1,
-            sampling_params=tinker_public.types.SamplingParams(
+            sampling_params=tinker.types.SamplingParams(
                 temperature=1.0,
                 max_tokens=self.max_tokens,
                 stop=self.renderer.get_stop_sequences(),

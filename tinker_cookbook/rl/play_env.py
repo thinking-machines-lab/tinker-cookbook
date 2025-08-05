@@ -3,8 +3,9 @@
 import asyncio
 
 import chz
-import tinker_public
+import tinker
 from termcolor import colored
+from tinker import types
 from tinker_cookbook import model_info
 from tinker_cookbook.completers import (
     StopCondition,
@@ -16,7 +17,6 @@ from tinker_cookbook.rl import train_cli
 from tinker_cookbook.rl.rollouts import do_single_rollout
 from tinker_cookbook.rl.types import Env, Trajectory
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
-from tinker_public import types
 
 
 async def get_async_input(prompt: str) -> str:
@@ -100,7 +100,7 @@ async def main(cfg: Config):
         # Interactive play
         await play_env(env, tokenizer)
     else:
-        service_client = tinker_public.ServiceClient()
+        service_client = tinker.ServiceClient()
         sampling_client = service_client.create_sampling_client(base_model=cfg.model)
         policy = TinkerTokenCompleter(sampling_client=sampling_client, max_tokens=20)
 

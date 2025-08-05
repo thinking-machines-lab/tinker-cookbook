@@ -5,7 +5,8 @@ from enum import StrEnum
 from typing import Sequence
 
 import chz
-import tinker_public
+import tinker
+from tinker import types
 from tinker_cookbook import renderers
 from tinker_cookbook.completers import StopCondition
 from tinker_cookbook.preference.preference_datasets import (
@@ -29,7 +30,6 @@ from tinker_cookbook.rl.types import (
     Trajectory,
 )
 from tinker_cookbook.utils.misc_utils import safezip
-from tinker_public import types
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +186,7 @@ class PairwisePreferenceRLDatasetBuilder(RLDatasetBuilder):
             batch_size=self.batch_size,
             preference_model=PreferenceModelFromChatRenderer(
                 convo_renderer=self.comparison_dataset_builder.renderer,
-                sampling_client=tinker_public.ServiceClient().create_sampling_client(
+                sampling_client=tinker.ServiceClient().create_sampling_client(
                     model_path=self.model_path
                 ),
             ),

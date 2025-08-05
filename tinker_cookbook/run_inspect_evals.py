@@ -10,7 +10,7 @@ import time
 from typing import Sequence
 
 import chz
-import tinker_public
+import tinker
 from inspect_ai import eval_async
 from inspect_ai.model import ChatCompletionChoice as InspectAIModelOutputChoice
 from inspect_ai.model import ChatMessage as InspectAIChatMessage
@@ -24,7 +24,7 @@ from inspect_ai.model import ModelUsage as InspectAIModelUsage
 from inspect_ai.tool import ToolChoice as InspectAIToolChoice
 from inspect_ai.tool import ToolInfo as InspectAIToolInfo
 from termcolor import colored
-from tinker_public import types
+from tinker import types
 
 from tinker_cookbook import renderers
 from tinker_cookbook.tokenizer_utils import get_tokenizer
@@ -78,7 +78,7 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
             api_key_vars=api_key_vars,
             config=config,
         )
-        service_client = tinker_public.ServiceClient(api_key=api_key)
+        service_client = tinker.ServiceClient(api_key=api_key)
         self.sampling_client = service_client.create_sampling_client(model_path=model_path)
         tokenizer = get_tokenizer(model_name)
         self.renderer = renderers.get_renderer(name=renderer_name, tokenizer=tokenizer)

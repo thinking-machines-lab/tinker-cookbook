@@ -1,7 +1,7 @@
 import logging
 
 import torch
-from tinker_public import types
+from tinker import types
 
 logger = logging.getLogger(__name__)
 

@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Sequence
 
 import chz
-import tinker_public
+import tinker
+from tinker.types import ModelInput
 from tinker_cookbook.completers import (
     MessageCompleter,
     StopCondition,
@@ -22,7 +23,6 @@ from tinker_cookbook.rl.types import (
     StepResult,
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
-from tinker_public.types import ModelInput
 
 # A MessageCompleter is similar to the OpenAI chat completions API
 
@@ -151,7 +151,7 @@ class TwentyQuestionsDatasetBuilder(RLDatasetBuilder):
         answerer_base_model = "meta-llama/Llama-3.1-8B-Instruct"
         answerer_tokenizer = get_tokenizer(answerer_base_model)
         answerer_renderer = Llama3Renderer(tokenizer=answerer_tokenizer)
-        service_client = tinker_public.ServiceClient(base_url=self.base_url)
+        service_client = tinker.ServiceClient(base_url=self.base_url)
         answerer_sampling_client = service_client.create_sampling_client(
             base_model=answerer_base_model
         )

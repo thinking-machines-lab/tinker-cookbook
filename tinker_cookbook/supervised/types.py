@@ -3,9 +3,9 @@ Basic interfaces and types for supervised training.
 """
 
 import chz
+from tinker import types
 from tinker_cookbook import renderers
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
-from tinker_public import types
 
 
 class SupervisedDataset:

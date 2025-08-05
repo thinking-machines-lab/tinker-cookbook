@@ -4,6 +4,7 @@ from typing import cast
 
 import chz
 import datasets
+from tinker import types
 from tinker_cookbook import renderers
 from tinker_cookbook.preference.types import (
     Comparison,
@@ -16,7 +17,6 @@ from tinker_cookbook.supervised.chat_datasets import (
 )
 from tinker_cookbook.supervised.common import datum_from_tokens_weights
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDataset
-from tinker_public import types
 
 
 @chz.chz

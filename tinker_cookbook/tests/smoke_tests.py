@@ -2,13 +2,13 @@ import asyncio
 from typing import cast
 
 import datasets
+from tinker import types
 from tinker_cookbook import renderers
 from tinker_cookbook.rl import arithmetic_env
 from tinker_cookbook.rl import train as rl_train
 from tinker_cookbook.supervised import chat_datasets
 from tinker_cookbook.supervised import train as supervised_train
 from tinker_cookbook.tokenizer_utils import get_tokenizer
-from tinker_public import types
 
 
 def test_supervised():

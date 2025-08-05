@@ -3,7 +3,7 @@ import itertools
 from typing import Dict, List
 
 import numpy as np
-import tinker_public
+import tinker
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.evaluators import SamplingClientEvaluator
 from tinker_cookbook.rl.rollouts import do_group_rollout
@@ -79,7 +79,7 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         self.env_group_builders_P = dataset_to_env_group_builders(dataset)
         self.max_tokens = max_tokens
 
-    async def __call__(self, sampling_client: tinker_public.SamplingClient) -> dict[str, float]:
+    async def __call__(self, sampling_client: tinker.SamplingClient) -> dict[str, float]:
         policy = TinkerTokenCompleter(sampling_client, max_tokens=self.max_tokens)
         trajectory_groups_P = await asyncio.gather(
             *[do_group_rollout(builder, policy) for builder in self.env_group_builders_P]

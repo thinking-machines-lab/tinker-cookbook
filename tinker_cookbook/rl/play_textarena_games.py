@@ -5,6 +5,7 @@ import asyncio
 import anyio
 import chz
 from termcolor import colored
+from tinker import types
 from tinker_cookbook.completers import StopCondition, TokenCompleter, TokensWithLogprobs
 from tinker_cookbook.rl.rollouts import do_single_rollout
 from tinker_cookbook.rl.textarena_envs import (
@@ -13,7 +14,6 @@ from tinker_cookbook.rl.textarena_envs import (
     TwoPlayerEnvGroupBuilder,
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
-from tinker_public import types
 
 
 async def get_async_input(prompt: str) -> str:

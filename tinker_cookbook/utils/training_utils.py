@@ -13,12 +13,12 @@ These functions are designed to be compatible with different training algorithms
 
 import logging
 
-import tinker_public
+import tinker
 
 logger = logging.getLogger(__name__)
 
 
-def save_checkpoint(training_client: tinker_public.TrainingClient, name: str) -> str:
+def save_checkpoint(training_client: tinker.TrainingClient, name: str) -> str:
     """Save model checkpoint.
     Args:
         training_client: Training client to save from
