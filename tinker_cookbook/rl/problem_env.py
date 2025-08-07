@@ -1,5 +1,4 @@
 import logging
-from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Callable, Sequence
 
@@ -34,17 +33,14 @@ class ProblemEnv(Env):
     def stop_condition(self) -> StopCondition:
         return self.renderer.get_stop_sequences()
 
-    @abstractmethod
     def get_question(self) -> str:
-        pass
+        raise NotImplementedError
 
-    @abstractmethod
     def check_answer(self, sample_str: str) -> bool:
-        pass
+        raise NotImplementedError
 
-    @abstractmethod
     def check_format(self, sample_str: str) -> bool:
-        pass
+        raise NotImplementedError
 
     async def initial_observation(self) -> tuple[Observation, StopCondition]:
         convo = self.convo_prefix + [
@@ -54,7 +50,7 @@ class ProblemEnv(Env):
 
     async def step(self, action: Action) -> StepResult:
         message, parse_success = self.renderer.parse_response(action)
-        correct_format = float(parse_success)
+        correct_format = float(parse_success) and float(self.check_format(message["content"]))
         correct_answer = float(self.check_answer(message["content"]))
         total_reward = self.format_coef * (correct_format - 1) + correct_answer
         return StepResult(

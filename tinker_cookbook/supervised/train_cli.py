@@ -24,6 +24,7 @@ class CLIConfig:
     lr_schedule: str = "linear"
     max_length: int | None = 8192
     batch_size: int = 256
+    num_epochs: int = 1
     lora_rank: int = 32
     pipelined: bool = False  # Use faster pipelined
 
@@ -97,6 +98,7 @@ def cli_main(cli_config: CLIConfig):
         evaluator_builders=[],
         learning_rate=cli_config.learning_rate,
         lr_schedule=cli_config.lr_schedule,
+        num_epochs=cli_config.num_epochs,
         base_url=cli_config.base_url,
         wandb_project=cli_config.wandb_project,
         wandb_name=cli_config.wandb_name,

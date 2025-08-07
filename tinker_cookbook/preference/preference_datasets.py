@@ -77,14 +77,14 @@ class DPODatasetBuilder(ChatDatasetBuilder):
         if test_dataset is not None:
             test_supervised_dataset = SupervisedDatasetFromHFDataset(
                 test_dataset,
-                batch_size=self.common_config.batch_size,
+                batch_size=len(test_dataset),
                 flatmap_fn=example_to_data,
             )
         else:
             test_supervised_dataset = None
 
         return SupervisedDatasetFromHFDataset(
-            train_dataset, batch_size=self.common_config.batch_size
+            train_dataset, batch_size=self.common_config.batch_size, flatmap_fn=example_to_data
         ), test_supervised_dataset
 
 
@@ -134,7 +134,7 @@ class PairwiseComparisonDatasetBuilder(ChatDatasetBuilder):
         if test_dataset is not None:
             test_supervised_dataset = SupervisedDatasetFromHFDataset(
                 test_dataset,
-                batch_size=self.common_config.batch_size,
+                batch_size=len(test_dataset),
                 flatmap_fn=example_to_data,
             )
         else:
@@ -337,6 +337,60 @@ class UltraFeedbackDPOBuilder(DPODatasetBuilder):
         instruction = example["instruction"]
         chosen_response = example["chosen_response"]
         rejected_response = example["rejected_response"]
+
+        prompt_conversation: list[renderers.Message] = [{"role": "user", "content": instruction}]
+
+        comparison = Comparison(
+            prompt_conversation=prompt_conversation,
+            completion_A=[{"role": "assistant", "content": chosen_response}],
+            completion_B=[{"role": "assistant", "content": rejected_response}],
+        )
+        return LabeledComparison(comparison=comparison, label="A")
+
+
+@chz.chz
+class Tulu38BBuilder(PairwiseComparisonDatasetBuilder):
+    def get_train_and_test_datasets(self) -> tuple[datasets.Dataset, datasets.Dataset | None]:
+        dataset = datasets.load_dataset(
+            "allenai/llama-3.1-tulu-3-8b-preference-mixture", split="train"
+        )
+        dataset = cast(datasets.Dataset, dataset)
+        dataset = dataset.shuffle(seed=0)
+        test_dataset = dataset.take(1024)
+        train_dataset = dataset.skip(1024)
+        return train_dataset, test_dataset
+
+    def example_to_labeled_comparison(self, example: dict) -> LabeledComparison | None:
+        instruction = example["prompt"]
+        chosen_response = example["chosen"][1]["content"]
+        rejected_response = example["rejected"][1]["content"]
+
+        prompt_conversation: list[renderers.Message] = [{"role": "user", "content": instruction}]
+
+        comparison = Comparison(
+            prompt_conversation=prompt_conversation,
+            completion_A=[{"role": "assistant", "content": chosen_response}],
+            completion_B=[{"role": "assistant", "content": rejected_response}],
+        )
+        return LabeledComparison(comparison=comparison, label="A")
+
+
+@chz.chz
+class Tulu38BDPOBuilder(DPODatasetBuilder):
+    def get_train_and_test_datasets(self) -> tuple[datasets.Dataset, datasets.Dataset | None]:
+        dataset = datasets.load_dataset(
+            "allenai/llama-3.1-tulu-3-8b-preference-mixture", split="train"
+        )
+        dataset = cast(datasets.Dataset, dataset)
+        dataset = dataset.shuffle(seed=0)
+        test_dataset = dataset.take(1024)
+        train_dataset = dataset.skip(1024)
+        return train_dataset, test_dataset
+
+    def example_to_labeled_comparison(self, example: dict) -> LabeledComparison | None:
+        instruction = example["prompt"]
+        chosen_response = example["chosen"][1]["content"]
+        rejected_response = example["rejected"][1]["content"]
 
         prompt_conversation: list[renderers.Message] = [{"role": "user", "content": instruction}]
 

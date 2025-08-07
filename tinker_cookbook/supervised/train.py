@@ -119,6 +119,7 @@ def main(config: Config):
     # Training setup
     dataset, maybe_test_dataset = config.dataset_builder()
     n_batches = len(dataset)
+    total_steps = n_batches * config.num_epochs
 
     evaluators = [evaluator() for evaluator in config.evaluator_builders]
     if maybe_test_dataset is not None:
@@ -126,60 +127,67 @@ def main(config: Config):
     logger.info(f"Training for {n_batches} batches")
 
     # Training loop
-    for batch_idx in range(n_batches):
-        metrics = {}
-        batch_start_time = time.time()
-        learning_rate = (
-            compute_schedule_lr_multiplier(
-                lr_schedule=config.lr_schedule, step=batch_idx, total_steps=n_batches
+    for epoch_idx in range(config.num_epochs):
+        # Shuffle the dataset
+        dataset.shuffle(seed=epoch_idx)
+
+        for batch_idx in range(n_batches):
+            step = epoch_idx * n_batches + batch_idx
+            metrics = {}
+            batch_start_time = time.time()
+            learning_rate = (
+                compute_schedule_lr_multiplier(
+                    lr_schedule=config.lr_schedule,
+                    step=step,
+                    total_steps=total_steps,
+                )
+                * config.learning_rate
             )
-            * config.learning_rate
-        )
-        adam_params = types.AdamParams(
-            learning_rate=learning_rate,
-            beta1=config.adam_beta1,
-            beta2=config.adam_beta2,
-            eps=config.adam_eps,
-        )
-
-        # Save checkpoint if needed
-        if batch_idx % config.save_every == 0 and batch_idx > 0:
-            metrics["save_path"] = save_checkpoint(
-                training_client=training_client, name=f"{batch_idx:06d}"
+            adam_params = types.AdamParams(
+                learning_rate=learning_rate,
+                beta1=config.adam_beta1,
+                beta2=config.adam_beta2,
+                eps=config.adam_eps,
             )
 
-        # Prepare batch
-        data = dataset.get_batch(batch_idx)
-        print(colorize_example(data[0], get_tokenizer(config.model_name)))
-        # Queue up the forward-backward pass and optimizer step before requesting either
-        fwd_bwd_future = training_client.forward_backward(data, loss_fn="cross_entropy")
-        # Optimizer step
-        optim_step_future = training_client.optim_step(adam_params)
-        fwd_bwd_result = fwd_bwd_future.result()
-        _optim_step_result = optim_step_future.result()
+            # Save checkpoint if needed
+            if step % config.save_every == 0 and step > 0:
+                metrics["save_path"] = save_checkpoint(
+                    training_client=training_client, name=f"{step:06d}"
+                )
 
-        # Compute training metrics
-        logprobs = [x["logprobs"] for x in fwd_bwd_result.loss_fn_outputs]
-        weights = [datum.loss_fn_inputs["weights"] for datum in data]
-        train_nll = compute_mean_nll(logprobs, weights)
+            # Prepare batch
+            data = dataset.get_batch(batch_idx)
+            print(colorize_example(data[0], get_tokenizer(config.model_name)))
+            # Queue up the forward-backward pass and optimizer step before requesting either
+            fwd_bwd_future = training_client.forward_backward(data, loss_fn="cross_entropy")
+            # Optimizer step
+            optim_step_future = training_client.optim_step(adam_params)
+            fwd_bwd_result = fwd_bwd_future.result()
+            _optim_step_result = optim_step_future.result()
 
-        # Prepare metrics
-        metrics.update(
-            num_sequences=len(data),
-            num_tokens=sum(datum.model_input.length for datum in data),
-            learning_rate=learning_rate,
-            train_mean_nll=train_nll,
-            progress=(batch_idx + 1) / n_batches,
-            batch_time=time.time() - batch_start_time,
-        )
+            # Compute training metrics
+            logprobs = [x["logprobs"] for x in fwd_bwd_result.loss_fn_outputs]
+            weights = [datum.loss_fn_inputs["weights"] for datum in data]
+            train_nll = compute_mean_nll(logprobs, weights)
 
-        # Evaluation
-        if config.test_interval > 0 and batch_idx % config.test_interval == 0:
-            eval_metrics = asyncio.run(run_evals(evaluators, training_client, batch_idx))
-            metrics.update(eval_metrics)
+            # Prepare metrics
+            metrics.update(
+                num_sequences=len(data),
+                num_tokens=sum(datum.model_input.length for datum in data),
+                learning_rate=learning_rate,
+                train_mean_nll=train_nll,
+                progress=step / total_steps,
+                batch_time=time.time() - batch_start_time,
+            )
 
-        # Log metrics
-        ml_logger.log_metrics(metrics=metrics, step=batch_idx)
+            # Evaluation
+            if config.test_interval > 0 and step % config.test_interval == 0:
+                eval_metrics = asyncio.run(run_evals(evaluators, training_client, step))
+                metrics.update(eval_metrics)
+
+            # Log metrics
+            ml_logger.log_metrics(metrics=metrics, step=step)
     # Save final checkpoint
     save_checkpoint(training_client=training_client, name="final")
 

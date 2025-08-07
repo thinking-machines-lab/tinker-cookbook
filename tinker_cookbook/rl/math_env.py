@@ -1,5 +1,6 @@
 import math
 from functools import partial
+from typing import Literal
 
 import chz
 from datasets import concatenate_datasets, get_dataset_config_names, load_dataset
@@ -24,6 +25,13 @@ class MathEnv(ProblemEnv):
 
     def get_question(self) -> str:
         return self.problem
+
+    def check_format(self, sample_str: str) -> bool:
+        try:
+            extract_boxed(sample_str)
+            return True
+        except ValueError:
+            return False
 
     def check_answer(self, sample_str: str) -> bool:
         try:
@@ -66,11 +74,18 @@ def _get_hendrycks_math_all():
 
 
 class MathDataset(RLDataset):
-    def __init__(self, batch_size: int, group_size: int, renderer: renderers.Renderer):
+    def __init__(
+        self,
+        batch_size: int,
+        group_size: int,
+        renderer: renderers.Renderer,
+        convo_prefix: list[renderers.Message] | None = None,
+    ):
         self.ds = _get_hendrycks_math_all().shuffle(seed=0)
         self.batch_size = batch_size
         self.group_size = group_size
         self.renderer = renderer
+        self.convo_prefix = convo_prefix
 
     def get_batch(self, index: int) -> list[EnvGroupBuilder]:
         return [
@@ -82,14 +97,18 @@ class MathDataset(RLDataset):
     def __len__(self) -> int:
         return len(self.ds) // self.batch_size
 
-    def _make_env_group_builder(self, x: dict, group_size: int) -> ProblemGroupBuilder | None:
+    def _make_env_group_builder(
+        self, x: dict[str, str], group_size: int
+    ) -> ProblemGroupBuilder | None:
         try:
             answer = extract_boxed(x["solution"])
         except ValueError:  # not sure if this happens
             logger.warning(f"No answer found for {x['solution']}")
             return None
         return ProblemGroupBuilder(
-            env_thunk=partial(MathEnv, x["problem"], answer, self.renderer),
+            env_thunk=partial(
+                MathEnv, x["problem"], answer, self.renderer, convo_prefix=self.convo_prefix
+            ),
             num_envs=group_size,
         )
 
@@ -100,11 +119,17 @@ class MathDatasetBuilder(RLDatasetBuilder):
     model_name_for_tokenizer: str
     renderer_name: str
     group_size: int
+    convo_prefix: list[renderers.Message] | None | Literal["standard"] = "standard"
 
     def __call__(self) -> tuple[MathDataset, None]:
+        if self.convo_prefix == "standard":
+            convo_prefix = MathEnv.standard_fewshot_prefix()
+        else:
+            convo_prefix = self.convo_prefix
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
         return MathDataset(
             batch_size=self.batch_size,
             group_size=self.group_size,
             renderer=renderers.get_renderer(self.renderer_name, tokenizer=tokenizer),
+            convo_prefix=convo_prefix,
         ), None

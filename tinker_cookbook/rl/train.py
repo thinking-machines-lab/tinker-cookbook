@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, List, cast
 
 import chz
+import numpy as np
 import tinker
 import torch
 from tinker import types
@@ -274,7 +275,24 @@ def assemble_training_data(
     return data_D, metadata_D
 
 
+def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]:
+    assert num_inds <= len(scores)
+    sorted_inds = np.argsort(scores)
+    uniform_inds = np.linspace(0, len(sorted_inds) - 1, num_inds).astype(int)
+    return [int(sorted_inds[i]) for i in uniform_inds]
+
+
 def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
+    # Cut down the number of trajectories to print
+    max_trajs_to_print = 4
+    if len(traj_group.trajectories_G) > max_trajs_to_print:
+        inds = _select_representative_inds(traj_group.get_total_rewards(), max_trajs_to_print)
+        traj_group = TrajectoryGroup(
+            trajectories_G=[traj_group.trajectories_G[i] for i in inds],
+            final_rewards_G=[traj_group.final_rewards_G[i] for i in inds],
+            metrics_G=[traj_group.metrics_G[i] for i in inds],
+        )
+
     rewards = traj_group.get_total_rewards()
     advantages_G = compute_advantages([traj_group])
     data_D, metadata_D = assemble_training_data([traj_group], advantages_G)
@@ -361,6 +379,7 @@ class Config:
     base_url: str | None = None
 
     test_interval: int = 1
+    load_checkpoint_path: str | None = None
 
     @property
     def log_base_dir(self) -> str:
@@ -372,8 +391,9 @@ async def main(
 ):
     """Main training loop for MDP RL."""
     log_dir = str(Path(cfg.log_base_dir) / cfg.log_relpath)
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.INFO, force=True)
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("tinker._base_client").setLevel(logging.WARNING)
 
     ml_logger = setup_logging(
         log_dir=log_dir,
@@ -383,6 +403,10 @@ async def main(
     )
     service_client = tinker.ServiceClient(base_url=cfg.base_url)
     training_client = await service_client.create_lora_training_client_async(cfg.model_name)
+    if cfg.load_checkpoint_path is not None:
+        future = await training_client.load_state_async(cfg.load_checkpoint_path)
+        _ = await future.result_async()
+        logger.info(f"Loaded state from {cfg.load_checkpoint_path}")
 
     # Initial weight save
     save_index = 0

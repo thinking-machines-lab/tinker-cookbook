@@ -2,6 +2,8 @@
 Basic interfaces and types for supervised training.
 """
 
+import warnings
+
 import chz
 from tinker import types
 from tinker_cookbook import renderers
@@ -18,6 +20,10 @@ class SupervisedDataset:
 
     def __len__(self) -> int:
         raise NotImplementedError
+
+    def shuffle(self, seed: int = 0):
+        """Shuffle the dataset with the given seed."""
+        warnings.warn("Shuffling the dataset is not implemented.")
 
 
 @chz.chz

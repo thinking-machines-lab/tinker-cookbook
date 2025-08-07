@@ -34,6 +34,7 @@ class CLIConfig:
     # Model configuration
     model_name: str = "meta-llama/Llama-3.1-8B-Instruct"
     renderer_name: str | None = None
+    load_checkpoint_path: str | None = None
 
     # Environment configuration
     env: str = "arithmetic"  # Options: arithmetic, guess_the_number
@@ -149,6 +150,7 @@ async def cli_main(cli_config: CLIConfig):
         wandb_name=cli_config.wandb_name,
         log_relpath=cli_config.log_relpath,
         base_url=cli_config.base_url,
+        load_checkpoint_path=cli_config.load_checkpoint_path,
     )
 
     # Run training

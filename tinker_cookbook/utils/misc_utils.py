@@ -46,3 +46,7 @@ def lookup_func(path_to_func: str, default_module: str | None = None):
         raise ValueError(f"Invalid path: {path_to_func}")
     module = importlib.import_module(module_name)
     return getattr(module, func_name)
+
+
+def concat_lists(list_of_lists: list[list[Any]]) -> list[Any]:
+    return [item for sublist in list_of_lists for item in sublist]

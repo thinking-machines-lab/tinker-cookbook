@@ -42,17 +42,25 @@ class SupervisedDatasetFromHFDataset(SupervisedDataset):
     ):
         assert _one_of(map_fn, flatmap_fn), "Only one of map_fn or flatmap_fn can be provided"
         self.hf_dataset = hf_dataset
+        self.shuffle_dataset = (
+            hf_dataset  # Keep a reference to the original dataset to avoid statefulness
+        )
         self.batch_size = batch_size
         self.map_fn = map_fn
         self.flatmap_fn = flatmap_fn
 
     def get_batch(self, index: int) -> list[types.Datum]:
-        rows = self.hf_dataset.select(range(index * self.batch_size, (index + 1) * self.batch_size))
+        rows = self.shuffle_dataset.select(
+            range(index * self.batch_size, (index + 1) * self.batch_size)
+        )
         if self.map_fn is not None:
             return [self.map_fn(row) for row in rows.to_list()]
         else:
             assert self.flatmap_fn is not None
             return [datum for row in rows.to_list() for datum in self.flatmap_fn(row)]
+
+    def shuffle(self, seed: int = 0):
+        self.shuffle_dataset = self.hf_dataset.shuffle(seed=seed)
 
     def __len__(self) -> int:
         return len(self.hf_dataset) // self.batch_size
@@ -104,7 +112,7 @@ class NoRobotsBuilder(ChatDatasetBuilder):
 @chz.chz
 class FromConversationFileBuilder(ChatDatasetBuilder):
     file_path: str
-    test_size: int = 128
+    test_size: int = 0
     shuffle_seed: int = 0
 
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
@@ -149,7 +157,7 @@ class FromConversationFileBuilder(ChatDatasetBuilder):
         # Create evaluator if we have test data
         if test_ds is not None:
             test_dataset = SupervisedDatasetFromHFDataset(
-                test_ds, batch_size=self.common_config.batch_size, map_fn=map_fn
+                test_ds, batch_size=len(test_ds), map_fn=map_fn
             )
         else:
             test_dataset = None
