@@ -36,10 +36,9 @@ class Config:
     model_name: str
     load_checkpoint_path: str | None = None
     dataset_builder: SupervisedDatasetBuilder
-    # dataset_builder optionally returns an evaluator (test set)
 
     # Training parameters
-    learning_rate: float = 1e-5
+    learning_rate: float = 1e-4
     lr_schedule: str = "linear"
     num_epochs: int = 1
 
@@ -209,9 +208,14 @@ def main(config: Config):
             ml_logger.log_metrics(metrics=metrics, step=step)
 
     # Save final checkpoint
-    state_path = save_checkpoint(training_client=training_client, name="final")
-    # Write a final line to log file so we have weights path
-    ml_logger.log_metrics(metrics={"state_path": state_path}, step=total_steps)
+    state_future = training_client.save_state("final")
+    save_weights_future = training_client.save_weights_for_sampler("final")
+    state_path = state_future.result().path
+    weights_path = save_weights_future.result().path
+    logger.info(f"Saved state to {state_path} and weights to {weights_path}")
+    ml_logger.log_metrics(
+        metrics={"state_path": state_path, "weights_path": weights_path}, step=total_steps
+    )
 
     # Cleanup
     ml_logger.close()

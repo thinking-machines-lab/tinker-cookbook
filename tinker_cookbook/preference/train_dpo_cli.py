@@ -14,7 +14,6 @@ from tinker_cookbook.preference.preference_datasets import (
     UltraFeedbackComparisonBuilder,
 )
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, ChatDatasetBuilderCommonConfig
-from tinker_cookbook.utils.misc_utils import lookup_func
 
 
 @chz.chz
@@ -71,16 +70,7 @@ def get_dataset_builder(
             common_config=common_config, comparison_builder=UltraFeedbackComparisonBuilder()
         )
     else:
-        # Can pass in path to callable like
-        # tinker_cookbook.preference.preference_datasets:HHHBuilder
-        try:
-            builder_func = lookup_func(dataset)
-        except ValueError:
-            raise ValueError(
-                f"Unknown dataset: {dataset}. Available datasets: hhh, helpsteer3, ultrafeedback"
-            )
-        else:
-            return builder_func(common_config=common_config)
+        raise ValueError(f"Unknown dataset: {dataset}")
 
 
 def cli_main(cli_config: CLIConfig):

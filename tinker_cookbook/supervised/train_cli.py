@@ -7,42 +7,45 @@ import asyncio
 import chz
 from tinker_cookbook import model_info
 from tinker_cookbook.evaluators import EvaluatorBuilder
-from tinker_cookbook.renderers import TrainOnWhat
 from tinker_cookbook.supervised import chat_datasets, train, train_pipelined
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, ChatDatasetBuilderCommonConfig
-from tinker_cookbook.utils.misc_utils import lookup_func
 
 
 @chz.chz
 class CLIConfig:
+    # Required parameters
+    log_relpath: str = "tmp/supervised"
     model_name: str = "meta-llama/Llama-3.1-8B"
     load_checkpoint_path: str | None = None
     dataset: str = "no_robots"
-    renderer_name: str | None = None
-    train_on_what: str | None = None  # TrainOnWhat option
 
     # Training parameters
     learning_rate: float = 1e-4
     lr_schedule: str = "linear"
-    max_length: int | None = 16384
-    batch_size: int = 256
     num_epochs: int = 1
+
+    # Model parameters
     lora_rank: int = 32
+
+    # Infrastructure parameters
+    base_url: str | None = None
     pipelined: bool = False  # Use faster pipelined
+
+    # Checkpointing and evaluation
     save_every: int = 20
     eval_every: int = 20
     infrequent_eval_every: int = 100
-
-    # Evaluation parameters
     inline_evals: str | None = None
 
+    # Dataset-specific parameters
+    renderer_name: str | None = None
+    train_on_what: str | None = None  # TrainOnWhat option
+    max_length: int | None = 16384
+    batch_size: int = 256
+
     # Logging parameters
-    log_relpath: str = "tmp/supervised"
     wandb_project: str | None = None
     wandb_name: str | None = None
-
-    # Service configuration
-    base_url: str | None = None
 
 
 def get_dataset_builder(
@@ -62,18 +65,7 @@ def get_dataset_builder(
         train_on_what=train_on_what,
     )
 
-    # Special handling for backwards compatibility with tulu3_user_sim
-    if dataset == "tulu3_user_sim":
-        # Override train_on_what for this specific dataset variant
-        common_config = ChatDatasetBuilderCommonConfig(
-            model_name_for_tokenizer=model_name,
-            renderer_name=renderer_name,
-            max_length=max_length,
-            batch_size=batch_size,
-            train_on_what=TrainOnWhat.ALL_USER_AND_SYSTEM_MESSAGES,
-        )
-        return chat_datasets.Tulu3Builder(common_config=common_config)
-    elif dataset == "tulu3":
+    if dataset == "tulu3":
         return chat_datasets.Tulu3Builder(common_config=common_config)
     elif dataset == "no_robots":
         return chat_datasets.NoRobotsBuilder(common_config=common_config)
@@ -93,15 +85,7 @@ def get_dataset_builder(
             file_path=dataset,
         )
     else:
-        # Can pass in path to callable like
-        # tinker_cookbook.supervised.chat_datasets:Tulu3Builder
-        # tinker_cookbook.preference.preference_datasets:HHHBuilder
-        try:
-            builder_func = lookup_func(dataset)
-        except ValueError:
-            raise ValueError(f"Unknown dataset: {dataset}")
-        else:
-            return builder_func(common_config=common_config)
+        raise ValueError(f"Unknown dataset: {dataset}")
 
 
 def get_infrequent_evaluator_builders(
@@ -113,7 +97,7 @@ def get_infrequent_evaluator_builders(
         from tinker_cookbook.inspect_evaluators import InspectEvaluatorBuilder
 
         builder = InspectEvaluatorBuilder(
-            tasks="gsm8k,ifeval",
+            tasks=["inspect_evals/gsm8k", "inspect_evals/ifeval"],
             renderer_name=renderer_name,
             model_name=model_name,
             temperature=0.6,
