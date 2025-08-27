@@ -121,6 +121,30 @@ def build_supervised_example(
     return torch.tensor(tokens), torch.tensor(weights)
 
 
+def parse_response_for_stop_token(
+    response: list[int], tokenizer: Tokenizer, stop_token: int
+) -> tuple[Message, bool]:
+    """Parse response for a single stop token.
+
+    We expect a properly rendered response to have exactly one stop token; but it may have zero if e.g. the model
+    ran out of tokens when sampling, which will incur a format error. If there are > 1, there is likely a bug in the
+    sampler and we should error.
+    """
+    emt_count = response.count(stop_token)
+    if emt_count == 0:
+        str_response = tokenizer.decode(response)
+        logger.debug(f"Response is not a valid assistant response: {str_response}")
+        return Message(role="assistant", content=str_response), False
+    elif emt_count == 1:
+        str_response = tokenizer.decode(response[: response.index(stop_token)])
+        return Message(role="assistant", content=str_response), True
+    else:
+        raise ValueError(
+            f"When parsing response, expected to split into 1 or 2 pieces using stop tokens, but got {emt_count}. "
+            "You probably are using the wrong stop tokens when sampling"
+        )
+
+
 class RoleColonRenderer(Renderer):
     """
     format like this:
@@ -267,16 +291,7 @@ class Llama3Renderer(Renderer):
         return [self._end_message_token]
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
-        str_response = self.tokenizer.decode(response)
-        splitted = str_response.split("<|eot_id|>")
-        if len(splitted) == 1:
-            logger.debug(f"Response is not a valid assistant response: {str_response}")
-            return (Message(role="assistant", content=str_response), False)
-        elif len(splitted) == 2:
-            before, _after = splitted
-            return (Message(role="assistant", content=before.strip()), True)
-        else:
-            raise ValueError(f"this shouldn't happen: {len(splitted)}")
+        return parse_response_for_stop_token(response, self.tokenizer, self._end_message_token)
 
 
 class Qwen2p5Renderer(Renderer):
@@ -353,19 +368,7 @@ class Qwen2p5Renderer(Renderer):
         return [self._end_message_token]
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
-        str_response = self.tokenizer.decode(response)
-        splitted = str_response.split("<|im_end|>")
-        if len(splitted) == 1:
-            logger.debug(f"Response is not a valid assistant response: {str_response}")
-            return Message(role="assistant", content=str_response), False
-        elif len(splitted) == 2:
-            before, _after = splitted
-            return Message(role="assistant", content=before.strip()), True
-        else:
-            raise ValueError(
-                f"When parsing response, expected to split into 1 or 2 pieces using stop tokens, but got {len(splitted)}. "
-                "You probably are using the wrong stop tokens when sampling"
-            )
+        return parse_response_for_stop_token(response, self.tokenizer, self._end_message_token)
 
 
 def get_renderer(name: str, tokenizer: Tokenizer) -> Renderer:

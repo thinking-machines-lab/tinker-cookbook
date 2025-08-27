@@ -4,10 +4,14 @@ Basic CLI for training with Direct Preference Optimization (DPO). It only suppor
 
 import chz
 from tinker_cookbook.preference import train_dpo
+from tinker_cookbook.preference.dpo_datasets import (
+    DPODatasetBuilderFromComparisons,
+)
 from tinker_cookbook.preference.preference_datasets import (
-    HelpSteer3Builder,
-    HHHDPOBuilder,
-    UltraFeedbackBuilder,
+    ChatDatasetBuilderFromComparisons,
+    HelpSteer3ComparisonBuilder,
+    HHHComparisonBuilder,
+    UltraFeedbackComparisonBuilder,
 )
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, ChatDatasetBuilderCommonConfig
 from tinker_cookbook.utils.misc_utils import lookup_func
@@ -55,11 +59,17 @@ def get_dataset_builder(
     )
 
     if dataset == "hhh":
-        return HHHDPOBuilder(common_config=common_config)
+        return DPODatasetBuilderFromComparisons(
+            common_config=common_config, comparison_builder=HHHComparisonBuilder()
+        )
     elif dataset == "helpsteer3":
-        return HelpSteer3Builder(common_config=common_config)
+        return ChatDatasetBuilderFromComparisons(
+            common_config=common_config, comparison_builder=HelpSteer3ComparisonBuilder()
+        )
     elif dataset == "ultrafeedback":
-        return UltraFeedbackBuilder(common_config=common_config)
+        return ChatDatasetBuilderFromComparisons(
+            common_config=common_config, comparison_builder=UltraFeedbackComparisonBuilder()
+        )
     else:
         # Can pass in path to callable like
         # tinker_cookbook.preference.preference_datasets:HHHBuilder

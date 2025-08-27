@@ -20,8 +20,8 @@ from tinker_cookbook.supervised.train import run_evals
 from tinker_cookbook.supervised.types import ChatDatasetBuilder
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 from tinker_cookbook.torch_style import forward, forward_with_autograd
+from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.format_colorized import format_colorized
-from tinker_cookbook.utils.ml_log import setup_logging
 from tinker_cookbook.utils.training_utils import (
     compute_schedule_lr_multiplier,
     save_checkpoint,
@@ -57,7 +57,7 @@ class Config:
     # Checkpointing and evaluation
     evaluator_builders: list[EvaluatorBuilder] = chz.field(default_factory=list)
     save_every: int = 20
-    test_interval: int = 10
+    eval_every: int = 10
 
     # Adam optimizer parameters
     adam_beta1: float = 0.9
@@ -167,7 +167,7 @@ def main(config: Config):
     logger.info("Starting Direct Preference Optimization training")
 
     # Setup
-    ml_logger = setup_logging(
+    ml_logger = ml_log.setup_logging(
         log_dir=os.path.join(config.log_base_dir, config.log_relpath),
         wandb_project=config.wandb_project,
         config=config,
@@ -208,9 +208,10 @@ def main(config: Config):
 
         # Save checkpoint if needed
         if batch_idx % config.save_every == 0 and batch_idx > 0:
-            metrics["save_path"] = save_checkpoint(
+            checkpoint_path = save_checkpoint(
                 training_client=training_client, name=f"{batch_idx:06d}"
             )
+            metrics["state_path"] = checkpoint_path
 
         # Prepare batch
         data = dataset.get_batch(batch_idx)
@@ -288,7 +289,7 @@ def main(config: Config):
         )
 
         # Evaluation
-        if config.test_interval > 0 and batch_idx % config.test_interval == 0:
+        if config.eval_every > 0 and batch_idx % config.eval_every == 0:
             eval_metrics = asyncio.run(run_evals(evaluators, training_client, batch_idx))
             metrics.update(eval_metrics)
 
@@ -296,7 +297,7 @@ def main(config: Config):
         ml_logger.log_metrics(metrics=metrics, step=batch_idx)
 
     # Save final checkpoint
-    save_checkpoint(training_client=training_client, name="final")
+    _ = save_checkpoint(training_client=training_client, name="final")
 
     # Cleanup
     ml_logger.close()

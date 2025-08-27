@@ -1,6 +1,10 @@
+import logging
 from typing import Callable
 
 import tinker
+
+# Set up logger
+logger = logging.getLogger(__name__)
 
 
 class TrainingClientEvaluator:

@@ -2,7 +2,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Sequence
+from typing import Callable, Sequence
 
 import chz
 import tinker
@@ -10,11 +10,11 @@ from tinker import types
 from tinker_cookbook import renderers
 from tinker_cookbook.completers import StopCondition
 from tinker_cookbook.preference.preference_datasets import (
-    LabeledComparison,
-    PairwiseComparisonDatasetBuilder,
+    ComparisonDatasetBuilder,
 )
 from tinker_cookbook.preference.types import (
     Comparison,
+    LabeledComparison,
     PreferenceModel,
     PreferenceModelFromChatRenderer,
 )
@@ -91,6 +91,7 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
     tournament_pattern: TournamentPattern
     preference_model: PreferenceModel
     num_envs: int
+    content_preprocessor: Callable[[str], str] | None = None  # e.g. strip out <thinking> tags
 
     async def make_envs(self) -> Sequence[Env]:
         return [
@@ -110,11 +111,16 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
 
         pairs = get_pairs(len(response_messages), self.tournament_pattern)
 
+        def preprocess_message(message: renderers.Message) -> renderers.Message:
+            if self.content_preprocessor is not None:
+                message = {**message, "content": self.content_preprocessor(message["content"])}
+            return message
+
         async def compute_j_reward(i: int, j: int) -> float:
             comparison = Comparison(
                 prompt_conversation=self.convo_prefix,
-                completion_A=[response_messages[i]],
-                completion_B=[response_messages[j]],
+                completion_A=[preprocess_message(response_messages[i])],
+                completion_B=[preprocess_message(response_messages[j])],
             )
             return await self.preference_model(comparison)
 
@@ -138,34 +144,38 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
 class PairwisePreferenceDataset(RLDataset):
     def __init__(
         self,
-        comparison_dataset_builder: PairwiseComparisonDatasetBuilder,
-        # ^^^ this is a bit hacky. we should use a prompt dataset instead
+        comparison_builder: ComparisonDatasetBuilder,
+        renderer: renderers.Renderer,
         batch_size: int,
         preference_model: PreferenceModel,
         tournament_pattern: TournamentPattern = TournamentPattern.ALL_PAIRS_BOTH_WAYS,
         group_size: int = 4,
+        content_preprocessor: Callable[[str], str] | None = None,
     ):
-        self.comparison_dataset_builder = comparison_dataset_builder
+        self.comparison_builder = comparison_builder
+        self.renderer = renderer
         self.batch_size = batch_size
         self.preference_model = preference_model
-        self.train_dataset, _ = self.comparison_dataset_builder.get_train_and_test_datasets()
+        self.train_dataset, _ = self.comparison_builder.get_train_and_test_datasets()
         self.tournament_pattern = tournament_pattern
         self.group_size = group_size
+        self.content_preprocessor = content_preprocessor
 
     def get_batch(self, index: int) -> list[EnvGroupBuilder]:
         rows = self.train_dataset.select(
             range(index * self.batch_size, (index + 1) * self.batch_size)
         )
-        lcs = [self.comparison_dataset_builder.example_to_labeled_comparison(row) for row in rows]  # type: ignore
+        lcs = [self.comparison_builder.example_to_labeled_comparison(row) for row in rows]  # type: ignore
         return [self._labeled_comparison_to_env_group(lc) for lc in lcs if lc is not None]
 
     def _labeled_comparison_to_env_group(self, lc: LabeledComparison) -> EnvGroupBuilder:
         return PairwisePreferenceGroupBuilder(
             convo_prefix=lc.comparison.prompt_conversation,
-            policy_renderer=self.comparison_dataset_builder.renderer,
+            policy_renderer=self.renderer,
             preference_model=self.preference_model,
             tournament_pattern=self.tournament_pattern,
             num_envs=self.group_size,
+            content_preprocessor=self.content_preprocessor,
         )
 
     def __len__(self) -> int:
@@ -174,22 +184,34 @@ class PairwisePreferenceDataset(RLDataset):
 
 @chz.chz
 class PairwisePreferenceRLDatasetBuilder(RLDatasetBuilder):
-    comparison_dataset_builder: PairwiseComparisonDatasetBuilder
+    comparison_builder: ComparisonDatasetBuilder
+    renderer_name: str
+    model_name_for_tokenizer: str
     batch_size: int
     tournament_pattern: TournamentPattern = TournamentPattern.ALL_PAIRS_BOTH_WAYS
     model_path: str
     group_size: int
+    base_url: str | None = None
+    content_preprocessor: Callable[[str], str] | None = None
 
     def __call__(self) -> tuple[PairwisePreferenceDataset, None]:
+        print(f"base_url: {self.base_url}")
+        from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+        tokenizer = get_tokenizer(self.model_name_for_tokenizer)
+        renderer = renderers.get_renderer(self.renderer_name, tokenizer=tokenizer)
+
         return PairwisePreferenceDataset(
-            comparison_dataset_builder=self.comparison_dataset_builder,
+            comparison_builder=self.comparison_builder,
+            renderer=renderer,
             batch_size=self.batch_size,
             preference_model=PreferenceModelFromChatRenderer(
-                convo_renderer=self.comparison_dataset_builder.renderer,
-                sampling_client=tinker.ServiceClient().create_sampling_client(
+                convo_renderer=renderer,
+                sampling_client=tinker.ServiceClient(base_url=self.base_url).create_sampling_client(
                     model_path=self.model_path
                 ),
             ),
             tournament_pattern=self.tournament_pattern,
             group_size=self.group_size,
+            content_preprocessor=self.content_preprocessor,
         ), None

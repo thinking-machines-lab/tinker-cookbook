@@ -45,6 +45,7 @@ def test_supervised():
 
 async def test_rl():
     model_name = "meta-llama/Llama-3.2-1B-Instruct"
+    lora_rank = 32
     renderer_name = "role_colon"
     tokenizer = get_tokenizer(model_name)
     renderers.get_renderer(renderer_name, tokenizer)
@@ -59,6 +60,7 @@ async def test_rl():
     )
     cfg = rl_train.Config(
         model_name=model_name,
+        lora_rank=lora_rank,
         dataset_builder=dataset_builder,
         log_relpath="tinker-smoke-test/rl-arithmetic",
         wandb_project="tinker-smoke-test",

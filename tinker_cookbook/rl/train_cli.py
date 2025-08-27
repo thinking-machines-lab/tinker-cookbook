@@ -9,19 +9,17 @@ import asyncio
 import logging
 
 import chz
-from tinker_cookbook import model_info, renderers
+from tinker_cookbook import model_info
 from tinker_cookbook.preference import preference_datasets
 from tinker_cookbook.rl import (
     arithmetic_env,
     math_env,
-    polaris_math_env,
     preference_envs,
     textarena_envs,
     twenty_questions_env,
 )
 from tinker_cookbook.rl.train import Config, main
 from tinker_cookbook.rl.types import RLDatasetBuilder
-from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 logger = logging.getLogger(__name__)
@@ -33,6 +31,7 @@ class CLIConfig:
 
     # Model configuration
     model_name: str = "meta-llama/Llama-3.1-8B-Instruct"
+    lora_rank: int = 32
     renderer_name: str | None = None
     load_checkpoint_path: str | None = None
 
@@ -44,11 +43,13 @@ class CLIConfig:
     groups_per_batch: int = 100
     learning_rate: float = 1e-5
     max_tokens: int = 5
+    kl_penalty_coef: float = 0.0
 
     # Logging configuration
     log_relpath: str = "tmp/rl"
     wandb_project: str | None = None
     wandb_name: str | None = None
+    compute_post_kl: bool = False
 
     # Service configuration
     base_url: str | None = None
@@ -71,15 +72,9 @@ def get_dataset_builder(
             include_fewshot=True,
             group_size=group_size,
         )
-    elif env == "math":
-        return math_env.MathDatasetBuilder(
-            batch_size=batch_size,
-            model_name_for_tokenizer=model_name,
-            renderer_name=renderer_name,
-            group_size=group_size,
-        )
-    elif env == "polaris_math":
-        return polaris_math_env.PolarisDatasetBuilder(
+    elif env in ["math", "polaris", "deepmath"]:
+        return math_env.get_math_dataset_builder(
+            dataset_name=env,
             batch_size=batch_size,
             model_name_for_tokenizer=model_name,
             renderer_name=renderer_name,
@@ -95,21 +90,16 @@ def get_dataset_builder(
             ),
         )
     elif env == "hhh":
-        common_config = ChatDatasetBuilderCommonConfig(
-            model_name_for_tokenizer=model_name,
-            renderer_name=renderer_name,
-            max_length=8192,
-            batch_size=batch_size,
-        )
-        comparison_dataset_builder = preference_datasets.HHHBuilder(
-            common_config=common_config, swap=False
-        )
+        comparison_builder = preference_datasets.HHHComparisonBuilder(swap=False)
         return preference_envs.PairwisePreferenceRLDatasetBuilder(
             batch_size=batch_size,
-            comparison_dataset_builder=comparison_dataset_builder,
+            comparison_builder=comparison_builder,
+            renderer_name=renderer_name,
+            model_name_for_tokenizer=model_name,
             model_path="tinker://40e97ac0-99ea-4a84-a8c8-3b319db7cd2b/sampler_weights/checkpoint_final",
             # ^^^ 8b instruct trained on anthropic-hhh dataset
             group_size=group_size,
+            base_url=base_url,
         )
     elif env == "twenty_questions":
         return twenty_questions_env.TwentyQuestionsDatasetBuilder(
@@ -127,12 +117,9 @@ async def cli_main(cli_config: CLIConfig):
     """Convert CLI config to full config and run training."""
 
     # Get tokenizer for stop sequences
-    tokenizer = get_tokenizer(cli_config.model_name)
     renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(
         cli_config.model_name
     )
-    renderers.get_renderer(renderer_name, tokenizer)
-
     # Create full config
     config = Config(
         learning_rate=cli_config.learning_rate,
@@ -145,12 +132,15 @@ async def cli_main(cli_config: CLIConfig):
             base_url=cli_config.base_url,
         ),
         model_name=cli_config.model_name,
+        lora_rank=cli_config.lora_rank,
         max_tokens=cli_config.max_tokens,
         wandb_project=cli_config.wandb_project,
         wandb_name=cli_config.wandb_name,
         log_relpath=cli_config.log_relpath,
         base_url=cli_config.base_url,
         load_checkpoint_path=cli_config.load_checkpoint_path,
+        compute_post_kl=cli_config.compute_post_kl,
+        kl_penalty_coef=cli_config.kl_penalty_coef,
     )
 
     # Run training

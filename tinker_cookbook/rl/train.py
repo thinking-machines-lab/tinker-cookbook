@@ -26,8 +26,12 @@ from tinker_cookbook.rl.types import (
     TrajectoryGroup,
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
-from tinker_cookbook.utils.misc_utils import all_same, safezip, timed
-from tinker_cookbook.utils.ml_log import setup_logging
+from tinker_cookbook.utils import ml_log
+from tinker_cookbook.utils.misc_utils import all_same, safezip, split_list, timed
+from tinker_cookbook.utils.training_utils import (
+    save_checkpoint_async,
+    save_sampling_checkpoint_async,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -233,24 +237,89 @@ async def compute_post_kl(
         datum.model_input.append_int(cast(int, datum.loss_fn_inputs["target_tokens"].data[-1]))
         for datum in data_D
     ]
-    logprob_results_D = await asyncio.gather(
+    new_logprobs_D = await asyncio.gather(
         *[
             post_sampling_client.compute_logprobs_async(sequence_input)
             for sequence_input in full_sequence_inputs_D
         ]
     )
-    prev_logprobs_list = [datum.loss_fn_inputs["logprobs"].to_torch() for datum in data_D]
-    masks = [prev_logprobs != 0 for prev_logprobs in prev_logprobs_list]
-    # ^^^ a bit of a hack. note that we put 0 in logprobs when building the datum in to_data
+
+    prev_logprobs_D = [datum.loss_fn_inputs["logprobs"].to_torch() for datum in data_D]
+    action_masks = [datum.loss_fn_inputs["mask"].to_torch() > 0 for datum in data_D]
     flat_diffs = [
-        (torch.tensor(result[1:]) - prev_logprobs)[mask]
-        for result, prev_logprobs, mask in safezip(logprob_results_D, prev_logprobs_list, masks)
+        (prev_logprobs - torch.tensor(new_logprobs[1:]))[action_mask]
+        for new_logprobs, prev_logprobs, action_mask in safezip(
+            new_logprobs_D, prev_logprobs_D, action_masks
+        )
     ]
     flat_diffs = torch.cat(flat_diffs)
     kl_post_v1 = flat_diffs.mean().item()
     kl_post_v2 = 0.5 * (flat_diffs**2).mean().item()
 
-    return {"kl_post_v1": kl_post_v1, "kl_post_v2": kl_post_v2}
+    return {"kl_pre_post_v1": kl_post_v1, "kl_pre_post_v2": kl_post_v2}
+
+
+async def incorporate_kl_penalty(
+    data_D: List[types.Datum],
+    base_sampling_client: tinker.SamplingClient,
+    kl_penalty_coef: float,
+    kl_discount_factor: float,
+) -> Dict[str, float]:
+    """
+    Compute KL against base model. Adjust advantages in-place by logp_base - logp_current - avg_kl,
+    where avg_kl is the average of logp_base - logp_current (which is -KL[current, base])
+    """
+    # Compute logprobs at all data items
+    full_sequence_inputs_D = [
+        datum.model_input.append_int(cast(int, datum.loss_fn_inputs["target_tokens"].data[-1]))
+        for datum in data_D
+    ]
+    base_logprobs_D = await asyncio.gather(
+        *[
+            base_sampling_client.compute_logprobs_async(sequence_input)
+            for sequence_input in full_sequence_inputs_D
+        ]
+    )
+    # compute the logprob differences, zeroed out when the mask == 0
+    sampled_logprobs_D = [datum.loss_fn_inputs["logprobs"].to_torch() for datum in data_D]
+    float_masks = [datum.loss_fn_inputs["mask"].to_torch().float() for datum in data_D]
+    logprob_diffs = [
+        (sampled_logprobs - torch.tensor(base_logprobs[1:])) * mask
+        for base_logprobs, sampled_logprobs, mask in safezip(
+            base_logprobs_D, sampled_logprobs_D, float_masks
+        )
+    ]
+    avg_logp_diff = sum([diff.sum() for diff in logprob_diffs]) / sum(
+        [mask.sum() for mask in float_masks]
+    )
+    for i, datum in enumerate(data_D):
+        kl_advantages = kl_penalty_coef * float_masks[i] * (avg_logp_diff - logprob_diffs[i])
+        if kl_discount_factor > 0:
+            kl_advantages = torch.tensor(
+                discounted_future_sum_vectorized(kl_advantages.numpy(), kl_discount_factor)
+            )
+        datum.loss_fn_inputs["advantages"] = types.TensorData.from_torch(
+            datum.loss_fn_inputs["advantages"].to_torch() + kl_advantages
+        )
+
+    return {"kl_policy_base": float(avg_logp_diff)}
+
+
+def discounted_future_sum_vectorized(x: np.ndarray, gamma: float) -> np.ndarray:
+    """
+    Compute discounted sum of future values for each position using a vectorized approach.
+
+    Args:
+        x (np.ndarray): 1D array of rewards.
+        gamma (float): Discount factor.
+
+    Returns:
+        np.ndarray: discounted sum of future values.
+    """
+    # Reverse x so lfilter processes from end to start
+    import scipy.signal
+
+    return scipy.signal.lfilter([1], [1, -gamma], x[::-1], axis=0)[::-1].astype(x.dtype)  # type: ignore
 
 
 def assemble_training_data(
@@ -315,52 +384,55 @@ def _remove_mask(datum: types.Datum) -> types.Datum:
     )
 
 
-def _remove_uniform_rewards(trajectory_groups_P: List[TrajectoryGroup]) -> List[TrajectoryGroup]:
+def _remove_constant_reward_groups(
+    trajectory_groups_P: List[TrajectoryGroup],
+) -> List[TrajectoryGroup]:
     new_groups = []
     for group in trajectory_groups_P:
         if not all_same(group.get_total_rewards()):
             new_groups.append(group)
     if not new_groups:
         logger.warning("All rewards are uniform. There will be no gradient")
-        return trajectory_groups_P
+        return trajectory_groups_P[0:1]  # return singleton list in case empty
+        # list will cause problems
     return new_groups
 
 
 async def train_step(
-    trajectory_groups_P: List[TrajectoryGroup],
+    data_D: List[types.Datum],
     training_client: tinker.TrainingClient,
     learning_rate: float,
-    remove_uniform_rewards: bool = True,
-) -> tuple[List[torch.Tensor], List[types.Datum]]:
+    num_minibatches: int,
+) -> List[torch.Tensor]:
     """Train the model on collected trajectories."""
-    # Compute advantages
-    if remove_uniform_rewards:
-        trajectory_groups_P = _remove_uniform_rewards(trajectory_groups_P)
+    batches_md = split_list(data_D, min(num_minibatches, len(data_D)))
+    fwd_futures_m = []
+    optim_step_futures_m = []
 
-    advantages_P = compute_advantages(trajectory_groups_P)
+    for batch_d in batches_md:
+        # Forward-backward pass
+        fwd_bwd_future = await training_client.forward_backward_async(
+            list(map(_remove_mask, batch_d)), loss_fn="importance_sampling"
+        )
 
-    # Assemble training data
-    data_D, _metadata_D = assemble_training_data(trajectory_groups_P, advantages_P)
+        # Optimizer step
+        adam_params = types.AdamParams(learning_rate=learning_rate, beta1=0.9, beta2=0.95, eps=1e-8)
+        optim_step_future = await training_client.optim_step_async(adam_params)
+        fwd_futures_m.append(fwd_bwd_future)
+        optim_step_futures_m.append(optim_step_future)
 
-    # Forward-backward pass
-    fwd_bwd_future = await training_client.forward_backward_async(
-        list(map(_remove_mask, data_D)), loss_fn="importance_sampling"
-    )
-
-    # Optimizer step
-    adam_params = types.AdamParams(learning_rate=learning_rate, beta1=0.9, beta2=0.95, eps=1e-8)
-    optim_step_future = await training_client.optim_step_async(adam_params)
-
-    fwd_bwd_result = await fwd_bwd_future.result_async()
-    _optim_step_result = await optim_step_future.result_async()
+    fwd_bwd_results_m = [await future.result_async() for future in fwd_futures_m]
+    _optim_step_results_m = [await future.result_async() for future in optim_step_futures_m]
 
     # Extract training logprobs from loss_fn_outputs
     training_logprobs_D = []
-    for output in fwd_bwd_result.loss_fn_outputs:
-        training_logprobs = output["logprobs"].to_torch()
-        training_logprobs_D.append(training_logprobs)
+    for fwd_bwd_result in fwd_bwd_results_m:
+        for output in fwd_bwd_result.loss_fn_outputs:
+            training_logprobs = output["logprobs"].to_torch()
+            training_logprobs_D.append(training_logprobs)
+
     # We dont display fwd_bwd_result.metrics to avoid spam
-    return training_logprobs_D, data_D
+    return training_logprobs_D
 
 
 @chz.chz
@@ -371,6 +443,11 @@ class Config:
     max_tokens: int
     compute_post_kl: bool = False
     evaluator_builders: list[SamplingClientEvaluatorBuilder] = chz.field(default_factory=list)
+    lora_rank: int = 32
+
+    kl_penalty_coef: float = 0.0
+    num_minibatches: int = 1
+    kl_discount_factor: float = 0.0
 
     wandb_project: str | None = None
     wandb_name: str | None = None
@@ -378,7 +455,9 @@ class Config:
     log_relpath: str
     base_url: str | None = None
 
-    test_interval: int = 1
+    remove_constant_reward_groups: bool = False
+    eval_every: int = 1
+    save_every: int = 20
     load_checkpoint_path: str | None = None
 
     @property
@@ -395,36 +474,23 @@ async def main(
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("tinker._base_client").setLevel(logging.WARNING)
 
-    ml_logger = setup_logging(
+    ml_logger = ml_log.setup_logging(
         log_dir=log_dir,
         wandb_project=cfg.wandb_project,
         config=cfg,
         wandb_name=cfg.wandb_name,
     )
     service_client = tinker.ServiceClient(base_url=cfg.base_url)
-    training_client = await service_client.create_lora_training_client_async(cfg.model_name)
+    training_client = await service_client.create_lora_training_client_async(
+        cfg.model_name, rank=cfg.lora_rank
+    )
     if cfg.load_checkpoint_path is not None:
         future = await training_client.load_state_async(cfg.load_checkpoint_path)
         _ = await future.result_async()
         logger.info(f"Loaded state from {cfg.load_checkpoint_path}")
 
     # Initial weight save
-    save_index = 0
-
-    async def save_weights(training_client: tinker.TrainingClient, save_index: int) -> str:
-        """Save current weights and return the path."""
-        checkpoint_name = f"{save_index:04d}"
-        save_sampler_future = await training_client.save_weights_for_sampler_async(checkpoint_name)
-        save_state_future = await training_client.save_state_async(checkpoint_name)
-        save_sampler_result = await save_sampler_future.result_async()
-        save_state_result = await save_state_future.result_async()
-        logger.info(f"Saved sampler weights to {save_sampler_result.path}")
-        logger.info(f"Saved state to {save_state_result.path}")
-        # XXX saving state due to bug
-        return save_sampler_result.path
-
-    current_weights_path = await save_weights(training_client, save_index)
-    save_index += 1
+    current_weights_path = await save_sampling_checkpoint_async(training_client, "000000")
 
     # Get tokenizer from training client
     tokenizer = training_client.get_tokenizer()
@@ -445,6 +511,7 @@ async def main(
             "progress/batch": i_batch,
             "optim/lr": cfg.learning_rate,
             "progress/done_frac": (i_batch + 1) / num_batches,
+            "sampler_weights_path": current_weights_path,
         }
         env_group_builders_P = dataset.get_batch(i_batch)
         with timed("sample", metrics):
@@ -461,18 +528,44 @@ async def main(
         for traj_group in trajectory_groups_P[:1]:
             print_group(traj_group, tokenizer)
 
+        # Remove groups with constant reward.
+        # This introduces slight bias when we have a kl penalty, but generally doesn't matter much
+        filtered_trajectory_groups_P = (
+            _remove_constant_reward_groups(trajectory_groups_P)
+            if cfg.remove_constant_reward_groups
+            else trajectory_groups_P
+        )
+        with timed("assemble_training_data", metrics):
+            advantages_P = compute_advantages(filtered_trajectory_groups_P)
+            data_D, _metadata_D = assemble_training_data(filtered_trajectory_groups_P, advantages_P)
+        if cfg.kl_penalty_coef > 0:
+            with timed("kl_vs_base", metrics):
+                kl_penalty_metrics = await incorporate_kl_penalty(
+                    data_D,
+                    service_client.create_sampling_client(base_model=cfg.model_name),
+                    # ^^^ TODO: replace with the model we load, if relevant
+                    cfg.kl_penalty_coef,
+                    cfg.kl_discount_factor,
+                )
+            metrics.update(kl_penalty_metrics)
+
         with timed("train", metrics):
-            training_logprobs_D, data_D = await train_step(
-                trajectory_groups_P, training_client, cfg.learning_rate
+            training_logprobs_D = await train_step(
+                data_D,
+                training_client,
+                cfg.learning_rate,
+                cfg.num_minibatches,
             )
 
         with timed("compute_kl_sample_train", metrics):
             kl_sample_train_metrics = compute_kl_sample_train(data_D, training_logprobs_D)
             metrics.update(kl_sample_train_metrics)
 
-        with timed("save_weights", metrics):
-            current_weights_path = await save_weights(training_client, save_index)
-            save_index += 1
+        with timed("save_sampling_weights", metrics):
+            # Over-write the sampling checkpoint to avoid blowing up memory
+            current_weights_path = await save_sampling_checkpoint_async(
+                training_client, f"{i_batch + 1:06d}"
+            )
 
         if cfg.compute_post_kl:
             with timed("compute_post_kl", metrics):
@@ -480,15 +573,18 @@ async def main(
                 post_kl_metrics = await compute_post_kl(data_D, post_sampling_client)
                 metrics.update(post_kl_metrics)
 
-        if cfg.test_interval > 0 and i_batch % cfg.test_interval == 0:
+        if cfg.eval_every > 0 and i_batch % cfg.eval_every == 0:
             sampling_client = training_client.create_sampling_client(current_weights_path)
             with timed("run_evals", metrics):
                 for evaluator in evaluators:
                     eval_metrics = await evaluator(sampling_client)
                     metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
 
+        if cfg.save_every > 0 and i_batch % cfg.save_every == 0 and i_batch > 0:
+            with timed("save_checkpoint", metrics):
+                state_path = await save_checkpoint_async(training_client, f"{i_batch + 1:06d}")
+                metrics["state_path"] = state_path
+
         # Log metrics
         metrics["time/total"] = time.time() - t_start
         ml_logger.log_metrics(metrics, step=i_batch)
-
-    return current_weights_path

@@ -8,13 +8,11 @@ import contextlib
 import re
 import signal
 import types
-from typing import Any, Callable, Dict, Tuple, TypeVar
+from typing import Any, Callable, Dict, Tuple
 
 import sympy
 from pylatexenc import latex2text
 from sympy.parsing import sympy_parser
-
-T = TypeVar("T")  # Return type of the function
 
 # ======================================================================
 # Math Normalize Functions
@@ -75,7 +73,7 @@ def _fix_a_slash_b(string: str) -> str:
     try:
         a = int(a)
         b = int(b)
-        assert string == "{}/{}".format(a, b)
+        assert string == f"{a}/{b}"
         new_string = "\\frac{" + str(a) + "}{" + str(b) + "}"
         return new_string
     except ValueError:
@@ -487,6 +485,20 @@ def grade_answer(given_answer: str, ground_truth: str) -> bool:
     return is_correct
 
 
+def grade_answer_math_verify(given_answer: str, ground_truth: str) -> bool:
+    """
+    Use the math_verify package to verify the answer.
+    """
+    from math_verify import parse, verify
+
+    given_answer_parsed = parse(given_answer)
+    ground_truth_parsed = parse(ground_truth)
+
+    is_correct = verify(given_answer_parsed, ground_truth_parsed)
+
+    return is_correct
+
+
 # ======================================================================
 # Timeout Functions
 # ======================================================================
@@ -502,7 +514,7 @@ def _timeout_handler(signum: int, frame: types.FrameType | None) -> None:
     raise TimeoutException("Function call timed out")
 
 
-def run_with_timeout_signal(
+def run_with_timeout_signal[T](
     func: Callable[..., T],
     args: Tuple[Any, ...] = (),
     kwargs: Dict[str, Any] = {},

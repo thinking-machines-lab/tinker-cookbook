@@ -4,6 +4,7 @@ from typing import cast
 
 import chz
 import datasets
+import pandas as pd
 from tinker import types
 from tinker_cookbook import renderers
 from tinker_cookbook.preference.types import (
@@ -18,107 +19,80 @@ from tinker_cookbook.supervised.chat_datasets import (
 from tinker_cookbook.supervised.common import datum_from_tokens_weights
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDataset
 
+# ============================================================================
+# Base Classes
+# ============================================================================
+
 
 @chz.chz
-class DPODatasetBuilder(ChatDatasetBuilder):
+class ComparisonDatasetBuilder:
     """
-    Abstract class for supervised learning datasets based on pairwise comparisons
+    Builds HF datasets and converts to LabeledComparisons.
+    This class is independent of rendering/tokenization.
     """
 
+    swap: bool = False  # do data augmentation by swapping the order of the completions
+
     def get_train_and_test_datasets(self) -> tuple[datasets.Dataset, datasets.Dataset | None]:
+        """Get raw HuggingFace datasets for train and test."""
         raise NotImplementedError
 
     def example_to_labeled_comparison(self, example: dict) -> LabeledComparison | None:
+        """Convert a HuggingFace dataset example to a LabeledComparison."""
         raise NotImplementedError
 
-    def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
+    def get_labeled_comparisons(
+        self,
+    ) -> tuple[list[LabeledComparison], list[LabeledComparison] | None]:
+        """Get all labeled comparisons for train and test sets."""
         train_dataset, test_dataset = self.get_train_and_test_datasets()
-        renderer = self.renderer
 
-        def comparison_to_datum(labeled_comparison: LabeledComparison) -> list[types.Datum]:
-            chosen_completion = (
-                labeled_comparison.comparison.completion_A
-                if labeled_comparison.label == "A"
-                else labeled_comparison.comparison.completion_B
-            )
-            rejected_completion = (
-                labeled_comparison.comparison.completion_B
-                if labeled_comparison.label == "A"
-                else labeled_comparison.comparison.completion_A
-            )
-
-            chosen_convo = [
-                *labeled_comparison.comparison.prompt_conversation,
-                *chosen_completion,
-            ]
-            rejected_convo = [
-                *labeled_comparison.comparison.prompt_conversation,
-                *rejected_completion,
-            ]
-
-            chosen_tokens, chosen_weights = renderer.build_supervised_example(chosen_convo)
-            rejected_tokens, rejected_weights = renderer.build_supervised_example(rejected_convo)
-
-            return [
-                datum_from_tokens_weights(
-                    chosen_tokens, chosen_weights, self.common_config.max_length
-                ),
-                datum_from_tokens_weights(
-                    rejected_tokens, rejected_weights, self.common_config.max_length
-                ),
-            ]
-
-        def example_to_data(example: dict[str, str]) -> list[types.Datum]:
+        # Process train dataset
+        train_comparisons = []
+        for i in range(len(train_dataset)):
+            example = train_dataset[i]
             labeled_comparison = self.example_to_labeled_comparison(example)
-            if labeled_comparison is None:
-                return []
-            return comparison_to_datum(labeled_comparison)
+            if labeled_comparison is not None:
+                train_comparisons.append(labeled_comparison)
 
+        # Process test dataset if it exists
+        test_comparisons = None
         if test_dataset is not None:
-            test_supervised_dataset = SupervisedDatasetFromHFDataset(
-                test_dataset,
-                batch_size=len(test_dataset),
-                flatmap_fn=example_to_data,
-            )
-        else:
-            test_supervised_dataset = None
+            test_comparisons = []
+            for i in range(len(test_dataset)):
+                example = test_dataset[i]
+                labeled_comparison = self.example_to_labeled_comparison(example)
+                if labeled_comparison is not None:
+                    test_comparisons.append(labeled_comparison)
 
-        return SupervisedDatasetFromHFDataset(
-            train_dataset, batch_size=self.common_config.batch_size, flatmap_fn=example_to_data
-        ), test_supervised_dataset
+        return train_comparisons, test_comparisons
 
 
 @chz.chz
-class PairwiseComparisonDatasetBuilder(ChatDatasetBuilder):
+class ChatDatasetBuilderFromComparisons(ChatDatasetBuilder):
     """
-    Abstract class for supervised learning datasets based on pairwise comparisons
+    Abstract base for chat dataset builders that use comparisons.
+    Subclasses must implement get_comparison_builder() to provide the dataset-specific logic.
     """
 
+    comparison_builder: ComparisonDatasetBuilder
     swap: bool = False  # do data augmentation by swapping the order of the completions
 
     @property
     def comparison_renderer(self) -> ComparisonRenderer:
         return ComparisonRendererFromChatRenderer(self.renderer)
 
-    def get_train_and_test_datasets(self) -> tuple[datasets.Dataset, datasets.Dataset | None]:
-        raise NotImplementedError
-
-    def example_to_labeled_comparison(self, example: dict) -> LabeledComparison | None:
-        raise NotImplementedError
-
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
-        train_dataset, test_dataset = self.get_train_and_test_datasets()
+        train_dataset, test_dataset = self.comparison_builder.get_train_and_test_datasets()
         comparison_renderer = self.comparison_renderer
         rng = random.Random(0)
-        # XXX This depends on what order we request the batch
-        # and violates determinism assumptions
 
         def comparison_to_datum(labeled_comparison: LabeledComparison) -> types.Datum:
             tokens, weights = comparison_renderer.to_tokens_weights(labeled_comparison)
             return datum_from_tokens_weights(tokens, weights, self.common_config.max_length)
 
         def example_to_data(example: dict[str, str]) -> list[types.Datum]:
-            labeled_comparison = self.example_to_labeled_comparison(example)
+            labeled_comparison = self.comparison_builder.example_to_labeled_comparison(example)
             if labeled_comparison is None:
                 return []
             if self.swap:
@@ -145,6 +119,11 @@ class PairwiseComparisonDatasetBuilder(ChatDatasetBuilder):
             batch_size=self.common_config.batch_size,
             flatmap_fn=example_to_data,
         ), test_supervised_dataset
+
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
 
 
 def _hhh_parse_conversation(text: str) -> list[renderers.Message]:
@@ -194,8 +173,53 @@ def hhh_example_to_comparison(example: dict[str, str]) -> LabeledComparison | No
     return LabeledComparison(comparison=comparison, label="A")
 
 
+def _arena_has_image(conversation: list) -> bool:
+    """Check if an arena conversation contains images."""
+    for msg in conversation:
+        if isinstance(msg, dict) and "content" in msg:
+            content = msg["content"]
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "image":
+                        return True
+    return False
+
+
+def _arena_parse_conversation(conversation: list) -> list[renderers.Message]:
+    """Parse arena conversation to message format."""
+    messages = []
+    for msg in conversation:
+        if isinstance(msg, dict):
+            role = msg.get("role", "")
+            content_list = msg.get("content", [])
+
+            # Extract text content only
+            text_parts = []
+            for item in content_list:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    text = item.get("text", "")
+                    if text:
+                        text_parts.append(text)
+
+            if text_parts:
+                content = " ".join(text_parts)
+                if role == "user":
+                    messages.append({"role": "user", "content": content})
+                elif role == "assistant":
+                    messages.append({"role": "assistant", "content": content})
+
+    return messages
+
+
+# ============================================================================
+# Concrete Dataset Implementations
+# ============================================================================
+
+
 @chz.chz
-class HHHBuilder(PairwiseComparisonDatasetBuilder):
+class HHHComparisonBuilder(ComparisonDatasetBuilder):
+    """HHH dataset comparison builder."""
+
     def get_train_and_test_datasets(self) -> tuple[datasets.Dataset, datasets.Dataset | None]:
         dataset = datasets.load_dataset("Anthropic/hh-rlhf")
         dataset = cast(datasets.DatasetDict, dataset)
@@ -208,20 +232,9 @@ class HHHBuilder(PairwiseComparisonDatasetBuilder):
 
 
 @chz.chz
-class HHHDPOBuilder(DPODatasetBuilder):
-    def get_train_and_test_datasets(self) -> tuple[datasets.Dataset, datasets.Dataset | None]:
-        dataset = datasets.load_dataset("Anthropic/hh-rlhf")
-        dataset = cast(datasets.DatasetDict, dataset)
-        train_dataset = dataset["train"].shuffle(seed=0)
-        test_dataset = dataset["test"].shuffle(seed=0).take(1024)
-        return train_dataset, test_dataset
+class HelpSteer3ComparisonBuilder(ComparisonDatasetBuilder):
+    """HelpSteer3 dataset comparison builder."""
 
-    def example_to_labeled_comparison(self, example: dict) -> LabeledComparison | None:
-        return hhh_example_to_comparison(example)
-
-
-@chz.chz
-class HelpSteer3Builder(PairwiseComparisonDatasetBuilder):
     def get_train_and_test_datasets(self) -> tuple[datasets.Dataset, datasets.Dataset | None]:
         dataset = datasets.load_dataset("nvidia/HelpSteer3", "preference")
         dataset = cast(datasets.DatasetDict, dataset)
@@ -258,60 +271,140 @@ class HelpSteer3Builder(PairwiseComparisonDatasetBuilder):
 
 
 @chz.chz
-class HelpSteer3DPOBuilder(DPODatasetBuilder):
+class UltraFeedbackComparisonBuilder(ComparisonDatasetBuilder):
+    """UltraFeedback dataset comparison builder."""
+
     def get_train_and_test_datasets(self) -> tuple[datasets.Dataset, datasets.Dataset | None]:
-        dataset = datasets.load_dataset("nvidia/HelpSteer3", "preference")
-        dataset = cast(datasets.DatasetDict, dataset)
-        train_dataset = dataset["train"].shuffle(seed=0)
-        test_dataset = dataset["validation"].shuffle(seed=0).take(1024)
+        dataset = datasets.load_dataset(
+            "argilla/ultrafeedback-binarized-preferences", split="train"
+        )
+        dataset = cast(datasets.Dataset, dataset)
+        dataset = dataset.shuffle(seed=0)
+        test_dataset = dataset.take(1024)
+        train_dataset = dataset.skip(1024)
         return train_dataset, test_dataset
 
     def example_to_labeled_comparison(self, example: dict) -> LabeledComparison | None:
-        context = example["context"]
-        response1 = example["response1"]
-        response2 = example["response2"]
-        overall_preference = example["overall_preference"]
+        instruction = example["instruction"]
+        chosen_response = example["chosen_response"]
+        rejected_response = example["rejected_response"]
 
-        # Skip ties
-        if overall_preference == 0:
+        prompt_conversation: list[renderers.Message] = [{"role": "user", "content": instruction}]
+
+        comparison = Comparison(
+            prompt_conversation=prompt_conversation,
+            completion_A=[{"role": "assistant", "content": chosen_response}],
+            completion_B=[{"role": "assistant", "content": rejected_response}],
+        )
+        return LabeledComparison(comparison=comparison, label="A")
+
+
+@chz.chz
+class ArenaComparisonBuilder(ComparisonDatasetBuilder):
+    """Arena dataset comparison builder."""
+
+    def get_train_and_test_datasets(self) -> tuple[datasets.Dataset, datasets.Dataset | None]:
+        dataset = datasets.load_dataset("lmarena-ai/arena-human-preference-140k", split="train")
+        dataset = cast(datasets.Dataset, dataset)
+
+        # Filter out conversations with images
+        def has_no_images(example: dict) -> bool:
+            conv_a = example.get("conversation_a", [])
+            conv_b = example.get("conversation_b", [])
+            return not (_arena_has_image(conv_a) or _arena_has_image(conv_b))
+
+        dataset = dataset.filter(has_no_images)
+        dataset = dataset.shuffle(seed=0)
+        test_dataset = dataset.take(1024)
+        train_dataset = dataset.skip(1024)
+        return train_dataset, test_dataset
+
+    def example_to_labeled_comparison(self, example: dict) -> LabeledComparison | None:
+        winner = example.get("winner", "")
+
+        # Skip ties or invalid winners
+        if winner not in ["model_a", "model_b"]:
             return None
 
-        # Convert context to message format
-        prompt_conversation = []
-        for msg in context:
-            if msg["role"] == "user":
-                prompt_conversation.append({"role": "user", "content": msg["content"]})
-            elif msg["role"] == "assistant":
-                prompt_conversation.append({"role": "assistant", "content": msg["content"]})
+        conversation_a = _arena_parse_conversation(example.get("conversation_a", []))
+        conversation_b = _arena_parse_conversation(example.get("conversation_b", []))
+
+        # Skip if conversations are empty or malformed
+        if not conversation_a or not conversation_b:
+            return None
+
+        # The conversations should have same prompt (all messages except last assistant response)
+        # Check that both have at least a user message and assistant response
+        if len(conversation_a) < 2 or len(conversation_b) < 2:
+            return None
+
+        # Verify same prompt conversation
+        if conversation_a[:-1] != conversation_b[:-1]:
+            return None
+
+        # Verify last message is assistant in both
+        if conversation_a[-1]["role"] != "assistant" or conversation_b[-1]["role"] != "assistant":
+            return None
 
         comparison = Comparison(
-            prompt_conversation=prompt_conversation,
-            completion_A=[{"role": "assistant", "content": response1}],
-            completion_B=[{"role": "assistant", "content": response2}],
+            prompt_conversation=conversation_a[:-1],
+            completion_A=[conversation_a[-1]],
+            completion_B=[conversation_b[-1]],
         )
-        return LabeledComparison(
-            comparison=comparison, label="A" if overall_preference > 0 else "B"
-        )
+
+        return LabeledComparison(comparison=comparison, label="A" if winner == "model_a" else "B")
 
 
 @chz.chz
-class UltraFeedbackBuilder(PairwiseComparisonDatasetBuilder):
+class HelpSteer2ComparisonBuilder(ComparisonDatasetBuilder):
+    """HelpSteer2 dataset comparison builder."""
+
     def get_train_and_test_datasets(self) -> tuple[datasets.Dataset, datasets.Dataset | None]:
-        dataset = datasets.load_dataset(
-            "argilla/ultrafeedback-binarized-preferences", split="train"
-        )
+        dataset = datasets.load_dataset("nvidia/HelpSteer2", split="train")
         dataset = cast(datasets.Dataset, dataset)
+
+        # Create pairs by grouping examples with same prompt
+        prompt_to_responses: dict[str, list] = {}
+        for i in range(len(dataset)):
+            example = dataset[i]
+            prompt = example["prompt"]
+            if prompt not in prompt_to_responses:
+                prompt_to_responses[prompt] = []
+            prompt_to_responses[prompt].append(example)
+
+        # Create comparison pairs from examples with same prompt
+        comparisons = []
+        for prompt, responses in prompt_to_responses.items():
+            if len(responses) >= 2:
+                # Sort by helpfulness score to create preferences
+                responses.sort(key=lambda x: x["helpfulness"], reverse=True)
+                # Take best vs worst if significant difference
+                if responses[0]["helpfulness"] > responses[-1]["helpfulness"]:
+                    comparisons.append(
+                        {
+                            "prompt": prompt,
+                            "chosen_response": responses[0]["response"],
+                            "rejected_response": responses[-1]["response"],
+                            "helpfulness_diff": responses[0]["helpfulness"]
+                            - responses[-1]["helpfulness"],
+                        }
+                    )
+
+        # Convert to dataset
+        df = pd.DataFrame(comparisons)
+        dataset = datasets.Dataset.from_pandas(df)
         dataset = dataset.shuffle(seed=0)
-        test_dataset = dataset.take(1024)
-        train_dataset = dataset.skip(1024)
+
+        test_dataset = dataset.take(min(1024, len(dataset) // 10))
+        train_dataset = dataset.skip(min(1024, len(dataset) // 10))
         return train_dataset, test_dataset
 
     def example_to_labeled_comparison(self, example: dict) -> LabeledComparison | None:
-        instruction = example["instruction"]
+        prompt = example["prompt"]
         chosen_response = example["chosen_response"]
         rejected_response = example["rejected_response"]
 
-        prompt_conversation: list[renderers.Message] = [{"role": "user", "content": instruction}]
+        prompt_conversation: list[renderers.Message] = [{"role": "user", "content": prompt}]
 
         comparison = Comparison(
             prompt_conversation=prompt_conversation,
@@ -322,81 +415,51 @@ class UltraFeedbackBuilder(PairwiseComparisonDatasetBuilder):
 
 
 @chz.chz
-class UltraFeedbackDPOBuilder(DPODatasetBuilder):
+class ComparisonBuilderFromJsonl(ComparisonDatasetBuilder):
+    """Load LabeledComparisons from JSONL files produced by combine_preference_datasets.py."""
+
+    train_path: str
+    test_path: str | None = None
+
     def get_train_and_test_datasets(self) -> tuple[datasets.Dataset, datasets.Dataset | None]:
-        dataset = datasets.load_dataset(
-            "argilla/ultrafeedback-binarized-preferences", split="train"
-        )
-        dataset = cast(datasets.Dataset, dataset)
-        dataset = dataset.shuffle(seed=0)
-        test_dataset = dataset.take(1024)
-        train_dataset = dataset.skip(1024)
+        """Load datasets from JSONL files."""
+        import json
+
+        import blobfile
+
+        # Load train dataset
+        train_data = []
+        with blobfile.BlobFile(self.train_path, "r", streaming=False) as f:
+            for line in f:
+                train_data.append(json.loads(line.strip()))
+
+        train_dataset = datasets.Dataset.from_list(train_data)
+
+        # Load test dataset if provided
+        test_dataset = None
+        if self.test_path:
+            test_data = []
+            with blobfile.BlobFile(self.test_path, "r", streaming=False) as f:
+                for line in f:
+                    test_data.append(json.loads(line.strip()))
+            test_dataset = datasets.Dataset.from_list(test_data)
+
         return train_dataset, test_dataset
 
     def example_to_labeled_comparison(self, example: dict) -> LabeledComparison | None:
-        instruction = example["instruction"]
-        chosen_response = example["chosen_response"]
-        rejected_response = example["rejected_response"]
+        """Convert a dictionary (from JSONL) back to a LabeledComparison."""
+        # The JSONL contains the raw LabeledComparison as a dict
+        # with 'comparison' and 'label' keys
+        if "comparison" not in example or "label" not in example:
+            return None
 
-        prompt_conversation: list[renderers.Message] = [{"role": "user", "content": instruction}]
+        comparison_dict = example["comparison"]
 
+        # Reconstruct the Comparison object
         comparison = Comparison(
-            prompt_conversation=prompt_conversation,
-            completion_A=[{"role": "assistant", "content": chosen_response}],
-            completion_B=[{"role": "assistant", "content": rejected_response}],
+            prompt_conversation=comparison_dict["prompt_conversation"],
+            completion_A=comparison_dict["completion_A"],
+            completion_B=comparison_dict["completion_B"],
         )
-        return LabeledComparison(comparison=comparison, label="A")
 
-
-@chz.chz
-class Tulu38BBuilder(PairwiseComparisonDatasetBuilder):
-    def get_train_and_test_datasets(self) -> tuple[datasets.Dataset, datasets.Dataset | None]:
-        dataset = datasets.load_dataset(
-            "allenai/llama-3.1-tulu-3-8b-preference-mixture", split="train"
-        )
-        dataset = cast(datasets.Dataset, dataset)
-        dataset = dataset.shuffle(seed=0)
-        test_dataset = dataset.take(1024)
-        train_dataset = dataset.skip(1024)
-        return train_dataset, test_dataset
-
-    def example_to_labeled_comparison(self, example: dict) -> LabeledComparison | None:
-        instruction = example["prompt"]
-        chosen_response = example["chosen"][1]["content"]
-        rejected_response = example["rejected"][1]["content"]
-
-        prompt_conversation: list[renderers.Message] = [{"role": "user", "content": instruction}]
-
-        comparison = Comparison(
-            prompt_conversation=prompt_conversation,
-            completion_A=[{"role": "assistant", "content": chosen_response}],
-            completion_B=[{"role": "assistant", "content": rejected_response}],
-        )
-        return LabeledComparison(comparison=comparison, label="A")
-
-
-@chz.chz
-class Tulu38BDPOBuilder(DPODatasetBuilder):
-    def get_train_and_test_datasets(self) -> tuple[datasets.Dataset, datasets.Dataset | None]:
-        dataset = datasets.load_dataset(
-            "allenai/llama-3.1-tulu-3-8b-preference-mixture", split="train"
-        )
-        dataset = cast(datasets.Dataset, dataset)
-        dataset = dataset.shuffle(seed=0)
-        test_dataset = dataset.take(1024)
-        train_dataset = dataset.skip(1024)
-        return train_dataset, test_dataset
-
-    def example_to_labeled_comparison(self, example: dict) -> LabeledComparison | None:
-        instruction = example["prompt"]
-        chosen_response = example["chosen"][1]["content"]
-        rejected_response = example["rejected"][1]["content"]
-
-        prompt_conversation: list[renderers.Message] = [{"role": "user", "content": instruction}]
-
-        comparison = Comparison(
-            prompt_conversation=prompt_conversation,
-            completion_A=[{"role": "assistant", "content": chosen_response}],
-            completion_B=[{"role": "assistant", "content": rejected_response}],
-        )
-        return LabeledComparison(comparison=comparison, label="A")
+        return LabeledComparison(comparison=comparison, label=example["label"])

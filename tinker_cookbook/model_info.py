@@ -46,6 +46,8 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
             "Qwen3-8B": ModelAttributes(org, "3", "8B", True),
             "Qwen3-14B": ModelAttributes(org, "3", "14B", True),
             "Qwen3-32B": ModelAttributes(org, "3", "32B", True),
+            "Qwen3-30B-A3B": ModelAttributes(org, "3", "30B-A3B", True),
+            "Qwen3-235B-A22B-Instruct-2507": ModelAttributes(org, "3", "235B-A22B", True),
         }[model_version_full]
     else:
         raise ValueError(f"Unknown model: {model_name}")

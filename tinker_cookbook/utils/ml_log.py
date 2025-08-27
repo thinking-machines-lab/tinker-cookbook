@@ -1,6 +1,7 @@
 """Simplified logging utilities for tinker-cookbook."""
 
 import json
+import logging
 import os
 from abc import ABC, abstractmethod
 from dataclasses import asdict, is_dataclass
@@ -11,6 +12,9 @@ from typing import Any, Dict, List
 import chz
 from rich.console import Console
 from rich.table import Table
+from tinker_cookbook.utils.code_state import code_state
+
+logger = logging.getLogger(__name__)
 
 _wandb_available = False
 try:
@@ -100,6 +104,9 @@ class JsonLogger(Logger):
             config_file = self.log_dir / "config.json"
             with open(config_file, "w") as f:
                 json.dump(config_dict, f, indent=2, cls=_PermissiveJSONEncoder)
+            diff_file = code_state()
+            with open(self.log_dir / "code.diff", "w") as f:
+                f.write(diff_file)
             self._logged_hparams = True
 
     def log_metrics(self, metrics: Dict[str, Any], step: int | None = None) -> None:
@@ -109,6 +116,7 @@ class JsonLogger(Logger):
 
         with open(self.metrics_file, "a") as f:
             f.write(json.dumps(log_entry) + "\n")
+            logger.info("Wrote metrics to %s", self.metrics_file)
 
 
 class PrettyPrintLogger(Logger):
@@ -261,12 +269,20 @@ def setup_logging(
     loggers.append(PrettyPrintLogger())
 
     # Add W&B logger if available and configured
-    if wandb_project and _wandb_available and os.environ.get("WANDB_API_KEY"):
-        loggers.append(
-            WandbLogger(
-                project=wandb_project, config=config, log_dir=log_dir_path, wandb_name=wandb_name
+    if wandb_project:
+        if not _wandb_available:
+            print("WARNING: wandb is not installed. Skipping W&B logging.")
+        elif not os.environ.get("WANDB_API_KEY"):
+            print("WARNING: WANDB_API_KEY environment variable not set. Skipping W&B logging. ")
+        else:
+            loggers.append(
+                WandbLogger(
+                    project=wandb_project,
+                    config=config,
+                    log_dir=log_dir_path,
+                    wandb_name=wandb_name,
+                )
             )
-        )
 
     # Create multiplex logger
     ml_logger = MultiplexLogger(loggers)

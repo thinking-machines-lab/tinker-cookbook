@@ -24,16 +24,42 @@ def save_checkpoint(training_client: tinker.TrainingClient, name: str) -> str:
         training_client: Training client to save from
         name: Name for the checkpoint
     Returns:
-        Path where checkpoint was saved
+        Dictionary with 'state_path' key
     """
-    # XXX currently saving both sampler and state
-    save_weights_future = training_client.save_weights_for_sampler(name)
     save_state_future = training_client.save_state(name)
-    save_weights_result = save_weights_future.result()
     save_state_result = save_state_future.result()
-    logger.info(f"Saved weights for sampler to: {save_weights_result.path}")
     logger.info(f"Saved state to: {save_state_result.path}")
+    return save_state_result.path
+
+
+def save_sampling_checkpoint(training_client: tinker.TrainingClient, name: str) -> str:
+    """Save model checkpoint for sampling.
+    Args:
+        training_client: Training client to save from
+        name: Name for the checkpoint
+    Returns:
+        Dictionary with 'weights_path' key
+    """
+    save_weights_future = training_client.save_weights_for_sampler(name)
+    save_weights_result = save_weights_future.result()
+    logger.info(f"Saved weights for sampler to: {save_weights_result.path}")
     return save_weights_result.path
+
+
+async def save_checkpoint_async(training_client: tinker.TrainingClient, name: str) -> str:
+    """Save current weights and return the path."""
+    save_state_future = await training_client.save_state_async(name)
+    save_state_result = await save_state_future.result_async()
+    logger.info(f"Saved state to {save_state_result.path}")
+    return save_state_result.path
+
+
+async def save_sampling_checkpoint_async(training_client: tinker.TrainingClient, name: str) -> str:
+    """Save current weights and return the path."""
+    save_sampler_future = await training_client.save_weights_for_sampler_async(name)
+    save_sampler_result = await save_sampler_future.result_async()
+    logger.info(f"Saved sampler weights to {save_sampler_result.path}")
+    return save_sampler_result.path
 
 
 def compute_schedule_lr_multiplier(lr_schedule: str, step: int, total_steps: int) -> float:

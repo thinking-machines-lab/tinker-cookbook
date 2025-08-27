@@ -16,7 +16,7 @@ from tinker_cookbook.supervised.common import compute_mean_nll
 from tinker_cookbook.supervised.nll_evaluator import NLLEvaluator
 from tinker_cookbook.supervised.train import Config, run_evals
 from tinker_cookbook.tokenizer_utils import get_tokenizer
-from tinker_cookbook.utils.ml_log import setup_logging
+from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.training_utils import compute_schedule_lr_multiplier
 
 logger = logging.getLogger(__name__)
@@ -31,13 +31,15 @@ class SubmitBatchResult:
     batch_idx: int
 
 
-async def save_checkpoint_async(training_client: tinker.TrainingClient, name: str) -> str:
+async def save_checkpoint_async(
+    training_client: tinker.TrainingClient, name: str
+) -> dict[str, str]:
     """Save model checkpoint asynchronously.
     Args:
         training_client: Training client to save from
         name: Name for the checkpoint
     Returns:
-        Path where checkpoint was saved
+        Dictionary with 'weights_path' and 'state_path' keys
     """
     # XXX currently saving both sampler and state
     save_weights_future = await training_client.save_weights_for_sampler_async(name)
@@ -46,7 +48,7 @@ async def save_checkpoint_async(training_client: tinker.TrainingClient, name: st
     save_state_result = await save_state_future.result_async()
     logger.info(f"Saved weights for sampler to: {save_weights_result.path}")
     logger.info(f"Saved state to: {save_state_result.path}")
-    return save_weights_result.path
+    return {"weights_path": save_weights_result.path, "state_path": save_state_result.path}
 
 
 async def main(config: Config):
@@ -54,7 +56,7 @@ async def main(config: Config):
     logging.basicConfig(level=logging.INFO)
 
     # Setup
-    ml_logger = setup_logging(
+    ml_logger = ml_log.setup_logging(
         log_dir=os.path.join(config.log_base_dir, config.log_relpath),
         wandb_project=config.wandb_project,
         config=config,
@@ -113,9 +115,10 @@ async def main(config: Config):
 
         # Save checkpoint if needed (before waiting for results)
         if batch_idx % config.save_every == 0 and batch_idx > 0:
-            metrics["save_path"] = await save_checkpoint_async(
+            checkpoint_paths = await save_checkpoint_async(
                 training_client=training_client, name=f"{batch_idx:06d}"
             )
+            metrics.update(checkpoint_paths)
 
         # Wait for results
         fwd_bwd_result = await submit_result.fwd_bwd_future.result_async()
@@ -134,7 +137,7 @@ async def main(config: Config):
             **submit_result.metrics,
         }
         # Evaluation
-        if config.test_interval > 0 and batch_idx % config.test_interval == 0:
+        if config.eval_every > 0 and batch_idx % config.eval_every == 0:
             eval_metrics = await run_evals(evaluators, training_client, batch_idx)
             metrics.update(eval_metrics)
 

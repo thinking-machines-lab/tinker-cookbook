@@ -20,7 +20,8 @@ from tinker_cookbook.supervised.common import compute_mean_nll
 from tinker_cookbook.supervised.nll_evaluator import NLLEvaluator
 from tinker_cookbook.supervised.types import SupervisedDatasetBuilder
 from tinker_cookbook.tokenizer_utils import get_tokenizer
-from tinker_cookbook.utils.ml_log import setup_logging
+from tinker_cookbook.utils import ml_log
+from tinker_cookbook.utils.misc_utils import timed
 from tinker_cookbook.utils.training_utils import compute_schedule_lr_multiplier, save_checkpoint
 
 logger = logging.getLogger(__name__)
@@ -46,13 +47,14 @@ class Config:
     lora_rank: int = 32
 
     # Infrastructure parameters
-    num_replicas: int = 8
     base_url: str | None = None
 
     # Checkpointing and evaluation
     evaluator_builders: list[EvaluatorBuilder] = chz.field(default_factory=list)
+    infrequent_evaluator_builders: list[EvaluatorBuilder] = chz.field(default_factory=list)
     save_every: int = 20
-    test_interval: int = 10
+    eval_every: int = 10
+    infrequent_eval_every: int = 100
 
     # Adam optimizer parameters
     adam_beta1: float = 0.9
@@ -101,7 +103,7 @@ def main(config: Config):
     logging.basicConfig(level=logging.INFO)
 
     # Setup
-    ml_logger = setup_logging(
+    ml_logger = ml_log.setup_logging(
         log_dir=os.path.join(config.log_base_dir, config.log_relpath),
         wandb_project=config.wandb_project,
         config=config,
@@ -124,17 +126,22 @@ def main(config: Config):
     evaluators = [evaluator() for evaluator in config.evaluator_builders]
     if maybe_test_dataset is not None:
         evaluators.append(NLLEvaluator.from_dataset(maybe_test_dataset))
-    logger.info(f"Training for {n_batches} batches")
+
+    infrequent_evaluators = [evaluator() for evaluator in config.infrequent_evaluator_builders]
+    logger.info(
+        f"Training for {n_batches} batches x {config.num_epochs} epochs = {n_batches * config.num_epochs} steps"
+    )
 
     # Training loop
     for epoch_idx in range(config.num_epochs):
         # Shuffle the dataset
+        logger.info(f"Shuffling dataset for epoch {epoch_idx}")
         dataset.shuffle(seed=epoch_idx)
 
         for batch_idx in range(n_batches):
             step = epoch_idx * n_batches + batch_idx
-            metrics = {}
-            batch_start_time = time.time()
+            metrics: dict[str, int | float | str] = {"epoch": epoch_idx}
+            start_time = time.time()
             learning_rate = (
                 compute_schedule_lr_multiplier(
                     lr_schedule=config.lr_schedule,
@@ -152,19 +159,36 @@ def main(config: Config):
 
             # Save checkpoint if needed
             if step % config.save_every == 0 and step > 0:
-                metrics["save_path"] = save_checkpoint(
-                    training_client=training_client, name=f"{step:06d}"
-                )
+                with timed("save_checkpoint", metrics):
+                    state_path = save_checkpoint(
+                        training_client=training_client, name=f"{step:06d}"
+                    )
+                    metrics["state_path"] = state_path
+            # Evaluation
+            if config.eval_every > 0 and step % config.eval_every == 0:
+                with timed("evals", metrics):
+                    eval_metrics = asyncio.run(run_evals(evaluators, training_client, step))
+                metrics.update(eval_metrics)
+
+            if config.infrequent_eval_every > 0 and step % config.infrequent_eval_every == 0:
+                with timed("infrequent_evals", metrics):
+                    eval_metrics = asyncio.run(
+                        run_evals(infrequent_evaluators, training_client, step)
+                    )
+                metrics.update(eval_metrics)
 
             # Prepare batch
-            data = dataset.get_batch(batch_idx)
+            with timed("get_batch", metrics):
+                data = dataset.get_batch(batch_idx)
             print(colorize_example(data[0], get_tokenizer(config.model_name)))
-            # Queue up the forward-backward pass and optimizer step before requesting either
-            fwd_bwd_future = training_client.forward_backward(data, loss_fn="cross_entropy")
-            # Optimizer step
-            optim_step_future = training_client.optim_step(adam_params)
-            fwd_bwd_result = fwd_bwd_future.result()
-            _optim_step_result = optim_step_future.result()
+
+            with timed("step", metrics):
+                # Queue up the forward-backward pass and optimizer step before requesting either
+                fwd_bwd_future = training_client.forward_backward(data, loss_fn="cross_entropy")
+                # Optimizer step
+                optim_step_future = training_client.optim_step(adam_params)
+                fwd_bwd_result = fwd_bwd_future.result()
+                _optim_step_result = optim_step_future.result()
 
             # Compute training metrics
             logprobs = [x["logprobs"] for x in fwd_bwd_result.loss_fn_outputs]
@@ -178,18 +202,16 @@ def main(config: Config):
                 learning_rate=learning_rate,
                 train_mean_nll=train_nll,
                 progress=step / total_steps,
-                batch_time=time.time() - batch_start_time,
             )
 
-            # Evaluation
-            if config.test_interval > 0 and step % config.test_interval == 0:
-                eval_metrics = asyncio.run(run_evals(evaluators, training_client, step))
-                metrics.update(eval_metrics)
-
             # Log metrics
+            metrics["time/total"] = time.time() - start_time
             ml_logger.log_metrics(metrics=metrics, step=step)
+
     # Save final checkpoint
-    save_checkpoint(training_client=training_client, name="final")
+    state_path = save_checkpoint(training_client=training_client, name="final")
+    # Write a final line to log file so we have weights path
+    ml_logger.log_metrics(metrics={"state_path": state_path}, step=total_steps)
 
     # Cleanup
     ml_logger.close()

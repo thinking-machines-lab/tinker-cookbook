@@ -48,7 +48,7 @@ def datum_from_tokens_weights(
                 shape=list(weights.shape),
             ),
             "target_tokens": types.TensorData(
-                data=[float(x) for x in target_tokens.tolist()],
+                data=[int(x) for x in target_tokens.tolist()],
                 dtype="int64",
                 shape=list(target_tokens.shape),
             ),

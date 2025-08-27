@@ -7,7 +7,7 @@ import numpy as np
 import tinker
 import tinker_cookbook.renderers as renderers
 from tinker_cookbook.completers import MessageCompleter
-from tinker_cookbook.preference.preference_datasets import hhh_example_to_comparison
+from tinker_cookbook.preference.preference_datasets import HHHComparisonBuilder
 from tinker_cookbook.preference.types import (
     Comparison,
     PreferenceModel,
@@ -64,10 +64,15 @@ def make_comparison_evaluator(
         .shuffle(seed=0)
         .select(range(dataset_size))
     )
+    hhh_builder = HHHComparisonBuilder()
     comparisons = [
         labeled_comparison.comparison
         for example in dataset
-        if (labeled_comparison := hhh_example_to_comparison(cast(dict[str, str], example)))
+        if (
+            labeled_comparison := hhh_builder.example_to_labeled_comparison(
+                cast(dict[str, str], example)
+            )
+        )
         is not None
     ]
     return ComparisonEvaluator(preference_model, comparisons)

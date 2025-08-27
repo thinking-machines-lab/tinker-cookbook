@@ -47,6 +47,7 @@ class ChatDatasetBuilderCommonConfig:
     renderer_name: str
     max_length: int | None
     batch_size: int
+    train_on_what: str | None = None
 
 
 @chz.chz

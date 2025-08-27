@@ -42,23 +42,22 @@ async def get_row(
         weights = torch.ones_like(tokens)
         weights[0] = 0.0
         datum = datum_from_tokens_weights(tokens, weights)
-        num_updates = 3 if saved_path_for_trainer is None else 0
-        for iteration in range(num_updates + 1):
+        for _ in range(3 if saved_path_for_trainer is None else 0):
             fwd_bwd_future = await training_client.forward_backward_async(
                 [datum], loss_fn="cross_entropy"
             )
-            # Use zero LR on the last iteration because we we'll use those training logprobs
-            # to compare against the sampling logprobs, and the sampling client will use the
-            # post-update model
             optim_step_future = await training_client.optim_step_async(
-                adam_params=AdamParams(learning_rate=1e-4 if iteration < num_updates else 0.0)
+                adam_params=AdamParams(learning_rate=1e-3)
             )
-            fwd_bwd_result = await fwd_bwd_future.result_async()
+            _fwd_bwd_result = await fwd_bwd_future.result_async()
             _optim_step_result = await optim_step_future.result_async()
-        training_logprobs = fwd_bwd_result.loss_fn_outputs[0]["logprobs"].to_torch()  # pyright: ignore[reportPossiblyUnboundVariable]
+        fwd_future = await training_client.forward_async([datum], loss_fn="cross_entropy")
+        fwd_result = await fwd_future.result_async()
+        training_logprobs = fwd_result.loss_fn_outputs[0]["logprobs"].to_torch()
         if saved_path_for_sampler is None:
-            state_for_trainer = await training_client.save_state_async(name="tmp-checkpoint")
-            print(f"Saved state for trainer: {state_for_trainer.result().path}")
+            state_for_trainer_future = await training_client.save_state_async(name="tmp-checkpoint")
+            state_for_trainer = await state_for_trainer_future.result_async()
+            print(f"Saved state for trainer: {state_for_trainer.path}")
             sampling_client = await training_client.save_weights_and_get_sampling_client_async(
                 name="tmp-checkpoint"
             )
