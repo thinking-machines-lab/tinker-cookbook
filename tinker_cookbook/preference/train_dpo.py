@@ -19,7 +19,6 @@ from tinker_cookbook.supervised.nll_evaluator import NLLEvaluator
 from tinker_cookbook.supervised.train import run_evals
 from tinker_cookbook.supervised.types import ChatDatasetBuilder
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
-from tinker_cookbook.torch_style import forward, forward_with_autograd
 from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.format_colorized import format_colorized
 from tinker_cookbook.utils.training_utils import (
@@ -226,54 +225,65 @@ def main(config: Config):
                 print_example(chosen_data[i], tokenizer, "Chosen")
                 print_example(rejected_data[i], tokenizer, "Rejected")
 
-        # Get log probabilities using single forward passes on original data
-        all_logprob_seqs = forward_with_autograd(training_client, data)
-        all_ref_logprob_seqs = forward(reference_client, data)
+        # Get reference log probabilities using single forward pass on original data
+        all_ref_result = reference_client.forward(data, "cross_entropy").result()
+        all_ref_logprob_seqs = [
+            torch.tensor(out["logprobs"].data) for out in all_ref_result.loss_fn_outputs
+        ]
 
-        # Split results into chosen and rejected
-        chosen_logprob_seqs = [all_logprob_seqs[i] for i in range(0, len(data), 2)]
+        # Split reference results into chosen and rejected
         chosen_ref_logprob_seqs = [all_ref_logprob_seqs[i] for i in range(0, len(data), 2)]
-        rejected_logprob_seqs = [all_logprob_seqs[i] for i in range(1, len(data), 2)]
         rejected_ref_logprob_seqs = [all_ref_logprob_seqs[i] for i in range(1, len(data), 2)]
 
-        # Extract log probabilities
-        chosen_logprobs = []
-        chosen_ref_logprobs = []
-        rejected_logprobs = []
-        rejected_ref_logprobs = []
+        # Create DPO loss function
+        def dpo_loss_fn(
+            data: List[types.Datum], logprobs_list: List[torch.Tensor]
+        ) -> Tuple[torch.Tensor, Dict[str, float]]:
+            # Split logprobs into chosen and rejected
+            chosen_logprob_seqs = [logprobs_list[i] for i in range(0, len(data), 2)]
+            rejected_logprob_seqs = [logprobs_list[i] for i in range(1, len(data), 2)]
 
-        for i in range(len(chosen_data)):
-            # Compute weighted logprobs for chosen responses
-            chosen_logprob_seq = chosen_logprob_seqs[i]
-            chosen_ref_logprob_seq = chosen_ref_logprob_seqs[i]
-            chosen_weights = torch.tensor(chosen_data[i].loss_fn_inputs["weights"].data)
-            chosen_logprob = torch.dot(chosen_logprob_seq.float(), chosen_weights.float())
-            chosen_ref_logprob = torch.dot(chosen_ref_logprob_seq.float(), chosen_weights.float())
-            chosen_logprobs.append(chosen_logprob)
-            chosen_ref_logprobs.append(chosen_ref_logprob)
+            # Extract log probabilities
+            chosen_logprobs = []
+            chosen_ref_logprobs = []
+            rejected_logprobs = []
+            rejected_ref_logprobs = []
 
-            # Compute weighted logprobs for rejected responses
-            rejected_logprob_seq = rejected_logprob_seqs[i]
-            rejected_ref_logprob_seq = rejected_ref_logprob_seqs[i]
-            rejected_weights = torch.tensor(rejected_data[i].loss_fn_inputs["weights"].data)
-            rejected_logprob = torch.dot(rejected_logprob_seq.float(), rejected_weights.float())
-            rejected_ref_logprob = torch.dot(
-                rejected_ref_logprob_seq.float(), rejected_weights.float()
+            for i in range(len(chosen_data)):
+                # Compute weighted logprobs for chosen responses
+                chosen_logprob_seq = chosen_logprob_seqs[i]
+                chosen_ref_logprob_seq = chosen_ref_logprob_seqs[i]
+                chosen_weights = torch.tensor(chosen_data[i].loss_fn_inputs["weights"].data)
+                chosen_logprob = torch.dot(chosen_logprob_seq.float(), chosen_weights.float())
+                chosen_ref_logprob = torch.dot(
+                    chosen_ref_logprob_seq.float(), chosen_weights.float()
+                )
+                chosen_logprobs.append(chosen_logprob)
+                chosen_ref_logprobs.append(chosen_ref_logprob)
+
+                # Compute weighted logprobs for rejected responses
+                rejected_logprob_seq = rejected_logprob_seqs[i]
+                rejected_ref_logprob_seq = rejected_ref_logprob_seqs[i]
+                rejected_weights = torch.tensor(rejected_data[i].loss_fn_inputs["weights"].data)
+                rejected_logprob = torch.dot(rejected_logprob_seq.float(), rejected_weights.float())
+                rejected_ref_logprob = torch.dot(
+                    rejected_ref_logprob_seq.float(), rejected_weights.float()
+                )
+                rejected_logprobs.append(rejected_logprob)
+                rejected_ref_logprobs.append(rejected_ref_logprob)
+
+            # Compute DPO loss
+            return compute_dpo_loss(
+                chosen_logprobs=chosen_logprobs,
+                rejected_logprobs=rejected_logprobs,
+                chosen_ref_logprobs=chosen_ref_logprobs,
+                rejected_ref_logprobs=rejected_ref_logprobs,
+                dpo_beta=config.dpo_beta,
             )
-            rejected_logprobs.append(rejected_logprob)
-            rejected_ref_logprobs.append(rejected_ref_logprob)
 
-        # Compute DPO loss
-        loss, dpo_metrics = compute_dpo_loss(
-            chosen_logprobs=chosen_logprobs,
-            rejected_logprobs=rejected_logprobs,
-            chosen_ref_logprobs=chosen_ref_logprobs,
-            rejected_ref_logprobs=rejected_ref_logprobs,
-            dpo_beta=config.dpo_beta,
-        )
-
-        # Backward pass
-        loss.backward()
+        # Do forward-backward with custom DPO loss
+        backward_result = training_client.forward_backward_custom(data, dpo_loss_fn).result()
+        dpo_metrics = backward_result.metrics
 
         # Optimizer step
         training_client.optim_step(adam_params).result()
