@@ -9,7 +9,7 @@ import asyncio
 import logging
 
 import chz
-from tinker_cookbook import model_info
+from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.preference import preference_datasets
 from tinker_cookbook.rl import (
     arithmetic_env,
@@ -46,13 +46,18 @@ class CLIConfig:
     kl_penalty_coef: float = 0.0
 
     # Logging configuration
-    log_relpath: str = "tmp/rl"
+    log_path: str = "/tmp/tinker-examples/rl"
     wandb_project: str | None = None
     wandb_name: str | None = None
     compute_post_kl: bool = False
 
+    # Checkpointing
+    save_every: int = 20
+
     # Service configuration
     base_url: str | None = None
+
+    behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
 
 def get_dataset_builder(
@@ -136,11 +141,16 @@ async def cli_main(cli_config: CLIConfig):
         max_tokens=cli_config.max_tokens,
         wandb_project=cli_config.wandb_project,
         wandb_name=cli_config.wandb_name,
-        log_relpath=cli_config.log_relpath,
+        log_path=cli_config.log_path,
         base_url=cli_config.base_url,
         load_checkpoint_path=cli_config.load_checkpoint_path,
         compute_post_kl=cli_config.compute_post_kl,
         kl_penalty_coef=cli_config.kl_penalty_coef,
+        save_every=cli_config.save_every,
+    )
+
+    cli_utils.check_log_dir(
+        cli_config.log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists
     )
 
     # Run training

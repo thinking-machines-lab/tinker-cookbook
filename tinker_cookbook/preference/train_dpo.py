@@ -4,27 +4,22 @@ Direct Preference Optimization (DPO) training
 
 import asyncio
 import logging
-import os
 import time
-from typing import Dict, List, Tuple, cast
+from typing import Any, Dict, List, Tuple, cast
 
 import chz
 import tinker
 import torch
 from tinker import types
-from tinker_cookbook.evaluators import (
-    EvaluatorBuilder,
-)
+from tinker_cookbook import checkpoint_utils
+from tinker_cookbook.evaluators import EvaluatorBuilder
 from tinker_cookbook.supervised.nll_evaluator import NLLEvaluator
 from tinker_cookbook.supervised.train import run_evals
 from tinker_cookbook.supervised.types import ChatDatasetBuilder
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.format_colorized import format_colorized
-from tinker_cookbook.utils.training_utils import (
-    compute_schedule_lr_multiplier,
-    save_checkpoint,
-)
+from tinker_cookbook.utils.lr_scheduling import compute_schedule_lr_multiplier
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +29,7 @@ class Config:
     """Configuration for Direct Preference Optimization (DPO) training."""
 
     # Required parameters
-    log_relpath: str
+    log_path: str
     model_name: str
     dataset_builder: ChatDatasetBuilder
     load_checkpoint_path: str | None = None
@@ -46,7 +41,6 @@ class Config:
     dpo_beta: float = 0.1
 
     # Model parameters
-    use_tinker: bool = True
     lora_rank: int = 32
 
     # Infrastructure parameters
@@ -70,19 +64,10 @@ class Config:
     # DPO-specific parameters
     reference_model_name: str | None = None
 
-    @property
-    def non_tinker_save_dir(self) -> str:
-        if self.use_tinker:
-            return "UNUSED"
-        return "/tmp/checkpoints"
-
-    @property
-    def log_base_dir(self) -> str:
-        return os.path.expanduser("~/experiments")
-
 
 def create_dpo_clients(
     config: Config,
+    resume_info: dict[str, Any] | None = None,
 ) -> Tuple[tinker.TrainingClient, tinker.TrainingClient]:
     """Create and configure the training clients for DPO.
 
@@ -105,10 +90,11 @@ def create_dpo_clients(
         base_model=config.reference_model_name or config.model_name, rank=config.lora_rank
     )
 
-    if config.load_checkpoint_path:
-        reference_client.load_state(config.load_checkpoint_path)
-        training_client.load_state(config.load_checkpoint_path)
-        logger.info(f"Loaded weights from {config.load_checkpoint_path}")
+    load_state_path = (resume_info and resume_info["state_path"]) or config.load_checkpoint_path
+    if load_state_path:
+        reference_client.load_state(load_state_path)
+        training_client.load_state(load_state_path)
+        logger.info(f"Loaded weights from {load_state_path}")
     return training_client, reference_client
 
 
@@ -165,15 +151,24 @@ def main(config: Config):
     logging.basicConfig(level=logging.INFO)
     logger.info("Starting Direct Preference Optimization training")
 
+    # Check for existing checkpoints
+    resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
+    if resume_info:
+        start_batch = resume_info["batch"] + 1  # Start from next batch after checkpoint
+        logger.info(f"Resuming from batch {start_batch}")
+    else:
+        start_batch = 0
+        logger.info("Starting training from scratch")
+
     # Setup
     ml_logger = ml_log.setup_logging(
-        log_dir=os.path.join(config.log_base_dir, config.log_relpath),
+        log_dir=config.log_path,
         wandb_project=config.wandb_project,
         config=config,
         wandb_name=config.wandb_name,
     )
 
-    training_client, reference_client = create_dpo_clients(config)
+    training_client, reference_client = create_dpo_clients(config, resume_info)
     tokenizer = get_tokenizer(config.model_name)
 
     # Training setup
@@ -187,7 +182,7 @@ def main(config: Config):
     logger.info(f"Training for {n_batches} batches")
 
     # Training loop
-    for batch_idx in range(n_batches):
+    for batch_idx in range(start_batch, n_batches):
         metrics = {}
         batch_start_time = time.time()
         learning_rate = (
@@ -207,10 +202,15 @@ def main(config: Config):
 
         # Save checkpoint if needed
         if batch_idx % config.save_every == 0 and batch_idx > 0:
-            checkpoint_path = save_checkpoint(
-                training_client=training_client, name=f"{batch_idx:06d}"
+            save_result = checkpoint_utils.save_checkpoint(
+                training_client=training_client,
+                name=f"{batch_idx:06d}",
+                log_path=config.log_path,
+                kind="both",
+                loop_state={"batch": batch_idx},
             )
-            metrics["state_path"] = checkpoint_path
+            if "state_path" in save_result:
+                metrics["state_path"] = save_result["state_path"]
 
         # Prepare batch
         data = dataset.get_batch(batch_idx)
@@ -307,7 +307,13 @@ def main(config: Config):
         ml_logger.log_metrics(metrics=metrics, step=batch_idx)
 
     # Save final checkpoint
-    _ = save_checkpoint(training_client=training_client, name="final")
+    _ = checkpoint_utils.save_checkpoint(
+        training_client=training_client,
+        name="final",
+        log_path=config.log_path,
+        kind="both",
+        loop_state={"batch": n_batches},
+    )
 
     # Cleanup
     ml_logger.close()
@@ -320,7 +326,3 @@ def print_example(datum: types.Datum, tokenizer: Tokenizer, label: str = ""):
     weights = datum.loss_fn_inputs["weights"].data
     print(f"\n{label} Example:")
     print(format_colorized(int_tokens, cast(list[float], weights), tokenizer))
-
-
-if __name__ == "__main__":
-    chz.nested_entrypoint(main, allow_hyphens=True)

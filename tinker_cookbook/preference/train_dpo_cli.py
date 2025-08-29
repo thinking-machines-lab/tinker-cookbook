@@ -3,6 +3,7 @@ Basic CLI for training with Direct Preference Optimization (DPO). It only suppor
 """
 
 import chz
+from tinker_cookbook import cli_utils
 from tinker_cookbook.preference import train_dpo
 from tinker_cookbook.preference.dpo_datasets import (
     DPODatasetBuilderFromComparisons,
@@ -31,7 +32,7 @@ class CLIConfig:
     batch_size: int = 256
 
     # Logging parameters
-    log_relpath: str = "tmp/dpo"
+    log_path: str = "/tmp/tinker-examples/dpo"
     wandb_project: str | None = None
     wandb_name: str | None = None
 
@@ -40,6 +41,8 @@ class CLIConfig:
 
     # DPO-specific parameters
     reference_model_name: str | None = None
+
+    behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
 
 def get_dataset_builder(
@@ -76,8 +79,12 @@ def get_dataset_builder(
 def cli_main(cli_config: CLIConfig):
     """Main CLI function that builds the full config and calls the training function."""
     # Build full config
+    cli_utils.check_log_dir(
+        cli_config.log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists
+    )
+
     config = train_dpo.Config(
-        log_relpath=cli_config.log_relpath,
+        log_path=cli_config.log_path,
         model_name=cli_config.model_name,
         dataset_builder=get_dataset_builder(
             cli_config.dataset,

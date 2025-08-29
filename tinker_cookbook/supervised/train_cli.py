@@ -5,7 +5,7 @@ Basic CLI for training with supervised learning. It only supports a few datasets
 import asyncio
 
 import chz
-from tinker_cookbook import model_info
+from tinker_cookbook import cli_utils, model_info, renderers
 from tinker_cookbook.evaluators import EvaluatorBuilder
 from tinker_cookbook.supervised import chat_datasets, train, train_pipelined
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, ChatDatasetBuilderCommonConfig
@@ -14,7 +14,7 @@ from tinker_cookbook.supervised.types import ChatDatasetBuilder, ChatDatasetBuil
 @chz.chz
 class CLIConfig:
     # Required parameters
-    log_relpath: str = "tmp/supervised"
+    log_path: str = "/tmp/tinker-examples/supervised"
     model_name: str = "meta-llama/Llama-3.1-8B"
     load_checkpoint_path: str | None = None
     dataset: str = "no_robots"
@@ -39,7 +39,7 @@ class CLIConfig:
 
     # Dataset-specific parameters
     renderer_name: str | None = None
-    train_on_what: str | None = None  # TrainOnWhat option
+    train_on_what: renderers.TrainOnWhat | None = None  # TrainOnWhat option
     max_length: int | None = 16384
     batch_size: int = 256
 
@@ -54,7 +54,7 @@ def get_dataset_builder(
     renderer_name: str,
     max_length: int | None,
     batch_size: int,
-    train_on_what: str | None = None,
+    train_on_what: renderers.TrainOnWhat | None = None,
 ) -> ChatDatasetBuilder:
     # Note that sft/train can work with non-chat datasets, but this CLI only supports chat datasets
     common_config = ChatDatasetBuilderCommonConfig(
@@ -119,7 +119,7 @@ def cli_main(cli_config: CLIConfig):
         cli_config.model_name
     )
     config = train.Config(
-        log_relpath=cli_config.log_relpath,
+        log_path=cli_config.log_path,
         model_name=cli_config.model_name,
         load_checkpoint_path=cli_config.load_checkpoint_path,
         dataset_builder=get_dataset_builder(
@@ -147,6 +147,7 @@ def cli_main(cli_config: CLIConfig):
         eval_every=cli_config.eval_every,
         infrequent_eval_every=cli_config.infrequent_eval_every,
     )
+    cli_utils.check_log_dir(config.log_path, behavior_if_exists=config.behavior_if_log_dir_exists)
     if cli_config.pipelined:
         asyncio.run(train_pipelined.main(config))
     else:

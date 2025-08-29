@@ -2,12 +2,14 @@
 Basic interfaces and types for supervised training.
 """
 
-import warnings
+import logging
 
 import chz
 from tinker import types
 from tinker_cookbook import renderers
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
+
+logger = logging.getLogger(__name__)
 
 
 class SupervisedDataset:
@@ -21,9 +23,16 @@ class SupervisedDataset:
     def __len__(self) -> int:
         raise NotImplementedError
 
-    def shuffle(self, seed: int = 0):
-        """Shuffle the dataset with the given seed."""
-        warnings.warn("Shuffling the dataset is not implemented.")
+    def set_epoch(self, seed: int = 0):
+        """Tell the dataset that we're on the given epoch of training.
+        Datasets can decide what to do with this information, but for best
+        results with multi-epoch training, you might want to shuffle differently each epoch,
+        though results on whether this helps are inconclusive.
+        """
+        logger.warning(
+            "set_epoch called, but shuffling is not implemented for %s",
+            self.__class__.__name__,
+        )
 
 
 @chz.chz
@@ -47,7 +56,7 @@ class ChatDatasetBuilderCommonConfig:
     renderer_name: str
     max_length: int | None
     batch_size: int
-    train_on_what: str | None = None
+    train_on_what: renderers.TrainOnWhat | None = None
 
 
 @chz.chz

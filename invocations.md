@@ -3,7 +3,7 @@
 ```bash
 model_name=Qwen/Qwen2.5-VL-7B-Instruct
 uv run python -m tinker_cookbook.supervised.train_cli \
-    log_relpath=tinker-examples/tulu-v3-sft \
+    log_path=/tmp/tinker-examples/tulu-v3-sft \
     model_name=$model_name \
     dataset=tulu3
 ```
@@ -24,7 +24,7 @@ Trivial, but runs fast enough that you can see it learn. Reward should go from 0
 ```bash
 model_name=meta-llama/Llama-3.2-1B
 uv run python -m tinker_cookbook.rl.train_cli \
-    log_relpath=tinker-examples/arithmetic-rl \
+    log_path=/tmp/tinker-examples/arithmetic-rl \
     model_name=$model_name \
     env=arithmetic \
     group_size=4 \
@@ -38,7 +38,7 @@ uv run python -m tinker_cookbook.rl.train_cli \
 ```bash
 model_name=Qwen/Qwen2.5-VL-7B-Instruct
 uv run python -m tinker_cookbook.rl.train_cli \
-    log_relpath=tinker-examples/math-rl \
+    log_path=/tmp/tinker-examples/math-rl \
     model_name=$model_name \
     env=math \
     group_size=16 \
@@ -52,7 +52,7 @@ uv run python -m tinker_cookbook.rl.train_cli \
 ```bash
 uv run python -m tinker_cookbook.rl.train_cli \
     env=hhh \
-    log_relpath=tinker-examples/hhh-rl \
+    log_path=/tmp/tinker-examples/hhh-rl \
     groups_per_batch=256 \
     group_size=4 \
     max_tokens=400 \
@@ -63,7 +63,7 @@ uv run python -m tinker_cookbook.rl.train_cli \
 ```bash
 model_name=meta-llama/Llama-3.1-8B-Instruct
 uv run python -m tinker_cookbook.rl.train_cli \
-    log_relpath=tinker-examples/twenty-questions-rl \
+    log_path=/tmp/tinker-examples/twenty-questions-rl \
     model_name=$model_name \
     env=twenty_questions \
     learning_rate=1e-4 \

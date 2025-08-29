@@ -4,7 +4,6 @@ This avoids missing a clock cycle of the training process while you load the nex
 """
 
 import logging
-import os
 import time
 from dataclasses import dataclass
 
@@ -17,7 +16,7 @@ from tinker_cookbook.supervised.nll_evaluator import NLLEvaluator
 from tinker_cookbook.supervised.train import Config, run_evals
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log
-from tinker_cookbook.utils.training_utils import compute_schedule_lr_multiplier
+from tinker_cookbook.utils.lr_scheduling import compute_schedule_lr_multiplier
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +56,7 @@ async def main(config: Config):
 
     # Setup
     ml_logger = ml_log.setup_logging(
-        log_dir=os.path.join(config.log_base_dir, config.log_relpath),
+        log_dir=config.log_path,
         wandb_project=config.wandb_project,
         config=config,
         wandb_name=config.wandb_name,

@@ -5,9 +5,7 @@ Implements RL on general MDPs
 
 import asyncio
 import logging
-import os
 import time
-from pathlib import Path
 from typing import Dict, List, cast
 
 import chz
@@ -15,12 +13,14 @@ import numpy as np
 import tinker
 import torch
 from tinker import types
+from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.display import colorize_example
-from tinker_cookbook.evaluators import SamplingClientEvaluatorBuilder
+from tinker_cookbook.evaluators import SamplingClientEvaluator, SamplingClientEvaluatorBuilder
 from tinker_cookbook.rl.metric_util import RLTestSetEvaluator, compute_trajectory_metrics
 from tinker_cookbook.rl.rollouts import do_group_rollout
 from tinker_cookbook.rl.types import (
+    RLDataset,
     RLDatasetBuilder,
     Trajectory,
     TrajectoryGroup,
@@ -28,10 +28,6 @@ from tinker_cookbook.rl.types import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.misc_utils import all_same, safezip, split_list, timed
-from tinker_cookbook.utils.training_utils import (
-    save_checkpoint_async,
-    save_sampling_checkpoint_async,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -452,7 +448,7 @@ class Config:
     wandb_project: str | None = None
     wandb_name: str | None = None
 
-    log_relpath: str
+    log_path: str
     base_url: str | None = None
 
     remove_constant_reward_groups: bool = False
@@ -460,22 +456,130 @@ class Config:
     save_every: int = 20
     load_checkpoint_path: str | None = None
 
-    @property
-    def log_base_dir(self) -> str:
-        return os.path.expanduser("~/experiments")
+
+async def do_update(
+    i_batch: int,
+    num_batches: int,
+    cfg: Config,
+    training_client: tinker.TrainingClient,
+    service_client: tinker.ServiceClient,
+    evaluators: list[SamplingClientEvaluator],
+    dataset: RLDataset,
+    ml_logger: ml_log.Logger,
+    tokenizer: Tokenizer,
+):
+    """Perform a single update step in the RL training loop."""
+    metrics = {
+        "progress/batch": i_batch,
+        "optim/lr": cfg.learning_rate,
+        "progress/done_frac": (i_batch + 1) / num_batches,
+    }
+
+    t_start = time.time()
+
+    # Save checkpoint and create sampling client
+    path_dict = await checkpoint_utils.save_checkpoint_async(
+        training_client=training_client,
+        name=f"{i_batch:06d}",
+        log_path=cfg.log_path,
+        loop_state={"batch": i_batch},
+        kind="both" if (i_batch > 0 and i_batch % cfg.save_every == 0) else "sampler",
+    )
+    sampling_client = training_client.create_sampling_client(path_dict["sampler_path"])
+
+    # Run evaluations
+    if cfg.eval_every > 0 and i_batch % cfg.eval_every == 0:
+        with timed("run_evals", metrics):
+            for evaluator in evaluators:
+                eval_metrics = await evaluator(sampling_client)
+                metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+
+    # Get batch and sample trajectories
+    env_group_builders_P = dataset.get_batch(i_batch)
+    with timed("sample", metrics):
+        # Create sampling client with current weights
+        policy = TinkerTokenCompleter(sampling_client, max_tokens=cfg.max_tokens)
+        trajectory_groups_P = await asyncio.gather(
+            *[do_group_rollout(builder, policy) for builder in env_group_builders_P]
+        )
+
+    # Compute trajectory metrics
+    metrics.update(compute_trajectory_metrics(trajectory_groups_P))
+
+    # Print one trajectory
+    for traj_group in trajectory_groups_P[:1]:
+        print_group(traj_group, tokenizer)
+
+    # Remove groups with constant reward if configured
+    filtered_trajectory_groups_P = (
+        _remove_constant_reward_groups(trajectory_groups_P)
+        if cfg.remove_constant_reward_groups
+        else trajectory_groups_P
+    )
+
+    # Assemble training data
+    with timed("assemble_training_data", metrics):
+        advantages_P = compute_advantages(filtered_trajectory_groups_P)
+        data_D, _metadata_D = assemble_training_data(filtered_trajectory_groups_P, advantages_P)
+
+    # Incorporate KL penalty if configured
+    if cfg.kl_penalty_coef > 0:
+        with timed("kl_vs_base", metrics):
+            kl_penalty_metrics = await incorporate_kl_penalty(
+                data_D,
+                service_client.create_sampling_client(base_model=cfg.model_name),
+                # ^^^ TODO: replace with the model we load, if relevant
+                cfg.kl_penalty_coef,
+                cfg.kl_discount_factor,
+            )
+        metrics.update(kl_penalty_metrics)
+
+    # Training step
+    with timed("train", metrics):
+        training_logprobs_D = await train_step(
+            data_D,
+            training_client,
+            cfg.learning_rate,
+            cfg.num_minibatches,
+        )
+
+    # Compute KL metrics
+    with timed("compute_kl_sample_train", metrics):
+        kl_sample_train_metrics = compute_kl_sample_train(data_D, training_logprobs_D)
+        metrics.update(kl_sample_train_metrics)
+
+    # Compute post-KL metrics if configured
+    if cfg.compute_post_kl:
+        sampling_client_for_kl = await training_client.save_weights_and_get_sampling_client_async(
+            f"{i_batch + 1:06d}_kl"
+        )
+        # TODO: currently this saves an extra sampling client, which is wasteful. We should
+        # be able to reuse this the next loop iteration if we've created it.
+        with timed("compute_post_kl", metrics):
+            post_kl_metrics = await compute_post_kl(data_D, sampling_client_for_kl)
+            metrics.update(post_kl_metrics)
+
+    # Log metrics
+    metrics["time/total"] = time.time() - t_start
+    ml_logger.log_metrics(metrics, step=i_batch)
 
 
 async def main(
     cfg: Config,
 ):
     """Main training loop for MDP RL."""
-    log_dir = str(Path(cfg.log_base_dir) / cfg.log_relpath)
     logging.basicConfig(level=logging.INFO, force=True)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("tinker._base_client").setLevel(logging.WARNING)
 
+    resume_info = checkpoint_utils.get_last_checkpoint(cfg.log_path)
+    if resume_info:
+        start_batch = resume_info["batch"]
+    else:
+        start_batch = 0
+
     ml_logger = ml_log.setup_logging(
-        log_dir=log_dir,
+        log_dir=cfg.log_path,
         wandb_project=cfg.wandb_project,
         config=cfg,
         wandb_name=cfg.wandb_name,
@@ -484,13 +588,14 @@ async def main(
     training_client = await service_client.create_lora_training_client_async(
         cfg.model_name, rank=cfg.lora_rank
     )
-    if cfg.load_checkpoint_path is not None:
-        future = await training_client.load_state_async(cfg.load_checkpoint_path)
-        _ = await future.result_async()
-        logger.info(f"Loaded state from {cfg.load_checkpoint_path}")
 
-    # Initial weight save
-    current_weights_path = await save_sampling_checkpoint_async(training_client, "000000")
+    load_state_path: str | None = (
+        resume_info["state_path"] if resume_info else cfg.load_checkpoint_path
+    )
+    if load_state_path:
+        future = await training_client.load_state_async(load_state_path)
+        _ = await future.result_async()
+        logger.info(f"Loaded state from {load_state_path}")
 
     # Get tokenizer from training client
     tokenizer = training_client.get_tokenizer()
@@ -505,86 +610,28 @@ async def main(
     print(f"Will train on {num_batches} batches")
 
     # Training loop
-    for i_batch in range(num_batches):
-        t_start = time.time()
-        metrics = {
-            "progress/batch": i_batch,
-            "optim/lr": cfg.learning_rate,
-            "progress/done_frac": (i_batch + 1) / num_batches,
-            "sampler_weights_path": current_weights_path,
-        }
-        env_group_builders_P = dataset.get_batch(i_batch)
-        with timed("sample", metrics):
-            # Create sampling client with current weights
-            sampling_client = training_client.create_sampling_client(current_weights_path)
-            policy = TinkerTokenCompleter(sampling_client, max_tokens=cfg.max_tokens)
-            trajectory_groups_P = await asyncio.gather(
-                *[do_group_rollout(builder, policy) for builder in env_group_builders_P]
-            )
-
-        # Compute some metrics
-        metrics.update(compute_trajectory_metrics(trajectory_groups_P))
-        # Print one trajectory
-        for traj_group in trajectory_groups_P[:1]:
-            print_group(traj_group, tokenizer)
-
-        # Remove groups with constant reward.
-        # This introduces slight bias when we have a kl penalty, but generally doesn't matter much
-        filtered_trajectory_groups_P = (
-            _remove_constant_reward_groups(trajectory_groups_P)
-            if cfg.remove_constant_reward_groups
-            else trajectory_groups_P
+    for i_batch in range(start_batch, num_batches):
+        await do_update(
+            i_batch=i_batch,
+            num_batches=num_batches,
+            cfg=cfg,
+            training_client=training_client,
+            service_client=service_client,
+            evaluators=evaluators,
+            dataset=dataset,
+            ml_logger=ml_logger,
+            tokenizer=tokenizer,
         )
-        with timed("assemble_training_data", metrics):
-            advantages_P = compute_advantages(filtered_trajectory_groups_P)
-            data_D, _metadata_D = assemble_training_data(filtered_trajectory_groups_P, advantages_P)
-        if cfg.kl_penalty_coef > 0:
-            with timed("kl_vs_base", metrics):
-                kl_penalty_metrics = await incorporate_kl_penalty(
-                    data_D,
-                    service_client.create_sampling_client(base_model=cfg.model_name),
-                    # ^^^ TODO: replace with the model we load, if relevant
-                    cfg.kl_penalty_coef,
-                    cfg.kl_discount_factor,
-                )
-            metrics.update(kl_penalty_metrics)
 
-        with timed("train", metrics):
-            training_logprobs_D = await train_step(
-                data_D,
-                training_client,
-                cfg.learning_rate,
-                cfg.num_minibatches,
-            )
+    # Save final checkpoint
+    checkpoint_utils.save_checkpoint(
+        training_client=training_client,
+        name="final",
+        log_path=cfg.log_path,
+        kind="both",
+        loop_state={"batch": num_batches},
+    )
 
-        with timed("compute_kl_sample_train", metrics):
-            kl_sample_train_metrics = compute_kl_sample_train(data_D, training_logprobs_D)
-            metrics.update(kl_sample_train_metrics)
-
-        with timed("save_sampling_weights", metrics):
-            # Over-write the sampling checkpoint to avoid blowing up memory
-            current_weights_path = await save_sampling_checkpoint_async(
-                training_client, f"{i_batch + 1:06d}"
-            )
-
-        if cfg.compute_post_kl:
-            with timed("compute_post_kl", metrics):
-                post_sampling_client = training_client.create_sampling_client(current_weights_path)
-                post_kl_metrics = await compute_post_kl(data_D, post_sampling_client)
-                metrics.update(post_kl_metrics)
-
-        if cfg.eval_every > 0 and i_batch % cfg.eval_every == 0:
-            sampling_client = training_client.create_sampling_client(current_weights_path)
-            with timed("run_evals", metrics):
-                for evaluator in evaluators:
-                    eval_metrics = await evaluator(sampling_client)
-                    metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
-
-        if cfg.save_every > 0 and i_batch % cfg.save_every == 0 and i_batch > 0:
-            with timed("save_checkpoint", metrics):
-                state_path = await save_checkpoint_async(training_client, f"{i_batch + 1:06d}")
-                metrics["state_path"] = state_path
-
-        # Log metrics
-        metrics["time/total"] = time.time() - t_start
-        ml_logger.log_metrics(metrics, step=i_batch)
+    # Cleanup
+    ml_logger.close()
+    logger.info("Training completed successfully")

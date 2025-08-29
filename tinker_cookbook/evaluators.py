@@ -27,3 +27,4 @@ class SamplingClientEvaluator:
 
 EvaluatorBuilder = Callable[[], TrainingClientEvaluator | SamplingClientEvaluator]
 SamplingClientEvaluatorBuilder = Callable[[], SamplingClientEvaluator]
+Evaluator = TrainingClientEvaluator | SamplingClientEvaluator

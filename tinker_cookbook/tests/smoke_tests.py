@@ -36,7 +36,7 @@ def test_supervised():
     cfg = supervised_train.Config(
         model_name=model_name,
         dataset_builder=dataset_builder,  # type: ignore
-        log_relpath="tinker-smoke-test/supervised",
+        log_path="/tmp/tinker-smoke-test/supervised",
         wandb_project="tinker-smoke-test",
         learning_rate=1e-4,
     )
@@ -62,7 +62,7 @@ async def test_rl():
         model_name=model_name,
         lora_rank=lora_rank,
         dataset_builder=dataset_builder,
-        log_relpath="tinker-smoke-test/rl-arithmetic",
+        log_path="/tmp/tinker-smoke-test/rl-arithmetic",
         wandb_project="tinker-smoke-test",
         learning_rate=1e-4,
         max_tokens=5,

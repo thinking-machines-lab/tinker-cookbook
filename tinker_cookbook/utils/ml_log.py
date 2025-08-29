@@ -90,11 +90,9 @@ class JsonLogger(Logger):
     """Logger that writes metrics to a JSONL file."""
 
     def __init__(self, log_dir: str | Path):
-        self.log_dir = Path(log_dir)
+        self.log_dir = Path(log_dir).expanduser()
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.metrics_file = self.log_dir / "metrics.jsonl"
-        # Create new file (don't append)
-        self.metrics_file.write_text("")
         self._logged_hparams = False
 
     def log_hparams(self, config: Any) -> None:

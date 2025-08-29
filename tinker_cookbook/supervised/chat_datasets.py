@@ -61,7 +61,7 @@ class SupervisedDatasetFromHFDataset(SupervisedDataset):
             assert self.flatmap_fn is not None
             return [datum for row in rows.to_list() for datum in self.flatmap_fn(row)]
 
-    def shuffle(self, seed: int = 0):
+    def set_epoch(self, seed: int = 0):
         self.shuffle_dataset = self.hf_dataset.shuffle(seed=seed)
 
     def __len__(self) -> int:
@@ -103,7 +103,7 @@ class StreamingSupervisedDatasetFromHFDataset(SupervisedDataset):
             assert self.flatmap_fn is not None
             return [datum for row in rows for datum in self.flatmap_fn(row)]
 
-    def shuffle(self, seed: int = 0):
+    def set_epoch(self, seed: int = 0):
         self.hf_dataset.set_epoch(seed)
         self.dataset_iterator = iter(self.hf_dataset)
         self.index = -1
