@@ -4,6 +4,7 @@ Direct Preference Optimization (DPO) training
 
 import asyncio
 import logging
+import os
 import time
 from typing import Any, Dict, List, Tuple, cast
 
@@ -29,7 +30,7 @@ class Config:
     """Configuration for Direct Preference Optimization (DPO) training."""
 
     # Required parameters
-    log_path: str
+    log_path: str = chz.field(munger=lambda _, s: os.path.expanduser(s))
     model_name: str
     dataset_builder: ChatDatasetBuilder
     load_checkpoint_path: str | None = None
@@ -92,8 +93,11 @@ def create_dpo_clients(
 
     load_state_path = (resume_info and resume_info["state_path"]) or config.load_checkpoint_path
     if load_state_path:
-        reference_client.load_state(load_state_path)
-        training_client.load_state(load_state_path)
+        assert isinstance(load_state_path, str)
+        rc_future = reference_client.load_state(load_state_path)
+        tc_future = training_client.load_state(load_state_path)
+        _ = rc_future.result()
+        _ = tc_future.result()
         logger.info(f"Loaded weights from {load_state_path}")
     return training_client, reference_client
 
@@ -148,8 +152,13 @@ def compute_dpo_loss(
 
 def main(config: Config):
     """Main training function that runs the complete DPO training process."""
-    logging.basicConfig(level=logging.INFO)
-    logger.info("Starting Direct Preference Optimization training")
+    ml_logger = ml_log.setup_logging(
+        log_dir=config.log_path,
+        wandb_project=config.wandb_project,
+        config=config,
+        wandb_name=config.wandb_name,
+        do_configure_logging_module=True,
+    )
 
     # Check for existing checkpoints
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
@@ -161,13 +170,6 @@ def main(config: Config):
         logger.info("Starting training from scratch")
 
     # Setup
-    ml_logger = ml_log.setup_logging(
-        log_dir=config.log_path,
-        wandb_project=config.wandb_project,
-        config=config,
-        wandb_name=config.wandb_name,
-    )
-
     training_client, reference_client = create_dpo_clients(config, resume_info)
     tokenizer = get_tokenizer(config.model_name)
 
@@ -306,14 +308,17 @@ def main(config: Config):
         # Log metrics
         ml_logger.log_metrics(metrics=metrics, step=batch_idx)
 
-    # Save final checkpoint
-    _ = checkpoint_utils.save_checkpoint(
-        training_client=training_client,
-        name="final",
-        log_path=config.log_path,
-        kind="both",
-        loop_state={"batch": n_batches},
-    )
+    # Save final checkpoint if training actually happened
+    if start_batch < n_batches:
+        _ = checkpoint_utils.save_checkpoint(
+            training_client=training_client,
+            name="final",
+            log_path=config.log_path,
+            kind="both",
+            loop_state={"batch": n_batches},
+        )
+    else:
+        logger.info("Training was already complete; nothing to do")
 
     # Cleanup
     ml_logger.close()
@@ -324,5 +329,5 @@ def print_example(datum: types.Datum, tokenizer: Tokenizer, label: str = ""):
     """Print a formatted example from the dataset."""
     int_tokens = list(datum.model_input.to_ints())
     weights = datum.loss_fn_inputs["weights"].data
-    print(f"\n{label} Example:")
-    print(format_colorized(int_tokens, cast(list[float], weights), tokenizer))
+    logger.info(f"\n{label} Example:")
+    logger.info(format_colorized(int_tokens, cast(list[float], weights), tokenizer))

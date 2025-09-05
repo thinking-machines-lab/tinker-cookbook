@@ -91,6 +91,17 @@ class EnvGroupBuilder:
         """
         return [(0.0, {}) for _ in trajectory_group]
 
+    def logging_tags(self) -> list[str]:
+        """
+        This is just used for logging. We often want to aggregate metrics (like rewards
+        or episode lengths) per-environment, or across a group of related environments.
+
+        Most commonly, you'd return a short name for the environment, such as ['gsm'] for
+        grade school math. You also might want a few tags at different levels of granularity,
+        e.g., ['gsm', 'math', 'rlvr']
+        """
+        return []
+
 
 @dataclass
 class TrajectoryGroup:

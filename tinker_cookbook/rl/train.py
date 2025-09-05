@@ -4,7 +4,9 @@ Implements RL on general MDPs
 """
 
 import asyncio
+import io
 import logging
+import os
 import time
 from typing import Dict, List, cast
 
@@ -361,16 +363,40 @@ def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
     rewards = traj_group.get_total_rewards()
     advantages_G = compute_advantages([traj_group])
     data_D, metadata_D = assemble_training_data([traj_group], advantages_G)
-    print("====== Trajectory Group ======")
+
+    buf = io.StringIO()
+
+    def bprint(s: str):
+        print(s, file=buf)
+
+    bprint("\n====== Trajectory Group ======")
     last_metadata = None
     for datum, metadata in safezip(data_D, metadata_D):
         idx = metadata["traj_idx"]
         if metadata != last_metadata:
-            print(f"****** trajectory idx={idx}, reward={rewards[idx]:.3g} ******")
-        print("---- datum ----")
-        print(colorize_example(datum, tokenizer, key="advantages"))
+            bprint(f"****** trajectory idx={idx}, reward={rewards[idx]:.3g} ******")
+            # Print trajectory-level metrics
+            if traj_group.metrics_G[idx]:
+                bprint("Trajectory metrics:")
+                for key, value in traj_group.metrics_G[idx].items():
+                    bprint(f"  {key}: {value}")
+            # Print per-transition metrics
+            transition_metrics = [
+                transition.metrics
+                for transition in traj_group.trajectories_G[idx].transitions
+                if transition.metrics
+            ]
+            if transition_metrics:
+                bprint("Per-step metrics:")
+                for i, metrics in enumerate(transition_metrics):
+                    bprint(f"  Step {i}:")
+                    for key, value in metrics.items():
+                        bprint(f"    {key}: {value}")
+        bprint("---- datum ----")
+        bprint(colorize_example(datum, tokenizer, key="advantages"))
         last_metadata = metadata
-    print("====== End Trajectory Group ======")
+    bprint("====== End Trajectory Group ======")
+    logger.info(buf.getvalue().rstrip())
 
 
 def _remove_mask(datum: types.Datum) -> types.Datum:
@@ -448,11 +474,11 @@ class Config:
     wandb_project: str | None = None
     wandb_name: str | None = None
 
-    log_path: str
+    log_path: str = chz.field(munger=lambda _, s: os.path.expanduser(s))
     base_url: str | None = None
 
     remove_constant_reward_groups: bool = False
-    eval_every: int = 1
+    eval_every: int = 20
     save_every: int = 20
     load_checkpoint_path: str | None = None
 
@@ -504,10 +530,11 @@ async def do_update(
         )
 
     # Compute trajectory metrics
-    metrics.update(compute_trajectory_metrics(trajectory_groups_P))
+    taglist_P = [env_group_builder.logging_tags() for env_group_builder in env_group_builders_P]
+    metrics.update(compute_trajectory_metrics(trajectory_groups_P, taglist_P))
 
     # Print one trajectory
-    for traj_group in trajectory_groups_P[:1]:
+    for traj_group in trajectory_groups_P[:2]:
         print_group(traj_group, tokenizer)
 
     # Remove groups with constant reward if configured
@@ -568,9 +595,14 @@ async def main(
     cfg: Config,
 ):
     """Main training loop for MDP RL."""
-    logging.basicConfig(level=logging.INFO, force=True)
+    ml_logger = ml_log.setup_logging(
+        log_dir=cfg.log_path,
+        wandb_project=cfg.wandb_project,
+        config=cfg,
+        wandb_name=cfg.wandb_name,
+    )
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("tinker._base_client").setLevel(logging.WARNING)
+    logging.getLogger("pylatexenc").setLevel(logging.WARNING)
 
     resume_info = checkpoint_utils.get_last_checkpoint(cfg.log_path)
     if resume_info:
@@ -578,12 +610,6 @@ async def main(
     else:
         start_batch = 0
 
-    ml_logger = ml_log.setup_logging(
-        log_dir=cfg.log_path,
-        wandb_project=cfg.wandb_project,
-        config=cfg,
-        wandb_name=cfg.wandb_name,
-    )
     service_client = tinker.ServiceClient(base_url=cfg.base_url)
     training_client = await service_client.create_lora_training_client_async(
         cfg.model_name, rank=cfg.lora_rank
@@ -607,7 +633,7 @@ async def main(
         evaluators.append(RLTestSetEvaluator(maybe_test_dataset, max_tokens=cfg.max_tokens))
 
     num_batches = len(dataset)
-    print(f"Will train on {num_batches} batches")
+    logger.info(f"Will train on {num_batches} batches")
 
     # Training loop
     for i_batch in range(start_batch, num_batches):
@@ -624,13 +650,16 @@ async def main(
         )
 
     # Save final checkpoint
-    checkpoint_utils.save_checkpoint(
-        training_client=training_client,
-        name="final",
-        log_path=cfg.log_path,
-        kind="both",
-        loop_state={"batch": num_batches},
-    )
+    if start_batch < num_batches:
+        _ = await checkpoint_utils.save_checkpoint_async(
+            training_client=training_client,
+            name="final",
+            log_path=cfg.log_path,
+            kind="both",
+            loop_state={"batch": num_batches},
+        )
+    else:
+        logger.info("Training was already complete; nothing to do")
 
     # Cleanup
     ml_logger.close()

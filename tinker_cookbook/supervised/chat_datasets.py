@@ -175,11 +175,12 @@ class Tulu3Builder(ChatDatasetBuilder):
 
 @chz.chz
 class NoRobotsBuilder(ChatDatasetBuilder):
-    def __call__(self) -> tuple[SupervisedDataset, None]:
+    def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset]:
         dataset = datasets.load_dataset("HuggingFaceH4/no_robots")
         dataset = cast(datasets.DatasetDict, dataset)
-        dataset = dataset["train"]
-        dataset = dataset.shuffle(seed=0)
+        train_dataset = dataset["train"]
+        test_dataset = dataset["test"]
+        train_dataset = train_dataset.shuffle(seed=0)
 
         # Use train_on_what from common_config if provided, otherwise use default
         train_on_what = (
@@ -194,8 +195,10 @@ class NoRobotsBuilder(ChatDatasetBuilder):
             )
 
         return SupervisedDatasetFromHFDataset(
-            dataset, batch_size=self.common_config.batch_size, map_fn=map_fn
-        ), None
+            train_dataset, batch_size=self.common_config.batch_size, map_fn=map_fn
+        ), SupervisedDatasetFromHFDataset(
+            test_dataset, batch_size=self.common_config.batch_size, map_fn=map_fn
+        )
 
 
 @chz.chz

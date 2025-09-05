@@ -2,7 +2,9 @@ from termcolor import colored
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
-def format_colorized(tokens: list[int], weights: list[float], tokenizer: Tokenizer) -> str:
+def format_colorized(
+    tokens: list[int], weights: list[float], tokenizer: Tokenizer, draw_newline_arrow: bool = False
+) -> str:
     """
     Colour-code text according to per-token weights.
 
@@ -23,7 +25,9 @@ def format_colorized(tokens: list[int], weights: list[float], tokenizer: Tokeniz
         decoded = tokenizer.decode(current_ids)
         lines = decoded.splitlines(keepends=True)
         for line in lines:
-            chunks.append(colored(line.replace("\n", "↵\n"), current_color))
+            if draw_newline_arrow:
+                line = line.replace("\n", "↵\n")
+            chunks.append(colored(line, current_color))
 
     for tok_id, w in zip(tokens, weights, strict=True):
         if w < 0:

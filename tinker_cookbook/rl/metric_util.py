@@ -1,5 +1,6 @@
 import asyncio
 import itertools
+from collections import defaultdict
 from typing import Dict, List
 
 import numpy as np
@@ -30,7 +31,31 @@ def _compute_by_group_metrics(trajectory_groups_P: List[TrajectoryGroup], good_t
     }
 
 
-def compute_trajectory_metrics(trajectory_groups_P: List[TrajectoryGroup]) -> Dict[str, float]:
+def compute_trajectory_metrics(
+    trajectory_groups_P: List[TrajectoryGroup], taglist_P: List[list[str]]
+) -> Dict[str, float]:
+    tag2trajgroups = defaultdict(list)
+    for taglist, trajectory_group in zip(taglist_P, trajectory_groups_P):
+        for tag in taglist:
+            tag2trajgroups[tag].append(trajectory_group)
+    out = {}
+    have_nontrivial_tags = any(
+        len(trajgroups) < len(trajectory_groups_P) for trajgroups in tag2trajgroups.values()
+    )  # check if any tag gives us a strict subset of the full trajectory groups
+    if have_nontrivial_tags:
+        for tag, trajectory_groups in tag2trajgroups.items():
+            prefixed_metrics = {
+                f"env/{tag}/{k}": v
+                for k, v in _compute_trajectory_metrics(trajectory_groups).items()
+            }
+            out.update(prefixed_metrics)
+    out.update(
+        {f"env/all/{k}": v for k, v in _compute_trajectory_metrics(trajectory_groups_P).items()}
+    )
+    return out
+
+
+def _compute_trajectory_metrics(trajectory_groups_P: List[TrajectoryGroup]) -> Dict[str, float]:
     """Compute metrics for the trajectory groups."""
     flat_trajs_PG = [traj for tg in trajectory_groups_P for traj in tg.trajectories_G]
     ac_tokens_by_turn = [
@@ -42,27 +67,29 @@ def compute_trajectory_metrics(trajectory_groups_P: List[TrajectoryGroup]) -> Di
     turns_by_trajectory = [len(traj.transitions) for traj in flat_trajs_PG]
     # Compute metrics
     metrics = {
-        "mean/ac_tokens_per_turn": sum(ac_tokens_by_turn) / sum(turns_by_trajectory),
-        "mean/ob_tokens_per_turn": sum(ob_tokens_by_turn) / sum(turns_by_trajectory),
-        "mean/turns_per_episode": sum(turns_by_trajectory) / len(flat_trajs_PG),
-        "total/episodes": len(flat_trajs_PG),
-        "total/turns": sum(turns_by_trajectory),
-        "total/ac_tokens": sum(ac_tokens_by_turn),
-        "total/ob_tokens": sum(ob_tokens_by_turn),
+        "ac_tokens_per_turn": sum(ac_tokens_by_turn) / sum(turns_by_trajectory),
+        "ob_tokens_per_turn": sum(ob_tokens_by_turn) / sum(turns_by_trajectory),
+        "turns_per_episode": sum(turns_by_trajectory) / len(flat_trajs_PG),
+        "total_episodes": len(flat_trajs_PG),
+        "total_turns": sum(turns_by_trajectory),
+        "total_ac_tokens": sum(ac_tokens_by_turn),
+        "total_ob_tokens": sum(ob_tokens_by_turn),
     }
     metrics["reward/total"] = np.mean(
         [reward for tg in trajectory_groups_P for reward in tg.get_total_rewards()]
     )
     # Per-transition metrics
-    _all_transitions = [
+    transition_metrics = [
         transition.metrics
         for tg in trajectory_groups_P
         for traj in tg.trajectories_G
         for transition in traj.transitions
     ]
-    metrics.update(dict_mean(_all_transitions))
-    # Final metrics
-    metrics.update(dict_mean([metrics for tg in trajectory_groups_P for metrics in tg.metrics_G]))
+    traj_metrics = [metrics for tg in trajectory_groups_P for metrics in tg.metrics_G]
+    metrics.update(dict_mean(transition_metrics + traj_metrics))
+    # combine traj_metrics and transition_metrics in case there's some key
+    # (like format error) that appears in the per-step metrics for some envs
+    # but the compute_group_rewards metric for other envs.
     metrics.update(_compute_by_group_metrics(trajectory_groups_P))
     return metrics
 
@@ -84,5 +111,6 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         trajectory_groups_P = await asyncio.gather(
             *[do_group_rollout(builder, policy) for builder in self.env_group_builders_P]
         )
-        metrics = compute_trajectory_metrics(trajectory_groups_P)
+        taglist_P = [builder.logging_tags() for builder in self.env_group_builders_P]
+        metrics = compute_trajectory_metrics(trajectory_groups_P, taglist_P)
         return metrics

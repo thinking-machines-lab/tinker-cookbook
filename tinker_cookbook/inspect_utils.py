@@ -5,6 +5,7 @@ This module contains the common classes and functions used by both
 run_inspect_evals.py and inspect_evaluator.py to avoid code duplication.
 """
 
+import logging
 import time
 from typing import Sequence
 
@@ -19,10 +20,13 @@ from inspect_ai.model import ModelOutput as InspectAIModelOutput
 from inspect_ai.model import ModelUsage as InspectAIModelUsage
 from inspect_ai.tool import ToolChoice as InspectAIToolChoice
 from inspect_ai.tool import ToolInfo as InspectAIToolInfo
+from termcolor import colored
 from tinker import types
 
 from tinker_cookbook import renderers
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+logger = logging.getLogger(__name__)
 
 
 def get_model_usage(
@@ -125,10 +129,10 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
 
         # Optional verbose output (only for standalone use)
         if self.verbose:
-            from termcolor import colored
-
-            print(colored(self.renderer.tokenizer.decode(prompt.to_ints()), "green"), end="")
-            print(colored(self.renderer.tokenizer.decode(sampled_token_sequences[0].tokens), "red"))
+            logger.info(
+                colored(self.renderer.tokenizer.decode(prompt.to_ints()), "green")
+                + colored(self.renderer.tokenizer.decode(sampled_token_sequences[0].tokens), "red")
+            )
 
         end_time = time.time()
 

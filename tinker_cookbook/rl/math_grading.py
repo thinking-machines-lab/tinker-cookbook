@@ -5,6 +5,7 @@ Includes math_normalize functionality that was dependency of grader.
 """
 
 import contextlib
+import logging
 import re
 import signal
 import types
@@ -13,6 +14,8 @@ from typing import Any, Callable, Dict, Tuple
 import sympy
 from pylatexenc import latex2text
 from sympy.parsing import sympy_parser
+
+logger = logging.getLogger(__name__)
 
 # ======================================================================
 # Math Normalize Functions
@@ -108,25 +111,20 @@ def _fix_sqrt(string: str) -> str:
 def _strip_string(string: str) -> str:
     # linebreaks
     string = string.replace("\n", "")
-    # print(string)
 
     # remove inverse spaces
     string = string.replace("\\!", "")
-    # print(string)
 
     # replace \\ with \
     string = string.replace("\\\\", "\\")
-    # print(string)
 
     # replace tfrac and dfrac with frac
     string = string.replace("tfrac", "frac")
     string = string.replace("dfrac", "frac")
-    # print(string)
 
     # remove \left and \right
     string = string.replace("\\left", "")
     string = string.replace("\\right", "")
-    # print(string)
 
     # Remove circ (degrees)
     string = string.replace("^{\\circ}", "")
@@ -540,11 +538,11 @@ def run_with_timeout_signal[T](
     try:
         result = func(*args, **kwargs)
     except TimeoutException:
-        print(f"Function timed out after {timeout_seconds} seconds.")
+        logger.warning(f"Function timed out after {timeout_seconds} seconds.")
         result = None
     except Exception as e:
         # Handle other exceptions from the function if needed
-        print(f"Function raised an exception: {e}")
+        logger.warning(f"Function raised an exception: {e}")
         result = None  # Or re-raise
     finally:
         # Disable the alarm

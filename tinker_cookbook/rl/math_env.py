@@ -1,4 +1,5 @@
 import math
+import re
 from functools import partial
 from typing import Literal, cast
 
@@ -30,8 +31,12 @@ class MathEnv(ProblemEnv):
         self.answer = answer
         self.grader = grader
 
+    @classmethod
+    def _boxed_format_suffix(cls) -> str:
+        return " Write your answer in \\boxed{} format."
+
     def get_question(self) -> str:
-        return self.problem
+        return self.problem + self._boxed_format_suffix()
 
     def check_format(self, sample_str: str) -> bool:
         try:
@@ -50,7 +55,10 @@ class MathEnv(ProblemEnv):
     @staticmethod
     def standard_fewshot_prefix() -> list[renderers.Message]:
         return [
-            {"role": "user", "content": "How many r's are in strawberry?"},
+            {
+                "role": "user",
+                "content": "How many r's are in strawberry?" + MathEnv._boxed_format_suffix(),
+            },
             {
                 "role": "assistant",
                 "content": "Let's spell the word out and number all the letters: 1) s 2) t 3) r 4) a 5) w 6) b 7) e 8) r 9) r 10) y. We have r's at positions 3, 8, and 9. \\boxed{3}",
@@ -72,6 +80,27 @@ def safe_grade(given_answer: str, ground_truth: str, grader: str = "sympy", time
         logger.warning(f"Timeout grading {given_answer} against {ground_truth}")
         return False
     return out
+
+
+def _extract_gsm8k_final_answer(text: str) -> str:
+    """Extract the final numeric/string answer from a GSM8K solution field.
+
+    GSM8K format typically places the final answer on a line starting with
+    '####'. We take the substring following '####' on the last such line.
+    """
+    lines = text.splitlines()
+    for line in reversed(lines):
+        s = line.strip()
+        if s.startswith("####"):
+            content = s[4:].strip()
+            if content.startswith(":"):
+                content = content[1:].strip()
+            content = content.replace(",", "").strip()
+            return content
+    matches = re.findall(r"####\s*(.+)", text)
+    if matches:
+        return matches[-1].strip()
+    raise ValueError("No GSM8K final answer found")
 
 
 def _get_hendrycks_math_test() -> Dataset:
@@ -204,6 +233,7 @@ class PolarisDataset(MathDataset):
                 MathEnv, problem, answer, self.renderer, convo_prefix=self.convo_prefix
             ),
             num_envs=group_size,
+            dataset_name="polaris",
         )
 
 
@@ -251,6 +281,7 @@ class DeepMathDataset(MathDataset):
                 MathEnv, problem, answer, self.renderer, convo_prefix=self.convo_prefix
             ),
             num_envs=group_size,
+            dataset_name="deepmath",
         )
 
 
@@ -270,11 +301,86 @@ class DeepMathDatasetBuilder(RLDatasetBuilder):
         ), None
 
 
+class Gsm8kDataset(RLDataset):
+    def __init__(
+        self,
+        batch_size: int,
+        group_size: int,
+        renderer: renderers.Renderer,
+        convo_prefix: list[renderers.Message] | None = None,
+        split: Literal["train", "test"] = "train",
+    ):
+        if split not in ("train", "test"):
+            raise ValueError("split must be 'train' or 'test'")
+        self.ds = cast(Dataset, load_dataset("openai/gsm8k", name="main", split=split))
+        if split == "train":
+            self.ds = self.ds.shuffle(seed=0)
+        self.batch_size = batch_size
+        self.group_size = group_size
+        self.renderer = renderer
+        self.convo_prefix = convo_prefix
+
+    def get_batch(self, index: int) -> list[EnvGroupBuilder]:
+        return [
+            builder
+            for row in self.ds.select(range(index * self.batch_size, (index + 1) * self.batch_size))
+            if (builder := self._make_env_group_builder(row, self.group_size)) is not None  # pyright: ignore[reportArgumentType]
+        ]
+
+    def __len__(self) -> int:
+        return len(self.ds) // self.batch_size
+
+    def _make_env_group_builder(
+        self, x: dict[str, str], group_size: int
+    ) -> ProblemGroupBuilder | None:
+        try:
+            problem = x["question"]
+            answer = _extract_gsm8k_final_answer(x["answer"])
+        except Exception as e:
+            logger.warning(f"Failed to parse GSM8K row: {e}")
+            return None
+        return ProblemGroupBuilder(
+            env_thunk=partial(
+                MathEnv, problem, answer, self.renderer, convo_prefix=self.convo_prefix
+            ),
+            num_envs=group_size,
+        )
+
+
+@chz.chz
+class Gsm8kDatasetBuilder(RLDatasetBuilder):
+    batch_size: int
+    model_name_for_tokenizer: str
+    renderer_name: str
+    group_size: int
+    convo_prefix: list[renderers.Message] | None | Literal["standard"] = "standard"
+
+    def __call__(self) -> tuple[Gsm8kDataset, Gsm8kDataset]:
+        if self.convo_prefix == "standard":
+            convo_prefix = MathEnv.standard_fewshot_prefix()
+        else:
+            convo_prefix = self.convo_prefix
+        tokenizer = get_tokenizer(self.model_name_for_tokenizer)
+        renderer = renderers.get_renderer(self.renderer_name, tokenizer=tokenizer)
+        datasets = [
+            Gsm8kDataset(
+                batch_size=self.batch_size,
+                group_size=self.group_size,
+                renderer=renderer,
+                convo_prefix=convo_prefix,
+                split=split,
+            )
+            for split in ("train", "test")
+        ]
+        return (datasets[0], datasets[1])
+
+
 # Populate the dataset builder map after all classes are defined
 DATASET_BUILDER_MAP = {
     "math": MathDatasetBuilder,
     "polaris": PolarisDatasetBuilder,
     "deepmath": DeepMathDatasetBuilder,
+    "gsm8k": Gsm8kDatasetBuilder,
 }
 
 
@@ -288,7 +394,7 @@ def get_math_dataset_builder(
     """
     Unified function to get any math dataset builder.
     Args:
-        dataset_name: One of "math", "polaris", or "deepmath"
+        dataset_name: One of "math", "polaris", "deepmath", or "gsm8k"
         batch_size: Number of groups per batch
         model_name_for_tokenizer: Model name for tokenizer
         renderer_name: Name of the renderer to use

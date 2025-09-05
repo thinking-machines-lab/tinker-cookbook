@@ -59,8 +59,8 @@ class ProblemEnv(Env):
             next_observation=types.ModelInput.empty(),
             next_stop_condition=self.stop_condition,
             metrics={
-                "subreward/correct_format": correct_format,
-                "subreward/correct_answer": correct_answer,
+                "format": correct_format,
+                "correct": correct_answer,
             },
         )
 
@@ -69,6 +69,7 @@ class ProblemEnv(Env):
 class ProblemGroupBuilder(EnvGroupBuilder):
     env_thunk: Callable[[], ProblemEnv]
     num_envs: int
+    dataset_name: str = "problems"
 
     async def make_envs(self) -> Sequence[Env]:
         return [self.env_thunk() for _ in range(self.num_envs)]
@@ -77,3 +78,6 @@ class ProblemGroupBuilder(EnvGroupBuilder):
         self, trajectory_group: list[Trajectory]
     ) -> list[tuple[float, Metrics]]:
         return [(0.0, {}) for _ in range(len(trajectory_group))]
+
+    def logging_tags(self) -> list[str]:
+        return [self.dataset_name]

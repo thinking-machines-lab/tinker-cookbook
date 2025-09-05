@@ -48,6 +48,8 @@ def check_log_dir(log_dir: str, behavior_if_exists: LogdirBehavior):
                     logger.warning(
                         f"Invalid input: {user_input}. Please enter 'delete', 'resume', or 'exit'."
                     )
+        elif behavior_if_exists == "resume":
+            return
         elif behavior_if_exists == "raise":
             raise ValueError(f"Log directory {log_dir} already exists. Will not delete it.")
         else:

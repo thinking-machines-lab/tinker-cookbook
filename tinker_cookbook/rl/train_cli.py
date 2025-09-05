@@ -1,4 +1,6 @@
 """
+DEPRECATED: we recommend using a standalone script like what's in recipes/rl_basic.py instead. We will remove this script in the future.
+
 Command-line interface for RL general training.
 
 This provides a simple entry point for common RL training scenarios.
@@ -7,6 +9,7 @@ For more advanced use cases, use train.py directly.
 
 import asyncio
 import logging
+import os
 
 import chz
 from tinker_cookbook import cli_utils, model_info
@@ -16,7 +19,6 @@ from tinker_cookbook.rl import (
     math_env,
     preference_envs,
     textarena_envs,
-    twenty_questions_env,
 )
 from tinker_cookbook.rl.train import Config, main
 from tinker_cookbook.rl.types import RLDatasetBuilder
@@ -46,7 +48,10 @@ class CLIConfig:
     kl_penalty_coef: float = 0.0
 
     # Logging configuration
-    log_path: str = "/tmp/tinker-examples/rl"
+    log_path: str = chz.field(
+        default="/tmp/tinker-examples/rl",
+        munger=lambda _, s: os.path.expanduser(s),
+    )
     wandb_project: str | None = None
     wandb_name: str | None = None
     compute_post_kl: bool = False
@@ -103,14 +108,6 @@ def get_dataset_builder(
             model_name_for_tokenizer=model_name,
             model_path="tinker://40e97ac0-99ea-4a84-a8c8-3b319db7cd2b/sampler_weights/checkpoint_final",
             # ^^^ 8b instruct trained on anthropic-hhh dataset
-            group_size=group_size,
-            base_url=base_url,
-        )
-    elif env == "twenty_questions":
-        return twenty_questions_env.TwentyQuestionsDatasetBuilder(
-            batch_size=batch_size,
-            model_name_for_tokenizer=model_name,
-            renderer_name=renderer_name,
             group_size=group_size,
             base_url=base_url,
         )

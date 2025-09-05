@@ -2,6 +2,8 @@
 Basic CLI for training with Direct Preference Optimization (DPO). It only supports a few datasets and configuration options; if you want to do something more complicated, please write a new script and call the train_dpo.main function directly.
 """
 
+import os
+
 import chz
 from tinker_cookbook import cli_utils
 from tinker_cookbook.preference import train_dpo
@@ -32,7 +34,9 @@ class CLIConfig:
     batch_size: int = 256
 
     # Logging parameters
-    log_path: str = "/tmp/tinker-examples/dpo"
+    log_path: str = chz.field(
+        default="/tmp/tinker-examples/dpo", munger=lambda _, s: os.path.expanduser(s)
+    )
     wandb_project: str | None = None
     wandb_name: str | None = None
 

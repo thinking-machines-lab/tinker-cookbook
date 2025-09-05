@@ -1,3 +1,4 @@
+import logging
 import random
 import re
 from typing import cast
@@ -18,6 +19,9 @@ from tinker_cookbook.supervised.chat_datasets import (
 )
 from tinker_cookbook.supervised.common import datum_from_tokens_weights
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDataset
+
+logger = logging.getLogger(__name__)
+
 
 # ============================================================================
 # Base Classes
@@ -173,40 +177,30 @@ def hhh_example_to_comparison(example: dict[str, str]) -> LabeledComparison | No
     return LabeledComparison(comparison=comparison, label="A")
 
 
-def _arena_has_image(conversation: list) -> bool:
-    """Check if an arena conversation contains images."""
-    for msg in conversation:
-        if isinstance(msg, dict) and "content" in msg:
-            content = msg["content"]
-            if isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "image":
-                        return True
-    return False
-
-
-def _arena_parse_conversation(conversation: list) -> list[renderers.Message]:
+def _arena_parse_conversation(conversation: list) -> list[renderers.Message] | None:
     """Parse arena conversation to message format."""
     messages = []
     for msg in conversation:
-        if isinstance(msg, dict):
-            role = msg.get("role", "")
-            content_list = msg.get("content", [])
+        assert isinstance(msg, dict)
+        role = msg["role"]
+        content_list = msg["content"]
 
-            # Extract text content only
-            text_parts = []
-            for item in content_list:
-                if isinstance(item, dict) and item.get("type") == "text":
-                    text = item.get("text", "")
-                    if text:
-                        text_parts.append(text)
+        # Extract text content only
+        text_parts = []
+        for item in content_list:
+            if isinstance(item, dict) and item["type"] == "text":
+                text = item.get("text", "")
+                text_parts.append(text)
+            else:
+                logger.info(f"Skipping arena conversation with non-text content: {msg}")
+                return None
 
-            if text_parts:
-                content = " ".join(text_parts)
-                if role == "user":
-                    messages.append({"role": "user", "content": content})
-                elif role == "assistant":
-                    messages.append({"role": "assistant", "content": content})
+        if text_parts:
+            content = " ".join(text_parts)
+            if role == "user":
+                messages.append({"role": "user", "content": content})
+            elif role == "assistant":
+                messages.append({"role": "assistant", "content": content})
 
     return messages
 
@@ -253,15 +247,8 @@ class HelpSteer3ComparisonBuilder(ComparisonDatasetBuilder):
             return None
 
         # Convert context to message format
-        prompt_conversation = []
-        for msg in context:
-            if msg["role"] == "user":
-                prompt_conversation.append({"role": "user", "content": msg["content"]})
-            elif msg["role"] == "assistant":
-                prompt_conversation.append({"role": "assistant", "content": msg["content"]})
-
         comparison = Comparison(
-            prompt_conversation=prompt_conversation,
+            prompt_conversation=context,
             completion_A=[{"role": "assistant", "content": response1}],
             completion_B=[{"role": "assistant", "content": response2}],
         )
@@ -307,49 +294,42 @@ class ArenaComparisonBuilder(ComparisonDatasetBuilder):
         dataset = datasets.load_dataset("lmarena-ai/arena-human-preference-140k", split="train")
         dataset = cast(datasets.Dataset, dataset)
 
-        # Filter out conversations with images
-        def has_no_images(example: dict) -> bool:
-            conv_a = example.get("conversation_a", [])
-            conv_b = example.get("conversation_b", [])
-            return not (_arena_has_image(conv_a) or _arena_has_image(conv_b))
-
-        dataset = dataset.filter(has_no_images)
         dataset = dataset.shuffle(seed=0)
         test_dataset = dataset.take(1024)
         train_dataset = dataset.skip(1024)
         return train_dataset, test_dataset
 
     def example_to_labeled_comparison(self, example: dict) -> LabeledComparison | None:
-        winner = example.get("winner", "")
+        winner = example["winner"]
 
         # Skip ties or invalid winners
         if winner not in ["model_a", "model_b"]:
+            # print(f"Skipping arena example with invalid winner: {winner}")
             return None
 
-        conversation_a = _arena_parse_conversation(example.get("conversation_a", []))
-        conversation_b = _arena_parse_conversation(example.get("conversation_b", []))
+        conversation_a = _arena_parse_conversation(example["conversation_a"])
+        conversation_b = _arena_parse_conversation(example["conversation_b"])
 
         # Skip if conversations are empty or malformed
         if not conversation_a or not conversation_b:
+            logger.info("Skipping arena example with empty conversations")
             return None
 
         # The conversations should have same prompt (all messages except last assistant response)
         # Check that both have at least a user message and assistant response
         if len(conversation_a) < 2 or len(conversation_b) < 2:
-            return None
-
-        # Verify same prompt conversation
-        if conversation_a[:-1] != conversation_b[:-1]:
+            logger.info("Skipping arena example with too few messages")
             return None
 
         # Verify last message is assistant in both
         if conversation_a[-1]["role"] != "assistant" or conversation_b[-1]["role"] != "assistant":
+            logger.info("Skipping arena example with non-assistant last message")
             return None
 
         comparison = Comparison(
-            prompt_conversation=conversation_a[:-1],
-            completion_A=[conversation_a[-1]],
-            completion_B=[conversation_b[-1]],
+            prompt_conversation=conversation_a[0:1],
+            completion_A=conversation_a[1:],
+            completion_B=conversation_b[1:],
         )
 
         return LabeledComparison(comparison=comparison, label="A" if winner == "model_a" else "B")

@@ -1,8 +1,11 @@
 """
+DEPRECATED: we recommend using a standalone script like what's in recipes/sl_basic.py instead. We will remove this script in the future.
+
 Basic CLI for training with supervised learning. It only supports a few datasets and configuration options; if you want to do something more complicated, please write a new script and call the train.main function directly.
 """
 
 import asyncio
+import os
 
 import chz
 from tinker_cookbook import cli_utils, model_info, renderers
@@ -14,7 +17,10 @@ from tinker_cookbook.supervised.types import ChatDatasetBuilder, ChatDatasetBuil
 @chz.chz
 class CLIConfig:
     # Required parameters
-    log_path: str = "/tmp/tinker-examples/supervised"
+    log_path: str = chz.field(
+        default="/tmp/tinker-examples/supervised",
+        munger=lambda _, s: os.path.expanduser(s),
+    )
     model_name: str = "meta-llama/Llama-3.1-8B"
     load_checkpoint_path: str | None = None
     dataset: str = "no_robots"
@@ -46,6 +52,8 @@ class CLIConfig:
     # Logging parameters
     wandb_project: str | None = None
     wandb_name: str | None = None
+
+    behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
 
 def get_dataset_builder(
@@ -115,6 +123,9 @@ def get_infrequent_evaluator_builders(
 
 def cli_main(cli_config: CLIConfig):
     # build full config
+    cli_utils.check_log_dir(
+        cli_config.log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists
+    )
     renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(
         cli_config.model_name
     )
@@ -147,7 +158,6 @@ def cli_main(cli_config: CLIConfig):
         eval_every=cli_config.eval_every,
         infrequent_eval_every=cli_config.infrequent_eval_every,
     )
-    cli_utils.check_log_dir(config.log_path, behavior_if_exists=config.behavior_if_log_dir_exists)
     if cli_config.pipelined:
         asyncio.run(train_pipelined.main(config))
     else:

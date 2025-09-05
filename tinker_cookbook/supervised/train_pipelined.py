@@ -52,15 +52,15 @@ async def save_checkpoint_async(
 
 async def main(config: Config):
     """Main training function that runs the complete training process."""
-    logging.basicConfig(level=logging.INFO)
-
     # Setup
     ml_logger = ml_log.setup_logging(
         log_dir=config.log_path,
         wandb_project=config.wandb_project,
         config=config,
         wandb_name=config.wandb_name,
+        do_configure_logging_module=True,
     )
+
     service_client = tinker.ServiceClient(base_url=config.base_url)
     training_client = await service_client.create_lora_training_client_async(
         base_model=config.model_name, rank=config.lora_rank
@@ -89,7 +89,7 @@ async def main(config: Config):
             eps=config.adam_eps,
         )
         data = dataset.get_batch(batch_idx)
-        print(colorize_example(data[0], get_tokenizer(config.model_name)))
+        logger.info(colorize_example(data[0], get_tokenizer(config.model_name)))
 
         fwd_bwd_future = await training_client.forward_backward_async(data, loss_fn="cross_entropy")
         optim_step_future = await training_client.optim_step_async(adam_params)

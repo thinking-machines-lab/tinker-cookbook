@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from enum import Enum
 from pathlib import Path
@@ -127,9 +128,10 @@ class PrettyPrintLogger(Logger):
     def log_hparams(self, config: Any) -> None:
         """Print configuration summary."""
         config_dict = chz.asdict(config)
-        self.console.print("[bold cyan]Configuration:[/bold cyan]")
-        for key, value in config_dict.items():
-            self.console.print(f"  {key}: {_maybe_truncate_repr(value)}")
+        with _rich_console_use_logger(self.console):
+            self.console.print("[bold cyan]Configuration:[/bold cyan]")
+            for key, value in config_dict.items():
+                self.console.print(f"  {key}: {_maybe_truncate_repr(value)}")
 
     def log_metrics(self, metrics: Dict[str, Any], step: int | None = None) -> None:
         """Display metrics in console."""
@@ -150,7 +152,8 @@ class PrettyPrintLogger(Logger):
                 value_str = str(value)
             table.add_row(key, value_str)
 
-        self.console.print(table)
+        with _rich_console_use_logger(self.console):
+            self.console.print(table)
 
 
 def _maybe_truncate_repr(value: Any) -> str:
@@ -158,6 +161,14 @@ def _maybe_truncate_repr(value: Any) -> str:
     if len(repr_value) > 256:
         return repr_value[:128] + " ... " + repr_value[-128:]
     return repr_value
+
+
+@contextmanager
+def _rich_console_use_logger(console: Console):
+    with console.capture() as capture:
+        yield
+    logger.info("\n" + capture.get().rstrip())
+    # ^^^ add a leading newline so things like table formatting work properly
 
 
 class WandbLogger(Logger):
@@ -241,6 +252,7 @@ def setup_logging(
     wandb_project: str | None = None,
     wandb_name: str | None = None,
     config: Any | None = None,
+    do_configure_logging_module: bool = True,
 ) -> Logger:
     """
     Set up logging infrastructure with multiple backends.
@@ -248,7 +260,9 @@ def setup_logging(
     Args:
         log_dir: Directory for logs
         wandb_project: W&B project name (if None, W&B logging is skipped)
+        wandb_name: W&B run name
         config: Configuration object to log
+        do_configure_logging_module: Whether to configure the logging module
 
     Returns:
         MultiplexLogger that combines all enabled loggers
@@ -289,5 +303,49 @@ def setup_logging(
     if config is not None:
         ml_logger.log_hparams(config)
 
-    print(f"Logging to: {log_dir_path}")
+    if do_configure_logging_module:
+        configure_logging_module(str(log_dir_path / "logs.log"))
+
+    logger.info(f"Logging to: {log_dir_path}")
     return ml_logger
+
+
+def configure_logging_module(path: str, level: int = logging.INFO) -> logging.Logger:
+    """Configure logging to console (color) and file (plain), forcing override of prior config."""
+    # ANSI escape codes for colors
+    COLORS = {
+        "DEBUG": "\033[94m",  # Blue
+        "INFO": "\033[92m",  # Green
+        "WARNING": "\033[93m",  # Yellow
+        "ERROR": "\033[91m",  # Red
+        "CRITICAL": "\033[95m",  # Magenta
+    }
+    RESET = "\033[0m"
+
+    class ColorFormatter(logging.Formatter):
+        """Colorized log formatter for console output that doesn't mutate record.levelname."""
+
+        def format(self, record: logging.LogRecord) -> str:
+            color = COLORS.get(record.levelname, "")
+            # add a separate attribute for the colored level name
+            record.levelname_colored = f"{color}{record.levelname}{RESET}"
+            return super().format(record)
+
+    # Console handler with colors
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(
+        ColorFormatter("%(name)s:%(lineno)d [%(levelname_colored)s] %(message)s")
+    )
+
+    # File handler without colors
+    file_handler = logging.FileHandler(path, encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter("%(name)s:%(lineno)d [%(levelname)s] %(message)s"))
+
+    # Force override like basicConfig(..., force=True)
+    root = logging.getLogger()
+    root.setLevel(level)
+    root.handlers.clear()
+    root.addHandler(console_handler)
+    root.addHandler(file_handler)
+
+    return root

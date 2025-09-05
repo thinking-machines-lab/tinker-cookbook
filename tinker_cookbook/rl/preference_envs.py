@@ -29,6 +29,7 @@ from tinker_cookbook.rl.types import (
     StepResult,
     Trajectory,
 )
+from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils.misc_utils import safezip
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,20 @@ class TournamentPattern(StrEnum):
     ALL_PAIRS_ONE_WAY = "all_pairs_one_way"
 
 
+def get_pairs_chunked(n: int, pattern: TournamentPattern, chunk_size: int) -> list[tuple[int, int]]:
+    """
+    Get pairs of indices of matchups of n players. If chunk_size < n, then we divide the players
+    into groups of at most chunk_size and get the matchup indices within each group.
+    """
+    out = []
+    for chunk_start in range(0, n, chunk_size):
+        chunk_end = min(chunk_start + chunk_size, n)
+        pairs = get_pairs(chunk_end - chunk_start, pattern)
+        for i, j in pairs:
+            out.append((chunk_start + i, chunk_start + j))
+    return out
+
+
 def get_pairs(n: int, pattern: TournamentPattern) -> list[tuple[int, int]]:
     if pattern == TournamentPattern.ALL_PAIRS_BOTH_WAYS:
         return [(i, j) for i in range(n) for j in range(n) if i != j]
@@ -92,6 +107,7 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
     preference_model: PreferenceModel
     num_envs: int
     content_preprocessor: Callable[[str], str] | None = None  # e.g. strip out <thinking> tags
+    matchup_group_size: int = 4  # divide group into smaller groups of this size for matchups
 
     async def make_envs(self) -> Sequence[Env]:
         return [
@@ -109,7 +125,9 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
         ]
         response_messages, is_valid_list = safezip(*response_tuples)
 
-        pairs = get_pairs(len(response_messages), self.tournament_pattern)
+        pairs = get_pairs_chunked(
+            len(response_messages), self.tournament_pattern, self.matchup_group_size
+        )
 
         def preprocess_message(message: renderers.Message) -> renderers.Message:
             if self.content_preprocessor is not None:
@@ -125,20 +143,26 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
             return await self.preference_model(comparison)
 
         pair_rewards = await asyncio.gather(*[compute_j_reward(i, j) for i, j in pairs])
-        tournament_rewards = [0.0 for _ in range(len(response_messages))]
+        win_minus_loss_list = [0.0 for _ in range(len(response_messages))]
+        matchup_count = [0 for _ in range(len(response_messages))]
         for (i, j), reward in safezip(pairs, pair_rewards):
-            tournament_rewards[j] += reward
-            tournament_rewards[i] -= reward
-
-        format_rewards = [float(is_valid) - 1.0 for is_valid in is_valid_list]
+            win_minus_loss_list[j] += reward
+            win_minus_loss_list[i] -= reward
+            matchup_count[j] += 1
+            matchup_count[i] += 1
         format_coef = 1.0
         return [
             (
-                tournament_reward + format_coef * format_reward,
-                {"reward/tournament": tournament_reward, "reward/format": format_reward},
+                win_minus_loss / matchup_count + format_coef * (float(is_valid) - 1.0),
+                {"win_minus_loss": win_minus_loss, "format": is_valid},
             )
-            for tournament_reward, format_reward in safezip(tournament_rewards, format_rewards)
+            for win_minus_loss, is_valid, matchup_count in safezip(
+                win_minus_loss_list, is_valid_list, matchup_count
+            )
         ]
+
+    def logging_tags(self) -> list[str]:
+        return ["pair_pref"]
 
 
 class PairwisePreferenceDataset(RLDataset):
@@ -195,9 +219,6 @@ class PairwisePreferenceRLDatasetBuilder(RLDatasetBuilder):
     content_preprocessor: Callable[[str], str] | None = None
 
     def __call__(self) -> tuple[PairwisePreferenceDataset, None]:
-        print(f"base_url: {self.base_url}")
-        from tinker_cookbook.tokenizer_utils import get_tokenizer
-
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
         renderer = renderers.get_renderer(self.renderer_name, tokenizer=tokenizer)
 

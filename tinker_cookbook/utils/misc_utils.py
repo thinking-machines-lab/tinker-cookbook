@@ -3,19 +3,22 @@ Small utilities requiring only basic python libraries.
 """
 
 import importlib
+import logging
 import time
 from contextlib import contextmanager
 from typing import Any, Sequence
 
 import numpy as np
 
+logger = logging.getLogger(__name__)
+
 
 @contextmanager
 def timed(key: str, metrics: dict[str, Any]):
-    print(f"Starting {key}")
+    logger.info(f"Starting {key}")
     tstart = time.time()
     yield
-    print(f"{key} took {time.time() - tstart:.2f} seconds")
+    logger.info(f"{key} took {time.time() - tstart:.2f} seconds")
     metrics[f"time/{key}"] = time.time() - tstart
 
 
@@ -83,3 +86,8 @@ def split_list[T](lst: Sequence[T], num_splits: int) -> list[list[T]]:
 
 def concat_lists(list_of_lists: list[list[Any]]) -> list[Any]:
     return [item for sublist in list_of_lists for item in sublist]
+
+
+def not_none[T](x: T | None) -> T:
+    assert x is not None, f"{x=} must not be None"
+    return x

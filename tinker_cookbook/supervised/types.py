@@ -69,6 +69,9 @@ class ChatDatasetBuilder(SupervisedDatasetBuilder):
     common_config: ChatDatasetBuilderCommonConfig
 
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
+        """
+        Return a training dataset and optionally an evaluation dataset.
+        """
         raise NotImplementedError
 
     @property

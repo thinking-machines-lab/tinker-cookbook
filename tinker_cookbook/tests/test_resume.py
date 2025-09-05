@@ -44,7 +44,6 @@ def checkpoint_resume():
             save_every=5,
             eval_every=0,
             infrequent_eval_every=0,
-            behavior_if_log_dir_exists="resume",
             wandb_project=None,
             lora_rank=16,
             learning_rate=1e-5,

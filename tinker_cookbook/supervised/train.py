@@ -4,12 +4,13 @@ Supervised fine-tuning (SFT)
 
 import asyncio
 import logging
+import os
 import time
 
 import chz
 import tinker
 from tinker import types
-from tinker_cookbook import checkpoint_utils, cli_utils
+from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.display import colorize_example
 from tinker_cookbook.evaluators import (
     Evaluator,
@@ -33,7 +34,7 @@ class Config:
     """Configuration for supervised fine-tuning."""
 
     # Required parameters
-    log_path: str
+    log_path: str = chz.field(munger=lambda _, s: os.path.expanduser(s))
     model_name: str
     load_checkpoint_path: str | None = None
     dataset_builder: SupervisedDatasetBuilder
@@ -64,8 +65,6 @@ class Config:
     # Logging parameters
     wandb_project: str | None = None
     wandb_name: str | None = None
-
-    behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
 
 async def run_evals(
@@ -148,7 +147,7 @@ def do_update(
     # Prepare batch
     with timed("get_batch", metrics):
         data = dataset.get_batch(batch_idx)
-    print(colorize_example(data[0], get_tokenizer(config.model_name)))
+    logger.info(colorize_example(data[0], get_tokenizer(config.model_name)))
 
     with timed("step", metrics):
         # Queue up the forward-backward pass and optimizer step before requesting either
@@ -179,8 +178,6 @@ def do_update(
 
 def main(config: Config):
     """Main training function that runs the complete training process."""
-    logging.basicConfig(level=logging.INFO)
-
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     if resume_info:
         start_epoch = resume_info["epoch"]
@@ -193,8 +190,9 @@ def main(config: Config):
     ml_logger = ml_log.setup_logging(
         log_dir=config.log_path,
         wandb_project=config.wandb_project,
-        config=config,
         wandb_name=config.wandb_name,
+        config=config,
+        do_configure_logging_module=True,
     )
     service_client = tinker.ServiceClient(base_url=config.base_url)
     training_client = service_client.create_lora_training_client(
@@ -243,14 +241,17 @@ def main(config: Config):
                 log_path=config.log_path,
             )
 
-    # Save final checkpoint
-    checkpoint_utils.save_checkpoint(
-        training_client=training_client,
-        name="final",
-        log_path=config.log_path,
-        kind="both",
-        loop_state={"epoch": config.num_epochs, "batch": n_batches},
-    )
+    # Save final checkpoint if training actually happened
+    if start_epoch < config.num_epochs:
+        checkpoint_utils.save_checkpoint(
+            training_client=training_client,
+            name="final",
+            log_path=config.log_path,
+            kind="both",
+            loop_state={"epoch": config.num_epochs, "batch": n_batches},
+        )
+    else:
+        logger.info("Training was already complete; nothing to do")
 
     # Cleanup
     ml_logger.close()

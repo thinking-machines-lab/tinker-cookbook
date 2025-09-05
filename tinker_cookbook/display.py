@@ -24,7 +24,7 @@ def colorize_example(datum: types.Datum, tokenizer: Tokenizer, key: str = "weigh
     return format_colorized(int_tokens, weights, tokenizer)
 
 
-def format_trajectory(trajectory: Trajectory, tokenizer: Tokenizer):
+def format_trajectory(trajectory: Trajectory, tokenizer: Tokenizer) -> str:
     buf = io.StringIO()
 
     def colorize(s: str):
@@ -43,4 +43,4 @@ def format_trajectory(trajectory: Trajectory, tokenizer: Tokenizer):
         bprint(f"{colorize('Metrics:')}: {transition.metrics}")
         bprint("-" * 60)
     bprint("=" * 60)
-    print(buf.getvalue())
+    return buf.getvalue()
