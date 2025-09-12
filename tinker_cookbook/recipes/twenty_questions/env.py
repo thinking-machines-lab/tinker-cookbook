@@ -8,12 +8,13 @@ from typing import Sequence
 import chz
 import tinker
 from tinker.types import ModelInput
+from tinker_cookbook import model_info
 from tinker_cookbook.completers import (
     MessageCompleter,
     StopCondition,
     TinkerMessageCompleter,
 )
-from tinker_cookbook.renderers import Llama3Renderer, Message, Renderer, get_renderer
+from tinker_cookbook.renderers import Message, Renderer, get_renderer
 from tinker_cookbook.rl.types import (
     Action,
     Env,
@@ -33,11 +34,11 @@ class TwentyQuestionsEnv(Env):
         self.answer = answer
         self.sys_for_answerer: Message = {
             "role": "system",
-            "content": f"You are are the answerer in a game of 20 questions. You should only ever respond with 'yes' or 'no'. Your secret word is {answer}.",
+            "content": f"You are are the answerer in a game of 20 questions. You should only ever respond with 'yes' or 'no'. Your secret word is {answer}. If the other player guesses it with Guess: <answer>, respond with 'yes' only if the answer is precisely your secret word.",
         }
         self.sys_for_player: Message = {
             "role": "system",
-            "content": "You are the player in a game of 20 questions. You will ask a series of yes/no questions to the answerer. You will win if you can guess the answer in 20 questions or less. You will lose if you ask more than 20 questions. To guess the answer, write a line of the form 'Guess: <answer>' (without the angle brackets). Your questions should be one line, and less than 20 words.",
+            "content": "You are the player in a game of 20 questions. You will ask a series of yes/no questions to the answerer. You will win if you can guess the answer in 20 questions or less. You will lose if you ask more than 20 questions. To guess the answer, write a line of the form 'Guess: <answer>' (without the angle brackets). The answer is always a single word -- don't use articles like 'a' or 'the'. Your questions should be one line, and less than 20 words.",
         }
         self.renderer = renderer
         self.turns = []
@@ -146,14 +147,19 @@ class TwentyQuestionsDatasetBuilder(RLDatasetBuilder):
     renderer_name: str
     group_size: int
     base_url: str | None = None
+    num_epochs: int = 1
+    answerer_base_model: str = "meta-llama/Llama-3.1-8B-Instruct"
 
     def __call__(self) -> tuple[RLDataset, RLDataset]:
-        answerer_base_model = "meta-llama/Llama-3.1-8B-Instruct"
-        answerer_tokenizer = get_tokenizer(answerer_base_model)
-        answerer_renderer = Llama3Renderer(tokenizer=answerer_tokenizer)
+        if self.answerer_base_model.startswith("Qwen/Qwen3"):
+            renderer_name = "qwen3_nothink"
+        else:
+            renderer_name = model_info.get_recommended_renderer_name(self.answerer_base_model)
+        answerer_tokenizer = get_tokenizer(self.answerer_base_model)
+        answerer_renderer = get_renderer(renderer_name, answerer_tokenizer)
         service_client = tinker.ServiceClient(base_url=self.base_url)
         answerer_sampling_client = service_client.create_sampling_client(
-            base_model=answerer_base_model
+            base_model=self.answerer_base_model
         )
         answerer = TinkerMessageCompleter(
             sampling_client=answerer_sampling_client, renderer=answerer_renderer, max_tokens=5
@@ -162,9 +168,11 @@ class TwentyQuestionsDatasetBuilder(RLDatasetBuilder):
         num_test = min(len(words) // 5, 100)
         train_words = words[:-num_test]
         test_words = words[-num_test:]
+        train_words = train_words * self.num_epochs
         player_renderer = get_renderer(
             self.renderer_name, get_tokenizer(self.model_name_for_tokenizer)
         )
+        assert self.batch_size <= len(train_words)
         training_dataset = TwentyQuestionsDataset(
             answerer=answerer,
             answers=train_words,
@@ -176,7 +184,7 @@ class TwentyQuestionsDatasetBuilder(RLDatasetBuilder):
             answerer=answerer,
             answers=test_words,
             renderer=player_renderer,
-            batch_size=self.batch_size,
+            batch_size=len(test_words),
             group_size=self.group_size,
         )
         return training_dataset, test_dataset

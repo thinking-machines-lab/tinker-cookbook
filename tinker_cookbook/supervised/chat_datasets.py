@@ -124,7 +124,7 @@ class OpenMathReasoningBuilder(ChatDatasetBuilder):
         test_ds = dataset.take(1024)
         train_ds = dataset.skip(1024)
 
-        def map_fn(row: dict) -> types.Datum:
+        def map_fn(row: dict[str, str]) -> types.Datum:
             messages = [
                 Message(role="user", content=row["problem"]),
                 Message(role="assistant", content=row["generated_solution"]),
@@ -135,6 +135,50 @@ class OpenMathReasoningBuilder(ChatDatasetBuilder):
 
         return StreamingSupervisedDatasetFromHFDataset(
             train_ds, batch_size=self.common_config.batch_size, length=3_200_000, map_fn=map_fn
+        ), StreamingSupervisedDatasetFromHFDataset(
+            test_ds,
+            batch_size=self.common_config.batch_size,
+            length=1024,
+            map_fn=map_fn,
+        )
+
+
+@chz.chz
+class OpenThoughts3Builder(ChatDatasetBuilder):
+    def __call__(
+        self,
+    ) -> tuple[StreamingSupervisedDatasetFromHFDataset, StreamingSupervisedDatasetFromHFDataset]:
+        dataset = datasets.load_dataset(
+            "open-thoughts/OpenThoughts3-1.2M", split="train", streaming=True
+        )
+        dataset = cast(IterableDataset, dataset)
+        test_ds = dataset.take(1024)
+        train_ds = dataset.skip(1024)
+
+        # Use train_on_what from common_config if provided, otherwise default to LAST_ASSISTANT_MESSAGE
+        train_on_what: TrainOnWhat = (
+            TrainOnWhat(self.common_config.train_on_what)
+            if self.common_config.train_on_what
+            else TrainOnWhat.LAST_ASSISTANT_MESSAGE
+        )
+
+        # take the last 1000 as test, the rest as train
+        def map_fn(row: dict[str, list[dict[str, str]]]) -> types.Datum:
+            messages: list[Message] = []
+            for conversation in row["conversations"]:
+                messages.append(Message(role=conversation["from"], content=conversation["value"]))
+            return conversation_to_datum(
+                messages,
+                self.renderer,
+                self.common_config.max_length,
+                train_on_what,
+            )
+
+        return StreamingSupervisedDatasetFromHFDataset(
+            train_ds,
+            batch_size=self.common_config.batch_size,
+            length=1_200_000,
+            map_fn=map_fn,
         ), StreamingSupervisedDatasetFromHFDataset(
             test_ds,
             batch_size=self.common_config.batch_size,

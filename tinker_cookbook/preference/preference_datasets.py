@@ -211,6 +211,35 @@ def _arena_parse_conversation(conversation: list) -> list[renderers.Message] | N
 
 
 @chz.chz
+class Tulu38BComparisonBuilder(ComparisonDatasetBuilder):
+    """Tulu 3.8B preference dataset comparison builder."""
+
+    def get_train_and_test_datasets(self) -> tuple[datasets.Dataset, datasets.Dataset | None]:
+        dataset = datasets.load_dataset(
+            "allenai/llama-3.1-tulu-3-8b-preference-mixture", split="train"
+        )
+        dataset = cast(datasets.Dataset, dataset)
+        dataset = dataset.shuffle(seed=0)
+        test_dataset = dataset.take(1024)
+        train_dataset = dataset.skip(1024)
+        return train_dataset, test_dataset
+
+    def example_to_labeled_comparison(self, example: dict) -> LabeledComparison | None:
+        instruction = example["prompt"]
+        chosen_response = example["chosen"][1]["content"]
+        rejected_response = example["rejected"][1]["content"]
+
+        prompt_conversation: list[renderers.Message] = [{"role": "user", "content": instruction}]
+
+        comparison = Comparison(
+            prompt_conversation=prompt_conversation,
+            completion_A=[{"role": "assistant", "content": chosen_response}],
+            completion_B=[{"role": "assistant", "content": rejected_response}],
+        )
+        return LabeledComparison(comparison=comparison, label="A")
+
+
+@chz.chz
 class HHHComparisonBuilder(ComparisonDatasetBuilder):
     """HHH dataset comparison builder."""
 

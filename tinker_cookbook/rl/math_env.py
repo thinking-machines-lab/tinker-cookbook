@@ -25,11 +25,13 @@ class MathEnv(ProblemEnv):
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None = None,
         grader: Literal["sympy", "math_verify"] = "sympy",
+        timeout: float = 1.0,
     ):
         super().__init__(renderer, convo_prefix)
         self.problem = problem
         self.answer = answer
         self.grader = grader
+        self.timeout = timeout
 
     @classmethod
     def _boxed_format_suffix(cls) -> str:
@@ -50,7 +52,7 @@ class MathEnv(ProblemEnv):
             answer = extract_boxed(sample_str)
         except ValueError:
             return False
-        return safe_grade(answer, self.answer, self.grader)
+        return safe_grade(answer, self.answer, self.grader, self.timeout)
 
     @staticmethod
     def standard_fewshot_prefix() -> list[renderers.Message]:
