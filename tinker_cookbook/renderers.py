@@ -322,13 +322,6 @@ class Qwen2p5Renderer(Renderer):
             self.tokenizer.encode(ac_tail_str, add_special_tokens=False),
         )
 
-    def _get_system_message(self, messages: list[Message]) -> Message:
-        """Get system message, using default if none provided."""
-        return Message(
-            role="system",
-            content="You are a helpful assistant.",
-        )
-
     def build_generation_prompt(
         self, messages: list[Message], role: str = "assistant"
     ) -> types.ModelInput:
@@ -352,11 +345,7 @@ class Qwen2p5Renderer(Renderer):
         """
         Get tokens and weights for action corresponding to final message.
         """
-        system_msg = self._get_system_message(messages)
-        messages_with_system = [system_msg] + messages
-        return build_supervised_example(
-            [], self._render_message, messages_with_system, train_on_what
-        )
+        return build_supervised_example([], self._render_message, messages, train_on_what)
 
     @property
     def _end_message_token(self) -> int:

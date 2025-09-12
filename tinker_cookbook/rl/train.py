@@ -15,6 +15,7 @@ import numpy as np
 import tinker
 import torch
 from tinker import types
+from tinker.lib.public_interfaces import APIFuture
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.display import colorize_example
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 def compute_advantages(trajectory_groups_P: List[TrajectoryGroup]) -> List[torch.Tensor]:
     """Compute advantages for each trajectory, centered within groups."""
-    advantages_P = []
+    advantages_P: list[torch.Tensor] = []
 
     for traj_group in trajectory_groups_P:
         rewards_G = torch.tensor(traj_group.get_total_rewards())
@@ -79,10 +80,10 @@ def to_data(traj: Trajectory, traj_advantage: float) -> list[types.Datum]:
     """
 
     class SequenceAccumulator:
-        full_sequence = []
-        sampled_logprobs = []
-        advantages = []
-        mask = []
+        full_sequence: list[FlatObElem] = []
+        sampled_logprobs: list[float] = []
+        advantages: list[float] = []
+        mask: list[float] = []
 
         @classmethod
         def clear(cls):
@@ -115,7 +116,7 @@ def to_data(traj: Trajectory, traj_advantage: float) -> list[types.Datum]:
             },
         )
 
-    data = []
+    data: list[types.Datum] = []
     for transition in traj.transitions:
         ob = transition.ob
         ob_flat = _flatten_chunks(ob.chunks)
@@ -162,8 +163,8 @@ def _to_input_targets(model_input: types.ModelInput) -> tuple[types.ModelInput, 
 
 
 def _flat_ob_to_model_input(flat_ob: FlatOb) -> types.ModelInput:
-    out = []
-    current_text_chunk = []
+    out: list[types.ModelInputChunk] = []
+    current_text_chunk: list[int] = []
 
     def flush_text_chunk():
         if current_text_chunk:
@@ -181,7 +182,7 @@ def _flat_ob_to_model_input(flat_ob: FlatOb) -> types.ModelInput:
 
 
 def _flatten_chunks(chunks: list[types.ModelInputChunk]) -> FlatOb:
-    out = []
+    out: FlatOb = []
     for chunk in chunks:
         if isinstance(chunk, types.EncodedTextChunk):
             out.extend(chunk.tokens)
@@ -194,8 +195,8 @@ def compute_kl_sample_train(
     data_D: List[types.Datum], training_logprobs_D: List[torch.Tensor]
 ) -> Dict[str, float]:
     """Compute KL divergence metrics between sampling and training logprobs."""
-    all_diffs = []
-    all_sampling_logprobs = []
+    all_diffs: list[torch.Tensor] = []
+    all_sampling_logprobs: list[torch.Tensor] = []
 
     for datum, training_logprobs in safezip(data_D, training_logprobs_D):
         # Get logprobs from sampling
@@ -323,10 +324,10 @@ def discounted_future_sum_vectorized(x: np.ndarray, gamma: float) -> np.ndarray:
 def assemble_training_data(
     trajectory_groups_P: List[TrajectoryGroup],
     advantages_P: List[torch.Tensor],
-) -> tuple[List[types.Datum], List[dict]]:
+) -> tuple[List[types.Datum], List[dict[str, int]]]:
     """Convert trajectories to training data format."""
-    data_D = []
-    metadata_D = []
+    data_D: list[types.Datum] = []
+    metadata_D: list[dict[str, int]] = []
 
     for i_group, (traj_group, advantages_G) in enumerate(
         safezip(trajectory_groups_P, advantages_P)
@@ -335,7 +336,7 @@ def assemble_training_data(
             safezip(traj_group.trajectories_G, advantages_G)
         ):
             # Build the full sequence from the trajectory
-            new_data = to_data(traj, traj_advantage)
+            new_data = to_data(traj, float(traj_advantage))
             data_D.extend(new_data)
             metadata_D.extend([dict(group_idx=i_group, traj_idx=i_traj) for _ in new_data])
 
@@ -428,8 +429,8 @@ async def train_step(
 ) -> List[torch.Tensor]:
     """Train the model on collected trajectories."""
     batches_md = split_list(data_D, min(num_minibatches, len(data_D)))
-    fwd_futures_m = []
-    optim_step_futures_m = []
+    fwd_futures_m: list[APIFuture[types.ForwardBackwardOutput]] = []
+    optim_step_futures_m: list[APIFuture[types.OptimStepResponse]] = []
 
     for batch_d in batches_md:
         # Forward-backward pass
@@ -447,7 +448,7 @@ async def train_step(
     _optim_step_results_m = [await future.result_async() for future in optim_step_futures_m]
 
     # Extract training logprobs from loss_fn_outputs
-    training_logprobs_D = []
+    training_logprobs_D: list[torch.Tensor] = []
     for fwd_bwd_result in fwd_bwd_results_m:
         for output in fwd_bwd_result.loss_fn_outputs:
             training_logprobs = output["logprobs"].to_torch()

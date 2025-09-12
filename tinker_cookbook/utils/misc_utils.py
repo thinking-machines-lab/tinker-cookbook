@@ -6,7 +6,7 @@ import importlib
 import logging
 import time
 from contextlib import contextmanager
-from typing import Any, Sequence
+from typing import Any, Sequence, cast
 
 import numpy as np
 
@@ -22,8 +22,7 @@ def timed(key: str, metrics: dict[str, Any]):
     metrics[f"time/{key}"] = time.time() - tstart
 
 
-def safezip(*args, **kwargs):  # type: ignore
-    return zip(*args, **kwargs, strict=True)
+safezip = cast(type[zip], lambda *args, **kwargs: zip(*args, **kwargs, strict=True))
 
 
 def dict_mean(list_of_dicts: list[dict[str, float | int]]) -> dict[str, float]:
