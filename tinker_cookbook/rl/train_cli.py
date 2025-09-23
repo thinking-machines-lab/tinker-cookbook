@@ -20,7 +20,7 @@ from tinker_cookbook.rl import (
     preference_envs,
     textarena_envs,
 )
-from tinker_cookbook.rl.train import Config, main
+from tinker_cookbook.rl.train import AsyncConfig, Config, StreamMinibatchConfig, main
 from tinker_cookbook.rl.types import RLDatasetBuilder
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
@@ -47,6 +47,14 @@ class CLIConfig:
     max_tokens: int = 5
     kl_penalty_coef: float = 0.0
 
+    # Number of optimizer steps per training iteration.
+    # Useful for very large batch sizes.
+    num_substeps: int = 1
+
+    # Minibatch streaming configuration
+    num_minibatches: int = 4
+    stream_minibatch: bool = False
+
     # Logging configuration
     log_path: str = chz.field(
         default="/tmp/tinker-examples/rl",
@@ -56,6 +64,9 @@ class CLIConfig:
     wandb_name: str | None = None
     compute_post_kl: bool = False
 
+    # Evals
+    eval_every: int = 20
+
     # Checkpointing
     save_every: int = 20
 
@@ -63,6 +74,8 @@ class CLIConfig:
     base_url: str | None = None
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
+
+    max_steps_off_policy: int | None = None
 
 
 def get_dataset_builder(
@@ -82,7 +95,7 @@ def get_dataset_builder(
             include_fewshot=True,
             group_size=group_size,
         )
-    elif env in ["math", "polaris", "deepmath"]:
+    elif env in ["math", "polaris", "deepmath", "gsm8k"]:
         return math_env.get_math_dataset_builder(
             dataset_name=env,
             batch_size=batch_size,
@@ -143,7 +156,21 @@ async def cli_main(cli_config: CLIConfig):
         load_checkpoint_path=cli_config.load_checkpoint_path,
         compute_post_kl=cli_config.compute_post_kl,
         kl_penalty_coef=cli_config.kl_penalty_coef,
+        num_substeps=cli_config.num_substeps,
+        eval_every=cli_config.eval_every,
         save_every=cli_config.save_every,
+        async_config=AsyncConfig(
+            max_steps_off_policy=cli_config.max_steps_off_policy,
+            groups_per_batch=cli_config.groups_per_batch,
+        )
+        if cli_config.max_steps_off_policy is not None
+        else None,
+        stream_minibatch_config=StreamMinibatchConfig(
+            groups_per_batch=cli_config.groups_per_batch,
+            num_minibatches=cli_config.num_minibatches,
+        )
+        if cli_config.stream_minibatch
+        else None,
     )
 
     cli_utils.check_log_dir(

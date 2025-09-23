@@ -49,6 +49,8 @@ def get_qwen_info() -> dict[str, ModelAttributes]:
         "Qwen3-14B": ModelAttributes(org, "3", "14B", True),
         "Qwen3-32B": ModelAttributes(org, "3", "32B", True),
         "Qwen3-30B-A3B": ModelAttributes(org, "3", "30B-A3B", True),
+        "Qwen3-4B-Instruct-2507": ModelAttributes(org, "3", "4B", True),
+        "Qwen3-30B-A3B-Instruct-2507": ModelAttributes(org, "3", "30B-A3B", True),
         "Qwen3-235B-A22B-Instruct-2507": ModelAttributes(org, "3", "235B-A22B", True),
     }
 
@@ -65,6 +67,7 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
 
 def get_recommended_renderer_names(model_name: str) -> list[str]:
     """
+    Return a list of renderers that are designed for the model.
     Used so we can emit a warning if you use a non-recommended renderer.
     The first result is the most recommended renderer for the model.
     """
@@ -74,10 +77,21 @@ def get_recommended_renderer_names(model_name: str) -> list[str]:
     elif attributes.organization == "meta-llama":
         return ["llama3"]
     elif attributes.organization == "Qwen":
-        return ["qwen2p5", "qwen3"]
+        if attributes.version_str == "2.5":
+            return ["qwen2p5"]
+        elif attributes.version_str == "3":
+            if "-Instruct" in model_name:
+                return ["qwen3_instruct"]
+            else:
+                return ["qwen3", "qwen3_disable_thinking"]
+        else:
+            raise ValueError(f"Unknown model: {model_name}")
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
 
 def get_recommended_renderer_name(model_name: str) -> str:
+    """
+    Return the most recommended renderer for the model.
+    """
     return get_recommended_renderer_names(model_name)[0]

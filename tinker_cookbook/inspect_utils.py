@@ -13,7 +13,7 @@ import tinker
 from inspect_ai.model import ChatCompletionChoice as InspectAIModelOutputChoice
 from inspect_ai.model import ChatMessage as InspectAIChatMessage
 from inspect_ai.model import ChatMessageAssistant as InspectAIChatMessageAssistant
-from inspect_ai.model import Content, modelapi
+from inspect_ai.model import ChatMessageSystem, Content, modelapi
 from inspect_ai.model import GenerateConfig as InspectAIGenerateConfig
 from inspect_ai.model import ModelAPI as InspectAIModelAPI
 from inspect_ai.model import ModelOutput as InspectAIModelOutput
@@ -109,6 +109,8 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
         """
         The main interface that needs to be implemented to test a new model.
         """
+        if config.system_message:
+            input = [ChatMessageSystem(content=config.system_message)] + input
         convo = convert_inspect_messages(input)
         prompt = self.renderer.build_generation_prompt(convo)
         num_responses = 1 if config.num_choices is None else config.num_choices

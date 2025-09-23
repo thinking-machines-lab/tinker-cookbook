@@ -89,7 +89,7 @@ async def main(cfg: Config):
         model_name=model_for_tokenizer,
         renderer_name=renderer_name,
     )
-    dataset, _ = dataset_builder()
+    dataset, _ = await dataset_builder()
     env_group_builder = dataset.get_batch(0)[0]
     envs = await env_group_builder.make_envs()
     env = envs[0]

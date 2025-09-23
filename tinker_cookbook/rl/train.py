@@ -8,339 +8,41 @@ import io
 import logging
 import os
 import time
-from typing import Dict, List, cast
+from typing import Any, Callable, List
 
 import chz
 import numpy as np
 import tinker
 import torch
 from tinker import types
-from tinker.lib.public_interfaces import APIFuture
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.display import colorize_example
 from tinker_cookbook.evaluators import SamplingClientEvaluator, SamplingClientEvaluatorBuilder
+from tinker_cookbook.rl.data_processing import (
+    assemble_training_data,
+    compute_advantages,
+    remove_constant_reward_groups,
+)
 from tinker_cookbook.rl.metric_util import RLTestSetEvaluator, compute_trajectory_metrics
+from tinker_cookbook.rl.metrics import (
+    compute_kl_sample_train,
+    compute_post_kl,
+    compute_sampling_client_metrics,
+    incorporate_kl_penalty,
+)
 from tinker_cookbook.rl.rollouts import do_group_rollout
 from tinker_cookbook.rl.types import (
+    EnvGroupBuilder,
     RLDataset,
     RLDatasetBuilder,
-    Trajectory,
     TrajectoryGroup,
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import ml_log
-from tinker_cookbook.utils.misc_utils import all_same, safezip, split_list, timed
+from tinker_cookbook.utils.misc_utils import safezip, split_list, timed
 
 logger = logging.getLogger(__name__)
-
-
-def compute_advantages(trajectory_groups_P: List[TrajectoryGroup]) -> List[torch.Tensor]:
-    """Compute advantages for each trajectory, centered within groups."""
-    advantages_P: list[torch.Tensor] = []
-
-    for traj_group in trajectory_groups_P:
-        rewards_G = torch.tensor(traj_group.get_total_rewards())
-        # Center advantages within the group
-        advantages_G = rewards_G - rewards_G.mean()
-        advantages_P.append(advantages_G)
-
-    return advantages_P
-
-
-FlatObElem = int | types.ModelInputChunk
-FlatOb = list[FlatObElem]
-
-
-def _is_prefix(seq1: FlatOb, seq2: FlatOb) -> bool:
-    """
-    Check if seq1 is a prefix of seq2.
-    """
-    return len(seq1) <= len(seq2) and seq2[: len(seq1)] == seq1
-
-
-def to_data(traj: Trajectory, traj_advantage: float) -> list[types.Datum]:
-    """
-    Return one or more Datum objects corresponding to the trajectory.
-    If the sequence grows by appending, i.e., each successive observation contains
-    the previous observation+action as a prefix, then we can return a single Datum.
-    However, if we get a sequence that's not an extension of the previous sequence,
-    then that results in a new Datum.
-
-    For example, let O1 denote a chunk of observation tokens, and let A1 denote an action.
-
-    Then let's say ob_ac_pairs is as follows.
-
-    (O1, A1)
-    (O1+A1+O2, A2)
-    (O3, A3)
-
-    Then we will merge the first two observation-action pairs into a single Datum,
-    and the last observation-action pair into a separate Datum.
-    """
-
-    class SequenceAccumulator:
-        full_sequence: list[FlatObElem] = []
-        sampled_logprobs: list[float] = []
-        advantages: list[float] = []
-        mask: list[float] = []
-
-        @classmethod
-        def clear(cls):
-            cls.full_sequence = []
-            cls.sampled_logprobs = []
-            cls.advantages = []
-            cls.mask = []
-
-    def make_datum_from_state():
-        # TODO: generalize to multimodal
-        all_tokens_T = _flat_ob_to_model_input(SequenceAccumulator.full_sequence)
-        input_tokens_T, target_tokens_T = _to_input_targets(all_tokens_T)
-        sampled_logprobs_T = SequenceAccumulator.sampled_logprobs[1:]
-        advantages_T = SequenceAccumulator.advantages[1:]
-        mask_T = SequenceAccumulator.mask[1:]
-        assert (
-            input_tokens_T.length
-            == len(target_tokens_T)
-            == len(sampled_logprobs_T)
-            == len(advantages_T)
-            == len(mask_T)
-        )
-        return types.Datum(
-            model_input=input_tokens_T,
-            loss_fn_inputs={  # type: ignore
-                "target_tokens": torch.tensor(target_tokens_T),
-                "logprobs": torch.tensor(sampled_logprobs_T),
-                "advantages": torch.tensor(advantages_T),
-                "mask": torch.tensor(mask_T),
-            },
-        )
-
-    data: list[types.Datum] = []
-    for transition in traj.transitions:
-        ob = transition.ob
-        ob_flat = _flatten_chunks(ob.chunks)
-        ac_with_logprobs = transition.ac
-        if len(SequenceAccumulator.full_sequence) == 0:
-            delta_ob_flat = ob_flat
-        elif _is_prefix(SequenceAccumulator.full_sequence, ob_flat):
-            delta_ob_flat = ob_flat[len(SequenceAccumulator.full_sequence) :]
-        else:
-            data.append(make_datum_from_state())
-            SequenceAccumulator.clear()
-            delta_ob_flat = ob_flat
-        delta_ob_len = _flat_ob_token_len(delta_ob_flat)
-        SequenceAccumulator.full_sequence.extend(delta_ob_flat)
-        SequenceAccumulator.full_sequence.extend(ac_with_logprobs.tokens)
-        SequenceAccumulator.sampled_logprobs.extend(
-            [0.0] * delta_ob_len + ac_with_logprobs.logprobs
-        )
-        SequenceAccumulator.advantages.extend(
-            [0] * delta_ob_len + [traj_advantage] * len(ac_with_logprobs.tokens)
-        )
-        SequenceAccumulator.mask.extend([0.0] * delta_ob_len + [1.0] * len(ac_with_logprobs.tokens))
-
-    if SequenceAccumulator.full_sequence:
-        data.append(make_datum_from_state())
-
-    return data
-
-
-def _flat_ob_token_len(flat_ob: FlatOb) -> int:
-    out = 0
-    for elem in flat_ob:
-        if isinstance(elem, int):
-            out += 1
-        else:
-            out += elem.length
-    return out
-
-
-def _to_input_targets(model_input: types.ModelInput) -> tuple[types.ModelInput, list[int]]:
-    # TODO: make this work with multimodal data
-    all_ints = model_input.to_ints()
-    return types.ModelInput.from_ints(tokens=all_ints[:-1]), all_ints[1:]
-
-
-def _flat_ob_to_model_input(flat_ob: FlatOb) -> types.ModelInput:
-    out: list[types.ModelInputChunk] = []
-    current_text_chunk: list[int] = []
-
-    def flush_text_chunk():
-        if current_text_chunk:
-            out.append(types.EncodedTextChunk(tokens=current_text_chunk))
-            current_text_chunk.clear()
-
-    for elem in flat_ob:
-        if isinstance(elem, int):
-            current_text_chunk.append(elem)
-        else:
-            flush_text_chunk()
-            out.append(elem)
-    flush_text_chunk()
-    return types.ModelInput(chunks=out)
-
-
-def _flatten_chunks(chunks: list[types.ModelInputChunk]) -> FlatOb:
-    out: FlatOb = []
-    for chunk in chunks:
-        if isinstance(chunk, types.EncodedTextChunk):
-            out.extend(chunk.tokens)
-        else:
-            out.append(chunk)
-    return out
-
-
-def compute_kl_sample_train(
-    data_D: List[types.Datum], training_logprobs_D: List[torch.Tensor]
-) -> Dict[str, float]:
-    """Compute KL divergence metrics between sampling and training logprobs."""
-    all_diffs: list[torch.Tensor] = []
-    all_sampling_logprobs: list[torch.Tensor] = []
-
-    for datum, training_logprobs in safezip(data_D, training_logprobs_D):
-        # Get logprobs from sampling
-        sampling_logprobs = datum.loss_fn_inputs["logprobs"].to_torch()
-        action_mask = datum.loss_fn_inputs["mask"].to_torch() > 0
-        # Extract only action token logprobs
-        sampling_logprobs_actions = sampling_logprobs[action_mask]
-        training_logprobs_actions = training_logprobs[action_mask]
-
-        if len(sampling_logprobs_actions) > 0:
-            logprob_diff = sampling_logprobs_actions - training_logprobs_actions
-            all_diffs.append(logprob_diff)
-            all_sampling_logprobs.append(sampling_logprobs_actions)
-
-    assert all_diffs
-    flat_diffs = torch.cat(all_diffs)
-    kl_sample_train_v1 = flat_diffs.mean().item()
-    kl_sample_train_v2 = 0.5 * (flat_diffs**2).mean().item()
-
-    flat_sampling_logprobs = torch.cat(all_sampling_logprobs)
-    entropy_sample = -flat_sampling_logprobs.mean().item()
-    return {
-        "optim/kl_sample_train_v1": kl_sample_train_v1,
-        "optim/kl_sample_train_v2": kl_sample_train_v2,
-        "optim/entropy": entropy_sample,
-    }
-
-
-async def compute_post_kl(
-    data_D: List[types.Datum], post_sampling_client: tinker.SamplingClient
-) -> Dict[str, float]:
-    """Compute post-update KL divergence metrics."""
-    # Compute logprobs at all data items
-    # This is a bit ugly, but we first reconstruct the original sequence from before we did the
-    # shifting to get the inputs and targets.
-    full_sequence_inputs_D = [
-        datum.model_input.append_int(cast(int, datum.loss_fn_inputs["target_tokens"].data[-1]))
-        for datum in data_D
-    ]
-    new_logprobs_D = await asyncio.gather(
-        *[
-            post_sampling_client.compute_logprobs_async(sequence_input)
-            for sequence_input in full_sequence_inputs_D
-        ]
-    )
-
-    prev_logprobs_D = [datum.loss_fn_inputs["logprobs"].to_torch() for datum in data_D]
-    action_masks = [datum.loss_fn_inputs["mask"].to_torch() > 0 for datum in data_D]
-    flat_diffs = [
-        (prev_logprobs - torch.tensor(new_logprobs[1:]))[action_mask]
-        for new_logprobs, prev_logprobs, action_mask in safezip(
-            new_logprobs_D, prev_logprobs_D, action_masks
-        )
-    ]
-    flat_diffs = torch.cat(flat_diffs)
-    kl_post_v1 = flat_diffs.mean().item()
-    kl_post_v2 = 0.5 * (flat_diffs**2).mean().item()
-
-    return {"kl_pre_post_v1": kl_post_v1, "kl_pre_post_v2": kl_post_v2}
-
-
-async def incorporate_kl_penalty(
-    data_D: List[types.Datum],
-    base_sampling_client: tinker.SamplingClient,
-    kl_penalty_coef: float,
-    kl_discount_factor: float,
-) -> Dict[str, float]:
-    """
-    Compute KL against base model. Adjust advantages in-place by logp_base - logp_current - avg_kl,
-    where avg_kl is the average of logp_base - logp_current (which is -KL[current, base])
-    """
-    # Compute logprobs at all data items
-    full_sequence_inputs_D = [
-        datum.model_input.append_int(cast(int, datum.loss_fn_inputs["target_tokens"].data[-1]))
-        for datum in data_D
-    ]
-    base_logprobs_D = await asyncio.gather(
-        *[
-            base_sampling_client.compute_logprobs_async(sequence_input)
-            for sequence_input in full_sequence_inputs_D
-        ]
-    )
-    # compute the logprob differences, zeroed out when the mask == 0
-    sampled_logprobs_D = [datum.loss_fn_inputs["logprobs"].to_torch() for datum in data_D]
-    float_masks = [datum.loss_fn_inputs["mask"].to_torch().float() for datum in data_D]
-    logprob_diffs = [
-        (sampled_logprobs - torch.tensor(base_logprobs[1:])) * mask
-        for base_logprobs, sampled_logprobs, mask in safezip(
-            base_logprobs_D, sampled_logprobs_D, float_masks
-        )
-    ]
-    avg_logp_diff = sum([diff.sum() for diff in logprob_diffs]) / sum(
-        [mask.sum() for mask in float_masks]
-    )
-    for i, datum in enumerate(data_D):
-        kl_advantages = kl_penalty_coef * float_masks[i] * (avg_logp_diff - logprob_diffs[i])
-        if kl_discount_factor > 0:
-            kl_advantages = torch.tensor(
-                discounted_future_sum_vectorized(kl_advantages.numpy(), kl_discount_factor)
-            )
-        datum.loss_fn_inputs["advantages"] = types.TensorData.from_torch(
-            datum.loss_fn_inputs["advantages"].to_torch() + kl_advantages
-        )
-
-    return {"kl_policy_base": float(avg_logp_diff)}
-
-
-def discounted_future_sum_vectorized(x: np.ndarray, gamma: float) -> np.ndarray:
-    """
-    Compute discounted sum of future values for each position using a vectorized approach.
-
-    Args:
-        x (np.ndarray): 1D array of rewards.
-        gamma (float): Discount factor.
-
-    Returns:
-        np.ndarray: discounted sum of future values.
-    """
-    # Reverse x so lfilter processes from end to start
-    import scipy.signal
-
-    return scipy.signal.lfilter([1], [1, -gamma], x[::-1], axis=0)[::-1].astype(x.dtype)  # type: ignore
-
-
-def assemble_training_data(
-    trajectory_groups_P: List[TrajectoryGroup],
-    advantages_P: List[torch.Tensor],
-) -> tuple[List[types.Datum], List[dict[str, int]]]:
-    """Convert trajectories to training data format."""
-    data_D: list[types.Datum] = []
-    metadata_D: list[dict[str, int]] = []
-
-    for i_group, (traj_group, advantages_G) in enumerate(
-        safezip(trajectory_groups_P, advantages_P)
-    ):
-        for i_traj, (traj, traj_advantage) in enumerate(
-            safezip(traj_group.trajectories_G, advantages_G)
-        ):
-            # Build the full sequence from the trajectory
-            new_data = to_data(traj, float(traj_advantage))
-            data_D.extend(new_data)
-            metadata_D.extend([dict(group_idx=i_group, traj_idx=i_traj) for _ in new_data])
-
-    return data_D, metadata_D
 
 
 def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]:
@@ -400,62 +102,87 @@ def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
     logger.info(buf.getvalue().rstrip())
 
 
-def _remove_mask(datum: types.Datum) -> types.Datum:
+async def optim_step(
+    training_client: tinker.TrainingClient,
+    learning_rate: float,
+) -> None:
+    """Apply the accumulated gradients to update the model weights"""
+    adam_params = types.AdamParams(learning_rate=learning_rate, beta1=0.9, beta2=0.95, eps=1e-8)
+    optim_step_future = await training_client.optim_step_async(adam_params)
+    await optim_step_future.result_async()
+
+
+def remove_mask(datum: types.Datum) -> types.Datum:
     return types.Datum(
         model_input=datum.model_input,
         loss_fn_inputs={k: v for k, v in datum.loss_fn_inputs.items() if k != "mask"},
     )
 
 
-def _remove_constant_reward_groups(
-    trajectory_groups_P: List[TrajectoryGroup],
-) -> List[TrajectoryGroup]:
-    new_groups = []
-    for group in trajectory_groups_P:
-        if not all_same(group.get_total_rewards()):
-            new_groups.append(group)
-    if not new_groups:
-        logger.warning("All rewards are uniform. There will be no gradient")
-        return trajectory_groups_P[0:1]  # return singleton list in case empty
-        # list will cause problems
-    return new_groups
+async def forward_backward(
+    training_client: tinker.TrainingClient,
+    batch_d: List[types.Datum],
+) -> List[torch.Tensor]:
+    """Accumulate gradients on a minibatch of data"""
+    fwd_bwd_future = await training_client.forward_backward_async(
+        list(map(remove_mask, batch_d)), loss_fn="importance_sampling"
+    )
+    fwd_bwd_result = await fwd_bwd_future.result_async()
+
+    # Extract training logprobs from loss_fn_outputs
+    training_logprobs_D: list[torch.Tensor] = []
+    for output in fwd_bwd_result.loss_fn_outputs:
+        training_logprobs = output["logprobs"].to_torch()
+        training_logprobs_D.append(training_logprobs)
+
+    # We dont display fwd_bwd_result.metrics to avoid spam
+    return training_logprobs_D
 
 
 async def train_step(
     data_D: List[types.Datum],
     training_client: tinker.TrainingClient,
     learning_rate: float,
-    num_minibatches: int,
+    num_substeps: int,
 ) -> List[torch.Tensor]:
     """Train the model on collected trajectories."""
-    batches_md = split_list(data_D, min(num_minibatches, len(data_D)))
-    fwd_futures_m: list[APIFuture[types.ForwardBackwardOutput]] = []
-    optim_step_futures_m: list[APIFuture[types.OptimStepResponse]] = []
-
-    for batch_d in batches_md:
-        # Forward-backward pass
-        fwd_bwd_future = await training_client.forward_backward_async(
-            list(map(_remove_mask, batch_d)), loss_fn="importance_sampling"
-        )
-
-        # Optimizer step
-        adam_params = types.AdamParams(learning_rate=learning_rate, beta1=0.9, beta2=0.95, eps=1e-8)
-        optim_step_future = await training_client.optim_step_async(adam_params)
-        fwd_futures_m.append(fwd_bwd_future)
-        optim_step_futures_m.append(optim_step_future)
-
-    fwd_bwd_results_m = [await future.result_async() for future in fwd_futures_m]
-    _optim_step_results_m = [await future.result_async() for future in optim_step_futures_m]
-
-    # Extract training logprobs from loss_fn_outputs
+    batches_md = split_list(data_D, min(num_substeps, len(data_D)))
     training_logprobs_D: list[torch.Tensor] = []
-    for fwd_bwd_result in fwd_bwd_results_m:
-        for output in fwd_bwd_result.loss_fn_outputs:
-            training_logprobs = output["logprobs"].to_torch()
-            training_logprobs_D.append(training_logprobs)
-
-    # We dont display fwd_bwd_result.metrics to avoid spam
+    for batch_d in batches_md:
+        training_logprobs = await forward_backward(training_client, batch_d)
+        training_logprobs_D.extend(training_logprobs)
+        await optim_step(training_client, learning_rate)
     return training_logprobs_D
+
+
+@chz.chz
+class StreamMinibatchConfig:
+    """
+    Configuration for training with minibatch streaming.
+    Once we have accumulated enough trajectories for a minibatch, we will
+    immediately train on them, instead of waiting for the full batch of
+    trajectories to be ready.
+    """
+
+    # Total number of trajectory groups across all minibatches and substeps
+    groups_per_batch: int
+    # For each substep, we will divide up the number of trajectory groups
+    # into this many minibatches.
+    # We will do num_minibatches forward_backward() passes and one optim_step()
+    # per substep.
+    num_minibatches: int
+
+
+@chz.chz
+class AsyncConfig:
+    """Configuration for async RL training"""
+
+    # If samples are generated from a sample more than this many steps ago,
+    # we will skip training on them.
+    max_steps_off_policy: int
+    # We will ensure all batches have at least this many groups, even
+    # as we discard stale samples
+    groups_per_batch: int
 
 
 @chz.chz
@@ -469,8 +196,11 @@ class Config:
     lora_rank: int = 32
 
     kl_penalty_coef: float = 0.0
-    num_minibatches: int = 1
     kl_discount_factor: float = 0.0
+
+    # Number of optimizer steps per training iteration.
+    # Useful for very large batch sizes.
+    num_substeps: int = 1
 
     wandb_project: str | None = None
     wandb_name: str | None = None
@@ -483,9 +213,13 @@ class Config:
     save_every: int = 20
     load_checkpoint_path: str | None = None
 
+    async_config: AsyncConfig | None = None
+    stream_minibatch_config: StreamMinibatchConfig | None = None
 
-async def do_update(
-    i_batch: int,
+
+async def do_sync_training_with_stream_minibatch(
+    start_batch: int,
+    end_batch: int,
     num_batches: int,
     cfg: Config,
     training_client: tinker.TrainingClient,
@@ -495,42 +229,354 @@ async def do_update(
     ml_logger: ml_log.Logger,
     tokenizer: Tokenizer,
 ):
-    """Perform a single update step in the RL training loop."""
-    metrics = {
-        "progress/batch": i_batch,
-        "optim/lr": cfg.learning_rate,
-        "progress/done_frac": (i_batch + 1) / num_batches,
-    }
+    """
+    Implements fully synchronous on-policy training with minibatch streaming.
+    Once we have accumulated enough trajectories for a minibatch, we will
+    immediately train on them, instead of waiting for the full batch of
+    trajectories to be ready. This allows us to overlap sampling and training.
+    """
 
-    t_start = time.time()
-
-    # Save checkpoint and create sampling client
-    path_dict = await checkpoint_utils.save_checkpoint_async(
-        training_client=training_client,
-        name=f"{i_batch:06d}",
-        log_path=cfg.log_path,
-        loop_state={"batch": i_batch},
-        kind="both" if (i_batch > 0 and i_batch % cfg.save_every == 0) else "sampler",
+    # Initial sampling client
+    sampling_client, _ = await save_checkpoint_and_get_sampling_client(
+        cfg, training_client, start_batch
     )
-    sampling_client = training_client.create_sampling_client(path_dict["sampler_path"])
 
-    # Run evaluations
-    if cfg.eval_every > 0 and i_batch % cfg.eval_every == 0:
-        with timed("run_evals", metrics):
-            for evaluator in evaluators:
-                eval_metrics = await evaluator(sampling_client)
-                metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+    for i_batch in range(start_batch, end_batch):
+        metrics = {
+            "progress/batch": i_batch,
+            "optim/lr": cfg.learning_rate,
+            "progress/done_frac": (i_batch + 1) / num_batches,
+        }
+        t_start = time.time()
 
-    # Get batch and sample trajectories
-    env_group_builders_P = dataset.get_batch(i_batch)
-    with timed("sample", metrics):
-        # Create sampling client with current weights
-        policy = TinkerTokenCompleter(sampling_client, max_tokens=cfg.max_tokens)
-        trajectory_groups_P = await asyncio.gather(
-            *[do_group_rollout(builder, policy) for builder in env_group_builders_P]
+        # Run evaluations
+        if cfg.eval_every > 0 and i_batch % cfg.eval_every == 0:
+            with timed("run_evals", metrics):
+                for evaluator in evaluators:
+                    eval_metrics = await evaluator(sampling_client)
+                    metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+
+        # Samplers will produce trajectory groups asynchronously,
+        # and the trainer will consume them as soon as they are ready
+        trajectory_groups_queue = asyncio.Queue[WrappedTrajectoryGroup | None]()
+
+        async def trajectory_group_worker_task(builder: EnvGroupBuilder) -> None:
+            metrics = {}
+            t_start = time.time()
+            trajectory_group = await do_group_rollout_and_filter_constant_reward(
+                cfg, sampling_client, builder
+            )
+            metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
+            if trajectory_group is not None:
+                trajectory_groups_queue.put_nowait(
+                    WrappedTrajectoryGroup(
+                        trajectory_group=trajectory_group,
+                        env_group_builder=builder,
+                        sampling_client_step=i_batch,
+                        metrics=metrics,
+                    )
+                )
+            else:
+                trajectory_groups_queue.put_nowait(None)
+
+        # Sample all trajectories asynchronously. If we have multiple minibatches,
+        # then sampling can overlap with training.
+        env_group_builders_P = dataset.get_batch(i_batch)
+        for builder in env_group_builders_P:
+            asyncio.create_task(trajectory_group_worker_task(builder))
+
+        # Run multiple optimizer substeps per training iteration
+        sampling_client, full_batch_metrics = await do_train_step_streaming_and_get_sampling_client(
+            cfg,
+            i_batch,
+            trajectory_groups_queue,
+            training_client,
+            service_client,
+            tokenizer,
         )
 
+        # Log metrics
+        metrics.update(full_batch_metrics)
+        metrics["time/total"] = time.time() - t_start
+        ml_logger.log_metrics(metrics, step=i_batch)
+
+
+@chz.chz
+class WrappedTrajectoryGroup:
+    """
+    A wrapper around a trajectory group that includes metadata about how it was generated.
+    Used when we need to overlap sampling and training.
+    """
+
+    trajectory_group: TrajectoryGroup
+    # The env group builder that produced the trajectory group.
+    # Pass this along in case the sampler is too stale, and we need to
+    # requeue this group.
+    env_group_builder: EnvGroupBuilder
+    # The step that produced this trajectory group.
+    sampling_client_step: int
+    metrics: dict[str, Any] = chz.field(default_factory=dict)
+
+
+async def do_async_training(
+    start_batch: int,
+    end_batch: int,
+    num_batches: int,
+    cfg: Config,
+    training_client: tinker.TrainingClient,
+    service_client: tinker.ServiceClient,
+    evaluators: list[SamplingClientEvaluator],
+    dataset: RLDataset,
+    ml_logger: ml_log.Logger,
+    tokenizer: Tokenizer,
+):
+    """Implements async off-policy training, capped at K steps off policy."""
+    assert cfg.async_config is not None
+
+    shutdown_event = asyncio.Event()
+    # We will have groups_per_batch worker generating rollouts, so cap the
+    # queue size to be groups_per_batch.
+    env_group_builders_queue = asyncio.Queue[EnvGroupBuilder | None](
+        maxsize=cfg.async_config.groups_per_batch
+    )
+    trajectory_groups_queue = asyncio.Queue[WrappedTrajectoryGroup | None]()
+
+    # Initial sampling client to use
+    path_dict = await checkpoint_utils.save_checkpoint_async(
+        training_client=training_client,
+        name=f"{start_batch:06d}",
+        log_path=cfg.log_path,
+        loop_state={"batch": start_batch},
+        kind="both",
+    )
+
+    # This will be updated by the training loop
+    sampling_client = training_client.create_sampling_client(path_dict["sampler_path"])
+    sampling_client_step = start_batch
+    sampling_client_updated_event = asyncio.Event()
+    sampling_client_updated_event.set()
+
+    def shutdown_loops():
+        """Trigger all loops to shutdown"""
+        shutdown_event.set()
+        assert cfg.async_config is not None
+        for _ in range(cfg.async_config.groups_per_batch):
+            env_group_builders_queue.put_nowait(None)
+        sampling_client_updated_event.set()
+
+    async def dataloader_loop():
+        """Gets the next set of env builders to run"""
+        i_batch = start_batch
+        while not shutdown_event.is_set() and i_batch < end_batch:
+            env_group_builders_P = dataset.get_batch(i_batch)
+            for env_group_builder in env_group_builders_P:
+                await env_group_builders_queue.put(env_group_builder)
+            i_batch += 1
+
+    async def trajectory_group_worker_loop():
+        """Generates trajectories for a single env builder"""
+        while not shutdown_event.is_set():
+            env_group_builder = await env_group_builders_queue.get()
+            if env_group_builder is None:
+                break
+
+            metrics = {}
+            t_start = time.time()
+            # Save a reference to the sampling client step in case it changes
+            # while we're running the rollout
+            sampling_client_step_copy = sampling_client_step
+            trajectory_group = await do_group_rollout_and_filter_constant_reward(
+                cfg,
+                sampling_client,
+                env_group_builder,
+            )
+            if trajectory_group is None:
+                trajectory_groups_queue.put_nowait(None)
+            else:
+                metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
+                trajectory_groups_queue.put_nowait(
+                    WrappedTrajectoryGroup(
+                        trajectory_group=trajectory_group,
+                        env_group_builder=env_group_builder,
+                        sampling_client_step=sampling_client_step_copy,
+                        metrics=metrics,
+                    )
+                )
+
+    async def training_loop():
+        """
+        Waits for a sufficient number of valid trajectories to be accumulated and trains on them.
+        Will discard trajectories that are too stale.
+        """
+        assert cfg.async_config is not None
+
+        i_batch = start_batch
+        wrapped_trajectory_groups = []
+        while i_batch < end_batch:
+            wrapped_trajectory_group = await trajectory_groups_queue.get()
+            if wrapped_trajectory_group is None:
+                continue
+
+            def filter_stale_trajectory_group(
+                wrapped_trajectory_group: WrappedTrajectoryGroup | None,
+            ) -> bool:
+                """Returns False if the trajectory group is too stale or not valid"""
+                if wrapped_trajectory_group is None:
+                    return False
+
+                # If the samples are too stale, requeue the data so that it will be used eventually.
+                # Requeue on a separate coroutine to avoid blocking the training loop
+                assert cfg.async_config is not None
+                if (
+                    i_batch - wrapped_trajectory_group.sampling_client_step
+                    > cfg.async_config.max_steps_off_policy
+                ):
+                    logger.info(f"[training_loop] Step {i_batch}: Samples are too stale, skipping")
+                    asyncio.create_task(
+                        env_group_builders_queue.put(wrapped_trajectory_group.env_group_builder)
+                    )
+                    return False
+                return True
+
+            metrics = {
+                "training_client/step": i_batch,
+                "optim/lr": cfg.learning_rate,
+                "progress/done_frac": (i_batch + 1) / num_batches,
+            }
+            t_start = time.time()
+
+            nonlocal sampling_client
+            nonlocal sampling_client_step
+            if cfg.stream_minibatch_config is not None:
+                (
+                    sampling_client,
+                    train_step_metrics,
+                ) = await do_train_step_streaming_and_get_sampling_client(
+                    cfg,
+                    i_batch,
+                    trajectory_groups_queue,
+                    training_client,
+                    service_client,
+                    tokenizer,
+                    filter_stale_trajectory_group,
+                )
+            else:
+                if not filter_stale_trajectory_group(wrapped_trajectory_group):
+                    continue
+
+                # Dynamic sampling: Wait for enough trajectories to accumulate to
+                # ensure all batch sizes are the same size. This avoids needing to adjust
+                # the learning rate for different batch sizes.
+                wrapped_trajectory_groups.append(wrapped_trajectory_group)
+                if len(wrapped_trajectory_groups) < cfg.async_config.groups_per_batch:
+                    continue
+                logger.info(
+                    f"[training_loop] Step {i_batch}: Will train on batch, num groups: {len(wrapped_trajectory_groups)}"
+                )
+
+                # Compute sampling client metrics, as samples may have been generated with
+                # different sampler versions
+                metrics.update(compute_sampling_client_metrics(wrapped_trajectory_groups))
+
+                # TODO: For proper checkpointing, we also need to save dataloader state and
+                # all queued trajectory groups that haven't been trained on yet
+                sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(
+                    cfg,
+                    i_batch,
+                    training_client,
+                    service_client,
+                    tokenizer,
+                    [g.env_group_builder for g in wrapped_trajectory_groups],
+                    [g.trajectory_group for g in wrapped_trajectory_groups],
+                )
+            sampling_client_step = i_batch + 1
+            sampling_client_updated_event.set()
+
+            # Log metrics
+            metrics.update(train_step_metrics)
+            metrics["time/training_loop/total"] = time.time() - t_start
+            ml_logger.log_metrics(metrics, step=i_batch)
+            i_batch += 1
+            wrapped_trajectory_groups = []
+
+        shutdown_loops()
+
+    async def evaluation_loop():
+        """Runs evals periodically"""
+        if len(evaluators) == 0 or cfg.eval_every == 0:
+            return
+
+        while not shutdown_event.is_set():
+            await sampling_client_updated_event.wait()
+            sampling_client_updated_event.clear()
+
+            metrics = {}
+            t_start = time.time()
+            # Save a reference to the original values in case it changes
+            # while we're running the evals
+            sampling_client_eval_step = sampling_client_step
+            sampling_client_eval = sampling_client
+            if cfg.eval_every > 0 and sampling_client_eval_step % cfg.eval_every == 0:
+                with timed("run_evals", metrics):
+                    for evaluator in evaluators:
+                        eval_metrics = await evaluator(sampling_client_eval)
+                        metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+                metrics["time/evaluation_loop/total"] = time.time() - t_start
+                ml_logger.log_metrics(metrics, step=sampling_client_eval_step)
+
+    await asyncio.gather(
+        dataloader_loop(),
+        *[trajectory_group_worker_loop() for _ in range(cfg.async_config.groups_per_batch)],
+        training_loop(),
+        evaluation_loop(),
+    )
+
+
+async def do_group_rollout_and_filter_constant_reward(
+    cfg: Config,
+    sampling_client: tinker.SamplingClient,
+    env_group_builder: EnvGroupBuilder,
+) -> TrajectoryGroup | None:
+    policy = TinkerTokenCompleter(sampling_client, max_tokens=cfg.max_tokens)
+    trajectory_group = await do_group_rollout(env_group_builder, policy)
+
+    # Remove if all trajectories have the same reward
+    trajectory_groups = [trajectory_group]
+    if cfg.remove_constant_reward_groups:
+        trajectory_groups = remove_constant_reward_groups(trajectory_groups)
+    if len(trajectory_groups) == 0:
+        return None
+    return trajectory_groups[0]
+
+
+async def save_checkpoint_and_get_sampling_client(
+    cfg: Config,
+    training_client: tinker.TrainingClient,
+    i_batch: int,
+) -> tuple[tinker.SamplingClient, dict[str, Any]]:
+    metrics = {}
+    with timed("save_checkpoint", metrics):
+        path_dict = await checkpoint_utils.save_checkpoint_async(
+            training_client=training_client,
+            name=f"{i_batch:06d}",
+            log_path=cfg.log_path,
+            loop_state={"batch": i_batch},
+            kind="both" if (i_batch > 0 and i_batch % cfg.save_every == 0) else "sampler",
+        )
+        return training_client.create_sampling_client(path_dict["sampler_path"]), metrics
+
+
+async def prepare_minibatch(
+    cfg: Config,
+    env_group_builders_P: list[EnvGroupBuilder],
+    trajectory_groups_P: list[TrajectoryGroup],
+    tokenizer: Tokenizer,
+    service_client: tinker.ServiceClient,
+) -> tuple[list[types.Datum], dict[str, Any]]:
+    """Converts the trajectories into a minibatch, and provides metrics about the minibatch"""
+
     # Compute trajectory metrics
+    metrics = {}
     taglist_P = [env_group_builder.logging_tags() for env_group_builder in env_group_builders_P]
     metrics.update(compute_trajectory_metrics(trajectory_groups_P, taglist_P))
 
@@ -538,17 +584,10 @@ async def do_update(
     for traj_group in trajectory_groups_P[:2]:
         print_group(traj_group, tokenizer)
 
-    # Remove groups with constant reward if configured
-    filtered_trajectory_groups_P = (
-        _remove_constant_reward_groups(trajectory_groups_P)
-        if cfg.remove_constant_reward_groups
-        else trajectory_groups_P
-    )
-
     # Assemble training data
     with timed("assemble_training_data", metrics):
-        advantages_P = compute_advantages(filtered_trajectory_groups_P)
-        data_D, _metadata_D = assemble_training_data(filtered_trajectory_groups_P, advantages_P)
+        advantages_P = compute_advantages(trajectory_groups_P)
+        data_D, _metadata_D = assemble_training_data(trajectory_groups_P, advantages_P)
 
     # Incorporate KL penalty if configured
     if cfg.kl_penalty_coef > 0:
@@ -562,34 +601,248 @@ async def do_update(
             )
         metrics.update(kl_penalty_metrics)
 
-    # Training step
-    with timed("train", metrics):
-        training_logprobs_D = await train_step(
-            data_D,
-            training_client,
-            cfg.learning_rate,
-            cfg.num_minibatches,
-        )
+    return data_D, metrics
+
+
+async def compute_full_batch_metrics_and_get_sampling_client(
+    cfg: Config,
+    training_client: tinker.TrainingClient,
+    i_batch: int,
+    data_D: list[types.Datum],
+    training_logprobs_D: list[torch.Tensor],
+) -> tuple[tinker.SamplingClient, dict[str, Any]]:
+    """
+    At the end of the iteration, this will compute metrics for the full batch
+    and return the latest sampling client.
+    """
+    metrics = {}
 
     # Compute KL metrics
     with timed("compute_kl_sample_train", metrics):
         kl_sample_train_metrics = compute_kl_sample_train(data_D, training_logprobs_D)
         metrics.update(kl_sample_train_metrics)
 
+    # Get a sampling client using the new weights
+    sampling_client, checkpoint_metrics = await save_checkpoint_and_get_sampling_client(
+        cfg, training_client, i_batch
+    )
+    metrics.update(checkpoint_metrics)
+
     # Compute post-KL metrics if configured
     if cfg.compute_post_kl:
-        sampling_client_for_kl = await training_client.save_weights_and_get_sampling_client_async(
-            f"{i_batch + 1:06d}_kl"
-        )
-        # TODO: currently this saves an extra sampling client, which is wasteful. We should
-        # be able to reuse this the next loop iteration if we've created it.
         with timed("compute_post_kl", metrics):
-            post_kl_metrics = await compute_post_kl(data_D, sampling_client_for_kl)
+            post_kl_metrics = await compute_post_kl(data_D, sampling_client)
             metrics.update(post_kl_metrics)
 
-    # Log metrics
-    metrics["time/total"] = time.time() - t_start
-    ml_logger.log_metrics(metrics, step=i_batch)
+    return sampling_client, metrics
+
+
+async def do_train_step_streaming_and_get_sampling_client(
+    cfg: Config,
+    i_batch: int,
+    trajectory_groups_queue: asyncio.Queue[WrappedTrajectoryGroup | None],
+    training_client: tinker.TrainingClient,
+    service_client: tinker.ServiceClient,
+    tokenizer: Tokenizer,
+    trajectory_group_filter: Callable[[WrappedTrajectoryGroup | None], bool] = lambda _: True,
+) -> tuple[tinker.SamplingClient, dict[str, Any]]:
+    """
+    As soon as we have enough trajectories for a minibatch, we will train on them.
+    This allows us to overlap sampling and training.
+    """
+    assert cfg.stream_minibatch_config is not None
+    assert cfg.stream_minibatch_config.groups_per_batch % cfg.num_substeps == 0, (
+        f"{cfg.stream_minibatch_config.groups_per_batch=} must be divisible by {cfg.num_substeps=}"
+    )
+    # Number of groups across all minibatches in each optimizer substep
+    groups_per_substep = cfg.stream_minibatch_config.groups_per_batch // cfg.num_substeps
+    assert groups_per_substep % cfg.stream_minibatch_config.num_minibatches == 0, (
+        f"{groups_per_substep} must be divisible by {cfg.stream_minibatch_config.num_minibatches=}"
+    )
+    # Number of groups per minibatch in each optimizer substep
+    groups_per_minibatch = groups_per_substep // cfg.stream_minibatch_config.num_minibatches
+
+    metrics = {}
+
+    # Run multiple optimizer substeps per training iteration
+    all_data_D = []
+    all_training_logprobs_D = []
+    all_wrapped_trajectory_groups = []
+    for i_substep in range(cfg.num_substeps):
+        # Run multiple minibatches per substep
+        # Once we have enough trajectories for a minibatch, train on them
+        wrapped_trajectory_groups = []
+        i_minibatch = 0
+        while i_minibatch < cfg.stream_minibatch_config.num_minibatches:
+            wrapped_trajectory_group = await trajectory_groups_queue.get()
+            if not trajectory_group_filter(wrapped_trajectory_group):
+                continue
+            wrapped_trajectory_groups.append(wrapped_trajectory_group)
+
+            if len(wrapped_trajectory_groups) < groups_per_minibatch:
+                continue
+            logger.info(
+                f"[stream_minibatch] Step {i_batch}, Substep {i_substep}/{cfg.num_substeps}, Minibatch {i_minibatch}/{cfg.stream_minibatch_config.num_minibatches}: Will train on minibatch, num groups: {len(wrapped_trajectory_groups)}"
+            )
+
+            # Note: we may have removed trajectory groups that have the same reward.
+            # To have the same results as the sync implementation, we will
+            # remove these and train on a smaller batch.
+            wrapped_trajectory_groups = [g for g in wrapped_trajectory_groups if g is not None]
+            data_D, prepare_minibatch_metrics = await prepare_minibatch(
+                cfg,
+                [g.env_group_builder for g in wrapped_trajectory_groups],
+                [g.trajectory_group for g in wrapped_trajectory_groups],
+                tokenizer,
+                service_client,
+            )
+            metrics.update(prepare_minibatch_metrics)
+
+            # Accumulate gradients across multiple minibatches
+            with timed(
+                f"train/forward_backward_substep_{i_substep}_minibatch_{i_minibatch}", metrics
+            ):
+                training_logprobs_D = await forward_backward(
+                    training_client,
+                    data_D,
+                )
+            all_data_D.extend(data_D)
+            all_training_logprobs_D.extend(training_logprobs_D)
+            all_wrapped_trajectory_groups.extend(wrapped_trajectory_groups)
+            i_minibatch += 1
+            wrapped_trajectory_groups = []
+
+        # Run optimizer step only once after all minibatches
+        with timed(f"train/optim_substep_{i_substep}", metrics):
+            await optim_step(training_client, cfg.learning_rate)
+
+    # Aggregate metrics across the entire batch
+    metrics.update(compute_sampling_client_metrics(all_wrapped_trajectory_groups))
+    metrics.update(
+        compute_trajectory_metrics(
+            [g.trajectory_group for g in all_wrapped_trajectory_groups],
+            [g.env_group_builder.logging_tags() for g in all_wrapped_trajectory_groups],
+        )
+    )
+    (
+        sampling_client,
+        full_batch_metrics,
+    ) = await compute_full_batch_metrics_and_get_sampling_client(
+        cfg,
+        training_client,
+        # NOTE: saving the checkpoint as the i + 1 step
+        i_batch + 1,
+        all_data_D,
+        all_training_logprobs_D,
+    )
+    metrics.update(full_batch_metrics)
+    return sampling_client, metrics
+
+
+async def do_train_step_and_get_sampling_client(
+    cfg: Config,
+    i_batch: int,
+    training_client: tinker.TrainingClient,
+    service_client: tinker.ServiceClient,
+    tokenizer: Tokenizer,
+    env_group_builders_P: list[EnvGroupBuilder],
+    trajectory_groups_P: list[TrajectoryGroup],
+) -> tuple[tinker.SamplingClient, dict[str, Any]]:
+    metrics = {}
+    data_D, prepare_minibatch_metrics = await prepare_minibatch(
+        cfg,
+        env_group_builders_P,
+        trajectory_groups_P,
+        tokenizer,
+        service_client,
+    )
+    metrics.update(prepare_minibatch_metrics)
+
+    with timed("train", metrics):
+        training_logprobs_D = await train_step(
+            data_D,
+            training_client,
+            cfg.learning_rate,
+            cfg.num_substeps,
+        )
+
+    sampling_client, full_batch_metrics = await compute_full_batch_metrics_and_get_sampling_client(
+        cfg,
+        training_client,
+        # NOTE: saving the checkpoint as the i + 1 step
+        i_batch + 1,
+        data_D,
+        training_logprobs_D,
+    )
+    metrics.update(full_batch_metrics)
+
+    return sampling_client, metrics
+
+
+async def do_sync_training(
+    start_batch: int,
+    end_batch: int,
+    num_batches: int,
+    cfg: Config,
+    training_client: tinker.TrainingClient,
+    service_client: tinker.ServiceClient,
+    evaluators: list[SamplingClientEvaluator],
+    dataset: RLDataset,
+    ml_logger: ml_log.Logger,
+    tokenizer: Tokenizer,
+):
+    """Implements fully synchronous on-policy training"""
+
+    # Initial sampling client
+    sampling_client, _ = await save_checkpoint_and_get_sampling_client(
+        cfg, training_client, start_batch
+    )
+
+    for i_batch in range(start_batch, end_batch):
+        metrics = {
+            "progress/batch": i_batch,
+            "optim/lr": cfg.learning_rate,
+            "progress/done_frac": (i_batch + 1) / num_batches,
+        }
+        t_start = time.time()
+
+        # Run evaluations
+        if cfg.eval_every > 0 and i_batch % cfg.eval_every == 0:
+            with timed("run_evals", metrics):
+                for evaluator in evaluators:
+                    eval_metrics = await evaluator(sampling_client)
+                    metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+
+        # Get batch and sample trajectories
+        env_group_builders_P = dataset.get_batch(i_batch)
+        with timed("sample", metrics):
+            trajectory_groups_P = await asyncio.gather(
+                *[
+                    do_group_rollout_and_filter_constant_reward(cfg, sampling_client, builder)
+                    for builder in env_group_builders_P
+                ]
+            )
+        trajectory_groups_P = [
+            trajectory_group
+            for trajectory_group in trajectory_groups_P
+            if trajectory_group is not None
+        ]
+
+        # Train step
+        sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(
+            cfg,
+            i_batch,
+            training_client,
+            service_client,
+            tokenizer,
+            env_group_builders_P,
+            trajectory_groups_P,
+        )
+
+        # Log metrics
+        metrics.update(train_step_metrics)
+        metrics["time/total"] = time.time() - t_start
+        ml_logger.log_metrics(metrics, step=i_batch)
 
 
 async def main(
@@ -628,7 +881,7 @@ async def main(
     tokenizer = training_client.get_tokenizer()
 
     # Create dataset from thunk
-    dataset, maybe_test_dataset = cfg.dataset_builder()
+    dataset, maybe_test_dataset = await cfg.dataset_builder()
     evaluators = [evaluator() for evaluator in cfg.evaluator_builders]
     if maybe_test_dataset is not None:
         evaluators.append(RLTestSetEvaluator(maybe_test_dataset, max_tokens=cfg.max_tokens))
@@ -637,18 +890,24 @@ async def main(
     logger.info(f"Will train on {num_batches} batches")
 
     # Training loop
-    for i_batch in range(start_batch, num_batches):
-        await do_update(
-            i_batch=i_batch,
-            num_batches=num_batches,
-            cfg=cfg,
-            training_client=training_client,
-            service_client=service_client,
-            evaluators=evaluators,
-            dataset=dataset,
-            ml_logger=ml_logger,
-            tokenizer=tokenizer,
-        )
+    if cfg.async_config is not None:
+        training_func = do_async_training
+    elif cfg.stream_minibatch_config is not None:
+        training_func = do_sync_training_with_stream_minibatch
+    else:
+        training_func = do_sync_training
+    await training_func(
+        start_batch=start_batch,
+        end_batch=num_batches,
+        num_batches=num_batches,
+        cfg=cfg,
+        training_client=training_client,
+        service_client=service_client,
+        evaluators=evaluators,
+        dataset=dataset,
+        ml_logger=ml_logger,
+        tokenizer=tokenizer,
+    )
 
     # Save final checkpoint
     if start_batch < num_batches:

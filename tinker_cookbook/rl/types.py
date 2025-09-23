@@ -2,6 +2,7 @@
 Basic interfaces and types for reinforcement learning.
 """
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Sequence
 
@@ -34,17 +35,19 @@ class Transition:
     metrics: Metrics = field(default_factory=dict)
 
 
-class Env:
+class Env(ABC):
     """
     Stateful environment that a single agent interacts with.
     Discard after running for one episode.
     """
 
+    @abstractmethod
     async def initial_observation(self) -> tuple[Observation, StopCondition]:
-        raise NotImplementedError
+        pass
 
+    @abstractmethod
     async def step(self, action: Action) -> StepResult:
-        raise NotImplementedError
+        pass
 
 
 @dataclass(frozen=True)
@@ -58,7 +61,7 @@ class Trajectory:
     final_ob: Observation
 
 
-class EnvGroupBuilder:
+class EnvGroupBuilder(ABC):
     """
     Builds a group of environments. The group will be used in the following way:
 
@@ -76,8 +79,9 @@ class EnvGroupBuilder:
     - As a part of the *algorithm* (e.g. GRPO), when dealing with single-agent tasks.
     """
 
+    @abstractmethod
     async def make_envs(self) -> Sequence[Env]:
-        raise NotImplementedError
+        pass
 
     async def compute_group_rewards(
         self, trajectory_group: list[Trajectory]
@@ -126,17 +130,19 @@ class TrajectoryGroup:
         ]
 
 
-class RLDataset:
+class RLDataset(ABC):
     """
     A dataset that produces batches of EnvGroups. This is the kind of dataset used by
     training algorithms.
     """
 
+    @abstractmethod
     def get_batch(self, index: int) -> list[EnvGroupBuilder]:
-        raise NotImplementedError
+        pass
 
+    @abstractmethod
     def __len__(self) -> int:
-        raise NotImplementedError
+        pass
 
 
 @chz.chz
@@ -145,8 +151,9 @@ class RLDatasetBuilder:
     Abstract class for building RL datasets.
     """
 
-    def __call__(self) -> tuple[RLDataset, RLDataset | None]:
+    @abstractmethod
+    async def __call__(self) -> tuple[RLDataset, RLDataset | None]:
         """
         Return RLDataset (for training) and an optional RL dataset for testing
         """
-        raise NotImplementedError
+        pass

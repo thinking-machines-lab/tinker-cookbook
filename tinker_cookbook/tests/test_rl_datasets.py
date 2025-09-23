@@ -1,3 +1,5 @@
+import asyncio
+
 from tinker_cookbook.rl.math_env import MathDatasetBuilder
 
 
@@ -8,7 +10,7 @@ def test_math_dataset_builder():
         renderer_name="qwen2p5",
         group_size=1,
     )
-    train_dataset, test_dataset = builder()
+    train_dataset, test_dataset = asyncio.run(builder())
 
     # Basic dataset statistics
     assert len(train_dataset) == 12_000

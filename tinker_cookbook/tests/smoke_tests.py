@@ -13,7 +13,7 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 def test_supervised():
     batch_size = 64
-    model_name = "meta-llama/Llama-3.2-1B-Instruct"
+    model_name = "meta-llama/Llama-3.1-8B-Instruct"
     renderer_name = "role_colon"
     tokenizer = get_tokenizer(model_name)
     renderer = renderers.get_renderer(renderer_name, tokenizer)
@@ -44,7 +44,7 @@ def test_supervised():
 
 
 async def test_rl():
-    model_name = "meta-llama/Llama-3.2-1B-Instruct"
+    model_name = "meta-llama/Llama-3.1-8B-Instruct"
     lora_rank = 32
     renderer_name = "role_colon"
     tokenizer = get_tokenizer(model_name)
@@ -68,6 +68,68 @@ async def test_rl():
         max_tokens=5,
     )
     await rl_train.main(cfg)
+
+
+def test_rl_async():
+    model_name = "Qwen/Qwen2.5-VL-7B-Instruct"
+    lora_rank = 32
+    renderer_name = "role_colon"
+    tokenizer = get_tokenizer(model_name)
+    renderers.get_renderer(renderer_name, tokenizer)
+
+    dataset_builder = arithmetic_env.ArithmeticDatasetBuilder(
+        batch_size=64,
+        model_name_for_tokenizer=model_name,
+        renderer_name="role_colon",
+        n_batches=3,
+        include_fewshot=True,
+        group_size=16,
+    )
+    cfg = rl_train.Config(
+        model_name=model_name,
+        lora_rank=lora_rank,
+        dataset_builder=dataset_builder,
+        log_path="/tmp/tinker-smoke-test/rl-arithmetic",
+        wandb_project="tinker-smoke-test",
+        learning_rate=1e-4,
+        max_tokens=5,
+        async_config=rl_train.AsyncConfig(
+            max_steps_off_policy=2,
+            groups_per_batch=64,
+        ),
+    )
+    asyncio.run(rl_train.main(cfg))
+
+
+def test_rl_sync_stream_minibatch():
+    model_name = "Qwen/Qwen2.5-VL-7B-Instruct"
+    lora_rank = 32
+    renderer_name = "role_colon"
+    tokenizer = get_tokenizer(model_name)
+    renderers.get_renderer(renderer_name, tokenizer)
+
+    dataset_builder = arithmetic_env.ArithmeticDatasetBuilder(
+        batch_size=64,
+        model_name_for_tokenizer=model_name,
+        renderer_name="role_colon",
+        n_batches=3,
+        include_fewshot=True,
+        group_size=16,
+    )
+    cfg = rl_train.Config(
+        model_name=model_name,
+        lora_rank=lora_rank,
+        dataset_builder=dataset_builder,
+        log_path="/tmp/tinker-smoke-test/rl-arithmetic-stream-minibatch",
+        wandb_project="tinker-smoke-test",
+        learning_rate=1e-4,
+        max_tokens=5,
+        stream_minibatch_config=rl_train.StreamMinibatchConfig(
+            groups_per_batch=64,
+            num_minibatches=2,
+        ),
+    )
+    asyncio.run(rl_train.main(cfg))
 
 
 if __name__ == "__main__":

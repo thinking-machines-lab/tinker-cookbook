@@ -218,7 +218,7 @@ class PairwisePreferenceRLDatasetBuilder(RLDatasetBuilder):
     base_url: str | None = None
     content_preprocessor: Callable[[str], str] | None = None
 
-    def __call__(self) -> tuple[PairwisePreferenceDataset, None]:
+    async def __call__(self) -> tuple[PairwisePreferenceDataset, None]:
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
         renderer = renderers.get_renderer(self.renderer_name, tokenizer=tokenizer)
 

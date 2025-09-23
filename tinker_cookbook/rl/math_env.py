@@ -34,11 +34,11 @@ class MathEnv(ProblemEnv):
         self.timeout = timeout
 
     @classmethod
-    def _boxed_format_suffix(cls) -> str:
+    def question_suffix(cls) -> str:
         return " Write your answer in \\boxed{} format."
 
     def get_question(self) -> str:
-        return self.problem + self._boxed_format_suffix()
+        return self.problem + self.question_suffix()
 
     def check_format(self, sample_str: str) -> bool:
         try:
@@ -59,7 +59,7 @@ class MathEnv(ProblemEnv):
         return [
             {
                 "role": "user",
-                "content": "How many r's are in strawberry?" + MathEnv._boxed_format_suffix(),
+                "content": "How many r's are in strawberry?" + MathEnv.question_suffix(),
             },
             {
                 "role": "assistant",
@@ -187,7 +187,7 @@ class MathDatasetBuilder(RLDatasetBuilder):
     group_size: int
     convo_prefix: list[renderers.Message] | None | Literal["standard"] = "standard"
 
-    def __call__(self) -> tuple[MathDataset, MathDataset]:
+    async def __call__(self) -> tuple[MathDataset, MathDataset]:
         if self.convo_prefix == "standard":
             convo_prefix = MathEnv.standard_fewshot_prefix()
         else:
@@ -246,7 +246,7 @@ class PolarisDatasetBuilder(RLDatasetBuilder):
     renderer_name: str
     group_size: int
 
-    def __call__(self) -> tuple[PolarisDataset, None]:
+    async def __call__(self) -> tuple[PolarisDataset, None]:
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
         return PolarisDataset(
             batch_size=self.batch_size,
@@ -294,7 +294,7 @@ class DeepMathDatasetBuilder(RLDatasetBuilder):
     renderer_name: str
     group_size: int
 
-    def __call__(self) -> tuple[DeepMathDataset, None]:
+    async def __call__(self) -> tuple[DeepMathDataset, None]:
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
         return DeepMathDataset(
             batch_size=self.batch_size,
@@ -321,6 +321,10 @@ class Gsm8kDataset(RLDataset):
         self.group_size = group_size
         self.renderer = renderer
         self.convo_prefix = convo_prefix
+
+    @classmethod
+    def question_suffix(cls) -> str:
+        return " Provide a numerical answer without units, written inside \\boxed{}."
 
     def get_batch(self, index: int) -> list[EnvGroupBuilder]:
         return [
@@ -357,7 +361,7 @@ class Gsm8kDatasetBuilder(RLDatasetBuilder):
     group_size: int
     convo_prefix: list[renderers.Message] | None | Literal["standard"] = "standard"
 
-    def __call__(self) -> tuple[Gsm8kDataset, Gsm8kDataset]:
+    async def __call__(self) -> tuple[Gsm8kDataset, Gsm8kDataset]:
         if self.convo_prefix == "standard":
             convo_prefix = MathEnv.standard_fewshot_prefix()
         else:

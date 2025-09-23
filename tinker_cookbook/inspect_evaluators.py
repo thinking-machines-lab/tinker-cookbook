@@ -26,7 +26,7 @@ class InspectEvaluatorBuilder:
     # Required parameters
     tasks: Tasks
     renderer_name: str
-    model_name: str  # TODO: remove once we can infer from model path
+    model_name: str | None = None
 
     # Generation parameters
     temperature: float = 1.0

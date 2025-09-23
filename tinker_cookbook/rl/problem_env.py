@@ -1,4 +1,5 @@
 import logging
+from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Callable, Sequence
 
@@ -33,14 +34,17 @@ class ProblemEnv(Env):
     def stop_condition(self) -> StopCondition:
         return self.renderer.get_stop_sequences()
 
+    @abstractmethod
     def get_question(self) -> str:
-        raise NotImplementedError
+        pass
 
+    @abstractmethod
     def check_answer(self, sample_str: str) -> bool:
-        raise NotImplementedError
+        pass
 
+    @abstractmethod
     def check_format(self, sample_str: str) -> bool:
-        raise NotImplementedError
+        pass
 
     async def initial_observation(self) -> tuple[Observation, StopCondition]:
         convo = self.convo_prefix + [

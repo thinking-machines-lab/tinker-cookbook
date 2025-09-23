@@ -150,7 +150,7 @@ class TwentyQuestionsDatasetBuilder(RLDatasetBuilder):
     num_epochs: int = 1
     answerer_base_model: str = "meta-llama/Llama-3.1-8B-Instruct"
 
-    def __call__(self) -> tuple[RLDataset, RLDataset]:
+    async def __call__(self) -> tuple[RLDataset, RLDataset]:
         if self.answerer_base_model.startswith("Qwen/Qwen3"):
             renderer_name = "qwen3_nothink"
         else:

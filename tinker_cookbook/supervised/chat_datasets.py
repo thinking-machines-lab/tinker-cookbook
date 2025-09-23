@@ -166,6 +166,8 @@ class OpenThoughts3Builder(ChatDatasetBuilder):
         def map_fn(row: dict[str, list[dict[str, str]]]) -> types.Datum:
             messages: list[Message] = []
             for conversation in row["conversations"]:
+                conversation["from"] = conversation["from"].replace("gpt", "assistant")
+                conversation["from"] = conversation["from"].replace("human", "user")
                 messages.append(Message(role=conversation["from"], content=conversation["value"]))
             return conversation_to_datum(
                 messages,

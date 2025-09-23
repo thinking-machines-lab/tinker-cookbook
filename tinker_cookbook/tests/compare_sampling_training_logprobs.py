@@ -124,7 +124,7 @@ async def main(config: Config):
 
     model_names = [x for x in sorted(model_names) if should_do_model(x)]
     print(f"Model names: {model_names}")
-    timeout_sec = 150.0
+    timeout_sec = 300.0
     rows = await asyncio.gather(
         *[
             get_row(

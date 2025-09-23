@@ -29,6 +29,11 @@ envs = [
     "sympy",
     "textarena",
 ]
+vector-search = [
+    "chromadb",
+    "google-genai",
+    "huggingface_hub"
+]
 
 [build-system]
 requires = ["hatchling"]

@@ -30,6 +30,8 @@ def dump_config(config: Any) -> Any:
     """Convert configuration object to JSON-serializable format."""
     if hasattr(config, "to_dict"):
         return config.to_dict()
+    elif chz.is_chz(config):
+        return chz.asdict(config)
     elif is_dataclass(config) and not isinstance(config, type):
         return asdict(config)
     elif isinstance(config, dict):

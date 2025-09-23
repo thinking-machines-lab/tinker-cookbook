@@ -9,6 +9,7 @@ from typing import Dict, Tuple
 
 import huggingface_hub
 import numpy as np
+from transformers import AutoConfig
 
 from tinker_cookbook.utils.misc_utils import not_none
 
@@ -77,18 +78,55 @@ def _get_hidden_size(model_name: str) -> int:
     return config.hidden_size
 
 
-def get_lora_param_count(model_name: str, lora_rank: int = 32) -> int:
+def get_lora_param_count(
+    model_name: str,
+    lora_rank: int = 32,
+    scale_moe_rank_by_topk: bool = True,
+    detailed: bool = False,
+    include_experts: bool = True,
+) -> int | dict[str, int]:
     """
     Get the number of parameters in the LoRA adapter.
     """
+    model_config = AutoConfig.from_pretrained(model_name)
 
     dim_sum = 0
+    dim_sum_experts = 0
+    ignore = ["gate", "embed_tokens", "q_b_proj", "kv_b_proj"]
+    if not include_experts:
+        ignore.append("experts")
+
     for name, shape in _list_param_shapes_from_safetensors_remote(model_name).items():
         if (
-            len(shape) == 2 and name.endswith(".weight") and ("experts" not in name)
-        ):  # not exactly right but close
-            dim_sum += shape[0] + shape[1]
-    return lora_rank * dim_sum
+            len(shape) == 2
+            and name.endswith(".weight")
+            and not any([v in name.split(".") for v in ignore])
+        ):
+            if "experts" not in name.split("."):
+                dim_sum += shape[0] + shape[1]
+            else:
+                dim_sum_experts += shape[0] + shape[1]
+
+    non_expert_params = lora_rank * dim_sum
+
+    if scale_moe_rank_by_topk and dim_sum_experts > 0:
+        assert hasattr(model_config, "num_experts_per_tok"), (
+            "num_experts_per_tok is not in the model config, can't calculate with scale_moe_rank_by_topk"
+        )
+        moe_rank_scale = model_config.num_experts_per_tok
+    else:
+        moe_rank_scale = 1
+    expert_params = dim_sum_experts * (lora_rank // moe_rank_scale)
+
+    return (
+        (expert_params + non_expert_params)
+        if not detailed
+        else {
+            "expert_params": expert_params,
+            "non_expert_params": non_expert_params,
+            "total_params": expert_params + non_expert_params,
+        }
+    )
 
 
 def get_full_finetune_param_count(model_name: str) -> float:

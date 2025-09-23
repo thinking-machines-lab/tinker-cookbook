@@ -3,9 +3,11 @@ Use viz_sft_dataset to visualize the output of different renderers. E.g.,
     python -m tinker_cookbook.viz_sft_dataset dataset_name=wildchat_v0 renderer_name=role_colon
 """
 
+import json
 import logging
+import re
 from enum import StrEnum
-from typing import Callable, TypedDict
+from typing import Callable, NotRequired, TypedDict
 
 import torch
 from tinker import types
@@ -15,9 +17,21 @@ from tinker_cookbook.tokenizer_utils import Tokenizer
 logger = logging.getLogger(__name__)
 
 
+class ToolCall(TypedDict):
+    name: str
+    # Each argument is a stringified JSON object
+    args: dict[str, str]
+
+
+# NOTE: we use a broad type definition for the role to be flexible
+# Common roles are "user", "assistant", "system", "tool"
+Role = str
+
+
 class Message(TypedDict):
-    role: str
+    role: Role
     content: str
+    tool_calls: NotRequired[list[ToolCall]]
 
 
 class TrainOnWhat(StrEnum):
@@ -40,7 +54,7 @@ class Renderer:
         raise NotImplementedError
 
     def build_generation_prompt(
-        self, messages: list[Message], role: str = "assistant"
+        self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> types.ModelInput:
         raise NotImplementedError
 
@@ -170,9 +184,9 @@ class RoleColonRenderer(Renderer):
         )
 
     def build_generation_prompt(
-        self, messages: list[Message], role: str = "assistant"
+        self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> types.ModelInput:
-        tokens = []
+        tokens: list[int] = []
         tokens.extend(self._bos_tokens)
         for message in messages:
             ob_part, action_part, action_tail = self._render_message(message)
@@ -181,6 +195,7 @@ class RoleColonRenderer(Renderer):
         new_partial_message = Message(role=role, content="")
         ob_part, _action_part, _action_tail = self._render_message(new_partial_message)
         tokens.extend(ob_part)
+        tokens.extend(self.tokenizer.encode(prefill or "", add_special_tokens=False))
         return types.ModelInput.from_ints(tokens)
 
     def build_supervised_example(
@@ -250,9 +265,9 @@ class Llama3Renderer(Renderer):
         )
 
     def build_generation_prompt(
-        self, messages: list[Message], role: str = "assistant"
+        self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> types.ModelInput:
-        tokens = []
+        tokens: list[int] = []
         tokens.extend(self._bos_tokens)
         for message in messages:
             ob_part, action_part, action_tail = self._render_message(message)
@@ -261,6 +276,7 @@ class Llama3Renderer(Renderer):
         new_partial_message = Message(role=role, content="")
         ob_part, _action_part, _action_tail = self._render_message(new_partial_message)
         tokens.extend(ob_part)
+        tokens.extend(self.tokenizer.encode(prefill or "", add_special_tokens=False))
         return types.ModelInput.from_ints(tokens)
 
     def build_supervised_example(
@@ -323,9 +339,9 @@ class Qwen2p5Renderer(Renderer):
         )
 
     def build_generation_prompt(
-        self, messages: list[Message], role: str = "assistant"
+        self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> types.ModelInput:
-        tokens = []  # No BOS token for Qwen
+        tokens: list[int] = []  # No BOS token for Qwen
         for idx, message in enumerate(messages):
             ob_part, action_part, _ = self._render_message(idx, message)
             tokens.extend(ob_part)
@@ -334,7 +350,7 @@ class Qwen2p5Renderer(Renderer):
         new_partial_message = Message(role=role, content="")
         ob_part, _, _ = self._render_message(len(messages), new_partial_message)
         tokens.extend(ob_part)
-
+        tokens.extend(self.tokenizer.encode(prefill or "", add_special_tokens=False))
         return types.ModelInput.from_ints(tokens)
 
     def build_supervised_example(
@@ -356,8 +372,71 @@ class Qwen2p5Renderer(Renderer):
     def get_stop_sequences(self) -> list[int]:
         return [self._end_message_token]
 
+    def _parse_tool_call(self, tool_call_str: str) -> list[ToolCall] | None:
+        try:
+            tool_call = json.loads(tool_call_str)
+        except json.JSONDecodeError:
+            return None
+
+        if not isinstance(tool_call, dict):
+            return None
+        if (
+            "name" not in tool_call
+            or "args" not in tool_call
+            or not isinstance(tool_call["name"], str)
+            or not isinstance(tool_call["args"], dict)
+        ):
+            return None
+
+        return [ToolCall(**tool_call)]
+
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
-        return parse_response_for_stop_token(response, self.tokenizer, self._end_message_token)
+        assistant_message, parse_success = parse_response_for_stop_token(
+            response, self.tokenizer, self._end_message_token
+        )
+        if not parse_success:
+            return assistant_message, False
+
+        # NOTE:
+        # we use the <function_call>...</function_call> tag to wrap the tool call.
+        match = re.search(
+            r"<function_call>(.*?)</function_call>", assistant_message["content"], re.DOTALL
+        )
+        if match:
+            tool_calls = self._parse_tool_call(match.group(1))
+            if tool_calls is None:
+                return assistant_message, False
+            else:
+                assistant_message["tool_calls"] = tool_calls
+                return assistant_message, True
+        return assistant_message, True
+
+
+class Qwen3Renderer(Qwen2p5Renderer):
+    """
+    Renderer for Qwen3 models. With thinking and hybrid models, it'll allow them to
+    sample a <think>...</think> token and then sample the response.
+    """
+
+
+class Qwen3DisableThinkingRenderer(Qwen2p5Renderer):
+    """
+    Renderer that disables thinking for hybrid-mode Qwen3 models
+    """
+
+    def build_generation_prompt(
+        self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
+    ) -> types.ModelInput:
+        prefill = "<think>\n\n</think>\n\n" + (prefill or "")
+        # XXX this causes inefficiency in RL, because the observations don't grow by appending to the end.
+        # Maybe we should just insert this empty thinking block in every message?
+        return super().build_generation_prompt(messages, role, prefill)
+
+
+class Qwen3InstructRenderer(Qwen2p5Renderer):
+    """
+    Renderer for Qwen3 instruct models
+    """
 
 
 def get_renderer(name: str, tokenizer: Tokenizer) -> Renderer:
@@ -367,5 +446,11 @@ def get_renderer(name: str, tokenizer: Tokenizer) -> Renderer:
         return Llama3Renderer(tokenizer)
     elif name == "qwen2p5":
         return Qwen2p5Renderer(tokenizer)
+    elif name == "qwen3":
+        return Qwen3Renderer(tokenizer)
+    elif name == "qwen3_disable_thinking":
+        return Qwen3DisableThinkingRenderer(tokenizer)
+    elif name == "qwen3_instruct":
+        return Qwen3InstructRenderer(tokenizer)
     else:
         raise ValueError(f"Unknown renderer: {name}")

@@ -166,6 +166,7 @@ def do_update(
     metrics.update(
         num_sequences=len(data),
         num_tokens=sum(datum.model_input.length for datum in data),
+        num_loss_tokens=sum(sum(datum.loss_fn_inputs["weights"].data) for datum in data),
         learning_rate=learning_rate,
         train_mean_nll=train_nll,
         progress=step / total_steps,

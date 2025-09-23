@@ -5,7 +5,10 @@ Script to visualize supervised datasets in the terminal.
 import chz
 
 from tinker_cookbook import model_info
-from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
+from tinker_cookbook.supervised.types import (
+    ChatDatasetBuilderCommonConfig,
+    SupervisedDatasetBuilder,
+)
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils.misc_utils import lookup_func
 
@@ -31,6 +34,7 @@ def run(cfg: Config):
     dataset_builder = lookup_func(
         cfg.dataset_path, default_module="tinker_cookbook.supervised.chat_datasets"
     )(common_config=common_config)
+    assert isinstance(dataset_builder, SupervisedDatasetBuilder)
     tokenizer = get_tokenizer(cfg.model_name)
     train_dataset, _ = dataset_builder()
     batch = train_dataset.get_batch(0)
@@ -38,7 +42,7 @@ def run(cfg: Config):
         int_tokens = list(datum.model_input.to_ints()) + [
             datum.loss_fn_inputs["target_tokens"].tolist()[-1]
         ]
-        weights = [0] + datum.loss_fn_inputs["weights"].tolist()
+        weights = [0.0] + datum.loss_fn_inputs["weights"].tolist()
         print(format_colorized(int_tokens, weights, tokenizer))
         input("press enter")
 

@@ -213,5 +213,5 @@ class TextArenaDatasetBuilder(rl_types.RLDatasetBuilder):
     batch_size: int
     builder: TextArenaEnvGroupBuilder
 
-    def __call__(self) -> tuple[TextArenaDataset, None]:
+    async def __call__(self) -> tuple[TextArenaDataset, None]:
         return TextArenaDataset(batch_size=self.batch_size, builder=self.builder), None
