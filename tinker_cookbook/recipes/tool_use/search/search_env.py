@@ -300,9 +300,11 @@ class SearchR1Dataset(RLDataset):
         seed: int = 0,
         split: Literal["train", "test"] = "train",
         subset_size: int | None = None,
+        max_trajectory_tokens: int = 32 * 1024,
     ):
         self.batch_size: int = batch_size
         self.group_size: int = group_size
+        self.max_trajectory_tokens: int = max_trajectory_tokens
         self.renderer: renderers.Renderer = renderer
         self.convo_prefix: list[renderers.Message] | None = convo_prefix
         self.chroma_tool_client: ChromaToolClient = chroma_tool_client
@@ -331,6 +333,7 @@ class SearchR1Dataset(RLDataset):
                 self.chroma_tool_client,
                 self.renderer,
                 convo_prefix=self.convo_prefix,
+                max_trajectory_tokens=self.max_trajectory_tokens,
             ),
             num_envs=group_size,
         )
@@ -346,6 +349,7 @@ class SearchR1DatasetBuilder(RLDatasetBuilder):
     convo_prefix: list[renderers.Message] | None | Literal["standard"] = "standard"
     seed: int = 0
     max_eval_size: int = 1024
+    max_trajectory_tokens: int = 32 * 1024
 
     async def __call__(self) -> tuple[SearchR1Dataset, None]:
         if self.convo_prefix == "standard":
@@ -365,5 +369,6 @@ class SearchR1DatasetBuilder(RLDatasetBuilder):
             convo_prefix=convo_prefix,
             split="train",
             seed=self.seed,
+            max_trajectory_tokens=self.max_trajectory_tokens,
         )
         return (train_dataset, None)

@@ -22,6 +22,7 @@ def build_config(
     chroma_port: int,
     wandb_project: str,
     stream_minibatch: bool,
+    max_trajectory_tokens: int,
 ) -> train.Config:
     renderer_name = model_info.get_recommended_renderer_name(model_name)
     chroma_tool_config = ChromaToolClientConfig(
@@ -44,6 +45,7 @@ def build_config(
         model_name_for_tokenizer=model_name,
         chroma_tool_config=chroma_tool_config,
         seed=seed,
+        max_trajectory_tokens=max_trajectory_tokens,
     )
     if stream_minibatch:
         stream_minibatch_config = train.StreamMinibatchConfig(
@@ -54,7 +56,7 @@ def build_config(
     else:
         stream_minibatch_config = None
         bs_str = f"bs{batch_size}"
-    run_name = f"search_r1_{model_name.lower()}_{bs_str}_gs8_seed{seed}_lr{learning_rate}_rank{lora_rank}_{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}"
+    run_name = f"search_r1_{model_name.lower()}_{bs_str}_gs8_seed{seed}_tracj{max_trajectory_tokens // 1024}k_lr{learning_rate}_rank{lora_rank}_{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}"
 
     if not Path("/tmp").exists():
         raise ValueError("/tmp does not exist")
@@ -107,6 +109,12 @@ def main():
     parser.add_argument(
         "--stream_minibatch", action="store_true", help="Stream minibatch (default: False)"
     )
+    parser.add_argument(
+        "--max_trajectory_tokens",
+        type=int,
+        default=8 * 1024,
+        help="Max trajectory tokens (default: 8 * 1024)",
+    )
     args = parser.parse_args()
 
     config = build_config(
@@ -118,6 +126,7 @@ def main():
         args.chroma_port,
         args.wandb_project,
         args.stream_minibatch,
+        args.max_trajectory_tokens,
     )
     # Avoid clobbering log dir from your previous run:
     cli_utils.check_log_dir(config.log_path, behavior_if_exists="ask")
