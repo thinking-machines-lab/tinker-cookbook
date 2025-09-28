@@ -6,7 +6,6 @@ from typing import Optional
 
 import chz
 import tinker
-from tinker import types
 
 from tinker_cookbook import renderers
 from tinker_cookbook.evaluators import SamplingClientEvaluator
@@ -129,7 +128,7 @@ class JsonlEvaluator(SamplingClientEvaluator):
 
         model_input = self.renderer.build_generation_prompt(messages)
 
-        sampling_params = types.SamplingParams(
+        sampling_params = tinker.SamplingParams(
             max_tokens=self.max_tokens,
             temperature=self.config.temperature,
             top_p=self.config.top_p,

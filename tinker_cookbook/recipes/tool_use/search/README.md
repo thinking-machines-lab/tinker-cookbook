@@ -8,6 +8,7 @@ In this demo, we replicated their experiments using Tinker.
 ### Replication Results
 
 We conducted experiments on a `Qwen/Qwen2.5-7B-Instruct` model and compared with the results reported in the original paper.
+Note this model is not available on Tinker and we chose it specifically to compare with the original perp.
 The results can be seen here,
 
 | | Natural Questions | Trivia QA | HotpotQA | 2WikiMultihopQA |
@@ -41,7 +42,7 @@ If you launch the chroma service locally, you generally need 160+ GB RAM to load
 
 This default command trains a `Qwen3-4B-Instruct-2507` with reasonable hyperparameters.
 ```
-uv run tinker_cookbook/recipes/tool_use/search/rl_search.py
+python -m recipes.tool_use.search.rl_search
 ```
 
 With the default hyperparameters, you can expect performance like: [TODO: apologies for the delay but this will be filled in soon].

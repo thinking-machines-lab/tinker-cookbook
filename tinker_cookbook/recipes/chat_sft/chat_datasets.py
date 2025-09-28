@@ -10,7 +10,7 @@ from typing import Any, Callable, cast
 import blobfile
 import chz
 import datasets
-import tinker.types as types
+import tinker
 from datasets import IterableDataset
 from tinker_cookbook.renderers import Message, Renderer, TrainOnWhat
 from tinker_cookbook.supervised.common import datum_from_tokens_weights
@@ -24,7 +24,7 @@ def conversation_to_datum(
     renderer: Renderer,
     max_length: int | None,
     train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
-) -> types.Datum:
+) -> tinker.Datum:
     """Common function to process a list of messages into a Datum."""
     tokens, weights = renderer.build_supervised_example(conversation, train_on_what=train_on_what)
     return datum_from_tokens_weights(tokens, weights, max_length)
@@ -39,8 +39,8 @@ class SupervisedDatasetFromHFDataset(SupervisedDataset):
         self,
         hf_dataset: datasets.Dataset,
         batch_size: int,
-        map_fn: Callable[[dict], types.Datum] | None = None,
-        flatmap_fn: Callable[[dict], list[types.Datum]] | None = None,
+        map_fn: Callable[[dict], tinker.Datum] | None = None,
+        flatmap_fn: Callable[[dict], list[tinker.Datum]] | None = None,
     ):
         assert _one_of(map_fn, flatmap_fn), "Only one of map_fn or flatmap_fn can be provided"
         self.hf_dataset = hf_dataset
@@ -51,7 +51,7 @@ class SupervisedDatasetFromHFDataset(SupervisedDataset):
         self.map_fn = map_fn
         self.flatmap_fn = flatmap_fn
 
-    def get_batch(self, index: int) -> list[types.Datum]:
+    def get_batch(self, index: int) -> list[tinker.Datum]:
         rows = self.shuffle_dataset.select(
             range(index * self.batch_size, (index + 1) * self.batch_size)
         )
@@ -74,8 +74,8 @@ class StreamingSupervisedDatasetFromHFDataset(SupervisedDataset):
         hf_dataset: datasets.IterableDataset,
         batch_size: int,
         length: int,
-        map_fn: Callable[[dict], types.Datum] | None = None,
-        flatmap_fn: Callable[[dict], list[types.Datum]] | None = None,
+        map_fn: Callable[[dict], tinker.Datum] | None = None,
+        flatmap_fn: Callable[[dict], list[tinker.Datum]] | None = None,
     ):
         assert _one_of(map_fn, flatmap_fn), "Only one of map_fn or flatmap_fn can be provided"
         # TODO: Figure out the shuffle buffer size
@@ -90,7 +90,7 @@ class StreamingSupervisedDatasetFromHFDataset(SupervisedDataset):
         # We pass the length to the dataset, since streaming HF datasets don't have a length attribute
         self.length = length
 
-    def get_batch(self, index: int) -> list[types.Datum]:
+    def get_batch(self, index: int) -> list[tinker.Datum]:
         # TODO: this is a hack to make sure the index is correct
         # should maybe think about a more robust way to do this
         assert index == self.index + 1
@@ -124,7 +124,7 @@ class OpenMathReasoningBuilder(ChatDatasetBuilder):
         test_ds = dataset.take(1024)
         train_ds = dataset.skip(1024)
 
-        def map_fn(row: dict[str, str]) -> types.Datum:
+        def map_fn(row: dict[str, str]) -> tinker.Datum:
             messages = [
                 Message(role="user", content=row["problem"]),
                 Message(role="assistant", content=row["generated_solution"]),
@@ -163,7 +163,7 @@ class OpenThoughts3Builder(ChatDatasetBuilder):
         )
 
         # take the last 1000 as test, the rest as train
-        def map_fn(row: dict[str, list[dict[str, str]]]) -> types.Datum:
+        def map_fn(row: dict[str, list[dict[str, str]]]) -> tinker.Datum:
             messages: list[Message] = []
             for conversation in row["conversations"]:
                 conversation["from"] = conversation["from"].replace("gpt", "assistant")
@@ -207,7 +207,7 @@ class Tulu3Builder(ChatDatasetBuilder):
         )
 
         # take the last 1000 as test, the rest as train
-        def map_fn(row: dict) -> types.Datum:
+        def map_fn(row: dict) -> tinker.Datum:
             return conversation_to_datum(
                 row["messages"], self.renderer, self.common_config.max_length, train_on_what
             )
@@ -235,7 +235,7 @@ class NoRobotsBuilder(ChatDatasetBuilder):
             else TrainOnWhat.ALL_ASSISTANT_MESSAGES
         )
 
-        def map_fn(row: dict) -> types.Datum:
+        def map_fn(row: dict) -> tinker.Datum:
             return conversation_to_datum(
                 row["messages"], self.renderer, self.common_config.max_length, train_on_what
             )
@@ -289,7 +289,7 @@ class FromConversationFileBuilder(ChatDatasetBuilder):
         )
 
         # Define mapping function
-        def map_fn(row: dict) -> types.Datum:
+        def map_fn(row: dict) -> tinker.Datum:
             return conversation_to_datum(
                 row["messages"], self.renderer, self.common_config.max_length, train_on_what
             )

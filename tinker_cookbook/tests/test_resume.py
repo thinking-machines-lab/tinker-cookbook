@@ -7,7 +7,8 @@ import tempfile
 from unittest.mock import patch
 
 from tinker_cookbook import renderers
-from tinker_cookbook.supervised import chat_datasets, train
+from tinker_cookbook.recipes.chat_sft import chat_datasets
+from tinker_cookbook.supervised import train
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 from tinker_cookbook.tests.test_utils import create_mock_logger_with_jsonl
 from tinker_cookbook.utils.file_utils import read_jsonl

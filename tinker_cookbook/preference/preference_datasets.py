@@ -6,7 +6,7 @@ from typing import cast
 import chz
 import datasets
 import pandas as pd
-from tinker import types
+import tinker
 from tinker_cookbook import renderers
 from tinker_cookbook.preference.types import (
     Comparison,
@@ -14,7 +14,7 @@ from tinker_cookbook.preference.types import (
     ComparisonRendererFromChatRenderer,
     LabeledComparison,
 )
-from tinker_cookbook.supervised.chat_datasets import (
+from tinker_cookbook.recipes.chat_sft.chat_datasets import (
     SupervisedDatasetFromHFDataset,
 )
 from tinker_cookbook.supervised.common import datum_from_tokens_weights
@@ -91,11 +91,11 @@ class ChatDatasetBuilderFromComparisons(ChatDatasetBuilder):
         comparison_renderer = self.comparison_renderer
         rng = random.Random(0)
 
-        def comparison_to_datum(labeled_comparison: LabeledComparison) -> types.Datum:
+        def comparison_to_datum(labeled_comparison: LabeledComparison) -> tinker.Datum:
             tokens, weights = comparison_renderer.to_tokens_weights(labeled_comparison)
             return datum_from_tokens_weights(tokens, weights, self.common_config.max_length)
 
-        def example_to_data(example: dict[str, str]) -> list[types.Datum]:
+        def example_to_data(example: dict[str, str]) -> list[tinker.Datum]:
             labeled_comparison = self.comparison_builder.example_to_labeled_comparison(example)
             if labeled_comparison is None:
                 return []

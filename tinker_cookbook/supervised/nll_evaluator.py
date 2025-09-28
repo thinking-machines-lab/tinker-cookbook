@@ -1,14 +1,13 @@
 import itertools
 
 import tinker
-from tinker import types
 from tinker_cookbook.evaluators import TrainingClientEvaluator
 from tinker_cookbook.supervised.common import compute_mean_nll
 from tinker_cookbook.supervised.types import SupervisedDataset
 
 
 class NLLEvaluator(TrainingClientEvaluator):
-    def __init__(self, data: list[types.Datum]):
+    def __init__(self, data: list[tinker.Datum]):
         self.data = data
 
     async def __call__(self, training_client: tinker.TrainingClient) -> dict[str, float]:

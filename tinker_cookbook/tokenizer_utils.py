@@ -5,17 +5,23 @@ Utilities for working with tokenizers. Create new types to avoid needing to impo
 Avoid importing AutoTokenizer and PreTrainedTokenizer until runtime, because they're slow imports.
 """
 
+from __future__ import annotations
+
 from functools import cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 if TYPE_CHECKING:
+    # this import takes a few seconds, so avoid it on the module import when possible
     from transformers.tokenization_utils import PreTrainedTokenizer
 
-type Tokenizer = "PreTrainedTokenizer"
+    Tokenizer: TypeAlias = PreTrainedTokenizer
+else:
+    # make it importable from other files as a type in runtime
+    Tokenizer: TypeAlias = Any
 
 
 @cache
-def get_tokenizer(model_name: str) -> "Tokenizer":
+def get_tokenizer(model_name: str) -> Tokenizer:
     from transformers.models.auto.tokenization_auto import AutoTokenizer
 
     # Avoid gating of Llama 3 models:

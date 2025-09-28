@@ -3,16 +3,14 @@ Script to visualize supervised datasets in the terminal.
 """
 
 import chz
-
 from tinker_cookbook import model_info
 from tinker_cookbook.supervised.types import (
     ChatDatasetBuilderCommonConfig,
     SupervisedDatasetBuilder,
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.utils.format_colorized import format_colorized
 from tinker_cookbook.utils.misc_utils import lookup_func
-
-from .utils.format_colorized import format_colorized
 
 
 @chz.chz

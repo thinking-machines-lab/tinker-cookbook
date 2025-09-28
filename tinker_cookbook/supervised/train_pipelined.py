@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SubmitBatchResult:
-    fwd_bwd_future: APIFuture[tinker.types.ForwardBackwardOutput]
-    optim_step_future: APIFuture[tinker.types.OptimStepResponse]
+    fwd_bwd_future: APIFuture[tinker.ForwardBackwardOutput]
+    optim_step_future: APIFuture[tinker.OptimStepResponse]
     metrics: dict[str, float | str]
     data: list
     batch_idx: int
@@ -82,7 +82,7 @@ async def main(config: Config):
             )
             * config.learning_rate
         )
-        adam_params = tinker.types.AdamParams(
+        adam_params = tinker.AdamParams(
             learning_rate=learning_rate,
             beta1=config.adam_beta1,
             beta2=config.adam_beta2,

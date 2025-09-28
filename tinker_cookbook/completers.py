@@ -7,15 +7,15 @@ Evals and other code should use the appropriate interface.
 """
 
 from dataclasses import dataclass
+from typing import TypeAlias
 
 import tinker
-from tinker import types
 
 from tinker_cookbook import renderers
 
 # Interfaces
 
-type StopCondition = list[str] | list[int]
+StopCondition: TypeAlias = list[str] | list[int]
 
 
 @dataclass
@@ -32,7 +32,7 @@ class TokensWithLogprobs:
 
 class TokenCompleter:
     async def __call__(
-        self, model_input: types.ModelInput, stop: StopCondition
+        self, model_input: tinker.ModelInput, stop: StopCondition
     ) -> TokensWithLogprobs:
         raise NotImplementedError
 
@@ -56,14 +56,14 @@ class TinkerTokenCompleter(TokenCompleter):
     max_tokens: int
 
     async def __call__(
-        self, model_input: types.ModelInput, stop: StopCondition
+        self, model_input: tinker.ModelInput, stop: StopCondition
     ) -> TokensWithLogprobs:
         """Sample an action from the policy given an observation."""
         # Sample from the model
         sample_result = await self.sampling_client.sample_async(
             prompt=model_input,
             num_samples=1,
-            sampling_params=tinker.types.SamplingParams(stop=stop, max_tokens=self.max_tokens),
+            sampling_params=tinker.SamplingParams(stop=stop, max_tokens=self.max_tokens),
         )
 
         # Extract tokens and logprobs from the first (and only) sample
@@ -82,10 +82,15 @@ class TinkerMessageCompleter(MessageCompleter):
         sampling_client: tinker.SamplingClient,
         renderer: renderers.Renderer,
         max_tokens: int,
+        stop_condition: StopCondition | None = None,
     ):
         self.sampling_client = sampling_client
         self.renderer = renderer
         self.max_tokens = max_tokens
+        if stop_condition is None:
+            self.stop_condition = self.renderer.get_stop_sequences()
+        else:
+            self.stop_condition = stop_condition
 
     async def __call__(self, messages: list[renderers.Message]) -> renderers.Message:
         # Render the conversation for the model
@@ -95,10 +100,10 @@ class TinkerMessageCompleter(MessageCompleter):
         response = await self.sampling_client.sample_async(
             model_input,
             num_samples=1,
-            sampling_params=tinker.types.SamplingParams(
+            sampling_params=tinker.SamplingParams(
                 temperature=1.0,
                 max_tokens=self.max_tokens,
-                stop=self.renderer.get_stop_sequences(),
+                stop=self.stop_condition,
             ),
         )
 

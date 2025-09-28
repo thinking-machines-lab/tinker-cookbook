@@ -9,7 +9,6 @@ import time
 
 import chz
 import tinker
-from tinker import types
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.display import colorize_example
 from tinker_cookbook.evaluators import (
@@ -126,7 +125,7 @@ def do_update(
     learning_rate = config.learning_rate * compute_schedule_lr_multiplier(
         lr_schedule=config.lr_schedule, step=step, total_steps=total_steps
     )
-    adam_params = types.AdamParams(
+    adam_params = tinker.AdamParams(
         learning_rate=learning_rate,
         beta1=config.adam_beta1,
         beta2=config.adam_beta2,
@@ -187,7 +186,7 @@ def main(config: Config):
         start_epoch = 0
         start_batch = 0
 
-    # Setup
+    # Setup logging
     ml_logger = ml_log.setup_logging(
         log_dir=config.log_path,
         wandb_project=config.wandb_project,
@@ -196,16 +195,17 @@ def main(config: Config):
         do_configure_logging_module=True,
     )
     service_client = tinker.ServiceClient(base_url=config.base_url)
-    training_client = service_client.create_lora_training_client(
-        base_model=config.model_name, rank=config.lora_rank
-    )
-
     load_state_path: str | None = (
         resume_info["state_path"] if resume_info else config.load_checkpoint_path
     )
+
     if load_state_path:
-        training_client.load_state(load_state_path)
+        training_client = service_client.create_training_client_from_state(load_state_path)
         logger.info(f"Loaded weights from {load_state_path}")
+    else:
+        training_client = service_client.create_lora_training_client(
+            base_model=config.model_name, rank=config.lora_rank
+        )
 
     # Training setup
     dataset, maybe_test_dataset = config.dataset_builder()

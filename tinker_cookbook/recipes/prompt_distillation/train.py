@@ -1,6 +1,7 @@
 from tinker_cookbook import cli_utils, model_info
+from tinker_cookbook.recipes.chat_sft import chat_datasets
 from tinker_cookbook.renderers import TrainOnWhat
-from tinker_cookbook.supervised import chat_datasets, train
+from tinker_cookbook.supervised import train
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 
 

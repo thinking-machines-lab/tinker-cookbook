@@ -31,6 +31,8 @@ class InspectEvaluatorBuilder:
     # Generation parameters
     temperature: float = 1.0
     max_tokens: int = 1000
+    top_p: float = 1.0
+    top_k: int = -1
 
     # Evaluation parameters
     limit: Optional[int] = None
@@ -75,7 +77,10 @@ class InspectEvaluator(SamplingClientEvaluator):
         model = InspectAIModel(
             api=api,
             config=InspectAIGenerateConfig(
-                temperature=self.config.temperature, max_tokens=self.config.max_tokens
+                temperature=self.config.temperature,
+                max_tokens=self.config.max_tokens,
+                top_p=self.config.top_p,
+                top_k=self.config.top_k,
             ),
         )
 
@@ -87,8 +92,10 @@ class InspectEvaluator(SamplingClientEvaluator):
             debug_errors=self.config.debug_errors,
             # Never retry - the tinker SDK is doing this for us already
             retry_on_error=0,
-            # Tinker sampling tries very hard to only throw unrecoverable failures
-            fail_on_error=True,
+            # Although Tinker sampling tries very hard to only throw unrecoverable failures,
+            # the inspect evaluation can still fail if e.g. the parser returns an error for
+            # a given sample.
+            fail_on_error=False,
             log_dir=self.config.log_dir or os.path.expanduser("~/inspect-logs"),
             max_connections=self.config.max_connections,
             log_level=self.config.log_level,

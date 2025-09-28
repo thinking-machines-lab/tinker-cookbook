@@ -1,13 +1,13 @@
 import logging
 
+import tinker
 import torch
-from tinker import types
 
 logger = logging.getLogger(__name__)
 
 
 def compute_mean_nll(
-    logprobs_list: list[types.TensorData], weights_list: list[types.TensorData]
+    logprobs_list: list[tinker.TensorData], weights_list: list[tinker.TensorData]
 ) -> float:
     """Compute weighted mean negative log likelihood."""
     total_weighted_logprobs = 0.0
@@ -30,7 +30,7 @@ def datum_from_tokens_weights(
     tokens: torch.Tensor,
     weights: torch.Tensor,
     max_length: int | None = None,
-) -> types.Datum:
+) -> tinker.Datum:
     if max_length is not None:
         tokens = tokens[:max_length]
     weights = weights[:max_length]
@@ -39,15 +39,15 @@ def datum_from_tokens_weights(
     target_tokens = tokens[1:]
     weights = weights[1:]
 
-    return types.Datum(
-        model_input=types.ModelInput.from_ints(tokens=input_tokens.tolist()),
+    return tinker.Datum(
+        model_input=tinker.ModelInput.from_ints(tokens=input_tokens.tolist()),
         loss_fn_inputs={
-            "weights": types.TensorData(
+            "weights": tinker.TensorData(
                 data=weights.tolist(),
                 dtype="float32",
                 shape=list(weights.shape),
             ),
-            "target_tokens": types.TensorData(
+            "target_tokens": tinker.TensorData(
                 data=[int(x) for x in target_tokens.tolist()],
                 dtype="int64",
                 shape=list(target_tokens.shape),

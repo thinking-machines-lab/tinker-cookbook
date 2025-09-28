@@ -9,9 +9,8 @@ import time
 import chz
 import datasets
 import tinker
-from tinker import types
 from tinker_cookbook import checkpoint_utils, model_info, renderers
-from tinker_cookbook.supervised.chat_datasets import conversation_to_datum
+from tinker_cookbook.recipes.chat_sft.chat_datasets import conversation_to_datum
 from tinker_cookbook.supervised.common import compute_mean_nll
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log
@@ -21,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 @chz.chz
 class Config:
+    base_url: str | None = None
     log_path: str = "/tmp/tinker-examples/sl-loop"
     model_name: str = "meta-llama/Llama-3.1-8B"
     batch_size: int = 128
@@ -57,18 +57,20 @@ def main(config: Config):
     logger.info(f"Train batches: {n_train_batches}")
 
     # Setup training client
-    service_client = tinker.ServiceClient(base_url=None)
-    training_client = service_client.create_lora_training_client(
-        base_model=config.model_name, rank=config.lora_rank
-    )
+    service_client = tinker.ServiceClient(base_url=config.base_url)
 
     # Check for resuming
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     if resume_info:
-        _ = training_client.load_state(resume_info["state_path"])
+        training_client = service_client.create_training_client_from_state(
+            resume_info["state_path"]
+        )
         start_batch = resume_info["batch"]
         logger.info(f"Resuming from batch {start_batch}")
     else:
+        training_client = service_client.create_lora_training_client(
+            base_model=config.model_name, rank=config.lora_rank
+        )
         start_batch = 0
 
     # Training loop (single epoch)
@@ -95,7 +97,7 @@ def main(config: Config):
         # Linear learning rate schedule
         lr_mult = max(0.0, 1.0 - step / n_train_batches)
         current_lr = config.learning_rate * lr_mult
-        adam_params = types.AdamParams(learning_rate=current_lr, beta1=0.9, beta2=0.95, eps=1e-8)
+        adam_params = tinker.AdamParams(learning_rate=current_lr, beta1=0.9, beta2=0.95, eps=1e-8)
 
         # Get training batch and convert to datums online
         batch_start = batch_idx * config.batch_size

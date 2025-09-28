@@ -1,22 +1,22 @@
 import io
 
+import tinker
 from termcolor import colored
-from tinker import types
 
 from tinker_cookbook.rl.types import Trajectory
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils.format_colorized import format_colorized
 
 
-def to_ints(chunk: types.ModelInputChunk, tokenizer: Tokenizer):
-    if isinstance(chunk, types.EncodedTextChunk):
+def to_ints(chunk: tinker.ModelInputChunk, tokenizer: Tokenizer):
+    if isinstance(chunk, tinker.EncodedTextChunk):
         return chunk.tokens
     else:
         (at_token,) = tokenizer.encode("@", add_special_tokens=False)
         return [at_token] * chunk.length
 
 
-def colorize_example(datum: types.Datum, tokenizer: Tokenizer, key: str = "weights"):
+def colorize_example(datum: tinker.Datum, tokenizer: Tokenizer, key: str = "weights"):
     int_tokens = [
         token for chunk in datum.model_input.chunks for token in to_ints(chunk, tokenizer)
     ] + [datum.loss_fn_inputs["target_tokens"].tolist()[-1]]

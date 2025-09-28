@@ -11,12 +11,11 @@ from typing import Any, Dict, List, cast
 import numpy as np
 import tinker
 import torch
-from tinker import types
 from tinker_cookbook.utils.misc_utils import safezip
 
 
 def compute_kl_sample_train(
-    data_D: List[types.Datum], training_logprobs_D: List[torch.Tensor]
+    data_D: List[tinker.Datum], training_logprobs_D: List[torch.Tensor]
 ) -> Dict[str, float]:
     """Compute KL divergence metrics between sampling and training logprobs."""
     all_diffs: list[torch.Tensor] = []
@@ -50,7 +49,7 @@ def compute_kl_sample_train(
 
 
 async def compute_post_kl(
-    data_D: List[types.Datum], post_sampling_client: tinker.SamplingClient
+    data_D: List[tinker.Datum], post_sampling_client: tinker.SamplingClient
 ) -> Dict[str, float]:
     """Compute post-update KL divergence metrics."""
     # Compute logprobs at all data items
@@ -83,7 +82,7 @@ async def compute_post_kl(
 
 
 async def incorporate_kl_penalty(
-    data_D: List[types.Datum],
+    data_D: List[tinker.Datum],
     base_sampling_client: tinker.SamplingClient,
     kl_penalty_coef: float,
     kl_discount_factor: float,
@@ -121,7 +120,7 @@ async def incorporate_kl_penalty(
             kl_advantages = torch.tensor(
                 discounted_future_sum_vectorized(kl_advantages.numpy(), kl_discount_factor)
             )
-        datum.loss_fn_inputs["advantages"] = types.TensorData.from_torch(
+        datum.loss_fn_inputs["advantages"] = tinker.TensorData.from_torch(
             datum.loss_fn_inputs["advantages"].to_torch() + kl_advantages
         )
 

@@ -4,15 +4,14 @@ import time
 
 import chz
 import tinker
-from tinker import types
 from tinker_cookbook import checkpoint_utils, model_info
 from tinker_cookbook.completers import TinkerTokenCompleter, TokenCompleter
+from tinker_cookbook.recipes.math_rl.math_env import MathDatasetBuilder
 from tinker_cookbook.rl.data_processing import (
     assemble_training_data,
     compute_advantages,
     remove_constant_reward_groups,
 )
-from tinker_cookbook.rl.math_env import MathDatasetBuilder
 from tinker_cookbook.rl.metric_util import compute_trajectory_metrics
 from tinker_cookbook.rl.rollouts import do_group_rollout
 from tinker_cookbook.rl.train import remove_mask
@@ -26,6 +25,7 @@ logging.getLogger("httpx").setLevel(logging.WARN)
 
 @chz.chz
 class Config:
+    base_url: str | None = None
     log_path: str = "/tmp/tinker-examples/rl-loop"
     model_name: str = "meta-llama/Llama-3.1-8B"
     batch_size: int = 64
@@ -56,18 +56,19 @@ def main(config: Config):
 
     train_dataset, _ = asyncio.run(dataset_builder())
 
-    service_client = tinker.ServiceClient()
-    training_client = service_client.create_lora_training_client(
-        base_model=config.model_name, rank=config.lora_rank
-    )
+    service_client = tinker.ServiceClient(base_url=config.base_url)
 
-    # Setup logging
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     if resume_info:
-        _ = training_client.load_state(resume_info["state_path"])
+        training_client = service_client.create_training_client_from_state(
+            resume_info["state_path"]
+        )
         start_batch = resume_info["batch"]
         logger.info(f"Resuming from batch {start_batch}")
     else:
+        training_client = service_client.create_lora_training_client(
+            base_model=config.model_name, rank=config.lora_rank
+        )
         start_batch = 0
 
     num_batches = len(train_dataset)
@@ -128,7 +129,7 @@ def main(config: Config):
             list(map(remove_mask, data_D)), loss_fn="importance_sampling"
         )
         # Optimizer step
-        adam_params = types.AdamParams(
+        adam_params = tinker.AdamParams(
             learning_rate=config.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8
         )
         optim_step_future = await training_client.optim_step_async(adam_params)

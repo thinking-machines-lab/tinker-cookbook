@@ -5,7 +5,7 @@ Basic interfaces and types for supervised training.
 import logging
 
 import chz
-from tinker import types
+import tinker
 from tinker_cookbook import renderers
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 
@@ -17,7 +17,7 @@ class SupervisedDataset:
     Dataset used for supervised learning
     """
 
-    def get_batch(self, index: int) -> list[types.Datum]:
+    def get_batch(self, index: int) -> list[tinker.Datum]:
         raise NotImplementedError
 
     def __len__(self) -> int:

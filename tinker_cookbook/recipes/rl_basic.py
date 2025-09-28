@@ -1,8 +1,8 @@
 import asyncio
 
 from tinker_cookbook import cli_utils, model_info
+from tinker_cookbook.recipes.math_rl.math_env import Gsm8kDatasetBuilder
 from tinker_cookbook.rl import train
-from tinker_cookbook.rl.math_env import Gsm8kDatasetBuilder
 
 
 def build_config() -> train.Config:

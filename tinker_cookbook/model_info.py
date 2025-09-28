@@ -32,12 +32,6 @@ def get_llama_info() -> dict[str, ModelAttributes]:
 def get_qwen_info() -> dict[str, ModelAttributes]:
     org = "Qwen"
     return {
-        "Qwen2.5-VL-3B-Instruct": ModelAttributes(org, "2.5", "3B", True, is_vl=True),
-        "Qwen2.5-VL-7B-Instruct": ModelAttributes(org, "2.5", "7B", True, is_vl=True),
-        "Qwen2.5-VL-32B-Instruct": ModelAttributes(org, "2.5", "32B", True, is_vl=True),
-        "Qwen2.5-VL-72B-Instruct": ModelAttributes(org, "2.5", "72B", True, is_vl=True),
-        "Qwen3-0.6B-Base": ModelAttributes(org, "3", "0.6B", False),
-        "Qwen3-1.7B-Base": ModelAttributes(org, "3", "1.7B", False),
         "Qwen3-4B-Base": ModelAttributes(org, "3", "4B", False),
         "Qwen3-8B-Base": ModelAttributes(org, "3", "8B", False),
         "Qwen3-14B-Base": ModelAttributes(org, "3", "14B", False),
@@ -77,9 +71,7 @@ def get_recommended_renderer_names(model_name: str) -> list[str]:
     elif attributes.organization == "meta-llama":
         return ["llama3"]
     elif attributes.organization == "Qwen":
-        if attributes.version_str == "2.5":
-            return ["qwen2p5"]
-        elif attributes.version_str == "3":
+        if attributes.version_str == "3":
             if "-Instruct" in model_name:
                 return ["qwen3_instruct"]
             else:

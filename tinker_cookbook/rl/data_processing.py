@@ -8,9 +8,9 @@ and assembling training batches.
 import logging
 from typing import List
 
+import tinker
 import torch
-from tinker import types
-from tinker.types.tensor_data import TensorData
+from tinker import TensorData
 from tinker_cookbook.rl.types import Trajectory, TrajectoryGroup
 from tinker_cookbook.utils.misc_utils import all_same, safezip
 
@@ -30,7 +30,7 @@ def compute_advantages(trajectory_groups_P: List[TrajectoryGroup]) -> List[torch
     return advantages_P
 
 
-FlatObElem = int | types.ModelInputChunk
+FlatObElem = int | tinker.ModelInputChunk
 FlatOb = list[FlatObElem]
 
 
@@ -51,19 +51,19 @@ def _flat_ob_token_len(flat_ob: FlatOb) -> int:
     return out
 
 
-def _to_input_targets(model_input: types.ModelInput) -> tuple[types.ModelInput, list[int]]:
+def _to_input_targets(model_input: tinker.ModelInput) -> tuple[tinker.ModelInput, list[int]]:
     # TODO: make this work with multimodal data
     all_ints = model_input.to_ints()
-    return types.ModelInput.from_ints(tokens=all_ints[:-1]), all_ints[1:]
+    return tinker.ModelInput.from_ints(tokens=all_ints[:-1]), all_ints[1:]
 
 
-def _flat_ob_to_model_input(flat_ob: FlatOb) -> types.ModelInput:
-    out: list[types.ModelInputChunk] = []
+def _flat_ob_to_model_input(flat_ob: FlatOb) -> tinker.ModelInput:
+    out: list[tinker.ModelInputChunk] = []
     current_text_chunk: list[int] = []
 
     def flush_text_chunk():
         if current_text_chunk:
-            out.append(types.EncodedTextChunk(tokens=current_text_chunk))
+            out.append(tinker.EncodedTextChunk(tokens=current_text_chunk))
             current_text_chunk.clear()
 
     for elem in flat_ob:
@@ -73,20 +73,20 @@ def _flat_ob_to_model_input(flat_ob: FlatOb) -> types.ModelInput:
             flush_text_chunk()
             out.append(elem)
     flush_text_chunk()
-    return types.ModelInput(chunks=out)
+    return tinker.ModelInput(chunks=out)
 
 
-def _flatten_chunks(chunks: list[types.ModelInputChunk]) -> FlatOb:
+def _flatten_chunks(chunks: list[tinker.ModelInputChunk]) -> FlatOb:
     out: FlatOb = []
     for chunk in chunks:
-        if isinstance(chunk, types.EncodedTextChunk):
+        if isinstance(chunk, tinker.EncodedTextChunk):
             out.extend(chunk.tokens)
         else:
             out.append(chunk)
     return out
 
 
-def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[types.Datum]:
+def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.Datum]:
     """
     Return one or more Datum objects corresponding to the trajectory.
     If the sequence grows by appending, i.e., each successive observation contains
@@ -133,7 +133,7 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[types.Da
             == len(advantages_T)
             == len(mask_T)
         )
-        return types.Datum(
+        return tinker.Datum(
             model_input=input_tokens_T,
             loss_fn_inputs={
                 "target_tokens": TensorData.from_torch(torch.tensor(target_tokens_T)),
@@ -143,7 +143,7 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[types.Da
             },
         )
 
-    data: list[types.Datum] = []
+    data: list[tinker.Datum] = []
     for transition in traj.transitions:
         ob = transition.ob
         ob_flat = _flatten_chunks(ob.chunks)
@@ -176,9 +176,9 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[types.Da
 def assemble_training_data(
     trajectory_groups_P: List[TrajectoryGroup],
     advantages_P: List[torch.Tensor],
-) -> tuple[List[types.Datum], List[dict[str, int]]]:
+) -> tuple[List[tinker.Datum], List[dict[str, int]]]:
     """Convert trajectories to training data format."""
-    data_D: list[types.Datum] = []
+    data_D: list[tinker.Datum] = []
     metadata_D: list[dict[str, int]] = []
 
     for i_group, (traj_group, advantages_G) in enumerate(

@@ -6,11 +6,13 @@ import importlib
 import logging
 import time
 from contextlib import contextmanager
-from typing import Any, Sequence, cast
+from typing import Any, Sequence, TypeVar, cast
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 @contextmanager
@@ -53,7 +55,7 @@ def lookup_func(path_to_func: str, default_module: str | None = None):
     return getattr(module, func_name)
 
 
-def split_list[T](lst: Sequence[T], num_splits: int) -> list[list[T]]:
+def split_list(lst: Sequence[T], num_splits: int) -> list[list[T]]:
     """
     Split a sequence into a list of lists, where the sizes are as equal as possible,
     and the long and short lists are as uniformly distributed as possible.
@@ -87,6 +89,6 @@ def concat_lists(list_of_lists: list[list[Any]]) -> list[Any]:
     return [item for sublist in list_of_lists for item in sublist]
 
 
-def not_none[T](x: T | None) -> T:
+def not_none(x: T | None) -> T:
     assert x is not None, f"{x=} must not be None"
     return x

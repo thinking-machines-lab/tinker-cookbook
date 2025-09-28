@@ -8,7 +8,7 @@ import httpx
 import pandas as pd
 import tinker
 import torch
-from tinker.types import AdamParams, ModelInput
+from tinker import AdamParams, ModelInput
 from tinker_cookbook.supervised.common import datum_from_tokens_weights
 
 

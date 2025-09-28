@@ -9,8 +9,8 @@ import re
 from enum import StrEnum
 from typing import Callable, NotRequired, TypedDict
 
+import tinker
 import torch
-from tinker import types
 
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
@@ -55,7 +55,7 @@ class Renderer:
 
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
-    ) -> types.ModelInput:
+    ) -> tinker.ModelInput:
         raise NotImplementedError
 
     def get_stop_sequences(self) -> list[str] | list[int]:
@@ -185,7 +185,7 @@ class RoleColonRenderer(Renderer):
 
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
-    ) -> types.ModelInput:
+    ) -> tinker.ModelInput:
         tokens: list[int] = []
         tokens.extend(self._bos_tokens)
         for message in messages:
@@ -196,7 +196,7 @@ class RoleColonRenderer(Renderer):
         ob_part, _action_part, _action_tail = self._render_message(new_partial_message)
         tokens.extend(ob_part)
         tokens.extend(self.tokenizer.encode(prefill or "", add_special_tokens=False))
-        return types.ModelInput.from_ints(tokens)
+        return tinker.ModelInput.from_ints(tokens)
 
     def build_supervised_example(
         self,
@@ -266,7 +266,7 @@ class Llama3Renderer(Renderer):
 
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
-    ) -> types.ModelInput:
+    ) -> tinker.ModelInput:
         tokens: list[int] = []
         tokens.extend(self._bos_tokens)
         for message in messages:
@@ -277,7 +277,7 @@ class Llama3Renderer(Renderer):
         ob_part, _action_part, _action_tail = self._render_message(new_partial_message)
         tokens.extend(ob_part)
         tokens.extend(self.tokenizer.encode(prefill or "", add_special_tokens=False))
-        return types.ModelInput.from_ints(tokens)
+        return tinker.ModelInput.from_ints(tokens)
 
     def build_supervised_example(
         self,
@@ -310,7 +310,7 @@ class Llama3Renderer(Renderer):
         return parse_response_for_stop_token(response, self.tokenizer, self._end_message_token)
 
 
-class Qwen2p5Renderer(Renderer):
+class Qwen3Renderer(Renderer):
     """
     Format like this:
         <|im_start|>system
@@ -340,7 +340,7 @@ class Qwen2p5Renderer(Renderer):
 
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
-    ) -> types.ModelInput:
+    ) -> tinker.ModelInput:
         tokens: list[int] = []  # No BOS token for Qwen
         for idx, message in enumerate(messages):
             ob_part, action_part, _ = self._render_message(idx, message)
@@ -351,7 +351,7 @@ class Qwen2p5Renderer(Renderer):
         ob_part, _, _ = self._render_message(len(messages), new_partial_message)
         tokens.extend(ob_part)
         tokens.extend(self.tokenizer.encode(prefill or "", add_special_tokens=False))
-        return types.ModelInput.from_ints(tokens)
+        return tinker.ModelInput.from_ints(tokens)
 
     def build_supervised_example(
         self,
@@ -412,28 +412,21 @@ class Qwen2p5Renderer(Renderer):
         return assistant_message, True
 
 
-class Qwen3Renderer(Qwen2p5Renderer):
-    """
-    Renderer for Qwen3 models. With thinking and hybrid models, it'll allow them to
-    sample a <think>...</think> token and then sample the response.
-    """
-
-
-class Qwen3DisableThinkingRenderer(Qwen2p5Renderer):
+class Qwen3DisableThinkingRenderer(Qwen3Renderer):
     """
     Renderer that disables thinking for hybrid-mode Qwen3 models
     """
 
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
-    ) -> types.ModelInput:
+    ) -> tinker.ModelInput:
         prefill = "<think>\n\n</think>\n\n" + (prefill or "")
         # XXX this causes inefficiency in RL, because the observations don't grow by appending to the end.
         # Maybe we should just insert this empty thinking block in every message?
         return super().build_generation_prompt(messages, role, prefill)
 
 
-class Qwen3InstructRenderer(Qwen2p5Renderer):
+class Qwen3InstructRenderer(Qwen3Renderer):
     """
     Renderer for Qwen3 instruct models
     """
@@ -444,8 +437,6 @@ def get_renderer(name: str, tokenizer: Tokenizer) -> Renderer:
         return RoleColonRenderer(tokenizer)
     elif name == "llama3":
         return Llama3Renderer(tokenizer)
-    elif name == "qwen2p5":
-        return Qwen2p5Renderer(tokenizer)
     elif name == "qwen3":
         return Qwen3Renderer(tokenizer)
     elif name == "qwen3_disable_thinking":

@@ -9,13 +9,16 @@ import logging
 import re
 import signal
 import types
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict, Tuple, TypeVar
 
 import sympy
 from pylatexenc import latex2text
 from sympy.parsing import sympy_parser
 
 logger = logging.getLogger(__name__)
+
+
+T = TypeVar("T")
 
 # ======================================================================
 # Math Normalize Functions
@@ -518,7 +521,7 @@ def _timeout_handler(signum: int, frame: types.FrameType | None) -> None:
     raise TimeoutException("Function call timed out")
 
 
-def run_with_timeout_signal[T](
+def run_with_timeout_signal(
     func: Callable[..., T],
     args: Tuple[Any, ...] = (),
     kwargs: Dict[str, Any] = {},

@@ -10,8 +10,8 @@ from typing import Literal, TypedDict, cast
 
 import chz
 import pandas as pd
+import tinker
 from huggingface_hub import hf_hub_download
-from tinker import types
 from tinker_cookbook import renderers
 from tinker_cookbook.completers import StopCondition
 from tinker_cookbook.recipes.tool_use.search.tools import ChromaToolClient, ChromaToolClientConfig
@@ -163,7 +163,7 @@ class SearchEnv(ProblemEnv):
             failure_result = StepResult(
                 reward=0.0,
                 episode_done=True,
-                next_observation=types.ModelInput.empty(),
+                next_observation=tinker.ModelInput.empty(),
                 next_stop_condition=self.stop_condition,
             )
             if message["tool_calls"][0]["name"] == "search":
@@ -196,7 +196,7 @@ class SearchEnv(ProblemEnv):
             return StepResult(
                 reward=total_reward,
                 episode_done=True,
-                next_observation=types.ModelInput.empty(),
+                next_observation=tinker.ModelInput.empty(),
                 next_stop_condition=self.stop_condition,
                 metrics={
                     "format": correct_format,

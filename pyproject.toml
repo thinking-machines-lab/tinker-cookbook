@@ -14,6 +14,7 @@ dependencies = [
     "torch",
     "transformers",
     "blobfile",
+    "inspect-ai",
 ]
 
 [project.optional-dependencies]
@@ -28,11 +29,16 @@ envs = [
     "pylatexenc",
     "sympy",
     "textarena",
+    "math-verify",
+    "scipy",
 ]
 vector-search = [
     "chromadb",
     "google-genai",
     "huggingface_hub"
+]
+wandb = [
+    "wandb",
 ]
 
 [build-system]
@@ -44,3 +50,6 @@ packages = ["tinker_cookbook"]
 
 [tool.pytest.ini_options]
 python_files = ["test_*.py", "*_test.py"]
+
+[tool.ruff]
+line-length = 100

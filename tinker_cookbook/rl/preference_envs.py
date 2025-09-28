@@ -6,7 +6,6 @@ from typing import Callable, Sequence
 
 import chz
 import tinker
-from tinker import types
 from tinker_cookbook import renderers
 from tinker_cookbook.completers import StopCondition
 from tinker_cookbook.preference.preference_datasets import (
@@ -65,7 +64,7 @@ class PreferenceEnv(Env):
         return StepResult(
             reward=0,
             episode_done=True,
-            next_observation=types.ModelInput.empty(),
+            next_observation=tinker.ModelInput.empty(),
             next_stop_condition=self.stop_condition,
             metrics={},
         )

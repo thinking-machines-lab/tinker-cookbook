@@ -6,7 +6,7 @@ from typing import Literal, cast
 import chz
 from datasets import Dataset, concatenate_datasets, get_dataset_config_names, load_dataset
 from tinker_cookbook import renderers
-from tinker_cookbook.rl.math_grading import (
+from tinker_cookbook.recipes.math_rl.math_grading import (
     extract_boxed,
     grade_answer,
     grade_answer_math_verify,

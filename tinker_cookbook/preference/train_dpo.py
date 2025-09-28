@@ -11,7 +11,6 @@ from typing import Any, cast
 import chz
 import tinker
 import torch
-from tinker import types
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.evaluators import Evaluator, EvaluatorBuilder
 from tinker_cookbook.supervised.train import run_evals
@@ -88,21 +87,21 @@ def create_dpo_clients(
     """
     # Create shared service client for both training and reference clients
     service_client = tinker.ServiceClient(base_url=config.base_url)
-    training_client = service_client.create_lora_training_client(
-        base_model=config.model_name, rank=config.lora_rank
-    )
-    reference_client = service_client.create_lora_training_client(
-        base_model=config.reference_model_name or config.model_name, rank=config.lora_rank
-    )
-
-    # Load state following the same pattern as train.py
     load_state_path: str | None = (
         resume_info["state_path"] if resume_info else config.load_checkpoint_path
     )
+
     if load_state_path:
-        training_client.load_state(load_state_path)
-        reference_client.load_state(load_state_path)
+        training_client = service_client.create_training_client_from_state(load_state_path)
+        reference_client = service_client.create_training_client_from_state(load_state_path)
         logger.info(f"Loaded weights from {load_state_path}")
+    else:
+        training_client = service_client.create_lora_training_client(
+            base_model=config.model_name, rank=config.lora_rank
+        )
+        reference_client = service_client.create_lora_training_client(
+            base_model=config.reference_model_name or config.model_name, rank=config.lora_rank
+        )
 
     return training_client, reference_client
 
@@ -191,7 +190,7 @@ def do_update(
     learning_rate = config.learning_rate * compute_schedule_lr_multiplier(
         lr_schedule=config.lr_schedule, step=step, total_steps=total_steps
     )
-    adam_params = types.AdamParams(
+    adam_params = tinker.AdamParams(
         learning_rate=learning_rate,
         beta1=config.adam_beta1,
         beta2=config.adam_beta2,
@@ -235,7 +234,7 @@ def do_update(
 
     # Create DPO loss function
     def dpo_loss_fn(
-        data: list[types.Datum], logprobs_list: list[torch.Tensor]
+        data: list[tinker.Datum], logprobs_list: list[torch.Tensor]
     ) -> tuple[torch.Tensor, dict[str, float]]:
         # Split logprobs into chosen and rejected
         chosen_logprob_seqs = [logprobs_list[i] for i in range(0, len(data), 2)]
@@ -371,7 +370,7 @@ def main(config: Config):
     logger.info("DPO training completed successfully")
 
 
-def print_example(datum: types.Datum, tokenizer: Tokenizer, label: str = ""):
+def print_example(datum: tinker.Datum, tokenizer: Tokenizer, label: str = ""):
     """Print a formatted example from the dataset."""
     int_tokens = list(datum.model_input.to_ints())
     weights = datum.loss_fn_inputs["weights"].data

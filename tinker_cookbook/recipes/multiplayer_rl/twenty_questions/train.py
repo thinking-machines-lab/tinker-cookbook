@@ -1,26 +1,22 @@
 import asyncio
 from time import time
 
-from tinker_cookbook import cli_utils, model_info
-from tinker_cookbook.recipes.twenty_questions.env import TwentyQuestionsDatasetBuilder
+from tinker_cookbook import cli_utils
+from tinker_cookbook.recipes.multiplayer_rl.twenty_questions.env import (
+    TwentyQuestionsDatasetBuilder,
+)
 from tinker_cookbook.rl import train
 
 
 def build_config() -> train.Config:
-    # model_name = "Qwen/Qwen3-30B-A3B"
-    if 0:
-        model_name = "Qwen/Qwen3-30B-A3B"
-        renderer_name = "qwen3_nothink"
-    else:
-        model_name = "meta-llama/Llama-3.1-8B-Instruct"
-        renderer_name = model_info.get_recommended_renderer_name(model_name)
+    model_name = "Qwen/Qwen3-8B"
+    renderer_name = "qwen3_disable_thinking"
     dataset_builder = TwentyQuestionsDatasetBuilder(
-        batch_size=400,
+        batch_size=64,
         model_name_for_tokenizer=model_name,
         renderer_name=renderer_name,
-        group_size=4,
+        group_size=8,
         num_epochs=100,
-        answerer_base_model=model_name,
     )
 
     return train.Config(

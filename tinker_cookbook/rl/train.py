@@ -14,7 +14,6 @@ import chz
 import numpy as np
 import tinker
 import torch
-from tinker import types
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.display import colorize_example
@@ -107,13 +106,13 @@ async def optim_step(
     learning_rate: float,
 ) -> None:
     """Apply the accumulated gradients to update the model weights"""
-    adam_params = types.AdamParams(learning_rate=learning_rate, beta1=0.9, beta2=0.95, eps=1e-8)
+    adam_params = tinker.AdamParams(learning_rate=learning_rate, beta1=0.9, beta2=0.95, eps=1e-8)
     optim_step_future = await training_client.optim_step_async(adam_params)
     await optim_step_future.result_async()
 
 
-def remove_mask(datum: types.Datum) -> types.Datum:
-    return types.Datum(
+def remove_mask(datum: tinker.Datum) -> tinker.Datum:
+    return tinker.Datum(
         model_input=datum.model_input,
         loss_fn_inputs={k: v for k, v in datum.loss_fn_inputs.items() if k != "mask"},
     )
@@ -121,7 +120,7 @@ def remove_mask(datum: types.Datum) -> types.Datum:
 
 async def forward_backward(
     training_client: tinker.TrainingClient,
-    batch_d: List[types.Datum],
+    batch_d: List[tinker.Datum],
 ) -> List[torch.Tensor]:
     """Accumulate gradients on a minibatch of data"""
     fwd_bwd_future = await training_client.forward_backward_async(
@@ -140,7 +139,7 @@ async def forward_backward(
 
 
 async def train_step(
-    data_D: List[types.Datum],
+    data_D: List[tinker.Datum],
     training_client: tinker.TrainingClient,
     learning_rate: float,
     num_substeps: int,
@@ -572,7 +571,7 @@ async def prepare_minibatch(
     trajectory_groups_P: list[TrajectoryGroup],
     tokenizer: Tokenizer,
     service_client: tinker.ServiceClient,
-) -> tuple[list[types.Datum], dict[str, Any]]:
+) -> tuple[list[tinker.Datum], dict[str, Any]]:
     """Converts the trajectories into a minibatch, and provides metrics about the minibatch"""
 
     # Compute trajectory metrics
@@ -608,7 +607,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     cfg: Config,
     training_client: tinker.TrainingClient,
     i_batch: int,
-    data_D: list[types.Datum],
+    data_D: list[tinker.Datum],
     training_logprobs_D: list[torch.Tensor],
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """

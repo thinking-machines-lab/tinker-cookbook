@@ -23,6 +23,7 @@ def build_config(
     wandb_project: str,
     stream_minibatch: bool,
     max_trajectory_tokens: int,
+    log_path: str | None,
 ) -> train.Config:
     renderer_name = model_info.get_recommended_renderer_name(model_name)
     chroma_tool_config = ChromaToolClientConfig(
@@ -56,14 +57,18 @@ def build_config(
     else:
         stream_minibatch_config = None
         bs_str = f"bs{batch_size}"
+
     run_name = f"search_r1_{model_name.lower()}_{bs_str}_gs8_seed{seed}_tracj{max_trajectory_tokens // 1024}k_lr{learning_rate}_rank{lora_rank}_{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}"
+
+    if log_path is None:
+        log_path = f"/tmp/tinker-examples/rl_search/{run_name}"
 
     if not Path("/tmp").exists():
         raise ValueError("/tmp does not exist")
 
     return train.Config(
         model_name=model_name,
-        log_path=f"/tmp/tinker-examples/rl_search/{run_name}",
+        log_path=log_path,
         dataset_builder=builder,
         learning_rate=learning_rate,
         max_tokens=1024,
@@ -115,6 +120,12 @@ def main():
         default=8 * 1024,
         help="Max trajectory tokens (default: 8 * 1024)",
     )
+    parser.add_argument(
+        "--log_path",
+        type=str,
+        default=None,
+        help="Load checkpoint path (default: None)",
+    )
     args = parser.parse_args()
 
     config = build_config(
@@ -127,6 +138,7 @@ def main():
         args.wandb_project,
         args.stream_minibatch,
         args.max_trajectory_tokens,
+        args.log_path,
     )
     # Avoid clobbering log dir from your previous run:
     cli_utils.check_log_dir(config.log_path, behavior_if_exists="ask")

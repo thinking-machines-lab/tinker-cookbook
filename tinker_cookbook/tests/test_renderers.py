@@ -6,9 +6,7 @@ from tinker_cookbook.renderers import Message, get_renderer
 from transformers.models.auto.tokenization_auto import AutoTokenizer
 
 
-@pytest.mark.parametrize(
-    "model_name", ["meta-llama/Llama-3.2-1B-Instruct", "Qwen/Qwen2.5-VL-3B-Instruct"]
-)
+@pytest.mark.parametrize("model_name", ["meta-llama/Llama-3.2-1B-Instruct", "Qwen/Qwen3-30B-A3B"])
 def test_against_hf_chat_templates(model_name: str):
     tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
     # not using get_tokenizer(model_name)
@@ -28,8 +26,7 @@ def test_against_hf_chat_templates(model_name: str):
         }
         aug_convo = [system_msg] + convo
     elif model_name.startswith("Qwen"):
-        system_message = Message(role="system", content="You are a helpful assistant.")
-        aug_convo = [system_message] + convo
+        aug_convo = convo
     else:
         raise ValueError(f"Unknown model name: {model_name}")
 
@@ -46,7 +43,7 @@ def test_against_hf_chat_templates(model_name: str):
 @pytest.mark.parametrize(
     "model_name,renderer_name",
     [
-        ("Qwen/Qwen2.5-VL-3B-Instruct", "qwen2p5"),
+        ("Qwen/Qwen3-30B-A3B", "qwen3"),
         ("meta-llama/Llama-3.2-1B-Instruct", "llama3"),
     ],
 )
@@ -58,7 +55,7 @@ def test_eot_parsing(model_name: str, renderer_name: str):
     # Get the appropriate EOT token for each renderer
     if renderer_name == "llama3":
         eot_token = "<|eot_id|>"
-    elif renderer_name == "qwen2p5":
+    elif renderer_name == "qwen3":
         eot_token = "<|im_end|>"
     else:
         raise ValueError(f"Unknown renderer: {renderer_name}")
@@ -94,4 +91,4 @@ def test_eot_parsing(model_name: str, renderer_name: str):
 if __name__ == "__main__":
     # test_against_hf_chat_templates("meta-llama/Llama-3.2-1B-Instruct")
     # test_against_hf_chat_templates("Qwen/Qwen2.5-VL-3B-Instruct")
-    test_eot_parsing("Qwen/Qwen2.5-VL-3B-Instruct", "qwen2p5")
+    test_eot_parsing("Qwen/Qwen3-30B-A3B", "qwen3")
