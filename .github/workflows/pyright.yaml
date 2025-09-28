@@ -1,0 +1,25 @@
+name: pyright
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  type-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install-uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: venv
+        run: uv venv && uv sync --extra dev --extra envs --extra vector-search --extra wandb
+
+      - name: pyright
+        run: uv run pyright
