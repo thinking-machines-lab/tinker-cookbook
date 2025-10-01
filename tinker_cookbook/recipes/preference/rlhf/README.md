@@ -25,4 +25,5 @@ Now we can optimize against a learned reward model!
 We include another way to learn from preferences, DPO, which requires a custom loss function.
 
 [1] Rajani, N., Tunstall, L., Beeching, E., Lambert, N., Rush, A. M., & Wolf, T. (2023). No Robots
+
 [2] Bai, Y., Kadavath, S., Kundu, S., Askell, A., Kernion, J., Jones, A., Chen, A., Goldie, A., Mirhoseini, A., McKinnon, C., Chen, C., Olsson, C., Olah, C., Hernandez, D., Drain, D., Ganguli, D., Li, D., Tran-Johnson, E., Perez, E., Kerr, J., Mueller, J., Ladish, J., Landau, J., Ndousse, K., Lukošiūtė, K., Lovitt, L., Sellitto, M., Elhage, N., Schiefer, N., Mercado, N., ... Kaplan, J. (2022). Training a helpful and harmless assistant with reinforcement learning from human feedback. arXiv. https://arxiv.org/abs/2204.05862
