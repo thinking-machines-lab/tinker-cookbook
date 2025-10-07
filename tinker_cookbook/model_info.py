@@ -26,6 +26,7 @@ def get_llama_info() -> dict[str, ModelAttributes]:
         "Llama-3.2-3B": ModelAttributes(org, "3.2", "3B", False),
         "Llama-3.1-8B": ModelAttributes(org, "3.1", "8B", False),
         "Llama-3.1-70B": ModelAttributes(org, "3.1", "70B", False),
+        "Llama-3.3-70B-Instruct": ModelAttributes(org, "3.3", "70B", True),
     }
 
 
