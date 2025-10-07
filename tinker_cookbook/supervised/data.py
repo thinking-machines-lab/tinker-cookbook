@@ -71,11 +71,11 @@ class StreamingSupervisedDatasetFromHFDataset(SupervisedDataset):
         length: int,
         map_fn: Callable[[dict], tinker.Datum] | None = None,
         flatmap_fn: Callable[[dict], list[tinker.Datum]] | None = None,
+        buffer_size: int = 10_000,
     ):
         assert _one_of(map_fn, flatmap_fn), "Only one of map_fn or flatmap_fn can be provided"
-        # TODO: Figure out the shuffle buffer size
-        self.hf_dataset = hf_dataset.batch(batch_size=batch_size, drop_last_batch=True).shuffle(
-            seed=0, buffer_size=1_000
+        self.hf_dataset = hf_dataset.shuffle(seed=0, buffer_size=buffer_size).batch(
+            batch_size=batch_size, drop_last_batch=True
         )
         self.dataset_iterator = iter(self.hf_dataset)
         self.index = -1
