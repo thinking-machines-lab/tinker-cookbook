@@ -46,6 +46,9 @@ vector-search = [
 wandb = [
     "wandb",
 ]
+neptune_scale = [
+    "neptune-scale>=0.27.0",
+]
 
 [build-system]
 requires = ["hatchling"]
