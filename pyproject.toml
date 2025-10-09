@@ -50,7 +50,7 @@ neptune_scale = [
     "neptune-scale>=0.27.0",
 ]
 trackio = [
-    "trackio>=0.1.0",
+    "trackio<1.0.0",
 ]
 
 [build-system]

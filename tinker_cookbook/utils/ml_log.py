@@ -303,8 +303,7 @@ class TrackioLogger(Logger):
                 "pip install trackio (or uv add trackio)"
             )
 
-        # Initialize trackio run
-        assert trackio is not None  # For type checker
+        assert trackio is not None
         self.run = trackio.init(
             project=project,
             name=trackio_name,
@@ -314,14 +313,11 @@ class TrackioLogger(Logger):
     def log_hparams(self, config: Any) -> None:
         """Log hyperparameters to trackio."""
         if self.run and trackio is not None:
-            # Trackio doesn't have a separate method for updating config after init
-            # Config is passed during init only
             pass
 
     def log_metrics(self, metrics: Dict[str, Any], step: int | None = None) -> None:
         """Log metrics to trackio."""
         if self.run and trackio is not None:
-            # Trackio.log accepts step as a separate parameter
             trackio.log(metrics, step=step)
             logger.info("Logged metrics to Trackio project: %s", self.run.project)
 
@@ -438,9 +434,6 @@ def setup_logging(
                 )
             )
 
-    # Add Trackio logger if available and configured
-    # - Following the same pattern as Neptune, allow Trackio to use the same W&B project and name.
-    # - Also allow logging to W&B, Neptune, and Trackio simultaneously
     if wandb_project and _trackio_available:
         loggers.append(
             TrackioLogger(
