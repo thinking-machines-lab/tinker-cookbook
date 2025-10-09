@@ -19,7 +19,7 @@ jobs:
           enable-cache: true
 
       - name: venv
-        run: uv venv && uv sync --extra dev --extra vector-search --extra wandb --extra neptune_scale
+        run: uv venv && uv sync --extra dev --extra vector-search --extra wandb --extra neptune-scale
 
       - name: pyright
         run: uv run pyright
