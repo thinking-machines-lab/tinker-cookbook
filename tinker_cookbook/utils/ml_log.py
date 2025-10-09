@@ -268,10 +268,8 @@ class NeptuneLogger(Logger):
     ) -> None:
         """Log metrics to neptune."""
         if self.run and NeptuneRun is not None:
-            if step is not None:
-                self.run.log_metrics(metrics, step=step)
-            else:
-                self.run.log_metrics(metrics)
+            assert step is not None, "step is required to be int or float for Neptune logging."
+            self.run.log_metrics(metrics, step=step)
             logger.info("Logging to: %s", self.run.get_run_url())
 
     def close(self) -> None:
