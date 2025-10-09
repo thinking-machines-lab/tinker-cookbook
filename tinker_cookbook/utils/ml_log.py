@@ -236,14 +236,14 @@ class NeptuneLogger(Logger):
         project: str | None = None,
         config: Any | None = None,
         log_dir: str | Path | None = None,
-        neptune_name: str | None = None
+        neptune_name: str | None = None,
     ):
         if not _neptune_available:
             raise ImportError(
                 "neptune-scale is not installed. Please install it with: "
                 "pip install neptune-scale (or uv add neptune-scale)"
             )
-        
+
         if not os.environ.get("NEPTUNE_API_TOKEN"):
             raise ValueError("NEPTUNE_API_TOKEN environment variable not set")
 
@@ -353,10 +353,7 @@ def setup_logging(
         if not _wandb_available:
             print("WARNING: wandb is not installed. Skipping W&B logging.")
         elif not os.environ.get("WANDB_API_KEY"):
-            print(
-                "WARNING: WANDB_API_KEY environment variable not set. "
-                "Skipping W&B logging. "
-            )
+            print("WARNING: WANDB_API_KEY environment variable not set. Skipping W&B logging. ")
         else:
             loggers.append(
                 WandbLogger(
@@ -368,9 +365,9 @@ def setup_logging(
             )
 
     # Add Neptune logger if available and configured
-    # - Hack, but before doing bigger logger-agnostic refactor allow Neptune to use
-    #   the same W&B project and name.
-    #   - Project_name should be `workspace-name/project-name`
+    # - MZ 10/8/25: Hack, but before doing bigger logger-agnostic refactor,
+    #   allow Neptune to use the same W&B project and name.
+    # - Project_name should be `workspace-name/project-name`.
     # - Also allow logging to both W&B and Neptune
     if wandb_project and _neptune_available:
         # if not _neptune_available:
