@@ -6,8 +6,9 @@ from typing import Any
 
 import chz
 import tinker
-from tinker_cookbook import renderers
 from tqdm.asyncio import tqdm_asyncio
+
+from tinker_cookbook import renderers
 
 LANGUAGE_CLASSIFICATION_PROMPT = """You are a precise language classifier.
 
@@ -104,7 +105,7 @@ async def create_data_async(cfg: Config, sampling_client: Any, tokenizer: Any, r
 
     async def sample_from_model(
         sentence: str,
-    ) -> str | None:
+    ) -> tuple[str, str | None]:
         prompt = LANGUAGE_CLASSIFICATION_PROMPT.format(text=sentence)
         tokenized_prompt = tinker.ModelInput.from_ints(tokenizer.encode(prompt))
         params = tinker.SamplingParams(
@@ -118,28 +119,31 @@ async def create_data_async(cfg: Config, sampling_client: Any, tokenizer: Any, r
         # the final answer is the xx part
         search_response = re.search(r"Final Answer: (\w+)", response)
         final_answer = search_response.group(1) if search_response else None
-        return final_answer
+        return (sentence, final_answer)
 
-    final_answers: list[str | None] = []
+    answers: list[str | None] = []
+    questions: list[str] = []
     for coro in tqdm_asyncio.as_completed(
         [sample_from_model(s) for s in sentences], total=len(sentences)
     ):
-        final_answers.append(await coro)
+        question, answer = await coro
+        answers.append(answer)
+        questions.append(question)
 
     # save the input and final answer to a file
     with open(cfg.output_file, "w") as f:
-        for sentence, final_answer in zip(sentences, final_answers):
-            if final_answer is None:
+        for question, answer in zip(questions, answers):
+            if answer is None:
                 continue
             messages = {
                 "messages": [
                     {
                         "role": "user",
-                        "content": sentence,
+                        "content": question,
                     },
                     {
                         "role": "assistant",
-                        "content": final_answer,
+                        "content": answer,
                     },
                 ],
             }
@@ -158,7 +162,6 @@ def main(cfg: Config):
         print(f"Output directory {os.path.dirname(cfg.output_file)} does not exist")
         print(f"Creating directory {os.path.dirname(cfg.output_file)}")
         os.makedirs(os.path.dirname(cfg.output_file), exist_ok=True)
-        return
 
     # Setup clients synchronously
     sampling_client, tokenizer, renderer = setup_clients()
