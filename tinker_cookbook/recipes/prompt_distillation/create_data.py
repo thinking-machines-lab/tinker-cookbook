@@ -83,11 +83,11 @@ class Config:
 def setup_clients():
     print("Creating service client")
     service_client = tinker.ServiceClient()
-    print("Creating training client")
+    print("Creating sampling client")
     sampling_client = service_client.create_sampling_client(
         base_model="Qwen/Qwen3-30B-A3B"
     )
-    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B", tokenizer_parallelism=False)
     renderer = renderers.get_renderer("qwen3", tokenizer)
 
     return sampling_client, tokenizer, renderer
