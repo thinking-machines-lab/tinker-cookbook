@@ -83,14 +83,11 @@ def setup_clients():
     print("Creating service client")
     service_client = tinker.ServiceClient()
     print("Creating training client")
-    training_client = service_client.create_lora_training_client(
+    sampling_client = service_client.create_sampling_client(
         base_model="Qwen/Qwen3-30B-A3B", rank=32
     )
-    tokenizer = training_client.get_tokenizer()
+    tokenizer = sampling_client.get_tokenizer()
     renderer = renderers.get_renderer("qwen3", tokenizer)
-
-    print("Creating sampling client")
-    sampling_client = training_client.save_weights_and_get_sampling_client(name="0000")
 
     return sampling_client, tokenizer, renderer
 
