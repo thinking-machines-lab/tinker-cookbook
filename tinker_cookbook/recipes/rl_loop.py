@@ -80,17 +80,6 @@ def main(config: Config):
 
     # Setup training client
     service_client = tinker.ServiceClient(base_url=config.base_url)
-    training_client = service_client.create_lora_training_client(
-        base_model=config.model_name, rank=config.lora_rank
-    )
-    sampling_params = tinker.types.SamplingParams(
-        max_tokens=config.max_tokens,
-        stop=renderer.get_stop_sequences(),
-    )
-    # Optimizer step
-    adam_params = types.AdamParams(
-        learning_rate=config.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8
-    )
 
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     if resume_info:
@@ -104,6 +93,15 @@ def main(config: Config):
             base_model=config.model_name, rank=config.lora_rank
         )
         start_batch = 0
+
+    sampling_params = tinker.types.SamplingParams(
+        max_tokens=config.max_tokens,
+        stop=renderer.get_stop_sequences(),
+    )
+    # Optimizer step
+    adam_params = types.AdamParams(
+        learning_rate=config.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8
+    )
 
     logger.info(f"Training for {n_train_batches} batches")
 
