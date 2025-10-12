@@ -16,7 +16,7 @@ from typing import Any, Callable, Dict, List, Optional, overload, Literal
 import tinker
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.completion import Completion
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, OpenAI
 from openai.resources.chat import AsyncChat as OpenAIAsyncChat
 from openai.resources.chat.completions import AsyncCompletions as OpenAIAsyncChatCompletions
 from openai.resources.completions import AsyncCompletions as OpenAIAsyncCompletions
@@ -49,7 +49,7 @@ def convert_oai_messages_to_renderer_messages(messages: List[Dict[str, Any]]) ->
     return out
 
 
-class TinkerOpenAIClient(AsyncOpenAI):
+class TinkerAsyncOpenAIClient(AsyncOpenAI):
     """
     OpenAI-compatible async client that routes calls to a Tinker SamplingClient.
     """
@@ -79,7 +79,7 @@ class TinkerOpenAIClient(AsyncOpenAI):
 
 
 class TinkerChatCompletions(OpenAIAsyncChatCompletions):
-    def __init__(self, parent: TinkerOpenAIClient) -> None:
+    def __init__(self, parent: TinkerAsyncOpenAIClient) -> None:
         self._parent = parent
 
     @overload
@@ -98,7 +98,7 @@ class TinkerChatCompletions(OpenAIAsyncChatCompletions):
         model = kwargs.get("model", "tinker")
         messages = kwargs.get("messages", [])
         if kwargs.get("stream", False):
-            raise ValueError("stream=True not supported by TinkerOpenAIClient")
+            raise ValueError("stream=True not supported by TinkerAsyncOpenAIClient")
         sampling_args = {k: v for k, v in kwargs.items() if k not in ("model", "messages", "tools")}
 
         # prepare prompt
@@ -125,8 +125,10 @@ class TinkerChatCompletions(OpenAIAsyncChatCompletions):
         if self._parent._hook is not None:
             self._parent._hook(conv_messages, model_input, tokens, logprobs)
 
-        # build ChatCompletion via pydantic validation
-        content_text = self._parent._tokenizer.decode(tokens)
+        # build ChatCompletion via pydantic validation using renderer parsing
+        assistant_message, parse_success = self._parent._renderer.parse_response(tokens)
+        content_text = assistant_message["content"]
+        finish_reason = "stop" if parse_success else "length"
         response_dict: Dict[str, Any] = {
             "id": "tinker-chatcmpl",
             "object": "chat.completion",
@@ -136,10 +138,10 @@ class TinkerChatCompletions(OpenAIAsyncChatCompletions):
                 {
                     "index": 0,
                     "message": {"role": "assistant", "content": content_text},
-                    "finish_reason": "stop",
+                    "finish_reason": finish_reason,
                     "logprobs": {
                         "content": [
-                            {"token": f"token_id:{tid}", "logprob": float(lp)}
+                            {"token": f"token_id:{tid}", "logprob": float(lp), "top_logprobs": []}
                             for tid, lp in zip(tokens, logprobs)
                         ]
                     },
@@ -155,7 +157,7 @@ class TinkerChatCompletions(OpenAIAsyncChatCompletions):
 
 
 class TinkerCompletions(OpenAIAsyncCompletions):
-    def __init__(self, parent: TinkerOpenAIClient) -> None:
+    def __init__(self, parent: TinkerAsyncOpenAIClient) -> None:
         self._parent = parent
 
     @overload
@@ -225,7 +227,7 @@ class TinkerCompletions(OpenAIAsyncCompletions):
 
 
 class TinkerAsyncChat(OpenAIAsyncChat):
-    def __init__(self, parent: TinkerOpenAIClient) -> None:
+    def __init__(self, parent: TinkerAsyncOpenAIClient) -> None:
         self._parent = parent
 
     @property

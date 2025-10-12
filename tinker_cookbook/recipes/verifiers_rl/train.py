@@ -11,7 +11,7 @@ import tinker
 import verifiers as vf
 from tinker_cookbook import cli_utils, model_info, renderers
 from tinker_cookbook.completers import TokensWithLogprobs
-from tinker_cookbook.recipes.verifiers_rl.openai import TinkerOpenAIClient
+from tinker_cookbook.recipes.verifiers_rl.tinker_openai import TinkerAsyncOpenAIClient
 from tinker_cookbook.rl import train
 from tinker_cookbook.rl.types import EnvGroupBuilder, RLDataset, RLDatasetBuilder, Trajectory, Transition, TrajectoryGroup
 from tinker_cookbook.tokenizer_utils import Tokenizer
@@ -116,7 +116,7 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
         assert isinstance(builder, VerifiersBuilder)
         renderer_name = model_info.get_recommended_renderer_name(cfg.model_name)
         renderer = renderers.get_renderer(renderer_name, tokenizer)
-        client = TinkerOpenAIClient(sampling_client, renderer, tokenizer)
+        client = TinkerAsyncOpenAIClient(sampling_client, renderer, tokenizer)
 
         # capture steps
         recorded: List[tuple[list[renderers.Message], tinker.ModelInput, list[int], list[float]]] = []

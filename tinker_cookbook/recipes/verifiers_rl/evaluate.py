@@ -11,7 +11,7 @@ import verifiers as vf
 from verifiers.utils.message_utils import messages_to_printable
 
 from tinker_cookbook import model_info, renderers
-from tinker_cookbook.recipes.verifiers_rl.openai import TinkerOpenAIClient
+from tinker_cookbook.recipes.verifiers_rl.tinker_openai import TinkerAsyncOpenAIClient
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 
@@ -60,11 +60,11 @@ def evaluate(
     vf_env_id: str,
     vf_env_args: dict,
     model_name: str,
-    num_examples: int = 5,
-    rollouts_per_example: int = 3,
-    max_concurrent: int = 32,
-    max_tokens: int = 1024,
-    temperature: float = 1.0,
+    num_examples: int,
+    rollouts_per_example: int,
+    max_concurrent: int,
+    max_tokens: int,
+    temperature: float,
 ):
     env = vf.load_environment(vf_env_id, **vf_env_args)
     tokenizer = get_tokenizer(model_name)
@@ -72,7 +72,7 @@ def evaluate(
     renderer = renderers.get_renderer(renderer_name, tokenizer)
     service = tinker.ServiceClient()
     sampling = service.create_sampling_client(base_model=model_name)
-    client = TinkerOpenAIClient(sampling, renderer, tokenizer)
+    client = TinkerAsyncOpenAIClient(sampling, renderer, tokenizer)
     start_time = time.time()
     results = env.evaluate(
         client=client,
@@ -98,7 +98,7 @@ def evaluate(
 @chz.chz
 class CLIConfig:
     model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
-    vf_env_id: str
+    vf_env_id: str = "wordle"
     vf_env_args: str | None = None  # JSON string
     num_examples: int = 5
     rollouts_per_example: int = 3
