@@ -24,7 +24,6 @@ dependencies = [
     "textarena",
     "math-verify",
     "scipy",
-    "verifiers",
 ]
 
 [project.urls]
@@ -49,6 +48,10 @@ wandb = [
 ]
 neptune-scale = [
     "neptune-scale>=0.27.0",
+]
+verifiers = [
+    "verifiers",
+    "openai",
 ]
 
 [build-system]
