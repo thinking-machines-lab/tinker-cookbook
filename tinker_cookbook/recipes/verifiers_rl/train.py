@@ -10,11 +10,12 @@ import json
 import tinker
 import verifiers as vf
 from tinker_cookbook import cli_utils, model_info, renderers
+from tinker_cookbook.completers import TokensWithLogprobs
+from tinker_cookbook.recipes.verifiers_rl.oai_from_tinker import TinkerOpenAIClient
 from tinker_cookbook.rl import train
 from tinker_cookbook.rl.types import EnvGroupBuilder, RLDataset, RLDatasetBuilder, Trajectory, Transition, TrajectoryGroup
 from tinker_cookbook.tokenizer_utils import Tokenizer
-from .oai_from_tinker import TinkerOpenAIClient
-from tinker_cookbook.completers import TokensWithLogprobs
+
 
 logger = logging.getLogger(__name__)
 

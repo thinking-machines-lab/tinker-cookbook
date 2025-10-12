@@ -14,9 +14,6 @@ import time
 from typing import Any, Callable, Dict, List, Optional, overload, Literal
 
 import tinker
-
-from tinker_cookbook import renderers
-from tinker_cookbook.tokenizer_utils import Tokenizer
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.completion import Completion
 from openai import AsyncOpenAI
@@ -24,6 +21,9 @@ from openai.resources.chat import AsyncChat as OpenAIAsyncChat
 from openai.resources.chat.completions import AsyncCompletions as OpenAIAsyncChatCompletions
 from openai.resources.completions import AsyncCompletions as OpenAIAsyncCompletions
 from openai._streaming import AsyncStream
+
+from tinker_cookbook import renderers
+from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
 GenerationHook = Callable[[List[renderers.Message], tinker.ModelInput, List[int], List[float]], None]
