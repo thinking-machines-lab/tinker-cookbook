@@ -24,6 +24,7 @@ dependencies = [
     "textarena",
     "math-verify",
     "scipy",
+    "verifiers",
 ]
 
 [project.urls]
