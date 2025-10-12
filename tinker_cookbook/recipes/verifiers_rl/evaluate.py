@@ -11,7 +11,7 @@ import verifiers as vf
 from verifiers.utils.message_utils import messages_to_printable
 
 from tinker_cookbook import model_info, renderers
-from tinker_cookbook.recipes.verifiers_rl.oai_from_tinker import TinkerOpenAIClient
+from tinker_cookbook.recipes.verifiers_rl.openai import TinkerOpenAIClient
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 

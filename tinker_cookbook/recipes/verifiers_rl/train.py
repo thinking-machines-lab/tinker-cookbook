@@ -11,7 +11,7 @@ import tinker
 import verifiers as vf
 from tinker_cookbook import cli_utils, model_info, renderers
 from tinker_cookbook.completers import TokensWithLogprobs
-from tinker_cookbook.recipes.verifiers_rl.oai_from_tinker import TinkerOpenAIClient
+from tinker_cookbook.recipes.verifiers_rl.openai import TinkerOpenAIClient
 from tinker_cookbook.rl import train
 from tinker_cookbook.rl.types import EnvGroupBuilder, RLDataset, RLDatasetBuilder, Trajectory, Transition, TrajectoryGroup
 from tinker_cookbook.tokenizer_utils import Tokenizer
@@ -71,7 +71,7 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
             for j in range(start, end):
                 row = self._rows[j]
                 builders.append(VerifiersBuilder(
-                    vf_env=vf_env,
+                    vf_env=self._vf_env,
                     prompt=row["prompt"],
                     answer=row.get("answer", ""),
                     task=row.get("task", "default"),
@@ -107,7 +107,12 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
         def logging_tags(self):
             return [self.task] if self.task else []
 
-    async def custom_do_group_rollout(cfg: train.Config, sampling_client: tinker.SamplingClient, builder: EnvGroupBuilder, tokenizer: Tokenizer) -> TrajectoryGroup:
+    async def custom_do_group_rollout(
+        cfg: train.Config,
+        sampling_client: tinker.SamplingClient,
+        builder: EnvGroupBuilder,
+        tokenizer: Tokenizer,
+    ) -> TrajectoryGroup:
         assert isinstance(builder, VerifiersBuilder)
         renderer_name = model_info.get_recommended_renderer_name(cfg.model_name)
         renderer = renderers.get_renderer(renderer_name, tokenizer)
