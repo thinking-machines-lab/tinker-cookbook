@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime
+from typing import Literal
 
 import chz
 from tinker_cookbook import cli_utils, model_info
@@ -56,6 +57,7 @@ class CLIConfig:
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
     max_steps_off_policy: int | None = None
+    loss_fn: Literal["importance_sampling", "ppo"] = "importance_sampling"
 
 
 def get_dataset_builder(
