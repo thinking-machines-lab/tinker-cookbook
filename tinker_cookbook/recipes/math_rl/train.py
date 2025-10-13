@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime
+from typing import Literal
 
 import chz
 from tinker_cookbook import cli_utils, model_info
@@ -56,6 +57,7 @@ class CLIConfig:
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
     max_steps_off_policy: int | None = None
+    loss_fn: Literal["importance_sampling", "ppo"] = "importance_sampling"
 
 
 def get_dataset_builder(
@@ -94,7 +96,7 @@ async def cli_main(cli_config: CLIConfig):
         cli_config.model_name
     )
     model_name = cli_config.model_name.replace("/", "-")
-    run_name = f"{cli_config.env}-{model_name}-{cli_config.lora_rank}rank-{cli_config.learning_rate}lr-{cli_config.group_size}group-{cli_config.groups_per_batch}batch-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
+    run_name = f"{cli_config.env}-{model_name}-{cli_config.lora_rank}rank-{cli_config.learning_rate}lr-{cli_config.group_size}group-{cli_config.groups_per_batch}batch-{cli_config.loss_fn}-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
     # create log path if it doesn't exist
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
