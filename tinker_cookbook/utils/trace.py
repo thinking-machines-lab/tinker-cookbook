@@ -285,7 +285,7 @@ def _create_end_event(
     )
 
 
-def scope(func: Callable[..., Any]):
+def scope(func: Callable[..., Any]) -> Callable[..., Any]:
     """
     Decorator for tracing both async and sync functions. In the resulting trace:
     - Each track represents a coroutine (or a sync function if not a coroutine)
