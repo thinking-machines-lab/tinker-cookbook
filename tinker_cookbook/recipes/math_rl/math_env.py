@@ -143,9 +143,10 @@ class MathDataset(RLDataset):
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None = None,
         split: Literal["train", "test"] = "train",
+        seed: int = 0,
     ):
         if split == "train":
-            self.ds = _get_hendrycks_math_train().shuffle(seed=0)
+            self.ds = _get_hendrycks_math_train().shuffle(seed=seed)
         elif split == "test":
             self.ds = _get_hendrycks_math_test()
         self.batch_size = batch_size
@@ -189,6 +190,7 @@ class MathDatasetBuilder(RLDatasetBuilder):
     renderer_name: str
     group_size: int
     convo_prefix: list[renderers.Message] | None | Literal["standard"] = "standard"
+    seed: int = 0
 
     async def __call__(self) -> tuple[MathDataset, MathDataset]:
         if self.convo_prefix == "standard":
@@ -204,6 +206,7 @@ class MathDatasetBuilder(RLDatasetBuilder):
                 renderer=renderer,
                 convo_prefix=convo_prefix,
                 split=split,
+                seed=self.seed,
             )
             for split in ("train", "test")
         ]
@@ -217,9 +220,12 @@ class PolarisDataset(MathDataset):
         group_size: int,
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None = None,
+        seed: int = 0,
     ):
         # Don't call super().__init__ since we're overriding the dataset loading
-        self.ds = load_dataset("POLARIS-Project/Polaris-Dataset-53K", split="train").shuffle(seed=0)
+        self.ds = load_dataset("POLARIS-Project/Polaris-Dataset-53K", split="train").shuffle(
+            seed=seed
+        )
         self.batch_size = batch_size
         self.group_size = group_size
         self.renderer = renderer
@@ -248,6 +254,7 @@ class PolarisDatasetBuilder(RLDatasetBuilder):
     model_name_for_tokenizer: str
     renderer_name: str
     group_size: int
+    seed: int = 0
 
     async def __call__(self) -> tuple[PolarisDataset, None]:
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
@@ -255,6 +262,7 @@ class PolarisDatasetBuilder(RLDatasetBuilder):
             batch_size=self.batch_size,
             group_size=self.group_size,
             renderer=renderers.get_renderer(self.renderer_name, tokenizer=tokenizer),
+            seed=self.seed,
         ), None
 
 
@@ -265,9 +273,10 @@ class DeepMathDataset(MathDataset):
         group_size: int,
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None = None,
+        seed: int = 0,
     ):
         # Don't call super().__init__ since we're overriding the dataset loading
-        self.ds = load_dataset("zwhe99/DeepMath-103K", split="train").shuffle(seed=0)
+        self.ds = load_dataset("zwhe99/DeepMath-103K", split="train").shuffle(seed=seed)
         self.batch_size = batch_size
         self.group_size = group_size
         self.renderer = renderer
@@ -296,6 +305,7 @@ class DeepMathDatasetBuilder(RLDatasetBuilder):
     model_name_for_tokenizer: str
     renderer_name: str
     group_size: int
+    seed: int = 0
 
     async def __call__(self) -> tuple[DeepMathDataset, None]:
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
@@ -303,6 +313,7 @@ class DeepMathDatasetBuilder(RLDatasetBuilder):
             batch_size=self.batch_size,
             group_size=self.group_size,
             renderer=renderers.get_renderer(self.renderer_name, tokenizer=tokenizer),
+            seed=self.seed,
         ), None
 
 
@@ -314,12 +325,13 @@ class Gsm8kDataset(RLDataset):
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None = None,
         split: Literal["train", "test"] = "train",
+        seed: int = 0,
     ):
         if split not in ("train", "test"):
             raise ValueError("split must be 'train' or 'test'")
         self.ds = cast(Dataset, load_dataset("openai/gsm8k", name="main", split=split))
         if split == "train":
-            self.ds = self.ds.shuffle(seed=0)
+            self.ds = self.ds.shuffle(seed=seed)
         self.batch_size = batch_size
         self.group_size = group_size if split == "train" else 1
         self.renderer = renderer
@@ -366,6 +378,7 @@ class Gsm8kDatasetBuilder(RLDatasetBuilder):
     renderer_name: str
     group_size: int
     convo_prefix: list[renderers.Message] | None | Literal["standard"] = "standard"
+    seed: int = 0
 
     async def __call__(self) -> tuple[Gsm8kDataset, Gsm8kDataset]:
         if self.convo_prefix == "standard":
@@ -381,6 +394,7 @@ class Gsm8kDatasetBuilder(RLDatasetBuilder):
                 renderer=renderer,
                 convo_prefix=convo_prefix,
                 split=split,
+                seed=self.seed,
             )
             for split in ("train", "test")
         ]
@@ -402,6 +416,7 @@ def get_math_dataset_builder(
     model_name_for_tokenizer: str,
     renderer_name: str,
     group_size: int,
+    seed: int = 0,
 ) -> RLDatasetBuilder:
     """
     Unified function to get any math dataset builder.
@@ -411,6 +426,7 @@ def get_math_dataset_builder(
         model_name_for_tokenizer: Model name for tokenizer
         renderer_name: Name of the renderer to use
         group_size: Number of environments per group
+        seed: Random seed for data shuffling (default: 0)
     Returns:
         The appropriate dataset builder instance
     """
@@ -426,4 +442,5 @@ def get_math_dataset_builder(
         model_name_for_tokenizer=model_name_for_tokenizer,
         renderer_name=renderer_name,
         group_size=group_size,
+        seed=seed,
     )
