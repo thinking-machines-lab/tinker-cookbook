@@ -21,6 +21,8 @@ You can then run the recipe with the following command, where `vf_env_id` is the
 python -m tinker_cookbook.recipes.verifiers_rl.train vf_env_id=env-id vf_env_args='{}' ...
 ```
 
+The reverse-text example as configured should climb from ~0.2 to ~0.35 in 32 steps.
+
 You can also evaluate offline:
 
 ```bash
