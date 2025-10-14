@@ -16,7 +16,7 @@ from typing import Any, Callable, Dict, List, Optional, overload, Literal
 import tinker
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.completion import Completion
-from openai import AsyncOpenAI, OpenAI
+from openai import AsyncOpenAI
 from openai.resources.chat import AsyncChat as OpenAIAsyncChat
 from openai.resources.chat.completions import AsyncCompletions as OpenAIAsyncChatCompletions
 from openai.resources.completions import AsyncCompletions as OpenAIAsyncCompletions
@@ -61,13 +61,16 @@ class TinkerAsyncOpenAIClient(AsyncOpenAI):
         tokenizer: Tokenizer,
     ) -> None:
         super().__init__(api_key="tinker", base_url="http://localhost")
-        self._sampling_client = sampling_client
-        self._renderer = renderer
-        self._tokenizer = tokenizer
-        self._hook: Optional[GenerationHook] = None
+        self.sampling_client = sampling_client
+        self.renderer = renderer
+        self.tokenizer = tokenizer
+        self.hook: Optional[GenerationHook] = None
 
     def set_generation_hook(self, hook: Optional[GenerationHook]) -> None:
-        self._hook = hook
+        self.hook = hook
+
+    def set_sampling_client(self, sampling_client: tinker.SamplingClient) -> None:
+        self.sampling_client = sampling_client
 
     @property
     def chat(self) -> OpenAIAsyncChat:
@@ -103,11 +106,11 @@ class TinkerChatCompletions(OpenAIAsyncChatCompletions):
 
         # prepare prompt
         conv_messages = convert_oai_messages_to_renderer_messages(messages)
-        stop = sampling_args.get("stop", self._parent._renderer.get_stop_sequences())
+        stop = sampling_args.get("stop", self._parent.renderer.get_stop_sequences())
         max_tokens = sampling_args.get("max_tokens") or sampling_args.get("max_completion_tokens")
 
-        model_input = self._parent._renderer.build_generation_prompt(conv_messages)
-        sample = await self._parent._sampling_client.sample_async(
+        model_input = self._parent.renderer.build_generation_prompt(conv_messages)
+        sample = await self._parent.sampling_client.sample_async(
             prompt=model_input,
             num_samples=1,
             sampling_params=tinker.SamplingParams(
@@ -122,11 +125,11 @@ class TinkerChatCompletions(OpenAIAsyncChatCompletions):
         tokens: List[int] = seq.tokens
         logprobs: List[float] = seq.logprobs or [0.0] * len(tokens)
 
-        if self._parent._hook is not None:
-            self._parent._hook(conv_messages, model_input, tokens, logprobs)
+        if self._parent.hook is not None:
+            self._parent.hook(conv_messages, model_input, tokens, logprobs)
 
         # build ChatCompletion via pydantic validation using renderer parsing
-        assistant_message, parse_success = self._parent._renderer.parse_response(tokens)
+        assistant_message, parse_success = self._parent.renderer.parse_response(tokens)
         content_text = assistant_message["content"]
         finish_reason = "stop" if parse_success else "length"
         response_dict: Dict[str, Any] = {
@@ -180,9 +183,9 @@ class TinkerCompletions(OpenAIAsyncCompletions):
 
         # Completion-mode: render prompt directly as text chunk
         model_input = tinker.ModelInput.from_ints(
-            self._parent._tokenizer.encode(prompt, add_special_tokens=True)
+            self._parent.tokenizer.encode(prompt, add_special_tokens=True)
         )
-        sample = await self._parent._sampling_client.sample_async(
+        sample = await self._parent.sampling_client.sample_async(
             prompt=model_input,
             num_samples=1,
             sampling_params=tinker.SamplingParams(
@@ -196,7 +199,7 @@ class TinkerCompletions(OpenAIAsyncCompletions):
         tokens: List[int] = seq.tokens
         logprobs: List[float] = seq.logprobs or [0.0] * len(tokens)
 
-        text = self._parent._tokenizer.decode(tokens)
+        text = self._parent.tokenizer.decode(tokens)
         tokens_str = [f"token_id:{tid}" for tid in tokens]
         response_dict: Dict[str, Any] = {
             "id": "tinker-cmpl",

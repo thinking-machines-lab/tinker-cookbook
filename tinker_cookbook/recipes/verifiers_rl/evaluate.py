@@ -98,7 +98,7 @@ def evaluate(
 @chz.chz
 class CLIConfig:
     model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
-    vf_env_id: str = "wordle"
+    vf_env_id: str = "reverse-text"
     vf_env_args: str | None = None  # JSON string
     num_examples: int = 5
     rollouts_per_example: int = 3
