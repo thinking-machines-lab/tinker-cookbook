@@ -40,10 +40,12 @@ from tinker_cookbook.rl.types import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.misc_utils import safezip, split_list, timed
+from tinker_cookbook.utils.trace import scope, trace_init, get_scope_context
 
 logger = logging.getLogger(__name__)
 
 
+@scope
 def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]:
     assert num_inds <= len(scores)
     sorted_inds = np.argsort(scores)
@@ -51,6 +53,7 @@ def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]
     return [int(sorted_inds[i]) for i in uniform_inds]
 
 
+@scope
 def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
     # Cut down the number of trajectories to print
     max_trajs_to_print = 4
@@ -68,6 +71,7 @@ def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
 
     buf = io.StringIO()
 
+    @scope
     def bprint(s: str):
         print(s, file=buf)
 
@@ -101,6 +105,7 @@ def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
     logger.info(buf.getvalue().rstrip())
 
 
+@scope
 async def optim_step(
     training_client: tinker.TrainingClient,
     learning_rate: float,
@@ -111,6 +116,7 @@ async def optim_step(
     await optim_step_future.result_async()
 
 
+@scope
 def remove_mask(datum: tinker.Datum) -> tinker.Datum:
     return tinker.Datum(
         model_input=datum.model_input,
@@ -118,6 +124,7 @@ def remove_mask(datum: tinker.Datum) -> tinker.Datum:
     )
 
 
+@scope
 async def forward_backward(
     training_client: tinker.TrainingClient,
     batch_d: List[tinker.Datum],
@@ -139,6 +146,7 @@ async def forward_backward(
     return training_logprobs_D
 
 
+@scope
 async def train_step(
     data_D: List[tinker.Datum],
     training_client: tinker.TrainingClient,
@@ -211,6 +219,7 @@ class Config:
 
     log_path: str = chz.field(munger=lambda _, s: os.path.expanduser(s))
     base_url: str | None = None
+    enable_trace: bool = False
 
     remove_constant_reward_groups: bool = False
     eval_every: int = 20
@@ -221,6 +230,7 @@ class Config:
     stream_minibatch_config: StreamMinibatchConfig | None = None
 
 
+@scope
 async def do_sync_training_with_stream_minibatch(
     start_batch: int,
     end_batch: int,
@@ -264,6 +274,7 @@ async def do_sync_training_with_stream_minibatch(
         # and the trainer will consume them as soon as they are ready
         trajectory_groups_queue = asyncio.Queue[WrappedTrajectoryGroup | None]()
 
+        @scope
         async def trajectory_group_worker_task(builder: EnvGroupBuilder) -> None:
             metrics = {}
             t_start = time.time()
@@ -286,8 +297,10 @@ async def do_sync_training_with_stream_minibatch(
         # Sample all trajectories asynchronously. If we have multiple minibatches,
         # then sampling can overlap with training.
         env_group_builders_P = dataset.get_batch(i_batch)
-        for builder in env_group_builders_P:
-            asyncio.create_task(trajectory_group_worker_task(builder))
+        for i, builder in enumerate(env_group_builders_P):
+            asyncio.create_task(
+                trajectory_group_worker_task(builder), name=f"trajectory_group_worker_task_{i}"
+            )
 
         # Run multiple optimizer substeps per training iteration
         sampling_client, full_batch_metrics = await do_train_step_streaming_and_get_sampling_client(
@@ -322,6 +335,7 @@ class WrappedTrajectoryGroup:
     metrics: dict[str, Any] = chz.field(default_factory=dict)
 
 
+@scope
 async def do_async_training(
     start_batch: int,
     end_batch: int,
@@ -360,6 +374,7 @@ async def do_async_training(
     sampling_client_updated_event = asyncio.Event()
     sampling_client_updated_event.set()
 
+    @scope
     def shutdown_loops():
         """Trigger all loops to shutdown"""
         shutdown_event.set()
@@ -368,6 +383,7 @@ async def do_async_training(
             env_group_builders_queue.put_nowait(None)
         sampling_client_updated_event.set()
 
+    @scope
     async def dataloader_loop():
         """Gets the next set of env builders to run"""
         i_batch = start_batch
@@ -377,6 +393,7 @@ async def do_async_training(
                 await env_group_builders_queue.put(env_group_builder)
             i_batch += 1
 
+    @scope
     async def trajectory_group_worker_loop():
         """Generates trajectories for a single env builder"""
         while not shutdown_event.is_set():
@@ -407,6 +424,7 @@ async def do_async_training(
                     )
                 )
 
+    @scope
     async def training_loop():
         """
         Waits for a sufficient number of valid trajectories to be accumulated and trains on them.
@@ -421,6 +439,7 @@ async def do_async_training(
             if wrapped_trajectory_group is None:
                 continue
 
+            @scope
             def filter_stale_trajectory_group(
                 wrapped_trajectory_group: WrappedTrajectoryGroup | None,
             ) -> bool:
@@ -437,7 +456,8 @@ async def do_async_training(
                 ):
                     logger.info(f"[training_loop] Step {i_batch}: Samples are too stale, skipping")
                     asyncio.create_task(
-                        env_group_builders_queue.put(wrapped_trajectory_group.env_group_builder)
+                        env_group_builders_queue.put(wrapped_trajectory_group.env_group_builder),
+                        name="requeue_stale_sample_task",
                     )
                     return False
                 return True
@@ -505,6 +525,7 @@ async def do_async_training(
 
         shutdown_loops()
 
+    @scope
     async def evaluation_loop():
         """Runs evals periodically"""
         if len(evaluators) == 0 or cfg.eval_every == 0:
@@ -529,13 +550,19 @@ async def do_async_training(
                 ml_logger.log_metrics(metrics, step=sampling_client_eval_step)
 
     await asyncio.gather(
-        dataloader_loop(),
-        *[trajectory_group_worker_loop() for _ in range(cfg.async_config.groups_per_batch)],
-        training_loop(),
-        evaluation_loop(),
+        asyncio.create_task(dataloader_loop(), name="dataloader_loop"),
+        *[
+            asyncio.create_task(
+                trajectory_group_worker_loop(), name=f"trajectory_group_worker_loop_{i}"
+            )
+            for i in range(cfg.async_config.groups_per_batch)
+        ],
+        asyncio.create_task(training_loop(), name="training_loop"),
+        asyncio.create_task(evaluation_loop(), name="evaluation_loop"),
     )
 
 
+@scope
 async def do_group_rollout_and_filter_constant_reward(
     cfg: Config,
     sampling_client: tinker.SamplingClient,
@@ -553,6 +580,7 @@ async def do_group_rollout_and_filter_constant_reward(
     return trajectory_groups[0]
 
 
+@scope
 async def save_checkpoint_and_get_sampling_client(
     cfg: Config,
     training_client: tinker.TrainingClient,
@@ -570,6 +598,7 @@ async def save_checkpoint_and_get_sampling_client(
         return training_client.create_sampling_client(path_dict["sampler_path"]), metrics
 
 
+@scope
 async def prepare_minibatch(
     cfg: Config,
     env_group_builders_P: Sequence[EnvGroupBuilder],
@@ -608,6 +637,7 @@ async def prepare_minibatch(
     return data_D, metrics
 
 
+@scope
 async def compute_full_batch_metrics_and_get_sampling_client(
     cfg: Config,
     training_client: tinker.TrainingClient,
@@ -641,6 +671,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     return sampling_client, metrics
 
 
+@scope
 async def do_train_step_streaming_and_get_sampling_client(
     cfg: Config,
     i_batch: int,
@@ -665,6 +696,9 @@ async def do_train_step_streaming_and_get_sampling_client(
     )
     # Number of groups per minibatch in each optimizer substep
     groups_per_minibatch = groups_per_substep // cfg.stream_minibatch_config.num_minibatches
+
+    context = get_scope_context()
+    context.attributes["step"] = i_batch
 
     metrics = {}
 
@@ -744,6 +778,7 @@ async def do_train_step_streaming_and_get_sampling_client(
     return sampling_client, metrics
 
 
+@scope
 async def do_train_step_and_get_sampling_client(
     cfg: Config,
     i_batch: int,
@@ -753,6 +788,9 @@ async def do_train_step_and_get_sampling_client(
     env_group_builders_P: Sequence[EnvGroupBuilder],
     trajectory_groups_P: list[TrajectoryGroup],
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
+    context = get_scope_context()
+    context.attributes["step"] = i_batch
+
     metrics = {}
     data_D, prepare_minibatch_metrics = await prepare_minibatch(
         cfg,
@@ -785,6 +823,7 @@ async def do_train_step_and_get_sampling_client(
     return sampling_client, metrics
 
 
+@scope
 async def do_sync_training(
     start_batch: int,
     end_batch: int,
@@ -824,9 +863,12 @@ async def do_sync_training(
         with timed("sample", metrics):
             trajectory_groups_P = await asyncio.gather(
                 *[
-                    do_group_rollout_and_filter_constant_reward(cfg, sampling_client, builder)
-                    for builder in env_group_builders_P
-                ]
+                    asyncio.create_task(
+                        do_group_rollout_and_filter_constant_reward(cfg, sampling_client, builder),
+                        name=f"sample_task_{i}",
+                    )
+                    for i, builder in enumerate(env_group_builders_P)
+                ],
             )
         trajectory_groups_P = [
             trajectory_group
@@ -851,6 +893,7 @@ async def do_sync_training(
         ml_logger.log_metrics(metrics, step=i_batch)
 
 
+@scope
 async def main(
     cfg: Config,
 ):
@@ -861,6 +904,18 @@ async def main(
         config=cfg,
         wandb_name=cfg.wandb_name,
     )
+    if cfg.enable_trace:
+        # Get and rename the current (main) task
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            current_task.set_name("main")
+        trace_events_path = os.path.join(cfg.log_path, "trace_events.jsonl")
+        logger.info(f"Tracing is enabled. Trace events will be saved to {trace_events_path}")
+        logger.info(
+            f"Run `python tinker_cookbook/utils/trace.py {trace_events_path} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"
+        )
+        trace_init(output_file=trace_events_path)
+
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("pylatexenc").setLevel(logging.WARNING)
 
