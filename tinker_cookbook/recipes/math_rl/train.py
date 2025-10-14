@@ -27,6 +27,7 @@ class CLIConfig:
 
     # Environment configuration
     env: str = "arithmetic"  # Options: arithmetic, math, polaris, deepmath, gsm8k
+    seed: int = 0  # Random seed for data shuffling
 
     # Training hyperparameters
     group_size: int = 4
@@ -66,6 +67,7 @@ def get_dataset_builder(
     model_name: str,
     renderer_name: str,
     group_size: int,
+    seed: int = 0,
 ) -> RLDatasetBuilder:
     if env == "arithmetic":
         return arithmetic_env.ArithmeticDatasetBuilder(
@@ -83,6 +85,7 @@ def get_dataset_builder(
             model_name_for_tokenizer=model_name,
             renderer_name=renderer_name,
             group_size=group_size,
+            seed=seed,
         )
     else:
         raise ValueError(f"Unknown environment: {env}")
@@ -116,6 +119,7 @@ async def cli_main(cli_config: CLIConfig):
             model_name=cli_config.model_name,
             renderer_name=renderer_name,
             group_size=cli_config.group_size,
+            seed=cli_config.seed,
         ),
         model_name=cli_config.model_name,
         lora_rank=cli_config.lora_rank,
