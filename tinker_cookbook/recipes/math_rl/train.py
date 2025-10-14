@@ -140,6 +140,7 @@ async def cli_main(cli_config: CLIConfig):
         )
         if cli_config.max_steps_off_policy is not None
         else None,
+        loss_fn=cli_config.loss_fn,
     )
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
