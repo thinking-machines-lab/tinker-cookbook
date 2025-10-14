@@ -15,7 +15,10 @@ from tinker_cookbook.recipes.verifiers_rl.tinker_openai import TinkerAsyncOpenAI
 from tinker_cookbook.rl import train
 from tinker_cookbook.rl.types import EnvGroupBuilder, Trajectory, Transition, TrajectoryGroup
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
-from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersEnvGroupBuilder, VerifiersRLDatasetBuilder
+from tinker_cookbook.recipes.verifiers_rl.verifiers_env import (
+    VerifiersEnvGroupBuilder,
+    VerifiersRLDatasetBuilder,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,12 +71,13 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
     env_args = json.loads(cli_config.vf_env_args) if cli_config.vf_env_args else {}
     vf_env = vf.load_environment(cli_config.vf_env_id, **env_args)
 
-
     # global objects shared across rollout groups
     shared_renderer: renderers.Renderer | None = None
     local_tokenizer: Tokenizer | None = None
 
-    async def custom_do_group_rollout(builder: EnvGroupBuilder, policy: TokenCompleter) -> TrajectoryGroup:
+    async def custom_do_group_rollout(
+        builder: EnvGroupBuilder, policy: TokenCompleter
+    ) -> TrajectoryGroup:
         assert isinstance(builder, VerifiersEnvGroupBuilder)
         assert isinstance(policy, TinkerTokenCompleter)
         nonlocal shared_renderer, local_tokenizer
@@ -87,14 +91,18 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
         sampling_client = policy.sampling_client
 
         async def run_one_rollout() -> tuple[Trajectory, float, dict[str, float | int]]:
-            recorded: List[tuple[list[renderers.Message], tinker.ModelInput, list[int], list[float]]] = []
+            recorded: List[
+                tuple[list[renderers.Message], tinker.ModelInput, list[int], list[float]]
+            ] = []
 
             def hook(messages, model_input, tokens, logprobs):
                 recorded.append((list(messages), model_input, list(tokens), list(logprobs)))
 
             # create per-rollout client for hook
             assert shared_renderer is not None and local_tokenizer is not None
-            local_client = TinkerAsyncOpenAIClient(sampling_client, shared_renderer, local_tokenizer)
+            local_client = TinkerAsyncOpenAIClient(
+                sampling_client, shared_renderer, local_tokenizer
+            )
             local_client.set_generation_hook(hook)
 
             completion, state = await builder.vf_env.rollout(
@@ -118,13 +126,15 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
 
             transitions: List[Transition] = []
             for _msgs, model_input, tokens, logprobs in recorded:
-                transitions.append(Transition(
-                    ob=model_input,
-                    ac=TokensWithLogprobs(tokens=tokens, maybe_logprobs=logprobs),
-                    reward=0.0,
-                    episode_done=False,
-                    metrics={},
-                ))
+                transitions.append(
+                    Transition(
+                        ob=model_input,
+                        ac=TokensWithLogprobs(tokens=tokens, maybe_logprobs=logprobs),
+                        reward=0.0,
+                        episode_done=False,
+                        metrics={},
+                    )
+                )
             if transitions:
                 transitions[-1] = Transition(
                     ob=transitions[-1].ob,
@@ -144,7 +154,7 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
 
     # override do_group_rollout function inside rl.train
     train.do_group_rollout = custom_do_group_rollout
-    
+
     cfg = train.Config(
         learning_rate=cli_config.learning_rate,
         dataset_builder=VerifiersRLDatasetBuilder(

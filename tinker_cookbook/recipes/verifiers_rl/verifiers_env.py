@@ -8,7 +8,8 @@ from tinker_cookbook.rl.types import EnvGroupBuilder, RLDataset, RLDatasetBuilde
 
 
 class VerifiersRLDataset(RLDataset):
-    def __init__(self,
+    def __init__(
+        self,
         rows: list[dict],
         vf_env: vf.Environment,
         groups_per_batch: int,
@@ -26,14 +27,17 @@ class VerifiersRLDataset(RLDataset):
         builders: list[EnvGroupBuilder] = []
         for j in range(start, end):
             row = self.rows[j]
-            builders.append(VerifiersEnvGroupBuilder(
-                vf_env=self.vf_env,
-                prompt=row["prompt"],
-                answer=row.get("answer", ""),
-                task=row.get("task", "default"),
-                info=row.get("info", {}),
-            ))
+            builders.append(
+                VerifiersEnvGroupBuilder(
+                    vf_env=self.vf_env,
+                    prompt=row["prompt"],
+                    answer=row.get("answer", ""),
+                    task=row.get("task", "default"),
+                    info=row.get("info", {}),
+                )
+            )
         return builders
+
 
 @chz.chz
 class VerifiersRLDatasetBuilder(RLDatasetBuilder):
@@ -55,8 +59,10 @@ class VerifiersRLDatasetBuilder(RLDatasetBuilder):
         ]
         return VerifiersRLDataset(rows, self.vf_env, self.groups_per_batch), None
 
+
 class VerifiersEnvGroupBuilder(EnvGroupBuilder):
-    def __init__(self,
+    def __init__(
+        self,
         vf_env: vf.Environment,
         prompt: vf.Messages,
         answer: str,
