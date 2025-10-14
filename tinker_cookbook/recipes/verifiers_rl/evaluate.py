@@ -56,6 +56,7 @@ def log_results(
             out = f"r{i + 1}: {trials}"
             print(out)
 
+
 def evaluate(
     vf_env_id: str,
     vf_env_args: dict,
@@ -86,7 +87,8 @@ def evaluate(
         },
     )
     end_time = time.time()
-    log_results(results,
+    log_results(
+        results,
         vf_env_id,
         model_name,
         num_examples,
@@ -123,4 +125,5 @@ async def cli_main(cfg: CLIConfig):
 
 if __name__ == "__main__":
     cfg = chz.entrypoint(CLIConfig)
+
     asyncio.run(cli_main(cfg))

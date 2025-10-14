@@ -26,9 +26,14 @@ from tinker_cookbook import renderers
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
-GenerationHook = Callable[[List[renderers.Message], tinker.ModelInput, List[int], List[float]], None]
+GenerationHook = Callable[
+    [List[renderers.Message], tinker.ModelInput, List[int], List[float]], None
+]
 
-def convert_oai_messages_to_renderer_messages(messages: List[Dict[str, Any]]) -> List[renderers.Message]:
+
+def convert_oai_messages_to_renderer_messages(
+    messages: List[Dict[str, Any]],
+) -> List[renderers.Message]:
     out: List[renderers.Message] = []
     for m in messages:
         role = str(m.get("role", "user"))
@@ -86,16 +91,17 @@ class TinkerChatCompletions(OpenAIAsyncChatCompletions):
         self._parent = parent
 
     @overload
-    async def create(self, *args: Any, stream: Literal[True], **kwargs: Any) -> AsyncStream[Any]:
-        ...
+    async def create(
+        self, *args: Any, stream: Literal[True], **kwargs: Any
+    ) -> AsyncStream[Any]: ...
 
     @overload
-    async def create(self, *args: Any, stream: Literal[False] = False, **kwargs: Any) -> ChatCompletion:
-        ...
+    async def create(
+        self, *args: Any, stream: Literal[False] = False, **kwargs: Any
+    ) -> ChatCompletion: ...
 
     @overload
-    async def create(self, *args: Any, stream: bool, **kwargs: Any) -> ChatCompletion:
-        ...
+    async def create(self, *args: Any, stream: bool, **kwargs: Any) -> ChatCompletion: ...
 
     async def create(self, *args: Any, **kwargs: Any) -> ChatCompletion | AsyncStream[Any]:
         model = kwargs.get("model", "tinker")
@@ -164,16 +170,19 @@ class TinkerCompletions(OpenAIAsyncCompletions):
         self._parent = parent
 
     @overload
-    async def create(self, *args: Any, stream: Literal[True], **kwargs: Any) -> AsyncStream[Completion]:
-        ...
+    async def create(
+        self, *args: Any, stream: Literal[True], **kwargs: Any
+    ) -> AsyncStream[Completion]: ...
 
     @overload
-    async def create(self, *args: Any, stream: Literal[False] = False, **kwargs: Any) -> Completion:
-        ...
+    async def create(
+        self, *args: Any, stream: Literal[False] = False, **kwargs: Any
+    ) -> Completion: ...
 
     @overload
-    async def create(self, *args: Any, stream: bool, **kwargs: Any) -> Completion | AsyncStream[Completion]:
-        ...
+    async def create(
+        self, *args: Any, stream: bool, **kwargs: Any
+    ) -> Completion | AsyncStream[Completion]: ...
 
     async def create(self, *args: Any, **kwargs: Any) -> Completion | AsyncStream[Completion]:
         stream = bool(kwargs.get("stream", False))
