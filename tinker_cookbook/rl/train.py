@@ -8,7 +8,7 @@ import io
 import logging
 import os
 import time
-from typing import Any, Callable, List, Sequence
+from typing import Any, Callable, List, Literal, Sequence
 
 import chz
 import numpy as np
@@ -128,10 +128,11 @@ def remove_mask(datum: tinker.Datum) -> tinker.Datum:
 async def forward_backward(
     training_client: tinker.TrainingClient,
     batch_d: List[tinker.Datum],
+    loss_fn: Literal["importance_sampling", "ppo"],
 ) -> List[torch.Tensor]:
     """Accumulate gradients on a minibatch of data"""
     fwd_bwd_future = await training_client.forward_backward_async(
-        list(map(remove_mask, batch_d)), loss_fn="importance_sampling"
+        list(map(remove_mask, batch_d)), loss_fn=loss_fn
     )
     fwd_bwd_result = await fwd_bwd_future.result_async()
 
@@ -151,12 +152,13 @@ async def train_step(
     training_client: tinker.TrainingClient,
     learning_rate: float,
     num_substeps: int,
+    loss_fn: Literal["importance_sampling", "ppo"],
 ) -> List[torch.Tensor]:
     """Train the model on collected trajectories."""
     batches_md = split_list(data_D, min(num_substeps, len(data_D)))
     training_logprobs_D: list[torch.Tensor] = []
     for batch_d in batches_md:
-        training_logprobs = await forward_backward(training_client, batch_d)
+        training_logprobs = await forward_backward(training_client, batch_d, loss_fn)
         training_logprobs_D.extend(training_logprobs)
         await optim_step(training_client, learning_rate)
     return training_logprobs_D
@@ -204,6 +206,9 @@ class Config:
 
     kl_penalty_coef: float = 0.0
     kl_discount_factor: float = 0.0
+
+    # Loss function to use for training: "importance_sampling" or "ppo"
+    loss_fn: Literal["importance_sampling", "ppo"] = "importance_sampling"
 
     # Number of optimizer steps per training iteration.
     # Useful for very large batch sizes.
@@ -738,6 +743,7 @@ async def do_train_step_streaming_and_get_sampling_client(
                 training_logprobs_D = await forward_backward(
                     training_client,
                     data_D,
+                    cfg.loss_fn,
                 )
             all_data_D.extend(data_D)
             all_training_logprobs_D.extend(training_logprobs_D)
@@ -801,6 +807,7 @@ async def do_train_step_and_get_sampling_client(
             training_client,
             cfg.learning_rate,
             cfg.num_substeps,
+            cfg.loss_fn,
         )
 
     sampling_client, full_batch_metrics = await compute_full_batch_metrics_and_get_sampling_client(
