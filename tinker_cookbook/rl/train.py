@@ -457,7 +457,7 @@ async def do_async_training(
                     logger.info(f"[training_loop] Step {i_batch}: Samples are too stale, skipping")
                     asyncio.create_task(
                         env_group_builders_queue.put(wrapped_trajectory_group.env_group_builder),
-                        name=f"requeue_stale_sample_task",
+                        name="requeue_stale_sample_task",
                     )
                     return False
                 return True
