@@ -1,6 +1,5 @@
 """
 Implements RL on general MDPs
-
 """
 
 import asyncio
@@ -55,6 +54,9 @@ def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]
 
 @scope
 def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
+    """
+    Print a subset of the trajectory group to the console.
+    """
     # Cut down the number of trajectories to print
     max_trajs_to_print = 4
     if len(traj_group.trajectories_G) > max_trajs_to_print:
@@ -252,7 +254,7 @@ async def do_sync_training_with_stream_minibatch(
 
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        cfg, training_client, start_batch
+        training_client, start_batch, cfg.log_path, cfg.save_every
     )
 
     for i_batch in range(start_batch, end_batch):
@@ -279,7 +281,10 @@ async def do_sync_training_with_stream_minibatch(
             metrics = {}
             t_start = time.time()
             trajectory_group = await do_group_rollout_and_filter_constant_reward(
-                cfg, sampling_client, builder
+                sampling_client,
+                builder,
+                max_tokens=cfg.max_tokens,
+                do_remove_constant_reward_groups=cfg.remove_constant_reward_groups,
             )
             metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
             if trajectory_group is not None:
@@ -407,9 +412,10 @@ async def do_async_training(
             # while we're running the rollout
             sampling_client_step_copy = sampling_client_step
             trajectory_group = await do_group_rollout_and_filter_constant_reward(
-                cfg,
                 sampling_client,
                 env_group_builder,
+                max_tokens=cfg.max_tokens,
+                do_remove_constant_reward_groups=cfg.remove_constant_reward_groups,
             )
             if trajectory_group is None:
                 trajectory_groups_queue.put_nowait(None)
@@ -564,16 +570,17 @@ async def do_async_training(
 
 @scope
 async def do_group_rollout_and_filter_constant_reward(
-    cfg: Config,
     sampling_client: tinker.SamplingClient,
     env_group_builder: EnvGroupBuilder,
+    max_tokens: int,
+    do_remove_constant_reward_groups: bool,
 ) -> TrajectoryGroup | None:
-    policy = TinkerTokenCompleter(sampling_client, max_tokens=cfg.max_tokens)
+    policy = TinkerTokenCompleter(sampling_client, max_tokens=max_tokens)
     trajectory_group = await do_group_rollout(env_group_builder, policy)
 
     # Remove if all trajectories have the same reward
     trajectory_groups = [trajectory_group]
-    if cfg.remove_constant_reward_groups:
+    if do_remove_constant_reward_groups:
         trajectory_groups = remove_constant_reward_groups(trajectory_groups)
     if len(trajectory_groups) == 0:
         return None
@@ -582,29 +589,32 @@ async def do_group_rollout_and_filter_constant_reward(
 
 @scope
 async def save_checkpoint_and_get_sampling_client(
-    cfg: Config,
     training_client: tinker.TrainingClient,
     i_batch: int,
+    log_path: str,
+    save_every: int,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     metrics = {}
     with timed("save_checkpoint", metrics):
         path_dict = await checkpoint_utils.save_checkpoint_async(
             training_client=training_client,
             name=f"{i_batch:06d}",
-            log_path=cfg.log_path,
+            log_path=log_path,
             loop_state={"batch": i_batch},
-            kind="both" if (i_batch > 0 and i_batch % cfg.save_every == 0) else "sampler",
+            kind="both" if (i_batch > 0 and i_batch % save_every == 0) else "sampler",
         )
         return training_client.create_sampling_client(path_dict["sampler_path"]), metrics
 
 
 @scope
 async def prepare_minibatch(
-    cfg: Config,
     env_group_builders_P: Sequence[EnvGroupBuilder],
     trajectory_groups_P: list[TrajectoryGroup],
     tokenizer: Tokenizer,
     service_client: tinker.ServiceClient,
+    model_name: str,
+    kl_penalty_coef: float,
+    kl_discount_factor: float,
 ) -> tuple[list[tinker.Datum], dict[str, Any]]:
     """Converts the trajectories into a minibatch, and provides metrics about the minibatch"""
 
@@ -623,14 +633,14 @@ async def prepare_minibatch(
         data_D, _metadata_D = assemble_training_data(trajectory_groups_P, advantages_P)
 
     # Incorporate KL penalty if configured
-    if cfg.kl_penalty_coef > 0:
+    if kl_penalty_coef > 0:
         with timed("kl_vs_base", metrics):
             kl_penalty_metrics = await incorporate_kl_penalty(
                 data_D,
-                service_client.create_sampling_client(base_model=cfg.model_name),
+                service_client.create_sampling_client(base_model=model_name),
                 # ^^^ TODO: replace with the model we load, if relevant
-                cfg.kl_penalty_coef,
-                cfg.kl_discount_factor,
+                kl_penalty_coef,
+                kl_discount_factor,
             )
         metrics.update(kl_penalty_metrics)
 
@@ -639,15 +649,20 @@ async def prepare_minibatch(
 
 @scope
 async def compute_full_batch_metrics_and_get_sampling_client(
-    cfg: Config,
     training_client: tinker.TrainingClient,
     i_batch: int,
     data_D: list[tinker.Datum],
     training_logprobs_D: list[torch.Tensor],
+    log_path: str,
+    save_every: int,
+    do_compute_post_kl: bool,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """
     At the end of the iteration, this will compute metrics for the full batch
     and return the latest sampling client.
+
+    The reason we return a sampling client is that if do_compute_post_kl is True,
+    we need to create a sampling client from the post-update policy.
     """
     metrics = {}
 
@@ -658,12 +673,12 @@ async def compute_full_batch_metrics_and_get_sampling_client(
 
     # Get a sampling client using the new weights
     sampling_client, checkpoint_metrics = await save_checkpoint_and_get_sampling_client(
-        cfg, training_client, i_batch
+        training_client, i_batch, log_path, save_every
     )
     metrics.update(checkpoint_metrics)
 
     # Compute post-KL metrics if configured
-    if cfg.compute_post_kl:
+    if do_compute_post_kl:
         with timed("compute_post_kl", metrics):
             post_kl_metrics = await compute_post_kl(data_D, sampling_client)
             metrics.update(post_kl_metrics)
@@ -728,11 +743,13 @@ async def do_train_step_streaming_and_get_sampling_client(
             # remove these and train on a smaller batch.
             wrapped_trajectory_groups = [g for g in wrapped_trajectory_groups if g is not None]
             data_D, prepare_minibatch_metrics = await prepare_minibatch(
-                cfg,
                 [g.env_group_builder for g in wrapped_trajectory_groups],
                 [g.trajectory_group for g in wrapped_trajectory_groups],
                 tokenizer,
                 service_client,
+                model_name=cfg.model_name,
+                kl_penalty_coef=cfg.kl_penalty_coef,
+                kl_discount_factor=cfg.kl_discount_factor,
             )
             metrics.update(prepare_minibatch_metrics)
 
@@ -767,12 +784,14 @@ async def do_train_step_streaming_and_get_sampling_client(
         sampling_client,
         full_batch_metrics,
     ) = await compute_full_batch_metrics_and_get_sampling_client(
-        cfg,
         training_client,
         # NOTE: saving the checkpoint as the i + 1 step
         i_batch + 1,
         all_data_D,
         all_training_logprobs_D,
+        cfg.log_path,
+        cfg.save_every,
+        cfg.compute_post_kl,
     )
     metrics.update(full_batch_metrics)
     return sampling_client, metrics
@@ -793,11 +812,13 @@ async def do_train_step_and_get_sampling_client(
 
     metrics = {}
     data_D, prepare_minibatch_metrics = await prepare_minibatch(
-        cfg,
         env_group_builders_P,
         trajectory_groups_P,
         tokenizer,
         service_client,
+        model_name=cfg.model_name,
+        kl_penalty_coef=cfg.kl_penalty_coef,
+        kl_discount_factor=cfg.kl_discount_factor,
     )
     metrics.update(prepare_minibatch_metrics)
 
@@ -811,12 +832,14 @@ async def do_train_step_and_get_sampling_client(
         )
 
     sampling_client, full_batch_metrics = await compute_full_batch_metrics_and_get_sampling_client(
-        cfg,
         training_client,
         # NOTE: saving the checkpoint as the i + 1 step
         i_batch + 1,
         data_D,
         training_logprobs_D,
+        cfg.log_path,
+        cfg.save_every,
+        cfg.compute_post_kl,
     )
     metrics.update(full_batch_metrics)
 
@@ -840,7 +863,7 @@ async def do_sync_training(
 
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        cfg, training_client, start_batch
+        training_client, start_batch, cfg.log_path, cfg.save_every
     )
 
     for i_batch in range(start_batch, end_batch):
@@ -864,7 +887,12 @@ async def do_sync_training(
             trajectory_groups_P = await asyncio.gather(
                 *[
                     asyncio.create_task(
-                        do_group_rollout_and_filter_constant_reward(cfg, sampling_client, builder),
+                        do_group_rollout_and_filter_constant_reward(
+                            sampling_client,
+                            builder,
+                            max_tokens=cfg.max_tokens,
+                            do_remove_constant_reward_groups=cfg.remove_constant_reward_groups,
+                        ),
                         name=f"sample_task_{i}",
                     )
                     for i, builder in enumerate(env_group_builders_P)
