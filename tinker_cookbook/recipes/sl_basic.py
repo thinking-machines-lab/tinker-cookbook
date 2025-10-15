@@ -1,3 +1,5 @@
+import chz
+import sys
 from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.recipes.chat_sl import chat_datasets
 from tinker_cookbook.renderers import TrainOnWhat
@@ -6,7 +8,7 @@ from tinker_cookbook.supervised.data import FromConversationFileBuilder
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 
 
-def build_config() -> train.Config:
+def build_config_blueprint() -> chz.Blueprint[train.Config]:
     model_name = "meta-llama/Llama-3.1-8B"
     renderer_name = model_info.get_recommended_renderer_name(model_name)
     common_config = ChatDatasetBuilderCommonConfig(
@@ -23,23 +25,26 @@ def build_config() -> train.Config:
         )
         # ^^^ Create a dataset from a JSONL file in the same format as
         # example-data/conversations.jsonl
-    return train.Config(
-        log_path="/tmp/tinker-examples/sl_basic",
-        model_name=model_name,
-        dataset_builder=dataset,
-        learning_rate=2e-4,
-        lr_schedule="linear",
-        num_epochs=1,
-        eval_every=8,
+    return chz.Blueprint(train.Config).apply(
+        {
+            "log_path": "/tmp/tinker-examples/sl_basic",
+            "model_name": model_name,
+            "dataset_builder": dataset,
+            "learning_rate": 2e-4,
+            "lr_schedule": "linear",
+            "num_epochs": 1,
+            "eval_every": 8,
+        }
     )
 
 
-def main():
-    config = build_config()
+def main(config: train.Config):
     # Avoid clobbering log dir from your previous run:
     cli_utils.check_log_dir(config.log_path, behavior_if_exists="ask")
     train.main(config)
 
 
 if __name__ == "__main__":
-    main()
+    blueprint = build_config_blueprint()
+    blueprint.make_from_argv(sys.argv[1:])
+    main(blueprint.make())

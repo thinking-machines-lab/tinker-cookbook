@@ -87,6 +87,10 @@ class Logger(ABC):
         """Force synchronization (optional to implement)."""
         pass
 
+    def get_logger_url(self) -> str | None:
+        """Get a permalink to view this logger's results."""
+        return None
+
 
 class _PermissiveJSONEncoder(json.JSONEncoder):
     """A JSON encoder that handles non-encodable objects by converting them to their type string."""
@@ -227,6 +231,12 @@ class WandbLogger(Logger):
         if self.run and wandb is not None:
             wandb.finish()
 
+    def get_logger_url(self) -> str | None:
+        """Get the URL of the wandb run."""
+        if self.run and wandb is not None:
+            return self.run.url
+        return None
+
 
 class NeptuneLogger(Logger):
     """Logger for Neptune."""
@@ -311,6 +321,13 @@ class MultiplexLogger(Logger):
         for logger in self.loggers:
             if hasattr(logger, "sync"):
                 logger.sync()
+
+    def get_logger_url(self) -> str | None:
+        """Get the first URL returned by the child loggers."""
+        for logger in self.loggers:
+            if url := logger.get_logger_url():
+                return url
+        return None
 
 
 def setup_logging(
