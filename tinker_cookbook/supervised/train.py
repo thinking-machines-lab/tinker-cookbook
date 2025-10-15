@@ -199,13 +199,14 @@ def main(config: Config):
         resume_info["state_path"] if resume_info else config.load_checkpoint_path
     )
 
-    user_metadata = {
-    }
+    user_metadata = {}
     if wandbd_link := ml_logger.get_logger_url():
         user_metadata["wandbd_link"] = wandbd_link
 
     if load_state_path:
-        training_client = service_client.create_training_client_from_state(load_state_path, user_metadata)
+        training_client = service_client.create_training_client_from_state(
+            load_state_path, user_metadata
+        )
         logger.info(f"Loaded weights from {load_state_path}")
     else:
         training_client = service_client.create_lora_training_client(

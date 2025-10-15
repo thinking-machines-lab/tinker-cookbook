@@ -17,14 +17,16 @@ def build_config_blueprint() -> chz.Blueprint[train.Config]:
         model_name_for_tokenizer=model_name,
     )
 
-    return chz.Blueprint(train.Config).apply({
-        "model_name": model_name,
-        "log_path": "/tmp/tinker-examples/rl_basic",
-        "dataset_builder": builder,
-        "learning_rate": 4e-5,
-        "max_tokens": 256,
-        "eval_every": 0,
-    })
+    return chz.Blueprint(train.Config).apply(
+        {
+            "model_name": model_name,
+            "log_path": "/tmp/tinker-examples/rl_basic",
+            "dataset_builder": builder,
+            "learning_rate": 4e-5,
+            "max_tokens": 256,
+            "eval_every": 0,
+        }
+    )
 
 
 def main(config: train.Config):

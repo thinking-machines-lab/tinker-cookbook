@@ -25,15 +25,17 @@ def build_config_blueprint() -> chz.Blueprint[train.Config]:
         )
         # ^^^ Create a dataset from a JSONL file in the same format as
         # example-data/conversations.jsonl
-    return chz.Blueprint(train.Config).apply({
-        "log_path": "/tmp/tinker-examples/sl_basic",
-        "model_name": model_name,
-        "dataset_builder": dataset,
-        "learning_rate": 2e-4,
-        "lr_schedule": "linear",
-        "num_epochs": 1,
-        "eval_every": 8,
-    })
+    return chz.Blueprint(train.Config).apply(
+        {
+            "log_path": "/tmp/tinker-examples/sl_basic",
+            "model_name": model_name,
+            "dataset_builder": dataset,
+            "learning_rate": 2e-4,
+            "lr_schedule": "linear",
+            "num_epochs": 1,
+            "eval_every": 8,
+        }
+    )
 
 
 def main(config: train.Config):

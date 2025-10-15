@@ -238,7 +238,6 @@ class WandbLogger(Logger):
         return None
 
 
-
 class NeptuneLogger(Logger):
     """Logger for Neptune."""
 
