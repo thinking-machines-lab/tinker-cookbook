@@ -6,6 +6,7 @@ Simple CLI chat interface using tinker sampling client.
 import asyncio
 import logging
 import sys
+import os
 
 import chz
 import tinker
@@ -97,6 +98,8 @@ async def main(config: Config):
 
     print(f"🚀 Initializing chat with model: {config.base_model}")
     print(f"📦 Using Path: {config.model_path}")
+
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     try:
         # Create service client
