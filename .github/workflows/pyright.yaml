@@ -2,7 +2,7 @@ name: pyright
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
 
 jobs:
@@ -19,7 +19,7 @@ jobs:
           enable-cache: true
 
       - name: venv
-        run: uv venv && uv sync --extra dev --extra vector-search --extra wandb --extra neptune-scale
+        run: uv venv && uv sync --extra dev --extra vector-search --extra wandb --extra neptune-scale --extra verifiers
 
       - name: pyright
         run: uv run pyright
