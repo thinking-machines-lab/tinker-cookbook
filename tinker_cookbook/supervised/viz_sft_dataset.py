@@ -30,7 +30,7 @@ def run(cfg: Config):
         batch_size=n_examples_total,
     )
     dataset_builder = lookup_func(
-        cfg.dataset_path, default_module="tinker_cookbook.supervised.chat_datasets"
+        cfg.dataset_path, default_module="tinker_cookbook.recipes.chat_sl.chat_datasets"
     )(common_config=common_config)
     assert isinstance(dataset_builder, SupervisedDatasetBuilder)
     tokenizer = get_tokenizer(cfg.model_name)
