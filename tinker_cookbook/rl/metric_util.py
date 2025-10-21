@@ -102,9 +102,10 @@ def dataset_to_env_group_builders(dataset: RLDataset) -> list[EnvGroupBuilder]:
 
 
 class RLTestSetEvaluator(SamplingClientEvaluator):
-    def __init__(self, dataset: RLDataset, max_tokens: int):
+    def __init__(self, dataset: RLDataset, max_tokens: int, name: str | None = None):
         self.env_group_builders_P = dataset_to_env_group_builders(dataset)
         self.max_tokens = max_tokens
+        self.name = name
 
     async def __call__(self, sampling_client: tinker.SamplingClient) -> dict[str, float]:
         policy = TinkerTokenCompleter(sampling_client, max_tokens=self.max_tokens)
@@ -113,4 +114,7 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         )
         taglist_P = [builder.logging_tags() for builder in self.env_group_builders_P]
         metrics = compute_trajectory_metrics(trajectory_groups_P, taglist_P)
+
+        if self.name is not None:
+            metrics = {f"{self.name}/{k}": v for k, v in metrics.items()}
         return metrics

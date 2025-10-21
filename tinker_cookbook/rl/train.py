@@ -1,6 +1,5 @@
 """
 Implements RL on general MDPs
-
 """
 
 import asyncio
@@ -8,7 +7,7 @@ import io
 import logging
 import os
 import time
-from typing import Any, Callable, List, Sequence
+from typing import Any, Callable, List, Literal, Sequence
 
 import chz
 import numpy as np
@@ -40,10 +39,12 @@ from tinker_cookbook.rl.types import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.misc_utils import safezip, split_list, timed
+from tinker_cookbook.utils.trace import scope, trace_init, get_scope_context
 
 logger = logging.getLogger(__name__)
 
 
+@scope
 def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]:
     assert num_inds <= len(scores)
     sorted_inds = np.argsort(scores)
@@ -51,7 +52,11 @@ def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]
     return [int(sorted_inds[i]) for i in uniform_inds]
 
 
+@scope
 def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
+    """
+    Print a subset of the trajectory group to the console.
+    """
     # Cut down the number of trajectories to print
     max_trajs_to_print = 4
     if len(traj_group.trajectories_G) > max_trajs_to_print:
@@ -68,6 +73,7 @@ def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
 
     buf = io.StringIO()
 
+    @scope
     def bprint(s: str):
         print(s, file=buf)
 
@@ -101,6 +107,7 @@ def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
     logger.info(buf.getvalue().rstrip())
 
 
+@scope
 async def optim_step(
     training_client: tinker.TrainingClient,
     learning_rate: float,
@@ -111,6 +118,7 @@ async def optim_step(
     await optim_step_future.result_async()
 
 
+@scope
 def remove_mask(datum: tinker.Datum) -> tinker.Datum:
     return tinker.Datum(
         model_input=datum.model_input,
@@ -118,13 +126,15 @@ def remove_mask(datum: tinker.Datum) -> tinker.Datum:
     )
 
 
+@scope
 async def forward_backward(
     training_client: tinker.TrainingClient,
     batch_d: List[tinker.Datum],
+    loss_fn: Literal["importance_sampling", "ppo"],
 ) -> List[torch.Tensor]:
     """Accumulate gradients on a minibatch of data"""
     fwd_bwd_future = await training_client.forward_backward_async(
-        list(map(remove_mask, batch_d)), loss_fn="importance_sampling"
+        list(map(remove_mask, batch_d)), loss_fn=loss_fn
     )
     fwd_bwd_result = await fwd_bwd_future.result_async()
 
@@ -138,17 +148,19 @@ async def forward_backward(
     return training_logprobs_D
 
 
+@scope
 async def train_step(
     data_D: List[tinker.Datum],
     training_client: tinker.TrainingClient,
     learning_rate: float,
     num_substeps: int,
+    loss_fn: Literal["importance_sampling", "ppo"],
 ) -> List[torch.Tensor]:
     """Train the model on collected trajectories."""
     batches_md = split_list(data_D, min(num_substeps, len(data_D)))
     training_logprobs_D: list[torch.Tensor] = []
     for batch_d in batches_md:
-        training_logprobs = await forward_backward(training_client, batch_d)
+        training_logprobs = await forward_backward(training_client, batch_d, loss_fn)
         training_logprobs_D.extend(training_logprobs)
         await optim_step(training_client, learning_rate)
     return training_logprobs_D
@@ -197,6 +209,9 @@ class Config:
     kl_penalty_coef: float = 0.0
     kl_discount_factor: float = 0.0
 
+    # Loss function to use for training: "importance_sampling" or "ppo"
+    loss_fn: Literal["importance_sampling", "ppo"] = "importance_sampling"
+
     # Number of optimizer steps per training iteration.
     # Useful for very large batch sizes.
     num_substeps: int = 1
@@ -206,6 +221,7 @@ class Config:
 
     log_path: str = chz.field(munger=lambda _, s: os.path.expanduser(s))
     base_url: str | None = None
+    enable_trace: bool = False
 
     remove_constant_reward_groups: bool = False
     eval_every: int = 20
@@ -216,6 +232,7 @@ class Config:
     stream_minibatch_config: StreamMinibatchConfig | None = None
 
 
+@scope
 async def do_sync_training_with_stream_minibatch(
     start_batch: int,
     end_batch: int,
@@ -237,7 +254,7 @@ async def do_sync_training_with_stream_minibatch(
 
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        cfg, training_client, start_batch
+        training_client, start_batch, cfg.log_path, cfg.save_every
     )
 
     for i_batch in range(start_batch, end_batch):
@@ -259,11 +276,15 @@ async def do_sync_training_with_stream_minibatch(
         # and the trainer will consume them as soon as they are ready
         trajectory_groups_queue = asyncio.Queue[WrappedTrajectoryGroup | None]()
 
+        @scope
         async def trajectory_group_worker_task(builder: EnvGroupBuilder) -> None:
             metrics = {}
             t_start = time.time()
             trajectory_group = await do_group_rollout_and_filter_constant_reward(
-                cfg, sampling_client, builder
+                sampling_client,
+                builder,
+                max_tokens=cfg.max_tokens,
+                do_remove_constant_reward_groups=cfg.remove_constant_reward_groups,
             )
             metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
             if trajectory_group is not None:
@@ -281,8 +302,10 @@ async def do_sync_training_with_stream_minibatch(
         # Sample all trajectories asynchronously. If we have multiple minibatches,
         # then sampling can overlap with training.
         env_group_builders_P = dataset.get_batch(i_batch)
-        for builder in env_group_builders_P:
-            asyncio.create_task(trajectory_group_worker_task(builder))
+        for i, builder in enumerate(env_group_builders_P):
+            asyncio.create_task(
+                trajectory_group_worker_task(builder), name=f"trajectory_group_worker_task_{i}"
+            )
 
         # Run multiple optimizer substeps per training iteration
         sampling_client, full_batch_metrics = await do_train_step_streaming_and_get_sampling_client(
@@ -317,6 +340,7 @@ class WrappedTrajectoryGroup:
     metrics: dict[str, Any] = chz.field(default_factory=dict)
 
 
+@scope
 async def do_async_training(
     start_batch: int,
     end_batch: int,
@@ -355,6 +379,7 @@ async def do_async_training(
     sampling_client_updated_event = asyncio.Event()
     sampling_client_updated_event.set()
 
+    @scope
     def shutdown_loops():
         """Trigger all loops to shutdown"""
         shutdown_event.set()
@@ -363,6 +388,7 @@ async def do_async_training(
             env_group_builders_queue.put_nowait(None)
         sampling_client_updated_event.set()
 
+    @scope
     async def dataloader_loop():
         """Gets the next set of env builders to run"""
         i_batch = start_batch
@@ -372,6 +398,7 @@ async def do_async_training(
                 await env_group_builders_queue.put(env_group_builder)
             i_batch += 1
 
+    @scope
     async def trajectory_group_worker_loop():
         """Generates trajectories for a single env builder"""
         while not shutdown_event.is_set():
@@ -385,9 +412,10 @@ async def do_async_training(
             # while we're running the rollout
             sampling_client_step_copy = sampling_client_step
             trajectory_group = await do_group_rollout_and_filter_constant_reward(
-                cfg,
                 sampling_client,
                 env_group_builder,
+                max_tokens=cfg.max_tokens,
+                do_remove_constant_reward_groups=cfg.remove_constant_reward_groups,
             )
             if trajectory_group is None:
                 trajectory_groups_queue.put_nowait(None)
@@ -402,6 +430,7 @@ async def do_async_training(
                     )
                 )
 
+    @scope
     async def training_loop():
         """
         Waits for a sufficient number of valid trajectories to be accumulated and trains on them.
@@ -416,6 +445,7 @@ async def do_async_training(
             if wrapped_trajectory_group is None:
                 continue
 
+            @scope
             def filter_stale_trajectory_group(
                 wrapped_trajectory_group: WrappedTrajectoryGroup | None,
             ) -> bool:
@@ -432,7 +462,8 @@ async def do_async_training(
                 ):
                     logger.info(f"[training_loop] Step {i_batch}: Samples are too stale, skipping")
                     asyncio.create_task(
-                        env_group_builders_queue.put(wrapped_trajectory_group.env_group_builder)
+                        env_group_builders_queue.put(wrapped_trajectory_group.env_group_builder),
+                        name="requeue_stale_sample_task",
                     )
                     return False
                 return True
@@ -500,6 +531,7 @@ async def do_async_training(
 
         shutdown_loops()
 
+    @scope
     async def evaluation_loop():
         """Runs evals periodically"""
         if len(evaluators) == 0 or cfg.eval_every == 0:
@@ -524,53 +556,65 @@ async def do_async_training(
                 ml_logger.log_metrics(metrics, step=sampling_client_eval_step)
 
     await asyncio.gather(
-        dataloader_loop(),
-        *[trajectory_group_worker_loop() for _ in range(cfg.async_config.groups_per_batch)],
-        training_loop(),
-        evaluation_loop(),
+        asyncio.create_task(dataloader_loop(), name="dataloader_loop"),
+        *[
+            asyncio.create_task(
+                trajectory_group_worker_loop(), name=f"trajectory_group_worker_loop_{i}"
+            )
+            for i in range(cfg.async_config.groups_per_batch)
+        ],
+        asyncio.create_task(training_loop(), name="training_loop"),
+        asyncio.create_task(evaluation_loop(), name="evaluation_loop"),
     )
 
 
+@scope
 async def do_group_rollout_and_filter_constant_reward(
-    cfg: Config,
     sampling_client: tinker.SamplingClient,
     env_group_builder: EnvGroupBuilder,
+    max_tokens: int,
+    do_remove_constant_reward_groups: bool,
 ) -> TrajectoryGroup | None:
-    policy = TinkerTokenCompleter(sampling_client, max_tokens=cfg.max_tokens)
+    policy = TinkerTokenCompleter(sampling_client, max_tokens=max_tokens)
     trajectory_group = await do_group_rollout(env_group_builder, policy)
 
     # Remove if all trajectories have the same reward
     trajectory_groups = [trajectory_group]
-    if cfg.remove_constant_reward_groups:
+    if do_remove_constant_reward_groups:
         trajectory_groups = remove_constant_reward_groups(trajectory_groups)
     if len(trajectory_groups) == 0:
         return None
     return trajectory_groups[0]
 
 
+@scope
 async def save_checkpoint_and_get_sampling_client(
-    cfg: Config,
     training_client: tinker.TrainingClient,
     i_batch: int,
+    log_path: str,
+    save_every: int,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     metrics = {}
     with timed("save_checkpoint", metrics):
         path_dict = await checkpoint_utils.save_checkpoint_async(
             training_client=training_client,
             name=f"{i_batch:06d}",
-            log_path=cfg.log_path,
+            log_path=log_path,
             loop_state={"batch": i_batch},
-            kind="both" if (i_batch > 0 and i_batch % cfg.save_every == 0) else "sampler",
+            kind="both" if (i_batch > 0 and i_batch % save_every == 0) else "sampler",
         )
         return training_client.create_sampling_client(path_dict["sampler_path"]), metrics
 
 
+@scope
 async def prepare_minibatch(
-    cfg: Config,
     env_group_builders_P: Sequence[EnvGroupBuilder],
     trajectory_groups_P: list[TrajectoryGroup],
     tokenizer: Tokenizer,
     service_client: tinker.ServiceClient,
+    model_name: str,
+    kl_penalty_coef: float,
+    kl_discount_factor: float,
 ) -> tuple[list[tinker.Datum], dict[str, Any]]:
     """Converts the trajectories into a minibatch, and provides metrics about the minibatch"""
 
@@ -589,30 +633,36 @@ async def prepare_minibatch(
         data_D, _metadata_D = assemble_training_data(trajectory_groups_P, advantages_P)
 
     # Incorporate KL penalty if configured
-    if cfg.kl_penalty_coef > 0:
+    if kl_penalty_coef > 0:
         with timed("kl_vs_base", metrics):
             kl_penalty_metrics = await incorporate_kl_penalty(
                 data_D,
-                service_client.create_sampling_client(base_model=cfg.model_name),
+                service_client.create_sampling_client(base_model=model_name),
                 # ^^^ TODO: replace with the model we load, if relevant
-                cfg.kl_penalty_coef,
-                cfg.kl_discount_factor,
+                kl_penalty_coef,
+                kl_discount_factor,
             )
         metrics.update(kl_penalty_metrics)
 
     return data_D, metrics
 
 
+@scope
 async def compute_full_batch_metrics_and_get_sampling_client(
-    cfg: Config,
     training_client: tinker.TrainingClient,
     i_batch: int,
     data_D: list[tinker.Datum],
     training_logprobs_D: list[torch.Tensor],
+    log_path: str,
+    save_every: int,
+    do_compute_post_kl: bool,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """
     At the end of the iteration, this will compute metrics for the full batch
     and return the latest sampling client.
+
+    The reason we return a sampling client is that if do_compute_post_kl is True,
+    we need to create a sampling client from the post-update policy.
     """
     metrics = {}
 
@@ -623,12 +673,12 @@ async def compute_full_batch_metrics_and_get_sampling_client(
 
     # Get a sampling client using the new weights
     sampling_client, checkpoint_metrics = await save_checkpoint_and_get_sampling_client(
-        cfg, training_client, i_batch
+        training_client, i_batch, log_path, save_every
     )
     metrics.update(checkpoint_metrics)
 
     # Compute post-KL metrics if configured
-    if cfg.compute_post_kl:
+    if do_compute_post_kl:
         with timed("compute_post_kl", metrics):
             post_kl_metrics = await compute_post_kl(data_D, sampling_client)
             metrics.update(post_kl_metrics)
@@ -636,6 +686,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     return sampling_client, metrics
 
 
+@scope
 async def do_train_step_streaming_and_get_sampling_client(
     cfg: Config,
     i_batch: int,
@@ -660,6 +711,9 @@ async def do_train_step_streaming_and_get_sampling_client(
     )
     # Number of groups per minibatch in each optimizer substep
     groups_per_minibatch = groups_per_substep // cfg.stream_minibatch_config.num_minibatches
+
+    context = get_scope_context()
+    context.attributes["step"] = i_batch
 
     metrics = {}
 
@@ -689,11 +743,13 @@ async def do_train_step_streaming_and_get_sampling_client(
             # remove these and train on a smaller batch.
             wrapped_trajectory_groups = [g for g in wrapped_trajectory_groups if g is not None]
             data_D, prepare_minibatch_metrics = await prepare_minibatch(
-                cfg,
                 [g.env_group_builder for g in wrapped_trajectory_groups],
                 [g.trajectory_group for g in wrapped_trajectory_groups],
                 tokenizer,
                 service_client,
+                model_name=cfg.model_name,
+                kl_penalty_coef=cfg.kl_penalty_coef,
+                kl_discount_factor=cfg.kl_discount_factor,
             )
             metrics.update(prepare_minibatch_metrics)
 
@@ -704,6 +760,7 @@ async def do_train_step_streaming_and_get_sampling_client(
                 training_logprobs_D = await forward_backward(
                     training_client,
                     data_D,
+                    cfg.loss_fn,
                 )
             all_data_D.extend(data_D)
             all_training_logprobs_D.extend(training_logprobs_D)
@@ -727,17 +784,20 @@ async def do_train_step_streaming_and_get_sampling_client(
         sampling_client,
         full_batch_metrics,
     ) = await compute_full_batch_metrics_and_get_sampling_client(
-        cfg,
         training_client,
         # NOTE: saving the checkpoint as the i + 1 step
         i_batch + 1,
         all_data_D,
         all_training_logprobs_D,
+        cfg.log_path,
+        cfg.save_every,
+        cfg.compute_post_kl,
     )
     metrics.update(full_batch_metrics)
     return sampling_client, metrics
 
 
+@scope
 async def do_train_step_and_get_sampling_client(
     cfg: Config,
     i_batch: int,
@@ -747,13 +807,18 @@ async def do_train_step_and_get_sampling_client(
     env_group_builders_P: Sequence[EnvGroupBuilder],
     trajectory_groups_P: list[TrajectoryGroup],
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
+    context = get_scope_context()
+    context.attributes["step"] = i_batch
+
     metrics = {}
     data_D, prepare_minibatch_metrics = await prepare_minibatch(
-        cfg,
         env_group_builders_P,
         trajectory_groups_P,
         tokenizer,
         service_client,
+        model_name=cfg.model_name,
+        kl_penalty_coef=cfg.kl_penalty_coef,
+        kl_discount_factor=cfg.kl_discount_factor,
     )
     metrics.update(prepare_minibatch_metrics)
 
@@ -763,21 +828,25 @@ async def do_train_step_and_get_sampling_client(
             training_client,
             cfg.learning_rate,
             cfg.num_substeps,
+            cfg.loss_fn,
         )
 
     sampling_client, full_batch_metrics = await compute_full_batch_metrics_and_get_sampling_client(
-        cfg,
         training_client,
         # NOTE: saving the checkpoint as the i + 1 step
         i_batch + 1,
         data_D,
         training_logprobs_D,
+        cfg.log_path,
+        cfg.save_every,
+        cfg.compute_post_kl,
     )
     metrics.update(full_batch_metrics)
 
     return sampling_client, metrics
 
 
+@scope
 async def do_sync_training(
     start_batch: int,
     end_batch: int,
@@ -794,7 +863,7 @@ async def do_sync_training(
 
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        cfg, training_client, start_batch
+        training_client, start_batch, cfg.log_path, cfg.save_every
     )
 
     for i_batch in range(start_batch, end_batch):
@@ -817,9 +886,17 @@ async def do_sync_training(
         with timed("sample", metrics):
             trajectory_groups_P = await asyncio.gather(
                 *[
-                    do_group_rollout_and_filter_constant_reward(cfg, sampling_client, builder)
-                    for builder in env_group_builders_P
-                ]
+                    asyncio.create_task(
+                        do_group_rollout_and_filter_constant_reward(
+                            sampling_client,
+                            builder,
+                            max_tokens=cfg.max_tokens,
+                            do_remove_constant_reward_groups=cfg.remove_constant_reward_groups,
+                        ),
+                        name=f"sample_task_{i}",
+                    )
+                    for i, builder in enumerate(env_group_builders_P)
+                ],
             )
         trajectory_groups_P = [
             trajectory_group
@@ -844,6 +921,7 @@ async def do_sync_training(
         ml_logger.log_metrics(metrics, step=i_batch)
 
 
+@scope
 async def main(
     cfg: Config,
 ):
@@ -854,6 +932,18 @@ async def main(
         config=cfg,
         wandb_name=cfg.wandb_name,
     )
+    if cfg.enable_trace:
+        # Get and rename the current (main) task
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            current_task.set_name("main")
+        trace_events_path = os.path.join(cfg.log_path, "trace_events.jsonl")
+        logger.info(f"Tracing is enabled. Trace events will be saved to {trace_events_path}")
+        logger.info(
+            f"Run `python tinker_cookbook/utils/trace.py {trace_events_path} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"
+        )
+        trace_init(output_file=trace_events_path)
+
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("pylatexenc").setLevel(logging.WARNING)
 
