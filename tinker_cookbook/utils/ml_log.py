@@ -315,7 +315,7 @@ class TrackioLogger(Logger):
 
         assert trackio is not None
         self.run = trackio.init(
-            project=project,
+            project=project or "default",
             name=trackio_name,
             config=dump_config(config) if config else None,
         )
