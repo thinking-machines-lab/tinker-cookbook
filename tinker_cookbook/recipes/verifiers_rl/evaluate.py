@@ -75,7 +75,7 @@ def evaluate(
     sampling = service.create_sampling_client(base_model=model_name)
     client = TinkerAsyncOpenAIClient(sampling, renderer, tokenizer)
     start_time = time.time()
-    results = env.evaluate(
+    results = env.evaluate_sync(
         client=client,
         model=model_name,
         num_examples=num_examples,
