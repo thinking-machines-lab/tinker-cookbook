@@ -51,6 +51,7 @@ neptune-scale = [
 ]
 trackio = [
     "trackio<1.0.0",
+]
 verifiers = [
     "verifiers",
     "openai",
