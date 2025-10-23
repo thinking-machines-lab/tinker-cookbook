@@ -450,8 +450,6 @@ async def main(config: Config):
             loss_fn=config.loss_fn,
         )
         optim_step_future = await training_client.optim_step_async(adam_params)
-        total_gradient_steps += 1
-        total_tokens_trained += sum([d.model_input.chunks[0].length for d in training_datums])
         fwd_bwd_result = await fwd_bwd_future.result_async()
         _ = await optim_step_future.result_async()
         metrics["time/train"] = time.time() - st
@@ -474,7 +472,6 @@ async def main(config: Config):
         metrics["sampler/token_entropy"] = -torch.tensor(act_token_logprobs).mean().item()
         metrics["train/kl_sample_train_v1"] = kl_sample_train_v1
         metrics["train/kl_sample_train_v2"] = kl_sample_train_v2
-        metrics["train/total_gradient_steps"] = total_gradient_steps
         metrics.update(**{f"train/{k}": v for k, v in fwd_bwd_result.metrics.items()})
 
         pprint.pprint(metrics)
