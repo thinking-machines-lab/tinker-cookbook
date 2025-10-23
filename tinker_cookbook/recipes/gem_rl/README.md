@@ -27,7 +27,7 @@ To train agents with the Tinker Cookbook, we implemented an adaption layer (`tin
 
 **Example 1: Training on Math Environments**
 
-```bash 
+```bash
 python -m examples.train_tinker.tinker_cookbook_train env_id=math:Math12K groups_per_batch=64 group_size=16 learning_rate=2e-5 max_tokens=2048 model_name=Qwen/Qwen3-8B-Base env_kwargs_json='{"use_mp": false}'
 ```
 
@@ -37,7 +37,7 @@ Note:
 
 **Example 2: Training on Reasoning Gym**
 
-```bash 
+```bash
 python -m examples.train_tinker.tinker_cookbook_train env_id=rg:simple_equations groups_per_batch=64 group_size=8 learning_rate=2e-5 max_tokens=2048 model_name=Qwen/Qwen3-8B-Base
 ```
 
@@ -48,7 +48,7 @@ We can also directly integrate GEM with Tinker, bypassing the abstraction layer 
 
 **Example 1: Training on Math Environments**
 
-```bash 
+```bash
 python -m examples.train_tinker.tinker_train model_name=Qwen/Qwen3-8B-Base env_id=math:DeepScaleR40K num_env=128 max_tokens=8192
 ```
 * In this example we observe the increasing response length phenomenon (as in DeepSeek-R1-Zero) with LoRA training with rank 32!
