@@ -37,7 +37,7 @@ from tinker_cookbook.rl.types import (
     TrajectoryGroup,
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
-from tinker_cookbook.utils import ml_log
+from tinker_cookbook.utils import logtree, ml_log
 from tinker_cookbook.utils.misc_utils import safezip, split_list, timed
 from tinker_cookbook.utils.trace import scope, trace_init, get_scope_context
 
@@ -254,8 +254,6 @@ async def do_sync_training_with_stream_minibatch(
     immediately train on them, instead of waiting for the full batch of
     trajectories to be ready. This allows us to overlap sampling and training.
     """
-    from tinker_cookbook.utils import logtree
-
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
         training_client, start_batch, cfg.log_path, cfg.save_every
@@ -867,8 +865,6 @@ async def do_sync_training(
     tokenizer: Tokenizer,
 ):
     """Implements fully synchronous on-policy training"""
-    from tinker_cookbook.utils import logtree
-
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
         training_client, start_batch, cfg.log_path, cfg.save_every
