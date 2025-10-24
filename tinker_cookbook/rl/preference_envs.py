@@ -195,16 +195,6 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
             matchup_count[i] += 1
         format_coef = 1.0
 
-        # Log final rewards
-        with logtree.scope_header("Final Rewards"):
-            for idx, (win_minus_loss, is_valid, count) in enumerate(
-                zip(win_minus_loss_list, is_valid_list, matchup_count, strict=True)
-            ):
-                final_reward = win_minus_loss / count + format_coef * (float(is_valid) - 1.0)
-                logtree.log_text(
-                    f"Trajectory {idx}: {final_reward:.3f} (win-loss: {win_minus_loss / count:.3f}, format_valid: {is_valid})"
-                )
-
         return [
             (
                 win_minus_loss / matchup_count + format_coef * (float(is_valid) - 1.0),
