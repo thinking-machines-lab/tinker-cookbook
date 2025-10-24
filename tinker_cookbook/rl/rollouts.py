@@ -9,6 +9,7 @@ from tinker_cookbook.rl.types import (
     TrajectoryGroup,
     Transition,
 )
+from tinker_cookbook.utils import logtree
 
 
 async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
@@ -33,10 +34,12 @@ async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
 
 
 async def do_group_rollout(
-    env_group_builder: EnvGroupBuilder, policy: TokenCompleter
+    env_group_builder: EnvGroupBuilder, policy: TokenCompleter, log_label: str | None = None
 ) -> TrajectoryGroup:
-    envs_G: Sequence[Env] = await env_group_builder.make_envs()
-    trajectories_G = await asyncio.gather(*[do_single_rollout(policy, env) for env in envs_G])
-    rewards_and_metrics_G = await env_group_builder.compute_group_rewards(trajectories_G)
-    rewards_G, metrics_G = zip(*rewards_and_metrics_G, strict=True)
+    with logtree.scope_header(f"Group {log_label}") if log_label else logtree.scope_disable():
+        envs_G: Sequence[Env] = await env_group_builder.make_envs()
+        trajectories_G = await asyncio.gather(*[do_single_rollout(policy, env) for env in envs_G])
+        rewards_and_metrics_G = await env_group_builder.compute_group_rewards(trajectories_G)
+        rewards_G, metrics_G = zip(*rewards_and_metrics_G, strict=True)
+        logtree.log_text(f"Rewards: {rewards_G}")
     return TrajectoryGroup(trajectories_G, list(rewards_G), list(metrics_G))
