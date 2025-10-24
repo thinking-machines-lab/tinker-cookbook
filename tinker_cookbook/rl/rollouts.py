@@ -12,6 +12,7 @@ from tinker_cookbook.rl.types import (
 from tinker_cookbook.utils import logtree
 
 
+@logtree.scope_header_decorator
 async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
     transitions = []
     ob, stop_condition = await env.initial_observation()

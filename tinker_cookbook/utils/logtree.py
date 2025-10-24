@@ -528,16 +528,12 @@ def scope_header_decorator(
             return w  # type: ignore
 
     # Check if this is a bare decorator (no arguments)
-    # Bare decorator: @scope_header_decorator (title will be the function)
-    # We detect this by checking if title is a function with a real name (not "<lambda>")
-    if (
-        callable(title)
-        and hasattr(title, "__name__")
-        and title.__name__ != "<lambda>"
-        and not isinstance(title, type)
-        and not attrs
-    ):
-        # This is bare decoration: @scope_header_decorator
+    # When used as @scope_header_decorator, title will be the decorated function.
+    # When used as @scope_header_decorator("string") or @scope_header_decorator(lambda ...),
+    # title will be a string or lambda, and this returns a decorator function.
+    # We distinguish by checking if it's a function but NOT a lambda.
+    if inspect.isfunction(title) and title.__name__ != "<lambda>" and not attrs:
+        # Bare decoration: @scope_header_decorator
         fn = title
         return _wrap(fn, lambda *_args, **_kwargs: fn.__name__)  # type: ignore[arg-type]
 

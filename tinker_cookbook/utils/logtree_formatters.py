@@ -27,7 +27,7 @@ class ConversationFormatter:
         parts = ['<div class="lt-conversation">']
         for msg in self.messages:
             role = html.escape(msg["role"])
-            content = html.escape(msg["content"])
+            content = msg["content"]
             parts.append(f'  <div class="lt-message lt-message-{role}">')
             parts.append(f'    <span class="lt-message-role">{role}:</span>')
             parts.append(f'    <span class="lt-message-content">{content}</span>')

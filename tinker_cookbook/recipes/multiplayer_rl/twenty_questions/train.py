@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime
 
 import chz
-from tinker_cookbook import cli_utils
+from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.recipes.multiplayer_rl.twenty_questions.env import (
     TwentyQuestionsDatasetBuilder,
 )
@@ -11,23 +11,25 @@ from tinker_cookbook.rl import train
 
 @chz.chz
 class CLIConfig:
-    model_name: str = "Qwen/Qwen3-8B"
-    renderer_name: str = "qwen3_disable_thinking"
-    group_size: int = 8
+    model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
+    renderer_name: str|None  = None
+    group_size: int = 4
     num_epochs: int = 100
-    batch_size: int = 64
+    batch_size: int = 200
     learning_rate: float = 3e-5
     max_tokens: int = 20
     eval_every: int = 5
     save_every: int = 20
-    wandb_project: str | None = None
+    wandb_project: str | None = "twenty-questions-rl"
     wandb_name: str | None = None
     log_path: str | None = None
 
 
 def build_config(cli_config: CLIConfig) -> train.Config:
     model_name = cli_config.model_name
-    renderer_name = cli_config.renderer_name
+    renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(
+        cli_config.model_name
+    )
 
     date_and_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
     run_name = f"{model_name}-{cli_config.group_size}group-{cli_config.batch_size}batch-{cli_config.learning_rate}lr-{date_and_time}"
