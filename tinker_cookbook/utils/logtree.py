@@ -29,7 +29,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Iterator, Mapping, Protocol, Sequence, TypeVar
+from typing import Any, Callable, Iterator, Mapping, Protocol, Sequence, TypeVar, overload
 
 # Context variables for task-local state
 _current_trace: ContextVar["Trace | None"] = ContextVar("lt_current_trace", default=None)
@@ -479,9 +479,29 @@ def scope_header(title: str, **attrs: Any) -> Iterator[None]:
 F = TypeVar("F", bound=Callable[..., Any])
 
 
+# Overloads to support both bare decorator and parameterized usage
+# More specific overloads must come first
+@overload
+def scope_header_decorator(title: str, **attrs: Any) -> Callable[[F], F]: ...  # String title
+
+
+@overload
 def scope_header_decorator(
-    title: str | Callable[..., str] | None = None, **attrs: Any
-) -> Callable[[F], F]:
+    title: Callable[..., str], **attrs: Any
+) -> Callable[[F], F]: ...  # Lambda title
+
+
+@overload
+def scope_header_decorator(title: None = None, **attrs: Any) -> Callable[[F], F]: ...  # No args
+
+
+@overload
+def scope_header_decorator(title: F) -> F: ...  # Bare: @scope_header_decorator
+
+
+def scope_header_decorator(
+    title: str | Callable[..., str] | F | None = None, **attrs: Any
+) -> F | Callable[[F], F]:
     """
     Decorator to wrap function in a scope_header.
 
@@ -541,13 +561,18 @@ def scope_header_decorator(
 
     # Parameterized decorator
     def deco(fn: F) -> F:
-        title_fn: Callable[..., str]
         if title is None:
-            title_fn = lambda *_args, **_kwargs: fn.__name__
+
+            def title_fn(*_args: Any, **_kwargs: Any) -> str:
+                return fn.__name__
+
         elif callable(title):
             title_fn = title
         else:
-            title_fn = lambda *_args, **_kwargs: str(title)
+
+            def title_fn(*_args: Any, **_kwargs: Any) -> str:
+                return str(title)
+
         return _wrap(fn, title_fn)
 
     return deco
