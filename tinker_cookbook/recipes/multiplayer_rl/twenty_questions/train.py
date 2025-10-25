@@ -12,15 +12,15 @@ from tinker_cookbook.rl import train
 @chz.chz
 class CLIConfig:
     model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
-    renderer_name: str|None  = None
-    group_size: int = 4
+    renderer_name: str | None = None
+    group_size: int = 8
     num_epochs: int = 100
-    batch_size: int = 200
+    batch_size: int = 64
     learning_rate: float = 3e-5
     max_tokens: int = 20
     eval_every: int = 5
     save_every: int = 20
-    wandb_project: str | None = "twenty-questions-rl"
+    wandb_project: str | None = None
     wandb_name: str | None = None
     log_path: str | None = None
 
