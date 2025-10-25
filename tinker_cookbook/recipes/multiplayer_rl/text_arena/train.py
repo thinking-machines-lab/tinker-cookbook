@@ -2,15 +2,15 @@ import asyncio
 from datetime import datetime
 
 import chz
-from tinker_cookbook import cli_utils
+from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.recipes.multiplayer_rl.text_arena.env import TwoPlayerTextArenaDatasetBuilder
 from tinker_cookbook.rl import train
 
 
 @chz.chz
 class CLIConfig:
-    model_name: str = "Qwen/Qwen3-8B"
-    renderer_name: str = "qwen3_disable_thinking"
+    model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
+    renderer_name: str | None = None
     game_name: str = "TicTacToe-v0"
     batch_size: int = 512
     num_train_datapoints: int = 131072
@@ -26,7 +26,9 @@ class CLIConfig:
 
 def build_config(cli_config: CLIConfig) -> train.Config:
     model_name = cli_config.model_name
-    renderer_name = cli_config.renderer_name
+    renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(
+        cli_config.model_name
+    )
 
     date_and_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
     run_name = f"{model_name}-{cli_config.game_name.lower().replace('-v0', '')}-{cli_config.batch_size}batch-{cli_config.learning_rate}lr-{date_and_time}"

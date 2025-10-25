@@ -150,6 +150,10 @@ class SearchEnv(ProblemEnv):
     def check_format(self, sample_str: str) -> bool:
         return self._extract_answer(sample_str) is not None
 
+    def get_reference_answer(self) -> str:
+        """Return the reference answer for logging purposes."""
+        return " OR ".join(self.answer) if self.answer else "N/A"
+
     async def call_search_tool(self, tool_call: renderers.ToolCall) -> list[renderers.Message]:
         async with _CONNECTION_SEMAPHORE:
             return await self.chroma_tool_client.invoke(tool_call)

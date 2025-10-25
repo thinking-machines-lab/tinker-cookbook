@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from dataclasses import dataclass
 from enum import StrEnum
@@ -28,6 +27,8 @@ from tinker_cookbook.rl.types import (
     Trajectory,
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.utils import logtree
+from tinker_cookbook.utils.logtree_formatters import ConversationFormatter
 from tinker_cookbook.utils.misc_utils import safezip
 
 logger = logging.getLogger(__name__)
@@ -134,6 +135,7 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
         )
         return comparison
 
+    @logtree.scope_header_decorator
     async def compute_group_rewards(
         self, trajectory_group: list[Trajectory]
     ) -> list[tuple[float, Metrics]]:
@@ -141,6 +143,18 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
         # Get response from each trajectory
         response_tuples = [self.get_response_message(trajectory) for trajectory in trajectory_group]
         response_messages, is_valid_list = safezip(*response_tuples)
+
+        # Log prompt
+        with logtree.scope_header("Prompt"):
+            logtree.log_formatter(ConversationFormatter(messages=self.convo_prefix))
+
+        # Log trajectories
+        for idx, (messages, is_valid) in enumerate(
+            zip(response_messages, is_valid_list, strict=True)
+        ):
+            with logtree.scope_header(f"Completion {idx}"):
+                logtree.log_formatter(ConversationFormatter(messages=messages))
+                logtree.log_text(f"Valid format: {is_valid}")
 
         # if the matching group size is 3 and len(response_messages) is 6
         # then it will return something like
@@ -150,15 +164,32 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
             len(response_messages), self.tournament_pattern, self.matchup_group_size
         )
 
+        logtree.log_text(
+            f"Got {len(trajectory_group)} trajectories, doing {len(comparison_indices_pairs)} pairwise matchups."
+        )
+
         j_comparisons = [
             self.comparison_reward_for_second_messages(
                 message_i=response_messages[i], message_j=response_messages[j]
             )
             for i, j in comparison_indices_pairs
         ]
-        j_rewards = await asyncio.gather(
-            *[self.preference_model(comparison) for comparison in j_comparisons]
-        )
+
+        # Log each pairwise comparison with its reward
+        with logtree.scope_header("Pairwise Comparisons"):
+            j_rewards = []
+
+            # Compute all rewards first
+            for comparison in j_comparisons:
+                reward = await self.preference_model(comparison)
+                j_rewards.append(reward)
+
+            # Log summary of all matchups
+            for idx, ((i, j), reward) in enumerate(
+                zip(comparison_indices_pairs, j_rewards, strict=True)
+            ):
+                logtree.log_text(f"Matchup {idx}: ({i} vs {j}) — Reward: {reward:.2f}")
+
         win_minus_loss_list = [0.0 for _ in range(len(response_messages))]
         matchup_count = [0 for _ in range(len(response_messages))]
         for (i, j), j_reward in safezip(comparison_indices_pairs, j_rewards):
@@ -167,6 +198,7 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
             matchup_count[j] += 1
             matchup_count[i] += 1
         format_coef = 1.0
+
         return [
             (
                 win_minus_loss / matchup_count + format_coef * (float(is_valid) - 1.0),
