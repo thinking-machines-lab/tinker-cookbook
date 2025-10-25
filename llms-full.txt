@@ -1755,7 +1755,7 @@ The player model (which we fine-tune) is also based on that same model.
 You can run the training script as follows:
 
 ```bash
-uv run python -m tinker_cookbook.recipes.twenty_questions.train
+uv run python -m tinker_cookbook.recipes.multiplayer_rl.twenty_questions.train
 ```
 
 
