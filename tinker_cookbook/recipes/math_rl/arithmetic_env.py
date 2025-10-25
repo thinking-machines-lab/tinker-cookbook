@@ -39,6 +39,9 @@ class ArithmeticEnv(ProblemEnv):
     def check_format(self, sample_str: str) -> bool:
         return True
 
+    def get_reference_answer(self) -> str:
+        return str(self.x + self.y)
+
     @staticmethod
     def standard_fewshot_prefix() -> list[renderers.Message]:
         return [

@@ -1,7 +1,7 @@
 import asyncio
 from time import time
 
-from tinker_cookbook import cli_utils
+from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.recipes.preference.shorter.env import (
     ShorterComparisonBuilder,
     ShorterPreferenceModelBuilder,
@@ -11,8 +11,8 @@ from tinker_cookbook.rl.preference_envs import PairwisePreferenceRLDatasetBuilde
 
 
 def build_config() -> train.Config:
-    model_name = "Qwen/Qwen3-8B"
-    renderer_name = "qwen3_disable_thinking"
+    model_name = "Qwen/Qwen3-4B-Instruct-2507"
+    renderer_name = model_info.get_recommended_renderer_name(model_name)
 
     comparison_builder = ShorterComparisonBuilder()
     dataset_builder = PairwisePreferenceRLDatasetBuilder(

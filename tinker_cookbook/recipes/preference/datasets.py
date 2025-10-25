@@ -139,6 +139,7 @@ class HHHComparisonBuilder(ComparisonDatasetBuilder):
         dataset = datasets.load_dataset("Anthropic/hh-rlhf")
         dataset = cast(datasets.DatasetDict, dataset)
         train_dataset = dataset["train"].shuffle(seed=0)
+        train_dataset = train_dataset.take(10_000) # XXX
         test_dataset = dataset["test"].shuffle(seed=0).take(self.test_size)
         return train_dataset, test_dataset
 
