@@ -149,7 +149,9 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
             logtree.log_formatter(ConversationFormatter(messages=self.convo_prefix))
 
         # Log trajectories
-        for idx, (messages, is_valid) in enumerate(zip(response_messages, is_valid_list, strict=True)):
+        for idx, (messages, is_valid) in enumerate(
+            zip(response_messages, is_valid_list, strict=True)
+        ):
             with logtree.scope_header(f"Completion {idx}"):
                 logtree.log_formatter(ConversationFormatter(messages=messages))
                 logtree.log_text(f"Valid format: {is_valid}")
@@ -183,7 +185,9 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
                 j_rewards.append(reward)
 
             # Log summary of all matchups
-            for idx, ((i, j), reward) in enumerate(zip(comparison_indices_pairs, j_rewards, strict=True)):
+            for idx, ((i, j), reward) in enumerate(
+                zip(comparison_indices_pairs, j_rewards, strict=True)
+            ):
                 logtree.log_text(f"Matchup {idx}: ({i} vs {j}) — Reward: {reward:.2f}")
 
         win_minus_loss_list = [0.0 for _ in range(len(response_messages))]

@@ -275,8 +275,16 @@ async def do_sync_training_with_stream_minibatch(
                     metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
 
         # Initialize logtree trace for this iteration if logging is enabled
-        logtree_path = os.path.join(cfg.log_path, f"iteration_{i_batch:06d}.html") if cfg.num_groups_to_log > 0 else None
-        with logtree.init_trace(f"RL Iteration {i_batch}", path=logtree_path) if logtree_path else logtree.scope_disable():
+        logtree_path = (
+            os.path.join(cfg.log_path, f"iteration_{i_batch:06d}.html")
+            if cfg.num_groups_to_log > 0
+            else None
+        )
+        with (
+            logtree.init_trace(f"RL Iteration {i_batch}", path=logtree_path)
+            if logtree_path
+            else logtree.scope_disable()
+        ):
             # Samplers will produce trajectory groups asynchronously,
             # and the trainer will consume them as soon as they are ready
             trajectory_groups_queue = asyncio.Queue[WrappedTrajectoryGroup | None]()
@@ -313,7 +321,10 @@ async def do_sync_training_with_stream_minibatch(
                 )
 
             # Run multiple optimizer substeps per training iteration
-            sampling_client, full_batch_metrics = await do_train_step_streaming_and_get_sampling_client(
+            (
+                sampling_client,
+                full_batch_metrics,
+            ) = await do_train_step_streaming_and_get_sampling_client(
                 cfg,
                 i_batch,
                 trajectory_groups_queue,
@@ -889,8 +900,17 @@ async def do_sync_training(
         env_group_builders_P = dataset.get_batch(i_batch)
 
         # Initialize logtree trace for this iteration if logging is enabled
-        logtree_path = os.path.join(cfg.log_path, f"iteration_{i_batch:06d}.html") if cfg.num_groups_to_log > 0 else None
-        with logtree.init_trace(f"RL Iteration {i_batch}", path=logtree_path) if logtree_path else logtree.scope_disable(), timed("sample", metrics):
+        logtree_path = (
+            os.path.join(cfg.log_path, f"iteration_{i_batch:06d}.html")
+            if cfg.num_groups_to_log > 0
+            else None
+        )
+        with (
+            logtree.init_trace(f"RL Iteration {i_batch}", path=logtree_path)
+            if logtree_path
+            else logtree.scope_disable(),
+            timed("sample", metrics),
+        ):
             trajectory_groups_P = await asyncio.gather(
                 *[
                     asyncio.create_task(

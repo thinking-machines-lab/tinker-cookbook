@@ -120,7 +120,9 @@ class TwentyQuestionsEnv(Env):
         logtree.log_text(f"Turn {turn_num} - Player: {action_message['content']}")
         logtree.log_text(f"Turn {turn_num} - Answerer: {answer_message['content']}")
         if episode_done:
-            logtree.log_text(f"Game Over - Secret: {self.answer}, Won: {'✓' if reward == 1 else '✗'}, Turns: {turn_num}")
+            logtree.log_text(
+                f"Game Over - Secret: {self.answer}, Won: {'✓' if reward == 1 else '✗'}, Turns: {turn_num}"
+            )
 
         # step 4: we return the next observation, reward, and whether the episode is done
         step_result = StepResult(

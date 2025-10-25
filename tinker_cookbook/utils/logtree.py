@@ -61,7 +61,9 @@ class Node:
     def to_html(self, indent: int = 0) -> str:
         """Convert node to HTML string."""
         ind = "  " * indent
-        attrs_str = "".join(f' {k}="{html_module.escape(v, quote=True)}"' for k, v in self.attrs.items())
+        attrs_str = "".join(
+            f' {k}="{html_module.escape(v, quote=True)}"' for k, v in self.attrs.items()
+        )
 
         if not self.children:
             return f"{ind}<{self.tag}{attrs_str}></{self.tag}>\n"

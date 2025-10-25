@@ -68,7 +68,9 @@ class ProblemEnv(Env):
         logtree.log_text(f"Problem: {self.get_question()}")
         logtree.log_text(f"Response: {message['content']}")
         logtree.log_text(f"Reference Answer: {self.get_reference_answer()}")
-        logtree.log_text(f"Format Valid: {'✓' if correct_format else '✗'}, Correct: {'✓' if correct_answer else '✗'}, Reward: {total_reward:.2f}")
+        logtree.log_text(
+            f"Format Valid: {'✓' if correct_format else '✗'}, Correct: {'✓' if correct_answer else '✗'}, Reward: {total_reward:.2f}"
+        )
 
         return StepResult(
             reward=total_reward,
