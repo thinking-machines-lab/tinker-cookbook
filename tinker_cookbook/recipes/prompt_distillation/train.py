@@ -2,6 +2,7 @@
 CLI for prompt distillation training.
 """
 
+import asyncio
 import os
 from datetime import datetime
 
@@ -103,7 +104,7 @@ def cli_main(cli_config: CLIConfig):
         save_every=cli_config.save_every,
         eval_every=cli_config.eval_every,
     )
-    train.main(config)
+    asyncio.run(train.main(config))
 
 
 if __name__ == "__main__":
