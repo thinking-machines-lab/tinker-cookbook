@@ -1,5 +1,10 @@
 """
 Supervised fine-tuning (SFT)
+
+This module implements a pipelined supervised learning training loop. For background on
+why we pipeline requests, see https://tinker-docs.thinkingmachines.ai/under-the-hood.
+For a minimal, pedagogical example of SL training without these optimizations,
+refer to `tinker_cookbook/recipes/sl_loop.py`.
 """
 
 import asyncio
@@ -186,9 +191,7 @@ async def main(config: Config):
         if data:
             logger.info(colorize_example(data[0], tokenizer))
 
-        fwd_bwd_future = await training_client.forward_backward_async(
-            data, loss_fn="cross_entropy"
-        )
+        fwd_bwd_future = await training_client.forward_backward_async(data, loss_fn="cross_entropy")
         optim_step_future = await training_client.optim_step_async(adam_params)
 
         return SubmittedBatch(
