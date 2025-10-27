@@ -3,6 +3,7 @@ Basic CLI for training with supervised learning. Currently only used for integra
 
 """
 
+import asyncio
 from datetime import datetime
 
 import chz
@@ -156,7 +157,7 @@ def cli_main(cli_config: CLIConfig):
         eval_every=cli_config.eval_every,
         infrequent_eval_every=cli_config.infrequent_eval_every,
     )
-    train.main(config)
+    asyncio.run(train.main(config))
 
 
 if __name__ == "__main__":

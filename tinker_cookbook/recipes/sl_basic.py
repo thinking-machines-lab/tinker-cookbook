@@ -6,6 +6,7 @@ from tinker_cookbook.renderers import TrainOnWhat
 from tinker_cookbook.supervised import train
 from tinker_cookbook.supervised.data import FromConversationFileBuilder
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
+import asyncio
 
 
 def build_config_blueprint() -> chz.Blueprint[train.Config]:
@@ -41,7 +42,7 @@ def build_config_blueprint() -> chz.Blueprint[train.Config]:
 def main(config: train.Config):
     # Avoid clobbering log dir from your previous run:
     cli_utils.check_log_dir(config.log_path, behavior_if_exists="ask")
-    train.main(config)
+    asyncio.run(train.main(config))
 
 
 if __name__ == "__main__":
