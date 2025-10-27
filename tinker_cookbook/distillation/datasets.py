@@ -15,13 +15,20 @@ import tinker
 from datasets import load_dataset
 from tinker_cookbook import renderers
 from tinker_cookbook.rl.problem_env import ProblemEnv, ProblemGroupBuilder, logger
-from tinker_cookbook.rl.types import Action, EnvGroupBuilder, RLDataset, RLDatasetBuilder, StepResult
+from tinker_cookbook.rl.types import (
+    Action,
+    EnvGroupBuilder,
+    RLDataset,
+    RLDatasetBuilder,
+    StepResult,
+)
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 
 @chz.chz
 class TeacherConfig:
     """Configuration for a teacher model."""
+
     base_model: str
     load_checkpoint_path: str | None = None
 
@@ -29,6 +36,7 @@ class TeacherConfig:
 @chz.chz
 class DistillationDatasetConfig:
     """Configuration for a dataset used in distillation."""
+
     dataset_builder: RLDatasetBuilder
     teacher_config: TeacherConfig
     groups_per_batch: int
@@ -141,7 +149,7 @@ class PromptOnlyDataset(RLDataset):
 
         tokens = self.tokenizer.encode(prompt)
         if len(tokens) > self.max_prompt_tokens:
-            tokens = tokens[:self.max_prompt_tokens]
+            tokens = tokens[: self.max_prompt_tokens]
             return self.tokenizer.decode(tokens)
         return prompt
 
@@ -191,12 +199,12 @@ def load_tulu3_prompts() -> list[str] | None:
         prompts = []
 
         for row in ds:  # type: ignore
-            messages = row["messages"]
+            messages = row["messages"]  # type: ignore
             # Extract first user message
             first_user_msg = None
             for msg in messages:
-                if msg["role"] == "user":
-                    first_user_msg = msg["content"]
+                if msg["role"] == "user":  # type: ignore
+                    first_user_msg = msg["content"]  # type: ignore
                     break
 
             if first_user_msg:
@@ -248,15 +256,19 @@ class PromptOnlyDatasetBuilder(RLDatasetBuilder):
             dataset_name=self.dataset_name,
         )
 
-        test_dataset = PromptOnlyDataset(
-            prompts=test_prompts,
-            batch_size=self.groups_per_batch,
-            group_size=1,  # Use group_size=1 for test
-            renderer=renderer,
-            tokenizer=tokenizer,
-            max_prompt_tokens=self.max_prompt_tokens,
-            convo_prefix=self.convo_prefix,
-            dataset_name=f"{self.dataset_name}_test",
-        ) if test_prompts is not None else None
+        test_dataset = (
+            PromptOnlyDataset(
+                prompts=test_prompts,
+                batch_size=self.groups_per_batch,
+                group_size=1,  # Use group_size=1 for test
+                renderer=renderer,
+                tokenizer=tokenizer,
+                max_prompt_tokens=self.max_prompt_tokens,
+                convo_prefix=self.convo_prefix,
+                dataset_name=f"{self.dataset_name}_test",
+            )
+            if test_prompts is not None
+            else None
+        )
 
         return train_dataset, test_dataset
