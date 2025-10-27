@@ -320,7 +320,7 @@ class Qwen3Renderer(Renderer):
         What can you help me with?<|im_end|>
         <|im_start|>assistant
         <think>
-        
+
         </think>
         I can help you with...<|im_end|>
 
@@ -464,19 +464,19 @@ class DeepSeekV3Renderer(Renderer):
     """
 
     def _render_message(self, message: Message) -> tuple[list[int], list[int], list[int]]:
-        if message['role'] == "user":
+        if message["role"] == "user":
             role_token = self._get_special_token("User")
-        elif message['role'] == "assistant":
+        elif message["role"] == "assistant":
             role_token = self._get_special_token("Assistant")
         else:
             raise ValueError(f"Unsuppoerted role: {message['role']}")
         ob = [role_token]
-        ac = self.tokenizer.encode(message['content'], add_special_tokens=False)
+        ac = self.tokenizer.encode(message["content"], add_special_tokens=False)
 
-        if message['role'] == "assistant": # end_of_message only for assistant in dsv3
+        if message["role"] == "assistant":  # end_of_message only for assistant in dsv3
             ac.append(self._end_message_token)
         # Action part that's only included in the last message in SFT
-        ac_tail = [] # No action tail needed for DsV3 format
+        ac_tail = []  # No action tail needed for DsV3 format
         return (ob, ac, ac_tail)
 
     def build_generation_prompt(
@@ -537,8 +537,12 @@ class DeepSeekV3DisableThinkingRenderer(DeepSeekV3Renderer):
     """
 
     def _render_message(self, message: Message) -> tuple[list[int], list[int], list[int]]:
-        if message['role'] == "assistant" and not message['content'].startswith("<think>") and not message['content'].startswith("</think>"):
-            message['content'] = "</think>" + message['content']
+        if (
+            message["role"] == "assistant"
+            and not message["content"].startswith("<think>")
+            and not message["content"].startswith("</think>")
+        ):
+            message["content"] = "</think>" + message["content"]
         return super()._render_message(message)
 
     def build_generation_prompt(
@@ -554,25 +558,38 @@ class GptOssRenderer(Renderer):
         <|start|>system<|message|>You are ChatGPT...<|end|><|start|>user<|message|>How much is 1+1?<|end|><|start|>assistant<|channel|>final<|message|>2<|end|><|start|>
     TODO: support channels in input messages and tools
     """
+
     system_prompt = "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: {current_date}\n\nReasoning: {reasoning_effort}\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>"
     use_system_prompt: bool = False
     reasoning_effort: str | None = None
-    current_date: str | None = None  # If use_system_prompt=True, will use the current date if this is None. Set this to a fixed date for deterministic system prompt.
+    current_date: str | None = (
+        None  # If use_system_prompt=True, will use the current date if this is None. Set this to a fixed date for deterministic system prompt.
+    )
 
-    def __init__(self, tokenizer: Tokenizer, use_system_prompt: bool = False, reasoning_effort: str | None = None, current_date: str | None = None):
+    def __init__(
+        self,
+        tokenizer: Tokenizer,
+        use_system_prompt: bool = False,
+        reasoning_effort: str | None = None,
+        current_date: str | None = None,
+    ):
         super().__init__(tokenizer)
         self.use_system_prompt = use_system_prompt
         self.reasoning_effort = reasoning_effort
         self.current_date = current_date
-        assert use_system_prompt == (reasoning_effort is not None), "Reasoning effort must be set iff using system prompt"
+        assert use_system_prompt == (reasoning_effort is not None), (
+            "Reasoning effort must be set iff using system prompt"
+        )
 
-    def _render_message(self, message: Message, is_last: bool = False) -> tuple[list[int], list[int], list[int]]:
-        assert message.get('tool_calls') is None, "TODO: support tools in gpt-oss renderer"
+    def _render_message(
+        self, message: Message, is_last: bool = False
+    ) -> tuple[list[int], list[int], list[int]]:
+        assert message.get("tool_calls") is None, "TODO: support tools in gpt-oss renderer"
         # Observation (prompt) part
         ob_str = f"<|start|>{message['role']}"
         # Action part
         ac_str = ""
-        if message['role'] == "assistant":
+        if message["role"] == "assistant":
             # TODO: support other channels/tools
             ac_str += "<|channel|>final"
         ac_str += f"<|message|>{message['content']}"
@@ -591,8 +608,14 @@ class GptOssRenderer(Renderer):
         )
 
     def _build_system_prompt(self) -> str:
-        current_date = self.current_date if self.current_date is not None else datetime.now().strftime("%Y-%m-%d")
-        return self.system_prompt.format(current_date=current_date, reasoning_effort=self.reasoning_effort)
+        current_date = (
+            self.current_date
+            if self.current_date is not None
+            else datetime.now().strftime("%Y-%m-%d")
+        )
+        return self.system_prompt.format(
+            current_date=current_date, reasoning_effort=self.reasoning_effort
+        )
 
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
@@ -600,7 +623,9 @@ class GptOssRenderer(Renderer):
         tokens: list[int] = []
         tokens.extend(self._bos_tokens)
         if self.use_system_prompt:
-            tokens.extend(self.tokenizer.encode(self._build_system_prompt(), add_special_tokens=False))
+            tokens.extend(
+                self.tokenizer.encode(self._build_system_prompt(), add_special_tokens=False)
+            )
         for message in messages:
             ob_part, action_part, action_tail = self._render_message(message)
             tokens.extend(ob_part)
@@ -621,7 +646,9 @@ class GptOssRenderer(Renderer):
         """
         start_tokens = self._bos_tokens
         if self.use_system_prompt:
-            start_tokens.extend(self.tokenizer.encode(self._build_system_prompt(), add_special_tokens=False))
+            start_tokens.extend(
+                self.tokenizer.encode(self._build_system_prompt(), add_special_tokens=False)
+            )
         return build_supervised_example(
             start_tokens,
             lambda _idx, message: self._render_message(message, is_last=_idx == len(messages) - 1),
