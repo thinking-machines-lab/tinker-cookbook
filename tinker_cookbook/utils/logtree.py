@@ -68,13 +68,13 @@ class Node:
         if not self.children:
             return f"{ind}<{self.tag}{attrs_str}></{self.tag}>\n"
 
-        lines = [f"{ind}<{self.tag}{attrs_str}>"]
+        lines = [f"{ind}<{self.tag}{attrs_str}>\n"]
         for child in self.children:
             if isinstance(child, str):
-                lines.append(child)
+                lines.append(f"{ind}  {child}\n")
             else:
-                lines.append("\n" + child.to_html(indent + 1).rstrip("\n"))
-        lines.append(f"</{self.tag}>\n")
+                lines.append(child.to_html(indent + 1))
+        lines.append(f"{ind}</{self.tag}>\n")
         return "".join(lines)
 
 
@@ -208,7 +208,6 @@ body {
 
 .lt-p {
     margin: 0.5rem 0;
-    white-space: pre-wrap;
 }
 
 .lt-details {
