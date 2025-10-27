@@ -23,6 +23,7 @@ We provide the following examples:
 4. **[Tool use](./tool_use/)**: train LLMs to better use retrieval tools to answer questions more accurately.
 5. **[Prompt distillation](./prompt_distillation/)**: internalize long and complex instructions into LLMs.
 6. **[Multi-Agent](./multiplayer_rl/)**: optimize LLMs to play against another LLM or themselves.
+7. **[Model distillation](./distillation/)**: use on-policy distillation or SFT to distill intelligence from a teacher model.
 
 These examples are located in each subfolder, and their `README.md` file will walk you through the key implementation details, the commands to run them, and the expected performance.
 
