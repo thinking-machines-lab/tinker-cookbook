@@ -13,6 +13,7 @@ Example usage:
         wandb_project=cookbook_distillation
 """
 
+import asyncio
 import logging
 import os
 from datetime import datetime
@@ -24,7 +25,10 @@ import tinker
 from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.renderers import Message, TrainOnWhat
 from tinker_cookbook.supervised import train
-from tinker_cookbook.supervised.data import StreamingSupervisedDatasetFromHFDataset, conversation_to_datum
+from tinker_cookbook.supervised.data import (
+    StreamingSupervisedDatasetFromHFDataset,
+    conversation_to_datum,
+)
 from tinker_cookbook.supervised.types import (
     ChatDatasetBuilder,
     ChatDatasetBuilderCommonConfig,
@@ -43,7 +47,9 @@ class OpenThoughts3Builder(ChatDatasetBuilder):
 
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
         # Load streaming dataset
-        ds = datasets.load_dataset("open-thoughts/OpenThoughts3-1.2M", split="train", streaming=True)
+        ds = datasets.load_dataset(
+            "open-thoughts/OpenThoughts3-1.2M", split="train", streaming=True
+        )
         ds = cast(datasets.IterableDataset, ds)
 
         # Use train_on_what from common_config if provided, otherwise default to ALL_ASSISTANT_MESSAGES
@@ -126,6 +132,7 @@ def cli_main(cli_config: CLIConfig):
     # Create log path if not specified
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
+        run_name = os.path.basename(log_path)
     else:
         model_name = cli_config.model_name.replace("/", "-")
         run_name = (
@@ -178,7 +185,7 @@ def cli_main(cli_config: CLIConfig):
     )
 
     # Run training
-    train.main(config)
+    asyncio.run(train.main(config))
 
 
 if __name__ == "__main__":

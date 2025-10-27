@@ -319,7 +319,7 @@ class Qwen3Renderer(Renderer):
         What can you help me with?<|im_end|>
         <|im_start|>assistant
         <think>
-        
+
         </think>
         I can help you with...<|im_end|>
 
