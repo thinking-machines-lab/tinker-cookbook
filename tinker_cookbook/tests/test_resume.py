@@ -1,5 +1,6 @@
 """Test for checkpoint resume functionality in supervised training."""
 
+import asyncio
 import contextlib
 import json
 import os
@@ -67,7 +68,7 @@ def checkpoint_resume():
 
             # Run until exception
             with contextlib.suppress(StopTrainingException):
-                train.main(config)
+                asyncio.run(train.main(config))
 
         # Verify checkpoint was saved at step 5
         checkpoint_file = os.path.join(log_path, "checkpoints.jsonl")
@@ -92,7 +93,7 @@ def checkpoint_resume():
             mock_setup_logging.return_value = mock_logger2
 
             with contextlib.suppress(StopTrainingException):
-                train.main(config)
+                asyncio.run(train.main(config))
 
         # Read second run metrics
         second_run_metrics = read_jsonl(os.path.join(log_path, "metrics_run2.jsonl"))

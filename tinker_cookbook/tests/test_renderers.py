@@ -6,12 +6,26 @@ from tinker_cookbook.renderers import Message, get_renderer
 from transformers.models.auto.tokenization_auto import AutoTokenizer
 
 
-@pytest.mark.parametrize("model_name", ["meta-llama/Llama-3.2-1B-Instruct", "Qwen/Qwen3-30B-A3B"])
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "meta-llama/Llama-3.2-1B-Instruct",
+        "Qwen/Qwen3-30B-A3B",
+        "deepseek-ai/DeepSeek-V3.1",
+        "openai/gpt-oss-20b",
+    ],
+)
 def test_against_hf_chat_templates(model_name: str):
     tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
     # not using get_tokenizer(model_name)
     # because we want to test against the original tokenizer from HF, not the mirror
-    cookbook_renderer = get_renderer(get_recommended_renderer_name(model_name), tokenizer)
+    # gpt_oss HF matches gpt_oss_medium_reasoning and not the default gpt_oss
+    render_name = (
+        get_recommended_renderer_name(model_name)
+        if not model_name.startswith("openai")
+        else "gpt_oss_medium_reasoning"
+    )
+    cookbook_renderer = get_renderer(render_name, tokenizer)
     convo: list[Message] = [
         {"role": "user", "content": "Hello, how are you?"},
         {"role": "assistant", "content": "I'm fine, thank you!"},
@@ -26,6 +40,10 @@ def test_against_hf_chat_templates(model_name: str):
         }
         aug_convo = [system_msg] + convo
     elif model_name.startswith("Qwen"):
+        aug_convo = convo
+    elif model_name.startswith("deepseek-ai"):
+        aug_convo = convo
+    elif model_name.startswith("openai"):
         aug_convo = convo
     else:
         raise ValueError(f"Unknown model name: {model_name}")
@@ -45,6 +63,7 @@ def test_against_hf_chat_templates(model_name: str):
     [
         ("Qwen/Qwen3-30B-A3B", "qwen3"),
         ("meta-llama/Llama-3.2-1B-Instruct", "llama3"),
+        ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning"),
     ],
 )
 def test_eot_parsing(model_name: str, renderer_name: str):
@@ -57,6 +76,8 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         eot_token = "<|eot_id|>"
     elif renderer_name == "qwen3":
         eot_token = "<|im_end|>"
+    elif renderer_name.startswith("gpt_oss"):
+        eot_token = "<|return|>"
     else:
         raise ValueError(f"Unknown renderer: {renderer_name}")
 

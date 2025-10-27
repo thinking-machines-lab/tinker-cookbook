@@ -90,7 +90,7 @@ def sft_stage(
     )
 
     # Run training
-    supervised_train.main(config)
+    asyncio.run(supervised_train.main(config))
 
 
 def train_rm(
@@ -142,7 +142,7 @@ def train_rm(
     )
 
     # Run training
-    supervised_train.main(config)
+    asyncio.run(supervised_train.main(config))
 
 
 async def train_rl(
