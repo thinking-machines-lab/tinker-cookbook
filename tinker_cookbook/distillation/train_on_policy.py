@@ -7,10 +7,9 @@ import asyncio
 import logging
 import os
 import time
-from typing import Any, Callable, List, Literal, Sequence, Dict, cast
+from typing import Any, List, Literal, Sequence, Dict, cast
 
 import chz
-import numpy as np
 import tinker
 import torch
 from tinker_cookbook import checkpoint_utils
@@ -24,8 +23,6 @@ from tinker_cookbook.rl.metric_util import RLTestSetEvaluator, compute_trajector
 from tinker_cookbook.rl.metrics import discounted_future_sum_vectorized
 from tinker_cookbook.rl.types import (
     EnvGroupBuilder,
-    RLDataset,
-    RLDatasetBuilder,
     TrajectoryGroup,
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
@@ -37,7 +34,6 @@ from tinker_cookbook.utils.trace import scope, get_scope_context, trace_init
 from tinker_cookbook.distillation.datasets import (
     CompositeDataset,
     DistillationDatasetConfig,
-    TeacherConfig,
 )
 
 # We re-use these methods from the RL training recipe
@@ -203,12 +199,10 @@ async def prepare_minibatch(
             #   - dataset_indices_P[group_idx] gives us the dataset index
             #   - teacher_clients[dataset_idx] gives us the teacher
             teacher_clients_D = [
-                teacher_clients[dataset_indices_P[metadata["group_idx"]]]
-                for metadata in metadata_D
+                teacher_clients[dataset_indices_P[metadata["group_idx"]]] for metadata in metadata_D
             ]
             dataset_indices_D = [
-                dataset_indices_P[metadata["group_idx"]]
-                for metadata in metadata_D
+                dataset_indices_P[metadata["group_idx"]] for metadata in metadata_D
             ]
             kl_penalty_metrics = await incorporate_kl_penalty(
                 data_D,
@@ -417,9 +411,7 @@ async def main(
 
         # Create teacher sampling client
         teacher_config = dataset_config.teacher_config
-        teacher_client = service_client.create_sampling_client(
-            base_model=teacher_config.base_model
-        )
+        teacher_client = service_client.create_sampling_client(base_model=teacher_config.base_model)
         # Load teacher checkpoint if specified
         if teacher_config.load_checkpoint_path is not None:
             teacher_client = service_client.create_sampling_client(

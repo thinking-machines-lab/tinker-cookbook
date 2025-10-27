@@ -23,7 +23,7 @@ import os
 from datetime import datetime
 
 import chz
-from tinker_cookbook import cli_utils, model_info
+from tinker_cookbook import cli_utils
 from tinker_cookbook.distillation import train_on_policy
 from tinker_cookbook.distillation.datasets import (
     DistillationDatasetConfig,
