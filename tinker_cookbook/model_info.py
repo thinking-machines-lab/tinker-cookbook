@@ -50,12 +50,32 @@ def get_qwen_info() -> dict[str, ModelAttributes]:
     }
 
 
+def get_deepseek_info() -> dict[str, ModelAttributes]:
+    org = "deepseek-ai"
+    return {
+        "DeepSeek-V3.1": ModelAttributes(org, "3", "671B-A37B", True),
+        "DeepSeek-V3.1-Base": ModelAttributes(org, "3", "671B-A37B", False),
+    }
+
+
+def get_gpt_oss_info() -> dict[str, ModelAttributes]:
+    org = "openai"
+    return {
+        "gpt-oss-20b": ModelAttributes(org, "1", "21B-A3.6B", True),
+        "gpt-oss-120b": ModelAttributes(org, "1", "117B-A5.1B", True),
+    }
+
+
 def get_model_attributes(model_name: str) -> ModelAttributes:
     org, model_version_full = model_name.split("/")
     if org == "meta-llama":
         return get_llama_info()[model_version_full]
     elif org == "Qwen":
         return get_qwen_info()[model_version_full]
+    elif org == "deepseek-ai":
+        return get_deepseek_info()[model_version_full]
+    elif org == "openai":
+        return get_gpt_oss_info()[model_version_full]
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
@@ -79,6 +99,10 @@ def get_recommended_renderer_names(model_name: str) -> list[str]:
                 return ["qwen3", "qwen3_disable_thinking"]
         else:
             raise ValueError(f"Unknown model: {model_name}")
+    elif attributes.organization == "deepseek-ai":
+        return ["deepseekv3_disable_thinking", "deepseekv3"]
+    elif attributes.organization == "openai":
+        return ["gpt_oss_no_sysprompt", "gpt_oss_medium_reasoning"]
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
