@@ -318,17 +318,24 @@ class Qwen3Renderer(Renderer):
         <|im_start|>user
         What can you help me with?<|im_end|>
         <|im_start|>assistant
+        <think>
+        
+        </think>
         I can help you with...<|im_end|>
 
-    This renderer is from the Qwen 2.5 series, however, it works with Qwen 3 as well.
-    It is just missing Qwen 3's functionality for removing thinking spans in multi-turn conversations.
+    It is currently missing Qwen 3's functionality for removing thinking spans in multi-turn conversations.
     """
 
     def _render_message(self, idx: int, message: Message) -> tuple[list[int], list[int], list[int]]:
         maybe_newline = "\n" if idx > 0 else ""
         ob_str = f"{maybe_newline}<|im_start|>{message['role']}\n"
+        ac_content = message["content"]
+        if message["role"] == "assistant" and "<think>" not in ac_content:
+            # Matching the paper, we force the assistant to start with <think>. Some SFT datasets include
+            # <think> in the assistant messages, we so don't need to re-add it in those cases.
+            ob_str += "<think>\n"
         # Observation (prompt) part
-        ac_str = f"{message['content']}<|im_end|>"
+        ac_str = f"{ac_content}<|im_end|>"
         # Action part
         ac_tail_str = ""  # No action tail needed for Qwen format
         # Action part that's only included in the last message in SFT
@@ -428,8 +435,24 @@ class Qwen3DisableThinkingRenderer(Qwen3Renderer):
 
 class Qwen3InstructRenderer(Qwen3Renderer):
     """
-    Renderer for Qwen3 instruct models
+    Renderer for Qwen3 instruct 2507 models. Unlike the earlier Qwen3 models, these models do not
+    use the <think> tag at all.
     """
+
+    def _render_message(self, idx: int, message: Message) -> tuple[list[int], list[int], list[int]]:
+        maybe_newline = "\n" if idx > 0 else ""
+        ob_str = f"{maybe_newline}<|im_start|>{message['role']}\n"
+        ac_content = message["content"]
+        # Observation (prompt) part
+        ac_str = f"{ac_content}<|im_end|>"
+        # Action part
+        ac_tail_str = ""  # No action tail needed for Qwen format
+        # Action part that's only included in the last message in SFT
+        return (
+            self.tokenizer.encode(ob_str, add_special_tokens=False),
+            self.tokenizer.encode(ac_str, add_special_tokens=False),
+            self.tokenizer.encode(ac_tail_str, add_special_tokens=False),
+        )
 
 
 def get_renderer(name: str, tokenizer: Tokenizer) -> Renderer:
