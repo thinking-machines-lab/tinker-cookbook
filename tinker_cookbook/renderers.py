@@ -590,9 +590,23 @@ class GptOssRenderer(Renderer):
         # Action part
         ac_str = ""
         if message["role"] == "assistant":
-            # TODO: support other channels/tools
-            ac_str += "<|channel|>final"
-        ac_str += f"<|message|>{message['content']}"
+            # TODO: support commentary channel / tools
+
+            # Assistant channels. See https://cookbook.openai.com/articles/openai-harmony
+            thinking = message.get("thinking")
+            content = message.get("content", "")
+
+            # Analysis channel (CoT)
+            if thinking:
+                if is_last:
+                    # Analysis channel only included in the last message. See https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot
+                    ac_str += f"<|channel|>analysis<|message|>{thinking}<|end|>"
+
+            # Final channel (Response Content)
+            ac_str += f"<|channel|>final<|message|>{content}"
+        else:
+            ac_str += f"<|message|>{message['content']}"
+
         if not is_last:
             ac_str += "<|end|>"
         else:

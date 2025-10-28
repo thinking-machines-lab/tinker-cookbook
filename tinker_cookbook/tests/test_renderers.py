@@ -109,7 +109,62 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         _ = renderer.parse_response(response_tokens_double_eot)
 
 
+def test_gptoss_channels():
+    """Test GPT-OSS multi-channel rendering for assistant messages with thinking/content fields."""
+    tokenizer = AutoTokenizer.from_pretrained("openai/gpt-oss-20b", use_fast=True)
+    renderer = get_renderer("gpt_oss_medium_reasoning", tokenizer)
+
+    # Test case 1: Training format with both thinking and content
+    messages_training: list[Message] = [
+        {"role": "user", "content": "What is 2+2?"},
+        {
+            "role": "assistant",
+            "thinking": "The user wants me to calculate 2+2. Let me compute: 2+2 = 4.",
+            "content": "The answer is 4.",
+        },
+    ]
+
+    tokens, weights = renderer.build_supervised_example(messages_training)
+    decoded = tokenizer.decode(tokens.tolist())
+
+    assert "<|channel|>analysis<|message|>The user wants me to calculate 2+2" in decoded, "Should have analysis channel"
+    assert "<|channel|>final<|message|>The answer is 4" in decoded, "Should have final channel"
+    analysis_pos = decoded.find("<|channel|>analysis")
+    final_pos = decoded.find("<|channel|>final")
+    assert analysis_pos < final_pos, "Analysis channel should come before final channel"
+
+    # Test case 2: Inference format excludes thinking from non-last messages
+    messages_inference: list[Message] = [
+        {"role": "user", "content": "What is 2+2?"},
+        {
+            "role": "assistant",
+            "thinking": "Previous reasoning",
+            "content": "Previous answer.",
+        },
+        {"role": "user", "content": "What about 3+3?"},
+    ]
+
+    prompt_tokens = renderer.build_generation_prompt(messages_inference)
+    decoded_inference = tokenizer.decode(prompt_tokens.to_ints())
+
+    assert "Previous reasoning" not in decoded_inference
+    assert "Previous answer." in decoded_inference
+
+    # Test case 3: Content-only messages without reasoning still work
+    messages_content_only: list[Message] = [
+        {"role": "user", "content": "What is 2+2?"},
+        {"role": "assistant", "content": "The answer is 4."},
+    ]
+
+    tokens_compat, weights_compat = renderer.build_supervised_example(messages_content_only)
+    decoded_compat = tokenizer.decode(tokens_compat.tolist())
+
+    assert "<|channel|>analysis" not in decoded_compat
+    assert "<|channel|>final<|message|>The answer is 4." in decoded_compat
+
+
 if __name__ == "__main__":
     # test_against_hf_chat_templates("meta-llama/Llama-3.2-1B-Instruct")
     # test_against_hf_chat_templates("Qwen/Qwen2.5-VL-3B-Instruct")
     test_eot_parsing("Qwen/Qwen3-30B-A3B", "qwen3")
+    test_gptoss_channels()
