@@ -174,7 +174,7 @@ class HelpSteer3ComparisonBuilder(ComparisonDatasetBuilder):
             completion_B=[{"role": "assistant", "content": response2}],
         )
         return LabeledComparison(
-            comparison=comparison, label="A" if overall_preference > 0 else "B"
+            comparison=comparison, label="A" if overall_preference < 0 else "B"
         )
 
 
