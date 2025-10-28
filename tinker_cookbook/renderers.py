@@ -33,6 +33,7 @@ class Message(TypedDict):
     role: Role
     content: str
     tool_calls: NotRequired[list[ToolCall]]
+    thinking: NotRequired[str]
 
 
 class TrainOnWhat(StrEnum):

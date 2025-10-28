@@ -127,7 +127,9 @@ def test_gptoss_channels():
     tokens, weights = renderer.build_supervised_example(messages_training)
     decoded = tokenizer.decode(tokens.tolist())
 
-    assert "<|channel|>analysis<|message|>The user wants me to calculate 2+2" in decoded, "Should have analysis channel"
+    assert "<|channel|>analysis<|message|>The user wants me to calculate 2+2" in decoded, (
+        "Should have analysis channel"
+    )
     assert "<|channel|>final<|message|>The answer is 4" in decoded, "Should have final channel"
     analysis_pos = decoded.find("<|channel|>analysis")
     final_pos = decoded.find("<|channel|>final")
