@@ -428,7 +428,7 @@ class Qwen3DisableThinkingRenderer(Qwen3Renderer):
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:
-        prefill = "<think>\n\n</think>\n\n" + (prefill or "")
+        prefill = "\n</think>\n\n" + (prefill or "")
         # XXX this causes inefficiency in RL, because the observations don't grow by appending to the end.
         # Maybe we should just insert this empty thinking block in every message?
         return super().build_generation_prompt(messages, role, prefill)
