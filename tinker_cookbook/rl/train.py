@@ -321,9 +321,7 @@ async def do_sync_training_with_stream_minibatch(
             # then sampling can overlap with training.
             for i, builder in enumerate(env_group_builders_P):
                 asyncio.create_task(
-                    trajectory_group_worker_task(
-                        builder, enable_logging=i < cfg.num_groups_to_log
-                    ),
+                    trajectory_group_worker_task(builder, enable_logging=i < cfg.num_groups_to_log),
                     name=f"trajectory_group_worker_task_{i}",
                 )
 
@@ -600,7 +598,7 @@ async def do_group_rollout_and_filter_constant_reward(
     enable_logging: bool = True,
 ) -> TrajectoryGroup | None:
     policy = TinkerTokenCompleter(sampling_client, max_tokens=max_tokens)
-    with (nullcontext() if enable_logging else logtree.scope_disable()):
+    with nullcontext() if enable_logging else logtree.scope_disable():
         trajectory_group = await do_group_rollout(env_group_builder, policy)
 
     # Remove if all trajectories have the same reward
