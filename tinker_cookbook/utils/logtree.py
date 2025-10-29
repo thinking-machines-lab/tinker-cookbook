@@ -528,24 +528,24 @@ def scope_header_decorator(
         if inspect.iscoroutinefunction(fn):
 
             @functools.wraps(fn)
-            async def aw(*args: Any, **kwargs: Any) -> Any:
+            async def aw(*args: Any, enable_logging: bool = True, **kwargs: Any) -> Any:
                 # Graceful degradation: if logging is disabled, just run the function
                 if not _is_logging_enabled():
                     return await fn(*args, **kwargs)
 
-                with scope_header(title_fn(*args, **kwargs), **attrs):
+                with scope_header(title_fn(*args, **kwargs), **attrs) if enable_logging else scope_disable():
                     return await fn(*args, **kwargs)
 
             return aw  # type: ignore
         else:
 
             @functools.wraps(fn)
-            def w(*args: Any, **kwargs: Any) -> Any:
+            def w(*args: Any, enable_logging: bool = True, **kwargs: Any) -> Any:
                 # Graceful degradation: if logging is disabled, just run the function
                 if not _is_logging_enabled():
                     return fn(*args, **kwargs)
 
-                with scope_header(title_fn(*args, **kwargs), **attrs):
+                with scope_header(title_fn(*args, **kwargs), **attrs) if enable_logging else scope_disable():
                     return fn(*args, **kwargs)
 
             return w  # type: ignore
