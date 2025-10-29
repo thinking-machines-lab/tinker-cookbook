@@ -7,6 +7,7 @@ import io
 import logging
 import os
 import time
+from contextlib import nullcontext
 from typing import Any, Callable, List, Literal, Sequence
 
 import chz
@@ -291,7 +292,9 @@ async def do_sync_training_with_stream_minibatch(
             env_group_builders_P = dataset.get_batch(i_batch)
 
             @scope
-            async def trajectory_group_worker_task(builder: EnvGroupBuilder) -> None:
+            async def trajectory_group_worker_task(
+                builder: EnvGroupBuilder, enable_logging: bool
+            ) -> None:
                 metrics = {}
                 t_start = time.time()
                 trajectory_group = await do_group_rollout_and_filter_constant_reward(
@@ -299,6 +302,7 @@ async def do_sync_training_with_stream_minibatch(
                     builder,
                     max_tokens=cfg.max_tokens,
                     do_remove_constant_reward_groups=cfg.remove_constant_reward_groups,
+                    enable_logging=enable_logging,
                 )
                 metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
                 if trajectory_group is not None:
@@ -317,7 +321,8 @@ async def do_sync_training_with_stream_minibatch(
             # then sampling can overlap with training.
             for i, builder in enumerate(env_group_builders_P):
                 asyncio.create_task(
-                    trajectory_group_worker_task(builder), name=f"trajectory_group_worker_task_{i}"
+                    trajectory_group_worker_task(builder, enable_logging=i < cfg.num_groups_to_log),
+                    name=f"trajectory_group_worker_task_{i}",
                 )
 
             # Run multiple optimizer substeps per training iteration
@@ -590,9 +595,11 @@ async def do_group_rollout_and_filter_constant_reward(
     env_group_builder: EnvGroupBuilder,
     max_tokens: int,
     do_remove_constant_reward_groups: bool,
+    enable_logging: bool = True,
 ) -> TrajectoryGroup | None:
     policy = TinkerTokenCompleter(sampling_client, max_tokens=max_tokens)
-    trajectory_group = await do_group_rollout(env_group_builder, policy)
+    with nullcontext() if enable_logging else logtree.scope_disable():
+        trajectory_group = await do_group_rollout(env_group_builder, policy)
 
     # Remove if all trajectories have the same reward
     trajectory_groups = [trajectory_group]
@@ -639,7 +646,7 @@ async def prepare_minibatch(
     taglist_P = [env_group_builder.logging_tags() for env_group_builder in env_group_builders_P]
     metrics.update(compute_trajectory_metrics(trajectory_groups_P, taglist_P))
 
-    # Print one trajectory
+    # Print up to two trajectory groups
     for traj_group in trajectory_groups_P[:2]:
         print_group(traj_group, tokenizer)
 
@@ -919,6 +926,7 @@ async def do_sync_training(
                             builder,
                             max_tokens=cfg.max_tokens,
                             do_remove_constant_reward_groups=cfg.remove_constant_reward_groups,
+                            enable_logging=i < cfg.num_groups_to_log,
                         ),
                         name=f"sample_task_{i}",
                     )
