@@ -71,7 +71,7 @@ class Node:
         lines = [f"{ind}<{self.tag}{attrs_str}>\n"]
         for child in self.children:
             if isinstance(child, str):
-                lines.append(child)
+                lines.append(f"{ind}  {child}\n")
             else:
                 lines.append(child.to_html(indent + 1))
         lines.append(f"{ind}</{self.tag}>\n")
@@ -208,7 +208,6 @@ body {
 
 .lt-p {
     margin: 0.5rem 0;
-    white-space: pre-wrap;
 }
 
 .lt-details {
