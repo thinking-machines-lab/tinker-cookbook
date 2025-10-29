@@ -7,6 +7,7 @@ import io
 import logging
 import os
 import time
+from contextlib import nullcontext
 from typing import Any, Callable, List, Literal, Sequence
 
 import chz
@@ -599,11 +600,8 @@ async def do_group_rollout_and_filter_constant_reward(
     enable_logging: bool = True,
 ) -> TrajectoryGroup | None:
     policy = TinkerTokenCompleter(sampling_client, max_tokens=max_tokens)
-    if enable_logging:
+    with (nullcontext() if enable_logging else logtree.scope_disable()):
         trajectory_group = await do_group_rollout(env_group_builder, policy)
-    else:
-        with logtree.scope_disable():
-            trajectory_group = await do_group_rollout(env_group_builder, policy)
 
     # Remove if all trajectories have the same reward
     trajectory_groups = [trajectory_group]
@@ -642,7 +640,6 @@ async def prepare_minibatch(
     model_name: str,
     kl_penalty_coef: float,
     kl_discount_factor: float,
-    num_groups_to_log: int,
 ) -> tuple[list[tinker.Datum], dict[str, Any]]:
     """Converts the trajectories into a minibatch, and provides metrics about the minibatch"""
 
@@ -651,10 +648,9 @@ async def prepare_minibatch(
     taglist_P = [env_group_builder.logging_tags() for env_group_builder in env_group_builders_P]
     metrics.update(compute_trajectory_metrics(trajectory_groups_P, taglist_P))
 
-    # Print one trajectory
-    if num_groups_to_log > 0:
-        for traj_group in trajectory_groups_P[:num_groups_to_log]:
-            print_group(traj_group, tokenizer)
+    # Print up to two trajectory groups
+    for traj_group in trajectory_groups_P[:2]:
+        print_group(traj_group, tokenizer)
 
     # Assemble training data
     with timed("assemble_training_data", metrics):
@@ -779,7 +775,6 @@ async def do_train_step_streaming_and_get_sampling_client(
                 model_name=cfg.model_name,
                 kl_penalty_coef=cfg.kl_penalty_coef,
                 kl_discount_factor=cfg.kl_discount_factor,
-                num_groups_to_log=cfg.num_groups_to_log,
             )
             metrics.update(prepare_minibatch_metrics)
 
@@ -849,7 +844,6 @@ async def do_train_step_and_get_sampling_client(
         model_name=cfg.model_name,
         kl_penalty_coef=cfg.kl_penalty_coef,
         kl_discount_factor=cfg.kl_discount_factor,
-        num_groups_to_log=cfg.num_groups_to_log,
     )
     metrics.update(prepare_minibatch_metrics)
 
