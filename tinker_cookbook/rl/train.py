@@ -619,9 +619,7 @@ async def do_group_rollout_and_filter_constant_reward(
     policy = TinkerTokenCompleter(sampling_client, max_tokens=max_tokens)
 
     with logtree.optional_enable_logging(enable_logging):
-        trajectory_group = await do_group_rollout(
-            env_group_builder, policy
-        )
+        trajectory_group = await do_group_rollout(env_group_builder, policy)
 
     # Remove if all trajectories have the same reward
     trajectory_groups = [trajectory_group]
