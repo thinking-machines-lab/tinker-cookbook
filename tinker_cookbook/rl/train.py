@@ -45,6 +45,15 @@ from tinker_cookbook.utils.trace import scope, trace_init, get_scope_context
 logger = logging.getLogger(__name__)
 
 
+
+def get_logtree_scope(log_path: str | None, num_groups_to_log: int, f_name: str, scope_name: str) -> scope:
+    if log_path is not None and num_groups_to_log > 0:
+        logtree_path = os.path.join(log_path, f"{f_name}.html")
+        return logtree.init_trace(scope_name, path=logtree_path)
+    else:
+        return logtree.scope_disable()
+
+
 @scope
 def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]:
     assert num_inds <= len(scores)
@@ -236,6 +245,9 @@ class Config:
     num_groups_to_log: int = 4  # Number of groups to log per iteration (0 = disable logging)
 
 
+
+
+
 @scope
 async def do_sync_training_with_stream_minibatch(
     start_batch: int,
@@ -272,20 +284,11 @@ async def do_sync_training_with_stream_minibatch(
         if (cfg.eval_every > 0 and i_batch % cfg.eval_every == 0) or i_batch == end_batch - 1:
             with timed("run_evals", metrics):
                 for evaluator in evaluators:
-                    eval_metrics = await evaluator(sampling_client)
-                    metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+                    with get_logtree_scope(cfg.log_path, cfg.num_groups_to_log, f"eval_{evaluator.name}_iteration_{i_batch:06d}", f"Running evaluation {evaluator.name} {i_batch}"):
+                        eval_metrics = await evaluator(sampling_client)
+                        metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
 
-        # Initialize logtree trace for this iteration if logging is enabled
-        logtree_path = (
-            os.path.join(cfg.log_path, f"iteration_{i_batch:06d}.html")
-            if cfg.num_groups_to_log > 0
-            else None
-        )
-        with (
-            logtree.init_trace(f"RL Iteration {i_batch}", path=logtree_path)
-            if logtree_path
-            else logtree.scope_disable()
-        ):
+        with get_logtree_scope(cfg.log_path, cfg.num_groups_to_log, f"train_iteration_{i_batch:06d}", f"RL Iteration {i_batch}"):
             # Samplers will produce trajectory groups asynchronously,
             # and the trainer will consume them as soon as they are ready
             trajectory_groups_queue = asyncio.Queue[WrappedTrajectoryGroup | None]()
@@ -899,24 +902,16 @@ async def do_sync_training(
         if cfg.eval_every > 0 and i_batch % cfg.eval_every == 0:
             with timed("run_evals", metrics):
                 for evaluator in evaluators:
-                    eval_metrics = await evaluator(sampling_client)
-                    metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+                    with get_logtree_scope(log_path=cfg.log_path, num_groups_to_log=cfg.num_groups_to_log, f_name=f"eval_{evaluator.name}_iteration_{i_batch:06d}", scope_name=f"Running evaluation {evaluator.name} {i_batch}"):
+
+                        eval_metrics = await evaluator(sampling_client)
+                        metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
 
         # Get batch and sample trajectories
         env_group_builders_P = dataset.get_batch(i_batch)
 
         # Initialize logtree trace for this iteration if logging is enabled
-        logtree_path = (
-            os.path.join(cfg.log_path, f"iteration_{i_batch:06d}.html")
-            if cfg.num_groups_to_log > 0
-            else None
-        )
-        with (
-            logtree.init_trace(f"RL Iteration {i_batch}", path=logtree_path)
-            if logtree_path
-            else logtree.scope_disable(),
-            timed("sample", metrics),
-        ):
+        with get_logtree_scope(log_path=cfg.log_path, num_groups_to_log=cfg.num_groups_to_log, f_name=f"iteration_{i_batch:06d}", scope_name=f"RL Iteration {i_batch}"):
             trajectory_groups_P = await asyncio.gather(
                 *[
                     asyncio.create_task(
