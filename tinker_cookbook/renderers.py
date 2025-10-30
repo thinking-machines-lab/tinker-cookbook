@@ -337,6 +337,9 @@ class Qwen3Renderer(Renderer):
             ob_str += "<think>\n"
         # Observation (prompt) part
         ac_str = f"{ac_content}<|im_end|>"
+        if "tool_calls" in message:
+            ac_str += "\n".join([f"<tool_call>\n{json.dumps(tool_call)}\n</tool_call>" for tool_call in message["tool_calls"]])
+        ac_str += "<|im_end|>"
         # Action part
         ac_tail_str = ""  # No action tail needed for Qwen format
         # Action part that's only included in the last message in SFT
@@ -405,10 +408,11 @@ class Qwen3Renderer(Renderer):
         if not parse_success:
             return assistant_message, False
 
-        # NOTE:
-        # we use the <function_call>...</function_call> tag to wrap the tool call.
+        # Follow Qwen docs and Qwen-Agent's tool calling prompt to use <tool_call>...</tool_call> tags to wrap the tool call.
+        # - https://qwen.readthedocs.io/en/latest/getting_started/concepts.html#tool-calling
+        # - https://github.com/QwenLM/Qwen-Agent/blob/main/qwen_agent/llm/fncall_prompts/nous_fncall_prompt.py#L279-L282
         match = re.search(
-            r"<function_call>(.*?)</function_call>", assistant_message["content"], re.DOTALL
+            r"<tool_call>(.*?)</tool_call>", assistant_message["content"], re.DOTALL
         )
         if match:
             tool_calls = self._parse_tool_call(match.group(1))
