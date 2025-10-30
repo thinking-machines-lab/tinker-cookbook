@@ -114,7 +114,6 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         self.env_group_builders_P = dataset_to_env_group_builders(dataset)
         self.max_tokens = max_tokens
         self.name = name
-        self.num_eval_times = 0
         self.num_groups_to_log = num_groups_to_log
 
     async def __call__(self, sampling_client: tinker.SamplingClient) -> dict[str, float]:
@@ -130,7 +129,6 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         )
         taglist_P = [builder.logging_tags() for builder in self.env_group_builders_P]
         metrics = compute_trajectory_metrics(trajectory_groups_P, taglist_P)
-        self.num_eval_times += 1
 
         if self.name is not None:
             metrics = {f"{self.name}/{k}": v for k, v in metrics.items()}
