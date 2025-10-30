@@ -47,9 +47,14 @@ logger = logging.getLogger(__name__)
 
 
 @contextmanager
-def get_logtree_scope(
+def _get_logtree_scope(
     log_path: str | None, num_groups_to_log: int, f_name: str, scope_name: str
 ) -> Iterator[None]:
+    """
+    Creates a context manager; all log inside this context will be logged under the section `scope_name`.
+    It will create a file with the path of log_path/f_name.html
+    If num_groups_to_log is 0, it will disable logging (but note that this function does not actually implement the logic for logging itself!)
+    """
     if log_path is not None and num_groups_to_log > 0:
         logtree_path = os.path.join(log_path, f"{f_name}.html")
         with logtree.init_trace(scope_name, path=logtree_path):
@@ -290,7 +295,7 @@ async def do_sync_training_with_stream_minibatch(
                         if isinstance(evaluator, RLTestSetEvaluator) and evaluator.name is not None
                         else ""
                     )
-                    with get_logtree_scope(
+                    with _get_logtree_scope(
                         log_path=cfg.log_path,
                         num_groups_to_log=cfg.num_groups_to_log,
                         f_name=f"eval_{ev_name}_iteration_{i_batch:06d}",
@@ -299,7 +304,7 @@ async def do_sync_training_with_stream_minibatch(
                         eval_metrics = await evaluator(sampling_client)
                         metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
 
-        with get_logtree_scope(
+        with _get_logtree_scope(
             cfg.log_path,
             cfg.num_groups_to_log,
             f"train_iteration_{i_batch:06d}",
@@ -925,7 +930,7 @@ async def do_sync_training(
                         if isinstance(evaluator, RLTestSetEvaluator) and evaluator.name is not None
                         else ""
                     )
-                    with get_logtree_scope(
+                    with _get_logtree_scope(
                         log_path=cfg.log_path,
                         num_groups_to_log=cfg.num_groups_to_log,
                         f_name=f"eval_{ev_name}_iteration_{i_batch:06d}",
@@ -938,7 +943,7 @@ async def do_sync_training(
         env_group_builders_P = dataset.get_batch(i_batch)
 
         # Initialize logtree trace for this iteration if logging is enabled
-        with get_logtree_scope(
+        with _get_logtree_scope(
             log_path=cfg.log_path,
             num_groups_to_log=cfg.num_groups_to_log,
             f_name=f"train_iteration_{i_batch:06d}",

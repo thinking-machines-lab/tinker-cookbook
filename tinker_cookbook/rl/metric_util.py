@@ -109,7 +109,6 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         max_tokens: int,
         name: str | None = None,
         num_groups_to_log: int = 4,
-        log_path: str | None = None,
     ):
         self.env_group_builders_P = dataset_to_env_group_builders(dataset)
         self.max_tokens = max_tokens
