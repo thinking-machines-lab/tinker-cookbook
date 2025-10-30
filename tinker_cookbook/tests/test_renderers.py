@@ -10,12 +10,13 @@ from transformers.models.auto.tokenization_auto import AutoTokenizer
     "model_name",
     [
         "meta-llama/Llama-3.2-1B-Instruct",
-        "Qwen/Qwen3-30B-A3B",
+        "Qwen/Qwen3-30B-A3B-Instruct-2507",
         "deepseek-ai/DeepSeek-V3.1",
         "openai/gpt-oss-20b",
     ],
 )
-def test_against_hf_chat_templates(model_name: str):
+def test_generation_against_hf_chat_templates(model_name: str):
+    """Test generation prompt against HF chat templates"""
     tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
     # not using get_tokenizer(model_name)
     # because we want to test against the original tokenizer from HF, not the mirror
@@ -50,6 +51,69 @@ def test_against_hf_chat_templates(model_name: str):
 
     cookbook_tokens = cookbook_renderer.build_generation_prompt(aug_convo).to_ints()
     hf_tokens = tokenizer.apply_chat_template(convo, add_generation_prompt=True)
+
+    assert cookbook_tokens == hf_tokens, (
+        f"Cookbook tokens: {cookbook_tokens}\n"
+        f"Cookbook string: {tokenizer.decode(cookbook_tokens)}\n"
+        f"HF tokens: {hf_tokens}\n"
+        f"HF string: {tokenizer.decode(hf_tokens)}"
+    )
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "meta-llama/Llama-3.2-1B-Instruct",
+        "Qwen/Qwen3-30B-A3B-Instruct-2507",
+        "deepseek-ai/DeepSeek-V3.1",
+        "openai/gpt-oss-20b",
+    ],
+)
+def test_supervised_example_against_hf_chat_templates(model_name: str):
+    """Test supervised example against HF chat templates"""
+    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
+    # not using get_tokenizer(model_name)
+    # because we want to test against the original tokenizer from HF, not the mirror
+    render_name = (
+        get_recommended_renderer_name(model_name)
+        if not model_name.startswith("openai")
+        else "gpt_oss_medium_reasoning"
+    )
+    cookbook_renderer = get_renderer(render_name, tokenizer)
+    convo: list[Message] = [
+        {"role": "user", "content": "Hello, how are you?"},
+        {"role": "assistant", "content": "I'm fine, thank you!"},
+    ]
+
+    if model_name.startswith("meta"):
+        today = date.today().strftime("%d %b %Y")
+        system_msg: Message = {
+            "role": "system",
+            "content": f"Cutting Knowledge Date: December 2023\nToday Date: {today}\n\n",
+        }
+        aug_convo = [system_msg] + convo
+    elif model_name.startswith("Qwen"):
+        # HF includes thinking tags in assistant content for supervised examples.
+        aug_convo = convo.copy()
+        aug_convo[1]['content'] = "<think>\n\n</think>\n\n I'm fine, thank you!"
+    elif model_name.startswith("deepseek-ai"):
+        aug_convo = convo
+    elif model_name.startswith("openai"):
+        # Test thinking field for GPT-OSS
+        convo[1] = {
+            "role": "assistant",
+            "thinking": "The user is sharing a greeting. We should respond politely.",
+            "content": "I'm fine, thank you!",
+        }
+        aug_convo = convo
+    else:
+        raise ValueError(f"Unknown model name: {model_name}")
+
+    cookbook_tokens_tensor, _ = cookbook_renderer.build_supervised_example(aug_convo)
+    cookbook_tokens = cookbook_tokens_tensor.tolist()
+    hf_output = tokenizer.apply_chat_template(convo, tokenize=False, add_generation_prompt=False)
+    hf_tokens = tokenizer.encode(hf_output.rstrip('\n'), add_special_tokens=False)
+
     assert cookbook_tokens == hf_tokens, (
         f"Cookbook tokens: {cookbook_tokens}\n"
         f"Cookbook string: {tokenizer.decode(cookbook_tokens)}\n"
@@ -109,64 +173,13 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         _ = renderer.parse_response(response_tokens_double_eot)
 
 
-def test_gptoss_channels():
-    """Test GPT-OSS multi-channel rendering for assistant messages with thinking/content fields."""
-    tokenizer = AutoTokenizer.from_pretrained("openai/gpt-oss-20b", use_fast=True)
-    renderer = get_renderer("gpt_oss_medium_reasoning", tokenizer)
-
-    # Test case 1: Training format with both thinking and content
-    messages_training: list[Message] = [
-        {"role": "user", "content": "What is 2+2?"},
-        {
-            "role": "assistant",
-            "thinking": "The user wants me to calculate 2+2. Let me compute: 2+2 = 4.",
-            "content": "The answer is 4.",
-        },
-    ]
-
-    tokens, weights = renderer.build_supervised_example(messages_training)
-    decoded = tokenizer.decode(tokens.tolist())
-
-    assert "<|channel|>analysis<|message|>The user wants me to calculate 2+2" in decoded, (
-        "Should have analysis channel"
-    )
-    assert "<|channel|>final<|message|>The answer is 4" in decoded, "Should have final channel"
-    analysis_pos = decoded.find("<|channel|>analysis")
-    final_pos = decoded.find("<|channel|>final")
-    assert analysis_pos < final_pos, "Analysis channel should come before final channel"
-
-    # Test case 2: Inference format excludes thinking from non-last messages
-    messages_inference: list[Message] = [
-        {"role": "user", "content": "What is 2+2?"},
-        {
-            "role": "assistant",
-            "thinking": "Previous reasoning",
-            "content": "Previous answer.",
-        },
-        {"role": "user", "content": "What about 3+3?"},
-    ]
-
-    prompt_tokens = renderer.build_generation_prompt(messages_inference)
-    decoded_inference = tokenizer.decode(prompt_tokens.to_ints())
-
-    assert "Previous reasoning" not in decoded_inference
-    assert "Previous answer." in decoded_inference
-
-    # Test case 3: Content-only messages without reasoning still work
-    messages_content_only: list[Message] = [
-        {"role": "user", "content": "What is 2+2?"},
-        {"role": "assistant", "content": "The answer is 4."},
-    ]
-
-    tokens_compat, weights_compat = renderer.build_supervised_example(messages_content_only)
-    decoded_compat = tokenizer.decode(tokens_compat.tolist())
-
-    assert "<|channel|>analysis" not in decoded_compat
-    assert "<|channel|>final<|message|>The answer is 4." in decoded_compat
-
-
 if __name__ == "__main__":
-    # test_against_hf_chat_templates("meta-llama/Llama-3.2-1B-Instruct")
-    # test_against_hf_chat_templates("Qwen/Qwen2.5-VL-3B-Instruct")
+    test_generation_against_hf_chat_templates("meta-llama/Llama-3.2-1B-Instruct")
+    test_generation_against_hf_chat_templates("Qwen/Qwen2.5-VL-3B-Instruct")
+    test_generation_against_hf_chat_templates("deepseek-ai/DeepSeek-V3.1")
+    test_generation_against_hf_chat_templates("openai/gpt-oss-20b")
+    test_supervised_example_against_hf_chat_templates("meta-llama/Llama-3.2-1B-Instruct")
+    test_supervised_example_against_hf_chat_templates("Qwen/Qwen3-30B-A3B-Instruct-2507")
+    test_supervised_example_against_hf_chat_templates("deepseek-ai/DeepSeek-V3.1")
+    test_supervised_example_against_hf_chat_templates("openai/gpt-oss-20b")
     test_eot_parsing("Qwen/Qwen3-30B-A3B", "qwen3")
-    test_gptoss_channels()

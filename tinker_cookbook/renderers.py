@@ -173,6 +173,7 @@ class RoleColonRenderer(Renderer):
     """
 
     def _render_message(self, message: Message) -> tuple[list[int], list[int], list[int]]:
+        assert message.get("thinking") is None, "Thinking tokens not supported in RoleColonRenderer"
         ob_str = message["role"].capitalize() + ":"
         # Observation (prompt) part
         ac_str = " " + message["content"] + "\n\n"
@@ -254,6 +255,7 @@ class Llama3Renderer(Renderer):
     """
 
     def _render_message(self, message: Message) -> tuple[list[int], list[int], list[int]]:
+        assert message.get("thinking") is None, "CoT tokens not supported in Llama3"
         ob_str = f"<|start_header_id|>{message['role']}<|end_header_id|>\n\n"
         # Observation (prompt) part
         ac_str = f"{message['content']}<|eot_id|>"
@@ -329,6 +331,7 @@ class Qwen3Renderer(Renderer):
     """
 
     def _render_message(self, idx: int, message: Message) -> tuple[list[int], list[int], list[int]]:
+        assert message.get("thinking") is None, "TODO: support CoT in Qwen3 renderer"
         maybe_newline = "\n" if idx > 0 else ""
         ob_str = f"{maybe_newline}<|im_start|>{message['role']}\n"
         ac_content = message["content"]
@@ -442,6 +445,7 @@ class Qwen3InstructRenderer(Qwen3Renderer):
     """
 
     def _render_message(self, idx: int, message: Message) -> tuple[list[int], list[int], list[int]]:
+        assert message.get("thinking") is None, "CoT tokens not supported in Qwen3 instruct 2507"
         maybe_newline = "\n" if idx > 0 else ""
         ob_str = f"{maybe_newline}<|im_start|>{message['role']}\n"
         ac_content = message["content"]
@@ -465,6 +469,7 @@ class DeepSeekV3Renderer(Renderer):
     """
 
     def _render_message(self, message: Message) -> tuple[list[int], list[int], list[int]]:
+        assert message.get("thinking") is None, "TODO: support CoT in DsV3 renderer"
         if message["role"] == "user":
             role_token = self._get_special_token("User")
         elif message["role"] == "assistant":
@@ -601,11 +606,12 @@ class GptOssRenderer(Renderer):
             if thinking:
                 if is_last:
                     # Analysis channel only included in the last message. See https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot
-                    ac_str += f"<|channel|>analysis<|message|>{thinking}<|end|>"
+                    ac_str += f"<|channel|>analysis<|message|>{thinking}<|end|><|start|>assistant"
 
             # Final channel (Response Content)
             ac_str += f"<|channel|>final<|message|>{content}"
         else:
+            assert message.get("thinking") is None, "Thinking is only allowed for assistant messages"
             ac_str += f"<|message|>{message['content']}"
 
         if not is_last:
