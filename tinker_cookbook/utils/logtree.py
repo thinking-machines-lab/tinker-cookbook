@@ -435,9 +435,6 @@ def init_trace(
         _current_trace.reset(tok_t)
 
 
-# Public API: Structure
-
-
 @contextmanager
 def scope_header(title: str, **attrs: Any) -> Iterator[None]:
     """
@@ -536,13 +533,12 @@ def scope_header_decorator(
                     return fn(*args, **kwargs)
 
             return w  # type: ignore
-    
+
     if isinstance(title, str):
         return _wrap
     else:
         fn = title
         return _wrap(fn)
-
 
 
 @contextmanager
