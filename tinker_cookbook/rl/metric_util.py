@@ -103,29 +103,22 @@ def dataset_to_env_group_builders(dataset: RLDataset) -> list[EnvGroupBuilder]:
 
 
 class RLTestSetEvaluator(SamplingClientEvaluator):
-    def __init__(self, dataset: RLDataset, max_tokens: int, name: str | None = None, logtree_dir: str | None = None, num_groups_to_log: int = 4):
+    def __init__(self, dataset: RLDataset, max_tokens: int, name: str | None = None, num_groups_to_log: int = 4):
         self.env_group_builders_P = dataset_to_env_group_builders(dataset)
         self.max_tokens = max_tokens
         self.name = name
-        self.logtree_dir = logtree_dir
         self.num_eval_times = 0
         self.num_groups_to_log = num_groups_to_log
 
     async def __call__(self, sampling_client: tinker.SamplingClient) -> dict[str, float]:
         policy = TinkerTokenCompleter(sampling_client, max_tokens=self.max_tokens)
-        log_path = os.path.join(self.logtree_dir, f"eval_{self.name}_{self.num_eval_times:06d}.html") if self.logtree_dir is not None else None
-        with (
-            logtree.init_trace(f"Evaluation {self.name} {self.num_eval_times}", path=log_path)
-            if log_path
-            else logtree.scope_disable(),
-        ):
-            trajectory_groups_P = await asyncio.gather(
-                *[do_group_rollout(builder, policy, enable_logging=i < self.num_groups_to_log) for i, builder in enumerate(self.env_group_builders_P)]
-            )
-            taglist_P = [builder.logging_tags() for builder in self.env_group_builders_P]
-            metrics = compute_trajectory_metrics(trajectory_groups_P, taglist_P)
-            self.num_eval_times += 1
+        trajectory_groups_P = await asyncio.gather(
+            *[do_group_rollout(builder, policy, enable_logging=i < self.num_groups_to_log) for i, builder in enumerate(self.env_group_builders_P)]
+        )
+        taglist_P = [builder.logging_tags() for builder in self.env_group_builders_P]
+        metrics = compute_trajectory_metrics(trajectory_groups_P, taglist_P)
+        self.num_eval_times += 1
 
-            if self.name is not None:
-                metrics = {f"{self.name}/{k}": v for k, v in metrics.items()}
-            return metrics
+        if self.name is not None:
+            metrics = {f"{self.name}/{k}": v for k, v in metrics.items()}
+        return metrics
