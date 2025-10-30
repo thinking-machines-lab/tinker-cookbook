@@ -477,12 +477,12 @@ def scope_header(title: str, **attrs: Any) -> Iterator[None]:
 F = TypeVar("F", bound=Callable[..., Any])
 
 
-# Overloads to support both bare decorator and parameterized usage
-# More specific overloads must come first
+# Overloads the parameterized usage
 @overload
 def scope_header_decorator(title: str) -> Callable[[F], F]: ...  # String title
 
 
+# Overloads the bare usage
 @overload
 def scope_header_decorator(title: F) -> F: ...  # Bare: @scope_header_decorator
 
@@ -495,15 +495,14 @@ def scope_header_decorator(
 
     Args:
         title: String or function returning string
-        **attrs: HTML attributes
 
     Examples:
         @logtree.scope_header_decorator
         async def process_batch():
             ...
 
-        @logtree.scope_header_decorator(lambda self, x: f"Item {x}")
-        def handle_item(self, x):
+        @logtree.scope_header_decorator("Handling item")
+        def handle_item():
             ...
     """
     title_str = title if isinstance(title, str) else title.__name__
