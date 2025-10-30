@@ -611,7 +611,9 @@ class GptOssRenderer(Renderer):
             # Final channel (Response Content)
             ac_str += f"<|channel|>final<|message|>{content}"
         else:
-            assert message.get("thinking") is None, "Thinking is only allowed for assistant messages"
+            assert message.get("thinking") is None, (
+                "Thinking is only allowed for assistant messages"
+            )
             ac_str += f"<|message|>{message['content']}"
 
         if not is_last:

@@ -95,7 +95,7 @@ def test_supervised_example_against_hf_chat_templates(model_name: str):
     elif model_name.startswith("Qwen"):
         # HF includes thinking tags in assistant content for supervised examples.
         aug_convo = convo.copy()
-        aug_convo[1]['content'] = "<think>\n\n</think>\n\n I'm fine, thank you!"
+        aug_convo[1]["content"] = "<think>\n\n</think>\n\n I'm fine, thank you!"
     elif model_name.startswith("deepseek-ai"):
         aug_convo = convo
     elif model_name.startswith("openai"):
@@ -112,7 +112,7 @@ def test_supervised_example_against_hf_chat_templates(model_name: str):
     cookbook_tokens_tensor, _ = cookbook_renderer.build_supervised_example(aug_convo)
     cookbook_tokens = cookbook_tokens_tensor.tolist()
     hf_output = tokenizer.apply_chat_template(convo, tokenize=False, add_generation_prompt=False)
-    hf_tokens = tokenizer.encode(hf_output.rstrip('\n'), add_special_tokens=False)
+    hf_tokens = tokenizer.encode(hf_output.rstrip("\n"), add_special_tokens=False)
 
     assert cookbook_tokens == hf_tokens, (
         f"Cookbook tokens: {cookbook_tokens}\n"
