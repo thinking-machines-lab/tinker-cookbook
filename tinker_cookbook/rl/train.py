@@ -911,7 +911,7 @@ async def do_sync_training(
         env_group_builders_P = dataset.get_batch(i_batch)
 
         # Initialize logtree trace for this iteration if logging is enabled
-        with get_logtree_scope(log_path=cfg.log_path, num_groups_to_log=cfg.num_groups_to_log, f_name=f"iteration_{i_batch:06d}", scope_name=f"RL Iteration {i_batch}"):
+        with get_logtree_scope(log_path=cfg.log_path, num_groups_to_log=cfg.num_groups_to_log, f_name=f"train_iteration_{i_batch:06d}", scope_name=f"RL Iteration {i_batch}"):
             trajectory_groups_P = await asyncio.gather(
                 *[
                     asyncio.create_task(
