@@ -533,7 +533,11 @@ def scope_header_decorator(
                 if not _is_logging_enabled():
                     return await fn(*args, **kwargs)
 
-                with scope_header(title_fn(*args, **kwargs), **attrs) if enable_logging else scope_disable():
+                with (
+                    scope_header(title_fn(*args, **kwargs), **attrs)
+                    if enable_logging
+                    else scope_disable()
+                ):
                     return await fn(*args, **kwargs)
 
             return aw  # type: ignore
@@ -545,7 +549,11 @@ def scope_header_decorator(
                 if not _is_logging_enabled():
                     return fn(*args, **kwargs)
 
-                with scope_header(title_fn(*args, **kwargs), **attrs) if enable_logging else scope_disable():
+                with (
+                    scope_header(title_fn(*args, **kwargs), **attrs)
+                    if enable_logging
+                    else scope_disable()
+                ):
                     return fn(*args, **kwargs)
 
             return w  # type: ignore
