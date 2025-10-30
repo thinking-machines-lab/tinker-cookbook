@@ -7,7 +7,7 @@ import io
 import logging
 import os
 import time
-from typing import Any, Callable, List, Literal, Sequence
+from typing import Any, Callable, List, Literal, Sequence, Iterator
 
 import chz
 import numpy as np
@@ -40,18 +40,22 @@ from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import logtree, ml_log
 from tinker_cookbook.utils.misc_utils import safezip, split_list, timed
 from tinker_cookbook.utils.trace import scope, trace_init, get_scope_context
+from contextlib import contextmanager
+
 
 logger = logging.getLogger(__name__)
 
 
+@contextmanager
 def get_logtree_scope(
     log_path: str | None, num_groups_to_log: int, f_name: str, scope_name: str
-) -> scope:
+) -> Iterator[None]:
     if log_path is not None and num_groups_to_log > 0:
         logtree_path = os.path.join(log_path, f"{f_name}.html")
-        return logtree.init_trace(scope_name, path=logtree_path)
+        with logtree.init_trace(scope_name, path=logtree_path):
+            yield
     else:
-        return logtree.scope_disable()
+        yield
 
 
 @scope
@@ -287,10 +291,10 @@ async def do_sync_training_with_stream_minibatch(
                         else ""
                     )
                     with get_logtree_scope(
-                        cfg.log_path,
-                        cfg.num_groups_to_log,
-                        f"eval_{ev_name}_iteration_{i_batch:06d}",
-                        f"Running evaluation {ev_name} {i_batch}",
+                        log_path=cfg.log_path,
+                        num_groups_to_log=cfg.num_groups_to_log,
+                        f_name=f"eval_{ev_name}_iteration_{i_batch:06d}",
+                        scope_name=f"Running evaluation {ev_name} {i_batch}",
                     ):
                         eval_metrics = await evaluator(sampling_client)
                         metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
@@ -613,9 +617,11 @@ async def do_group_rollout_and_filter_constant_reward(
     enable_logging: bool = True,
 ) -> TrajectoryGroup | None:
     policy = TinkerTokenCompleter(sampling_client, max_tokens=max_tokens)
-    trajectory_group = await do_group_rollout(
-        env_group_builder, policy, enable_logging=enable_logging
-    )
+
+    with logtree.optional_enable_logging(enable_logging):
+        trajectory_group = await do_group_rollout(
+            env_group_builder, policy
+        )
 
     # Remove if all trajectories have the same reward
     trajectory_groups = [trajectory_group]
