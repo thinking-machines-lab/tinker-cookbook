@@ -435,9 +435,6 @@ def init_trace(
         _current_trace.reset(tok_t)
 
 
-# Public API: Structure
-
-
 @contextmanager
 def scope_header(title: str, **attrs: Any) -> Iterator[None]:
     """
@@ -480,51 +477,37 @@ def scope_header(title: str, **attrs: Any) -> Iterator[None]:
 F = TypeVar("F", bound=Callable[..., Any])
 
 
-# Overloads to support both bare decorator and parameterized usage
-# More specific overloads must come first
+# Overloads the parameterized usage
 @overload
-def scope_header_decorator(title: str, **attrs: Any) -> Callable[[F], F]: ...  # String title
+def scope_header_decorator(title: str) -> Callable[[F], F]: ...  # String title
 
 
-@overload
-def scope_header_decorator(
-    title: Callable[..., str], **attrs: Any
-) -> Callable[[F], F]: ...  # Lambda title
-
-
-@overload
-def scope_header_decorator(title: None = None, **attrs: Any) -> Callable[[F], F]: ...  # No args
-
-
+# Overloads the bare usage
 @overload
 def scope_header_decorator(title: F) -> F: ...  # Bare: @scope_header_decorator
 
 
 def scope_header_decorator(
-    title: str | Callable[..., str] | F | None = None, **attrs: Any
+    title: str | F,
 ) -> F | Callable[[F], F]:
     """
     Decorator to wrap function in a scope_header.
 
     Args:
-        title: String, callable returning string, or None (use function name)
-        **attrs: HTML attributes
+        title: String or function returning string
 
     Examples:
         @logtree.scope_header_decorator
         async def process_batch():
             ...
 
-        @logtree.scope_header_decorator("Processing")
-        def work():
-            ...
-
-        @logtree.scope_header_decorator(lambda self, x: f"Item {x}")
-        def handle_item(self, x):
+        @logtree.scope_header_decorator("Handling item")
+        def handle_item():
             ...
     """
+    title_str = title if isinstance(title, str) else title.__name__
 
-    def _wrap(fn: F, title_fn: Callable[..., str]) -> F:
+    def _wrap(fn: F) -> F:
         if inspect.iscoroutinefunction(fn):
 
             @functools.wraps(fn)
@@ -533,7 +516,7 @@ def scope_header_decorator(
                 if not _is_logging_enabled():
                     return await fn(*args, **kwargs)
 
-                with scope_header(title_fn(*args, **kwargs), **attrs):
+                with scope_header(title_str):
                     return await fn(*args, **kwargs)
 
             return aw  # type: ignore
@@ -545,38 +528,16 @@ def scope_header_decorator(
                 if not _is_logging_enabled():
                     return fn(*args, **kwargs)
 
-                with scope_header(title_fn(*args, **kwargs), **attrs):
+                with scope_header(title_str):
                     return fn(*args, **kwargs)
 
             return w  # type: ignore
 
-    # Check if this is a bare decorator (no arguments)
-    # When used as @scope_header_decorator, title will be the decorated function.
-    # When used as @scope_header_decorator("string") or @scope_header_decorator(lambda ...),
-    # title will be a string or lambda, and this returns a decorator function.
-    # We distinguish by checking if it's a function but NOT a lambda.
-    if inspect.isfunction(title) and title.__name__ != "<lambda>" and not attrs:
-        # Bare decoration: @scope_header_decorator
+    if isinstance(title, str):
+        return _wrap
+    else:
         fn = title
-        return _wrap(fn, lambda *_args, **_kwargs: fn.__name__)  # type: ignore[arg-type]
-
-    # Parameterized decorator
-    def deco(fn: F) -> F:
-        if title is None:
-
-            def title_fn(*_args: Any, **_kwargs: Any) -> str:
-                return fn.__name__
-
-        elif callable(title):
-            title_fn = title
-        else:
-
-            def title_fn(*_args: Any, **_kwargs: Any) -> str:
-                return str(title)
-
-        return _wrap(fn, title_fn)
-
-    return deco
+        return _wrap(fn)
 
 
 @contextmanager
@@ -616,6 +577,16 @@ def scope_disable() -> Iterator[None]:
         yield
     finally:
         _logging_disabled.reset(token)
+
+
+@contextmanager
+def optional_enable_logging(enable: bool) -> Iterator[None]:
+    """Context manager to optionally enable logging."""
+    if enable:
+        yield
+    else:
+        with scope_disable():
+            yield
 
 
 @contextmanager
