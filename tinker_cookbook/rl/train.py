@@ -245,9 +245,6 @@ class Config:
     num_groups_to_log: int = 4  # Number of groups to log per iteration (0 = disable logging)
 
 
-
-
-
 @scope
 async def do_sync_training_with_stream_minibatch(
     start_batch: int,
