@@ -46,6 +46,15 @@ from contextlib import contextmanager
 logger = logging.getLogger(__name__)
 
 
+
+def _get_evaluator_name(evaluator: SamplingClientEvaluator) -> str:
+    return (
+        evaluator.name
+        if isinstance(evaluator, RLTestSetEvaluator) and evaluator.name is not None
+        else ""
+    )
+
+
 @contextmanager
 def _get_logtree_scope(
     log_path: str | None, num_groups_to_log: int, f_name: str, scope_name: str
@@ -264,11 +273,7 @@ async def run_evaluations_parallel(
     """Run all evaluators in parallel and return aggregated metrics."""
 
     async def run_single_evaluation(evaluator, cfg, i_batch, sampling_client):
-        ev_name = (
-            evaluator.name
-            if isinstance(evaluator, RLTestSetEvaluator) and evaluator.name is not None
-            else ""
-        )
+        ev_name = _get_evaluator_name(evaluator)
         with _get_logtree_scope(
             log_path=cfg.log_path,
             num_groups_to_log=cfg.num_groups_to_log,
@@ -278,10 +283,15 @@ async def run_evaluations_parallel(
             eval_metrics = await evaluator(sampling_client)
             return {f"test/{k}": v for k, v in eval_metrics.items()}
 
-    # Create tasks for all evaluators
-    tasks = [
-        run_single_evaluation(evaluator, cfg, i_batch, sampling_client) for evaluator in evaluators
-    ]
+    # Create tasks for all evaluators with names for better traceability
+    tasks = []
+    for i, evaluator in enumerate(evaluators):
+        ev_name = _get_evaluator_name(evaluator)
+        task = asyncio.create_task(
+            run_single_evaluation(evaluator, cfg, i_batch, sampling_client),
+            name=f"eval_task_{ev_name or i}_{i_batch}",
+        )
+        tasks.append(task)
 
     # Wait for all to complete
     results = await asyncio.gather(*tasks)
