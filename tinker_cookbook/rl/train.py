@@ -46,7 +46,6 @@ from contextlib import contextmanager
 logger = logging.getLogger(__name__)
 
 
-
 def _get_evaluator_name(evaluator: SamplingClientEvaluator) -> str:
     return (
         evaluator.name
