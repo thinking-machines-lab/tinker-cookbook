@@ -263,6 +263,19 @@ class Config:
 
 
 @scope
+async def run_single_evaluation(evaluator, cfg, i_batch, sampling_client):
+    ev_name = _get_evaluator_name(evaluator)
+    with _get_logtree_scope(
+        log_path=cfg.log_path,
+        num_groups_to_log=cfg.num_groups_to_log,
+        f_name=f"eval_{ev_name}_iteration_{i_batch:06d}",
+        scope_name=f"Running evaluation {ev_name} {i_batch}",
+    ):
+        eval_metrics = await evaluator(sampling_client)
+        return {f"test/{k}": v for k, v in eval_metrics.items()}
+
+
+@scope
 async def run_evaluations_parallel(
     evaluators: list[SamplingClientEvaluator],
     sampling_client: tinker.SamplingClient,
@@ -270,17 +283,6 @@ async def run_evaluations_parallel(
     i_batch: int,
 ) -> dict[str, Any]:
     """Run all evaluators in parallel and return aggregated metrics."""
-
-    async def run_single_evaluation(evaluator, cfg, i_batch, sampling_client):
-        ev_name = _get_evaluator_name(evaluator)
-        with _get_logtree_scope(
-            log_path=cfg.log_path,
-            num_groups_to_log=cfg.num_groups_to_log,
-            f_name=f"eval_{ev_name}_iteration_{i_batch:06d}",
-            scope_name=f"Running evaluation {ev_name} {i_batch}",
-        ):
-            eval_metrics = await evaluator(sampling_client)
-            return {f"test/{k}": v for k, v in eval_metrics.items()}
 
     # Create tasks for all evaluators with names for better traceability
     tasks = []
