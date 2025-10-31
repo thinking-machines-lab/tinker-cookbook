@@ -262,6 +262,7 @@ async def run_evaluations_parallel(
     i_batch: int,
 ) -> dict[str, Any]:
     """Run all evaluators in parallel and return aggregated metrics."""
+
     async def run_single_evaluation(evaluator, cfg, i_batch, sampling_client):
         ev_name = (
             evaluator.name
@@ -279,8 +280,7 @@ async def run_evaluations_parallel(
 
     # Create tasks for all evaluators
     tasks = [
-        run_single_evaluation(evaluator, cfg, i_batch, sampling_client)
-        for evaluator in evaluators
+        run_single_evaluation(evaluator, cfg, i_batch, sampling_client) for evaluator in evaluators
     ]
 
     # Wait for all to complete
@@ -329,7 +329,9 @@ async def do_sync_training_with_stream_minibatch(
         # Run evaluations
         if (cfg.eval_every > 0 and i_batch % cfg.eval_every == 0) or i_batch == end_batch - 1:
             with timed("run_evals", metrics):
-                eval_metrics = await run_evaluations_parallel(evaluators, sampling_client, cfg, i_batch)
+                eval_metrics = await run_evaluations_parallel(
+                    evaluators, sampling_client, cfg, i_batch
+                )
                 metrics.update(eval_metrics)
 
         with _get_logtree_scope(
@@ -952,7 +954,9 @@ async def do_sync_training(
         # Run evaluations
         if cfg.eval_every > 0 and i_batch % cfg.eval_every == 0:
             with timed("run_evals", metrics):
-                eval_metrics = await run_evaluations_parallel(evaluators, sampling_client, cfg, i_batch)
+                eval_metrics = await run_evaluations_parallel(
+                    evaluators, sampling_client, cfg, i_batch
+                )
                 metrics.update(eval_metrics)
 
         # Get batch and sample trajectories
