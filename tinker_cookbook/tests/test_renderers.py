@@ -45,11 +45,7 @@ def test_generation_against_hf_chat_templates(model_name: str):
     elif model_name.startswith("deepseek-ai"):
         aug_convo = convo
     elif model_name.startswith("openai"):
-        convo[1] = {
-            "role": "assistant",
-            "thinking": "The user is sharing a greeting. We should respond politely.",
-            "content": "I'm fine, thank you!",
-        }
+        convo[1]["thinking"] = "The user is sharing a greeting. We should respond politely."
         aug_convo = convo
     else:
         raise ValueError(f"Unknown model name: {model_name}")
@@ -105,11 +101,7 @@ def test_supervised_example_against_hf_chat_templates(model_name: str):
         aug_convo = convo
     elif model_name.startswith("openai"):
         # Test thinking field for GPT-OSS
-        convo[1] = {
-            "role": "assistant",
-            "thinking": "The user is sharing a greeting. We should respond politely.",
-            "content": "I'm fine, thank you!",
-        }
+        convo[1]["thinking"] = "The user is sharing a greeting. We should respond politely."
         aug_convo = convo
     else:
         raise ValueError(f"Unknown model name: {model_name}")
