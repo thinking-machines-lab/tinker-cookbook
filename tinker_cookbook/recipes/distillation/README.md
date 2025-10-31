@@ -8,7 +8,7 @@ Specifically, we provide the scripts needed to reproduce our experiments from th
 
 ## Distillation for reasoning
 
-Our results can be reproducing by running:
+Our results can be reproduced by running:
 1. Supervised finetuning on [OpenThoughts3](https://huggingface.co/datasets/open-thoughts/OpenThoughts3-1.2M)
 2. On-policy distillation on [DeepMath](https://huggingface.co/datasets/zwhe99/DeepMath-103K)
 
