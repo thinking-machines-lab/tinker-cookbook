@@ -288,7 +288,7 @@ async def run_evaluations_parallel(
         ev_name = _get_evaluator_name(evaluator)
         task = asyncio.create_task(
             run_single_evaluation(evaluator, cfg, i_batch, sampling_client),
-            name=f"eval_task_{ev_name or i}_{i_batch}",
+            name=f"eval_{ev_name or i}_iteration_{i_batch:06d}",
         )
         tasks.append(task)
 
