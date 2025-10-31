@@ -340,13 +340,20 @@ class Qwen3Renderer(Renderer):
             # <think> in the assistant messages, we so don't need to re-add it in those cases.
             ob_str += "<think>\n"
         # Observation (prompt) part
-        ac_str = f"{ac_content}<|im_end|>"
+        if "tool_calls" in message:
+            ac_content += "\n".join(
+                [
+                    f"<tool_call>\n{json.dumps(tool_call)}\n</tool_call>"
+                    for tool_call in message["tool_calls"]
+                ]
+            )
+        ac_content += "<|im_end|>"
         # Action part
         ac_tail_str = ""  # No action tail needed for Qwen format
         # Action part that's only included in the last message in SFT
         return (
             self.tokenizer.encode(ob_str, add_special_tokens=False),
-            self.tokenizer.encode(ac_str, add_special_tokens=False),
+            self.tokenizer.encode(ac_content, add_special_tokens=False),
             self.tokenizer.encode(ac_tail_str, add_special_tokens=False),
         )
 
@@ -409,11 +416,10 @@ class Qwen3Renderer(Renderer):
         if not parse_success:
             return assistant_message, False
 
-        # NOTE:
-        # we use the <function_call>...</function_call> tag to wrap the tool call.
-        match = re.search(
-            r"<function_call>(.*?)</function_call>", assistant_message["content"], re.DOTALL
-        )
+        # Follow Qwen docs and Qwen-Agent's tool calling prompt to use <tool_call>...</tool_call> tags to wrap the tool call.
+        # - https://qwen.readthedocs.io/en/latest/getting_started/concepts.html#tool-calling
+        # - https://github.com/QwenLM/Qwen-Agent/blob/main/qwen_agent/llm/fncall_prompts/nous_fncall_prompt.py#L279-L282
+        match = re.search(r"<tool_call>(.*?)</tool_call>", assistant_message["content"], re.DOTALL)
         if match:
             tool_calls = self._parse_tool_call(match.group(1))
             if tool_calls is None:
