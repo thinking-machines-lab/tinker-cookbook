@@ -274,6 +274,7 @@ async def run_single_evaluation(evaluator, cfg, i_batch, sampling_client):
         eval_metrics = await evaluator(sampling_client)
         return {f"test/{k}": v for k, v in eval_metrics.items()}
 
+
 @scope
 async def run_evaluations_parallel(
     evaluators: list[SamplingClientEvaluator],
