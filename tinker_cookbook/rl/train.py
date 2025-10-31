@@ -324,7 +324,7 @@ async def do_sync_training_with_stream_minibatch(
     """
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        training_client, start_batch, cfg.log_path, cfg.save_every
+        training_client, start_batch, cfg.log_path, cfg.save_every, start_batch
     )
 
     for i_batch in range(start_batch, end_batch):
@@ -680,6 +680,7 @@ async def save_checkpoint_and_get_sampling_client(
     i_batch: int,
     log_path: str,
     save_every: int,
+    start_batch: int = 0,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     metrics = {}
     with timed("save_checkpoint", metrics):
@@ -688,7 +689,7 @@ async def save_checkpoint_and_get_sampling_client(
             name=f"{i_batch:06d}",
             log_path=log_path,
             loop_state={"batch": i_batch},
-            kind="both" if (i_batch > 0 and i_batch % save_every == 0) else "sampler",
+            kind="both" if (i_batch > start_batch and i_batch % save_every == 0) else "sampler",
         )
         return training_client.create_sampling_client(path_dict["sampler_path"]), metrics
 
@@ -949,7 +950,7 @@ async def do_sync_training(
     """Implements fully synchronous on-policy training"""
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        training_client, start_batch, cfg.log_path, cfg.save_every
+        training_client, start_batch, cfg.log_path, cfg.save_every, start_batch
     )
 
     for i_batch in range(start_batch, end_batch):
