@@ -106,6 +106,10 @@ class PromptOnlyEnv(ProblemEnv):
     def check_answer(self, sample_str: str) -> bool:
         # Always return False - no answer checking for distillation
         return False
+    
+    def get_reference_answer(self) -> str | None:
+        """No reference answer needed for distillation."""
+        pass
 
     async def step(self, action: Action) -> StepResult:
         """Return zero reward always."""
