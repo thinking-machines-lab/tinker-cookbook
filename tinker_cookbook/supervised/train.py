@@ -211,14 +211,13 @@ async def main(config: Config):
 
         if submitted.step % config.save_every == 0 and submitted.step > 0:
             with timed("save_checkpoint", metrics):
-                checkpoint_paths = await checkpoint_utils.save_checkpoint_async(
+                await checkpoint_utils.save_checkpoint_async(
                     training_client=training_client,
                     name=f"{submitted.step:06d}",
                     log_path=config.log_path,
                     loop_state={"epoch": submitted.epoch_idx, "batch": submitted.batch_idx},
                     kind="both",
                 )
-            metrics.update(checkpoint_paths)
 
         with timed("step", metrics):
             fwd_bwd_result = await submitted.fwd_bwd_future.result_async()
