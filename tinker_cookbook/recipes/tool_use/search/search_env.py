@@ -275,9 +275,6 @@ def download_search_r1_dataset(split: Literal["train", "test"]) -> list[SearchR1
     tmp_download_dir = Path("/tmp") / user / "data" / hf_repo_id / split
     tmp_download_dir.mkdir(parents=True, exist_ok=True)
 
-    hf_repo_id: str = "PeterJinGo/nq_hotpotqa_train"
-    parquet_filename: str = f"{split}.parquet"
-
     local_parquet_filepath = hf_hub_download(
         repo_id=hf_repo_id,
         filename=parquet_filename,
