@@ -139,7 +139,7 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
     async def compute_group_rewards(
         self,
         trajectory_group: list[Trajectory],
-        env_group: list[Env],
+        env_group: Sequence[Env],
     ) -> list[tuple[float, Metrics]]:
         assert all(len(trajectory.transitions) == 1 for trajectory in trajectory_group)
         # Get response from each trajectory
