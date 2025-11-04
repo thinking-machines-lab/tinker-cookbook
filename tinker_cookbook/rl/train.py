@@ -1052,17 +1052,18 @@ async def main(
         start_batch = 0
 
     service_client = tinker.ServiceClient(base_url=cfg.base_url)
-    training_client = await service_client.create_lora_training_client_async(
-        cfg.model_name, rank=cfg.lora_rank
-    )
-
     load_state_path: str | None = (
         resume_info["state_path"] if resume_info else cfg.load_checkpoint_path
     )
     if load_state_path:
-        future = await training_client.load_state_async(load_state_path)
-        _ = await future.result_async()
+        training_client = await service_client.create_training_client_from_state_async(
+            load_state_path
+        )
         logger.info(f"Loaded state from {load_state_path}")
+    else:
+        training_client = await service_client.create_lora_training_client_async(
+            cfg.model_name, rank=cfg.lora_rank
+        )
 
     # Get tokenizer from training client
     tokenizer = training_client.get_tokenizer()
