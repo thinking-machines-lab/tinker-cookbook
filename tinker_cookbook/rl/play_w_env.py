@@ -1,4 +1,4 @@
-""" 
+"""
 To help you debug your environment, you can use the play_env function to play as the policy by typing in your responses in an environment interactively.
 
 We include an example of playing the Twenty Questions environment in the main function.
