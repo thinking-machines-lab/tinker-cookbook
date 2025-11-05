@@ -39,6 +39,9 @@ class CLIConfig:
     save_every: int = 100
     eval_every: int = 20
 
+    # Logtree configuration - number of groups to log per iteration (0 = disable)
+    num_groups_to_log: int = 4
+
 
 def sft_stage(
     log_path: str,
@@ -87,7 +90,7 @@ def sft_stage(
     )
 
     # Run training
-    supervised_train.main(config)
+    asyncio.run(supervised_train.main(config))
 
 
 def train_rm(
@@ -139,7 +142,7 @@ def train_rm(
     )
 
     # Run training
-    supervised_train.main(config)
+    asyncio.run(supervised_train.main(config))
 
 
 async def train_rl(
@@ -156,6 +159,7 @@ async def train_rl(
     max_tokens: int,
     save_every: int,
     eval_every: int,
+    num_groups_to_log: int = 4,
 ):
     """Train policy using RL with prompts from Anthropic HHH data."""
     # Get checkpoints from previous stages
@@ -219,6 +223,7 @@ async def train_rl(
         lora_rank=lora_rank,
         save_every=save_every,
         eval_every=eval_every,
+        num_groups_to_log=num_groups_to_log,
     )
     await train.main(config)
 
@@ -270,6 +275,7 @@ def cli_main(cli_config: CLIConfig):
                 cli_config.rl_max_tokens,
                 cli_config.save_every,
                 cli_config.eval_every,
+                cli_config.num_groups_to_log,
             )
         )
 

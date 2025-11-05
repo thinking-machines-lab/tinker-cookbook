@@ -150,6 +150,10 @@ class SearchEnv(ProblemEnv):
     def check_format(self, sample_str: str) -> bool:
         return self._extract_answer(sample_str) is not None
 
+    def get_reference_answer(self) -> str:
+        """Return the reference answer for logging purposes."""
+        return " OR ".join(self.answer) if self.answer else "N/A"
+
     async def call_search_tool(self, tool_call: renderers.ToolCall) -> list[renderers.Message]:
         async with _CONNECTION_SEMAPHORE:
             return await self.chroma_tool_client.invoke(tool_call)
@@ -270,9 +274,6 @@ def download_search_r1_dataset(split: Literal["train", "test"]) -> list[SearchR1
     assert user is not None
     tmp_download_dir = Path("/tmp") / user / "data" / hf_repo_id / split
     tmp_download_dir.mkdir(parents=True, exist_ok=True)
-
-    hf_repo_id: str = "PeterJinGo/nq_hotpotqa_train"
-    parquet_filename: str = f"{split}.parquet"
 
     local_parquet_filepath = hf_hub_download(
         repo_id=hf_repo_id,

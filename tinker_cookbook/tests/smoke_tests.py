@@ -41,7 +41,7 @@ def test_supervised():
         wandb_project="tinker-smoke-test",
         learning_rate=1e-4,
     )
-    supervised_train.main(cfg)
+    asyncio.run(supervised_train.main(cfg))
 
 
 async def test_rl():

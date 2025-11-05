@@ -97,7 +97,7 @@ def create_dpo_clients(
     )
     if load_state_path:
         # Load state into the training client
-        training_client.load_state(load_state_path)
+        training_client.load_state(load_state_path).result()
         logger.info(f"Loaded weights from {load_state_path}")
     # Create a sampling client for the reference model from the training client
     reference_client = training_client.save_weights_and_get_sampling_client("reference")

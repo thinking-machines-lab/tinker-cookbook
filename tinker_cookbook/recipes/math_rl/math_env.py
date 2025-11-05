@@ -54,6 +54,9 @@ class MathEnv(ProblemEnv):
             return False
         return safe_grade(answer, self.answer, self.grader, self.timeout)
 
+    def get_reference_answer(self) -> str:
+        return self.answer
+
     @staticmethod
     def standard_fewshot_prefix() -> list[renderers.Message]:
         return [

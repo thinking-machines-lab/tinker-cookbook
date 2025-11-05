@@ -24,6 +24,7 @@ from tinker_cookbook.rl.types import (
     StepResult,
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.utils import logtree
 
 ANSWERER_SYSTEM_PROMPT = """
 You are the answerer in a game of 20 questions. You should only ever respond with 'yes' or 'no'. Your secret word is {answer}. If the other player guesses it with Guess: <answer>, respond with 'yes' only if the answer is precisely your secret word.
@@ -113,6 +114,15 @@ class TwentyQuestionsEnv(Env):
         # the episode ends if the player guessed the answer or the player asked more than 20 questions
         reward = self._compute_reward(action_message["content"])
         episode_done = (reward == 1) or (len(self.turns) // 2 >= 20)
+
+        # Log the turn
+        turn_num = len(self.turns) // 2
+        logtree.log_text(f"Turn {turn_num} - Player: {action_message['content']}")
+        logtree.log_text(f"Turn {turn_num} - Answerer: {answer_message['content']}")
+        if episode_done:
+            logtree.log_text(
+                f"Game Over - Secret: {self.answer}, Won: {'✓' if reward == 1 else '✗'}, Turns: {turn_num}"
+            )
 
         # step 4: we return the next observation, reward, and whether the episode is done
         step_result = StepResult(
