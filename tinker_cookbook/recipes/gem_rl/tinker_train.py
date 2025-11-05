@@ -246,7 +246,7 @@ async def main(config: Config):
     # by directly providing dataset when creating the env. (we can also use the gem.Env.spawn api).
     envs = [gem.make(config.env_id, seed=int(time.time_ns()), use_mp=False)]
     for i in range(config.num_env - 1):
-        dataset = envs[0].dataset if hasattr(envs[0], "dataset") else None
+        dataset = envs[0].dataset if hasattr(envs[0], "dataset") else None # type: ignore
         envs.append(
             gem.make(
                 config.env_id,
@@ -264,13 +264,13 @@ async def main(config: Config):
     skip_eval = not hasattr(envs[0], "dataset")
     eval_data_size = 0
     if not skip_eval:
-        eval_data_size = len(eval_envs[0].dataset)
+        eval_data_size = len(eval_envs[0].dataset) # type: ignore
         for i in range((config.eval_n * eval_data_size) - 1):
             eval_envs.append(
                 gem.make(
                     config.eval_env_id,
                     seed=int(time.time_ns()) * i,
-                    dataset=eval_envs[0].dataset,
+                    dataset=eval_envs[0].dataset, # type: ignore
                     use_mp=False,
                     eval=True,
                 )

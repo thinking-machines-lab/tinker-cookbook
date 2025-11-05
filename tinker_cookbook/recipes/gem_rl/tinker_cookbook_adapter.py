@@ -165,7 +165,7 @@ class GemDatasetBuilder(RLDatasetBuilder):
     async def __call__(self) -> tuple[RLDataset, RLDataset | None]:
         env_kwargs = json.loads(self.env_kwargs_json) if self.env_kwargs_json else {}
         env_parent = gem.make(self.env_id, seed=int(time.time_ns()), **env_kwargs)
-        seed_parent = env_parent.seed
+        seed_parent = env_parent.seed # type: ignore
         pool = [env_parent.spawn(seed=i + seed_parent + 1) for i in range(self.groups_per_batch)]
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
         renderer = renderers.get_renderer(self.renderer_name, tokenizer=tokenizer)
