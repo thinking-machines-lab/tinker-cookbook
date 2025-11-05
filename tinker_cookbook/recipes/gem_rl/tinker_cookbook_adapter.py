@@ -59,7 +59,7 @@ class GemTinkerEnv(Env):
 
     async def initial_observation(self) -> tuple[Observation, StopCondition]:
         self.convo.append(
-            {"role": "user", "content": PROMPT_FACTORY[self.prompt_type](self.init_obs)}
+            {"role": "user", "content": PROMPT_FACTORY[self.prompt_type](str(self.init_obs))}
         )
         return self.renderer.build_generation_prompt(self.convo), self.stop_condition
 

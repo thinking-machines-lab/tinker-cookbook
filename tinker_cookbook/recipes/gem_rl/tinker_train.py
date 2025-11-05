@@ -10,7 +10,7 @@ import os
 import pprint
 import time
 from datetime import datetime
-from typing import Any, List, Literal
+from typing import Any, List, Literal, Dict
 
 import chz
 import numpy as np
@@ -262,6 +262,7 @@ async def main(config: Config):
     # Setup environment for in-distribution eval
     eval_envs = [gem.make(config.eval_env_id, seed=int(time.time_ns()), use_mp=False, eval=True)]
     skip_eval = not hasattr(envs[0], "dataset")
+    eval_data_size = 0
     if not skip_eval:
         eval_data_size = len(eval_envs[0].dataset)
         for i in range((config.eval_n * eval_data_size) - 1):
@@ -298,7 +299,7 @@ async def main(config: Config):
     # Start agent-environment loop (Algo: https://arxiv.org/pdf/2510.01051#page=15.10):
     for policy_iteration_step in range(config.max_steps):
         print("=" * 10 + f" Step {policy_iteration_step} " + "=" * 10)
-        metrics = {"step": policy_iteration_step}
+        metrics: Dict[str, Any] = {"step": policy_iteration_step}
 
         # create sampler
         sampling_path = (
