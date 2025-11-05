@@ -252,7 +252,7 @@ class TwentyQuestionsDatasetBuilder(RLDatasetBuilder):
         return train_words, test_words
 
 
-def construct_minimal_20q_env(answer: str) -> Env:
+def construct_minimal_20q_env(answer: str) -> TwentyQuestionsEnv:
     answerer_model = "meta-llama/Llama-3.1-8B-Instruct"
 
     service_client = tinker.ServiceClient()
