@@ -258,8 +258,14 @@ def construct_minimal_20q_env(answer: str) -> Env:
     service_client = tinker.ServiceClient()
     answerer_sampling_client = service_client.create_sampling_client(base_model=answerer_model)
     answerer = TinkerMessageCompleter(
-        sampling_client=answerer_sampling_client, renderer=get_renderer(get_recommended_renderer_name(answerer_model), get_tokenizer(answerer_model)), max_tokens=5
+        sampling_client=answerer_sampling_client,
+        renderer=get_renderer(
+            get_recommended_renderer_name(answerer_model), get_tokenizer(answerer_model)
+        ),
+        max_tokens=5,
     )
-    policy_renderer = get_renderer(get_recommended_renderer_name(answerer_model), get_tokenizer(answerer_model)) # this argument is not actually used and is a placeholder
+    policy_renderer = get_renderer(
+        get_recommended_renderer_name(answerer_model), get_tokenizer(answerer_model)
+    )  # this argument is not actually used and is a placeholder
     env = TwentyQuestionsEnv(answerer, answer, policy_renderer)
     return env

@@ -1,6 +1,4 @@
-"""
-
-"""
+""" """
 
 import asyncio
 import tinker
@@ -13,9 +11,6 @@ from tinker_cookbook.completers import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.rl.rollouts import do_single_rollout
 from tinker_cookbook.rl.types import Env, Trajectory
-from tinker_cookbook.renderers import get_renderer
-from tinker_cookbook.tokenizer_utils import get_tokenizer
-from tinker_cookbook.model_info import get_recommended_renderer_name
 
 
 async def get_async_input(prompt: str) -> str:
@@ -40,7 +35,6 @@ class ManualPolicy(TokenCompleter):
         self.step_count += 1
         return TokensWithLogprobs(tokens=action_tokens, maybe_logprobs=None)
 
-    
 
 def print_trajectory_summary(trajectory: Trajectory):
     """Print a summary of the completed trajectory."""
@@ -70,11 +64,11 @@ async def play_env(env: Env, tokenizer: Tokenizer):
     return trajectory
 
 
-
-
-
 async def main():
-    from tinker_cookbook.recipes.multiplayer_rl.twenty_questions.env import construct_minimal_20q_env
+    from tinker_cookbook.recipes.multiplayer_rl.twenty_questions.env import (
+        construct_minimal_20q_env,
+    )
+
     answer = "apple"
     env = construct_minimal_20q_env(answer)
     await play_env(env, env.renderer.tokenizer)
