@@ -474,6 +474,23 @@ class DeepSeekV3Renderer(Renderer):
     For no-think, just use <|Assistant|></think>
     """
 
+    def _split_system_prompt(self, messages: list[Message]) -> tuple[str | None, list[Message]]:
+        """
+        DeepSeek v3 only supports a single system message, placed immediately after BOS.
+        """
+        system_prompt: str | None = None
+        filtered_messages: list[Message] = []
+        for idx, message in enumerate(messages):
+            if message["role"] == "system":
+                if idx == 0 and system_prompt is None:
+                    system_prompt = message["content"]
+                    continue
+                raise ValueError(
+                    "DeepSeek v3 only supports a single system message as the first message in the conversation."
+                )
+            filtered_messages.append(message)
+        return system_prompt, filtered_messages
+
     def _render_message(self, message: Message) -> tuple[list[int], list[int], list[int]]:
         assert message.get("thinking") is None, "TODO: support CoT in DsV3 renderer"
         if message["role"] == "user":
@@ -481,7 +498,7 @@ class DeepSeekV3Renderer(Renderer):
         elif message["role"] == "assistant":
             role_token = self._get_special_token("Assistant")
         else:
-            raise ValueError(f"Unsuppoerted role: {message['role']}")
+            raise ValueError(f"Unsupported role: {message['role']}")
         ob = [role_token]
         ac = self.tokenizer.encode(message["content"], add_special_tokens=False)
 
@@ -494,9 +511,12 @@ class DeepSeekV3Renderer(Renderer):
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:
+        system_prompt, non_system_messages = self._split_system_prompt(messages)
         tokens: list[int] = []
         tokens.extend(self._bos_tokens)
-        for message in messages:
+        if system_prompt:
+            tokens.extend(self.tokenizer.encode(system_prompt, add_special_tokens=False))
+        for message in non_system_messages:
             ob_part, action_part, action_tail = self._render_message(message)
             tokens.extend(ob_part)
             tokens.extend(action_part)
@@ -514,10 +534,16 @@ class DeepSeekV3Renderer(Renderer):
         """
         Get tokens and weights for action corresponding to final message
         """
+        system_prompt, non_system_messages = self._split_system_prompt(messages)
+        if not non_system_messages:
+            raise ValueError("DeepSeek v3 requires at least one non-system message in the conversation.")
+        start_tokens = list(self._bos_tokens)
+        if system_prompt:
+            start_tokens.extend(self.tokenizer.encode(system_prompt, add_special_tokens=False))
         return build_supervised_example(
-            self._bos_tokens,
+            start_tokens,
             lambda _idx, message: self._render_message(message),
-            messages,
+            non_system_messages,
             train_on_what,
         )
 
@@ -561,6 +587,31 @@ class DeepSeekV3DisableThinkingRenderer(DeepSeekV3Renderer):
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:
         prefill = "</think>" + (prefill or "")
+        return super().build_generation_prompt(messages, role, prefill)
+
+
+class DeepSeekV3ForceThinkingRenderer(DeepSeekV3Renderer):
+    """
+    Renderer that forces inclusion of a thinking block for DsV3 models.
+    """
+
+    def _render_message(self, message: Message) -> tuple[list[int], list[int], list[int]]:
+        if message["role"] == "assistant":
+            content = message["content"]
+            new_content = content
+            if new_content.startswith("</think>"):
+                new_content = new_content[len("</think>") :]
+            if not new_content.startswith("<think>"):
+                new_content = "<think>" + new_content
+            if new_content != content:
+                message = message.copy()
+                message["content"] = new_content
+        return super()._render_message(message)
+
+    def build_generation_prompt(
+        self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
+    ) -> tinker.ModelInput:
+        prefill = "<think>" + (prefill or "")
         return super().build_generation_prompt(messages, role, prefill)
 
 
@@ -717,6 +768,8 @@ def get_renderer(name: str, tokenizer: Tokenizer) -> Renderer:
         return DeepSeekV3Renderer(tokenizer)
     elif name == "deepseekv3_disable_thinking":
         return DeepSeekV3DisableThinkingRenderer(tokenizer)
+    elif name == "deepseekv3_force_thinking":
+        return DeepSeekV3ForceThinkingRenderer(tokenizer)
     elif name == "gpt_oss_no_sysprompt":
         return GptOssRenderer(tokenizer, use_system_prompt=False)
     elif name == "gpt_oss_low_reasoning":
