@@ -68,7 +68,7 @@ def get_lora_lr_over_full_finetune_lr(model_name: str, lora_alpha: int = 32) -> 
     Find the factor that you should scale the full fine-tuning learning rate by to get the equivalent LoRA learning rate.
     """
 
-    return _get_hidden_size(model_name) / (2 * lora_alpha)
+    return 10.0 
 
 
 def _get_hidden_size(model_name: str) -> int:
