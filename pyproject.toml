@@ -13,7 +13,7 @@ dependencies = [
     "numpy",
     "rich",
     "termcolor",
-    "tinker",
+    "tinker>=0.3.0",
     "torch",
     "transformers",
     "blobfile",
