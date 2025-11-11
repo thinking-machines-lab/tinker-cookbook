@@ -7,12 +7,14 @@ from typing import Any, Literal
 import tinker
 
 from tinker_cookbook.utils.file_utils import read_jsonl
+from tinker_cookbook.utils.trace import get_scope_context, scope
 
 CHECKPOINTS_BASE_NAME = "checkpoints.jsonl"
 
 logger = logging.getLogger(__name__)
 
 
+@scope
 def load_checkpoints_file(log_dir: str) -> list[dict[str, Any]]:
     checkpoint_path = os.path.join(log_dir, CHECKPOINTS_BASE_NAME)
     if not os.path.exists(checkpoint_path):
@@ -20,9 +22,12 @@ def load_checkpoints_file(log_dir: str) -> list[dict[str, Any]]:
         return []
 
     logger.info(f"Reading checkpoints from {checkpoint_path}")
+    context = get_scope_context()
+    context.attributes["checkpoint_path"] = checkpoint_path
     return read_jsonl(checkpoint_path)
 
 
+@scope
 def get_last_checkpoint(log_dir: str, required_key: str = "state_path") -> dict[str, Any] | None:
     """
     Get the last checkpoint from the checkpoints.jsonl file in the specified log directory.
@@ -49,6 +54,7 @@ def get_last_checkpoint(log_dir: str, required_key: str = "state_path") -> dict[
         return None
 
 
+@scope
 async def save_checkpoint_async(
     training_client: tinker.TrainingClient,
     name: str,
@@ -72,6 +78,8 @@ async def save_checkpoint_async(
 
     results = {k: await v.result_async() for k, v in futures.items()}
     paths = {k + "_path": v.path for k, v in results.items()}
+    context = get_scope_context()
+    context.attributes.update(paths)
     logger.info(f"Saved checkpoints: {paths}")
     full_dict = {"name": name, **loop_state, **paths}
     with open(os.path.join(log_path, "checkpoints.jsonl"), "a") as f:
@@ -80,6 +88,7 @@ async def save_checkpoint_async(
     return paths
 
 
+@scope
 def save_checkpoint(
     training_client: tinker.TrainingClient,
     name: str,
