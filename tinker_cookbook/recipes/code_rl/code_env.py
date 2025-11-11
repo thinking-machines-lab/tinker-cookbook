@@ -28,16 +28,20 @@ from tinker_cookbook.utils import logtree
 def _load_deepcoder_split(split: Literal["train", "test"]) -> Dataset:
     if split == "train":
         datasets = [
-            load_dataset("agentica-org/DeepCoder-Preview-Dataset", name=name, split="train")
+            cast(
+                Dataset,
+                load_dataset("agentica-org/DeepCoder-Preview-Dataset", name=name, split="train"),
+            )
             for name in ("primeintellect", "taco", "lcbv5")
         ]
     elif split == "test":
         datasets = [
-            load_dataset("agentica-org/DeepCoder-Preview-Dataset", name=name, split="test")
+            cast(
+                Dataset,
+                load_dataset("agentica-org/DeepCoder-Preview-Dataset", name=name, split="test"),
+            )
             for name in ("codeforces", "lcbv5")
         ]
-    else:
-        raise ValueError(f"Unsupported split: {split}")
     return cast(Dataset, concatenate_datasets(datasets))
 
 
@@ -119,18 +123,25 @@ class CodeEnv(ProblemEnv):
     def check_format(self, sample_str: str) -> bool:
         return extract_code_from_model(sample_str) is not None
 
-    async def check_answer(self, sample_str: str) -> bool:
+    def check_answer(self, sample_str: str) -> bool:
+        """Not used - CodeEnv uses async check_sandbox_correctness instead."""
+        return False
+
+    async def check_sandbox_correctness(self, sample_str: str) -> bool:
         """Check if the code passes all test cases using sandbox execution."""
         code = extract_code_from_model(sample_str)
         if code is None:
             logtree.log_text("No code block detected in response.")
             return False
-        
+
         try:
             success, details = await sandbox_check_correctness(
-                self.tests, code, timeout=self.reward_timeout)
+                self.tests, code, timeout=self.reward_timeout
+            )
             status = "✓" if success else "✗"
-            logtree.log_text(f"Sandbox result {status}: {'All tests passed' if success else 'Failed'}")
+            logtree.log_text(
+                f"Sandbox result {status}: {'All tests passed' if success else 'Failed'}"
+            )
             return success
         except Exception as exc:
             logger.warning("Sandbox check failed: %s", exc, exc_info=True)
@@ -144,7 +155,7 @@ class CodeEnv(ProblemEnv):
         message, parse_success = self.renderer.parse_response(action)
         content = message["content"]
         format_ok_bool = bool(parse_success) and self.check_format(content)
-        correct_answer_bool = await self.check_answer(content)
+        correct_answer_bool = await self.check_sandbox_correctness(content)
         format_score = float(format_ok_bool)
         correct_score = float(correct_answer_bool)
         total_reward = self.format_coef * (format_score - 1.0) + correct_score

@@ -782,7 +782,7 @@ def reliability_guard(maximum_memory_bytes=None):
     sys.modules["tkinter"] = None
 '''
 
-TEST_CODE = '''
+TEST_CODE = """
 import json
 import sys
 
@@ -799,7 +799,7 @@ if any(x != True for x in result):
     sys.exit(-1)
 else:
     sys.exit(0)
-'''
+"""
 
 LCB_SYSTEM_MESSAGE_GENERIC = "You are an expert Python programmer. You will be given a question (problem specification) and will generate a correct Python program that matches the specification and passes all tests."
 LCB_FORMATTING_MESSAGE_WITH_STARTER_CODE = "You will use the following starter code to write the solution to the problem and enclose your code within delimiters."
