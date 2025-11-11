@@ -686,14 +686,17 @@ async def save_checkpoint_and_get_sampling_client(
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     metrics = {}
     with timed("save_checkpoint", metrics):
-        path_dict = await checkpoint_utils.save_checkpoint_async(
-            training_client=training_client,
-            name=f"{i_batch:06d}",
-            log_path=log_path,
-            loop_state={"batch": i_batch},
-            kind="both" if (i_batch > start_batch and i_batch % save_every == 0) else "sampler",
-        )
-        return training_client.create_sampling_client(path_dict["sampler_path"]), metrics
+        if i_batch > start_batch and i_batch % save_every == 0:
+            path_dict = await checkpoint_utils.save_checkpoint_async(
+                training_client=training_client,
+                name=f"{i_batch:06d}",
+                log_path=log_path,
+                loop_state={"batch": i_batch},
+                kind="both",
+            )
+            return training_client.create_sampling_client(path_dict["sampler_path"]), metrics
+        else:
+            return await training_client.save_weights_and_get_sampling_client_async(), metrics
 
 
 @scope
