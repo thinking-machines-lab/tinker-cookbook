@@ -119,9 +119,13 @@ def build_supervised_example(
         ob_part, action_part, action_tail = render_message(idx, message)
 
         if train_on_what == TrainOnWhat.CUSTOMIZED:
-            assert "trainable" in message, "When using CUSTOMIZED train_on_what, each message must have a trainable field: True if loss is applied on this message, False otherwise"
+            assert "trainable" in message, (
+                "When using CUSTOMIZED train_on_what, each message must have a trainable field: True if loss is applied on this message, False otherwise"
+            )
         else:
-            assert "trainable" not in message, "When using non-CUSTOMIZED train_on_what, each message must not have a trainable field. Either change train_on_what to CUSTOMIZED or remove the trainable field from the message"
+            assert "trainable" not in message, (
+                "When using non-CUSTOMIZED train_on_what, each message must not have a trainable field. Either change train_on_what to CUSTOMIZED or remove the trainable field from the message"
+            )
 
         if train_on_what == TrainOnWhat.LAST_ASSISTANT_MESSAGE:
             tokens_weights.extend([(token, 0) for token in ob_part + action_part])
