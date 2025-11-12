@@ -83,6 +83,8 @@ class SubmittedBatch:
     epoch_idx: int
     batch_idx: int
     batch_start_time: float
+    eval_metrics_future: asyncio.Task[dict[str, float]] | None = None
+    infrequent_eval_metrics_future: asyncio.Task[dict[str, float]] | None = None
 
 
 async def run_evals(
@@ -90,7 +92,17 @@ async def run_evals(
     training_client: tinker.TrainingClient,
     step: int,
 ) -> dict[str, float]:
-    """Run all evaluators and return metrics with test/ prefix."""
+    """Run evaluators before training step `step`.
+
+    Notes:
+    - Timing: Evals are invoked BEFORE optimizer step `step` is submitted, so they
+      snapshot pre-step `step` weights (i.e., post-step `step-1` or initial for step 0).
+    - TrainingClient evaluators run against the in-memory training client.
+    - SamplingClient evaluators receive a fresh sampling client created from a
+      saved snapshot of the current (pre-step) weights labeled "evals_step_{step}".
+    - Returned metrics are prefixed with "test/" and logged on the same row
+      (step == `step`) as the corresponding training metrics.
+    """
     metrics = {}
     sampling_client = None
 
@@ -100,6 +112,7 @@ async def run_evals(
         elif isinstance(evaluator, SamplingClientEvaluator):
             # Create sampling client lazily, only when needed
             if sampling_client is None:
+                # Snapshot the current pre-step weights and create a new sampling client.
                 sampling_client = await training_client.save_weights_and_get_sampling_client_async(
                     f"evals_step_{step}"
                 )
@@ -114,7 +127,23 @@ async def run_evals(
 
 
 async def main(config: Config):
-    """Main training function that runs the complete training process."""
+    """Main training function that runs the complete training process.
+
+    Checkpointing and resume:
+    - If resuming, the stored `epoch`/`batch` indices denote the NEXT batch to run,
+      or equivalently, how many epochs and batches have been completed.
+      The checkpointed state itself reflects updates through the previous batch.
+    - Step checkpoints are saved when `submitted.step % save_every == 0` and
+      `submitted.step > 0`. Save requests are queued after the already-submitted
+      forward/backward and optimizer requests for that step, so snapshots capture
+      post-step weights.
+
+    Eval timing:
+    - Evals are triggered BEFORE submitting optimizer step `i`, so they snapshot
+      pre-step `i` weights (i.e., post-step `i-1` weights, or initial weights for step 0).
+      The eval operations are queued before training operations, then awaited after
+      training completes. Results are logged on the metrics row for `step == i`.
+    """
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     if resume_info:
         start_epoch = resume_info["epoch"]
@@ -122,6 +151,7 @@ async def main(config: Config):
     else:
         start_epoch = 0
         start_batch = 0
+    # (start_epoch, start_batch) now represent the next batch to execute if resuming.
 
     ml_logger = ml_log.setup_logging(
         log_dir=config.log_path,
@@ -191,6 +221,21 @@ async def main(config: Config):
         if data:
             logger.info(colorize_example(data[0], tokenizer))
 
+        # Trigger evaluations BEFORE submitting training operations so they snapshot pre-step weights
+        eval_metrics_future = None
+        if evaluators and config.eval_every > 0 and step % config.eval_every == 0:
+            eval_metrics_future = asyncio.create_task(run_evals(evaluators, training_client, step))
+
+        infrequent_eval_metrics_future = None
+        if (
+            infrequent_evaluators
+            and config.infrequent_eval_every > 0
+            and step % config.infrequent_eval_every == 0
+        ):
+            infrequent_eval_metrics_future = asyncio.create_task(
+                run_evals(infrequent_evaluators, training_client, step)
+            )
+
         fwd_bwd_future = await training_client.forward_backward_async(data, loss_fn="cross_entropy")
         optim_step_future = await training_client.optim_step_async(adam_params)
 
@@ -203,6 +248,8 @@ async def main(config: Config):
             epoch_idx=epoch_idx,
             batch_idx=batch_idx,
             batch_start_time=batch_start_time,
+            eval_metrics_future=eval_metrics_future,
+            infrequent_eval_metrics_future=infrequent_eval_metrics_future,
         )
 
     async def finish_batch(submitted: SubmittedBatch):
@@ -211,6 +258,8 @@ async def main(config: Config):
 
         if submitted.step % config.save_every == 0 and submitted.step > 0:
             with timed("save_checkpoint", metrics):
+                # Enqueue a checkpoint save after the forward/backward and optimizer
+                # requests for this step; the snapshot will reflect post-step weights.
                 await checkpoint_utils.save_checkpoint_async(
                     training_client=training_client,
                     name=f"{submitted.step:06d}",
@@ -237,22 +286,18 @@ async def main(config: Config):
         )
         metrics["time/total"] = time.time() - submitted.batch_start_time
 
-        if evaluators and config.eval_every > 0 and submitted.step % config.eval_every == 0:
+        # Await eval futures that were triggered before the training step
+        if submitted.eval_metrics_future is not None:
             with timed("evals", metrics):
-                eval_metrics = await run_evals(evaluators, training_client, submitted.step)
+                eval_metrics = await submitted.eval_metrics_future
             metrics.update(eval_metrics)
 
-        if (
-            infrequent_evaluators
-            and config.infrequent_eval_every > 0
-            and submitted.step % config.infrequent_eval_every == 0
-        ):
+        if submitted.infrequent_eval_metrics_future is not None:
             with timed("infrequent_evals", metrics):
-                eval_metrics = await run_evals(
-                    infrequent_evaluators, training_client, submitted.step
-                )
+                eval_metrics = await submitted.infrequent_eval_metrics_future
             metrics.update(eval_metrics)
 
+        # Emit all metrics for this step (train and eval) on the `submitted.step` row.
         ml_logger.log_metrics(metrics=metrics, step=submitted.step)
 
     pending_batch: SubmittedBatch | None = None
