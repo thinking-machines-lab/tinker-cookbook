@@ -136,8 +136,8 @@ async def main(config: Config):
     )
 
     user_metadata: dict[str, str] = {}
-    if wandbd_link := ml_logger.get_logger_url():
-        user_metadata["wandbd_link"] = wandbd_link
+    if wandb_link := ml_logger.get_logger_url():
+        user_metadata["wandb_link"] = wandb_link
 
     if load_state_path:
         training_client = await service_client.create_training_client_from_state_async(
