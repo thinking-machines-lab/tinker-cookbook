@@ -83,8 +83,8 @@ class SubmittedBatch:
     epoch_idx: int
     batch_idx: int
     batch_start_time: float
-    eval_metrics_future: asyncio.Task[dict[str, float]] | None = None
-    infrequent_eval_metrics_future: asyncio.Task[dict[str, float]] | None = None
+    eval_metrics: dict[str, float] | None = None
+    infrequent_eval_metrics: dict[str, float] | None = None
 
 
 async def run_evals(
@@ -95,9 +95,9 @@ async def run_evals(
     """Run evaluators before training step `step`.
 
     Notes:
-    - Timing: Evals are invoked BEFORE optimizer step `step` is submitted, so they
-      snapshot pre-step `step` weights (i.e., post-step `step-1` or initial for step 0).
-    - TrainingClient evaluators run against the in-memory training client.
+    - Timing: Callers await this helper *before* submitting optimizer step `step`, so it
+      snapshots pre-step `step` weights (i.e., post-step `step-1` or initial for step 0).
+    - TrainingClient evaluators run directly against the in-memory training client.
     - SamplingClient evaluators receive a fresh sampling client created from a
       saved snapshot of the current (pre-step) weights labeled "evals_step_{step}".
     - Returned metrics are prefixed with "test/" and logged on the same row
@@ -139,10 +139,9 @@ async def main(config: Config):
       post-step weights.
 
     Eval timing:
-    - Evals are triggered BEFORE submitting optimizer step `i`, so they snapshot
+    - Evals are triggered and awaited BEFORE submitting optimizer step `i`, so they snapshot
       pre-step `i` weights (i.e., post-step `i-1` weights, or initial weights for step 0).
-      The eval operations are queued before training operations, then awaited after
-      training completes. Results are logged on the metrics row for `step == i`.
+      Results are logged on the metrics row for `step == i`.
     """
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     if resume_info:
@@ -222,19 +221,21 @@ async def main(config: Config):
             logger.info(colorize_example(data[0], tokenizer))
 
         # Trigger evaluations BEFORE submitting training operations so they snapshot pre-step weights
-        eval_metrics_future = None
+        eval_metrics = None
         if evaluators and config.eval_every > 0 and step % config.eval_every == 0:
-            eval_metrics_future = asyncio.create_task(run_evals(evaluators, training_client, step))
+            with timed("evals", metrics):
+                eval_metrics = await run_evals(evaluators, training_client, step)
 
-        infrequent_eval_metrics_future = None
+        infrequent_eval_metrics = None
         if (
             infrequent_evaluators
             and config.infrequent_eval_every > 0
             and step % config.infrequent_eval_every == 0
         ):
-            infrequent_eval_metrics_future = asyncio.create_task(
-                run_evals(infrequent_evaluators, training_client, step)
-            )
+            with timed("infrequent_evals", metrics):
+                infrequent_eval_metrics = await run_evals(
+                    infrequent_evaluators, training_client, step
+                )
 
         fwd_bwd_future = await training_client.forward_backward_async(data, loss_fn="cross_entropy")
         optim_step_future = await training_client.optim_step_async(adam_params)
@@ -248,8 +249,8 @@ async def main(config: Config):
             epoch_idx=epoch_idx,
             batch_idx=batch_idx,
             batch_start_time=batch_start_time,
-            eval_metrics_future=eval_metrics_future,
-            infrequent_eval_metrics_future=infrequent_eval_metrics_future,
+            eval_metrics=eval_metrics,
+            infrequent_eval_metrics=infrequent_eval_metrics,
         )
 
     async def finish_batch(submitted: SubmittedBatch):
@@ -286,16 +287,12 @@ async def main(config: Config):
         )
         metrics["time/total"] = time.time() - submitted.batch_start_time
 
-        # Await eval futures that were triggered before the training step
-        if submitted.eval_metrics_future is not None:
-            with timed("evals", metrics):
-                eval_metrics = await submitted.eval_metrics_future
-            metrics.update(eval_metrics)
+        # Merge evaluation metrics gathered before the training step was submitted
+        if submitted.eval_metrics is not None:
+            metrics.update(submitted.eval_metrics)
 
-        if submitted.infrequent_eval_metrics_future is not None:
-            with timed("infrequent_evals", metrics):
-                eval_metrics = await submitted.infrequent_eval_metrics_future
-            metrics.update(eval_metrics)
+        if submitted.infrequent_eval_metrics is not None:
+            metrics.update(submitted.infrequent_eval_metrics)
 
         # Emit all metrics for this step (train and eval) on the `submitted.step` row.
         ml_logger.log_metrics(metrics=metrics, step=submitted.step)
