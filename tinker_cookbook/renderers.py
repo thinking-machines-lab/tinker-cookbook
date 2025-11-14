@@ -115,7 +115,7 @@ def build_supervised_example(
             - weights: a tensor of weights
     """
     tokens_weights = [(token, 0) for token in start_tokens]
-    for idx, message in enumerate(messages[:-1]):
+    for idx, message in enumerate(messages):
         if train_on_what == TrainOnWhat.CUSTOMIZED:
             assert "trainable" in message, (
                 "When using CUSTOMIZED train_on_what, each message must have a trainable field: True if loss is applied on this message, False otherwise"
