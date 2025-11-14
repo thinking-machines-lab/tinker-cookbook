@@ -34,6 +34,7 @@ class CLIConfig:
     groups_per_batch: int = 100
     learning_rate: float = 1e-5
     max_tokens: int = 5
+    temperature: float = 1.0
     kl_penalty_coef: float = 0.0
 
     # Number of optimizer steps per training iteration.
@@ -124,6 +125,7 @@ async def cli_main(cli_config: CLIConfig):
         model_name=cli_config.model_name,
         lora_rank=cli_config.lora_rank,
         max_tokens=cli_config.max_tokens,
+        temperature=cli_config.temperature,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
         log_path=log_path,
