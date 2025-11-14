@@ -13,6 +13,7 @@ from tinker_cookbook.utils.format_colorized import format_colorized
 from tinker_cookbook.utils.misc_utils import lookup_func
 from tinker_cookbook.renderers import TrainOnWhat
 
+
 @chz.chz
 class Config:
     model_name: str = "meta-llama/Llama-3.1-8B"  # just for tokenizer
