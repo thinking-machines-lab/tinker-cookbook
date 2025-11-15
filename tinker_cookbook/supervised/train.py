@@ -92,16 +92,15 @@ async def run_evals(
     training_client: tinker.TrainingClient,
     step: int,
 ) -> dict[str, float]:
-    """Run evaluators before training step `step`.
+    """Evaluate the current model weights and prefix results with ``test/``.
 
-    Notes:
-    - Timing: Callers await this helper *before* submitting optimizer step `step`, so it
-      snapshots pre-step `step` weights (i.e., post-step `step-1` or initial for step 0).
-    - TrainingClient evaluators run directly against the in-memory training client.
-    - SamplingClient evaluators receive a fresh sampling client created from a
-      saved snapshot of the current (pre-step) weights labeled "evals_step_{step}".
-    - Returned metrics are prefixed with "test/" and logged on the same row
-      (step == `step`) as the corresponding training metrics.
+    The helper is called immediately before optimizer step `step` is submitted, so it
+    measures the weights produced after step `step-1` (or the initial weights for step 0).
+    Training-client evaluators run against the mutable training client, while sampling
+    evaluators request a fresh `SamplingClient` snapshot via
+    `save_weights_and_get_sampling_client_async` to ensure their work uses a fixed
+    checkpoint. Returned metrics are prefixed with ``test/`` so they can be logged next
+    to the same-step training metrics.
     """
     metrics = {}
     sampling_client = None
@@ -127,21 +126,19 @@ async def run_evals(
 
 
 async def main(config: Config):
-    """Main training function that runs the complete training process.
+    """Run the standard supervised learning loop used by the supervised recipes.
 
-    Checkpointing and resume:
-    - If resuming, the stored `epoch`/`batch` indices denote the NEXT batch to run,
-      or equivalently, how many epochs and batches have been completed.
-      The checkpointed state itself reflects updates through the previous batch.
-    - Step checkpoints are saved when `submitted.step % save_every == 0` and
-      `submitted.step > 0`. Save requests are queued after the already-submitted
-      forward/backward and optimizer requests for that step, so snapshots capture
-      post-step weights.
+    Responsibilities:
+    1. Initialize logging, build the dataset/evaluator objects, construct (or resume) the
+       training client, and determine the ``epoch``/``batch`` indices to start from.
+    2. Iterate over batches: fetch data, optionally run evaluations before submitting the
+       optimizer step (so they observe pre-step weights), issue `forward_backward` and
+       `optim_step` requests, and log metrics once the futures resolve.
+    3. Save checkpoints at the configured cadence so runs can resume or export weights,
+       then emit a final checkpoint when training completes.
 
-    Eval timing:
-    - Evals are triggered and awaited BEFORE submitting optimizer step `i`, so they snapshot
-      pre-step `i` weights (i.e., post-step `i-1` weights, or initial weights for step 0).
-      Results are logged on the metrics row for `step == i`.
+    Training and evaluation metrics share the same ``step`` index to keep dashboards easy
+    to read.
     """
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     if resume_info:
