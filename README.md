@@ -21,6 +21,7 @@ Refer to the [docs](https://tinker-docs.thinkingmachines.ai/training-sampling) t
 Here we introduce a few Tinker primitives - the basic components to fine-tune LLMs:
 
 ```python
+import tinker
 service_client = tinker.ServiceClient()
 training_client = service_client.create_lora_training_client(
   base_model="meta-llama/Llama-3.2-1B", rank=32,
