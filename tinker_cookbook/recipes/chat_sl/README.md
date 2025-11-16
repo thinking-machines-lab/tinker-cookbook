@@ -3,7 +3,7 @@
 ## SFT on NoRobots
 
 ```bash
-python -m tinker_cookbook.recipes.chat_sl.train
+python -m tinker_cookbook.recipes.chat_sl.train \
     model_name=Qwen/Qwen3-8B-Base \
     dataset=no_robots \
     learning_rate=5e-4 \
@@ -19,7 +19,7 @@ After 140 steps of training, `test/nll` decreases to 1.788.
 ## SFT on Tulu3 dataset
 
 ```bash
-python -m tinker_cookbook.recipes.chat_sl.train
+python -m tinker_cookbook.recipes.chat_sl.train \
     model_name=Qwen/Qwen3-8B-Base \
     dataset=tulu3 \
     learning_rate=5e-4 \
