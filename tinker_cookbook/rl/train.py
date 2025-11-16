@@ -725,6 +725,17 @@ async def prepare_minibatch(
         advantages_P = compute_advantages(trajectory_groups_P)
         data_D, _metadata_D = assemble_training_data(trajectory_groups_P, advantages_P)
 
+    # Log advantage statistics
+    all_advantages = torch.cat(advantages_P)
+    metrics.update(
+        {
+            "advantages/mean": all_advantages.mean().item(),
+            "advantages/std": all_advantages.std().item(),
+            "advantages/min": all_advantages.min().item(),
+            "advantages/max": all_advantages.max().item(),
+        }
+    )
+
     # Incorporate KL penalty if configured
     if kl_penalty_coef > 0:
         with timed("kl_vs_base", metrics):

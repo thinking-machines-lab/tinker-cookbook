@@ -18,14 +18,25 @@ logger = logging.getLogger(__name__)
 
 
 def compute_advantages(trajectory_groups_P: List[TrajectoryGroup]) -> List[torch.Tensor]:
-    """Compute advantages for each trajectory, centered within groups."""
+    """Compute advantages for each trajectory, centered within groups.
+
+    For single-trajectory groups, centers across the entire batch.
+    """
+    # Flatten all rewards
+    all_rewards = torch.cat(
+        [torch.tensor(traj_group.get_total_rewards()) for traj_group in trajectory_groups_P]
+    )
+
+    # Compute baseline per group (or global if group size is 1)
     advantages_P: list[torch.Tensor] = []
 
     for traj_group in trajectory_groups_P:
         rewards_G = torch.tensor(traj_group.get_total_rewards())
-        # Center advantages within the group
-        advantages_G = rewards_G - rewards_G.mean()
-        advantages_P.append(advantages_G)
+        group_size = len(rewards_G)
+
+        # Use group mean if > 1 trajectory, else use batch mean
+        baseline = rewards_G.mean() if group_size > 1 else all_rewards.mean()
+        advantages_P.append(rewards_G - baseline)
 
     return advantages_P
 
