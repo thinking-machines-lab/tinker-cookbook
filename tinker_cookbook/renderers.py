@@ -506,7 +506,7 @@ class DeepSeekV3Renderer(Renderer):
         elif message["role"] == "assistant":
             role_token = self._get_special_token("Assistant")
         else:
-            raise ValueError(f"Unsuppoerted role: {message['role']}")
+            raise ValueError(f"Unsupported role: {message['role']}")
         ob = [role_token]
         ac = self.tokenizer.encode(message["content"], add_special_tokens=False)
 
