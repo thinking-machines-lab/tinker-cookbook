@@ -229,7 +229,7 @@ class Config:
     dataset_builder: RLDatasetBuilder  # also determines batch size
     model_name: str
     max_tokens: int
-    temperature: float = 1.0
+    temperature: float = 1.0 # Changing sampling temperature is not generally recommended; does not currently play well with KL penalty
     compute_post_kl: bool = False
     evaluator_builders: list[SamplingClientEvaluatorBuilder] = chz.field(default_factory=list)
     lora_rank: int = 32
