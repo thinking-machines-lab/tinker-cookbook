@@ -229,6 +229,7 @@ class Config:
     dataset_builder: RLDatasetBuilder  # also determines batch size
     model_name: str
     max_tokens: int
+    temperature: float = 1.0  # Changing sampling temperature is not generally recommended; does not currently play well with KL penalty
     compute_post_kl: bool = False
     evaluator_builders: list[SamplingClientEvaluatorBuilder] = chz.field(default_factory=list)
     lora_rank: int = 32
@@ -366,6 +367,7 @@ async def do_sync_training_with_stream_minibatch(
                     sampling_client,
                     builder,
                     max_tokens=cfg.max_tokens,
+                    temperature=cfg.temperature,
                     do_remove_constant_reward_groups=cfg.remove_constant_reward_groups,
                     enable_logging=enable_logging,
                 )
@@ -501,6 +503,7 @@ async def do_async_training(
                 sampling_client,
                 env_group_builder,
                 max_tokens=cfg.max_tokens,
+                temperature=cfg.temperature,
                 do_remove_constant_reward_groups=cfg.remove_constant_reward_groups,
             )
             if trajectory_group is None:
@@ -659,10 +662,11 @@ async def do_group_rollout_and_filter_constant_reward(
     sampling_client: tinker.SamplingClient,
     env_group_builder: EnvGroupBuilder,
     max_tokens: int,
+    temperature: float,
     do_remove_constant_reward_groups: bool,
     enable_logging: bool = True,
 ) -> TrajectoryGroup | None:
-    policy = TinkerTokenCompleter(sampling_client, max_tokens=max_tokens)
+    policy = TinkerTokenCompleter(sampling_client, max_tokens=max_tokens, temperature=temperature)
 
     with logtree.optional_enable_logging(enable_logging):
         trajectory_group = await do_group_rollout(env_group_builder, policy)
@@ -991,6 +995,7 @@ async def do_sync_training(
                             sampling_client,
                             builder,
                             max_tokens=cfg.max_tokens,
+                            temperature=cfg.temperature,
                             do_remove_constant_reward_groups=cfg.remove_constant_reward_groups,
                             enable_logging=i < cfg.num_groups_to_log,
                         ),
