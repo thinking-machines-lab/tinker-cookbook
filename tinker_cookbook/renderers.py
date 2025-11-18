@@ -481,13 +481,20 @@ class Qwen3InstructRenderer(Qwen3Renderer):
         ob_str = f"{maybe_newline}<|im_start|>{message['role']}\n"
         ac_content = message["content"]
         # Observation (prompt) part
-        ac_str = f"{ac_content}<|im_end|>"
+        if "tool_calls" in message:
+            ac_content += "\n".join(
+                [
+                    f"<tool_call>\n{json.dumps(tool_call)}\n</tool_call>"
+                    for tool_call in message["tool_calls"]
+                ]
+            )
+        ac_content += "<|im_end|>"
         # Action part
         ac_tail_str = ""  # No action tail needed for Qwen format
         # Action part that's only included in the last message in SFT
         return (
             self.tokenizer.encode(ob_str, add_special_tokens=False),
-            self.tokenizer.encode(ac_str, add_special_tokens=False),
+            self.tokenizer.encode(ac_content, add_special_tokens=False),
             self.tokenizer.encode(ac_tail_str, add_special_tokens=False),
         )
 
