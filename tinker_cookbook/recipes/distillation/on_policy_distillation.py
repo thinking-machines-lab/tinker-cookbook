@@ -64,6 +64,7 @@ class CLIConfig:
     groups_per_batch: int = 1024
     learning_rate: float = 1e-4
     max_tokens: int = 4096
+    temperature: float = 1.0
     kl_penalty_coef: float = 1.0
     kl_discount_factor: float = 0.0
 
