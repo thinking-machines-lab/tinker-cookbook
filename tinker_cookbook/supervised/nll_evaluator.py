@@ -21,6 +21,6 @@ class NLLEvaluator(TrainingClientEvaluator):
         return {key: nll}
 
     @classmethod
-    def from_dataset(cls, dataset: SupervisedDataset) -> "NLLEvaluator":
+    def from_dataset(cls, dataset: SupervisedDataset, name: str) -> "NLLEvaluator":
         all_data = list(itertools.chain(*[dataset.get_batch(i) for i in range(len(dataset))]))
-        return cls(all_data)
+        return cls(all_data, name=name)
