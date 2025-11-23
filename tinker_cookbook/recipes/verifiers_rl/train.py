@@ -125,7 +125,7 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
                 state=state,
                 score_sem=score_sem,
             )
-            rs = vf.RolloutScore(reward=state["reward"], metrics=state.get("metrics", {}))
+            rs: vf.RolloutScore = {"reward": state["reward"], "metrics": state.get("metrics", {})}
 
             transitions: List[Transition] = []
             for _msgs, model_input, tokens, logprobs in recorded:
@@ -147,7 +147,7 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
                     metrics=transitions[-1].metrics,
                 )
             traj = Trajectory(transitions=transitions, final_ob=tinker.ModelInput.empty())
-            return traj, float(rs.reward), dict(rs.metrics)
+            return traj, float(rs["reward"]), dict(rs["metrics"])
 
         results = await asyncio.gather(*[run_one_rollout() for _ in range(cli_config.group_size)])
         trajectories_G = [t for (t, _r, _m) in results]
