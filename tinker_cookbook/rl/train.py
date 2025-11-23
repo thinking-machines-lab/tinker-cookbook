@@ -7,12 +7,14 @@ import io
 import logging
 import os
 import time
-from typing import Any, Callable, List, Literal, Sequence, Iterator
+from contextlib import contextmanager
+from typing import Any, Callable, Iterator, List, Literal, Sequence
 
 import chz
 import numpy as np
 import tinker
 import torch
+
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.display import colorize_example
@@ -39,11 +41,17 @@ from tinker_cookbook.rl.types import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import logtree, ml_log
 from tinker_cookbook.utils.misc_utils import safezip, split_list, timed
-from tinker_cookbook.utils.trace import scope, trace_init, get_scope_context
-from contextlib import contextmanager
-
+from tinker_cookbook.utils.trace import scope, update_scope_context, trace_init
 
 logger = logging.getLogger(__name__)
+
+
+def _get_evaluator_name(evaluator: SamplingClientEvaluator) -> str:
+    return (
+        evaluator.name
+        if isinstance(evaluator, RLTestSetEvaluator) and evaluator.name is not None
+        else ""
+    )
 
 
 @contextmanager
@@ -221,6 +229,7 @@ class Config:
     dataset_builder: RLDatasetBuilder  # also determines batch size
     model_name: str
     max_tokens: int
+    temperature: float = 1.0  # Changing sampling temperature is not generally recommended; does not currently play well with KL penalty
     compute_post_kl: bool = False
     evaluator_builders: list[SamplingClientEvaluatorBuilder] = chz.field(default_factory=list)
     lora_rank: int = 32
@@ -255,6 +264,49 @@ class Config:
 
 
 @scope
+async def run_single_evaluation(evaluator, cfg, i_batch, sampling_client):
+    ev_name = _get_evaluator_name(evaluator)
+    with _get_logtree_scope(
+        log_path=cfg.log_path,
+        num_groups_to_log=cfg.num_groups_to_log,
+        f_name=f"eval_{ev_name}_iteration_{i_batch:06d}",
+        scope_name=f"Running evaluation {ev_name} {i_batch}",
+    ):
+        eval_metrics = await evaluator(sampling_client)
+        return eval_metrics
+
+
+@scope
+async def run_evaluations_parallel(
+    evaluators: list[SamplingClientEvaluator],
+    sampling_client: tinker.SamplingClient,
+    cfg: Config,
+    i_batch: int,
+) -> dict[str, Any]:
+    """Run all evaluators in parallel and return aggregated metrics."""
+
+    # Create tasks for all evaluators with names for better traceability
+    tasks = []
+    for i, evaluator in enumerate(evaluators):
+        ev_name = _get_evaluator_name(evaluator)
+        task = asyncio.create_task(
+            run_single_evaluation(evaluator, cfg, i_batch, sampling_client),
+            name=f"eval_{ev_name or i}_iteration_{i_batch:06d}",
+        )
+        tasks.append(task)
+
+    # Wait for all to complete
+    results = await asyncio.gather(*tasks)
+
+    # Merge all metrics
+    metrics = {}
+    for result in results:
+        metrics.update(result)
+
+    return metrics
+
+
+@scope
 async def do_sync_training_with_stream_minibatch(
     start_batch: int,
     end_batch: int,
@@ -275,7 +327,7 @@ async def do_sync_training_with_stream_minibatch(
     """
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        training_client, start_batch, cfg.log_path, cfg.save_every
+        training_client, start_batch, cfg.log_path, cfg.save_every, start_batch
     )
 
     for i_batch in range(start_batch, end_batch):
@@ -289,20 +341,10 @@ async def do_sync_training_with_stream_minibatch(
         # Run evaluations
         if (cfg.eval_every > 0 and i_batch % cfg.eval_every == 0) or i_batch == end_batch - 1:
             with timed("run_evals", metrics):
-                for evaluator in evaluators:
-                    ev_name = (
-                        evaluator.name
-                        if isinstance(evaluator, RLTestSetEvaluator) and evaluator.name is not None
-                        else ""
-                    )
-                    with _get_logtree_scope(
-                        log_path=cfg.log_path,
-                        num_groups_to_log=cfg.num_groups_to_log,
-                        f_name=f"eval_{ev_name}_iteration_{i_batch:06d}",
-                        scope_name=f"Running evaluation {ev_name} {i_batch}",
-                    ):
-                        eval_metrics = await evaluator(sampling_client)
-                        metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+                eval_metrics = await run_evaluations_parallel(
+                    evaluators, sampling_client, cfg, i_batch
+                )
+                metrics.update(eval_metrics)
 
         with _get_logtree_scope(
             cfg.log_path,
@@ -325,6 +367,7 @@ async def do_sync_training_with_stream_minibatch(
                     sampling_client,
                     builder,
                     max_tokens=cfg.max_tokens,
+                    temperature=cfg.temperature,
                     do_remove_constant_reward_groups=cfg.remove_constant_reward_groups,
                     enable_logging=enable_logging,
                 )
@@ -460,6 +503,7 @@ async def do_async_training(
                 sampling_client,
                 env_group_builder,
                 max_tokens=cfg.max_tokens,
+                temperature=cfg.temperature,
                 do_remove_constant_reward_groups=cfg.remove_constant_reward_groups,
             )
             if trajectory_group is None:
@@ -618,10 +662,11 @@ async def do_group_rollout_and_filter_constant_reward(
     sampling_client: tinker.SamplingClient,
     env_group_builder: EnvGroupBuilder,
     max_tokens: int,
+    temperature: float,
     do_remove_constant_reward_groups: bool,
     enable_logging: bool = True,
 ) -> TrajectoryGroup | None:
-    policy = TinkerTokenCompleter(sampling_client, max_tokens=max_tokens)
+    policy = TinkerTokenCompleter(sampling_client, max_tokens=max_tokens, temperature=temperature)
 
     with logtree.optional_enable_logging(enable_logging):
         trajectory_group = await do_group_rollout(env_group_builder, policy)
@@ -641,17 +686,21 @@ async def save_checkpoint_and_get_sampling_client(
     i_batch: int,
     log_path: str,
     save_every: int,
+    start_batch: int = 0,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     metrics = {}
     with timed("save_checkpoint", metrics):
-        path_dict = await checkpoint_utils.save_checkpoint_async(
-            training_client=training_client,
-            name=f"{i_batch:06d}",
-            log_path=log_path,
-            loop_state={"batch": i_batch},
-            kind="both" if (i_batch > 0 and i_batch % save_every == 0) else "sampler",
-        )
-        return training_client.create_sampling_client(path_dict["sampler_path"]), metrics
+        if i_batch > start_batch and i_batch % save_every == 0:
+            path_dict = await checkpoint_utils.save_checkpoint_async(
+                training_client=training_client,
+                name=f"{i_batch:06d}",
+                log_path=log_path,
+                loop_state={"batch": i_batch},
+                kind="both",
+            )
+            return training_client.create_sampling_client(path_dict["sampler_path"]), metrics
+        else:
+            return await training_client.save_weights_and_get_sampling_client_async(), metrics
 
 
 @scope
@@ -760,8 +809,7 @@ async def do_train_step_streaming_and_get_sampling_client(
     # Number of groups per minibatch in each optimizer substep
     groups_per_minibatch = groups_per_substep // cfg.stream_minibatch_config.num_minibatches
 
-    context = get_scope_context()
-    context.attributes["step"] = i_batch
+    update_scope_context({"step": i_batch})
 
     metrics = {}
 
@@ -855,8 +903,7 @@ async def do_train_step_and_get_sampling_client(
     env_group_builders_P: Sequence[EnvGroupBuilder],
     trajectory_groups_P: list[TrajectoryGroup],
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
-    context = get_scope_context()
-    context.attributes["step"] = i_batch
+    update_scope_context({"step": i_batch})
 
     metrics = {}
     data_D, prepare_minibatch_metrics = await prepare_minibatch(
@@ -910,7 +957,7 @@ async def do_sync_training(
     """Implements fully synchronous on-policy training"""
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        training_client, start_batch, cfg.log_path, cfg.save_every
+        training_client, start_batch, cfg.log_path, cfg.save_every, start_batch
     )
 
     for i_batch in range(start_batch, end_batch):
@@ -924,20 +971,10 @@ async def do_sync_training(
         # Run evaluations
         if cfg.eval_every > 0 and i_batch % cfg.eval_every == 0:
             with timed("run_evals", metrics):
-                for evaluator in evaluators:
-                    ev_name = (
-                        evaluator.name
-                        if isinstance(evaluator, RLTestSetEvaluator) and evaluator.name is not None
-                        else ""
-                    )
-                    with _get_logtree_scope(
-                        log_path=cfg.log_path,
-                        num_groups_to_log=cfg.num_groups_to_log,
-                        f_name=f"eval_{ev_name}_iteration_{i_batch:06d}",
-                        scope_name=f"Running evaluation {ev_name} {i_batch}",
-                    ):
-                        eval_metrics = await evaluator(sampling_client)
-                        metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+                eval_metrics = await run_evaluations_parallel(
+                    evaluators, sampling_client, cfg, i_batch
+                )
+                metrics.update(eval_metrics)
 
         # Get batch and sample trajectories
         env_group_builders_P = dataset.get_batch(i_batch)
@@ -956,6 +993,7 @@ async def do_sync_training(
                             sampling_client,
                             builder,
                             max_tokens=cfg.max_tokens,
+                            temperature=cfg.temperature,
                             do_remove_constant_reward_groups=cfg.remove_constant_reward_groups,
                             enable_logging=i < cfg.num_groups_to_log,
                         ),
@@ -1020,17 +1058,18 @@ async def main(
         start_batch = 0
 
     service_client = tinker.ServiceClient(base_url=cfg.base_url)
-    training_client = await service_client.create_lora_training_client_async(
-        cfg.model_name, rank=cfg.lora_rank
-    )
-
     load_state_path: str | None = (
         resume_info["state_path"] if resume_info else cfg.load_checkpoint_path
     )
     if load_state_path:
-        future = await training_client.load_state_async(load_state_path)
-        _ = await future.result_async()
+        training_client = await service_client.create_training_client_from_state_async(
+            load_state_path
+        )
         logger.info(f"Loaded state from {load_state_path}")
+    else:
+        training_client = await service_client.create_lora_training_client_async(
+            cfg.model_name, rank=cfg.lora_rank
+        )
 
     # Get tokenizer from training client
     tokenizer = training_client.get_tokenizer()

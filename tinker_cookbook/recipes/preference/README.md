@@ -1,6 +1,6 @@
 # Learning from Preferences
 
-Many applications involve learnin from preferences beyond scalar rewards. We provide a few examples here:
+Many applications involve learning from preferences beyond scalar rewards. We provide a few examples here:
 
 1. [Shorter](./shorter/): we introduce the `PairwisePreferenceRLDatasetBuilder` abstraction and walk through a simple example that trains a model to generate shorter responses.
 2. [RLHF](./rlhf/): we walk through the standard RLHF pipeline from [1, 2]. This pipeline involves three stages: supervised fine-tuning, reward model learning, and reinforcement learning.

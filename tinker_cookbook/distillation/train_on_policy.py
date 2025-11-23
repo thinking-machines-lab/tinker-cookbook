@@ -7,13 +7,18 @@ import asyncio
 import logging
 import os
 import time
-from typing import Any, List, Literal, Sequence, Dict, cast
+from typing import Any, Dict, List, Literal, Sequence, cast
 
 import chz
 import tinker
 import torch
+
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.display import colorize_example
+from tinker_cookbook.distillation.datasets import (
+    CompositeDataset,
+    DistillationDatasetConfig,
+)
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator, SamplingClientEvaluatorBuilder
 from tinker_cookbook.rl.data_processing import (
     assemble_training_data,
@@ -21,6 +26,12 @@ from tinker_cookbook.rl.data_processing import (
 )
 from tinker_cookbook.rl.metric_util import RLTestSetEvaluator, compute_trajectory_metrics
 from tinker_cookbook.rl.metrics import discounted_future_sum_vectorized
+from tinker_cookbook.rl.train import (
+    compute_full_batch_metrics_and_get_sampling_client,
+    do_group_rollout_and_filter_constant_reward,
+    save_checkpoint_and_get_sampling_client,
+    train_step,
+)
 from tinker_cookbook.rl.types import (
     EnvGroupBuilder,
     TrajectoryGroup,
@@ -28,21 +39,7 @@ from tinker_cookbook.rl.types import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.misc_utils import safezip, timed
-from tinker_cookbook.utils.trace import scope, get_scope_context, trace_init
-
-# Dataset configuration classes
-from tinker_cookbook.distillation.datasets import (
-    CompositeDataset,
-    DistillationDatasetConfig,
-)
-
-# We re-use these methods from the RL training recipe
-from tinker_cookbook.rl.train import (
-    save_checkpoint_and_get_sampling_client,
-    train_step,
-    compute_full_batch_metrics_and_get_sampling_client,
-    do_group_rollout_and_filter_constant_reward,
-)
+from tinker_cookbook.utils.trace import scope, update_scope_context, trace_init
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +132,7 @@ class Config:
     dataset_configs: List[DistillationDatasetConfig]
     model_name: str
     max_tokens: int
+    temperature: float = 1.0
     compute_post_kl: bool = False
     evaluator_builders: list[SamplingClientEvaluatorBuilder] = chz.field(default_factory=list)
     lora_rank: int = 32
@@ -228,8 +226,7 @@ async def do_train_step_and_get_sampling_client(
     dataset_indices_P: List[int],
     teacher_clients: List[tinker.SamplingClient],
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
-    context = get_scope_context()
-    context.attributes["step"] = i_batch
+    update_scope_context({"step": i_batch})
 
     metrics = {}
     data_D, prepare_minibatch_metrics = await prepare_minibatch(
@@ -312,6 +309,7 @@ async def do_sync_training(
                         do_group_rollout_and_filter_constant_reward(
                             sampling_client,
                             builder,
+                            temperature=cfg.temperature,
                             max_tokens=cfg.max_tokens,
                             do_remove_constant_reward_groups=False,
                         ),

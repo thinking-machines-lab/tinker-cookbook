@@ -42,5 +42,6 @@ def create_mock_logger_with_jsonl(
 
     mock_logger.log_metrics = log_metrics
     mock_logger.close = MagicMock()
+    mock_logger.get_logger_url = MagicMock(return_value=None)
 
     return mock_logger

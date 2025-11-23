@@ -229,7 +229,7 @@ def main(config: Config):
 
         # Log metrics[]
         metrics["time/total"] = time.time() - t_start
-        metrics["reward/mean"] = sum(batch_rewards) / len(batch_rewards)
+        metrics["reward/total"] = sum(batch_rewards) / len(batch_rewards)
         ml_logger.log_metrics(metrics, step=batch_idx)
 
         # Save final checkpoint

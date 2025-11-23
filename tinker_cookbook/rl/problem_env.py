@@ -94,7 +94,7 @@ class ProblemGroupBuilder(EnvGroupBuilder):
         return [self.env_thunk() for _ in range(self.num_envs)]
 
     async def compute_group_rewards(
-        self, trajectory_group: list[Trajectory]
+        self, trajectory_group: list[Trajectory], env_group: Sequence[Env]
     ) -> list[tuple[float, Metrics]]:
         return [(0.0, {}) for _ in range(len(trajectory_group))]
 

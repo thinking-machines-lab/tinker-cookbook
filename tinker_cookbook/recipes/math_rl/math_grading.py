@@ -7,8 +7,7 @@ Includes math_normalize functionality that was dependency of grader.
 import contextlib
 import logging
 import re
-import signal
-import types
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Any, Callable, Dict, Tuple, TypeVar
 
 import sympy
@@ -516,11 +515,6 @@ class TimeoutException(Exception):
     pass
 
 
-# The handler function that raises the exception
-def _timeout_handler(signum: int, frame: types.FrameType | None) -> None:
-    raise TimeoutException("Function call timed out")
-
-
 def run_with_timeout_signal(
     func: Callable[..., T],
     args: Tuple[Any, ...] = (),
@@ -528,7 +522,7 @@ def run_with_timeout_signal(
     timeout_seconds: int = 5,
 ) -> T | None:
     """
-    Runs a function with a timeout using signal.alarm (Unix only).
+    Runs a function with a timeout using ThreadPoolExecutor (cross-platform).
 
     Args:
         func: The function to execute.
@@ -539,24 +533,16 @@ def run_with_timeout_signal(
     Returns:
         The result of the function call, or None if it times out.
     """
-    # Set the signal handler for SIGALRM
-    old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
-    # Schedule the alarm
-    signal.alarm(timeout_seconds)
-
-    try:
-        result = func(*args, **kwargs)
-    except TimeoutException:
-        logger.warning(f"Function timed out after {timeout_seconds} seconds.")
-        result = None
-    except Exception as e:
-        # Handle other exceptions from the function if needed
-        logger.warning(f"Function raised an exception: {e}")
-        result = None  # Or re-raise
-    finally:
-        # Disable the alarm
-        signal.alarm(0)
-        # Restore the original signal handler
-        signal.signal(signal.SIGALRM, old_handler)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(func, *args, **kwargs)
+        try:
+            result = future.result(timeout=timeout_seconds)
+        except FuturesTimeoutError:
+            logger.warning(f"Function timed out after {timeout_seconds} seconds.")
+            result = None
+        except Exception as e:
+            # Handle other exceptions from the function if needed
+            logger.warning(f"Function raised an exception: {e}")
+            result = None  # Or re-raise
 
     return result

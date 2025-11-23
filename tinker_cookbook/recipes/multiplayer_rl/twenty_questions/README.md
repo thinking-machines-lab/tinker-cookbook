@@ -61,7 +61,7 @@ Our demo is simple, involving only one LLM other than the policy and a very simp
 ### Next
 
 In this example, we play against a static language model answerer, which does not update during training.
-In recipe.multiturn_rl.text_arena, we will demonstrate an example (tic-tac-toe), which updates the weights of both players in a game.
+In recipes.multiplayer_rl.text_arena, we will demonstrate an example (tic-tac-toe), which updates the weights of both players in a game.
 
 [1] Checklists Are Better Than Reward Models For Aligning Language Models
 Viswanathan, V., Sun, Y., Ma, S., Kong, X., Cao, M., Neubig, G., & Wu, T. (2025). Checklists are better than reward models for aligning language models. arXiv. https://arxiv.org/abs/2507.18624

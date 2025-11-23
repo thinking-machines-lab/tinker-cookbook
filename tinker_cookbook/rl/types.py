@@ -84,7 +84,7 @@ class EnvGroupBuilder(ABC):
         pass
 
     async def compute_group_rewards(
-        self, trajectory_group: list[Trajectory]
+        self, trajectory_group: list[Trajectory], env_group: Sequence[Env]
     ) -> list[tuple[float, Metrics]]:
         """
         This computes a final reward for each trajectory that depends on the whole group.

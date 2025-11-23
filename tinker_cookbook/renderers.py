@@ -33,6 +33,8 @@ class Message(TypedDict):
     role: Role
     content: str
     tool_calls: NotRequired[list[ToolCall]]
+    thinking: NotRequired[str]
+    trainable: NotRequired[bool]
 
 
 class TrainOnWhat(StrEnum):
@@ -41,6 +43,7 @@ class TrainOnWhat(StrEnum):
     ALL_MESSAGES = "all_messages"
     ALL_TOKENS = "all_tokens"
     ALL_USER_AND_SYSTEM_MESSAGES = "all_user_and_system_messages"
+    CUSTOMIZED = "customized"
 
 
 class Renderer:
@@ -100,6 +103,10 @@ def build_supervised_example(
         train_on_what: an enum that controls how the weights are assigned to the tokens.
             - TrainOnWhat.LAST_ASSISTANT_MESSAGE: only the last assistant message is used for training
             - TrainOnWhat.ALL_ASSISTANT_MESSAGES: all assistant messages are used for training
+            - TrainOnWhat.ALL_MESSAGES: all messages are used for training
+            - TrainOnWhat.ALL_TOKENS: all tokens are used for training
+            - TrainOnWhat.ALL_USER_AND_SYSTEM_MESSAGES: all user and system messages are used for training
+            - TrainOnWhat.CUSTOMIZED: each message has a trainable field, and the weights are assigned based on the trainable field
         messages: a list of messages to render.
 
     Returns:
@@ -108,30 +115,49 @@ def build_supervised_example(
             - weights: a tensor of weights
     """
     tokens_weights = [(token, 0) for token in start_tokens]
-    for idx, message in enumerate(messages[:-1]):
-        ob_part, action_part, action_tail = render_message(idx, message)
-        if train_on_what == TrainOnWhat.LAST_ASSISTANT_MESSAGE:
-            tokens_weights.extend([(token, 0) for token in ob_part + action_part])
-        elif train_on_what == TrainOnWhat.ALL_ASSISTANT_MESSAGES:
-            tokens_weights += [(token, 0) for token in ob_part]
-            # TODO: look at the previous action tail and its overlap with the current action part
-            # and put weight of 1 on those tokens too.
-            is_assistant = message["role"] == "assistant"
-            tokens_weights += [(token, int(is_assistant)) for token in action_part]
-        elif train_on_what == TrainOnWhat.ALL_MESSAGES:
-            tokens_weights += [(token, 0) for token in ob_part]
-            tokens_weights += [(token, 1) for token in action_part]
-        elif train_on_what == TrainOnWhat.ALL_TOKENS:
-            tokens_weights += [(token, 1) for token in ob_part + action_part]
-        elif train_on_what == TrainOnWhat.ALL_USER_AND_SYSTEM_MESSAGES:
-            tokens_weights += [(token, 0) for token in ob_part]
-            is_user_or_system = message["role"] in ["user", "system"]
-            tokens_weights += [(token, int(is_user_or_system)) for token in action_part]
+    for idx, message in enumerate(messages):
+        if train_on_what == TrainOnWhat.CUSTOMIZED:
+            assert "trainable" in message, (
+                "When using CUSTOMIZED train_on_what, each message must have a trainable field: True if loss is applied on this message, False otherwise"
+            )
         else:
-            raise ValueError(f"Unknown train_on_what: {train_on_what}")
-    ob_part, action_part, action_tail = render_message(len(messages) - 1, messages[-1])
-    tokens_weights.extend([(token, 0) for token in ob_part])
-    tokens_weights.extend([(token, 1) for token in action_part + action_tail])
+            assert "trainable" not in message, (
+                "When using non-CUSTOMIZED train_on_what, each message must not have a trainable field. Either change train_on_what to CUSTOMIZED or remove the trainable field from the message"
+            )
+
+        is_last_message = idx == len(messages) - 1
+        is_assistant = message["role"] == "assistant"
+        is_user_or_system = message["role"] in ["user", "system"]
+
+        # only apply weight to observation part if train_on_what is ALL_TOKENS
+        ob_part, action_part, action_tail = render_message(idx, message)
+        ob_weight = int(train_on_what == TrainOnWhat.ALL_TOKENS)
+        tokens_weights += [(token, ob_weight) for token in ob_part]
+
+        action_tokens = action_part
+        # action tail is effectively the stop_token and the start token for the next turn
+        # e.g. \n\nUser:
+        if is_last_message:
+            action_tokens += action_tail
+
+        match train_on_what:
+            case TrainOnWhat.LAST_ASSISTANT_MESSAGE:
+                action_has_weight = is_last_message and is_assistant
+            case TrainOnWhat.ALL_ASSISTANT_MESSAGES:
+                action_has_weight = is_assistant
+            case TrainOnWhat.ALL_MESSAGES:
+                action_has_weight = True
+            case TrainOnWhat.ALL_TOKENS:
+                action_has_weight = True
+            case TrainOnWhat.ALL_USER_AND_SYSTEM_MESSAGES:
+                action_has_weight = is_user_or_system
+            case TrainOnWhat.CUSTOMIZED:
+                action_has_weight = message.get("trainable", False)
+            case _:
+                raise ValueError(f"Unknown train_on_what: {train_on_what}")
+
+        tokens_weights += [(token, int(action_has_weight)) for token in action_tokens]
+
     tokens, weights = zip(*tokens_weights, strict=True)
     return torch.tensor(tokens), torch.tensor(weights)
 
@@ -172,6 +198,7 @@ class RoleColonRenderer(Renderer):
     """
 
     def _render_message(self, message: Message) -> tuple[list[int], list[int], list[int]]:
+        assert message.get("thinking") is None, "Thinking tokens not supported in RoleColonRenderer"
         ob_str = message["role"].capitalize() + ":"
         # Observation (prompt) part
         ac_str = " " + message["content"] + "\n\n"
@@ -253,6 +280,7 @@ class Llama3Renderer(Renderer):
     """
 
     def _render_message(self, message: Message) -> tuple[list[int], list[int], list[int]]:
+        assert message.get("thinking") is None, "CoT tokens not supported in Llama3"
         ob_str = f"<|start_header_id|>{message['role']}<|end_header_id|>\n\n"
         # Observation (prompt) part
         ac_str = f"{message['content']}<|eot_id|>"
@@ -323,26 +351,35 @@ class Qwen3Renderer(Renderer):
 
         </think>
         I can help you with...<|im_end|>
-
-    It is currently missing Qwen 3's functionality for removing thinking spans in multi-turn conversations.
     """
 
     def _render_message(self, idx: int, message: Message) -> tuple[list[int], list[int], list[int]]:
+        assert message.get("thinking") is None, "TODO: support CoT in Qwen3 renderer"
         maybe_newline = "\n" if idx > 0 else ""
         ob_str = f"{maybe_newline}<|im_start|>{message['role']}\n"
         ac_content = message["content"]
-        if message["role"] == "assistant" and "<think>" not in ac_content:
+        if message["role"] == "assistant" and "</think>" in ac_content:
+            # Multi-turn conversation, we remove the thinking section from the assistant message
+            ac_content = ac_content.split("</think>")[1].lstrip()
+        elif message["role"] == "assistant" and "<think>" not in ac_content:
             # Matching the paper, we force the assistant to start with <think>. Some SFT datasets include
             # <think> in the assistant messages, we so don't need to re-add it in those cases.
             ob_str += "<think>\n"
         # Observation (prompt) part
-        ac_str = f"{ac_content}<|im_end|>"
+        if "tool_calls" in message:
+            ac_content += "\n".join(
+                [
+                    f"<tool_call>\n{json.dumps(tool_call)}\n</tool_call>"
+                    for tool_call in message["tool_calls"]
+                ]
+            )
+        ac_content += "<|im_end|>"
         # Action part
         ac_tail_str = ""  # No action tail needed for Qwen format
         # Action part that's only included in the last message in SFT
         return (
             self.tokenizer.encode(ob_str, add_special_tokens=False),
-            self.tokenizer.encode(ac_str, add_special_tokens=False),
+            self.tokenizer.encode(ac_content, add_special_tokens=False),
             self.tokenizer.encode(ac_tail_str, add_special_tokens=False),
         )
 
@@ -405,11 +442,10 @@ class Qwen3Renderer(Renderer):
         if not parse_success:
             return assistant_message, False
 
-        # NOTE:
-        # we use the <function_call>...</function_call> tag to wrap the tool call.
-        match = re.search(
-            r"<function_call>(.*?)</function_call>", assistant_message["content"], re.DOTALL
-        )
+        # Follow Qwen docs and Qwen-Agent's tool calling prompt to use <tool_call>...</tool_call> tags to wrap the tool call.
+        # - https://qwen.readthedocs.io/en/latest/getting_started/concepts.html#tool-calling
+        # - https://github.com/QwenLM/Qwen-Agent/blob/main/qwen_agent/llm/fncall_prompts/nous_fncall_prompt.py#L279-L282
+        match = re.search(r"<tool_call>(.*?)</tool_call>", assistant_message["content"], re.DOTALL)
         if match:
             tool_calls = self._parse_tool_call(match.group(1))
             if tool_calls is None:
@@ -441,17 +477,25 @@ class Qwen3InstructRenderer(Qwen3Renderer):
     """
 
     def _render_message(self, idx: int, message: Message) -> tuple[list[int], list[int], list[int]]:
+        assert message.get("thinking") is None, "CoT tokens not supported in Qwen3 instruct 2507"
         maybe_newline = "\n" if idx > 0 else ""
         ob_str = f"{maybe_newline}<|im_start|>{message['role']}\n"
         ac_content = message["content"]
         # Observation (prompt) part
-        ac_str = f"{ac_content}<|im_end|>"
+        if "tool_calls" in message:
+            ac_content += "\n".join(
+                [
+                    f"<tool_call>\n{json.dumps(tool_call)}\n</tool_call>"
+                    for tool_call in message["tool_calls"]
+                ]
+            )
+        ac_content += "<|im_end|>"
         # Action part
         ac_tail_str = ""  # No action tail needed for Qwen format
         # Action part that's only included in the last message in SFT
         return (
             self.tokenizer.encode(ob_str, add_special_tokens=False),
-            self.tokenizer.encode(ac_str, add_special_tokens=False),
+            self.tokenizer.encode(ac_content, add_special_tokens=False),
             self.tokenizer.encode(ac_tail_str, add_special_tokens=False),
         )
 
@@ -464,12 +508,13 @@ class DeepSeekV3Renderer(Renderer):
     """
 
     def _render_message(self, message: Message) -> tuple[list[int], list[int], list[int]]:
+        assert message.get("thinking") is None, "TODO: support CoT in DsV3 renderer"
         if message["role"] == "user":
             role_token = self._get_special_token("User")
         elif message["role"] == "assistant":
             role_token = self._get_special_token("Assistant")
         else:
-            raise ValueError(f"Unsuppoerted role: {message['role']}")
+            raise ValueError(f"Unsupported role: {message['role']}")
         ob = [role_token]
         ac = self.tokenizer.encode(message["content"], add_special_tokens=False)
 
@@ -590,9 +635,26 @@ class GptOssRenderer(Renderer):
         # Action part
         ac_str = ""
         if message["role"] == "assistant":
-            # TODO: support other channels/tools
-            ac_str += "<|channel|>final"
-        ac_str += f"<|message|>{message['content']}"
+            # TODO: support commentary channel / tools
+
+            # Assistant channels. See https://cookbook.openai.com/articles/openai-harmony
+            thinking = message.get("thinking")
+            content = message.get("content", "")
+
+            # Analysis channel (CoT)
+            if thinking:
+                if is_last:
+                    # Analysis channel only included in the last message. See https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot
+                    ac_str += f"<|channel|>analysis<|message|>{thinking}<|end|><|start|>assistant"
+
+            # Final channel (Response Content)
+            ac_str += f"<|channel|>final<|message|>{content}"
+        else:
+            assert message.get("thinking") is None, (
+                "Thinking is only allowed for assistant messages"
+            )
+            ac_str += f"<|message|>{message['content']}"
+
         if not is_last:
             ac_str += "<|end|>"
         else:

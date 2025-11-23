@@ -21,6 +21,7 @@ Refer to the [docs](https://tinker-docs.thinkingmachines.ai/training-sampling) t
 Here we introduce a few Tinker primitives - the basic components to fine-tune LLMs:
 
 ```python
+import tinker
 service_client = tinker.ServiceClient()
 training_client = service_client.create_lora_training_client(
   base_model="meta-llama/Llama-3.2-1B", rank=32,
@@ -71,3 +72,19 @@ Tinker cookbook includes several utilities. Here's a quick overview:
 This project is built in the spirit of open science and collaborative development. We believe that the best tools emerge through community involvement and shared learning.
 
 We welcome PR contributions after our private beta is over. If you have any feedback, please email us at tinker@thinkingmachines.ai.
+
+## Citation
+If you use Tinker for your research, please cite it as:
+```
+Thinking Machines Lab, 2025. Tinker. https://thinkingmachines.ai/tinker/.
+```
+
+Or use this BibTeX citation:
+```
+@misc{tml2025tinker,
+  author = {Thinking Machines Lab},
+  title = {Tinker},
+  year = {2025},
+  url = {https://thinkingmachines.ai/tinker/},
+}
+```
