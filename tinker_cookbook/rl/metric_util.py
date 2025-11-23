@@ -11,6 +11,7 @@ from tinker_cookbook.rl.rollouts import do_group_rollout
 from tinker_cookbook.rl.types import EnvGroupBuilder, RLDataset, TrajectoryGroup
 from tinker_cookbook.utils.misc_utils import all_same, dict_mean
 from tinker_cookbook.utils import logtree
+from tinker_cookbook.completers import TokenCompleter
 
 
 def _compute_by_group_metrics(trajectory_groups_P: List[TrajectoryGroup], good_thresh: float = 0.5):
@@ -107,7 +108,7 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         self,
         dataset: RLDataset,
         max_tokens: int,
-        name: str | None = None,
+        name: str = "test",
         num_groups_to_log: int = 4,
     ):
         self.env_group_builders_P = dataset_to_env_group_builders(dataset)
@@ -115,9 +116,7 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         self.name = name
         self.num_groups_to_log = num_groups_to_log
 
-    async def __call__(self, sampling_client: tinker.SamplingClient) -> dict[str, float]:
-        policy = TinkerTokenCompleter(sampling_client, max_tokens=self.max_tokens)
-
+    async def eval_token_completer(self, policy: TokenCompleter) -> dict[str, float]:
         async def run_group_rollout(builder, i):
             enable_logging = i < self.num_groups_to_log
             with logtree.optional_enable_logging(enable=enable_logging):
@@ -129,6 +128,9 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         taglist_P = [builder.logging_tags() for builder in self.env_group_builders_P]
         metrics = compute_trajectory_metrics(trajectory_groups_P, taglist_P)
 
-        if self.name is not None:
-            metrics = {f"{self.name}/{k}": v for k, v in metrics.items()}
+        metrics = {f"{self.name}/{k}": v for k, v in metrics.items()}
         return metrics
+
+    async def __call__(self, sampling_client: tinker.SamplingClient) -> dict[str, float]:
+        policy = TinkerTokenCompleter(sampling_client, max_tokens=self.max_tokens)
+        return await self.eval_token_completer(policy)

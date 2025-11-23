@@ -196,7 +196,6 @@ class TwoPlayerEnvGroupBuilder(EnvGroupBuilder):
         def _construct_coordinator() -> TwoPlayerCoordinator:
             """During training, the coordinator performs necessary blocking/synchronization, so that the policys can take turns to make moves on the shared environment, across different Environment objects"""
             shared_env = ta.make(env_id=self.game_name)
-            shared_env = ta.wrappers.LLMObservationWrapper(shared_env)
             shared_env.reset(num_players=self.num_players)
             return TwoPlayerCoordinator(shared_env=shared_env)
 
