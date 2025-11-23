@@ -493,7 +493,7 @@ async def do_async_training(
     async def dataloader_loop():
         """Gets the next set of env builders to run"""
         i_batch = start_batch
-        while not i_batch < end_batch:
+        while i_batch < end_batch:
             env_group_builders_P = dataset.get_batch(i_batch)
             for env_group_builder in env_group_builders_P:
                 await env_group_builders_queue.put(env_group_builder)
