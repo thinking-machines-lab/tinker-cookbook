@@ -30,25 +30,25 @@ def log_results(
     print(f"Examples: {num_examples}")
     print(f"Rollouts per example: {rollouts_per_example}")
     print("--- Example ---")
-    printable_prompts = [messages_to_printable(p) for p in results.prompt]
-    printable_completions = [messages_to_printable(c) for c in results.completion]
+    printable_prompts = [messages_to_printable(p) for p in results["prompt"]]
+    printable_completions = [messages_to_printable(c) for c in results["completion"]]
     vf.print_prompt_completions_sample(
-        printable_prompts, printable_completions, results.reward, step=0
+        printable_prompts, printable_completions, results["reward"], step=0
     )
     print("--- All ---")
     print("Rewards:")
     print(
-        f"reward: avg - {sum(results.reward) / len(results.reward):.3f}, std - {np.std(results.reward):.3f}"
+        f"reward: avg - {sum(results['reward']) / len(results['reward']):.3f}, std - {np.std(results['reward']):.3f}"
     )
     r = rollouts_per_example
-    n = len(results.reward) // r
+    n = len(results["reward"]) // r
     for i in range(r):
         # rounded to 3 decimal places
-        trials = [round(results.reward[(i * n) + j], 3) for j in range(n)]
+        trials = [round(results["reward"][(i * n) + j], 3) for j in range(n)]
         out = f"r{i + 1}: {trials}"
         print(out)
-    for k in results.metrics:
-        v = results.metrics[k]
+    for k in results["metrics"]:
+        v = results["metrics"][k]
         print(f"{k}: avg - {sum(v) / len(v):.3f}, std - {np.std(v):.3f}")
         for i in range(r):
             # rounded to 3 decimal places
