@@ -7,7 +7,7 @@ from logging import getLogger
 from os import environ
 from typing import Any
 
-from google import genai
+import google.genai as genai
 from google.genai import types
 
 logger = getLogger(__name__)
@@ -25,7 +25,7 @@ def get_gemini_client(
     http_options: types.HttpOptions | None = None,
     **kwargs: Any,
 ) -> genai.Client:
-    from google import genai
+    import google.genai as genai
     from google.genai.types import HttpOptions
 
     project = project or environ.get("GCP_VERTEXAI_PROJECT_NUMBER")
