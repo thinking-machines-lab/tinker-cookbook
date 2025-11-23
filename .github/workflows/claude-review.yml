@@ -62,7 +62,7 @@ jobs:
 
           # Limit how long Claude iterates on the review.
           # You can tune this for speed vs. depth.
-          claude_args: "--max-turns 5"
+          claude_args: "--max-turns 50"
 
   # ---------------------------------------
   # Job 2: Comment-triggered @claude runs
