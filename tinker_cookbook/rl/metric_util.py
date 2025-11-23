@@ -117,7 +117,6 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         self.num_groups_to_log = num_groups_to_log
 
     async def eval_token_completer(self, policy: TokenCompleter) -> dict[str, float]:
-
         async def run_group_rollout(builder, i):
             enable_logging = i < self.num_groups_to_log
             with logtree.optional_enable_logging(enable=enable_logging):
