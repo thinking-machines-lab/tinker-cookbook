@@ -1,0 +1,122 @@
+dataset:
+  database:
+    backend:
+      type: none
+    cache:
+      path: memory
+      sources:
+        - type: local
+          path: sandbox/tests/datasets/samples
+  max_runner_concurrency: 32
+  default_dataset_table: code_eval_${dataset_id}
+  registry:
+    - module_path: sandbox.datasets.aider_benchmark
+      class_name: AiderBenchmarkDataset
+      dataset_tables:
+        aider_benchmark_v1: code_eval_aider_benchmark_v1
+    - module_path: sandbox.datasets.autoeval
+      class_name: AutoEvalDataset
+    - module_path: sandbox.datasets.common_oj
+      class_name: CommonOJDataset
+      dataset_tables:
+        code_contests: code_eval_code_contests
+    - module_path: sandbox.datasets.cruxeval
+      class_name: CruxEvalDataset
+      dataset_tables:
+        cruxeval: code_eval_cruxeval
+        cruxeval_x: code_eval_cruxeval_x
+    - module_path: sandbox.datasets.multiple
+      class_name: MultiPLEDataset
+      dataset_tables:
+        multiple_cpp: code_eval_multiple_cpp
+        multiple_ts: code_eval_multiple_ts
+        multiple_sh: code_eval_multiple_sh
+        multiple_cs: code_eval_multiple_cs
+        multiple_go: code_eval_multiple_go
+        multiple_java: code_eval_multiple_java
+        multiple_lua: code_eval_multiple_lua
+        multiple_js: code_eval_multiple_js
+        multiple_php: code_eval_multiple_php
+        multiple_pl: code_eval_multiple_pl
+        multiple_rkt: code_eval_multiple_rkt
+        multiple_r: code_eval_multiple_r
+        multiple_rs: code_eval_multiple_re
+        multiple_scala: code_eval_multiple_scala
+        multiple_swift: code_eval_multiple_swift
+        multiple_rb: code_eval_multiple_rb
+        multiple_d: code_eval_multiple_d
+        multiple_jl: code_eval_multiple_jl
+    - module_path: sandbox.datasets.humaneval
+      class_name: HumanEvalDataset
+      dataset_tables:
+        humaneval_python: code_eval_humaneval_python
+        humaneval_cpp: code_eval_humaneval_cpp
+        humaneval_typescript: code_eval_humaneval_typescript
+        humaneval_bash: code_eval_humaneval_bash
+        humaneval_csharp: code_eval_humaneval_csharp
+        humaneval_go: code_eval_humaneval_go
+        humaneval_java: code_eval_humaneval_java
+        shadow_humaneval_python: code_eval_shadow_humaneval_python
+        bigcodebench: code_eval_bigcodebench
+    - module_path: sandbox.datasets.humanevoeval
+      class_name: EvoEvalDataset
+      dataset_tables:
+        evoeval: code_eval_EvoEval
+    - module_path: sandbox.datasets.live_code_bench
+      class_name: LiveCodeBenchDataset
+      dataset_tables:
+        live_code_bench_v1: code_eval_live_code_bench_v1
+    - module_path: sandbox.datasets.mbpp
+      class_name: MBPPDataset
+      dataset_tables:
+        mbpp: code_eval_mbpp
+    - module_path: sandbox.datasets.mbxp
+      class_name: MBXPDataset
+      dataset_tables:
+        mbxp_v1_en: code_eval_mbxp_v1_en
+        humanevalds_v1_en: code_eval_humanevalds_v1_en
+        oodtest_v1_zh: code_eval_oodtest_v1_zh
+        humanevalds_v2_en: code_eval_humanevalds_v2_en
+        mbxp_v2_en: code_eval_mbxp_v2_en
+    - module_path: sandbox.datasets.mhpp
+      class_name: MHPPDataset
+      dataset_tables:
+        mhpp: code_eval_mhpp
+    - module_path: sandbox.datasets.minif2f
+      class_name: MiniF2FLean4Dataset
+      dataset_tables:
+        minif2f_lean4_test: code_eval_minif2f_lean4_test
+        minif2f_lean4_valid: code_eval_minif2f_lean4_valid
+    - module_path: sandbox.datasets.natural_code_bench
+      class_name: NaturalCodeBenchDataset
+      dataset_tables:
+        ncb_python_zh: code_eval_ncb_python_zh
+        ncb_python_en: code_eval_ncb_python_en
+        ncb_java_zh: code_eval_ncb_java_zh
+        ncb_java_en: code_eval_ncb_java_en
+    - module_path: sandbox.datasets.palmath
+      class_name: PalMathDataset
+      dataset_tables:
+        palmath: code_eval_palmath
+    - module_path: sandbox.datasets.repobench_c
+      class_name: RepobenchCDataset
+      dataset_tables:
+        repobench_c_python: code_eval_repobench_c_python_sampled
+        repobench_c_java: code_eval_repobench_c_java_sampled
+    - module_path: sandbox.datasets.repobench_p
+      class_name: RepobenchPDataset
+      dataset_tables:
+        repobench_p_python: code_eval_repobench_p_python_sampled
+        repobench_p_java: code_eval_repobench_p_java_sampled
+    - module_path: sandbox.datasets.verilog
+      class_name: VerilogDataset
+      dataset_tables:
+        verilogeval_human: code_eval_verilogeval_human
+        verilogeval_machine: code_eval_verilogeval_machine
+sandbox:
+  isolation: none
+  cleanup_process: false
+  restore_bash: false
+  max_concurrency: 34
+common:
+  logging_color: true

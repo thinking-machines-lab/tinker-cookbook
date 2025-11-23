@@ -54,6 +54,7 @@ class TinkerTokenCompleter(TokenCompleter):
 
     sampling_client: tinker.SamplingClient
     max_tokens: int
+    temperature: float = 1.0
 
     async def __call__(
         self, model_input: tinker.ModelInput, stop: StopCondition
@@ -63,7 +64,11 @@ class TinkerTokenCompleter(TokenCompleter):
         sample_result = await self.sampling_client.sample_async(
             prompt=model_input,
             num_samples=1,
-            sampling_params=tinker.SamplingParams(stop=stop, max_tokens=self.max_tokens),
+            sampling_params=tinker.SamplingParams(
+                stop=stop,
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+            ),
         )
 
         # Extract tokens and logprobs from the first (and only) sample
