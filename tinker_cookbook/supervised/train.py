@@ -59,8 +59,8 @@ class Config:
     base_url: str | None = None
 
     # Checkpointing and evaluation
-    evaluator_builders: list[EvaluatorBuilder] = chz.field(default_factory=list)
-    infrequent_evaluator_builders: list[EvaluatorBuilder] = chz.field(default_factory=list)
+    evaluator_builders: dict[str, EvaluatorBuilder] = chz.field(default_factory=dict)
+    infrequent_evaluator_builders: dict[str, EvaluatorBuilder] = chz.field(default_factory=dict)
     save_every: int = 20
     eval_every: int = 10
     infrequent_eval_every: int = 100
@@ -93,19 +93,19 @@ class SubmittedBatch:
 
 @scope
 async def run_evals(
-    evaluators: list[Evaluator],
+    evaluators: dict[str, Evaluator],
     training_client: tinker.TrainingClient,
     step: int,
 ) -> dict[str, float]:
-    """Evaluate the current model weights and prefix results with ``test/``.
+    """Evaluate the current model weights and prefix results with evaluator keys.
 
     The helper is called immediately before optimizer step `step` is submitted, so it
     measures the weights produced after step `step-1` (or the initial weights for step 0).
     Training-client evaluators run against the mutable training client, while sampling
     evaluators request a fresh `SamplingClient` snapshot via
     `save_weights_and_get_sampling_client_async` to ensure their work uses a fixed
-    checkpoint. Returned metrics are prefixed with ``test/`` so they can be logged next
-    to the same-step training metrics.
+    checkpoint. Returned metrics are prefixed with the evaluator's key from the dict,
+    allowing multiple evaluators with distinct namespaces.
     """
     context = get_scope_context()
     context.attributes["step"] = step
@@ -114,9 +114,10 @@ async def run_evals(
     sampling_client = None
 
     @scope
-    async def run_evaluator(evaluator: Evaluator) -> dict[str, float]:
+    async def run_evaluator(prefix: str, evaluator: Evaluator) -> dict[str, float]:
         context = get_scope_context()
         context.attributes["step"] = step
+        context.attributes["evaluator_prefix"] = prefix
         context.attributes["evaluator_name"] = type(evaluator).__name__
         if isinstance(evaluator, TrainingClientEvaluator):
             context.attributes["evaluator_type"] = "TrainingClientEvaluator"
@@ -134,10 +135,10 @@ async def run_evals(
         else:
             raise ValueError(f"Unknown evaluator type: {type(evaluator)}")
 
-    for evaluator in evaluators:
-        eval_metrics = await run_evaluator(evaluator)
-        # Add test/ prefix to all metrics
-        metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+    for prefix, evaluator in evaluators.items():
+        eval_metrics = await run_evaluator(prefix, evaluator)
+        # Add prefix from dict key to all metrics
+        metrics.update({f"{prefix}/{k}": v for k, v in eval_metrics.items()})
 
     return metrics
 
@@ -213,11 +214,17 @@ async def main(config: Config):
     progress_denominator = total_steps if total_steps > 0 else 1
     tokenizer = get_tokenizer(config.model_name)
 
-    evaluators = [evaluator() for evaluator in config.evaluator_builders]
+    # Build evaluators dict, starting with test dataset if present
+    evaluators: dict[str, Evaluator] = {}
     if maybe_test_dataset is not None:
-        evaluators.append(NLLEvaluator.from_dataset(maybe_test_dataset))
+        evaluators["test"] = NLLEvaluator.from_dataset(maybe_test_dataset)
+    # Add user-provided evaluators
+    evaluators.update({prefix: builder() for prefix, builder in config.evaluator_builders.items()})
 
-    infrequent_evaluators = [evaluator() for evaluator in config.infrequent_evaluator_builders]
+    # Build infrequent evaluators dict
+    infrequent_evaluators: dict[str, Evaluator] = {
+        prefix: builder() for prefix, builder in config.infrequent_evaluator_builders.items()
+    }
     logger.info(
         f"Training for {n_batches} batches x {config.num_epochs} epochs = {n_batches * config.num_epochs} steps"
     )

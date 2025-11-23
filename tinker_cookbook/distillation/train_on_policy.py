@@ -136,7 +136,7 @@ class Config:
     model_name: str
     max_tokens: int
     compute_post_kl: bool = False
-    evaluator_builders: list[SamplingClientEvaluatorBuilder] = chz.field(default_factory=list)
+    evaluator_builders: dict[str, SamplingClientEvaluatorBuilder] = chz.field(default_factory=dict)
     lora_rank: int = 32
 
     kl_penalty_coef: float = 1.0
@@ -275,7 +275,7 @@ async def do_sync_training(
     cfg: Config,
     training_client: tinker.TrainingClient,
     service_client: tinker.ServiceClient,
-    evaluators: list[SamplingClientEvaluator],
+    evaluators: dict[str, SamplingClientEvaluator],
     dataset: CompositeDataset,
     teacher_clients: List[tinker.SamplingClient],
     ml_logger: ml_log.Logger,
@@ -299,9 +299,9 @@ async def do_sync_training(
         # Run evaluations
         if cfg.eval_every > 0 and i_batch % cfg.eval_every == 0:
             with timed("run_evals", metrics):
-                for evaluator in evaluators:
+                for prefix, evaluator in evaluators.items():
                     eval_metrics = await evaluator(sampling_client)
-                    metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+                    metrics.update({f"{prefix}/{k}": v for k, v in eval_metrics.items()})
 
         # Get batch and sample trajectories
         env_group_builders_P, dataset_indices_P = dataset.get_batch(i_batch)
@@ -397,9 +397,12 @@ async def main(
     datasets = []
     teacher_clients = []
     groups_per_batch_list = []
-    evaluators = [evaluator() for evaluator in cfg.evaluator_builders]
+    # Build evaluators dict, starting with user-provided evaluators
+    evaluators: dict[str, SamplingClientEvaluator] = {
+        prefix: builder() for prefix, builder in cfg.evaluator_builders.items()
+    }
 
-    for dataset_config in cfg.dataset_configs:
+    for i, dataset_config in enumerate(cfg.dataset_configs):
         # Create dataset
         dataset, maybe_test_dataset = await dataset_config.dataset_builder()
         datasets.append(dataset)
@@ -407,7 +410,9 @@ async def main(
 
         # Add test dataset evaluator if present
         if maybe_test_dataset is not None:
-            evaluators.append(RLTestSetEvaluator(maybe_test_dataset, max_tokens=cfg.max_tokens))
+            # Use "test" for single dataset, "test_0", "test_1" etc for multiple
+            test_key = "test" if len(cfg.dataset_configs) == 1 else f"test_{i}"
+            evaluators[test_key] = RLTestSetEvaluator(maybe_test_dataset, max_tokens=cfg.max_tokens)
 
         # Create teacher sampling client
         teacher_config = dataset_config.teacher_config

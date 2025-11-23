@@ -16,7 +16,10 @@ import torch
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.display import colorize_example
-from tinker_cookbook.eval.evaluators import SamplingClientEvaluator, SamplingClientEvaluatorBuilder
+from tinker_cookbook.eval.evaluators import (
+    SamplingClientEvaluator,
+    SamplingClientEvaluatorBuilder,
+)
 from tinker_cookbook.rl.data_processing import (
     assemble_training_data,
     compute_advantages,
@@ -47,11 +50,8 @@ logger = logging.getLogger(__name__)
 
 
 def _get_evaluator_name(evaluator: SamplingClientEvaluator) -> str:
-    return (
-        evaluator.name
-        if isinstance(evaluator, RLTestSetEvaluator) and evaluator.name is not None
-        else ""
-    )
+    # Return the class name as a simple identifier
+    return type(evaluator).__name__
 
 
 @contextmanager
@@ -231,7 +231,7 @@ class Config:
     max_tokens: int
     temperature: float = 1.0  # Changing sampling temperature is not generally recommended; does not currently play well with KL penalty
     compute_post_kl: bool = False
-    evaluator_builders: list[SamplingClientEvaluatorBuilder] = chz.field(default_factory=list)
+    evaluator_builders: dict[str, SamplingClientEvaluatorBuilder] = chz.field(default_factory=dict)
     lora_rank: int = 32
 
     kl_penalty_coef: float = 0.0
@@ -264,21 +264,21 @@ class Config:
 
 
 @scope
-async def run_single_evaluation(evaluator, cfg, i_batch, sampling_client):
+async def run_single_evaluation(prefix, evaluator, cfg, i_batch, sampling_client):
     ev_name = _get_evaluator_name(evaluator)
     with _get_logtree_scope(
         log_path=cfg.log_path,
         num_groups_to_log=cfg.num_groups_to_log,
-        f_name=f"eval_{ev_name}_iteration_{i_batch:06d}",
-        scope_name=f"Running evaluation {ev_name} {i_batch}",
+        f_name=f"eval_{prefix}_{ev_name}_iteration_{i_batch:06d}",
+        scope_name=f"Running evaluation {prefix}/{ev_name} {i_batch}",
     ):
         eval_metrics = await evaluator(sampling_client)
-        return {f"test/{k}": v for k, v in eval_metrics.items()}
+        return {f"{prefix}/{k}": v for k, v in eval_metrics.items()}
 
 
 @scope
 async def run_evaluations_parallel(
-    evaluators: list[SamplingClientEvaluator],
+    evaluators: dict[str, SamplingClientEvaluator],
     sampling_client: tinker.SamplingClient,
     cfg: Config,
     i_batch: int,
@@ -287,11 +287,11 @@ async def run_evaluations_parallel(
 
     # Create tasks for all evaluators with names for better traceability
     tasks = []
-    for i, evaluator in enumerate(evaluators):
+    for prefix, evaluator in evaluators.items():
         ev_name = _get_evaluator_name(evaluator)
         task = asyncio.create_task(
-            run_single_evaluation(evaluator, cfg, i_batch, sampling_client),
-            name=f"eval_{ev_name or i}_iteration_{i_batch:06d}",
+            run_single_evaluation(prefix, evaluator, cfg, i_batch, sampling_client),
+            name=f"eval_{prefix}_{ev_name}_iteration_{i_batch:06d}",
         )
         tasks.append(task)
 
@@ -314,7 +314,7 @@ async def do_sync_training_with_stream_minibatch(
     cfg: Config,
     training_client: tinker.TrainingClient,
     service_client: tinker.ServiceClient,
-    evaluators: list[SamplingClientEvaluator],
+    evaluators: dict[str, SamplingClientEvaluator],
     dataset: RLDataset,
     ml_logger: ml_log.Logger,
     tokenizer: Tokenizer,
@@ -436,7 +436,7 @@ async def do_async_training(
     cfg: Config,
     training_client: tinker.TrainingClient,
     service_client: tinker.ServiceClient,
-    evaluators: list[SamplingClientEvaluator],
+    evaluators: dict[str, SamplingClientEvaluator],
     dataset: RLDataset,
     ml_logger: ml_log.Logger,
     tokenizer: Tokenizer,
@@ -638,9 +638,9 @@ async def do_async_training(
             sampling_client_eval = sampling_client
             if cfg.eval_every > 0 and sampling_client_eval_step % cfg.eval_every == 0:
                 with timed("run_evals", metrics):
-                    for evaluator in evaluators:
+                    for prefix, evaluator in evaluators.items():
                         eval_metrics = await evaluator(sampling_client_eval)
-                        metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+                        metrics.update({f"{prefix}/{k}": v for k, v in eval_metrics.items()})
                 metrics["time/evaluation_loop/total"] = time.time() - t_start
                 ml_logger.log_metrics(metrics, step=sampling_client_eval_step)
 
@@ -951,7 +951,7 @@ async def do_sync_training(
     cfg: Config,
     training_client: tinker.TrainingClient,
     service_client: tinker.ServiceClient,
-    evaluators: list[SamplingClientEvaluator],
+    evaluators: dict[str, SamplingClientEvaluator],
     dataset: RLDataset,
     ml_logger: ml_log.Logger,
     tokenizer: Tokenizer,
@@ -1078,9 +1078,12 @@ async def main(
 
     # Create dataset from thunk
     dataset, maybe_test_dataset = await cfg.dataset_builder()
-    evaluators = [evaluator() for evaluator in cfg.evaluator_builders]
+    # Build evaluators dict, starting with test dataset if present
+    evaluators: dict[str, SamplingClientEvaluator] = {}
     if maybe_test_dataset is not None:
-        evaluators.append(RLTestSetEvaluator(maybe_test_dataset, max_tokens=cfg.max_tokens))
+        evaluators["test"] = RLTestSetEvaluator(maybe_test_dataset, max_tokens=cfg.max_tokens)
+    # Add user-provided evaluators
+    evaluators.update({prefix: builder() for prefix, builder in cfg.evaluator_builders.items()})
 
     num_batches = len(dataset)
     logger.info(f"Will train on {num_batches} batches")

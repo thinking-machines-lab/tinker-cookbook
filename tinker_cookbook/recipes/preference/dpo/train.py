@@ -108,7 +108,7 @@ def cli_main(cli_config: CLIConfig):
             cli_config.batch_size,
         ),
         load_checkpoint_path=cli_config.load_checkpoint_path,
-        evaluator_builders=[],
+        evaluator_builders={},
         learning_rate=cli_config.learning_rate,
         lr_schedule=cli_config.lr_schedule,
         dpo_beta=cli_config.dpo_beta,

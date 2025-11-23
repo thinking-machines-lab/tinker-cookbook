@@ -78,7 +78,7 @@ def sft_stage(
         log_path=log_path,
         model_name=base_model,
         dataset_builder=dataset_builder,
-        evaluator_builders=[],  # Could add evaluators here
+        evaluator_builders={},  # Could add evaluators here
         num_epochs=1,
         learning_rate=learning_rate,
         lr_schedule="linear",
@@ -130,7 +130,7 @@ def train_rm(
         log_path=log_path,
         model_name=base_model,
         dataset_builder=dataset_builder,
-        evaluator_builders=[],  # Could add evaluators here
+        evaluator_builders={},  # Could add evaluators here
         num_epochs=1,
         learning_rate=learning_rate,
         lr_schedule="linear",
@@ -217,7 +217,7 @@ async def train_rl(
         learning_rate=learning_rate,
         max_tokens=max_tokens,
         log_path=log_path,
-        evaluator_builders=[get_evaluator_builder],
+        evaluator_builders={"comparison": get_evaluator_builder},
         wandb_project=wandb_project,
         wandb_name=f"{wandb_name}-rl",
         lora_rank=lora_rank,

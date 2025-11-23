@@ -86,9 +86,9 @@ def get_dataset_builder(
 
 def get_infrequent_evaluator_builders(
     inline_evals: str | None, renderer_name: str, model_name: str
-) -> list[EvaluatorBuilder]:
+) -> dict[str, EvaluatorBuilder]:
     if inline_evals is None:
-        return []
+        return {}
     elif inline_evals == "inspect":
         from tinker_cookbook.eval.inspect_evaluators import InspectEvaluatorBuilder
 
@@ -104,7 +104,7 @@ def get_infrequent_evaluator_builders(
             max_connections=512,
             log_level="INFO",
         )
-        return [builder]
+        return {"inspect": builder}
     else:
         raise ValueError(f"Unknown inline evaluator: {inline_evals}")
 
@@ -140,7 +140,7 @@ def cli_main(cli_config: CLIConfig):
             cli_config.batch_size,
             cli_config.train_on_what,
         ),
-        evaluator_builders=[],
+        evaluator_builders={},
         infrequent_evaluator_builders=get_infrequent_evaluator_builders(
             cli_config.inline_evals,
             renderer_name,

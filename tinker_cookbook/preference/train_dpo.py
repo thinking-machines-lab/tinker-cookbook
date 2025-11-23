@@ -49,8 +49,8 @@ class Config:
     base_url: str | None = None
 
     # Checkpointing and evaluation
-    evaluator_builders: list[EvaluatorBuilder] = chz.field(default_factory=list)
-    infrequent_evaluator_builders: list[EvaluatorBuilder] = chz.field(default_factory=list)
+    evaluator_builders: dict[str, EvaluatorBuilder] = chz.field(default_factory=dict)
+    infrequent_evaluator_builders: dict[str, EvaluatorBuilder] = chz.field(default_factory=dict)
     save_every: int = 20
     eval_every: int = 10
     infrequent_eval_every: int = 100
@@ -160,8 +160,8 @@ def do_update(
     config: Config,
     training_client: tinker.TrainingClient,
     reference_client: tinker.SamplingClient,
-    evaluators: list[Evaluator],
-    infrequent_evaluators: list[Evaluator],
+    evaluators: dict[str, Evaluator],
+    infrequent_evaluators: dict[str, Evaluator],
     dataset: SupervisedDataset,
     ml_logger: ml_log.Logger,
     log_path: str,
@@ -341,8 +341,13 @@ def main(config: Config):
     n_batches = len(dataset)
     total_steps = n_batches * config.num_epochs
 
-    evaluators = [evaluator() for evaluator in config.evaluator_builders]
-    infrequent_evaluators = [evaluator() for evaluator in config.infrequent_evaluator_builders]
+    # Build evaluators dict from builders
+    evaluators: dict[str, Evaluator] = {
+        prefix: builder() for prefix, builder in config.evaluator_builders.items()
+    }
+    infrequent_evaluators: dict[str, Evaluator] = {
+        prefix: builder() for prefix, builder in config.infrequent_evaluator_builders.items()
+    }
     logger.info(
         f"Training for {n_batches} batches x {config.num_epochs} epochs = {n_batches * config.num_epochs} steps"
     )
