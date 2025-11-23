@@ -1,5 +1,12 @@
 name: claude-auto-review
 
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read    # so Claude can see CI results
+  id-token: write  # ← REQUIRED for the OIDC token
+
 on:
   pull_request:
     types: [opened, synchronize]
