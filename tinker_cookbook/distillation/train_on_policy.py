@@ -39,7 +39,7 @@ from tinker_cookbook.rl.types import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.misc_utils import safezip, timed
-from tinker_cookbook.utils.trace import scope, set_scope_context, trace_init
+from tinker_cookbook.utils.trace import scope, update_scope_context, trace_init
 
 logger = logging.getLogger(__name__)
 
@@ -225,7 +225,7 @@ async def do_train_step_and_get_sampling_client(
     dataset_indices_P: List[int],
     teacher_clients: List[tinker.SamplingClient],
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
-    set_scope_context({"step": i_batch})
+    update_scope_context({"step": i_batch})
 
     metrics = {}
     data_D, prepare_minibatch_metrics = await prepare_minibatch(

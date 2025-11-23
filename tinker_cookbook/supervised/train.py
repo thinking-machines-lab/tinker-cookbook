@@ -32,7 +32,7 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.lr_scheduling import compute_schedule_lr_multiplier
 from tinker_cookbook.utils.misc_utils import timed
-from tinker_cookbook.utils.trace import scope, set_scope_context, trace_init
+from tinker_cookbook.utils.trace import scope, update_scope_context, trace_init
 
 logger = logging.getLogger(__name__)
 
@@ -107,24 +107,24 @@ async def run_evals(
     checkpoint. Returned metrics are prefixed with ``test/`` so they can be logged next
     to the same-step training metrics.
     """
-    set_scope_context({"step": step})
+    update_scope_context({"step": step})
 
     metrics = {}
     sampling_client = None
 
     @scope
     async def run_evaluator(evaluator: Evaluator) -> dict[str, float]:
-        set_scope_context(
+        update_scope_context(
             {
                 "step": step,
                 "evaluator_name": type(evaluator).__name__,
             }
         )
         if isinstance(evaluator, TrainingClientEvaluator):
-            set_scope_context({"evaluator_type": "TrainingClientEvaluator"})
+            update_scope_context({"evaluator_type": "TrainingClientEvaluator"})
             return await evaluator(training_client)
         elif isinstance(evaluator, SamplingClientEvaluator):
-            set_scope_context({"evaluator_type": "SamplingClientEvaluator"})
+            update_scope_context({"evaluator_type": "SamplingClientEvaluator"})
             # Create sampling client lazily, only when needed
             nonlocal sampling_client
             if sampling_client is None:
@@ -227,7 +227,7 @@ async def main(config: Config):
     @scope
     async def submit_batch(epoch_idx: int, batch_idx: int) -> SubmittedBatch:
         step = epoch_idx * n_batches + batch_idx
-        set_scope_context({"step": step})
+        update_scope_context({"step": step})
 
         batch_start_time = time.time()
         metrics: dict[str, int | float | str] = {"epoch": epoch_idx}
@@ -287,7 +287,7 @@ async def main(config: Config):
 
     @scope
     async def finish_batch(submitted: SubmittedBatch):
-        set_scope_context({"step": submitted.step})
+        update_scope_context({"step": submitted.step})
 
         metrics = submitted.metrics
         metrics["progress"] = min((submitted.step + 1) / progress_denominator, 1.0)

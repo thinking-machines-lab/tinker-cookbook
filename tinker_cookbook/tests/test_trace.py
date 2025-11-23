@@ -6,7 +6,7 @@ import threading
 from tinker_cookbook.utils.trace import (
     get_scope_context,
     scope,
-    set_scope_context,
+    update_scope_context,
     trace_init,
     trace_shutdown,
 )
@@ -37,7 +37,7 @@ def ced():
 @scope
 async def baz():
     await asyncio.sleep(0.02)
-    set_scope_context({"baz": "baz"})
+    update_scope_context({"baz": "baz"})
     ced()
 
 

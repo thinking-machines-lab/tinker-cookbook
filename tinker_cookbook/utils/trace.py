@@ -407,12 +407,12 @@ def get_scope_context() -> ScopeContext:
     return result
 
 
-def set_scope_context(values: dict[str, Any]) -> None:
-    """Set the current scope's context. Example usage:
+def update_scope_context(values: dict[str, Any]) -> None:
+    """Update the current scope's context. Example usage:
 
     @scope
     async def foo(step: int):
-        set_scope_context({"step": step})
+        update_scope_context({"step": step})
         await bar()
 
     """
