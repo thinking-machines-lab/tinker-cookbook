@@ -7,12 +7,14 @@ import io
 import logging
 import os
 import time
-from typing import Any, Callable, List, Literal, Sequence, Iterator
+from contextlib import contextmanager
+from typing import Any, Callable, Iterator, List, Literal, Sequence
 
 import chz
 import numpy as np
 import tinker
 import torch
+
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.display import colorize_example
@@ -39,9 +41,7 @@ from tinker_cookbook.rl.types import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import logtree, ml_log
 from tinker_cookbook.utils.misc_utils import safezip, split_list, timed
-from tinker_cookbook.utils.trace import scope, trace_init, get_scope_context
-from contextlib import contextmanager
-
+from tinker_cookbook.utils.trace import scope, update_scope_context, trace_init
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +273,7 @@ async def run_single_evaluation(evaluator, cfg, i_batch, sampling_client):
         scope_name=f"Running evaluation {ev_name} {i_batch}",
     ):
         eval_metrics = await evaluator(sampling_client)
-        return {f"test/{k}": v for k, v in eval_metrics.items()}
+        return eval_metrics
 
 
 @scope
@@ -809,8 +809,7 @@ async def do_train_step_streaming_and_get_sampling_client(
     # Number of groups per minibatch in each optimizer substep
     groups_per_minibatch = groups_per_substep // cfg.stream_minibatch_config.num_minibatches
 
-    context = get_scope_context()
-    context.attributes["step"] = i_batch
+    update_scope_context({"step": i_batch})
 
     metrics = {}
 
@@ -904,8 +903,7 @@ async def do_train_step_and_get_sampling_client(
     env_group_builders_P: Sequence[EnvGroupBuilder],
     trajectory_groups_P: list[TrajectoryGroup],
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
-    context = get_scope_context()
-    context.attributes["step"] = i_batch
+    update_scope_context({"step": i_batch})
 
     metrics = {}
     data_D, prepare_minibatch_metrics = await prepare_minibatch(

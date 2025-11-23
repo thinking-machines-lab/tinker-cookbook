@@ -1,4 +1,6 @@
+import argparse
 import asyncio
+import atexit
 import functools
 import inspect
 import json
@@ -6,12 +8,10 @@ import queue
 import threading
 import time
 from contextvars import ContextVar
-from typing import Any, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-import argparse
 from io import TextIOWrapper
-import atexit
+from typing import Any, Callable
 
 
 class EventType(str, Enum):
@@ -405,6 +405,20 @@ def get_scope_context() -> ScopeContext:
     result = trace_context.get(ScopeContext())
     assert result is not None, "Trace context is not set"
     return result
+
+
+def update_scope_context(values: dict[str, Any]) -> None:
+    """Update the current scope's context. Example usage:
+
+    @scope
+    async def foo(step: int):
+        update_scope_context({"step": step})
+        await bar()
+
+    """
+    result = trace_context.get(ScopeContext())
+    assert result is not None, "Trace context is not set"
+    result.attributes.update(values)
 
 
 def convert_jsonl_to_json_main():

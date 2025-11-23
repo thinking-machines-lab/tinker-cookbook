@@ -9,6 +9,7 @@ import chz
 import json
 import tinker
 import verifiers as vf
+from verifiers.utils.async_utils import maybe_semaphore
 from tinker_cookbook import cli_utils, model_info, renderers
 from tinker_cookbook.completers import TokensWithLogprobs, TokenCompleter, TinkerTokenCompleter
 from tinker_cookbook.recipes.verifiers_rl.tinker_openai import TinkerAsyncOpenAIClient
@@ -105,24 +106,26 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
             )
             local_client.set_generation_hook(hook)
 
-            completion, state = await builder.vf_env.rollout(
+            rollout_input: vf.RolloutInput = {
+                "prompt": builder.prompt,
+                "answer": builder.answer,
+                "task": builder.task,
+                "info": builder.info,
+                "example_id": 0,
+            }
+            state = await builder.vf_env.rollout(
+                input=rollout_input,
                 client=local_client,
                 model="tinker",
-                prompt=builder.prompt,
-                answer=builder.answer,
-                task=builder.task,
-                info=builder.info,
                 sampling_args={},
             )
 
-            rs = await builder.vf_env.rubric.score_rollout(
-                prompt=builder.prompt,
-                completion=completion,
-                answer=builder.answer,
+            score_sem = await maybe_semaphore(None)
+            await builder.vf_env.rubric.score_rollout(
                 state=state,
-                task=builder.task,
-                info=builder.info,
+                score_sem=score_sem,
             )
+            rs: vf.RolloutScore = {"reward": state["reward"], "metrics": state.get("metrics", {})}
 
             transitions: List[Transition] = []
             for _msgs, model_input, tokens, logprobs in recorded:
@@ -144,7 +147,7 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
                     metrics=transitions[-1].metrics,
                 )
             traj = Trajectory(transitions=transitions, final_ob=tinker.ModelInput.empty())
-            return traj, float(rs.reward), dict(rs.metrics)
+            return traj, float(rs["reward"]), dict(rs["metrics"])
 
         results = await asyncio.gather(*[run_one_rollout() for _ in range(cli_config.group_size)])
         trajectories_G = [t for (t, _r, _m) in results]

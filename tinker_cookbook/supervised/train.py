@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import chz
 import tinker
 from tinker.lib.public_interfaces import APIFuture
+
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.display import colorize_example
 from tinker_cookbook.eval.evaluators import (
@@ -31,6 +32,7 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.lr_scheduling import compute_schedule_lr_multiplier
 from tinker_cookbook.utils.misc_utils import timed
+from tinker_cookbook.utils.trace import scope, update_scope_context, trace_init
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +74,8 @@ class Config:
     wandb_project: str | None = None
     wandb_name: str | None = None
 
+    enable_trace: bool = False
+
 
 @dataclass
 class SubmittedBatch:
@@ -87,6 +91,7 @@ class SubmittedBatch:
     infrequent_eval_metrics: dict[str, float] | None = None
 
 
+@scope
 async def run_evals(
     evaluators: list[Evaluator],
     training_client: tinker.TrainingClient,
@@ -102,29 +107,44 @@ async def run_evals(
     checkpoint. Returned metrics are prefixed with ``test/`` so they can be logged next
     to the same-step training metrics.
     """
+    update_scope_context({"step": step})
+
     metrics = {}
     sampling_client = None
 
-    for evaluator in evaluators:
+    @scope
+    async def run_evaluator(evaluator: Evaluator) -> dict[str, float]:
+        update_scope_context(
+            {
+                "step": step,
+                "evaluator_name": type(evaluator).__name__,
+            }
+        )
         if isinstance(evaluator, TrainingClientEvaluator):
-            eval_metrics = await evaluator(training_client)
+            update_scope_context({"evaluator_type": "TrainingClientEvaluator"})
+            return await evaluator(training_client)
         elif isinstance(evaluator, SamplingClientEvaluator):
+            update_scope_context({"evaluator_type": "SamplingClientEvaluator"})
             # Create sampling client lazily, only when needed
+            nonlocal sampling_client
             if sampling_client is None:
                 # Snapshot the current pre-step weights and create a new sampling client.
                 sampling_client = await training_client.save_weights_and_get_sampling_client_async(
                     f"evals_step_{step}"
                 )
-            eval_metrics = await evaluator(sampling_client)
+            return await evaluator(sampling_client)
         else:
             raise ValueError(f"Unknown evaluator type: {type(evaluator)}")
 
+    for evaluator in evaluators:
+        eval_metrics = await run_evaluator(evaluator)
         # Add test/ prefix to all metrics
-        metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+        metrics.update(eval_metrics)
 
     return metrics
 
 
+@scope
 async def main(config: Config):
     """Run the standard supervised learning loop used by the supervised recipes.
 
@@ -156,6 +176,18 @@ async def main(config: Config):
         config=config,
         do_configure_logging_module=True,
     )
+    if config.enable_trace:
+        # Get and rename the current (main) task
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            current_task.set_name("main")
+        trace_events_path = os.path.join(config.log_path, "trace_events.jsonl")
+        logger.info(f"Tracing is enabled. Trace events will be saved to {trace_events_path}")
+        logger.info(
+            f"Run `python tinker_cookbook/utils/trace.py {trace_events_path} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"
+        )
+        trace_init(output_file=os.path.join(config.log_path, "trace_events.jsonl"))
+
     service_client = tinker.ServiceClient(base_url=config.base_url)
     load_state_path: str | None = (
         resume_info["state_path"] if resume_info else config.load_checkpoint_path
@@ -192,8 +224,11 @@ async def main(config: Config):
         f"Training for {n_batches} batches x {config.num_epochs} epochs = {n_batches * config.num_epochs} steps"
     )
 
+    @scope
     async def submit_batch(epoch_idx: int, batch_idx: int) -> SubmittedBatch:
         step = epoch_idx * n_batches + batch_idx
+        update_scope_context({"step": step})
+
         batch_start_time = time.time()
         metrics: dict[str, int | float | str] = {"epoch": epoch_idx}
         metrics["progress"] = step / progress_denominator
@@ -250,7 +285,10 @@ async def main(config: Config):
             infrequent_eval_metrics=infrequent_eval_metrics,
         )
 
+    @scope
     async def finish_batch(submitted: SubmittedBatch):
+        update_scope_context({"step": submitted.step})
+
         metrics = submitted.metrics
         metrics["progress"] = min((submitted.step + 1) / progress_denominator, 1.0)
 
