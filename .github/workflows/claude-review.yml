@@ -1,0 +1,18 @@
+name: claude-auto-review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  claude_review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run Claude Code review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Built-in slash command that performs a code review
+          prompt: "/review"
+          # Limit how long Claude iterates on the review
+          claude_args: "--max-turns 5"
