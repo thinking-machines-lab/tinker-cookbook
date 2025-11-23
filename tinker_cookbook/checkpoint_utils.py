@@ -7,7 +7,7 @@ from typing import Any, Literal
 import tinker
 
 from tinker_cookbook.utils.file_utils import read_jsonl
-from tinker_cookbook.utils.trace import get_scope_context, scope
+from tinker_cookbook.utils.trace import scope, update_scope_context
 
 CHECKPOINTS_BASE_NAME = "checkpoints.jsonl"
 
@@ -22,8 +22,7 @@ def load_checkpoints_file(log_dir: str) -> list[dict[str, Any]]:
         return []
 
     logger.info(f"Reading checkpoints from {checkpoint_path}")
-    context = get_scope_context()
-    context.attributes["checkpoint_path"] = checkpoint_path
+    update_scope_context({"checkpoint_path": checkpoint_path})
     return read_jsonl(checkpoint_path)
 
 
@@ -78,8 +77,7 @@ async def save_checkpoint_async(
 
     results = {k: await v.result_async() for k, v in futures.items()}
     paths = {k + "_path": v.path for k, v in results.items()}
-    context = get_scope_context()
-    context.attributes.update(paths)
+    update_scope_context(paths)
     logger.info(f"Saved checkpoints: {paths}")
     full_dict = {"name": name, **loop_state, **paths}
     with open(os.path.join(log_path, "checkpoints.jsonl"), "a") as f:

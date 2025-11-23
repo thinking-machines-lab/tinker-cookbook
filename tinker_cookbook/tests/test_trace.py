@@ -1,8 +1,15 @@
-import json
-from tinker_cookbook.utils.trace import scope, trace_init, trace_shutdown, get_scope_context
 import asyncio
-import threading
+import json
 import tempfile
+import threading
+
+from tinker_cookbook.utils.trace import (
+    get_scope_context,
+    scope,
+    update_scope_context,
+    trace_init,
+    trace_shutdown,
+)
 
 
 @scope
@@ -30,8 +37,7 @@ def ced():
 @scope
 async def baz():
     await asyncio.sleep(0.02)
-    context = get_scope_context()
-    context.attributes["baz"] = "baz"
+    update_scope_context({"baz": "baz"})
     ced()
 
 
