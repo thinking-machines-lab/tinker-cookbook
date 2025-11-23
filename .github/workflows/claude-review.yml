@@ -14,6 +14,7 @@ on:
 jobs:
   claude_review:
     runs-on: ubuntu-latest
+    environment: claude-review
     steps:
       - name: Run Claude Code review
         uses: anthropics/claude-code-action@v1
