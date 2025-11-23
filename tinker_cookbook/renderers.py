@@ -351,8 +351,6 @@ class Qwen3Renderer(Renderer):
 
         </think>
         I can help you with...<|im_end|>
-
-    It is currently missing Qwen 3's functionality for removing thinking spans in multi-turn conversations.
     """
 
     def _render_message(self, idx: int, message: Message) -> tuple[list[int], list[int], list[int]]:
@@ -360,7 +358,10 @@ class Qwen3Renderer(Renderer):
         maybe_newline = "\n" if idx > 0 else ""
         ob_str = f"{maybe_newline}<|im_start|>{message['role']}\n"
         ac_content = message["content"]
-        if message["role"] == "assistant" and "<think>" not in ac_content:
+        if message["role"] == "assistant" and "</think>" in ac_content:
+            # Multi-turn conversation, we remove the thinking section from the assistant message
+            ac_content = ac_content.split("</think>")[1].lstrip()
+        elif message["role"] == "assistant" and "<think>" not in ac_content:
             # Matching the paper, we force the assistant to start with <think>. Some SFT datasets include
             # <think> in the assistant messages, we so don't need to re-add it in those cases.
             ob_str += "<think>\n"
