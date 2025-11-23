@@ -137,7 +137,7 @@ async def run_evals(
     for evaluator in evaluators:
         eval_metrics = await run_evaluator(evaluator)
         # Add test/ prefix to all metrics
-        metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+        metrics.update(eval_metrics)
 
     return metrics
 
