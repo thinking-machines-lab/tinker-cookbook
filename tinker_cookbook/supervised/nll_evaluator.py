@@ -7,7 +7,7 @@ from tinker_cookbook.supervised.types import SupervisedDataset
 
 
 class NLLEvaluator(TrainingClientEvaluator):
-    def __init__(self, data: list[tinker.Datum], name: str | None = None):
+    def __init__(self, data: list[tinker.Datum], name: str = "test"):
         self.name = name
         self.data = data
 
@@ -17,10 +17,10 @@ class NLLEvaluator(TrainingClientEvaluator):
         logprobs = [x["logprobs"] for x in result.loss_fn_outputs]
         weights = [datum.loss_fn_inputs["weights"] for datum in self.data]
         nll = compute_mean_nll(logprobs, weights)
-        key = "nll" if self.name is None else f"{self.name}/nll"
+        key = f"{self.name}/nll"
         return {key: nll}
 
     @classmethod
-    def from_dataset(cls, dataset: SupervisedDataset, name: str | None = None) -> "NLLEvaluator":
+    def from_dataset(cls, dataset: SupervisedDataset, name: str = "test") -> "NLLEvaluator":
         all_data = list(itertools.chain(*[dataset.get_batch(i) for i in range(len(dataset))]))
         return cls(all_data, name=name)

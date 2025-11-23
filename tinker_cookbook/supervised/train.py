@@ -120,7 +120,7 @@ async def run_evals(
             raise ValueError(f"Unknown evaluator type: {type(evaluator)}")
 
         # Add test/ prefix to all metrics
-        metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+        metrics.update(eval_metrics)
 
     return metrics
 
