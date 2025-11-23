@@ -56,6 +56,13 @@ verifiers = [
     "verifiers",
     "openai",
 ]
+all = [
+    "tinker_cookbook[vector-search]",
+    "tinker_cookbook[wandb]",
+    "tinker_cookbook[neptune-scale]",
+    "tinker_cookbook[trackio]",
+    "tinker_cookbook[verifiers]",
+]
 
 [build-system]
 requires = ["hatchling"]
