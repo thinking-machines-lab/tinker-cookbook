@@ -132,6 +132,7 @@ class Config:
     dataset_configs: List[DistillationDatasetConfig]
     model_name: str
     max_tokens: int
+    temperature: float = 1.0
     compute_post_kl: bool = False
     evaluator_builders: list[SamplingClientEvaluatorBuilder] = chz.field(default_factory=list)
     lora_rank: int = 32
@@ -308,6 +309,7 @@ async def do_sync_training(
                         do_group_rollout_and_filter_constant_reward(
                             sampling_client,
                             builder,
+                            temperature=cfg.temperature,
                             max_tokens=cfg.max_tokens,
                             do_remove_constant_reward_groups=False,
                         ),
