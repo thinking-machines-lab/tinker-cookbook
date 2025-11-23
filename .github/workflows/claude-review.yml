@@ -5,6 +5,12 @@ permissions:
   pull-requests: write   # allow PR comments/reviews & PR creation
   issues: write          # allow issue comments & labels
 
+  id-token: write       # Necessary because otherwise we get:
+    # Error: Failed to setup GitHub token: Error: Could not fetch an OIDC token. Did you remember to add `id-token: write` to your workflow permissions?
+    # If you instead wish to use this action with a custom GitHub token or custom GitHub app, provide a `github_token` in the `uses` section of the app in your workflow yml file.
+  actions: read
+    # ^^^ Not sure if this is necessary, but my previous working configuration had it.
+
 on:
   # 1) Automatic PR review (non‑excessive)
   pull_request:
