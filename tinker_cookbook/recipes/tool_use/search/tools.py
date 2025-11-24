@@ -150,7 +150,9 @@ class ChromaToolClient(ToolClientInterface):
             return [
                 Message(role="tool", content="Error invoking search tool: query_list is required")
             ]
-        if not query_list or not all(isinstance(query, str) and query.strip() for query in query_list):
+        if not query_list or not all(
+            isinstance(query, str) and query.strip() for query in query_list
+        ):
             return [
                 Message(
                     role="tool",
