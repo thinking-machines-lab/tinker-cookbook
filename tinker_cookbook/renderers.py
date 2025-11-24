@@ -12,16 +12,41 @@ from typing import Callable, NotRequired, TypedDict
 
 import tinker
 import torch
+from tinker._models import StrictBase
 
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
 logger = logging.getLogger(__name__)
 
+# Tool types are based on kosong (https://github.com/MoonshotAI/kosong).
 
-class ToolCall(TypedDict):
+
+class ToolCall(StrictBase):
+    """Structured tool invocation with parsed arguments."""
+
     name: str
-    # Each argument is a stringified JSON object
-    args: dict[str, str]
+    args: dict[str, object]
+    id: str | None = None
+
+
+class ToolOk(StrictBase):
+    output: str
+    message: str = ""
+    brief: str = ""
+
+
+class ToolError(StrictBase):
+    output: str = ""
+    message: str = ""
+    brief: str = ""
+
+
+ToolReturnType = ToolOk | ToolError
+
+
+class ToolResult(StrictBase):
+    tool_call_id: str | None
+    result: ToolReturnType
 
 
 # NOTE: we use a broad type definition for the role to be flexible
@@ -35,6 +60,13 @@ class Message(TypedDict):
     tool_calls: NotRequired[list[ToolCall]]
     thinking: NotRequired[str]
     trainable: NotRequired[bool]
+    tool_call_id: NotRequired[str]
+    name: NotRequired[str]
+
+
+def _tool_call_payload(tool_call: ToolCall) -> dict[str, object]:
+    """Minimal JSON payload for embedding in <tool_call> blocks."""
+    return tool_call.model_dump(exclude_none=True, exclude={"id"})
 
 
 class TrainOnWhat(StrEnum):
@@ -369,7 +401,7 @@ class Qwen3Renderer(Renderer):
         if "tool_calls" in message:
             ac_content += "\n".join(
                 [
-                    f"<tool_call>\n{json.dumps(tool_call)}\n</tool_call>"
+                    f"<tool_call>\n{json.dumps(_tool_call_payload(tool_call))}\n</tool_call>"
                     for tool_call in message["tool_calls"]
                 ]
             )
@@ -425,15 +457,14 @@ class Qwen3Renderer(Renderer):
 
         if not isinstance(tool_call, dict):
             return None
-        if (
-            "name" not in tool_call
-            or "args" not in tool_call
-            or not isinstance(tool_call["name"], str)
-            or not isinstance(tool_call["args"], dict)
-        ):
+        name = tool_call.get("name")
+        args = tool_call.get("args")
+        tool_id = tool_call.get("id")
+        if not isinstance(name, str) or not isinstance(args, dict):
             return None
-
-        return [ToolCall(**tool_call)]
+        if tool_id is not None and not isinstance(tool_id, str):
+            tool_id = None
+        return [ToolCall(name=name, args=args, id=tool_id)]
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
         assistant_message, parse_success = parse_response_for_stop_token(
@@ -485,7 +516,7 @@ class Qwen3InstructRenderer(Qwen3Renderer):
         if "tool_calls" in message:
             ac_content += "\n".join(
                 [
-                    f"<tool_call>\n{json.dumps(tool_call)}\n</tool_call>"
+                    f"<tool_call>\n{json.dumps(_tool_call_payload(tool_call))}\n</tool_call>"
                     for tool_call in message["tool_calls"]
                 ]
             )

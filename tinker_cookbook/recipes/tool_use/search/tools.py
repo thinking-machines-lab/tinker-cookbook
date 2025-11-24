@@ -142,18 +142,15 @@ class ChromaToolClient(ToolClientInterface):
         raise RuntimeError("All ChromaDB query attempts failed")
 
     async def invoke(self, tool_call: ToolCall) -> list[Message]:
-        if tool_call["name"] != "search":
-            raise ValueError(f"Invalid tool name: {tool_call['name']}")
-        if not isinstance(tool_call["args"], dict) or "query_list" not in tool_call["args"]:
+        if tool_call.name != "search":
+            raise ValueError(f"Invalid tool name: {tool_call.name}")
+        args = tool_call.args
+        query_list = args.get("query_list")
+        if not isinstance(query_list, list):
             return [
                 Message(role="tool", content="Error invoking search tool: query_list is required")
             ]
-        query_list = tool_call["args"]["query_list"]
-        if (
-            not isinstance(query_list, list)
-            or not len(query_list) > 0
-            or not all(isinstance(query, str) and len(query.strip()) > 0 for query in query_list)
-        ):
+        if not query_list or not all(isinstance(query, str) and query.strip() for query in query_list):
             return [
                 Message(
                     role="tool",
