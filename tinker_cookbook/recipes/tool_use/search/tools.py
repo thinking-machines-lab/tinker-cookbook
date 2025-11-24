@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from abc import ABC, abstractmethod
 from typing import Any
@@ -142,9 +143,9 @@ class ChromaToolClient(ToolClientInterface):
         raise RuntimeError("All ChromaDB query attempts failed")
 
     async def invoke(self, tool_call: ToolCall) -> list[Message]:
-        if tool_call.name != "search":
-            raise ValueError(f"Invalid tool name: {tool_call.name}")
-        args = tool_call.args
+        if tool_call.function.name != "search":
+            raise ValueError(f"Invalid tool name: {tool_call.function.name}")
+        args = json.loads(tool_call.function.arguments)
         query_list = args.get("query_list")
         if not isinstance(query_list, list):
             return [

@@ -12,7 +12,7 @@ from typing import Callable, NotRequired, TypedDict
 
 import tinker
 import torch
-from tinker._models import StrictBase
+import pydantic
 
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
@@ -21,12 +21,34 @@ logger = logging.getLogger(__name__)
 # Tool types are based on kosong (https://github.com/MoonshotAI/kosong).
 
 
-class ToolCall(StrictBase):
-    """Structured tool invocation with parsed arguments."""
+class StrictBase(pydantic.BaseModel):
+    """
+    Don't allow extra fields, so user errors are caught earlier.
+    Use this for request types.
+    """
 
-    name: str
-    args: dict[str, object]
+    model_config = pydantic.ConfigDict(frozen=True, extra="forbid")
+
+    def __str__(self) -> str:
+        return repr(self)
+
+
+class ToolCall(StrictBase):
+    """Structured tool invocation following OpenAI/kosong format."""
+
+    class FunctionBody(pydantic.BaseModel):
+        """Tool call function body."""
+
+        name: str
+        """The name of the tool to be called."""
+        arguments: str
+        """Arguments of the tool call in JSON string format."""
+
+    type: str = "function"
     id: str | None = None
+    """The ID of the tool call."""
+    function: FunctionBody
+    """The function body of the tool call."""
 
 
 class ToolOk(StrictBase):
@@ -66,7 +88,11 @@ class Message(TypedDict):
 
 def _tool_call_payload(tool_call: ToolCall) -> dict[str, object]:
     """Minimal JSON payload for embedding in <tool_call> blocks."""
-    return tool_call.model_dump(exclude_none=True, exclude={"id"})
+    # Convert from nested structure to flat format for compatibility
+    return {
+        "name": tool_call.function.name,
+        "args": json.loads(tool_call.function.arguments),
+    }
 
 
 class TrainOnWhat(StrEnum):
@@ -464,7 +490,13 @@ class Qwen3Renderer(Renderer):
             return None
         if tool_id is not None and not isinstance(tool_id, str):
             tool_id = None
-        return [ToolCall(name=name, args=args, id=tool_id)]
+        # Convert to nested structure with arguments as JSON string
+        return [
+            ToolCall(
+                function=ToolCall.FunctionBody(name=name, arguments=json.dumps(args)),
+                id=tool_id,
+            )
+        ]
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
         assistant_message, parse_success = parse_response_for_stop_token(
