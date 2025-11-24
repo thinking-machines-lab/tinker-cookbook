@@ -1,6 +1,9 @@
 """
 To help you debug your environment, you can use the play_env function to play as the policy by typing in your responses in an environment interactively.
 
+Options:
+- multiline=True: Enable multi-line input mode (terminate with two blank lines)
+
 We include an example of playing the Twenty Questions environment in the main function.
 You can run it with:
 
@@ -44,7 +47,7 @@ async def get_async_input(prompt: str, multiline: bool = False) -> str:
 
 
 class ManualPolicy(TokenCompleter):
-    def __init__(self, tokenizer: Tokenizer, multiline: bool = True, show_observation: bool = False):
+    def __init__(self, tokenizer: Tokenizer, multiline: bool = True, show_observation: bool = True):
         self.tokenizer = tokenizer
         self.step_count = 0
         self.multiline = multiline
@@ -58,7 +61,8 @@ class ManualPolicy(TokenCompleter):
             print(observation_str)
             print(colored("-" * 60, "green"))
 
-        action_str = await get_async_input(colored("Your action:", "yellow"), multiline=self.multiline)
+        prompt_text = "Your action:" if self.multiline else "Your action: "
+        action_str = await get_async_input(colored(prompt_text, "yellow"), multiline=self.multiline)
         action_tokens = self.tokenizer.encode(action_str, add_special_tokens=False)
         self.step_count += 1
         return TokensWithLogprobs(tokens=action_tokens, maybe_logprobs=None)
@@ -80,7 +84,7 @@ def print_trajectory_summary(trajectory: Trajectory):
     print(colored("===================", "cyan", attrs=["bold"]))
 
 
-async def play_env(env: Env, tokenizer: Tokenizer, multiline: bool = True, show_observation: bool = False):
+async def play_env(env: Env, tokenizer: Tokenizer, multiline: bool = True, show_observation: bool = True):
     """Play a single-player environment interactively."""
     print(colored("Starting interactive environment session...", "cyan", attrs=["bold"]))
     print("Type your actions when prompted. The episode will end when the episode is done.")
