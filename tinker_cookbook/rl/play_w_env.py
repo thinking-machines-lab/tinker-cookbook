@@ -84,7 +84,9 @@ def print_trajectory_summary(trajectory: Trajectory):
     print(colored("===================", "cyan", attrs=["bold"]))
 
 
-async def play_env(env: Env, tokenizer: Tokenizer, multiline: bool = True, show_observation: bool = True):
+async def play_env(
+    env: Env, tokenizer: Tokenizer, multiline: bool = True, show_observation: bool = True
+):
     """Play a single-player environment interactively."""
     print(colored("Starting interactive environment session...", "cyan", attrs=["bold"]))
     print("Type your actions when prompted. The episode will end when the episode is done.")
