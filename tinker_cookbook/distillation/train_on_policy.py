@@ -13,6 +13,8 @@ import chz
 import tinker
 import torch
 
+from tinker.types import LossFnType
+
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.display import colorize_example
 from tinker_cookbook.distillation.datasets import (
@@ -141,7 +143,7 @@ class Config:
     kl_discount_factor: float = 0.0
 
     # Loss function to use for training: "importance_sampling" or "ppo"
-    loss_fn: Literal["importance_sampling", "ppo"] = "importance_sampling"
+    loss_fn: LossFnType = "importance_sampling"
 
     # Number of optimizer steps per training iteration.
     # Useful for very large batch sizes.

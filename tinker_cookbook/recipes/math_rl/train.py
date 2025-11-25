@@ -11,6 +11,7 @@ from tinker_cookbook.recipes.math_rl import (
 )
 from tinker_cookbook.rl.train import AsyncConfig, Config, main
 from tinker_cookbook.rl.types import RLDatasetBuilder
+from tinker.types import LossFnType
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ class CLIConfig:
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
     max_steps_off_policy: int | None = None
-    loss_fn: Literal["importance_sampling", "ppo"] = "importance_sampling"
+    loss_fn: LossFnType = "importance_sampling"
 
 
 def get_dataset_builder(
