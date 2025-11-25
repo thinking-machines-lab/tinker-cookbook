@@ -7,7 +7,7 @@ import asyncio
 import logging
 import os
 import time
-from typing import Any, Dict, List, Literal, Sequence, cast
+from typing import Any, Dict, List, Sequence, cast
 
 import chz
 import tinker

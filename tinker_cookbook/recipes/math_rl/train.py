@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from datetime import datetime
-from typing import Literal
 
 import chz
 from tinker_cookbook import cli_utils, model_info

@@ -8,7 +8,7 @@ import logging
 import os
 import time
 from contextlib import contextmanager
-from typing import Any, Callable, Iterator, List, Literal, Sequence
+from typing import Any, Callable, Iterator, List, Sequence
 
 import chz
 import numpy as np
