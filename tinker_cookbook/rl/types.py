@@ -16,6 +16,7 @@ Observation: TypeAlias = tinker.ModelInput
 Logprobs: TypeAlias = list[float]
 Metrics: TypeAlias = dict[str, float | int]
 
+
 @dataclass
 class StepResult:
     reward: float
