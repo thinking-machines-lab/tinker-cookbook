@@ -8,20 +8,126 @@ import logging
 import re
 from datetime import datetime
 from enum import StrEnum
-from typing import Callable, NotRequired, TypedDict
+from typing import Callable, Literal, NotRequired, TypedDict
 
 import tinker
 import torch
+import pydantic
 
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
 logger = logging.getLogger(__name__)
 
+# Tool types are based on kosong (https://github.com/MoonshotAI/kosong).
 
-class ToolCall(TypedDict):
-    name: str
-    # Each argument is a stringified JSON object
-    args: dict[str, str]
+
+class StrictBase(pydantic.BaseModel):
+    """
+    Pydantic base class that's immutable and doesn't silently ignore extra fields.
+    """
+
+    model_config = pydantic.ConfigDict(frozen=True, extra="forbid")
+
+    def __str__(self) -> str:
+        return repr(self)
+
+
+class ToolCall(StrictBase):
+    """
+    Structured tool invocation following OpenAI/kosong format.
+
+    This represents a request to invoke a tool/function. The structure follows
+    the OpenAI function calling format for compatibility with various LLM APIs.
+
+    Example:
+        tool_call = ToolCall(
+            function=ToolCall.FunctionBody(
+                name="search",
+                arguments='{"query_list": ["python async", "pydantic validation"]}'
+            ),
+            id="call_abc123"
+        )
+    """
+
+    class FunctionBody(pydantic.BaseModel):
+        """
+        Tool call function body containing the tool name and arguments.
+
+        The arguments field must be a valid JSON string that will be parsed
+        by the tool implementation.
+        """
+
+        name: str
+        """The name of the tool to be called."""
+        arguments: str
+        """Arguments of the tool call in JSON string format."""
+
+    type: Literal["function"] = "function"
+    """Tool call type, must be 'function' for compatibility."""
+
+    id: str | None = None
+    """Optional unique identifier for tracking this specific tool call."""
+
+    function: FunctionBody
+    """The function body containing tool name and arguments."""
+
+
+class ToolOk(StrictBase):
+    """
+    Successful tool execution result.
+
+    Used to indicate that a tool call completed successfully, with
+    the main output and optional metadata fields.
+    """
+
+    output: str
+    """The main output/result from the tool execution."""
+
+    message: str = ""
+    """Optional human-readable message about the execution."""
+
+    brief: str = ""
+    """Optional brief summary of the result for logging."""
+
+
+class ToolError(StrictBase):
+    """
+    Tool execution error result.
+
+    Used to indicate that a tool call failed or encountered an error,
+    with details about what went wrong.
+    """
+
+    output: str = ""
+    """Any partial output that was generated before the error."""
+
+    message: str = ""
+    """Error message describing what went wrong."""
+
+    brief: str = ""
+    """Brief error summary for logging."""
+
+
+ToolReturnType = ToolOk | ToolError
+"""Union type for tool execution results - either success or error."""
+
+
+class ToolResult(StrictBase):
+    """
+    Complete tool execution result with tracking ID.
+
+    Wraps the actual result (ToolOk or ToolError) with the corresponding
+    tool call ID for correlation in multi-tool scenarios.
+
+    Note: This class is defined for future use in handling multiple
+    concurrent tool calls with result correlation.
+    """
+
+    tool_call_id: str | None
+    """ID of the tool call this result corresponds to."""
+
+    result: ToolReturnType
+    """The actual execution result (success or error)."""
 
 
 # NOTE: we use a broad type definition for the role to be flexible
@@ -35,6 +141,17 @@ class Message(TypedDict):
     tool_calls: NotRequired[list[ToolCall]]
     thinking: NotRequired[str]
     trainable: NotRequired[bool]
+    tool_call_id: NotRequired[str]
+    name: NotRequired[str]
+
+
+def _tool_call_payload(tool_call: ToolCall) -> dict[str, object]:
+    """Minimal JSON payload for embedding in <tool_call> blocks."""
+    # Convert from nested structure to flat format for compatibility
+    return {
+        "name": tool_call.function.name,
+        "args": json.loads(tool_call.function.arguments),
+    }
 
 
 class TrainOnWhat(StrEnum):
@@ -369,7 +486,7 @@ class Qwen3Renderer(Renderer):
         if "tool_calls" in message:
             ac_content += "\n".join(
                 [
-                    f"<tool_call>\n{json.dumps(tool_call)}\n</tool_call>"
+                    f"<tool_call>\n{json.dumps(_tool_call_payload(tool_call))}\n</tool_call>"
                     for tool_call in message["tool_calls"]
                 ]
             )
@@ -425,15 +542,20 @@ class Qwen3Renderer(Renderer):
 
         if not isinstance(tool_call, dict):
             return None
-        if (
-            "name" not in tool_call
-            or "args" not in tool_call
-            or not isinstance(tool_call["name"], str)
-            or not isinstance(tool_call["args"], dict)
-        ):
+        name = tool_call.get("name")
+        args = tool_call.get("args")
+        tool_id = tool_call.get("id")
+        if not isinstance(name, str) or not isinstance(args, dict):
             return None
-
-        return [ToolCall(**tool_call)]
+        if tool_id is not None and not isinstance(tool_id, str):
+            tool_id = None
+        # Convert to nested structure with arguments as JSON string
+        return [
+            ToolCall(
+                function=ToolCall.FunctionBody(name=name, arguments=json.dumps(args)),
+                id=tool_id,
+            )
+        ]
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
         assistant_message, parse_success = parse_response_for_stop_token(
@@ -485,7 +607,7 @@ class Qwen3InstructRenderer(Qwen3Renderer):
         if "tool_calls" in message:
             ac_content += "\n".join(
                 [
-                    f"<tool_call>\n{json.dumps(tool_call)}\n</tool_call>"
+                    f"<tool_call>\n{json.dumps(_tool_call_payload(tool_call))}\n</tool_call>"
                     for tool_call in message["tool_calls"]
                 ]
             )
