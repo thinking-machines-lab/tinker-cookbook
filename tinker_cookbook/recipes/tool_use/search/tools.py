@@ -153,7 +153,7 @@ class ChromaToolClient(ToolClientInterface):
             return [
                 Message(
                     role="tool",
-                    content=f"Error invoking search tool: Invalid JSON in arguments - {str(e)}"
+                    content=f"Error invoking search tool: Invalid JSON in arguments - {str(e)}",
                 )
             ]
 
