@@ -171,7 +171,10 @@ class SearchEnv(ProblemEnv):
                 next_observation=tinker.ModelInput.empty(),
                 next_stop_condition=self.stop_condition,
             )
-            if tool_calls and tool_calls[0].function.name == "search":
+            # Check if tool_calls list is not empty
+            if not tool_calls:
+                return failure_result
+            if tool_calls[0].function.name == "search":
                 self.current_num_calls += 1
                 if self.current_num_calls > self.max_num_calls:
                     return failure_result

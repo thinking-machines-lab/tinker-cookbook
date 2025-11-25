@@ -8,7 +8,7 @@ import logging
 import re
 from datetime import datetime
 from enum import StrEnum
-from typing import Callable, NotRequired, TypedDict
+from typing import Callable, Literal, NotRequired, TypedDict
 
 import tinker
 import torch
@@ -23,8 +23,7 @@ logger = logging.getLogger(__name__)
 
 class StrictBase(pydantic.BaseModel):
     """
-    Don't allow extra fields, so user errors are caught earlier.
-    Use this for request types.
+    Pydantic base class that's immutable and doesn't silently ignore extra fields.
     """
 
     model_config = pydantic.ConfigDict(frozen=True, extra="forbid")
@@ -34,41 +33,101 @@ class StrictBase(pydantic.BaseModel):
 
 
 class ToolCall(StrictBase):
-    """Structured tool invocation following OpenAI/kosong format."""
+    """
+    Structured tool invocation following OpenAI/kosong format.
+
+    This represents a request to invoke a tool/function. The structure follows
+    the OpenAI function calling format for compatibility with various LLM APIs.
+
+    Example:
+        tool_call = ToolCall(
+            function=ToolCall.FunctionBody(
+                name="search",
+                arguments='{"query_list": ["python async", "pydantic validation"]}'
+            ),
+            id="call_abc123"
+        )
+    """
 
     class FunctionBody(pydantic.BaseModel):
-        """Tool call function body."""
+        """
+        Tool call function body containing the tool name and arguments.
+
+        The arguments field must be a valid JSON string that will be parsed
+        by the tool implementation.
+        """
 
         name: str
         """The name of the tool to be called."""
         arguments: str
         """Arguments of the tool call in JSON string format."""
 
-    type: str = "function"
+    type: Literal["function"] = "function"
+    """Tool call type, must be 'function' for compatibility."""
+
     id: str | None = None
-    """The ID of the tool call."""
+    """Optional unique identifier for tracking this specific tool call."""
+
     function: FunctionBody
-    """The function body of the tool call."""
+    """The function body containing tool name and arguments."""
 
 
 class ToolOk(StrictBase):
+    """
+    Successful tool execution result.
+
+    Used to indicate that a tool call completed successfully, with
+    the main output and optional metadata fields.
+    """
+
     output: str
+    """The main output/result from the tool execution."""
+
     message: str = ""
+    """Optional human-readable message about the execution."""
+
     brief: str = ""
+    """Optional brief summary of the result for logging."""
 
 
 class ToolError(StrictBase):
+    """
+    Tool execution error result.
+
+    Used to indicate that a tool call failed or encountered an error,
+    with details about what went wrong.
+    """
+
     output: str = ""
+    """Any partial output that was generated before the error."""
+
     message: str = ""
+    """Error message describing what went wrong."""
+
     brief: str = ""
+    """Brief error summary for logging."""
 
 
 ToolReturnType = ToolOk | ToolError
+"""Union type for tool execution results - either success or error."""
 
 
 class ToolResult(StrictBase):
+    """
+    Complete tool execution result with tracking ID.
+
+    Wraps the actual result (ToolOk or ToolError) with the corresponding
+    tool call ID for correlation in multi-tool scenarios.
+
+    Note: This class is defined for future use in handling multiple
+    concurrent tool calls with result correlation.
+    """
+
     tool_call_id: str | None
+    """ID of the tool call this result corresponds to."""
+
     result: ToolReturnType
+    """The actual execution result (success or error)."""
 
 
 # NOTE: we use a broad type definition for the role to be flexible

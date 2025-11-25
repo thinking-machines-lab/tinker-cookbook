@@ -145,7 +145,18 @@ class ChromaToolClient(ToolClientInterface):
     async def invoke(self, tool_call: ToolCall) -> list[Message]:
         if tool_call.function.name != "search":
             raise ValueError(f"Invalid tool name: {tool_call.function.name}")
-        args = json.loads(tool_call.function.arguments)
+
+        # Parse arguments with error handling
+        try:
+            args = json.loads(tool_call.function.arguments)
+        except json.JSONDecodeError as e:
+            return [
+                Message(
+                    role="tool",
+                    content=f"Error invoking search tool: Invalid JSON in arguments - {str(e)}"
+                )
+            ]
+
         query_list = args.get("query_list")
         if not isinstance(query_list, list):
             return [
