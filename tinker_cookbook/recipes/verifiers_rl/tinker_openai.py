@@ -1,7 +1,10 @@
 """
 OpenAI-compatible client backed by Tinker sampling.
 
-Returns responses with prompt_token_ids + token_ids for verifiers trajectory tracking.
+Implements OpenAI client semantics for:
+- chat.completions.create(...)
+- completions.create(...)
+Returns OpenAI types (ChatCompletion / Completion) constructed from sampled tokens.
 """
 
 from __future__ import annotations
@@ -127,8 +130,8 @@ class TinkerChatCompletions(OpenAIAsyncChatCompletions):
         }
         response = ChatCompletion.model_validate(response_dict)
 
-        response.prompt_token_ids = prompt_token_ids
-        response.choices[0].token_ids = completion_token_ids
+        setattr(response, "prompt_token_ids", prompt_token_ids)
+        setattr(response.choices[0], "token_ids", completion_token_ids)
 
         return response
 
@@ -201,8 +204,8 @@ class TinkerCompletions(OpenAIAsyncCompletions):
         }
         response = Completion.model_validate(response_dict)
 
-        response.choices[0].prompt_token_ids = prompt_token_ids
-        response.choices[0].token_ids = completion_token_ids
+        setattr(response.choices[0], "prompt_token_ids", prompt_token_ids)
+        setattr(response.choices[0], "token_ids", completion_token_ids)
 
         if stream:
             return TinkerAsyncCompletionStream(response)
