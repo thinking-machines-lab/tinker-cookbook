@@ -4,6 +4,7 @@ OpenAI-compatible client backed by Tinker sampling.
 Implements OpenAI client semantics for:
 - chat.completions.create(...)
 - completions.create(...)
+
 Returns OpenAI types (ChatCompletion / Completion) constructed from sampled tokens.
 """
 
@@ -76,7 +77,7 @@ class TinkerChatCompletions(OpenAIAsyncChatCompletions):
         if kwargs.get("tools"):
             raise NotImplementedError("Tool calling is not yet supported by this model's renderer.")
         if kwargs.get("stream", False):
-            raise ValueError("stream=True not supported")
+            raise ValueError("stream=True not supported by TinkerAsyncOpenAIClient")
         sampling_args = {k: v for k, v in kwargs.items() if k not in ("model", "messages", "tools")}
 
         stop = sampling_args.get("stop", self._parent.renderer.get_stop_sequences())

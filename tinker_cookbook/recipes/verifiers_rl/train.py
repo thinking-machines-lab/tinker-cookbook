@@ -7,7 +7,6 @@ from datetime import datetime
 from typing import Any, cast
 
 import chz
-import verifiers as vf
 from verifiers.utils.async_utils import maybe_semaphore
 
 from tinker_cookbook import cli_utils, model_info, renderers
@@ -17,7 +16,6 @@ from tinker_cookbook.recipes.verifiers_rl.verifiers_env import (
     VerifiersEnvGroupBuilder,
     VerifiersRLDatasetBuilder,
     convert_states_to_trajectory_group,
-    set_vf_env,
 )
 from tinker_cookbook.rl import train
 from tinker_cookbook.rl.types import EnvGroupBuilder, TrajectoryGroup
@@ -69,10 +67,7 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
     log_path = cli_config.log_path or f"/tmp/tinker-examples/verifiers_rl/{run_name}"
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
 
-    # load verifiers environment (must be installed; `prime env install user/env-id`)
     env_args = json.loads(cli_config.vf_env_args) if cli_config.vf_env_args else {}
-    vf_env = vf.load_environment(cli_config.vf_env_id, **env_args)
-    set_vf_env(vf_env)
 
     shared_client: TinkerAsyncOpenAIClient | None = None
     shared_renderer: renderers.Renderer | None = None
