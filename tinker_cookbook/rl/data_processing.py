@@ -25,9 +25,9 @@ def compute_advantages(trajectory_groups_P: List[TrajectoryGroup]) -> List[torch
         rewards_G = torch.tensor(traj_group.get_total_rewards())
         # Center advantages within the group
         advantages_G = rewards_G - rewards_G.mean()
-	# Correct for bias introduced by reward centering
-	G = len(rewards_G)
-	advantages *= ((G-1)/G)
+        # Correct for bias introduced by reward centering
+        G = len(rewards_G)
+        advantages *= ((G-1)/G)
         advantages_P.append(advantages_G)
 
     return advantages_P
