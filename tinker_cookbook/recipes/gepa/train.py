@@ -3,11 +3,15 @@ import os
 from datetime import datetime
 
 import chz
-import gepa
+from gepa.api import optimize as gepa_optimize
 import tinker
 
 from tinker_cookbook import cli_utils, model_info, renderers
-from tinker_cookbook.recipes.gepa.adapter import TinkerGEPAAdapter, TinkerReflectionLM
+from tinker_cookbook.recipes.gepa.adapter import (
+    TinkerDataInst,
+    TinkerGEPAAdapter,
+    TinkerReflectionLM,
+)
 from tinker_cookbook.recipes.gepa.tasks import GEPADataInstance, get_task, list_tasks
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log
@@ -121,14 +125,13 @@ def main(config: CLIConfig) -> None:
         tokenizer=reflection_tokenizer,
     )
 
-    def to_gepa_format(instances: list[GEPADataInstance]) -> list[dict]:
+    def to_gepa_format(instances: list[GEPADataInstance]) -> list[TinkerDataInst]:
         return [
-            {
-                "input": inst["input"],
-                "answer": inst["answer"],
-                "additional_context": inst.get("metadata", {}),
-                "metadata": inst.get("metadata", {}),
-            }
+            TinkerDataInst(
+                input=inst["input"],
+                answer=inst["answer"],
+                metadata=inst.get("metadata", {}),
+            )
             for inst in instances
         ]
 
@@ -137,7 +140,7 @@ def main(config: CLIConfig) -> None:
     gepa_testset = to_gepa_format(testset) if testset else []
 
     logger.info("Starting GEPA optimization loop...")
-    result = gepa.optimize(
+    result = gepa_optimize(
         seed_candidate={task.prompt_component_name: seed_prompt},
         trainset=gepa_trainset,
         valset=gepa_valset,
