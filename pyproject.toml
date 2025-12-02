@@ -54,7 +54,7 @@ trackio = [
     "trackio<1.0.0",
 ]
 verifiers = [
-    "verifiers",
+    "verifiers>=0.1.8.post0",
     "openai",
 ]
 all = [

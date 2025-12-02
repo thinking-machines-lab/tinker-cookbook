@@ -1,25 +1,25 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from typing import Any, List
 from datetime import datetime
+from typing import Any, cast
 
 import chz
-import json
-import tinker
-import verifiers as vf
 from verifiers.utils.async_utils import maybe_semaphore
+
 from tinker_cookbook import cli_utils, model_info, renderers
-from tinker_cookbook.completers import TokensWithLogprobs, TokenCompleter, TinkerTokenCompleter
+from tinker_cookbook.completers import TinkerTokenCompleter, TokenCompleter
 from tinker_cookbook.recipes.verifiers_rl.tinker_openai import TinkerAsyncOpenAIClient
-from tinker_cookbook.rl import train
-from tinker_cookbook.rl.types import EnvGroupBuilder, Trajectory, Transition, TrajectoryGroup
-from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 from tinker_cookbook.recipes.verifiers_rl.verifiers_env import (
     VerifiersEnvGroupBuilder,
     VerifiersRLDatasetBuilder,
+    convert_states_to_trajectory_group,
 )
+from tinker_cookbook.rl import train
+from tinker_cookbook.rl.types import EnvGroupBuilder, TrajectoryGroup
+from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,10 @@ class CLIConfig:
     num_substeps: int = 1
     learning_rate: float = 1e-5
     max_tokens: int = 512
+    temperature: float = 1.0
     kl_penalty_coef: float = 0.0
+    max_concurrent_generation: int = -1
+    max_concurrent_scoring: int = -1
 
     # logging configuration
     eval_every: int = 0
@@ -61,27 +64,19 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
         f"_lr{cli_config.learning_rate}_rank{cli_config.lora_rank}_{date_and_time}"
     )
 
-    if cli_config.log_path is not None:
-        log_path = cli_config.log_path
-    else:
-        log_path = f"/tmp/tinker-examples/verifiers_rl/{run_name}"
-
+    log_path = cli_config.log_path or f"/tmp/tinker-examples/verifiers_rl/{run_name}"
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
 
-    # load verifiers environment (must be installed; `prime env install user/env-id`)
     env_args = json.loads(cli_config.vf_env_args) if cli_config.vf_env_args else {}
-    vf_env = vf.load_environment(cli_config.vf_env_id, **env_args)
 
-    # global objects shared across rollout groups
+    shared_client: TinkerAsyncOpenAIClient | None = None
     shared_renderer: renderers.Renderer | None = None
     local_tokenizer: Tokenizer | None = None
 
     async def custom_do_group_rollout(
         builder: EnvGroupBuilder, policy: TokenCompleter
     ) -> TrajectoryGroup:
-        assert isinstance(builder, VerifiersEnvGroupBuilder)
-        assert isinstance(policy, TinkerTokenCompleter)
-        nonlocal shared_renderer, local_tokenizer
+        nonlocal shared_client, shared_renderer, local_tokenizer
 
         # initialize tokenizer and renderer lazily
         if local_tokenizer is None:
@@ -89,85 +84,52 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
         if shared_renderer is None:
             renderer_name = model_info.get_recommended_renderer_name(cli_config.model_name)
             shared_renderer = renderers.get_renderer(renderer_name, local_tokenizer)
-        sampling_client = policy.sampling_client
 
-        async def run_one_rollout() -> tuple[Trajectory, float, dict[str, float | int]]:
-            recorded: List[
-                tuple[list[renderers.Message], tinker.ModelInput, list[int], list[float]]
-            ] = []
-
-            def hook(messages, model_input, tokens, logprobs):
-                recorded.append((list(messages), model_input, list(tokens), list(logprobs)))
-
-            # create per-rollout client for hook
-            assert shared_renderer is not None and local_tokenizer is not None
-            local_client = TinkerAsyncOpenAIClient(
+        sampling_client = cast(TinkerTokenCompleter, policy).sampling_client
+        if shared_client is None:
+            shared_client = TinkerAsyncOpenAIClient(
                 sampling_client, shared_renderer, local_tokenizer
             )
-            local_client.set_generation_hook(hook)
+        else:
+            shared_client.set_sampling_client(sampling_client)
 
-            rollout_input: vf.RolloutInput = {
-                "prompt": builder.prompt,
-                "answer": builder.answer,
-                "task": builder.task,
-                "info": builder.info,
-                "example_id": 0,
-            }
-            state = await builder.vf_env.rollout(
-                input=rollout_input,
-                client=local_client,
-                model="tinker",
-                sampling_args={},
-            )
+        vf_builder = cast(VerifiersEnvGroupBuilder, builder)
+        rollout_inputs = vf_builder.get_rollout_inputs(cli_config.group_size)
 
-            score_sem = await maybe_semaphore(None)
-            await builder.vf_env.rubric.score_rollout(
-                state=state,
-                score_sem=score_sem,
-            )
-            rs: vf.RolloutScore = {"reward": state["reward"], "metrics": state.get("metrics", {})}
+        gen_sem = await maybe_semaphore(cli_config.max_concurrent_generation)
+        score_sem = await maybe_semaphore(cli_config.max_concurrent_scoring)
 
-            transitions: List[Transition] = []
-            for _msgs, model_input, tokens, logprobs in recorded:
-                transitions.append(
-                    Transition(
-                        ob=model_input,
-                        ac=TokensWithLogprobs(tokens=tokens, maybe_logprobs=logprobs),
-                        reward=0.0,
-                        episode_done=False,
-                        metrics={},
-                    )
-                )
-            if transitions:
-                transitions[-1] = Transition(
-                    ob=transitions[-1].ob,
-                    ac=transitions[-1].ac,
-                    reward=0.0,
-                    episode_done=True,
-                    metrics=transitions[-1].metrics,
-                )
-            traj = Trajectory(transitions=transitions, final_ob=tinker.ModelInput.empty())
-            return traj, float(rs["reward"]), dict(rs["metrics"])
+        states = await vf_builder.vf_env.run_group(
+            group_inputs=rollout_inputs,
+            client=shared_client,
+            model="tinker",
+            gen_sampling_args={
+                "max_tokens": cli_config.max_tokens,
+                "temperature": cli_config.temperature,
+            },
+            gen_sem=gen_sem,
+            score_sem=score_sem,
+        )
 
-        results = await asyncio.gather(*[run_one_rollout() for _ in range(cli_config.group_size)])
-        trajectories_G = [t for (t, _r, _m) in results]
-        final_rewards_G = [r for (_t, r, _m) in results]
-        metrics_G = [m for (_t, _r, m) in results]
-        return TrajectoryGroup(trajectories_G, final_rewards_G, metrics_G)
+        return convert_states_to_trajectory_group(states)
 
     # override do_group_rollout function inside rl.train
     train.do_group_rollout = custom_do_group_rollout
 
+    dataset_builder = VerifiersRLDatasetBuilder(
+        vf_env_id=cli_config.vf_env_id,
+        vf_env_args=env_args,
+        groups_per_batch=cli_config.groups_per_batch,
+        dataset_n=cli_config.dataset_n,
+        dataset_seed=cli_config.dataset_seed,
+    )
+
     cfg = train.Config(
         learning_rate=cli_config.learning_rate,
-        dataset_builder=VerifiersRLDatasetBuilder(
-            vf_env=vf_env,
-            groups_per_batch=cli_config.groups_per_batch,
-            dataset_n=cli_config.dataset_n,
-            dataset_seed=cli_config.dataset_seed,
-        ),
+        dataset_builder=dataset_builder,
         model_name=cli_config.model_name,
         max_tokens=cli_config.max_tokens,
+        temperature=cli_config.temperature,
         lora_rank=cli_config.lora_rank,
         kl_penalty_coef=cli_config.kl_penalty_coef,
         num_substeps=cli_config.num_substeps,
