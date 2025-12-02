@@ -7,12 +7,11 @@ import sys
 from collections.abc import Callable
 
 import cloudpickle
-from py_utils.symbol_lookup import get_symbol_path
 from pydantic import BaseModel
 from termcolor import colored
 
 from .control import PaneJobInfo, SessionMetadata, WindowJobInfo, load_existing_metadata
-from .utils import generate_unique_names
+from .utils import generate_unique_names, get_symbol_path
 
 
 class JobSpec(BaseModel):
