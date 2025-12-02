@@ -18,9 +18,9 @@ from .utils import generate_unique_names
 class JobSpec(BaseModel):
     """Specification for a single job in the swarm"""
 
-    main_fn: Callable[..., object]
-    log_relpath: str
-    entrypoint_config: object
+    main_fn: Callable[..., object]  # function to run
+    log_relpath: str  # path to log directory
+    entrypoint_config: object  # argument to pass to main_fn
     tmux_window_name: str | None = None  # If set, groups jobs together
 
     def get_window_name(self, default_name: str) -> str:
@@ -34,7 +34,7 @@ class SwarmConfig(BaseModel):
     sweep_name: str  # Becomes tmux session name
     max_panes_per_window: int = 4  # When grouping, split into multiple windows if needed
     use_pickle: bool = True  # Whether to use pickle for config serialization
-    dry_run: bool = False
+    dry_run: bool = False  # If set, will create the session but not launch any jobs
     control_window_cmd: str | None = None  # Custom control window command
     status_format: str | None = None  # Custom status bar format
     debug: bool = False  # Whether to run jobs with pdb debugger
