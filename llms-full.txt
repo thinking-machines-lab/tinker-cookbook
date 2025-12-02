@@ -676,6 +676,27 @@ training_client.load_state(sft_checkpoint_path)
 - Multi-step training pipelines (e.g., starting DPO training from an SFT checkpoint)
 - Starting fresh training from pretrained weights with a new optimizer
 
+### ServiceClient methods for loading checkpoints
+
+The `ServiceClient` also provides methods to create a new `TrainingClient` directly from a saved checkpoint:
+
+- `create_training_client_from_state(path)`: Creates a `TrainingClient` with weights loaded from the checkpoint (no optimizer state). Use this when starting a new training phase from saved weights.
+- `create_training_client_from_state_with_optimizer(path)`: Creates a `TrainingClient` with both weights and optimizer state loaded. Use this when resuming interrupted training.
+
+```python
+# Resume training with optimizer state
+training_client = service_client.create_training_client_from_state_with_optimizer(
+    "tinker://run-id/weights/checkpoint-001"
+)
+
+# Start fresh training from a checkpoint (weights only)
+training_client = service_client.create_training_client_from_state(
+    "tinker://run-id/weights/checkpoint-001"
+)
+```
+
+Async versions are also available: `create_training_client_from_state_async()` and `create_training_client_from_state_with_optimizer_async()`.
+
 
 ---
 
