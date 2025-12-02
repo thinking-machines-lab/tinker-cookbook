@@ -102,7 +102,7 @@ class JobCommand(BaseModel):
     env: dict[str, str]
 
 
-def get_tmux_env_flags(env: dict[str, str]) -> list[str]:
+def _get_tmux_env_flags(env: dict[str, str]) -> list[str]:
     """Get the flags to pass to tmux to set the environment"""
     key_value_pairs = [["-e", f"{key}={value}"] for key, value in env.items()]
     return sum(key_value_pairs, [])
@@ -222,7 +222,7 @@ def _enable_pane_logging(
     )
 
 
-def configure_status_bar(session_name: str, sweep_name: str, verbose: bool = False) -> None:
+def _configure_status_bar(session_name: str, sweep_name: str, verbose: bool = False) -> None:
     """Configure a multi-line status bar for the session"""
 
     # Status bar content
@@ -401,7 +401,7 @@ def launch_swarm(job_specs: list[JobSpec], config: SwarmConfig) -> None:
         )
 
         # Configure status bar
-        configure_status_bar(session_name, config.sweep_name, verbose=config.verbose)
+        _configure_status_bar(session_name, config.sweep_name, verbose=config.verbose)
 
     # If a new session is added, we need to add bindings for the new windows too
     for window_index in range(starting_window_index, ending_window_index):
@@ -440,7 +440,7 @@ def launch_swarm(job_specs: list[JobSpec], config: SwarmConfig) -> None:
                 "-t",
                 f"{session_name}:{window_index}",
             ]
-            + get_tmux_env_flags(job_cmd.env)
+            + _get_tmux_env_flags(job_cmd.env)
             + [
                 "-n",
                 window_name,
@@ -478,7 +478,7 @@ def launch_swarm(job_specs: list[JobSpec], config: SwarmConfig) -> None:
                     f"{session_name}:{window_index}",
                     "-h",  # Split horizontally for better layout
                 ]
-                + get_tmux_env_flags(job_cmd.env)
+                + _get_tmux_env_flags(job_cmd.env)
                 + [
                     job_cmd.command,
                 ],
@@ -521,7 +521,7 @@ def launch_swarm(job_specs: list[JobSpec], config: SwarmConfig) -> None:
                 "-t",
                 f"{session_name}:{window_index}",
             ]
-            + get_tmux_env_flags(job_cmd.env)
+            + _get_tmux_env_flags(job_cmd.env)
             + [
                 "-n",
                 window_name,
