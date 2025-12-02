@@ -40,7 +40,7 @@ See [tinker_cookbook/recipes/sl_loop.py](tinker_cookbook/recipes/sl_loop.py) and
 To download the weights of any model:
 ```python
 rest_client = service_client.create_rest_client()
-future = rest_client.download_checkpoint_archive_from_tinker_path(sampling_client.model_path)
+future = rest_client.get_checkpoint_archive_url_from_tinker_path(sampling_client.model_path)
 with open(f"model-checkpoint.tar.gz", "wb") as f:
     f.write(future.result())
 ```
