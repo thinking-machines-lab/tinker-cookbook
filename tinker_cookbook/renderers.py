@@ -629,9 +629,13 @@ class DeepSeekV3Renderer(Renderer):
     For no-think, just use <|Assistant|></think>
     """
 
+    def __init__(self, tokenizer: Tokenizer, system_role_as_user: bool = False):
+        super().__init__(tokenizer)
+        self.system_role_as_user = system_role_as_user
+
     def _render_message(self, message: Message) -> tuple[list[int], list[int], list[int]]:
         assert message.get("thinking") is None, "TODO: support CoT in DsV3 renderer"
-        if message["role"] == "user":
+        if message["role"] == "user" or (self.system_role_as_user and message["role"] == "system"):
             role_token = self._get_special_token("User")
         elif message["role"] == "assistant":
             role_token = self._get_special_token("Assistant")
