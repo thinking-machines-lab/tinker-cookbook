@@ -70,6 +70,15 @@ class JobInfo(BaseModel):
     pid: int | None = None
 
 
+def load_existing_metadata(session_name: str) -> SessionMetadata | None:
+    """Load existing session metadata"""
+    metadata_path = os.path.expanduser(f"~/experiments/.xmux/{session_name}.json")
+    if os.path.exists(metadata_path):
+        with open(metadata_path, "r") as f:
+            return SessionMetadata.model_validate_json(f.read())
+    return None
+
+
 class ControlWindow:
     """Interactive control window for managing xmux sessions"""
 
@@ -80,8 +89,9 @@ class ControlWindow:
         self.last_refresh: float = time.time()
         self.start_time: datetime = datetime.now()
 
-        # Load metadata if available
-        self.metadata: SessionMetadata = self._load_metadata()
+        metadata = load_existing_metadata(self.session_name)
+        assert metadata is not None
+        self.metadata: SessionMetadata = metadata
 
         # Set up debug log file
         self.debug_log: str = os.path.expanduser(

@@ -11,7 +11,7 @@ from py_utils.symbol_lookup import get_symbol_path
 from pydantic import BaseModel
 from termcolor import colored
 
-from .control import PaneJobInfo, SessionMetadata, WindowJobInfo
+from .control import PaneJobInfo, SessionMetadata, WindowJobInfo, load_existing_metadata
 from .utils import generate_unique_names
 
 
@@ -47,7 +47,7 @@ class SwarmConfig(BaseModel):
 
 
 class JobConfig(BaseModel):
-    """Internal job configuration (compatible with wonka)"""
+    """Internal job configuration"""
 
     log_relpath: str
     entrypoint: str
@@ -136,15 +136,6 @@ def _session_exists(session_name: str) -> bool:
         ["tmux", "has-session", "-t", session_name], capture_output=True, check=False
     )
     return result.returncode == 0
-
-
-def _load_existing_metadata(session_name: str) -> SessionMetadata | None:
-    """Load existing session metadata"""
-    metadata_path = os.path.expanduser(f"~/experiments/.xmux/{session_name}.json")
-    if os.path.exists(metadata_path):
-        with open(metadata_path, "r") as f:
-            return SessionMetadata.model_validate_json(f.read())
-    return None
 
 
 def _get_next_window_index(metadata: SessionMetadata | None) -> int:
@@ -312,7 +303,7 @@ def launch_swarm(job_specs: list[JobSpec], config: SwarmConfig) -> None:
                     "cyan",
                 )
             )
-        existing_metadata = _load_existing_metadata(session_name)
+        existing_metadata = load_existing_metadata(session_name)
         starting_window_index = _get_next_window_index(existing_metadata)
         if config.verbose:
             print(colored(f"Starting new jobs from window index {starting_window_index}", "cyan"))
