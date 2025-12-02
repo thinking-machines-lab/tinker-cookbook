@@ -26,6 +26,6 @@ def get_tokenizer(model_name: str) -> Tokenizer:
 
     # Avoid gating of Llama 3 models:
     if model_name.startswith("meta-llama/Llama-3"):
-        model_name = "Xenova/Meta-Llama-3.1-Tokenizer"
+        model_name = "thinkingmachineslabinc/meta-llama-3-tokenizer"
 
     return AutoTokenizer.from_pretrained(model_name, use_fast=True)
