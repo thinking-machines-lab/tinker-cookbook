@@ -61,7 +61,7 @@ def async_rl_sweep():
             max_steps_off_policy=max_steps_off_policy,
             name=tmux_window_name,
         )
-        log_relpath = f"~/experiments/{log_relpath_base}/{tmux_window_name}"
+        log_relpath = os.path.expanduser(f"~/experiments/{log_relpath_base}/{tmux_window_name}")
 
         if json_already_exists(log_relpath):
             print(f"Skipping {log_relpath} because it already exists")
