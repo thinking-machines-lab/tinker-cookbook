@@ -88,6 +88,7 @@ class TinkerMessageCompleter(MessageCompleter):
         renderer: renderers.Renderer,
         max_tokens: int,
         stop_condition: StopCondition | None = None,
+        prefill: str | None = None,
     ):
         self.sampling_client = sampling_client
         self.renderer = renderer
@@ -96,10 +97,11 @@ class TinkerMessageCompleter(MessageCompleter):
             self.stop_condition = self.renderer.get_stop_sequences()
         else:
             self.stop_condition = stop_condition
+        self.prefill = prefill
 
     async def __call__(self, messages: list[renderers.Message]) -> renderers.Message:
         # Render the conversation for the model
-        model_input = self.renderer.build_generation_prompt(messages)
+        model_input = self.renderer.build_generation_prompt(messages, prefill=self.prefill)
 
         # Sample from the model
         response = await self.sampling_client.sample_async(
