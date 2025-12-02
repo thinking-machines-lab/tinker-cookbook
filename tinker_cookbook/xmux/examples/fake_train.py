@@ -9,10 +9,10 @@ from pydantic import BaseModel
 
 
 class Config(BaseModel):
-    duration: int
-    failure_rate: float
-    model: str
-    lr: float
+    duration: int = 60
+    failure_rate: float = 0.2
+    model: str = "unknown"
+    lr: float = 0.001
 
 
 def fake_train_model(config_dict: dict[str, Any]):
