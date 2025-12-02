@@ -384,7 +384,7 @@ async def main(
         resume_info["state_path"] if resume_info else cfg.load_checkpoint_path
     )
     if load_state_path:
-        future = await training_client.load_state_async(load_state_path)
+        future = await training_client.load_state_with_optimizer_async(load_state_path)
         _ = await future.result_async()
         logger.info(f"Loaded state from {load_state_path}")
 
