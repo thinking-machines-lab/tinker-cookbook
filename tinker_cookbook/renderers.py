@@ -627,6 +627,7 @@ class DeepSeekV3Renderer(Renderer):
     Format like this (no newlines between messages):
         <|begin_of_sentence|><|User|>What can you help me with?<|Assistant|><think>Thinking...</think>I can help you with...<|end_of_centence|>
     For no-think, just use <|Assistant|></think>
+    Deepseek renderer does not support the system role out of the box. You can set system_role_as_user to True to automatically convert the system role to the user role.
     """
 
     def __init__(self, tokenizer: Tokenizer, system_role_as_user: bool = False):
