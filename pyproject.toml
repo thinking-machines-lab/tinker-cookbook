@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.11"
 dependencies = [
     "chz",
+    "cloudpickle",
     "datasets",
     "numpy",
     "rich",
