@@ -59,7 +59,7 @@ Working notes for future agents hacking on `tinker-cookbook`. Additional docs ca
 
 ### Evaluations & Sampling
 - Inline evaluators implement either `TrainingClientEvaluator` or `SamplingClientEvaluator`. Training loops accept builder lists (`evaluator_builders`, `infrequent_evaluator_builders`). Inspect AI integration is in `eval/inspect_evaluators.py` and `eval/run_inspect_evals.py`.
-- Sampling clients come from `training_client.save_weights_and_get_sampling_client(name=...)`. To export weights, use `RestClient.download_checkpoint_archive_from_tinker_path`.
+- Sampling clients come from `training_client.save_weights_and_get_sampling_client(name=...)`. To export weights, use `RestClient.get_checkpoint_archive_url_from_tinker_path`.
 
 ## Async & Performance
 - Worker pools advance in ~10s clock cycles. Submit `forward_backward_async` and `optim_step_async` back-to-back, then await both futures to keep them on the same cycle.
