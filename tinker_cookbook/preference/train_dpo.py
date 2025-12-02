@@ -91,14 +91,15 @@ def create_dpo_clients(
         base_model=config.model_name, rank=config.lora_rank
     )
 
-    # Load state first to get the SFT checkpoint path for the reference client
-    load_state_path: str | None = (
-        resume_info["state_path"] if resume_info else config.load_checkpoint_path
-    )
-    if load_state_path:
-        # Load state into the training client
-        training_client.load_state(load_state_path).result()
-        logger.info(f"Loaded weights from {load_state_path}")
+    # Load state - differentiate between resuming DPO training vs starting fresh from SFT
+    if resume_info:
+        # Resuming interrupted DPO training - load optimizer state for proper continuation
+        training_client.load_state_with_optimizer(resume_info["state_path"]).result()
+        logger.info(f"Resumed DPO training from {resume_info['state_path']}")
+    elif config.load_checkpoint_path:
+        # Starting fresh DPO from SFT checkpoint - load weights only (fresh optimizer)
+        training_client.load_state(config.load_checkpoint_path).result()
+        logger.info(f"Loaded weights from {config.load_checkpoint_path}")
     # Create a sampling client for the reference model from the training client
     reference_client = training_client.save_weights_and_get_sampling_client("reference")
     return training_client, reference_client
