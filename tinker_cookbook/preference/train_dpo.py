@@ -173,7 +173,7 @@ def do_update(
     metrics: dict[str, int | float | str] = {"epoch": epoch_idx}
 
     # Save checkpoint if needed
-    if config.save_every and step % config.save_every == 0 and step > 0:
+    if config.save_every > 0 and step % config.save_every == 0 and step > 0:
         with timed("save_checkpoint", metrics):
             save_result = checkpoint_utils.save_checkpoint(
                 training_client=training_client,

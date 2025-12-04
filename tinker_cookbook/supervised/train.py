@@ -292,7 +292,7 @@ async def main(config: Config):
         metrics = submitted.metrics
         metrics["progress"] = min((submitted.step + 1) / progress_denominator, 1.0)
 
-        if config.save_every and submitted.step % config.save_every == 0 and submitted.step > 0:
+        if config.save_every > 0 and submitted.step % config.save_every == 0 and submitted.step > 0:
             with timed("save_checkpoint", metrics):
                 # Enqueue a checkpoint save after the forward/backward and optimizer
                 # requests for this step; the snapshot will reflect post-step weights.

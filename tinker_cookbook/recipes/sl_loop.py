@@ -86,7 +86,7 @@ def main(config: Config):
         metrics = {}
 
         # Save checkpoint
-        if config.save_every and step % config.save_every == 0 and step > 0:
+        if config.save_every > 0 and step % config.save_every == 0 and step > 0:
             checkpoint_utils.save_checkpoint(
                 training_client=training_client,
                 name=f"{step:06d}",
