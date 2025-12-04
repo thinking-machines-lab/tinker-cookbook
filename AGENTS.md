@@ -73,7 +73,7 @@ Working notes for future agents hacking on `tinker-cookbook`. Additional docs ca
 
 ## Testing & Troubleshooting
 - Lightweight checks: `pytest tinker_cookbook/tests/test_renderers.py`, `pytest tinker_cookbook/tests/test_utils.py`. `tests/smoke_tests.py` spins up real training runs (needs HF + API access).
-- Example data lives in `example-data/` (e.g., `conversations.jsonl`, `multilingual.txt`) and mirrors the formats documented in `training-sampling`.
+- Example data lives in `tinker_cookbook/example_data/` (e.g., `conversations.jsonl`, `multilingual.txt`) and mirrors the formats documented in `training-sampling`.
 - If you hit auth/network issues, double-check `TINKER_API_KEY`, ensure your environment can reach the Tinker service, and verify dependencies (`pip show tinker`).
 - Resize datasets/batch sizes in recipes when debugging; `dataset_builder` objects usually accept `n_batches`, `batch_size`, and `group_size` fields so you can shrink workloads.
 
