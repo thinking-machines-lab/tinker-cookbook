@@ -690,7 +690,7 @@ async def save_checkpoint_and_get_sampling_client(
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     metrics = {}
     with timed("save_checkpoint", metrics):
-        if i_batch > start_batch and i_batch % save_every == 0:
+        if save_every and i_batch > start_batch and i_batch % save_every == 0:
             path_dict = await checkpoint_utils.save_checkpoint_async(
                 training_client=training_client,
                 name=f"{i_batch:06d}",
