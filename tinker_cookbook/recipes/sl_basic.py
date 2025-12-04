@@ -25,7 +25,7 @@ def build_config_blueprint() -> chz.Blueprint[train.Config]:
             common_config=common_config, file_path="/path/to/your/dataset.jsonl"
         )
         # ^^^ Create a dataset from a JSONL file in the same format as
-        # example-data/conversations.jsonl
+        # tinker_cookbook/example_data/conversations.jsonl
     return chz.Blueprint(train.Config).apply(
         {
             "log_path": "/tmp/tinker-examples/sl_basic",
