@@ -491,7 +491,11 @@ class Qwen3Renderer(Renderer):
         maybe_newline = "\n" if idx > 0 else ""
         ob_str = f"{maybe_newline}<|im_start|>{message['role']}\n"
         ac_content = message["content"]
-        if self.strip_thinking_from_history and message["role"] == "assistant" and "</think>" in ac_content:
+        if (
+            self.strip_thinking_from_history
+            and message["role"] == "assistant"
+            and "</think>" in ac_content
+        ):
             # Multi-turn conversation, we remove the thinking section from the assistant message.
             # This matches how Qwen3 models were trained - they only see their own thinking
             # during the current turn, not from previous turns.
