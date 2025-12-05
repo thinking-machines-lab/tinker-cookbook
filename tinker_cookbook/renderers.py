@@ -478,7 +478,10 @@ class Qwen3Renderer(Renderer):
                 from assistant messages in multi-turn history. This matches how Qwen3 models
                 were trained - they only see their own thinking during the current turn, not
                 from previous turns. Set to False to preserve thinking in history (useful for
-                certain RL scenarios).
+                certain RL scenarios where you want the extension property for efficiency).
+
+        See https://tinker-docs.thinkingmachines.ai/rl/sequence-extension for details on
+        how this option affects multi-turn RL compute efficiency.
         """
         super().__init__(tokenizer)
         self.strip_thinking_from_history = strip_thinking_from_history
