@@ -28,7 +28,7 @@ class Config:
     learning_rate: float = 4e-5
     max_length: int = 32768
     lora_rank: int = 32
-    save_every: int = 20
+    save_every: int = 20  # 0 = disabled
     max_tokens: int = 256
 
 
@@ -117,7 +117,7 @@ def main(config: Config):
         }
 
         # Save checkpoint
-        if step % config.save_every == 0 and step > 0:
+        if config.save_every > 0 and step % config.save_every == 0 and step > 0:
             checkpoint_utils.save_checkpoint(
                 training_client=training_client,
                 name=f"{step:06d}",

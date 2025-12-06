@@ -29,7 +29,7 @@ class Config:
     max_length: int = 32768
     train_on_what: renderers.TrainOnWhat = renderers.TrainOnWhat.ALL_ASSISTANT_MESSAGES
     lora_rank: int = 32
-    save_every: int = 20
+    save_every: int = 20  # 0 = disabled
 
 
 def main(config: Config):
@@ -86,7 +86,7 @@ def main(config: Config):
         metrics = {}
 
         # Save checkpoint
-        if step % config.save_every == 0 and step > 0:
+        if config.save_every > 0 and step % config.save_every == 0 and step > 0:
             checkpoint_utils.save_checkpoint(
                 training_client=training_client,
                 name=f"{step:06d}",

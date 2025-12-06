@@ -58,7 +58,7 @@ class Config:
     # Infrastructure parameters
     base_url: str | None = None
 
-    # Checkpointing and evaluation
+    # Checkpointing and evaluation (0 = disabled for *_every fields)
     evaluator_builders: list[EvaluatorBuilder] = chz.field(default_factory=list)
     infrequent_evaluator_builders: list[EvaluatorBuilder] = chz.field(default_factory=list)
     save_every: int = 20
@@ -298,7 +298,7 @@ async def main(config: Config):
         metrics = submitted.metrics
         metrics["progress"] = min((submitted.step + 1) / progress_denominator, 1.0)
 
-        if submitted.step % config.save_every == 0 and submitted.step > 0:
+        if config.save_every > 0 and submitted.step % config.save_every == 0 and submitted.step > 0:
             with timed("save_checkpoint", metrics):
                 # Enqueue a checkpoint save after the forward/backward and optimizer
                 # requests for this step; the snapshot will reflect post-step weights.

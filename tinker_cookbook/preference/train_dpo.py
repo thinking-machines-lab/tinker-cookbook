@@ -48,7 +48,7 @@ class Config:
     num_replicas: int = 8
     base_url: str | None = None
 
-    # Checkpointing and evaluation
+    # Checkpointing and evaluation (0 = disabled for *_every fields)
     evaluator_builders: list[EvaluatorBuilder] = chz.field(default_factory=list)
     infrequent_evaluator_builders: list[EvaluatorBuilder] = chz.field(default_factory=list)
     save_every: int = 20
@@ -174,7 +174,7 @@ def do_update(
     metrics: dict[str, int | float | str] = {"epoch": epoch_idx}
 
     # Save checkpoint if needed
-    if step % config.save_every == 0 and step > 0:
+    if config.save_every > 0 and step % config.save_every == 0 and step > 0:
         with timed("save_checkpoint", metrics):
             save_result = checkpoint_utils.save_checkpoint(
                 training_client=training_client,
