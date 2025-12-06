@@ -5,9 +5,11 @@ permissions:
   pull-requests: write   # allow PR comments/reviews & PR creation
   issues: write          # allow issue comments & labels
 
-  id-token: write       # Necessary because otherwise we get:
+
+  # id-token: write       # Necessary because otherwise we get:
     # Error: Failed to setup GitHub token: Error: Could not fetch an OIDC token. Did you remember to add `id-token: write` to your workflow permissions?
     # If you instead wish to use this action with a custom GitHub token or custom GitHub app, provide a `github_token` in the `uses` section of the app in your workflow yml file.
+  # ^^^ removed in favor of GITHUB_TOKEN; OIDC stopped working for some reason.
   actions: read
     # ^^^ Not sure if this is necessary, but my previous working configuration had it.
 
@@ -49,6 +51,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           # Official slash command for PR review (context comes from the PR event)
           # https://code.claude.com/docs/en/github-actions#using-slash-commands
           prompt: "/review"
@@ -77,6 +80,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           # No prompt → action switches to "tag" mode and responds to @claude
           # https://code.claude.com/docs/en/github-actions#configuration-examples
           claude_args: ${{ env.CLAUDE_ARGS_COMMON }}
