@@ -252,8 +252,8 @@ class Config:
     enable_trace: bool = False
 
     remove_constant_reward_groups: bool = False
-    eval_every: int = 20
-    save_every: int = 20
+    eval_every: int = 20  # 0 = disabled
+    save_every: int = 20  # 0 = disabled
     load_checkpoint_path: str | None = None
 
     async_config: AsyncConfig | None = None

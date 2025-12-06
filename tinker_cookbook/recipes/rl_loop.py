@@ -28,7 +28,7 @@ class Config:
     learning_rate: float = 4e-5
     max_length: int = 32768
     lora_rank: int = 32
-    save_every: int = 20
+    save_every: int = 20  # 0 = disabled
     max_tokens: int = 256
 
 

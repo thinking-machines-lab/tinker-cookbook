@@ -58,7 +58,7 @@ class Config:
     # Infrastructure parameters
     base_url: str | None = None
 
-    # Checkpointing and evaluation
+    # Checkpointing and evaluation (0 = disabled for *_every fields)
     evaluator_builders: list[EvaluatorBuilder] = chz.field(default_factory=list)
     infrequent_evaluator_builders: list[EvaluatorBuilder] = chz.field(default_factory=list)
     save_every: int = 20

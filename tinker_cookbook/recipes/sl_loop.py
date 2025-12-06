@@ -29,7 +29,7 @@ class Config:
     max_length: int = 32768
     train_on_what: renderers.TrainOnWhat = renderers.TrainOnWhat.ALL_ASSISTANT_MESSAGES
     lora_rank: int = 32
-    save_every: int = 20
+    save_every: int = 20  # 0 = disabled
 
 
 def main(config: Config):
