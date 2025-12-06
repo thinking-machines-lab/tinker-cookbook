@@ -19,7 +19,7 @@ Working notes for future agents hacking on `tinker-cookbook`. Additional docs ca
   - Launch scripts define a CLI-facing `CLIConfig` (parsed by `chz`) that instantiates the richer training `Config`. This gives every recipe a consistent `python -m ... key=value` interface.
   - Env builders compose like `RLDatasetBuilder → EnvGroupBuilder → Env`. Groups let us share metadata (tags, pairwise comparisons) and center rewards across related rollouts.
 - **Completers:** algorithms interact with the `TokenCompleter` interface. `TinkerTokenCompleter` (wrapping a `SamplingClient`) is the default implementation, but evaluators may accept any `TokenCompleter` or `MessageCompleter`.
-- **Renderers & tokenizer utils:** pick the renderer that matches your tokenizer/model pair (e.g., `role_colon`, `llama3`, `qwen3`). `TrainOnWhat` controls which tokens get weight=1 in SFT. Tokenizers are cached via `tokenizer_utils.get_tokenizer`, with Llama-3 names remapped to `baseten/Meta-Llama-3-tokenizer` to bypass HF gating.
+- **Renderers & tokenizer utils:** pick the renderer that matches your tokenizer/model pair (e.g., `role_colon`, `llama3`, `qwen3`). `TrainOnWhat` controls which tokens get weight=1 in SFT. Tokenizers are cached via `tokenizer_utils.get_tokenizer`, with Llama-3 names remapped to `thinkingmachineslabinc/meta-llama-3-tokenizer` to bypass HF gating.
 - **Loss plumbing:** every `tinker.Datum` bundles a `model_input` plus `loss_fn_inputs` (`TensorData`). Use helpers such as `conversation_to_datum`, `datum_from_tokens_weights`, and `_remove_mask` instead of constructing dicts manually. Built-in losses: `cross_entropy`, `importance_sampling`, `ppo`; `forward_backward_custom` covers bespoke differentiable objectives.
 
 ## Conventions & Notation (from CONTRIBUTING)
@@ -59,7 +59,7 @@ Working notes for future agents hacking on `tinker-cookbook`. Additional docs ca
 
 ### Evaluations & Sampling
 - Inline evaluators implement either `TrainingClientEvaluator` or `SamplingClientEvaluator`. Training loops accept builder lists (`evaluator_builders`, `infrequent_evaluator_builders`). Inspect AI integration is in `eval/inspect_evaluators.py` and `eval/run_inspect_evals.py`.
-- Sampling clients come from `training_client.save_weights_and_get_sampling_client(name=...)`. To export weights, use `RestClient.download_checkpoint_archive_from_tinker_path`.
+- Sampling clients come from `training_client.save_weights_and_get_sampling_client(name=...)`. To export weights, use `RestClient.get_checkpoint_archive_url_from_tinker_path`.
 
 ## Async & Performance
 - Worker pools advance in ~10s clock cycles. Submit `forward_backward_async` and `optim_step_async` back-to-back, then await both futures to keep them on the same cycle.
@@ -73,7 +73,7 @@ Working notes for future agents hacking on `tinker-cookbook`. Additional docs ca
 
 ## Testing & Troubleshooting
 - Lightweight checks: `pytest tinker_cookbook/tests/test_renderers.py`, `pytest tinker_cookbook/tests/test_utils.py`. `tests/smoke_tests.py` spins up real training runs (needs HF + API access).
-- Example data lives in `example-data/` (e.g., `conversations.jsonl`, `multilingual.txt`) and mirrors the formats documented in `training-sampling`.
+- Example data lives in `tinker_cookbook/example_data/` (e.g., `conversations.jsonl`, `multilingual.txt`) and mirrors the formats documented in `training-sampling`.
 - If you hit auth/network issues, double-check `TINKER_API_KEY`, ensure your environment can reach the Tinker service, and verify dependencies (`pip show tinker`).
 - Resize datasets/batch sizes in recipes when debugging; `dataset_builder` objects usually accept `n_batches`, `batch_size`, and `group_size` fields so you can shrink workloads.
 

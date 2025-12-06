@@ -9,11 +9,12 @@ authors = [
 requires-python = ">=3.11"
 dependencies = [
     "chz",
+    "cloudpickle",
     "datasets",
     "numpy",
     "rich",
     "termcolor",
-    "tinker>=0.3.0",
+    "tinker>=0.6.1",
     "torch",
     "transformers",
     "blobfile",
@@ -53,7 +54,7 @@ trackio = [
     "trackio<1.0.0",
 ]
 verifiers = [
-    "verifiers",
+    "verifiers>=0.1.8.post0",
     "openai",
 ]
 all = [

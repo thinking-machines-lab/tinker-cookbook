@@ -8,13 +8,13 @@ import logging
 import os
 import time
 from contextlib import contextmanager
-from typing import Any, Callable, Iterator, List, Literal, Sequence
+from typing import Any, Callable, Iterator, List, Sequence
 
 import chz
 import numpy as np
 import tinker
 import torch
-
+from tinker.types import LossFnType
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.display import colorize_example
@@ -157,7 +157,7 @@ def remove_mask(datum: tinker.Datum) -> tinker.Datum:
 async def forward_backward(
     training_client: tinker.TrainingClient,
     batch_d: List[tinker.Datum],
-    loss_fn: Literal["importance_sampling", "ppo"],
+    loss_fn: LossFnType,
 ) -> List[torch.Tensor]:
     """Accumulate gradients on a minibatch of data"""
     fwd_bwd_future = await training_client.forward_backward_async(
@@ -181,7 +181,7 @@ async def train_step(
     training_client: tinker.TrainingClient,
     learning_rate: float,
     num_substeps: int,
-    loss_fn: Literal["importance_sampling", "ppo"],
+    loss_fn: LossFnType,
 ) -> List[torch.Tensor]:
     """Train the model on collected trajectories."""
     batches_md = split_list(data_D, min(num_substeps, len(data_D)))
@@ -238,7 +238,7 @@ class Config:
     kl_discount_factor: float = 0.0
 
     # Loss function to use for training: "importance_sampling" or "ppo"
-    loss_fn: Literal["importance_sampling", "ppo"] = "importance_sampling"
+    loss_fn: LossFnType = "importance_sampling"
 
     # Number of optimizer steps per training iteration.
     # Useful for very large batch sizes.
@@ -1058,14 +1058,20 @@ async def main(
         start_batch = 0
 
     service_client = tinker.ServiceClient(base_url=cfg.base_url)
-    load_state_path: str | None = (
-        resume_info["state_path"] if resume_info else cfg.load_checkpoint_path
-    )
-    if load_state_path:
-        training_client = await service_client.create_training_client_from_state_async(
-            load_state_path
+    if resume_info:
+        # Resuming interrupted training - load optimizer state for proper continuation
+        training_client = (
+            await service_client.create_training_client_from_state_with_optimizer_async(
+                resume_info["state_path"]
+            )
         )
-        logger.info(f"Loaded state from {load_state_path}")
+        logger.info(f"Resumed training from {resume_info['state_path']}")
+    elif cfg.load_checkpoint_path:
+        # Starting fresh from a checkpoint - load weights only (fresh optimizer)
+        training_client = await service_client.create_training_client_from_state_async(
+            cfg.load_checkpoint_path
+        )
+        logger.info(f"Loaded weights from {cfg.load_checkpoint_path}")
     else:
         training_client = await service_client.create_lora_training_client_async(
             cfg.model_name, rank=cfg.lora_rank

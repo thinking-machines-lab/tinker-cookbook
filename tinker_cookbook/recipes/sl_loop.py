@@ -63,7 +63,7 @@ def main(config: Config):
     # Check for resuming
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     if resume_info:
-        training_client = service_client.create_training_client_from_state(
+        training_client = service_client.create_training_client_from_state_with_optimizer(
             resume_info["state_path"]
         )
         start_batch = resume_info["batch"]

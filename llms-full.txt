@@ -607,11 +607,12 @@ We'll start with a couple of general pages that'll be relevant to almost all of 
 
 # Saving and loading weights and optimizer state
 
-During training, you'll need to save checkpoints for two main purposes: *sampling* (to test your model) and *resuming training* (to continue from where you left off). The `TrainingClient` provides three methods to handle these cases:
+During training, you'll need to save checkpoints for two main purposes: *sampling* (to test your model) and *resuming training* (to continue from where you left off). The `TrainingClient` provides these methods to handle these cases:
 
 1. `save_weights_for_sampler()`: saves a copy of the model weights that can be used for sampling.
 2. `save_state()`: saves the weights and the optimizer state. You can fully resume training from this checkpoint.
-3. `load_state()`: load the weights and the optimizer state. You can fully resume training from this checkpoint.
+3. `load_state()`: load the model weights only (without optimizer state). Use this when you want to start fresh training from a checkpoint, e.g., starting DPO training from an SFT checkpoint.
+4. `load_state_with_optimizer()`: load the model weights and optimizer state. Use this when resuming interrupted training, as it restores the full training state including optimizer momentum.
 
 Note that (1) is faster and requires less storage space than (2).
 
@@ -644,23 +645,57 @@ sampling_client = training_client.save_weights_and_get_sampling_client(name="000
 
 ### Example: Saving to resume training
 
-Use `save_state()` and `load_state()` when you need to pause and continue training with full optimizer state preferred:
+Use `save_state()` and `load_state_with_optimizer()` when you need to pause and continue training with full optimizer state:
 
 ```python
 # Save a checkpoint that you can resume from
 resume_path = training_client.save_state(name="0010").result().path
 
-# Load that checkpoint
-training_client.load_state(resume_path)
+# Load that checkpoint with optimizer state (for resuming training)
+training_client.load_state_with_optimizer(resume_path)
 ```
 
-### When to use `save_state()` and `load_state()`:
+Async versions are also available: `load_state_with_optimizer_async()`.
 
+### Example: Starting fresh from a checkpoint
 
-- Multi-step training pipelines (e.g. supervised learning followed by reinforcement learning)
-- Adjusting hyperparameters or data mid-run
-- Recovery from interruptions or failures
+Use `load_state()` when you want to start a new training phase from saved weights (e.g., starting DPO from an SFT checkpoint):
+
+```python
+# Load weights only, starting with fresh optimizer state
+training_client.load_state(sft_checkpoint_path)
+```
+
+### When to use `load_state_with_optimizer()`:
+
+- Recovery from interruptions or failures (resume training exactly where you left off)
 - Any scenario where you need to preserve exact optimizer state (momentum, learning rate schedules, etc.)
+
+### When to use `load_state()`:
+
+- Multi-step training pipelines (e.g., starting DPO training from an SFT checkpoint)
+- Starting fresh training from pretrained weights with a new optimizer
+
+### ServiceClient methods for loading checkpoints
+
+The `ServiceClient` also provides methods to create a new `TrainingClient` directly from a saved checkpoint:
+
+- `create_training_client_from_state(path)`: Creates a `TrainingClient` with weights loaded from the checkpoint (no optimizer state). Use this when starting a new training phase from saved weights.
+- `create_training_client_from_state_with_optimizer(path)`: Creates a `TrainingClient` with both weights and optimizer state loaded. Use this when resuming interrupted training.
+
+```python
+# Resume training with optimizer state
+training_client = service_client.create_training_client_from_state_with_optimizer(
+    "tinker://run-id/weights/checkpoint-001"
+)
+
+# Start fresh training from a checkpoint (weights only)
+training_client = service_client.create_training_client_from_state(
+    "tinker://run-id/weights/checkpoint-001"
+)
+```
+
+Async versions are also available: `create_training_client_from_state_async()` and `create_training_client_from_state_with_optimizer_async()`.
 
 
 ---
@@ -1838,7 +1873,7 @@ You should see a plot like this:
 - `checkpoints.jsonl`: this files stores the checkpoints that were saved during training. Recall from [Saving and Loading](/save-load) that there are (currently) two kinds of checkpoints: one that has "/sampler_weights/" in the path (used for sampling), and the other that has "/weights/" in the path (includes full optimizer state, used for resuming training). If you interrupt the training script, then run it again, it will ask you if you want to resume training. If you choose to do so, it'll load the last (full state) checkpoint from this file.
 - `config.json`: the configuration that you used for training.
 
-In the `sl_basic` script, you'll see that there's also some disabled code (under `if 0:`) that shows how to use your own dataset, specified as a JSONL file, provided in the format of <CookbookLink path="example-data/conversations.jsonl">conversations.jsonl</CookbookLink>.
+In the `sl_basic` script, you'll see that there's also some disabled code (under `if 0:`) that shows how to use your own dataset, specified as a JSONL file, provided in the format of <CookbookLink path="tinker_cookbook/example_data/conversations.jsonl">conversations.jsonl</CookbookLink>.
 
 ---
 

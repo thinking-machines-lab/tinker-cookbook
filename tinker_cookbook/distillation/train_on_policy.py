@@ -7,11 +7,13 @@ import asyncio
 import logging
 import os
 import time
-from typing import Any, Dict, List, Literal, Sequence, cast
+from typing import Any, Dict, List, Sequence, cast
 
 import chz
 import tinker
 import torch
+
+from tinker.types import LossFnType
 
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.display import colorize_example
@@ -141,7 +143,7 @@ class Config:
     kl_discount_factor: float = 0.0
 
     # Loss function to use for training: "importance_sampling" or "ppo"
-    loss_fn: Literal["importance_sampling", "ppo"] = "importance_sampling"
+    loss_fn: LossFnType = "importance_sampling"
 
     # Number of optimizer steps per training iteration.
     # Useful for very large batch sizes.
@@ -384,7 +386,7 @@ async def main(
         resume_info["state_path"] if resume_info else cfg.load_checkpoint_path
     )
     if load_state_path:
-        future = await training_client.load_state_async(load_state_path)
+        future = await training_client.load_state_with_optimizer_async(load_state_path)
         _ = await future.result_async()
         logger.info(f"Loaded state from {load_state_path}")
 
