@@ -470,13 +470,35 @@ class Qwen3Renderer(Renderer):
         I can help you with...<|im_end|>
     """
 
+    def __init__(self, tokenizer: Tokenizer, strip_thinking_from_history: bool = True):
+        """
+        Args:
+            tokenizer: The tokenizer to use for encoding.
+            strip_thinking_from_history: When True (default), strips <think>...</think> blocks
+                from assistant messages in multi-turn history. This matches how Qwen3 models
+                were trained - they only see their own thinking during the current turn, not
+                from previous turns. Set to False to preserve thinking in history (useful for
+                certain RL scenarios where you want the extension property for efficiency).
+
+        See https://tinker-docs.thinkingmachines.ai/rl/sequence-extension for details on
+        how this option affects multi-turn RL compute efficiency.
+        """
+        super().__init__(tokenizer)
+        self.strip_thinking_from_history = strip_thinking_from_history
+
     def _render_message(self, idx: int, message: Message) -> tuple[list[int], list[int], list[int]]:
         assert message.get("thinking") is None, "TODO: support CoT in Qwen3 renderer"
         maybe_newline = "\n" if idx > 0 else ""
         ob_str = f"{maybe_newline}<|im_start|>{message['role']}\n"
         ac_content = message["content"]
-        if message["role"] == "assistant" and "</think>" in ac_content:
-            # Multi-turn conversation, we remove the thinking section from the assistant message
+        if (
+            self.strip_thinking_from_history
+            and message["role"] == "assistant"
+            and "</think>" in ac_content
+        ):
+            # Multi-turn conversation, we remove the thinking section from the assistant message.
+            # This matches how Qwen3 models were trained - they only see their own thinking
+            # during the current turn, not from previous turns.
             ac_content = ac_content.split("</think>")[1].lstrip()
         elif message["role"] == "assistant" and "<think>" not in ac_content:
             # Matching the paper, we force the assistant to start with <think>. Some SFT datasets include
