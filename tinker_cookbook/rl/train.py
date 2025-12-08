@@ -244,10 +244,9 @@ class Config:
     kl_penalty_coef: float = 0.0
     kl_discount_factor: float = 0.0
 
-    # Loss function to use for training: "importance_sampling" or "ppo"
-    loss_fn: LossFnType = "importance_sampling"
-    # Configuration for the loss function.
+    # Loss function and configuration.
     # See https://tinker-docs.thinkingmachines.ai/losses
+    loss_fn: LossFnType = "importance_sampling"
     loss_fn_config: dict[str, Any] | None = None
 
     # Number of optimizer steps per training iteration.
