@@ -144,6 +144,9 @@ class Config:
 
     # Loss function to use for training: "importance_sampling" or "ppo"
     loss_fn: LossFnType = "importance_sampling"
+    # Configuration for the loss function.
+    # See https://tinker-docs.thinkingmachines.ai/losses
+    loss_fn_config: dict[str, Any] | None = None
 
     # Number of optimizer steps per training iteration.
     # Useful for very large batch sizes.
@@ -244,11 +247,12 @@ async def do_train_step_and_get_sampling_client(
 
     with timed("train", metrics):
         training_logprobs_D = await train_step(
-            data_D,
-            training_client,
-            cfg.learning_rate,
-            cfg.num_substeps,
-            cfg.loss_fn,
+            data_D=data_D,
+            training_client=training_client,
+            learning_rate=cfg.learning_rate,
+            num_substeps=cfg.num_substeps,
+            loss_fn=cfg.loss_fn,
+            loss_fn_config=cfg.loss_fn_config,
         )
 
     sampling_client, full_batch_metrics = await compute_full_batch_metrics_and_get_sampling_client(
