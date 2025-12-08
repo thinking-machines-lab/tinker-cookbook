@@ -864,8 +864,8 @@ async def do_train_step_streaming_and_get_sampling_client(
                 f"train/forward_backward_substep_{i_substep}_minibatch_{i_minibatch}", metrics
             ):
                 training_logprobs_D = await forward_backward(
-                    training_client,
-                    data_D,
+                    training_client=training_client,
+                    batch_d=data_D,
                     loss_fn=cfg.loss_fn,
                     loss_fn_config=cfg.loss_fn_config,
                 )
@@ -930,10 +930,10 @@ async def do_train_step_and_get_sampling_client(
 
     with timed("train", metrics):
         training_logprobs_D = await train_step(
-            data_D,
-            training_client,
-            cfg.learning_rate,
-            cfg.num_substeps,
+            data_D=data_D,
+            training_client=training_client,
+            learning_rate=cfg.learning_rate,
+            num_substeps=cfg.num_substeps,
             loss_fn=cfg.loss_fn,
             loss_fn_config=cfg.loss_fn_config,
         )
