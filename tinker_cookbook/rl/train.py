@@ -253,7 +253,7 @@ class Config:
     enable_trace: bool = False
 
     remove_constant_reward_groups: bool = False
-    filter_incomplete_trajectories: bool = False  # Filter trajectories that aren't fully generated, hit max_tokens
+    filter_incomplete_trajectories: bool = False
     eval_every: int = 20  # 0 = disabled
     save_every: int = 20  # 0 = disabled
     load_checkpoint_path: str | None = None

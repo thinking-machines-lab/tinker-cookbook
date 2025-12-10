@@ -222,9 +222,7 @@ def filter_incomplete_trajectories(
         filtered_rewards = []
         filtered_metrics = []
 
-        for traj, reward, metrics in zip(
-            tg.trajectories_G, tg.final_rewards_G, tg.metrics_G
-        ):
+        for traj, reward, metrics in zip(tg.trajectories_G, tg.final_rewards_G, tg.metrics_G):
             total_trajs += 1
             # Check if any transition is incomplete (hit max_tokens)
             if any(not t.is_complete for t in traj.transitions):
@@ -235,11 +233,13 @@ def filter_incomplete_trajectories(
             filtered_metrics.append(metrics)
 
         if filtered_trajs:
-            filtered_groups.append(TrajectoryGroup(
-                trajectories_G=filtered_trajs,
-                final_rewards_G=filtered_rewards,
-                metrics_G=filtered_metrics,
-            ))
+            filtered_groups.append(
+                TrajectoryGroup(
+                    trajectories_G=filtered_trajs,
+                    final_rewards_G=filtered_rewards,
+                    metrics_G=filtered_metrics,
+                )
+            )
 
     if incomplete_trajs > 0:
         logger.warning(
