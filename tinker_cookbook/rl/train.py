@@ -22,6 +22,7 @@ from tinker_cookbook.eval.evaluators import SamplingClientEvaluator, SamplingCli
 from tinker_cookbook.rl.data_processing import (
     assemble_training_data,
     compute_advantages,
+    filter_incomplete_trajectories,
     remove_constant_reward_groups,
 )
 from tinker_cookbook.rl.metric_util import RLTestSetEvaluator, compute_trajectory_metrics
@@ -252,6 +253,7 @@ class Config:
     enable_trace: bool = False
 
     remove_constant_reward_groups: bool = False
+    filter_incomplete_trajectories: bool = False  # Filter trajectories that aren't fully generated, hit max_tokens
     eval_every: int = 20  # 0 = disabled
     save_every: int = 20  # 0 = disabled
     load_checkpoint_path: str | None = None
@@ -712,6 +714,7 @@ async def prepare_minibatch(
     model_name: str,
     kl_penalty_coef: float,
     kl_discount_factor: float,
+    do_filter_incomplete_trajectories: bool = False,
 ) -> tuple[list[tinker.Datum], dict[str, Any]]:
     """Converts the trajectories into a minibatch, and provides metrics about the minibatch"""
 
@@ -719,6 +722,14 @@ async def prepare_minibatch(
     metrics = {}
     taglist_P = [env_group_builder.logging_tags() for env_group_builder in env_group_builders_P]
     metrics.update(compute_trajectory_metrics(trajectory_groups_P, taglist_P))
+
+    # Filter incomplete trajectories (hit max_tokens instead of stop sequence)
+    if do_filter_incomplete_trajectories:
+        trajectory_groups_P, filter_stats = filter_incomplete_trajectories(trajectory_groups_P)
+        metrics.update(filter_stats)
+        if not trajectory_groups_P:
+            logger.warning("All trajectories were incomplete (hit max_tokens), skipping batch")
+            return [], metrics
 
     # Print up to two trajectory groups
     for traj_group in trajectory_groups_P[:2]:
@@ -846,8 +857,13 @@ async def do_train_step_streaming_and_get_sampling_client(
                 model_name=cfg.model_name,
                 kl_penalty_coef=cfg.kl_penalty_coef,
                 kl_discount_factor=cfg.kl_discount_factor,
+                do_filter_incomplete_trajectories=cfg.filter_incomplete_trajectories,
             )
             metrics.update(prepare_minibatch_metrics)
+
+            # Skip if all trajectories were filtered
+            if not data_D:
+                continue
 
             # Accumulate gradients across multiple minibatches
             with timed(
@@ -914,8 +930,14 @@ async def do_train_step_and_get_sampling_client(
         model_name=cfg.model_name,
         kl_penalty_coef=cfg.kl_penalty_coef,
         kl_discount_factor=cfg.kl_discount_factor,
+        do_filter_incomplete_trajectories=cfg.filter_incomplete_trajectories,
     )
     metrics.update(prepare_minibatch_metrics)
+
+    # Handle case where all trajectories were filtered
+    if not data_D:
+        sampling_client = await training_client.save_weights_and_get_sampling_client_async()
+        return sampling_client, metrics
 
     with timed("train", metrics):
         training_logprobs_D = await train_step(

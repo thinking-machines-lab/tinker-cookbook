@@ -207,3 +207,47 @@ def remove_constant_reward_groups(
         return trajectory_groups_P[0:1]  # return singleton list in case empty
         # list will cause problems
     return new_groups
+
+
+def filter_incomplete_trajectories(
+    trajectory_groups_P: List[TrajectoryGroup],
+) -> tuple[List[TrajectoryGroup], dict[str, int]]:
+    """Filter out trajectories with incomplete rollouts (hit max_tokens instead of stop sequence)."""
+    filtered_groups: list[TrajectoryGroup] = []
+    total_trajs = 0
+    incomplete_trajs = 0
+
+    for tg in trajectory_groups_P:
+        filtered_trajs = []
+        filtered_rewards = []
+        filtered_metrics = []
+
+        for traj, reward, metrics in zip(
+            tg.trajectories_G, tg.final_rewards_G, tg.metrics_G
+        ):
+            total_trajs += 1
+            # Check if any transition is incomplete (hit max_tokens)
+            if any(not t.is_complete for t in traj.transitions):
+                incomplete_trajs += 1
+                continue
+            filtered_trajs.append(traj)
+            filtered_rewards.append(reward)
+            filtered_metrics.append(metrics)
+
+        if filtered_trajs:
+            filtered_groups.append(TrajectoryGroup(
+                trajectories_G=filtered_trajs,
+                final_rewards_G=filtered_rewards,
+                metrics_G=filtered_metrics,
+            ))
+
+    if incomplete_trajs > 0:
+        logger.warning(
+            f"Filtered {incomplete_trajs}/{total_trajs} incomplete trajectories "
+            f"(hit max_tokens limit)"
+        )
+
+    return filtered_groups, {
+        "filter/total_trajectories": total_trajs,
+        "filter/incomplete_trajectories": incomplete_trajs,
+    }
