@@ -917,6 +917,8 @@ async def do_train_step_streaming_and_get_sampling_client(
             wrapped_trajectory_groups = []
 
         # Enqueue the optimizer step _before_ we wait for any results.
+        # This ensures forward_backward and optim_step land on the same clock cycle,
+        # minimizing idle time on the worker pool.
         with timed(f"train/optim_substep_{i_substep}_enqueue", metrics):
             optim_step_future = await enqueue_optim_step(training_client, cfg.learning_rate)
 
