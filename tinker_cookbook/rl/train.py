@@ -40,7 +40,7 @@ from tinker_cookbook.rl.types import (
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import logtree, ml_log
-from tinker_cookbook.utils.misc_utils import safezip, split_list, timed
+from tinker_cookbook.utils.misc_utils import safezip, split_list, timed, all_same
 from tinker_cookbook.utils.trace import scope, update_scope_context, trace_init
 
 logger = logging.getLogger(__name__)
@@ -567,6 +567,7 @@ async def do_async_training(
             nonlocal sampling_client
             nonlocal sampling_client_step
             if cfg.stream_minibatch_config is not None:
+                await trajectory_groups_queue.put(wrapped_trajectory_group)
                 (
                     sampling_client,
                     train_step_metrics,
@@ -672,12 +673,10 @@ async def do_group_rollout_and_filter_constant_reward(
         trajectory_group = await do_group_rollout(env_group_builder, policy)
 
     # Remove if all trajectories have the same reward
-    trajectory_groups = [trajectory_group]
-    if do_remove_constant_reward_groups:
-        trajectory_groups = remove_constant_reward_groups(trajectory_groups)
-    if len(trajectory_groups) == 0:
+    if do_remove_constant_reward_groups and all_same(trajectory_group.get_total_rewards()):
         return None
-    return trajectory_groups[0]
+    else:
+        return trajectory_group
 
 
 @scope
@@ -838,6 +837,10 @@ async def do_train_step_streaming_and_get_sampling_client(
             # To have the same results as the sync implementation, we will
             # remove these and train on a smaller batch.
             wrapped_trajectory_groups = [g for g in wrapped_trajectory_groups if g is not None]
+            if len(wrapped_trajectory_groups) == 0:
+                i_minibatch += 1
+                continue
+
             data_D, prepare_minibatch_metrics = await prepare_minibatch(
                 [g.env_group_builder for g in wrapped_trajectory_groups],
                 [g.trajectory_group for g in wrapped_trajectory_groups],
@@ -986,6 +989,8 @@ async def do_sync_training(
             f_name=f"train_iteration_{i_batch:06d}",
             scope_name=f"RL Iteration {i_batch}",
         ):
+            # Note: do_remove_constant_reward_groups=False here because we remove
+            # constant reward groups after all rollouts are collected (below)
             trajectory_groups_P = await asyncio.gather(
                 *[
                     asyncio.create_task(
@@ -994,7 +999,7 @@ async def do_sync_training(
                             builder,
                             max_tokens=cfg.max_tokens,
                             temperature=cfg.temperature,
-                            do_remove_constant_reward_groups=cfg.remove_constant_reward_groups,
+                            do_remove_constant_reward_groups=False,
                             enable_logging=i < cfg.num_groups_to_log,
                         ),
                         name=f"sample_task_{i}",
@@ -1002,11 +1007,9 @@ async def do_sync_training(
                     for i, builder in enumerate(env_group_builders_P)
                 ],
             )
-        trajectory_groups_P = [
-            trajectory_group
-            for trajectory_group in trajectory_groups_P
-            if trajectory_group is not None
-        ]
+
+        if cfg.remove_constant_reward_groups:
+            trajectory_groups_P = remove_constant_reward_groups(trajectory_groups_P)
 
         # Train step
         sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(
