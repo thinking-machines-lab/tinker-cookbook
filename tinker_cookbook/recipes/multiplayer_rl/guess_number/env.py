@@ -8,7 +8,7 @@ from tinker import ModelInput
 from tinker_cookbook.completers import (
     StopCondition,
 )
-from tinker_cookbook.renderers import Message, Renderer, get_renderer
+from tinker_cookbook.renderers import Message, Renderer, get_renderer, ensure_text
 from tinker_cookbook.rl.types import (
     Action,
     Env,
@@ -74,10 +74,11 @@ class GuessNumberEnv(Env):
 
         # step 2: based on the string answer, we compute the reward and the user turn.
         # This part is NOT templated, so you need to implement it. But it is plain python without using special libraries.
-        user_turn, reward = self._get_user_turn(action_message["content"])
+        action_content = ensure_text(action_message["content"])
+        user_turn, reward = self._get_user_turn(action_content)
 
         # step 3: update the conversation history
-        self.turns.append({"role": "player", "content": action_message["content"]})
+        self.turns.append({"role": "player", "content": action_content})
         self.turns.append(user_turn)
         episode_done = (reward == 1) or (len(self.turns) // 2 >= MAX_TURNS)
 

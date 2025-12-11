@@ -16,6 +16,7 @@ from tinker_cookbook.recipes.preference.datasets import (
     UltraFeedbackComparisonBuilder,
 )
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, ChatDatasetBuilderCommonConfig
+from tinker_cookbook.utils.lr_scheduling import LRSchedule
 
 
 @chz.chz
@@ -27,7 +28,7 @@ class CLIConfig:
 
     # Training parameters
     learning_rate: float = 1e-5
-    lr_schedule: str = "linear"
+    lr_schedule: LRSchedule = "linear"
     dpo_beta: float = 0.1
     max_length: int | None = 8192
     batch_size: int = 256

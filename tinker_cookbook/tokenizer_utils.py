@@ -28,4 +28,9 @@ def get_tokenizer(model_name: str) -> Tokenizer:
     if model_name.startswith("meta-llama/Llama-3"):
         model_name = "thinkingmachineslabinc/meta-llama-3-tokenizer"
 
-    return AutoTokenizer.from_pretrained(model_name, use_fast=True)
+    kwargs: dict[str, Any] = {}
+    if model_name == "moonshotai/Kimi-K2-Thinking":
+        kwargs["trust_remote_code"] = True
+        kwargs["revision"] = "612681931a8c906ddb349f8ad0f582cb552189cd"
+
+    return AutoTokenizer.from_pretrained(model_name, use_fast=True, **kwargs)

@@ -49,9 +49,9 @@ class ComparisonRenderer:
     def build_generation_prompt(self, comparison: Comparison) -> types.ModelInput:
         raise NotImplementedError
 
-    def to_tokens_weights(
+    def to_model_input_weights(
         self, labeled_comparison: LabeledComparison
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[types.ModelInput, torch.Tensor]:
         raise NotImplementedError
 
     @property
@@ -77,14 +77,22 @@ class ComparisonRendererFromChatRenderer(ComparisonRenderer):
     def build_generation_prompt(self, comparison: Comparison) -> types.ModelInput:
         return self.convo_renderer.build_generation_prompt(self._comparison_to_convo(comparison))
 
-    def to_tokens_weights(
+    def to_model_input_weights(
         self, labeled_comparison: LabeledComparison
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[types.ModelInput, torch.Tensor]:
         convo = self._comparison_to_convo(labeled_comparison.comparison)
         convo_with_pref = convo + [{"role": "assistant", "content": labeled_comparison.label}]
-        tokens, weights = self.convo_renderer.build_supervised_example(convo_with_pref)
-        first_weight_one_index = torch.nonzero(weights == 1.0)[0]
-        return tokens[: first_weight_one_index + 1], weights[: first_weight_one_index + 1]
+        model_input, weights = self.convo_renderer.build_supervised_example(convo_with_pref)
+        # TODO: support images in preference learning
+        assert all(isinstance(c, tinker.types.EncodedTextChunk) for c in model_input.chunks), (
+            "Preference learning currently only supports text-only content."
+        )
+        # Truncate at the first weight==1 position + 1
+        tokens = model_input.to_ints()
+        first_weight_one_index = int(torch.nonzero(weights == 1.0)[0])
+        truncated_tokens = tokens[: first_weight_one_index + 1]
+        truncated_weights = weights[: first_weight_one_index + 1]
+        return types.ModelInput.from_ints(truncated_tokens), truncated_weights
 
     @property
     def tokenizer(self) -> Tokenizer:

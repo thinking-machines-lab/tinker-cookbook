@@ -33,6 +33,8 @@ def get_llama_info() -> dict[str, ModelAttributes]:
 def get_qwen_info() -> dict[str, ModelAttributes]:
     org = "Qwen"
     return {
+        "Qwen3-VL-30B-A3B-Instruct": ModelAttributes(org, "3", "30B-A3B", True, is_vl=True),
+        "Qwen3-VL-235B-A22B-Instruct": ModelAttributes(org, "3", "235B-A22B", True, is_vl=True),
         "Qwen3-4B-Base": ModelAttributes(org, "3", "4B", False),
         "Qwen3-8B-Base": ModelAttributes(org, "3", "8B", False),
         "Qwen3-14B-Base": ModelAttributes(org, "3", "14B", False),
@@ -66,6 +68,13 @@ def get_gpt_oss_info() -> dict[str, ModelAttributes]:
     }
 
 
+def get_moonshot_info() -> dict[str, ModelAttributes]:
+    org = "moonshotai"
+    return {
+        "Kimi-K2-Thinking": ModelAttributes(org, "K2", "1T-A32B", True),
+    }
+
+
 def get_model_attributes(model_name: str) -> ModelAttributes:
     org, model_version_full = model_name.split("/")
     if org == "meta-llama":
@@ -76,6 +85,8 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
         return get_deepseek_info()[model_version_full]
     elif org == "openai":
         return get_gpt_oss_info()[model_version_full]
+    elif org == "moonshotai":
+        return get_moonshot_info()[model_version_full]
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
@@ -93,7 +104,9 @@ def get_recommended_renderer_names(model_name: str) -> list[str]:
         return ["llama3"]
     elif attributes.organization == "Qwen":
         if attributes.version_str == "3":
-            if "-Instruct" in model_name:
+            if attributes.is_vl:
+                return ["qwen3_vl"]
+            elif "-Instruct" in model_name:
                 return ["qwen3_instruct"]
             else:
                 return ["qwen3", "qwen3_disable_thinking"]
@@ -103,6 +116,8 @@ def get_recommended_renderer_names(model_name: str) -> list[str]:
         return ["deepseekv3_disable_thinking", "deepseekv3"]
     elif attributes.organization == "openai":
         return ["gpt_oss_no_sysprompt", "gpt_oss_medium_reasoning"]
+    elif attributes.organization == "moonshotai":
+        return ["kimi_k2"]
     else:
         raise ValueError(f"Unknown model: {model_name}")
 

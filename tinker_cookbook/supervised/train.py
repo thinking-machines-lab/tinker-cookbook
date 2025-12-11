@@ -30,7 +30,7 @@ from tinker_cookbook.supervised.nll_evaluator import NLLEvaluator
 from tinker_cookbook.supervised.types import SupervisedDatasetBuilder
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log
-from tinker_cookbook.utils.lr_scheduling import compute_schedule_lr_multiplier
+from tinker_cookbook.utils.lr_scheduling import compute_schedule_lr_multiplier, LRSchedule
 from tinker_cookbook.utils.misc_utils import timed
 from tinker_cookbook.utils.trace import scope, update_scope_context, trace_init
 
@@ -49,7 +49,7 @@ class Config:
 
     # Training parameters
     learning_rate: float = 1e-4
-    lr_schedule: str = "linear"
+    lr_schedule: LRSchedule = "linear"
     num_epochs: int = 1
 
     # Model parameters
