@@ -32,6 +32,7 @@ class Transition:
     ac: TokensWithLogprobs
     reward: float
     episode_done: bool
+    is_complete: bool = True  # True if action hit stop sequence, False if hit max_tokens
     metrics: Metrics = field(default_factory=dict)
 
 

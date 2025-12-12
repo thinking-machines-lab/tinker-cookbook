@@ -7,7 +7,7 @@ Evals and other code should use the appropriate interface.
 """
 
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 import tinker
 
@@ -16,18 +16,25 @@ from tinker_cookbook import renderers
 # Interfaces
 
 StopCondition: TypeAlias = list[str] | list[int]
+StopReason: TypeAlias = Literal["length", "stop"]
 
 
 @dataclass
 class TokensWithLogprobs:
     tokens: list[int]
     maybe_logprobs: list[float] | None
+    stop_reason: StopReason = "stop"  # Default for backward compatibility
 
     @property
     def logprobs(self) -> list[float]:
         if self.maybe_logprobs is None:
             raise ValueError("Logprobs are not available")
         return self.maybe_logprobs
+
+    @property
+    def is_complete(self) -> bool:
+        """Return True if generation completed normally (hit stop sequence)."""
+        return self.stop_reason == "stop"
 
 
 class TokenCompleter:
@@ -71,12 +78,18 @@ class TinkerTokenCompleter(TokenCompleter):
             ),
         )
 
-        # Extract tokens and logprobs from the first (and only) sample
-        sampled_tokens = sample_result.sequences[0].tokens
-        sampled_logprobs = sample_result.sequences[0].logprobs
+        # Extract tokens, logprobs, and stop_reason from the first (and only) sample
+        sampled_seq = sample_result.sequences[0]
+        sampled_tokens = sampled_seq.tokens
+        sampled_logprobs = sampled_seq.logprobs
+        stop_reason = sampled_seq.stop_reason  # "length" or "stop"
         assert sampled_logprobs is not None
 
-        return TokensWithLogprobs(tokens=sampled_tokens, maybe_logprobs=sampled_logprobs)
+        return TokensWithLogprobs(
+            tokens=sampled_tokens,
+            maybe_logprobs=sampled_logprobs,
+            stop_reason=stop_reason,
+        )
 
 
 class TinkerMessageCompleter(MessageCompleter):
