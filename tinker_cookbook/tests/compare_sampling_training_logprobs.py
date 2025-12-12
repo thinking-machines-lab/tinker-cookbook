@@ -9,7 +9,7 @@ import pandas as pd
 import tinker
 import torch
 from tinker import AdamParams, ModelInput
-from tinker_cookbook.supervised.common import datum_from_tokens_weights
+from tinker_cookbook.supervised.common import datum_from_model_input_weights
 
 
 @cache
@@ -38,10 +38,11 @@ async def get_row(
             await training_client.load_state_async(saved_path_for_trainer)
         # First sample something
         tokenizer = training_client.get_tokenizer()
-        tokens = torch.tensor(tokenizer.encode(get_reference_document()))
-        weights = torch.ones_like(tokens)
+        tokens = tokenizer.encode(get_reference_document())
+        model_input = ModelInput.from_ints(tokens)
+        weights = torch.ones(len(tokens), dtype=torch.float32)
         weights[0] = 0.0
-        datum = datum_from_tokens_weights(tokens, weights)
+        datum = datum_from_model_input_weights(model_input, weights)
         for _ in range(3 if saved_path_for_trainer is None else 0):
             fwd_bwd_future = await training_client.forward_backward_async(
                 [datum], loss_fn="cross_entropy"
@@ -65,9 +66,7 @@ async def get_row(
             sampling_client = training_client.create_sampling_client(
                 model_path=saved_path_for_sampler
             )
-        logprobs_response = await sampling_client.compute_logprobs_async(
-            ModelInput.from_ints(tokens.tolist())
-        )
+        logprobs_response = await sampling_client.compute_logprobs_async(model_input)
         sampling_logprobs = torch.tensor(logprobs_response[1:])
         mse = ((sampling_logprobs - training_logprobs) ** 2).mean()
 

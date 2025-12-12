@@ -18,7 +18,7 @@ from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDatas
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.format_colorized import format_colorized
-from tinker_cookbook.utils.lr_scheduling import compute_schedule_lr_multiplier
+from tinker_cookbook.utils.lr_scheduling import compute_schedule_lr_multiplier, LRSchedule
 from tinker_cookbook.utils.misc_utils import timed
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ class Config:
 
     # Training parameters
     learning_rate: float = 1e-5
-    lr_schedule: str = "linear"
+    lr_schedule: LRSchedule = "linear"
     num_epochs: int = 1
     dpo_beta: float = 0.1
 

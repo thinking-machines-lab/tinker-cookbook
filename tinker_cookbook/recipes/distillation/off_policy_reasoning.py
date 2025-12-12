@@ -34,6 +34,7 @@ from tinker_cookbook.supervised.types import (
     ChatDatasetBuilderCommonConfig,
     SupervisedDataset,
 )
+from tinker_cookbook.utils.lr_scheduling import LRSchedule
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ class CLIConfig:
     # Training hyperparameters
     batch_size: int = 128
     learning_rate: float = 1e-3
-    lr_schedule: str = "linear"
+    lr_schedule: LRSchedule = "linear"
     num_epochs: int = 1
     max_length: int = 16384
 

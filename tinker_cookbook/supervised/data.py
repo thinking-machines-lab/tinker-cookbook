@@ -10,7 +10,7 @@ import chz
 import datasets
 import tinker
 from tinker_cookbook.renderers import Message, Renderer, TrainOnWhat
-from tinker_cookbook.supervised.common import datum_from_tokens_weights
+from tinker_cookbook.supervised.common import datum_from_model_input_weights
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDataset
 
 
@@ -21,8 +21,10 @@ def conversation_to_datum(
     train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
 ) -> tinker.Datum:
     """Common function to process a list of messages into a Datum."""
-    tokens, weights = renderer.build_supervised_example(conversation, train_on_what=train_on_what)
-    return datum_from_tokens_weights(tokens, weights, max_length)
+    model_input, weights = renderer.build_supervised_example(
+        conversation, train_on_what=train_on_what
+    )
+    return datum_from_model_input_weights(model_input, weights, max_length)
 
 
 def _one_of(a: Any, b: Any) -> bool:

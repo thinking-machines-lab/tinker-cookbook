@@ -10,7 +10,7 @@ from tinker_cookbook.preference.types import (
     ComparisonRendererFromChatRenderer,
     LabeledComparison,
 )
-from tinker_cookbook.supervised.common import datum_from_tokens_weights
+from tinker_cookbook.supervised.common import datum_from_model_input_weights
 from tinker_cookbook.supervised.data import SupervisedDatasetFromHFDataset
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDataset
 
@@ -86,8 +86,10 @@ class ChatDatasetBuilderFromComparisons(ChatDatasetBuilder):
         rng = random.Random(0)
 
         def comparison_to_datum(labeled_comparison: LabeledComparison) -> tinker.Datum:
-            tokens, weights = comparison_renderer.to_tokens_weights(labeled_comparison)
-            return datum_from_tokens_weights(tokens, weights, self.common_config.max_length)
+            model_input, weights = comparison_renderer.to_model_input_weights(labeled_comparison)
+            return datum_from_model_input_weights(
+                model_input, weights, self.common_config.max_length
+            )
 
         def example_to_data(example: dict[str, str]) -> list[tinker.Datum]:
             labeled_comparison = self.comparison_builder.example_to_labeled_comparison(example)

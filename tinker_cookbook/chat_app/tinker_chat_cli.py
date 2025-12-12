@@ -84,9 +84,10 @@ class ChatSession:
 
             # Parse the response
             parsed_message, _ = self.renderer.parse_response(response.sequences[0].tokens)
+            content = renderers.ensure_text(parsed_message["content"])
 
-            self.add_assistant_message(parsed_message["content"])
-            return parsed_message["content"]
+            self.add_assistant_message(content)
+            return content
 
         except Exception as e:
             logger.error(f"Error generating response: {e}")

@@ -1,9 +1,20 @@
 from datetime import date
+from typing import Any, cast
 
 import pytest
 from tinker_cookbook.model_info import get_recommended_renderer_name
 from tinker_cookbook.renderers import Message, get_renderer
 from transformers.models.auto.tokenization_auto import AutoTokenizer
+
+
+def _load_tokenizer(model_name: str) -> Any:
+    """Load tokenizer with special handling for models that need trust_remote_code."""
+    kwargs: dict[str, Any] = {}
+    if model_name == "moonshotai/Kimi-K2-Thinking":
+        kwargs["trust_remote_code"] = True
+        kwargs["revision"] = "612681931a8c906ddb349f8ad0f582cb552189cd"
+
+    return AutoTokenizer.from_pretrained(model_name, use_fast=True, **kwargs)
 
 
 @pytest.mark.parametrize(
@@ -13,11 +24,12 @@ from transformers.models.auto.tokenization_auto import AutoTokenizer
         # "Qwen/Qwen3-30B-A3B", TODO: This was broken, will address in another PR.
         "deepseek-ai/DeepSeek-V3.1",
         "openai/gpt-oss-20b",
+        "moonshotai/Kimi-K2-Thinking",
     ],
 )
 def test_generation_against_hf_chat_templates(model_name: str):
     """Test generation prompt against HF chat templates"""
-    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
+    tokenizer = _load_tokenizer(model_name)
     # not using get_tokenizer(model_name)
     # because we want to test against the original tokenizer from HF, not the mirror
     # gpt_oss HF matches gpt_oss_medium_reasoning and not the default gpt_oss
@@ -48,11 +60,14 @@ def test_generation_against_hf_chat_templates(model_name: str):
         # Thinking field should not be rendered in this case as it is not the last message.
         convo[1]["thinking"] = "The user is sharing a greeting. We should respond politely."
         aug_convo = convo
+    elif model_name.startswith("moonshotai"):
+        aug_convo = convo
     else:
         raise ValueError(f"Unknown model name: {model_name}")
 
     cookbook_tokens = cookbook_renderer.build_generation_prompt(aug_convo).to_ints()
-    hf_tokens = tokenizer.apply_chat_template(convo, add_generation_prompt=True)
+    hf_convo = cast(list[dict[str, str]], convo)
+    hf_tokens = tokenizer.apply_chat_template(hf_convo, add_generation_prompt=True, tokenize=True)
 
     assert cookbook_tokens == hf_tokens, (
         f"Cookbook tokens: {cookbook_tokens}\n"
@@ -69,11 +84,12 @@ def test_generation_against_hf_chat_templates(model_name: str):
         "Qwen/Qwen3-30B-A3B",
         "deepseek-ai/DeepSeek-V3.1",
         "openai/gpt-oss-20b",
+        "moonshotai/Kimi-K2-Thinking",
     ],
 )
 def test_supervised_example_against_hf_chat_templates(model_name: str):
     """Test supervised example against HF chat templates"""
-    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
+    tokenizer = _load_tokenizer(model_name)
     # not using get_tokenizer(model_name)
     # because we want to test against the original tokenizer from HF, not the mirror
     render_name = (
@@ -104,12 +120,17 @@ def test_supervised_example_against_hf_chat_templates(model_name: str):
         # Test thinking field for GPT-OSS is rendered.
         convo[1]["thinking"] = "The user is sharing a greeting. We should respond politely."
         aug_convo = convo
+    elif model_name.startswith("moonshotai"):
+        # Kimi K2 adds empty <think></think> blocks for assistant messages
+        aug_convo = convo.copy()
+        aug_convo[1]["content"] = "<think></think>I'm fine, thank you!"
     else:
         raise ValueError(f"Unknown model name: {model_name}")
 
-    cookbook_tokens_tensor, _ = cookbook_renderer.build_supervised_example(aug_convo)
-    cookbook_tokens = cookbook_tokens_tensor.tolist()
-    hf_output = tokenizer.apply_chat_template(convo, tokenize=False, add_generation_prompt=False)
+    cookbook_model_input, _ = cookbook_renderer.build_supervised_example(aug_convo)
+    cookbook_tokens = cookbook_model_input.to_ints()
+    hf_convo = cast(list[dict[str, str]], convo)
+    hf_output = tokenizer.apply_chat_template(hf_convo, tokenize=False, add_generation_prompt=False)
     hf_tokens = tokenizer.encode(hf_output.rstrip("\n"), add_special_tokens=False)
 
     assert cookbook_tokens == hf_tokens, (
@@ -126,11 +147,12 @@ def test_supervised_example_against_hf_chat_templates(model_name: str):
         ("Qwen/Qwen3-30B-A3B", "qwen3"),
         ("meta-llama/Llama-3.2-1B-Instruct", "llama3"),
         ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning"),
+        ("moonshotai/Kimi-K2-Thinking", "kimi_k2"),
     ],
 )
 def test_eot_parsing(model_name: str, renderer_name: str):
     """Test EOT token parsing behavior for different renderers using real tokenizers."""
-    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
+    tokenizer = _load_tokenizer(model_name)
     renderer = get_renderer(renderer_name, tokenizer)
 
     # Get the appropriate EOT token for each renderer
@@ -140,6 +162,8 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         eot_token = "<|im_end|>"
     elif renderer_name.startswith("gpt_oss"):
         eot_token = "<|return|>"
+    elif renderer_name == "kimi_k2":
+        eot_token = "<|im_end|>"
     else:
         raise ValueError(f"Unknown renderer: {renderer_name}")
 

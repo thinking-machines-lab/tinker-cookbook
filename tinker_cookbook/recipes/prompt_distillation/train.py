@@ -12,6 +12,7 @@ from tinker_cookbook.renderers import TrainOnWhat
 from tinker_cookbook.supervised import train
 from tinker_cookbook.supervised.data import FromConversationFileBuilder
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
+from tinker_cookbook.utils.lr_scheduling import LRSchedule
 
 
 @chz.chz
@@ -24,7 +25,7 @@ class CLIConfig:
 
     # Training parameters
     learning_rate: float = 1e-4
-    lr_schedule: str = "linear"
+    lr_schedule: LRSchedule = "linear"
     num_epochs: int = 4
 
     # Model parameters
