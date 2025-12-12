@@ -135,14 +135,22 @@ def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
 
 
 @scope
-async def optim_step(
+async def enqueue_optim_step(
     training_client: tinker.TrainingClient,
     learning_rate: float,
-) -> None:
-    """Apply the accumulated gradients to update the model weights"""
+) -> tinker.APIFuture[tinker.OptimStepResponse]:
+    """Enqueue an optimizer step and return the future"""
     adam_params = tinker.AdamParams(learning_rate=learning_rate, beta1=0.9, beta2=0.95, eps=1e-8)
     optim_step_future = await training_client.optim_step_async(adam_params)
-    await optim_step_future.result_async()
+    return optim_step_future
+
+
+@scope
+async def consume_optim_step(
+    optim_step_future: tinker.APIFuture[tinker.OptimStepResponse],
+) -> tinker.OptimStepResponse:
+    """Apply the accumulated gradients to update the model weights and return the result"""
+    return await optim_step_future.result_async()
 
 
 @scope
@@ -154,15 +162,23 @@ def remove_mask(datum: tinker.Datum) -> tinker.Datum:
 
 
 @scope
-async def forward_backward(
+async def enqueue_forward_backward(
     training_client: tinker.TrainingClient,
     batch_d: List[tinker.Datum],
     loss_fn: LossFnType,
-) -> List[torch.Tensor]:
-    """Accumulate gradients on a minibatch of data"""
+) -> tinker.APIFuture[tinker.ForwardBackwardOutput]:
+    """Enqueue a forward-backward pass for a minibatch of data and return the future"""
     fwd_bwd_future = await training_client.forward_backward_async(
         list(map(remove_mask, batch_d)), loss_fn=loss_fn
     )
+    return fwd_bwd_future
+
+
+@scope
+async def consume_forward_backward(
+    fwd_bwd_future: tinker.APIFuture[tinker.ForwardBackwardOutput],
+) -> List[torch.Tensor]:
+    """Consume the result of a forward-backward pass and return the training logprobs"""
     fwd_bwd_result = await fwd_bwd_future.result_async()
 
     # Extract training logprobs from loss_fn_outputs
@@ -186,10 +202,42 @@ async def train_step(
     """Train the model on collected trajectories."""
     batches_md = split_list(data_D, min(num_substeps, len(data_D)))
     training_logprobs_D: list[torch.Tensor] = []
-    for batch_d in batches_md:
-        training_logprobs = await forward_backward(training_client, batch_d, loss_fn)
+
+    if len(batches_md) == 0:
+        return training_logprobs_D
+
+    enqueued_futures: (
+        tuple[
+            tinker.APIFuture[tinker.ForwardBackwardOutput],
+            tinker.APIFuture[tinker.OptimStepResponse],
+        ]
+        | None
+    ) = (
+        await enqueue_forward_backward(training_client, batches_md[0], loss_fn),
+        await enqueue_optim_step(training_client, learning_rate),
+    )
+
+    for i in range(len(batches_md)):
+        assert enqueued_futures is not None
+
+        fwd_bwd_future, optim_step_future = enqueued_futures
+        enqueued_futures = None
+
+        # Enqueue the next forward-backward pass and optimizer step before consuming the current result
+        if i != len(batches_md) - 1:
+            assert enqueued_futures is None
+            enqueued_futures = (
+                await enqueue_forward_backward(training_client, batches_md[i + 1], loss_fn),
+                await enqueue_optim_step(training_client, learning_rate),
+            )
+
+        training_logprobs = await consume_forward_backward(fwd_bwd_future)
         training_logprobs_D.extend(training_logprobs)
-        await optim_step(training_client, learning_rate)
+
+        await consume_optim_step(optim_step_future)
+
+    assert enqueued_futures is None
+
     return training_logprobs_D
 
 
@@ -820,6 +868,7 @@ async def do_train_step_streaming_and_get_sampling_client(
         # Run multiple minibatches per substep
         # Once we have enough trajectories for a minibatch, train on them
         wrapped_trajectory_groups = []
+        forward_backward_futures: list[tinker.APIFuture[tinker.ForwardBackwardOutput]] = []
         i_minibatch = 0
         while i_minibatch < cfg.stream_minibatch_config.num_minibatches:
             wrapped_trajectory_group = await trajectory_groups_queue.get()
@@ -852,24 +901,41 @@ async def do_train_step_streaming_and_get_sampling_client(
             )
             metrics.update(prepare_minibatch_metrics)
 
-            # Accumulate gradients across multiple minibatches
+            # Accumulate gradients across multiple minibatches. Note that we only enqueue the forward-backward pass here.
+            # We will only await the forward-backward pass for its result once all minibatches are enqueued.
             with timed(
-                f"train/forward_backward_substep_{i_substep}_minibatch_{i_minibatch}", metrics
+                f"train/forward_backward_substep_{i_substep}_minibatch_{i_minibatch}_enqueue",
+                metrics,
             ):
-                training_logprobs_D = await forward_backward(
-                    training_client,
-                    data_D,
-                    cfg.loss_fn,
+                forward_backward_futures.append(
+                    await enqueue_forward_backward(
+                        training_client,
+                        data_D,
+                        cfg.loss_fn,
+                    )
                 )
             all_data_D.extend(data_D)
-            all_training_logprobs_D.extend(training_logprobs_D)
             all_wrapped_trajectory_groups.extend(wrapped_trajectory_groups)
             i_minibatch += 1
             wrapped_trajectory_groups = []
 
+        # Enqueue the optimizer step _before_ we wait for any results.
+        # This ensures forward_backward and optim_step land on the same clock cycle,
+        # minimizing idle time on the worker pool.
+        with timed(f"train/optim_substep_{i_substep}_enqueue", metrics):
+            optim_step_future = await enqueue_optim_step(training_client, cfg.learning_rate)
+
+        for i_forward_backward, forward_backward_future in enumerate(forward_backward_futures):
+            with timed(
+                f"train/forward_backward_substep_{i_substep}_minibatch_{i_forward_backward}_consume",
+                metrics,
+            ):
+                training_logprobs_D = await consume_forward_backward(forward_backward_future)
+                all_training_logprobs_D.extend(training_logprobs_D)
+
         # Run optimizer step only once after all minibatches
-        with timed(f"train/optim_substep_{i_substep}", metrics):
-            await optim_step(training_client, cfg.learning_rate)
+        with timed(f"train/optim_substep_{i_substep}_consume", metrics):
+            await consume_optim_step(optim_step_future)
 
     # Aggregate metrics across the entire batch
     metrics.update(compute_sampling_client_metrics(all_wrapped_trajectory_groups))
