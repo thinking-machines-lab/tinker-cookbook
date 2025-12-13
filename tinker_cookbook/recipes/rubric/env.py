@@ -6,13 +6,11 @@ from tinker_cookbook.rl.types import (
     RLDataset,
     RLDatasetBuilder,
 )
-from tinker_cookbook.renderers import Message, Renderer, Role
-from typing import TypeAlias
+from tinker_cookbook.renderers import Renderer
 from tinker_cookbook.completers import MessageCompleter, StopCondition, TinkerMessageCompleter
 from tinker.types import ModelInput
 from dataclasses import dataclass
 from typing import Sequence
-import re
 import json
 import chz
 import tinker
@@ -20,7 +18,12 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.renderers import get_renderer
 import asyncio
 from tinker_cookbook import model_info
-from tinker_cookbook.recipes.rubric.data import RubricBasedDatapoint, Rubric, Conversation, RubricDatapointListBuilder
+from tinker_cookbook.recipes.rubric.data import (
+    RubricBasedDatapoint,
+    Rubric,
+    Conversation,
+    RubricDatapointListBuilder,
+)
 
 # ANSI color codes
 BLUE = "\033[94m"
@@ -28,6 +31,7 @@ GREEN = "\033[92m"
 YELLOW = "\033[93m"
 MAGENTA = "\033[95m"
 RESET = "\033[0m"
+
 
 class RubricGradedEnv(Env):
     def __init__(
