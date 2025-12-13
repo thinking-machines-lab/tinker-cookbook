@@ -1,4 +1,4 @@
-from tinker_cookbook.rl.types import (
+from tinker_cookbook.renderers import (
     Message,
     Role,
 )
