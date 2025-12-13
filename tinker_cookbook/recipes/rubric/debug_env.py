@@ -7,6 +7,7 @@ import tinker
 from tinker_cookbook.rl.rollouts import do_single_rollout
 import asyncio
 
+
 def get_addition_datapoint() -> RubricBasedDatapoint:
     datapoint = RubricBasedDatapoint(
         convo=[
@@ -22,14 +23,16 @@ def get_addition_datapoint() -> RubricBasedDatapoint:
 
     return datapoint
 
+
 def get_prometheus_datapoint() -> RubricBasedDatapoint:
     from tinker_cookbook.recipes.rubric.data import PrometheusDatapointListBuilder
+
     datapoint = PrometheusDatapointListBuilder()()
     datapoint = datapoint[0]
     return datapoint
 
-async def main(datapoint: RubricBasedDatapoint):
 
+async def main(datapoint: RubricBasedDatapoint):
     policy_name = "meta-llama/Llama-3.1-8B-Instruct"
     grader_name = "Qwen/Qwen3-30B-A3B-Instruct-2507"
     service_client = tinker.ServiceClient()
@@ -59,7 +62,6 @@ async def main(datapoint: RubricBasedDatapoint):
 
 
 if __name__ == "__main__":
-
     dataset = "addition"
 
     if dataset == "addition":

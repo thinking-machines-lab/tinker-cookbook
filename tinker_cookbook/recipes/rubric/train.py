@@ -73,8 +73,12 @@ def get_dataset_builder(
         model_name_for_tokenizer=policy_model_name,
         renderer_name=renderer_name,
         grader_llm_name=grader_llm_name,
-        train_datapoint_list_builder=RubricDatapointListBuilderFromJsonl(jsonl_path=train_jsonl_path),
-        test_datapoint_list_builder=RubricDatapointListBuilderFromJsonl(jsonl_path=test_jsonl_path) if test_jsonl_path is not None else None,
+        train_datapoint_list_builder=RubricDatapointListBuilderFromJsonl(
+            jsonl_path=train_jsonl_path
+        ),
+        test_datapoint_list_builder=RubricDatapointListBuilderFromJsonl(jsonl_path=test_jsonl_path)
+        if test_jsonl_path is not None
+        else None,
         train_group_size=train_group_size,
         test_group_size=test_group_size,
     )
