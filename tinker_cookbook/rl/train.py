@@ -856,16 +856,20 @@ async def do_train_step_streaming_and_get_sampling_client(
 
             # Enqueue forward-backward (we'll await results after all minibatches are enqueued)
             with timed(f"train/fwd_bwd_substep_{i_substep}_mb_{i_minibatch}_enqueue", metrics):
-                forward_backward_futures.append(await training_client.forward_backward_async(
-                    [_remove_mask(d) for d in data_D], loss_fn=cfg.loss_fn
-                ))
+                forward_backward_futures.append(
+                    await training_client.forward_backward_async(
+                        [_remove_mask(d) for d in data_D], loss_fn=cfg.loss_fn
+                    )
+                )
             all_data_D.extend(data_D)
             all_wrapped_trajectory_groups.extend(wrapped_trajectory_groups)
             i_minibatch += 1
             wrapped_trajectory_groups = []
 
         # Enqueue optim_step before awaiting results (so they land on same clock cycle)
-        adam_params = tinker.AdamParams(learning_rate=cfg.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8)
+        adam_params = tinker.AdamParams(
+            learning_rate=cfg.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8
+        )
         with timed(f"train/optim_substep_{i_substep}_enqueue", metrics):
             optim_future = await training_client.optim_step_async(adam_params)
 
