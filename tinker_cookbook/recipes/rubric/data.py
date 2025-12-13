@@ -1,0 +1,147 @@
+from tinker_cookbook.rl.types import (
+    Action,
+    Env,
+    StepResult,
+    EnvGroupBuilder,
+    RLDataset,
+    RLDatasetBuilder,
+)
+from tinker_cookbook.renderers import Message, Renderer, Role
+from typing import TypeAlias
+from tinker_cookbook.completers import MessageCompleter, StopCondition, TinkerMessageCompleter
+from tinker.types import ModelInput
+from dataclasses import dataclass
+from typing import Sequence
+import re
+import json
+import chz
+import tinker
+from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.renderers import get_renderer
+import asyncio
+from tinker_cookbook import model_info
+
+Conversation: TypeAlias = list[Message]
+
+@dataclass
+class Rubric:
+    """
+    A rubric should specify 1) what counts as a good response, 2) how the grader language model should output the score, and 3) how to extract the score from the grader's response.
+    """
+
+    rubric_str: str
+    extraction_regex: str = r"<score>(.*)</score>"
+    grader_output_format_instruction: str = (
+        "Please output your score between 0 and 1 wrapped in <score> ... </score>"
+    )
+
+    def __convert_role(self, role: Role) -> str:
+        return "Human" if role in ("user", "system") else "Chatbot"
+
+    def _flatten_convo(self, convo: Conversation) -> str:
+        """
+        Convert the whole conversation (user's turns + assistant's turns) into a single string. E.g.
+        \n\nHuman: ....
+        \n\nChatbot: ...
+        \n\nHuman: ...
+        \n\nChatbot: ...
+        """
+        return "\n\n".join(
+            [f"{self.__convert_role(message['role'])}: {message['content']}" for message in convo]
+        )
+
+    def get_grader_prompt(self, convo: Conversation) -> Conversation:
+        """
+        Create a prompt for the grader to grade the conversation based on the rubric. The prompt should contain 1) the conversation to be graded, and 2) the rubric.
+        """
+
+        prompt = "I will show you 1) a conversation between a human and a chatbot, and 2) a rubric for grading the conversation. Please grade the conversation based on the rubric."
+
+        prompt += f"Here is the conversation: <conversation>\n\n{self._flatten_convo(convo)} \n\n</conversation>\n\nHere is the rubric: <rubric>\n{self.rubric_str}\n</rubric>\n"
+        prompt += f"Please grade the conversation based on the rubric. {self.grader_output_format_instruction}"
+        return [
+            {
+                "role": "user",
+                "content": prompt,
+            }
+        ]
+
+    def extract_score(self, response: str) -> float:
+        match = re.search(self.extraction_regex, response, re.DOTALL)
+        if match is not None:
+            try:
+                return float(match.group(1))
+            except ValueError:
+                print(f"Warning: Failed to extract score from grader response: {response}")
+                return 0.0
+        else:
+            print(f"Warning: Failed to extract score from grader response: {response}")
+            return 0.0
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "rubric_str": self.rubric_str,
+            "extraction_regex": self.extraction_regex,
+            "grader_output_format_instruction": self.grader_output_format_instruction,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict())
+
+    @staticmethod
+    def from_dict(d: dict[str, str]) -> "Rubric":
+        return Rubric(
+            rubric_str=d["rubric_str"],
+            extraction_regex=d["extraction_regex"],
+            grader_output_format_instruction=d["grader_output_format_instruction"],
+        )
+
+    @staticmethod
+    def from_json(json_str: str) -> "Rubric":
+        return Rubric.from_dict(json.loads(json_str))
+
+
+@dataclass(frozen=True)
+class RubricBasedDatapoint:
+    """
+    A rubric-based datapoint contains a conversation and a rubric.
+    In this task, the policy model sees the conversation, create a response, and then the grader language model grades the response based on the rubric.
+    """
+
+    convo: Conversation
+    rubric_items: Sequence[Rubric]
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "convo": self.convo,
+                "rubric_items": [rubric.to_dict() for rubric in self.rubric_items],
+            }
+        )
+
+    @staticmethod
+    def from_json(json_str: str) -> "RubricBasedDatapoint":
+        d = json.loads(json_str)
+        return RubricBasedDatapoint(
+            convo=d["convo"],
+            rubric_items=[Rubric.from_dict(rubric) for rubric in d["rubric_items"]],
+        )
+
+
+
+class RubricDatapointListBuilder:
+
+    def __call__(self) -> Sequence[RubricBasedDatapoint]:
+        raise NotImplementedError("Subclass must implement this method")
+
+@chz.chz
+class RubricDatapointListBuilderFromJsonl(RubricDatapointListBuilder):
+    jsonl_path: str
+
+    def __call__(self) -> Sequence[RubricBasedDatapoint]:
+        datapoints = []
+        with open(self.jsonl_path, "r") as f:
+            for line in f:
+                data = json.loads(line)
+                datapoints.append(RubricBasedDatapoint.from_json(data))
+        return datapoints
