@@ -18,13 +18,9 @@ import chz
 import tinker
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.renderers import get_renderer
-import logging
 import asyncio
-
-import chz
 from tinker_cookbook import model_info
 
-logger = logging.getLogger(__name__)
 
 Conversation: TypeAlias = list[Message]
 
@@ -122,7 +118,7 @@ class RubricBasedDatapoint:
     def to_json(self) -> str:
         return json.dumps({
             "convo": self.convo,
-            "rubric_items": [rubric.to_json() for rubric in self.rubric_items],
+            "rubric_items": [rubric.to_dict() for rubric in self.rubric_items],
         })
 
     @staticmethod
@@ -130,7 +126,7 @@ class RubricBasedDatapoint:
         d = json.loads(json_str)
         return RubricBasedDatapoint(
             convo=d["convo"],
-            rubric_items=[Rubric.from_json(rubric) for rubric in d["rubric_items"]],
+            rubric_items=[Rubric.from_dict(rubric) for rubric in d["rubric_items"]],
         )
 
 
@@ -185,7 +181,8 @@ class RubricGradedEnv(Env):
             print(f"{MAGENTA}{'='*80}")
             print(f"DEBUG: Score")
             print(f"{'='*80}{RESET}")
-            print(f"{MAGENTA}Score: {score}{RESET}\n")
+            print(f"{MAGENTA}Grader Response: {grader_response_content}{RESET}\n")
+            print(f"{MAGENTA}Extracted Score: {score}{RESET}\n")
         return score
     
     async def step(self, action: Action) -> StepResult:

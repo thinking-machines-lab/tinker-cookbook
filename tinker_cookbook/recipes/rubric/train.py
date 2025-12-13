@@ -1,8 +1,6 @@
 import chz
 import asyncio
 from datetime import datetime
-
-import chz
 from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.rl.train import AsyncConfig, Config, main
 from tinker_cookbook.rl.types import RLDatasetBuilder

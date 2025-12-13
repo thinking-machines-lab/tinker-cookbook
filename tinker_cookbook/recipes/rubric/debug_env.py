@@ -14,7 +14,7 @@ async def main():
             {"role": "assistant", "content": "9"},
             {"role": "user", "content": "What is 125 + 311?"},
         ],
-        rubric_items=[Rubric(rubric_str="Does the chatbot correctly gets the answer 436?"), Rubric(rubric_str="Does the chatbot provide an explanation for the answer?")]
+        rubric_items=[Rubric(rubric_str="Does the chatbot correctly get the answer 436?"), Rubric(rubric_str="Does the chatbot provide an answer without saying anything else?")]
     )
     policy_name = "meta-llama/Llama-3.1-8B-Instruct"
     grader_name = "Qwen/Qwen3-30B-A3B-Instruct-2507"
