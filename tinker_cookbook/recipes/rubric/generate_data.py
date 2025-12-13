@@ -1,4 +1,4 @@
-from tinker_cookbook.recipes.rubric.env import RubricBasedDatapoint, Rubric
+from tinker_cookbook.recipes.rubric.data import RubricBasedDatapoint, Rubric
 import random
 import os
 

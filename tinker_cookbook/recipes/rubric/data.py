@@ -116,7 +116,7 @@ class RubricBasedDatapoint:
             rubric_items=[Rubric.from_dict(rubric) for rubric in d["rubric_items"]],
         )
 
-
+@chz.chz
 class RubricDatapointListBuilder:
     def __call__(self) -> Sequence[RubricBasedDatapoint]:
         raise NotImplementedError("Subclass must implement this method")
@@ -133,3 +133,46 @@ class RubricDatapointListBuilderFromJsonl(RubricDatapointListBuilder):
                 data = json.loads(line)
                 datapoints.append(RubricBasedDatapoint.from_json(data))
         return datapoints
+
+
+@chz.chz
+class PrometheusDatapointListBuilder(RubricDatapointListBuilder):
+
+    data_path: str = "prometheus-eval/Feedback-Collection"
+
+    def __call__(self) -> Sequence[RubricBasedDatapoint]:
+        from datasets import load_dataset
+        train_dataset = load_dataset(self.data_path)["train"]
+        return [self.build_rubric_datapoint(item) for item in train_dataset]
+
+    
+    def build_rubric_datapoint(self, item: dict) -> RubricBasedDatapoint:
+
+        convo = [
+            {'role': 'user', 'content': item['orig_instruction']},
+        ]
+
+        rubric_text = f"Your job is to evalaute the following: {item['orig_criteria']}. Your response should be a score between 1 to 5.\n"
+        rubric_text += f"Here is the calibration for each score:\n"
+        for i in range(1, 6):
+            rubric_text += f"<score>{i}.0</score>: {item[f'orig_score{i}_description']}\n"
+
+        rubric_text += f"\nHere is a reference response that achieved a score of 5: {item['orig_reference_answer']}\n"
+
+
+        rubric = Rubric(
+            rubric_str=rubric_text,
+            extraction_regex=r"<score>(.*)</score>",
+            grader_output_format_instruction="Please output your score between 1 and 5 wrapped in <score> ... </score>",
+        )
+
+        return RubricBasedDatapoint(
+            convo=convo,
+            rubric_items=[rubric],
+        )
+
+
+
+
+
+

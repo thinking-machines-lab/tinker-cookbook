@@ -7,8 +7,7 @@ import tinker
 from tinker_cookbook.rl.rollouts import do_single_rollout
 import asyncio
 
-
-async def main():
+def get_addition_datapoint() -> RubricBasedDatapoint:
     datapoint = RubricBasedDatapoint(
         convo=[
             {"role": "user", "content": "What is 4 + 5?"},
@@ -20,6 +19,17 @@ async def main():
             Rubric(rubric_str="Does the chatbot provide an answer without saying anything else?"),
         ],
     )
+
+    return datapoint
+
+def get_prometheus_datapoint() -> RubricBasedDatapoint:
+    from tinker_cookbook.recipes.rubric.data import PrometheusDatapointListBuilder
+    datapoint = PrometheusDatapointListBuilder()()
+    datapoint = datapoint[0]
+    return datapoint
+
+async def main(datapoint: RubricBasedDatapoint):
+
     policy_name = "meta-llama/Llama-3.1-8B-Instruct"
     grader_name = "Qwen/Qwen3-30B-A3B-Instruct-2507"
     service_client = tinker.ServiceClient()
@@ -49,4 +59,14 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+
+    dataset = "addition"
+
+    if dataset == "addition":
+        datapoint = get_addition_datapoint()
+        asyncio.run(main(datapoint))
+    elif dataset == "prometheus":
+        datapoint = get_prometheus_datapoint()
+        asyncio.run(main(datapoint))
+    else:
+        raise ValueError(f"Unknown dataset: {dataset}")

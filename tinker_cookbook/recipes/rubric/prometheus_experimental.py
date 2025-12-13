@@ -5,8 +5,8 @@ from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.rl.train import AsyncConfig, Config, main
 from tinker_cookbook.rl.types import RLDatasetBuilder
 from tinker.types import LossFnType
+from tinker_cookbook.recipes.rubric.data import PrometheusDatapointListBuilder
 from tinker_cookbook.recipes.rubric.env import RubricGradedDatasetBuilder
-from tinker_cookbook.recipes.rubric.data import RubricDatapointListBuilderFromJsonl
 
 
 @chz.chz
@@ -30,9 +30,6 @@ class CLIConfig:
     temperature: float = 1.0
     kl_penalty_coef: float = 0.0
     grader_llm_name: str = "Qwen/Qwen3-30B-A3B-Instruct-2507"
-    train_jsonl_path: str = "tinker_cookbook/example_data/example_rubric_train.jsonl"
-    test_jsonl_path: str = "tinker_cookbook/example_data/example_rubric_test.jsonl"
-
     # Number of optimizer steps per training iteration.
     # Useful for very large batch sizes.
     num_substeps: int = 1
@@ -64,8 +61,6 @@ def get_dataset_builder(
     renderer_name: str,
     grader_llm_name: str,
     train_group_size: int,
-    train_jsonl_path: str,
-    test_jsonl_path: str | None = None,
     test_group_size: int = 1,
 ) -> RLDatasetBuilder:
     return RubricGradedDatasetBuilder(
@@ -73,8 +68,8 @@ def get_dataset_builder(
         model_name_for_tokenizer=policy_model_name,
         renderer_name=renderer_name,
         grader_llm_name=grader_llm_name,
-        train_datapoint_list_builder=RubricDatapointListBuilderFromJsonl(jsonl_path=train_jsonl_path),
-        test_datapoint_list_builder=RubricDatapointListBuilderFromJsonl(jsonl_path=test_jsonl_path) if test_jsonl_path is not None else None,
+        train_datapoint_list_builder=PrometheusDatapointListBuilder(),
+        test_datapoint_list_builder=None,
         train_group_size=train_group_size,
         test_group_size=test_group_size,
     )
@@ -88,7 +83,7 @@ async def cli_main(cli_config: CLIConfig):
         cli_config.model_name
     )
     model_name = cli_config.model_name.replace("/", "-")
-    run_name = f"{model_name}-{cli_config.lora_rank}rank-{cli_config.learning_rate}lr-{cli_config.train_group_size}group_size-{cli_config.groups_per_batch}batch-{cli_config.loss_fn}-seed{cli_config.seed}-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
+    run_name = f"prometheus_experimental-{model_name}-{cli_config.lora_rank}rank-{cli_config.learning_rate}lr-{cli_config.train_group_size}group_size-{cli_config.groups_per_batch}batch-{cli_config.loss_fn}-seed{cli_config.seed}-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
     # create log path if it doesn't exist
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
@@ -109,8 +104,6 @@ async def cli_main(cli_config: CLIConfig):
             renderer_name=renderer_name,
             grader_llm_name=cli_config.grader_llm_name,
             train_group_size=cli_config.train_group_size,
-            train_jsonl_path=cli_config.train_jsonl_path,
-            test_jsonl_path=cli_config.test_jsonl_path,
             test_group_size=cli_config.test_group_size,
         ),
         model_name=cli_config.model_name,
