@@ -7,6 +7,7 @@ from tinker_cookbook.rl.types import RLDatasetBuilder
 from tinker.types import LossFnType
 from tinker_cookbook.recipes.rubric.env import RubricGradedDatasetBuilder
 
+
 @chz.chz
 class CLIConfig:
     """Simple command-line configuration for RL training."""
@@ -76,7 +77,6 @@ def get_dataset_builder(
         train_group_size=train_group_size,
         test_group_size=test_group_size,
     )
-
 
 
 async def cli_main(cli_config: CLIConfig):

@@ -2,6 +2,7 @@ from tinker_cookbook.recipes.rubric.env import RubricBasedDatapoint, Rubric
 import random
 import os
 
+
 def generate_one(rng: random.Random) -> RubricBasedDatapoint:
     x, y = rng.randint(0, 1000), rng.randint(0, 1000)
     return RubricBasedDatapoint(
@@ -9,11 +10,14 @@ def generate_one(rng: random.Random) -> RubricBasedDatapoint:
             {"role": "user", "content": "What is 4 + 5?"},
             {"role": "assistant", "content": "9"},
             {"role": "user", "content": f"What is {x} + {y}?"},
-        ], rubric_items=[Rubric(rubric_str=f"Does the chatbot correctly gets the answer {x + y}?")]
+        ],
+        rubric_items=[Rubric(rubric_str=f"Does the chatbot correctly gets the answer {x + y}?")],
     )
 
 
-def generate_dataset(num_train: int, num_test: int, seed: int, write_dir: str = "tinker_cookbook/example_data/") -> tuple[str, str]:
+def generate_dataset(
+    num_train: int, num_test: int, seed: int, write_dir: str = "tinker_cookbook/example_data/"
+) -> tuple[str, str]:
     random.seed(seed)
     rng = random.Random(seed)
     total_datapoints = num_train + num_test
@@ -34,6 +38,7 @@ def generate_dataset(num_train: int, num_test: int, seed: int, write_dir: str = 
     print(f"Generated {len(test_datapoints)} test datapoints in {test_jsonl_path}")
 
     return train_jsonl_path, test_jsonl_path
+
 
 if __name__ == "__main__":
     train_jsonl_path, test_jsonl_path = generate_dataset(num_train=10000, num_test=1000, seed=42)

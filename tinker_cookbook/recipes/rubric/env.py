@@ -37,9 +37,12 @@ class Rubric:
     """
     A rubric should specify 1) what counts as a good response, 2) how the grader language model should output the score, and 3) how to extract the score from the grader's response.
     """
+
     rubric_str: str
     extraction_regex: str = r"<score>(.*)</score>"
-    grader_output_format_instruction: str = "Please output your score between 0 and 1 wrapped in <score> ... </score>"
+    grader_output_format_instruction: str = (
+        "Please output your score between 0 and 1 wrapped in <score> ... </score>"
+    )
 
     def __convert_role(self, role: Role) -> str:
         return "Human" if role in ("user", "system") else "Chatbot"
@@ -52,11 +55,13 @@ class Rubric:
         \n\nHuman: ...
         \n\nChatbot: ...
         """
-        return "\n\n".join([f"{self.__convert_role(message['role'])}: {message['content']}" for message in convo])
+        return "\n\n".join(
+            [f"{self.__convert_role(message['role'])}: {message['content']}" for message in convo]
+        )
 
     def get_grader_prompt(self, convo: Conversation) -> Conversation:
         """
-        Create a prompt for the grader to grade the conversation based on the rubric. The prompt should contain 1) the conversation to be graded, and 2) the rubric. 
+        Create a prompt for the grader to grade the conversation based on the rubric. The prompt should contain 1) the conversation to be graded, and 2) the rubric.
         """
 
         prompt = "I will show you 1) a conversation between a human and a chatbot, and 2) a rubric for grading the conversation. Please grade the conversation based on the rubric."
@@ -99,27 +104,29 @@ class Rubric:
             extraction_regex=d["extraction_regex"],
             grader_output_format_instruction=d["grader_output_format_instruction"],
         )
-    
+
     @staticmethod
     def from_json(json_str: str) -> "Rubric":
         return Rubric.from_dict(json.loads(json_str))
 
 
-
 @dataclass(frozen=True)
 class RubricBasedDatapoint:
     """
-    A rubric-based datapoint contains a conversation and a rubric. 
+    A rubric-based datapoint contains a conversation and a rubric.
     In this task, the policy model sees the conversation, create a response, and then the grader language model grades the response based on the rubric.
     """
+
     convo: Conversation
     rubric_items: Sequence[Rubric]
 
     def to_json(self) -> str:
-        return json.dumps({
-            "convo": self.convo,
-            "rubric_items": [rubric.to_dict() for rubric in self.rubric_items],
-        })
+        return json.dumps(
+            {
+                "convo": self.convo,
+                "rubric_items": [rubric.to_dict() for rubric in self.rubric_items],
+            }
+        )
 
     @staticmethod
     def from_json(json_str: str) -> "RubricBasedDatapoint":
@@ -131,7 +138,6 @@ class RubricBasedDatapoint:
 
 
 class RubricGradedEnv(Env):
-
     def __init__(
         self,
         renderer: Renderer,
@@ -150,7 +156,7 @@ class RubricGradedEnv(Env):
     @property
     def rubric_items(self) -> Sequence[Rubric]:
         return self.datapoint.rubric_items
-    
+
     @property
     def convo(self) -> Conversation:
         return self.datapoint.convo
@@ -158,7 +164,7 @@ class RubricGradedEnv(Env):
     @property
     def stop_condition(self) -> StopCondition:
         return self.renderer.get_stop_sequences()
-    
+
     async def initial_observation(self) -> tuple[ModelInput, StopCondition]:
         return self.renderer.build_generation_prompt(self.convo), self.stop_condition
 
@@ -173,37 +179,38 @@ class RubricGradedEnv(Env):
         assert isinstance(grader_response_content, str), "Grader response content must be a string"
         score = rubric.extract_score(grader_response_content)
         if self.debug:
-            print(f"{YELLOW}{'='*80}")
-            print(f"DEBUG: First Turn of Grader Prompt")
-            print(f"{'='*80}{RESET}")
+            print(f"{YELLOW}{'=' * 80}")
+            print("DEBUG: First Turn of Grader Prompt")
+            print(f"{'=' * 80}{RESET}")
             print(f"{YELLOW}{grader_prompt[0]['content']}{RESET}\n")
 
-            print(f"{MAGENTA}{'='*80}")
-            print(f"DEBUG: Score")
-            print(f"{'='*80}{RESET}")
+            print(f"{MAGENTA}{'=' * 80}")
+            print("DEBUG: Score")
+            print(f"{'=' * 80}{RESET}")
             print(f"{MAGENTA}Grader Response: {grader_response_content}{RESET}\n")
             print(f"{MAGENTA}Extracted Score: {score}{RESET}\n")
         return score
-    
+
     async def step(self, action: Action) -> StepResult:
         # obtain the policy action message
         (policy_action_message, _parse_success) = self.renderer.parse_response(action)
 
         if self.debug:
-
-            print(f"\n{BLUE}{'='*80}")
-            print(f"DEBUG: Original Conversation (self.convo)")
-            print(f"{'='*80}{RESET}")
+            print(f"\n{BLUE}{'=' * 80}")
+            print("DEBUG: Original Conversation (self.convo)")
+            print(f"{'=' * 80}{RESET}")
             print(f"{BLUE}{json.dumps(self.convo, indent=2)}{RESET}\n")
 
-            print(f"{GREEN}{'='*80}")
-            print(f"DEBUG: Policy Action Message")
-            print(f"{'='*80}{RESET}")
+            print(f"{GREEN}{'=' * 80}")
+            print("DEBUG: Policy Action Message")
+            print(f"{'=' * 80}{RESET}")
             print(f"{GREEN}{json.dumps(policy_action_message, indent=2)}{RESET}\n")
-                # this shows the full back-and-forth conversation to the grader
+            # this shows the full back-and-forth conversation to the grader
         convo = self.convo + [policy_action_message]
 
-        scores = await asyncio.gather(*[self._grade_with_rubric(convo, rubric_item) for rubric_item in self.rubric_items])
+        scores = await asyncio.gather(
+            *[self._grade_with_rubric(convo, rubric_item) for rubric_item in self.rubric_items]
+        )
         avg_score = sum(scores) / len(scores)
 
         return StepResult(
@@ -227,7 +234,8 @@ class RubricGradedEnvGroupBuilder(EnvGroupBuilder):
                 renderer=self.renderer,
                 datapoint=self.datapoint,
                 grader_llm=self.grader_llm,
-            ) for _ in range(self.group_size)
+            )
+            for _ in range(self.group_size)
         ]
 
 
@@ -269,7 +277,9 @@ class RubricGradedDatasetBuilder(RLDatasetBuilder):
     base_url: str | None = None
     grader_llm_name: str = "Qwen/Qwen3-30B-A3B-Instruct-2507"
 
-    def _get_datapoints_from_jsonl(self, jsonl_path: str | None) -> Sequence[RubricBasedDatapoint] | None:
+    def _get_datapoints_from_jsonl(
+        self, jsonl_path: str | None
+    ) -> Sequence[RubricBasedDatapoint] | None:
         if jsonl_path is None:
             return None
         datapoints = []
@@ -278,7 +288,7 @@ class RubricGradedDatasetBuilder(RLDatasetBuilder):
                 datapoint = RubricBasedDatapoint.from_json(line)
                 datapoints.append(datapoint)
         return datapoints
-    
+
     def _get_grader_llm(self) -> MessageCompleter:
         tokenizer = get_tokenizer(self.grader_llm_name)
         renderer_name = model_info.get_recommended_renderer_name(self.grader_llm_name)
@@ -286,16 +296,16 @@ class RubricGradedDatasetBuilder(RLDatasetBuilder):
         service_client = tinker.ServiceClient(base_url=self.base_url)
         sampling_client = service_client.create_sampling_client(base_model=self.grader_llm_name)
         return TinkerMessageCompleter(
-            sampling_client=sampling_client,
-            renderer=renderer,
-            max_tokens=2048
+            sampling_client=sampling_client, renderer=renderer, max_tokens=2048
         )
-    
+
     async def __call__(self) -> tuple[RubricGradedDataset, RubricGradedDataset | None]:
         train_datapoints = self._get_datapoints_from_jsonl(self.train_jsonl_path)
         test_datapoints = self._get_datapoints_from_jsonl(self.test_jsonl_path)
 
-        renderer = get_renderer(name=self.renderer_name, tokenizer=get_tokenizer(self.model_name_for_tokenizer))
+        renderer = get_renderer(
+            name=self.renderer_name, tokenizer=get_tokenizer(self.model_name_for_tokenizer)
+        )
 
         assert train_datapoints is not None, "Train datapoints are required"
         train_dataset = RubricGradedDataset(
