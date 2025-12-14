@@ -1,52 +1,3 @@
-# TINKER DOCUMENTATION
-This file contains the core Tinker documentation (index, quickstart, and losses).
-
-## File: index.mdx
-
-# Tinker: a training API for researchers and developers
-
-Tinker lets you focus on what matters in LLM fine-tuning – your data and algorithms – while we handle the heavy lifting of distributed training.
-
-You write a simple loop that runs on your CPU-only machine, including the data or environment and the loss function. We figure out how to make the training work on a bunch of GPUs, doing the exact computation you specified, efficiently. To change the model you're working with, you only need to change a single string in your code.
-
-Tinker gives you full control over the training loop and all the algorithmic details. It's not a magic black box that makes fine-tuning "easy". It's a clean abstraction that shields you from the complexity of distributed training while preserving your control.
-
-Here's how the division of responsibilities works in practice:
-
-| **You focus on** | **You write** | **We handle** |
-|---|---|---|
-|  **Datasets and RL environments**<br />Your custom training data |  **Simple Python script**<br />Runs on your CPU |  **Efficient distributed training of large models**<br />Llama 70B, Qwen 235B |
-|  **Training logic**<br />Your loss functions, training loop, and evals |  **API calls**<br />`forward_backward()`<br />`optim_step()`<br />`sample()`<br />`save_state()` |  **Reliability**<br />Hardware failures handled transparently |
-
-## Features
-
-What the Tinker service currently supports:
-
-- Tinker lets you fine-tune open-weight models like the Qwen and Llama series, including large mixture-of-experts models like Qwen3-235B-A22B.
-- Tinker supports vision-language models (VLMs) like Qwen3-VL for image understanding tasks. See [Vision Inputs](/rendering#vision-inputs) for details.
-- Tinker implements low-rank adaptation (LoRA) fine-tuning, not full fine-tuning. However, we believe that LoRA gives the same performance as full fine-tuning for many important use cases, especially in RL (see [LoRA Without Regret](https://thinkingmachines.ai/blog/lora/)).
-- You can download the weights of your trained model to use outside of Tinker, for example with your inference provider of choice.
-
-## A quick look at functionality
-
-Tinker's main functionality is contained in a few key functions:
-
-- `forward_backward`: feed in your data and loss function, and we'll compute and accumulate the gradients for you.
-- `optim_step`: update your model using the accumulated gradients
-- `sample`: Generate outputs from your trained model
-- other functions for saving and loading weights and optimizer state
-
-## What's next?
-
-Some features we expect to support in the future:
-
-- Full fine-tuning
-
-
----
-
-## File: losses.mdx
-
 import { CookbookLink } from '../components/CookbookLink'
 
 # Loss functions in Tinker
@@ -306,4 +257,52 @@ We detail the `async` version of methods in the [Async and Futures](./async) of 
 
 ### How `forward_backward_custom` works
 
----
+You don't need to read the following section to use `forward_backward_custom`, but read on if you're curious about how it works under the hood. Tinker does NOT pickle your function or send it to the server. Instead, Tinker decomposes the gradient computation into a `forward` call followed by a `forward_backward` call on an appropriately designed weighted cross-entropy loss, which lets it compute exactly the right gradient.
+
+Mathematically, this works as follows. First, consider the full nonlinear loss function:
+
+```python
+loss = compute_loss_from_logprobs(compute_target_logprobs(params))
+```
+
+We construct a loss function that is linear in the logprobs, but has the same gradient with respect to params as the full nonlinear loss:
+
+```python
+logprobs = compute_target_logprobs(params)
+surrogate_loss = (logprobs * logprob_grads).sum()
+# where logprob_grads = dLoss/dLogprobs
+```
+
+Here's a diagram showing what happens under the hood, on the client and server.
+
+```mermaid
+%%{init: {'theme':'base', 'themeVariables': {'fontSize':'11px'}}}%%
+flowchart TD
+
+    subgraph Server ["Server Side"]
+        B["<b>Initial Forward Pass</b><br/><i>→ model outputs (logprobs)</i>"]
+        I["<b>Forward-Backward Pass</b><br/>Linear loss: sum(outputs * grad_outputs)<br/><i>→ final gradients on weights</i>"]
+    end
+
+    subgraph Client ["Client Side"]
+        A["<b>Prepare Data</b><br/>List of Datum objects<br/><i>→ training data</i>"]
+        A1["<b>Call forward function</b><br/>"]
+        C["<b>Compute Custom Loss on Model Outputs</b><br/>loss = custom_fn(logprobs)<br/><i>→ loss tensor</i>"]
+        G["<b>Backward Pass</b><br/>Call loss.backward()<br/><i>→ grad_outputs</i> (dLoss/dLogprobs)"]
+    end
+
+
+    A --> A1
+    A1 --> B
+    B --> C
+    C --> G
+    G --> I
+
+    classDef clientBox fill:#e1f5fe,stroke:#0277bd,color:#000
+    classDef serverBox fill:#f3e5f5,stroke:#7b1fa2,color:#000
+
+    class A,C,G clientBox
+    class B,I serverBox
+```
+
+Since `forward_backward_custom` does an extra forward pass, it requires 1.5x as many FLOPs as a single `forward_backward`. It'll also take up to 3x as long (wall time), due to implementation details of how `forward_backward` operations are scheduled.

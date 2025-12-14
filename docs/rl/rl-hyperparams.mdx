@@ -1,0 +1,83 @@
+# RL Hyperparameters
+
+This guide covers the key hyperparameters for reinforcement learning training, from core settings to advanced configurations.
+
+## Core Hyperparameters
+
+### Learning Rate
+
+Similar to the [supervised learning setting](../supervised-learning/sl-hyperparams), the learning rate is the most critical hyperparameter choice. We recommend using the guidance presented there as a starting point for RL experiments as well.
+
+
+### Batch and Group Sizes
+
+As described in our [RL environments](../rl/rl-envs.mdx) documentation, we use two key parameters:
+
+- **`batch_size`**: The number of unique environments or problems used for training
+- **`group_size`**: The number of rollouts performed per unique environment
+
+If you have limited environments or problems available for training, increase the `group_size` to generate more training data. While the total number of rollouts depends on both parameters, we recommend scaling learning rates proportionally to $\text{LR} \propto \sqrt{\text{batch\_size}}$.
+
+## Multiple Updates per Sampling Iteration
+
+The `num_substeps` parameter controls how many policy weight updates are performed on data sampled from the last policy iteration, similar to PPO and GRPO.
+
+### How it works:
+
+- **`num_substeps = 1` (default)**: Each batch of collected trajectories is used for exactly one optimizer update
+- **`num_substeps > 1`**: The batch of unique environments is split into `num_substeps` mini-batches, where each environment/problem has `group_size` rollouts (we pack all rollouts for a particular environment/problem in the same minibatch). We do a single update step on each mini-batch. Note that our implementation still takes only a single epoch through the data.
+
+### Usage Guidelines:
+
+- The batch size must be divisible by `num_substeps`
+- Our experiments show that `num_substeps = 1` already gives decent performance, but if you would like to experiment with this parameter, we recommend starting with a low value of 2-4 and using the PPO objective.
+- Higher values can lead to update steps that are too out-of-distribution for the policy. Consider limiting the number of updates or decreasing the learning rate when using multiple update steps.
+
+## Advanced Training Configurations
+
+⚠️ **Note**: These features are experimental and may be subject to instabilities. They are currently disabled by default.
+
+### Streaming Minibatch Training
+
+Enable streaming minibatch training by specifying the `StreamMinibatchConfig`. This approach overlaps trajectory sampling and model training, improving overall throughput by submitting training requests as soon as enough rollouts complete, without waiting for all sampling jobs to finish.
+
+**Configuration Parameters:**
+
+- **`groups_per_batch`**: Same as batch size
+- **`num_minibatches`**: Number of minibatches per substep—controls how many individual forward-backward requests we submit. This controls how the work is split.
+
+
+**Important**: This remains on-policy training and is strictly a pipeline efficiency improvement.
+
+### Async Off-Policy Training
+
+Async training allows the model to train on trajectories generated with slightly older model versions, enabling higher throughput at the cost of some off-policy bias. While Tinker doesn't currently support in-flight weight changes, it supports the "off-by-K" async RL approach where multiple model iterations generate data simultaneously. Configure this by setting the `AsyncConfig` object.
+
+**Configuration Parameters:**
+
+- **`max_steps_off_policy`**: Maximum age (in training steps) of trajectories before they're discarded. Essentially, trajectories from policy iterations older than `max_steps_off_policy` steps will not be used.
+- **`groups_per_batch`**: Number of new trajectory groups to accumulate (with a `group_size` number of rollouts each) before updating the current iteration of the model. Note: This is separate from the batch size used for dataset construction.
+
+**Usage Guidelines:**
+
+- Async RL is appropriate for applications with long and heterogeneous rollouts, such as very long CoT models, multi-hop tool use, or agentic workflows
+- Start with a small value for `max_steps_off_policy` (less than 5)
+
+
+
+## Monitoring and Run Health
+
+Using policy-gradient algorithms with off-policy data can significantly degrade performance or even crash the policy, making monitoring essential during training.
+
+### KL Divergence Monitoring
+
+The current implementation logs the KL divergence between the data generation policy and the current learner: $\mathbb{D}_{KL}[\pi_{\text{sampler}}(\cdot|x)||\pi_{\theta}(\cdot|x)]$ using two separate estimators ([Schulman 2020](http://joschu.net/blog/kl-approx.html)):
+
+- `kl_sample_train_v1`
+- `kl_sample_train_v2`
+
+
+A few important notes to keep in mind:
+- Even with full on-policy training, the divergence between sampling and learning policies will not be exactly zero ([He 2025](https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/)) due to implementation details
+- In our experience training is stable with KL divergence below 0.01
+- If KL divergence crosses a recommended threshold, this indicates a numerical instability or potential issue with the training run

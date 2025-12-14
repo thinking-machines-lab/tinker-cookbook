@@ -1,0 +1,44 @@
+# Supervised Learning Hyperparameters
+
+Successful LLM fine-tuning requires careful hyperparameter tuning. While the most accurate approach is to sweep over ranges and selecting values that minimize loss or maximize eval performance for each hyperparameter, this is often time-consuming and expensive. This guide provides some starting recommendations for the most important hyperparameters.
+
+
+## Learning rate
+
+The most important hyperparameter is generally the learning rate (LR). Our current best estimate of optimal LR for a model $m$ is the following:
+
+$$ LR(m) = lr_{base} · M_{LoRA} · \Big(\frac{2000}{H_m}\Big)^{P_m} $$
+
+where $lr_{base}$ is a constant base LR, $M_{LoRA}$ is a multiplier applied when using LoRA (1 if using full-finetuning), $H_m$ is the hidden size of the model $m$, and $P_m$ is a model-specific exponent adjustment. Importantly, this function is independent of the LoRA rank.
+
+Our current best estimates are the following: $lr_{base} = 5e-5$,
+$M_{LoRA} = 10$, $P_m = 0.0775$ for Qwen models and $P_m = 0.781$ for Llama models.
+
+### Getting the recommended learning rate
+You can use the following function to get the recommended LR for any Llama or Qwen model:
+```
+from tinker_cookbook.hyperparam_utils import get_lr
+model_name = "meta-llama/Llama-3.2-1B"
+recommended_lr = get_lr(model_name)
+print(f"Recommended LR: {recommended_lr}")
+```
+### Validation
+We validated this formula across diverse supervised fine-tuning experiments, varying datasets, dataset sizes, batch_sizes and lora_ranks.
+
+Using our LR estimates resulted in \<0.5% regret compared to exhaustive hyperparameter sweeps, where regret is defined as:
+
+We can define the regret of using any lr as the following:
+$$regret(lr') = \frac{loss(lr') - min_{lr} loss(lr)}{min_{lr} loss(lr)}$$
+
+
+## Batch size
+
+Batch size is the second-most important hyperparameter; it significantly affects both training efficiency and final performance.
+
+For small batch sizes, there's a phenomenon of *perfect scaling*, where the LR and batchsize should be varied together as $LR \propto \sqrt{B}$, and the learning curve only depends on $\frac{LR}{\sqrt{B}}$. See [Shallue et al. (2018)](https://arxiv.org/abs/1811.03600) for an example in the training-from-scratch setting.
+
+When fine-tuning LLMs, we're often in a regime where smaller batch sizes give better performance, at the cost of longer training time; moreover, the $LR \propto \sqrt{B}$ scaling doesn't always hold. When doing SL fine-tuning, we recommend using smaller batch sizes like 128, depending on your tolerance for longer training time.
+
+For best results, you should aim for at least 100 steps of training (but usually get best results with 1000 or more).
+
+⚠️ Note: Our batch size recommendations are based on preliminary findings and ongoing research. We're not confident about them!

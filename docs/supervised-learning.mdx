@@ -1,0 +1,16 @@
+import { CookbookLink } from '../components/CookbookLink'
+
+# Cookbook: Supervised learning
+
+This section takes you through examples from the Tinker Cookbook that relate to supervised learning.
+
+In general, supervised learning (SL) means learning an input-output mapping from labeled data. In the context of language model fine-tuning, this means **minimizing a weighted cross-entropy loss** on token sequences---equivalently, maximizing the log-probability of the specified target tokens.
+
+There are a few ways that SL is commonly used in LLM fine-tuning pipelines:
+
+- *Instruction tuning*: This is the first step in post-training pipelines, applied to the base (raw, pretrained) model. Typically, we do SL on a high-quality dataset that demonstrates the correct format and style, while boosting the model's reasoning and instruction-following.
+- *Context distillation* / *prompt distillation*: let's say we have a generic model that can do chat / instruction following / reasoning, but we want to adjust how it behaves in a certain scenario. We can add some instructions to the system message of our model. However, the system message might grow impractically long and start ignoring some of its instructions. So it's often better to create a supervised dataset on a narrow prompt distribution, with a shorter set of instructions that that are targeted at these prompts.
+
+We'll cover both of these use cases in this documentation and related Cookbook code.
+
+The library code implementing supervised learning can be found in the <CookbookLink path="tinker_cookbook/supervised">`supervised`</CookbookLink> directory.

@@ -1,0 +1,5 @@
+import { CookbookLink } from '../../components/CookbookLink'
+
+# Supervised Learning Training Loop
+
+We've provided a simple SL training loop in <CookbookLink path="tinker_cookbook/recipes/sl_loop.py">sl_loop.py</CookbookLink>, which avoids using our dataset classes and instead defines the data loading in a more self-contained way. This is for people who like to write their own training loops or learn about how things work under the hood. Our more performant implementation in <CookbookLink path="tinker_cookbook/supervised/train.py">supervised/train.py</CookbookLink> does basically the same thing, but with some performance optimizations, and with some additional features like periodic evals.

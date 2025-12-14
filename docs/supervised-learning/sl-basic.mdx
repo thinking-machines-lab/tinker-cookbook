@@ -1,0 +1,45 @@
+import { CookbookLink } from '../../components/CookbookLink'
+
+# Basic Supervised Learning
+
+This guide walks you through running your first supervised learning experiment using Tinker's built-in training loop.
+
+## Quick start
+
+We've provided an implementation of supervised learning in <CookbookLink path="tinker_cookbook/supervised/train.py">train_cli.py</CookbookLink>. To use this training loop, you'll need to create a `Config` object with the data and parameters.
+
+We've provided a ready-to-run example that fine-tunes Llama-3.1-8B on a small instruction-following dataset in <CookbookLink path="tinker_cookbook/recipes/sl_basic.py">sl_basic.py</CookbookLink>. You can run it from the command line as follows:
+
+```bash
+python -m tinker_cookbook.recipes.sl_basic
+```
+
+This script fine-tunes the base (pretrained) model on a small dataset called [NoRobots](https://huggingface.co/datasets/HuggingFaceH4/no_robots), created by Hugging Face.
+
+### What you'll see during training
+
+- Each step you should see a printout of the train and test loss, along with other stats like timing.
+- The training script will also print out what the data looks like, with predicted tokens (weight=1) in green and context tokens (weight=0) in yellow.
+- The training script will write various logs and checkpoint info to the `log_path` directory, which is set to `/tmp/tinker-examples/sl_basic` in the example script.
+
+### Understanding the output files
+Looking at the `log_path` directory, you will find several files of interest:
+- `metrics.jsonl`: the training metrics that also were printed to the console. You can load and plot them like this:
+
+    ```python
+    import pandas
+    import matplotlib.pyplot as plt
+    df = pandas.read_json("/tmp/tinker-examples/sl_basic/metrics.jsonl", lines=True)
+    plt.plot(df['train_mean_nll'], label='train_loss')
+    plt.plot(df['test/nll'].dropna(), label='test_loss')
+    plt.legend()
+    plt.show()
+    ```
+You should see a plot like this:
+![Train and test loss as a function of steps](./images/train_test_loss.png)
+
+
+- `checkpoints.jsonl`: the checkpoints that were saved during training. Recall from [Saving and Loading](/save-load) that there are (currently) two kinds of checkpoints: one that has "/sampler_weights/" in the path (used for sampling), and the other that has "/weights/" in the path (includes full optimizer state, used for resuming training). If you interrupt the training script, then run it again, it will ask you if you want to resume training. If you choose to do so, it'll load the last (full state) checkpoint from this file.
+- `config.json`: the configuration that you used for training.
+
+In the `sl_basic` script, you'll see that there's also some disabled code (under `if 0:`) that shows how to use your own dataset, specified as a JSONL file, provided in the format of <CookbookLink path="example-data/conversations.jsonl">conversations.jsonl</CookbookLink>.

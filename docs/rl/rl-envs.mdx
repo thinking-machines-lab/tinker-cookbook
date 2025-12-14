@@ -1,0 +1,63 @@
+import { CookbookLink } from '../../components/CookbookLink'
+
+# RL Environments
+
+Here, we'll explain how to create your own RL environments and train on them. First, lets look at the basic classes, which can be found in <CookbookLink path="tinker_cookbook/rl/types.py">`tinker_cookbook.rl.types`</CookbookLink>. As you can see, there's an `Env` interface, corresponding to an RL environment. To write an environment, you need to implement two methods: `initial_observation` and `step`.
+
+```python
+class Env:
+    """
+    Stateful environment that a single agent interacts with.
+    Discard after running for one episode.
+    """
+
+    async def initial_observation(self) -> tuple[Observation, StopCondition]:
+        raise NotImplementedError
+
+    async def step(self, action: Action) -> StepResult:
+        raise NotImplementedError
+```
+
+Note that this `Env` operates on *tokens*, rather than strings or messages. Why define it this way, when it's usually more natural to define the logic in terms of strings or messages? We've defined `Env` this way because this interface is what's needed by the *training* code, which needs to know the exact tokens that were sampled, and their logprobs.
+
+We need to write two more small classes to use this environment in the RL training code. First, since the environment is discarded after a single episode, we need to be able to instantiate new environments in the training loop. We actually build a *group* of environments at a time, which enables multi-agent training or objectives that compare multiple samples (for example, a reward model that acts on a pair of samples).
+
+```python
+class EnvGroupBuilder:
+    """
+    Builds a group of environments.
+    """
+
+    async def make_envs(self) -> Sequence[Env]:
+        raise NotImplementedError
+```
+
+This object creates a group of environments. Often it does the trivial thing of returning a list of copies of the same environment.
+
+Finally, we need a dataset of these EnvGroupBuilders.
+
+```python
+class RLDataset:
+    """
+    Dataset of EnvGroupBuilders.
+    """
+
+    def get_batch(self, index: int) -> list[EnvGroupBuilder]:
+        raise NotImplementedError
+```
+
+
+That's a lot of classes! But their combination gives us a lot of flexibility. In previous implementations (like OpenAI Gym), the dataset is implicitly part of the environment; this structure is more modular and gives us more control over the data loading.
+
+## Building a simple example
+
+You can find an example of writing a new RL environment in the <CookbookLink path="tinker_cookbook/recipes/multiplayer_rl/twenty_questions">Twenty Questions</CookbookLink> directory.
+Here, we define a multi-step environment, where we're training a question-asking agent, which asks questions to another agent to guess a hidden word.
+In this case, the answerer model is fixed and is Llama-3.1-8B-Instruct.
+The player model (which we fine-tune) is also based on that same model.
+
+You can run the training script as follows:
+
+```bash
+python -m tinker_cookbook.recipes.twenty_questions.train
+```

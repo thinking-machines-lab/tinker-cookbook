@@ -1,0 +1,22 @@
+import { CookbookLink } from '../../components/CookbookLink'
+
+# Reinforcement Learning from Human Feedback
+
+We've provided a script that shows how to run a standard pipeline for reinforcement learning from human feedback (RLHF) in <CookbookLink path="tinker_cookbook/recipes/preference/rlhf/rlhf_pipeline.py">rlhf_pipeline.py</CookbookLink>.
+
+```bash
+python -m recipes.preference.rlhf.rlhf_pipeline
+```
+
+## Training the initial policy via supervised learning
+
+First, we train the policy on the [no_robots dataset](https://huggingface.co/datasets/HuggingFaceH4/no_robots) from Huggingface, which is a basic instruction following dataset with human-written answers, which was designed to match the methodology from [InstructGPT](https://arxiv.org/abs/2203.02155).
+
+
+## Training the preference model via supervised learning
+
+We train the preference model on the [HHH dataset](https://huggingface.co/datasets/Anthropic/hh-rlhf) from Anthropic, which is a dataset of pairwise comparisons of completions. We train a model that sees a pair of completions, A and B, and outputs which one is preferred.
+
+## Training the policy via reinforcement learning
+
+Taking the initial policy, and the preference model we just trained, we can now train the policy via reinforcement learning. This RL is a form of self-play, where we use the preference model to grade match-ups between the policy and itself. In particular, for each prompt, we sample multiple completions, and use the preference model to grade all pairs of completions. We then give the policy a reward based on the win fraction.
