@@ -227,7 +227,7 @@ class WandbLogger(Logger):
     def log_hparams(self, config: Any) -> None:
         """Log hyperparameters to wandb."""
         if self.run and wandb is not None:
-            wandb.config.update(dump_config(config))
+            wandb.config.update(dump_config(config), allow_val_change=True)
 
     def log_metrics(self, metrics: Dict[str, Any], step: int | None = None) -> None:
         """Log metrics to wandb."""
