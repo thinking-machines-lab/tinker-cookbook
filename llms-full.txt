@@ -3174,4 +3174,3 @@ class UnloadModelResponse(BaseModel):
 
     type: Optional[Literal["unload_model"]] = None
 ```
-
