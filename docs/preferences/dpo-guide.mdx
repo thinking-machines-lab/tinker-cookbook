@@ -54,7 +54,7 @@ python -m tinker_cookbook.recipes.preference.train \
 There are several pre-defined datasets:
 
 - **`hhh`**: Anthropic's Helpful-Harmless-Honest dataset
-- **`helpsteer3`**: NVIDIA's HelpSteer3 preference dataset  
+- **`helpsteer3`**: NVIDIA's HelpSteer3 preference dataset
 - **`ultrafeedback`**: UltraFeedback binarized preferences dataset
 
 These are implemented as `DPODatasetBuilder` classes and you can implement a custom dataset builder following the `tinker_cookbook.preference.preference_datasets` interface.
@@ -64,7 +64,7 @@ These are implemented as `DPODatasetBuilder` classes and you can implement a cus
 During training, you'll see output like this showing the DPO metrics:
 
 ```
-                   Step 50                    
+                   Step 50
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
 ┃ Metric                         ┃ Value     ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━┩
@@ -110,5 +110,3 @@ This will evaluate the model on various benchmarks to measure the impact of pref
 2. **Learning Rate**: Use a lower learning rate than supervised fine-tuning (typically 1e-5 to 1e-6).
 
 3. **Base Model**: The base model should already be in-distribution with the preference data. Either start with a ligh SFT phase or collect on-policy preferences. While training would still work. sharp distribution mis-match will create strange model behaviors.
-
-

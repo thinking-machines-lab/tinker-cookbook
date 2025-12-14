@@ -95,7 +95,7 @@ fwd_bwd_result = await training_client.forward_backward_async(
 
 ## Basic loss functions
 
-Currently, the Tinker API supports `cross_entropy` (for supervised learning), `importance_sampling`, `ppo`, `cispo` and `dro` for RL. We denote the training model as $p_{\theta}$, the sampling distribution as $q$, and advantages as $A$. Also, for notation simplicity we omit the query and denote the full model completion sequence of tokens as $x$. 
+Currently, the Tinker API supports `cross_entropy` (for supervised learning), `importance_sampling`, `ppo`, `cispo` and `dro` for RL. We denote the training model as $p_{\theta}$, the sampling distribution as $q$, and advantages as $A$. Also, for notation simplicity we omit the query and denote the full model completion sequence of tokens as $x$.
 
 All losses are applied at the token level and tensors below have shape `(N,)` where `N` is `model_input.length`. They can be provided as `numpy.ndarray` or `torch.Tensor`, and the return values will use the same tensor type.
 
@@ -118,12 +118,12 @@ elementwise_loss = -target_logprobs * weights
 loss = elementwise_loss.sum()  # scalar
 ```
 
-- **Input tensors:**  
+- **Input tensors:**
   - `target_tokens: array[(N,), int]` - Target token IDs
   - `weights: array[(N,), float]` - Token-level loss weights (typically from the renderer)
-- **Output tensors:**  
+- **Output tensors:**
   - `logprobs: array[(N,), float]` - Log probabilities of predicted tokens
-- **Output diagnostics:**  
+- **Output diagnostics:**
   - `loss:sum` (scalar) - Sum of weighted cross-entropy losses
 
 ### Policy gradient: `importance_sampling`
@@ -249,7 +249,7 @@ fwd_bwd_result = await training_client.forward_backward_async(
 
 ### Direct Reward Optimization: `dro`
 
-DRO ([Richemond et al., 2024](https://arxiv.org/abs/2405.19107); [Kimi Team et al., 2025](https://arxiv.org/abs/2501.12599)) is a general off-policy (and even offline) reinforcement learning method that uses a quadratic penalty term to constrain the policy update. Notice that this loss uses a dfferent (soft) formulation of the advantage estimation, which needs to be implemented on the client side. 
+DRO ([Richemond et al., 2024](https://arxiv.org/abs/2405.19107); [Kimi Team et al., 2025](https://arxiv.org/abs/2501.12599)) is a general off-policy (and even offline) reinforcement learning method that uses a quadratic penalty term to constrain the policy update. Notice that this loss uses a dfferent (soft) formulation of the advantage estimation, which needs to be implemented on the client side.
 The DRO objective is:
 
 $$
@@ -509,9 +509,9 @@ import { CookbookLink } from '../components/CookbookLink'
 
 # Evaluations
 
-Our training scripts will print out training and test loss. Two common workflows for evaluations are to do inline evals during training and to do offline evals on various checkpoints from a run. 
+Our training scripts will print out training and test loss. Two common workflows for evaluations are to do inline evals during training and to do offline evals on various checkpoints from a run.
 
-## Inline Evals 
+## Inline Evals
 
 You can add inline evaluations to your training runs by configuring evaluator builders in advance for both supervised fine-tuning and RL training jobs.
 
@@ -533,11 +533,11 @@ For implementation guidance and a detailed example, see <CookbookLink path="tink
 
 ## Offline evals
 
-We support and recommend several ways for creating and running your offline evaluations on your model checkpoints. 
+We support and recommend several ways for creating and running your offline evaluations on your model checkpoints.
 
-### Running Standard Evaluations with Inspect AI. 
+### Running Standard Evaluations with Inspect AI.
 
-We support running many of the standard cited evaluations using the [Inspect AI library](https://github.com/UKGovernmentBEIS/inspect_ai). 
+We support running many of the standard cited evaluations using the [Inspect AI library](https://github.com/UKGovernmentBEIS/inspect_ai).
 
 We have provided a <CookbookLink path="tinker_cookbook/eval/run_inspect_evals.py">script</CookbookLink> to evaluate models using Tinker's internal sampling functionality as shown below.
 
@@ -554,11 +554,11 @@ Click [here](https://github.com/UKGovernmentBEIS/inspect_ai/blob/main/docs/evals
 
 ### Creating your own Sampling Evaluations
 
-We recommend two ways to create your own evaluations: 
-- creating your own tasks with Inspect AI and running like above 
+We recommend two ways to create your own evaluations:
+- creating your own tasks with Inspect AI and running like above
 - creating your own SamplingClientEvaluator
 
-#### Create tasks with Inspect AI 
+#### Create tasks with Inspect AI
 
 In addition to passing in standard evaluations, you can create your own tasks using inspect ai as detailed [here](https://inspect.aisi.org.uk/tasks.html).
 
@@ -594,7 +594,7 @@ sampling_client = service_client.create_sampling_client(
 )
 
 api = InspectAPIFromTinkerSampling(
-    renderer_name="llama3", 
+    renderer_name="llama3",
     model_name="meta-llama/Llama-3.1-8B-Instruct",
     sampling_client=sampling_client,
     verbose=False,
@@ -629,7 +629,7 @@ Inspect also natively supports replacing our `GRADER_MODEL` with any openai-chat
 
 #### Create your own SamplingClientEvaluator
 
-Alternatively, you can create your own SamplingClientEvaluator class instead of using Inspect AI. This is a lower 
+Alternatively, you can create your own SamplingClientEvaluator class instead of using Inspect AI. This is a lower
 level abstraction than the above with finer-grain control over running your evaluations.
 
 We expose this to interace to allow users more control over their datasets and metrics. To illustrate, see this
@@ -653,8 +653,8 @@ class CustomEvaluator(SamplingClientEvaluator):
     """
 
     def __init__(
-        self, 
-        dataset: Any, 
+        self,
+        dataset: Any,
         grader_fn: Callable[[str, str], bool],
         model_name: str,
         renderer_name: str,
@@ -726,7 +726,7 @@ evaluator = CustomEvaluator(
     grader_fn=grader_fn,
     renderer_name="llama3",
     model_name="meta-llama/Llama-3.1-8B-Instruct",
-    
+
 )
 
 service_client = tinker.ServiceClient()
@@ -1211,7 +1211,7 @@ sample_response = sampling_client.sample(
 ).result()
 
 # example:
-# [None, 
+# [None,
 #  [(14924, -1.17005), (755, -2.23255), (2, -2.73255), (791, -3.67005), (16309, -4.29505)],
 #  [(25, -1.64629), (3137, -2.39629), (11630, -2.89629), (21460, -3.83379), (14881, -4.02129)],
 #  [(41, -3.49866), (42, -3.49866), (49, -4.24866), (38, -4.37366), (54, -4.49866)],
@@ -1767,7 +1767,7 @@ python -m tinker_cookbook.recipes.preference.train \
 There are several pre-defined datasets:
 
 - **`hhh`**: Anthropic's Helpful-Harmless-Honest dataset
-- **`helpsteer3`**: NVIDIA's HelpSteer3 preference dataset  
+- **`helpsteer3`**: NVIDIA's HelpSteer3 preference dataset
 - **`ultrafeedback`**: UltraFeedback binarized preferences dataset
 
 These are implemented as `DPODatasetBuilder` classes and you can implement a custom dataset builder following the `tinker_cookbook.preference.preference_datasets` interface.
@@ -1777,7 +1777,7 @@ These are implemented as `DPODatasetBuilder` classes and you can implement a cus
 During training, you'll see output like this showing the DPO metrics:
 
 ```
-                   Step 50                    
+                   Step 50
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
 ┃ Metric                         ┃ Value     ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━┩
@@ -2058,8 +2058,8 @@ The `num_substeps` parameter controls how many policy weight updates are perform
 ### Usage Guidelines:
 
 - The batch size must be divisible by `num_substeps`
-- Our experiments show that `num_substeps = 1` already gives decent performance, but if you would like to experiment with this parameter, we recommend starting with a low value of 2-4 and using the PPO objective. 
-- Higher values can lead to update steps that are too out-of-distribution for the policy. Consider limiting the number of updates or decreasing the learning rate when using multiple update steps. 
+- Our experiments show that `num_substeps = 1` already gives decent performance, but if you would like to experiment with this parameter, we recommend starting with a low value of 2-4 and using the PPO objective.
+- Higher values can lead to update steps that are too out-of-distribution for the policy. Consider limiting the number of updates or decreasing the learning rate when using multiple update steps.
 
 ## Advanced Training Configurations
 
@@ -2075,7 +2075,7 @@ Enable streaming minibatch training by specifying the `StreamMinibatchConfig`. T
 - **`num_minibatches`**: Number of minibatches per substep—controls how many individual forward-backward requests we submit. This controls how the work is split.
 
 
-**Important**: This remains on-policy training and is strictly a pipeline efficiency improvement. 
+**Important**: This remains on-policy training and is strictly a pipeline efficiency improvement.
 
 ### Async Off-Policy Training
 
@@ -2108,7 +2108,7 @@ The current implementation logs the KL divergence between the data generation po
 A few important notes to keep in mind:
 - Even with full on-policy training, the divergence between sampling and learning policies will not be exactly zero ([He 2025](https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/)) due to implementation details
 - In our experience training is stable with KL divergence below 0.01
-- If KL divergence crosses a recommended threshold, this indicates a numerical instability or potential issue with the training run  
+- If KL divergence crosses a recommended threshold, this indicates a numerical instability or potential issue with the training run
 
 
 
@@ -2320,21 +2320,21 @@ import { CookbookLink } from '../../components/CookbookLink'
 
 # Prompt Distillation
 
-Prompt distillation is a training technique in which a model is optimized to behave as though it had been provided with a long and complex prompt, without requiring access to that prompt during inference.  
+Prompt distillation is a training technique in which a model is optimized to behave as though it had been provided with a long and complex prompt, without requiring access to that prompt during inference.
 
-At a high level, this procedure involves two main steps:  
-- **Creation of distillation data**: A teacher prompt, which is typically lengthy and highly detailed, provides explicit, step-by-step instructions. A teacher model uses this prompt to generate responses for a set of queries.  
-- **Training the student model**: A student model is then trained (or fine-tuned) on the distilled dataset, thereby learning to reproduce the essential behaviors and reasoning encoded in the teacher’s instructions.  
+At a high level, this procedure involves two main steps:
+- **Creation of distillation data**: A teacher prompt, which is typically lengthy and highly detailed, provides explicit, step-by-step instructions. A teacher model uses this prompt to generate responses for a set of queries.
+- **Training the student model**: A student model is then trained (or fine-tuned) on the distilled dataset, thereby learning to reproduce the essential behaviors and reasoning encoded in the teacher’s instructions.
 
 ---
 
-## Overview  
+## Overview
 
-Let $f_T$ and $f_S$ denote the teacher and student models, respectively. Given an instruction prompt $P$ and a query $q_i$, the teacher model generates a response $r_i$:  
+Let $f_T$ and $f_S$ denote the teacher and student models, respectively. Given an instruction prompt $P$ and a query $q_i$, the teacher model generates a response $r_i$:
 
 $$
 r_i = f_T([P, q_i])
-$$  
+$$
 
 Here, the prompt $P$ and the query $q_i$ are concatenated to form the input to the teacher model $f_T$. For a dataset of queries $Q = \{q_i \mid 1 \leq i \leq D\}$, we obtain a corresponding set of teacher responses $R = \{r_i \mid 1 \leq i \leq D\}$.
 
@@ -2342,26 +2342,26 @@ The distillation training dataset is defined as the set of query–response pair
 
 $$
 T = \{(q_i, r_i) \mid 1 \leq i \leq D\}.
-$$  
+$$
 
-The student model $f_S$ is then trained to minimize the cross-entropy loss:  
+The student model $f_S$ is then trained to minimize the cross-entropy loss:
 
 $$
 \ell(f_S(q_i), r_i) = \ell(f_S(q_i), f_T([P, q_i])).
-$$  
+$$
 
 ---
 
-## Example  
+## Example
 
 The Tinker Cookbook provides a prompt distillation recipe tailored for a language classification task. The objective is straightforward: given a text query, the model should predict a two-character code corresponding to the language of the input. The set of possible labels is:
 ```
 ar (Arabic), de (German), el (Greek), en (English), es (Spanish), fr (French), hi (Hindi), ru (Russian), tr (Turkish), ur (Urdu), vi (Vietnamese), zh (Chinese - Simplified), ot (Other/Unknown).
 ```
 
-The recipe in <CookbookLink path="tinker_cookbook/recipes/prompt_distillation/create_data.py">recipes/prompt_distillation/create_data.py</CookbookLink> also includes handling strategies for inputs containing code, numerical content, or multiple languages.  
+The recipe in <CookbookLink path="tinker_cookbook/recipes/prompt_distillation/create_data.py">recipes/prompt_distillation/create_data.py</CookbookLink> also includes handling strategies for inputs containing code, numerical content, or multiple languages.
 
-In the example below, the same model (`Qwen/Qwen3-30B-A3B`) is used as both teacher and student, though in general they need not be identical.  
+In the example below, the same model (`Qwen/Qwen3-30B-A3B`) is used as both teacher and student, though in general they need not be identical.
 
 ---
 
@@ -2606,9 +2606,9 @@ print(f"{response.choices[0].text}")
 
 Notes:
 
-* `BASE_URL` points to the OpenAI compatible inference endpoint.  
+* `BASE_URL` points to the OpenAI compatible inference endpoint.
 * `MODEL_PATH` is a sampler checkpoint path from Tinker (`tinker://0034d8c9-0a88-52a9-b2b7-bce7cb1e6fef:train:0/sampler_weights/000080`).
-* The rest of the arguments (`prompt`, `max_tokens`, `temperature`, `top_p`) behave like they do in the OpenAI Completions API.  
+* The rest of the arguments (`prompt`, `max_tokens`, `temperature`, `top_p`) behave like they do in the OpenAI Completions API.
 * You can swap `MODEL_PATH` to any other sampler checkpoint to compare runs quickly in your evals or notebooks.
 
 ## Related docs
@@ -3174,4 +3174,3 @@ class UnloadModelResponse(BaseModel):
 
     type: Optional[Literal["unload_model"]] = None
 ```
-

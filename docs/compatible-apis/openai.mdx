@@ -66,9 +66,9 @@ print(f"{response.choices[0].text}")
 
 Notes:
 
-* `BASE_URL` points to the OpenAI compatible inference endpoint.  
+* `BASE_URL` points to the OpenAI compatible inference endpoint.
 * `MODEL_PATH` is a sampler checkpoint path from Tinker (`tinker://0034d8c9-0a88-52a9-b2b7-bce7cb1e6fef:train:0/sampler_weights/000080`).
-* The rest of the arguments (`prompt`, `max_tokens`, `temperature`, `top_p`) behave like they do in the OpenAI Completions API.  
+* The rest of the arguments (`prompt`, `max_tokens`, `temperature`, `top_p`) behave like they do in the OpenAI Completions API.
 * You can swap `MODEL_PATH` to any other sampler checkpoint to compare runs quickly in your evals or notebooks.
 
 ## Related docs

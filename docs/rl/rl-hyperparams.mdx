@@ -30,8 +30,8 @@ The `num_substeps` parameter controls how many policy weight updates are perform
 ### Usage Guidelines:
 
 - The batch size must be divisible by `num_substeps`
-- Our experiments show that `num_substeps = 1` already gives decent performance, but if you would like to experiment with this parameter, we recommend starting with a low value of 2-4 and using the PPO objective. 
-- Higher values can lead to update steps that are too out-of-distribution for the policy. Consider limiting the number of updates or decreasing the learning rate when using multiple update steps. 
+- Our experiments show that `num_substeps = 1` already gives decent performance, but if you would like to experiment with this parameter, we recommend starting with a low value of 2-4 and using the PPO objective.
+- Higher values can lead to update steps that are too out-of-distribution for the policy. Consider limiting the number of updates or decreasing the learning rate when using multiple update steps.
 
 ## Advanced Training Configurations
 
@@ -47,7 +47,7 @@ Enable streaming minibatch training by specifying the `StreamMinibatchConfig`. T
 - **`num_minibatches`**: Number of minibatches per substep—controls how many individual forward-backward requests we submit. This controls how the work is split.
 
 
-**Important**: This remains on-policy training and is strictly a pipeline efficiency improvement. 
+**Important**: This remains on-policy training and is strictly a pipeline efficiency improvement.
 
 ### Async Off-Policy Training
 
@@ -80,5 +80,4 @@ The current implementation logs the KL divergence between the data generation po
 A few important notes to keep in mind:
 - Even with full on-policy training, the divergence between sampling and learning policies will not be exactly zero ([He 2025](https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/)) due to implementation details
 - In our experience training is stable with KL divergence below 0.01
-- If KL divergence crosses a recommended threshold, this indicates a numerical instability or potential issue with the training run  
-
+- If KL divergence crosses a recommended threshold, this indicates a numerical instability or potential issue with the training run

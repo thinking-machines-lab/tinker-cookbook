@@ -20,5 +20,3 @@ We train the preference model on the [HHH dataset](https://huggingface.co/datase
 ## Training the policy via reinforcement learning
 
 Taking the initial policy, and the preference model we just trained, we can now train the policy via reinforcement learning. This RL is a form of self-play, where we use the preference model to grade match-ups between the policy and itself. In particular, for each prompt, we sample multiple completions, and use the preference model to grade all pairs of completions. We then give the policy a reward based on the win fraction.
-
-

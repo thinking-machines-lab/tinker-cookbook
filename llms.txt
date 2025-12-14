@@ -86,7 +86,7 @@ fwd_bwd_result = await training_client.forward_backward_async(
 
 ## Basic loss functions
 
-Currently, the Tinker API supports `cross_entropy` (for supervised learning), `importance_sampling`, `ppo`, `cispo` and `dro` for RL. We denote the training model as $p_{\theta}$, the sampling distribution as $q$, and advantages as $A$. Also, for notation simplicity we omit the query and denote the full model completion sequence of tokens as $x$. 
+Currently, the Tinker API supports `cross_entropy` (for supervised learning), `importance_sampling`, `ppo`, `cispo` and `dro` for RL. We denote the training model as $p_{\theta}$, the sampling distribution as $q$, and advantages as $A$. Also, for notation simplicity we omit the query and denote the full model completion sequence of tokens as $x$.
 
 All losses are applied at the token level and tensors below have shape `(N,)` where `N` is `model_input.length`. They can be provided as `numpy.ndarray` or `torch.Tensor`, and the return values will use the same tensor type.
 
@@ -109,12 +109,12 @@ elementwise_loss = -target_logprobs * weights
 loss = elementwise_loss.sum()  # scalar
 ```
 
-- **Input tensors:**  
+- **Input tensors:**
   - `target_tokens: array[(N,), int]` - Target token IDs
   - `weights: array[(N,), float]` - Token-level loss weights (typically from the renderer)
-- **Output tensors:**  
+- **Output tensors:**
   - `logprobs: array[(N,), float]` - Log probabilities of predicted tokens
-- **Output diagnostics:**  
+- **Output diagnostics:**
   - `loss:sum` (scalar) - Sum of weighted cross-entropy losses
 
 ### Policy gradient: `importance_sampling`
@@ -240,7 +240,7 @@ fwd_bwd_result = await training_client.forward_backward_async(
 
 ### Direct Reward Optimization: `dro`
 
-DRO ([Richemond et al., 2024](https://arxiv.org/abs/2405.19107); [Kimi Team et al., 2025](https://arxiv.org/abs/2501.12599)) is a general off-policy (and even offline) reinforcement learning method that uses a quadratic penalty term to constrain the policy update. Notice that this loss uses a dfferent (soft) formulation of the advantage estimation, which needs to be implemented on the client side. 
+DRO ([Richemond et al., 2024](https://arxiv.org/abs/2405.19107); [Kimi Team et al., 2025](https://arxiv.org/abs/2501.12599)) is a general off-policy (and even offline) reinforcement learning method that uses a quadratic penalty term to constrain the policy update. Notice that this loss uses a dfferent (soft) formulation of the advantage estimation, which needs to be implemented on the client side.
 The DRO objective is:
 
 $$
@@ -307,4 +307,3 @@ We detail the `async` version of methods in the [Async and Futures](./async) of 
 ### How `forward_backward_custom` works
 
 ---
-

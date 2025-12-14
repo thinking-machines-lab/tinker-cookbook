@@ -3,9 +3,9 @@ import { CookbookLink } from '../components/CookbookLink'
 
 # Evaluations
 
-Our training scripts will print out training and test loss. Two common workflows for evaluations are to do inline evals during training and to do offline evals on various checkpoints from a run. 
+Our training scripts will print out training and test loss. Two common workflows for evaluations are to do inline evals during training and to do offline evals on various checkpoints from a run.
 
-## Inline Evals 
+## Inline Evals
 
 You can add inline evaluations to your training runs by configuring evaluator builders in advance for both supervised fine-tuning and RL training jobs.
 
@@ -27,11 +27,11 @@ For implementation guidance and a detailed example, see <CookbookLink path="tink
 
 ## Offline evals
 
-We support and recommend several ways for creating and running your offline evaluations on your model checkpoints. 
+We support and recommend several ways for creating and running your offline evaluations on your model checkpoints.
 
-### Running Standard Evaluations with Inspect AI. 
+### Running Standard Evaluations with Inspect AI.
 
-We support running many of the standard cited evaluations using the [Inspect AI library](https://github.com/UKGovernmentBEIS/inspect_ai). 
+We support running many of the standard cited evaluations using the [Inspect AI library](https://github.com/UKGovernmentBEIS/inspect_ai).
 
 We have provided a <CookbookLink path="tinker_cookbook/eval/run_inspect_evals.py">script</CookbookLink> to evaluate models using Tinker's internal sampling functionality as shown below.
 
@@ -48,11 +48,11 @@ Click [here](https://github.com/UKGovernmentBEIS/inspect_ai/blob/main/docs/evals
 
 ### Creating your own Sampling Evaluations
 
-We recommend two ways to create your own evaluations: 
-- creating your own tasks with Inspect AI and running like above 
+We recommend two ways to create your own evaluations:
+- creating your own tasks with Inspect AI and running like above
 - creating your own SamplingClientEvaluator
 
-#### Create tasks with Inspect AI 
+#### Create tasks with Inspect AI
 
 In addition to passing in standard evaluations, you can create your own tasks using inspect ai as detailed [here](https://inspect.aisi.org.uk/tasks.html).
 
@@ -88,7 +88,7 @@ sampling_client = service_client.create_sampling_client(
 )
 
 api = InspectAPIFromTinkerSampling(
-    renderer_name="llama3", 
+    renderer_name="llama3",
     model_name="meta-llama/Llama-3.1-8B-Instruct",
     sampling_client=sampling_client,
     verbose=False,
@@ -123,7 +123,7 @@ Inspect also natively supports replacing our `GRADER_MODEL` with any openai-chat
 
 #### Create your own SamplingClientEvaluator
 
-Alternatively, you can create your own SamplingClientEvaluator class instead of using Inspect AI. This is a lower 
+Alternatively, you can create your own SamplingClientEvaluator class instead of using Inspect AI. This is a lower
 level abstraction than the above with finer-grain control over running your evaluations.
 
 We expose this to interace to allow users more control over their datasets and metrics. To illustrate, see this
@@ -147,8 +147,8 @@ class CustomEvaluator(SamplingClientEvaluator):
     """
 
     def __init__(
-        self, 
-        dataset: Any, 
+        self,
+        dataset: Any,
         grader_fn: Callable[[str, str], bool],
         model_name: str,
         renderer_name: str,
@@ -220,7 +220,7 @@ evaluator = CustomEvaluator(
     grader_fn=grader_fn,
     renderer_name="llama3",
     model_name="meta-llama/Llama-3.1-8B-Instruct",
-    
+
 )
 
 service_client = tinker.ServiceClient()
