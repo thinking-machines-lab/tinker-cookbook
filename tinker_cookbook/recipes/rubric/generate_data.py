@@ -11,7 +11,7 @@ def generate_one(rng: random.Random) -> RubricBasedDatapoint:
             {"role": "assistant", "content": "9"},
             {"role": "user", "content": f"What is {x} + {y}?"},
         ],
-        rubric_items=[Rubric(rubric_str=f"Does the chatbot correctly gets the answer {x + y}?")],
+        rubric_items=[Rubric(rubric_str=f"Does the chatbot correctly get the answer {x + y}?")],
     )
 
 

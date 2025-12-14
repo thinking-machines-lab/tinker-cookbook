@@ -131,8 +131,7 @@ class RubricDatapointListBuilderFromJsonl(RubricDatapointListBuilder):
         datapoints = []
         with open(self.jsonl_path, "r") as f:
             for line in f:
-                data = json.loads(line)
-                datapoints.append(RubricBasedDatapoint.from_json(data))
+                datapoints.append(RubricBasedDatapoint.from_json(line))
         return datapoints
 
 
@@ -151,7 +150,7 @@ class PrometheusDatapointListBuilder(RubricDatapointListBuilder):
             {"role": "user", "content": item["orig_instruction"]},
         ]
 
-        rubric_text = f"Your job is to evalaute the following: {item['orig_criteria']}. Your response should be a score between 1 to 5.\n"
+        rubric_text = f"Your job is to evaluate the following: {item['orig_criteria']}. Your response should be a score between 1 to 5.\n"
         rubric_text += "Here is the calibration for each score:\n"
         for i in range(1, 6):
             rubric_text += f"<score>{i}.0</score>: {item[f'orig_score{i}_description']}\n"
