@@ -1,0 +1,191 @@
+import { CookbookLink } from '../components/CookbookLink'
+
+
+# Rendering to tokens
+
+Rendering converts list-of-message datatypes into their token representations for model training and inference. While similar to [chat templates](https://huggingface.co/docs/transformers/en/chat_templating), Tinker's rendering system is designed for the full training lifecycle--not just inference--supporting supervised learning, reinforcement learning, and deployment.
+
+
+## The Renderer class
+
+The Renderer class is the main interface used for rendering. It can be found in <CookbookLink path="tinker_cookbook/renderers.py">`renderers.py`</CookbookLink>.
+
+**Eample conversation:**
+
+```python
+messages =[
+    {'role': 'system', 'content': 'Answer concisely; at most one sentence per response'},
+    {'role': 'user', 'content': 'What is the longest-lived rodent species?'},
+    {'role': 'assistant', 'content': 'The naked mole rat, which can live over 30 years.'},
+    {'role': 'user', 'content': 'How do they live so long?'},
+    {'role': 'assistant', 'content': 'They evolved multiple protective mechanisms including special hyaluronic acid that prevents cancer, extremely stable proteins, and efficient DNA repair systems that work together to prevent aging.'}
+]
+```
+
+We'll use this conversation throughout the examples below.
+
+## Inference: Generating messages
+
+Our model maps tokens to tokens, but with the renderer, it can map messages to messages. To sample messages from the model, we need to use three methods from the renderer:
+
+- `build_generation_prompt`
+- `get_stop_sequences`
+- `parse_response`
+
+
+`build_generation_prompt` converts a conversation into a prompt that we can use to sample from the assistant. This is used during reinforcement learning and at deployment time.
+
+
+**Example: Generate an alternative assistant response**
+
+Let's remove the last assistant message and call `build_generation_prompt` to get a prompt that we can use to sample an alternative response from the assistant:
+
+```python
+from tinker_cookbook import renderers, tokenizer_utils
+tokenizer = tokenizer_utils.get_tokenizer('Qwen/Qwen3-30B-A3B')
+renderer = renderers.get_renderer('qwen3', tokenizer)
+prompt = renderer.build_generation_prompt(messages[:-1])
+print(prompt)
+print('-'*10)
+print(tokenizer.decode(prompt.to_ints()))
+```
+
+**Output:**
+```
+ModelInput(chunks=[EncodedTextChunk(tokens=[151644, 8948, 198, 2610, 525, 264, 10950, 17847, 13, 151645, 198, 151644, 8948, 198, 16141, 3529, 285, 974, 26, 518, 1429, 825, 11652, 817, 2033, 151645, 198, 151644, 872, 198, 3838, 374, 279, 22032, 61854, 20589, 306, 9419, 30, 151645, 198, 151644, 77091, 198, 785, 19020, 34651, 11244, 11, 892, 646, 3887, 916, 220, 18, 15, 1635, 13, 151645, 198, 151644, 872, 198, 10234, 30, 151645, 198, 151644, 77091, 198], type='encoded_text')])
+----------
+<|im_start|>system
+Answer concisely; at most one sentence per response<|im_end|>
+<|im_start|>user
+What is the longest-lived rodent species?<|im_end|>
+<|im_start|>assistant
+The naked mole rat, which can live over 30 years.<|im_end|>
+<|im_start|>user
+How do they live so long?<|im_end|>
+<|im_start|>assistant
+
+```
+
+You can see that the prompt is a `ModelInput` object, which is a list of `EncodedTextChunk` objects (but contains different objects in multi-modal data).
+
+
+**Sampling and parsing the response:**
+
+Given that we're providing messages as input, we probably want a message output, rather than a token output. For that, we can use `parse_response`.
+
+```python
+import tinker
+from tinker.types import SamplingParams
+service_client = tinker.ServiceClient()
+sampling_client = service_client.create_sampling_client(base_model='Qwen/Qwen3-30B-A3B')
+stop_sequences = renderer.get_stop_sequences()
+print(f"Stop sequences: {stop_sequences}")
+sampling_params = SamplingParams(max_tokens=100, temperature=0.5, stop=stop_sequences)
+output = sampling_client.sample(prompt, sampling_params=sampling_params, num_samples=1).result()
+print(f"Sampled tokens: {output.sequences[0].tokens}")
+sampled_message, parse_success = renderer.parse_response(output.sequences[0].tokens)
+print(f"Sampled message: {sampled_message}")
+print(f"Parse success: {parse_success}")
+```
+
+**Output:**
+
+```
+Stop sequences: [151645]
+Sampled tokens: [45, 7741, 34651, 31410, 614, 4911, 76665, 11, 2670, 264, 7548, 11050, 22077, 1849, 323, 264, 1602, 3347, 40761, 4379, 11, 892, 16792, 311, 862, 57119, 13, 151645]
+Sampled message: {'role': 'assistant', 'content': 'Naked mole rats have unique adaptations, including a highly efficient immune system and a very low metabolic rate, which contribute to their longevity.'}
+Parse success: True
+```
+
+You can see that the there is one stop sequence, `151645`, which you can verify is the `<|im_end|>` token. The output is parsed successfully into a message.
+
+
+## Training: Supervised learning
+
+For supervised learning (and some other algorithms like [DPO](/preferences/dpo-guide)), we need to distinguish between **prompt tokens** (context) and **completion tokens** (what the model should learn to generate). We want to provide a target assistant message, and the renderer needs to tell us which tokens are part of the prompt and completion.
+
+We can use `build_supervised_example` to get a `ModelInput` and per-token loss weights:
+
+```python
+model_input, weights = renderer.build_supervised_example(messages)
+
+from tinker_cookbook.utils.format_colorized import format_colorized
+print(format_colorized(model_input.to_ints(), weights, tokenizer))
+```
+
+We get the following output:
+
+<div className="example">
+<span className="prompt">&lt;|im_start|&gt;system↵<br />Answer concisely; at most one sentence per response&lt;|im_end|&gt;↵<br />&lt;|im_start|&gt;user↵<br />What is the longest-lived rodent species?&lt;|im_end|&gt;↵<br />&lt;|im_start|&gt;assistant↵<br />The naked mole rat, which can live over 30 years.&lt;|im_end|&gt;↵<br />&lt;|im_start|&gt;user↵<br />How do they live so long?&lt;|im_end|&gt;↵<br />&lt;|im_start|&gt;assistant↵<br /></span>
+<span className="completion">They evolved multiple protective mechanisms including special hyaluronic acid that prevents cancer, extremely stable proteins, and efficient DNA repair systems that work together to prevent aging.&lt;|im_end|&gt;<br /></span>
+</div>
+The green text is part of the prompt (i.e. with `weight=0`, so no loss is computed on these) and red is part of the completion (i.e. with `weight=1`, so the model is trained to predict these). Note that the ↵ have been inserted for clarity to show newlines; these are not actually part of the token sequence.
+
+The key insight here is that only the final assistant message is treated as the completion. All previous context, including the first assistant response, is part of the prompt, so the model learns to continue conversations rather than just answer single questions.
+
+## Vision Inputs
+
+Tinker supports vision-language models (VLMs) like `Qwen/Qwen3-VL-30B-A3B-Instruct` and `Qwen/Qwen3-VL-235B-A22B-Instruct`. For low-level `ImageChunk` usage, see [Vision inputs](/training-sampling#vision-inputs) in the Training and Sampling guide. This section covers the higher-level message abstractions.
+
+### Multimodal messages
+
+For VLMs, message content can be either a string or a list of content parts:
+
+```python
+from tinker_cookbook.renderers import Message, TextPart, ImagePart
+
+# Text-only message (standard)
+text_message = Message(role='user', content='What is this?')
+
+# Multimodal message with image
+multimodal_message = Message(
+    role='user',
+    content=[
+        ImagePart(type='image', image='https://thinkingmachines.ai/blog/on-policy-distillation/images/chess.png'),
+        TextPart(type='text', text='What is in this image?'),
+    ]
+)
+```
+
+For lower-level control using `ImageChunk` directly, see [Vision inputs](/training-sampling#vision-inputs) in the Training and Sampling guide.
+
+### Using Qwen3VLRenderer
+
+The `Qwen3VLRenderer` handles Qwen's vision special tokens (`<|vision_start|>`, `<|vision_end|>`) automatically:
+
+```python
+from tinker_cookbook import renderers, tokenizer_utils
+from tinker_cookbook.image_processing_utils import get_image_processor
+
+model_name = "Qwen/Qwen3-VL-235B-A22B-Instruct"
+tokenizer = tokenizer_utils.get_tokenizer(model_name)
+image_processor = get_image_processor(model_name)
+
+renderer = renderers.Qwen3VLRenderer(tokenizer, image_processor)
+
+messages = [
+    {
+        'role': 'user',
+        'content': [
+            {'type': 'image', 'image': 'https://thinkingmachines.ai/blog/on-policy-distillation/images/chess.png'},
+            {'type': 'text', 'text': 'What is in this image?'},
+        ]
+    }
+]
+
+prompt = renderer.build_generation_prompt(messages)
+```
+
+For a complete example of training a VLM image classifier, see the <CookbookLink path="tinker_cookbook/recipes/vlm_classifier">VLM Classifier recipe</CookbookLink> in the cookbook.
+
+## Multi-turn RL and the Extension Property
+
+When using renderers in multi-turn RL, an important consideration is whether consecutive timesteps satisfy the **extension property**—where each observation is a prefix extension of the previous observation plus action. This affects compute efficiency (O(T) vs O(T^2)) and KV-cache reuse.
+
+Some renderers, like `Qwen3Renderer`, have options that affect this property. For example, `strip_thinking_from_history` controls whether `<think>` blocks are preserved in conversation history.
+
+See the [Sequence Extension](/rl/sequence-extension) documentation for details on how this works and the tradeoffs involved.
+
+## Appendix: Why not Jinja templates?
+
+In our experience, the Jinja2 templates are harder to write than Python code, especially when we need to get the whitespace exactly right. They are also unwieldy for supervised learning, where you need to put different labels on different tokens.

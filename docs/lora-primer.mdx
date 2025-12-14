@@ -1,0 +1,55 @@
+# LoRA Primer
+
+Tinker supports [LoRA fine-tuning](https://arxiv.org/abs/2106.09685), which adjusts a small number of parameters, rather than full fine-tuning, which adjusts all of the parameters of the original model.
+
+Our current understanding is that LoRA has equivalent performance to full fine-tuning when doing RL or doing SL on small datasets, while it has worse performance on larger datasets. In more detail:
+
+- For supervised fine-tuning on small-to-medium-sized instruction-tuning and reasoning datasets, LoRA performs the same as full fine-tuning.
+- For datasets that exceed LoRA capacity, LoRA underperforms FullFT. Rather than the loss reaching a distinct floor that it can’t go below, LoRA results in worse training efficiency that depends on the relationship between model capacity to dataset size.
+- In some scenarios, LoRA is less tolerant of large batch sizes than full fine-tuning — it pays a larger penalty in loss as batch size increases beyond some point. This penalty is not mitigated by increasing the LoRA rank; it is a property of the product-of-matrices parametrization, which has different training dynamics than optimizing the original weight matrix.
+- Even in small data settings, LoRA performs better when applied to all weight matrices, especially MLP and MoE layers. Attention-only LoRA underperforms even when we match the number of trainable parameters by using higher rank for attention-only LoRA.
+- LoRA performs equivalently to FullFT for reinforcement learning even with small ranks. We find that RL requires very low capacity, a result we anticipated based on information-theoretical arguments.
+
+See [LoRA Without Regret](https://thinkingmachines.ai/blog/lora) for more details and experimental results.
+
+## Hyperparameters
+
+The learning rate (LR) is usually the most important hyperparameter in your ML experiments.
+
+
+LoRA requires a much larger LR than full fine-tuning---typically 20-100x larger, depending on model size. People often mistakenly retain their full fine-tuning LR when they port their code to use LoRA, leading them to conclude that LoRA works poorly.
+
+**Calculate the correct LoRA learning rate:**
+
+We've provided a utility that calculates the factor you should scale the full fine-tuning LR by to get the equivalent LoRA LR:
+
+```python
+from tinker_cookbook.hyperparam_utils import get_lora_lr_over_full_finetune_lr
+
+model_name = "meta-llama/Llama-3.1-8B"
+print(get_lora_lr_over_full_finetune_lr(model_name))
+```
+
+Note that for `Llama-3.2-1B`, the factor is 32, while for `Llama-3.1-70B`, the factor is 128.
+
+## What is LoRA exactly?
+
+LoRA is short for Low-Rank Adaptation. Given that the original model has a weight matrix $W$, we replace it with a new weight matrix $W'=W + BA$, where $B$ and $A$ are low-rank matrices. If $W$ is an $n \times n$ matrix, then $B$ and $A$ are $n \times r$ and $r \times n$ matrices, respectively, where $r$ is the rank of the low-rank approximation. The default $r$ used by tinker is $32$.
+
+The fact that LoRA uses a low-rank approximation of weight matrices is not terribly important. We prefer to think of LoRA as just a random projection of the parameter space that happens to be efficient to implement. When training with RL or small SL datasets, we are only learning a small amount of information, and this reduced set of parameters is more than enough.
+
+
+## What rank to use?
+
+The default rank used by tinker is $32$. However, if you're doing SL on a large dataset, you should use a larger rank. For supervised learning, as a very rough approximation, LoRA will give good results as long as the number of LoRA parameters is at least as large as the number of completion tokens (i.e., weight=1 tokens). You can calculate the number of LoRA parameters with the following utility:
+
+```python
+from tinker_cookbook.hyperparam_utils import get_lora_param_count
+
+model_name = "meta-llama/Llama-3.1-8B"
+print(get_lora_param_count(model_name, lora_rank=32))
+```
+
+For reinforcement learning, we've found that small ranks give equivalent performance to larger ranks and full fine-tuning.
+
+Note that conveniently, the optimal learning rate does *not* depend on the LoRA rank. In fact, you can verify that if you train with SL on different ranks (but with the same LR), you'll get exactly the same learning curves for the first few steps of training.

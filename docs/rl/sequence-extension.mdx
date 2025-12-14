@@ -1,0 +1,127 @@
+import { CookbookLink } from '../../components/CookbookLink'
+
+# Sequence Extension Property in Multi-Turn RL
+
+When running reinforcement learning with multi-turn conversations, the way you render observations at each timestep has important implications for compute efficiency. This document explains the **extension property** and how it affects training and sampling.
+
+## What is the Extension Property?
+
+A sequence of observations has the **extension property** if each successive observation contains all previous observations and actions as a prefix. In other words, the context grows monotonically by appending new tokens to the end.
+
+When this property holds, multiple timesteps can be merged into a single training datum, the KV-cache can be reused during sampling, and compute scales as O(T) rather than O(T^2) for a trajectory of length T.
+
+## Example 1: Qwen3 with Thinking Visible (Extension Holds)
+
+When using `Qwen3Renderer` with `strip_thinking_from_history=False`, the full conversation history (including `<think>` blocks) is preserved at each timestep. Consider a two-turn math conversation:
+
+**Timestep 1:**
+<div className="example">
+<span className="prompt">User: What is 2+2?<br/><br/>Assistant: </span><span className="completion">&lt;think&gt;Let me calculate...&lt;/think&gt; 4<br/><br/>User:</span>
+</div>
+
+**Timestep 2:**
+<div className="example">
+<span className="prompt">User: What is 2+2?<br/><br/>Assistant: &lt;think&gt;Let me calculate...&lt;/think&gt; 4<br/><br/>User: What is 3+3?<br/><br/>Assistant: </span><span className="completion">&lt;think&gt;Let me calculate...&lt;/think&gt; 6<br/><br/>User:</span>
+</div>
+
+Notice that the observation (green) at timestep 2 contains the entire timestep 1 sequence as a prefix. The new observation just appends `What is 3+3?\n\nAssistant: ` to the end. This is the **extension property**.
+
+Because extension holds, the RL code can merge both timesteps into a **single Datum**:
+
+<div className="example">
+<span className="prompt">User: What is 2+2?<br/><br/>Assistant: </span><span className="completion">&lt;think&gt;Let me calculate...&lt;/think&gt; 4<br/><br/>User:</span><span className="prompt"> What is 3+3?<br/><br/>Assistant: </span><span className="completion">&lt;think&gt;Let me calculate...&lt;/think&gt; 6<br/><br/>User:</span>
+</div>
+
+Green = observation tokens (loss weight = 0). Red = action tokens (loss weight > 0).
+
+## Example 2: Qwen3 with Thinking Hidden (Extension Breaks)
+
+When using `Qwen3Renderer` with the default `strip_thinking_from_history=True`, the `<think>...</think>` blocks are stripped from previous assistant messages. This matches how Qwen3 models were post-trained by the Qwen team.
+
+**Timestep 1:**
+<div className="example">
+<span className="prompt">User: What is 2+2?<br/><br/>Assistant: </span><span className="completion">&lt;think&gt;Let me calculate...&lt;/think&gt; 4<br/><br/>User:</span>
+</div>
+
+**Timestep 2:**
+<div className="example">
+<span className="prompt">User: What is 2+2?<br/><br/>Assistant: 4<br/><br/>User: What is 3+3?<br/><br/>Assistant: </span><span className="completion">&lt;think&gt;Let me calculate...&lt;/think&gt; 6<br/><br/>User:</span>
+</div>
+
+The observation at timestep 2 is **not** an extension of timestep 1's full sequence. The `<think>Let me calculate...</think>` portion was stripped, so the prefix doesn't match. The RL code must create **two separate Datums**:
+
+**Datum 1:**
+<div className="example">
+<span className="prompt">User: What is 2+2?<br/><br/>Assistant: </span><span className="completion">&lt;think&gt;Let me calculate...&lt;/think&gt; 4<br/><br/>User:</span>
+</div>
+
+**Datum 2:**
+<div className="example">
+<span className="prompt">User: What is 2+2?<br/><br/>Assistant: 4<br/><br/>User: What is 3+3?<br/><br/>Assistant: </span><span className="completion">&lt;think&gt;Let me calculate...&lt;/think&gt; 6<br/><br/>User:</span>
+</div>
+
+This results in more compute during training (two forward/backward passes instead of one) and prevents KV-cache reuse during sampling. For a trajectory of T timesteps, compute scales as O(T²) instead of O(T).
+
+## The Tradeoff
+
+**Keeping thinking visible** (`strip_thinking_from_history=False`) gives you O(T) compute scaling, allows packing sequences together in training batches, and enables KV-cache reuse during sampling. The downside is that context grows faster since all thinking tokens are retained, so you may hit context length limits sooner.
+
+**Stripping thinking** (`strip_thinking_from_history=True`, the default) keeps context smaller but breaks the extension property, leading to O(T²) compute scaling.
+
+Note that while stripping thinking matches Qwen3's original post-training distribution, with RL fine-tuning the model should quickly adapt to the new situation where thinking is preserved. So "distribution match" might not be a major concern in practice.
+
+## How the RL Code Handles This
+
+The RL training code in <CookbookLink path="tinker_cookbook/rl/data_processing.py">`data_processing.py`</CookbookLink> automatically detects whether consecutive timesteps satisfy the extension property. The key function is `trajectory_to_data`:
+
+```python
+def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.Datum]:
+    """
+    Return one or more Datum objects corresponding to the trajectory.
+    If the sequence grows by appending, i.e., each successive observation contains
+    the previous observation+action as a prefix, then we can return a single Datum.
+    However, if we get a sequence that's not an extension of the previous sequence,
+    then that results in a new Datum.
+    """
+```
+
+When rendering your conversations, be aware of whether your renderer has the extension property. For `Qwen3Renderer`:
+- `strip_thinking_from_history=False` → Extension holds
+- `strip_thinking_from_history=True` (default) → Extension breaks
+
+**Note on sampling:** The training code automatically merges timesteps when possible. Sampling infrastructure doesn't yet adjust billing based on KV-cache hits, but this is planned for a future release.
+
+## Advanced: Periodic Compaction
+
+A hybrid approach is to use **periodic compaction**: keep thinking visible most of the time (preserving extension), but periodically clear old thinking blocks from the context.
+
+**How it works:**
+- For turns 1-10, keep all thinking visible (extension holds, single datum)
+- At turn 11, strip thinking from turns 1-10 (extension breaks once, new datum starts)
+- For turns 11-20, keep thinking visible again (extension holds)
+- Repeat every N turns
+
+Here's what the datums look like with compaction every 3 turns:
+
+**Datum 1 (turns 1-3):**
+<div className="example">
+<span className="prompt">User: Q1<br/>Assistant: </span><span className="completion">&lt;think&gt;...&lt;/think&gt; A1<br/>User:</span><span className="prompt"> Q2<br/>Assistant: </span><span className="completion">&lt;think&gt;...&lt;/think&gt; A2<br/>User:</span><span className="prompt"> Q3<br/>Assistant: </span><span className="completion">&lt;think&gt;...&lt;/think&gt; A3<br/>User:</span>
+</div>
+
+**Datum 2 (turns 4-6, thinking from turns 1-3 stripped):**
+<div className="example">
+<span className="prompt">User: Q1<br/>Assistant: A1<br/>User: Q2<br/>Assistant: A2<br/>User: Q3<br/>Assistant: A3<br/>User: Q4<br/>Assistant: </span><span className="completion">&lt;think&gt;...&lt;/think&gt; A4<br/>User:</span><span className="prompt"> Q5<br/>Assistant: </span><span className="completion">&lt;think&gt;...&lt;/think&gt; A5<br/>User:</span><span className="prompt"> Q6<br/>Assistant: </span><span className="completion">&lt;think&gt;...&lt;/think&gt; A6<br/>User:</span>
+</div>
+
+This approach breaks extension only every N timesteps instead of every timestep, keeps context size bounded (old thinking doesn't accumulate forever), and amortizes the recomputation cost over N turns.
+
+To implement this, you would modify your environment or renderer to periodically transform the conversation history, stripping `<think>` blocks from messages older than N turns.
+
+## Summary
+
+For `Qwen3Renderer`:
+- `strip_thinking_from_history=False` → Extension holds → Use for long trajectories where compute efficiency matters
+- `strip_thinking_from_history=True` (default) → Extension breaks → Use for short trajectories, or when you want minimal changes from base model behavior
+- Periodic compaction → Best of both worlds when you need efficiency with bounded context
+
+When designing your RL environment, consider how many turns you expect and whether the O(T) vs O(T²) difference will be significant for your use case.

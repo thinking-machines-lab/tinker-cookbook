@@ -1,0 +1,38 @@
+# Tinker: a training API for researchers and developers
+
+Tinker lets you focus on what matters in LLM fine-tuning – your data and algorithms – while we handle the heavy lifting of distributed training.
+
+You write a simple loop that runs on your CPU-only machine, including the data or environment and the loss function. We figure out how to make the training work on a bunch of GPUs, doing the exact computation you specified, efficiently. To change the model you're working with, you only need to change a single string in your code.
+
+Tinker gives you full control over the training loop and all the algorithmic details. It's not a magic black box that makes fine-tuning "easy". It's a clean abstraction that shields you from the complexity of distributed training while preserving your control.
+
+Here's how the division of responsibilities works in practice:
+
+| **You focus on** | **You write** | **We handle** |
+|---|---|---|
+|  **Datasets and RL environments**<br />Your custom training data |  **Simple Python script**<br />Runs on your CPU |  **Efficient distributed training of large models**<br />Llama 70B, Qwen 235B |
+|  **Training logic**<br />Your loss functions, training loop, and evals |  **API calls**<br />`forward_backward()`<br />`optim_step()`<br />`sample()`<br />`save_state()` |  **Reliability**<br />Hardware failures handled transparently |
+
+## Features
+
+What the Tinker service currently supports:
+
+- Tinker lets you fine-tune open-weight models like the Qwen and Llama series, including large mixture-of-experts models like Qwen3-235B-A22B.
+- Tinker supports vision-language models (VLMs) like Qwen3-VL for image understanding tasks. See [Vision Inputs](/rendering#vision-inputs) for details.
+- Tinker implements low-rank adaptation (LoRA) fine-tuning, not full fine-tuning. However, we believe that LoRA gives the same performance as full fine-tuning for many important use cases, especially in RL (see [LoRA Without Regret](https://thinkingmachines.ai/blog/lora/)).
+- You can download the weights of your trained model to use outside of Tinker, for example with your inference provider of choice.
+
+## A quick look at functionality
+
+Tinker's main functionality is contained in a few key functions:
+
+- `forward_backward`: feed in your data and loss function, and we'll compute and accumulate the gradients for you.
+- `optim_step`: update your model using the accumulated gradients
+- `sample`: Generate outputs from your trained model
+- other functions for saving and loading weights and optimizer state
+
+## What's next?
+
+Some features we expect to support in the future:
+
+- Full fine-tuning

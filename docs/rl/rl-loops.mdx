@@ -1,0 +1,25 @@
+import { CookbookLink } from '../../components/CookbookLink'
+
+# Reinforcement Learning Training Loop
+
+We've provided a simple RL training loop in <CookbookLink path="tinker_cookbook/recipes/rl_loop.py">rl_loop.py</CookbookLink>, which avoids using our environment classes and instead defines the data loading and rollouts in a more self-contained way. This is for people who like to write their own training loops or learn about how things work under the hood. Our more performant implementation in <CookbookLink path="tinker_cookbook/rl/train.py">rl/train.py</CookbookLink> does basically the same thing, but with some performance optimizations, and with some additional features like periodic evals.
+
+You can run the RL training loop using:
+```
+python -m tinker_cookbook.recipes.rl_loop
+```
+
+The default config should write the results to `/tmp/tinker-examples/rl-loop`. The experiment should be completed after 57 steps of training. You can plot the reward curve as follows:
+```python
+import pandas
+import matplotlib.pyplot as plt
+
+metrics_path = "/tmp/tinker-examples/rl-loop/metrics.jsonl"
+df = pandas.read_json(metrics_path, lines=True)
+plt.plot(df["reward/total"], label="reward/total")
+plt.legend()
+plt.show()
+```
+
+You should see a plot like this:
+![Reward as a function of steps](./images/rl_loop_reward.png)
