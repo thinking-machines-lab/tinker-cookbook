@@ -2,6 +2,8 @@
 
 Quick reference for agents working on `tinker-cookbook`. Full documentation is in `docs/`.
 
+`tinker-cookbook` is a client library with training and eval code built on the Tinker service (hosted by Thinking Machines Lab) and the Tinker SDK (a separate repo with just the API). You author training/eval loops that run on a CPU machine; Tinker executes the heavy GPU work.
+
 **Start here:** `docs/training-sampling.mdx` - Complete walkthrough of training and sampling basics.
 
 ## Documentation Map (`docs/`)
@@ -42,7 +44,7 @@ Quick reference for agents working on `tinker-cookbook`. Full documentation is i
 - `rlhf-example.mdx` - RLHF pipeline
 
 **Other:**
-- `rendering.mdx` - Renderers, vision inputs, TrainOnWhat
+- `rendering.mdx` - Renderers (bridge between chat-style data and token sequences), vision inputs, TrainOnWhat
 - `completers.mdx` - TokenCompleter vs MessageCompleter
 - `evals.mdx` - Inline evals, Inspect AI, custom evaluators
 - `lora-primer.mdx` - LoRA background
