@@ -369,7 +369,6 @@ training_client = service_client.create_training_client_from_state(ckpt_path)
 ```
 
 
-
 ---
 
 ## File: supervised-learning.mdx
@@ -411,6 +410,7 @@ When you have pairwise preference data, there are two main approaches:
 1. **Direct Preference Optimization (DPO)**: Directly update the policy to prefer chosen responses over rejected ones, without needing a separate reward model. This is simpler and computationally cheaper. See the [DPO Guide](/preferences/dpo-guide) for details.
 
 2. **Reinforcement Learning from Human Feedback (RLHF)**: Train a reward model on preference data, then use reinforcement learning to optimize the policy against this reward model. This two-stage approach provides more flexibility. See the the [RLHF example](/preferences/rlhf-example) for details.
+
 
 ---
 
@@ -499,6 +499,7 @@ print(get_lora_param_count(model_name, lora_rank=32))
 For reinforcement learning, we've found that small ranks give equivalent performance to larger ranks and full fine-tuning.
 
 Note that conveniently, the optimal learning rate does *not* depend on the LoRA rank. In fact, you can verify that if you train with SL on different ranks (but with the same LR), you'll get exactly the same learning curves for the first few steps of training.
+
 
 ---
 
@@ -738,6 +739,7 @@ async def main():
 
 asyncio.run(main())
 ```
+
 
 ---
 
@@ -1825,8 +1827,6 @@ This will evaluate the model on various benchmarks to measure the impact of pref
 3. **Base Model**: The base model should already be in-distribution with the preference data. Either start with a ligh SFT phase or collect on-policy preferences. While training would still work. sharp distribution mis-match will create strange model behaviors.
 
 
-
-
 ---
 
 ## File: preferences/rlhf-example.mdx
@@ -1853,8 +1853,6 @@ We train the preference model on the [HHH dataset](https://huggingface.co/datase
 ## Training the policy via reinforcement learning
 
 Taking the initial policy, and the preference model we just trained, we can now train the policy via reinforcement learning. This RL is a form of self-play, where we use the preference model to grade match-ups between the policy and itself. In particular, for each prompt, we sample multiple completions, and use the preference model to grade all pairs of completions. We then give the policy a reward based on the win fraction.
-
-
 
 
 ---
@@ -1888,6 +1886,7 @@ The training should take about 1 minute per iteration and climb to about 63% acc
 - `time/...`: time for different parts of the training loop
 
 You can also look at the `log_path` directory for more detailed metrics. There are several files of interest, which are mostly the same as in the [Supervised Learning](/supervised-learning/sl-basic) case.
+
 
 ---
 
@@ -2111,7 +2110,6 @@ A few important notes to keep in mind:
 - If KL divergence crosses a recommended threshold, this indicates a numerical instability or potential issue with the training run
 
 
-
 ---
 
 ## File: rl/rl-loops.mdx
@@ -2141,6 +2139,7 @@ plt.show()
 
 You should see a plot like this:
 ![Reward as a function of steps](./images/rl_loop_reward.png)
+
 
 ---
 
@@ -2533,6 +2532,7 @@ import { CookbookLink } from '../../components/CookbookLink'
 # Supervised Learning Training Loop
 
 We've provided a simple SL training loop in <CookbookLink path="tinker_cookbook/recipes/sl_loop.py">sl_loop.py</CookbookLink>, which avoids using our dataset classes and instead defines the data loading in a more self-contained way. This is for people who like to write their own training loops or learn about how things work under the hood. Our more performant implementation in <CookbookLink path="tinker_cookbook/supervised/train.py">supervised/train.py</CookbookLink> does basically the same thing, but with some performance optimizations, and with some additional features like periodic evals.
+
 
 ---
 
