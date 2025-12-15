@@ -688,12 +688,20 @@ class Qwen3DisableThinkingRenderer(Qwen3Renderer):
     Renderer that disables thinking for hybrid-mode Qwen3 models
     """
 
+    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+        # Add empty thinking block to assistant messages if not already present
+        if message["role"] == "assistant":
+            content = message.get("content", "")
+            if isinstance(content, str) and "<think>" not in content:
+                message = message.copy()
+                message["content"] = "<think>\n\n</think>\n\n" + content
+        return super().render_message(idx, message, is_last)
+
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:
-        prefill = "\n</think>\n\n" + (prefill or "")
-        # XXX this causes inefficiency in RL, because the observations don't grow by appending to the end.
-        # Maybe we should just insert this empty thinking block in every message?
+        # Note: This method is kept for backwards compatibility but render_message() now
+        # handles adding the empty thinking block to all assistant messages.
         return super().build_generation_prompt(messages, role, prefill)
 
 
