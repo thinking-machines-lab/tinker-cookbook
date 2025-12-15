@@ -27,7 +27,7 @@ def test_2_turn_preserves_thinking():
     model_input, weights = renderer.build_supervised_example(messages)
     tokens = []
     for chunk in model_input.chunks:
-        tokens.extend(chunk.tokens)
+        tokens.extend(chunk.tokens)  # type: ignore[attr-defined]
     tinker_decoded = tokenizer.decode(tokens)
 
     # Get expected format from HuggingFace tokenizer
@@ -74,7 +74,7 @@ def test_4_turn_only_last_thinking_preserved():
     model_input, weights = renderer.build_supervised_example(messages)
     tokens = []
     for chunk in model_input.chunks:
-        tokens.extend(chunk.tokens)
+        tokens.extend(chunk.tokens)  # type: ignore[attr-defined]
     tinker_decoded = tokenizer.decode(tokens)
 
     # Get expected format from HuggingFace tokenizer

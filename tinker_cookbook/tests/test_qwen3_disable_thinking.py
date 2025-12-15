@@ -30,7 +30,7 @@ def test_qwen3_disable_thinking_format():
     model_input, weights = renderer.build_supervised_example(messages)
     tokens = []
     for chunk in model_input.chunks:
-        tokens.extend(chunk.tokens)
+        tokens.extend(chunk.tokens)  # type: ignore[attr-defined]
     decoded = tokenizer.decode(tokens)
 
     # Get expected format from official Qwen3-8B tokenizer
