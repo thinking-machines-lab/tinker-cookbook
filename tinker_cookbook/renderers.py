@@ -606,7 +606,7 @@ class Qwen3Renderer(Renderer):
             # This matches how Qwen3 models were trained - they only see their own thinking
             # during the current turn, not from previous turns.
             ac_content = ac_content.split("</think>")[1].lstrip()
-        elif message["role"] == "assistant" and "<think>" not in ac_content:
+        elif message["role"] == "assistant" and "<think>" not in ac_content and is_last:
             # Matching the paper, we force the assistant to start with <think>. Some SFT datasets include
             # <think> in the assistant messages, we so don't need to re-add it in those cases.
             ob_str += "<think>\n"
@@ -700,6 +700,14 @@ class Qwen3DisableThinkingRenderer(Qwen3Renderer):
                 message = message.copy()
                 message["content"] = "<think>\n\n</think>\n\n" + content
         return super().render_message(idx, message, is_last=is_last)
+
+    def build_generation_prompt(
+        self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
+    ) -> tinker.ModelInput:
+        prefill = "<think>\n\n</think>\n\n" + (prefill or "")
+        # XXX this causes inefficiency in RL, because the observations don't grow by appending to the end.
+        # Maybe we should just insert this empty thinking block in every message?
+        return super().build_generation_prompt(messages, role, prefill)
 
 
 class Qwen3InstructRenderer(Qwen3Renderer):

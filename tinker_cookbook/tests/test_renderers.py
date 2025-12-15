@@ -195,9 +195,73 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         _ = renderer.parse_response(response_tokens_double_eot)
 
 
+def test_qwen_disable_thinking_renderer():
+    """Test Qwen3DisableThinkingRenderer to ensure it matches official Qwen3-8B tokenizer format."""
+    tokenizer = _load_tokenizer("Qwen/Qwen3-8B")
+    cookbook_renderer = get_renderer("qwen3_disable_thinking", tokenizer)
+    convo: list[Message] = [
+        {"role": "user", "content": "Hello, how are you?"},
+        {"role": "assistant", "content": "I'm fine, thank you!"},
+        {"role": "user", "content": "What is the capital of France?"},
+    ]
+    cookbook_tokens = cookbook_renderer.build_generation_prompt(convo).to_ints()
+    hf_convo = cast(list[dict[str, str]], convo)
+    hf_tokens = tokenizer.apply_chat_template(
+        hf_convo,
+        add_generation_prompt=True,
+        tokenize=True,
+        # HF will add <think>\n\n</think>\n\n non-thinking tokens.
+        enable_thinking=False,
+    )
+    print(f"Cookbook tokens: {cookbook_tokens}")
+    print(f"Cookbook string: {tokenizer.decode(cookbook_tokens)}")
+    print(f"HF tokens: {hf_tokens}")
+    print(f"HF string: {tokenizer.decode(hf_tokens)}")
+
+    assert cookbook_tokens == hf_tokens, (
+        f"Cookbook tokens: {cookbook_tokens}\n"
+        f"Cookbook string: {tokenizer.decode(cookbook_tokens)}\n"
+        f"HF tokens: {hf_tokens}\n"
+        f"HF string: {tokenizer.decode(hf_tokens)}"
+    )
+
+
+def test_qwen_enable_thinking_renderer():
+    """Test Qwen3Renderer to ensure it matches official Qwen3-8B tokenizer format."""
+    tokenizer = _load_tokenizer("Qwen/Qwen3-8B")
+    cookbook_renderer = get_renderer("qwen3", tokenizer)
+    convo: list[Message] = [
+        {"role": "user", "content": "Hello, how are you?"},
+        {"role": "assistant", "content": "I'm fine, thank you!"},
+        {"role": "user", "content": "What is the capital of France?"},
+    ]
+    cookbook_tokens = cookbook_renderer.build_generation_prompt(convo).to_ints()
+    hf_convo = cast(list[dict[str, str]], convo)
+    hf_tokens = tokenizer.apply_chat_template(
+        hf_convo,
+        add_generation_prompt=True,
+        tokenize=True,
+        # HF will add <think>\n only
+        enable_thinking=True,
+    )
+    print(f"Cookbook tokens: {cookbook_tokens}")
+    print(f"Cookbook string: {tokenizer.decode(cookbook_tokens)}")
+    print(f"HF tokens: {hf_tokens}")
+    print(f"HF string: {tokenizer.decode(hf_tokens)}")
+
+    assert cookbook_tokens == hf_tokens, (
+        f"Cookbook tokens: {cookbook_tokens}\n"
+        f"Cookbook string: {tokenizer.decode(cookbook_tokens)}\n"
+        f"HF tokens: {hf_tokens}\n"
+        f"HF string: {tokenizer.decode(hf_tokens)}"
+    )
+
+
 if __name__ == "__main__":
     # test_against_hf_chat_templates("meta-llama/Llama-3.2-1B-Instruct")
     # test_against_hf_chat_templates("Qwen/Qwen2.5-VL-3B-Instruct")
     test_generation_against_hf_chat_templates("openai/gpt-oss-20b")
     test_supervised_example_against_hf_chat_templates("openai/gpt-oss-20b")
     test_eot_parsing("Qwen/Qwen3-30B-A3B", "qwen3")
+    test_qwen_disable_thinking_renderer()
+    test_qwen_enable_thinking_renderer()
