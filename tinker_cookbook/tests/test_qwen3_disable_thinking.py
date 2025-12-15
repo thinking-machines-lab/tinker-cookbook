@@ -34,25 +34,23 @@ def test_qwen3_disable_thinking_format():
     decoded = tokenizer.decode(tokens)
 
     # Get expected format from official Qwen3-8B tokenizer
-    official_format = tokenizer.apply_chat_template(
-        messages, tokenize=False, thinking=False
-    )
+    official_format = tokenizer.apply_chat_template(messages, tokenize=False, thinking=False)
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("ACTUAL (tinker-cookbook renderer):")
-    print("="*80)
+    print("=" * 80)
     print(decoded)
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("EXPECTED (Qwen3-8B tokenizer):")
-    print("="*80)
+    print("=" * 80)
     print(official_format)
 
-    # The critical assertion: must have the COMPLETE empty thinking block
+    # Must have the COMPLETE empty thinking block
     # Not just <think>\n but the full <think>\n\n</think>\n\n
-    assert (
-        "<think>\n\n</think>\n\n" in decoded
-    ), f"Renderer must add '<think>\\n\\n</think>\\n\\n' but got: {decoded}"
+    assert "<think>\n\n</think>\n\n" in decoded, (
+        f"Renderer must add '<think>\\n\\n</think>\\n\\n' but got: {decoded}"
+    )
 
 
 if __name__ == "__main__":
