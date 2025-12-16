@@ -17,6 +17,7 @@ dependencies = [
     "termcolor",
     "tinker>=0.6.1",
     "torch",
+    "torchvision",
     "transformers",
     "blobfile",
     "inspect-ai",
@@ -26,6 +27,7 @@ dependencies = [
     "textarena>=0.7.4",
     "math-verify",
     "scipy",
+    "Pillow"
 ]
 
 [project.urls]
