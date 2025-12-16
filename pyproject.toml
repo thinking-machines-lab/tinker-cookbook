@@ -12,6 +12,7 @@ dependencies = [
     "cloudpickle",
     "datasets",
     "numpy",
+    "pillow",
     "rich",
     "termcolor",
     "tinker>=0.6.1",
