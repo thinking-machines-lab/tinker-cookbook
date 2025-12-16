@@ -1,7 +1,7 @@
 # Replicating Search-R1 with Tinker
 
 [Search-R1](https://arxiv.org/pdf/2503.09516) is a recent paper that showcases tool-use RL for multi-hop QA on Wikipedia.
-It provides a clean setup for testing tool-use RL and also releases their training and evaluation data.
+It provides a clean setup for testing tool-use RL and also released their training and evaluation data.
 In this demo, we demonstrate similar experiments using `Qwen3-4B-Instruct-2507`, and we include our replication results using `Qwen/Qwen2.5-7B-Instruct` at the end.
 
 ## Running This Demo
@@ -61,3 +61,4 @@ The key differences between our experiment and the original paper include:
 3. We used Gemini embedding and Chroma DB, motivated by their simplicity to setup for a public demo. In exploratory experiments, the Gemini embedding does not improve RL performance over the E5 embedding model used in the original paper.
 
 [1] Jin, B., Zeng, H., Yue, Z., Yoon, J., Arık, S. O., Wang, D., Zamani, H., & Han, J. (2025). Search-R1: Training LLMs to reason and leverage search engines with reinforcement learning. arXiv preprint arXiv:2503.09516.
+
