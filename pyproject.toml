@@ -17,6 +17,7 @@ dependencies = [
     "termcolor",
     "tinker>=0.6.1",
     "torch",
+    "torchvision",
     "transformers",
     "blobfile",
     "inspect-ai",
