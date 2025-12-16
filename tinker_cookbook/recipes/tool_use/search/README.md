@@ -1,7 +1,7 @@
 # Replicating Search-R1 with Tinker
 
 [Search-R1](https://arxiv.org/pdf/2503.09516) is a recent paper that showcases tool-use RL for multi-hop QA on Wikipedia.
-It provides a clean setup for testing tool-use RL and also releases their training and evaluation data.
+It provides a clean setup for testing tool-use RL and also released their training and evaluation data.
 In this demo, we demonstrate similar experiments using `Qwen3-4B-Instruct-2507`, and we include our replication results using `Qwen/Qwen2.5-7B-Instruct` at the end.
 
 ## Running This Demo

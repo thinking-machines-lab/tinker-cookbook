@@ -10,7 +10,7 @@ We provide two libraries for the broader community to customize their language m
 
 ## Installation
 
-1. Sign up for Tinker through the [waitlist](https://thinkingmachines.ai/tinker).
+1. Sign up for Tinker [here](https://auth.thinkingmachines.ai/sign-up).
 2. Once you have access, create an API key from the [console](https://tinker-console.thinkingmachines.ai) and export it as environment variable `TINKER_API_KEY`.
 3. Install tinker python client via `pip install tinker`
 4. We recommend installing `tinker-cookbook` in a virtual env either with `conda` or `uv`. For running most examples, you can install via `pip install -e .`.
