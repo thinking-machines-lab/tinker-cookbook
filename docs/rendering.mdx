@@ -5,12 +5,29 @@ import { CookbookLink } from '../components/CookbookLink'
 
 Rendering converts list-of-message datatypes into their token representations for model training and inference. While similar to [chat templates](https://huggingface.co/docs/transformers/en/chat_templating), Tinker's rendering system is designed for the full training lifecycle--not just inference--supporting supervised learning, reinforcement learning, and deployment.
 
+## HuggingFace Compatibility
+
+**Important:** Tinker's default renderers are designed to produce **identical tokens** to HuggingFace's `apply_chat_template`. This is critical because:
+
+1. **The [OpenAI-compatible endpoint](/compatible-apis/openai)** (`/chat/completions`) uses HuggingFace chat templates to convert messages to tokens
+2. **If you train with a non-HF-compatible renderer**, your model may not work correctly with the OpenAI endpoint
+
+The default renderers (`qwen3`, `llama3`, `deepseekv3`, etc.) match HF behavior. The one exception is `Qwen3Renderer` with `strip_thinking_from_history=False`, which is a special mode for multi-turn RL efficiency that does NOT match HF (see [Sequence Extension](/rl/sequence-extension)).
+
+| Renderer | HF Equivalent |
+|----------|---------------|
+| `qwen3` | `apply_chat_template(..., enable_thinking=True)` (default) |
+| `qwen3_disable_thinking` | `apply_chat_template(..., enable_thinking=False)` |
+| `llama3` | `apply_chat_template(...)` |
+| `deepseekv3` | `apply_chat_template(...)` |
+
+**Recommendation:** If you plan to use the OpenAI endpoint for inference, always use the default renderers with default options.
 
 ## The Renderer class
 
 The Renderer class is the main interface used for rendering. It can be found in <CookbookLink path="tinker_cookbook/renderers.py">`renderers.py`</CookbookLink>.
 
-**Eample conversation:**
+**Example conversation:**
 
 ```python
 messages =[

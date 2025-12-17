@@ -1,9 +1,27 @@
+"""
+Tests for tinker_cookbook renderers against HuggingFace chat templates.
+
+These tests verify that tinker-cookbook renderers produce identical token sequences
+to HuggingFace's chat templates. This is important because:
+
+1. The OpenAI-compatible inference endpoint (/chat/completions) uses HuggingFace
+   chat templates to render conversations to tokens.
+2. Users who train with tinker-cookbook and want to use the OpenAI endpoint for
+   inference need their training to use HF-compatible rendering.
+
+For models with thinking capabilities (Qwen3, DeepSeek), we test both the default
+renderer (thinking enabled) and the disable_thinking variant.
+
+See docs/rendering.mdx for more details on the rendering system.
+See docs/compatible-apis/openai.mdx for the OpenAI-compatible endpoint documentation.
+"""
+
 from datetime import date
 from typing import Any, cast
 
 import pytest
 from tinker_cookbook.model_info import get_recommended_renderer_name
-from tinker_cookbook.renderers import Message, get_renderer
+from tinker_cookbook.renderers import Message, get_renderer, Qwen3Renderer
 from transformers.models.auto.tokenization_auto import AutoTokenizer
 
 
@@ -17,18 +35,23 @@ def _load_tokenizer(model_name: str) -> Any:
     return AutoTokenizer.from_pretrained(model_name, use_fast=True, **kwargs)
 
 
+# =============================================================================
+# Basic HF Compatibility Tests (3-turn conversations)
+# =============================================================================
+
+
 @pytest.mark.parametrize(
     "model_name",
     [
         "meta-llama/Llama-3.2-1B-Instruct",
-        # "Qwen/Qwen3-30B-A3B", TODO: This was broken, will address in another PR.
+        "Qwen/Qwen3-30B-A3B",
         "deepseek-ai/DeepSeek-V3.1",
         "openai/gpt-oss-20b",
         "moonshotai/Kimi-K2-Thinking",
     ],
 )
 def test_generation_against_hf_chat_templates(model_name: str):
-    """Test generation prompt against HF chat templates"""
+    """Test generation prompt against HF chat templates (3-turn conversation)."""
     tokenizer = _load_tokenizer(model_name)
     # not using get_tokenizer(model_name)
     # because we want to test against the original tokenizer from HF, not the mirror
@@ -88,7 +111,7 @@ def test_generation_against_hf_chat_templates(model_name: str):
     ],
 )
 def test_supervised_example_against_hf_chat_templates(model_name: str):
-    """Test supervised example against HF chat templates"""
+    """Test supervised example against HF chat templates (2-turn conversation)."""
     tokenizer = _load_tokenizer(model_name)
     # not using get_tokenizer(model_name)
     # because we want to test against the original tokenizer from HF, not the mirror
@@ -141,11 +164,221 @@ def test_supervised_example_against_hf_chat_templates(model_name: str):
     )
 
 
+# =============================================================================
+# Qwen3 Thinking Tests (multi-turn with thinking content)
+# =============================================================================
+
+
+def test_qwen3_2turn_preserves_thinking():
+    """
+    For 2-turn conversations (user + assistant), thinking should be fully preserved
+    since the assistant message is the last message.
+    """
+    model_name = "Qwen/Qwen3-8B"
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    renderer = Qwen3Renderer(tokenizer)
+
+    messages: list[Message] = [
+        {"role": "user", "content": "What is 2+2?"},
+        {
+            "role": "assistant",
+            "content": "<think>\nLet me calculate this.\n</think>\n\nThe answer is 4.",
+        },
+    ]
+
+    model_input, _ = renderer.build_supervised_example(messages)
+    tinker_tokens = model_input.to_ints()
+    tinker_decoded = tokenizer.decode(tinker_tokens)
+
+    # Get expected format from HuggingFace tokenizer
+    hf_decoded = tokenizer.apply_chat_template(cast(list[dict[str, str]], messages), tokenize=False)
+
+    # Tinker and HuggingFace should produce the same output (strip trailing newline from HF)
+    assert tinker_decoded == hf_decoded.rstrip("\n"), (
+        f"Tinker and HuggingFace outputs differ:\n"
+        f"TINKER:\n{tinker_decoded!r}\n\n"
+        f"HUGGINGFACE:\n{hf_decoded!r}"
+    )
+
+
+def test_qwen3_4turn_only_last_thinking_preserved():
+    """
+    For 4-turn conversations, only the last assistant message's thinking should be preserved.
+    Earlier assistant thinking blocks are stripped (matching HF behavior with strip_thinking_from_history=True).
+    """
+    model_name = "Qwen/Qwen3-8B"
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    renderer = Qwen3Renderer(tokenizer)
+
+    messages: list[Message] = [
+        {"role": "user", "content": "What is 2+2?"},
+        {
+            "role": "assistant",
+            "content": "<think>\nFirst turn reasoning here.\n</think>\n\nThe answer is 4.",
+        },
+        {"role": "user", "content": "And what is 3+3?"},
+        {
+            "role": "assistant",
+            "content": "<think>\nSecond turn reasoning here.\n</think>\n\nThe answer is 6.",
+        },
+    ]
+
+    model_input, _ = renderer.build_supervised_example(messages)
+    tinker_tokens = model_input.to_ints()
+    tinker_decoded = tokenizer.decode(tinker_tokens)
+
+    # Get expected format from HuggingFace tokenizer
+    hf_decoded = tokenizer.apply_chat_template(cast(list[dict[str, str]], messages), tokenize=False)
+
+    # Tinker and HuggingFace should produce the same output (strip trailing newline from HF)
+    assert tinker_decoded == hf_decoded.rstrip("\n"), (
+        f"Tinker and HuggingFace outputs differ:\n"
+        f"TINKER:\n{tinker_decoded!r}\n\n"
+        f"HUGGINGFACE:\n{hf_decoded!r}"
+    )
+
+
+def test_qwen3_generation_matches_hf():
+    """Test Qwen3Renderer generation prompt matches HF with enable_thinking=True (default)."""
+    tokenizer = _load_tokenizer("Qwen/Qwen3-8B")
+    cookbook_renderer = get_renderer("qwen3", tokenizer)
+
+    convo: list[Message] = [
+        {"role": "user", "content": "Hello, how are you?"},
+        {"role": "assistant", "content": "I'm fine, thank you!"},
+        {"role": "user", "content": "What is the capital of France?"},
+    ]
+
+    cookbook_tokens = cookbook_renderer.build_generation_prompt(convo).to_ints()
+    hf_tokens = tokenizer.apply_chat_template(
+        cast(list[dict[str, str]], convo),
+        add_generation_prompt=True,
+        tokenize=True,
+        enable_thinking=True,  # Explicit, though this is the default
+    )
+
+    assert cookbook_tokens == hf_tokens, (
+        f"Cookbook tokens: {cookbook_tokens}\n"
+        f"Cookbook string: {tokenizer.decode(cookbook_tokens)}\n"
+        f"HF tokens: {hf_tokens}\n"
+        f"HF string: {tokenizer.decode(hf_tokens)}"
+    )
+
+
+# =============================================================================
+# Qwen3 Disable Thinking Tests
+# =============================================================================
+
+
+def test_qwen3_disable_thinking_supervised():
+    """
+    Test that Qwen3DisableThinkingRenderer adds the correct empty thinking block
+    to assistant messages for SFT, matching HF tokenizer with thinking=False.
+    """
+    model_name = "Qwen/Qwen3-8B"
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    renderer = get_renderer("qwen3_disable_thinking", tokenizer)
+
+    messages: list[Message] = [
+        {"role": "user", "content": "What is 2+2?"},
+        {"role": "assistant", "content": "The answer is 4."},
+    ]
+
+    model_input, _ = renderer.build_supervised_example(messages)
+    tinker_tokens = model_input.to_ints()
+    tinker_decoded = tokenizer.decode(tinker_tokens)
+
+    # Get expected format from official Qwen3 tokenizer with thinking=False
+    hf_decoded = tokenizer.apply_chat_template(
+        cast(list[dict[str, str]], messages), tokenize=False, thinking=False
+    )
+
+    # Verify the complete empty thinking block is present
+    assert "<think>\n\n</think>\n\n" in tinker_decoded, (
+        f"Renderer must add '<think>\\n\\n</think>\\n\\n' but got: {tinker_decoded}"
+    )
+
+    # Verify matches HF
+    assert tinker_decoded == hf_decoded.rstrip("\n"), (
+        f"Tinker and HuggingFace outputs differ:\n"
+        f"TINKER:\n{tinker_decoded!r}\n\n"
+        f"HUGGINGFACE:\n{hf_decoded!r}"
+    )
+
+
+def test_qwen3_disable_thinking_generation():
+    """Test Qwen3DisableThinkingRenderer generation matches HF with enable_thinking=False."""
+    tokenizer = _load_tokenizer("Qwen/Qwen3-8B")
+    cookbook_renderer = get_renderer("qwen3_disable_thinking", tokenizer)
+
+    convo: list[Message] = [
+        {"role": "user", "content": "Hello, how are you?"},
+        {"role": "assistant", "content": "I'm fine, thank you!"},
+        {"role": "user", "content": "What is the capital of France?"},
+    ]
+
+    cookbook_tokens = cookbook_renderer.build_generation_prompt(convo).to_ints()
+    hf_tokens = tokenizer.apply_chat_template(
+        cast(list[dict[str, str]], convo),
+        add_generation_prompt=True,
+        tokenize=True,
+        enable_thinking=False,
+    )
+
+    assert cookbook_tokens == hf_tokens, (
+        f"Cookbook tokens: {cookbook_tokens}\n"
+        f"Cookbook string: {tokenizer.decode(cookbook_tokens)}\n"
+        f"HF tokens: {hf_tokens}\n"
+        f"HF string: {tokenizer.decode(hf_tokens)}"
+    )
+
+
+def test_qwen3_disable_thinking_4turn():
+    """
+    Test Qwen3DisableThinkingRenderer with 4-turn conversation.
+    Only the last assistant message should have the empty thinking block
+    (historical thinking is stripped, matching HF behavior).
+    """
+    model_name = "Qwen/Qwen3-8B"
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    renderer = get_renderer("qwen3_disable_thinking", tokenizer)
+
+    messages: list[Message] = [
+        {"role": "user", "content": "What is 2+2?"},
+        {"role": "assistant", "content": "The answer is 4."},
+        {"role": "user", "content": "And what is 3+3?"},
+        {"role": "assistant", "content": "The answer is 6."},
+    ]
+
+    model_input, _ = renderer.build_supervised_example(messages)
+    tinker_tokens = model_input.to_ints()
+    tinker_decoded = tokenizer.decode(tinker_tokens)
+
+    # Get expected format from HF
+    hf_decoded = tokenizer.apply_chat_template(
+        cast(list[dict[str, str]], messages), tokenize=False, thinking=False
+    )
+
+    assert tinker_decoded == hf_decoded.rstrip("\n"), (
+        f"Tinker and HuggingFace outputs differ:\n"
+        f"TINKER:\n{tinker_decoded!r}\n\n"
+        f"HUGGINGFACE:\n{hf_decoded!r}"
+    )
+
+
+# =============================================================================
+# EOT Parsing Tests
+# =============================================================================
+
+
 @pytest.mark.parametrize(
     "model_name,renderer_name",
     [
         ("Qwen/Qwen3-30B-A3B", "qwen3"),
+        ("Qwen/Qwen3-8B", "qwen3_disable_thinking"),
         ("meta-llama/Llama-3.2-1B-Instruct", "llama3"),
+        ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
+        ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_disable_thinking"),
         ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning"),
         ("moonshotai/Kimi-K2-Thinking", "kimi_k2"),
     ],
@@ -156,15 +389,18 @@ def test_eot_parsing(model_name: str, renderer_name: str):
     renderer = get_renderer(renderer_name, tokenizer)
 
     # Get the appropriate EOT token for each renderer
-    if renderer_name == "llama3":
-        eot_token = "<|eot_id|>"
-    elif renderer_name == "qwen3":
-        eot_token = "<|im_end|>"
-    elif renderer_name.startswith("gpt_oss"):
-        eot_token = "<|return|>"
-    elif renderer_name == "kimi_k2":
-        eot_token = "<|im_end|>"
-    else:
+    # Note: DeepSeek uses full-width pipes (｜) not ASCII pipes (|)
+    eot_tokens = {
+        "llama3": "<|eot_id|>",
+        "qwen3": "<|im_end|>",
+        "qwen3_disable_thinking": "<|im_end|>",
+        "deepseekv3": "<｜end▁of▁sentence｜>",  # Full-width pipes
+        "deepseekv3_disable_thinking": "<｜end▁of▁sentence｜>",  # Full-width pipes
+        "gpt_oss_medium_reasoning": "<|return|>",
+        "kimi_k2": "<|im_end|>",
+    }
+    eot_token = eot_tokens.get(renderer_name)
+    if eot_token is None:
         raise ValueError(f"Unknown renderer: {renderer_name}")
 
     # Test case 1: Normal case with single EOT - should parse correctly
@@ -195,9 +431,40 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         _ = renderer.parse_response(response_tokens_double_eot)
 
 
-if __name__ == "__main__":
-    # test_against_hf_chat_templates("meta-llama/Llama-3.2-1B-Instruct")
-    # test_against_hf_chat_templates("Qwen/Qwen2.5-VL-3B-Instruct")
-    test_generation_against_hf_chat_templates("openai/gpt-oss-20b")
-    test_supervised_example_against_hf_chat_templates("openai/gpt-oss-20b")
-    test_eot_parsing("Qwen/Qwen3-30B-A3B", "qwen3")
+# =============================================================================
+# strip_thinking_from_history=False Tests (Extension Property)
+# =============================================================================
+
+
+def test_qwen3_strip_thinking_false_preserves_all():
+    """
+    Test that strip_thinking_from_history=False preserves thinking in ALL messages.
+    This mode is used for multi-turn RL where the extension property is needed.
+    Note: This mode does NOT match HF behavior - it's a special mode for efficiency.
+    """
+    model_name = "Qwen/Qwen3-8B"
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    renderer = Qwen3Renderer(tokenizer, strip_thinking_from_history=False)
+
+    messages: list[Message] = [
+        {"role": "user", "content": "What is 2+2?"},
+        {
+            "role": "assistant",
+            "content": "<think>\nFirst calculation.\n</think>\n\nThe answer is 4.",
+        },
+        {"role": "user", "content": "And what is 3+3?"},
+        {
+            "role": "assistant",
+            "content": "<think>\nSecond calculation.\n</think>\n\nThe answer is 6.",
+        },
+    ]
+
+    model_input, _ = renderer.build_supervised_example(messages)
+    decoded = tokenizer.decode(model_input.to_ints())
+
+    # Both thinking blocks should be present
+    assert decoded.count("<think>") == 2, (
+        f"Expected 2 thinking blocks with strip_thinking_from_history=False, got: {decoded}"
+    )
+    assert "First calculation" in decoded
+    assert "Second calculation" in decoded

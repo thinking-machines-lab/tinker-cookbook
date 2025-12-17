@@ -560,16 +560,26 @@ class Llama3Renderer(Renderer):
 
 class Qwen3Renderer(Renderer):
     """
-    Format like this:
+    Renderer for Qwen3 models with thinking enabled.
+
+    This renderer is designed to match HuggingFace's Qwen3 chat template behavior
+    (with enable_thinking=True, which is the default). This ensures compatibility
+    with the OpenAI-compatible /chat/completions endpoint, which uses HF templates.
+
+    Format:
         <|im_start|>system
-        You are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>
+        You are Qwen, created by Alibaba Cloud.<|im_end|>
         <|im_start|>user
         What can you help me with?<|im_end|>
         <|im_start|>assistant
         <think>
-
+        [reasoning content]
         </think>
         I can help you with...<|im_end|>
+
+    The default strip_thinking_from_history=True matches HF behavior where thinking
+    blocks are stripped from historical assistant messages in multi-turn conversations.
+    Use strip_thinking_from_history=False for multi-turn RL to get the extension property.
     """
 
     def __init__(self, tokenizer: Tokenizer, strip_thinking_from_history: bool = True):
@@ -577,13 +587,15 @@ class Qwen3Renderer(Renderer):
         Args:
             tokenizer: The tokenizer to use for encoding.
             strip_thinking_from_history: When True (default), strips <think>...</think> blocks
-                from assistant messages in multi-turn history. This matches how Qwen3 models
-                were trained - they only see their own thinking during the current turn, not
-                from previous turns. Set to False to preserve thinking in history (useful for
-                certain RL scenarios where you want the extension property for efficiency).
+                from assistant messages in multi-turn history. This matches HuggingFace's
+                Qwen3 chat template behavior. Set to False to preserve thinking in history
+                (useful for multi-turn RL where you need the extension property).
 
-        See https://tinker-docs.thinkingmachines.ai/rl/sequence-extension for details on
-        how this option affects multi-turn RL compute efficiency.
+        Note: When strip_thinking_from_history=True, this renderer produces identical
+        tokens to HuggingFace's apply_chat_template with enable_thinking=True.
+
+        See /rl/sequence-extension in the docs for details on how strip_thinking_from_history
+        affects multi-turn RL compute efficiency.
         """
         super().__init__(tokenizer)
         self.strip_thinking_from_history = strip_thinking_from_history
@@ -686,7 +698,15 @@ class Qwen3Renderer(Renderer):
 
 class Qwen3DisableThinkingRenderer(Qwen3Renderer):
     """
-    Renderer that disables thinking for hybrid-mode Qwen3 models
+    Renderer for Qwen3 hybrid models with thinking disabled.
+
+    This renderer matches HuggingFace's Qwen3 chat template behavior with
+    enable_thinking=False (or thinking=False for apply_chat_template). It adds
+    empty <think>\\n\\n</think>\\n\\n blocks to assistant messages, signaling to
+    the model that it should respond directly without extended reasoning.
+
+    Use this renderer when you want to train or sample from Qwen3 models in
+    "non-thinking" mode while maintaining compatibility with the OpenAI endpoint.
     """
 
     def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
