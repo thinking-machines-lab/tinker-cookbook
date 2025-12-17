@@ -382,6 +382,7 @@ def test_qwen3_disable_thinking_4turn():
         ("Qwen/Qwen3-8B", "qwen3_disable_thinking"),
         ("meta-llama/Llama-3.2-1B-Instruct", "llama3"),
         ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
+        ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_disable_thinking"),
         ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning"),
         ("moonshotai/Kimi-K2-Thinking", "kimi_k2"),
     ],
@@ -398,6 +399,7 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         "qwen3": "<|im_end|>",
         "qwen3_disable_thinking": "<|im_end|>",
         "deepseekv3": "<｜end▁of▁sentence｜>",  # Full-width pipes
+        "deepseekv3_disable_thinking": "<｜end▁of▁sentence｜>",  # Full-width pipes
         "gpt_oss_medium_reasoning": "<|return|>",
         "kimi_k2": "<|im_end|>",
     }
@@ -470,12 +472,3 @@ def test_qwen3_strip_thinking_false_preserves_all():
     )
     assert "First calculation" in decoded
     assert "Second calculation" in decoded
-
-
-if __name__ == "__main__":
-    test_generation_against_hf_chat_templates("Qwen/Qwen3-30B-A3B")
-    test_supervised_example_against_hf_chat_templates("Qwen/Qwen3-30B-A3B")
-    test_qwen3_2turn_preserves_thinking()
-    test_qwen3_4turn_only_last_thinking_preserved()
-    test_qwen3_disable_thinking_supervised()
-    test_qwen3_disable_thinking_generation()
