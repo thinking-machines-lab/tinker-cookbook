@@ -191,9 +191,7 @@ def test_qwen3_2turn_preserves_thinking():
     tinker_decoded = tokenizer.decode(tinker_tokens)
 
     # Get expected format from HuggingFace tokenizer
-    hf_decoded = tokenizer.apply_chat_template(
-        cast(list[dict[str, str]], messages), tokenize=False
-    )
+    hf_decoded = tokenizer.apply_chat_template(cast(list[dict[str, str]], messages), tokenize=False)
 
     # Tinker and HuggingFace should produce the same output (strip trailing newline from HF)
     assert tinker_decoded == hf_decoded.rstrip("\n"), (
@@ -230,9 +228,7 @@ def test_qwen3_4turn_only_last_thinking_preserved():
     tinker_decoded = tokenizer.decode(tinker_tokens)
 
     # Get expected format from HuggingFace tokenizer
-    hf_decoded = tokenizer.apply_chat_template(
-        cast(list[dict[str, str]], messages), tokenize=False
-    )
+    hf_decoded = tokenizer.apply_chat_template(cast(list[dict[str, str]], messages), tokenize=False)
 
     # Tinker and HuggingFace should produce the same output (strip trailing newline from HF)
     assert tinker_decoded == hf_decoded.rstrip("\n"), (
