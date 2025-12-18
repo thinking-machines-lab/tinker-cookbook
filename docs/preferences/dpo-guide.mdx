@@ -19,7 +19,7 @@ Where:
 - $\beta$ is the DPO beta parameter
 - Where $\mathcal{D}$ is a dataset of prompts $x$, a chosen response $y_{\text{chosen}}$ and a rejected response $y_{\text{rejected}}$
 
-This optimizes the classical constrianed RLHF objective, where the reference model constrains deviation from the initial distribution.
+This optimizes the classical constrained RLHF objective, where the reference model constrains deviation from the initial distribution.
 
 <Callout type="info">
 **DPO vs RLHF**: DPO eliminates the need for a separate reward model by directly optimizing the policy to prefer chosen responses. This makes training simpler and computationally cheaper than classical RLHF.
@@ -109,4 +109,4 @@ This will evaluate the model on various benchmarks to measure the impact of pref
 
 2. **Learning Rate**: Use a lower learning rate than supervised fine-tuning (typically 1e-5 to 1e-6).
 
-3. **Base Model**: The base model should already be in-distribution with the preference data. Either start with a ligh SFT phase or collect on-policy preferences. While training would still work. sharp distribution mis-match will create strange model behaviors.
+3. **Base Model**: The base model should already be in-distribution with the preference data. Either start with a light SFT phase or collect on-policy preferences. While training would still work, sharp distribution mis-match will create strange model behaviors.

@@ -4,7 +4,7 @@ This page explains some implementation details of Tinker, which are important fo
 
 ## Clock Cycles
 
-In Tinker, after you call `ServiceClient.create_lora_training_client`, your training job gets assigned to a pool of machines that working together -- a *worker pool* -- which are doing forward-backward operations repeatedly in lock-step.
+In Tinker, after you call `ServiceClient.create_lora_training_client`, your training job gets assigned to a pool of machines that work together -- a *worker pool* -- which are doing forward-backward operations repeatedly in lock-step.
 Each of these steps of the worker pool is called a *clock cycle*.
 In each clock cycle, we do forward-backward and an optimizer step operation, each of which may involve multiple LoRA models that are being trained by this pool.
 You can think of this pool as a single large training run that is time-shared between multiple different LoRA models, often from different users.
