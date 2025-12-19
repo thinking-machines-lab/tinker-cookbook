@@ -129,6 +129,4 @@ def get_recommended_renderer_name(model_name: str) -> str:
     """
     Return the most recommended renderer for the model.
     """
-    renderer_names = get_recommended_renderer_names(model_name)
-    print(f'Got renderer names: {renderer_names}')
-    return renderer_names[0]
+    return get_recommended_renderer_names(model_name)[0]
