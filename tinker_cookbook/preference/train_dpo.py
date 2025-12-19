@@ -394,4 +394,3 @@ def print_example(datum: tinker.Datum, tokenizer: Tokenizer, label: str = ""):
     weights = datum.loss_fn_inputs["weights"].data
     logger.info(f"\n{label} Example:")
     logger.info(format_colorized(int_tokens, cast(list[float], weights), tokenizer))
-

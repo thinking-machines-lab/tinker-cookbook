@@ -1,5 +1,4 @@
-import { CookbookLink } from '../components/CookbookLink'
-
+import { CookbookLink } from "../components/CookbookLink";
 
 # Rendering to tokens
 
@@ -14,12 +13,12 @@ Rendering converts list-of-message datatypes into their token representations fo
 
 The default renderers (`qwen3`, `llama3`, `deepseekv3`, etc.) match HF behavior. The one exception is `Qwen3Renderer` with `strip_thinking_from_history=False`, which is a special mode for multi-turn RL efficiency that does NOT match HF (see [Sequence Extension](/rl/sequence-extension)).
 
-| Renderer | HF Equivalent |
-|----------|---------------|
-| `qwen3` | `apply_chat_template(..., enable_thinking=True)` (default) |
-| `qwen3_disable_thinking` | `apply_chat_template(..., enable_thinking=False)` |
-| `llama3` | `apply_chat_template(...)` |
-| `deepseekv3` | `apply_chat_template(...)` |
+| Renderer                 | HF Equivalent                                              |
+| ------------------------ | ---------------------------------------------------------- |
+| `qwen3`                  | `apply_chat_template(..., enable_thinking=True)` (default) |
+| `qwen3_disable_thinking` | `apply_chat_template(..., enable_thinking=False)`          |
+| `llama3`                 | `apply_chat_template(...)`                                 |
+| `deepseekv3`             | `apply_chat_template(...)`                                 |
 
 **Recommendation:** If you plan to use the OpenAI endpoint for inference, always use the default renderers with default options.
 
@@ -49,9 +48,7 @@ Our model maps tokens to tokens, but with the renderer, it can map messages to m
 - `get_stop_sequences`
 - `parse_response`
 
-
 `build_generation_prompt` converts a conversation into a prompt that we can use to sample from the assistant. This is used during reinforcement learning and at deployment time.
-
 
 **Example: Generate an alternative assistant response**
 
@@ -68,6 +65,7 @@ print(tokenizer.decode(prompt.to_ints()))
 ```
 
 **Output:**
+
 ```
 ModelInput(chunks=[EncodedTextChunk(tokens=[151644, 8948, 198, 2610, 525, 264, 10950, 17847, 13, 151645, 198, 151644, 8948, 198, 16141, 3529, 285, 974, 26, 518, 1429, 825, 11652, 817, 2033, 151645, 198, 151644, 872, 198, 3838, 374, 279, 22032, 61854, 20589, 306, 9419, 30, 151645, 198, 151644, 77091, 198, 785, 19020, 34651, 11244, 11, 892, 646, 3887, 916, 220, 18, 15, 1635, 13, 151645, 198, 151644, 872, 198, 10234, 30, 151645, 198, 151644, 77091, 198], type='encoded_text')])
 ----------
@@ -84,7 +82,6 @@ How do they live so long?<|im_end|>
 ```
 
 You can see that the prompt is a `ModelInput` object, which is a list of `EncodedTextChunk` objects (but contains different objects in multi-modal data).
-
 
 **Sampling and parsing the response:**
 
@@ -116,7 +113,6 @@ Parse success: True
 
 You can see that there is one stop sequence, `151645`, which you can verify is the `<|im_end|>` token. The output is parsed successfully into a message.
 
-
 ## Training: Supervised learning
 
 For supervised learning (and some other algorithms like [DPO](/preferences/dpo-guide)), we need to distinguish between **prompt tokens** (context) and **completion tokens** (what the model should learn to generate). We want to provide a target assistant message, and the renderer needs to tell us which tokens are part of the prompt and completion.
@@ -133,10 +129,37 @@ print(format_colorized(model_input.to_ints(), weights, tokenizer))
 We get the following output:
 
 <div className="example">
-<span className="prompt">&lt;|im_start|&gt;system↵<br />Answer concisely; at most one sentence per response&lt;|im_end|&gt;↵<br />&lt;|im_start|&gt;user↵<br />What is the longest-lived rodent species?&lt;|im_end|&gt;↵<br />&lt;|im_start|&gt;assistant↵<br />The naked mole rat, which can live over 30 years.&lt;|im_end|&gt;↵<br />&lt;|im_start|&gt;user↵<br />How do they live so long?&lt;|im_end|&gt;↵<br />&lt;|im_start|&gt;assistant↵<br /></span>
-<span className="completion">They evolved multiple protective mechanisms including special hyaluronic acid that prevents cancer, extremely stable proteins, and efficient DNA repair systems that work together to prevent aging.&lt;|im_end|&gt;<br /></span>
+  <span className="prompt">
+    &lt;|im_start|&gt;system↵
+    <br />
+    Answer concisely; at most one sentence per response&lt;|im_end|&gt;↵
+    <br />
+    &lt;|im_start|&gt;user↵
+    <br />
+    What is the longest-lived rodent species?&lt;|im_end|&gt;↵
+    <br />
+    &lt;|im_start|&gt;assistant↵
+    <br />
+    The naked mole rat, which can live over 30 years.&lt;|im_end|&gt;↵
+    <br />
+    &lt;|im_start|&gt;user↵
+    <br />
+    How do they live so long?&lt;|im_end|&gt;↵
+    <br />
+    &lt;|im_start|&gt;assistant↵
+    <br />
+  </span>
+  <span className="completion">
+    They evolved multiple protective mechanisms including special hyaluronic
+    acid that prevents cancer, extremely stable proteins, and efficient DNA
+    repair systems that work together to prevent aging.&lt;|im_end|&gt;
+    <br />
+  </span>
 </div>
-The green text is part of the prompt (i.e. with `weight=0`, so no loss is computed on these) and red is part of the completion (i.e. with `weight=1`, so the model is trained to predict these). Note that the ↵ have been inserted for clarity to show newlines; these are not actually part of the token sequence.
+The green text is part of the prompt (i.e. with `weight=0`, so no loss is computed
+on these) and red is part of the completion (i.e. with `weight=1`, so the model is
+trained to predict these). Note that the ↵ have been inserted for clarity to show
+newlines; these are not actually part of the token sequence.
 
 The key insight here is that only the final assistant message is treated as the completion. All previous context, including the first assistant response, is part of the prompt, so the model learns to continue conversations rather than just answer single questions.
 
@@ -168,7 +191,7 @@ For lower-level control using `ImageChunk` directly, see [Vision inputs](/traini
 
 ### Using Qwen3VLRenderer
 
-The `Qwen3VLRenderer` handles Qwen's vision special tokens (`<|vision_start|>`, `<|vision_end|>`) automatically:
+The `Qwen3VLRenderer` and `Qwen3VLInstructRenderer` handle Qwen's vision special tokens (`<|vision_start|>`, `<|vision_end|>`) automatically:
 
 ```python
 from tinker_cookbook import renderers, tokenizer_utils
@@ -178,7 +201,7 @@ model_name = "Qwen/Qwen3-VL-235B-A22B-Instruct"
 tokenizer = tokenizer_utils.get_tokenizer(model_name)
 image_processor = get_image_processor(model_name)
 
-renderer = renderers.Qwen3VLRenderer(tokenizer, image_processor)
+renderer = renderers.Qwen3VLInstructRenderer(tokenizer, image_processor)
 
 messages = [
     {
