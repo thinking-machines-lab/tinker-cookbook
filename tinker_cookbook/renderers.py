@@ -3,23 +3,22 @@ Use viz_sft_dataset to visualize the output of different renderers. E.g.,
     python -m tinker_cookbook.supervised.viz_sft_dataset dataset_path=Tulu3Builder renderer_name=role_colon
 """
 
+import io
 import json
 import logging
 import re
 import urllib.request
 from datetime import datetime
 from enum import StrEnum
-from typing import NotRequired, Optional, TypedDict, Literal, Protocol, cast
-from PIL import Image
+from typing import Literal, NotRequired, Optional, Protocol, TypedDict, cast
 
+import pydantic
 import tinker
 import torch
-import pydantic
+from PIL import Image
 
-import io
-
-from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.image_processing_utils import ImageProcessor
+from tinker_cookbook.tokenizer_utils import Tokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -907,6 +906,52 @@ class Qwen3VLRenderer(Qwen3Renderer):
         return RenderedMessage(prefix=prefix, content=ac_content_chunks_encoded)
 
 
+class Qwen3VLInstructRenderer(Qwen3VLRenderer):
+    """
+    Renderer for Qwen3-VL Instruct models.
+
+    Unlike the Qwen3-VL Thinking models, The Qwen3-VL Instruct models do not use the <think> tag.
+    """
+
+    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+        assert message.get("thinking") is None, "CoT tokens not supported in Qwen3-VL instruct"
+        maybe_newline = "\n" if idx > 0 else ""
+        ob_str = f"{maybe_newline}<|im_start|>{message['role']}\n"
+
+        ac_content_chunks = self._preprocess_message_parts(message)
+
+        if "tool_calls" in message:
+            ac_content_chunks += [
+                TextPart(
+                    type="text",
+                    text="\n".join(
+                        [
+                            f"<tool_call>\n{json.dumps(_tool_call_payload(tool_call))}\n</tool_call>"
+                            for tool_call in message["tool_calls"]
+                        ]
+                    ),
+                )
+            ]
+        ac_content_chunks += [TextPart(type="text", text="<|im_end|>")]
+
+        ac_content_chunks_encoded: list[tinker.ModelInputChunk] = [
+            image_to_chunk(
+                image_or_str=x["image"],
+                image_processor=cast(ImageProcessorProtocol, self.image_processor),
+            )
+            if x["type"] == "image"
+            else tinker.EncodedTextChunk(
+                tokens=self.tokenizer.encode(x["text"], add_special_tokens=False)
+            )
+            for x in ac_content_chunks
+        ]
+
+        prefix = tinker.types.EncodedTextChunk(
+            tokens=self.tokenizer.encode(ob_str, add_special_tokens=False)
+        )
+        return RenderedMessage(prefix=prefix, content=ac_content_chunks_encoded)
+
+
 class DeepSeekV3Renderer(Renderer):
     """
     Format like this (no newlines between messages):
@@ -1340,6 +1385,9 @@ def get_renderer(
     elif name == "qwen3_vl":
         assert image_processor is not None, "qwen3_vl renderer requires an image_processor"
         return Qwen3VLRenderer(tokenizer, image_processor)
+    elif name == "qwen3_vl_instruct":
+        assert image_processor is not None, "qwen3_vl_instruct renderer requires an image_processor"
+        return Qwen3VLInstructRenderer(tokenizer, image_processor)
     elif name == "qwen3_disable_thinking":
         return Qwen3DisableThinkingRenderer(tokenizer)
     elif name == "qwen3_instruct":

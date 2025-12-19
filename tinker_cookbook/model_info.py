@@ -105,7 +105,10 @@ def get_recommended_renderer_names(model_name: str) -> list[str]:
     elif attributes.organization == "Qwen":
         if attributes.version_str == "3":
             if attributes.is_vl:
-                return ["qwen3_vl"]
+                if "-Instruct" in model_name:
+                    return ["qwen3_vl_instruct"]
+                else:
+                    return ["qwen3_vl"]
             elif "-Instruct" in model_name:
                 return ["qwen3_instruct"]
             else:
@@ -126,4 +129,6 @@ def get_recommended_renderer_name(model_name: str) -> str:
     """
     Return the most recommended renderer for the model.
     """
-    return get_recommended_renderer_names(model_name)[0]
+    renderer_names = get_recommended_renderer_names(model_name)
+    print(f'Got renderer names: {renderer_names}')
+    return renderer_names[0]

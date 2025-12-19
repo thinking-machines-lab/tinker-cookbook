@@ -20,9 +20,11 @@ from datetime import date
 from typing import Any, cast
 
 import pytest
-from tinker_cookbook.model_info import get_recommended_renderer_name
-from tinker_cookbook.renderers import Message, get_renderer, Qwen3Renderer
 from transformers.models.auto.tokenization_auto import AutoTokenizer
+
+from tinker_cookbook.image_processing_utils import get_image_processor
+from tinker_cookbook.model_info import get_model_attributes, get_recommended_renderer_name
+from tinker_cookbook.renderers import Message, Qwen3Renderer, get_renderer
 
 
 def _load_tokenizer(model_name: str) -> Any:
@@ -48,11 +50,14 @@ def _load_tokenizer(model_name: str) -> Any:
         "deepseek-ai/DeepSeek-V3.1",
         "openai/gpt-oss-20b",
         "moonshotai/Kimi-K2-Thinking",
+        "Qwen/Qwen3-VL-30B-A3B-Instruct",
     ],
 )
 def test_generation_against_hf_chat_templates(model_name: str):
     """Test generation prompt against HF chat templates (3-turn conversation)."""
     tokenizer = _load_tokenizer(model_name)
+    attributes = get_model_attributes(model_name)
+    image_processor = get_image_processor(model_name) if attributes.is_vl else None
     # not using get_tokenizer(model_name)
     # because we want to test against the original tokenizer from HF, not the mirror
     # gpt_oss HF matches gpt_oss_medium_reasoning and not the default gpt_oss
@@ -61,7 +66,7 @@ def test_generation_against_hf_chat_templates(model_name: str):
         if not model_name.startswith("openai")
         else "gpt_oss_medium_reasoning"
     )
-    cookbook_renderer = get_renderer(render_name, tokenizer)
+    cookbook_renderer = get_renderer(render_name, tokenizer, image_processor)
     convo: list[Message] = [
         {"role": "user", "content": "Hello, how are you?"},
         {"role": "assistant", "content": "I'm fine, thank you!"},
@@ -108,11 +113,14 @@ def test_generation_against_hf_chat_templates(model_name: str):
         "deepseek-ai/DeepSeek-V3.1",
         "openai/gpt-oss-20b",
         "moonshotai/Kimi-K2-Thinking",
+        "Qwen/Qwen3-VL-30B-A3B-Instruct",
     ],
 )
 def test_supervised_example_against_hf_chat_templates(model_name: str):
     """Test supervised example against HF chat templates (2-turn conversation)."""
     tokenizer = _load_tokenizer(model_name)
+    attributes = get_model_attributes(model_name)
+    image_processor = get_image_processor(model_name) if attributes.is_vl else None
     # not using get_tokenizer(model_name)
     # because we want to test against the original tokenizer from HF, not the mirror
     render_name = (
@@ -120,7 +128,7 @@ def test_supervised_example_against_hf_chat_templates(model_name: str):
         if not model_name.startswith("openai")
         else "gpt_oss_medium_reasoning"
     )
-    cookbook_renderer = get_renderer(render_name, tokenizer)
+    cookbook_renderer = get_renderer(render_name, tokenizer, image_processor)
     convo: list[Message] = [
         {"role": "user", "content": "Hello, how are you?"},
         {"role": "assistant", "content": "I'm fine, thank you!"},
