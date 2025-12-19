@@ -1004,11 +1004,11 @@ Let's create some training examples and convert them to a format expected by Tin
 examples = [
     {
         "input": "banana split",
-        "output": "anana-bay plit-say"
+        "output": "anana-bay it-splay"
     },
     {
         "input": "quantum physics",
-        "output": "uantum-qay ysics-phay"
+        "output": "antum-quay ysics-phay"
     },
     {
         "input": "donut shop",
@@ -3174,3 +3174,4 @@ class UnloadModelResponse(BaseModel):
 
     type: Optional[Literal["unload_model"]] = None
 ```
+

@@ -18,7 +18,7 @@ dependencies = [
     "tinker>=0.6.1",
     "torch",
     "torchvision",
-    "transformers",
+    "transformers>=4.57.1",
     "blobfile",
     "inspect-ai",
     "anyio",

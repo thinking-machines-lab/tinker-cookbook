@@ -140,7 +140,7 @@ def compute_dpo_loss(
     accuracy = (chosen_log_ratio > rejected_log_ratio).float().mean().item()
     chosen_rewards = dpo_beta * chosen_log_ratio
     rejected_rewards = dpo_beta * rejected_log_ratio
-    margin = dpo_beta * (chosen_rewards - rejected_rewards).mean().item()
+    margin = (chosen_rewards - rejected_rewards).mean().item()
 
     metrics = {
         "dpo_loss": loss.item(),
@@ -394,3 +394,4 @@ def print_example(datum: tinker.Datum, tokenizer: Tokenizer, label: str = ""):
     weights = datum.loss_fn_inputs["weights"].data
     logger.info(f"\n{label} Example:")
     logger.info(format_colorized(int_tokens, cast(list[float], weights), tokenizer))
+
