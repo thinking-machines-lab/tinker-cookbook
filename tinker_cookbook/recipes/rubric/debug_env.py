@@ -33,12 +33,16 @@ def get_prometheus_datapoint() -> RubricBasedDatapoint:
 
 
 async def main(datapoint: RubricBasedDatapoint):
+    # Configuration parameters
     policy_name = "meta-llama/Llama-3.1-8B-Instruct"
     grader_name = "Qwen/Qwen3-30B-A3B-Instruct-2507"
+    policy_max_tokens = 64
+    grader_max_tokens = 64
+
     service_client = tinker.ServiceClient()
     policy = TinkerTokenCompleter(
         sampling_client=service_client.create_sampling_client(base_model=policy_name),
-        max_tokens=64,
+        max_tokens=policy_max_tokens,
     )
     policy_renderer = get_renderer(
         model_info.get_recommended_renderer_name(policy_name), get_tokenizer(policy_name)
@@ -48,7 +52,7 @@ async def main(datapoint: RubricBasedDatapoint):
         renderer=get_renderer(
             model_info.get_recommended_renderer_name(grader_name), get_tokenizer(grader_name)
         ),
-        max_tokens=64,
+        max_tokens=grader_max_tokens,
     )
 
     env = RubricGradedEnv(

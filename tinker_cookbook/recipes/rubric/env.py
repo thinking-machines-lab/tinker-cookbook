@@ -24,13 +24,7 @@ from tinker_cookbook.recipes.rubric.data import (
     Conversation,
     RubricDatapointListBuilder,
 )
-
-# ANSI color codes
-BLUE = "\033[94m"
-GREEN = "\033[92m"
-YELLOW = "\033[93m"
-MAGENTA = "\033[95m"
-RESET = "\033[0m"
+from termcolor import colored
 
 
 class RubricGradedEnv(Env):
@@ -40,14 +34,17 @@ class RubricGradedEnv(Env):
         datapoint: RubricBasedDatapoint,
         grader_llm: MessageCompleter,
         debug: bool = False,
+        format_coef: float = 0.1,
     ):
         """
-        Initialize the RubricGradedEnv. In this environment, the policy model sees the conversation, create a response, and then the grader language model grades the response based on the rubric.
+        Initialize the RubricGradedEnv. In this environment, the policy model sees the conversation,
+        creates a response, and then the grader language model grades the response based on the rubric.
         """
         self.renderer = renderer
         self.datapoint = datapoint
         self.grader_llm = grader_llm
         self.debug = debug
+        self.format_coef = format_coef
 
     @property
     def rubric_items(self) -> Sequence[Rubric]:
@@ -75,33 +72,35 @@ class RubricGradedEnv(Env):
         assert isinstance(grader_response_content, str), "Grader response content must be a string"
         score = rubric.extract_score(grader_response_content)
         if self.debug:
-            print(f"{YELLOW}{'=' * 80}")
-            print("DEBUG: First Turn of Grader Prompt")
-            print(f"{'=' * 80}{RESET}")
-            print(f"{YELLOW}{grader_prompt[0]['content']}{RESET}\n")
+            print(colored("=" * 80, "yellow"))
+            print(colored("DEBUG: First Turn of Grader Prompt", "yellow"))
+            print(colored("=" * 80, "yellow"))
+            print(colored(grader_prompt[0]["content"], "yellow") + "\n")
 
-            print(f"{MAGENTA}{'=' * 80}")
-            print("DEBUG: Score")
-            print(f"{'=' * 80}{RESET}")
-            print(f"{MAGENTA}Grader Response: {grader_response_content}{RESET}\n")
-            print(f"{MAGENTA}Extracted Score: {score}{RESET}\n")
+            print(colored("=" * 80, "magenta"))
+            print(colored("DEBUG: Score", "magenta"))
+            print(colored("=" * 80, "magenta"))
+            print(colored(f"Grader Response: {grader_response_content}", "magenta") + "\n")
+            print(colored(f"Extracted Score: {score}", "magenta") + "\n")
         return score
 
     async def step(self, action: Action) -> StepResult:
         # obtain the policy action message
-        (policy_action_message, _parse_success) = self.renderer.parse_response(action)
+        (policy_action_message, parse_success) = self.renderer.parse_response(action)
+        correct_format = float(parse_success)
 
         if self.debug:
-            print(f"\n{BLUE}{'=' * 80}")
-            print("DEBUG: Original Conversation (self.convo)")
-            print(f"{'=' * 80}{RESET}")
-            print(f"{BLUE}{json.dumps(self.convo, indent=2)}{RESET}\n")
+            print("\n" + colored("=" * 80, "blue"))
+            print(colored("DEBUG: Original Conversation (self.convo)", "blue"))
+            print(colored("=" * 80, "blue"))
+            print(colored(json.dumps(self.convo, indent=2), "blue") + "\n")
 
-            print(f"{GREEN}{'=' * 80}")
-            print("DEBUG: Policy Action Message")
-            print(f"{'=' * 80}{RESET}")
-            print(f"{GREEN}{json.dumps(policy_action_message, indent=2)}{RESET}\n")
-            # this shows the full back-and-forth conversation to the grader
+            print(colored("=" * 80, "green"))
+            print(colored("DEBUG: Policy Action Message", "green"))
+            print(colored("=" * 80, "green"))
+            print(colored(json.dumps(policy_action_message, indent=2), "green") + "\n")
+            print(colored(f"Parse Success: {parse_success}", "green") + "\n")
+
         convo = self.convo + [policy_action_message]
 
         scores = await asyncio.gather(
@@ -109,11 +108,18 @@ class RubricGradedEnv(Env):
         )
         avg_score = sum(scores) / len(scores)
 
+        # Apply format penalty similar to ProblemEnv
+        total_reward = self.format_coef * (correct_format - 1) + avg_score
+
         return StepResult(
-            reward=avg_score,
+            reward=total_reward,
             episode_done=True,
             next_observation=self.renderer.build_generation_prompt(convo),
             next_stop_condition=self.stop_condition,
+            metrics={
+                "format": correct_format,
+                "rubric_score": avg_score,
+            },
         )
 
 

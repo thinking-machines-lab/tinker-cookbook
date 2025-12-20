@@ -65,7 +65,7 @@ python -m tinker_cookbook.recipes.rubric.debug_env
 
 You can see the message that the policy sees, its response, the grader input, and the grader output.
 
-<img width="1168" height="771" alt="image" src="https://github.com/user-attachments/assets/9f4e3c89-f21e-49b0-96d6-e2f27bd21b43" />
+<img width="1168" height="771" alt="Debug output showing the conversation context, policy response, grader prompt, and extracted score" src="https://github.com/user-attachments/assets/9f4e3c89-f21e-49b0-96d6-e2f27bd21b43" />
 
 
 ### An example training run
@@ -77,7 +77,7 @@ python -m tinker_cookbook.recipes.rubric.train
 
 You can see the reward quickly goes up.
 
-<img width="705" height="279" alt="image" src="https://github.com/user-attachments/assets/2f825805-20a7-4cf3-8d06-55d5e9a98098" />
+<img width="705" height="279" alt="Training metrics showing reward increasing over training steps for the addition task" src="https://github.com/user-attachments/assets/2f825805-20a7-4cf3-8d06-55d5e9a98098" />
 
 ### A more realistic dataset
 
@@ -89,6 +89,6 @@ python -m tinker_cookbook.recipes.rubric.prometheus_experimental
 
 We can see that the reward climbs up steadily.
 
-<img width="1086" height="514" alt="image" src="https://github.com/user-attachments/assets/8877ea6c-b9ea-46da-b995-046bbd3e7c80" />
+<img width="1086" height="514" alt="Training metrics showing reward climbing steadily over training steps for the Prometheus dataset" src="https://github.com/user-attachments/assets/8877ea6c-b9ea-46da-b995-046bbd3e7c80" />
 
 Note that this training recipe is experimental -- to make the performance better we may need to fine-tune the grader LLM as well. We hope our code serves as a starting point for you to improve rubric-based grading for training LLMs!

@@ -2,7 +2,7 @@ from tinker_cookbook.renderers import (
     Message,
     Role,
 )
-from typing import TypeAlias
+from typing import Any, TypeAlias
 from dataclasses import dataclass
 from typing import Sequence
 import re
@@ -24,7 +24,7 @@ class Rubric:
         "Please output your score between 0 and 1 wrapped in <score> ... </score>"
     )
 
-    def __convert_role(self, role: Role) -> str:
+    def _convert_role(self, role: Role) -> str:
         return "Human" if role in ("user", "system") else "Chatbot"
 
     def _flatten_convo(self, convo: Conversation) -> str:
@@ -36,22 +36,41 @@ class Rubric:
         \n\nChatbot: ...
         """
         return "\n\n".join(
-            [f"{self.__convert_role(message['role'])}: {message['content']}" for message in convo]
+            [f"{self._convert_role(message['role'])}: {message['content']}" for message in convo]
         )
 
     def get_grader_prompt(self, convo: Conversation) -> Conversation:
         """
-        Create a prompt for the grader to grade the conversation based on the rubric. The prompt should contain 1) the conversation to be graded, and 2) the rubric.
+        Create a prompt for the grader to grade the conversation based on the rubric.
+        The prompt separates the context (prior turns) from the completion (last assistant message)
+        so the grader focuses on grading the most recent response.
         """
+        # Separate context from the completion to grade
+        context = convo[:-1]
+        completion = convo[-1]
 
-        prompt = "I will show you 1) a conversation between a human and a chatbot, and 2) a rubric for grading the conversation. Please grade the conversation based on the rubric."
-
-        prompt += f"Here is the conversation: <conversation>\n\n{self._flatten_convo(convo)} \n\n</conversation>\n\nHere is the rubric: <rubric>\n{self.rubric_str}\n</rubric>\n"
-        prompt += f"Please grade the conversation based on the rubric. {self.grader_output_format_instruction}"
+        lines = [
+            "I will show you a conversation context, a chatbot completion to grade, and a rubric.",
+            "Please grade the chatbot's completion based on the rubric.",
+            "",
+            "<context>",
+            self._flatten_convo(context) if context else "(No prior context)",
+            "</context>",
+            "",
+            "<completion_to_grade>",
+            f"Chatbot: {completion['content']}",
+            "</completion_to_grade>",
+            "",
+            "<rubric>",
+            self.rubric_str,
+            "</rubric>",
+            "",
+            f"Please grade the chatbot's completion based on the rubric. {self.grader_output_format_instruction}",
+        ]
         return [
             {
                 "role": "user",
-                "content": prompt,
+                "content": "\n".join(lines),
             }
         ]
 
@@ -120,6 +139,7 @@ class RubricBasedDatapoint:
 @chz.chz
 class RubricDatapointListBuilder:
     def __call__(self) -> Sequence[RubricBasedDatapoint]:
+        """Load and return a sequence of rubric-based datapoints."""
         raise NotImplementedError("Subclass must implement this method")
 
 
@@ -145,17 +165,19 @@ class PrometheusDatapointListBuilder(RubricDatapointListBuilder):
         train_dataset = load_dataset(self.data_path)["train"]
         return [self.build_rubric_datapoint(item) for item in train_dataset]  # type: ignore
 
-    def build_rubric_datapoint(self, item: dict) -> RubricBasedDatapoint:
+    def build_rubric_datapoint(self, item: dict[str, Any]) -> RubricBasedDatapoint:
         convo: Conversation = [
             {"role": "user", "content": item["orig_instruction"]},
         ]
 
-        rubric_text = f"Your job is to evaluate the following: {item['orig_criteria']}. Your response should be a score between 1 to 5.\n"
-        rubric_text += "Here is the calibration for each score:\n"
+        rubric_lines = [
+            f"Your job is to evaluate the following: {item['orig_criteria']}. Your response should be a score between 1 to 5.",
+            "Here is the calibration for each score:",
+        ]
         for i in range(1, 6):
-            rubric_text += f"<score>{i}.0</score>: {item[f'orig_score{i}_description']}\n"
-
-        rubric_text += f"\nHere is a reference response that achieved a score of 5: {item['orig_reference_answer']}\n"
+            rubric_lines.append(f"<score>{i}.0</score>: {item[f'orig_score{i}_description']}")
+        rubric_lines.append(f"Here is a reference response that achieved a score of 5: {item['orig_reference_answer']}")
+        rubric_text = "\n".join(rubric_lines)
 
         rubric = Rubric(
             rubric_str=rubric_text,
