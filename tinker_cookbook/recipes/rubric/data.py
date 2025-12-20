@@ -176,7 +176,9 @@ class PrometheusDatapointListBuilder(RubricDatapointListBuilder):
         ]
         for i in range(1, 6):
             rubric_lines.append(f"<score>{i}.0</score>: {item[f'orig_score{i}_description']}")
-        rubric_lines.append(f"Here is a reference response that achieved a score of 5: {item['orig_reference_answer']}")
+        rubric_lines.append(
+            f"Here is a reference response that achieved a score of 5: {item['orig_reference_answer']}"
+        )
         rubric_text = "\n".join(rubric_lines)
 
         rubric = Rubric(
