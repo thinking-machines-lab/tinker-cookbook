@@ -20,6 +20,14 @@ Coefficient used for computing running averages of gradient square
 
 Term added to the denominator to improve numerical stability
 
+#### `weight_decay`
+
+Weight decay coefficient for decoupled weight decay regularization (default: 0.0)
+
+#### `grad_clip_norm`
+
+Maximum gradient norm for gradient clipping. Set to 0.0 to disable clipping (default: 0.0)
+
 ## `OptimStepResponse` Objects
 
 ```python

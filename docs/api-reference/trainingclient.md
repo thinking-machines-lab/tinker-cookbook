@@ -177,7 +177,7 @@ def optim_step(
 Update model parameters using Adam optimizer.
 
 Args:
-- `adam_params`: Adam optimizer parameters (learning_rate, betas, eps, weight_decay)
+- `adam_params`: Adam optimizer parameters (learning_rate, betas, eps, weight_decay, grad_clip_norm)
 
 Returns:
 - `APIFuture` containing optimizer step response
@@ -191,7 +191,8 @@ fwdbwd_future = training_client.forward_backward(data, "cross_entropy")
 optim_future = training_client.optim_step(
     types.AdamParams(
         learning_rate=1e-4,
-        weight_decay=0.01
+        weight_decay=0.01,
+        grad_clip_norm=1.0  # Optional: clip gradients to max norm of 1.0
     )
 )
 

@@ -151,7 +151,7 @@ def _training_logprobs_from_fwd_bwd(
 async def train_step(
     data_D: List[tinker.Datum],
     training_client: tinker.TrainingClient,
-    learning_rate: float,
+    adam_params: tinker.AdamParams,
     num_substeps: int,
     loss_fn: LossFnType,
 ) -> List[torch.Tensor]:
@@ -163,7 +163,6 @@ async def train_step(
     if not batches:
         return []
 
-    adam_params = tinker.AdamParams(learning_rate=learning_rate, beta1=0.9, beta2=0.95, eps=1e-8)
     training_logprobs_D: list[torch.Tensor] = []
 
     # Enqueue first batch
@@ -262,6 +261,13 @@ class Config:
 
     # Logtree configuration
     num_groups_to_log: int = 4  # Number of groups to log per iteration (0 = disable logging)
+
+    # Adam optimizer parameters
+    adam_beta1: float = 0.9
+    adam_beta2: float = 0.95
+    adam_eps: float = 1e-8
+    weight_decay: float = 0.0
+    grad_clip_norm: float = 0.0
 
 
 @scope
@@ -868,7 +874,12 @@ async def do_train_step_streaming_and_get_sampling_client(
 
         # Enqueue optim_step before awaiting results (so they land on same clock cycle)
         adam_params = tinker.AdamParams(
-            learning_rate=cfg.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8
+            learning_rate=cfg.learning_rate,
+            beta1=cfg.adam_beta1,
+            beta2=cfg.adam_beta2,
+            eps=cfg.adam_eps,
+            weight_decay=cfg.weight_decay,
+            grad_clip_norm=cfg.grad_clip_norm,
         )
         with timed(f"train/optim_substep_{i_substep}_enqueue", metrics):
             optim_future = await training_client.optim_step_async(adam_params)
@@ -931,11 +942,19 @@ async def do_train_step_and_get_sampling_client(
     )
     metrics.update(prepare_minibatch_metrics)
 
+    adam_params = tinker.AdamParams(
+        learning_rate=cfg.learning_rate,
+        beta1=cfg.adam_beta1,
+        beta2=cfg.adam_beta2,
+        eps=cfg.adam_eps,
+        weight_decay=cfg.weight_decay,
+        grad_clip_norm=cfg.grad_clip_norm,
+    )
     with timed("train", metrics):
         training_logprobs_D = await train_step(
             data_D,
             training_client,
-            cfg.learning_rate,
+            adam_params,
             cfg.num_substeps,
             cfg.loss_fn,
         )

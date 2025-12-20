@@ -69,6 +69,8 @@ class Config:
     adam_beta1: float = 0.9
     adam_beta2: float = 0.95
     adam_eps: float = 1e-8
+    weight_decay: float = 0.0
+    grad_clip_norm: float = 0.0
 
     # Logging parameters
     wandb_project: str | None = None
@@ -251,6 +253,8 @@ async def main(config: Config):
             beta1=config.adam_beta1,
             beta2=config.adam_beta2,
             eps=config.adam_eps,
+            weight_decay=config.weight_decay,
+            grad_clip_norm=config.grad_clip_norm,
         )
 
         with timed("get_batch", metrics):
