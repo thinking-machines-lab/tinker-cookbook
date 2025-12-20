@@ -7,6 +7,7 @@ Avoid importing AutoTokenizer and PreTrainedTokenizer until runtime, because the
 
 from __future__ import annotations
 
+import os
 from functools import cache
 from typing import TYPE_CHECKING, Any, TypeAlias
 
@@ -29,6 +30,12 @@ def get_tokenizer(model_name: str) -> Tokenizer:
         model_name = "thinkingmachineslabinc/meta-llama-3-tokenizer"
 
     kwargs: dict[str, Any] = {}
+
+    # Pass HF token if available (needed for gated/private repos)
+    hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    if hf_token:
+        kwargs["token"] = hf_token
+
     if model_name == "moonshotai/Kimi-K2-Thinking":
         kwargs["trust_remote_code"] = True
         kwargs["revision"] = "612681931a8c906ddb349f8ad0f582cb552189cd"
