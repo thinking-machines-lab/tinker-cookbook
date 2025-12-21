@@ -14,8 +14,10 @@ python -m tinker_cookbook.recipes.math_rl.train model_name="meta-llama/Llama-3.2
 ## RL on MATH dataset.
 
 ```bash
-python -m tinker_cookbook.recipes.math_rl.train env=math model_name="Qwen/Qwen3-8B" group_size=16 groups_per_batch=64 learning_rate=2e-5 max_tokens=512
+python -m tinker_cookbook.recipes.math_rl.train env=math model_name="Qwen/Qwen3-8B" group_size=16 groups_per_batch=64 learning_rate=2e-5 max_tokens=2048
 ```
+
+> **Note:** Qwen3-8B uses thinking mode by default (with `<think>` blocks for chain-of-thought reasoning). This requires sufficient `max_tokens` (2048+) to complete the reasoning and produce the final `\boxed{}` answer. Using a lower value like 512 will cause responses to be truncated before the answer, resulting in 0% format scores.
 
 After 180 steps of training, we observe `"test/env/all/correct": 0.767578125`, which is logged to `/tmp/tinker-examples/math_rl/math-Qwen_Qwen3-8B-32rank-2e-05lr-${DATE}/metrics.jsonl`.
 
