@@ -58,6 +58,6 @@ The results can be seen here,
 The key differences between our experiment and the original paper include:
 1. We used the default importance-weighting REINFORCE loss implemented in Tinker
 2. We used the default synchronous rollout logic in the Tinker Cookbook
-3. We used Gemini embedding and Chroma DB, motivated by their simplicity to setup for a public demo. In exploratory experiments, the Gemini embedding does not improve RL performance over the E5 embedding model used in the original paper.
+3. We used Gemini embedding and Chroma DB, motivated by their ease of setup for a public demo. In exploratory experiments, the Gemini embedding does not improve RL performance over the E5 embedding model used in the original paper.
 
 [1] Jin, B., Zeng, H., Yue, Z., Yoon, J., Arık, S. O., Wang, D., Zamani, H., & Han, J. (2025). Search-R1: Training LLMs to reason and leverage search engines with reinforcement learning. arXiv preprint arXiv:2503.09516.
