@@ -1,6 +1,6 @@
 # Using Reinforcement Learning to Solve Math Problems
 
-Math problems have been the most active testbed for RL with LLMs. This recipe collects environments and grading functions that allows you to test on several popular math datasets.
+Math problems have been the most active testbed for RL with LLMs. This recipe collects environments and grading functions that allow you to test on several popular math datasets.
 
 
 ## RL on arithmetic.
