@@ -86,6 +86,9 @@ def _get_hidden_size(model_name: str) -> int:
             "meta-llama/Llama-3.3-70B-Instruct": 8192,
         }[model_name]
 
+    if model_name == "moonshotai/Kimi-K2-Thinking":
+        return 7168
+
     config = AutoConfig.from_pretrained(model_name)
     return config.hidden_size
 
@@ -152,6 +155,8 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
     if "llama" in model_name.lower():
         exponent_model = 0.781
     elif "qwen" in model_name.lower():
+        exponent_model = 0.0775
+    elif model_name == "moonshotai/Kimi-K2-Thinking":
         exponent_model = 0.0775
     else:
         assert False, f"Unknown model: {model_name}"

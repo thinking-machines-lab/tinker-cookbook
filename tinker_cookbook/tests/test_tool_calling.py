@@ -14,7 +14,6 @@ import tinker
 from tinker_cookbook.renderers import Message, get_renderer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-
 # =============================================================================
 # Tool Response Rendering Tests
 # =============================================================================
