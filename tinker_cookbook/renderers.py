@@ -116,35 +116,6 @@ ToolReturnType = ToolOk | ToolError
 """Union type for tool execution results - either success or error."""
 
 
-class ToolSpec(TypedDict):
-    """
-    Tool specification for defining available functions.
-
-    Example:
-        tool: ToolSpec = {
-            "name": "get_weather",
-            "description": "Get weather information for a location",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "location": {"type": "string", "description": "City name"},
-                    "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
-                },
-                "required": ["location"]
-            }
-        }
-    """
-
-    name: str
-    """The name of the function to be called."""
-
-    description: str
-    """A description of what the function does."""
-
-    parameters: NotRequired[dict]
-    """JSON Schema describing the function parameters."""
-
-
 class ToolResult(StrictBase):
     """
     Complete tool execution result with tracking ID.
@@ -541,44 +512,6 @@ class RoleColonRenderer(Renderer):
         return self.tokenizer.encode(bos_token_str, add_special_tokens=False)
 
 
-def render_tools_for_llama3(tools: list[ToolSpec]) -> str:
-    """
-    Render tool specifications for Llama 3 models.
-
-    Llama 3 uses a system prompt with `Environment: ipython` header
-    and JSON function definitions. Tool responses use the `ipython` role.
-
-    Reference: https://www.llama.com/docs/model-cards-and-prompt-formats/llama3_1/
-
-    Args:
-        tools: List of tool specifications.
-
-    Returns:
-        Formatted string for the system message header and tool definitions.
-
-    Example output:
-        Environment: ipython
-
-        You have access to the following functions:
-
-        {"name": "search", "description": "...", "parameters": {...}}
-
-        Think carefully before calling functions.
-    """
-    if not tools:
-        return ""
-
-    tool_lines = "\n\n".join(json.dumps(tool, indent=2) for tool in tools)
-
-    return f"""Environment: ipython
-
-You have access to the following functions:
-
-{tool_lines}
-
-Think carefully before calling functions."""
-
-
 class Llama3Renderer(Renderer):
     """
     Format like this:
@@ -588,20 +521,6 @@ class Llama3Renderer(Renderer):
 
         What can you help me with?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 
-    For tool calling, Llama 3 uses:
-    - System prompt with `Environment: ipython` to enable tool use
-    - Assistant generates tool calls with `<|python_tag|>` prefix or `<function=name>` format
-    - Tool responses use the `ipython` role
-
-    Example tool call:
-        <|start_header_id|>assistant<|end_header_id|>
-
-        {"name": "search", "parameters": {"query": "weather"}}
-
-    Example tool response:
-        <|start_header_id|>ipython<|end_header_id|>
-
-        {"output": "sunny, 72F"}
     """
 
     def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
@@ -609,28 +528,18 @@ class Llama3Renderer(Renderer):
         assert isinstance(message["content"], str), (
             "Llama3Renderer only supports message with string content"
         )
-
-        # Per Llama 3 documentation, tool messages use the "ipython" role
-        role = message["role"]
-        if role == "tool":
-            role = "ipython"
-            # Wrap tool response in JSON output format
-            content = json.dumps({"output": message["content"]})
-        else:
-            content = message["content"]
-
-        ob_str = f"<|start_header_id|>{role}<|end_header_id|>\n\n"
+        ob_str = f"<|start_header_id|>{message['role']}<|end_header_id|>\n\n"
         # Observation (prompt) part
-        ac_str = f"{content}<|eot_id|>"
+        ac_str = f"{message['content']}<|eot_id|>"
         prefix = tinker.types.EncodedTextChunk(
             tokens=self.tokenizer.encode(ob_str, add_special_tokens=False)
         )
-        content_chunks: list[tinker.ModelInputChunk] = [
+        content: list[tinker.ModelInputChunk] = [
             tinker.types.EncodedTextChunk(
                 tokens=self.tokenizer.encode(ac_str, add_special_tokens=False)
             )
         ]
-        return RenderedMessage(prefix=prefix, content=content_chunks)
+        return RenderedMessage(prefix=prefix, content=content)
 
     @property
     def _bos_tokens(self) -> list[int]:
@@ -648,56 +557,6 @@ class Llama3Renderer(Renderer):
         return parse_response_for_stop_token(response, self.tokenizer, self._end_message_token)
 
 
-def render_tools_for_qwen3(tools: list[ToolSpec]) -> str:
-    """
-    Render tool specifications for Qwen3 models.
-
-    Qwen3 uses XML `<tools>` tags with JSON tool definitions inside.
-    This matches the HuggingFace Qwen3 chat template behavior.
-
-    Args:
-        tools: List of tool specifications.
-
-    Returns:
-        Formatted string to append to the system message content.
-
-    Example output:
-        # Tools
-
-        You may call one or more functions to assist with the user query.
-
-        You are provided with function signatures within <tools></tools> XML tags:
-        <tools>
-        {"name": "search", "description": "...", "parameters": {...}}
-        </tools>
-
-        For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
-        <tool_call>
-        {"name": <function-name>, "arguments": <args-json-object>}
-        </tool_call>
-    """
-    if not tools:
-        return ""
-
-    tool_lines = "\n".join(json.dumps(tool, separators=(",", ":")) for tool in tools)
-
-    return f"""
-
-# Tools
-
-You may call one or more functions to assist with the user query.
-
-You are provided with function signatures within <tools></tools> XML tags:
-<tools>
-{tool_lines}
-</tools>
-
-For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
-<tool_call>
-{{"name": <function-name>, "arguments": <args-json-object>}}
-</tool_call>"""
-
-
 class Qwen3Renderer(Renderer):
     """
     Renderer for Qwen3 models with thinking enabled.
@@ -705,6 +564,8 @@ class Qwen3Renderer(Renderer):
     This renderer is designed to match HuggingFace's Qwen3 chat template behavior
     (with enable_thinking=True, which is the default). This ensures compatibility
     with the OpenAI-compatible /chat/completions endpoint, which uses HF templates.
+
+    Reference: https://huggingface.co/Qwen/Qwen3-8B/blob/main/tokenizer_config.json
 
     Format:
         <|im_start|>system
@@ -740,6 +601,20 @@ class Qwen3Renderer(Renderer):
         super().__init__(tokenizer)
         self.strip_thinking_from_history = strip_thinking_from_history
 
+    def _get_qwen_role_for_message(self, message: Message) -> str:
+        """Get the role to use for rendering a message in Qwen format.
+
+        Per HuggingFace Qwen3 chat template, tool messages are rendered with role "user".
+        """
+        role = message["role"]
+        if role == "tool":
+            return "user"
+        return role
+
+    def _wrap_qwen_tool_response(self, content: str) -> str:
+        """Wrap tool response content in Qwen's <tool_response> tags."""
+        return f"<tool_response>\n{content}\n</tool_response>"
+
     def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
         assert message.get("thinking") is None, "TODO: support CoT in Qwen3 renderer"
         assert isinstance(message["content"], str), (
@@ -747,18 +622,13 @@ class Qwen3Renderer(Renderer):
         )
         maybe_newline = "\n" if idx > 0 else ""
 
-        # Per HuggingFace Qwen3 chat template, tool messages are rendered with role "user"
-        # and content wrapped in <tool_response> tags
-        role = message["role"]
-        if role == "tool":
-            role = "user"
-
+        role = self._get_qwen_role_for_message(message)
         ob_str = f"{maybe_newline}<|im_start|>{role}\n"
         ac_content = message["content"]
 
         # Handle tool response wrapping
         if message["role"] == "tool":
-            ac_content = f"<tool_response>\n{ac_content}\n</tool_response>"
+            ac_content = self._wrap_qwen_tool_response(ac_content)
 
         if (
             self.strip_thinking_from_history
@@ -900,18 +770,13 @@ class Qwen3InstructRenderer(Qwen3Renderer):
         )
         maybe_newline = "\n" if idx > 0 else ""
 
-        # Per HuggingFace Qwen3 chat template, tool messages are rendered with role "user"
-        # and content wrapped in <tool_response> tags
-        role = message["role"]
-        if role == "tool":
-            role = "user"
-
+        role = self._get_qwen_role_for_message(message)
         ob_str = f"{maybe_newline}<|im_start|>{role}\n"
         ac_content = message["content"]
 
         # Handle tool response wrapping
         if message["role"] == "tool":
-            ac_content = f"<tool_response>\n{ac_content}\n</tool_response>"
+            ac_content = self._wrap_qwen_tool_response(ac_content)
 
         # Observation (prompt) part
         if "tool_calls" in message:
@@ -1021,28 +886,28 @@ class Qwen3VLRenderer(Qwen3Renderer):
 
         return chunks
 
+    def _wrap_qwen_tool_response_chunks(
+        self, chunks: list[ImagePart | TextPart]
+    ) -> list[ImagePart | TextPart]:
+        """Wrap content chunks in Qwen's <tool_response> tags for multimodal messages."""
+        return (
+            [TextPart(type="text", text="<tool_response>\n")]
+            + chunks
+            + [TextPart(type="text", text="\n</tool_response>")]
+        )
+
     def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
         assert message.get("thinking") is None, "TODO: support CoT in Qwen3 renderer"
         maybe_newline = "\n" if idx > 0 else ""
 
-        # Per HuggingFace Qwen3 chat template, tool messages are rendered with role "user"
-        # and content wrapped in <tool_response> tags
-        role = message["role"]
-        if role == "tool":
-            role = "user"
-
+        role = self._get_qwen_role_for_message(message)
         ob_str = f"{maybe_newline}<|im_start|>{role}\n"
 
         ac_content_chunks = self._preprocess_message_parts(message)
 
         # Handle tool response wrapping
         if message["role"] == "tool":
-            # Wrap content in tool_response tags
-            ac_content_chunks = (
-                [TextPart(type="text", text="<tool_response>\n")]
-                + ac_content_chunks
-                + [TextPart(type="text", text="\n</tool_response>")]
-            )
+            ac_content_chunks = self._wrap_qwen_tool_response_chunks(ac_content_chunks)
 
         contains_think_token = any(
             [
@@ -1105,23 +970,14 @@ class Qwen3VLInstructRenderer(Qwen3VLRenderer):
         assert message.get("thinking") is None, "CoT tokens not supported in Qwen3-VL instruct"
         maybe_newline = "\n" if idx > 0 else ""
 
-        # Per HuggingFace Qwen3 chat template, tool messages are rendered with role "user"
-        # and content wrapped in <tool_response> tags
-        role = message["role"]
-        if role == "tool":
-            role = "user"
-
+        role = self._get_qwen_role_for_message(message)
         ob_str = f"{maybe_newline}<|im_start|>{role}\n"
 
         ac_content_chunks = self._preprocess_message_parts(message)
 
         # Handle tool response wrapping
         if message["role"] == "tool":
-            ac_content_chunks = (
-                [TextPart(type="text", text="<tool_response>\n")]
-                + ac_content_chunks
-                + [TextPart(type="text", text="\n</tool_response>")]
-            )
+            ac_content_chunks = self._wrap_qwen_tool_response_chunks(ac_content_chunks)
 
         if "tool_calls" in message:
             ac_content_chunks += [
@@ -1155,54 +1011,12 @@ class Qwen3VLInstructRenderer(Qwen3VLRenderer):
         return RenderedMessage(prefix=prefix, content=ac_content_chunks_encoded)
 
 
-def render_tools_for_deepseek_v3(tools: list[ToolSpec]) -> str:
-    """
-    Render tool specifications for DeepSeek V3 models.
-
-    DeepSeek V3 uses JSON function definitions in the system prompt.
-    Note: The HuggingFace template doesn't include tool rendering,
-    so this must be manually added to the system prompt.
-
-    Reference: https://api-docs.deepseek.com/guides/function_calling
-
-    Args:
-        tools: List of tool specifications.
-
-    Returns:
-        Formatted string to include in the system message.
-    """
-    if not tools:
-        return ""
-
-    tool_lines = "\n".join(json.dumps(tool, indent=2) for tool in tools)
-
-    return f"""You have access to the following tools:
-
-{tool_lines}
-
-To call a tool, respond with a JSON object in the format:
-{{"name": "function_name", "arguments": {{"arg1": "value1"}}}}"""
-
-
 class DeepSeekV3Renderer(Renderer):
     """
     Format like this (no newlines between messages):
         <|begin_of_sentence|><|User|>What can you help me with?<|Assistant|><think>Thinking...</think>I can help you with...<|end_of_sentence|>
     For no-think, just use <|Assistant|></think>
     Deepseek renderer does not support the system role out of the box. You can set system_role_as_user to True to automatically convert the system role to the user role.
-
-    Tool calling format (per HuggingFace chat template):
-        - Tool calls: <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>{name}<｜tool▁sep｜>{json_args}<｜tool▁call▁end｜><｜tool▁calls▁end｜>
-        - Tool outputs: <｜tool▁output▁begin｜>{content}<｜tool▁output▁end｜>
-
-    Note: Uses special Unicode characters:
-        - ｜ (U+FF5C) FULLWIDTH VERTICAL LINE
-        - ▁ (U+2581) LOWER ONE EIGHTH BLOCK
-
-    References:
-        - DeepSeek V3.1 Chat Template: https://huggingface.co/deepseek-ai/DeepSeek-V3.1/blob/main/assets/chat_template.jinja
-        - DeepSeek API Guide: https://api-docs.deepseek.com/guides/function_calling
-        - Tool Trajectory Example: https://huggingface.co/deepseek-ai/DeepSeek-V3.1/blob/main/assets/search_tool_trajectory.html
     """
 
     def __init__(self, tokenizer: Tokenizer, system_role_as_user: bool = False):
@@ -1214,16 +1028,6 @@ class DeepSeekV3Renderer(Renderer):
         assert isinstance(message["content"], str), (
             "DeepSeekV3Renderer only supports message with string content"
         )
-
-        # Handle tool response messages
-        if message["role"] == "tool":
-            # Tool outputs don't have a role token prefix
-            tool_output = f"<｜tool▁output▁begin｜>{message['content']}<｜tool▁output▁end｜>"
-            ac = self.tokenizer.encode(tool_output, add_special_tokens=False)
-            prefix = tinker.types.EncodedTextChunk(tokens=[])
-            content: list[tinker.ModelInputChunk] = [tinker.types.EncodedTextChunk(tokens=ac)]
-            return RenderedMessage(prefix=prefix, content=content)
-
         if message["role"] == "user" or (self.system_role_as_user and message["role"] == "system"):
             role_token = self._get_special_token("User")
         elif message["role"] == "assistant":
@@ -1231,27 +1035,13 @@ class DeepSeekV3Renderer(Renderer):
         else:
             raise ValueError(f"Unsupported role: {message['role']}")
         ob = [role_token]
-        ac_str = message["content"]
-
-        # Handle assistant messages with tool calls
-        if message["role"] == "assistant" and "tool_calls" in message:
-            tool_calls_str = "<｜tool▁calls▁begin｜>"
-            for tool_call in message["tool_calls"]:
-                tool_calls_str += (
-                    f"<｜tool▁call▁begin｜>{tool_call.function.name}"
-                    f"<｜tool▁sep｜>{tool_call.function.arguments}"
-                    "<｜tool▁call▁end｜>"
-                )
-            tool_calls_str += "<｜tool▁calls▁end｜>"
-            ac_str += tool_calls_str
-
-        ac = self.tokenizer.encode(ac_str, add_special_tokens=False)
+        ac = self.tokenizer.encode(message["content"], add_special_tokens=False)
 
         if message["role"] == "assistant":  # end_of_message only for assistant in dsv3
             ac.append(self._end_message_token)
 
         prefix = tinker.types.EncodedTextChunk(tokens=ob)
-        content = [tinker.types.EncodedTextChunk(tokens=ac)]
+        content: list[tinker.ModelInputChunk] = [tinker.types.EncodedTextChunk(tokens=ac)]
         return RenderedMessage(prefix=prefix, content=content)
 
     def _get_special_token(self, name: str) -> int:
@@ -1272,82 +1062,8 @@ class DeepSeekV3Renderer(Renderer):
     def get_stop_sequences(self) -> list[int]:
         return [self._end_message_token]
 
-    def _parse_single_tool_call(self, tool_call_str: str) -> ToolCall | None:
-        """Parse a single DeepSeek tool call block into a ToolCall object.
-
-        Expected format: {name}<｜tool▁sep｜>{json_arguments}
-        """
-        sep = "<｜tool▁sep｜>"
-        if sep not in tool_call_str:
-            return None
-
-        parts = tool_call_str.split(sep, 1)
-        if len(parts) != 2:
-            return None
-
-        name = parts[0].strip()
-        args_str = parts[1].strip()
-
-        if not name:
-            return None
-
-        try:
-            args = json.loads(args_str) if args_str else {}
-            if not isinstance(args, dict):
-                return None
-        except json.JSONDecodeError:
-            return None
-
-        return ToolCall(
-            function=ToolCall.FunctionBody(name=name, arguments=json.dumps(args)),
-            id=None,
-        )
-
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
-        assistant_message, parse_success = parse_response_for_stop_token(
-            response, self.tokenizer, self._end_message_token
-        )
-        if not parse_success:
-            return assistant_message, False
-
-        assert isinstance(assistant_message["content"], str)
-        content = assistant_message["content"]
-
-        # Parse tool calls if present
-        tool_calls_begin = "<｜tool▁calls▁begin｜>"
-        tool_calls_end = "<｜tool▁calls▁end｜>"
-        tool_call_begin = "<｜tool▁call▁begin｜>"
-        tool_call_end = "<｜tool▁call▁end｜>"
-
-        if tool_calls_begin in content:
-            # Extract tool calls section
-            start_idx = content.find(tool_calls_begin)
-            end_idx = content.find(tool_calls_end)
-            if end_idx == -1:
-                end_idx = len(content)
-            else:
-                end_idx += len(tool_calls_end)
-
-            tool_calls_section = content[start_idx + len(tool_calls_begin) : end_idx - len(tool_calls_end)]
-
-            # Parse individual tool calls
-            tool_calls: list[ToolCall] = []
-            for match in re.finditer(
-                rf"{re.escape(tool_call_begin)}(.*?){re.escape(tool_call_end)}",
-                tool_calls_section,
-                re.DOTALL,
-            ):
-                parsed = self._parse_single_tool_call(match.group(1))
-                if parsed is None:
-                    return assistant_message, False
-                tool_calls.append(parsed)
-
-            if tool_calls:
-                assistant_message["tool_calls"] = tool_calls
-                # Strip tool calls from content
-                assistant_message["content"] = content[:start_idx].rstrip()
-
-        return assistant_message, True
+        return parse_response_for_stop_token(response, self.tokenizer, self._end_message_token)
 
 
 class DeepSeekV3DisableThinkingRenderer(DeepSeekV3Renderer):
@@ -1372,33 +1088,6 @@ class DeepSeekV3DisableThinkingRenderer(DeepSeekV3Renderer):
     ) -> tinker.ModelInput:
         prefill = "</think>" + (prefill or "")
         return super().build_generation_prompt(messages, role, prefill)
-
-
-def render_tools_for_kimi_k2(tools: list[ToolSpec]) -> Message:
-    """
-    Render tool specifications for Kimi K2 models.
-
-    Kimi K2 uses a special system message with role name `tool_declare`
-    containing the JSON tool definitions.
-
-    Reference: https://github.com/MoonshotAI/Kimi-K2/blob/main/docs/tool_call_guidance.md
-
-    Args:
-        tools: List of tool specifications.
-
-    Returns:
-        A Message dict with the tool declaration to prepend to the conversation.
-
-    Note:
-        The returned message should be inserted at the beginning of the
-        conversation, before any other messages.
-    """
-    tools_json = json.dumps(tools, separators=(",", ":"))
-    return Message(
-        role="system",
-        content=tools_json,
-        name="tool_declare",
-    )
 
 
 class KimiK2Renderer(Renderer):
@@ -1649,31 +1338,9 @@ class KimiK2Renderer(Renderer):
 
 class GptOssRenderer(Renderer):
     """
-    Renderer for OpenAI's GPT-OSS models (gpt-oss-120b, gpt-4.1-nano) using the Harmony format.
-
-    Basic format (no newlines between messages):
-        <|start|>system<|message|>You are ChatGPT...<|end|>
-        <|start|>user<|message|>How much is 1+1?<|end|>
-        <|start|>assistant<|channel|>final<|message|>2<|return|>
-
-    Note: The last message ends with <|return|> during generation, but should be
-    replaced with <|end|> when storing in conversation history.
-
-    Tool Calling (NOT YET IMPLEMENTED):
-        GPT-OSS uses a complex channel-based format for tool calling:
-        - Tools defined in developer message using TypeScript namespace syntax
-        - Tool calls go to "commentary" channel with to=functions.{name}
-        - Uses special tokens: <|call|>, <|constrain|>json, <|channel|>
-        - Tool results use function name as role with to=assistant
-
-        Due to the complexity of the Harmony format, it is recommended to use
-        the official openai-harmony library for tool calling support.
-
-    References:
-        - Harmony Format Spec: https://cookbook.openai.com/articles/openai-harmony
-        - openai-harmony library: https://github.com/openai/harmony
-        - PyPI package: https://pypi.org/project/openai-harmony/
-        - Model card: https://huggingface.co/openai/gpt-oss-120b
+    Format like this (no newlines between messages, last message should end with <|return|> but be replaced by <|end|> when continuing the convo):
+        <|start|>system<|message|>You are ChatGPT...<|end|><|start|>user<|message|>How much is 1+1?<|end|><|start|>assistant<|channel|>final<|message|>2<|end|><|start|>
+    TODO: support channels in input messages and tools
     """
 
     system_prompt = "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: {current_date}\n\nReasoning: {reasoning_effort}\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>"
