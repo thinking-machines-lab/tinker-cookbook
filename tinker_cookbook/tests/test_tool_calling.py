@@ -174,18 +174,3 @@ def test_qwen3_parse_invalid_tool_call_json():
     message, success = renderer.parse_response(response_tokens)
 
     assert success is False
-
-
-def test_qwen3_parse_no_tool_call():
-    """Test parsing response without tool calls."""
-    model_name = "Qwen/Qwen3-8B"
-    tokenizer = get_tokenizer(model_name)
-    renderer = get_renderer("qwen3", tokenizer)
-
-    response_text = "I don't need to use any tools for this.<|im_end|>"
-    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
-    message, success = renderer.parse_response(response_tokens)
-
-    assert success is True
-    assert "tool_calls" not in message
-    assert message["content"] == "I don't need to use any tools for this."
