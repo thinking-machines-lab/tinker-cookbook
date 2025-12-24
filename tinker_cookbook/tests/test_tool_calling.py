@@ -14,7 +14,6 @@ import tinker
 from tinker_cookbook.renderers import Message, get_renderer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-
 # =============================================================================
 # Tool Response Rendering Tests
 # =============================================================================
@@ -78,7 +77,7 @@ def test_qwen3_parse_single_tool_call(model_name: str, renderer_name: str):
     # Simulate model response with tool call
     response_text = """I'll search for that information.
 <tool_call>
-{"name": "search", "args": {"query": "weather in NYC"}}
+{"name": "search", "arguments": {"query": "weather in NYC"}}
 </tool_call><|im_end|>"""
 
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
@@ -110,10 +109,10 @@ def test_qwen3_parse_multiple_tool_calls(model_name: str, renderer_name: str):
     # Simulate model response with multiple tool calls
     response_text = """I'll get the weather for both cities.
 <tool_call>
-{"name": "get_weather", "args": {"location": "NYC"}}
+{"name": "get_weather", "arguments": {"location": "NYC"}}
 </tool_call>
 <tool_call>
-{"name": "get_weather", "args": {"location": "LA"}}
+{"name": "get_weather", "arguments": {"location": "LA"}}
 </tool_call><|im_end|>"""
 
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
