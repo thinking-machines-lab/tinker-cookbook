@@ -9,6 +9,7 @@ These tests verify:
 """
 
 import pytest
+import tinker
 
 from tinker_cookbook.renderers import Message, get_renderer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
@@ -38,8 +39,16 @@ def test_qwen3_tool_response_rendering(model_name: str, renderer_name: str):
     tool_message: Message = {"role": "tool", "content": '{"weather": "sunny", "high": 72}'}
 
     rendered = renderer.render_message(0, tool_message)
-    prefix_str = tokenizer.decode(rendered["prefix"].tokens)
-    content_str = tokenizer.decode(rendered["content"][0].tokens)
+    prefix = rendered.get("prefix")
+    assert prefix is not None, "Expected prefix in rendered message"
+    content = rendered["content"]
+    assert len(content) > 0, "Expected content in rendered message"
+
+    prefix_str = tokenizer.decode(list(prefix.tokens))
+    # Content[0] is an EncodedTextChunk for text-only messages
+    content_chunk = content[0]
+    assert isinstance(content_chunk, tinker.EncodedTextChunk), "Expected EncodedTextChunk"
+    content_str = tokenizer.decode(list(content_chunk.tokens))
 
     # Tool messages should be rendered as "user" role
     assert "<|im_start|>user" in prefix_str
@@ -126,8 +135,6 @@ def test_kimi_k2_parse_tool_call():
     This verifies the fix for extracting function name from tool_id format
     "functions.{name}:{idx}".
     """
-    from tinker_cookbook.renderers import get_renderer
-
     model_name = "moonshotai/Kimi-K2-Thinking"
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer("kimi_k2", tokenizer)
@@ -154,8 +161,6 @@ def test_kimi_k2_parse_tool_call():
 
 def test_qwen3_parse_invalid_tool_call_json():
     """Test that invalid JSON in tool call returns parse failure."""
-    from tinker_cookbook.renderers import get_renderer
-
     model_name = "Qwen/Qwen3-8B"
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer("qwen3", tokenizer)
@@ -173,8 +178,6 @@ def test_qwen3_parse_invalid_tool_call_json():
 
 def test_qwen3_parse_no_tool_call():
     """Test parsing response without tool calls."""
-    from tinker_cookbook.renderers import get_renderer
-
     model_name = "Qwen/Qwen3-8B"
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer("qwen3", tokenizer)
