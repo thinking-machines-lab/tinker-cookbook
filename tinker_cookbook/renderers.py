@@ -1190,6 +1190,19 @@ class DeepSeekV3Renderer(Renderer):
         <|begin_of_sentence|><|User|>What can you help me with?<|Assistant|><think>Thinking...</think>I can help you with...<|end_of_sentence|>
     For no-think, just use <|Assistant|></think>
     Deepseek renderer does not support the system role out of the box. You can set system_role_as_user to True to automatically convert the system role to the user role.
+
+    Tool calling format (per HuggingFace chat template):
+        - Tool calls: <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>{name}<｜tool▁sep｜>{json_args}<｜tool▁call▁end｜><｜tool▁calls▁end｜>
+        - Tool outputs: <｜tool▁output▁begin｜>{content}<｜tool▁output▁end｜>
+
+    Note: Uses special Unicode characters:
+        - ｜ (U+FF5C) FULLWIDTH VERTICAL LINE
+        - ▁ (U+2581) LOWER ONE EIGHTH BLOCK
+
+    References:
+        - DeepSeek V3.1 Chat Template: https://huggingface.co/deepseek-ai/DeepSeek-V3.1/blob/main/assets/chat_template.jinja
+        - DeepSeek API Guide: https://api-docs.deepseek.com/guides/function_calling
+        - Tool Trajectory Example: https://huggingface.co/deepseek-ai/DeepSeek-V3.1/blob/main/assets/search_tool_trajectory.html
     """
 
     def __init__(self, tokenizer: Tokenizer, system_role_as_user: bool = False):
@@ -1201,6 +1214,16 @@ class DeepSeekV3Renderer(Renderer):
         assert isinstance(message["content"], str), (
             "DeepSeekV3Renderer only supports message with string content"
         )
+
+        # Handle tool response messages
+        if message["role"] == "tool":
+            # Tool outputs don't have a role token prefix
+            tool_output = f"<｜tool▁output▁begin｜>{message['content']}<｜tool▁output▁end｜>"
+            ac = self.tokenizer.encode(tool_output, add_special_tokens=False)
+            prefix = tinker.types.EncodedTextChunk(tokens=[])
+            content: list[tinker.ModelInputChunk] = [tinker.types.EncodedTextChunk(tokens=ac)]
+            return RenderedMessage(prefix=prefix, content=content)
+
         if message["role"] == "user" or (self.system_role_as_user and message["role"] == "system"):
             role_token = self._get_special_token("User")
         elif message["role"] == "assistant":
@@ -1208,13 +1231,27 @@ class DeepSeekV3Renderer(Renderer):
         else:
             raise ValueError(f"Unsupported role: {message['role']}")
         ob = [role_token]
-        ac = self.tokenizer.encode(message["content"], add_special_tokens=False)
+        ac_str = message["content"]
+
+        # Handle assistant messages with tool calls
+        if message["role"] == "assistant" and "tool_calls" in message:
+            tool_calls_str = "<｜tool▁calls▁begin｜>"
+            for tool_call in message["tool_calls"]:
+                tool_calls_str += (
+                    f"<｜tool▁call▁begin｜>{tool_call.function.name}"
+                    f"<｜tool▁sep｜>{tool_call.function.arguments}"
+                    "<｜tool▁call▁end｜>"
+                )
+            tool_calls_str += "<｜tool▁calls▁end｜>"
+            ac_str += tool_calls_str
+
+        ac = self.tokenizer.encode(ac_str, add_special_tokens=False)
 
         if message["role"] == "assistant":  # end_of_message only for assistant in dsv3
             ac.append(self._end_message_token)
 
         prefix = tinker.types.EncodedTextChunk(tokens=ob)
-        content: list[tinker.ModelInputChunk] = [tinker.types.EncodedTextChunk(tokens=ac)]
+        content = [tinker.types.EncodedTextChunk(tokens=ac)]
         return RenderedMessage(prefix=prefix, content=content)
 
     def _get_special_token(self, name: str) -> int:
@@ -1235,8 +1272,82 @@ class DeepSeekV3Renderer(Renderer):
     def get_stop_sequences(self) -> list[int]:
         return [self._end_message_token]
 
+    def _parse_single_tool_call(self, tool_call_str: str) -> ToolCall | None:
+        """Parse a single DeepSeek tool call block into a ToolCall object.
+
+        Expected format: {name}<｜tool▁sep｜>{json_arguments}
+        """
+        sep = "<｜tool▁sep｜>"
+        if sep not in tool_call_str:
+            return None
+
+        parts = tool_call_str.split(sep, 1)
+        if len(parts) != 2:
+            return None
+
+        name = parts[0].strip()
+        args_str = parts[1].strip()
+
+        if not name:
+            return None
+
+        try:
+            args = json.loads(args_str) if args_str else {}
+            if not isinstance(args, dict):
+                return None
+        except json.JSONDecodeError:
+            return None
+
+        return ToolCall(
+            function=ToolCall.FunctionBody(name=name, arguments=json.dumps(args)),
+            id=None,
+        )
+
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
-        return parse_response_for_stop_token(response, self.tokenizer, self._end_message_token)
+        assistant_message, parse_success = parse_response_for_stop_token(
+            response, self.tokenizer, self._end_message_token
+        )
+        if not parse_success:
+            return assistant_message, False
+
+        assert isinstance(assistant_message["content"], str)
+        content = assistant_message["content"]
+
+        # Parse tool calls if present
+        tool_calls_begin = "<｜tool▁calls▁begin｜>"
+        tool_calls_end = "<｜tool▁calls▁end｜>"
+        tool_call_begin = "<｜tool▁call▁begin｜>"
+        tool_call_end = "<｜tool▁call▁end｜>"
+
+        if tool_calls_begin in content:
+            # Extract tool calls section
+            start_idx = content.find(tool_calls_begin)
+            end_idx = content.find(tool_calls_end)
+            if end_idx == -1:
+                end_idx = len(content)
+            else:
+                end_idx += len(tool_calls_end)
+
+            tool_calls_section = content[start_idx + len(tool_calls_begin) : end_idx - len(tool_calls_end)]
+
+            # Parse individual tool calls
+            tool_calls: list[ToolCall] = []
+            for match in re.finditer(
+                rf"{re.escape(tool_call_begin)}(.*?){re.escape(tool_call_end)}",
+                tool_calls_section,
+                re.DOTALL,
+            ):
+                parsed = self._parse_single_tool_call(match.group(1))
+                if parsed is None:
+                    return assistant_message, False
+                tool_calls.append(parsed)
+
+            if tool_calls:
+                assistant_message["tool_calls"] = tool_calls
+                # Strip tool calls from content
+                assistant_message["content"] = content[:start_idx].rstrip()
+
+        return assistant_message, True
 
 
 class DeepSeekV3DisableThinkingRenderer(DeepSeekV3Renderer):
@@ -1538,9 +1649,31 @@ class KimiK2Renderer(Renderer):
 
 class GptOssRenderer(Renderer):
     """
-    Format like this (no newlines between messages, last message should end with <|return|> but be replaced by <|end|> when continuing the convo):
-        <|start|>system<|message|>You are ChatGPT...<|end|><|start|>user<|message|>How much is 1+1?<|end|><|start|>assistant<|channel|>final<|message|>2<|end|><|start|>
-    TODO: support channels in input messages and tools
+    Renderer for OpenAI's GPT-OSS models (gpt-oss-120b, gpt-4.1-nano) using the Harmony format.
+
+    Basic format (no newlines between messages):
+        <|start|>system<|message|>You are ChatGPT...<|end|>
+        <|start|>user<|message|>How much is 1+1?<|end|>
+        <|start|>assistant<|channel|>final<|message|>2<|return|>
+
+    Note: The last message ends with <|return|> during generation, but should be
+    replaced with <|end|> when storing in conversation history.
+
+    Tool Calling (NOT YET IMPLEMENTED):
+        GPT-OSS uses a complex channel-based format for tool calling:
+        - Tools defined in developer message using TypeScript namespace syntax
+        - Tool calls go to "commentary" channel with to=functions.{name}
+        - Uses special tokens: <|call|>, <|constrain|>json, <|channel|>
+        - Tool results use function name as role with to=assistant
+
+        Due to the complexity of the Harmony format, it is recommended to use
+        the official openai-harmony library for tool calling support.
+
+    References:
+        - Harmony Format Spec: https://cookbook.openai.com/articles/openai-harmony
+        - openai-harmony library: https://github.com/openai/harmony
+        - PyPI package: https://pypi.org/project/openai-harmony/
+        - Model card: https://huggingface.co/openai/gpt-oss-120b
     """
 
     system_prompt = "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: {current_date}\n\nReasoning: {reasoning_effort}\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>"
