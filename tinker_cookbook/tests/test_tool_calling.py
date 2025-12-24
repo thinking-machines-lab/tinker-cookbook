@@ -1,11 +1,11 @@
 """
-Tests for tool calling bug fixes in renderers.
+Tests for tool calling support in renderers.
 
-These tests verify:
-1. Tool response messages are correctly rendered (Issue #74)
-2. Multiple tool calls are correctly parsed
-3. Tool call content is stripped from parsed messages
-4. Kimi K2 tool name extraction works correctly
+These tests verify that renderers correctly handle:
+1. Tool response message rendering (role mapping and content wrapping)
+2. Parsing of single and multiple tool calls from model output
+3. Stripping tool call blocks from parsed message content
+4. Extracting function names from model-specific tool call formats
 """
 
 import pytest
@@ -30,7 +30,7 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 def test_qwen3_tool_response_rendering(model_name: str, renderer_name: str):
     """Test that Qwen3 renders tool responses with user role and tool_response tags.
 
-    This verifies the fix for Issue #74: tool messages should render as
+    Per the Qwen3 chat template, tool messages should render as
     <|im_start|>user with content wrapped in <tool_response> tags.
     """
     tokenizer = get_tokenizer(model_name)
@@ -102,7 +102,7 @@ def test_qwen3_parse_single_tool_call(model_name: str, renderer_name: str):
 def test_qwen3_parse_multiple_tool_calls(model_name: str, renderer_name: str):
     """Test parsing multiple tool calls from Qwen3 response.
 
-    This verifies the fix for the bug where only the first tool call was parsed.
+    When a model response contains multiple <tool_call> blocks, all should be parsed.
     """
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer(renderer_name, tokenizer)
@@ -132,8 +132,8 @@ def test_qwen3_parse_multiple_tool_calls(model_name: str, renderer_name: str):
 def test_kimi_k2_parse_tool_call():
     """Test parsing tool call from Kimi K2 response.
 
-    This verifies the fix for extracting function name from tool_id format
-    "functions.{name}:{idx}".
+    Kimi K2 uses tool_id format "functions.{name}:{idx}", and the function
+    name should be extracted correctly.
     """
     model_name = "moonshotai/Kimi-K2-Thinking"
     tokenizer = get_tokenizer(model_name)
