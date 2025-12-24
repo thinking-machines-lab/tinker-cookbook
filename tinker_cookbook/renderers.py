@@ -227,7 +227,7 @@ def _tool_call_payload(tool_call: ToolCall) -> dict[str, object]:
     # Convert from nested structure to flat format for compatibility
     return {
         "name": tool_call.function.name,
-        "args": json.loads(tool_call.function.arguments),
+        "arguments": json.loads(tool_call.function.arguments),
     }
 
 
@@ -683,15 +683,15 @@ class Qwen3Renderer(Renderer):
         if not isinstance(tool_call, dict):
             return None
         name = tool_call.get("name")
-        args = tool_call.get("args")
+        arguments = tool_call.get("arguments")
         tool_id = tool_call.get("id")
-        if not isinstance(name, str) or not isinstance(args, dict):
+        if not isinstance(name, str) or not isinstance(arguments, dict):
             return None
         if tool_id is not None and not isinstance(tool_id, str):
             tool_id = None
         # Convert to nested structure with arguments as JSON string
         return ToolCall(
-            function=ToolCall.FunctionBody(name=name, arguments=json.dumps(args)),
+            function=ToolCall.FunctionBody(name=name, arguments=json.dumps(arguments)),
             id=tool_id,
         )
 
