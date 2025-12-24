@@ -207,6 +207,35 @@ class Message(TypedDict):
     name: NotRequired[str]
 
 
+class ToolSpec(TypedDict):
+    """
+    Tool specification following the OpenAI function calling format.
+
+    This represents a tool that can be called by the model, including its name,
+    description, and parameter schema.
+
+    Example:
+        tool_spec: ToolSpec = {
+            "name": "get_weather",
+            "description": "Get the current weather for a location",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string", "description": "City name"},
+                },
+                "required": ["location"],
+            },
+        }
+    """
+
+    name: str
+    """The name of the tool."""
+    description: str
+    """A description of what the tool does."""
+    parameters: dict
+    """JSON Schema object describing the tool's parameters."""
+
+
 def ensure_text(content: Content) -> str:
     """
     Assert that content is text-only and return it as a string.
@@ -223,11 +252,15 @@ def ensure_text(content: Content) -> str:
 
 
 def _tool_call_payload(tool_call: ToolCall) -> dict[str, object]:
-    """Minimal JSON payload for embedding in <tool_call> blocks."""
+    """Minimal JSON payload for embedding in <tool_call> blocks.
+
+    Uses "arguments" key per Qwen tool calling format:
+    https://qwen.readthedocs.io/en/latest/getting_started/concepts.html#tool-calling
+    """
     # Convert from nested structure to flat format for compatibility
     return {
         "name": tool_call.function.name,
-        "args": json.loads(tool_call.function.arguments),
+        "arguments": json.loads(tool_call.function.arguments),
     }
 
 
@@ -288,6 +321,27 @@ class Renderer(Protocol):
         raise NotImplementedError
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+        raise NotImplementedError
+
+    def create_system_prefix_with_tools(
+        self, tools: list[ToolSpec], system_prompt: str = ""
+    ) -> list[Message]:
+        """Create system message(s) with tool specifications.
+
+        Returns one or more messages to prepend to the conversation. This is the
+        standard way to add tools - the returned messages should be placed at the
+        start of your message list before user/assistant messages.
+
+        Args:
+            tools: List of tool specifications.
+            system_prompt: The system prompt content.
+
+        Returns:
+            List of messages to prepend to the conversation.
+
+        Raises:
+            NotImplementedError: If the renderer doesn't support tool calling.
+        """
         raise NotImplementedError
 
     def build_generation_prompt(
@@ -556,6 +610,31 @@ class Llama3Renderer(Renderer):
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
         return parse_response_for_stop_token(response, self.tokenizer, self._end_message_token)
 
+    def create_system_prefix_with_tools(
+        self, tools: list[ToolSpec], system_prompt: str = ""
+    ) -> list[Message]:
+        """Create system message with Llama 3 tool specifications.
+
+        Llama 3 uses a system prompt with `Environment: ipython` header
+        and JSON function definitions. Tool responses use the `ipython` role.
+
+        Reference: https://www.llama.com/docs/model-cards-and-prompt-formats/llama3_1/
+        """
+        tools_text = ""
+        if tools:
+            tool_lines = "\n\n".join(json.dumps(tool, indent=2) for tool in tools)
+            tools_text = f"""Environment: ipython
+
+You have access to the following functions:
+
+{tool_lines}
+
+Think carefully before calling functions.
+
+"""
+
+        return [Message(role="system", content=tools_text + system_prompt)]
+
 
 class Qwen3Renderer(Renderer):
     """
@@ -674,7 +753,10 @@ class Qwen3Renderer(Renderer):
         return [self._end_message_token]
 
     def _parse_single_tool_call(self, tool_call_str: str) -> ToolCall | None:
-        """Parse a single tool call JSON string into a ToolCall object."""
+        """Parse a single tool call JSON string into a ToolCall object.
+
+        Accepts both "arguments" (Qwen standard) and "args" (legacy) keys.
+        """
         try:
             tool_call = json.loads(tool_call_str.strip())
         except json.JSONDecodeError:
@@ -683,7 +765,8 @@ class Qwen3Renderer(Renderer):
         if not isinstance(tool_call, dict):
             return None
         name = tool_call.get("name")
-        args = tool_call.get("args")
+        # Accept both "arguments" (Qwen standard) and "args" (legacy)
+        args = tool_call.get("arguments") or tool_call.get("args")
         tool_id = tool_call.get("id")
         if not isinstance(name, str) or not isinstance(args, dict):
             return None
@@ -723,6 +806,37 @@ class Qwen3Renderer(Renderer):
             assistant_message["content"] = content.strip()
 
         return assistant_message, True
+
+    def create_system_prefix_with_tools(
+        self, tools: list[ToolSpec], system_prompt: str = ""
+    ) -> list[Message]:
+        """Create system message with Qwen3 tool specifications.
+
+        Qwen3 uses XML `<tools>` tags with JSON tool definitions appended to the
+        system message content.
+
+        Reference: https://huggingface.co/Qwen/Qwen3-8B/blob/main/tokenizer_config.json
+        """
+        tools_text = ""
+        if tools:
+            tool_lines = "\n".join(json.dumps(tool, separators=(",", ":")) for tool in tools)
+            tools_text = f"""
+
+# Tools
+
+You may call one or more functions to assist with the user query.
+
+You are provided with function signatures within <tools></tools> XML tags:
+<tools>
+{tool_lines}
+</tools>
+
+For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
+<tool_call>
+{{"name": <function-name>, "arguments": <args-json-object>}}
+</tool_call>"""
+
+        return [Message(role="system", content=system_prompt + tools_text)]
 
 
 class Qwen3DisableThinkingRenderer(Qwen3Renderer):
@@ -1065,6 +1179,38 @@ class DeepSeekV3Renderer(Renderer):
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
         return parse_response_for_stop_token(response, self.tokenizer, self._end_message_token)
 
+    def create_system_prefix_with_tools(
+        self, tools: list[ToolSpec], system_prompt: str = ""
+    ) -> list[Message]:
+        """Create system/user message with DeepSeek V3 tool specifications.
+
+        DeepSeek V3 uses JSON function definitions in the system prompt.
+        Tool calls use special tokens: <｜tool▁calls▁begin｜>, <｜tool▁call▁begin｜>, etc.
+
+        Note: DeepSeek V3 doesn't support system role natively. Returns user role
+        unless system_role_as_user is True (in which case system messages are
+        automatically converted to user role by render_message).
+
+        References:
+            - DeepSeek V3.1 Chat Template: https://huggingface.co/deepseek-ai/DeepSeek-V3.1/blob/main/assets/chat_template.jinja
+            - DeepSeek API Guide: https://api-docs.deepseek.com/guides/function_calling
+        """
+        tools_text = ""
+        if tools:
+            tool_lines = "\n".join(json.dumps(tool, indent=2) for tool in tools)
+            tools_text = f"""
+
+You have access to the following tools:
+
+{tool_lines}
+
+To call a tool, use the format:
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function_name<｜tool▁sep｜>{{"arg1": "value1"}}<｜tool▁call▁end｜><｜tool▁calls▁end｜>"""
+
+        # Use system role if system_role_as_user is True (will be converted), otherwise use user role
+        role = "system" if self.system_role_as_user else "user"
+        return [Message(role=role, content=system_prompt + tools_text)]
+
 
 class DeepSeekV3DisableThinkingRenderer(DeepSeekV3Renderer):
     """
@@ -1157,19 +1303,10 @@ class KimiK2Renderer(Renderer):
         ]
         return RenderedMessage(prefix=prefix, content=content)
 
-    def _get_default_system_chunk(self) -> tinker.types.EncodedTextChunk:
-        """Returns chunk for the default system message if none is present."""
-        system_str = "<|im_system|>system<|im_middle|>You are Kimi, an AI assistant created by Moonshot AI.<|im_end|>"
-        return tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(system_str))
-
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:
         chunks: list[tinker.types.ModelInputChunk] = []
-
-        # Add default system prompt if no system message present
-        if len(messages) == 0 or messages[0]["role"] != "system":
-            chunks.append(self._get_default_system_chunk())
 
         for idx, message in enumerate(messages):
             # For generation prompt, no message is "last assistant" since we're generating new response
@@ -1203,10 +1340,6 @@ class KimiK2Renderer(Renderer):
                 break
 
         model_input_chunks_weights: list[tuple[tinker.types.ModelInputChunk, float]] = []
-
-        # Add default system prompt if needed
-        if len(messages) == 0 or messages[0]["role"] != "system":
-            model_input_chunks_weights.append((self._get_default_system_chunk(), 0.0))
 
         for idx, message in enumerate(messages):
             if train_on_what == TrainOnWhat.CUSTOMIZED:
@@ -1334,6 +1467,28 @@ class KimiK2Renderer(Renderer):
                     assistant_message["content"] = content
 
         return assistant_message, True
+
+    def create_system_prefix_with_tools(
+        self, tools: list[ToolSpec], system_prompt: str = ""
+    ) -> list[Message]:
+        """Create system messages with Kimi K2 tool specifications.
+
+        Kimi K2 uses a special system message with role name `tool_declare`
+        containing the JSON tool definitions, followed by a regular system message.
+
+        Reference: https://github.com/MoonshotAI/Kimi-K2/blob/main/docs/tool_call_guidance.md
+        """
+        messages: list[Message] = []
+
+        if tools:
+            # Tool declaration message
+            tools_json = json.dumps(tools, separators=(",", ":"))
+            messages.append(Message(role="system", content=tools_json, name="tool_declare"))
+
+        # Regular system message
+        messages.append(Message(role="system", content=system_prompt))
+
+        return messages
 
 
 class GptOssRenderer(Renderer):

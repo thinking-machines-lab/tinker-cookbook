@@ -13,20 +13,13 @@ Usage:
 
 import argparse
 import asyncio
-import json
 
 import tinker
 
-from tinker_cookbook import model_info
 from tinker_cookbook.renderers import (
     Message,
-    ToolCall,
     ToolSpec,
     get_renderer,
-    render_tools_for_deepseek_v3,
-    render_tools_for_kimi_k2,
-    render_tools_for_llama3,
-    render_tools_for_qwen3,
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
@@ -68,26 +61,22 @@ MODEL_CONFIGS = [
     {
         "model_name": "Qwen/Qwen3-8B",
         "renderer_name": "qwen3",
-        "render_tools_fn": render_tools_for_qwen3,
-        "tools_in_system": True,  # Tools go in system message
     },
     {
-        "model_name": "meta-llama/Llama-3.1-8B",
+        "model_name": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+        "renderer_name": "qwen3_instruct",
+    },
+    {
+        "model_name": "meta-llama/Llama-3.1-8B-Instruct",
         "renderer_name": "llama3",
-        "render_tools_fn": render_tools_for_llama3,
-        "tools_in_system": True,
     },
     {
         "model_name": "deepseek-ai/DeepSeek-V3-0324",
         "renderer_name": "deepseekv3",
-        "render_tools_fn": render_tools_for_deepseek_v3,
-        "tools_in_system": True,
     },
     {
         "model_name": "moonshotai/Kimi-K2-Thinking",
         "renderer_name": "kimi_k2",
-        "render_tools_fn": render_tools_for_kimi_k2,
-        "tools_in_system": False,  # Tools go in separate message
     },
 ]
 
@@ -116,11 +105,11 @@ def print_result(
 
 
 async def test_model(
+    service_client: tinker.ServiceClient,
     model_name: str,
     renderer_name: str,
-    render_tools_fn: callable,
-    tools_in_system: bool,
     tools: list[ToolSpec],
+    system_prompt: str,
     user_prompt: str,
 ) -> tuple[bool, Message, str]:
     """
@@ -135,37 +124,25 @@ async def test_model(
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer(renderer_name, tokenizer)
 
-    # Build messages with tools
-    messages: list[Message] = []
-
-    if tools_in_system:
-        # Tools rendered in system message content
-        tools_text = render_tools_fn(tools)
-        system_content = f"You are a helpful assistant with access to tools.\n\n{tools_text}"
-        messages.append({"role": "system", "content": system_content})
-    else:
-        # Tools rendered as separate message (e.g., Kimi K2)
-        tools_message = render_tools_fn(tools)
-        messages.append(tools_message)
-        messages.append({"role": "system", "content": "You are a helpful assistant."})
-
-    messages.append({"role": "user", "content": user_prompt})
+    # Build messages using the unified interface
+    prefix_messages = renderer.create_system_prefix_with_tools(tools, system_prompt)
+    messages: list[Message] = prefix_messages + [{"role": "user", "content": user_prompt}]
 
     # Build prompt
     prompt = renderer.build_generation_prompt(messages)
     stop_sequences = renderer.get_stop_sequences()
 
     # Create sampling client
-    async with tinker.SamplingClient(model=model_name) as client:
-        result = await client.sample_async(
-            prompt=prompt,
-            num_samples=1,
-            sampling_params=tinker.SamplingParams(
-                stop=stop_sequences,
-                max_tokens=512,
-                temperature=0.0,  # Deterministic for testing
-            ),
-        )
+    sampling_client = service_client.create_sampling_client(base_model=model_name)
+    result = await sampling_client.sample_async(
+        prompt=prompt,
+        num_samples=1,
+        sampling_params=tinker.SamplingParams(
+            stop=stop_sequences,
+            max_tokens=512,
+            temperature=0.0,  # Deterministic for testing
+        ),
+    )
 
     # Parse response
     response_tokens = result.sequences[0].tokens
@@ -209,15 +186,19 @@ async def main():
     print(f"User prompt: {args.prompt}")
     print(f"Models to test: {[c['model_name'] for c in configs]}")
 
+    # Create service client (shared across all model tests)
+    service_client = tinker.ServiceClient()
+
+    system_prompt = "You are a helpful assistant."
     results = []
     for config in configs:
         try:
             success, message, raw_response = await test_model(
+                service_client=service_client,
                 model_name=config["model_name"],
                 renderer_name=config["renderer_name"],
-                render_tools_fn=config["render_tools_fn"],
-                tools_in_system=config["tools_in_system"],
                 tools=SAMPLE_TOOLS,
+                system_prompt=system_prompt,
                 user_prompt=args.prompt,
             )
             print_result(config["model_name"], success, message, raw_response)

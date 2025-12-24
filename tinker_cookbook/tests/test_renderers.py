@@ -89,7 +89,12 @@ def test_generation_against_hf_chat_templates(model_name: str):
         convo[1]["thinking"] = "The user is sharing a greeting. We should respond politely."
         aug_convo = convo
     elif model_name.startswith("moonshotai"):
-        aug_convo = convo
+        # Kimi K2 HF template adds default system message; we need to include it explicitly
+        system_msg: Message = {
+            "role": "system",
+            "content": "You are Kimi, an AI assistant created by Moonshot AI.",
+        }
+        aug_convo = [system_msg] + convo
     else:
         raise ValueError(f"Unknown model name: {model_name}")
 
@@ -152,9 +157,14 @@ def test_supervised_example_against_hf_chat_templates(model_name: str):
         convo[1]["thinking"] = "The user is sharing a greeting. We should respond politely."
         aug_convo = convo
     elif model_name.startswith("moonshotai"):
-        # Kimi K2 adds empty <think></think> blocks for assistant messages
-        aug_convo = convo.copy()
-        aug_convo[1]["content"] = "<think></think>I'm fine, thank you!"
+        # Kimi K2 HF template adds default system message; we need to include it explicitly
+        # Also adds empty <think></think> blocks for assistant messages
+        system_msg: Message = {
+            "role": "system",
+            "content": "You are Kimi, an AI assistant created by Moonshot AI.",
+        }
+        aug_convo = [system_msg] + convo
+        aug_convo[2]["content"] = "<think></think>I'm fine, thank you!"
     else:
         raise ValueError(f"Unknown model name: {model_name}")
 
