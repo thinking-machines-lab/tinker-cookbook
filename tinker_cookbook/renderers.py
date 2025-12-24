@@ -582,9 +582,25 @@ class Llama3Renderer(Renderer):
         assert isinstance(message["content"], str), (
             "Llama3Renderer only supports message with string content"
         )
-        ob_str = f"<|start_header_id|>{message['role']}<|end_header_id|>\n\n"
-        # Observation (prompt) part
-        ac_str = f"{message['content']}<|eot_id|>"
+
+        # Per Llama 3 documentation, tool messages use the "ipython" role
+        # Reference: https://www.llama.com/docs/model-cards-and-prompt-formats/llama3_1/
+        role = message["role"]
+        ac_content = message["content"]
+
+        if role == "tool":
+            role = "ipython"
+            # Wrap tool response in JSON output format
+            ac_content = json.dumps({"output": ac_content})
+
+        ob_str = f"<|start_header_id|>{role}<|end_header_id|>\n\n"
+
+        # Handle tool calls in assistant messages
+        if "tool_calls" in message:
+            for tool_call in message["tool_calls"]:
+                ac_content += f"\n<function={tool_call.function.name}>{tool_call.function.arguments}</function>"
+
+        ac_str = f"{ac_content}<|eot_id|>"
         prefix = tinker.types.EncodedTextChunk(
             tokens=self.tokenizer.encode(ob_str, add_special_tokens=False)
         )

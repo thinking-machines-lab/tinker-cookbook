@@ -57,6 +57,71 @@ def test_qwen3_tool_response_rendering(model_name: str, renderer_name: str):
     assert '"weather": "sunny"' in content_str
 
 
+def test_llama3_tool_response_rendering():
+    """Test that Llama3 renders tool responses with ipython role and JSON output.
+
+    Per the Llama 3.1 documentation, tool messages should render with the
+    'ipython' role and content wrapped in {"output": ...} JSON format.
+    """
+    model_name = "meta-llama/Llama-3.2-1B-Instruct"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("llama3", tokenizer)
+
+    tool_message: Message = {"role": "tool", "content": '{"weather": "sunny", "high": 72}'}
+
+    rendered = renderer.render_message(0, tool_message)
+    prefix = rendered.get("prefix")
+    assert prefix is not None, "Expected prefix in rendered message"
+    content = rendered["content"]
+    assert len(content) > 0, "Expected content in rendered message"
+
+    prefix_str = tokenizer.decode(list(prefix.tokens))
+    content_chunk = content[0]
+    assert isinstance(content_chunk, tinker.EncodedTextChunk), "Expected EncodedTextChunk"
+    content_str = tokenizer.decode(list(content_chunk.tokens))
+
+    # Tool messages should be rendered with "ipython" role
+    assert "ipython" in prefix_str
+    # Content should be wrapped in JSON output format
+    assert '"output"' in content_str
+    assert '"weather": "sunny"' in content_str
+
+
+def test_llama3_tool_call_rendering():
+    """Test that Llama3 renders assistant messages with tool_calls correctly.
+
+    When an assistant message has tool_calls, they should be rendered as
+    <function=name>{args}</function> tags.
+    """
+    from tinker_cookbook.renderers import ToolCall
+
+    model_name = "meta-llama/Llama-3.2-1B-Instruct"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("llama3", tokenizer)
+
+    tool_call = ToolCall(
+        function=ToolCall.FunctionBody(
+            name="get_weather",
+            arguments='{"location": "San Francisco"}',
+        )
+    )
+    assistant_message: Message = {
+        "role": "assistant",
+        "content": "I'll check the weather for you.",
+        "tool_calls": [tool_call],
+    }
+
+    rendered = renderer.render_message(0, assistant_message)
+    content_chunk = rendered["content"][0]
+    assert isinstance(content_chunk, tinker.EncodedTextChunk), "Expected EncodedTextChunk"
+    content_str = tokenizer.decode(list(content_chunk.tokens))
+
+    # Tool calls should be rendered with function tags
+    assert "<function=get_weather>" in content_str
+    assert '{"location": "San Francisco"}' in content_str
+    assert "</function>" in content_str
+
+
 # =============================================================================
 # Tool Call Parsing Tests
 # =============================================================================
