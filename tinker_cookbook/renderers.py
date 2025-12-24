@@ -607,29 +607,84 @@ class Llama3Renderer(Renderer):
     def get_stop_sequences(self) -> list[int]:
         return [self._end_message_token]
 
+    def _parse_llama_tool_calls(self, content: str) -> list[ToolCall]:
+        """Parse tool calls from Llama 3 format.
+
+        Llama 3 uses: <function=function_name>{"arg": "value"}</function>
+        """
+        tool_calls: list[ToolCall] = []
+
+        for match in re.finditer(
+            r"<function=(\w+)>(.*?)</function>",
+            content,
+            re.DOTALL,
+        ):
+            func_name = match.group(1)
+            args_str = match.group(2).strip()
+            try:
+                # Validate JSON
+                json.loads(args_str)
+                tool_calls.append(
+                    ToolCall(
+                        function=ToolCall.FunctionBody(name=func_name, arguments=args_str),
+                    )
+                )
+            except json.JSONDecodeError:
+                continue
+
+        return tool_calls
+
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
-        return parse_response_for_stop_token(response, self.tokenizer, self._end_message_token)
+        assistant_message, parse_success = parse_response_for_stop_token(
+            response, self.tokenizer, self._end_message_token
+        )
+        if not parse_success:
+            return assistant_message, False
+
+        assert isinstance(assistant_message["content"], str)
+        content = assistant_message["content"]
+
+        # Parse tool calls
+        tool_calls = self._parse_llama_tool_calls(content)
+        if tool_calls:
+            assistant_message["tool_calls"] = tool_calls
+            # Strip tool call blocks from content
+            content = re.sub(
+                r"\s*<function=\w+>.*?</function>",
+                "",
+                content,
+                flags=re.DOTALL,
+            )
+            assistant_message["content"] = content.strip()
+
+        return assistant_message, True
 
     def create_system_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
     ) -> list[Message]:
         """Create system message with Llama 3 tool specifications.
 
-        Llama 3 uses a system prompt with `Environment: ipython` header
-        and JSON function definitions. Tool responses use the `ipython` role.
+        Llama 3.1 supports two tool calling formats. We use the function-tag format
+        which works for custom tools without special environment setup.
 
-        Reference: https://www.llama.com/docs/model-cards-and-prompt-formats/llama3_1/
+        Reference: https://github.com/meta-llama/llama-models/blob/main/models/llama3_1/prompt_format.md
         """
         tools_text = ""
         if tools:
             tool_lines = "\n\n".join(json.dumps(tool, indent=2) for tool in tools)
-            tools_text = f"""Environment: ipython
-
-You have access to the following functions:
+            tools_text = f"""You have access to the following functions:
 
 {tool_lines}
 
-Think carefully before calling functions.
+If you choose to call a function, ONLY reply in the following format with no prefix or suffix:
+
+<function=example_function_name>{{"example_name": "example_value"}}</function>
+
+Reminder:
+- Function calls MUST follow the specified format, start with <function= and end with </function>
+- Required parameters MUST be specified
+- Only call one function at a time
+- Put the entire function call reply on one line
 
 """
 
@@ -1175,8 +1230,73 @@ class DeepSeekV3Renderer(Renderer):
     def get_stop_sequences(self) -> list[int]:
         return [self._end_message_token]
 
+    def _parse_deepseek_tool_calls(self, content: str) -> list[ToolCall]:
+        """Parse tool calls from DeepSeek V3 format.
+
+        DeepSeek uses: <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>name
+        ```json
+        {args}
+        ```
+        <｜tool▁call▁end｜>...<｜tool▁calls▁end｜>
+        """
+        tool_calls: list[ToolCall] = []
+
+        # Match tool calls section
+        calls_match = re.search(
+            r"<｜tool▁calls▁begin｜>(.*?)<｜tool▁calls▁end｜>",
+            content,
+            re.DOTALL,
+        )
+        if not calls_match:
+            return tool_calls
+
+        calls_content = calls_match.group(1)
+
+        # Parse individual tool calls
+        for match in re.finditer(
+            r"<｜tool▁call▁begin｜>(?:function)?<｜tool▁sep｜>(\w+)\s*```json\s*(.*?)\s*```\s*<｜tool▁call▁end｜>",
+            calls_content,
+            re.DOTALL,
+        ):
+            func_name = match.group(1)
+            args_str = match.group(2).strip()
+            try:
+                # Validate JSON
+                json.loads(args_str)
+                tool_calls.append(
+                    ToolCall(
+                        function=ToolCall.FunctionBody(name=func_name, arguments=args_str),
+                    )
+                )
+            except json.JSONDecodeError:
+                continue
+
+        return tool_calls
+
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
-        return parse_response_for_stop_token(response, self.tokenizer, self._end_message_token)
+        assistant_message, parse_success = parse_response_for_stop_token(
+            response, self.tokenizer, self._end_message_token
+        )
+        if not parse_success:
+            return assistant_message, False
+
+        assert isinstance(assistant_message["content"], str)
+        content = assistant_message["content"]
+
+        # Parse tool calls
+        tool_calls = self._parse_deepseek_tool_calls(content)
+        if tool_calls:
+            assistant_message["tool_calls"] = tool_calls
+            # Strip tool calls section from content
+            content = re.sub(
+                r"\s*<｜tool▁calls▁begin｜>.*?<｜tool▁calls▁end｜>",
+                "",
+                content,
+                flags=re.DOTALL,
+            )
+            assistant_message["content"] = content.strip()
+
+        return assistant_message, True
 
     def create_system_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
@@ -1184,7 +1304,7 @@ class DeepSeekV3Renderer(Renderer):
         """Create system/user message with DeepSeek V3 tool specifications.
 
         DeepSeek V3 uses JSON function definitions in the system prompt.
-        Tool calls use special tokens: <｜tool▁calls▁begin｜>, <｜tool▁call▁begin｜>, etc.
+        Tool calls use special tokens with JSON in code blocks.
 
         Note: DeepSeek V3 doesn't support system role natively. Returns user role
         unless system_role_as_user is True (in which case system messages are
@@ -1203,8 +1323,12 @@ You have access to the following tools:
 
 {tool_lines}
 
-To call a tool, use the format:
-<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function_name<｜tool▁sep｜>{{"arg1": "value1"}}<｜tool▁call▁end｜><｜tool▁calls▁end｜>"""
+To call a tool, use this format:
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>function_name
+```json
+{{"arg1": "value1"}}
+```
+<｜tool▁call▁end｜><｜tool▁calls▁end｜>"""
 
         # Use system role if system_role_as_user is True (will be converted), otherwise use user role
         role = "system" if self.system_role_as_user else "user"

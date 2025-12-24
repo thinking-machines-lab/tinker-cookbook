@@ -153,6 +153,58 @@ def test_kimi_k2_parse_tool_call():
     assert message["tool_calls"][0].id == "functions.search:0"
 
 
+def test_llama3_parse_tool_call():
+    """Test parsing tool call from Llama 3 response.
+
+    Llama 3 uses <function=name>{"args"}</function> format.
+    """
+    model_name = "meta-llama/Llama-3.2-1B-Instruct"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("llama3", tokenizer)
+
+    response_text = """I'll get the weather for you.
+<function=get_weather>{"location": "San Francisco"}</function><|eot_id|>"""
+
+    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success is True
+    assert "tool_calls" in message
+    assert len(message["tool_calls"]) == 1
+    assert message["tool_calls"][0].function.name == "get_weather"
+    assert "San Francisco" in message["tool_calls"][0].function.arguments
+    # Content should have function block stripped
+    assert "<function=" not in message["content"]
+
+
+def test_deepseek_parse_tool_call():
+    """Test parsing tool call from DeepSeek V3 response.
+
+    DeepSeek V3 uses special tokens with JSON in code blocks.
+    """
+    model_name = "deepseek-ai/DeepSeek-V3.1"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("deepseekv3", tokenizer)
+
+    response_text = """I'll check the weather.
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
+```json
+{"location": "NYC"}
+```
+<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜>"""
+
+    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success is True
+    assert "tool_calls" in message
+    assert len(message["tool_calls"]) == 1
+    assert message["tool_calls"][0].function.name == "get_weather"
+    assert "NYC" in message["tool_calls"][0].function.arguments
+    # Content should have tool calls section stripped
+    assert "<｜tool▁calls▁begin｜>" not in message["content"]
+
+
 # =============================================================================
 # Edge Cases and Error Handling
 # =============================================================================

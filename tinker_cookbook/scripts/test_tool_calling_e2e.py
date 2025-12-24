@@ -71,7 +71,7 @@ MODEL_CONFIGS = [
         "renderer_name": "llama3",
     },
     {
-        "model_name": "deepseek-ai/DeepSeek-V3-0324",
+        "model_name": "deepseek-ai/DeepSeek-V3.1",
         "renderer_name": "deepseekv3",
     },
     {
@@ -89,9 +89,9 @@ def print_result(
 ):
     """Print formatted test result."""
     status = "✓" if success else "✗"
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"{status} {model_name}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     if "tool_calls" in message and message["tool_calls"]:
         print(f"Tool calls found: {len(message['tool_calls'])}")
