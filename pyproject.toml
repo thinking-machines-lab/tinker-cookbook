@@ -27,6 +27,8 @@ dependencies = [
     "textarena>=0.7.4",
     "math-verify",
     "scipy",
+    "pytest>=9.0.2",
+    "tiktoken>=0.12.0", # Required for Kimi tokenizer
 ]
 
 [project.urls]
