@@ -565,6 +565,8 @@ class Qwen3Renderer(Renderer):
     (with enable_thinking=True, which is the default). This ensures compatibility
     with the OpenAI-compatible /chat/completions endpoint, which uses HF templates.
 
+    Reference: https://huggingface.co/Qwen/Qwen3-8B/blob/main/tokenizer_config.json
+
     Format:
         <|im_start|>system
         You are Qwen, created by Alibaba Cloud.<|im_end|>
