@@ -1015,3 +1015,18 @@ def render_with_jinja(
             f.write(html)
 
     return html
+
+
+def flush_trace() -> bool:
+    """
+    Flush the current trace to the saved path even if the trace has not been exited.
+    This is useful for long-running programs where we wanna inspect some logs early.
+
+    Returns:
+        True if the trace was flushed, False otherwise.
+    """
+    trace = _current_trace.get()
+    if trace is not None and trace.path is not None:
+        _write_trace(trace)
+        return True
+    return False
