@@ -1198,16 +1198,47 @@ class DeepSeekV3Renderer(Renderer):
         assert isinstance(message["content"], str), (
             "DeepSeekV3Renderer only supports message with string content"
         )
-        if message["role"] == "user" or (self.system_role_as_user and message["role"] == "system"):
+
+        role = message["role"]
+        message_content = message["content"]
+
+        # Handle tool response messages
+        # Per DeepSeek V3 template: <｜tool▁output▁begin｜>{content}<｜tool▁output▁end｜>
+        if role == "tool":
+            prefix_str = "<｜tool▁output▁begin｜>"
+            ac_str = f"{message_content}<｜tool▁output▁end｜>"
+            prefix = tinker.types.EncodedTextChunk(
+                tokens=self.tokenizer.encode(prefix_str, add_special_tokens=False)
+            )
+            content: list[tinker.ModelInputChunk] = [
+                tinker.types.EncodedTextChunk(
+                    tokens=self.tokenizer.encode(ac_str, add_special_tokens=False)
+                )
+            ]
+            return RenderedMessage(prefix=prefix, content=content)
+
+        if role == "user" or (self.system_role_as_user and role == "system"):
             role_token = self._get_special_token("User")
-        elif message["role"] == "assistant":
+        elif role == "assistant":
             role_token = self._get_special_token("Assistant")
         else:
-            raise ValueError(f"Unsupported role: {message['role']}")
-        ob = [role_token]
-        ac = self.tokenizer.encode(message["content"], add_special_tokens=False)
+            raise ValueError(f"Unsupported role: {role}")
 
-        if message["role"] == "assistant":  # end_of_message only for assistant in dsv3
+        ob = [role_token]
+        ac_str = message_content
+
+        # Handle tool calls in assistant messages
+        if "tool_calls" in message:
+            ac_str += "<｜tool▁calls▁begin｜>"
+            for tool_call in message["tool_calls"]:
+                func_name = tool_call.function.name
+                args = tool_call.function.arguments
+                ac_str += f"<｜tool▁call▁begin｜>function<｜tool▁sep｜>{func_name}\n```json\n{args}\n```\n<｜tool▁call▁end｜>"
+            ac_str += "<｜tool▁calls▁end｜>"
+
+        ac = self.tokenizer.encode(ac_str, add_special_tokens=False)
+
+        if role == "assistant":  # end_of_message only for assistant in dsv3
             ac.append(self._end_message_token)
 
         prefix = tinker.types.EncodedTextChunk(tokens=ob)

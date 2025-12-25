@@ -57,6 +57,123 @@ def test_qwen3_tool_response_rendering(model_name: str, renderer_name: str):
     assert '"weather": "sunny"' in content_str
 
 
+def test_deepseek_tool_response_rendering():
+    """Test that DeepSeek V3 renders tool responses with special tokens.
+
+    Per the DeepSeek V3 template, tool outputs use:
+    <｜tool▁output▁begin｜>{content}<｜tool▁output▁end｜>
+    """
+    model_name = "deepseek-ai/DeepSeek-V3.1"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("deepseekv3", tokenizer)
+
+    tool_message: Message = {
+        "role": "tool",
+        "content": '{"weather": "sunny", "high": 72}',
+    }
+
+    rendered = renderer.render_message(0, tool_message)
+    prefix = rendered.get("prefix")
+    assert prefix is not None, "Expected prefix in rendered message"
+    content = rendered["content"]
+    assert len(content) > 0, "Expected content in rendered message"
+
+    prefix_str = tokenizer.decode(list(prefix.tokens))
+    content_chunk = content[0]
+    assert isinstance(content_chunk, tinker.EncodedTextChunk), "Expected EncodedTextChunk"
+    content_str = tokenizer.decode(list(content_chunk.tokens))
+
+    # Tool outputs use special wrapper tokens (no function name in output)
+    assert "<｜tool▁output▁begin｜>" in prefix_str
+    assert "<｜tool▁output▁end｜>" in content_str
+    assert '"weather": "sunny"' in content_str
+
+
+def test_deepseek_tool_call_rendering():
+    """Test that DeepSeek V3 renders assistant messages with tool calls.
+
+    Per the DeepSeek V3 template, tool calls use:
+    <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>name
+    ```json
+    {args}
+    ```
+    <｜tool▁call▁end｜><｜tool▁calls▁end｜>
+    """
+    from tinker_cookbook.renderers import ToolCall
+
+    model_name = "deepseek-ai/DeepSeek-V3.1"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("deepseekv3", tokenizer)
+
+    tool_call = ToolCall(
+        function=ToolCall.FunctionBody(
+            name="get_weather",
+            arguments='{"location": "NYC"}',
+        )
+    )
+
+    message: Message = {
+        "role": "assistant",
+        "content": "I'll check the weather for you.",
+        "tool_calls": [tool_call],
+    }
+
+    rendered = renderer.render_message(0, message)
+    content_chunk = rendered["content"][0]
+    assert isinstance(content_chunk, tinker.EncodedTextChunk), "Expected EncodedTextChunk"
+    content_str = tokenizer.decode(list(content_chunk.tokens))
+
+    # Verify tool call structure
+    assert "I'll check the weather for you." in content_str
+    assert "<｜tool▁calls▁begin｜>" in content_str
+    assert "<｜tool▁call▁begin｜>" in content_str
+    assert "<｜tool▁sep｜>get_weather" in content_str
+    assert '{"location": "NYC"}' in content_str
+    assert "<｜tool▁call▁end｜>" in content_str
+    assert "<｜tool▁calls▁end｜>" in content_str
+
+
+def test_deepseek_multiple_tool_calls_rendering():
+    """Test rendering assistant message with multiple tool calls."""
+    from tinker_cookbook.renderers import ToolCall
+
+    model_name = "deepseek-ai/DeepSeek-V3.1"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("deepseekv3", tokenizer)
+
+    tool_calls = [
+        ToolCall(
+            function=ToolCall.FunctionBody(
+                name="get_weather",
+                arguments='{"location": "NYC"}',
+            )
+        ),
+        ToolCall(
+            function=ToolCall.FunctionBody(
+                name="get_weather",
+                arguments='{"location": "LA"}',
+            )
+        ),
+    ]
+
+    message: Message = {
+        "role": "assistant",
+        "content": "I'll check the weather for both cities.",
+        "tool_calls": tool_calls,
+    }
+
+    rendered = renderer.render_message(0, message)
+    content_chunk = rendered["content"][0]
+    assert isinstance(content_chunk, tinker.EncodedTextChunk), "Expected EncodedTextChunk"
+    content_str = tokenizer.decode(list(content_chunk.tokens))
+
+    # Verify both tool calls are present
+    assert content_str.count("<｜tool▁call▁begin｜>") == 2
+    assert content_str.count("<｜tool▁call▁end｜>") == 2
+    assert "NYC" in content_str
+    assert "LA" in content_str
+
+
 # =============================================================================
 # Tool Call Parsing Tests
 # =============================================================================
