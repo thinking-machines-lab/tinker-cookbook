@@ -379,7 +379,7 @@ def _convert_tool_calls_to_hf_format(convo: list[Message]) -> list[dict]:
                     "function": {
                         "name": tc.function.name,
                         "arguments": tc.function.arguments,
-                    }
+                    },
                 }
                 for tc in msg["tool_calls"]
             ]
