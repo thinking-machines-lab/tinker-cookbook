@@ -1432,9 +1432,8 @@ class DeepSeekV3Renderer(Renderer):
         DeepSeek V3 uses JSON function definitions in the system prompt.
         Tool calls use special tokens with JSON in code blocks.
 
-        Note: DeepSeek V3 doesn't support system role natively. Returns user role
-        unless system_role_as_user is True (in which case system messages are
-        automatically converted to user role by render_message).
+        Note: System messages at position 0 are rendered without role tokens (matching HF).
+        System messages at later positions require system_role_as_user=True.
 
         References:
             - DeepSeek V3.1 Chat Template: https://huggingface.co/deepseek-ai/DeepSeek-V3.1/blob/main/assets/chat_template.jinja
@@ -1465,7 +1464,7 @@ class DeepSeekV3DisableThinkingRenderer(DeepSeekV3Renderer):
     """
     Renderer that disables thinking for DsV3 models.
 
-    Note: The base DeepSeekV3Renderer now handles </think> addition to match HF templates,
+    Note: The base DeepSeekV3Renderer handles </think> addition to match HF templates,
     so this renderer just inherits that behavior. This class is kept for backwards
     compatibility and explicit naming.
     """
