@@ -89,6 +89,15 @@ def _get_hidden_size(model_name: str) -> int:
     if model_name == "moonshotai/Kimi-K2-Thinking":
         return 7168
 
+    if "deepseek-ai/DeepSeek-V3" in model_name:
+        return {
+            "deepseek-ai/DeepSeek-V3.1": 7168,
+            "deepseek-ai/DeepSeek-V3.1-Base": 7168,
+        }[model_name]
+
+    if model_name in ("openai/gpt-oss-20b", "openai/gpt-oss-120b"):
+        return 2880
+
     config = AutoConfig.from_pretrained(model_name)
     return config.hidden_size
 
@@ -157,6 +166,10 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
     elif "qwen" in model_name.lower():
         exponent_model = 0.0775
     elif model_name == "moonshotai/Kimi-K2-Thinking":
+        exponent_model = 0.0775
+    elif "deepseek-v3" in model_name.lower():
+        exponent_model = 0.0775
+    elif model_name in ("openai/gpt-oss-20b", "openai/gpt-oss-120b"):
         exponent_model = 0.0775
     else:
         assert False, f"Unknown model: {model_name}"
