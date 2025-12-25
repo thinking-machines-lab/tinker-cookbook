@@ -544,6 +544,7 @@ class Llama3Renderer(Renderer):
 
         What can you help me with?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 
+    The HF template prepends "Cutting Knowledge Date" info to system messages.
     """
 
     def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
@@ -562,6 +563,13 @@ class Llama3Renderer(Renderer):
 
         # Build action content
         ac_str = message["content"]
+
+        # HF template prepends date info to system messages
+        if message["role"] == "system":
+            from datetime import date
+
+            today = date.today().strftime("%d %b %Y")
+            ac_str = f"Cutting Knowledge Date: December 2023\nToday Date: {today}\n\n{ac_str}"
 
         # Handle tool calls in assistant messages
         # Llama 3 format: <function=function_name>{"arg": "value"}</function>
@@ -1209,7 +1217,9 @@ class DeepSeekV3Renderer(Renderer):
     Format like this (no newlines between messages):
         <|begin_of_sentence|><|User|>What can you help me with?<|Assistant|><think>Thinking...</think>I can help you with...<|end_of_sentence|>
     For no-think, just use <|Assistant|></think>
-    Deepseek renderer does not support the system role out of the box. You can set system_role_as_user to True to automatically convert the system role to the user role.
+
+    System messages at position 0 are rendered without role tokens (matching HF template).
+    System messages at later positions require system_role_as_user=True to convert to user role.
     """
 
     def __init__(self, tokenizer: Tokenizer, system_role_as_user: bool = False):
@@ -1221,7 +1231,23 @@ class DeepSeekV3Renderer(Renderer):
         assert isinstance(message["content"], str), (
             "DeepSeekV3Renderer only supports message with string content"
         )
-        if message["role"] == "user" or (self.system_role_as_user and message["role"] == "system"):
+        if message["role"] == "system":
+            # HF template collects all system messages at the start without role tokens
+            # We only support this for idx=0; later system messages need system_role_as_user=True
+            if idx == 0:
+                ob = []
+                ac_str = message["content"]
+            elif self.system_role_as_user:
+                # Convert later system messages to user role
+                role_token = self._get_special_token("User")
+                ob = [role_token]
+                ac_str = message["content"]
+            else:
+                raise ValueError(
+                    "DeepSeek only supports system message at start. "
+                    "Use system_role_as_user=True to convert later system messages to user role."
+                )
+        elif message["role"] == "user":
             role_token = self._get_special_token("User")
             ob = [role_token]
             ac_str = message["content"]
@@ -1286,15 +1312,17 @@ class DeepSeekV3Renderer(Renderer):
 
         for idx, message in enumerate(messages):
             rendered = self.render_message(idx, message)
-            if rendered.get("prefix"):
-                chunks.append(rendered["prefix"])
+            prefix = rendered.get("prefix")
+            if prefix:
+                chunks.append(prefix)
             chunks.extend(rendered["content"])
 
         # Add assistant prefix only if last message is NOT tool (HF behavior)
         if not messages or messages[-1]["role"] != "tool":
             rendered = self.render_message(len(messages), Message(role=role, content=""))
-            if rendered.get("prefix"):
-                chunks.append(rendered["prefix"])
+            prefix = rendered.get("prefix")
+            if prefix:
+                chunks.append(prefix)
             chunks.extend(rendered["content"])  # includes </think>
 
         if prefill:
@@ -1766,7 +1794,11 @@ class GptOssRenderer(Renderer):
             "GptOssRenderer only supports message with string content"
         )
         # Observation (prompt) part
-        ob_str = f"<|start|>{message['role']}"
+        # HF template maps "system" role to "developer" with special formatting
+        role = message["role"]
+        if role == "system":
+            role = "developer"
+        ob_str = f"<|start|>{role}"
         # Action part
         ac_str = ""
         if message["role"] == "assistant":
@@ -1785,6 +1817,9 @@ class GptOssRenderer(Renderer):
 
             # Final channel (Response Content)
             ac_str += f"<|channel|>final<|message|>{message_content}"
+        elif message["role"] == "system":
+            # HF wraps system content as developer instructions
+            ac_str += f"<|message|># Instructions\n\n{message['content']}\n\n"
         else:
             assert message.get("thinking") is None, (
                 "Thinking is only allowed for assistant messages"

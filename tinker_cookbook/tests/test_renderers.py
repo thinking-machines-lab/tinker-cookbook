@@ -17,7 +17,8 @@ See docs/compatible-apis/openai.mdx for the OpenAI-compatible endpoint documenta
 """
 
 from datetime import date
-from typing import cast
+from functools import cache
+from typing import Any, Callable, cast
 import copy
 
 import pytest
@@ -26,7 +27,21 @@ from transformers.models.auto.tokenization_auto import AutoTokenizer
 from tinker_cookbook.image_processing_utils import get_image_processor
 from tinker_cookbook.model_info import get_model_attributes, get_recommended_renderer_name
 from tinker_cookbook.renderers import Message, Qwen3Renderer, ToolCall, get_renderer
-from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.tokenizer_utils import Tokenizer
+
+
+# TEMPORARY: Local get_tokenizer that doesn't use the mirror for Llama 3, so we get
+# the real chat template for HF comparison tests. Remove this once the mirrored
+# tokenizer (thinkingmachineslabinc/meta-llama-3-tokenizer) includes the chat template.
+@cache
+def get_tokenizer(model_name: str) -> Tokenizer:
+    """Get tokenizer with chat template for HF comparison tests."""
+    kwargs: dict[str, Any] = {}
+    if model_name == "moonshotai/Kimi-K2-Thinking":
+        kwargs["trust_remote_code"] = True
+        kwargs["revision"] = "612681931a8c906ddb349f8ad0f582cb552189cd"
+
+    return AutoTokenizer.from_pretrained(model_name, use_fast=True, **kwargs)
 
 # =============================================================================
 # Test Conversation Definitions
@@ -55,6 +70,37 @@ def get_basic_2turn_conversation() -> list[Message]:
     return [
         {"role": "user", "content": "Hello, how are you?"},
         {"role": "assistant", "content": "I'm fine, thank you!"},
+    ]
+
+
+def get_system_message_3turn_conversation() -> list[Message]:
+    """3-turn conversation with a nontrivial system message.
+
+    Tests that renderers correctly handle system messages with real instructions.
+    """
+    return [
+        {
+            "role": "system",
+            "content": "You are a helpful coding assistant. Always explain your reasoning step by step.",
+        },
+        {"role": "user", "content": "How do I reverse a string in Python?"},
+        {"role": "assistant", "content": "You can use slicing: `s[::-1]` to reverse a string."},
+        {"role": "user", "content": "Can you show me another way?"},
+    ]
+
+
+def get_system_message_2turn_conversation() -> list[Message]:
+    """2-turn conversation with a nontrivial system message.
+
+    Tests that renderers correctly handle system messages with real instructions.
+    """
+    return [
+        {
+            "role": "system",
+            "content": "You are a helpful coding assistant. Always explain your reasoning step by step.",
+        },
+        {"role": "user", "content": "How do I reverse a string in Python?"},
+        {"role": "assistant", "content": "You can use slicing: `s[::-1]` to reverse a string."},
     ]
 
 
@@ -88,10 +134,12 @@ def get_tool_call_conversation() -> list[Message]:
 
 
 # Conversation registry for parametrized tests
-# Maps conversation ID to (factory_function, description, requires_tools)
-CONVERSATION_REGISTRY: dict[str, tuple[callable, str, bool]] = {
+# Maps conversation ID to (factory_function, description, requires_system)
+CONVERSATION_REGISTRY: dict[str, tuple[Callable[[], list[Message]], str, bool]] = {
     "basic_3turn": (get_basic_3turn_conversation, "basic 3-turn conversation", False),
     "basic_2turn": (get_basic_2turn_conversation, "basic 2-turn conversation", False),
+    "system_3turn": (get_system_message_3turn_conversation, "3-turn with system message", True),
+    "system_2turn": (get_system_message_2turn_conversation, "2-turn with system message", True),
 }
 
 
@@ -125,7 +173,10 @@ def _prepare_conversation_for_model(
     - OpenAI: HF templates handle the "thinking" field, so we include it in both.
       No asymmetry needed here.
 
-    - Llama/DeepSeek: No thinking-related modifications needed for either.
+    - Llama: HF auto-adds "Cutting Knowledge Date" content to the system message, so we add
+      it to aug_convo but skip the system message in hf_convo to avoid duplication.
+
+    - DeepSeek: No thinking-related modifications needed for either.
 
     Args:
         model_name: The model name (e.g., "Qwen/Qwen3-30B-A3B").
@@ -147,15 +198,17 @@ def _prepare_conversation_for_model(
     # Deep copy to avoid mutating the original
     convo = copy.deepcopy(convo)
 
+    # Check if conversation already has a system message
+    has_system = convo and convo[0]["role"] == "system"
+
     # Apply model-specific modifications first, then create hf_convo
     if model_name.startswith("meta"):
-        today = date.today().strftime("%d %b %Y")
-        system_msg: Message = {
-            "role": "system",
-            # No trailing newlines - HF template uses | trim which strips them
-            "content": f"Cutting Knowledge Date: December 2023\nToday Date: {today}",
-        }
-        aug_convo = [system_msg] + convo
+        # Only add system message if one doesn't exist - the Llama3Renderer
+        # now prepends "Cutting Knowledge Date" to any system message content
+        if has_system:
+            aug_convo = convo
+        else:
+            aug_convo = [Message(role="system", content="")] + convo
     elif model_name.startswith("Qwen"):
         if not is_generation:
             # HACK: For supervised examples, we must include thinking tags in the input.
@@ -196,6 +249,10 @@ def _prepare_conversation_for_model(
     # Only copy fields needed for basic conversation tests (role, content, thinking)
     hf_convo: list[Message] = []
     for msg in aug_convo:
+        # Skip empty system messages for Llama (ones we added) - HF auto-adds date info
+        # But include real system messages (HF will prepend date info to them)
+        if model_name.startswith("meta") and msg["role"] == "system" and not msg["content"]:
+            continue
         hf_msg: Message = {"role": msg["role"], "content": msg["content"]}
         if model_name.startswith("openai") and "thinking" in msg:
             hf_msg["thinking"] = msg["thinking"]
@@ -215,7 +272,7 @@ _GENERATION_TEST_PARAMS = [
         "moonshotai/Kimi-K2-Thinking",
         "Qwen/Qwen3-VL-30B-A3B-Instruct",
     ]
-    for conv_id in ["basic_3turn"]
+    for conv_id in ["basic_3turn", "system_3turn"]
 ]
 
 
@@ -265,7 +322,7 @@ _SUPERVISED_TEST_PARAMS = [
         "moonshotai/Kimi-K2-Thinking",
         "Qwen/Qwen3-VL-30B-A3B-Instruct",
     ]
-    for conv_id in ["basic_2turn"]
+    for conv_id in ["basic_2turn", "system_2turn"]
 ]
 
 
@@ -296,6 +353,7 @@ def test_supervised_example_against_hf_chat_templates(model_name: str, conv_id: 
     hf_output = tokenizer.apply_chat_template(
         cast(list[dict[str, str]], hf_convo), tokenize=False, add_generation_prompt=False
     )
+    assert isinstance(hf_output, str)
     hf_tokens = tokenizer.encode(hf_output.rstrip("\n"), add_special_tokens=False)
 
     assert cookbook_tokens == hf_tokens, (
