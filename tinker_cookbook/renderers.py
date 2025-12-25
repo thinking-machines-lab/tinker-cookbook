@@ -566,13 +566,6 @@ class Llama3Renderer(Renderer):
         # Build action content
         ac_str = message["content"]
 
-        # HF template prepends date info to system messages
-        if message["role"] == "system":
-            from datetime import date
-
-            today = date.today().strftime("%d %b %Y")
-            ac_str = f"Cutting Knowledge Date: December 2023\nToday Date: {today}\n\n{ac_str}"
-
         # Handle tool calls in assistant messages
         # Llama 3 format: <function=function_name>{"arg": "value"}</function>
         if "tool_calls" in message and message["tool_calls"]:
