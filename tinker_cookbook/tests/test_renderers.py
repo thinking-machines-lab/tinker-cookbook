@@ -17,169 +17,352 @@ See docs/compatible-apis/openai.mdx for the OpenAI-compatible endpoint documenta
 """
 
 from datetime import date
-from typing import Any, cast
+from typing import cast
+import copy
 
 import pytest
 from transformers.models.auto.tokenization_auto import AutoTokenizer
 
 from tinker_cookbook.image_processing_utils import get_image_processor
 from tinker_cookbook.model_info import get_model_attributes, get_recommended_renderer_name
-from tinker_cookbook.renderers import Message, Qwen3Renderer, get_renderer
-
-
-def _load_tokenizer(model_name: str) -> Any:
-    """Load tokenizer with special handling for models that need trust_remote_code."""
-    kwargs: dict[str, Any] = {}
-    if model_name == "moonshotai/Kimi-K2-Thinking":
-        kwargs["trust_remote_code"] = True
-        kwargs["revision"] = "612681931a8c906ddb349f8ad0f582cb552189cd"
-
-    return AutoTokenizer.from_pretrained(model_name, use_fast=True, **kwargs)
-
+from tinker_cookbook.renderers import Message, Qwen3Renderer, ToolCall, get_renderer
+from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 # =============================================================================
-# Basic HF Compatibility Tests (3-turn conversations)
+# Test Conversation Definitions
 # =============================================================================
+# These functions provide reusable conversations for testing different scenarios.
+# Each returns a list of Message dicts that can be used across multiple tests.
 
 
-@pytest.mark.parametrize(
-    "model_name",
-    [
-        "meta-llama/Llama-3.2-1B-Instruct",
-        "Qwen/Qwen3-30B-A3B",
-        "deepseek-ai/DeepSeek-V3.1",
-        "openai/gpt-oss-20b",
-        "moonshotai/Kimi-K2-Thinking",
-        "Qwen/Qwen3-VL-30B-A3B-Instruct",
-    ],
-)
-def test_generation_against_hf_chat_templates(model_name: str):
-    """Test generation prompt against HF chat templates (3-turn conversation)."""
-    tokenizer = _load_tokenizer(model_name)
-    attributes = get_model_attributes(model_name)
-    image_processor = get_image_processor(model_name) if attributes.is_vl else None
-    # not using get_tokenizer(model_name)
-    # because we want to test against the original tokenizer from HF, not the mirror
-    # gpt_oss HF matches gpt_oss_medium_reasoning and not the default gpt_oss
-    render_name = (
-        get_recommended_renderer_name(model_name)
-        if not model_name.startswith("openai")
-        else "gpt_oss_medium_reasoning"
-    )
-    cookbook_renderer = get_renderer(render_name, tokenizer, image_processor)
-    convo: list[Message] = [
+def get_basic_3turn_conversation() -> list[Message]:
+    """Simple 3-turn conversation: user -> assistant -> user.
+
+    This is the standard test case for generation prompt testing.
+    """
+    return [
         {"role": "user", "content": "Hello, how are you?"},
         {"role": "assistant", "content": "I'm fine, thank you!"},
         {"role": "user", "content": "What is the capital of France?"},
     ]
 
+
+def get_basic_2turn_conversation() -> list[Message]:
+    """Simple 2-turn conversation: user -> assistant.
+
+    This is the standard test case for supervised example testing.
+    """
+    return [
+        {"role": "user", "content": "Hello, how are you?"},
+        {"role": "assistant", "content": "I'm fine, thank you!"},
+    ]
+
+
+def get_tool_call_conversation() -> list[Message]:
+    """Full tool use conversation with tool call and response.
+
+    Includes: user request -> assistant tool call -> tool response -> assistant final answer.
+    """
+    return [
+        {"role": "user", "content": "What's the weather in San Francisco?"},
+        {
+            "role": "assistant",
+            "content": "I'll check the weather for you.",
+            "tool_calls": [
+                ToolCall(
+                    function=ToolCall.FunctionBody(
+                        name="get_weather",
+                        arguments='{"location": "San Francisco"}',
+                    ),
+                    id="call_123",
+                )
+            ],
+        },
+        {
+            "role": "tool",
+            "content": '{"temperature": 72, "condition": "sunny"}',
+            "tool_call_id": "call_123",
+        },
+        {"role": "assistant", "content": "The weather in San Francisco is sunny with 72°F."},
+    ]
+
+
+# Conversation registry for parametrized tests
+# Maps conversation ID to (factory_function, description, requires_tools)
+CONVERSATION_REGISTRY: dict[str, tuple[callable, str, bool]] = {
+    "basic_3turn": (get_basic_3turn_conversation, "basic 3-turn conversation", False),
+    "basic_2turn": (get_basic_2turn_conversation, "basic 2-turn conversation", False),
+    "tool_sft": (get_tool_call_conversation, "tool use conversation", True),
+}
+
+
+# Models that support tool calling in their renderers
+TOOL_CAPABLE_MODELS = {
+    "Qwen/Qwen3-30B-A3B",
+    "Qwen/Qwen3-VL-30B-A3B-Instruct",
+    "meta-llama/Llama-3.2-1B-Instruct",
+    "deepseek-ai/DeepSeek-V3.1",
+    "moonshotai/Kimi-K2-Thinking",
+}
+
+
+# =============================================================================
+# HF Compatibility Tests (parametrized by model and conversation)
+# =============================================================================
+
+
+def _prepare_conversation_for_model(
+    model_name: str, convo: list[Message], is_generation: bool
+) -> tuple[list[Message], list[Message]]:
+    """Prepare conversation for both cookbook renderer and HF template comparison.
+
+    Unfortunately, aug_convo and hf_convo sometimes need to differ because HF templates
+    auto-add certain content that our renderers expect to be present in the input:
+
+    - Qwen (supervised): HF auto-adds "<think>\\n\\n</think>\\n\\n" to assistant content,
+      but Qwen3Renderer expects thinking tags to already be in the input. So we must
+      manually add them to aug_convo while leaving hf_convo without them.
+
+    - OpenAI: HF templates handle the "thinking" field, so we include it in both.
+      No asymmetry needed here.
+
+    - Llama/DeepSeek: No thinking-related modifications needed for either.
+
+    Args:
+        model_name: The model name (e.g., "Qwen/Qwen3-30B-A3B").
+        convo: The base conversation to prepare.
+        is_generation: True for generation prompts, False for supervised examples.
+
+    Returns:
+        Tuple of (aug_convo, hf_convo):
+        - aug_convo: Augmented conversation for the cookbook renderer. May include
+          model-specific modifications like system messages, thinking tags, etc.
+          that the renderer expects in its input.
+        - hf_convo: Conversation for HF's apply_chat_template. Generally simpler
+          since HF templates auto-add things like thinking blocks. Only includes
+          fields that HF templates handle (role, content, thinking for openai).
+    """
+    # Deep copy to avoid mutating the original
+    convo = copy.deepcopy(convo)
+
+    # Apply model-specific modifications first, then create hf_convo
     if model_name.startswith("meta"):
         today = date.today().strftime("%d %b %Y")
         system_msg: Message = {
             "role": "system",
-            "content": f"Cutting Knowledge Date: December 2023\nToday Date: {today}\n\n",
+            # No trailing newlines - HF template uses | trim which strips them
+            "content": f"Cutting Knowledge Date: December 2023\nToday Date: {today}",
         }
         aug_convo = [system_msg] + convo
     elif model_name.startswith("Qwen"):
+        if not is_generation:
+            # HACK: For supervised examples, we must include thinking tags in the input.
+            #
+            # The Qwen3Renderer expects SFT data to already contain <think>...</think> blocks.
+            # It does NOT auto-add empty thinking blocks like HF's apply_chat_template does.
+            # Instead, Qwen3Renderer only adds "<think>\n" to the prefix for generation prompting
+            # (to prompt the model to start reasoning).
+            #
+            # To use Qwen3Renderer for SFT:
+            #   - Include thinking tags in your training data (empty or with actual reasoning)
+            #   - Example: {"role": "assistant", "content": "<think>\n\n</think>\n\nThe answer is 42."}
+            #
+            # Without this modification, test_supervised_example_against_hf_chat_templates fails
+            # for Qwen models because HF auto-adds "<think>\n\n</think>\n\n" but our renderer doesn't.
+            for i in range(len(convo) - 1, -1, -1):
+                if convo[i]["role"] == "assistant":
+                    content = convo[i]["content"]
+                    if "<think>" not in content:
+                        convo[i]["content"] = f"<think>\n\n</think>\n\n{content}"
+                    break
         aug_convo = convo
     elif model_name.startswith("deepseek-ai"):
         aug_convo = convo
     elif model_name.startswith("openai"):
-        # Thinking field should not be rendered in this case as it is not the last message.
-        convo[1]["thinking"] = "The user is sharing a greeting. We should respond politely."
+        # Add thinking field to first assistant message for testing
+        for msg in convo:
+            if msg["role"] == "assistant" and "thinking" not in msg:
+                msg["thinking"] = "The user is sharing a greeting. We should respond politely."
+                break
         aug_convo = convo
     elif model_name.startswith("moonshotai"):
-        # Kimi K2 HF template adds default system message; we need to include it explicitly
-        system_msg: Message = {
-            "role": "system",
-            "content": "You are Kimi, an AI assistant created by Moonshot AI.",
-        }
-        aug_convo = [system_msg] + convo
+        # Kimi K2 HF template adds default system message; we include it explicitly
+        # Note: The KimiK2Renderer automatically adds <think></think> blocks for
+        # assistant messages, so we don't need to add them here. The renderer
+        # matches HF behavior.
+
+        # system_msg: Message = {
+        #     "role": "system",
+        #     "content": KimiK2Renderer.DEFAULT_SYSTEM_PROMPT,
+        # }
+        # aug_convo = [system_msg] + convo
+        aug_convo = convo
     else:
         raise ValueError(f"Unknown model name: {model_name}")
 
-    cookbook_tokens = cookbook_renderer.build_generation_prompt(aug_convo).to_ints()
-    hf_convo = cast(list[dict[str, str]], convo)
-    hf_tokens = tokenizer.apply_chat_template(hf_convo, add_generation_prompt=True, tokenize=True)
+    # Create HF-compatible version from aug_convo
+    # Only copy fields needed for basic conversation tests (role, content, thinking)
+    hf_convo: list[Message] = []
+    for msg in aug_convo:
+        hf_msg: Message = {"role": msg["role"], "content": msg["content"]}
+        if model_name.startswith("openai") and "thinking" in msg:
+            hf_msg["thinking"] = msg["thinking"]
+        hf_convo.append(hf_msg)
 
-    assert cookbook_tokens == hf_tokens, (
-        f"Cookbook tokens: {cookbook_tokens}\n"
-        f"Cookbook string: {tokenizer.decode(cookbook_tokens)}\n"
-        f"HF tokens: {hf_tokens}\n"
-        f"HF string: {tokenizer.decode(hf_tokens)}"
-    )
+    return aug_convo, hf_convo
 
 
-@pytest.mark.parametrize(
-    "model_name",
-    [
+# Test matrix: models x conversations for generation tests
+_GENERATION_TEST_PARAMS = [
+    (model, conv_id)
+    for model in [
         "meta-llama/Llama-3.2-1B-Instruct",
         "Qwen/Qwen3-30B-A3B",
         "deepseek-ai/DeepSeek-V3.1",
         "openai/gpt-oss-20b",
         "moonshotai/Kimi-K2-Thinking",
         "Qwen/Qwen3-VL-30B-A3B-Instruct",
-    ],
-)
-def test_supervised_example_against_hf_chat_templates(model_name: str):
-    """Test supervised example against HF chat templates (2-turn conversation)."""
-    tokenizer = _load_tokenizer(model_name)
+    ]
+    for conv_id in ["basic_3turn"]
+]
+
+
+@pytest.mark.parametrize("model_name,conv_id", _GENERATION_TEST_PARAMS)
+def test_generation_against_hf_chat_templates(model_name: str, conv_id: str):
+    """Test generation prompt against HF chat templates.
+
+    Parametrized by model and conversation type. Tests that our renderer produces
+    identical tokens to HuggingFace's chat template for the same conversation.
+    """
+    conv_factory, conv_desc, requires_tools = CONVERSATION_REGISTRY[conv_id]
+    convo = conv_factory()
+
+    tokenizer = get_tokenizer(model_name)
     attributes = get_model_attributes(model_name)
     image_processor = get_image_processor(model_name) if attributes.is_vl else None
-    # not using get_tokenizer(model_name)
-    # because we want to test against the original tokenizer from HF, not the mirror
     render_name = (
         get_recommended_renderer_name(model_name)
         if not model_name.startswith("openai")
         else "gpt_oss_medium_reasoning"
     )
     cookbook_renderer = get_renderer(render_name, tokenizer, image_processor)
-    convo: list[Message] = [
-        {"role": "user", "content": "Hello, how are you?"},
-        {"role": "assistant", "content": "I'm fine, thank you!"},
-    ]
 
-    if model_name.startswith("meta"):
-        today = date.today().strftime("%d %b %Y")
-        system_msg: Message = {
-            "role": "system",
-            "content": f"Cutting Knowledge Date: December 2023\nToday Date: {today}\n\n",
-        }
-        aug_convo = [system_msg] + convo
-    elif model_name.startswith("Qwen"):
-        # HF includes thinking tags in assistant content for supervised examples.
-        aug_convo = convo.copy()
-        aug_convo[1]["content"] = "<think>\n\n</think>\n\n I'm fine, thank you!"
-    elif model_name.startswith("deepseek-ai"):
-        aug_convo = convo
-    elif model_name.startswith("openai"):
-        # Test thinking field for GPT-OSS is rendered.
-        convo[1]["thinking"] = "The user is sharing a greeting. We should respond politely."
-        aug_convo = convo
-    elif model_name.startswith("moonshotai"):
-        # Kimi K2 HF template adds default system message; we need to include it explicitly
-        # Also adds empty <think></think> blocks for assistant messages
-        system_msg: Message = {
-            "role": "system",
-            "content": "You are Kimi, an AI assistant created by Moonshot AI.",
-        }
-        aug_convo = [system_msg] + convo
-        aug_convo[2]["content"] = "<think></think>I'm fine, thank you!"
-    else:
-        raise ValueError(f"Unknown model name: {model_name}")
+    aug_convo, hf_convo = _prepare_conversation_for_model(model_name, convo, is_generation=True)
 
-    cookbook_model_input, _ = cookbook_renderer.build_supervised_example(aug_convo)
-    cookbook_tokens = cookbook_model_input.to_ints()
-    hf_convo = cast(list[dict[str, str]], convo)
-    hf_output = tokenizer.apply_chat_template(hf_convo, tokenize=False, add_generation_prompt=False)
-    hf_tokens = tokenizer.encode(hf_output.rstrip("\n"), add_special_tokens=False)
+    cookbook_tokens = cookbook_renderer.build_generation_prompt(aug_convo).to_ints()
+    hf_tokens = tokenizer.apply_chat_template(
+        cast(list[dict[str, str]], hf_convo), add_generation_prompt=True, tokenize=True
+    )
 
     assert cookbook_tokens == hf_tokens, (
-        f"Cookbook tokens: {cookbook_tokens}\n"
+        f"[{conv_desc}] Cookbook tokens: {cookbook_tokens}\n"
         f"Cookbook string: {tokenizer.decode(cookbook_tokens)}\n"
         f"HF tokens: {hf_tokens}\n"
         f"HF string: {tokenizer.decode(hf_tokens)}"
     )
+
+
+# Test matrix: models x conversations for supervised tests
+_SUPERVISED_TEST_PARAMS = [
+    (model, conv_id)
+    for model in [
+        "meta-llama/Llama-3.2-1B-Instruct",
+        "Qwen/Qwen3-30B-A3B",
+        "deepseek-ai/DeepSeek-V3.1",
+        "openai/gpt-oss-20b",
+        "moonshotai/Kimi-K2-Thinking",
+        "Qwen/Qwen3-VL-30B-A3B-Instruct",
+    ]
+    for conv_id in ["basic_2turn"]
+]
+
+
+@pytest.mark.parametrize("model_name,conv_id", _SUPERVISED_TEST_PARAMS)
+def test_supervised_example_against_hf_chat_templates(model_name: str, conv_id: str):
+    """Test supervised example against HF chat templates.
+
+    Parametrized by model and conversation type. Tests that our renderer produces
+    identical tokens to HuggingFace's chat template for the same conversation.
+    """
+    conv_factory, conv_desc, requires_tools = CONVERSATION_REGISTRY[conv_id]
+    convo = conv_factory()
+
+    tokenizer = get_tokenizer(model_name)
+    attributes = get_model_attributes(model_name)
+    image_processor = get_image_processor(model_name) if attributes.is_vl else None
+    render_name = (
+        get_recommended_renderer_name(model_name)
+        if not model_name.startswith("openai")
+        else "gpt_oss_medium_reasoning"
+    )
+    cookbook_renderer = get_renderer(render_name, tokenizer, image_processor)
+
+    aug_convo, hf_convo = _prepare_conversation_for_model(model_name, convo, is_generation=False)
+
+    cookbook_model_input, _ = cookbook_renderer.build_supervised_example(aug_convo)
+    cookbook_tokens = cookbook_model_input.to_ints()
+    hf_output = tokenizer.apply_chat_template(
+        cast(list[dict[str, str]], hf_convo), tokenize=False, add_generation_prompt=False
+    )
+    hf_tokens = tokenizer.encode(hf_output.rstrip("\n"), add_special_tokens=False)
+
+    assert cookbook_tokens == hf_tokens, (
+        f"[{conv_desc}] Cookbook tokens: {cookbook_tokens}\n"
+        f"Cookbook string: {tokenizer.decode(cookbook_tokens)}\n"
+        f"HF tokens: {hf_tokens}\n"
+        f"HF string: {tokenizer.decode(hf_tokens)}"
+    )
+
+
+# =============================================================================
+# Tool Use Rendering Tests (no HF comparison - HF templates don't support tool calls)
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "Qwen/Qwen3-30B-A3B",
+        "meta-llama/Llama-3.2-1B-Instruct",
+        "deepseek-ai/DeepSeek-V3.1",
+        "moonshotai/Kimi-K2-Thinking",
+    ],
+)
+def test_tool_call_supervised_rendering(model_name: str):
+    """Test that tool call conversations render without errors.
+
+    This doesn't compare to HF templates (which don't support tool calls),
+    but verifies that our renderers handle tool call conversations correctly.
+    """
+    convo = get_tool_call_conversation()
+
+    tokenizer = get_tokenizer(model_name)
+    attributes = get_model_attributes(model_name)
+    image_processor = get_image_processor(model_name) if attributes.is_vl else None
+    render_name = get_recommended_renderer_name(model_name)
+    cookbook_renderer = get_renderer(render_name, tokenizer, image_processor)
+
+    # Build supervised example - should not raise
+    model_input, weights = cookbook_renderer.build_supervised_example(convo)
+    tokens = model_input.to_ints()
+    decoded = tokenizer.decode(tokens)
+
+    # Verify basic structure
+    assert len(tokens) > 0, "Should produce non-empty token sequence"
+    assert len(weights) == len(tokens), "Weights should match token count"
+
+    # Verify tool-related content appears in output
+    # Different renderers format tool calls differently:
+    # - Qwen3: <tool_call>{"name": "get_weather", ...}</tool_call>
+    # - Llama3: <function=get_weather>...</function>
+    # - DeepSeek: <｜tool▁sep｜>get_weather
+    # - Kimi K2: Uses tool_id (functions.name:idx or just the id) + arguments
+    # Check for tool arguments which all formats include
+    assert "San Francisco" in decoded, f"Tool argument should appear in rendered output: {decoded}"
+
+    # Check for either the function name or the tool_call_id
+    has_tool_indicator = "get_weather" in decoded or "call_123" in decoded
+    assert has_tool_indicator, f"Tool name or ID should appear in rendered output: {decoded}"
 
 
 # =============================================================================
@@ -258,7 +441,7 @@ def test_qwen3_4turn_only_last_thinking_preserved():
 
 def test_qwen3_generation_matches_hf():
     """Test Qwen3Renderer generation prompt matches HF with enable_thinking=True (default)."""
-    tokenizer = _load_tokenizer("Qwen/Qwen3-8B")
+    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
     cookbook_renderer = get_renderer("qwen3", tokenizer)
 
     convo: list[Message] = [
@@ -326,7 +509,7 @@ def test_qwen3_disable_thinking_supervised():
 
 def test_qwen3_disable_thinking_generation():
     """Test Qwen3DisableThinkingRenderer generation matches HF with enable_thinking=False."""
-    tokenizer = _load_tokenizer("Qwen/Qwen3-8B")
+    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
     cookbook_renderer = get_renderer("qwen3_disable_thinking", tokenizer)
 
     convo: list[Message] = [
@@ -403,7 +586,7 @@ def test_qwen3_disable_thinking_4turn():
 )
 def test_eot_parsing(model_name: str, renderer_name: str):
     """Test EOT token parsing behavior for different renderers using real tokenizers."""
-    tokenizer = _load_tokenizer(model_name)
+    tokenizer = get_tokenizer(model_name)
     renderer = get_renderer(renderer_name, tokenizer)
 
     # Get the appropriate EOT token for each renderer

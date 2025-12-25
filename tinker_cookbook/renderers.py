@@ -550,9 +550,30 @@ class Llama3Renderer(Renderer):
         assert isinstance(message["content"], str), (
             "Llama3Renderer only supports message with string content"
         )
-        ob_str = f"<|start_header_id|>{message['role']}<|end_header_id|>\n\n"
-        # Observation (prompt) part
-        ac_str = f"{message['content']}<|eot_id|>"
+
+        # Determine role for header
+        # Tool responses use "ipython" role in Llama 3 format
+        role = message["role"]
+        if role == "tool":
+            role = "ipython"
+
+        ob_str = f"<|start_header_id|>{role}<|end_header_id|>\n\n"
+
+        # Build action content
+        ac_str = message["content"]
+
+        # Handle tool calls in assistant messages
+        # Llama 3 format: <function=function_name>{"arg": "value"}</function>
+        if "tool_calls" in message and message["tool_calls"]:
+            tool_call_strs = []
+            for tool_call in message["tool_calls"]:
+                func_name = tool_call.function.name
+                args = tool_call.function.arguments
+                tool_call_strs.append(f"<function={func_name}>{args}</function>")
+            ac_str += "".join(tool_call_strs)
+
+        ac_str += "<|eot_id|>"
+
         prefix = tinker.types.EncodedTextChunk(
             tokens=self.tokenizer.encode(ob_str, add_special_tokens=False)
         )
@@ -1202,10 +1223,32 @@ class DeepSeekV3Renderer(Renderer):
             role_token = self._get_special_token("User")
         elif message["role"] == "assistant":
             role_token = self._get_special_token("Assistant")
+        elif message["role"] == "tool":
+            # Tool responses use User role with tool result formatting
+            role_token = self._get_special_token("User")
         else:
             raise ValueError(f"Unsupported role: {message['role']}")
         ob = [role_token]
-        ac = self.tokenizer.encode(message["content"], add_special_tokens=False)
+
+        # Build action content
+        ac_str = message["content"]
+
+        # Handle tool response formatting
+        if message["role"] == "tool":
+            tool_call_id = message.get("tool_call_id", "")
+            ac_str = f"Tool result for {tool_call_id}:\n{ac_str}"
+
+        # Handle tool calls in assistant messages
+        # DeepSeek format: <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>name\n```json\n{args}\n```\n<｜tool▁call▁end｜><｜tool▁calls▁end｜>
+        if "tool_calls" in message and message["tool_calls"]:
+            ac_str += "<｜tool▁calls▁begin｜>"
+            for tool_call in message["tool_calls"]:
+                func_name = tool_call.function.name
+                args = tool_call.function.arguments
+                ac_str += f"<｜tool▁call▁begin｜>function<｜tool▁sep｜>{func_name}\n```json\n{args}\n```\n<｜tool▁call▁end｜>"
+            ac_str += "<｜tool▁calls▁end｜>"
+
+        ac = self.tokenizer.encode(ac_str, add_special_tokens=False)
 
         if message["role"] == "assistant":  # end_of_message only for assistant in dsv3
             ac.append(self._end_message_token)
@@ -1383,7 +1426,24 @@ class KimiK2Renderer(Renderer):
 
     Historical assistant messages use empty <think></think> blocks, while the final assistant
     response preserves reasoning_content in the thinking block.
+
+    Note: Per the HuggingFace chat template, the default system message is automatically
+    prepended if no system message is provided. This ensures train-eval consistency when
+    using HF's apply_chat_template for inference.
     """
+
+    DEFAULT_SYSTEM_PROMPT = "You are Kimi, an AI assistant created by Moonshot AI."
+
+    def _ensure_system_message(self, messages: list[Message]) -> list[Message]:
+        """Prepend default system message if no system message is present.
+
+        This matches the HuggingFace chat template behavior where a default system
+        message is automatically added when none is provided.
+        """
+        if not messages or messages[0]["role"] != "system":
+            default_system = Message(role="system", content=self.DEFAULT_SYSTEM_PROMPT)
+            return [default_system] + list(messages)
+        return messages
 
     def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
         """
@@ -1444,6 +1504,7 @@ class KimiK2Renderer(Renderer):
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:
+        messages = self._ensure_system_message(messages)
         chunks: list[tinker.types.ModelInputChunk] = []
 
         for idx, message in enumerate(messages):
@@ -1469,7 +1530,10 @@ class KimiK2Renderer(Renderer):
     ) -> tuple[tinker.ModelInput, torch.Tensor]:
         """
         Override to properly handle thinking preservation for the last assistant message.
+        Also ensures default system message is prepended if none is present.
         """
+        messages = self._ensure_system_message(messages)
+
         # Find last non-tool-call assistant message index
         last_assistant_idx = -1
         for idx in range(len(messages) - 1, -1, -1):
@@ -1619,20 +1683,22 @@ class KimiK2Renderer(Renderer):
     ) -> list[Message]:
         """Create system messages with Kimi K2 tool specifications.
 
-        Kimi K2 uses a special system message with role name `tool_declare`
-        containing the JSON tool definitions, followed by a regular system message.
+        Per the HuggingFace chat template, Kimi K2 places the tool_declare message
+        BEFORE the regular system message. If no system_prompt is provided, uses
+        the default system prompt to match HuggingFace chat template behavior.
 
-        Reference: https://github.com/MoonshotAI/Kimi-K2/blob/main/docs/tool_call_guidance.md
+        Reference: https://huggingface.co/moonshotai/Kimi-K2-Thinking (chat_template)
         """
         messages: list[Message] = []
 
+        # Tool declaration message comes first (per HF chat template)
         if tools:
-            # Tool declaration message
             tools_json = json.dumps(tools, separators=(",", ":"))
             messages.append(Message(role="system", content=tools_json, name="tool_declare"))
 
-        # Regular system message
-        messages.append(Message(role="system", content=system_prompt))
+        # Regular system message second (use default if none provided)
+        actual_system_prompt = system_prompt if system_prompt else self.DEFAULT_SYSTEM_PROMPT
+        messages.append(Message(role="system", content=actual_system_prompt))
 
         return messages
 
