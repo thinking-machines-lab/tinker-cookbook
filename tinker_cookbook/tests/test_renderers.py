@@ -214,19 +214,11 @@ def _prepare_conversation_for_model(
             aug_convo = [Message(role="system", content=date_prefix)] + convo
     elif model_name.startswith("Qwen"):
         if not is_generation:
-            # HACK: For supervised examples, we must include thinking tags in the input.
-            #
-            # The Qwen3Renderer expects SFT data to already contain <think>...</think> blocks.
-            # It does NOT auto-add empty thinking blocks like HF's apply_chat_template does.
+            # This is a hack needed for test_supervised_example_against_hf_chat_templates.
+            # The Qwen3Renderer does NOT auto-add empty thinking blocks like HF's apply_chat_template does.
             # Instead, Qwen3Renderer only adds "<think>\n" to the prefix for generation prompting
-            # (to prompt the model to start reasoning).
-            #
-            # To use Qwen3Renderer for SFT:
-            #   - Include thinking tags in your training data (empty or with actual reasoning)
-            #   - Example: {"role": "assistant", "content": "<think>\n\n</think>\n\nThe answer is 42."}
-            #
-            # Without this modification, test_supervised_example_against_hf_chat_templates fails
-            # for Qwen models because HF auto-adds "<think>\n\n</think>\n\n" but our renderer doesn't.
+            # (to prompt the model to start reasoning). We probably want to make the SFT behavior
+            # match the generation behavior, but that's for a future PR. (TODO)
             for i in range(len(convo) - 1, -1, -1):
                 if convo[i]["role"] == "assistant":
                     content = convo[i]["content"]
