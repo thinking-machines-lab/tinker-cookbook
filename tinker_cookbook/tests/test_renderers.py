@@ -209,6 +209,7 @@ def _prepare_conversation_for_model(
         date_prefix = f"Cutting Knowledge Date: December 2023\nToday Date: {today}\n\n"
         if has_system:
             aug_convo = copy.deepcopy(convo)
+            assert isinstance(convo[0]["content"], str)
             aug_convo[0]["content"] = date_prefix + convo[0]["content"]
         else:
             aug_convo = [Message(role="system", content=date_prefix)] + convo
