@@ -860,6 +860,9 @@ def table_from_dict_of_lists(
             "score": [95, 87]
         })
     """
+    if not _is_logging_enabled():
+        return
+
     if not columns:
         return
 
