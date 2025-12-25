@@ -565,6 +565,25 @@ class RoleColonRenderer(Renderer):
         assert isinstance(bos_token_str, str)
         return self.tokenizer.encode(bos_token_str, add_special_tokens=False)
 
+    def create_system_prefix_with_tools(
+        self, tools: list[ToolSpec], system_prompt: str = ""
+    ) -> list[Message]:
+        """Create system message with tool specifications for RoleColonRenderer.
+
+        Uses a simple JSON format for tools in the system prompt, similar to Llama3.
+        """
+        tools_text = ""
+        if tools:
+            tool_lines = "\n\n".join(json.dumps(tool, indent=2) for tool in tools)
+            tools_text = f"""You have access to the following functions:
+
+{tool_lines}
+
+If you choose to call a function, reply with the function name and arguments in JSON format.
+
+"""
+        return [Message(role="system", content=tools_text + system_prompt)]
+
 
 class Llama3Renderer(Renderer):
     """
@@ -1736,6 +1755,26 @@ class GptOssRenderer(Renderer):
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
         return parse_response_for_stop_token(response, self.tokenizer, self._return_token)
+
+    def create_system_prefix_with_tools(
+        self, tools: list[ToolSpec], system_prompt: str = ""
+    ) -> list[Message]:
+        """Create system message with tool specifications for GptOssRenderer.
+
+        Note: GptOss has its own system prompt handling via _bos_tokens.
+        This method adds tools to a user-provided system prompt as JSON.
+        """
+        tools_text = ""
+        if tools:
+            tool_lines = "\n\n".join(json.dumps(tool, indent=2) for tool in tools)
+            tools_text = f"""You have access to the following functions:
+
+{tool_lines}
+
+If you choose to call a function, reply with the function name and arguments in JSON format.
+
+"""
+        return [Message(role="system", content=tools_text + system_prompt)]
 
 
 def get_renderer(
