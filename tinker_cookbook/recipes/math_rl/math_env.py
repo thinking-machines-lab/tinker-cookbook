@@ -113,19 +113,6 @@ def _get_hendrycks_math_test() -> Dataset:
     return cast(Dataset, test_dataset)
 
 
-# Known config names for EleutherAI/hendrycks_math dataset
-# Used as fallback when get_dataset_config_names can't reach the HF API
-HENDRYCKS_MATH_CONFIGS = [
-    "algebra",
-    "counting_and_probability",
-    "geometry",
-    "intermediate_algebra",
-    "number_theory",
-    "prealgebra",
-    "precalculus",
-]
-
-
 def _get_hendrycks_math_train() -> Dataset:
     # For Hendrycks MATH, the standard is to use both the "train" and "test" splits for
     # training. The "test" split here is NOT the same as the MATH-500 test split above,
@@ -139,13 +126,7 @@ def _get_hendrycks_math_train() -> Dataset:
     }
 
     dataset_name = "EleutherAI/hendrycks_math"
-    try:
-        configs = get_dataset_config_names(dataset_name)
-        # If we only get "default", the API is unreachable - use hardcoded configs
-        if configs == ["default"]:
-            configs = HENDRYCKS_MATH_CONFIGS
-    except Exception:
-        configs = HENDRYCKS_MATH_CONFIGS
+    configs = get_dataset_config_names(dataset_name)
     pieces = []
     for cfg in configs:
         for split in ("train", "test"):
