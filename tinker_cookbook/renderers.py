@@ -1281,13 +1281,32 @@ class DeepSeekV3Renderer(Renderer):
 
     System messages at position 0 are rendered without role tokens (matching HF template).
     System messages at later positions require system_role_as_user=True to convert to user role.
+
+    The default strip_thinking_from_history=True matches HF behavior where thinking
+    traces are removed from historical assistant messages in multi-turn conversations.
+    Use strip_thinking_from_history=False for multi-turn RL to get the extension property.
     """
 
-    def __init__(self, tokenizer: Tokenizer, system_role_as_user: bool = False):
+    def __init__(
+        self, tokenizer: Tokenizer, system_role_as_user: bool = False, strip_thinking_from_history: bool = True
+    ):
         super().__init__(tokenizer)
         self.system_role_as_user = system_role_as_user
+        self.strip_thinking_from_history = strip_thinking_from_history
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(
+        self, idx: int, message: Message, is_last: bool = False, follows_tool: bool = False
+    ) -> RenderedMessage:
+        """Render a single message to tokens.
+
+        Args:
+            idx: Message index in the conversation.
+            message: The message to render.
+            is_last: Whether this is the last message (affects thinking stripping).
+            follows_tool: Whether this message immediately follows a tool response.
+                For assistant messages after tool responses, DeepSeek format skips
+                the role token and </think> prefix, and preserves thinking traces.
+        """
         assert message.get("thinking") is None, "TODO: support thinking attribute in DSV3 renderer"
         assert isinstance(message["content"], str), (
             "DeepSeekV3Renderer only supports message with string content"
@@ -1313,10 +1332,29 @@ class DeepSeekV3Renderer(Renderer):
             header_tokens = [role_token]
             output_str = message["content"]
         elif message["role"] == "assistant":
-            role_token = self._get_special_token("Assistant")
-            header_tokens = [role_token]
-            # Add </think> after assistant role (no-think mode) to match HF template
-            output_str = "</think>" + message["content"]
+            output_content = message["content"]
+
+            if follows_tool:
+                # Post-tool assistant: no role token, no </think> prefix, preserve thinking
+                # Content flows directly after <|tool_output_end|>
+                header_tokens = []
+                output_str = output_content
+            else:
+                # Normal assistant message
+                role_token = self._get_special_token("Assistant")
+                header_tokens = [role_token]
+
+                # Handle thinking traces
+                # When strip_thinking_from_history=True, strip <think>...</think> from
+                # assistant messages WITHOUT tool_calls. Messages with tool_calls preserve
+                # thinking (the model's reasoning before making the tool call).
+                has_tool_calls = "tool_calls" in message and message["tool_calls"]
+                if self.strip_thinking_from_history and "</think>" in output_content and not has_tool_calls and not is_last:
+                    # Remove everything up to and including </think>
+                    output_content = output_content.split("</think>", 1)[1]
+
+                # Prepend </think> to close thinking mode (DeepSeek "no-think" format)
+                output_str = "</think>" + output_content
         elif message["role"] == "tool":
             # Tool responses use special tool output tokens to match HF template
             header_tokens = self.tokenizer.encode(
@@ -1376,19 +1414,27 @@ class DeepSeekV3Renderer(Renderer):
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:
-        """Override to skip assistant header after tool messages (matches HF behavior)."""
+        """Override to handle post-tool assistant context correctly.
+
+        For DeepSeek, assistant messages immediately following tool responses have
+        special formatting: no role token, no </think> prefix, and thinking is preserved.
+        """
         chunks: list[tinker.types.ModelInputChunk] = []
         if self._bos_tokens:
             chunks.append(tinker.types.EncodedTextChunk(tokens=self._bos_tokens))
 
         for idx, message in enumerate(messages):
-            rendered = self.render_message(idx, message)
+            # Check if this message follows a tool response
+            follows_tool = idx > 0 and messages[idx - 1]["role"] == "tool"
+            is_last = idx == len(messages) - 1
+            rendered = self.render_message(idx, message, is_last=is_last, follows_tool=follows_tool)
             header = rendered.get("header")
             if header:
                 chunks.append(header)
             chunks.extend(rendered["output"])
 
-        # Add assistant header only if last message is NOT tool (HF behavior)
+        # Add assistant header only if last message is NOT tool
+        # When last message IS tool, generation continues directly after tool_output_end
         if not messages or messages[-1]["role"] != "tool":
             rendered = self.render_message(len(messages), Message(role=role, content=""))
             header = rendered.get("header")
