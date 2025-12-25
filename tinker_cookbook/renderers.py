@@ -220,11 +220,7 @@ def ensure_text(content: Content) -> str:
 
 
 def _tool_call_payload(tool_call: ToolCall) -> dict[str, object]:
-    """Minimal JSON payload for embedding in <tool_call> blocks.
-
-    Uses "arguments" key per Qwen tool calling format:
-    https://qwen.readthedocs.io/en/latest/getting_started/concepts.html#tool-calling
-    """
+    """Minimal JSON payload for embedding in <tool_call> blocks."""
     # Convert from nested structure to flat format for compatibility
     return {
         "name": tool_call.function.name,

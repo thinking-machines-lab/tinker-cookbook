@@ -74,7 +74,7 @@ def test_qwen3_parse_single_tool_call(model_name: str, renderer_name: str):
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer(renderer_name, tokenizer)
 
-    # Simulate model response with tool call (uses "arguments" per Qwen standard)
+    # Simulate model response with tool call
     response_text = """I'll search for that information.
 <tool_call>
 {"name": "search", "arguments": {"query": "weather in NYC"}}
@@ -106,7 +106,7 @@ def test_qwen3_parse_multiple_tool_calls(model_name: str, renderer_name: str):
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer(renderer_name, tokenizer)
 
-    # Simulate model response with multiple tool calls (uses "arguments" per Qwen standard)
+    # Simulate model response with multiple tool calls
     response_text = """I'll get the weather for both cities.
 <tool_call>
 {"name": "get_weather", "arguments": {"location": "NYC"}}
