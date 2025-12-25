@@ -827,6 +827,9 @@ def table_from_dict(
     Example:
         logtree.table_from_dict({"lr": 0.001, "batch_size": 32}, caption="Hyperparams")
     """
+    if not _is_logging_enabled():
+        return
+
     items = list(data.items())
     if sort_by == "key":
         items.sort(key=lambda x: x[0])
@@ -857,6 +860,9 @@ def table_from_dict_of_lists(
             "score": [95, 87]
         })
     """
+    if not _is_logging_enabled():
+        return
+
     if not columns:
         return
 
