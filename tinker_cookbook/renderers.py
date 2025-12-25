@@ -1222,7 +1222,7 @@ class DeepSeekV3Renderer(Renderer):
         self.system_role_as_user = system_role_as_user
 
     def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
-        assert message.get("thinking") is None, "TODO: support CoT in DsV3 renderer"
+        assert message.get("thinking") is None, "TODO: support thinking attribute in DSV3 renderer"
         assert isinstance(message["content"], str), (
             "DeepSeekV3Renderer only supports message with string content"
         )
@@ -1275,9 +1275,13 @@ class DeepSeekV3Renderer(Renderer):
         if message["role"] == "assistant" and message["content"]:
             ac.append(self._end_message_token)
 
-        prefix = tinker.types.EncodedTextChunk(tokens=ob)
         content: list[tinker.ModelInputChunk] = [tinker.types.EncodedTextChunk(tokens=ac)]
-        return RenderedMessage(prefix=prefix, content=content)
+        # Only include prefix if non-empty; tinker rejects empty token chunks with
+        # "Chunk N has empty tokens list". This happens for system messages at idx=0.
+        if ob:
+            return RenderedMessage(prefix=tinker.types.EncodedTextChunk(tokens=ob), content=content)
+        else:
+            return RenderedMessage(content=content)
 
     def _get_special_token(self, name: str) -> int:
         sep = chr(65372)
@@ -1332,27 +1336,16 @@ class DeepSeekV3Renderer(Renderer):
     def _parse_deepseek_tool_calls(
         self, content: str
     ) -> tuple[list[ToolCall], list[UnparsedToolCall]]:
-        """Parse tool calls from DeepSeek V3 format.
+        """Parse tool calls from DeepSeek V3.1 format.
 
-        Accepts two formats:
+        Expected format (per HuggingFace model card and chat template):
+            <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>func_name<｜tool▁sep｜>{"arg":"value"}<｜tool▁call▁end｜><｜tool▁calls▁end｜>
 
-        1. HF template format (what we render):
-           <｜tool▁call▁begin｜>func_name<｜tool▁sep｜>{"arg": "value"}<｜tool▁call▁end｜>
+        Multiple tool calls are chained directly without separators.
 
-        2. Model output format (what the model sometimes generates):
-           <｜tool▁call▁begin｜>func_name
-           ```json
-           {"arg": "value"}
-           ```
-           <｜tool▁call▁end｜>
-
-        NOTE: The model sometimes outputs format #2 (no <｜tool▁sep｜>, args in markdown
-        code blocks), which differs from the HF template format we use for rendering.
-        We accept both for parsing, but this is questionable - the mismatch means our
-        rendered tool calls won't match model output, breaking the sequence extension
-        property (see docs/rl/sequence-extension.mdx). This may indicate incorrect
-        prompting or a model/template mismatch that should be investigated. We may
-        remove support for format #2 in the future once the root cause is understood.
+        References:
+            - DeepSeek V3.1 Model Card: https://huggingface.co/deepseek-ai/DeepSeek-V3.1
+            - Chat Template: https://huggingface.co/deepseek-ai/DeepSeek-V3.1/blob/main/assets/chat_template.jinja
         """
         tool_calls: list[ToolCall] = []
         unparsed_tool_calls: list[UnparsedToolCall] = []
@@ -1363,20 +1356,13 @@ class DeepSeekV3Renderer(Renderer):
         if not calls_match:
             return tool_calls, unparsed_tool_calls
 
-        # Match both HF format (with <｜tool▁sep｜>) and model output format (without)
         for match in re.finditer(
-            r"<｜tool▁call▁begin｜>(\w+)(?:<｜tool▁sep｜>|\s*)(.*?)<｜tool▁call▁end｜>",
+            r"<｜tool▁call▁begin｜>(\w+)<｜tool▁sep｜>(.*?)<｜tool▁call▁end｜>",
             calls_match.group(1),
             re.DOTALL,
         ):
             raw_text = match.group(0)
             func_name, args_str = match.group(1), match.group(2).strip()
-
-            # Strip ```json...``` wrapper if present (model sometimes outputs this)
-            if args_str.startswith("```"):
-                # Remove opening ``` (with optional language tag) and closing ```
-                args_str = re.sub(r"^```(?:json)?\s*", "", args_str)
-                args_str = re.sub(r"\s*```$", "", args_str).strip()
 
             try:
                 json.loads(args_str)
@@ -1422,37 +1408,45 @@ class DeepSeekV3Renderer(Renderer):
     def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
     ) -> list[Message]:
-        """Create system/user message with DeepSeek V3 tool specifications.
+        """Create system message with DeepSeek V3.1 tool specifications.
 
-        DeepSeek V3 uses JSON function definitions in the system prompt.
-        Tool calls use special tokens with JSON in code blocks.
+        DeepSeek V3.1 tool calling requires tools to be described in the system message
+        using a specific format with ### headers and inline JSON parameters.
 
-        Note: System messages at position 0 are rendered without role tokens (matching HF).
-        System messages at later positions require system_role_as_user=True.
+        Note: Tool calling is supported in non-thinking mode only.
 
         References:
+            - DeepSeek V3.1 Model Card (ToolCall section): https://huggingface.co/deepseek-ai/DeepSeek-V3.1
             - DeepSeek V3.1 Chat Template: https://huggingface.co/deepseek-ai/DeepSeek-V3.1/blob/main/assets/chat_template.jinja
-            - DeepSeek API Guide: https://api-docs.deepseek.com/guides/function_calling
+            - DeepSeek API Tool Calls Guide: https://api-docs.deepseek.com/guides/tool_calls
         """
         tools_text = ""
         if tools:
-            tool_lines = "\n".join(json.dumps(tool, indent=2) for tool in tools)
+            # Format each tool with ### header, description, and parameters
+            tool_blocks = []
+            for tool in tools:
+                tool_block = f"""### {tool["name"]}
+Description: {tool["description"]}
+
+Parameters: {json.dumps(tool["parameters"])}"""
+                tool_blocks.append(tool_block)
+
             tools_text = f"""
 
+## Tools
 You have access to the following tools:
 
-{tool_lines}
+{chr(10).join(tool_blocks)}
 
-To call a tool, use this format:
-<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>function_name
-```json
-{{"arg1": "value1"}}
-```
-<｜tool▁call▁end｜><｜tool▁calls▁end｜>"""
+IMPORTANT: ALWAYS adhere to this exact format for tool use:
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>tool_call_name<｜tool▁sep｜>tool_call_arguments<｜tool▁call▁end｜><｜tool▁calls▁end｜>
 
-        # Use system role if system_role_as_user is True (will be converted), otherwise use user role
-        role = "system" if self.system_role_as_user else "user"
-        return [Message(role=role, content=system_prompt + tools_text)]
+Where:
+- `tool_call_name` must be an exact match to one of the available tools
+- `tool_call_arguments` must be valid JSON that strictly follows the tool's Parameters Schema
+- For multiple tool calls, chain them directly without separators or spaces"""
+
+        return [Message(role="system", content=system_prompt + tools_text)]
 
 
 class DeepSeekV3DisableThinkingRenderer(DeepSeekV3Renderer):
@@ -1737,7 +1731,7 @@ class KimiK2Renderer(Renderer):
         BEFORE the regular system message. If no system_prompt is provided, uses
         the default system prompt to match HuggingFace chat template behavior.
 
-        Reference: https://huggingface.co/moonshotai/Kimi-K2-Thinking (chat_template)
+        Reference: https://huggingface.co/moonshotai/Kimi-K2-Thinking/blob/main/chat_template.jinja
         """
         messages: list[Message] = []
 
@@ -1806,7 +1800,9 @@ class GptOssRenderer(Renderer):
             # Analysis channel (CoT) - always included for last message to match HF template
             if is_last:
                 thinking_content = thinking if thinking else ""
-                ac_str += f"<|channel|>analysis<|message|>{thinking_content}<|end|><|start|>assistant"
+                ac_str += (
+                    f"<|channel|>analysis<|message|>{thinking_content}<|end|><|start|>assistant"
+                )
 
             # Final channel (Response Content)
             ac_str += f"<|channel|>final<|message|>{message_content}"
