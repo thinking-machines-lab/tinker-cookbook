@@ -31,12 +31,13 @@ from tinker_cookbook.renderers import Message, Qwen3Renderer, ToolCall, get_rend
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
-# TEMPORARY: Local get_tokenizer that doesn't use the mirror for Llama 3, so we get
-# the real chat template for HF comparison tests. Remove this once the mirrored
-# tokenizer (thinkingmachineslabinc/meta-llama-3-tokenizer) includes the chat template.
+# TEMPORARY: get_tokenizer uses a mirror for Llama 3 to avoid needing the HF_TOKEN,
+# however, the mirrored tokenizer does not include the chat template.
+# Remove this once the mirrored tokenizer (thinkingmachineslabinc/meta-llama-3-tokenizer)
+# includes the chat template.
 @cache
 def get_tokenizer(model_name: str) -> Tokenizer:
-    """Get tokenizer with chat template for HF comparison tests."""
+    """Get tokenizer with chat template."""
     kwargs: dict[str, Any] = {}
     if model_name == "moonshotai/Kimi-K2-Thinking":
         kwargs["trust_remote_code"] = True
