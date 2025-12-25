@@ -78,6 +78,7 @@ MODEL_CONFIGS = [
         "model_name": "moonshotai/Kimi-K2-Thinking",
         "renderer_name": "kimi_k2",
     },
+    # TODO: implement and add GPT-OSS
 ]
 
 
@@ -125,7 +126,7 @@ async def test_model(
     renderer = get_renderer(renderer_name, tokenizer)
 
     # Build messages using the unified interface
-    prefix_messages = renderer.create_system_prefix_with_tools(tools, system_prompt)
+    prefix_messages = renderer.create_conversation_prefix_with_tools(tools, system_prompt)
     messages: list[Message] = prefix_messages + [{"role": "user", "content": user_prompt}]
 
     # Build prompt

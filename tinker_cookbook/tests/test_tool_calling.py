@@ -180,18 +180,14 @@ def test_llama3_parse_tool_call():
 def test_deepseek_parse_tool_call():
     """Test parsing tool call from DeepSeek V3 response.
 
-    DeepSeek V3 uses special tokens with JSON in code blocks.
+    DeepSeek V3 HF template format: <｜tool▁call▁begin｜>name<｜tool▁sep｜>args<｜tool▁call▁end｜>
     """
     model_name = "deepseek-ai/DeepSeek-V3.1"
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer("deepseekv3", tokenizer)
 
     response_text = """I'll check the weather.
-<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
-```json
-{"location": "NYC"}
-```
-<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜>"""
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"location": "NYC"}<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜>"""
 
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
     message, success = renderer.parse_response(response_tokens)
@@ -206,16 +202,12 @@ def test_deepseek_parse_tool_call():
 
 
 # =============================================================================
-# Unparsed Tool Calls (Parse Failure Handling)
+# Edge Cases and Error Handling
 # =============================================================================
 
 
 def test_qwen3_parse_invalid_tool_call_json():
-    """Test that invalid JSON in tool call is captured as unparsed_tool_calls.
-
-    When a tool call has invalid JSON, it should be captured in unparsed_tool_calls
-    rather than causing the entire parse to fail.
-    """
+    """Test that invalid JSON in tool call is captured as unparsed_tool_calls."""
     model_name = "Qwen/Qwen3-8B"
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer("qwen3", tokenizer)
@@ -296,11 +288,7 @@ def test_deepseek_parse_invalid_tool_call_json():
     renderer = get_renderer("deepseekv3", tokenizer)
 
     response_text = """I'll check.
-<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
-```json
-{invalid json}
-```
-<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜>"""
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{invalid json}<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜>"""
 
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
     message, success = renderer.parse_response(response_tokens)

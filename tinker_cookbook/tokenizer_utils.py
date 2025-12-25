@@ -22,7 +22,7 @@ else:
 
 # Llama 3 Instruct chat template (the mirror tokenizer doesn't include it)
 # Only needed by unit tests -- we don't use chat templates in this library
-# (TODO: fix the mirror tokenizer to include the chat template)
+# (TODO: fix the mirrored tokenizer to include the chat template)
 
 LLAMA3_CHAT_TEMPLATE = """\
 {{- bos_token }}

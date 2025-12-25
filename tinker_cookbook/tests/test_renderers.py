@@ -92,7 +92,6 @@ def get_tool_call_conversation() -> list[Message]:
 CONVERSATION_REGISTRY: dict[str, tuple[callable, str, bool]] = {
     "basic_3turn": (get_basic_3turn_conversation, "basic 3-turn conversation", False),
     "basic_2turn": (get_basic_2turn_conversation, "basic 2-turn conversation", False),
-    "tool_sft": (get_tool_call_conversation, "tool use conversation", True),
 }
 
 
@@ -133,14 +132,17 @@ def _prepare_conversation_for_model(
         convo: The base conversation to prepare.
         is_generation: True for generation prompts, False for supervised examples.
 
+    Note: HF templates only use certain Message fields (role, content, and thinking
+    for openai models). Fields like tool_calls are not handled by HF templates in
+    the same way, so tool calling tests use separate comparison methods.
+
     Returns:
         Tuple of (aug_convo, hf_convo):
         - aug_convo: Augmented conversation for the cookbook renderer. May include
           model-specific modifications like system messages, thinking tags, etc.
           that the renderer expects in its input.
         - hf_convo: Conversation for HF's apply_chat_template. Generally simpler
-          since HF templates auto-add things like thinking blocks. Only includes
-          fields that HF templates handle (role, content, thinking for openai).
+          since HF templates auto-add things like thinking blocks.
     """
     # Deep copy to avoid mutating the original
     convo = copy.deepcopy(convo)
@@ -186,16 +188,6 @@ def _prepare_conversation_for_model(
                 break
         aug_convo = convo
     elif model_name.startswith("moonshotai"):
-        # Kimi K2 HF template adds default system message; we include it explicitly
-        # Note: The KimiK2Renderer automatically adds <think></think> blocks for
-        # assistant messages, so we don't need to add them here. The renderer
-        # matches HF behavior.
-
-        # system_msg: Message = {
-        #     "role": "system",
-        #     "content": KimiK2Renderer.DEFAULT_SYSTEM_PROMPT,
-        # }
-        # aug_convo = [system_msg] + convo
         aug_convo = convo
     else:
         raise ValueError(f"Unknown model name: {model_name}")
@@ -315,7 +307,7 @@ def test_supervised_example_against_hf_chat_templates(model_name: str, conv_id: 
 
 
 # =============================================================================
-# Tool Use Rendering Tests (no HF comparison - HF templates don't support tool calls)
+# Tool Use Rendering Tests
 # =============================================================================
 
 
@@ -331,8 +323,8 @@ def test_supervised_example_against_hf_chat_templates(model_name: str, conv_id: 
 def test_tool_call_supervised_rendering(model_name: str):
     """Test that tool call conversations render without errors.
 
-    This doesn't compare to HF templates (which don't support tool calls),
-    but verifies that our renderers handle tool call conversations correctly.
+    Verifies that our renderers handle tool call conversations correctly
+    for supervised learning.
     """
     convo = get_tool_call_conversation()
 
@@ -363,6 +355,62 @@ def test_tool_call_supervised_rendering(model_name: str):
     # Check for either the function name or the tool_call_id
     has_tool_indicator = "get_weather" in decoded or "call_123" in decoded
     assert has_tool_indicator, f"Tool name or ID should appear in rendered output: {decoded}"
+
+
+# Models where our tool call rendering matches HF templates exactly
+_TOOL_CALL_HF_COMPATIBLE_MODELS = [
+    ("Qwen/Qwen3-8B", "qwen3"),
+    ("Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3_instruct"),
+    ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
+    ("moonshotai/Kimi-K2-Thinking", "kimi_k2"),
+]
+
+
+def _convert_tool_calls_to_hf_format(convo: list[Message]) -> list[dict]:
+    """Convert ToolCall objects to HF dict format for template comparison."""
+    result = []
+    for msg in convo:
+        msg_dict: dict = {"role": msg["role"], "content": msg["content"]}
+        if "tool_calls" in msg:
+            msg_dict["tool_calls"] = [
+                {
+                    "type": "function",
+                    "id": tc.id,
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    }
+                }
+                for tc in msg["tool_calls"]
+            ]
+        if "tool_call_id" in msg:
+            msg_dict["tool_call_id"] = msg["tool_call_id"]
+        result.append(msg_dict)
+    return result
+
+
+@pytest.mark.parametrize("model_name,renderer_name", _TOOL_CALL_HF_COMPATIBLE_MODELS)
+def test_tool_call_generation_against_hf_templates(model_name: str, renderer_name: str):
+    """Test tool call generation rendering matches HF templates.
+
+    For models with HF-compatible tool call support, verify our renderer produces
+    identical tokens to HuggingFace's chat template.
+    """
+    # Use first 3 messages (without final assistant response) for generation prompt
+    convo_ours = get_tool_call_conversation()[:-1]
+    convo_hf = _convert_tool_calls_to_hf_format(convo_ours)
+
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer(renderer_name, tokenizer)
+
+    ours = renderer.build_generation_prompt(convo_ours).to_ints()
+    hf = tokenizer.apply_chat_template(convo_hf, add_generation_prompt=True, tokenize=True)
+
+    assert ours == hf, (
+        f"Tool call rendering mismatch for {model_name}\n"
+        f"Ours: {tokenizer.decode(ours)}\n"
+        f"HF:   {tokenizer.decode(hf)}"
+    )
 
 
 # =============================================================================

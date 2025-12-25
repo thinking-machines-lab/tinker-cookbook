@@ -287,10 +287,10 @@ class Renderer(Protocol):
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
         raise NotImplementedError
 
-    def create_system_prefix_with_tools(
+    def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
     ) -> list[Message]:
-        """Create system message(s) with tool specifications.
+        """Create message(s) with tool specifications to prepend to conversations.
 
         Returns one or more messages to prepend to the conversation. This is the
         standard way to add tools - the returned messages should be placed at the
@@ -529,6 +529,11 @@ class RoleColonRenderer(Renderer):
         assert isinstance(bos_token_str, str)
         return self.tokenizer.encode(bos_token_str, add_special_tokens=False)
 
+    def create_conversation_prefix_with_tools(
+        self, tools: list[ToolSpec], system_prompt: str = ""
+    ) -> list[Message]:
+        raise NotImplementedError("RoleColonRenderer does not support tool calling")
+
 
 class Llama3Renderer(Renderer):
     """
@@ -657,7 +662,7 @@ class Llama3Renderer(Renderer):
 
         return assistant_message, True
 
-    def create_system_prefix_with_tools(
+    def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
     ) -> list[Message]:
         """Create system message with Llama 3 tool specifications.
@@ -778,7 +783,8 @@ class Qwen3Renderer(Renderer):
             ob_str += "<think>\n"
         # Observation (prompt) part
         if "tool_calls" in message:
-            ac_content += "\n".join(
+            # Add leading newline to match HF template behavior
+            ac_content += "\n" + "\n".join(
                 [
                     f"<tool_call>\n{json.dumps(_tool_call_payload(tool_call))}\n</tool_call>"
                     for tool_call in message["tool_calls"]
@@ -837,7 +843,6 @@ class Qwen3Renderer(Renderer):
         if tool_id is not None and not isinstance(tool_id, str):
             tool_id = None
 
-        # Convert to nested structure with arguments as JSON string
         return ToolCall(
             function=ToolCall.FunctionBody(name=name, arguments=json.dumps(arguments)),
             id=tool_id,
@@ -880,7 +885,7 @@ class Qwen3Renderer(Renderer):
 
         return assistant_message, True
 
-    def create_system_prefix_with_tools(
+    def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
     ) -> list[Message]:
         """Create system message with Qwen3 tool specifications.
@@ -967,7 +972,8 @@ class Qwen3InstructRenderer(Qwen3Renderer):
 
         # Observation (prompt) part
         if "tool_calls" in message:
-            ac_content += "\n".join(
+            # Add leading newline to match HF template behavior
+            ac_content += "\n" + "\n".join(
                 [
                     f"<tool_call>\n{json.dumps(_tool_call_payload(tool_call))}\n</tool_call>"
                     for tool_call in message["tool_calls"]
@@ -1217,36 +1223,35 @@ class DeepSeekV3Renderer(Renderer):
         )
         if message["role"] == "user" or (self.system_role_as_user and message["role"] == "system"):
             role_token = self._get_special_token("User")
+            ob = [role_token]
+            ac_str = message["content"]
         elif message["role"] == "assistant":
             role_token = self._get_special_token("Assistant")
+            ob = [role_token]
+            # Add </think> after assistant role (no-think mode) to match HF template
+            ac_str = "</think>" + message["content"]
         elif message["role"] == "tool":
-            # Tool responses use User role with tool result formatting
-            role_token = self._get_special_token("User")
+            # Tool responses use special tool output tokens to match HF template
+            ob = self.tokenizer.encode("<｜tool▁output▁begin｜>", add_special_tokens=False)
+            ac_str = message["content"] + "<｜tool▁output▁end｜>"
         else:
             raise ValueError(f"Unsupported role: {message['role']}")
-        ob = [role_token]
-
-        # Build action content
-        ac_str = message["content"]
-
-        # Handle tool response formatting
-        if message["role"] == "tool":
-            tool_call_id = message.get("tool_call_id", "")
-            ac_str = f"Tool result for {tool_call_id}:\n{ac_str}"
 
         # Handle tool calls in assistant messages
-        # DeepSeek format: <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>name\n```json\n{args}\n```\n<｜tool▁call▁end｜><｜tool▁calls▁end｜>
+        # HF format: <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>name<｜tool▁sep｜>args<｜tool▁call▁end｜><｜tool▁calls▁end｜>
         if "tool_calls" in message and message["tool_calls"]:
             ac_str += "<｜tool▁calls▁begin｜>"
             for tool_call in message["tool_calls"]:
                 func_name = tool_call.function.name
                 args = tool_call.function.arguments
-                ac_str += f"<｜tool▁call▁begin｜>function<｜tool▁sep｜>{func_name}\n```json\n{args}\n```\n<｜tool▁call▁end｜>"
+                ac_str += f"<｜tool▁call▁begin｜>{func_name}<｜tool▁sep｜>{args}<｜tool▁call▁end｜>"
             ac_str += "<｜tool▁calls▁end｜>"
 
         ac = self.tokenizer.encode(ac_str, add_special_tokens=False)
 
-        if message["role"] == "assistant":  # end_of_message only for assistant in dsv3
+        # Add end_of_sentence only for assistant messages with content
+        # (not for empty generation prompt messages)
+        if message["role"] == "assistant" and message["content"]:
             ac.append(self._end_message_token)
 
         prefix = tinker.types.EncodedTextChunk(tokens=ob)
@@ -1271,50 +1276,89 @@ class DeepSeekV3Renderer(Renderer):
     def get_stop_sequences(self) -> list[int]:
         return [self._end_message_token]
 
+    def build_generation_prompt(
+        self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
+    ) -> tinker.ModelInput:
+        """Override to skip assistant prefix after tool messages (matches HF behavior)."""
+        chunks: list[tinker.types.ModelInputChunk] = []
+        if self._bos_tokens:
+            chunks.append(tinker.types.EncodedTextChunk(tokens=self._bos_tokens))
+
+        for idx, message in enumerate(messages):
+            rendered = self.render_message(idx, message)
+            if rendered.get("prefix"):
+                chunks.append(rendered["prefix"])
+            chunks.extend(rendered["content"])
+
+        # Add assistant prefix only if last message is NOT tool (HF behavior)
+        if not messages or messages[-1]["role"] != "tool":
+            rendered = self.render_message(len(messages), Message(role=role, content=""))
+            if rendered.get("prefix"):
+                chunks.append(rendered["prefix"])
+            chunks.extend(rendered["content"])  # includes </think>
+
+        if prefill:
+            chunks.append(
+                tinker.types.EncodedTextChunk(
+                    tokens=self.tokenizer.encode(prefill, add_special_tokens=False)
+                )
+            )
+
+        return tinker.ModelInput(chunks=chunks)
+
     def _parse_deepseek_tool_calls(
         self, content: str
     ) -> tuple[list[ToolCall], list[UnparsedToolCall]]:
         """Parse tool calls from DeepSeek V3 format.
 
-        DeepSeek uses: <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>name
-        ```json
-        {args}
-        ```
-        <｜tool▁call▁end｜>...<｜tool▁calls▁end｜>
+        Accepts two formats:
 
-        Returns:
-            Tuple of (successfully parsed tool calls, failed parses).
+        1. HF template format (what we render):
+           <｜tool▁call▁begin｜>func_name<｜tool▁sep｜>{"arg": "value"}<｜tool▁call▁end｜>
+
+        2. Model output format (what the model sometimes generates):
+           <｜tool▁call▁begin｜>func_name
+           ```json
+           {"arg": "value"}
+           ```
+           <｜tool▁call▁end｜>
+
+        NOTE: The model sometimes outputs format #2 (no <｜tool▁sep｜>, args in markdown
+        code blocks), which differs from the HF template format we use for rendering.
+        We accept both for parsing, but this is questionable - the mismatch means our
+        rendered tool calls won't match model output, breaking the sequence extension
+        property (see docs/rl/sequence-extension.mdx). This may indicate incorrect
+        prompting or a model/template mismatch that should be investigated. We may
+        remove support for format #2 in the future once the root cause is understood.
         """
         tool_calls: list[ToolCall] = []
         unparsed_tool_calls: list[UnparsedToolCall] = []
 
-        # Match tool calls section
         calls_match = re.search(
-            r"<｜tool▁calls▁begin｜>(.*?)<｜tool▁calls▁end｜>",
-            content,
-            re.DOTALL,
+            r"<｜tool▁calls▁begin｜>(.*?)<｜tool▁calls▁end｜>", content, re.DOTALL
         )
         if not calls_match:
             return tool_calls, unparsed_tool_calls
 
-        calls_content = calls_match.group(1)
-
-        # Parse individual tool calls
+        # Match both HF format (with <｜tool▁sep｜>) and model output format (without)
         for match in re.finditer(
-            r"<｜tool▁call▁begin｜>(?:function)?<｜tool▁sep｜>(\w+)\s*```json\s*(.*?)\s*```\s*<｜tool▁call▁end｜>",
-            calls_content,
+            r"<｜tool▁call▁begin｜>(\w+)(?:<｜tool▁sep｜>|\s*)(.*?)<｜tool▁call▁end｜>",
+            calls_match.group(1),
             re.DOTALL,
         ):
             raw_text = match.group(0)
-            func_name = match.group(1)
-            args_str = match.group(2).strip()
+            func_name, args_str = match.group(1), match.group(2).strip()
+
+            # Strip ```json...``` wrapper if present (model sometimes outputs this)
+            if args_str.startswith("```"):
+                # Remove opening ``` (with optional language tag) and closing ```
+                args_str = re.sub(r"^```(?:json)?\s*", "", args_str)
+                args_str = re.sub(r"\s*```$", "", args_str).strip()
+
             try:
-                # Validate JSON
                 json.loads(args_str)
                 tool_calls.append(
-                    ToolCall(
-                        function=ToolCall.FunctionBody(name=func_name, arguments=args_str),
-                    )
+                    ToolCall(function=ToolCall.FunctionBody(name=func_name, arguments=args_str))
                 )
             except json.JSONDecodeError as e:
                 unparsed_tool_calls.append(
@@ -1352,7 +1396,7 @@ class DeepSeekV3Renderer(Renderer):
 
         return assistant_message, True
 
-    def create_system_prefix_with_tools(
+    def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
     ) -> list[Message]:
         """Create system/user message with DeepSeek V3 tool specifications.
@@ -1391,26 +1435,14 @@ To call a tool, use this format:
 
 class DeepSeekV3DisableThinkingRenderer(DeepSeekV3Renderer):
     """
-    Renderer that disables thinking for DsV3 models
+    Renderer that disables thinking for DsV3 models.
+
+    Note: The base DeepSeekV3Renderer now handles </think> addition to match HF templates,
+    so this renderer just inherits that behavior. This class is kept for backwards
+    compatibility and explicit naming.
     """
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
-        assert isinstance(message["content"], str), (
-            "DeepSeekV3DisableThinkingRenderer only supports message with string content"
-        )
-        if (
-            message["role"] == "assistant"
-            and not message["content"].startswith("<think>")
-            and not message["content"].startswith("</think>")
-        ):
-            message["content"] = "</think>" + message["content"]
-        return super().render_message(idx, message, is_last)
-
-    def build_generation_prompt(
-        self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
-    ) -> tinker.ModelInput:
-        prefill = "</think>" + (prefill or "")
-        return super().build_generation_prompt(messages, role, prefill)
+    pass
 
 
 class KimiK2Renderer(Renderer):
@@ -1674,7 +1706,7 @@ class KimiK2Renderer(Renderer):
 
         return assistant_message, True
 
-    def create_system_prefix_with_tools(
+    def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
     ) -> list[Message]:
         """Create system messages with Kimi K2 tool specifications.
@@ -1805,6 +1837,11 @@ class GptOssRenderer(Renderer):
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
         return parse_response_for_stop_token(response, self.tokenizer, self._return_token)
+
+    def create_conversation_prefix_with_tools(
+        self, tools: list[ToolSpec], system_prompt: str = ""
+    ) -> list[Message]:
+        raise NotImplementedError("GptOssRenderer does not support tool calling")
 
 
 def get_renderer(
