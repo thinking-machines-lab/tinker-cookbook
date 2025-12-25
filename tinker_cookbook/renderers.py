@@ -544,7 +544,9 @@ class Llama3Renderer(Renderer):
 
         What can you help me with?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 
-    The HF template prepends "Cutting Knowledge Date" info to system messages.
+    Note: The HF template prepends "Cutting Knowledge Date: December 2023\\nToday Date: {date}"
+    to system messages. We chose not to do this because it seemed janky. If you want to match
+    the HF template exactly, modify render_message to prepend this info for system messages.
     """
 
     def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
@@ -1808,11 +1810,10 @@ class GptOssRenderer(Renderer):
             message_content = message.get("content", "")
             assert isinstance(message_content, str), "GptOssRenderer only supports string content"
 
-            # Analysis channel (CoT)
-            if thinking:
-                if is_last:
-                    # Analysis channel only included in the last message. See https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot
-                    ac_str += f"<|channel|>analysis<|message|>{thinking}<|end|><|start|>assistant"
+            # Analysis channel (CoT) - always included for last message to match HF template
+            if is_last:
+                thinking_content = thinking if thinking else ""
+                ac_str += f"<|channel|>analysis<|message|>{thinking_content}<|end|><|start|>assistant"
 
             # Final channel (Response Content)
             ac_str += f"<|channel|>final<|message|>{message_content}"

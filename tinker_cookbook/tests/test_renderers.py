@@ -170,22 +170,19 @@ def _prepare_conversation_for_model(
       but Qwen3Renderer expects thinking tags to already be in the input. So we must
       manually add them to aug_convo while leaving hf_convo without them.
 
-    - OpenAI: HF templates handle the "thinking" field, so we include it in both.
-      No asymmetry needed here.
-
     - Llama: HF auto-adds "Cutting Knowledge Date" content to the system message, so we add
       it to aug_convo but skip the system message in hf_convo to avoid duplication.
 
-    - DeepSeek: No thinking-related modifications needed for either.
+    - OpenAI/DeepSeek/Kimi: No modifications needed.
 
     Args:
         model_name: The model name (e.g., "Qwen/Qwen3-30B-A3B").
         convo: The base conversation to prepare.
         is_generation: True for generation prompts, False for supervised examples.
 
-    Note: HF templates only use certain Message fields (role, content, and thinking
-    for openai models). Fields like tool_calls are not handled by HF templates in
-    the same way, so tool calling tests use separate comparison methods.
+    Note: HF templates only use certain Message fields (role, content). Fields like
+    tool_calls are not handled by HF templates in the same way, so tool calling tests
+    use separate comparison methods.
 
     Returns:
         Tuple of (aug_convo, hf_convo):
@@ -234,11 +231,6 @@ def _prepare_conversation_for_model(
     elif model_name.startswith("deepseek-ai"):
         aug_convo = convo
     elif model_name.startswith("openai"):
-        # Add thinking field to first assistant message for testing
-        for msg in convo:
-            if msg["role"] == "assistant" and "thinking" not in msg:
-                msg["thinking"] = "The user is sharing a greeting. We should respond politely."
-                break
         aug_convo = convo
     elif model_name.startswith("moonshotai"):
         aug_convo = convo
@@ -246,17 +238,14 @@ def _prepare_conversation_for_model(
         raise ValueError(f"Unknown model name: {model_name}")
 
     # Create HF-compatible version from aug_convo
-    # Only copy fields needed for basic conversation tests (role, content, thinking)
+    # Only copy fields needed for basic conversation tests (role, content)
     hf_convo: list[Message] = []
     for msg in aug_convo:
         # Skip empty system messages for Llama (ones we added) - HF auto-adds date info
         # But include real system messages (HF will prepend date info to them)
         if model_name.startswith("meta") and msg["role"] == "system" and not msg["content"]:
             continue
-        hf_msg: Message = {"role": msg["role"], "content": msg["content"]}
-        if model_name.startswith("openai") and "thinking" in msg:
-            hf_msg["thinking"] = msg["thinking"]
-        hf_convo.append(hf_msg)
+        hf_convo.append({"role": msg["role"], "content": msg["content"]})
 
     return aug_convo, hf_convo
 
@@ -312,13 +301,14 @@ def test_generation_against_hf_chat_templates(model_name: str, conv_id: str):
 
 
 # Test matrix: models x conversations for supervised tests
+# Note: OpenAI excluded because we intentionally include empty analysis channel for train-test
+# consistency, which diverges from HF template (HF only adds analysis channel during generation)
 _SUPERVISED_TEST_PARAMS = [
     (model, conv_id)
     for model in [
         "meta-llama/Llama-3.2-1B-Instruct",
         "Qwen/Qwen3-30B-A3B",
         "deepseek-ai/DeepSeek-V3.1",
-        "openai/gpt-oss-20b",
         "moonshotai/Kimi-K2-Thinking",
         "Qwen/Qwen3-VL-30B-A3B-Instruct",
     ]
