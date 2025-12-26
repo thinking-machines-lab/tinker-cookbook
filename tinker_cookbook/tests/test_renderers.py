@@ -910,9 +910,11 @@ def test_deepseek_post_tool_formatting():
     ]
 
     # Render each message individually to check formatting
+    # Use compute_render_hints to get proper context
+    hints = renderer.compute_render_hints(messages)
     for idx, message in enumerate(messages):
-        follows_tool = idx > 0 and messages[idx - 1]["role"] == "tool"
-        rendered = renderer.render_message(idx, message, follows_tool=follows_tool)
+        follows_tool = hints[idx].get("follows_tool", False)
+        rendered = renderer.render_message(idx, message, hints=hints[idx])
 
         if message["role"] == "assistant" and follows_tool:
             # Post-tool assistant should have no prefix (no role token)

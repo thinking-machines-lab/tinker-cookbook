@@ -257,6 +257,25 @@ class TrainOnWhat(StrEnum):
     CUSTOMIZED = "customized"
 
 
+class RenderHints(TypedDict, total=False):
+    """
+    Context hints computed from the full message list for rendering.
+
+    This separates the computation of message context (what comes before/after)
+    from the actual rendering logic. The base class computes default hints,
+    and subclasses can override compute_render_hints() to add model-specific
+    context without duplicating the loop logic in build_generation_prompt.
+
+    Fields:
+        is_last: Whether this is the last message in the conversation.
+        follows_tool: Whether this message immediately follows a tool response.
+            Used by DeepSeek to suppress </think> prefix after tool responses.
+    """
+
+    is_last: bool
+    follows_tool: bool
+
+
 class Renderer(Protocol):
     """
     Render a message list into training and sampling prompts for language models.
@@ -281,7 +300,40 @@ class Renderer(Protocol):
     def get_stop_sequences(self) -> list[str] | list[int]:
         raise NotImplementedError
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def compute_render_hints(self, messages: list[Message]) -> list[RenderHints]:
+        """Compute context hints for each message in the conversation.
+
+        Override this method to add model-specific context computation without
+        duplicating the loop logic in build_generation_prompt/build_supervised_example.
+
+        Args:
+            messages: The full list of messages to compute hints for.
+
+        Returns:
+            A list of RenderHints, one per message, containing context-dependent
+            information like is_last and follows_tool.
+        """
+        hints: list[RenderHints] = []
+        for idx, message in enumerate(messages):
+            hints.append(
+                RenderHints(
+                    is_last=idx == len(messages) - 1,
+                    follows_tool=idx > 0 and messages[idx - 1]["role"] == "tool",
+                )
+            )
+        return hints
+
+    def render_message(
+        self, idx: int, message: Message, hints: RenderHints | None = None
+    ) -> RenderedMessage:
+        """Render a single message with optional context hints.
+
+        Args:
+            idx: The message index in the conversation.
+            message: The message to render.
+            hints: Optional context hints computed by compute_render_hints().
+                   If None, default hints (is_last=False, follows_tool=False) are used.
+        """
         raise NotImplementedError
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
@@ -323,15 +375,22 @@ class Renderer(Protocol):
         chunks: list[tinker.types.ModelInputChunk] = []
         if self._bos_tokens:
             chunks.append(tinker.types.EncodedTextChunk(tokens=self._bos_tokens))
+
+        # Compute hints for all messages including the new partial message
+        all_messages = messages + [Message(role=role, content="")]
+        hints = self.compute_render_hints(all_messages)
+
         for idx, message in enumerate(messages):
-            rendered_message = self.render_message(idx, message)
+            rendered_message = self.render_message(idx, message, hints=hints[idx])
             ob_chunk = rendered_message.get("prefix")
             action_chunks = rendered_message["content"]
             if ob_chunk:
                 chunks.append(ob_chunk)
             chunks.extend([x for x in action_chunks if x])
-        new_partial_message = Message(role=role, content="")
-        rendered_message = self.render_message(len(messages), new_partial_message)
+
+        # Render the new partial message for generation
+        new_partial_message = all_messages[-1]
+        rendered_message = self.render_message(len(messages), new_partial_message, hints=hints[-1])
         ob_chunk = rendered_message.get("prefix")
         if ob_chunk:
             chunks.append(ob_chunk)
@@ -374,6 +433,9 @@ class Renderer(Protocol):
                 (tinker.types.EncodedTextChunk(tokens=self._bos_tokens), 0.0)
             )
 
+        # Compute hints for all messages
+        hints = self.compute_render_hints(messages)
+
         for idx, message in enumerate(messages):
             if train_on_what == TrainOnWhat.CUSTOMIZED:
                 assert "trainable" in message, (
@@ -384,12 +446,12 @@ class Renderer(Protocol):
                     "When using non-CUSTOMIZED train_on_what, each message must not have a trainable field. Either change train_on_what to CUSTOMIZED or remove the trainable field from the message"
                 )
 
-            is_last_message = idx == len(messages) - 1
+            is_last_message = hints[idx].get("is_last", False)
             is_assistant = message["role"] == "assistant"
             is_user_or_system = message["role"] in ["user", "system"]
 
             # only apply weight to observation part if train_on_what is ALL_TOKENS
-            rendered_message = self.render_message(idx, message, is_last=is_last_message)
+            rendered_message = self.render_message(idx, message, hints=hints[idx])
             ob_part = rendered_message.get("prefix")
             action_parts = rendered_message.get("content")
             action_tail = rendered_message.get("suffix")
@@ -479,7 +541,9 @@ class RoleColonRenderer(Renderer):
     except that they use "Human" instead of "User".
     """
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(
+        self, idx: int, message: Message, hints: RenderHints | None = None
+    ) -> RenderedMessage:
         assert message.get("thinking") is None, "Thinking tokens not supported in RoleColonRenderer"
         assert isinstance(message["content"], str), (
             "RoleColonRenderer only supports message with string content"
@@ -549,7 +613,9 @@ class Llama3Renderer(Renderer):
     the HF template exactly, modify render_message to prepend this info for system messages.
     """
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(
+        self, idx: int, message: Message, hints: RenderHints | None = None
+    ) -> RenderedMessage:
         assert message.get("thinking") is None, "CoT tokens not supported in Llama3"
         assert isinstance(message["content"], str), (
             "Llama3Renderer only supports message with string content"
@@ -755,7 +821,11 @@ class Qwen3Renderer(Renderer):
         """Wrap tool response content in Qwen's <tool_response> tags."""
         return f"<tool_response>\n{content}\n</tool_response>"
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(
+        self, idx: int, message: Message, hints: RenderHints | None = None
+    ) -> RenderedMessage:
+        is_last = hints.get("is_last", False) if hints else False
+
         assert message.get("thinking") is None, "TODO: support CoT in Qwen3 renderer"
         assert isinstance(message["content"], str), (
             "Qwen3Renderer only supports message with string content"
@@ -933,7 +1003,9 @@ class Qwen3DisableThinkingRenderer(Qwen3Renderer):
     "non-thinking" mode while maintaining compatibility with the OpenAI endpoint.
     """
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(
+        self, idx: int, message: Message, hints: RenderHints | None = None
+    ) -> RenderedMessage:
         # Add empty thinking block to assistant messages if not already present
         if message["role"] == "assistant":
             content = message.get("content", "")
@@ -943,7 +1015,7 @@ class Qwen3DisableThinkingRenderer(Qwen3Renderer):
             if "<think>" not in content:
                 message = message.copy()
                 message["content"] = "<think>\n\n</think>\n\n" + content
-        return super().render_message(idx, message, is_last=is_last)
+        return super().render_message(idx, message, hints=hints)
 
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
@@ -958,7 +1030,9 @@ class Qwen3InstructRenderer(Qwen3Renderer):
     use the <think> tag at all.
     """
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(
+        self, idx: int, message: Message, hints: RenderHints | None = None
+    ) -> RenderedMessage:
         assert message.get("thinking") is None, "CoT tokens not supported in Qwen3 instruct 2507"
         assert isinstance(message["content"], str), (
             "Qwen3InstructRenderer only supports message with string content"
@@ -1092,7 +1166,9 @@ class Qwen3VLRenderer(Qwen3Renderer):
             + [TextPart(type="text", text="\n</tool_response>")]
         )
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(
+        self, idx: int, message: Message, hints: RenderHints | None = None
+    ) -> RenderedMessage:
         assert message.get("thinking") is None, "TODO: support CoT in Qwen3 renderer"
         maybe_newline = "\n" if idx > 0 else ""
 
@@ -1162,7 +1238,9 @@ class Qwen3VLInstructRenderer(Qwen3VLRenderer):
     Unlike the Qwen3-VL Thinking models, The Qwen3-VL Instruct models do not use the <think> tag.
     """
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(
+        self, idx: int, message: Message, hints: RenderHints | None = None
+    ) -> RenderedMessage:
         assert message.get("thinking") is None, "CoT tokens not supported in Qwen3-VL instruct"
         maybe_newline = "\n" if idx > 0 else ""
 
@@ -1232,18 +1310,22 @@ class DeepSeekV3Renderer(Renderer):
         self.strip_thinking_from_history = strip_thinking_from_history
 
     def render_message(
-        self, idx: int, message: Message, is_last: bool = False, follows_tool: bool = False
+        self, idx: int, message: Message, hints: RenderHints | None = None
     ) -> RenderedMessage:
         """Render a single message to tokens.
 
         Args:
             idx: Message index in the conversation.
             message: The message to render.
-            is_last: Whether this is the last message (affects thinking stripping).
-            follows_tool: Whether this message immediately follows a tool response.
-                For assistant messages after tool responses, DeepSeek format skips
-                the role token and </think> prefix, and preserves thinking traces.
+            hints: Context hints computed by compute_render_hints().
+                - is_last: Whether this is the last message (affects thinking stripping).
+                - follows_tool: Whether this message immediately follows a tool response.
+                    For assistant messages after tool responses, DeepSeek format skips
+                    the role token and </think> prefix, and preserves thinking traces.
         """
+        is_last = hints.get("is_last", False) if hints else False
+        follows_tool = hints.get("follows_tool", False) if hints else False
+
         assert message.get("thinking") is None, "TODO: support thinking attribute in DSV3 renderer"
         assert isinstance(message["content"], str), (
             "DeepSeekV3Renderer only supports message with string content"
@@ -1350,42 +1432,37 @@ class DeepSeekV3Renderer(Renderer):
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:
-        """Override to handle post-tool assistant context correctly.
+        """Override to skip assistant prefix when last message is a tool response.
 
-        For DeepSeek, assistant messages immediately following tool responses have
-        special formatting: no role token, no </think> prefix, and thinking is preserved.
+        DeepSeek's tool calling format has the model continue directly after
+        <|tool_output_end|> without an <|Assistant|></think> prefix.
         """
-        chunks: list[tinker.types.ModelInputChunk] = []
-        if self._bos_tokens:
-            chunks.append(tinker.types.EncodedTextChunk(tokens=self._bos_tokens))
+        # When last message is a tool response, don't add assistant prefix
+        # The base class always adds a prefix for the new partial message
+        if messages and messages[-1]["role"] == "tool":
+            chunks: list[tinker.types.ModelInputChunk] = []
+            if self._bos_tokens:
+                chunks.append(tinker.types.EncodedTextChunk(tokens=self._bos_tokens))
 
-        for idx, message in enumerate(messages):
-            # Check if this message follows a tool response
-            follows_tool = idx > 0 and messages[idx - 1]["role"] == "tool"
-            is_last = idx == len(messages) - 1
-            rendered = self.render_message(idx, message, is_last=is_last, follows_tool=follows_tool)
-            prefix = rendered.get("prefix")
-            if prefix:
-                chunks.append(prefix)
-            chunks.extend(rendered["content"])
+            # Use base class hint computation and render each message
+            hints = self.compute_render_hints(messages)
+            for idx, message in enumerate(messages):
+                rendered = self.render_message(idx, message, hints=hints[idx])
+                prefix = rendered.get("prefix")
+                if prefix:
+                    chunks.append(prefix)
+                chunks.extend(rendered["content"])
 
-        # Add assistant prefix only if last message is NOT tool
-        # When last message IS tool, generation continues directly after tool_output_end
-        if not messages or messages[-1]["role"] != "tool":
-            rendered = self.render_message(len(messages), Message(role=role, content=""))
-            prefix = rendered.get("prefix")
-            if prefix:
-                chunks.append(prefix)
-            chunks.extend(rendered["content"])  # includes </think>
-
-        if prefill:
-            chunks.append(
-                tinker.types.EncodedTextChunk(
-                    tokens=self.tokenizer.encode(prefill, add_special_tokens=False)
+            if prefill:
+                chunks.append(
+                    tinker.types.EncodedTextChunk(
+                        tokens=self.tokenizer.encode(prefill, add_special_tokens=False)
+                    )
                 )
-            )
+            return tinker.ModelInput(chunks=chunks)
 
-        return tinker.ModelInput(chunks=chunks)
+        # For normal cases, use base class implementation
+        return super().build_generation_prompt(messages, role, prefill)
 
     def _parse_deepseek_tool_calls(
         self, content: str
@@ -1543,11 +1620,15 @@ class KimiK2Renderer(Renderer):
             return [default_system] + list(messages)
         return messages
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(
+        self, idx: int, message: Message, hints: RenderHints | None = None
+    ) -> RenderedMessage:
         """
         Render a message. For assistant messages, is_last controls whether thinking is preserved
         (True) or stripped to empty <think></think> (False).
         """
+        is_last = hints.get("is_last", False) if hints else False
+
         assert isinstance(message["content"], str), (
             "KimiK2Renderer only supports message with string content"
         )
@@ -1605,9 +1686,14 @@ class KimiK2Renderer(Renderer):
         messages = self._ensure_system_message(messages)
         chunks: list[tinker.types.ModelInputChunk] = []
 
+        # Compute hints - for generation, no message is "last" since we're generating new response
+        hints = self.compute_render_hints(messages)
+        # Override is_last to False for all messages in generation prompt
+        for hint in hints:
+            hint["is_last"] = False
+
         for idx, message in enumerate(messages):
-            # For generation prompt, no message is "last assistant" since we're generating new response
-            rendered_message = self.render_message(idx, message, is_last=False)
+            rendered_message = self.render_message(idx, message, hints=hints[idx])
             ob_chunk = rendered_message.get("prefix")
             action_chunks = rendered_message["content"]
             if ob_chunk:
@@ -1639,6 +1725,13 @@ class KimiK2Renderer(Renderer):
                 last_assistant_idx = idx
                 break
 
+        # Compute hints and override is_last for Kimi K2's special behavior
+        hints = self.compute_render_hints(messages)
+        for idx, hint in enumerate(hints):
+            # For Kimi K2, preserve thinking only for last non-tool-call assistant
+            is_assistant = messages[idx]["role"] == "assistant"
+            hint["is_last"] = idx >= last_assistant_idx and is_assistant
+
         model_input_chunks_weights: list[tuple[tinker.types.ModelInputChunk, float]] = []
 
         for idx, message in enumerate(messages):
@@ -1655,9 +1748,7 @@ class KimiK2Renderer(Renderer):
             is_assistant = message["role"] == "assistant"
             is_user_or_system = message["role"] in ["user", "system"]
 
-            # For Kimi K2, preserve thinking only for last non-tool-call assistant
-            is_last_assistant = idx >= last_assistant_idx and is_assistant
-            rendered_message = self.render_message(idx, message, is_last=is_last_assistant)
+            rendered_message = self.render_message(idx, message, hints=hints[idx])
 
             ob_part = rendered_message.get("prefix")
             action_parts = rendered_message.get("content")
@@ -1830,7 +1921,11 @@ class GptOssRenderer(Renderer):
             "Reasoning effort must be set iff using system prompt"
         )
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(
+        self, idx: int, message: Message, hints: RenderHints | None = None
+    ) -> RenderedMessage:
+        is_last = hints.get("is_last", False) if hints else False
+
         assert message.get("tool_calls") is None, "TODO: support tools in gpt-oss renderer"
         assert isinstance(message["content"], str), (
             "GptOssRenderer only supports message with string content"
