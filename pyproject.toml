@@ -18,7 +18,8 @@ dependencies = [
     "tinker>=0.6.1",
     "torch",
     "torchvision",
-    "transformers>=4.57.1",
+    # <4.57: mistral regex bug makes API calls even with local_files_only=True (fixed in PR #42743)
+    "transformers>=4.45.0,<4.57.0",
     "blobfile",
     "inspect-ai",
     "anyio",

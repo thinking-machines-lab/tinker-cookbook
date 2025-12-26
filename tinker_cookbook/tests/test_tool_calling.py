@@ -153,13 +153,61 @@ def test_kimi_k2_parse_tool_call():
     assert message["tool_calls"][0].id == "functions.search:0"
 
 
+def test_llama3_parse_tool_call():
+    """Test parsing tool call from Llama 3 response.
+
+    Llama 3 uses <function=name>{"args"}</function> format.
+    """
+    model_name = "meta-llama/Llama-3.2-1B-Instruct"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("llama3", tokenizer)
+
+    response_text = """I'll get the weather for you.
+<function=get_weather>{"location": "San Francisco"}</function><|eot_id|>"""
+
+    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success is True
+    assert "tool_calls" in message
+    assert len(message["tool_calls"]) == 1
+    assert message["tool_calls"][0].function.name == "get_weather"
+    assert "San Francisco" in message["tool_calls"][0].function.arguments
+    # Content should have function block stripped
+    assert "<function=" not in message["content"]
+
+
+def test_deepseek_parse_tool_call():
+    """Test parsing tool call from DeepSeek V3 response.
+
+    DeepSeek V3 HF template format: <｜tool▁call▁begin｜>name<｜tool▁sep｜>args<｜tool▁call▁end｜>
+    """
+    model_name = "deepseek-ai/DeepSeek-V3.1"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("deepseekv3", tokenizer)
+
+    response_text = """I'll check the weather.
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"location": "NYC"}<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜>"""
+
+    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success is True
+    assert "tool_calls" in message
+    assert len(message["tool_calls"]) == 1
+    assert message["tool_calls"][0].function.name == "get_weather"
+    assert "NYC" in message["tool_calls"][0].function.arguments
+    # Content should have tool calls section stripped
+    assert "<｜tool▁calls▁begin｜>" not in message["content"]
+
+
 # =============================================================================
 # Edge Cases and Error Handling
 # =============================================================================
 
 
 def test_qwen3_parse_invalid_tool_call_json():
-    """Test that invalid JSON in tool call returns parse failure."""
+    """Test that invalid JSON in tool call is captured as unparsed_tool_calls."""
     model_name = "Qwen/Qwen3-8B"
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer("qwen3", tokenizer)
@@ -172,4 +220,100 @@ def test_qwen3_parse_invalid_tool_call_json():
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
     message, success = renderer.parse_response(response_tokens)
 
-    assert success is False
+    # Parse succeeds, but tool call is captured as unparsed
+    assert success is True
+    assert "tool_calls" not in message or len(message.get("tool_calls", [])) == 0
+    assert "unparsed_tool_calls" in message
+    assert len(message["unparsed_tool_calls"]) == 1
+    assert "Invalid JSON" in message["unparsed_tool_calls"][0].error
+    # Raw text should contain the original tool call
+    assert "<tool_call>" in message["unparsed_tool_calls"][0].raw_text
+
+
+def test_qwen3_mixed_valid_invalid_tool_calls():
+    """Test parsing when some tool calls are valid and some are invalid.
+
+    Valid tool calls should be parsed, invalid ones captured in unparsed_tool_calls.
+    """
+    model_name = "Qwen/Qwen3-8B"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("qwen3", tokenizer)
+
+    # First tool call is valid, second has invalid JSON
+    response_text = """I'll try both.
+<tool_call>
+{"name": "search", "arguments": {"query": "weather"}}
+</tool_call>
+<tool_call>
+{bad json here}
+</tool_call><|im_end|>"""
+
+    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success is True
+    # Valid tool call should be parsed
+    assert "tool_calls" in message
+    assert len(message["tool_calls"]) == 1
+    assert message["tool_calls"][0].function.name == "search"
+    # Invalid tool call should be in unparsed_tool_calls
+    assert "unparsed_tool_calls" in message
+    assert len(message["unparsed_tool_calls"]) == 1
+    assert "Invalid JSON" in message["unparsed_tool_calls"][0].error
+
+
+def test_llama3_parse_invalid_tool_call_json():
+    """Test that invalid JSON in Llama 3 tool call is captured as unparsed."""
+    model_name = "meta-llama/Llama-3.2-1B-Instruct"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("llama3", tokenizer)
+
+    response_text = """I'll get the weather.
+<function=get_weather>{invalid json}</function><|eot_id|>"""
+
+    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success is True
+    assert "tool_calls" not in message or len(message.get("tool_calls", [])) == 0
+    assert "unparsed_tool_calls" in message
+    assert len(message["unparsed_tool_calls"]) == 1
+    assert "Invalid JSON" in message["unparsed_tool_calls"][0].error
+
+
+def test_deepseek_parse_invalid_tool_call_json():
+    """Test that invalid JSON in DeepSeek tool call is captured as unparsed."""
+    model_name = "deepseek-ai/DeepSeek-V3.1"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("deepseekv3", tokenizer)
+
+    response_text = """I'll check.
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{invalid json}<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜>"""
+
+    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success is True
+    assert "tool_calls" not in message or len(message.get("tool_calls", [])) == 0
+    assert "unparsed_tool_calls" in message
+    assert len(message["unparsed_tool_calls"]) == 1
+    assert "Invalid JSON" in message["unparsed_tool_calls"][0].error
+
+
+def test_kimi_k2_parse_invalid_tool_call_json():
+    """Test that invalid JSON in Kimi K2 tool call is captured as unparsed."""
+    model_name = "moonshotai/Kimi-K2-Thinking"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("kimi_k2", tokenizer)
+
+    response_text = """<think></think>I'll search.
+<|tool_calls_section_begin|><|tool_call_begin|>functions.search:0<|tool_call_argument_begin|>{invalid}<|tool_call_end|><|tool_calls_section_end|><|im_end|>"""
+
+    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success is True
+    assert "tool_calls" not in message or len(message.get("tool_calls", [])) == 0
+    assert "unparsed_tool_calls" in message
+    assert len(message["unparsed_tool_calls"]) == 1
+    assert "Invalid JSON" in message["unparsed_tool_calls"][0].error
