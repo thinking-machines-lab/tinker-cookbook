@@ -1349,8 +1349,8 @@ class DeepSeekV3Renderer(Renderer):
 
                 # Handle thinking traces
                 # When strip_thinking_from_history=True, strip <think>...</think> from
-                # assistant messages WITHOUT tool_calls. Messages with tool_calls preserve
-                # thinking (the model's reasoning before making the tool call).
+                # historical assistant messages (not the last one). Messages with tool_calls
+                # always preserve thinking (the model's reasoning before making the call).
                 has_tool_calls = "tool_calls" in message and message["tool_calls"]
                 if (
                     self.strip_thinking_from_history

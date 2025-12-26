@@ -754,3 +754,175 @@ def test_qwen3_strip_thinking_false_preserves_all():
     )
     assert "First calculation" in decoded
     assert "Second calculation" in decoded
+
+
+# =============================================================================
+# DeepSeek Thinking Trace Tests
+# =============================================================================
+
+
+def test_deepseek_strip_thinking_from_history_default():
+    """
+    Test that DeepSeek strips thinking from historical assistant messages by default.
+    Only the last assistant message should preserve thinking.
+    """
+    from tinker_cookbook.renderers import DeepSeekV3Renderer
+
+    model_name = "deepseek-ai/DeepSeek-V3.1"
+    tokenizer = get_tokenizer(model_name)
+    renderer = DeepSeekV3Renderer(tokenizer)
+
+    messages: list[Message] = [
+        {"role": "user", "content": "What is 2+2?"},
+        {
+            "role": "assistant",
+            "content": "<think>First calculation.</think>The answer is 4.",
+        },
+        {"role": "user", "content": "And what is 3+3?"},
+        {
+            "role": "assistant",
+            "content": "<think>Second calculation.</think>The answer is 6.",
+        },
+    ]
+
+    model_input, _ = renderer.build_supervised_example(messages)
+    decoded = tokenizer.decode(model_input.to_ints())
+
+    # First thinking block should be stripped, second preserved
+    assert "First calculation" not in decoded, (
+        f"Historical thinking should be stripped by default: {decoded}"
+    )
+    assert "Second calculation" in decoded, (
+        f"Last assistant thinking should be preserved: {decoded}"
+    )
+
+
+def test_deepseek_strip_thinking_false_preserves_all():
+    """
+    Test that strip_thinking_from_history=False preserves thinking in ALL messages.
+    This mode is used for multi-turn RL where the extension property is needed.
+    """
+    from tinker_cookbook.renderers import DeepSeekV3Renderer
+
+    model_name = "deepseek-ai/DeepSeek-V3.1"
+    tokenizer = get_tokenizer(model_name)
+    renderer = DeepSeekV3Renderer(tokenizer, strip_thinking_from_history=False)
+
+    messages: list[Message] = [
+        {"role": "user", "content": "What is 2+2?"},
+        {
+            "role": "assistant",
+            "content": "<think>First calculation.</think>The answer is 4.",
+        },
+        {"role": "user", "content": "And what is 3+3?"},
+        {
+            "role": "assistant",
+            "content": "<think>Second calculation.</think>The answer is 6.",
+        },
+    ]
+
+    model_input, _ = renderer.build_supervised_example(messages)
+    decoded = tokenizer.decode(model_input.to_ints())
+
+    # Both thinking blocks should be present
+    assert "First calculation" in decoded, (
+        f"First thinking should be preserved with strip_thinking_from_history=False: {decoded}"
+    )
+    assert "Second calculation" in decoded, f"Second thinking should be preserved: {decoded}"
+
+
+def test_deepseek_thinking_preserved_with_tool_calls():
+    """
+    Test that thinking is preserved in messages that have tool_calls.
+    The thinking represents the model's reasoning about WHY it's making the tool call.
+    """
+    from tinker_cookbook.renderers import DeepSeekV3Renderer
+
+    model_name = "deepseek-ai/DeepSeek-V3.1"
+    tokenizer = get_tokenizer(model_name)
+    renderer = DeepSeekV3Renderer(tokenizer)  # Default strip_thinking_from_history=True
+
+    messages: list[Message] = [
+        {"role": "user", "content": "What's the weather in NYC?"},
+        {
+            "role": "assistant",
+            "content": "<think>I need to check the weather.</think>Let me look that up.",
+            "tool_calls": [
+                ToolCall(
+                    function=ToolCall.FunctionBody(
+                        name="get_weather",
+                        arguments='{"location": "NYC"}',
+                    ),
+                    id="call_1",
+                )
+            ],
+        },
+        {
+            "role": "tool",
+            "content": '{"temperature": 72}',
+            "tool_call_id": "call_1",
+        },
+        {"role": "assistant", "content": "The temperature in NYC is 72°F."},
+    ]
+
+    model_input, _ = renderer.build_supervised_example(messages)
+    decoded = tokenizer.decode(model_input.to_ints())
+
+    # Thinking in message with tool_calls should be preserved
+    assert "I need to check the weather" in decoded, (
+        f"Thinking in tool_call message should be preserved: {decoded}"
+    )
+
+
+def test_deepseek_post_tool_formatting():
+    """
+    Test that assistant messages following tool responses have correct formatting.
+    Post-tool assistant messages should not have the role token or </think> prefix.
+    """
+    from tinker_cookbook.renderers import DeepSeekV3Renderer
+
+    model_name = "deepseek-ai/DeepSeek-V3.1"
+    tokenizer = get_tokenizer(model_name)
+    renderer = DeepSeekV3Renderer(tokenizer)
+
+    messages: list[Message] = [
+        {"role": "user", "content": "What's the weather?"},
+        {
+            "role": "assistant",
+            "content": "Let me check.",
+            "tool_calls": [
+                ToolCall(
+                    function=ToolCall.FunctionBody(
+                        name="get_weather",
+                        arguments='{"location": "NYC"}',
+                    ),
+                    id="call_1",
+                )
+            ],
+        },
+        {
+            "role": "tool",
+            "content": '{"temperature": 72}',
+            "tool_call_id": "call_1",
+        },
+        {"role": "assistant", "content": "The temperature is 72°F."},
+    ]
+
+    # Render each message individually to check formatting
+    for idx, message in enumerate(messages):
+        follows_tool = idx > 0 and messages[idx - 1]["role"] == "tool"
+        rendered = renderer.render_message(idx, message, follows_tool=follows_tool)
+
+        if message["role"] == "assistant" and follows_tool:
+            # Post-tool assistant should have no prefix (no role token)
+            prefix = rendered.get("prefix")
+            assert prefix is None or len(prefix.tokens) == 0, (
+                f"Post-tool assistant should have no prefix, got: {prefix}"
+            )
+
+            # Content should not start with </think>
+            content_tokens = rendered["content"][0].tokens
+            content_str = tokenizer.decode(list(content_tokens))
+            assert not content_str.startswith("</think>"), (
+                f"Post-tool assistant should not have </think> prefix: {content_str}"
+            )
