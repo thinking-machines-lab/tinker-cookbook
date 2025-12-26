@@ -28,7 +28,14 @@ from transformers.models.auto.tokenization_auto import AutoTokenizer
 
 from tinker_cookbook.image_processing_utils import get_image_processor
 from tinker_cookbook.model_info import get_model_attributes, get_recommended_renderer_name
-from tinker_cookbook.renderers import Message, Qwen3Renderer, ToolCall, get_renderer
+from tinker_cookbook.renderers import (
+    DeepSeekV3ThinkingRenderer,
+    Message,
+    Qwen3Renderer,
+    RenderContext,
+    ToolCall,
+    get_renderer,
+)
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
@@ -399,6 +406,7 @@ def test_tool_call_supervised_rendering(model_name: str):
 _TOOL_CALL_HF_COMPATIBLE_MODELS = [
     ("Qwen/Qwen3-8B", "qwen3"),
     ("Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3_instruct"),
+    # deepseekv3 defaults to non-thinking mode (matches HF template)
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
     ("moonshotai/Kimi-K2-Thinking", "kimi_k2"),
 ]
@@ -664,8 +672,9 @@ def test_qwen3_disable_thinking_4turn():
         ("Qwen/Qwen3-30B-A3B", "qwen3"),
         ("Qwen/Qwen3-8B", "qwen3_disable_thinking"),
         ("meta-llama/Llama-3.2-1B-Instruct", "llama3"),
+        # deepseekv3 defaults to non-thinking, deepseekv3_thinking is thinking mode
         ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
-        ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_disable_thinking"),
+        ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking"),
         ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning"),
         ("moonshotai/Kimi-K2-Thinking", "kimi_k2"),
     ],
@@ -682,7 +691,8 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         "qwen3": "<|im_end|>",
         "qwen3_disable_thinking": "<|im_end|>",
         "deepseekv3": "<｜end▁of▁sentence｜>",  # Full-width pipes
-        "deepseekv3_disable_thinking": "<｜end▁of▁sentence｜>",  # Full-width pipes
+        "deepseekv3_thinking": "<｜end▁of▁sentence｜>",  # Full-width pipes
+        "deepseekv3_disable_thinking": "<｜end▁of▁sentence｜>",  # Full-width pipes (alias)
         "gpt_oss_medium_reasoning": "<|return|>",
         "kimi_k2": "<|im_end|>",
     }
@@ -767,11 +777,9 @@ def test_deepseek_strip_thinking_from_history_default():
     Test that DeepSeek strips thinking from historical assistant messages by default.
     Only the last assistant message should preserve thinking.
     """
-    from tinker_cookbook.renderers import DeepSeekV3Renderer
-
     model_name = "deepseek-ai/DeepSeek-V3.1"
     tokenizer = get_tokenizer(model_name)
-    renderer = DeepSeekV3Renderer(tokenizer)
+    renderer = DeepSeekV3ThinkingRenderer(tokenizer)
 
     messages: list[Message] = [
         {"role": "user", "content": "What is 2+2?"},
@@ -803,11 +811,9 @@ def test_deepseek_strip_thinking_false_preserves_all():
     Test that strip_thinking_from_history=False preserves thinking in ALL messages.
     This mode is used for multi-turn RL where the extension property is needed.
     """
-    from tinker_cookbook.renderers import DeepSeekV3Renderer
-
     model_name = "deepseek-ai/DeepSeek-V3.1"
     tokenizer = get_tokenizer(model_name)
-    renderer = DeepSeekV3Renderer(tokenizer, strip_thinking_from_history=False)
+    renderer = DeepSeekV3ThinkingRenderer(tokenizer, strip_thinking_from_history=False)
 
     messages: list[Message] = [
         {"role": "user", "content": "What is 2+2?"},
@@ -837,11 +843,9 @@ def test_deepseek_thinking_preserved_with_tool_calls():
     Test that thinking is preserved in messages that have tool_calls.
     The thinking represents the model's reasoning about WHY it's making the tool call.
     """
-    from tinker_cookbook.renderers import DeepSeekV3Renderer
-
     model_name = "deepseek-ai/DeepSeek-V3.1"
     tokenizer = get_tokenizer(model_name)
-    renderer = DeepSeekV3Renderer(tokenizer)  # Default strip_thinking_from_history=True
+    renderer = DeepSeekV3ThinkingRenderer(tokenizer)  # Default strip_thinking_from_history=True
 
     messages: list[Message] = [
         {"role": "user", "content": "What's the weather in NYC?"},
@@ -880,11 +884,9 @@ def test_deepseek_post_tool_formatting():
     Test that assistant messages following tool responses have correct formatting.
     Post-tool assistant messages should not have the role token or </think> prefix.
     """
-    from tinker_cookbook.renderers import DeepSeekV3Renderer
-
     model_name = "deepseek-ai/DeepSeek-V3.1"
     tokenizer = get_tokenizer(model_name)
-    renderer = DeepSeekV3Renderer(tokenizer)
+    renderer = DeepSeekV3ThinkingRenderer(tokenizer)
 
     messages: list[Message] = [
         {"role": "user", "content": "What's the weather?"},
@@ -911,20 +913,25 @@ def test_deepseek_post_tool_formatting():
 
     # Render each message individually to check formatting
     for idx, message in enumerate(messages):
-        follows_tool = idx > 0 and messages[idx - 1]["role"] == "tool"
-        rendered = renderer.render_message(idx, message, follows_tool=follows_tool)
+        ctx = RenderContext(
+            idx=idx,
+            is_last=idx == len(messages) - 1,
+            prev_message=messages[idx - 1] if idx > 0 else None,
+        )
+        follows_tool = ctx.prev_message is not None and ctx.prev_message["role"] == "tool"
+        rendered = renderer.render_message(message, ctx)
 
         if message["role"] == "assistant" and follows_tool:
-            # Post-tool assistant should have no prefix (no role token)
-            prefix = rendered.get("prefix")
-            assert prefix is None or len(prefix.tokens) == 0, (
-                f"Post-tool assistant should have no prefix, got: {prefix}"
+            # Post-tool assistant should have no header (no role token)
+            header = rendered.header
+            assert header is None or len(header.tokens) == 0, (
+                f"Post-tool assistant should have no header, got: {header}"
             )
 
-            # Content should not start with </think>
-            content_chunk = rendered["content"][0]
-            assert isinstance(content_chunk, tinker.EncodedTextChunk), "Expected EncodedTextChunk"
-            content_str = tokenizer.decode(list(content_chunk.tokens))
-            assert not content_str.startswith("</think>"), (
-                f"Post-tool assistant should not have </think> prefix: {content_str}"
+            # Output should not start with </think>
+            output_chunk = rendered.output[0]
+            assert isinstance(output_chunk, tinker.EncodedTextChunk), "Expected EncodedTextChunk"
+            output_str = tokenizer.decode(list(output_chunk.tokens))
+            assert not output_str.startswith("</think>"), (
+                f"Post-tool assistant should not have </think> prefix: {output_str}"
             )
