@@ -938,14 +938,41 @@ class Qwen3Renderer(Renderer):
 
         role = self._get_qwen_role_for_message(message)
         header_str = f"{maybe_newline}<|im_start|>{role}\n"
-        output_content = ensure_text(message["content"])
+
+        # Check if content has ThinkingPart in list form for cleaner stripping
+        content = message["content"]
+        has_thinking_part = (
+            isinstance(content, list)
+            and any(p["type"] == "thinking" for p in content)
+        )
+
+        if has_thinking_part:
+            # Content is list with ThinkingPart - use list filtering for stripping
+            parts = ensure_list(content)
+            if self.strip_thinking_from_history and message["role"] == "assistant" and not ctx.is_last:
+                # Remove thinking parts for historical messages
+                parts = remove_thinking(parts)
+                output_content = "".join(p["text"] for p in parts if p["type"] == "text")
+            else:
+                # For the last message, serialize to <think>content</think>text format
+                thinking_content = "".join(p["thinking"] for p in parts if p["type"] == "thinking")
+                text_content = "".join(p["text"] for p in parts if p["type"] == "text")
+                if thinking_content:
+                    output_content = f"<think>{thinking_content}</think>{text_content}"
+                else:
+                    output_content = text_content
+        else:
+            # Content is string (possibly with embedded <think> tags) - use string manipulation
+            output_content = ensure_text(content)
 
         # Handle tool response wrapping
         if message["role"] == "tool":
             output_content = self._wrap_qwen_tool_response(output_content)
 
+        # Legacy string-based stripping for content without ThinkingPart
         if (
-            self.strip_thinking_from_history
+            not has_thinking_part
+            and self.strip_thinking_from_history
             and message["role"] == "assistant"
             and "</think>" in output_content
             and not ctx.is_last
@@ -1419,7 +1446,20 @@ class DeepSeekV3ThinkingRenderer(Renderer):
         """
         # Check if this assistant message follows a tool response
         follows_tool = ctx.prev_message is not None and ctx.prev_message["role"] == "tool"
-        content_str = ensure_text(message["content"])
+
+        # Check if content has ThinkingPart in list form for cleaner stripping
+        content = message["content"]
+        has_thinking_part = (
+            isinstance(content, list)
+            and any(p["type"] == "thinking" for p in content)
+        )
+
+        # Only use ensure_text for non-ThinkingPart content
+        # (ThinkingPart content is handled separately in the assistant branch)
+        if not has_thinking_part:
+            content_str = ensure_text(content)
+        else:
+            content_str = ""  # Will be set in assistant branch
 
         if message["role"] == "system":
             # HF template collects all system messages at the start without role tokens
@@ -1442,7 +1482,30 @@ class DeepSeekV3ThinkingRenderer(Renderer):
             header_tokens = [role_token]
             output_str = content_str
         elif message["role"] == "assistant":
-            output_content = content_str
+            has_tool_calls = "tool_calls" in message and message["tool_calls"]
+
+            if has_thinking_part:
+                # Content is list with ThinkingPart - use list filtering for stripping
+                parts = ensure_list(content)
+                if (
+                    self.strip_thinking_from_history
+                    and not has_tool_calls
+                    and not ctx.is_last
+                ):
+                    # Remove thinking parts for historical messages
+                    parts = remove_thinking(parts)
+                    output_content = "".join(p["text"] for p in parts if p["type"] == "text")
+                else:
+                    # Serialize to <think>content</think>text format
+                    thinking_content = "".join(p["thinking"] for p in parts if p["type"] == "thinking")
+                    text_content = "".join(p["text"] for p in parts if p["type"] == "text")
+                    if thinking_content:
+                        output_content = f"<think>{thinking_content}</think>{text_content}"
+                    else:
+                        output_content = text_content
+            else:
+                # Content is string (possibly with embedded <think> tags)
+                output_content = content_str
 
             if follows_tool:
                 # Post-tool assistant: no role token, content flows directly after tool output
@@ -1453,15 +1516,15 @@ class DeepSeekV3ThinkingRenderer(Renderer):
                 role_token = self._get_special_token("Assistant")
                 header_tokens = [role_token]
 
-                # Handle thinking traces in history
+                # Legacy string-based stripping for content without ThinkingPart
                 # When strip_thinking_from_history=True, strip <think>...</think> from
                 # historical assistant messages (not the last one). Messages with tool_calls
                 # always preserve thinking (the model's reasoning before making the call).
                 # Note: We check for BOTH <think> and </think> to only strip full thinking
                 # blocks, not standalone </think> prefixes used in non-thinking mode.
-                has_tool_calls = "tool_calls" in message and message["tool_calls"]
                 if (
-                    self.strip_thinking_from_history
+                    not has_thinking_part
+                    and self.strip_thinking_from_history
                     and "<think>" in output_content
                     and "</think>" in output_content
                     and not has_tool_calls

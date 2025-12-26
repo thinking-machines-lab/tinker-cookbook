@@ -30,11 +30,18 @@ from tinker_cookbook.image_processing_utils import get_image_processor
 from tinker_cookbook.model_info import get_model_attributes, get_recommended_renderer_name
 from tinker_cookbook.renderers import (
     DeepSeekV3ThinkingRenderer,
+    GptOssRenderer,
+    KimiK2Renderer,
     Message,
     Qwen3Renderer,
     RenderContext,
+    TextPart,
+    ThinkingPart,
     ToolCall,
+    ensure_list,
+    ensure_text,
     get_renderer,
+    remove_thinking,
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
@@ -935,3 +942,208 @@ def test_deepseek_post_tool_formatting():
             assert not output_str.startswith("</think>"), (
                 f"Post-tool assistant should not have </think> prefix: {output_str}"
             )
+
+
+# =============================================================================
+# ThinkingPart Tests
+# =============================================================================
+
+
+def test_ensure_list_string_input():
+    """Test that ensure_list normalizes string content to list form."""
+    content = "Hello world"
+    result = ensure_list(content)
+    assert len(result) == 1
+    assert result[0]["type"] == "text"
+    assert result[0]["text"] == "Hello world"
+
+
+def test_ensure_list_list_input():
+    """Test that ensure_list returns list content unchanged."""
+    content = [
+        TextPart(type="text", text="Hello"),
+        ThinkingPart(type="thinking", thinking="Let me think..."),
+    ]
+    result = ensure_list(content)
+    assert result == content
+
+
+def test_remove_thinking():
+    """Test that remove_thinking filters out ThinkingPart elements."""
+    content = [
+        ThinkingPart(type="thinking", thinking="Let me think..."),
+        TextPart(type="text", text="The answer is 42."),
+    ]
+    result = remove_thinking(content)
+    assert len(result) == 1
+    assert result[0]["type"] == "text"
+    assert result[0]["text"] == "The answer is 42."
+
+
+def test_gpt_oss_with_thinking_part_in_content():
+    """Test GptOssRenderer extracts thinking from ThinkingPart in content list."""
+    tokenizer = get_tokenizer("openai/gpt-oss-20b")
+    renderer = GptOssRenderer(tokenizer, use_system_prompt=False)
+
+    message: Message = {
+        "role": "assistant",
+        "content": [
+            ThinkingPart(type="thinking", thinking="Step 1: Think about it."),
+            TextPart(type="text", text="The answer is 42."),
+        ],
+    }
+
+    ctx = RenderContext(idx=0, is_last=True, prev_message=None)
+    rendered = renderer.render_message(message, ctx)
+
+    # Decode to check content
+    output_tokens = [tok for chunk in rendered.output for tok in chunk.tokens]
+    output_str = tokenizer.decode(output_tokens)
+
+    # Should contain thinking in analysis channel
+    assert "analysis" in output_str
+    assert "Step 1: Think about it." in output_str
+    assert "The answer is 42." in output_str
+
+
+def test_kimi_k2_with_thinking_part_in_content():
+    """Test KimiK2Renderer extracts thinking from ThinkingPart in content list."""
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    renderer = KimiK2Renderer(tokenizer)
+
+    message: Message = {
+        "role": "assistant",
+        "content": [
+            ThinkingPart(type="thinking", thinking="Let me reason..."),
+            TextPart(type="text", text="Here is my answer."),
+        ],
+    }
+
+    # Test last message (should preserve thinking)
+    ctx = RenderContext(idx=1, is_last=True, prev_message=None)
+    rendered = renderer.render_message(message, ctx)
+
+    output_tokens = [tok for chunk in rendered.output for tok in chunk.tokens]
+    output_str = tokenizer.decode(output_tokens)
+
+    assert "<think>Let me reason...</think>" in output_str
+    assert "Here is my answer." in output_str
+
+    # Test non-last message (should strip thinking)
+    ctx = RenderContext(idx=1, is_last=False, prev_message=None)
+    rendered = renderer.render_message(message, ctx)
+
+    output_tokens = [tok for chunk in rendered.output for tok in chunk.tokens]
+    output_str = tokenizer.decode(output_tokens)
+
+    # Should have empty think block
+    assert "<think></think>" in output_str
+    assert "Here is my answer." in output_str
+    assert "Let me reason..." not in output_str
+
+
+def test_kimi_k2_parse_response_returns_thinking_part():
+    """Test that KimiK2Renderer.parse_response extracts thinking to ThinkingPart."""
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    renderer = KimiK2Renderer(tokenizer)
+
+    # Simulate a response with thinking
+    response_str = "<think>Let me think step by step.</think>The final answer is 7.<|im_end|>"
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success
+    assert message["role"] == "assistant"
+
+    # Content should be a list with ThinkingPart and TextPart
+    content = message["content"]
+    assert isinstance(content, list)
+
+    parts = ensure_list(content)
+    thinking_parts = [p for p in parts if p["type"] == "thinking"]
+    text_parts = [p for p in parts if p["type"] == "text"]
+
+    assert len(thinking_parts) == 1
+    assert thinking_parts[0]["thinking"] == "Let me think step by step."
+
+    assert len(text_parts) == 1
+    assert text_parts[0]["text"] == "The final answer is 7."
+
+
+def test_qwen3_stripping_with_thinking_part():
+    """Test Qwen3Renderer strips ThinkingPart from historical messages."""
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
+    renderer = Qwen3Renderer(tokenizer, strip_thinking_from_history=True)
+
+    message: Message = {
+        "role": "assistant",
+        "content": [
+            ThinkingPart(type="thinking", thinking="Internal reasoning..."),
+            TextPart(type="text", text="The visible response."),
+        ],
+    }
+
+    # Non-last message should have thinking stripped
+    ctx = RenderContext(idx=1, is_last=False, prev_message=None)
+    rendered = renderer.render_message(message, ctx)
+
+    output_tokens = [tok for chunk in rendered.output for tok in chunk.tokens]
+    output_str = tokenizer.decode(output_tokens)
+
+    # Should not contain thinking
+    assert "Internal reasoning" not in output_str
+    assert "The visible response." in output_str
+
+    # Last message should preserve thinking
+    ctx = RenderContext(idx=1, is_last=True, prev_message=None)
+    rendered = renderer.render_message(message, ctx)
+
+    output_tokens = [tok for chunk in rendered.output for tok in chunk.tokens]
+    output_str = tokenizer.decode(output_tokens)
+
+    # Should serialize thinking to <think>...</think> format
+    assert "<think>Internal reasoning...</think>" in output_str
+    assert "The visible response." in output_str
+
+
+def test_deepseek_stripping_with_thinking_part():
+    """Test DeepSeekV3ThinkingRenderer strips ThinkingPart from historical messages."""
+    tokenizer = get_tokenizer("deepseek-ai/DeepSeek-V3.1")
+    renderer = DeepSeekV3ThinkingRenderer(tokenizer, strip_thinking_from_history=True)
+
+    message: Message = {
+        "role": "assistant",
+        "content": [
+            ThinkingPart(type="thinking", thinking="Deep reasoning here..."),
+            TextPart(type="text", text="The conclusion."),
+        ],
+    }
+
+    # Non-last message should have thinking stripped
+    ctx = RenderContext(idx=1, is_last=False, prev_message=None)
+    rendered = renderer.render_message(message, ctx)
+
+    output_tokens = []
+    for chunk in rendered.output:
+        if hasattr(chunk, "tokens"):
+            output_tokens.extend(chunk.tokens)
+    output_str = tokenizer.decode(output_tokens)
+
+    # Should not contain thinking
+    assert "Deep reasoning here" not in output_str
+    assert "The conclusion." in output_str
+
+    # Last message should preserve thinking
+    ctx = RenderContext(idx=1, is_last=True, prev_message=None)
+    rendered = renderer.render_message(message, ctx)
+
+    output_tokens = []
+    for chunk in rendered.output:
+        if hasattr(chunk, "tokens"):
+            output_tokens.extend(chunk.tokens)
+    output_str = tokenizer.decode(output_tokens)
+
+    # Should serialize thinking to <think>...</think> format
+    assert "<think>Deep reasoning here...</think>" in output_str
+    assert "The conclusion." in output_str
