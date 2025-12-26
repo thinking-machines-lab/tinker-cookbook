@@ -923,9 +923,7 @@ def test_deepseek_post_tool_formatting():
 
             # Content should not start with </think>
             content_chunk = rendered["content"][0]
-            assert isinstance(content_chunk, tinker.EncodedTextChunk), (
-                "Expected EncodedTextChunk"
-            )
+            assert isinstance(content_chunk, tinker.EncodedTextChunk), "Expected EncodedTextChunk"
             content_str = tokenizer.decode(list(content_chunk.tokens))
             assert not content_str.startswith("</think>"), (
                 f"Post-tool assistant should not have </think> prefix: {content_str}"
