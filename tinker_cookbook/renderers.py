@@ -1222,7 +1222,10 @@ class DeepSeekV3Renderer(Renderer):
     """
 
     def __init__(
-        self, tokenizer: Tokenizer, system_role_as_user: bool = False, strip_thinking_from_history: bool = True
+        self,
+        tokenizer: Tokenizer,
+        system_role_as_user: bool = False,
+        strip_thinking_from_history: bool = True,
     ):
         super().__init__(tokenizer)
         self.system_role_as_user = system_role_as_user
@@ -1283,7 +1286,11 @@ class DeepSeekV3Renderer(Renderer):
                 # assistant messages WITHOUT tool_calls. Messages with tool_calls preserve
                 # thinking (the model's reasoning before making the tool call).
                 has_tool_calls = "tool_calls" in message and message["tool_calls"]
-                if self.strip_thinking_from_history and "</think>" in ac_content and not has_tool_calls:
+                if (
+                    self.strip_thinking_from_history
+                    and "</think>" in ac_content
+                    and not has_tool_calls
+                ):
                     # Remove everything up to and including </think>
                     ac_content = ac_content.split("</think>", 1)[1]
 
