@@ -23,6 +23,7 @@ from datetime import date
 
 
 import pytest
+import tinker
 from transformers.models.auto.tokenization_auto import AutoTokenizer
 
 from tinker_cookbook.image_processing_utils import get_image_processor
@@ -921,8 +922,11 @@ def test_deepseek_post_tool_formatting():
             )
 
             # Content should not start with </think>
-            content_tokens = rendered["content"][0].tokens
-            content_str = tokenizer.decode(list(content_tokens))
+            content_chunk = rendered["content"][0]
+            assert isinstance(content_chunk, tinker.EncodedTextChunk), (
+                "Expected EncodedTextChunk"
+            )
+            content_str = tokenizer.decode(list(content_chunk.tokens))
             assert not content_str.startswith("</think>"), (
                 f"Post-tool assistant should not have </think> prefix: {content_str}"
             )
