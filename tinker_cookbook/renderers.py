@@ -394,6 +394,27 @@ class Renderer(ABC):
         """
         raise NotImplementedError
 
+    def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
+        """Return tokens to append when prompting for generation.
+
+        This is called by build_generation_prompt to add the appropriate prefix
+        before the model starts generating. Override this method instead of
+        build_generation_prompt when you only need to customize the suffix.
+
+        Args:
+            role: The role to generate (usually "assistant")
+            ctx: Context for the generation suffix. Note that ctx.is_last is False
+                because we're prompting for generation, not rendering a complete message.
+
+        Returns:
+            List of token IDs to append (e.g., role header tokens)
+        """
+        # Default: render an empty message and use its header tokens
+        rendered = self.render_message(Message(role=role, content=""), ctx)
+        if rendered.header:
+            return list(rendered.header.tokens)
+        return []
+
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:
@@ -412,7 +433,7 @@ class Renderer(ABC):
         for idx, message in enumerate(messages):
             ctx = RenderContext(
                 idx=idx,
-                is_last=False,  # Not last since we're adding generation prompt after
+                is_last=(idx == len(messages) - 1),
                 prev_message=messages[idx - 1] if idx > 0 else None,
             )
             rendered_message = self.render_message(message, ctx)
@@ -421,16 +442,16 @@ class Renderer(ABC):
             if header_chunk:
                 chunks.append(header_chunk)
             chunks.extend([x for x in output_chunks if x])
-        new_partial_message = Message(role=role, content="")
-        ctx = RenderContext(
+
+        suffix_ctx = RenderContext(
             idx=len(messages),
-            is_last=False,  # Not a complete message - just prompting for generation
+            is_last=True,
             prev_message=messages[-1] if messages else None,
         )
-        rendered_message = self.render_message(new_partial_message, ctx)
-        header_chunk = rendered_message.header
-        if header_chunk:
-            chunks.append(header_chunk)
+        suffix_tokens = self._get_generation_suffix(role, suffix_ctx)
+        if suffix_tokens:
+            chunks.append(tinker.types.EncodedTextChunk(tokens=suffix_tokens))
+
         if prefill:
             chunks.append(
                 tinker.types.EncodedTextChunk(
@@ -471,6 +492,11 @@ class Renderer(ABC):
             A tuple of (model_input, weights) where weights is a 1D tensor with the
             same length as the total number of tokens.
         """
+        # TODO: Warn if train_on_what != LAST_ASSISTANT_MESSAGE and the renderer
+        # doesn't satisfy the sequence extension property (e.g., strips thinking from
+        # history). In that case, training on multiple assistant messages requires
+        # separate examples with different token sequences, not a single example.
+        # See docs/rl/sequence-extension.mdx for details.
 
         model_input_chunks_weights: list[tuple[tinker.types.ModelInputChunk, float]] = []
         if self._bos_tokens:
@@ -910,6 +936,17 @@ class Qwen3Renderer(Renderer):
             )
         ]
         return RenderedMessage(header=header, output=output)
+
+    def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
+        """Return the generation suffix for Qwen3.
+
+        For Qwen3 in thinking mode, we only add the role header (e.g., <|im_start|>assistant\n).
+        We do NOT add <think> here - the model generates that itself. This matches HF's
+        add_generation_prompt=True behavior.
+        """
+        maybe_newline = "\n" if ctx.idx > 0 else ""
+        header_str = f"{maybe_newline}<|im_start|>{role}\n"
+        return self.tokenizer.encode(header_str, add_special_tokens=False)
 
     @property
     def _end_message_token(self) -> int:
@@ -1618,44 +1655,15 @@ class DeepSeekV3DisableThinkingRenderer(DeepSeekV3ThinkingRenderer):
 
         return super().render_message(message, ctx)
 
-    def build_generation_prompt(
-        self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
-    ) -> tinker.ModelInput:
-        """Override to add </think> prefix for non-thinking mode generation.
-
-        We can't just use prefill because that goes after the output tokens.
-        Instead, we manually add <｜Assistant｜></think> for the generation prompt.
-        """
-        chunks: list[tinker.types.ModelInputChunk] = []
-        if self._bos_tokens:
-            chunks.append(tinker.types.EncodedTextChunk(tokens=self._bos_tokens))
-
-        for idx, message in enumerate(messages):
-            ctx = RenderContext(
-                idx=idx,
-                is_last=False,  # Not last since we're adding generation prompt after
-                prev_message=messages[idx - 1] if idx > 0 else None,
-            )
-            rendered = self.render_message(message, ctx)
-            if rendered.header:
-                chunks.append(rendered.header)
-            chunks.extend(rendered.output)
-
-        # Add assistant header + </think> for generation (if not following tool)
-        if not messages or messages[-1]["role"] != "tool":
-            role_token = self._get_special_token("Assistant")
-            # Encode </think> separately to avoid the end_of_sentence token
-            think_close = self.tokenizer.encode("</think>", add_special_tokens=False)
-            chunks.append(tinker.types.EncodedTextChunk(tokens=[role_token] + think_close))
-
-        if prefill:
-            chunks.append(
-                tinker.types.EncodedTextChunk(
-                    tokens=self.tokenizer.encode(prefill, add_special_tokens=False)
-                )
-            )
-
-        return tinker.ModelInput(chunks=chunks)
+    def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
+        """Return <｜Assistant｜></think> for generation, or empty after tool messages."""
+        # No suffix after tool messages - content flows directly
+        if ctx.prev_message is not None and ctx.prev_message["role"] == "tool":
+            return []
+        # Otherwise: <｜Assistant｜></think>
+        role_token = self._get_special_token("Assistant")
+        think_close = self.tokenizer.encode("</think>", add_special_tokens=False)
+        return [role_token] + think_close
 
 
 class KimiK2Renderer(Renderer):
@@ -2020,11 +2028,11 @@ class GptOssRenderer(Renderer):
             )
             output_str += f"<|message|>{message['content']}"
 
-        if not ctx.is_last:
-            output_str += "<|end|>"
-        else:
-            # <|return|> ends the last-message in harmony (but should be replaced by <|end|> when continuing the convo)
+        if ctx.is_last and message["role"] == "assistant":
+            # <|return|> is the stop token for assistant generation
             output_str += "<|return|>"
+        else:
+            output_str += "<|end|>"
 
         header = tinker.types.EncodedTextChunk(
             tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
