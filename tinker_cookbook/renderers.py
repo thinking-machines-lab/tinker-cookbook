@@ -9,6 +9,7 @@ import logging
 import re
 import urllib.request
 from datetime import datetime
+from abc import ABC, abstractmethod
 from enum import StrEnum
 from typing import Literal, NotRequired, Optional, Protocol, TypedDict, cast
 
@@ -230,22 +231,46 @@ def _tool_call_payload(tool_call: ToolCall) -> dict[str, object]:
 
 class RenderedMessage(TypedDict):
     """
-    Container for parts of a rendered message, for masking.
+    Container for parts of a rendered message, structured for loss masking.
+
+    A rendered message is split into header and output to control which tokens receive
+    training loss. In the simplest case (where the full conversation is formed by
+    concatenation), building a supervised example from messages [m_0, ..., m_{n-1}]
+    produces:
+
+        tokens = BOS + header_0 + output_0 + header_1 + output_1 + ... + header_{n-1} + output_{n-1}
+
+    However, some renderers modify this structure. For example, Qwen3Renderer strips
+    thinking blocks from historical assistant messages. Such renderers must override
+    build_supervised_example to match their build_generation_prompt behavior.
 
     Args:
 
-    prefix: NotRequired[tinker.EncodedTextChunk]
-        Message header that typically includes the speaker's role in the conversation.
-    content: list[tinker.ModelInputChunk]
-        Inner parts of the message that may include spans of image and text.
-    suffix: NotRequired[tinker.EncodedTextChunk]
-        Message header that typically includes the turn stop token.
+    header: NotRequired[tinker.EncodedTextChunk]
+        Role identifier and delimiters that introduce the turn. This is what the model
+        sees but does not generate.
+        Examples: "User:" (RoleColon), "<|start_header_id|>user<|end_header_id|>\n\n" (Llama3).
+        Typically receives zero training weight.
+    output: list[tinker.ModelInputChunk]
+        What the model generates for this turn: the message text/images plus end-of-turn
+        tokens. This is the trainable portion.
+        Examples: " Hello world\n\n" (RoleColon), "Hello world<|eot_id|>" (Llama3).
+    stop_overlap: NotRequired[tinker.EncodedTextChunk]
+        Edge case field for formats where the stop sequence spans message boundaries.
+        Most renderers (Llama3, Qwen3, DeepSeek, etc.) don't use this—their stop tokens
+        are included in output.
+
+        Only RoleColonRenderer uses this. Its stop sequence is "\n\nUser:", where "\n\n"
+        ends the output but "User:" would duplicate the next message's header. To avoid
+        duplication, "User:" is stored here and only appended for the last message in
+        supervised training. The name "stop_overlap" reflects that these tokens are the
+        overlap between the stop sequence and the next message's header.
 
     """
 
-    prefix: NotRequired[tinker.EncodedTextChunk]
-    content: list[tinker.ModelInputChunk]
-    suffix: NotRequired[tinker.EncodedTextChunk]
+    header: NotRequired[tinker.EncodedTextChunk]
+    output: list[tinker.ModelInputChunk]
+    stop_overlap: NotRequired[tinker.EncodedTextChunk]
 
 
 class TrainOnWhat(StrEnum):
@@ -257,9 +282,18 @@ class TrainOnWhat(StrEnum):
     CUSTOMIZED = "customized"
 
 
-class Renderer(Protocol):
+class Renderer(ABC):
     """
-    Render a message list into training and sampling prompts for language models.
+    Abstract base class for rendering message lists into training and sampling prompts.
+
+    Subclasses must implement:
+    - get_stop_sequences(): Return stop tokens/strings for sampling
+    - render_message(): Break a message into header/output/stop_overlap components
+    - parse_response(): Convert sampled tokens back into a Message
+
+    The default build_generation_prompt and build_supervised_example implementations
+    assume simple concatenation of rendered messages. Override these if your renderer
+    modifies the conversation structure (e.g., stripping thinking blocks from history).
     """
 
     tokenizer: Tokenizer
@@ -278,14 +312,45 @@ class Renderer(Protocol):
     def _bos_tokens(self) -> list[int]:
         return []
 
+    @abstractmethod
     def get_stop_sequences(self) -> list[str] | list[int]:
-        raise NotImplementedError
+        """Return the stop sequences used when sampling from this renderer."""
+        ...
 
+    @abstractmethod
     def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
-        raise NotImplementedError
+        """
+        Render a single message into its header/output/stop_overlap components.
 
+        This method breaks down a message into parts for loss masking. See RenderedMessage
+        for detailed semantics of each component.
+
+        Args:
+            idx: The index of this message in the conversation (0-based). Some renderers
+                use this to decide whether to add leading newlines or other separators.
+            message: The message to render.
+            is_last: Whether this is the last message in the sequence. This affects:
+                - Whether stop_overlap is meaningful (only appended for last message)
+                - For some renderers (Qwen3, GptOss), whether to preserve vs strip thinking blocks
+
+        Returns:
+            RenderedMessage with header, output, and optionally stop_overlap.
+        """
+        ...
+
+    @abstractmethod
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
-        raise NotImplementedError
+        """
+        Parse sampled tokens back into a Message.
+
+        Args:
+            response: Token IDs returned from sampling.
+
+        Returns:
+            A tuple of (message, success). If success is False, the response could not
+            be parsed (e.g., missing stop token), but a best-effort message is still returned.
+        """
+        ...
 
     def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
@@ -325,16 +390,16 @@ class Renderer(Protocol):
             chunks.append(tinker.types.EncodedTextChunk(tokens=self._bos_tokens))
         for idx, message in enumerate(messages):
             rendered_message = self.render_message(idx, message)
-            ob_chunk = rendered_message.get("prefix")
-            action_chunks = rendered_message["content"]
-            if ob_chunk:
-                chunks.append(ob_chunk)
-            chunks.extend([x for x in action_chunks if x])
+            header_chunk = rendered_message.get("header")
+            output_chunks = rendered_message["output"]
+            if header_chunk:
+                chunks.append(header_chunk)
+            chunks.extend([x for x in output_chunks if x])
         new_partial_message = Message(role=role, content="")
         rendered_message = self.render_message(len(messages), new_partial_message)
-        ob_chunk = rendered_message.get("prefix")
-        if ob_chunk:
-            chunks.append(ob_chunk)
+        header_chunk = rendered_message.get("header")
+        if header_chunk:
+            chunks.append(header_chunk)
         if prefill:
             chunks.append(
                 tinker.types.EncodedTextChunk(
@@ -349,23 +414,31 @@ class Renderer(Protocol):
         train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_MESSAGE,
     ) -> tuple[tinker.ModelInput, torch.Tensor]:
         """
-        Generates tokens and weights (for SFT) in the most standard way; by concatenating
-        together tokens and weights for each message.
+        Build tokens and per-token weights for supervised fine-tuning.
+
+        This default implementation concatenates rendered messages in order. Override
+        this method if your build_generation_prompt does anything that breaks the simple
+        concatenation assumption—for example, if it strips thinking blocks from history
+        (like Qwen3Renderer), injects default system prompts (like KimiK2Renderer), or
+        otherwise modifies the token sequence.
+
+        The supervised example tokens should match what build_generation_prompt would
+        produce for the same conversation prefix, so the model trains on the same
+        distribution it sees at inference time.
 
         Args:
-            messages: a list of messages to render.
-            train_on_what: an enum that controls how the weights are assigned to the tokens.
-                - TrainOnWhat.LAST_ASSISTANT_MESSAGE: only the last assistant message is used for training
-                - TrainOnWhat.ALL_ASSISTANT_MESSAGES: all assistant messages are used for training
-                - TrainOnWhat.ALL_MESSAGES: all messages are used for training
-                - TrainOnWhat.ALL_TOKENS: all tokens are used for training
-                - TrainOnWhat.ALL_USER_AND_SYSTEM_MESSAGES: all user and system messages are used for training
-                - TrainOnWhat.CUSTOMIZED: each message has a trainable field, and the weights are assigned based on the trainable field
+            messages: A list of messages to render.
+            train_on_what: Controls which tokens receive non-zero training weight:
+                - LAST_ASSISTANT_MESSAGE: Only the last assistant message
+                - ALL_ASSISTANT_MESSAGES: All assistant messages
+                - ALL_MESSAGES: All messages (but not headers)
+                - ALL_TOKENS: Everything including headers
+                - ALL_USER_AND_SYSTEM_MESSAGES: User and system messages only
+                - CUSTOMIZED: Use the 'trainable' field on each message
 
         Returns:
-            A tuple of two tensors:
-                - model_input: the tinker ModelInput for your model
-                - weights: a tensor of weights
+            A tuple of (model_input, weights) where weights is a 1D tensor with the
+            same length as the total number of tokens.
         """
 
         model_input_chunks_weights: list[tuple[tinker.types.ModelInputChunk, float]] = []
@@ -388,40 +461,40 @@ class Renderer(Protocol):
             is_assistant = message["role"] == "assistant"
             is_user_or_system = message["role"] in ["user", "system"]
 
-            # only apply weight to observation part if train_on_what is ALL_TOKENS
+            # only apply weight to header if train_on_what is ALL_TOKENS
             rendered_message = self.render_message(idx, message, is_last=is_last_message)
-            ob_part = rendered_message.get("prefix")
-            action_parts = rendered_message.get("content")
-            action_tail = rendered_message.get("suffix")
+            header_part = rendered_message.get("header")
+            output_parts = rendered_message.get("output")
+            stop_overlap_part = rendered_message.get("stop_overlap")
 
-            ob_weight = int(train_on_what == TrainOnWhat.ALL_TOKENS)
-            if ob_part:
-                model_input_chunks_weights += [(ob_part, ob_weight)]
+            header_weight = int(train_on_what == TrainOnWhat.ALL_TOKENS)
+            if header_part:
+                model_input_chunks_weights += [(header_part, header_weight)]
 
             match train_on_what:
                 case TrainOnWhat.LAST_ASSISTANT_MESSAGE:
-                    action_has_weight = is_last_message and is_assistant
+                    output_has_weight = is_last_message and is_assistant
                 case TrainOnWhat.ALL_ASSISTANT_MESSAGES:
-                    action_has_weight = is_assistant
+                    output_has_weight = is_assistant
                 case TrainOnWhat.ALL_MESSAGES:
-                    action_has_weight = True
+                    output_has_weight = True
                 case TrainOnWhat.ALL_TOKENS:
-                    action_has_weight = True
+                    output_has_weight = True
                 case TrainOnWhat.ALL_USER_AND_SYSTEM_MESSAGES:
-                    action_has_weight = is_user_or_system
+                    output_has_weight = is_user_or_system
                 case TrainOnWhat.CUSTOMIZED:
-                    action_has_weight = message.get("trainable", False)
+                    output_has_weight = message.get("trainable", False)
                 case _:
                     raise ValueError(f"Unknown train_on_what: {train_on_what}")
 
             model_input_chunks_weights += [
-                (action_part, int(action_has_weight)) for action_part in action_parts if action_part
+                (output_part, int(output_has_weight)) for output_part in output_parts if output_part
             ]
 
-            # action tail is effectively the stop_token and the start token for the next turn
-            # e.g. \n\nUser:
-            if is_last_message and action_tail:
-                model_input_chunks_weights += [(action_tail, int(action_has_weight))]
+            # stop_overlap completes the stop sequence for formats like RoleColon (e.g., "User:")
+            # Only included for the last message.
+            if is_last_message and stop_overlap_part:
+                model_input_chunks_weights += [(stop_overlap_part, int(output_has_weight))]
 
         weights_data = [w for chunk, w in model_input_chunks_weights for _ in range(chunk.length)]
         weights_tensor = torch.tensor(weights_data)
@@ -484,24 +557,23 @@ class RoleColonRenderer(Renderer):
         assert isinstance(message["content"], str), (
             "RoleColonRenderer only supports message with string content"
         )
-        ob_str = message["role"].capitalize() + ":"
-        # Observation (prompt) part
-        ac_str = " " + message["content"] + "\n\n"
-        # Action part
-        ac_tail_str = "User:" if message["role"] == "assistant" else "<UNUSED>"
-        # Action part that's only included in the last message in SFT
-        prefix = tinker.types.EncodedTextChunk(
-            tokens=self.tokenizer.encode(ob_str, add_special_tokens=False)
+        header_str = message["role"].capitalize() + ":"
+        output_str = " " + message["content"] + "\n\n"
+        # stop_overlap completes the stop sequence "\n\nUser:" for assistant messages.
+        # For non-assistant messages, we use a placeholder that's never actually concatenated.
+        stop_overlap_str = "User:" if message["role"] == "assistant" else "<UNUSED>"
+        header = tinker.types.EncodedTextChunk(
+            tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
         )
-        content: list[tinker.ModelInputChunk] = [
+        output: list[tinker.ModelInputChunk] = [
             tinker.types.EncodedTextChunk(
-                tokens=self.tokenizer.encode(ac_str, add_special_tokens=False)
+                tokens=self.tokenizer.encode(output_str, add_special_tokens=False)
             )
         ]
-        suffix = tinker.types.EncodedTextChunk(
-            tokens=self.tokenizer.encode(ac_tail_str, add_special_tokens=False)
+        stop_overlap = tinker.types.EncodedTextChunk(
+            tokens=self.tokenizer.encode(stop_overlap_str, add_special_tokens=False)
         )
-        return RenderedMessage(prefix=prefix, content=content, suffix=suffix)
+        return RenderedMessage(header=header, output=output, stop_overlap=stop_overlap)
 
     def get_stop_sequences(self) -> list[str]:
         return ["\n\nUser:"]
@@ -561,10 +633,10 @@ class Llama3Renderer(Renderer):
         if role == "tool":
             role = "ipython"
 
-        ob_str = f"<|start_header_id|>{role}<|end_header_id|>\n\n"
+        header_str = f"<|start_header_id|>{role}<|end_header_id|>\n\n"
 
-        # Build action content
-        ac_str = message["content"]
+        # Build output content
+        output_str = message["content"]
 
         # Handle tool calls in assistant messages
         # Llama 3 format: <function=function_name>{"arg": "value"}</function>
@@ -574,19 +646,19 @@ class Llama3Renderer(Renderer):
                 func_name = tool_call.function.name
                 args = tool_call.function.arguments
                 tool_call_strs.append(f"<function={func_name}>{args}</function>")
-            ac_str += "".join(tool_call_strs)
+            output_str += "".join(tool_call_strs)
 
-        ac_str += "<|eot_id|>"
+        output_str += "<|eot_id|>"
 
-        prefix = tinker.types.EncodedTextChunk(
-            tokens=self.tokenizer.encode(ob_str, add_special_tokens=False)
+        header = tinker.types.EncodedTextChunk(
+            tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
         )
-        content: list[tinker.ModelInputChunk] = [
+        output: list[tinker.ModelInputChunk] = [
             tinker.types.EncodedTextChunk(
-                tokens=self.tokenizer.encode(ac_str, add_special_tokens=False)
+                tokens=self.tokenizer.encode(output_str, add_special_tokens=False)
             )
         ]
-        return RenderedMessage(prefix=prefix, content=content)
+        return RenderedMessage(header=header, output=output)
 
     @property
     def _bos_tokens(self) -> list[int]:
@@ -763,47 +835,45 @@ class Qwen3Renderer(Renderer):
         maybe_newline = "\n" if idx > 0 else ""
 
         role = self._get_qwen_role_for_message(message)
-        ob_str = f"{maybe_newline}<|im_start|>{role}\n"
-        ac_content = message["content"]
+        header_str = f"{maybe_newline}<|im_start|>{role}\n"
+        output_content = message["content"]
 
         # Handle tool response wrapping
         if message["role"] == "tool":
-            ac_content = self._wrap_qwen_tool_response(ac_content)
+            output_content = self._wrap_qwen_tool_response(output_content)
 
         if (
             self.strip_thinking_from_history
             and message["role"] == "assistant"
-            and "</think>" in ac_content
+            and "</think>" in output_content
             and not is_last
         ):
             # Multi-turn conversation, we remove the thinking section from the assistant message.
             # This matches how Qwen3 models were trained - they only see their own thinking
             # during the current turn, not from previous turns.
-            ac_content = ac_content.split("</think>")[1].lstrip()
-        elif message["role"] == "assistant" and "<think>" not in ac_content and is_last:
+            output_content = output_content.split("</think>")[1].lstrip()
+        elif message["role"] == "assistant" and "<think>" not in output_content and is_last:
             # Matching the paper, we force the assistant to start with <think>. Some SFT datasets include
             # <think> in the assistant messages, we so don't need to re-add it in those cases.
-            ob_str += "<think>\n"
-        # Observation (prompt) part
+            header_str += "<think>\n"
         if "tool_calls" in message:
             # Add leading newline to match HF template behavior
-            ac_content += "\n" + "\n".join(
+            output_content += "\n" + "\n".join(
                 [
                     f"<tool_call>\n{json.dumps(_tool_call_payload(tool_call))}\n</tool_call>"
                     for tool_call in message["tool_calls"]
                 ]
             )
-        ac_content += "<|im_end|>"
-        # Action part
-        prefix = tinker.types.EncodedTextChunk(
-            tokens=self.tokenizer.encode(ob_str, add_special_tokens=False)
+        output_content += "<|im_end|>"
+        header = tinker.types.EncodedTextChunk(
+            tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
         )
-        content: list[tinker.ModelInputChunk] = [
+        output: list[tinker.ModelInputChunk] = [
             tinker.types.EncodedTextChunk(
-                tokens=self.tokenizer.encode(ac_content, add_special_tokens=False)
+                tokens=self.tokenizer.encode(output_content, add_special_tokens=False)
             )
         ]
-        return RenderedMessage(prefix=prefix, content=content)
+        return RenderedMessage(header=header, output=output)
 
     @property
     def _end_message_token(self) -> int:
@@ -966,33 +1036,31 @@ class Qwen3InstructRenderer(Qwen3Renderer):
         maybe_newline = "\n" if idx > 0 else ""
 
         role = self._get_qwen_role_for_message(message)
-        ob_str = f"{maybe_newline}<|im_start|>{role}\n"
-        ac_content = message["content"]
+        header_str = f"{maybe_newline}<|im_start|>{role}\n"
+        output_content = message["content"]
 
         # Handle tool response wrapping
         if message["role"] == "tool":
-            ac_content = self._wrap_qwen_tool_response(ac_content)
+            output_content = self._wrap_qwen_tool_response(output_content)
 
-        # Observation (prompt) part
         if "tool_calls" in message:
             # Add leading newline to match HF template behavior
-            ac_content += "\n" + "\n".join(
+            output_content += "\n" + "\n".join(
                 [
                     f"<tool_call>\n{json.dumps(_tool_call_payload(tool_call))}\n</tool_call>"
                     for tool_call in message["tool_calls"]
                 ]
             )
-        ac_content += "<|im_end|>"
-        # Action part
-        prefix = tinker.types.EncodedTextChunk(
-            tokens=self.tokenizer.encode(ob_str, add_special_tokens=False)
+        output_content += "<|im_end|>"
+        header = tinker.types.EncodedTextChunk(
+            tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
         )
-        content: list[tinker.ModelInputChunk] = [
+        output: list[tinker.ModelInputChunk] = [
             tinker.types.EncodedTextChunk(
-                tokens=self.tokenizer.encode(ac_content, add_special_tokens=False)
+                tokens=self.tokenizer.encode(output_content, add_special_tokens=False)
             )
         ]
-        return RenderedMessage(prefix=prefix, content=content)
+        return RenderedMessage(header=header, output=output)
 
 
 class ImageProcessorProtocol(Protocol):
@@ -1097,13 +1165,13 @@ class Qwen3VLRenderer(Qwen3Renderer):
         maybe_newline = "\n" if idx > 0 else ""
 
         role = self._get_qwen_role_for_message(message)
-        ob_str = f"{maybe_newline}<|im_start|>{role}\n"
+        header_str = f"{maybe_newline}<|im_start|>{role}\n"
 
-        ac_content_chunks = self._preprocess_message_parts(message)
+        output_chunks = self._preprocess_message_parts(message)
 
         # Handle tool response wrapping
         if message["role"] == "tool":
-            ac_content_chunks = self._wrap_qwen_tool_response_chunks(ac_content_chunks)
+            output_chunks = self._wrap_qwen_tool_response_chunks(output_chunks)
 
         contains_think_token = any(
             [
@@ -1114,16 +1182,15 @@ class Qwen3VLRenderer(Qwen3Renderer):
                     if isinstance(x, dict) and x["type"] == "text"
                     else False
                 )
-                for x in ac_content_chunks
+                for x in output_chunks
             ]
         )
         if message["role"] == "assistant" and not contains_think_token:
             # Matching the paper, we force the assistant to start with <think>. Some SFT datasets include
             # <think> in the assistant messages, we so don't need to re-add it in those cases.
-            ob_str += "<think>\n"
-        # Observation (prompt) part
+            header_str += "<think>\n"
         if "tool_calls" in message:
-            ac_content_chunks += [
+            output_chunks += [
                 TextPart(
                     type="text",
                     text="\n".join(
@@ -1134,10 +1201,9 @@ class Qwen3VLRenderer(Qwen3Renderer):
                     ),
                 )
             ]
-        ac_content_chunks += [TextPart(type="text", text="<|im_end|>")]
-        # Action part
+        output_chunks += [TextPart(type="text", text="<|im_end|>")]
 
-        ac_content_chunks_encoded: list[tinker.ModelInputChunk] = [
+        output_chunks_encoded: list[tinker.ModelInputChunk] = [
             image_to_chunk(
                 image_or_str=x["image"],
                 image_processor=cast(ImageProcessorProtocol, self.image_processor),
@@ -1146,13 +1212,13 @@ class Qwen3VLRenderer(Qwen3Renderer):
             else tinker.EncodedTextChunk(
                 tokens=self.tokenizer.encode(x["text"], add_special_tokens=False)
             )
-            for x in ac_content_chunks
+            for x in output_chunks
         ]
 
-        prefix = tinker.types.EncodedTextChunk(
-            tokens=self.tokenizer.encode(ob_str, add_special_tokens=False)
+        header = tinker.types.EncodedTextChunk(
+            tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
         )
-        return RenderedMessage(prefix=prefix, content=ac_content_chunks_encoded)
+        return RenderedMessage(header=header, output=output_chunks_encoded)
 
 
 class Qwen3VLInstructRenderer(Qwen3VLRenderer):
@@ -1167,16 +1233,16 @@ class Qwen3VLInstructRenderer(Qwen3VLRenderer):
         maybe_newline = "\n" if idx > 0 else ""
 
         role = self._get_qwen_role_for_message(message)
-        ob_str = f"{maybe_newline}<|im_start|>{role}\n"
+        header_str = f"{maybe_newline}<|im_start|>{role}\n"
 
-        ac_content_chunks = self._preprocess_message_parts(message)
+        output_chunks = self._preprocess_message_parts(message)
 
         # Handle tool response wrapping
         if message["role"] == "tool":
-            ac_content_chunks = self._wrap_qwen_tool_response_chunks(ac_content_chunks)
+            output_chunks = self._wrap_qwen_tool_response_chunks(output_chunks)
 
         if "tool_calls" in message:
-            ac_content_chunks += [
+            output_chunks += [
                 TextPart(
                     type="text",
                     text="\n".join(
@@ -1187,9 +1253,9 @@ class Qwen3VLInstructRenderer(Qwen3VLRenderer):
                     ),
                 )
             ]
-        ac_content_chunks += [TextPart(type="text", text="<|im_end|>")]
+        output_chunks += [TextPart(type="text", text="<|im_end|>")]
 
-        ac_content_chunks_encoded: list[tinker.ModelInputChunk] = [
+        output_chunks_encoded: list[tinker.ModelInputChunk] = [
             image_to_chunk(
                 image_or_str=x["image"],
                 image_processor=cast(ImageProcessorProtocol, self.image_processor),
@@ -1198,13 +1264,13 @@ class Qwen3VLInstructRenderer(Qwen3VLRenderer):
             else tinker.EncodedTextChunk(
                 tokens=self.tokenizer.encode(x["text"], add_special_tokens=False)
             )
-            for x in ac_content_chunks
+            for x in output_chunks
         ]
 
-        prefix = tinker.types.EncodedTextChunk(
-            tokens=self.tokenizer.encode(ob_str, add_special_tokens=False)
+        header = tinker.types.EncodedTextChunk(
+            tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
         )
-        return RenderedMessage(prefix=prefix, content=ac_content_chunks_encoded)
+        return RenderedMessage(header=header, output=output_chunks_encoded)
 
 
 class DeepSeekV3Renderer(Renderer):
@@ -1230,13 +1296,13 @@ class DeepSeekV3Renderer(Renderer):
             # HF template collects all system messages at the start without role tokens
             # We only support this for idx=0; later system messages need system_role_as_user=True
             if idx == 0:
-                ob = []
-                ac_str = message["content"]
+                header_tokens = []
+                output_str = message["content"]
             elif self.system_role_as_user:
                 # Convert later system messages to user role
                 role_token = self._get_special_token("User")
-                ob = [role_token]
-                ac_str = message["content"]
+                header_tokens = [role_token]
+                output_str = message["content"]
             else:
                 raise ValueError(
                     "DeepSeek only supports system message at start. "
@@ -1244,44 +1310,50 @@ class DeepSeekV3Renderer(Renderer):
                 )
         elif message["role"] == "user":
             role_token = self._get_special_token("User")
-            ob = [role_token]
-            ac_str = message["content"]
+            header_tokens = [role_token]
+            output_str = message["content"]
         elif message["role"] == "assistant":
             role_token = self._get_special_token("Assistant")
-            ob = [role_token]
+            header_tokens = [role_token]
             # Add </think> after assistant role (no-think mode) to match HF template
-            ac_str = "</think>" + message["content"]
+            output_str = "</think>" + message["content"]
         elif message["role"] == "tool":
             # Tool responses use special tool output tokens to match HF template
-            ob = self.tokenizer.encode("<｜tool▁output▁begin｜>", add_special_tokens=False)
-            ac_str = message["content"] + "<｜tool▁output▁end｜>"
+            header_tokens = self.tokenizer.encode(
+                "<｜tool▁output▁begin｜>", add_special_tokens=False
+            )
+            output_str = message["content"] + "<｜tool▁output▁end｜>"
         else:
             raise ValueError(f"Unsupported role: {message['role']}")
 
         # Handle tool calls in assistant messages
         # HF format: <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>name<｜tool▁sep｜>args<｜tool▁call▁end｜><｜tool▁calls▁end｜>
         if "tool_calls" in message and message["tool_calls"]:
-            ac_str += "<｜tool▁calls▁begin｜>"
+            output_str += "<｜tool▁calls▁begin｜>"
             for tool_call in message["tool_calls"]:
                 func_name = tool_call.function.name
                 args = tool_call.function.arguments
-                ac_str += f"<｜tool▁call▁begin｜>{func_name}<｜tool▁sep｜>{args}<｜tool▁call▁end｜>"
-            ac_str += "<｜tool▁calls▁end｜>"
+                output_str += (
+                    f"<｜tool▁call▁begin｜>{func_name}<｜tool▁sep｜>{args}<｜tool▁call▁end｜>"
+                )
+            output_str += "<｜tool▁calls▁end｜>"
 
-        ac = self.tokenizer.encode(ac_str, add_special_tokens=False)
+        output_tokens = self.tokenizer.encode(output_str, add_special_tokens=False)
 
         # Add end_of_sentence only for assistant messages with content
         # (not for empty generation prompt messages)
         if message["role"] == "assistant" and message["content"]:
-            ac.append(self._end_message_token)
+            output_tokens.append(self._end_message_token)
 
-        content: list[tinker.ModelInputChunk] = [tinker.types.EncodedTextChunk(tokens=ac)]
-        # Only include prefix if non-empty; tinker rejects empty token chunks with
+        output: list[tinker.ModelInputChunk] = [tinker.types.EncodedTextChunk(tokens=output_tokens)]
+        # Only include header if non-empty; tinker rejects empty token chunks with
         # "Chunk N has empty tokens list". This happens for system messages at idx=0.
-        if ob:
-            return RenderedMessage(prefix=tinker.types.EncodedTextChunk(tokens=ob), content=content)
+        if header_tokens:
+            return RenderedMessage(
+                header=tinker.types.EncodedTextChunk(tokens=header_tokens), output=output
+            )
         else:
-            return RenderedMessage(content=content)
+            return RenderedMessage(output=output)
 
     def _get_special_token(self, name: str) -> int:
         sep = chr(65372)
@@ -1304,25 +1376,25 @@ class DeepSeekV3Renderer(Renderer):
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:
-        """Override to skip assistant prefix after tool messages (matches HF behavior)."""
+        """Override to skip assistant header after tool messages (matches HF behavior)."""
         chunks: list[tinker.types.ModelInputChunk] = []
         if self._bos_tokens:
             chunks.append(tinker.types.EncodedTextChunk(tokens=self._bos_tokens))
 
         for idx, message in enumerate(messages):
             rendered = self.render_message(idx, message)
-            prefix = rendered.get("prefix")
-            if prefix:
-                chunks.append(prefix)
-            chunks.extend(rendered["content"])
+            header = rendered.get("header")
+            if header:
+                chunks.append(header)
+            chunks.extend(rendered["output"])
 
-        # Add assistant prefix only if last message is NOT tool (HF behavior)
+        # Add assistant header only if last message is NOT tool (HF behavior)
         if not messages or messages[-1]["role"] != "tool":
             rendered = self.render_message(len(messages), Message(role=role, content=""))
-            prefix = rendered.get("prefix")
-            if prefix:
-                chunks.append(prefix)
-            chunks.extend(rendered["content"])  # includes </think>
+            header = rendered.get("header")
+            if header:
+                chunks.append(header)
+            chunks.extend(rendered["output"])  # includes </think>
 
         if prefill:
             chunks.append(
@@ -1502,48 +1574,48 @@ class KimiK2Renderer(Renderer):
 
         # Build role token based on role type
         if role == "user":
-            ob_str = f"<|im_user|>{role_name}<|im_middle|>"
+            header_str = f"<|im_user|>{role_name}<|im_middle|>"
         elif role == "assistant":
-            ob_str = f"<|im_assistant|>{role_name}<|im_middle|>"
+            header_str = f"<|im_assistant|>{role_name}<|im_middle|>"
         elif role == "system":
-            ob_str = f"<|im_system|>{role_name}<|im_middle|>"
+            header_str = f"<|im_system|>{role_name}<|im_middle|>"
         elif role == "tool":
-            ob_str = f"<|im_system|>{role_name}<|im_middle|>"
+            header_str = f"<|im_system|>{role_name}<|im_middle|>"
             # Tool responses have special formatting
             tool_call_id = message.get("tool_call_id", "")
-            ob_str += f"## Return of {tool_call_id}\n"
+            header_str += f"## Return of {tool_call_id}\n"
         else:
-            ob_str = f"<|im_system|>{role_name}<|im_middle|>"
+            header_str = f"<|im_system|>{role_name}<|im_middle|>"
 
-        # Build action content
-        ac_str = ""
+        # Build output content
+        output_str = ""
         if role == "assistant":
             # For the last assistant message (is_last=True), preserve thinking; otherwise use empty think block
             thinking = message.get("thinking", "")
             if is_last and thinking:
-                ac_str = f"<think>{thinking}</think>"
+                output_str = f"<think>{thinking}</think>"
             else:
-                ac_str = "<think></think>"
-            ac_str += message["content"]
+                output_str = "<think></think>"
+            output_str += message["content"]
 
             # Handle tool calls
             if "tool_calls" in message and message["tool_calls"]:
-                ac_str += "<|tool_calls_section_begin|>"
+                output_str += "<|tool_calls_section_begin|>"
                 for tool_call in message["tool_calls"]:
                     tool_id = tool_call.id or ""
                     args = tool_call.function.arguments
-                    ac_str += f"<|tool_call_begin|>{tool_id}<|tool_call_argument_begin|>{args}<|tool_call_end|>"
-                ac_str += "<|tool_calls_section_end|>"
+                    output_str += f"<|tool_call_begin|>{tool_id}<|tool_call_argument_begin|>{args}<|tool_call_end|>"
+                output_str += "<|tool_calls_section_end|>"
         else:
-            ac_str = message["content"]
+            output_str = message["content"]
 
-        ac_str += "<|im_end|>"
+        output_str += "<|im_end|>"
 
-        prefix = tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(ob_str))
-        content: list[tinker.ModelInputChunk] = [
-            tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(ac_str))
+        header = tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(header_str))
+        output: list[tinker.ModelInputChunk] = [
+            tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(output_str))
         ]
-        return RenderedMessage(prefix=prefix, content=content)
+        return RenderedMessage(header=header, output=output)
 
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
@@ -1554,11 +1626,11 @@ class KimiK2Renderer(Renderer):
         for idx, message in enumerate(messages):
             # For generation prompt, no message is "last assistant" since we're generating new response
             rendered_message = self.render_message(idx, message, is_last=False)
-            ob_chunk = rendered_message.get("prefix")
-            action_chunks = rendered_message["content"]
-            if ob_chunk:
-                chunks.append(ob_chunk)
-            chunks.extend([x for x in action_chunks if x])
+            header_chunk = rendered_message.get("header")
+            output_chunks = rendered_message["output"]
+            if header_chunk:
+                chunks.append(header_chunk)
+            chunks.extend([x for x in output_chunks if x])
 
         # Add generation prompt for new assistant message
         gen_prompt = f"<|im_assistant|>{role}<|im_middle|>"
@@ -1605,31 +1677,31 @@ class KimiK2Renderer(Renderer):
             is_last_assistant = idx >= last_assistant_idx and is_assistant
             rendered_message = self.render_message(idx, message, is_last=is_last_assistant)
 
-            ob_part = rendered_message.get("prefix")
-            action_parts = rendered_message.get("content")
+            header_part = rendered_message.get("header")
+            output_parts = rendered_message.get("output")
 
-            ob_weight = int(train_on_what == TrainOnWhat.ALL_TOKENS)
-            if ob_part:
-                model_input_chunks_weights += [(ob_part, ob_weight)]
+            header_weight = int(train_on_what == TrainOnWhat.ALL_TOKENS)
+            if header_part:
+                model_input_chunks_weights += [(header_part, header_weight)]
 
             match train_on_what:
                 case TrainOnWhat.LAST_ASSISTANT_MESSAGE:
-                    action_has_weight = is_last_message and is_assistant
+                    output_has_weight = is_last_message and is_assistant
                 case TrainOnWhat.ALL_ASSISTANT_MESSAGES:
-                    action_has_weight = is_assistant
+                    output_has_weight = is_assistant
                 case TrainOnWhat.ALL_MESSAGES:
-                    action_has_weight = True
+                    output_has_weight = True
                 case TrainOnWhat.ALL_TOKENS:
-                    action_has_weight = True
+                    output_has_weight = True
                 case TrainOnWhat.ALL_USER_AND_SYSTEM_MESSAGES:
-                    action_has_weight = is_user_or_system
+                    output_has_weight = is_user_or_system
                 case TrainOnWhat.CUSTOMIZED:
-                    action_has_weight = message.get("trainable", False)
+                    output_has_weight = message.get("trainable", False)
                 case _:
                     raise ValueError(f"Unknown train_on_what: {train_on_what}")
 
             model_input_chunks_weights += [
-                (action_part, int(action_has_weight)) for action_part in action_parts if action_part
+                (output_part, int(output_has_weight)) for output_part in output_parts if output_part
             ]
 
         weights_data = [w for chunk, w in model_input_chunks_weights for _ in range(chunk.length)]
@@ -1781,14 +1853,12 @@ class GptOssRenderer(Renderer):
         assert isinstance(message["content"], str), (
             "GptOssRenderer only supports message with string content"
         )
-        # Observation (prompt) part
         # HF template maps "system" role to "developer" with special formatting
         role = message["role"]
         if role == "system":
             role = "developer"
-        ob_str = f"<|start|>{role}"
-        # Action part
-        ac_str = ""
+        header_str = f"<|start|>{role}"
+        output_str = ""
         if message["role"] == "assistant":
             # TODO: support commentary channel / tools
 
@@ -1800,36 +1870,36 @@ class GptOssRenderer(Renderer):
             # Analysis channel (CoT) - always included for last message to match HF template
             if is_last:
                 thinking_content = thinking if thinking else ""
-                ac_str += (
+                output_str += (
                     f"<|channel|>analysis<|message|>{thinking_content}<|end|><|start|>assistant"
                 )
 
             # Final channel (Response Content)
-            ac_str += f"<|channel|>final<|message|>{message_content}"
+            output_str += f"<|channel|>final<|message|>{message_content}"
         elif message["role"] == "system":
             # HF wraps system content as developer instructions
-            ac_str += f"<|message|># Instructions\n\n{message['content']}\n\n"
+            output_str += f"<|message|># Instructions\n\n{message['content']}\n\n"
         else:
             assert message.get("thinking") is None, (
                 "Thinking is only allowed for assistant messages"
             )
-            ac_str += f"<|message|>{message['content']}"
+            output_str += f"<|message|>{message['content']}"
 
         if not is_last:
-            ac_str += "<|end|>"
+            output_str += "<|end|>"
         else:
             # <|return|> ends the last-message in harmony (but should be replaced by <|end|> when continuing the convo)
-            ac_str += "<|return|>"
+            output_str += "<|return|>"
 
-        prefix = tinker.types.EncodedTextChunk(
-            tokens=self.tokenizer.encode(ob_str, add_special_tokens=False)
+        header = tinker.types.EncodedTextChunk(
+            tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
         )
-        content: list[tinker.ModelInputChunk] = [
+        output: list[tinker.ModelInputChunk] = [
             tinker.types.EncodedTextChunk(
-                tokens=self.tokenizer.encode(ac_str, add_special_tokens=False)
+                tokens=self.tokenizer.encode(output_str, add_special_tokens=False)
             )
         ]
-        return RenderedMessage(prefix=prefix, content=content)
+        return RenderedMessage(header=header, output=output)
 
     def _build_system_prompt(self) -> str:
         current_date = (

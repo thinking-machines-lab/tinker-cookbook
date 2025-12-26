@@ -38,23 +38,23 @@ def test_qwen3_tool_response_rendering(model_name: str, renderer_name: str):
     tool_message: Message = {"role": "tool", "content": '{"weather": "sunny", "high": 72}'}
 
     rendered = renderer.render_message(0, tool_message)
-    prefix = rendered.get("prefix")
-    assert prefix is not None, "Expected prefix in rendered message"
-    content = rendered["content"]
-    assert len(content) > 0, "Expected content in rendered message"
+    header = rendered.get("header")
+    assert header is not None, "Expected header in rendered message"
+    output = rendered["output"]
+    assert len(output) > 0, "Expected output in rendered message"
 
-    prefix_str = tokenizer.decode(list(prefix.tokens))
-    # Content[0] is an EncodedTextChunk for text-only messages
-    content_chunk = content[0]
-    assert isinstance(content_chunk, tinker.EncodedTextChunk), "Expected EncodedTextChunk"
-    content_str = tokenizer.decode(list(content_chunk.tokens))
+    header_str = tokenizer.decode(list(header.tokens))
+    # output[0] is an EncodedTextChunk for text-only messages
+    output_chunk = output[0]
+    assert isinstance(output_chunk, tinker.EncodedTextChunk), "Expected EncodedTextChunk"
+    output_str = tokenizer.decode(list(output_chunk.tokens))
 
     # Tool messages should be rendered as "user" role
-    assert "<|im_start|>user" in prefix_str
+    assert "<|im_start|>user" in header_str
     # Content should be wrapped in tool_response tags
-    assert "<tool_response>" in content_str
-    assert "</tool_response>" in content_str
-    assert '"weather": "sunny"' in content_str
+    assert "<tool_response>" in output_str
+    assert "</tool_response>" in output_str
+    assert '"weather": "sunny"' in output_str
 
 
 # =============================================================================
