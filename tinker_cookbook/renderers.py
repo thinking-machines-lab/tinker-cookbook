@@ -10,6 +10,7 @@ import re
 import urllib.request
 from datetime import datetime
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal, NotRequired, Optional, Protocol, TypedDict, cast
 
@@ -176,6 +177,26 @@ class Message(TypedDict):
     name: NotRequired[str]
 
 
+@dataclass
+class RenderContext:
+    """
+    Context passed to render_message for rendering a single message.
+
+    This allows renderers to access information about the message's position
+    in the conversation without changing the render_message signature for
+    each new piece of context needed.
+    """
+
+    idx: int
+    """Index of the message in the conversation (0-based)."""
+
+    is_last: bool
+    """Whether this is the last message in the conversation."""
+
+    prev_message: Message | None = None
+    """The previous message in the conversation, if any."""
+
+
 class ToolSpec(TypedDict):
     """
     Tool specification following the OpenAI function calling format.
@@ -229,7 +250,8 @@ def _tool_call_payload(tool_call: ToolCall) -> dict[str, object]:
     }
 
 
-class RenderedMessage(TypedDict):
+@dataclass(frozen=True)
+class RenderedMessage:
     """
     Container for parts of a rendered message, structured for loss masking.
 
@@ -244,33 +266,33 @@ class RenderedMessage(TypedDict):
     thinking blocks from historical assistant messages. Such renderers must override
     build_supervised_example to match their build_generation_prompt behavior.
 
-    Args:
+    Attributes:
+        output: What the model generates for this turn: the message text/images plus
+            end-of-turn tokens. This is the trainable portion.
+            Examples: " Hello world\\n\\n" (RoleColon), "Hello world<|eot_id|>" (Llama3).
+        header: Role identifier and delimiters that introduce the turn. This is what the
+            model sees but does not generate.
+            Examples: "User:" (RoleColon), "<|start_header_id|>user<|end_header_id|>\\n\\n" (Llama3).
+            Typically receives zero training weight.
+        stop_overlap: Edge case field for formats where the stop sequence spans message
+            boundaries. Most renderers (Llama3, Qwen3, DeepSeek, etc.) don't use this—their
+            stop tokens are included in output.
 
-    header: NotRequired[tinker.EncodedTextChunk]
-        Role identifier and delimiters that introduce the turn. This is what the model
-        sees but does not generate.
-        Examples: "User:" (RoleColon), "<|start_header_id|>user<|end_header_id|>\n\n" (Llama3).
-        Typically receives zero training weight.
-    output: list[tinker.ModelInputChunk]
-        What the model generates for this turn: the message text/images plus end-of-turn
-        tokens. This is the trainable portion.
-        Examples: " Hello world\n\n" (RoleColon), "Hello world<|eot_id|>" (Llama3).
-    stop_overlap: NotRequired[tinker.EncodedTextChunk]
-        Edge case field for formats where the stop sequence spans message boundaries.
-        Most renderers (Llama3, Qwen3, DeepSeek, etc.) don't use this—their stop tokens
-        are included in output.
-
-        Only RoleColonRenderer uses this. Its stop sequence is "\n\nUser:", where "\n\n"
-        ends the output but "User:" would duplicate the next message's header. To avoid
-        duplication, "User:" is stored here and only appended for the last message in
-        supervised training. The name "stop_overlap" reflects that these tokens are the
-        overlap between the stop sequence and the next message's header.
-
+            Only RoleColonRenderer uses this. Its stop sequence is "\\n\\nUser:", where "\\n\\n"
+            ends the output but "User:" would duplicate the next message's header. To avoid
+            duplication, "User:" is stored here and only appended for the last message in
+            supervised training. The name "stop_overlap" reflects that these tokens are the
+            overlap between the stop sequence and the next message's header.
     """
 
-    header: NotRequired[tinker.EncodedTextChunk]
     output: list[tinker.ModelInputChunk]
-    stop_overlap: NotRequired[tinker.EncodedTextChunk]
+    """What the model generates for this turn."""
+
+    header: tinker.EncodedTextChunk | None = None
+    """Role identifier and delimiters that introduce the turn."""
+
+    stop_overlap: tinker.EncodedTextChunk | None = None
+    """Tokens that overlap between stop sequence and next message's header."""
 
 
 class TrainOnWhat(StrEnum):
@@ -318,7 +340,7 @@ class Renderer(ABC):
         ...
 
     @abstractmethod
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         """
         Render a single message into its header/output/stop_overlap components.
 
@@ -326,12 +348,11 @@ class Renderer(ABC):
         for detailed semantics of each component.
 
         Args:
-            idx: The index of this message in the conversation (0-based). Some renderers
-                use this to decide whether to add leading newlines or other separators.
             message: The message to render.
-            is_last: Whether this is the last message in the sequence. This affects:
-                - Whether stop_overlap is meaningful (only appended for last message)
-                - For some renderers (Qwen3, GptOss), whether to preserve vs strip thinking blocks
+            ctx: Context about the message's position in the conversation, including:
+                - idx: The index of this message (0-based)
+                - is_last: Whether this is the last message
+                - prev_message: The previous message, if any
 
         Returns:
             RenderedMessage with header, output, and optionally stop_overlap.
@@ -373,6 +394,27 @@ class Renderer(ABC):
         """
         raise NotImplementedError
 
+    def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
+        """Return tokens to append when prompting for generation.
+
+        This is called by build_generation_prompt to add the appropriate prefix
+        before the model starts generating. Override this method instead of
+        build_generation_prompt when you only need to customize the suffix.
+
+        Args:
+            role: The role to generate (usually "assistant")
+            ctx: Context for the generation suffix. Note that ctx.is_last is False
+                because we're prompting for generation, not rendering a complete message.
+
+        Returns:
+            List of token IDs to append (e.g., role header tokens)
+        """
+        # Default: render an empty message and use its header tokens
+        rendered = self.render_message(Message(role=role, content=""), ctx)
+        if rendered.header:
+            return list(rendered.header.tokens)
+        return []
+
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:
@@ -389,17 +431,27 @@ class Renderer(ABC):
         if self._bos_tokens:
             chunks.append(tinker.types.EncodedTextChunk(tokens=self._bos_tokens))
         for idx, message in enumerate(messages):
-            rendered_message = self.render_message(idx, message)
-            header_chunk = rendered_message.get("header")
-            output_chunks = rendered_message["output"]
+            ctx = RenderContext(
+                idx=idx,
+                is_last=(idx == len(messages) - 1),
+                prev_message=messages[idx - 1] if idx > 0 else None,
+            )
+            rendered_message = self.render_message(message, ctx)
+            header_chunk = rendered_message.header
+            output_chunks = rendered_message.output
             if header_chunk:
                 chunks.append(header_chunk)
             chunks.extend([x for x in output_chunks if x])
-        new_partial_message = Message(role=role, content="")
-        rendered_message = self.render_message(len(messages), new_partial_message)
-        header_chunk = rendered_message.get("header")
-        if header_chunk:
-            chunks.append(header_chunk)
+
+        suffix_ctx = RenderContext(
+            idx=len(messages),
+            is_last=True,
+            prev_message=messages[-1] if messages else None,
+        )
+        suffix_tokens = self._get_generation_suffix(role, suffix_ctx)
+        if suffix_tokens:
+            chunks.append(tinker.types.EncodedTextChunk(tokens=suffix_tokens))
+
         if prefill:
             chunks.append(
                 tinker.types.EncodedTextChunk(
@@ -440,6 +492,11 @@ class Renderer(ABC):
             A tuple of (model_input, weights) where weights is a 1D tensor with the
             same length as the total number of tokens.
         """
+        # TODO: Warn if train_on_what != LAST_ASSISTANT_MESSAGE and the renderer
+        # doesn't satisfy the sequence extension property (e.g., strips thinking from
+        # history). In that case, training on multiple assistant messages requires
+        # separate examples with different token sequences, not a single example.
+        # See docs/rl/sequence-extension.mdx for details.
 
         model_input_chunks_weights: list[tuple[tinker.types.ModelInputChunk, float]] = []
         if self._bos_tokens:
@@ -462,10 +519,15 @@ class Renderer(ABC):
             is_user_or_system = message["role"] in ["user", "system"]
 
             # only apply weight to header if train_on_what is ALL_TOKENS
-            rendered_message = self.render_message(idx, message, is_last=is_last_message)
-            header_part = rendered_message.get("header")
-            output_parts = rendered_message.get("output")
-            stop_overlap_part = rendered_message.get("stop_overlap")
+            ctx = RenderContext(
+                idx=idx,
+                is_last=is_last_message,
+                prev_message=messages[idx - 1] if idx > 0 else None,
+            )
+            rendered_message = self.render_message(message, ctx)
+            header_part = rendered_message.header
+            output_parts = rendered_message.output
+            stop_overlap_part = rendered_message.stop_overlap
 
             header_weight = int(train_on_what == TrainOnWhat.ALL_TOKENS)
             if header_part:
@@ -552,7 +614,7 @@ class RoleColonRenderer(Renderer):
     except that they use "Human" instead of "User".
     """
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         assert message.get("thinking") is None, "Thinking tokens not supported in RoleColonRenderer"
         assert isinstance(message["content"], str), (
             "RoleColonRenderer only supports message with string content"
@@ -621,7 +683,7 @@ class Llama3Renderer(Renderer):
     the HF template exactly, modify render_message to prepend this info for system messages.
     """
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         assert message.get("thinking") is None, "CoT tokens not supported in Llama3"
         assert isinstance(message["content"], str), (
             "Llama3Renderer only supports message with string content"
@@ -827,12 +889,12 @@ class Qwen3Renderer(Renderer):
         """Wrap tool response content in Qwen's <tool_response> tags."""
         return f"<tool_response>\n{content}\n</tool_response>"
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         assert message.get("thinking") is None, "TODO: support CoT in Qwen3 renderer"
         assert isinstance(message["content"], str), (
             "Qwen3Renderer only supports message with string content"
         )
-        maybe_newline = "\n" if idx > 0 else ""
+        maybe_newline = "\n" if ctx.idx > 0 else ""
 
         role = self._get_qwen_role_for_message(message)
         header_str = f"{maybe_newline}<|im_start|>{role}\n"
@@ -846,13 +908,13 @@ class Qwen3Renderer(Renderer):
             self.strip_thinking_from_history
             and message["role"] == "assistant"
             and "</think>" in output_content
-            and not is_last
+            and not ctx.is_last
         ):
             # Multi-turn conversation, we remove the thinking section from the assistant message.
             # This matches how Qwen3 models were trained - they only see their own thinking
             # during the current turn, not from previous turns.
             output_content = output_content.split("</think>")[1].lstrip()
-        elif message["role"] == "assistant" and "<think>" not in output_content and is_last:
+        elif message["role"] == "assistant" and "<think>" not in output_content and ctx.is_last:
             # Matching the paper, we force the assistant to start with <think>. Some SFT datasets include
             # <think> in the assistant messages, we so don't need to re-add it in those cases.
             header_str += "<think>\n"
@@ -874,6 +936,17 @@ class Qwen3Renderer(Renderer):
             )
         ]
         return RenderedMessage(header=header, output=output)
+
+    def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
+        """Return the generation suffix for Qwen3.
+
+        For Qwen3 in thinking mode, we only add the role header (e.g., <|im_start|>assistant\n).
+        We do NOT add <think> here - the model generates that itself. This matches HF's
+        add_generation_prompt=True behavior.
+        """
+        maybe_newline = "\n" if ctx.idx > 0 else ""
+        header_str = f"{maybe_newline}<|im_start|>{role}\n"
+        return self.tokenizer.encode(header_str, add_special_tokens=False)
 
     @property
     def _end_message_token(self) -> int:
@@ -1003,7 +1076,7 @@ class Qwen3DisableThinkingRenderer(Qwen3Renderer):
     "non-thinking" mode while maintaining compatibility with the OpenAI endpoint.
     """
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         # Add empty thinking block to assistant messages if not already present
         if message["role"] == "assistant":
             content = message.get("content", "")
@@ -1013,7 +1086,7 @@ class Qwen3DisableThinkingRenderer(Qwen3Renderer):
             if "<think>" not in content:
                 message = message.copy()
                 message["content"] = "<think>\n\n</think>\n\n" + content
-        return super().render_message(idx, message, is_last=is_last)
+        return super().render_message(message, ctx)
 
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
@@ -1028,12 +1101,12 @@ class Qwen3InstructRenderer(Qwen3Renderer):
     use the <think> tag at all.
     """
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         assert message.get("thinking") is None, "CoT tokens not supported in Qwen3 instruct 2507"
         assert isinstance(message["content"], str), (
             "Qwen3InstructRenderer only supports message with string content"
         )
-        maybe_newline = "\n" if idx > 0 else ""
+        maybe_newline = "\n" if ctx.idx > 0 else ""
 
         role = self._get_qwen_role_for_message(message)
         header_str = f"{maybe_newline}<|im_start|>{role}\n"
@@ -1160,9 +1233,9 @@ class Qwen3VLRenderer(Qwen3Renderer):
             + [TextPart(type="text", text="\n</tool_response>")]
         )
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         assert message.get("thinking") is None, "TODO: support CoT in Qwen3 renderer"
-        maybe_newline = "\n" if idx > 0 else ""
+        maybe_newline = "\n" if ctx.idx > 0 else ""
 
         role = self._get_qwen_role_for_message(message)
         header_str = f"{maybe_newline}<|im_start|>{role}\n"
@@ -1228,9 +1301,9 @@ class Qwen3VLInstructRenderer(Qwen3VLRenderer):
     Unlike the Qwen3-VL Thinking models, The Qwen3-VL Instruct models do not use the <think> tag.
     """
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         assert message.get("thinking") is None, "CoT tokens not supported in Qwen3-VL instruct"
-        maybe_newline = "\n" if idx > 0 else ""
+        maybe_newline = "\n" if ctx.idx > 0 else ""
 
         role = self._get_qwen_role_for_message(message)
         header_str = f"{maybe_newline}<|im_start|>{role}\n"
@@ -1273,29 +1346,55 @@ class Qwen3VLInstructRenderer(Qwen3VLRenderer):
         return RenderedMessage(header=header, output=output_chunks_encoded)
 
 
-class DeepSeekV3Renderer(Renderer):
+class DeepSeekV3ThinkingRenderer(Renderer):
     """
-    Format like this (no newlines between messages):
-        <|begin_of_sentence|><|User|>What can you help me with?<|Assistant|><think>Thinking...</think>I can help you with...<|end_of_sentence|>
-    For no-think, just use <|Assistant|></think>
+    Renderer for DeepSeek V3 models in THINKING mode.
+
+    Format:
+        <|begin_of_sentence|><|User|>question<|Assistant|><think>reasoning</think>answer<|end_of_sentence|>
+
+    For non-thinking mode, use DeepSeekV3DisableThinkingRenderer instead.
 
     System messages at position 0 are rendered without role tokens (matching HF template).
     System messages at later positions require system_role_as_user=True to convert to user role.
+
+    The default strip_thinking_from_history=True matches HF behavior where thinking
+    traces are removed from historical assistant messages in multi-turn conversations.
+    Use strip_thinking_from_history=False for multi-turn RL to get the extension property.
     """
 
-    def __init__(self, tokenizer: Tokenizer, system_role_as_user: bool = False):
+    def __init__(
+        self,
+        tokenizer: Tokenizer,
+        system_role_as_user: bool = False,
+        strip_thinking_from_history: bool = True,
+    ):
         super().__init__(tokenizer)
         self.system_role_as_user = system_role_as_user
+        self.strip_thinking_from_history = strip_thinking_from_history
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        """Render a single message to tokens.
+
+        Args:
+            message: The message to render.
+            ctx: Context about the message's position, including:
+                - idx: The index of this message (0-based)
+                - is_last: Whether this is the last message (affects thinking stripping)
+                - prev_message: The previous message, used to detect post-tool formatting
+        """
         assert message.get("thinking") is None, "TODO: support thinking attribute in DSV3 renderer"
         assert isinstance(message["content"], str), (
-            "DeepSeekV3Renderer only supports message with string content"
+            "DeepSeekV3ThinkingRenderer only supports message with string content"
         )
+
+        # Check if this assistant message follows a tool response
+        follows_tool = ctx.prev_message is not None and ctx.prev_message["role"] == "tool"
+
         if message["role"] == "system":
             # HF template collects all system messages at the start without role tokens
             # We only support this for idx=0; later system messages need system_role_as_user=True
-            if idx == 0:
+            if ctx.idx == 0:
                 header_tokens = []
                 output_str = message["content"]
             elif self.system_role_as_user:
@@ -1313,10 +1412,35 @@ class DeepSeekV3Renderer(Renderer):
             header_tokens = [role_token]
             output_str = message["content"]
         elif message["role"] == "assistant":
-            role_token = self._get_special_token("Assistant")
-            header_tokens = [role_token]
-            # Add </think> after assistant role (no-think mode) to match HF template
-            output_str = "</think>" + message["content"]
+            output_content = message["content"]
+
+            if follows_tool:
+                # Post-tool assistant: no role token, content flows directly after tool output
+                header_tokens = []
+                output_str = output_content
+            else:
+                # Normal assistant message
+                role_token = self._get_special_token("Assistant")
+                header_tokens = [role_token]
+
+                # Handle thinking traces in history
+                # When strip_thinking_from_history=True, strip <think>...</think> from
+                # historical assistant messages (not the last one). Messages with tool_calls
+                # always preserve thinking (the model's reasoning before making the call).
+                # Note: We check for BOTH <think> and </think> to only strip full thinking
+                # blocks, not standalone </think> prefixes used in non-thinking mode.
+                has_tool_calls = "tool_calls" in message and message["tool_calls"]
+                if (
+                    self.strip_thinking_from_history
+                    and "<think>" in output_content
+                    and "</think>" in output_content
+                    and not has_tool_calls
+                    and not ctx.is_last
+                ):
+                    # Remove everything up to and including </think>
+                    output_content = output_content.split("</think>", 1)[1]
+
+                output_str = output_content
         elif message["role"] == "tool":
             # Tool responses use special tool output tokens to match HF template
             header_tokens = self.tokenizer.encode(
@@ -1372,38 +1496,6 @@ class DeepSeekV3Renderer(Renderer):
 
     def get_stop_sequences(self) -> list[int]:
         return [self._end_message_token]
-
-    def build_generation_prompt(
-        self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
-    ) -> tinker.ModelInput:
-        """Override to skip assistant header after tool messages (matches HF behavior)."""
-        chunks: list[tinker.types.ModelInputChunk] = []
-        if self._bos_tokens:
-            chunks.append(tinker.types.EncodedTextChunk(tokens=self._bos_tokens))
-
-        for idx, message in enumerate(messages):
-            rendered = self.render_message(idx, message)
-            header = rendered.get("header")
-            if header:
-                chunks.append(header)
-            chunks.extend(rendered["output"])
-
-        # Add assistant header only if last message is NOT tool (HF behavior)
-        if not messages or messages[-1]["role"] != "tool":
-            rendered = self.render_message(len(messages), Message(role=role, content=""))
-            header = rendered.get("header")
-            if header:
-                chunks.append(header)
-            chunks.extend(rendered["output"])  # includes </think>
-
-        if prefill:
-            chunks.append(
-                tinker.types.EncodedTextChunk(
-                    tokens=self.tokenizer.encode(prefill, add_special_tokens=False)
-                )
-            )
-
-        return tinker.ModelInput(chunks=chunks)
 
     def _parse_deepseek_tool_calls(
         self, content: str
@@ -1521,16 +1613,57 @@ Where:
         return [Message(role="system", content=system_prompt + tools_text)]
 
 
-class DeepSeekV3DisableThinkingRenderer(DeepSeekV3Renderer):
+class DeepSeekV3DisableThinkingRenderer(DeepSeekV3ThinkingRenderer):
     """
-    Renderer that disables thinking for DsV3 models.
+    Renderer for DeepSeek V3 models in NON-THINKING mode.
 
-    Note: The base DeepSeekV3Renderer handles </think> addition to match HF templates,
-    so this renderer just inherits that behavior. This class is kept for backwards
-    compatibility and explicit naming.
+    Format:
+        <|begin_of_sentence|><|User|>question<|Assistant|></think>answer<|end_of_sentence|>
+
+    The </think> prefix signals to the model to skip reasoning and respond directly.
+    Any <think>...</think> blocks in the content are stripped.
+
+    For thinking mode, use DeepSeekV3ThinkingRenderer instead.
     """
 
-    pass
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        """Render message in non-thinking mode.
+
+        For assistant messages (not following tool):
+        - Strip any <think>...</think> blocks from content
+        - Prepend </think> to signal non-thinking mode
+        """
+        # Check if this assistant message follows a tool response
+        follows_tool = ctx.prev_message is not None and ctx.prev_message["role"] == "tool"
+
+        if message["role"] == "assistant" and not follows_tool:
+            content = message.get("content", "")
+            assert isinstance(content, str), (
+                "DeepSeekV3DisableThinkingRenderer only supports message with string content"
+            )
+
+            # Strip any <think>...</think> blocks - they shouldn't be here in non-thinking mode
+            if "<think>" in content and "</think>" in content:
+                content = content.split("</think>", 1)[1]
+
+            # Prepend </think> to signal non-thinking mode
+            content = "</think>" + content
+
+            # Create modified message
+            message = message.copy()
+            message["content"] = content
+
+        return super().render_message(message, ctx)
+
+    def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
+        """Return <｜Assistant｜></think> for generation, or empty after tool messages."""
+        # No suffix after tool messages - content flows directly
+        if ctx.prev_message is not None and ctx.prev_message["role"] == "tool":
+            return []
+        # Otherwise: <｜Assistant｜></think>
+        role_token = self._get_special_token("Assistant")
+        think_close = self.tokenizer.encode("</think>", add_special_tokens=False)
+        return [role_token] + think_close
 
 
 class KimiK2Renderer(Renderer):
@@ -1561,9 +1694,9 @@ class KimiK2Renderer(Renderer):
             return [default_system] + list(messages)
         return messages
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         """
-        Render a message. For assistant messages, is_last controls whether thinking is preserved
+        Render a message. For assistant messages, ctx.is_last controls whether thinking is preserved
         (True) or stripped to empty <think></think> (False).
         """
         assert isinstance(message["content"], str), (
@@ -1592,7 +1725,7 @@ class KimiK2Renderer(Renderer):
         if role == "assistant":
             # For the last assistant message (is_last=True), preserve thinking; otherwise use empty think block
             thinking = message.get("thinking", "")
-            if is_last and thinking:
+            if ctx.is_last and thinking:
                 output_str = f"<think>{thinking}</think>"
             else:
                 output_str = "<think></think>"
@@ -1625,9 +1758,14 @@ class KimiK2Renderer(Renderer):
 
         for idx, message in enumerate(messages):
             # For generation prompt, no message is "last assistant" since we're generating new response
-            rendered_message = self.render_message(idx, message, is_last=False)
-            header_chunk = rendered_message.get("header")
-            output_chunks = rendered_message["output"]
+            ctx = RenderContext(
+                idx=idx,
+                is_last=False,
+                prev_message=messages[idx - 1] if idx > 0 else None,
+            )
+            rendered_message = self.render_message(message, ctx)
+            header_chunk = rendered_message.header
+            output_chunks = rendered_message.output
             if header_chunk:
                 chunks.append(header_chunk)
             chunks.extend([x for x in output_chunks if x])
@@ -1675,10 +1813,15 @@ class KimiK2Renderer(Renderer):
 
             # For Kimi K2, preserve thinking only for last non-tool-call assistant
             is_last_assistant = idx >= last_assistant_idx and is_assistant
-            rendered_message = self.render_message(idx, message, is_last=is_last_assistant)
+            ctx = RenderContext(
+                idx=idx,
+                is_last=is_last_assistant,
+                prev_message=messages[idx - 1] if idx > 0 else None,
+            )
+            rendered_message = self.render_message(message, ctx)
 
-            header_part = rendered_message.get("header")
-            output_parts = rendered_message.get("output")
+            header_part = rendered_message.header
+            output_parts = rendered_message.output
 
             header_weight = int(train_on_what == TrainOnWhat.ALL_TOKENS)
             if header_part:
@@ -1848,7 +1991,7 @@ class GptOssRenderer(Renderer):
             "Reasoning effort must be set iff using system prompt"
         )
 
-    def render_message(self, idx: int, message: Message, is_last: bool = False) -> RenderedMessage:
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         assert message.get("tool_calls") is None, "TODO: support tools in gpt-oss renderer"
         assert isinstance(message["content"], str), (
             "GptOssRenderer only supports message with string content"
@@ -1868,7 +2011,7 @@ class GptOssRenderer(Renderer):
             assert isinstance(message_content, str), "GptOssRenderer only supports string content"
 
             # Analysis channel (CoT) - always included for last message to match HF template
-            if is_last:
+            if ctx.is_last:
                 thinking_content = thinking if thinking else ""
                 output_str += (
                     f"<|channel|>analysis<|message|>{thinking_content}<|end|><|start|>assistant"
@@ -1885,11 +2028,11 @@ class GptOssRenderer(Renderer):
             )
             output_str += f"<|message|>{message['content']}"
 
-        if not is_last:
-            output_str += "<|end|>"
-        else:
-            # <|return|> ends the last-message in harmony (but should be replaced by <|end|> when continuing the convo)
+        if ctx.is_last and message["role"] == "assistant":
+            # <|return|> is the stop token for assistant generation
             output_str += "<|return|>"
+        else:
+            output_str += "<|end|>"
 
         header = tinker.types.EncodedTextChunk(
             tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
@@ -1958,9 +2101,13 @@ def get_renderer(
     elif name == "qwen3_instruct":
         return Qwen3InstructRenderer(tokenizer)
     elif name == "deepseekv3":
-        return DeepSeekV3Renderer(tokenizer)
-    elif name == "deepseekv3_disable_thinking":
+        # Default to non-thinking mode (matches HF template default behavior)
         return DeepSeekV3DisableThinkingRenderer(tokenizer)
+    elif name == "deepseekv3_disable_thinking":
+        # Alias for backward compatibility
+        return DeepSeekV3DisableThinkingRenderer(tokenizer)
+    elif name == "deepseekv3_thinking":
+        return DeepSeekV3ThinkingRenderer(tokenizer)
     elif name == "kimi_k2":
         return KimiK2Renderer(tokenizer)
     elif name == "gpt_oss_no_sysprompt":

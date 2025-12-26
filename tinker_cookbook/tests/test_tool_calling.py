@@ -11,7 +11,7 @@ These tests verify that renderers correctly handle:
 import pytest
 import tinker
 
-from tinker_cookbook.renderers import Message, get_renderer
+from tinker_cookbook.renderers import Message, RenderContext, get_renderer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 # =============================================================================
@@ -37,10 +37,11 @@ def test_qwen3_tool_response_rendering(model_name: str, renderer_name: str):
 
     tool_message: Message = {"role": "tool", "content": '{"weather": "sunny", "high": 72}'}
 
-    rendered = renderer.render_message(0, tool_message)
-    header = rendered.get("header")
+    ctx = RenderContext(idx=0, is_last=False, prev_message=None)
+    rendered = renderer.render_message(tool_message, ctx)
+    header = rendered.header
     assert header is not None, "Expected header in rendered message"
-    output = rendered["output"]
+    output = rendered.output
     assert len(output) > 0, "Expected output in rendered message"
 
     header_str = tokenizer.decode(list(header.tokens))
