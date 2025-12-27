@@ -279,7 +279,8 @@ def format_content_as_string(content: Content, separator: str = "\n") -> str:
 
     This is useful for compatibility with APIs that expect string content
     (e.g., OpenAI Chat Completions API), but we don't recommend it if you
-    need to ensure correctness - prefer working with structured content directly.
+    need to ensure correctness - prefer working with structured content directly
+    and using build_generation_prompt to convert to tokens.
 
     Args:
         content: Message content (string or list of ContentPart).
@@ -1452,9 +1453,7 @@ class Qwen3VLRenderer(Qwen3Renderer):
 
         # Strip thinking from history for non-last assistant messages (matching non-VL behavior)
         strip_thinking = (
-            self.strip_thinking_from_history
-            and message["role"] == "assistant"
-            and not ctx.is_last
+            self.strip_thinking_from_history and message["role"] == "assistant" and not ctx.is_last
         )
         output_chunks = self._preprocess_message_parts(message, strip_thinking=strip_thinking)
 
