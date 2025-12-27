@@ -101,16 +101,8 @@ class UnparsedToolCall(StrictBase):
 
 
 class TextPart(TypedDict):
-    """
-    Container for a text part in a multimodal message.
-
-    Args:
-
-    type: Literal['text']
-        The type of the content part, which must be text in this case.
-    text: str
-        The string content of the content part.
-    """
+    """A chunk of text content in a message, usually meant to be visible to the user
+    (unlike ThinkingPart, which is internal reasoning)."""
 
     type: Literal["text"]
     text: str
@@ -118,14 +110,7 @@ class TextPart(TypedDict):
 
 class ImagePart(TypedDict):
     """
-    Container for an image part in a multimodal message.
-
-    Args:
-
-    type: Literal['image']
-        The type of the content part, which must be image in this case.
-    image: str | Image.Image
-        Either a url, data URL, or PIL image.
+    A chunk of image content in a message.
     """
 
     type: Literal["image"]
@@ -133,65 +118,25 @@ class ImagePart(TypedDict):
 
 
 class ThinkingPart(TypedDict):
-    """
-    Container for a thinking/reasoning part in a message.
-
-    This represents the model's internal reasoning process (chain-of-thought),
-    which may be rendered differently than regular text content depending on
-    the model format.
-
-    Args:
-
-    type: Literal['thinking']
-        The type of the content part, which must be thinking in this case.
-    thinking: str
-        The thinking/reasoning content.
-    """
+    """Model's internal reasoning (chain-of-thought) as a content part."""
 
     type: Literal["thinking"]
-    thinking: str
+    thinking: str  # The thinking/reasoning content
 
 
 class ToolCallPart(TypedDict):
-    """
-    Container for a tool call part in a message content list.
-
-    This represents a tool/function call as a content part, preserving its
-    position relative to other content like thinking and text blocks.
-
-    Args:
-
-    type: Literal['tool_call']
-        The type of the content part, which must be tool_call in this case.
-    tool_call: ToolCall
-        The tool call object.
-    """
+    """Tool/function call as a content part, preserving position in content list."""
 
     type: Literal["tool_call"]
-    tool_call: ToolCall
+    tool_call: ToolCall  # The parsed tool call object
 
 
 class UnparsedToolCallPart(TypedDict):
-    """
-    Container for a tool call that failed to parse.
-
-    This represents a tool call block that was found in the content but could
-    not be parsed into a valid ToolCall object. Preserves the raw text and
-    error information for debugging.
-
-    Args:
-
-    type: Literal['unparsed_tool_call']
-        The type of the content part.
-    raw_text: str
-        The raw text of the tool call block including tags.
-    error: str
-        Description of what went wrong during parsing.
-    """
+    """Tool call that failed to parse, preserving raw text for debugging."""
 
     type: Literal["unparsed_tool_call"]
-    raw_text: str
-    error: str
+    raw_text: str  # Raw text of the tool call block including tags
+    error: str  # Description of what went wrong during parsing
 
 
 # Container for a part of a multimodal message content
@@ -303,46 +248,19 @@ def ensure_text(content: Content) -> str:
 
 
 def ensure_list(content: Content) -> list[ContentPart]:
-    """
-    Normalize content to list form.
-
-    Args:
-        content: Either a string or a list of ContentParts.
-
-    Returns:
-        A list of ContentPart elements. If content is a string, returns a single
-        TextPart wrapping that string.
-    """
+    """Normalize content to list form. Wraps string content in a TextPart."""
     if isinstance(content, str):
         return [TextPart(type="text", text=content)]
     return content
 
 
 def remove_thinking(parts: list[ContentPart]) -> list[ContentPart]:
-    """
-    Remove ThinkingPart elements from content.
-
-    Args:
-        parts: A list of ContentParts.
-
-    Returns:
-        A list of ContentPart elements with ThinkingPart removed.
-    """
+    """Filter out ThinkingPart elements from a content part list."""
     return [p for p in parts if p["type"] != "thinking"]
 
 
-def _parse_tool_call_json(
-    tool_call_str: str, raw_text: str
-) -> ToolCall | UnparsedToolCall:
-    """Parse a tool call JSON string into a ToolCall object.
-
-    Args:
-        tool_call_str: The JSON content inside the tool_call tags.
-        raw_text: The full raw text including tags (for error reporting).
-
-    Returns:
-        ToolCall on success, UnparsedToolCall on failure.
-    """
+def _parse_tool_call_json(tool_call_str: str, raw_text: str) -> ToolCall | UnparsedToolCall:
+    """Parse tool call JSON. Returns UnparsedToolCall on failure."""
     try:
         tool_call = json.loads(tool_call_str.strip())
     except json.JSONDecodeError as e:
@@ -404,13 +322,11 @@ def parse_content_blocks(content: str) -> list[ContentPart]:
     pos = 0
 
     # Pattern to find both <think>...</think> and <tool_call>...</tool_call> blocks
-    pattern = re.compile(
-        r"<think>(.*?)</think>|<tool_call>(.*?)</tool_call>", re.DOTALL
-    )
+    pattern = re.compile(r"<think>(.*?)</think>|<tool_call>(.*?)</tool_call>", re.DOTALL)
 
     for match in pattern.finditer(content):
         # Add any text before this block
-        text_before = content[pos:match.start()]
+        text_before = content[pos : match.start()]
         if text_before.strip():  # Skip empty/whitespace-only text
             parts.append(TextPart(type="text", text=text_before.strip()))
 
@@ -426,11 +342,13 @@ def parse_content_blocks(content: str) -> list[ContentPart]:
             parsed = _parse_tool_call_json(tool_call_json, raw_text)
             if isinstance(parsed, UnparsedToolCall):
                 # Include unparsed tool calls as UnparsedToolCallPart to preserve order
-                parts.append(UnparsedToolCallPart(
-                    type="unparsed_tool_call",
-                    raw_text=parsed.raw_text,
-                    error=parsed.error,
-                ))
+                parts.append(
+                    UnparsedToolCallPart(
+                        type="unparsed_tool_call",
+                        raw_text=parsed.raw_text,
+                        error=parsed.error,
+                    )
+                )
             else:
                 parts.append(ToolCallPart(type="tool_call", tool_call=parsed))
 
@@ -465,7 +383,7 @@ def parse_think_blocks(content: str) -> list[ContentPart]:
     pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL)
 
     for match in pattern.finditer(content):
-        text_before = content[pos:match.start()]
+        text_before = content[pos : match.start()]
         if text_before.strip():
             parts.append(TextPart(type="text", text=text_before.strip()))
 
@@ -1114,18 +1032,16 @@ class Qwen3Renderer(Renderer):
         """Wrap tool response content in Qwen's <tool_response> tags."""
         return f"<tool_response>\n{content}\n</tool_response>"
 
-    def _should_add_think_prefix(self, message: Message, output_content: str, ctx: RenderContext) -> bool:
+    def _should_add_think_prefix(
+        self, message: Message, output_content: str, ctx: RenderContext
+    ) -> bool:
         """Whether to add <think> prefix to the last assistant message.
 
         Thinking-enabled models (default) check if this is the last assistant message
         and if <think> is not already present. Override in subclasses like
         Qwen3InstructRenderer to disable the <think> prefix entirely.
         """
-        return (
-            message["role"] == "assistant"
-            and "<think>" not in output_content
-            and ctx.is_last
-        )
+        return message["role"] == "assistant" and "<think>" not in output_content and ctx.is_last
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         maybe_newline = "\n" if ctx.idx > 0 else ""
@@ -1135,26 +1051,23 @@ class Qwen3Renderer(Renderer):
 
         content = message["content"]
 
-        # Check if content is a list with ThinkingPart
-        has_thinking_part = isinstance(content, list) and any(
-            p["type"] == "thinking" for p in content
-        )
-
-        if has_thinking_part:
-            # Structured content with ThinkingPart - handle with list operations
-            parts = ensure_list(content)
-            if self.strip_thinking_from_history and message["role"] == "assistant" and not ctx.is_last:
+        if isinstance(content, list):
+            # Structured content - handle with list operations
+            parts = content
+            if (
+                self.strip_thinking_from_history
+                and message["role"] == "assistant"
+                and not ctx.is_last
+            ):
                 # Remove thinking parts for historical messages
                 parts = remove_thinking(parts)
-                output_content = "".join(p["text"] for p in parts if p["type"] == "text")
-            else:
-                # Render inline: <think>...</think> for thinking, text for text
-                thinking = "".join(p["thinking"] for p in parts if p["type"] == "thinking")
-                text = "".join(p["text"] for p in parts if p["type"] == "text")
-                output_content = f"<think>{thinking}</think>{text}" if thinking else text
+            # Render: <think>...</think> for thinking, text for text
+            thinking = "".join(p["thinking"] for p in parts if p["type"] == "thinking")
+            text = "".join(p["text"] for p in parts if p["type"] == "text")
+            output_content = f"<think>{thinking}</think>{text}" if thinking else text
         else:
-            # String content or text-only list - pass through as-is
-            output_content = ensure_text(content)
+            # String content - pass through as-is
+            output_content = content
 
         # Handle tool response wrapping
         if message["role"] == "tool":
@@ -1227,15 +1140,14 @@ class Qwen3Renderer(Renderer):
             assistant_message["content"] = parts
 
             # Also populate tool_calls and unparsed_tool_calls fields for backward compatibility
-            tool_calls = [
-                p["tool_call"] for p in parts if p["type"] == "tool_call"
-            ]
+            tool_calls = [p["tool_call"] for p in parts if p["type"] == "tool_call"]
             if tool_calls:
                 assistant_message["tool_calls"] = tool_calls
 
             unparsed = [
                 UnparsedToolCall(raw_text=p["raw_text"], error=p["error"])
-                for p in parts if p["type"] == "unparsed_tool_call"
+                for p in parts
+                if p["type"] == "unparsed_tool_call"
             ]
             if unparsed:
                 assistant_message["unparsed_tool_calls"] = unparsed
@@ -1319,7 +1231,9 @@ class Qwen3InstructRenderer(Qwen3Renderer):
     the conversation includes thinking, but no prefix is added automatically.
     """
 
-    def _should_add_think_prefix(self, message: Message, output_content: str, ctx: RenderContext) -> bool:
+    def _should_add_think_prefix(
+        self, message: Message, output_content: str, ctx: RenderContext
+    ) -> bool:
         """Instruct models don't use <think> prefix."""
         return False
 
@@ -1400,8 +1314,9 @@ class Qwen3VLRenderer(Qwen3Renderer):
     def _preprocess_message_parts(self, message: Message) -> list[ImagePart | TextPart]:
         """Convert message content to list form for VL rendering.
 
-        Filters out ThinkingPart, ToolCallPart, and UnparsedToolCallPart since VL renderers
-        don't support these in the message parts. Wraps images with vision tokens.
+        Filters out ThinkingPart and ToolCallPart from content list (these are handled
+        separately). Wraps images with vision tokens. Tool calls are supported via
+        the message's tool_calls field, not via ToolCallPart in content.
         """
         content = message["content"]
         if isinstance(content, str):
@@ -1495,7 +1410,9 @@ class Qwen3VLInstructRenderer(Qwen3VLRenderer):
     Unlike the Qwen3-VL Thinking models, The Qwen3-VL Instruct models do not use the <think> tag.
     """
 
-    def _should_add_think_prefix(self, message: Message, output_content: str, ctx: RenderContext) -> bool:
+    def _should_add_think_prefix(
+        self, message: Message, output_content: str, ctx: RenderContext
+    ) -> bool:
         """Instruct models don't use <think> prefix."""
         return False
 
@@ -1542,11 +1459,6 @@ class DeepSeekV3ThinkingRenderer(Renderer):
 
         content = message["content"]
 
-        # Check if content is a list with ThinkingPart
-        has_thinking_part = isinstance(content, list) and any(
-            p["type"] == "thinking" for p in content
-        )
-
         if message["role"] == "system":
             # HF template collects all system messages at the start without role tokens
             # We only support this for idx=0; later system messages need system_role_as_user=True
@@ -1571,25 +1483,19 @@ class DeepSeekV3ThinkingRenderer(Renderer):
         elif message["role"] == "assistant":
             has_tool_calls = "tool_calls" in message and message["tool_calls"]
 
-            if has_thinking_part:
-                # Structured content with ThinkingPart - handle with list operations
-                parts = ensure_list(content)
-                if (
-                    self.strip_thinking_from_history
-                    and not has_tool_calls
-                    and not ctx.is_last
-                ):
+            if isinstance(content, list):
+                # Structured content - handle with list operations
+                parts = content
+                if self.strip_thinking_from_history and not has_tool_calls and not ctx.is_last:
                     # Remove thinking parts for historical messages
                     parts = remove_thinking(parts)
-                    output_content = "".join(p["text"] for p in parts if p["type"] == "text")
-                else:
-                    # Render inline: <think>...</think> for thinking, text for text
-                    thinking = "".join(p["thinking"] for p in parts if p["type"] == "thinking")
-                    text = "".join(p["text"] for p in parts if p["type"] == "text")
-                    output_content = f"<think>{thinking}</think>{text}" if thinking else text
+                # Render: <think>...</think> for thinking, text for text
+                thinking = "".join(p["thinking"] for p in parts if p["type"] == "thinking")
+                text = "".join(p["text"] for p in parts if p["type"] == "text")
+                output_content = f"<think>{thinking}</think>{text}" if thinking else text
             else:
-                # String content or text-only list - pass through as-is
-                output_content = ensure_text(content)
+                # String content - pass through as-is
+                output_content = content
 
             if follows_tool:
                 # Post-tool assistant: no role token, content flows directly after tool output
