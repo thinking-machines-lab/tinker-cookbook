@@ -1008,8 +1008,8 @@ def test_parse_content_blocks_whitespace_handling():
 
     assert len(parts) == 2
     # Thinking content preserves internal whitespace but text gets stripped
-    assert parts[0]["thinking"] == "  thinking  "
-    assert parts[1]["text"] == "answer"
+    assert parts[0]["type"] == "thinking" and parts[0]["thinking"] == "  thinking  "
+    assert parts[1]["type"] == "text" and parts[1]["text"] == "answer"
 
 
 def test_parse_content_blocks_tool_call_only():
@@ -1167,7 +1167,7 @@ def test_qwen3_parse_response_tool_call_only():
     assert content[0]["type"] == "tool_call"
 
     # Backward-compatible field
-    assert len(message["tool_calls"]) == 1
+    assert "tool_calls" in message and len(message["tool_calls"]) == 1
 
 
 # =============================================================================
