@@ -56,7 +56,7 @@ class DeepSeekV3ThinkingRenderer(Renderer):
         self.strip_thinking_from_history = strip_thinking_from_history
 
     @property
-    def grows_by_extension(self) -> bool:
+    def has_extension_property(self) -> bool:
         """Extension property depends on strip_thinking_from_history setting.
 
         When strip_thinking_from_history=False, thinking traces are preserved in
@@ -331,7 +331,7 @@ class DeepSeekV3DisableThinkingRenderer(DeepSeekV3ThinkingRenderer):
     """
 
     @property
-    def grows_by_extension(self) -> bool:
+    def has_extension_property(self) -> bool:
         """Non-thinking mode always satisfies extension - no thinking to strip from history."""
         return True
 

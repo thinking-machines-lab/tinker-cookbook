@@ -537,7 +537,7 @@ class Renderer(ABC):
         self.tokenizer = tokenizer
 
     @property
-    def grows_by_extension(self) -> bool:
+    def has_extension_property(self) -> bool:
         """Whether this renderer satisfies the sequence extension property.
 
         A renderer has the extension property if, for any multi-turn conversation,
@@ -725,11 +725,11 @@ class Renderer(ABC):
         # different context prefix, so they should be trained as separate examples.
         # NOTE: This warning only covers ALL_ASSISTANT_MESSAGES. Other modes that train
         # multiple assistant messages (e.g., ALL_MESSAGES, ALL_TOKENS, CUSTOMIZED) should
-        # be used with caution when grows_by_extension=False.
-        if train_on_what == TrainOnWhat.ALL_ASSISTANT_MESSAGES and not self.grows_by_extension:
+        # be used with caution when has_extension_property=False.
+        if train_on_what == TrainOnWhat.ALL_ASSISTANT_MESSAGES and not self.has_extension_property:
             logger.warning(
                 "WARNING: Using train_on_what=ALL_ASSISTANT_MESSAGES with a renderer that "
-                "does not satisfy the extension property (grows_by_extension=False). "
+                "does not satisfy the extension property (has_extension_property=False). "
                 "This means earlier assistant messages in the conversation see a different "
                 "token prefix than what build_generation_prompt would produce at that turn. "
                 "You should instead create separate conversations for each assistant message "

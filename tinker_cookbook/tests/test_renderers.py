@@ -1057,7 +1057,7 @@ def test_extension_property_holds(
     model_name, renderer_name_or_class, renderer_kwargs, conversation_fn
 ):
     """
-    Test that renderers with grows_by_extension=True actually satisfy the property.
+    Test that renderers with has_extension_property=True actually satisfy the property.
     For each conversation, verify that build_generation_prompt at successive assistant
     turns produces token sequences where each is a prefix of the next.
     """
@@ -1068,8 +1068,8 @@ def test_extension_property_holds(
     else:
         renderer = renderer_name_or_class(tokenizer, **renderer_kwargs)
 
-    assert renderer.grows_by_extension, (
-        f"Expected {renderer_name_or_class} to have grows_by_extension=True"
+    assert renderer.has_extension_property, (
+        f"Expected {renderer_name_or_class} to have has_extension_property=True"
     )
 
     messages = conversation_fn()
@@ -1084,7 +1084,7 @@ def test_extension_property_breaks_when_expected():
     tokenizer = get_tokenizer("Qwen/Qwen3-8B")
     renderer = Qwen3Renderer(tokenizer, strip_thinking_from_history=True)
 
-    assert not renderer.grows_by_extension, "Default Qwen3Renderer should NOT have extension"
+    assert not renderer.has_extension_property, "Default Qwen3Renderer should NOT have extension"
 
     messages = _get_multiturn_thinking_conversation()
 

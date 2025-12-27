@@ -46,7 +46,7 @@ class Llama3Renderer(Renderer):
     """
 
     @property
-    def grows_by_extension(self) -> bool:
+    def has_extension_property(self) -> bool:
         """Llama3 satisfies the extension property - no content is stripped from history."""
         return True
 

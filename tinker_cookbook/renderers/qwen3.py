@@ -81,7 +81,7 @@ class Qwen3Renderer(Renderer):
         self.strip_thinking_from_history = strip_thinking_from_history
 
     @property
-    def grows_by_extension(self) -> bool:
+    def has_extension_property(self) -> bool:
         """Extension property depends on strip_thinking_from_history setting.
 
         When strip_thinking_from_history=False, thinking blocks are preserved in
@@ -323,7 +323,7 @@ class Qwen3InstructRenderer(Qwen3Renderer):
     """
 
     @property
-    def grows_by_extension(self) -> bool:
+    def has_extension_property(self) -> bool:
         """Qwen3 Instruct always satisfies extension - no thinking to strip from history."""
         # NOTE: If callers include ThinkingPart in history, Qwen3Renderer may still strip it
         # when strip_thinking_from_history=True, so extension can break.

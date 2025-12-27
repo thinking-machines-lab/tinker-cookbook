@@ -34,7 +34,7 @@ class RoleColonRenderer(Renderer):
     """
 
     @property
-    def grows_by_extension(self) -> bool:
+    def has_extension_property(self) -> bool:
         """RoleColon satisfies the extension property - no content is stripped from history."""
         return True
 
