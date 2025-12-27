@@ -14,14 +14,11 @@ import tinker
 import torch
 
 from tinker_cookbook.renderers.base import (
-    ContentPart,
     Message,
     RenderContext,
     RenderedMessage,
     Renderer,
     Role,
-    TextPart,
-    ThinkingPart,
     ToolCall,
     ToolSpec,
     TrainOnWhat,
