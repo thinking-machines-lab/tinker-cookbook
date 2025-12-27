@@ -481,50 +481,83 @@ def test_tool_call_generation_against_hf_templates(model_name: str, renderer_nam
 
 
 # =============================================================================
-# Qwen3 Thinking Tests (multi-turn with thinking content)
+# Thinking Stripping Tests (multi-turn with thinking content)
 # =============================================================================
 
 
-def test_qwen3_4turn_only_last_thinking_preserved():
-    """
-    For 4-turn conversations with ThinkingPart, only the last assistant message's thinking
-    should be preserved. Earlier assistant thinking blocks are stripped.
-    """
-    model_name = "Qwen/Qwen3-8B"
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    renderer = Qwen3Renderer(tokenizer)
-
-    # Use structured content with ThinkingPart
-    messages: list[Message] = [
+def _get_4turn_thinking_conversation() -> list[Message]:
+    """4-turn conversation with ThinkingPart in assistant messages."""
+    return [
         {"role": "user", "content": "What is 2+2?"},
         {
             "role": "assistant",
             "content": [
-                ThinkingPart(type="thinking", thinking="\nFirst turn reasoning here.\n"),
-                TextPart(type="text", text="\n\nThe answer is 4."),
+                ThinkingPart(type="thinking", thinking="First turn reasoning here."),
+                TextPart(type="text", text="The answer is 4."),
             ],
         },
         {"role": "user", "content": "And what is 3+3?"},
         {
             "role": "assistant",
             "content": [
-                ThinkingPart(type="thinking", thinking="\nSecond turn reasoning here.\n"),
-                TextPart(type="text", text="\n\nThe answer is 6."),
+                ThinkingPart(type="thinking", thinking="Second turn reasoning here."),
+                TextPart(type="text", text="The answer is 6."),
             ],
         },
     ]
 
+
+@pytest.mark.parametrize(
+    "model_name,renderer_class",
+    [
+        ("Qwen/Qwen3-8B", Qwen3Renderer),
+        ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3ThinkingRenderer),
+    ],
+)
+def test_strip_thinking_from_history_default(model_name: str, renderer_class):
+    """
+    Test that renderers with strip_thinking_from_history=True (default) only preserve
+    the last assistant message's thinking. Earlier assistant thinking blocks are stripped.
+    """
+    tokenizer = get_tokenizer(model_name)
+    renderer = renderer_class(tokenizer)  # Default strip_thinking_from_history=True
+
+    messages = _get_4turn_thinking_conversation()
     model_input, _ = renderer.build_supervised_example(messages)
-    tinker_decoded = tokenizer.decode(model_input.to_ints())
+    decoded = tokenizer.decode(model_input.to_ints())
 
     # First assistant message should have thinking stripped
-    assert "First turn reasoning" not in tinker_decoded, (
-        f"First turn thinking should be stripped:\n{tinker_decoded}"
+    assert "First turn reasoning" not in decoded, (
+        f"First turn thinking should be stripped:\n{decoded}"
     )
     # Second (last) assistant message should preserve thinking
-    assert "Second turn reasoning" in tinker_decoded, (
-        f"Last turn thinking should be preserved:\n{tinker_decoded}"
+    assert "Second turn reasoning" in decoded, f"Last turn thinking should be preserved:\n{decoded}"
+
+
+@pytest.mark.parametrize(
+    "model_name,renderer_class",
+    [
+        ("Qwen/Qwen3-8B", Qwen3Renderer),
+        ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3ThinkingRenderer),
+    ],
+)
+def test_strip_thinking_from_history_false(model_name: str, renderer_class):
+    """
+    Test that strip_thinking_from_history=False preserves thinking in ALL messages.
+    This mode is used for multi-turn RL where the extension property is needed.
+    """
+    tokenizer = get_tokenizer(model_name)
+    renderer = renderer_class(tokenizer, strip_thinking_from_history=False)
+
+    messages = _get_4turn_thinking_conversation()
+    model_input, _ = renderer.build_supervised_example(messages)
+    decoded = tokenizer.decode(model_input.to_ints())
+
+    # Both thinking blocks should be present
+    assert "First turn reasoning" in decoded, (
+        f"First thinking should be preserved with strip_thinking_from_history=False: {decoded}"
     )
+    assert "Second turn reasoning" in decoded, f"Second thinking should be preserved: {decoded}"
 
 
 # =============================================================================
@@ -684,120 +717,8 @@ def test_eot_parsing(model_name: str, renderer_name: str):
 
 
 # =============================================================================
-# strip_thinking_from_history=False Tests (Extension Property)
+# DeepSeek Tool Call Tests
 # =============================================================================
-
-
-def test_qwen3_strip_thinking_false_preserves_all():
-    """
-    Test that strip_thinking_from_history=False preserves thinking in ALL messages.
-    This mode is used for multi-turn RL where the extension property is needed.
-    Note: This mode does NOT match HF behavior - it's a special mode for efficiency.
-    """
-    model_name = "Qwen/Qwen3-8B"
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    renderer = Qwen3Renderer(tokenizer, strip_thinking_from_history=False)
-
-    messages: list[Message] = [
-        {"role": "user", "content": "What is 2+2?"},
-        {
-            "role": "assistant",
-            "content": "<think>\nFirst calculation.\n</think>\n\nThe answer is 4.",
-        },
-        {"role": "user", "content": "And what is 3+3?"},
-        {
-            "role": "assistant",
-            "content": "<think>\nSecond calculation.\n</think>\n\nThe answer is 6.",
-        },
-    ]
-
-    model_input, _ = renderer.build_supervised_example(messages)
-    decoded = tokenizer.decode(model_input.to_ints())
-
-    # Both thinking blocks should be present
-    assert decoded.count("<think>") == 2, (
-        f"Expected 2 thinking blocks with strip_thinking_from_history=False, got: {decoded}"
-    )
-    assert "First calculation" in decoded
-    assert "Second calculation" in decoded
-
-
-# =============================================================================
-# DeepSeek Thinking Trace Tests
-# =============================================================================
-
-
-def test_deepseek_strip_thinking_from_history_default():
-    """
-    Test that DeepSeek strips thinking from historical assistant messages by default.
-    Only the last assistant message should preserve thinking.
-    """
-    model_name = "deepseek-ai/DeepSeek-V3.1"
-    tokenizer = get_tokenizer(model_name)
-    renderer = DeepSeekV3ThinkingRenderer(tokenizer)
-
-    # Use structured content with ThinkingPart
-    messages: list[Message] = [
-        {"role": "user", "content": "What is 2+2?"},
-        {
-            "role": "assistant",
-            "content": [
-                ThinkingPart(type="thinking", thinking="First calculation."),
-                TextPart(type="text", text="The answer is 4."),
-            ],
-        },
-        {"role": "user", "content": "And what is 3+3?"},
-        {
-            "role": "assistant",
-            "content": [
-                ThinkingPart(type="thinking", thinking="Second calculation."),
-                TextPart(type="text", text="The answer is 6."),
-            ],
-        },
-    ]
-
-    model_input, _ = renderer.build_supervised_example(messages)
-    decoded = tokenizer.decode(model_input.to_ints())
-
-    # First thinking block should be stripped, second preserved
-    assert "First calculation" not in decoded, (
-        f"Historical thinking should be stripped by default: {decoded}"
-    )
-    assert "Second calculation" in decoded, (
-        f"Last assistant thinking should be preserved: {decoded}"
-    )
-
-
-def test_deepseek_strip_thinking_false_preserves_all():
-    """
-    Test that strip_thinking_from_history=False preserves thinking in ALL messages.
-    This mode is used for multi-turn RL where the extension property is needed.
-    """
-    model_name = "deepseek-ai/DeepSeek-V3.1"
-    tokenizer = get_tokenizer(model_name)
-    renderer = DeepSeekV3ThinkingRenderer(tokenizer, strip_thinking_from_history=False)
-
-    messages: list[Message] = [
-        {"role": "user", "content": "What is 2+2?"},
-        {
-            "role": "assistant",
-            "content": "<think>First calculation.</think>The answer is 4.",
-        },
-        {"role": "user", "content": "And what is 3+3?"},
-        {
-            "role": "assistant",
-            "content": "<think>Second calculation.</think>The answer is 6.",
-        },
-    ]
-
-    model_input, _ = renderer.build_supervised_example(messages)
-    decoded = tokenizer.decode(model_input.to_ints())
-
-    # Both thinking blocks should be present
-    assert "First calculation" in decoded, (
-        f"First thinking should be preserved with strip_thinking_from_history=False: {decoded}"
-    )
-    assert "Second calculation" in decoded, f"Second thinking should be preserved: {decoded}"
 
 
 def test_deepseek_thinking_preserved_with_tool_calls():
@@ -897,3 +818,276 @@ def test_deepseek_post_tool_formatting():
             assert not output_str.startswith("</think>"), (
                 f"Post-tool assistant should not have </think> prefix: {output_str}"
             )
+
+
+# =============================================================================
+# Sequence Extension Property Tests
+# =============================================================================
+
+
+def _get_multiturn_thinking_conversation() -> list[Message]:
+    """Multi-turn conversation with thinking in assistant messages."""
+    return [
+        {"role": "user", "content": "What is 2+2?"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="\nLet me add 2+2.\n"),
+                TextPart(type="text", text="\n\nThe answer is 4."),
+            ],
+        },
+        {"role": "user", "content": "What is 3+3?"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="\nLet me add 3+3.\n"),
+                TextPart(type="text", text="\n\nThe answer is 6."),
+            ],
+        },
+    ]
+
+
+def _get_multiturn_tool_conversation() -> list[Message]:
+    """Multi-turn conversation with tool calls."""
+    return [
+        {"role": "user", "content": "What's the weather in NYC?"},
+        {
+            "role": "assistant",
+            "content": "Let me check the weather for you.",
+            "tool_calls": [
+                ToolCall(
+                    function=ToolCall.FunctionBody(
+                        name="get_weather",
+                        arguments='{"location": "NYC"}',
+                    ),
+                    id="call_1",
+                )
+            ],
+        },
+        {
+            "role": "tool",
+            "content": '{"temperature": 72, "condition": "sunny"}',
+            "tool_call_id": "call_1",
+        },
+        {"role": "assistant", "content": "The weather in NYC is sunny with 72°F."},
+        {"role": "user", "content": "What about San Francisco?"},
+        {
+            "role": "assistant",
+            "content": "Let me check SF weather.",
+            "tool_calls": [
+                ToolCall(
+                    function=ToolCall.FunctionBody(
+                        name="get_weather",
+                        arguments='{"location": "San Francisco"}',
+                    ),
+                    id="call_2",
+                )
+            ],
+        },
+        {
+            "role": "tool",
+            "content": '{"temperature": 65, "condition": "foggy"}',
+            "tool_call_id": "call_2",
+        },
+        {"role": "assistant", "content": "San Francisco is foggy at 65°F."},
+    ]
+
+
+def _get_multiturn_thinking_and_tool_conversation() -> list[Message]:
+    """Multi-turn conversation with both thinking AND tool calls (for DeepSeek)."""
+    return [
+        {"role": "user", "content": "What's the weather in NYC?"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="\nI need to check the weather API.\n"),
+                TextPart(type="text", text="Let me look that up."),
+            ],
+            "tool_calls": [
+                ToolCall(
+                    function=ToolCall.FunctionBody(
+                        name="get_weather",
+                        arguments='{"location": "NYC"}',
+                    ),
+                    id="call_1",
+                )
+            ],
+        },
+        {
+            "role": "tool",
+            "content": '{"temperature": 72}',
+            "tool_call_id": "call_1",
+        },
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="\nThe API returned 72 degrees.\n"),
+                TextPart(type="text", text="NYC is 72°F."),
+            ],
+        },
+        {"role": "user", "content": "Is that warm?"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(
+                    type="thinking", thinking="\n72°F is about 22°C, which is pleasant.\n"
+                ),
+                TextPart(type="text", text="Yes, 72°F is comfortable room temperature."),
+            ],
+        },
+    ]
+
+
+def _verify_extension_property(renderer, messages: list[Message], tokenizer):
+    """
+    Verify the sequence extension property for multi-turn conversations.
+
+    The extension property holds when the full sequence at timestep t (observation + action)
+    is a prefix of the observation at timestep t+1. This enables KV-cache reuse and O(T)
+    compute scaling for T-turn trajectories.
+
+    For a conversation [user1, asst1, user2, asst2, ...], we check:
+    - (prompt_before_asst1 + asst1_completion) is prefix of prompt_before_asst2
+    - (prompt_before_asst2 + asst2_completion) is prefix of prompt_before_asst3
+    - etc.
+
+    The "completion" for an assistant message is how it would be rendered as the model's
+    output (with thinking, tool calls, etc.), not how it appears in history (where thinking
+    might be stripped).
+    """
+    # Find all assistant message indices
+    assistant_indices = [i for i, m in enumerate(messages) if m["role"] == "assistant"]
+
+    if len(assistant_indices) < 2:
+        return  # Need at least 2 assistant messages to test extension
+
+    # Build sequences for comparison
+    # seq[i] = observation before assistant i + completion for assistant i
+    # We check if seq[i] is a prefix of observation before assistant i+1
+    for i in range(len(assistant_indices) - 1):
+        asst_idx = assistant_indices[i]
+        next_asst_idx = assistant_indices[i + 1]
+
+        # Build the assistant's completion - we need to render the assistant message
+        # as it would appear when generated (with thinking preserved), not as it
+        # would appear in history. We do this by building a supervised example and
+        # extracting the tokens after the prompt.
+        messages_through_asst = messages[: asst_idx + 1]
+        model_input_through_asst, _ = renderer.build_supervised_example(messages_through_asst)
+        seq_through_asst = model_input_through_asst.to_ints()
+
+        # Build prompt before the next assistant message (observation_{t+1})
+        context_before_next = messages[:next_asst_idx]
+        prompt_before_next = renderer.build_generation_prompt(context_before_next).to_ints()
+
+        # Check if seq_through_asst is a prefix of prompt_before_next
+        is_prefix = prompt_before_next[: len(seq_through_asst)] == seq_through_asst
+        if not is_prefix:
+            # Decode for debugging
+            seq_str = tokenizer.decode(seq_through_asst)
+            next_prompt_str = tokenizer.decode(prompt_before_next)
+            # Find where they diverge
+            diverge_idx = 0
+            for j in range(min(len(seq_through_asst), len(prompt_before_next))):
+                if seq_through_asst[j] != prompt_before_next[j]:
+                    diverge_idx = j
+                    break
+            else:
+                diverge_idx = min(len(seq_through_asst), len(prompt_before_next))
+
+            raise AssertionError(
+                f"Extension property violated between assistant {i} and {i + 1}.\n"
+                f"Full sequence through asst {i} (len={len(seq_through_asst)}) is NOT a prefix "
+                f"of prompt before asst {i + 1} (len={len(prompt_before_next)}).\n"
+                f"Divergence at token {diverge_idx}:\n"
+                f"  Seq through asst[{diverge_idx}:]: {seq_through_asst[diverge_idx : diverge_idx + 10]}\n"
+                f"  Next prompt[{diverge_idx}:]:      {prompt_before_next[diverge_idx : diverge_idx + 10]}\n"
+                f"Sequence through assistant: {seq_str}\n"
+                f"Next prompt: {next_prompt_str}"
+            )
+
+
+# Test extension property actually holds for renderers that claim it
+# Format: (model_name, renderer_name_or_class, renderer_kwargs, conversation_fn)
+# If renderer_name_or_class is a string, use get_renderer; if a class, instantiate directly
+_EXTENSION_PROPERTY_TEST_PARAMS = [
+    # Llama3 with basic multi-turn
+    ("meta-llama/Llama-3.2-1B-Instruct", "llama3", {}, get_basic_4turn_conversation),
+    # Llama3 with tool calls
+    ("meta-llama/Llama-3.2-1B-Instruct", "llama3", {}, _get_multiturn_tool_conversation),
+    # RoleColon with basic multi-turn (doesn't support tools)
+    ("meta-llama/Llama-3.2-1B-Instruct", "role_colon", {}, get_basic_4turn_conversation),
+    # Qwen3 Instruct with basic multi-turn
+    ("Qwen/Qwen3-8B", "qwen3_instruct", {}, get_basic_4turn_conversation),
+    # Qwen3 Instruct with tool calls
+    ("Qwen/Qwen3-8B", "qwen3_instruct", {}, _get_multiturn_tool_conversation),
+    # Qwen3 with strip_thinking_from_history=False (preserves thinking)
+    (
+        "Qwen/Qwen3-8B",
+        Qwen3Renderer,
+        {"strip_thinking_from_history": False},
+        _get_multiturn_thinking_conversation,
+    ),
+    # DeepSeek non-thinking with basic multi-turn
+    ("deepseek-ai/DeepSeek-V3.1", "deepseekv3", {}, get_basic_4turn_conversation),
+    # DeepSeek non-thinking with tool calls
+    ("deepseek-ai/DeepSeek-V3.1", "deepseekv3", {}, _get_multiturn_tool_conversation),
+    # DeepSeek with strip_thinking_from_history=False (preserves thinking)
+    (
+        "deepseek-ai/DeepSeek-V3.1",
+        DeepSeekV3ThinkingRenderer,
+        {"strip_thinking_from_history": False},
+        _get_multiturn_thinking_conversation,
+    ),
+    # DeepSeek with strip_thinking_from_history=False + tool calls
+    (
+        "deepseek-ai/DeepSeek-V3.1",
+        DeepSeekV3ThinkingRenderer,
+        {"strip_thinking_from_history": False},
+        _get_multiturn_thinking_and_tool_conversation,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "model_name,renderer_name_or_class,renderer_kwargs,conversation_fn",
+    _EXTENSION_PROPERTY_TEST_PARAMS,
+)
+def test_extension_property_holds(
+    model_name, renderer_name_or_class, renderer_kwargs, conversation_fn
+):
+    """
+    Test that renderers with grows_by_extension=True actually satisfy the property.
+    For each conversation, verify that build_generation_prompt at successive assistant
+    turns produces token sequences where each is a prefix of the next.
+    """
+    tokenizer = get_tokenizer(model_name)
+
+    if isinstance(renderer_name_or_class, str):
+        renderer = get_renderer(renderer_name_or_class, tokenizer)
+    else:
+        renderer = renderer_name_or_class(tokenizer, **renderer_kwargs)
+
+    assert renderer.grows_by_extension, (
+        f"Expected {renderer_name_or_class} to have grows_by_extension=True"
+    )
+
+    messages = conversation_fn()
+    _verify_extension_property(renderer, messages, tokenizer)
+
+
+def test_extension_property_breaks_when_expected():
+    """
+    Verify that extension property actually breaks for renderers that strip thinking.
+    This confirms our test helper can detect violations.
+    """
+    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+    renderer = Qwen3Renderer(tokenizer, strip_thinking_from_history=True)
+
+    assert not renderer.grows_by_extension, "Default Qwen3Renderer should NOT have extension"
+
+    messages = _get_multiturn_thinking_conversation()
+
+    # Extension should break - expect an assertion error
+    with pytest.raises(AssertionError, match="Extension property violated"):
+        _verify_extension_property(renderer, messages, tokenizer)

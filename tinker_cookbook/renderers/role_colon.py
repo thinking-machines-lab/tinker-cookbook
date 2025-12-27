@@ -33,6 +33,11 @@ class RoleColonRenderer(Renderer):
     except that they use "Human" instead of "User".
     """
 
+    @property
+    def grows_by_extension(self) -> bool:
+        """RoleColon satisfies the extension property - no content is stripped from history."""
+        return True
+
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         header_str = message["role"].capitalize() + ":"
         output_str = " " + ensure_text(message["content"]) + "\n\n"

@@ -537,6 +537,25 @@ class Renderer(ABC):
         self.tokenizer = tokenizer
 
     @property
+    def grows_by_extension(self) -> bool:
+        """Whether this renderer satisfies the sequence extension property.
+
+        A renderer has the extension property if, for any multi-turn conversation,
+        calling build_generation_prompt at each successive assistant turn produces
+        token sequences where each is a prefix of the next. This enables:
+        - Merging multiple timesteps into a single training datum
+        - KV-cache reuse during sampling
+        - O(T) compute scaling instead of O(T^2) for T-turn trajectories
+
+        Renderers that strip thinking blocks from history (like Qwen3Renderer with
+        strip_thinking_from_history=True) do NOT have this property because the
+        observation at timestep 2 is not a prefix of timestep 1's full sequence.
+
+        See docs/rl/sequence-extension.mdx for details.
+        """
+        return False
+
+    @property
     def _bos_tokens(self) -> list[int]:
         return []
 
@@ -701,11 +720,22 @@ class Renderer(ABC):
             A tuple of (model_input, weights) where weights is a 1D tensor with the
             same length as the total number of tokens.
         """
-        # TODO: Warn if train_on_what != LAST_ASSISTANT_MESSAGE and the renderer
-        # doesn't satisfy the sequence extension property (e.g., strips thinking from
-        # history). In that case, training on multiple assistant messages requires
-        # separate examples with different token sequences, not a single example.
-        # See docs/rl/sequence-extension.mdx for details.
+        # Warn if training on multiple assistant messages with a renderer that doesn't
+        # satisfy the extension property. In that case, each assistant message sees a
+        # different context prefix, so they should be trained as separate examples.
+        # NOTE: This warning only covers ALL_ASSISTANT_MESSAGES. Other modes that train
+        # multiple assistant messages (e.g., ALL_MESSAGES, ALL_TOKENS, CUSTOMIZED) should
+        # be used with caution when grows_by_extension=False.
+        if train_on_what == TrainOnWhat.ALL_ASSISTANT_MESSAGES and not self.grows_by_extension:
+            logger.warning(
+                "WARNING: Using train_on_what=ALL_ASSISTANT_MESSAGES with a renderer that "
+                "does not satisfy the extension property (grows_by_extension=False). "
+                "This means earlier assistant messages in the conversation see a different "
+                "token prefix than what build_generation_prompt would produce at that turn. "
+                "You should instead create separate conversations for each assistant message "
+                "and call build_supervised_example with train_on_what=LAST_ASSISTANT_MESSAGE "
+                "for each one. See docs/rl/sequence-extension.mdx for details."
+            )
 
         model_input_chunks_weights: list[tuple[tinker.types.ModelInputChunk, float]] = []
         if self._bos_tokens:

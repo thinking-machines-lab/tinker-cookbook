@@ -80,6 +80,18 @@ class Qwen3Renderer(Renderer):
         super().__init__(tokenizer)
         self.strip_thinking_from_history = strip_thinking_from_history
 
+    @property
+    def grows_by_extension(self) -> bool:
+        """Extension property depends on strip_thinking_from_history setting.
+
+        When strip_thinking_from_history=False, thinking blocks are preserved in
+        history, so each successive observation is a prefix extension of the previous.
+
+        When strip_thinking_from_history=True (default), thinking blocks are stripped
+        from historical messages, breaking the extension property.
+        """
+        return not self.strip_thinking_from_history
+
     def _get_qwen_role_for_message(self, message: Message) -> str:
         """Get the role to use for rendering a message in Qwen format.
 
@@ -309,6 +321,15 @@ class Qwen3InstructRenderer(Qwen3Renderer):
     ThinkingPart in content is still handled (rendered as <think>...</think>) in case
     the conversation includes thinking, but no prefix is added automatically.
     """
+
+    @property
+    def grows_by_extension(self) -> bool:
+        """Qwen3 Instruct always satisfies extension - no thinking to strip from history."""
+        # NOTE: If callers include ThinkingPart in history, Qwen3Renderer may still strip it
+        # when strip_thinking_from_history=True, so extension can break.
+        # This is a rare case that'll only occur if we prompt the instruct model
+        # with a conversation from a different model.
+        return True
 
     def _should_add_think_prefix(
         self, message: Message, output_content: str, ctx: RenderContext

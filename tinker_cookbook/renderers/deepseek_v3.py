@@ -55,6 +55,18 @@ class DeepSeekV3ThinkingRenderer(Renderer):
         self.system_role_as_user = system_role_as_user
         self.strip_thinking_from_history = strip_thinking_from_history
 
+    @property
+    def grows_by_extension(self) -> bool:
+        """Extension property depends on strip_thinking_from_history setting.
+
+        When strip_thinking_from_history=False, thinking traces are preserved in
+        history, so each successive observation is a prefix extension of the previous.
+
+        When strip_thinking_from_history=True (default), thinking traces are stripped
+        from historical messages, breaking the extension property.
+        """
+        return not self.strip_thinking_from_history
+
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         """Render a single message to tokens.
 
@@ -317,6 +329,11 @@ class DeepSeekV3DisableThinkingRenderer(DeepSeekV3ThinkingRenderer):
 
     For thinking mode, use DeepSeekV3ThinkingRenderer instead.
     """
+
+    @property
+    def grows_by_extension(self) -> bool:
+        """Non-thinking mode always satisfies extension - no thinking to strip from history."""
+        return True
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         """Render message in non-thinking mode.
