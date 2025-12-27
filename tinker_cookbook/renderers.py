@@ -296,13 +296,14 @@ def _parse_tool_call_json(tool_call_str: str, raw_text: str) -> ToolCall | Unpar
     # TODO: arguments is already a dict from json.loads above, but ToolCall.FunctionBody.arguments
     # expects a JSON string. This round-trip (loads then dumps) is wasteful. Consider changing
     # FunctionBody.arguments to accept dict directly, or parse tool calls more lazily.
+    # We may want to revisit the decision to store arguments as unparsed JSON string.
     return ToolCall(
         function=ToolCall.FunctionBody(name=name, arguments=json.dumps(arguments)),
         id=tool_id,
     )
 
 
-def parse_content_blocks(content: str) -> list[ContentPart]:
+def parse_content_blocks(content: str) -> list[ContentPart] | None:
     """
     Parse a string with <think>...</think> and <tool_call>...</tool_call> tags.
 
@@ -310,13 +311,15 @@ def parse_content_blocks(content: str) -> list[ContentPart]:
     in order. Empty parts are omitted. Failed tool call parses are included as
     UnparsedToolCallPart to preserve ordering.
 
+    Whitespace is preserved exactly - roundtrip (parse then render) is identity.
+
     Args:
         content: String potentially containing <think> and/or <tool_call> blocks.
 
     Returns:
         List of ContentPart (ThinkingPart, TextPart, ToolCallPart, UnparsedToolCallPart)
-        in order. If no special tags are found, returns empty list - caller should
-        use the original string for backward compatibility.
+        in order. Returns None if no special tags are found - caller should use
+        the original string for backward compatibility.
 
     Example:
         >>> parse_content_blocks("<think>step 1</think>answer<tool_call>{...}</tool_call>more")
@@ -328,7 +331,7 @@ def parse_content_blocks(content: str) -> list[ContentPart]:
         ]
     """
     if "<think>" not in content and "<tool_call>" not in content:
-        return []  # No special blocks, caller should use original string
+        return None  # No special blocks, caller should use original string
 
     parts: list[ContentPart] = []
     pos = 0
@@ -337,15 +340,15 @@ def parse_content_blocks(content: str) -> list[ContentPart]:
     pattern = re.compile(r"<think>(.*?)</think>|<tool_call>(.*?)</tool_call>", re.DOTALL)
 
     for match in pattern.finditer(content):
-        # Add any text before this block
+        # Add any text before this block (preserve whitespace for identity roundtrip)
         text_before = content[pos : match.start()]
-        if text_before.strip():  # Skip empty/whitespace-only text
-            parts.append(TextPart(type="text", text=text_before.strip()))
+        if text_before:  # Skip only truly empty strings
+            parts.append(TextPart(type="text", text=text_before))
 
         if match.group(1) is not None:
             # This is a <think> block
             thinking = match.group(1)
-            if thinking.strip():
+            if thinking:  # Skip empty thinking blocks
                 parts.append(ThinkingPart(type="thinking", thinking=thinking))
         else:
             # This is a <tool_call> block
@@ -368,27 +371,29 @@ def parse_content_blocks(content: str) -> list[ContentPart]:
 
     # Add any remaining text after the last block
     remaining = content[pos:]
-    if remaining.strip():
-        parts.append(TextPart(type="text", text=remaining.strip()))
+    if remaining:  # Skip only truly empty strings
+        parts.append(TextPart(type="text", text=remaining))
 
     return parts
 
 
-def parse_think_blocks(content: str) -> list[ContentPart]:
+def parse_think_blocks(content: str) -> list[ContentPart] | None:
     """
     Parse a string with only <think>...</think> tags into ThinkingPart/TextPart list.
 
     This is a simpler version of parse_content_blocks for renderers that use
     non-standard tool call formats (like DeepSeek's <｜tool▁calls▁begin｜>).
 
+    Whitespace is preserved exactly - roundtrip (parse then render) is identity.
+
     Args:
         content: String potentially containing <think>...</think> blocks.
 
     Returns:
-        List of ThinkingPart and TextPart in order. Empty if no <think> tags found.
+        List of ThinkingPart and TextPart in order. None if no <think> tags found.
     """
     if "<think>" not in content:
-        return []
+        return None
 
     parts: list[ContentPart] = []
     pos = 0
@@ -396,18 +401,18 @@ def parse_think_blocks(content: str) -> list[ContentPart]:
 
     for match in pattern.finditer(content):
         text_before = content[pos : match.start()]
-        if text_before.strip():
-            parts.append(TextPart(type="text", text=text_before.strip()))
+        if text_before:  # Skip only truly empty strings
+            parts.append(TextPart(type="text", text=text_before))
 
         thinking = match.group(1)
-        if thinking.strip():
+        if thinking:  # Skip empty thinking blocks
             parts.append(ThinkingPart(type="thinking", thinking=thinking))
 
         pos = match.end()
 
     remaining = content[pos:]
-    if remaining.strip():
-        parts.append(TextPart(type="text", text=remaining.strip()))
+    if remaining:  # Skip only truly empty strings
+        parts.append(TextPart(type="text", text=remaining))
 
     return parts
 
@@ -1076,12 +1081,21 @@ class Qwen3Renderer(Renderer):
             ):
                 # Remove thinking parts for historical messages
                 parts = remove_thinking(parts)
-            # Render: <think>...</think> for thinking, text for text
-            thinking = "".join(p["thinking"] for p in parts if p["type"] == "thinking")
-            text = "".join(p["text"] for p in parts if p["type"] == "text")
-            output_content = f"<think>{thinking}</think>{text}" if thinking else text
+            # Render parts in order, preserving interleaved thinking/text structure.
+            # No separator needed - whitespace is preserved in TextPart for roundtrip identity.
+            rendered_parts = []
+            for p in parts:
+                if p["type"] == "thinking":
+                    rendered_parts.append(f"<think>{p['thinking']}</think>")
+                elif p["type"] == "text":
+                    rendered_parts.append(p["text"])
+                # ToolCallPart handled via message's tool_calls field
+            output_content = "".join(rendered_parts)
         else:
-            # String content - pass through as-is
+            # String content - pass through as-is.
+            # Note: strip_thinking_from_history only works with list-based content.
+            # For stripping to work on historical messages, use structured content
+            # with ThinkingPart separated from text (as returned by parse_response).
             output_content = content
 
         # Handle tool response wrapping
@@ -1151,10 +1165,12 @@ class Qwen3Renderer(Renderer):
         # Parse all blocks in one pass, preserving order
         parts = parse_content_blocks(content)
 
-        if parts:
+        if parts is not None:
             assistant_message["content"] = parts
 
             # Also populate tool_calls and unparsed_tool_calls fields for backward compatibility
+            # TODO: Consider moving away from TypedDicts for part types - current approach
+            # relies on runtime type checking (p["type"] == "tool_call") without static guarantees.
             tool_calls = [p["tool_call"] for p in parts if p["type"] == "tool_call"]
             if tool_calls:
                 assistant_message["tool_calls"] = tool_calls
@@ -1306,6 +1322,8 @@ def image_to_chunk(
 
 class Qwen3VLRenderer(Qwen3Renderer):
     """
+    Vision-language renderer for Qwen3-VL models with thinking support.
+
     Format like this:
         <|im_start|>system
         You are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>
@@ -1317,31 +1335,49 @@ class Qwen3VLRenderer(Qwen3Renderer):
         </think>
         I can help you with...<|im_end|>
 
-    It is currently missing Qwen 3's functionality for removing thinking spans in multi-turn conversations.
+    The default strip_thinking_from_history=True matches the non-VL Qwen3Renderer behavior.
     """
 
     image_processor: ImageProcessor
 
-    def __init__(self, tokenizer: Tokenizer, image_processor: ImageProcessor):
+    def __init__(
+        self,
+        tokenizer: Tokenizer,
+        image_processor: ImageProcessor,
+        strip_thinking_from_history: bool = True,
+    ):
         self.tokenizer = tokenizer
         self.image_processor = image_processor
+        self.strip_thinking_from_history = strip_thinking_from_history
 
-    def _preprocess_message_parts(self, message: Message) -> list[ImagePart | TextPart]:
+    def _preprocess_message_parts(
+        self, message: Message, *, strip_thinking: bool = False
+    ) -> list[ImagePart | TextPart]:
         """Convert message content to list form for VL rendering.
 
-        Filters out ThinkingPart and ToolCallPart from content list (these are handled
-        separately). Wraps images with vision tokens. Tool calls are supported via
-        the message's tool_calls field, not via ToolCallPart in content.
+        Converts ThinkingPart to <think>...</think> text (or strips if strip_thinking=True).
+        Wraps images with vision tokens. ToolCallPart is not supported in VL content list
+        (use message's tool_calls field instead).
         """
         content = message["content"]
         if isinstance(content, str):
             base_parts: list[ImagePart | TextPart] = [TextPart(type="text", text=content)]
         else:
-            # Filter out parts that VL renderers don't support
-            base_parts = cast(
-                list[ImagePart | TextPart],
-                [p for p in content if p["type"] in ("text", "image")],
-            )
+            # Convert structured content to ImagePart/TextPart list
+            base_parts: list[ImagePart | TextPart] = []
+            for p in content:
+                if p["type"] == "text":
+                    base_parts.append(cast(TextPart, p))
+                elif p["type"] == "image":
+                    base_parts.append(cast(ImagePart, p))
+                elif p["type"] == "thinking":
+                    if not strip_thinking:
+                        # Render thinking as <think>...</think> text
+                        base_parts.append(
+                            TextPart(type="text", text=f"<think>{p['thinking']}</think>")
+                        )
+                    # else: strip thinking by not appending
+                # ToolCallPart and UnparsedToolCallPart are handled via message's tool_calls field
 
         # Wrap images with vision tokens
         chunks: list[ImagePart | TextPart] = []
@@ -1372,7 +1408,13 @@ class Qwen3VLRenderer(Qwen3Renderer):
         role = self._get_qwen_role_for_message(message)
         header_str = f"{maybe_newline}<|im_start|>{role}\n"
 
-        output_chunks = self._preprocess_message_parts(message)
+        # Strip thinking from history for non-last assistant messages (matching non-VL behavior)
+        strip_thinking = (
+            self.strip_thinking_from_history
+            and message["role"] == "assistant"
+            and not ctx.is_last
+        )
+        output_chunks = self._preprocess_message_parts(message, strip_thinking=strip_thinking)
 
         # Handle tool response wrapping
         if message["role"] == "tool":
@@ -1504,12 +1546,21 @@ class DeepSeekV3ThinkingRenderer(Renderer):
                 if self.strip_thinking_from_history and not has_tool_calls and not ctx.is_last:
                     # Remove thinking parts for historical messages
                     parts = remove_thinking(parts)
-                # Render: <think>...</think> for thinking, text for text
-                thinking = "".join(p["thinking"] for p in parts if p["type"] == "thinking")
-                text = "".join(p["text"] for p in parts if p["type"] == "text")
-                output_content = f"<think>{thinking}</think>{text}" if thinking else text
+                # Render parts in order, preserving interleaved thinking/text structure.
+                # No separator needed - whitespace is preserved in TextPart for roundtrip identity.
+                rendered_parts = []
+                for p in parts:
+                    if p["type"] == "thinking":
+                        rendered_parts.append(f"<think>{p['thinking']}</think>")
+                    elif p["type"] == "text":
+                        rendered_parts.append(p["text"])
+                    # ToolCallPart handled via message's tool_calls field
+                output_content = "".join(rendered_parts)
             else:
-                # String content - pass through as-is
+                # String content - pass through as-is.
+                # Note: strip_thinking_from_history only works with list-based content.
+                # For stripping to work on historical messages, use structured content
+                # with ThinkingPart separated from text (as returned by parse_response).
                 output_content = content
 
             if follows_tool:
@@ -1649,7 +1700,7 @@ class DeepSeekV3ThinkingRenderer(Renderer):
 
         # Parse <think>...</think> blocks into ThinkingPart/TextPart list
         parts = parse_think_blocks(content)
-        if parts:
+        if parts is not None:
             assistant_message["content"] = parts
         else:
             assistant_message["content"] = content
@@ -1726,12 +1777,13 @@ class DeepSeekV3DisableThinkingRenderer(DeepSeekV3ThinkingRenderer):
         if message["role"] == "assistant" and not follows_tool:
             content = message["content"]
 
-            # Handle structured content with ThinkingPart
+            # Strip thinking from content
             if isinstance(content, list):
                 # Remove ThinkingPart, keep only text
                 text_content = "".join(p["text"] for p in content if p["type"] == "text")
             else:
-                text_content = content
+                # Strip <think>...</think> blocks from string content
+                text_content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
 
             # Prepend </think> to signal non-thinking mode
             message = message.copy()

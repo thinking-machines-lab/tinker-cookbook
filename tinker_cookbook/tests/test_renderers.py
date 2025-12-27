@@ -965,9 +965,9 @@ def test_deepseek_post_tool_formatting():
 
 
 def test_parse_content_blocks_no_special_tags():
-    """Test parse_content_blocks returns empty when no special tags."""
+    """Test parse_content_blocks returns None when no special tags."""
     parts = parse_content_blocks("Just plain text")
-    assert parts == []
+    assert parts is None
 
 
 def test_parse_content_blocks_single_think_block():
@@ -1003,13 +1003,13 @@ def test_parse_content_blocks_empty_blocks_omitted():
 
 
 def test_parse_content_blocks_whitespace_handling():
-    """Test parse_content_blocks handles whitespace correctly."""
+    """Test parse_content_blocks preserves whitespace for identity roundtrip."""
     parts = parse_content_blocks("<think>  thinking  </think>  answer  ")
 
     assert len(parts) == 2
-    # Thinking content preserves internal whitespace but text gets stripped
+    # Whitespace is preserved exactly for identity roundtrip
     assert parts[0]["type"] == "thinking" and parts[0]["thinking"] == "  thinking  "
-    assert parts[1]["type"] == "text" and parts[1]["text"] == "answer"
+    assert parts[1]["type"] == "text" and parts[1]["text"] == "  answer  "
 
 
 def test_parse_content_blocks_tool_call_only():
