@@ -180,7 +180,7 @@ def main(config: Config):
                 group_logprobs.append(sampled_logprobs)
 
                 parsed_message, _ = renderer.parse_response(sampled_tokens)
-                content = renderers.ensure_text(parsed_message["content"])
+                content = renderers.get_text_content(parsed_message)
                 reward = get_reward(content, answer)
                 group_rewards.append(reward)
 

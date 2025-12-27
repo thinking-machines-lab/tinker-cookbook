@@ -9,7 +9,7 @@ import textarena as ta
 import tinker
 from tinker import types
 from tinker_cookbook.completers import StopCondition, TinkerMessageCompleter
-from tinker_cookbook.renderers import Message, Renderer, get_renderer, ensure_text
+from tinker_cookbook.renderers import Message, Renderer, get_renderer, get_text_content
 from tinker_cookbook.rl.types import (
     Action,
     Env,
@@ -125,7 +125,7 @@ class TwoPlayerEnv(Env):
         )
         opponent_convo: list[Message] = [{"role": "user", "content": opponent_observation_str}]
         opponent_response = await self.opponent_policy(opponent_convo)
-        opponent_action_content = ensure_text(opponent_response["content"])
+        opponent_action_content = get_text_content(opponent_response)
         await self.coordinator.make_move(opponent_player_id, opponent_action_content)
 
     async def step(self, action: Action) -> StepResult:
@@ -136,7 +136,7 @@ class TwoPlayerEnv(Env):
 
         # make a move ...
         action_message: Message = self.renderer.parse_response(action)[0]
-        action_content = ensure_text(action_message["content"])
+        action_content = get_text_content(action_message)
         await self.coordinator.make_move(self.player_id, action_content)
 
         # we wait here rather than the beginning of this function,

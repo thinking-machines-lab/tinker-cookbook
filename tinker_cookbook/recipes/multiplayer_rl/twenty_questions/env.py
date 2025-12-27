@@ -14,7 +14,7 @@ from tinker_cookbook.completers import (
     StopCondition,
     TinkerMessageCompleter,
 )
-from tinker_cookbook.renderers import Message, Renderer, get_renderer, ensure_text
+from tinker_cookbook.renderers import Message, Renderer, get_renderer, get_text_content
 from tinker_cookbook.rl.types import (
     Action,
     Env,
@@ -113,7 +113,7 @@ class TwentyQuestionsEnv(Env):
 
         # step 3: we calculate the reward and decide whether to end the episode.
         # the episode ends if the player guessed the answer or the player asked more than 20 questions
-        action_content = ensure_text(action_message["content"])
+        action_content = get_text_content(action_message)
         reward = self._compute_reward(action_content)
         episode_done = (reward == 1) or (len(self.turns) // 2 >= 20)
 

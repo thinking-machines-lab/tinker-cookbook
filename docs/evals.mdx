@@ -195,7 +195,8 @@ class CustomEvaluator(SamplingClientEvaluator):
             )
             tokens: list[int] = r.sequences[0].tokens
             response: renderers.Message = self.renderer.parse_response(tokens)[0]
-            if self.grader_fn(response["content"], datum["output"]):
+            response_text = renderers.get_text_content(response)
+            if self.grader_fn(response_text, datum["output"]):
                 num_correct += 1
 
         metrics["accuracy"] = num_correct / num_examples

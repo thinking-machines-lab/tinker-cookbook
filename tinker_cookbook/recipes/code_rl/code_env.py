@@ -153,7 +153,7 @@ class CodeEnv(ProblemEnv):
 
     async def step(self, action: Action) -> StepResult:
         message, parse_success = self.renderer.parse_response(action)
-        content = renderers.ensure_text(message["content"])
+        content = renderers.get_text_content(message)
         format_ok_bool = bool(parse_success) and self.check_format(content)
         correct_answer_bool = await self.check_sandbox_correctness(content)
         format_score = float(format_ok_bool)

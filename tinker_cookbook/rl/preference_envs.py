@@ -116,7 +116,7 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
 
     def _preprocess_message(self, message: renderers.Message) -> renderers.Message:
         if self.content_preprocessor is not None:
-            content = renderers.ensure_text(message["content"])
+            content = renderers.get_text_content(message)
             message = {**message, "content": self.content_preprocessor(content)}
         return message
 

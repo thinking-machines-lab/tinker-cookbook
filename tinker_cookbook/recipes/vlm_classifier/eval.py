@@ -14,7 +14,7 @@ from tinker_cookbook import renderers
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator, EvaluatorBuilder
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.image_processing_utils import get_image_processor, resize_image
-from tinker_cookbook.renderers import Message, ImagePart, TextPart, ensure_text
+from tinker_cookbook.renderers import Message, ImagePart, TextPart, get_text_content
 from tinker_cookbook.utils.misc_utils import timed
 
 
@@ -147,7 +147,7 @@ class ClassifierEvaluator(SamplingClientEvaluator):
         tokens: list[int] = r.sequences[0].tokens
         response = self.renderer.parse_response(tokens)[0]
 
-        predicted_class_name = ensure_text(response["content"]).split(":")[-1].strip().lower()
+        predicted_class_name = get_text_content(response).split(":")[-1].strip().lower()
 
         return ClassifierOutput(predicted_class_name=predicted_class_name)
 
