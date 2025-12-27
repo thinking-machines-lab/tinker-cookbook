@@ -183,6 +183,7 @@ TOOL_CAPABLE_MODELS = {
     "meta-llama/Llama-3.2-1B-Instruct",
     "deepseek-ai/DeepSeek-V3.1",
     "moonshotai/Kimi-K2-Thinking",
+    "openai/gpt-oss-20b",
 }
 
 
@@ -383,6 +384,7 @@ def test_supervised_example_against_hf_chat_templates(model_name: str, conv_id: 
         "meta-llama/Llama-3.2-1B-Instruct",
         "deepseek-ai/DeepSeek-V3.1",
         "moonshotai/Kimi-K2-Thinking",
+        "openai/gpt-oss-20b",
     ],
 )
 def test_tool_call_supervised_rendering(model_name: str):
@@ -396,7 +398,11 @@ def test_tool_call_supervised_rendering(model_name: str):
     tokenizer = get_tokenizer(model_name)
     attributes = get_model_attributes(model_name)
     image_processor = get_image_processor(model_name) if attributes.is_vl else None
-    render_name = get_recommended_renderer_name(model_name)
+    render_name = (
+        get_recommended_renderer_name(model_name)
+        if not model_name.startswith("openai")
+        else "gpt_oss_medium_reasoning"
+    )
     cookbook_renderer = get_renderer(render_name, tokenizer, image_processor)
 
     # Build supervised example - should not raise
@@ -414,6 +420,7 @@ def test_tool_call_supervised_rendering(model_name: str):
     # - Llama3: <function=get_weather>...</function>
     # - DeepSeek: <｜tool▁sep｜>get_weather
     # - Kimi K2: Uses tool_id (functions.name:idx or just the id) + arguments
+    # - GptOss: <|channel|>commentary to=functions.get_weather <|constrain|>json<|message|>{args}
     # Check for tool arguments which all formats include
     assert "San Francisco" in decoded, f"Tool argument should appear in rendered output: {decoded}"
 

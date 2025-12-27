@@ -1,11 +1,24 @@
 """
-GptOssRenderer - OpenAI's open source model format.
+GptOssRenderer - OpenAI's open source model format (Harmony).
 
 Format like this (no newlines between messages, last message should end with <|return|> but
 be replaced by <|end|> when continuing the convo):
     <|start|>system<|message|>You are ChatGPT...<|end|><|start|>user<|message|>How much is 1+1?<|end|><|start|>assistant<|channel|>final<|message|>2<|end|><|start|>
+
+Harmony channels:
+- analysis: Chain-of-thought (CoT) / reasoning traces (not shown to end users)
+- commentary: Tool calls for developer-defined functions; also user-visible "preambles"
+- final: User-facing answer text
+
+Tool calling format:
+- Tool definitions go in developer message with TypeScript-ish syntax in `functions` namespace
+- Tool calls: <|start|>assistant<|channel|>commentary to=functions.name <|constrain|>json<|message|>{args}<|call|>
+- Tool results: <|start|>functions.name to=assistant<|channel|>commentary<|message|>{result}<|end|>
+
+Reference: https://raw.githubusercontent.com/openai/openai-cookbook/main/articles/openai-harmony.md
 """
 
+import json
 import re
 from datetime import datetime
 
@@ -19,7 +32,9 @@ from tinker_cookbook.renderers.base import (
     Renderer,
     TextPart,
     ThinkingPart,
+    ToolCall,
     ToolSpec,
+    UnparsedToolCall,
     ensure_list,
     ensure_text,
     parse_response_for_stop_token,
@@ -29,9 +44,22 @@ from tinker_cookbook.tokenizer_utils import Tokenizer
 
 class GptOssRenderer(Renderer):
     """
-    Format like this (no newlines between messages, last message should end with <|return|> but be replaced by <|end|> when continuing the convo):
-        <|start|>system<|message|>You are ChatGPT...<|end|><|start|>user<|message|>How much is 1+1?<|end|><|start|>assistant<|channel|>final<|message|>2<|end|><|start|>
-    TODO: support channels in input messages and tools
+    Renderer for OpenAI's open source models using the Harmony format.
+
+    Format: <|start|>role<|channel|>channel<|message|>content<|end|>
+    No newlines between messages. Last assistant message should end with <|return|> but
+    be replaced by <|end|> when continuing the conversation.
+
+    Harmony channels:
+    - analysis: Chain-of-thought (CoT) / reasoning traces (not shown to end users)
+    - commentary: Tool calls for developer-defined functions; also user-visible "preambles"
+    - final: User-facing answer text
+
+    Tool calling uses the commentary channel with special formatting:
+    - Tool calls: <|start|>assistant<|channel|>commentary to=functions.name <|constrain|>json<|message|>{args}<|call|>
+    - Tool results: <|start|>functions.name to=assistant<|channel|>commentary<|message|>{result}<|end|>
+
+    Reference: https://raw.githubusercontent.com/openai/openai-cookbook/main/articles/openai-harmony.md
     """
 
     system_prompt = "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: {current_date}\n\nReasoning: {reasoning_effort}\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>"
@@ -57,16 +85,19 @@ class GptOssRenderer(Renderer):
         )
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
-        assert message.get("tool_calls") is None, "TODO: support tools in gpt-oss renderer"
-        # HF template maps "system" role to "developer" with special formatting
         role = message["role"]
+
+        # Handle tool result messages (role="tool")
+        if role == "tool":
+            return self._render_tool_result_message(message, ctx)
+
+        # HF template maps "system" role to "developer" with special formatting
         if role == "system":
             role = "developer"
         header_str = f"<|start|>{role}"
         output_str = ""
-        if message["role"] == "assistant":
-            # TODO: support commentary channel / tools
 
+        if message["role"] == "assistant":
             # Assistant channels. See https://cookbook.openai.com/articles/openai-harmony
             # Extract text and thinking from content list
             parts = ensure_list(message["content"])
@@ -79,19 +110,77 @@ class GptOssRenderer(Renderer):
                     f"<|channel|>analysis<|message|>{thinking_content}<|end|><|start|>assistant"
                 )
 
-            # Final channel (Response Content)
-            output_str += f"<|channel|>final<|message|>{text_content}"
+            # Handle tool calls (goes in commentary channel)
+            if "tool_calls" in message and message["tool_calls"]:
+                output_str += self._render_tool_calls(message["tool_calls"])
+            else:
+                # Final channel (Response Content)
+                output_str += f"<|channel|>final<|message|>{text_content}"
         elif message["role"] == "system":
             # HF wraps system content as developer instructions
             output_str += f"<|message|># Instructions\n\n{ensure_text(message['content'])}\n\n"
         else:
             output_str += f"<|message|>{ensure_text(message['content'])}"
 
+        # Determine the end token
         if ctx.is_last and message["role"] == "assistant":
-            # <|return|> is the stop token for assistant generation
-            output_str += "<|return|>"
+            if "tool_calls" in message and message["tool_calls"]:
+                # Tool call ends with <|call|>
+                output_str += "<|call|>"
+            else:
+                # Normal assistant response ends with <|return|>
+                output_str += "<|return|>"
         else:
             output_str += "<|end|>"
+
+        header = tinker.types.EncodedTextChunk(
+            tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
+        )
+        output: list[tinker.ModelInputChunk] = [
+            tinker.types.EncodedTextChunk(
+                tokens=self.tokenizer.encode(output_str, add_special_tokens=False)
+            )
+        ]
+        return RenderedMessage(header=header, output=output)
+
+    def _render_tool_calls(self, tool_calls: list[ToolCall]) -> str:
+        """Render tool calls in Harmony commentary channel format.
+
+        Each tool call becomes a separate commentary message:
+        <|channel|>commentary to=functions.name <|constrain|>json<|message|>{args}
+
+        Multiple tool calls are separated by <|end|><|start|>assistant.
+        """
+        result_parts = []
+        for i, tc in enumerate(tool_calls):
+            # Format: <|channel|>commentary to=functions.name <|constrain|>json<|message|>{args}
+            result_parts.append(
+                f"<|channel|>commentary to=functions.{tc.function.name} <|constrain|>json<|message|>"
+                f"{tc.function.arguments}"
+            )
+            # If not the last tool call, close message and start new assistant message
+            if i < len(tool_calls) - 1:
+                result_parts.append("<|call|><|start|>assistant")
+        return "".join(result_parts)
+
+    def _render_tool_result_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        """Render a tool result message.
+
+        Format: <|start|>functions.name to=assistant<|channel|>commentary<|message|>{result}<|end|>
+        """
+        # Get the tool name from the tool_call_id or name field
+        tool_name = message.get("name", "")
+        if not tool_name and "tool_call_id" in message:
+            # Try to extract tool name from tool_call_id (e.g., "call_get_weather_123")
+            # But typically the name field should be present
+            tool_name = "unknown"
+
+        # Build the header with tool name as role and to=assistant
+        header_str = f"<|start|>functions.{tool_name} to=assistant"
+
+        # Tool results go in commentary channel
+        content = ensure_text(message["content"])
+        output_str = f"<|channel|>commentary<|message|>{content}<|end|>"
 
         header = tinker.types.EncodedTextChunk(
             tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
@@ -128,10 +217,35 @@ class GptOssRenderer(Renderer):
         assert len(res) == 1, f"Expected single token for <|return|>, got {len(res)}"
         return res[0]
 
+    @property
+    def _call_token(self) -> int:
+        res = self.tokenizer.encode("<|call|>", add_special_tokens=False)
+        assert len(res) == 1, f"Expected single token for <|call|>, got {len(res)}"
+        return res[0]
+
     def get_stop_sequences(self) -> list[int]:
-        return [self._return_token]
+        # Both <|return|> and <|call|> are stop tokens
+        # <|return|> for normal completion, <|call|> for tool calls
+        return [self._return_token, self._call_token]
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+        # Check if response ends with <|call|> (tool call) or <|return|> (normal response)
+        has_return = self._return_token in response
+        has_call = self._call_token in response
+
+        if has_call:
+            # Parse tool call response
+            return self._parse_tool_call_response(response)
+        elif has_return:
+            # Parse normal response
+            return self._parse_normal_response(response)
+        else:
+            # No stop token - format error
+            str_response = self.tokenizer.decode(response)
+            return Message(role="assistant", content=str_response), False
+
+    def _parse_normal_response(self, response: list[int]) -> tuple[Message, bool]:
+        """Parse a normal response ending with <|return|>."""
         assistant_message, parse_success = parse_response_for_stop_token(
             response, self.tokenizer, self._return_token
         )
@@ -150,6 +264,75 @@ class GptOssRenderer(Renderer):
         # else: keep as string for backward compatibility
 
         return assistant_message, True
+
+    def _parse_tool_call_response(self, response: list[int]) -> tuple[Message, bool]:
+        """Parse a tool call response ending with <|call|>.
+
+        Format: <|channel|>commentary to=functions.name <|constrain|>json<|message|>{args}<|call|>
+        """
+        call_count = response.count(self._call_token)
+        if call_count == 0:
+            str_response = self.tokenizer.decode(response)
+            return Message(role="assistant", content=str_response), False
+        elif call_count > 1:
+            raise ValueError(
+                f"When parsing response, expected at most 1 <|call|> token, but got {call_count}. "
+                "You probably are using the wrong stop tokens when sampling"
+            )
+
+        str_response = self.tokenizer.decode(response[: response.index(self._call_token)])
+
+        # Parse out tool calls from the commentary channel(s)
+        # Format: <|channel|>commentary to=functions.name <|constrain|>json<|message|>{args}
+        tool_calls, unparsed = self._parse_tool_calls_from_response(str_response)
+
+        # Also extract any text content (e.g., from analysis channel)
+        parts = self._parse_gptoss_channels(str_response)
+        content: list[ContentPart] | str = parts if parts else ""
+
+        message: Message = {"role": "assistant", "content": content}
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+        if unparsed:
+            message["unparsed_tool_calls"] = unparsed
+
+        return message, True
+
+    def _parse_tool_calls_from_response(
+        self, content: str
+    ) -> tuple[list[ToolCall], list[UnparsedToolCall]]:
+        """Parse tool calls from Harmony commentary channel format.
+
+        Pattern: <|channel|>commentary to=functions.name <|constrain|>json<|message|>{args}
+        """
+        tool_calls: list[ToolCall] = []
+        unparsed: list[UnparsedToolCall] = []
+
+        # Pattern to match tool call in commentary channel
+        # <|channel|>commentary to=functions.name <|constrain|>json<|message|>{args}
+        pattern = re.compile(
+            r"<\|channel\|>commentary\s+to=functions\.(\w+)\s*<\|constrain\|>json<\|message\|>(.*?)(?:<\|end\|>|<\|call\|>|$)",
+            re.DOTALL,
+        )
+
+        for match in pattern.finditer(content):
+            tool_name = match.group(1)
+            args_json = match.group(2).strip()
+            raw_text = match.group(0)
+
+            try:
+                # Validate JSON and create ToolCall
+                json.loads(args_json)  # Validate JSON
+                tool_calls.append(
+                    ToolCall(
+                        function=ToolCall.FunctionBody(name=tool_name, arguments=args_json),
+                        id=None,  # Harmony format doesn't include call IDs
+                    )
+                )
+            except json.JSONDecodeError as e:
+                unparsed.append(UnparsedToolCall(raw_text=raw_text, error=f"Invalid JSON: {e}"))
+
+        return tool_calls, unparsed
 
     def _parse_gptoss_channels(self, content: str) -> list[ContentPart]:
         """Parse GptOss channel format into ContentPart list.
@@ -192,4 +375,69 @@ class GptOssRenderer(Renderer):
     def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
     ) -> list[Message]:
-        raise NotImplementedError("GptOssRenderer does not support tool calling")
+        """Create conversation prefix with tools in Harmony format.
+
+        Tools are defined in a developer message using TypeScript-ish syntax
+        in a `functions` namespace, following the OpenAI Harmony spec.
+
+        Reference: https://raw.githubusercontent.com/openai/openai-cookbook/main/articles/openai-harmony.md
+        """
+        tools_text = ""
+        if tools:
+            # Format tools as TypeScript-ish function signatures in functions namespace
+            tool_defs = []
+            for tool in tools:
+                # Build TypeScript-style type string from JSON schema properties
+                params_str = self._json_schema_to_typescript(tool["parameters"])
+                tool_defs.append(f"  function {tool['name']}(_: {params_str}): any;")
+
+            tools_text = f"""
+
+# Tools
+
+namespace functions {{
+{chr(10).join(tool_defs)}
+}}"""
+
+        content = system_prompt + tools_text
+        return [Message(role="system", content=content)]
+
+    def _json_schema_to_typescript(self, schema: dict) -> str:
+        """Convert JSON schema to TypeScript-ish type string for Harmony tools.
+
+        Harmony uses TypeScript-style inline types for tool parameters.
+        """
+        if schema.get("type") != "object":
+            return "any"
+
+        properties = schema.get("properties", {})
+        required = set(schema.get("required", []))
+
+        type_parts = []
+        for prop_name, prop_schema in properties.items():
+            prop_type = self._json_type_to_typescript(prop_schema)
+            optional = "" if prop_name in required else "?"
+            type_parts.append(f"{prop_name}{optional}: {prop_type}")
+
+        return "{ " + ", ".join(type_parts) + " }"
+
+    def _json_type_to_typescript(self, schema: dict) -> str:
+        """Convert a single JSON schema type to TypeScript."""
+        json_type = schema.get("type", "any")
+
+        if json_type == "string":
+            # Check for enum
+            if "enum" in schema:
+                return " | ".join(f'"{v}"' for v in schema["enum"])
+            return "string"
+        elif json_type == "number" or json_type == "integer":
+            return "number"
+        elif json_type == "boolean":
+            return "boolean"
+        elif json_type == "array":
+            items_type = self._json_type_to_typescript(schema.get("items", {}))
+            return f"{items_type}[]"
+        elif json_type == "object":
+            return self._json_schema_to_typescript(schema)
+        else:
+            return "any"
