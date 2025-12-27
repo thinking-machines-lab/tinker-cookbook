@@ -43,7 +43,6 @@ from tinker_cookbook.renderers import (
     TextPart,
     ThinkingPart,
     ToolCall,
-    ToolCallPart,
     get_renderer,
     parse_content_blocks,
 )
@@ -960,8 +959,6 @@ def test_deepseek_post_tool_formatting():
             )
 
 
-
-
 # =============================================================================
 # parse_content_blocks Tests
 # =============================================================================
@@ -1042,7 +1039,7 @@ def test_parse_content_blocks_interleaved():
 
 def test_parse_content_blocks_invalid_tool_call():
     """Test parse_content_blocks handles invalid tool call JSON as UnparsedToolCallPart."""
-    content = '<tool_call>not valid json</tool_call>text after'
+    content = "<tool_call>not valid json</tool_call>text after"
     parts = parse_content_blocks(content)
 
     # Invalid tool call is included as UnparsedToolCallPart, text is still captured
@@ -1156,7 +1153,9 @@ def test_qwen3_parse_response_tool_call_only():
     tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = Qwen3Renderer(tokenizer)
 
-    response_str = '<tool_call>{"name": "calculator", "arguments": {"expr": "2+2"}}</tool_call><|im_end|>'
+    response_str = (
+        '<tool_call>{"name": "calculator", "arguments": {"expr": "2+2"}}</tool_call><|im_end|>'
+    )
     response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
 
     message, success = renderer.parse_response(response_tokens)

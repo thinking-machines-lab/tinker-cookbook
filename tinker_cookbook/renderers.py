@@ -559,7 +559,10 @@ class Renderer(ABC):
                 because we're prompting for generation, not rendering a complete message.
 
         Returns:
-            List of token IDs to append (e.g., role header tokens)
+            List of token IDs for the role header. Examples in string form:
+            - Llama3: "<|start_header_id|>assistant<|end_header_id|>\n\n"
+            - Qwen3: "<|im_start|>assistant\n"
+            - DeepSeek: "<｜Assistant｜>" (single special token)
         """
         # Default: render an empty message and use its header tokens
         rendered = self.render_message(Message(role=role, content=""), ctx)
