@@ -169,11 +169,31 @@ def get_tool_call_conversation() -> list[Message]:
 
 # Conversation registry for parametrized tests
 # Maps conversation ID to (factory_function, description, requires_system)
+from tinker_cookbook.tests.conversation_generator import generate_simple_conversation
+
 CONVERSATION_REGISTRY: dict[str, tuple[Callable[[], list[Message]], str, bool]] = {
     "basic_3turn": (get_basic_3turn_conversation, "basic 3-turn conversation", False),
     "basic_2turn": (get_basic_2turn_conversation, "basic 2-turn conversation", False),
     "system_3turn": (get_system_message_3turn_conversation, "3-turn with system message", True),
     "system_2turn": (get_system_message_2turn_conversation, "2-turn with system message", True),
+    # Random conversations ending with user (for generation tests)
+    **{
+        f"random_gen_{seed}": (
+            lambda s=seed: generate_simple_conversation(s, end_with_assistant=False),
+            f"random gen conversation (seed={seed})",
+            False,
+        )
+        for seed in [1, 42, 123, 456, 999]
+    },
+    # Random conversations ending with assistant (for supervised tests)
+    **{
+        f"random_sup_{seed}": (
+            lambda s=seed: generate_simple_conversation(s, end_with_assistant=True),
+            f"random sup conversation (seed={seed})",
+            False,
+        )
+        for seed in [1, 42, 123, 456, 999]
+    },
 }
 
 
@@ -282,7 +302,7 @@ _HF_TEST_MODELS = [
 ]
 
 # Conversations for generation tests (end with user message)
-_GENERATION_CONVERSATIONS = ["basic_3turn", "system_3turn"]
+_GENERATION_CONVERSATIONS = ["basic_3turn", "system_3turn", "random_gen_1", "random_gen_42", "random_gen_123", "random_gen_456", "random_gen_999"]
 
 
 @pytest.mark.parametrize("conv_id", _GENERATION_CONVERSATIONS)
@@ -331,7 +351,7 @@ _SUPERVISED_TEST_MODELS = [
 ]
 
 # Conversations for supervised tests (end with assistant message)
-_SUPERVISED_CONVERSATIONS = ["basic_2turn", "system_2turn"]
+_SUPERVISED_CONVERSATIONS = ["basic_2turn", "system_2turn", "random_sup_1", "random_sup_42", "random_sup_123", "random_sup_456", "random_sup_999"]
 
 
 @pytest.mark.parametrize("conv_id", _SUPERVISED_CONVERSATIONS)
@@ -725,6 +745,10 @@ _CONSISTENCY_RENDERERS = [
 _CONSISTENCY_CONVERSATIONS = [
     get_basic_2turn_conversation,
     get_2turn_with_thinking,
+    # Random conversations (simple, no thinking - compatible with all renderers)
+    lambda: generate_simple_conversation(1, end_with_assistant=True),
+    lambda: generate_simple_conversation(42, end_with_assistant=True),
+    lambda: generate_simple_conversation(999, end_with_assistant=True),
 ]
 
 
@@ -753,7 +777,7 @@ def test_supervised_generation_parse_consistency(
     - The action tokens can be parsed back to the original message
     """
     # Check if this combination is supported
-    has_thinking_content = conversation_fn == get_2turn_with_thinking
+    has_thinking_content = conversation_fn is get_2turn_with_thinking
     if has_thinking_content and renderer_name in _RENDERERS_WITHOUT_THINKING_SUPPORT:
         pytest.skip(f"{renderer_name} doesn't support ThinkingPart content")
     if has_thinking_content and renderer_name in _RENDERERS_WITH_THINKING_STRIPPING:
@@ -1276,3 +1300,5 @@ def test_extension_property_breaks_when_expected():
     # Extension should break - expect an assertion error
     with pytest.raises(AssertionError, match="Extension property violated"):
         _verify_extension_property(renderer, messages, tokenizer)
+
+
