@@ -620,16 +620,16 @@ class Renderer(ABC):
         raise NotImplementedError
 
     def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
-        """Return tokens to append when prompting for generation.
+        """Return tokens to append to the prompt for generation.
 
-        This is called by build_generation_prompt to add the appropriate prefix
-        before the model starts generating. Override this method instead of
-        build_generation_prompt when you only need to customize the suffix.
+        This is called by build_generation_prompt to add the role header that
+        precedes the model's response. The default implementation renders an
+        empty message and extracts its header tokens.
 
         Args:
             role: The role to generate (usually "assistant")
-            ctx: Context for the generation suffix. Note that ctx.is_last is False
-                because we're prompting for generation, not rendering a complete message.
+            ctx: Context for the generation suffix. Note that ctx.is_last is True
+                because we're rendering the header for the final (to-be-generated) message.
 
         Returns:
             List of token IDs for the role header. Examples in string form:
