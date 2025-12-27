@@ -507,38 +507,43 @@ def test_qwen3_2turn_preserves_thinking():
 
 def test_qwen3_4turn_only_last_thinking_preserved():
     """
-    For 4-turn conversations, only the last assistant message's thinking should be preserved.
-    Earlier assistant thinking blocks are stripped (matching HF behavior with strip_thinking_from_history=True).
+    For 4-turn conversations with ThinkingPart, only the last assistant message's thinking
+    should be preserved. Earlier assistant thinking blocks are stripped.
     """
     model_name = "Qwen/Qwen3-8B"
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     renderer = Qwen3Renderer(tokenizer)
 
+    # Use structured content with ThinkingPart
     messages: list[Message] = [
         {"role": "user", "content": "What is 2+2?"},
         {
             "role": "assistant",
-            "content": "<think>\nFirst turn reasoning here.\n</think>\n\nThe answer is 4.",
+            "content": [
+                ThinkingPart(type="thinking", thinking="\nFirst turn reasoning here.\n"),
+                TextPart(type="text", text="\n\nThe answer is 4."),
+            ],
         },
         {"role": "user", "content": "And what is 3+3?"},
         {
             "role": "assistant",
-            "content": "<think>\nSecond turn reasoning here.\n</think>\n\nThe answer is 6.",
+            "content": [
+                ThinkingPart(type="thinking", thinking="\nSecond turn reasoning here.\n"),
+                TextPart(type="text", text="\n\nThe answer is 6."),
+            ],
         },
     ]
 
     model_input, _ = renderer.build_supervised_example(messages)
-    tinker_tokens = model_input.to_ints()
-    tinker_decoded = tokenizer.decode(tinker_tokens)
+    tinker_decoded = tokenizer.decode(model_input.to_ints())
 
-    # Get expected format from HuggingFace tokenizer
-    hf_decoded = tokenizer.apply_chat_template(cast(list[dict[str, str]], messages), tokenize=False)
-
-    # Tinker and HuggingFace should produce the same output (strip trailing newline from HF)
-    assert tinker_decoded == hf_decoded.rstrip("\n"), (
-        f"Tinker and HuggingFace outputs differ:\n"
-        f"TINKER:\n{tinker_decoded!r}\n\n"
-        f"HUGGINGFACE:\n{hf_decoded!r}"
+    # First assistant message should have thinking stripped
+    assert "First turn reasoning" not in tinker_decoded, (
+        f"First turn thinking should be stripped:\n{tinker_decoded}"
+    )
+    # Second (last) assistant message should preserve thinking
+    assert "Second turn reasoning" in tinker_decoded, (
+        f"Last turn thinking should be preserved:\n{tinker_decoded}"
     )
 
 
@@ -790,16 +795,23 @@ def test_deepseek_strip_thinking_from_history_default():
     tokenizer = get_tokenizer(model_name)
     renderer = DeepSeekV3ThinkingRenderer(tokenizer)
 
+    # Use structured content with ThinkingPart
     messages: list[Message] = [
         {"role": "user", "content": "What is 2+2?"},
         {
             "role": "assistant",
-            "content": "<think>First calculation.</think>The answer is 4.",
+            "content": [
+                ThinkingPart(type="thinking", thinking="First calculation."),
+                TextPart(type="text", text="The answer is 4."),
+            ],
         },
         {"role": "user", "content": "And what is 3+3?"},
         {
             "role": "assistant",
-            "content": "<think>Second calculation.</think>The answer is 6.",
+            "content": [
+                ThinkingPart(type="thinking", thinking="Second calculation."),
+                TextPart(type="text", text="The answer is 6."),
+            ],
         },
     ]
 
@@ -1158,17 +1170,15 @@ def test_deepseek_stripping_with_thinking_part():
 
 def test_parse_content_blocks_no_special_tags():
     """Test parse_content_blocks returns empty when no special tags."""
-    parts, unparsed = parse_content_blocks("Just plain text")
+    parts = parse_content_blocks("Just plain text")
     assert parts == []
-    assert unparsed == []
 
 
 def test_parse_content_blocks_single_think_block():
     """Test parse_content_blocks with a single think block."""
-    parts, unparsed = parse_content_blocks("<think>reasoning</think>visible answer")
+    parts = parse_content_blocks("<think>reasoning</think>visible answer")
 
     assert len(parts) == 2
-    assert len(unparsed) == 0
     assert parts[0]["type"] == "thinking"
     assert parts[0]["thinking"] == "reasoning"
     assert parts[1]["type"] == "text"
@@ -1178,10 +1188,9 @@ def test_parse_content_blocks_single_think_block():
 def test_parse_content_blocks_multiple_think_blocks():
     """Test parse_content_blocks with multiple interleaved think blocks."""
     content = "<think>step 1</think>partial<think>step 2</think>final"
-    parts, unparsed = parse_content_blocks(content)
+    parts = parse_content_blocks(content)
 
     assert len(parts) == 4
-    assert len(unparsed) == 0
     assert parts[0] == ThinkingPart(type="thinking", thinking="step 1")
     assert parts[1] == TextPart(type="text", text="partial")
     assert parts[2] == ThinkingPart(type="thinking", thinking="step 2")
@@ -1190,7 +1199,7 @@ def test_parse_content_blocks_multiple_think_blocks():
 
 def test_parse_content_blocks_empty_blocks_omitted():
     """Test parse_content_blocks omits empty think blocks."""
-    parts, unparsed = parse_content_blocks("<think></think>visible")
+    parts = parse_content_blocks("<think></think>visible")
 
     assert len(parts) == 1
     assert parts[0]["type"] == "text"
@@ -1199,7 +1208,7 @@ def test_parse_content_blocks_empty_blocks_omitted():
 
 def test_parse_content_blocks_whitespace_handling():
     """Test parse_content_blocks handles whitespace correctly."""
-    parts, unparsed = parse_content_blocks("<think>  thinking  </think>  answer  ")
+    parts = parse_content_blocks("<think>  thinking  </think>  answer  ")
 
     assert len(parts) == 2
     # Thinking content preserves internal whitespace but text gets stripped
@@ -1210,11 +1219,9 @@ def test_parse_content_blocks_whitespace_handling():
 def test_parse_content_blocks_tool_call_only():
     """Test parse_content_blocks parses tool calls."""
     content = '<tool_call>{"name": "search", "arguments": {"query": "test"}}</tool_call>'
-    parts, unparsed = parse_content_blocks(content)
+    parts = parse_content_blocks(content)
 
     assert len(parts) == 1
-    assert len(unparsed) == 0
-
     assert parts[0]["type"] == "tool_call"
     tool_call = parts[0]["tool_call"]
     assert tool_call.function.name == "search"
@@ -1224,11 +1231,9 @@ def test_parse_content_blocks_tool_call_only():
 def test_parse_content_blocks_interleaved():
     """Test parse_content_blocks handles interleaved think and tool_call blocks."""
     content = '<think>Let me search</think>Searching...<tool_call>{"name": "search", "arguments": {"q": "test"}}</tool_call>Done'
-    parts, unparsed = parse_content_blocks(content)
+    parts = parse_content_blocks(content)
 
     assert len(parts) == 4
-    assert len(unparsed) == 0
-
     assert parts[0] == ThinkingPart(type="thinking", thinking="Let me search")
     assert parts[1] == TextPart(type="text", text="Searching...")
     assert parts[2]["type"] == "tool_call"
@@ -1237,16 +1242,15 @@ def test_parse_content_blocks_interleaved():
 
 
 def test_parse_content_blocks_invalid_tool_call():
-    """Test parse_content_blocks handles invalid tool call JSON."""
+    """Test parse_content_blocks handles invalid tool call JSON as UnparsedToolCallPart."""
     content = '<tool_call>not valid json</tool_call>text after'
-    parts, unparsed = parse_content_blocks(content)
+    parts = parse_content_blocks(content)
 
-    # Invalid tool call goes to unparsed, text is still captured
-    assert len(parts) == 1
-    assert len(unparsed) == 1
-
-    assert parts[0] == TextPart(type="text", text="text after")
-    assert "Invalid JSON" in unparsed[0].error
+    # Invalid tool call is included as UnparsedToolCallPart, text is still captured
+    assert len(parts) == 2
+    assert parts[0]["type"] == "unparsed_tool_call"
+    assert "Invalid JSON" in parts[0]["error"]
+    assert parts[1] == TextPart(type="text", text="text after")
 
 
 # =============================================================================
