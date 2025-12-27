@@ -110,11 +110,13 @@ class Qwen3Renderer(Renderer):
     ) -> bool:
         """Whether to add <think> prefix to the last assistant message.
 
-        Thinking-enabled models (default) check if this is the last assistant message
-        and if <think> is not already present. Override in subclasses like
-        Qwen3InstructRenderer to disable the <think> prefix entirely.
+        Returns False - we don't auto-add <think> for SFT. If training data has
+        thinking content, it's preserved. If not, we don't artificially add it.
+        At inference time, the model generates <think> itself (HF behavior).
+
+        This ensures the consistency property: parsed(action) == original message.
         """
-        return message["role"] == "assistant" and "<think>" not in output_content and ctx.is_last
+        return False
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         maybe_newline = "\n" if ctx.idx > 0 else ""

@@ -686,36 +686,19 @@ def _split_by_weights(tokens: list[int], weights: list[float]) -> tuple[list[int
     return ob, ac
 
 
-def get_2turn_with_thinking() -> list[Message]:
-    """2-turn conversation with thinking content in assistant message.
-
-    For use with thinking-enabled renderers (qwen3, deepseekv3_thinking).
-    """
-    return [
-        {"role": "user", "content": "Hello, how are you?"},
-        {
-            "role": "assistant",
-            "content": [
-                ThinkingPart(type="thinking", thinking="\nLet me respond politely.\n"),
-                TextPart(type="text", text="\n\nI'm fine, thank you!"),
-            ],
-        },
-    ]
-
-
 # Models and renderers for the consistency test
 # Format: (model_name, renderer_name, conversation_fn)
 _CONSISTENCY_TEST_PARAMS = [
     # Simple renderers
     ("meta-llama/Llama-3.2-1B-Instruct", "llama3", get_basic_2turn_conversation),
     ("meta-llama/Llama-3.2-1B-Instruct", "role_colon", get_basic_2turn_conversation),
-    # Qwen3 family - thinking enabled needs thinking content
-    ("Qwen/Qwen3-8B", "qwen3", get_2turn_with_thinking),
+    # Qwen3 family
+    ("Qwen/Qwen3-8B", "qwen3", get_basic_2turn_conversation),
     ("Qwen/Qwen3-8B", "qwen3_disable_thinking", get_basic_2turn_conversation),
     ("Qwen/Qwen3-8B", "qwen3_instruct", get_basic_2turn_conversation),
-    # DeepSeek family - thinking enabled needs thinking content
+    # DeepSeek family
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3", get_basic_2turn_conversation),
-    ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking", get_2turn_with_thinking),
+    ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking", get_basic_2turn_conversation),
     # GPT-OSS
     ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning", get_basic_2turn_conversation),
     # Kimi K2
