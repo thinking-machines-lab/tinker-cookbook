@@ -723,6 +723,9 @@ class Renderer(ABC):
         # Warn if training on multiple assistant messages with a renderer that doesn't
         # satisfy the extension property. In that case, each assistant message sees a
         # different context prefix, so they should be trained as separate examples.
+        # NOTE: This warning only covers ALL_ASSISTANT_MESSAGES. Other modes that train
+        # multiple assistant messages (e.g., ALL_MESSAGES, ALL_TOKENS, CUSTOMIZED) should
+        # be used with caution when grows_by_extension=False.
         if train_on_what == TrainOnWhat.ALL_ASSISTANT_MESSAGES and not self.grows_by_extension:
             logger.warning(
                 "WARNING: Using train_on_what=ALL_ASSISTANT_MESSAGES with a renderer that "
