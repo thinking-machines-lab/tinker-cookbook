@@ -259,6 +259,18 @@ def remove_thinking(parts: list[ContentPart]) -> list[ContentPart]:
     return [p for p in parts if p["type"] != "thinking"]
 
 
+def get_text_content(message: Message) -> str:
+    """Extract text content from message, stripping thinking parts.
+
+    Use this after parse_response when you only need the text output,
+    ignoring any thinking/reasoning content.
+    """
+    content = message["content"]
+    if isinstance(content, str):
+        return content
+    return "".join(p["text"] for p in content if p["type"] == "text")
+
+
 def _parse_tool_call_json(tool_call_str: str, raw_text: str) -> ToolCall | UnparsedToolCall:
     """Parse tool call JSON. Returns UnparsedToolCall on failure."""
     try:
