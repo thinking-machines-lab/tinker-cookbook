@@ -608,6 +608,80 @@ class Renderer(ABC):
         """
         ...
 
+    def to_openai_message(self, message: Message) -> dict:
+        """
+        Convert a Message to OpenAI API format.
+
+        This enables compatibility with HuggingFace's apply_chat_template (which accepts
+        OpenAI format) and with OpenAI-compatible APIs (OpenRouter, vLLM, etc.).
+
+        The base implementation handles:
+        - Basic role/content conversion
+        - tool_calls conversion from ToolCall objects to OpenAI dict format
+        - tool_call_id and name for tool response messages
+
+        Subclasses should override this to handle model-specific features like
+        reasoning_content for thinking models.
+
+        Args:
+            message: The Message to convert.
+
+        Returns:
+            A dict in OpenAI API message format.
+        """
+        result: dict = {"role": message["role"]}
+
+        # Handle content
+        content = message["content"]
+        if isinstance(content, str):
+            result["content"] = content
+        else:
+            # Structured content with ThinkingPart/TextPart/etc.
+            # Base implementation: concatenate text parts, render thinking as <think> tags
+            parts = []
+            for p in content:
+                if p["type"] == "text":
+                    parts.append(p["text"])
+                elif p["type"] == "thinking":
+                    parts.append(f"<think>{p['thinking']}</think>")
+                # Skip tool_call and unparsed_tool_call parts - handled via tool_calls field
+            result["content"] = "".join(parts)
+
+        # Handle tool_calls (convert ToolCall objects to OpenAI format)
+        if "tool_calls" in message and message["tool_calls"]:
+            result["tool_calls"] = [
+                {
+                    "type": "function",
+                    "id": tc.id,
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in message["tool_calls"]
+            ]
+
+        # Handle tool response fields
+        if message["role"] == "tool":
+            if "tool_call_id" in message:
+                result["tool_call_id"] = message["tool_call_id"]
+            if "name" in message:
+                result["name"] = message["name"]
+
+        return result
+
+    def to_openai_messages(self, messages: list[Message]) -> list[dict]:
+        """
+        Convert a list of Messages to OpenAI API format.
+
+        Args:
+            messages: The Messages to convert.
+
+        Returns:
+            A list of dicts in OpenAI API message format.
+        """
+        return [self.to_openai_message(m) for m in messages]
+
     def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
     ) -> list[Message]:

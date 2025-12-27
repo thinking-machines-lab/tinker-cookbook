@@ -141,6 +141,7 @@ def get_tool_call_conversation() -> list[Message]:
     """Full tool use conversation with tool call and response.
 
     Includes: user request -> assistant tool call -> tool response -> assistant final answer.
+    Ends with assistant (for supervised tests).
     """
     return [
         {"role": "user", "content": "What's the weather in San Francisco?"},
@@ -167,30 +168,196 @@ def get_tool_call_conversation() -> list[Message]:
     ]
 
 
+def get_tool_call_gen_conversation() -> list[Message]:
+    """Tool use conversation for generation testing (ends with tool response).
+
+    Tests generating assistant response after receiving tool output.
+    """
+    return get_tool_call_conversation()[:-1]
+
+
+def get_4turn_thinking_conversation() -> list[Message]:
+    """4-turn conversation with ThinkingPart in assistant messages.
+
+    Tests thinking content handling in multi-turn conversations.
+    """
+    return [
+        {"role": "user", "content": "What is 2+2?"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="First turn reasoning here."),
+                TextPart(type="text", text="The answer is 4."),
+            ],
+        },
+        {"role": "user", "content": "And what is 3+3?"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="Second turn reasoning here."),
+                TextPart(type="text", text="The answer is 6."),
+            ],
+        },
+    ]
+
+
+def get_multiturn_thinking_conversation() -> list[Message]:
+    """Multi-turn conversation with thinking in assistant messages.
+
+    Used for testing extension property with thinking content.
+    """
+    return [
+        {"role": "user", "content": "What is 2+2?"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="Let me add 2+2."),
+                TextPart(type="text", text="The answer is 4."),
+            ],
+        },
+        {"role": "user", "content": "What is 3+3?"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="Let me add 3+3."),
+                TextPart(type="text", text="The answer is 6."),
+            ],
+        },
+    ]
+
+
+def get_multiturn_tool_conversation() -> list[Message]:
+    """Multi-turn conversation with tool calls.
+
+    Used for testing extension property with tool calling.
+    """
+    return [
+        {"role": "user", "content": "What's the weather in NYC?"},
+        {
+            "role": "assistant",
+            "content": "Let me check the weather for you.",
+            "tool_calls": [
+                ToolCall(
+                    function=ToolCall.FunctionBody(
+                        name="get_weather",
+                        arguments='{"location": "NYC"}',
+                    ),
+                    id="call_1",
+                )
+            ],
+        },
+        {
+            "role": "tool",
+            "content": '{"temperature": 72, "condition": "sunny"}',
+            "tool_call_id": "call_1",
+            "name": "get_weather",
+        },
+        {"role": "assistant", "content": "The weather in NYC is sunny with 72°F."},
+        {"role": "user", "content": "What about San Francisco?"},
+        {
+            "role": "assistant",
+            "content": "Let me check SF weather.",
+            "tool_calls": [
+                ToolCall(
+                    function=ToolCall.FunctionBody(
+                        name="get_weather",
+                        arguments='{"location": "San Francisco"}',
+                    ),
+                    id="call_2",
+                )
+            ],
+        },
+        {
+            "role": "tool",
+            "content": '{"temperature": 65, "condition": "foggy"}',
+            "tool_call_id": "call_2",
+            "name": "get_weather",
+        },
+        {"role": "assistant", "content": "San Francisco is foggy at 65°F."},
+    ]
+
+
+def get_multiturn_thinking_and_tool_conversation() -> list[Message]:
+    """Multi-turn conversation with both thinking AND tool calls.
+
+    Tests complex interactions with both thinking blocks and tool calling.
+    """
+    return [
+        {"role": "user", "content": "What's the weather in NYC?"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="I need to check the weather API."),
+                TextPart(type="text", text="Let me look that up."),
+            ],
+            "tool_calls": [
+                ToolCall(
+                    function=ToolCall.FunctionBody(
+                        name="get_weather",
+                        arguments='{"location": "NYC"}',
+                    ),
+                    id="call_1",
+                )
+            ],
+        },
+        {
+            "role": "tool",
+            "content": '{"temperature": 72}',
+            "tool_call_id": "call_1",
+            "name": "get_weather",
+        },
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="The API returned 72 degrees."),
+                TextPart(type="text", text="NYC is 72°F."),
+            ],
+        },
+        {"role": "user", "content": "Is that warm?"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="72°F is about 22°C, which is pleasant."),
+                TextPart(type="text", text="Yes, 72°F is comfortable room temperature."),
+            ],
+        },
+    ]
+
+
 # Conversation registry for parametrized tests
-# Maps conversation ID to (factory_function, description, requires_system)
-from tinker_cookbook.tests.conversation_generator import generate_simple_conversation
+# Maps conversation ID to (factory_function, description, requires_tools)
+from tinker_cookbook.tests.conversation_generator import (
+    generate_conversation,
+)
 
 CONVERSATION_REGISTRY: dict[str, tuple[Callable[[], list[Message]], str, bool]] = {
     "basic_3turn": (get_basic_3turn_conversation, "basic 3-turn conversation", False),
     "basic_2turn": (get_basic_2turn_conversation, "basic 2-turn conversation", False),
-    "system_3turn": (get_system_message_3turn_conversation, "3-turn with system message", True),
-    "system_2turn": (get_system_message_2turn_conversation, "2-turn with system message", True),
-    # Random conversations ending with user (for generation tests)
+    "system_3turn": (get_system_message_3turn_conversation, "3-turn with system message", False),
+    "system_2turn": (get_system_message_2turn_conversation, "2-turn with system message", False),
+    "tool_call": (get_tool_call_conversation, "tool call conversation (supervised)", True),
+    "tool_call_gen": (get_tool_call_gen_conversation, "tool call conversation (generation)", True),
+    "thinking_4turn": (get_4turn_thinking_conversation, "4-turn with thinking", False),
+    "thinking_and_tool": (
+        get_multiturn_thinking_and_tool_conversation,
+        "multi-turn with thinking and tools",
+        True,
+    ),
+    # Random conversations ending with user (for generation tests) - with tools/thinking
     **{
         f"random_gen_{seed}": (
-            lambda s=seed: generate_simple_conversation(s, end_with_assistant=False),
+            lambda s=seed: generate_conversation(s, end_with_assistant=False),
             f"random gen conversation (seed={seed})",
-            False,
+            True,  # May contain tools
         )
         for seed in [1, 42, 123, 456, 999]
     },
-    # Random conversations ending with assistant (for supervised tests)
+    # Random conversations ending with assistant (for supervised tests) - with tools/thinking
     **{
         f"random_sup_{seed}": (
-            lambda s=seed: generate_simple_conversation(s, end_with_assistant=True),
+            lambda s=seed: generate_conversation(s, end_with_assistant=True),
             f"random sup conversation (seed={seed})",
-            False,
+            True,  # May contain tools
         )
         for seed in [1, 42, 123, 456, 999]
     },
@@ -213,84 +380,6 @@ TOOL_CAPABLE_MODELS = {
 # =============================================================================
 
 
-def _prepare_conversation_for_model(
-    model_name: str, convo: list[Message], is_generation: bool
-) -> tuple[list[Message], list[Message]]:
-    """Prepare conversation for both cookbook renderer and HF template comparison.
-
-    Unfortunately, aug_convo and hf_convo sometimes need to differ because HF templates
-    auto-add certain content that our renderers expect to be present in the input:
-
-    - Qwen (supervised): HF auto-adds "<think>\\n\\n</think>\\n\\n" to assistant content,
-      but Qwen3Renderer expects thinking tags to already be in the input. So we must
-      manually add them to aug_convo while leaving hf_convo without them.
-
-    - Llama: HF auto-adds "Cutting Knowledge Date" content to the system message, so we add
-      it to aug_convo but skip the system message in hf_convo to avoid duplication.
-
-    - OpenAI/DeepSeek/Kimi: No modifications needed.
-
-    Args:
-        model_name: The model name (e.g., "Qwen/Qwen3-30B-A3B").
-        convo: The base conversation to prepare.
-        is_generation: True for generation prompts, False for supervised examples.
-
-    Note: HF templates only use certain Message fields (role, content). Fields like
-    tool_calls are not handled by HF templates in the same way, so tool calling tests
-    use separate comparison methods.
-
-    Returns:
-        Tuple of (aug_convo, hf_convo):
-        - aug_convo: Augmented conversation for the cookbook renderer. May include
-          model-specific modifications like system messages, thinking tags, etc.
-          that the renderer expects in its input.
-        - hf_convo: Conversation for HF's apply_chat_template. Generally simpler
-          since HF templates auto-add things like thinking blocks.
-    """
-    # Deep copy to avoid mutating the original
-
-    # Check if conversation already has a system message
-    has_system = convo and convo[0]["role"] == "system"
-
-    # Apply model-specific modifications first, then create hf_convo
-    if model_name.startswith("meta"):
-        # HACK: HF template auto-prepends "Cutting Knowledge Date" to system messages.
-        # Our Llama3Renderer doesn't do this, so we manually add it to aug_convo
-        # to match what HF produces.
-        today = date.today().strftime("%d %b %Y")
-        date_prefix = f"Cutting Knowledge Date: December 2023\nToday Date: {today}\n\n"
-        if has_system:
-            aug_convo = copy.deepcopy(convo)
-            assert isinstance(convo[0]["content"], str)
-            aug_convo[0]["content"] = date_prefix + convo[0]["content"]
-        else:
-            aug_convo = [Message(role="system", content=date_prefix)] + convo
-    elif model_name.startswith("Qwen"):
-        if not is_generation:
-            # This is a hack needed for test_supervised_example_against_hf_chat_templates.
-            # The Qwen3Renderer does NOT auto-add empty thinking blocks like HF's apply_chat_template does.
-            # Instead, Qwen3Renderer only adds "<think>\n" to the prefix for generation prompting
-            # (to prompt the model to start reasoning). We probably want to make the SFT behavior
-            # match the generation behavior, but that's for a future PR. (TODO)
-            for i in range(len(convo) - 1, -1, -1):
-                if convo[i]["role"] == "assistant":
-                    content = convo[i]["content"]
-                    if "<think>" not in content:
-                        convo[i]["content"] = f"<think>\n\n</think>\n\n{content}"
-                    break
-        aug_convo = convo
-    elif model_name.startswith("deepseek-ai"):
-        aug_convo = convo
-    elif model_name.startswith("openai"):
-        aug_convo = convo
-    elif model_name.startswith("moonshotai"):
-        aug_convo = convo
-    else:
-        raise ValueError(f"Unknown model name: {model_name}")
-
-    return aug_convo, convo
-
-
 # Models for HF generation/supervised tests
 _HF_TEST_MODELS = [
     "meta-llama/Llama-3.2-1B-Instruct",
@@ -301,8 +390,42 @@ _HF_TEST_MODELS = [
     "Qwen/Qwen3-VL-30B-A3B-Instruct",
 ]
 
-# Conversations for generation tests (end with user message)
-_GENERATION_CONVERSATIONS = ["basic_3turn", "system_3turn", "random_gen_1", "random_gen_42", "random_gen_123", "random_gen_456", "random_gen_999"]
+# Models whose tool call format matches HF's apply_chat_template exactly.
+# Other models have intentional differences (see renderer docstrings for details).
+_HF_TOOL_COMPATIBLE_MODELS = {
+    "Qwen/Qwen3-30B-A3B",
+    "deepseek-ai/DeepSeek-V3.1",
+}
+
+# Conversations for generation tests (end with user message or tool response)
+# Note: Random conversations are tested in consistency tests, not HF comparison,
+# because they can have complex thinking+tool combinations with HF format quirks.
+_GENERATION_CONVERSATIONS = [
+    "basic_3turn",
+    "system_3turn",
+    "tool_call_gen",
+]
+
+
+def _conversation_has_tools(messages: list[Message]) -> bool:
+    """Check if a conversation contains tool calls or tool responses."""
+    for m in messages:
+        if "tool_calls" in m or m["role"] == "tool":
+            return True
+    return False
+
+
+def _add_llama3_date_prefix(messages: list[Message]) -> list[Message]:
+    """Add date prefix to messages for Llama models."""
+    today = date.today().strftime("%d %b %Y")
+    date_prefix = f"Cutting Knowledge Date: December 2023\nToday Date: {today}\n\n"
+    messages = copy.deepcopy(messages)
+    if messages and messages[0]["role"] == "system":
+        assert isinstance(messages[0]["content"], str)
+        messages[0]["content"] = date_prefix + messages[0]["content"]
+    else:
+        messages = [Message(role="system", content=date_prefix)] + messages
+    return messages
 
 
 @pytest.mark.parametrize("conv_id", _GENERATION_CONVERSATIONS)
@@ -316,6 +439,12 @@ def test_generation_against_hf_chat_templates(model_name: str, conv_id: str):
     conv_factory, conv_desc, requires_tools = CONVERSATION_REGISTRY[conv_id]
     convo = conv_factory()
 
+    # Skip tool-containing conversations for models with intentional HF differences
+    if _conversation_has_tools(convo) and model_name not in _HF_TOOL_COMPATIBLE_MODELS:
+        pytest.skip(
+            f"{model_name} has intentional tool format differences from HF (see renderer docstring)"
+        )
+
     tokenizer = get_tokenizer(model_name)
     attributes = get_model_attributes(model_name)
     image_processor = get_image_processor(model_name) if attributes.is_vl else None
@@ -326,12 +455,14 @@ def test_generation_against_hf_chat_templates(model_name: str, conv_id: str):
     )
     cookbook_renderer = get_renderer(render_name, tokenizer, image_processor)
 
-    aug_convo, hf_convo = _prepare_conversation_for_model(model_name, convo, is_generation=True)
-
-    cookbook_tokens = cookbook_renderer.build_generation_prompt(aug_convo).to_ints()
-    hf_tokens = tokenizer.apply_chat_template(
-        cast(list[dict[str, str]], hf_convo), add_generation_prompt=True, tokenize=True
+    modified_cookbook_convo = (
+        _add_llama3_date_prefix(convo) if model_name.startswith("meta") else convo
     )
+    # ^^^ modify the cookbook convo just for llama3, where we chose not to match the HF template
+    hf_convo = cookbook_renderer.to_openai_messages(convo)
+
+    cookbook_tokens = cookbook_renderer.build_generation_prompt(modified_cookbook_convo).to_ints()
+    hf_tokens = tokenizer.apply_chat_template(hf_convo, add_generation_prompt=True, tokenize=True)
 
     assert cookbook_tokens == hf_tokens, (
         f"[{conv_desc}] Cookbook tokens: {cookbook_tokens}\n"
@@ -341,17 +472,24 @@ def test_generation_against_hf_chat_templates(model_name: str, conv_id: str):
     )
 
 
-# Models for supervised tests (OpenAI excluded - analysis channel diverges from HF template)
+# Models for supervised tests
+# Excluded:
+# - OpenAI: analysis channel diverges from HF template
+# - Qwen/Qwen3-30B-A3B: HF template adds empty <think> blocks to non-thinking messages
 _SUPERVISED_TEST_MODELS = [
     "meta-llama/Llama-3.2-1B-Instruct",
-    "Qwen/Qwen3-30B-A3B",
     "deepseek-ai/DeepSeek-V3.1",
     "moonshotai/Kimi-K2-Thinking",
     "Qwen/Qwen3-VL-30B-A3B-Instruct",
 ]
 
 # Conversations for supervised tests (end with assistant message)
-_SUPERVISED_CONVERSATIONS = ["basic_2turn", "system_2turn", "random_sup_1", "random_sup_42", "random_sup_123", "random_sup_456", "random_sup_999"]
+# Note: Random conversations are tested in consistency tests, not HF comparison.
+_SUPERVISED_CONVERSATIONS = [
+    "basic_2turn",
+    "system_2turn",
+    "tool_call",
+]
 
 
 @pytest.mark.parametrize("conv_id", _SUPERVISED_CONVERSATIONS)
@@ -365,6 +503,12 @@ def test_supervised_example_against_hf_chat_templates(model_name: str, conv_id: 
     conv_factory, conv_desc, requires_tools = CONVERSATION_REGISTRY[conv_id]
     convo = conv_factory()
 
+    # Skip tool-containing conversations for models with intentional HF differences
+    if _conversation_has_tools(convo) and model_name not in _HF_TOOL_COMPATIBLE_MODELS:
+        pytest.skip(
+            f"{model_name} has intentional tool format differences from HF (see renderer docstring)"
+        )
+
     tokenizer = get_tokenizer(model_name)
     attributes = get_model_attributes(model_name)
     image_processor = get_image_processor(model_name) if attributes.is_vl else None
@@ -375,13 +519,15 @@ def test_supervised_example_against_hf_chat_templates(model_name: str, conv_id: 
     )
     cookbook_renderer = get_renderer(render_name, tokenizer, image_processor)
 
-    aug_convo, hf_convo = _prepare_conversation_for_model(model_name, convo, is_generation=False)
-
-    cookbook_model_input, _ = cookbook_renderer.build_supervised_example(aug_convo)
-    cookbook_tokens = cookbook_model_input.to_ints()
-    hf_output = tokenizer.apply_chat_template(
-        cast(list[dict[str, str]], hf_convo), tokenize=False, add_generation_prompt=False
+    modified_cookbook_convo = (
+        _add_llama3_date_prefix(convo) if model_name.startswith("meta") else convo
     )
+    # ^^^ modify the cookbook convo just for llama3, where we chose not to match the HF template
+    hf_convo = cookbook_renderer.to_openai_messages(convo)
+
+    cookbook_model_input, _ = cookbook_renderer.build_supervised_example(modified_cookbook_convo)
+    cookbook_tokens = cookbook_model_input.to_ints()
+    hf_output = tokenizer.apply_chat_template(hf_convo, tokenize=False, add_generation_prompt=False)
     assert isinstance(hf_output, str)
     hf_tokens = tokenizer.encode(hf_output.rstrip("\n"), add_special_tokens=False)
 
@@ -390,6 +536,82 @@ def test_supervised_example_against_hf_chat_templates(model_name: str, conv_id: 
         f"Cookbook string: {tokenizer.decode(cookbook_tokens)}\n"
         f"HF tokens: {hf_tokens}\n"
         f"HF string: {tokenizer.decode(hf_tokens)}"
+    )
+
+
+# =============================================================================
+# Tokenization Boundary Difference Tests
+# =============================================================================
+
+
+def _get_conversation_with_whitespace_boundary() -> list[Message]:
+    """Conversation with leading whitespace in TextPart - triggers tokenization boundary issue.
+
+    When content parts start with whitespace (like '\\n\\n'), our renderer tokenizes
+    piece-by-piece (header, then content) while HF's apply_chat_template tokenizes
+    the full string at once. This produces different token sequences that decode
+    to identical strings.
+
+    Example with Qwen3:
+    - Piece-wise: encode("<|im_start|>assistant\\n") + encode("\\n\\nasst_text")
+      → [..., 198, 271, ...] (newline + double-newline as separate tokens)
+    - All-at-once: encode("<|im_start|>assistant\\n\\n\\nasst_text")
+      → [..., 1406, ...] (triple-newline as single token)
+
+    Both decode to the same string, but the token sequences differ.
+    """
+    return [
+        {"role": "user", "content": "Hello, how are you?"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="\nLet me respond politely.\n"),
+                TextPart(type="text", text="\n\nI'm fine, thank you!"),
+            ],
+        },
+    ]
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "Qwen/Qwen3-30B-A3B",  # Uses <|im_start|>assistant\n header
+    ],
+)
+def test_tokenization_boundary_with_whitespace(model_name: str):
+    """Test that tokenization boundaries work correctly with whitespace in content.
+
+    This test verifies that our piece-wise tokenization produces identical tokens
+    to HF's all-at-once tokenization, even when ThinkingPart or TextPart content
+    contains leading/trailing whitespace.
+    """
+    convo = _get_conversation_with_whitespace_boundary()
+
+    tokenizer = get_tokenizer(model_name)
+    attributes = get_model_attributes(model_name)
+    image_processor = get_image_processor(model_name) if attributes.is_vl else None
+    render_name = get_recommended_renderer_name(model_name)
+    cookbook_renderer = get_renderer(render_name, tokenizer, image_processor)
+
+    hf_convo = cookbook_renderer.to_openai_messages(convo)
+
+    cookbook_model_input, _ = cookbook_renderer.build_supervised_example(convo)
+    cookbook_tokens = cookbook_model_input.to_ints()
+    hf_output = tokenizer.apply_chat_template(hf_convo, tokenize=False, add_generation_prompt=False)
+    assert isinstance(hf_output, str)
+    hf_tokens = tokenizer.encode(hf_output.rstrip("\n"), add_special_tokens=False)
+
+    # Verify decoded strings match (this should pass)
+    cookbook_decoded = tokenizer.decode(cookbook_tokens)
+    hf_decoded = tokenizer.decode(hf_tokens)
+    assert cookbook_decoded == hf_decoded, "Decoded strings should match even if tokens differ"
+
+    # Verify tokens match
+    assert cookbook_tokens == hf_tokens, (
+        f"Token mismatch with whitespace content.\n"
+        f"Cookbook tokens: {cookbook_tokens}\n"
+        f"HF tokens: {hf_tokens}\n"
+        f"Both decode to: {cookbook_decoded!r}"
     )
 
 
@@ -450,88 +672,9 @@ def test_tool_call_supervised_rendering(model_name: str):
     assert has_tool_indicator, f"Tool name or ID should appear in rendered output: {decoded}"
 
 
-# Models where our tool call rendering matches HF templates exactly
-_TOOL_CALL_HF_COMPATIBLE_MODELS = [
-    ("Qwen/Qwen3-8B", "qwen3"),
-    ("Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3_instruct"),
-    # deepseekv3 defaults to non-thinking mode (matches HF template)
-    ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
-    ("moonshotai/Kimi-K2-Thinking", "kimi_k2"),
-]
-
-
-def _convert_tool_calls_to_hf_format(convo: list[Message]) -> list[dict]:
-    """Convert ToolCall objects to HF dict format for template comparison."""
-    result = []
-    for msg in convo:
-        msg_dict: dict = {"role": msg["role"], "content": msg["content"]}
-        if "tool_calls" in msg:
-            msg_dict["tool_calls"] = [
-                {
-                    "type": "function",
-                    "id": tc.id,
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
-                }
-                for tc in msg["tool_calls"]
-            ]
-        if "tool_call_id" in msg:
-            msg_dict["tool_call_id"] = msg["tool_call_id"]
-        result.append(msg_dict)
-    return result
-
-
-@pytest.mark.parametrize("model_name,renderer_name", _TOOL_CALL_HF_COMPATIBLE_MODELS)
-def test_tool_call_generation_against_hf_templates(model_name: str, renderer_name: str):
-    """Test tool call generation rendering matches HF templates.
-
-    For models with HF-compatible tool call support, verify our renderer produces
-    identical tokens to HuggingFace's chat template.
-    """
-    # Use first 3 messages (without final assistant response) for generation prompt
-    convo_ours = get_tool_call_conversation()[:-1]
-    convo_hf = _convert_tool_calls_to_hf_format(convo_ours)
-
-    tokenizer = get_tokenizer(model_name)
-    renderer = get_renderer(renderer_name, tokenizer)
-
-    ours = renderer.build_generation_prompt(convo_ours).to_ints()
-    hf = tokenizer.apply_chat_template(convo_hf, add_generation_prompt=True, tokenize=True)
-
-    assert ours == hf, (
-        f"Tool call rendering mismatch for {model_name}\n"
-        f"Ours: {tokenizer.decode(ours)}\n"
-        f"HF:   {tokenizer.decode(hf)}"
-    )
-
-
 # =============================================================================
 # Thinking Stripping Tests (multi-turn with thinking content)
 # =============================================================================
-
-
-def _get_4turn_thinking_conversation() -> list[Message]:
-    """4-turn conversation with ThinkingPart in assistant messages."""
-    return [
-        {"role": "user", "content": "What is 2+2?"},
-        {
-            "role": "assistant",
-            "content": [
-                ThinkingPart(type="thinking", thinking="First turn reasoning here."),
-                TextPart(type="text", text="The answer is 4."),
-            ],
-        },
-        {"role": "user", "content": "And what is 3+3?"},
-        {
-            "role": "assistant",
-            "content": [
-                ThinkingPart(type="thinking", thinking="Second turn reasoning here."),
-                TextPart(type="text", text="The answer is 6."),
-            ],
-        },
-    ]
 
 
 @pytest.mark.parametrize(
@@ -549,7 +692,7 @@ def test_strip_thinking_from_history_default(model_name: str, renderer_class):
     tokenizer = get_tokenizer(model_name)
     renderer = renderer_class(tokenizer)  # Default strip_thinking_from_history=True
 
-    messages = _get_4turn_thinking_conversation()
+    messages = get_4turn_thinking_conversation()
     model_input, _ = renderer.build_supervised_example(messages)
     decoded = tokenizer.decode(model_input.to_ints())
 
@@ -576,7 +719,7 @@ def test_strip_thinking_from_history_false(model_name: str, renderer_class):
     tokenizer = get_tokenizer(model_name)
     renderer = renderer_class(tokenizer, strip_thinking_from_history=False)
 
-    messages = _get_4turn_thinking_conversation()
+    messages = get_4turn_thinking_conversation()
     model_input, _ = renderer.build_supervised_example(messages)
     decoded = tokenizer.decode(model_input.to_ints())
 
@@ -721,8 +864,8 @@ def get_2turn_with_thinking() -> list[Message]:
         {
             "role": "assistant",
             "content": [
-                ThinkingPart(type="thinking", thinking="\nLet me respond politely.\n"),
-                TextPart(type="text", text="\n\nI'm fine, thank you!"),
+                ThinkingPart(type="thinking", thinking="Let me respond politely."),
+                TextPart(type="text", text="I'm fine, thank you!"),
             ],
         },
     ]
@@ -745,15 +888,19 @@ _CONSISTENCY_RENDERERS = [
 _CONSISTENCY_CONVERSATIONS = [
     get_basic_2turn_conversation,
     get_2turn_with_thinking,
-    # Random conversations (simple, no thinking - compatible with all renderers)
-    lambda: generate_simple_conversation(1, end_with_assistant=True),
-    lambda: generate_simple_conversation(42, end_with_assistant=True),
-    lambda: generate_simple_conversation(999, end_with_assistant=True),
+    get_tool_call_conversation,
+    # Random conversations with tools/thinking
+    lambda: generate_conversation(1, end_with_assistant=True),
+    lambda: generate_conversation(42, end_with_assistant=True),
+    lambda: generate_conversation(999, end_with_assistant=True),
 ]
 
 
 # Renderers that don't support ThinkingPart content (use ensure_text)
 _RENDERERS_WITHOUT_THINKING_SUPPORT = {"llama3", "role_colon"}
+
+# Renderers that don't support tool calling
+_RENDERERS_WITHOUT_TOOL_SUPPORT = {"role_colon"}
 
 # Renderers that strip thinking in non-thinking mode (conversation must not have ThinkingPart)
 _RENDERERS_WITH_THINKING_STRIPPING = {"qwen3_disable_thinking", "deepseekv3", "kimi_k2"}
@@ -776,17 +923,36 @@ def test_supervised_generation_parse_consistency(
     - The observation tokens match what the model would see at generation time
     - The action tokens can be parsed back to the original message
     """
-    # Check if this combination is supported
-    has_thinking_content = conversation_fn is get_2turn_with_thinking
-    if has_thinking_content and renderer_name in _RENDERERS_WITHOUT_THINKING_SUPPORT:
-        pytest.skip(f"{renderer_name} doesn't support ThinkingPart content")
-    if has_thinking_content and renderer_name in _RENDERERS_WITH_THINKING_STRIPPING:
-        pytest.skip(f"{renderer_name} strips thinking content, breaking roundtrip consistency")
-
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer(renderer_name, tokenizer)
 
     messages = conversation_fn()
+
+    # Check if this combination is supported based on actual message content
+    def has_thinking(msgs):
+        for m in msgs:
+            content = m["content"]
+            if isinstance(content, list):
+                for p in content:
+                    if p.get("type") == "thinking":
+                        return True
+        return False
+
+    def has_tools(msgs):
+        for m in msgs:
+            if "tool_calls" in m or m["role"] == "tool":
+                return True
+        return False
+
+    has_thinking_content = has_thinking(messages)
+    has_tool_content = has_tools(messages)
+
+    if has_thinking_content and renderer_name in _RENDERERS_WITHOUT_THINKING_SUPPORT:
+        pytest.skip(f"{renderer_name} doesn't support ThinkingPart content")
+    if has_thinking_content and renderer_name in _RENDERERS_WITH_THINKING_STRIPPING:
+        pytest.skip(f"{renderer_name} strips thinking content, breaking roundtrip consistency")
+    if has_tool_content and renderer_name in _RENDERERS_WITHOUT_TOOL_SUPPORT:
+        pytest.skip(f"{renderer_name} doesn't support tool calling")
     assert len(messages) >= 2, "Need at least 2 messages for this test"
     assert messages[-1]["role"] == "assistant", "Last message must be assistant"
 
@@ -1031,122 +1197,6 @@ def test_deepseek_post_tool_formatting():
 # =============================================================================
 
 
-def _get_multiturn_thinking_conversation() -> list[Message]:
-    """Multi-turn conversation with thinking in assistant messages."""
-    return [
-        {"role": "user", "content": "What is 2+2?"},
-        {
-            "role": "assistant",
-            "content": [
-                ThinkingPart(type="thinking", thinking="\nLet me add 2+2.\n"),
-                TextPart(type="text", text="\n\nThe answer is 4."),
-            ],
-        },
-        {"role": "user", "content": "What is 3+3?"},
-        {
-            "role": "assistant",
-            "content": [
-                ThinkingPart(type="thinking", thinking="\nLet me add 3+3.\n"),
-                TextPart(type="text", text="\n\nThe answer is 6."),
-            ],
-        },
-    ]
-
-
-def _get_multiturn_tool_conversation() -> list[Message]:
-    """Multi-turn conversation with tool calls."""
-    return [
-        {"role": "user", "content": "What's the weather in NYC?"},
-        {
-            "role": "assistant",
-            "content": "Let me check the weather for you.",
-            "tool_calls": [
-                ToolCall(
-                    function=ToolCall.FunctionBody(
-                        name="get_weather",
-                        arguments='{"location": "NYC"}',
-                    ),
-                    id="call_1",
-                )
-            ],
-        },
-        {
-            "role": "tool",
-            "content": '{"temperature": 72, "condition": "sunny"}',
-            "tool_call_id": "call_1",
-            "name": "get_weather",
-        },
-        {"role": "assistant", "content": "The weather in NYC is sunny with 72°F."},
-        {"role": "user", "content": "What about San Francisco?"},
-        {
-            "role": "assistant",
-            "content": "Let me check SF weather.",
-            "tool_calls": [
-                ToolCall(
-                    function=ToolCall.FunctionBody(
-                        name="get_weather",
-                        arguments='{"location": "San Francisco"}',
-                    ),
-                    id="call_2",
-                )
-            ],
-        },
-        {
-            "role": "tool",
-            "content": '{"temperature": 65, "condition": "foggy"}',
-            "tool_call_id": "call_2",
-            "name": "get_weather",
-        },
-        {"role": "assistant", "content": "San Francisco is foggy at 65°F."},
-    ]
-
-
-def _get_multiturn_thinking_and_tool_conversation() -> list[Message]:
-    """Multi-turn conversation with both thinking AND tool calls (for DeepSeek)."""
-    return [
-        {"role": "user", "content": "What's the weather in NYC?"},
-        {
-            "role": "assistant",
-            "content": [
-                ThinkingPart(type="thinking", thinking="\nI need to check the weather API.\n"),
-                TextPart(type="text", text="Let me look that up."),
-            ],
-            "tool_calls": [
-                ToolCall(
-                    function=ToolCall.FunctionBody(
-                        name="get_weather",
-                        arguments='{"location": "NYC"}',
-                    ),
-                    id="call_1",
-                )
-            ],
-        },
-        {
-            "role": "tool",
-            "content": '{"temperature": 72}',
-            "tool_call_id": "call_1",
-            "name": "get_weather",
-        },
-        {
-            "role": "assistant",
-            "content": [
-                ThinkingPart(type="thinking", thinking="\nThe API returned 72 degrees.\n"),
-                TextPart(type="text", text="NYC is 72°F."),
-            ],
-        },
-        {"role": "user", "content": "Is that warm?"},
-        {
-            "role": "assistant",
-            "content": [
-                ThinkingPart(
-                    type="thinking", thinking="\n72°F is about 22°C, which is pleasant.\n"
-                ),
-                TextPart(type="text", text="Yes, 72°F is comfortable room temperature."),
-            ],
-        },
-    ]
-
-
 def _verify_extension_property(renderer, messages: list[Message], tokenizer):
     """
     Verify the sequence extension property for multi-turn conversations.
@@ -1223,37 +1273,37 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
     # Llama3 with basic multi-turn
     ("meta-llama/Llama-3.2-1B-Instruct", "llama3", {}, get_basic_4turn_conversation),
     # Llama3 with tool calls
-    ("meta-llama/Llama-3.2-1B-Instruct", "llama3", {}, _get_multiturn_tool_conversation),
+    ("meta-llama/Llama-3.2-1B-Instruct", "llama3", {}, get_multiturn_tool_conversation),
     # RoleColon with basic multi-turn (doesn't support tools)
     ("meta-llama/Llama-3.2-1B-Instruct", "role_colon", {}, get_basic_4turn_conversation),
     # Qwen3 Instruct with basic multi-turn
     ("Qwen/Qwen3-8B", "qwen3_instruct", {}, get_basic_4turn_conversation),
     # Qwen3 Instruct with tool calls
-    ("Qwen/Qwen3-8B", "qwen3_instruct", {}, _get_multiturn_tool_conversation),
+    ("Qwen/Qwen3-8B", "qwen3_instruct", {}, get_multiturn_tool_conversation),
     # Qwen3 with strip_thinking_from_history=False (preserves thinking)
     (
         "Qwen/Qwen3-8B",
         Qwen3Renderer,
         {"strip_thinking_from_history": False},
-        _get_multiturn_thinking_conversation,
+        get_multiturn_thinking_conversation,
     ),
     # DeepSeek non-thinking with basic multi-turn
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3", {}, get_basic_4turn_conversation),
     # DeepSeek non-thinking with tool calls
-    ("deepseek-ai/DeepSeek-V3.1", "deepseekv3", {}, _get_multiturn_tool_conversation),
+    ("deepseek-ai/DeepSeek-V3.1", "deepseekv3", {}, get_multiturn_tool_conversation),
     # DeepSeek with strip_thinking_from_history=False (preserves thinking)
     (
         "deepseek-ai/DeepSeek-V3.1",
         DeepSeekV3ThinkingRenderer,
         {"strip_thinking_from_history": False},
-        _get_multiturn_thinking_conversation,
+        get_multiturn_thinking_conversation,
     ),
     # DeepSeek with strip_thinking_from_history=False + tool calls
     (
         "deepseek-ai/DeepSeek-V3.1",
         DeepSeekV3ThinkingRenderer,
         {"strip_thinking_from_history": False},
-        _get_multiturn_thinking_and_tool_conversation,
+        get_multiturn_thinking_and_tool_conversation,
     ),
 ]
 
@@ -1295,10 +1345,8 @@ def test_extension_property_breaks_when_expected():
 
     assert not renderer.has_extension_property, "Default Qwen3Renderer should NOT have extension"
 
-    messages = _get_multiturn_thinking_conversation()
+    messages = get_multiturn_thinking_conversation()
 
     # Extension should break - expect an assertion error
     with pytest.raises(AssertionError, match="Extension property violated"):
         _verify_extension_property(renderer, messages, tokenizer)
-
-

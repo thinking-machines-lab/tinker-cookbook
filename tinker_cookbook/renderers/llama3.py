@@ -4,13 +4,20 @@ Llama3Renderer - Llama 3 chat format.
 Format like this:
     <|begin_of_text|><|start_header_id|>system<|end_header_id|>
 
-    You are a helpful AI assistant for travel tips and recommendations<|eot_id|><|start_header_id|>user<|end_header_id|>
+    You are a helpful AI assistant<|eot_id|><|start_header_id|>user<|end_header_id|>
 
     What can you help me with?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 
-Note: The HF template prepends "Cutting Knowledge Date: December 2023\\nToday Date: {date}"
-to system messages. We chose not to do this because it seemed janky. If you want to match
-the HF template exactly, modify render_message to prepend this info for system messages.
+Tool calls use JSON format: {"name": "func_name", "parameters": {"arg": "value"}}
+
+Note: We intentionally differ from HF's stock Llama template:
+- HF prepends "Cutting Knowledge Date..." to system messages; we don't (add manually if needed)
+- HF drops assistant content when tool_calls are present; we preserve it
+- HF double-encodes tool args via |tojson; we use clean single-encoding
+- HF escapes tool result content; we pass it through as-is
+
+These differences are intentional - the stock Llama format has quirks not worth matching.
+Our format works with vllm's Llama tool parser which accepts both single and double encoding.
 """
 
 import json
@@ -40,9 +47,9 @@ class Llama3Renderer(Renderer):
 
         What can you help me with?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 
-    Note: The HF template prepends "Cutting Knowledge Date: December 2023\\nToday Date: {date}"
-    to system messages. We chose not to do this because it seemed janky. If you want to match
-    the HF template exactly, modify render_message to prepend this info for system messages.
+    Tool calls use JSON format: {"name": "func", "parameters": {"arg": "value"}}
+
+    See module docstring for intentional differences from HF's Llama template.
     """
 
     @property
@@ -63,13 +70,15 @@ class Llama3Renderer(Renderer):
         output_str = ensure_text(message["content"])
 
         # Handle tool calls in assistant messages
-        # Llama 3 format: <function=function_name>{"arg": "value"}</function>
+        # JSON format: {"name": "func_name", "parameters": {"arg": "value"}}
+        # Note: HF template double-encodes args via |tojson, but we use single-encoding
+        # which is cleaner and still works with vllm's parser.
         if "tool_calls" in message and message["tool_calls"]:
             tool_call_strs = []
             for tool_call in message["tool_calls"]:
                 func_name = tool_call.function.name
-                args = tool_call.function.arguments
-                tool_call_strs.append(f"<function={func_name}>{args}</function>")
+                args = tool_call.function.arguments  # Already a JSON string
+                tool_call_strs.append(f'{{"name": "{func_name}", "parameters": {args}}}')
             output_str += "".join(tool_call_strs)
 
         output_str += "<|eot_id|>"
@@ -98,39 +107,49 @@ class Llama3Renderer(Renderer):
 
     def _parse_llama_tool_calls(
         self, content: str
-    ) -> tuple[list[ToolCall], list[UnparsedToolCall]]:
-        """Parse tool calls from Llama 3 format.
+    ) -> tuple[list[ToolCall], list[UnparsedToolCall], str]:
+        """Parse tool calls from Llama 3 JSON format.
 
-        Llama 3 uses: <function=function_name>{"arg": "value"}</function>
+        Format: {"name": "func_name", "parameters": {"arg": "value"}}
 
         Returns:
-            Tuple of (successfully parsed tool calls, failed parses).
+            Tuple of (successfully parsed tool calls, failed parses, remaining content).
         """
         tool_calls: list[ToolCall] = []
         unparsed_tool_calls: list[UnparsedToolCall] = []
+        remaining_content = content
 
-        for match in re.finditer(
-            r"<function=(\w+)>(.*?)</function>",
-            content,
-            re.DOTALL,
-        ):
-            raw_text = match.group(0)
-            func_name = match.group(1)
-            args_str = match.group(2).strip()
+        # Use JSON decoder to find and parse tool call objects
+        decoder = json.JSONDecoder()
+        search_start = 0
+
+        while search_start < len(content):
+            brace_pos = content.find("{", search_start)
+            if brace_pos == -1:
+                break
+
             try:
-                # Validate JSON
-                json.loads(args_str)
-                tool_calls.append(
-                    ToolCall(
-                        function=ToolCall.FunctionBody(name=func_name, arguments=args_str),
-                    )
-                )
-            except json.JSONDecodeError as e:
-                unparsed_tool_calls.append(
-                    UnparsedToolCall(raw_text=raw_text, error=f"Invalid JSON: {e}")
-                )
+                obj, end_idx = decoder.raw_decode(content[brace_pos:])
+                raw_text = content[brace_pos : brace_pos + end_idx]
 
-        return tool_calls, unparsed_tool_calls
+                # Check if it's a tool call (has name and parameters/arguments)
+                if "name" in obj and ("parameters" in obj or "arguments" in obj):
+                    func_name = obj["name"]
+                    params = obj.get("parameters") or obj.get("arguments")
+                    args_str = json.dumps(params) if isinstance(params, dict) else params
+
+                    tool_calls.append(
+                        ToolCall(
+                            function=ToolCall.FunctionBody(name=func_name, arguments=args_str),
+                        )
+                    )
+                    remaining_content = remaining_content.replace(raw_text, "", 1)
+
+                search_start = brace_pos + end_idx
+            except (json.JSONDecodeError, KeyError):
+                search_start = brace_pos + 1
+
+        return tool_calls, unparsed_tool_calls, remaining_content.strip()
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
         assistant_message, parse_success = parse_response_for_stop_token(
@@ -142,22 +161,16 @@ class Llama3Renderer(Renderer):
         assert isinstance(assistant_message["content"], str)
         content = assistant_message["content"]
 
-        # Parse tool calls
-        tool_calls, unparsed_tool_calls = self._parse_llama_tool_calls(content)
+        # Parse tool calls and get remaining content with tool calls stripped
+        tool_calls, unparsed_tool_calls, remaining_content = self._parse_llama_tool_calls(content)
         if tool_calls:
             assistant_message["tool_calls"] = tool_calls
         if unparsed_tool_calls:
             assistant_message["unparsed_tool_calls"] = unparsed_tool_calls
 
-        # Strip all function blocks from content (both parsed and unparsed)
+        # Update content to remaining content (tool calls stripped)
         if tool_calls or unparsed_tool_calls:
-            content = re.sub(
-                r"\s*<function=\w+>.*?</function>",
-                "",
-                content,
-                flags=re.DOTALL,
-            )
-            assistant_message["content"] = content.strip()
+            assistant_message["content"] = remaining_content
 
         return assistant_message, True
 
@@ -166,27 +179,20 @@ class Llama3Renderer(Renderer):
     ) -> list[Message]:
         """Create system message with Llama 3 tool specifications.
 
-        Llama 3.1 supports two tool calling formats. We use the function-tag format
-        which works for custom tools without special environment setup.
-
-        Reference: https://github.com/meta-llama/llama-models/blob/main/models/llama3_1/prompt_format.md
+        Note: HF's Llama template puts tool instructions in the user message, not
+        system. We use a system message for simplicity. The JSON format matches
+        what HF expects: {"name": function name, "parameters": dictionary of args}.
         """
         tools_text = ""
         if tools:
             tool_lines = "\n\n".join(json.dumps(tool, indent=2) for tool in tools)
-            tools_text = f"""You have access to the following functions:
+            # Wording matches HF template's tool instruction
+            tools_text = f"""You have access to the following functions. To call a function, please respond with JSON for a function call.
+
+Respond in the format {{"name": function name, "parameters": dictionary of argument name and its value}}.
+Do not use variables.
 
 {tool_lines}
-
-If you choose to call a function, ONLY reply in the following format with no prefix or suffix:
-
-<function=example_function_name>{{"example_name": "example_value"}}</function>
-
-Reminder:
-- Function calls MUST follow the specified format, start with <function= and end with </function>
-- Required parameters MUST be specified
-- Only call one function at a time
-- Put the entire function call reply on one line
 
 """
 

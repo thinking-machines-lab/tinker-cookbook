@@ -88,8 +88,8 @@ def generate_conversation(
         # Build content
         if has_thinking:
             content: str | list[ContentPart] = [
-                ThinkingPart(type="thinking", thinking=f"\nthink_{_rand_str(rng)}\n"),
-                TextPart(type="text", text=f"\n\nasst_{_rand_str(rng)}"),
+                ThinkingPart(type="thinking", thinking=f"think_{_rand_str(rng)}"),
+                TextPart(type="text", text=f"asst_{_rand_str(rng)}"),
             ]
         else:
             content = f"asst_{_rand_str(rng)}"
