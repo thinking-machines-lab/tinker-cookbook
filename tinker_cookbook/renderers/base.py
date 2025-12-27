@@ -176,10 +176,13 @@ class Message(TypedDict):
         renders "## Return of {tool_call_id}"). The value should match ToolCall.id from the
         assistant's tool_calls. Not all formats use IDs - GptOss/Harmony does not.
     name: NotRequired[str]
-        For tool result messages (role="tool"): The function name that was called. Used by
-        renderers whose wire format references calls by name (e.g., GptOss renders
-        "<|start|>functions.{name}..."). When constructing tool results, include both name
-        and tool_call_id when available - different renderers require different fields.
+        Has two uses depending on message role:
+        1. For tool result messages (role="tool"): The function name that was called.
+           Required by GptOss (renders "<|start|>functions.{name}..."), optional for others.
+        2. For other messages: Can override the display name in the message header.
+           Used by Kimi K2's tool definition messages (name="tool_declare").
+        When constructing tool results, include both name and tool_call_id when available
+        since different renderers require different fields.
 
     """
 

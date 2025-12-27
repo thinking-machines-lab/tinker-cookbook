@@ -121,8 +121,9 @@ class KimiK2Renderer(Renderer):
         (True) or stripped to empty <think></think> (False).
         """
         role = message["role"]
-        # For most roles, "name" can override the display name. But for tool messages,
-        # always use "tool" per HF template (name field is for GptOss, not display).
+        # For most roles, "name" can override the display name (e.g., "tool_declare" for
+        # tool definition messages). But for tool result messages, always use "tool" per
+        # HF template - the "name" field there represents the function name, not display.
         role_name = role if role == "tool" else message.get("name", role)
 
         # Build role token based on role type
