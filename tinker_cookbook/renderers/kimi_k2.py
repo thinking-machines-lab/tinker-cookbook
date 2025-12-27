@@ -121,18 +121,17 @@ class KimiK2Renderer(Renderer):
         (True) or stripped to empty <think></think> (False).
         """
         role = message["role"]
-        # For most roles, "name" can override the display name (e.g., "tool_declare" for
-        # tool definition messages). But for tool result messages, always use "tool" per
-        # HF template - the "name" field there represents the function name, not display.
-        role_name = role if role == "tool" else message.get("name", role)
 
         # Build role token based on role type
         if role == "user":
-            header_str = f"<|im_user|>{role_name}<|im_middle|>"
+            header_str = f"<|im_user|>{role}<|im_middle|>"
         elif role == "assistant":
-            header_str = f"<|im_assistant|>{role_name}<|im_middle|>"
+            header_str = f"<|im_assistant|>{role}<|im_middle|>"
         elif role == "system":
-            header_str = f"<|im_system|>{role_name}<|im_middle|>"
+            header_str = f"<|im_system|>{role}<|im_middle|>"
+        elif role == "tool_declare":
+            # Tool declaration uses system token but with "tool_declare" as display name
+            header_str = f"<|im_system|>{role}<|im_middle|>"
         elif role == "tool":
             header_str = f"<|im_system|>{role}<|im_middle|>"
             # Tool responses have special formatting - need tool_call_id to correlate with the call
@@ -147,7 +146,8 @@ class KimiK2Renderer(Renderer):
                 )
             header_str += f"## Return of {tool_call_id}\n"
         else:
-            header_str = f"<|im_system|>{role_name}<|im_middle|>"
+            # Unknown roles default to system-style formatting
+            header_str = f"<|im_system|>{role}<|im_middle|>"
 
         # Build output content
         output_str = ""
@@ -342,7 +342,7 @@ class KimiK2Renderer(Renderer):
         if tools:
             tools_payload = [{"type": "function", "function": tool} for tool in tools]
             tools_json = json.dumps(tools_payload, separators=(",", ":"))
-            messages.append(Message(role="system", content=tools_json, name="tool_declare"))
+            messages.append(Message(role="tool_declare", content=tools_json))
 
         # Regular system message second (use default if none provided)
         actual_system_prompt = system_prompt if system_prompt else self.DEFAULT_SYSTEM_PROMPT
