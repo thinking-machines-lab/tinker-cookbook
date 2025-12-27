@@ -3,70 +3,37 @@ Renderers for converting message lists into training and sampling prompts.
 
 Use viz_sft_dataset to visualize the output of different renderers. E.g.,
     python -m tinker_cookbook.supervised.viz_sft_dataset dataset_path=Tulu3Builder renderer_name=role_colon
-
-This module re-exports all renderer classes and types for backwards compatibility.
-Code that imports from tinker_cookbook.renderers will continue to work unchanged.
 """
 
 from tinker_cookbook.image_processing_utils import ImageProcessor
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
-# Base types and utilities
+# Types and utilities used by external code
 from tinker_cookbook.renderers.base import (
-    # Pydantic base
-    StrictBase,
-    # Tool types
-    ToolCall,
-    UnparsedToolCall,
     # Content part types
-    TextPart,
-    ImagePart,
-    ThinkingPart,
-    ToolCallPart,
-    UnparsedToolCallPart,
     ContentPart,
-    # Message types
-    Role,
-    Content,
+    ImagePart,
     Message,
-    RenderContext,
+    Role,
+    TextPart,
+    ThinkingPart,
+    ToolCall,
     ToolSpec,
+    # Renderer base
+    RenderContext,
+    Renderer,
+    TrainOnWhat,
     # Utility functions
     ensure_text,
-    ensure_list,
-    remove_thinking,
-    get_text_content,
     format_content_as_string,
-    # Parsing functions
+    get_text_content,
     parse_content_blocks,
-    parse_think_blocks,
-    # Renderer base class and related
-    RenderedMessage,
-    TrainOnWhat,
-    Renderer,
-    tokens_weights_from_strings_weights,
-    parse_response_for_stop_token,
-    # Image utilities
-    ImageProcessorProtocol,
-    image_to_chunk,
 )
 
-# Renderer implementations
-from tinker_cookbook.renderers.role_colon import RoleColonRenderer
-from tinker_cookbook.renderers.llama3 import Llama3Renderer
-from tinker_cookbook.renderers.qwen3 import (
-    Qwen3Renderer,
-    Qwen3DisableThinkingRenderer,
-    Qwen3InstructRenderer,
-    Qwen3VLRenderer,
-    Qwen3VLInstructRenderer,
-)
-from tinker_cookbook.renderers.deepseek_v3 import (
-    DeepSeekV3ThinkingRenderer,
-    DeepSeekV3DisableThinkingRenderer,
-)
-from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
+# Renderer classes used directly by tests
+from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3ThinkingRenderer
 from tinker_cookbook.renderers.gpt_oss import GptOssRenderer
+from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
 
 
 def get_renderer(
@@ -101,6 +68,19 @@ def get_renderer(
         ValueError: If the renderer name is unknown.
         AssertionError: If a VL renderer is requested without an image_processor.
     """
+    # Import renderer classes lazily to avoid circular imports and keep exports minimal
+    from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3DisableThinkingRenderer
+    from tinker_cookbook.renderers.gpt_oss import GptOssRenderer
+    from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
+    from tinker_cookbook.renderers.llama3 import Llama3Renderer
+    from tinker_cookbook.renderers.qwen3 import (
+        Qwen3DisableThinkingRenderer,
+        Qwen3InstructRenderer,
+        Qwen3VLInstructRenderer,
+        Qwen3VLRenderer,
+    )
+    from tinker_cookbook.renderers.role_colon import RoleColonRenderer
+
     if name == "role_colon":
         return RoleColonRenderer(tokenizer)
     elif name == "llama3":
@@ -140,50 +120,28 @@ def get_renderer(
 
 
 __all__ = [
-    # Base types
-    "StrictBase",
-    "ToolCall",
-    "UnparsedToolCall",
-    "TextPart",
-    "ImagePart",
-    "ThinkingPart",
-    "ToolCallPart",
-    "UnparsedToolCallPart",
+    # Types
     "ContentPart",
-    "Role",
-    "Content",
+    "ImagePart",
     "Message",
-    "RenderContext",
+    "Role",
+    "TextPart",
+    "ThinkingPart",
+    "ToolCall",
     "ToolSpec",
+    # Renderer base
+    "RenderContext",
+    "Renderer",
+    "TrainOnWhat",
     # Utility functions
     "ensure_text",
-    "ensure_list",
-    "remove_thinking",
-    "get_text_content",
     "format_content_as_string",
+    "get_text_content",
     "parse_content_blocks",
-    "parse_think_blocks",
-    # Renderer base
-    "RenderedMessage",
-    "TrainOnWhat",
-    "Renderer",
-    "tokens_weights_from_strings_weights",
-    "parse_response_for_stop_token",
-    # Image utilities
-    "ImageProcessorProtocol",
-    "image_to_chunk",
-    # Renderer implementations
-    "RoleColonRenderer",
-    "Llama3Renderer",
-    "Qwen3Renderer",
-    "Qwen3DisableThinkingRenderer",
-    "Qwen3InstructRenderer",
-    "Qwen3VLRenderer",
-    "Qwen3VLInstructRenderer",
-    "DeepSeekV3ThinkingRenderer",
-    "DeepSeekV3DisableThinkingRenderer",
-    "KimiK2Renderer",
-    "GptOssRenderer",
-    # Factory function
+    # Factory
     "get_renderer",
+    # Renderer classes (used by tests)
+    "DeepSeekV3ThinkingRenderer",
+    "GptOssRenderer",
+    "Qwen3Renderer",
 ]
