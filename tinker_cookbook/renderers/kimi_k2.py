@@ -39,7 +39,7 @@ _TOOL_CALLS_SECTION_RE = re.compile(
     re.DOTALL,
 )
 _TOOL_CALL_RE = re.compile(
-    r"<\|tool_call_begin\|>(.*?)<\|tool_call_argument_begin\|>(.*?)<\|tool_call_end\|>",
+    r"<\|tool_call_begin\|>\s*([^<]+:\d+)\s*<\|tool_call_argument_begin\|>\s*(.*?)\s*<\|tool_call_end\|>",
     re.DOTALL,
 )
 
