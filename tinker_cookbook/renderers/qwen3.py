@@ -22,7 +22,6 @@ from tinker_cookbook.renderers.base import (
     RenderContext,
     RenderedMessage,
     Renderer,
-    Role,
     TextPart,
     ThinkingPart,
     ToolSpec,
@@ -160,7 +159,8 @@ class Qwen3Renderer(Renderer):
         if self._should_add_think_prefix(message, output_content, ctx):
             # Matching the paper, we force the assistant to start with <think>. Some SFT datasets include
             # <think> in the assistant messages, so we don't need to re-add it in those cases.
-            header_str += "<think>\n"
+            # This goes in output (not header) so observation matches generation prompt.
+            output_content = "<think>\n" + output_content
 
         # Handle tool_calls field
         if "tool_calls" in message:
@@ -181,17 +181,6 @@ class Qwen3Renderer(Renderer):
             )
         ]
         return RenderedMessage(header=header, output=output)
-
-    def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
-        """Return the generation suffix for Qwen3.
-
-        For Qwen3 in thinking mode, we only add the role header (e.g., <|im_start|>assistant\n).
-        We do NOT add <think> here - the model generates that itself. This matches HF's
-        add_generation_prompt=True behavior.
-        """
-        maybe_newline = "\n" if ctx.idx > 0 else ""
-        header_str = f"{maybe_newline}<|im_start|>{role}\n"
-        return self.tokenizer.encode(header_str, add_special_tokens=False)
 
     @property
     def _end_message_token(self) -> int:
@@ -287,29 +276,36 @@ class Qwen3DisableThinkingRenderer(Qwen3Renderer):
     "non-thinking" mode while maintaining compatibility with the OpenAI endpoint.
     """
 
+    def _should_add_think_prefix(
+        self, message: Message, output_content: str, ctx: RenderContext
+    ) -> bool:
+        """Disable thinking models add empty thinking block instead of just <think>."""
+        return False
+
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
-        # Add empty thinking block only to the LAST assistant message (matching HF behavior)
+        # Get the base rendered message
+        rendered = super().render_message(message, ctx)
+
+        # Add empty thinking block to header for last assistant message
+        # This goes in header (weight=0) so observation matches generation prompt.
         if message["role"] == "assistant" and ctx.is_last:
             content = message.get("content", "")
-            message = message.copy()
             if isinstance(content, str):
-                if "<think>" not in content:
-                    message["content"] = "<think>\n\n</think>\n\n" + content
+                has_think = "<think>" in content
             else:
-                # List content - prepend empty ThinkingPart if no thinking already present
-                has_thinking = any(p["type"] == "thinking" for p in content)
-                if not has_thinking:
-                    message["content"] = [
-                        ThinkingPart(type="thinking", thinking="\n\n"),
-                        *content,
-                    ]
-        return super().render_message(message, ctx)
+                has_think = any(p["type"] == "thinking" for p in content)
 
-    def build_generation_prompt(
-        self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
-    ) -> tinker.ModelInput:
-        prefill = "<think>\n\n</think>\n\n" + (prefill or "")
-        return super().build_generation_prompt(messages, role, prefill)
+            if not has_think:
+                empty_think_tokens = self.tokenizer.encode(
+                    "<think>\n\n</think>\n\n", add_special_tokens=False
+                )
+                old_header_tokens = list(rendered.header.tokens) if rendered.header else []
+                new_header = tinker.EncodedTextChunk(tokens=old_header_tokens + empty_think_tokens)
+                rendered = RenderedMessage(
+                    header=new_header, output=rendered.output, stop_overlap=rendered.stop_overlap
+                )
+
+        return rendered
 
 
 class Qwen3InstructRenderer(Qwen3Renderer):

@@ -44,6 +44,7 @@ from tinker_cookbook.renderers import (
     ToolCall,
     get_renderer,
 )
+from tinker_cookbook.renderers.base import ensure_list
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
@@ -646,6 +647,167 @@ def test_qwen3_disable_thinking_4turn():
         f"Tinker and HuggingFace outputs differ:\n"
         f"TINKER:\n{tinker_decoded!r}\n\n"
         f"HUGGINGFACE:\n{hf_decoded!r}"
+    )
+
+
+# =============================================================================
+# Supervised/Generation/Parse Consistency Tests
+# =============================================================================
+
+
+def _split_by_weights(tokens: list[int], weights: list[float]) -> tuple[list[int], list[int]]:
+    """Split token sequence into observation (weight=0) and action (weight=1) parts.
+
+    Assumes weights are like 000...0111...1 (zeros then ones).
+    Returns (ob, ac) where ob has all weight=0 tokens and ac has all weight=1 tokens.
+    """
+    assert len(tokens) == len(weights), f"Token/weight length mismatch: {len(tokens)} vs {len(weights)}"
+
+    # Find the first non-zero weight
+    first_nonzero = None
+    for i, w in enumerate(weights):
+        if w > 0:
+            first_nonzero = i
+            break
+
+    if first_nonzero is None:
+        # All zeros - no action tokens
+        return tokens, []
+
+    # Verify the pattern: all zeros before first_nonzero, all ones after
+    for i, w in enumerate(weights):
+        if i < first_nonzero:
+            assert w == 0, f"Expected weight=0 at index {i}, got {w}"
+        else:
+            assert w == 1, f"Expected weight=1 at index {i}, got {w}"
+
+    ob = tokens[:first_nonzero]
+    ac = tokens[first_nonzero:]
+    return ob, ac
+
+
+def get_2turn_with_thinking() -> list[Message]:
+    """2-turn conversation with thinking content in assistant message.
+
+    For use with thinking-enabled renderers (qwen3, deepseekv3_thinking).
+    """
+    return [
+        {"role": "user", "content": "Hello, how are you?"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="\nLet me respond politely.\n"),
+                TextPart(type="text", text="\n\nI'm fine, thank you!"),
+            ],
+        },
+    ]
+
+
+# Models and renderers for the consistency test
+# Format: (model_name, renderer_name, conversation_fn)
+_CONSISTENCY_TEST_PARAMS = [
+    # Simple renderers
+    ("meta-llama/Llama-3.2-1B-Instruct", "llama3", get_basic_2turn_conversation),
+    ("meta-llama/Llama-3.2-1B-Instruct", "role_colon", get_basic_2turn_conversation),
+    # Qwen3 family - thinking enabled needs thinking content
+    ("Qwen/Qwen3-8B", "qwen3", get_2turn_with_thinking),
+    ("Qwen/Qwen3-8B", "qwen3_disable_thinking", get_basic_2turn_conversation),
+    ("Qwen/Qwen3-8B", "qwen3_instruct", get_basic_2turn_conversation),
+    # DeepSeek family - thinking enabled needs thinking content
+    ("deepseek-ai/DeepSeek-V3.1", "deepseekv3", get_basic_2turn_conversation),
+    ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking", get_2turn_with_thinking),
+    # GPT-OSS
+    ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning", get_basic_2turn_conversation),
+    # Kimi K2
+    ("moonshotai/Kimi-K2-Thinking", "kimi_k2", get_basic_2turn_conversation),
+]
+
+
+@pytest.mark.parametrize("model_name,renderer_name,conversation_fn", _CONSISTENCY_TEST_PARAMS)
+def test_supervised_generation_parse_consistency(
+    model_name: str, renderer_name: str, conversation_fn
+):
+    """Test consistency between build_supervised_example, build_generation_prompt, and parse_response.
+
+    For train_on_what=LAST_ASSISTANT_MESSAGE, this test verifies:
+    1. The supervised example produces weights like 000...0111...1
+    2. Split tokens into (ob, ac) based on weights
+    3. ob == build_generation_prompt(messages[:-1]).to_ints()
+    4. parse_response(ac) returns the final message
+
+    This ensures that:
+    - The observation tokens match what the model would see at generation time
+    - The action tokens can be parsed back to the original message
+    """
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer(renderer_name, tokenizer)
+
+    messages = conversation_fn()
+    assert len(messages) >= 2, "Need at least 2 messages for this test"
+    assert messages[-1]["role"] == "assistant", "Last message must be assistant"
+
+    prefix_messages = messages[:-1]
+    final_message = messages[-1]
+
+    # Build supervised example
+    from tinker_cookbook.renderers import TrainOnWhat
+
+    model_input, weights = renderer.build_supervised_example(
+        messages, train_on_what=TrainOnWhat.LAST_ASSISTANT_MESSAGE
+    )
+    sup_tokens = model_input.to_ints()
+    weights_list = weights.tolist()
+
+    # Split into observation and action
+    ob, ac = _split_by_weights(sup_tokens, weights_list)
+
+    # Build generation prompt for prefix
+    gen_prompt = renderer.build_generation_prompt(prefix_messages)
+    gen_tokens = gen_prompt.to_ints()
+
+    # Check 1: Observation should match generation prompt
+    ob_matches_gen = ob == gen_tokens
+    if not ob_matches_gen:
+        # Find where they diverge
+        min_len = min(len(ob), len(gen_tokens))
+        diverge_idx = min_len
+        for i in range(min_len):
+            if ob[i] != gen_tokens[i]:
+                diverge_idx = i
+                break
+
+        ob_decoded = tokenizer.decode(ob)
+        gen_decoded = tokenizer.decode(gen_tokens)
+
+        # Show the discrepancy
+        assert False, (
+            f"Observation tokens do not match generation prompt for {renderer_name}.\n"
+            f"Divergence at token {diverge_idx}:\n"
+            f"  ob[{diverge_idx}:]:  {ob[diverge_idx:diverge_idx+10]} = {tokenizer.decode(ob[diverge_idx:diverge_idx+10])!r}\n"
+            f"  gen[{diverge_idx}:]: {gen_tokens[diverge_idx:diverge_idx+10]} = {tokenizer.decode(gen_tokens[diverge_idx:diverge_idx+10])!r}\n"
+            f"\nFull observation ({len(ob)} tokens):\n{ob_decoded!r}\n"
+            f"\nFull generation prompt ({len(gen_tokens)} tokens):\n{gen_decoded!r}"
+        )
+
+    # Check 2: Parse the action tokens
+    parsed_message, parse_success = renderer.parse_response(ac)
+
+    # Check parse success
+    assert parse_success, (
+        f"Failed to parse action tokens for {renderer_name}.\n"
+        f"Action tokens: {ac}\n"
+        f"Decoded: {tokenizer.decode(ac)!r}\n"
+        f"Parsed message: {parsed_message}"
+    )
+
+    # Check 3: Parsed content should match final message content
+    # Normalize both to list form for comparison (handles string vs list[TextPart])
+    parsed_normalized = ensure_list(parsed_message["content"])
+    expected_normalized = ensure_list(final_message["content"])
+    assert parsed_normalized == expected_normalized, (
+        f"Parsed content does not match final message for {renderer_name}.\n"
+        f"Expected: {expected_normalized!r}\n"
+        f"Got: {parsed_normalized!r}"
     )
 
 

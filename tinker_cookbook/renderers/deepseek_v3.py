@@ -16,7 +16,6 @@ from tinker_cookbook.renderers.base import (
     RenderContext,
     RenderedMessage,
     Renderer,
-    Role,
     ToolCall,
     ToolSpec,
     UnparsedToolCall,
@@ -340,7 +339,7 @@ class DeepSeekV3DisableThinkingRenderer(DeepSeekV3ThinkingRenderer):
 
         For assistant messages (not following tool):
         - Strip any ThinkingPart from structured content
-        - Prepend </think> to signal non-thinking mode
+        - Add </think> to header to signal non-thinking mode
         """
         # Check if this assistant message follows a tool response
         follows_tool = ctx.prev_message is not None and ctx.prev_message["role"] == "tool"
@@ -356,18 +355,18 @@ class DeepSeekV3DisableThinkingRenderer(DeepSeekV3ThinkingRenderer):
                 # Strip <think>...</think> blocks from string content
                 text_content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
 
-            # Prepend </think> to signal non-thinking mode
             message = message.copy()
-            message["content"] = "</think>" + text_content
+            message["content"] = text_content
 
-        return super().render_message(message, ctx)
+        # Call parent to get base rendering
+        rendered = super().render_message(message, ctx)
 
-    def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
-        """Return <｜Assistant｜></think> for generation, or empty after tool messages."""
-        # No suffix after tool messages - content flows directly
-        if ctx.prev_message is not None and ctx.prev_message["role"] == "tool":
-            return []
-        # Otherwise: <｜Assistant｜></think>
-        role_token = self._get_special_token("Assistant")
-        think_close = self.tokenizer.encode("</think>", add_special_tokens=False)
-        return [role_token] + think_close
+        # Add </think> to header for assistant messages (not following tool)
+        # This goes in header (weight=0) so observation matches generation prompt.
+        if message["role"] == "assistant" and not follows_tool:
+            think_close_tokens = self.tokenizer.encode("</think>", add_special_tokens=False)
+            old_header_tokens = list(rendered.header.tokens) if rendered.header else []
+            new_header = tinker.EncodedTextChunk(tokens=old_header_tokens + think_close_tokens)
+            rendered = RenderedMessage(header=new_header, output=rendered.output)
+
+        return rendered
