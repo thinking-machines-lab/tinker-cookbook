@@ -583,3 +583,179 @@ def test_gptoss_create_system_prefix_with_tools():
         tools, system_prompt="You are helpful."
     )
     assert messages == messages2
+
+
+def test_gptoss_parse_multiple_tool_calls():
+    """Test parsing multiple tool calls from a single GptOss response.
+
+    When the model makes multiple tool calls in one response, all should be
+    parsed correctly with sequential IDs (functions.{name}:{idx}).
+    """
+    model_name = "openai/gpt-oss-20b"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("gpt_oss_medium_reasoning", tokenizer)
+
+    # Response with two tool calls in commentary channels
+    response_text = """<|channel|>commentary to=functions.get_weather<|constrain|>json<|message|>{"city": "Tokyo"}<|call|><|start|>assistant<|channel|>commentary to=functions.get_weather<|constrain|>json<|message|>{"city": "London"}<|call|>"""
+
+    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success is True
+    assert "tool_calls" in message
+    assert len(message["tool_calls"]) == 2
+
+    # First tool call
+    assert message["tool_calls"][0].function.name == "get_weather"
+    assert "Tokyo" in message["tool_calls"][0].function.arguments
+    assert message["tool_calls"][0].id == "functions.get_weather:0"
+
+    # Second tool call
+    assert message["tool_calls"][1].function.name == "get_weather"
+    assert "London" in message["tool_calls"][1].function.arguments
+    assert message["tool_calls"][1].id == "functions.get_weather:1"
+
+
+def test_gptoss_tool_response_extracts_function_name():
+    """Test that tool response rendering correctly extracts function name from tool_call_id.
+
+    The tool_call_id format is 'functions.{name}:{idx}', and the renderer should
+    extract the function name to use in the routing header.
+    """
+    model_name = "openai/gpt-oss-20b"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("gpt_oss_medium_reasoning", tokenizer)
+
+    # Test with various tool_call_id formats
+    test_cases = [
+        ("functions.get_weather:0", "get_weather"),
+        ("functions.search:5", "search"),
+        ("functions.complex_function_name:123", "complex_function_name"),
+    ]
+
+    for tool_call_id, expected_name in test_cases:
+        tool_message: Message = {
+            "role": "tool",
+            "content": '{"result": "success"}',
+            "tool_call_id": tool_call_id,
+        }
+
+        ctx = RenderContext(idx=0, is_last=False, prev_message=None)
+        rendered = renderer.render_message(tool_message, ctx)
+        header_str = tokenizer.decode(list(rendered.header.tokens))
+
+        assert f"functions.{expected_name}" in header_str, (
+            f"Expected 'functions.{expected_name}' in header for tool_call_id '{tool_call_id}'"
+        )
+        assert "to=assistant" in header_str
+
+
+def test_gptoss_parse_thinking_preserved_with_empty_final():
+    """Test that thinking is preserved even when final channel is empty.
+
+    Some responses may have analysis (thinking) but no final response content,
+    e.g., when the model decides to make tool calls instead of responding.
+    """
+    model_name = "openai/gpt-oss-20b"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("gpt_oss_medium_reasoning", tokenizer)
+
+    # Response with thinking in analysis channel but only tool calls (no final)
+    response_text = """<|channel|>analysis<|message|>I need to search for this information before responding.<|end|><|start|>assistant<|channel|>commentary to=functions.search<|constrain|>json<|message|>{"query": "latest news"}<|call|>"""
+
+    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success is True
+    # Content should be a list with ThinkingPart
+    content = message["content"]
+    assert isinstance(content, list), f"Expected list content, got {type(content)}"
+    thinking_parts = [p for p in content if p["type"] == "thinking"]
+    assert len(thinking_parts) == 1
+    assert "search for this information" in thinking_parts[0]["thinking"]
+    # Tool call should also be parsed
+    assert "tool_calls" in message
+    assert len(message["tool_calls"]) == 1
+
+
+def test_gptoss_parse_response_without_harmony_markers():
+    """Test parsing a simple response without Harmony format markers.
+
+    For backward compatibility, responses without channel markers should still
+    be parsed as plain text content.
+    """
+    model_name = "openai/gpt-oss-20b"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("gpt_oss_medium_reasoning", tokenizer)
+
+    # Simple response without channel markers
+    response_text = "Hello, how can I help you today?<|return|>"
+
+    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success is True
+    assert message["role"] == "assistant"
+    # Content should be plain string without the stop token
+    assert message["content"] == "Hello, how can I help you today?"
+
+
+def test_gptoss_parse_mixed_valid_and_invalid_tool_calls():
+    """Test that valid tool calls are parsed even when some have invalid JSON.
+
+    If one tool call has invalid JSON, it should be captured as unparsed while
+    other valid tool calls are still parsed correctly.
+    """
+    model_name = "openai/gpt-oss-20b"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("gpt_oss_medium_reasoning", tokenizer)
+
+    # Response with one valid and one invalid tool call
+    response_text = """<|channel|>commentary to=functions.get_weather<|constrain|>json<|message|>{"city": "Tokyo"}<|call|><|start|>assistant<|channel|>commentary to=functions.search<|constrain|>json<|message|>{invalid json}<|call|>"""
+
+    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success is True
+    # Valid tool call should be parsed
+    assert "tool_calls" in message
+    assert len(message["tool_calls"]) == 1
+    assert message["tool_calls"][0].function.name == "get_weather"
+    # Invalid tool call should be in unparsed
+    assert "unparsed_tool_calls" in message
+    assert len(message["unparsed_tool_calls"]) == 1
+    assert "Invalid JSON" in message["unparsed_tool_calls"][0].error
+
+
+def test_gptoss_tool_call_id_generation():
+    """Test that rendered tool calls get proper IDs in functions.{name}:{idx} format.
+
+    When rendering assistant messages with tool_calls, the IDs should follow
+    the Harmony format convention.
+    """
+    from tinker_cookbook.renderers import ToolCall
+
+    model_name = "openai/gpt-oss-20b"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("gpt_oss_medium_reasoning", tokenizer)
+
+    # Create tool calls without IDs (renderer should not need to generate them for rendering)
+    tool_calls = [
+        ToolCall(function=ToolCall.FunctionBody(name="func_a", arguments='{"x": 1}')),
+        ToolCall(function=ToolCall.FunctionBody(name="func_b", arguments='{"y": 2}')),
+    ]
+    assistant_message: Message = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": tool_calls,
+    }
+
+    ctx = RenderContext(idx=0, is_last=False, prev_message=None)
+    rendered = renderer.render_message(assistant_message, ctx)
+    output_str = tokenizer.decode(list(rendered.output[0].tokens))
+
+    # Verify both tool calls are in the output with proper routing
+    assert "<|channel|>commentary to=functions.func_a" in output_str
+    assert "<|channel|>commentary to=functions.func_b" in output_str
+    assert '{"x": 1}' in output_str
+    assert '{"y": 2}' in output_str
