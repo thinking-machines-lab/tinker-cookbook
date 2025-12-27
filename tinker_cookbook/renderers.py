@@ -419,6 +419,44 @@ def parse_content_blocks(
     return parts, unparsed_tool_calls
 
 
+def parse_think_blocks(content: str) -> list[ContentPart]:
+    """
+    Parse a string with only <think>...</think> tags into ThinkingPart/TextPart list.
+
+    This is a simpler version of parse_content_blocks for renderers that use
+    non-standard tool call formats (like DeepSeek's <｜tool▁calls▁begin｜>).
+
+    Args:
+        content: String potentially containing <think>...</think> blocks.
+
+    Returns:
+        List of ThinkingPart and TextPart in order. Empty if no <think> tags found.
+    """
+    if "<think>" not in content:
+        return []
+
+    parts: list[ContentPart] = []
+    pos = 0
+    pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+
+    for match in pattern.finditer(content):
+        text_before = content[pos:match.start()]
+        if text_before.strip():
+            parts.append(TextPart(type="text", text=text_before.strip()))
+
+        thinking = match.group(1)
+        if thinking.strip():
+            parts.append(ThinkingPart(type="thinking", thinking=thinking))
+
+        pos = match.end()
+
+    remaining = content[pos:]
+    if remaining.strip():
+        parts.append(TextPart(type="text", text=remaining.strip()))
+
+    return parts
+
+
 def _tool_call_payload(tool_call: ToolCall) -> dict[str, object]:
     """Minimal JSON payload for embedding in <tool_call> blocks."""
     # Convert from nested structure to flat format for compatibility
@@ -1735,7 +1773,7 @@ class DeepSeekV3ThinkingRenderer(Renderer):
         assert isinstance(assistant_message["content"], str)
         content = assistant_message["content"]
 
-        # Parse tool calls
+        # Parse DeepSeek-specific tool calls
         tool_calls, unparsed_tool_calls = self._parse_deepseek_tool_calls(content)
         if tool_calls:
             assistant_message["tool_calls"] = tool_calls
@@ -1750,7 +1788,14 @@ class DeepSeekV3ThinkingRenderer(Renderer):
                 content,
                 flags=re.DOTALL,
             )
-            assistant_message["content"] = content.strip()
+            content = content.strip()
+
+        # Parse <think>...</think> blocks into ThinkingPart/TextPart list
+        parts = parse_think_blocks(content)
+        if parts:
+            assistant_message["content"] = parts
+        else:
+            assistant_message["content"] = content
 
         return assistant_message, True
 
@@ -2258,7 +2303,62 @@ class GptOssRenderer(Renderer):
         return [self._return_token]
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
-        return parse_response_for_stop_token(response, self.tokenizer, self._return_token)
+        assistant_message, parse_success = parse_response_for_stop_token(
+            response, self.tokenizer, self._return_token
+        )
+        if not parse_success:
+            return assistant_message, False
+
+        assert isinstance(assistant_message["content"], str)
+        content = assistant_message["content"]
+
+        # Parse GptOss multi-channel format into content parts
+        # Format: <|channel|>channel_name<|message|>content<|end|> or <|return|>
+        # Channels: analysis (thinking), commentary (tool calls), final (response)
+        parts = self._parse_gptoss_channels(content)
+        if parts:
+            assistant_message["content"] = parts
+        # else: keep as string for backward compatibility
+
+        return assistant_message, True
+
+    def _parse_gptoss_channels(self, content: str) -> list[ContentPart]:
+        """Parse GptOss channel format into ContentPart list.
+
+        Channels:
+        - analysis: Chain-of-thought (maps to ThinkingPart)
+        - final: User-facing answer (maps to TextPart)
+        - commentary: Tool calls or preambles (maps to TextPart for now)
+        """
+        if "<|channel|>" not in content:
+            return []
+
+        parts: list[ContentPart] = []
+
+        # Pattern to match channel messages
+        # <|channel|>channel_name<|message|>content<|end|> or <|return|>
+        pattern = re.compile(
+            r"<\|channel\|>(\w+)(?:[^<]*)?<\|message\|>(.*?)(?:<\|end\|>|<\|return\|>|$)",
+            re.DOTALL,
+        )
+
+        for match in pattern.finditer(content):
+            channel = match.group(1)
+            msg_content = match.group(2)
+
+            if not msg_content.strip():
+                continue
+
+            if channel == "analysis":
+                parts.append(ThinkingPart(type="thinking", thinking=msg_content))
+            elif channel == "final":
+                parts.append(TextPart(type="text", text=msg_content))
+            elif channel == "commentary":
+                # Commentary without tool recipient is user-visible preamble
+                # (tool calls would need additional parsing of to=functions.x)
+                parts.append(TextPart(type="text", text=msg_content))
+
+        return parts
 
     def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
