@@ -87,24 +87,7 @@ class ChatSession:
             content = parsed_message["content"]
 
             # Format content for display
-            if isinstance(content, str):
-                display_content = content
-            else:
-                # List content - format each part
-                parts = []
-                for p in content:
-                    if p["type"] == "thinking":
-                        parts.append(f"<thinking>{p['thinking']}</thinking>")
-                    elif p["type"] == "text":
-                        parts.append(p["text"])
-                    elif p["type"] == "tool_call":
-                        tc = p["tool_call"]
-                        parts.append(f"<tool_call>{tc.function.name}({tc.function.arguments})</tool_call>")
-                    elif p["type"] == "unparsed_tool_call":
-                        parts.append(f"<unparsed_tool_call>{p['raw_text']}</unparsed_tool_call>")
-                    else:
-                        raise ValueError(f"Unknown content part type: {p['type']}")
-                display_content = "\n--------\n".join(parts)
+            display_content = renderers.format_content_as_string(content, separator="\n--------\n")
 
             self.add_assistant_message(display_content)
             return display_content

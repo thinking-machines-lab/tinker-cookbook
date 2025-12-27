@@ -271,6 +271,42 @@ def get_text_content(message: Message) -> str:
     return "".join(p["text"] for p in content if p["type"] == "text")
 
 
+def format_content_as_string(content: Content, separator: str = "\n") -> str:
+    """Format message content as a string, preserving all part types.
+
+    Unlike get_text_content which only extracts text parts, this formats
+    all content parts (thinking, text, tool_call, etc.) as a readable string.
+
+    This is useful for compatibility with APIs that expect string content
+    (e.g., OpenAI Chat Completions API), but we don't recommend it if you
+    need to ensure correctness - prefer working with structured content directly.
+
+    Args:
+        content: Message content (string or list of ContentPart).
+        separator: String to join parts with. Default is newline.
+
+    Returns:
+        Formatted string representation of all content parts.
+    """
+    if isinstance(content, str):
+        return content
+
+    parts = []
+    for p in content:
+        if p["type"] == "thinking":
+            parts.append(f"<thinking>{p['thinking']}</thinking>")
+        elif p["type"] == "text":
+            parts.append(p["text"])
+        elif p["type"] == "tool_call":
+            tc = p["tool_call"]
+            parts.append(f"<tool_call>{tc.function.name}({tc.function.arguments})</tool_call>")
+        elif p["type"] == "unparsed_tool_call":
+            parts.append(f"<unparsed_tool_call>{p['raw_text']}</unparsed_tool_call>")
+        else:
+            raise ValueError(f"Unknown content part type: {p['type']}")
+    return separator.join(parts)
+
+
 def _parse_tool_call_json(tool_call_str: str, raw_text: str) -> ToolCall | UnparsedToolCall:
     """Parse tool call JSON. Returns UnparsedToolCall on failure."""
     try:

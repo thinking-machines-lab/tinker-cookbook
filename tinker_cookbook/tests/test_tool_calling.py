@@ -11,7 +11,7 @@ These tests verify that renderers correctly handle:
 import pytest
 import tinker
 
-from tinker_cookbook.renderers import Message, RenderContext, get_renderer
+from tinker_cookbook.renderers import Message, RenderContext, get_renderer, get_text_content
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 # =============================================================================
@@ -89,8 +89,9 @@ def test_qwen3_parse_single_tool_call(model_name: str, renderer_name: str):
     assert "tool_calls" in message
     assert len(message["tool_calls"]) == 1
     assert message["tool_calls"][0].function.name == "search"
-    # Content should have tool_call block stripped
-    assert "<tool_call>" not in message["content"]
+    # Content should have tool_call block stripped (text content only)
+    text_content = get_text_content(message)
+    assert "<tool_call>" not in text_content
 
 
 @pytest.mark.parametrize(
@@ -174,8 +175,9 @@ def test_llama3_parse_tool_call():
     assert len(message["tool_calls"]) == 1
     assert message["tool_calls"][0].function.name == "get_weather"
     assert "San Francisco" in message["tool_calls"][0].function.arguments
-    # Content should have function block stripped
-    assert "<function=" not in message["content"]
+    # Content should have function block stripped (text content only)
+    text_content = get_text_content(message)
+    assert "<function=" not in text_content
 
 
 def test_deepseek_parse_tool_call():
@@ -198,8 +200,9 @@ def test_deepseek_parse_tool_call():
     assert len(message["tool_calls"]) == 1
     assert message["tool_calls"][0].function.name == "get_weather"
     assert "NYC" in message["tool_calls"][0].function.arguments
-    # Content should have tool calls section stripped
-    assert "<｜tool▁calls▁begin｜>" not in message["content"]
+    # Content should have tool calls section stripped (text content only)
+    text_content = get_text_content(message)
+    assert "<｜tool▁calls▁begin｜>" not in text_content
 
 
 # =============================================================================
