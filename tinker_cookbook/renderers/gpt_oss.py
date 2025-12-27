@@ -560,20 +560,35 @@ class GptOssRenderer(Renderer):
     ) -> list[Message]:
         """Create conversation prefix with tools in Harmony format.
 
-        Tools are defined in a developer message using TypeScript-ish syntax
-        in a `functions` namespace, following the OpenAI Harmony spec.
+        Returns a list of messages to prepend to conversations:
+        1. If tools present: A system message with tool routing instruction
+        2. A developer message with user instructions and tool definitions
+
+        Tools are defined using TypeScript-ish syntax in a `functions` namespace,
+        following the OpenAI Harmony spec.
+
+        Note: When using this with tools, you typically don't need use_system_prompt=True
+        since this method provides the necessary system setup for tool routing.
 
         Reference: https://raw.githubusercontent.com/openai/openai-cookbook/main/articles/openai-harmony.md
         """
+        messages: list[Message] = []
+
+        # Tool routing instruction goes in system message (per Harmony spec)
+        if tools:
+            messages.append(
+                Message(
+                    role=self._INTERNAL_SYSTEM_ROLE,
+                    content="Calls to these tools must go to the commentary channel: 'functions'.",
+                )
+            )
+
+        # User instructions and tool definitions go in developer message
         content_parts: list[str] = []
         if system_prompt:
             content_parts.append(f"# Instructions\n\n{system_prompt}")
 
         if tools:
-            # Add tool channel instruction when tools are present
-            content_parts.append(
-                "Calls to these tools must go to the commentary channel: 'functions'."
-            )
             tool_defs = [_format_tool_definition(tool) for tool in tools]
             tools_text = "\n\n".join(tool_defs)
             content_parts.append(
@@ -582,7 +597,8 @@ class GptOssRenderer(Renderer):
                 "} // namespace functions"
             )
 
-        if not content_parts:
-            return []
-        content = "\n\n".join(content_parts)
-        return [Message(role="developer", content=content)]
+        if content_parts:
+            content = "\n\n".join(content_parts)
+            messages.append(Message(role="developer", content=content))
+
+        return messages

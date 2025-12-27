@@ -121,7 +121,9 @@ class KimiK2Renderer(Renderer):
         (True) or stripped to empty <think></think> (False).
         """
         role = message["role"]
-        role_name = message.get("name", role)
+        # For most roles, "name" can override the display name. But for tool messages,
+        # always use "tool" per HF template (name field is for GptOss, not display).
+        role_name = role if role == "tool" else message.get("name", role)
 
         # Build role token based on role type
         if role == "user":
@@ -131,7 +133,7 @@ class KimiK2Renderer(Renderer):
         elif role == "system":
             header_str = f"<|im_system|>{role_name}<|im_middle|>"
         elif role == "tool":
-            header_str = f"<|im_system|>{role_name}<|im_middle|>"
+            header_str = f"<|im_system|>{role}<|im_middle|>"
             # Tool responses have special formatting - need tool_call_id to correlate with the call
             tool_call_id = message.get("tool_call_id", "")
             if not tool_call_id:

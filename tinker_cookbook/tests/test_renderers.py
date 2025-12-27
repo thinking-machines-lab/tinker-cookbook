@@ -161,8 +161,7 @@ def get_tool_call_conversation() -> list[Message]:
             "role": "tool",
             "content": '{"temperature": 72, "condition": "sunny"}',
             "tool_call_id": "call_123",
-            # Note: GptOss renderer requires "name" field for tool messages.
-            # Other renderers infer it from tool_call_id.
+            "name": "get_weather",  # Required by GptOss, optional for others
         },
         {"role": "assistant", "content": "The weather in San Francisco is sunny with 72°F."},
     ]
@@ -1051,6 +1050,7 @@ def _get_multiturn_tool_conversation() -> list[Message]:
             "role": "tool",
             "content": '{"temperature": 72, "condition": "sunny"}',
             "tool_call_id": "call_1",
+            "name": "get_weather",
         },
         {"role": "assistant", "content": "The weather in NYC is sunny with 72°F."},
         {"role": "user", "content": "What about San Francisco?"},
@@ -1071,6 +1071,7 @@ def _get_multiturn_tool_conversation() -> list[Message]:
             "role": "tool",
             "content": '{"temperature": 65, "condition": "foggy"}',
             "tool_call_id": "call_2",
+            "name": "get_weather",
         },
         {"role": "assistant", "content": "San Francisco is foggy at 65°F."},
     ]
@@ -1100,6 +1101,7 @@ def _get_multiturn_thinking_and_tool_conversation() -> list[Message]:
             "role": "tool",
             "content": '{"temperature": 72}',
             "tool_call_id": "call_1",
+            "name": "get_weather",
         },
         {
             "role": "assistant",
