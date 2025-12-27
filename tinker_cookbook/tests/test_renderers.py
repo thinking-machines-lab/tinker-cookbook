@@ -161,6 +161,8 @@ def get_tool_call_conversation() -> list[Message]:
             "role": "tool",
             "content": '{"temperature": 72, "condition": "sunny"}',
             "tool_call_id": "call_123",
+            # Note: GptOss renderer requires "name" field for tool messages.
+            # Other renderers infer it from tool_call_id.
         },
         {"role": "assistant", "content": "The weather in San Francisco is sunny with 72°F."},
     ]

@@ -20,9 +20,11 @@ Reference: https://raw.githubusercontent.com/openai/openai-cookbook/main/article
 
 import json
 import re
+import warnings
 from datetime import datetime
 
 import tinker
+import torch
 
 from tinker_cookbook.renderers.base import (
     ContentPart,
@@ -30,10 +32,12 @@ from tinker_cookbook.renderers.base import (
     RenderContext,
     RenderedMessage,
     Renderer,
+    Role,
     TextPart,
     ThinkingPart,
     ToolCall,
     ToolSpec,
+    TrainOnWhat,
     UnparsedToolCall,
     ensure_list,
     ensure_text,
@@ -175,14 +179,14 @@ class GptOssRenderer(Renderer):
     Reference: https://raw.githubusercontent.com/openai/openai-cookbook/main/articles/openai-harmony.md
     """
 
-    # System prompt template. Note: tool channel instructions are NOT included here;
-    # they are only added when tools are defined in the developer message.
-    system_prompt = (
-        "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\n"
+    # System prompt content (without rendering tokens). Tool channel instructions are NOT
+    # included here; they are only added when tools are defined in the developer message.
+    system_prompt_content = (
+        "You are ChatGPT, a large language model trained by OpenAI.\n"
         "Knowledge cutoff: 2024-06\n"
         "Current date: {current_date}\n\n"
         "Reasoning: {reasoning_effort}\n\n"
-        "# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>"
+        "# Valid channels: analysis, commentary, final. Channel must be included for every message."
     )
     use_system_prompt: bool = False
     reasoning_effort: str | None = None
@@ -205,6 +209,9 @@ class GptOssRenderer(Renderer):
             "Reasoning effort must be set iff using system prompt"
         )
 
+    # Internal role for OpenAI's system prompt (bypasses system->developer mapping)
+    _INTERNAL_SYSTEM_ROLE = "_gptoss_internal_system"
+
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         role = message["role"]
 
@@ -212,9 +219,13 @@ class GptOssRenderer(Renderer):
         if role == "tool":
             return self._render_tool_result_message(message, ctx)
 
-        # HF template maps "system" role to "developer" with special formatting
-        if role == "system":
+        # Internal system role renders as actual "system" without transformation
+        if role == self._INTERNAL_SYSTEM_ROLE:
+            role = "system"
+        # User-provided "system" messages map to "developer" (per HF template)
+        elif role == "system":
             role = "developer"
+
         header_str = f"<|start|>{role}"
         output_str = ""
 
@@ -245,9 +256,10 @@ class GptOssRenderer(Renderer):
                 # Final channel (Response Content)
                 output_str += f"<|channel|>final<|message|>{text_content}"
         elif message["role"] == "system":
-            # HF wraps system content as developer instructions
+            # User-provided system messages get "# Instructions" wrapper (rendered as developer)
             output_str += f"<|message|># Instructions\n\n{ensure_text(message['content'])}\n\n"
         else:
+            # user, developer, internal system, and other roles: plain content
             output_str += f"<|message|>{ensure_text(message['content'])}"
 
         # End token logic:
@@ -299,12 +311,24 @@ class GptOssRenderer(Renderer):
 
         Format: <|start|>functions.name to=assistant<|channel|>commentary<|message|>{result}<|end|>
 
-        Note: The tool name MUST be provided in the message's "name" field. We do not
-        track tool_call_id -> name mappings statefully since the renderer must be stateless.
+        IMPORTANT: The tool name MUST be provided in the message's "name" field.
+        The renderer is stateless and cannot track tool_call_id -> name mappings.
+        When constructing tool result messages, always include the "name" field:
+
+            {"role": "tool", "name": "get_weather", "content": "72 degrees", "tool_call_id": "..."}
+
+        If "name" is missing, this will produce "functions.unknown" which is incorrect.
         """
-        # Get the tool name from the "name" field (required per OpenAI API spec)
+        # Get the tool name from the "name" field
         tool_name = message.get("name", "")
         if not tool_name:
+            warnings.warn(
+                "Tool message missing 'name' field. GptOssRenderer requires the 'name' field "
+                "to render tool results correctly. Add 'name' to your tool messages: "
+                "{'role': 'tool', 'name': 'function_name', 'content': '...', 'tool_call_id': '...'}",
+                UserWarning,
+                stacklevel=3,
+            )
             tool_name = "unknown"
 
         # Ensure qualified with "functions." prefix
@@ -328,25 +352,48 @@ class GptOssRenderer(Renderer):
         ]
         return RenderedMessage(header=header, output=output)
 
-    def _build_system_prompt(self) -> str:
+    def _get_system_message(self) -> Message | None:
+        """Return system message if configured, else None.
+
+        Uses internal role to render as actual 'system' (not mapped to 'developer').
+        """
+        if not self.use_system_prompt:
+            return None
         current_date = (
             self.current_date
             if self.current_date is not None
             else datetime.now().strftime("%Y-%m-%d")
         )
-        return self.system_prompt.format(
+        content = self.system_prompt_content.format(
             current_date=current_date,
             reasoning_effort=self.reasoning_effort,
         )
+        return Message(role=self._INTERNAL_SYSTEM_ROLE, content=content)
 
     @property
     def _bos_tokens(self) -> list[int]:
-        tokens = []
-        if self.use_system_prompt:
-            tokens.extend(
-                self.tokenizer.encode(self._build_system_prompt(), add_special_tokens=False)
-            )
-        return tokens
+        # GptOss has no BOS token. System prompt is prepended as a message.
+        return []
+
+    def build_generation_prompt(
+        self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
+    ) -> tinker.ModelInput:
+        """Build generation prompt, prepending system message if configured."""
+        system_msg = self._get_system_message()
+        if system_msg:
+            messages = [system_msg] + list(messages)
+        return super().build_generation_prompt(messages, role, prefill)
+
+    def build_supervised_example(
+        self,
+        messages: list[Message],
+        train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_MESSAGE,
+    ) -> tuple[tinker.ModelInput, torch.Tensor]:
+        """Build supervised example, prepending system message if configured."""
+        system_msg = self._get_system_message()
+        if system_msg:
+            messages = [system_msg] + list(messages)
+        return super().build_supervised_example(messages, train_on_what)
 
     @property
     def _return_token(self) -> int:
@@ -426,7 +473,7 @@ class GptOssRenderer(Renderer):
                             function=ToolCall.FunctionBody(
                                 name=tool_name, arguments=msg_content.strip()
                             ),
-                            id=None,
+                            id=None,  # Harmony format doesn't include tool call IDs
                         )
                     )
                 except json.JSONDecodeError as e:
