@@ -105,19 +105,6 @@ class Qwen3Renderer(Renderer):
         """Wrap tool response content in Qwen's <tool_response> tags."""
         return f"<tool_response>\n{content}\n</tool_response>"
 
-    def _should_add_think_prefix(
-        self, message: Message, output_content: str, ctx: RenderContext
-    ) -> bool:
-        """Whether to add <think> prefix to the last assistant message.
-
-        Returns False - we don't auto-add <think> for SFT. If training data has
-        thinking content, it's preserved. If not, we don't artificially add it.
-        At inference time, the model generates <think> itself (HF behavior).
-
-        This ensures the consistency property: parsed(action) == original message.
-        """
-        return False
-
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         maybe_newline = "\n" if ctx.idx > 0 else ""
 
@@ -156,13 +143,6 @@ class Qwen3Renderer(Renderer):
         # Handle tool response wrapping
         if message["role"] == "tool":
             output_content = self._wrap_qwen_tool_response(output_content)
-
-        # Add <think> prefix for last assistant message if not already present
-        if self._should_add_think_prefix(message, output_content, ctx):
-            # Matching the paper, we force the assistant to start with <think>. Some SFT datasets include
-            # <think> in the assistant messages, so we don't need to re-add it in those cases.
-            # This goes in output (not header) so observation matches generation prompt.
-            output_content = "<think>\n" + output_content
 
         # Handle tool_calls field
         if "tool_calls" in message:
@@ -278,12 +258,6 @@ class Qwen3DisableThinkingRenderer(Qwen3Renderer):
     "non-thinking" mode while maintaining compatibility with the OpenAI endpoint.
     """
 
-    def _should_add_think_prefix(
-        self, message: Message, output_content: str, ctx: RenderContext
-    ) -> bool:
-        """Disable thinking models add empty thinking block instead of just <think>."""
-        return False
-
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         # Get the base rendered message
         rendered = super().render_message(message, ctx)
@@ -315,9 +289,8 @@ class Qwen3InstructRenderer(Qwen3Renderer):
     Renderer for Qwen3 instruct 2507 models. Unlike the earlier Qwen3 models, these models do not
     use the <think> tag at all.
 
-    Inherits from Qwen3Renderer but disables the <think> prefix for assistant messages.
-    ThinkingPart in content is still handled (rendered as <think>...</think>) in case
-    the conversation includes thinking, but no prefix is added automatically.
+    Inherits from Qwen3Renderer. ThinkingPart in content is still handled (rendered as
+    <think>...</think>) in case the conversation includes thinking.
     """
 
     @property
@@ -328,12 +301,6 @@ class Qwen3InstructRenderer(Qwen3Renderer):
         # This is a rare case that'll only occur if we prompt the instruct model
         # with a conversation from a different model.
         return True
-
-    def _should_add_think_prefix(
-        self, message: Message, output_content: str, ctx: RenderContext
-    ) -> bool:
-        """Instruct models don't use <think> prefix."""
-        return False
 
 
 class Qwen3VLRenderer(Qwen3Renderer):
@@ -434,14 +401,6 @@ class Qwen3VLRenderer(Qwen3Renderer):
         if message["role"] == "tool":
             output_chunks = self._wrap_qwen_tool_response_chunks(output_chunks)
 
-        # Check if any text chunk contains <think> already
-        output_content_for_think_check = "".join(
-            x["text"] for x in output_chunks if isinstance(x, dict) and x["type"] == "text"
-        )
-        if self._should_add_think_prefix(message, output_content_for_think_check, ctx):
-            # Matching the paper, we force the assistant to start with <think>. Some SFT datasets include
-            # <think> in the assistant messages, we so don't need to re-add it in those cases.
-            header_str += "<think>\n"
         if "tool_calls" in message:
             output_chunks += [
                 TextPart(
@@ -481,8 +440,4 @@ class Qwen3VLInstructRenderer(Qwen3VLRenderer):
     Unlike the Qwen3-VL Thinking models, The Qwen3-VL Instruct models do not use the <think> tag.
     """
 
-    def _should_add_think_prefix(
-        self, message: Message, output_content: str, ctx: RenderContext
-    ) -> bool:
-        """Instruct models don't use <think> prefix."""
-        return False
+    pass

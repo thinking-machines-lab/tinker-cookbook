@@ -269,22 +269,22 @@ def _prepare_conversation_for_model(
     return aug_convo, convo
 
 
-# Test matrix: models x conversations for generation tests
-_GENERATION_TEST_PARAMS = [
-    (model, conv_id)
-    for model in [
-        "meta-llama/Llama-3.2-1B-Instruct",
-        "Qwen/Qwen3-30B-A3B",
-        "deepseek-ai/DeepSeek-V3.1",
-        "openai/gpt-oss-20b",
-        "moonshotai/Kimi-K2-Thinking",
-        "Qwen/Qwen3-VL-30B-A3B-Instruct",
-    ]
-    for conv_id in ["basic_3turn", "system_3turn"]
+# Models for HF generation/supervised tests
+_HF_TEST_MODELS = [
+    "meta-llama/Llama-3.2-1B-Instruct",
+    "Qwen/Qwen3-30B-A3B",
+    "deepseek-ai/DeepSeek-V3.1",
+    "openai/gpt-oss-20b",
+    "moonshotai/Kimi-K2-Thinking",
+    "Qwen/Qwen3-VL-30B-A3B-Instruct",
 ]
 
+# Conversations for generation tests (end with user message)
+_GENERATION_CONVERSATIONS = ["basic_3turn", "system_3turn"]
 
-@pytest.mark.parametrize("model_name,conv_id", _GENERATION_TEST_PARAMS)
+
+@pytest.mark.parametrize("conv_id", _GENERATION_CONVERSATIONS)
+@pytest.mark.parametrize("model_name", _HF_TEST_MODELS)
 def test_generation_against_hf_chat_templates(model_name: str, conv_id: str):
     """Test generation prompt against HF chat templates.
 
@@ -319,23 +319,21 @@ def test_generation_against_hf_chat_templates(model_name: str, conv_id: str):
     )
 
 
-# Test matrix: models x conversations for supervised tests
-# Note: OpenAI excluded because we intentionally include empty analysis channel for train-test
-# consistency, which diverges from HF template (HF only adds analysis channel during generation)
-_SUPERVISED_TEST_PARAMS = [
-    (model, conv_id)
-    for model in [
-        "meta-llama/Llama-3.2-1B-Instruct",
-        "Qwen/Qwen3-30B-A3B",
-        "deepseek-ai/DeepSeek-V3.1",
-        "moonshotai/Kimi-K2-Thinking",
-        "Qwen/Qwen3-VL-30B-A3B-Instruct",
-    ]
-    for conv_id in ["basic_2turn", "system_2turn"]
+# Models for supervised tests (OpenAI excluded - analysis channel diverges from HF template)
+_SUPERVISED_TEST_MODELS = [
+    "meta-llama/Llama-3.2-1B-Instruct",
+    "Qwen/Qwen3-30B-A3B",
+    "deepseek-ai/DeepSeek-V3.1",
+    "moonshotai/Kimi-K2-Thinking",
+    "Qwen/Qwen3-VL-30B-A3B-Instruct",
 ]
 
+# Conversations for supervised tests (end with assistant message)
+_SUPERVISED_CONVERSATIONS = ["basic_2turn", "system_2turn"]
 
-@pytest.mark.parametrize("model_name,conv_id", _SUPERVISED_TEST_PARAMS)
+
+@pytest.mark.parametrize("conv_id", _SUPERVISED_CONVERSATIONS)
+@pytest.mark.parametrize("model_name", _SUPERVISED_TEST_MODELS)
 def test_supervised_example_against_hf_chat_templates(model_name: str, conv_id: str):
     """Test supervised example against HF chat templates.
 
@@ -686,27 +684,49 @@ def _split_by_weights(tokens: list[int], weights: list[float]) -> tuple[list[int
     return ob, ac
 
 
-# Models and renderers for the consistency test
-# Format: (model_name, renderer_name, conversation_fn)
-_CONSISTENCY_TEST_PARAMS = [
-    # Simple renderers
-    ("meta-llama/Llama-3.2-1B-Instruct", "llama3", get_basic_2turn_conversation),
-    ("meta-llama/Llama-3.2-1B-Instruct", "role_colon", get_basic_2turn_conversation),
-    # Qwen3 family
-    ("Qwen/Qwen3-8B", "qwen3", get_basic_2turn_conversation),
-    ("Qwen/Qwen3-8B", "qwen3_disable_thinking", get_basic_2turn_conversation),
-    ("Qwen/Qwen3-8B", "qwen3_instruct", get_basic_2turn_conversation),
-    # DeepSeek family
-    ("deepseek-ai/DeepSeek-V3.1", "deepseekv3", get_basic_2turn_conversation),
-    ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking", get_basic_2turn_conversation),
-    # GPT-OSS
-    ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning", get_basic_2turn_conversation),
-    # Kimi K2
-    ("moonshotai/Kimi-K2-Thinking", "kimi_k2", get_basic_2turn_conversation),
+def get_2turn_with_thinking() -> list[Message]:
+    """2-turn conversation with thinking content in assistant message."""
+    return [
+        {"role": "user", "content": "Hello, how are you?"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="\nLet me respond politely.\n"),
+                TextPart(type="text", text="\n\nI'm fine, thank you!"),
+            ],
+        },
+    ]
+
+
+# Renderers for the consistency test - (model_name, renderer_name)
+_CONSISTENCY_RENDERERS = [
+    ("meta-llama/Llama-3.2-1B-Instruct", "llama3"),
+    ("meta-llama/Llama-3.2-1B-Instruct", "role_colon"),
+    ("Qwen/Qwen3-8B", "qwen3"),
+    ("Qwen/Qwen3-8B", "qwen3_disable_thinking"),
+    ("Qwen/Qwen3-8B", "qwen3_instruct"),
+    ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
+    ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking"),
+    ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning"),
+    ("moonshotai/Kimi-K2-Thinking", "kimi_k2"),
+]
+
+# Conversations for the consistency test
+_CONSISTENCY_CONVERSATIONS = [
+    get_basic_2turn_conversation,
+    get_2turn_with_thinking,
 ]
 
 
-@pytest.mark.parametrize("model_name,renderer_name,conversation_fn", _CONSISTENCY_TEST_PARAMS)
+# Renderers that don't support ThinkingPart content (use ensure_text)
+_RENDERERS_WITHOUT_THINKING_SUPPORT = {"llama3", "role_colon"}
+
+# Renderers that strip thinking in non-thinking mode (conversation must not have ThinkingPart)
+_RENDERERS_WITH_THINKING_STRIPPING = {"qwen3_disable_thinking", "deepseekv3", "kimi_k2"}
+
+
+@pytest.mark.parametrize("conversation_fn", _CONSISTENCY_CONVERSATIONS)
+@pytest.mark.parametrize("model_name,renderer_name", _CONSISTENCY_RENDERERS)
 def test_supervised_generation_parse_consistency(
     model_name: str, renderer_name: str, conversation_fn
 ):
@@ -722,6 +742,13 @@ def test_supervised_generation_parse_consistency(
     - The observation tokens match what the model would see at generation time
     - The action tokens can be parsed back to the original message
     """
+    # Check if this combination is supported
+    has_thinking_content = conversation_fn == get_2turn_with_thinking
+    if has_thinking_content and renderer_name in _RENDERERS_WITHOUT_THINKING_SUPPORT:
+        pytest.skip(f"{renderer_name} doesn't support ThinkingPart content")
+    if has_thinking_content and renderer_name in _RENDERERS_WITH_THINKING_STRIPPING:
+        pytest.skip(f"{renderer_name} strips thinking content, breaking roundtrip consistency")
+
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer(renderer_name, tokenizer)
 
