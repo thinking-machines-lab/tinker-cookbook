@@ -45,6 +45,11 @@ class Llama3Renderer(Renderer):
     the HF template exactly, modify render_message to prepend this info for system messages.
     """
 
+    @property
+    def grows_by_extension(self) -> bool:
+        """Llama3 satisfies the extension property - no content is stripped from history."""
+        return True
+
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         # Determine role for header
         # Tool responses use "ipython" role in Llama 3 format
