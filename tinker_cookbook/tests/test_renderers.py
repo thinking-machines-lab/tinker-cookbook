@@ -659,7 +659,9 @@ def _split_by_weights(tokens: list[int], weights: list[float]) -> tuple[list[int
     Assumes weights are like 000...0111...1 (zeros then ones).
     Returns (ob, ac) where ob has all weight=0 tokens and ac has all weight=1 tokens.
     """
-    assert len(tokens) == len(weights), f"Token/weight length mismatch: {len(tokens)} vs {len(weights)}"
+    assert len(tokens) == len(weights), (
+        f"Token/weight length mismatch: {len(tokens)} vs {len(weights)}"
+    )
 
     # Find the first non-zero weight
     first_nonzero = None
@@ -793,8 +795,8 @@ def test_supervised_generation_parse_consistency(
         assert False, (
             f"Observation tokens do not match generation prompt for {renderer_name}.\n"
             f"Divergence at token {diverge_idx}:\n"
-            f"  ob[{diverge_idx}:]:  {ob[diverge_idx:diverge_idx+10]} = {tokenizer.decode(ob[diverge_idx:diverge_idx+10])!r}\n"
-            f"  gen[{diverge_idx}:]: {gen_tokens[diverge_idx:diverge_idx+10]} = {tokenizer.decode(gen_tokens[diverge_idx:diverge_idx+10])!r}\n"
+            f"  ob[{diverge_idx}:]:  {ob[diverge_idx : diverge_idx + 10]} = {tokenizer.decode(ob[diverge_idx : diverge_idx + 10])!r}\n"
+            f"  gen[{diverge_idx}:]: {gen_tokens[diverge_idx : diverge_idx + 10]} = {tokenizer.decode(gen_tokens[diverge_idx : diverge_idx + 10])!r}\n"
             f"\nFull observation ({len(ob)} tokens):\n{ob_decoded!r}\n"
             f"\nFull generation prompt ({len(gen_tokens)} tokens):\n{gen_decoded!r}"
         )
