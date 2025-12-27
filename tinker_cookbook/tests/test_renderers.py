@@ -829,27 +829,6 @@ def test_deepseek_post_tool_formatting():
 # =============================================================================
 
 
-# Renderers expected to have grows_by_extension=True (and configs where relevant)
-_EXTENSION_TRUE_CONFIGS = [
-    ("meta-llama/Llama-3.2-1B-Instruct", "llama3", {}),
-    ("meta-llama/Llama-3.2-1B-Instruct", "role_colon", {}),  # RoleColonRenderer
-    ("Qwen/Qwen3-8B", "qwen3_instruct", {}),
-    ("deepseek-ai/DeepSeek-V3.1", "deepseekv3", {}),  # DeepSeekV3DisableThinkingRenderer
-]
-
-# Renderers expected to have grows_by_extension=False (default configs)
-_EXTENSION_FALSE_CONFIGS = [
-    ("Qwen/Qwen3-8B", "qwen3", {}),  # Qwen3Renderer with strip_thinking_from_history=True
-    (
-        "deepseek-ai/DeepSeek-V3.1",
-        "deepseekv3_thinking",
-        {},
-    ),  # with strip_thinking_from_history=True
-    ("moonshotai/Kimi-K2-Thinking", "kimi_k2", {}),
-    ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning", {}),
-]
-
-
 def _get_multiturn_thinking_conversation() -> list[Message]:
     """Multi-turn conversation with thinking in assistant messages."""
     return [
