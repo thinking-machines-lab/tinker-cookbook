@@ -14,22 +14,76 @@ import tinker
 import torch
 
 from tinker_cookbook.renderers.base import (
-    ContentPart,
     Message,
     RenderContext,
     RenderedMessage,
     Renderer,
     Role,
-    TextPart,
-    ThinkingPart,
     ToolCall,
     ToolSpec,
     TrainOnWhat,
     UnparsedToolCall,
     ensure_list,
     ensure_text,
+    parse_think_blocks,
     parse_response_for_stop_token,
 )
+
+
+_TOOL_CALLS_SECTION_RE = re.compile(
+    r"<\|tool_calls_section_begin\|>(.*?)<\|tool_calls_section_end\|>"
+    r"|<\|tool_call_section_begin\|>(.*?)<\|tool_call_section_end\|>",
+    re.DOTALL,
+)
+_TOOL_CALL_RE = re.compile(
+    r"<\|tool_call_begin\|>\s*([^<]+:\d+)\s*<\|tool_call_argument_begin\|>\s*(.*?)\s*<\|tool_call_end\|>",
+    re.DOTALL,
+)
+
+
+def _split_tool_calls_section(content: str) -> tuple[str, str | None]:
+    match = _TOOL_CALLS_SECTION_RE.search(content)
+    if not match:
+        return content, None
+    tool_section = match.group(1) if match.group(1) is not None else match.group(2)
+    return content[: match.start()], tool_section
+
+
+def _extract_tool_name(tool_id: str) -> str:
+    if not tool_id:
+        return ""
+    name_part = tool_id.split(":", 1)[0]
+    if "." in name_part:
+        _, name_part = name_part.split(".", 1)
+    return name_part
+
+
+def _parse_tool_calls_section(
+    tool_section: str,
+) -> tuple[list[ToolCall], list[UnparsedToolCall]]:
+    tool_calls: list[ToolCall] = []
+    unparsed_tool_calls: list[UnparsedToolCall] = []
+
+    for match in _TOOL_CALL_RE.finditer(tool_section):
+        raw_text = match.group(0)
+        tool_id = match.group(1).strip()
+        args_str = match.group(2).strip()
+        func_name = _extract_tool_name(tool_id)
+
+        try:
+            json.loads(args_str)
+            tool_calls.append(
+                ToolCall(
+                    function=ToolCall.FunctionBody(name=func_name, arguments=args_str),
+                    id=tool_id if tool_id else None,
+                )
+            )
+        except json.JSONDecodeError as e:
+            unparsed_tool_calls.append(
+                UnparsedToolCall(raw_text=raw_text, error=f"Invalid JSON: {e}")
+            )
+
+    return tool_calls, unparsed_tool_calls
 
 
 class KimiK2Renderer(Renderer):
@@ -101,8 +155,10 @@ class KimiK2Renderer(Renderer):
             # Handle tool calls
             if "tool_calls" in message and message["tool_calls"]:
                 output_str += "<|tool_calls_section_begin|>"
-                for tool_call in message["tool_calls"]:
-                    tool_id = tool_call.id or ""
+                for idx, tool_call in enumerate(message["tool_calls"]):
+                    tool_id = tool_call.id
+                    if not tool_id:
+                        tool_id = f"functions.{tool_call.function.name}:{idx}"
                     args = tool_call.function.arguments
                     output_str += f"<|tool_call_begin|>{tool_id}<|tool_call_argument_begin|>{args}<|tool_call_end|>"
                 output_str += "<|tool_calls_section_end|>"
@@ -178,8 +234,10 @@ class KimiK2Renderer(Renderer):
             is_assistant = message["role"] == "assistant"
             is_user_or_system = message["role"] in ["user", "system"]
 
-            # For Kimi K2, preserve thinking only for last non-tool-call assistant
-            is_last_assistant = idx >= last_assistant_idx and is_assistant
+            # For Kimi K2, preserve thinking only for the suffix after the last non-tool-call assistant.
+            is_last_assistant = (
+                is_assistant and last_assistant_idx != -1 and idx >= last_assistant_idx
+            )
             ctx = RenderContext(
                 idx=idx,
                 is_last=is_last_assistant,
@@ -239,73 +297,17 @@ class KimiK2Renderer(Renderer):
         content = assistant_message["content"]
         assert isinstance(content, str)
 
-        # Extract thinking content if present
-        think_match = re.search(r"<think>(.*?)</think>", content, re.DOTALL)
-        if think_match:
-            thinking = think_match.group(1)
-            # Remove the think block from content
-            remaining_content = content[think_match.end() :].lstrip()
-            # Return content as list with ThinkingPart and TextPart
-            content_parts: list[ContentPart] = []
-            if thinking:  # Omit empty thinking
-                content_parts.append(ThinkingPart(type="thinking", thinking=thinking))
-            content_parts.append(TextPart(type="text", text=remaining_content))
-            assistant_message["content"] = content_parts
-            content = remaining_content  # Update content for tool call parsing below
-
         # Handle tool calls if present
-        if "<|tool_calls_section_begin|>" in content:
-            tool_section_match = re.search(
-                r"<\|tool_calls_section_begin\|>(.*?)<\|tool_calls_section_end\|>",
-                content,
-                re.DOTALL,
-            )
-            if tool_section_match:
-                tool_section = tool_section_match.group(1)
-                tool_calls: list[ToolCall] = []
-                unparsed_tool_calls: list[UnparsedToolCall] = []
+        text_content, tool_section = _split_tool_calls_section(content)
+        if tool_section is not None:
+            tool_calls, unparsed_tool_calls = _parse_tool_calls_section(tool_section)
+            if tool_calls:
+                assistant_message["tool_calls"] = tool_calls
+            if unparsed_tool_calls:
+                assistant_message["unparsed_tool_calls"] = unparsed_tool_calls
 
-                # Parse individual tool calls
-                # Tool ID format: "functions.{func_name}:{idx}" e.g. "functions.get_weather:0"
-                tool_call_pattern = r"<\|tool_call_begin\|>(.*?)<\|tool_call_argument_begin\|>(.*?)<\|tool_call_end\|>"
-                for match in re.finditer(tool_call_pattern, tool_section, re.DOTALL):
-                    raw_text = match.group(0)
-                    tool_id = match.group(1).strip()
-                    args_str = match.group(2).strip()
-
-                    # Extract function name from tool_id (format: "functions.{name}:{idx}")
-                    func_name = ""
-                    if tool_id and "." in tool_id:
-                        # Split on first dot to get "functions" prefix and the rest
-                        parts = tool_id.split(".", 1)
-                        if len(parts) == 2:
-                            # Split on colon to separate name from index
-                            name_part = parts[1].split(":")[0] if ":" in parts[1] else parts[1]
-                            func_name = name_part
-
-                    # Try to parse as JSON to validate, but store as string
-                    try:
-                        json.loads(args_str)
-                        tool_calls.append(
-                            ToolCall(
-                                function=ToolCall.FunctionBody(name=func_name, arguments=args_str),
-                                id=tool_id if tool_id else None,
-                            )
-                        )
-                    except json.JSONDecodeError as e:
-                        unparsed_tool_calls.append(
-                            UnparsedToolCall(raw_text=raw_text, error=f"Invalid JSON: {e}")
-                        )
-
-                if tool_calls:
-                    assistant_message["tool_calls"] = tool_calls
-                if unparsed_tool_calls:
-                    assistant_message["unparsed_tool_calls"] = unparsed_tool_calls
-
-                # Remove tool section from content (both parsed and unparsed)
-                if tool_calls or unparsed_tool_calls:
-                    content = content[: content.find("<|tool_calls_section_begin|>")]
-                    assistant_message["content"] = content
+        content_parts = parse_think_blocks(text_content)
+        assistant_message["content"] = content_parts if content_parts is not None else text_content
 
         return assistant_message, True
 
@@ -315,8 +317,10 @@ class KimiK2Renderer(Renderer):
         """Create system messages with Kimi K2 tool specifications.
 
         Per the HuggingFace chat template, Kimi K2 places the tool_declare message
-        BEFORE the regular system message. If no system_prompt is provided, uses
-        the default system prompt to match HuggingFace chat template behavior.
+        BEFORE the regular system message. The tool_declare payload expects the
+        OpenAI-style tool schema ({"type":"function","function":{...}}).
+        If no system_prompt is provided, uses the default system prompt to match
+        HuggingFace chat template behavior.
 
         Reference: https://huggingface.co/moonshotai/Kimi-K2-Thinking/blob/main/chat_template.jinja
         """
@@ -324,7 +328,8 @@ class KimiK2Renderer(Renderer):
 
         # Tool declaration message comes first (per HF chat template)
         if tools:
-            tools_json = json.dumps(tools, separators=(",", ":"))
+            tools_payload = [{"type": "function", "function": tool} for tool in tools]
+            tools_json = json.dumps(tools_payload, separators=(",", ":"))
             messages.append(Message(role="system", content=tools_json, name="tool_declare"))
 
         # Regular system message second (use default if none provided)
