@@ -40,9 +40,6 @@ from tinker_cookbook.renderers.base import (
     # Parsing functions
     parse_content_blocks,
     parse_think_blocks,
-    # Internal helpers (exported for completeness)
-    _parse_tool_call_json,
-    _tool_call_payload,
     # Renderer base class and related
     RenderedMessage,
     TrainOnWhat,
