@@ -23,3 +23,5 @@ jobs:
 
       - name: pytest
         run: uv run pytest tinker_cookbook
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
