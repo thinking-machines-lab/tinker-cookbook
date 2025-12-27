@@ -23,7 +23,6 @@ from tinker_cookbook.renderers.base import (
     RenderedMessage,
     Renderer,
     TextPart,
-    ThinkingPart,
     ToolSpec,
     UnparsedToolCall,
     _tool_call_payload,
