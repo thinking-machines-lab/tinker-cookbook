@@ -1,0 +1,469 @@
+"""
+Qwen3 family renderers - text and vision-language models.
+
+Includes:
+- Qwen3Renderer: Base Qwen3 with thinking enabled
+- Qwen3DisableThinkingRenderer: Qwen3 with thinking disabled
+- Qwen3InstructRenderer: Qwen3 instruct 2507 models (no <think> tag)
+- Qwen3VLRenderer: Vision-language Qwen3 with thinking
+- Qwen3VLInstructRenderer: Vision-language instruct models
+"""
+
+import json
+from typing import cast
+
+import tinker
+
+from tinker_cookbook.image_processing_utils import ImageProcessor
+from tinker_cookbook.renderers.base import (
+    ImagePart,
+    ImageProcessorProtocol,
+    Message,
+    RenderContext,
+    RenderedMessage,
+    Renderer,
+    Role,
+    TextPart,
+    ThinkingPart,
+    ToolSpec,
+    UnparsedToolCall,
+    _tool_call_payload,
+    image_to_chunk,
+    parse_content_blocks,
+    parse_response_for_stop_token,
+    remove_thinking,
+)
+from tinker_cookbook.tokenizer_utils import Tokenizer
+
+
+class Qwen3Renderer(Renderer):
+    """
+    Renderer for Qwen3 models with thinking enabled.
+
+    This renderer is designed to match HuggingFace's Qwen3 chat template behavior
+    (with enable_thinking=True, which is the default). This ensures compatibility
+    with the OpenAI-compatible /chat/completions endpoint, which uses HF templates.
+
+    Reference: https://huggingface.co/Qwen/Qwen3-8B/blob/main/tokenizer_config.json
+
+    Format:
+        <|im_start|>system
+        You are Qwen, created by Alibaba Cloud.<|im_end|>
+        <|im_start|>user
+        What can you help me with?<|im_end|>
+        <|im_start|>assistant
+        <think>
+        [reasoning content]
+        </think>
+        I can help you with...<|im_end|>
+
+    The default strip_thinking_from_history=True matches HF behavior where thinking
+    blocks are stripped from historical assistant messages in multi-turn conversations.
+    Use strip_thinking_from_history=False for multi-turn RL to get the extension property.
+    """
+
+    def __init__(self, tokenizer: Tokenizer, strip_thinking_from_history: bool = True):
+        """
+        Args:
+            tokenizer: The tokenizer to use for encoding.
+            strip_thinking_from_history: When True (default), strips <think>...</think> blocks
+                from assistant messages in multi-turn history. This matches HuggingFace's
+                Qwen3 chat template behavior. Set to False to preserve thinking in history
+                (useful for multi-turn RL where you need the extension property).
+
+        Note: When strip_thinking_from_history=True, this renderer produces identical
+        tokens to HuggingFace's apply_chat_template with enable_thinking=True.
+
+        See /rl/sequence-extension in the docs for details on how strip_thinking_from_history
+        affects multi-turn RL compute efficiency.
+        """
+        super().__init__(tokenizer)
+        self.strip_thinking_from_history = strip_thinking_from_history
+
+    def _get_qwen_role_for_message(self, message: Message) -> str:
+        """Get the role to use for rendering a message in Qwen format.
+
+        Per HuggingFace Qwen3 chat template, tool messages are rendered with role "user".
+        """
+        role = message["role"]
+        if role == "tool":
+            return "user"
+        return role
+
+    def _wrap_qwen_tool_response(self, content: str) -> str:
+        """Wrap tool response content in Qwen's <tool_response> tags."""
+        return f"<tool_response>\n{content}\n</tool_response>"
+
+    def _should_add_think_prefix(
+        self, message: Message, output_content: str, ctx: RenderContext
+    ) -> bool:
+        """Whether to add <think> prefix to the last assistant message.
+
+        Thinking-enabled models (default) check if this is the last assistant message
+        and if <think> is not already present. Override in subclasses like
+        Qwen3InstructRenderer to disable the <think> prefix entirely.
+        """
+        return message["role"] == "assistant" and "<think>" not in output_content and ctx.is_last
+
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        maybe_newline = "\n" if ctx.idx > 0 else ""
+
+        role = self._get_qwen_role_for_message(message)
+        header_str = f"{maybe_newline}<|im_start|>{role}\n"
+
+        content = message["content"]
+
+        if isinstance(content, list):
+            # Structured content - handle with list operations
+            parts = content
+            if (
+                self.strip_thinking_from_history
+                and message["role"] == "assistant"
+                and not ctx.is_last
+            ):
+                # Remove thinking parts for historical messages
+                parts = remove_thinking(parts)
+            # Render parts in order, preserving interleaved thinking/text structure.
+            # No separator needed - whitespace is preserved in TextPart for roundtrip identity.
+            rendered_parts = []
+            for p in parts:
+                if p["type"] == "thinking":
+                    rendered_parts.append(f"<think>{p['thinking']}</think>")
+                elif p["type"] == "text":
+                    rendered_parts.append(p["text"])
+                # ToolCallPart handled via message's tool_calls field
+            output_content = "".join(rendered_parts)
+        else:
+            # String content - pass through as-is.
+            # Note: strip_thinking_from_history only works with list-based content.
+            # For stripping to work on historical messages, use structured content
+            # with ThinkingPart separated from text (as returned by parse_response).
+            output_content = content
+
+        # Handle tool response wrapping
+        if message["role"] == "tool":
+            output_content = self._wrap_qwen_tool_response(output_content)
+
+        # Add <think> prefix for last assistant message if not already present
+        if self._should_add_think_prefix(message, output_content, ctx):
+            # Matching the paper, we force the assistant to start with <think>. Some SFT datasets include
+            # <think> in the assistant messages, so we don't need to re-add it in those cases.
+            header_str += "<think>\n"
+
+        # Handle tool_calls field
+        if "tool_calls" in message:
+            # Add leading newline to match HF template behavior
+            output_content += "\n" + "\n".join(
+                [
+                    f"<tool_call>\n{json.dumps(_tool_call_payload(tool_call))}\n</tool_call>"
+                    for tool_call in message["tool_calls"]
+                ]
+            )
+        output_content += "<|im_end|>"
+        header = tinker.types.EncodedTextChunk(
+            tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
+        )
+        output: list[tinker.ModelInputChunk] = [
+            tinker.types.EncodedTextChunk(
+                tokens=self.tokenizer.encode(output_content, add_special_tokens=False)
+            )
+        ]
+        return RenderedMessage(header=header, output=output)
+
+    def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
+        """Return the generation suffix for Qwen3.
+
+        For Qwen3 in thinking mode, we only add the role header (e.g., <|im_start|>assistant\n).
+        We do NOT add <think> here - the model generates that itself. This matches HF's
+        add_generation_prompt=True behavior.
+        """
+        maybe_newline = "\n" if ctx.idx > 0 else ""
+        header_str = f"{maybe_newline}<|im_start|>{role}\n"
+        return self.tokenizer.encode(header_str, add_special_tokens=False)
+
+    @property
+    def _end_message_token(self) -> int:
+        tokens = self.tokenizer.encode("<|im_end|>", add_special_tokens=False)
+        assert len(tokens) == 1, f"Expected single token for <|im_end|>, got {len(tokens)}"
+        return tokens[0]
+
+    def get_stop_sequences(self) -> list[int]:
+        return [self._end_message_token]
+
+    def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+        assistant_message, parse_success = parse_response_for_stop_token(
+            response, self.tokenizer, self._end_message_token
+        )
+        if not parse_success:
+            return assistant_message, False
+
+        # Parse <think>...</think> and <tool_call>...</tool_call> blocks together
+        # to preserve ordering. Tool calls use Qwen's format:
+        # - https://qwen.readthedocs.io/en/latest/getting_started/concepts.html#tool-calling
+        # - https://github.com/QwenLM/Qwen-Agent/blob/main/qwen_agent/llm/fncall_prompts/nous_fncall_prompt.py#L279-L282
+        assert isinstance(assistant_message["content"], str)
+        content = assistant_message["content"]
+
+        # Parse all blocks in one pass, preserving order
+        parts = parse_content_blocks(content)
+
+        if parts is not None:
+            assistant_message["content"] = parts
+
+            # Also populate tool_calls and unparsed_tool_calls fields for backward compatibility
+            # TODO: Consider moving away from TypedDicts for part types - current approach
+            # relies on runtime type checking (p["type"] == "tool_call") without static guarantees.
+            tool_calls = [p["tool_call"] for p in parts if p["type"] == "tool_call"]
+            if tool_calls:
+                assistant_message["tool_calls"] = tool_calls
+
+            unparsed = [
+                UnparsedToolCall(raw_text=p["raw_text"], error=p["error"])
+                for p in parts
+                if p["type"] == "unparsed_tool_call"
+            ]
+            if unparsed:
+                assistant_message["unparsed_tool_calls"] = unparsed
+        else:
+            # No special blocks found - keep as string for backward compatibility
+            assistant_message["content"] = content
+
+        return assistant_message, True
+
+    def create_conversation_prefix_with_tools(
+        self, tools: list[ToolSpec], system_prompt: str = ""
+    ) -> list[Message]:
+        """Create system message with Qwen3 tool specifications.
+
+        Qwen3 uses XML `<tools>` tags with JSON tool definitions appended to the
+        system message content.
+
+        Reference: https://huggingface.co/Qwen/Qwen3-8B/blob/main/tokenizer_config.json
+        """
+        tools_text = ""
+        if tools:
+            tool_lines = "\n".join(json.dumps(tool, separators=(",", ":")) for tool in tools)
+            tools_text = f"""
+
+# Tools
+
+You may call one or more functions to assist with the user query.
+
+You are provided with function signatures within <tools></tools> XML tags:
+<tools>
+{tool_lines}
+</tools>
+
+For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
+<tool_call>
+{{"name": <function-name>, "arguments": <args-json-object>}}
+</tool_call>"""
+
+        return [Message(role="system", content=system_prompt + tools_text)]
+
+
+class Qwen3DisableThinkingRenderer(Qwen3Renderer):
+    """
+    Renderer for Qwen3 hybrid models with thinking disabled.
+
+    This renderer matches HuggingFace's Qwen3 chat template behavior with
+    enable_thinking=False (or thinking=False for apply_chat_template). It adds
+    empty <think>\\n\\n</think>\\n\\n blocks to assistant messages, signaling to
+    the model that it should respond directly without extended reasoning.
+
+    Use this renderer when you want to train or sample from Qwen3 models in
+    "non-thinking" mode while maintaining compatibility with the OpenAI endpoint.
+    """
+
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        # Add empty thinking block only to the LAST assistant message (matching HF behavior)
+        if message["role"] == "assistant" and ctx.is_last:
+            content = message.get("content", "")
+            message = message.copy()
+            if isinstance(content, str):
+                if "<think>" not in content:
+                    message["content"] = "<think>\n\n</think>\n\n" + content
+            else:
+                # List content - prepend empty ThinkingPart if no thinking already present
+                has_thinking = any(p["type"] == "thinking" for p in content)
+                if not has_thinking:
+                    message["content"] = [
+                        ThinkingPart(type="thinking", thinking="\n\n"),
+                        *content,
+                    ]
+        return super().render_message(message, ctx)
+
+    def build_generation_prompt(
+        self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
+    ) -> tinker.ModelInput:
+        prefill = "<think>\n\n</think>\n\n" + (prefill or "")
+        return super().build_generation_prompt(messages, role, prefill)
+
+
+class Qwen3InstructRenderer(Qwen3Renderer):
+    """
+    Renderer for Qwen3 instruct 2507 models. Unlike the earlier Qwen3 models, these models do not
+    use the <think> tag at all.
+
+    Inherits from Qwen3Renderer but disables the <think> prefix for assistant messages.
+    ThinkingPart in content is still handled (rendered as <think>...</think>) in case
+    the conversation includes thinking, but no prefix is added automatically.
+    """
+
+    def _should_add_think_prefix(
+        self, message: Message, output_content: str, ctx: RenderContext
+    ) -> bool:
+        """Instruct models don't use <think> prefix."""
+        return False
+
+
+class Qwen3VLRenderer(Qwen3Renderer):
+    """
+    Vision-language renderer for Qwen3-VL models with thinking support.
+
+    Format like this:
+        <|im_start|>system
+        You are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>
+        <|im_start|>user
+        What can you help me with?<|im_end|>
+        <|im_start|>assistant
+        <think>
+
+        </think>
+        I can help you with...<|im_end|>
+
+    The default strip_thinking_from_history=True matches the non-VL Qwen3Renderer behavior.
+    """
+
+    image_processor: ImageProcessor
+
+    def __init__(
+        self,
+        tokenizer: Tokenizer,
+        image_processor: ImageProcessor,
+        strip_thinking_from_history: bool = True,
+    ):
+        self.tokenizer = tokenizer
+        self.image_processor = image_processor
+        self.strip_thinking_from_history = strip_thinking_from_history
+
+    def _preprocess_message_parts(
+        self, message: Message, *, strip_thinking: bool = False
+    ) -> list[ImagePart | TextPart]:
+        """Convert message content to list form for VL rendering.
+
+        Converts ThinkingPart to <think>...</think> text (or strips if strip_thinking=True).
+        Wraps images with vision tokens. ToolCallPart is not supported in VL content list
+        (use message's tool_calls field instead).
+        """
+        content = message["content"]
+        if isinstance(content, str):
+            base_parts: list[ImagePart | TextPart] = [TextPart(type="text", text=content)]
+        else:
+            # Convert structured content to ImagePart/TextPart list
+            base_parts: list[ImagePart | TextPart] = []
+            for p in content:
+                if p["type"] == "text":
+                    base_parts.append(cast(TextPart, p))
+                elif p["type"] == "image":
+                    base_parts.append(cast(ImagePart, p))
+                elif p["type"] == "thinking":
+                    if not strip_thinking:
+                        # Render thinking as <think>...</think> text
+                        base_parts.append(
+                            TextPart(type="text", text=f"<think>{p['thinking']}</think>")
+                        )
+                    # else: strip thinking by not appending
+                # ToolCallPart and UnparsedToolCallPart are handled via message's tool_calls field
+
+        # Wrap images with vision tokens
+        chunks: list[ImagePart | TextPart] = []
+        for content_chunk in base_parts:
+            if content_chunk["type"] == "image":
+                chunks.append(TextPart(type="text", text="<|vision_start|>"))
+
+            chunks.append(content_chunk)
+
+            if content_chunk["type"] == "image":
+                chunks.append(TextPart(type="text", text="<|vision_end|>"))
+
+        return chunks
+
+    def _wrap_qwen_tool_response_chunks(
+        self, chunks: list[ImagePart | TextPart]
+    ) -> list[ImagePart | TextPart]:
+        """Wrap content chunks in Qwen's <tool_response> tags for multimodal messages."""
+        return (
+            [TextPart(type="text", text="<tool_response>\n")]
+            + chunks
+            + [TextPart(type="text", text="\n</tool_response>")]
+        )
+
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        maybe_newline = "\n" if ctx.idx > 0 else ""
+
+        role = self._get_qwen_role_for_message(message)
+        header_str = f"{maybe_newline}<|im_start|>{role}\n"
+
+        # Strip thinking from history for non-last assistant messages (matching non-VL behavior)
+        strip_thinking = (
+            self.strip_thinking_from_history and message["role"] == "assistant" and not ctx.is_last
+        )
+        output_chunks = self._preprocess_message_parts(message, strip_thinking=strip_thinking)
+
+        # Handle tool response wrapping
+        if message["role"] == "tool":
+            output_chunks = self._wrap_qwen_tool_response_chunks(output_chunks)
+
+        # Check if any text chunk contains <think> already
+        output_content_for_think_check = "".join(
+            x["text"] for x in output_chunks if isinstance(x, dict) and x["type"] == "text"
+        )
+        if self._should_add_think_prefix(message, output_content_for_think_check, ctx):
+            # Matching the paper, we force the assistant to start with <think>. Some SFT datasets include
+            # <think> in the assistant messages, we so don't need to re-add it in those cases.
+            header_str += "<think>\n"
+        if "tool_calls" in message:
+            output_chunks += [
+                TextPart(
+                    type="text",
+                    text="\n".join(
+                        [
+                            f"<tool_call>\n{json.dumps(_tool_call_payload(tool_call))}\n</tool_call>"
+                            for tool_call in message["tool_calls"]
+                        ]
+                    ),
+                )
+            ]
+        output_chunks += [TextPart(type="text", text="<|im_end|>")]
+
+        output_chunks_encoded: list[tinker.ModelInputChunk] = [
+            image_to_chunk(
+                image_or_str=x["image"],
+                image_processor=cast(ImageProcessorProtocol, self.image_processor),
+            )
+            if x["type"] == "image"
+            else tinker.EncodedTextChunk(
+                tokens=self.tokenizer.encode(x["text"], add_special_tokens=False)
+            )
+            for x in output_chunks
+        ]
+
+        header = tinker.types.EncodedTextChunk(
+            tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
+        )
+        return RenderedMessage(header=header, output=output_chunks_encoded)
+
+
+class Qwen3VLInstructRenderer(Qwen3VLRenderer):
+    """
+    Renderer for Qwen3-VL Instruct models.
+
+    Unlike the Qwen3-VL Thinking models, The Qwen3-VL Instruct models do not use the <think> tag.
+    """
+
+    def _should_add_think_prefix(
+        self, message: Message, output_content: str, ctx: RenderContext
+    ) -> bool:
+        """Instruct models don't use <think> prefix."""
+        return False
