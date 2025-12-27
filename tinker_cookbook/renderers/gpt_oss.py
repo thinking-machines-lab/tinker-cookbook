@@ -228,6 +228,7 @@ class GptOssRenderer(Renderer):
 
         header_str = f"<|start|>{role}"
         output_str = ""
+        tool_calls: list[ToolCall] = []
 
         if message["role"] == "assistant":
             # Assistant channels. See https://cookbook.openai.com/articles/openai-harmony
@@ -248,8 +249,7 @@ class GptOssRenderer(Renderer):
                 # If there's text content with tool calls, render as commentary preamble first
                 if text_content:
                     output_str += (
-                        f"<|channel|>commentary<|message|>{text_content}"
-                        "<|end|><|start|>assistant"
+                        f"<|channel|>commentary<|message|>{text_content}<|end|><|start|>assistant"
                     )
                 output_str += self._render_tool_calls(tool_calls)
             else:
@@ -429,12 +429,10 @@ class GptOssRenderer(Renderer):
                 "You probably are using the wrong stop tokens when sampling"
             )
 
-        stop_token = self._return_token
         stop_idx = response.index(self._return_token) if return_count else None
         if call_count:
             call_idx = response.index(self._call_token)
             if stop_idx is None or call_idx < stop_idx:
-                stop_token = self._call_token
                 stop_idx = call_idx
 
         assert stop_idx is not None
@@ -459,7 +457,8 @@ class GptOssRenderer(Renderer):
         unparsed: list[UnparsedToolCall] = []
 
         for msg in messages:
-            msg_content = msg["content"]
+            msg_content = msg["content"] or ""
+            msg_raw_text = msg["raw_text"] or ""
             if not msg_content.strip():
                 continue
 
@@ -478,7 +477,7 @@ class GptOssRenderer(Renderer):
                     )
                 except json.JSONDecodeError as e:
                     unparsed.append(
-                        UnparsedToolCall(raw_text=msg["raw_text"], error=f"Invalid JSON: {e}")
+                        UnparsedToolCall(raw_text=msg_raw_text, error=f"Invalid JSON: {e}")
                     )
                 continue
 

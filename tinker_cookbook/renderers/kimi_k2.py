@@ -9,6 +9,7 @@ Format for moonshotai/Kimi-K2-Thinking:
 
 import json
 import re
+import warnings
 
 import tinker
 import torch
@@ -131,8 +132,16 @@ class KimiK2Renderer(Renderer):
             header_str = f"<|im_system|>{role_name}<|im_middle|>"
         elif role == "tool":
             header_str = f"<|im_system|>{role_name}<|im_middle|>"
-            # Tool responses have special formatting
+            # Tool responses have special formatting - need tool_call_id to correlate with the call
             tool_call_id = message.get("tool_call_id", "")
+            if not tool_call_id:
+                warnings.warn(
+                    "Tool message missing 'tool_call_id' field. KimiK2Renderer requires 'tool_call_id' "
+                    "to render tool results correctly. The value should match ToolCall.id from the "
+                    "assistant's tool_calls.",
+                    UserWarning,
+                    stacklevel=3,
+                )
             header_str += f"## Return of {tool_call_id}\n"
         else:
             header_str = f"<|im_system|>{role_name}<|im_middle|>"
