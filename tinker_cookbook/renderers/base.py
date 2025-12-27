@@ -170,6 +170,16 @@ class Message(TypedDict):
         The raw text is preserved for debugging or re-rendering.
     trainable: NotRequired[bool]
         Optional indicator whether this message should contribute to the training loss.
+    tool_call_id: NotRequired[str]
+        For tool result messages (role="tool"): ID correlating this result to a specific
+        tool call. Used by renderers whose wire format references calls by ID (e.g., Kimi K2
+        renders "## Return of {tool_call_id}"). The value should match ToolCall.id from the
+        assistant's tool_calls. Not all formats use IDs - GptOss/Harmony does not.
+    name: NotRequired[str]
+        For tool result messages (role="tool"): The function name that was called.
+        Required by GptOss (renders "<|start|>functions.{name}..."), optional for others.
+        When constructing tool results, include both name and tool_call_id when available
+        since different renderers require different fields.
 
     """
 

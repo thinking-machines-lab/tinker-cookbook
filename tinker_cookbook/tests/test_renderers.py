@@ -161,6 +161,7 @@ def get_tool_call_conversation() -> list[Message]:
             "role": "tool",
             "content": '{"temperature": 72, "condition": "sunny"}',
             "tool_call_id": "call_123",
+            "name": "get_weather",  # Required by GptOss, optional for others
         },
         {"role": "assistant", "content": "The weather in San Francisco is sunny with 72°F."},
     ]
@@ -183,6 +184,7 @@ TOOL_CAPABLE_MODELS = {
     "meta-llama/Llama-3.2-1B-Instruct",
     "deepseek-ai/DeepSeek-V3.1",
     "moonshotai/Kimi-K2-Thinking",
+    "openai/gpt-oss-20b",
 }
 
 
@@ -383,6 +385,7 @@ def test_supervised_example_against_hf_chat_templates(model_name: str, conv_id: 
         "meta-llama/Llama-3.2-1B-Instruct",
         "deepseek-ai/DeepSeek-V3.1",
         "moonshotai/Kimi-K2-Thinking",
+        "openai/gpt-oss-20b",
     ],
 )
 def test_tool_call_supervised_rendering(model_name: str):
@@ -396,7 +399,11 @@ def test_tool_call_supervised_rendering(model_name: str):
     tokenizer = get_tokenizer(model_name)
     attributes = get_model_attributes(model_name)
     image_processor = get_image_processor(model_name) if attributes.is_vl else None
-    render_name = get_recommended_renderer_name(model_name)
+    render_name = (
+        get_recommended_renderer_name(model_name)
+        if not model_name.startswith("openai")
+        else "gpt_oss_medium_reasoning"
+    )
     cookbook_renderer = get_renderer(render_name, tokenizer, image_processor)
 
     # Build supervised example - should not raise
@@ -414,6 +421,7 @@ def test_tool_call_supervised_rendering(model_name: str):
     # - Llama3: <function=get_weather>...</function>
     # - DeepSeek: <｜tool▁sep｜>get_weather
     # - Kimi K2: Uses tool_id (functions.name:idx or just the id) + arguments
+    # - GptOss: to=functions.get_weather<|channel|>commentary <|constrain|>json<|message|>{args}
     # Check for tool arguments which all formats include
     assert "San Francisco" in decoded, f"Tool argument should appear in rendered output: {decoded}"
 
@@ -886,7 +894,7 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         test_response_double_eot, add_special_tokens=False
     )
 
-    with pytest.raises(ValueError, match="expected to split into 1 or 2 pieces"):
+    with pytest.raises(ValueError, match="expected .* 1"):
         _ = renderer.parse_response(response_tokens_double_eot)
 
 
@@ -1042,6 +1050,7 @@ def _get_multiturn_tool_conversation() -> list[Message]:
             "role": "tool",
             "content": '{"temperature": 72, "condition": "sunny"}',
             "tool_call_id": "call_1",
+            "name": "get_weather",
         },
         {"role": "assistant", "content": "The weather in NYC is sunny with 72°F."},
         {"role": "user", "content": "What about San Francisco?"},
@@ -1062,6 +1071,7 @@ def _get_multiturn_tool_conversation() -> list[Message]:
             "role": "tool",
             "content": '{"temperature": 65, "condition": "foggy"}',
             "tool_call_id": "call_2",
+            "name": "get_weather",
         },
         {"role": "assistant", "content": "San Francisco is foggy at 65°F."},
     ]
@@ -1091,6 +1101,7 @@ def _get_multiturn_thinking_and_tool_conversation() -> list[Message]:
             "role": "tool",
             "content": '{"temperature": 72}',
             "tool_call_id": "call_1",
+            "name": "get_weather",
         },
         {
             "role": "assistant",

@@ -367,3 +367,107 @@ def test_gptoss_parse_response_no_channels():
     # No channel markers, so content stays as string
     assert isinstance(message["content"], str)
     assert message["content"] == "Plain response without channels."
+
+
+# =============================================================================
+# GptOss Tool Call Parsing Tests
+# =============================================================================
+
+
+def test_gptoss_parse_response_tool_call():
+    """Test GptOssRenderer.parse_response extracts tool calls from commentary channel."""
+    tokenizer = get_tokenizer("openai/gpt-oss-20b")
+    renderer = GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="medium")
+
+    # Tool call format: commentary channel with to=functions.name and <|call|> stop token
+    response_str = '<|channel|>commentary to=functions.get_weather <|constrain|>json<|message|>{"location": "San Francisco"}<|call|>'
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success
+    assert "tool_calls" in message
+    assert len(message["tool_calls"]) == 1
+    assert message["tool_calls"][0].function.name == "get_weather"
+    assert '"location"' in message["tool_calls"][0].function.arguments
+
+
+def test_gptoss_parse_response_tool_call_with_analysis():
+    """Test GptOssRenderer.parse_response extracts both thinking and tool calls."""
+    tokenizer = get_tokenizer("openai/gpt-oss-20b")
+    renderer = GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="medium")
+
+    # Analysis (thinking) followed by tool call
+    response_str = '<|channel|>analysis<|message|>I need to check the weather.<|end|><|start|>assistant<|channel|>commentary to=functions.get_weather <|constrain|>json<|message|>{"city": "NYC"}<|call|>'
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success
+    content = message["content"]
+    assert isinstance(content, list)
+
+    # Should have thinking from analysis channel
+    thinking_parts = [p for p in content if p["type"] == "thinking"]
+    assert len(thinking_parts) >= 1
+    assert "check the weather" in thinking_parts[0]["thinking"]
+
+    # Should have tool call
+    assert "tool_calls" in message
+    assert len(message["tool_calls"]) == 1
+    assert message["tool_calls"][0].function.name == "get_weather"
+
+
+def test_gptoss_parse_response_invalid_tool_call_json():
+    """Test GptOssRenderer.parse_response handles invalid JSON in tool calls."""
+    tokenizer = get_tokenizer("openai/gpt-oss-20b")
+    renderer = GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="medium")
+
+    # Invalid JSON in tool call
+    response_str = "<|channel|>commentary to=functions.broken <|constrain|>json<|message|>not valid json<|call|>"
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success
+    # Should have unparsed_tool_calls
+    assert "unparsed_tool_calls" in message
+    assert len(message["unparsed_tool_calls"]) == 1
+    assert "Invalid JSON" in message["unparsed_tool_calls"][0].error
+
+
+def test_gptoss_parse_response_tool_call_recipient_before_channel():
+    """Test GptOssRenderer.parse_response handles recipient before channel."""
+    tokenizer = get_tokenizer("openai/gpt-oss-20b")
+    renderer = GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="medium")
+
+    response_str = '<|start|>assistant to=functions.get_weather<|channel|>commentary<|constrain|>json<|message|>{"location": "Tokyo"}<|call|>'
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success
+    assert "tool_calls" in message
+    assert len(message["tool_calls"]) == 1
+    assert message["tool_calls"][0].function.name == "get_weather"
+
+
+def test_gptoss_parse_response_commentary_preamble():
+    """Test GptOssRenderer.parse_response keeps commentary preamble text."""
+    tokenizer = get_tokenizer("openai/gpt-oss-20b")
+    renderer = GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="medium")
+
+    response_str = (
+        "<|channel|>commentary<|message|>Checking now.<|end|>"
+        '<|start|>assistant to=functions.get_weather<|channel|>commentary <|constrain|>json<|message|>{"location": "SF"}<|call|>'
+    )
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success
+    content = message["content"]
+    assert isinstance(content, list)
+    assert len(content) == 1
+    assert content[0] == TextPart(type="text", text="Checking now.")
+    assert "tool_calls" in message and len(message["tool_calls"]) == 1

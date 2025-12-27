@@ -78,7 +78,10 @@ MODEL_CONFIGS = [
         "model_name": "moonshotai/Kimi-K2-Thinking",
         "renderer_name": "kimi_k2",
     },
-    # TODO: implement and add GPT-OSS
+    {
+        "model_name": "openai/gpt-oss-20b",
+        "renderer_name": "gpt_oss_medium_reasoning",
+    },
 ]
 
 
