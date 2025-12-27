@@ -1,22 +1,4 @@
-"""
-GptOssRenderer - OpenAI's open source model format (Harmony).
-
-Format like this (no newlines between messages, last message should end with <|return|> but
-be replaced by <|end|> when continuing the convo):
-    <|start|>system<|message|>You are ChatGPT...<|end|><|start|>user<|message|>How much is 1+1?<|end|><|start|>assistant<|channel|>final<|message|>2<|end|><|start|>
-
-Harmony channels:
-- analysis: Chain-of-thought (CoT) / reasoning traces (not shown to end users)
-- commentary: Tool calls for developer-defined functions; also user-visible "preambles"
-- final: User-facing answer text
-
-Tool calling format:
-- Tool definitions go in developer message with TypeScript-ish syntax in `functions` namespace
-- Tool calls: <|start|>assistant to=functions.name<|channel|>commentary <|constrain|>json<|message|>{args}<|call|>
-- Tool results: <|start|>functions.name to=assistant<|channel|>commentary<|message|>{result}<|end|>
-
-Reference: https://raw.githubusercontent.com/openai/openai-cookbook/main/articles/openai-harmony.md
-"""
+"""GptOssRenderer - OpenAI's open source model format (Harmony)."""
 
 import json
 import re
@@ -163,16 +145,30 @@ class GptOssRenderer(Renderer):
     """
     Renderer for OpenAI's open source models using the Harmony format.
 
-    Format: <|start|>role<|channel|>channel<|message|>content<|end|>
-    No newlines between messages. Last assistant message should end with <|return|> but
-    be replaced by <|end|> when continuing the conversation.
+    Wire format: <|start|>role<|channel|>channel<|message|>content<|end|>
+    No newlines between messages. Last assistant message ends with <|return|>;
+    historical assistant messages end with <|end|>.
 
-    Harmony channels:
-    - analysis: Chain-of-thought (CoT) / reasoning traces (not shown to end users)
-    - commentary: Tool calls for developer-defined functions; also user-visible "preambles"
-    - final: User-facing answer text
+    Harmony Channels
+    ----------------
+    Each assistant message specifies a "channel" that controls how the content is
+    interpreted and displayed. An assistant turn can have multiple channel segments
+    (rendered as separate <|start|>assistant... blocks):
 
-    Tool calling uses the commentary channel with special formatting:
+    - analysis: Chain-of-thought reasoning (hidden from end users, like <think> blocks)
+    - commentary: Tool calls to developer-defined functions, or user-visible "preambles"
+      before tool calls. Uses `to=functions.name` to route to specific tools.
+    - final: The user-facing response text
+
+    A typical assistant turn with thinking + tool call + final answer would render as:
+        <|start|>assistant<|channel|>analysis<|message|>{thinking}<|end|>
+        <|start|>assistant to=functions.get_weather<|channel|>commentary <|constrain|>json<|message|>{args}<|call|>
+        ... (tool result) ...
+        <|start|>assistant<|channel|>final<|message|>{answer}<|return|>
+
+    Tool Calling
+    ------------
+    - Tool definitions: Go in developer message with TypeScript-style syntax
     - Tool calls: <|start|>assistant to=functions.name<|channel|>commentary <|constrain|>json<|message|>{args}<|call|>
     - Tool results: <|start|>functions.name to=assistant<|channel|>commentary<|message|>{result}<|end|>
 
@@ -375,10 +371,22 @@ class GptOssRenderer(Renderer):
         # GptOss has no BOS token. System prompt is prepended as a message.
         return []
 
+    def _warn_if_user_system_message(self, messages: list[Message]) -> None:
+        """Warn if user provides system message when use_system_prompt=True."""
+        if self.use_system_prompt and messages and messages[0]["role"] == "system":
+            warnings.warn(
+                "use_system_prompt=True but messages already start with a system message. "
+                "The built-in system prompt will be prepended, resulting in two system messages. "
+                "Either set use_system_prompt=False or remove the system message from your messages.",
+                UserWarning,
+                stacklevel=3,
+            )
+
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:
         """Build generation prompt, prepending system message if configured."""
+        self._warn_if_user_system_message(messages)
         system_msg = self._get_system_message()
         if system_msg:
             messages = [system_msg] + list(messages)
@@ -390,6 +398,7 @@ class GptOssRenderer(Renderer):
         train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_MESSAGE,
     ) -> tuple[tinker.ModelInput, torch.Tensor]:
         """Build supervised example, prepending system message if configured."""
+        self._warn_if_user_system_message(messages)
         system_msg = self._get_system_message()
         if system_msg:
             messages = [system_msg] + list(messages)
