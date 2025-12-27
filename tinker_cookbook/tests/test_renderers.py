@@ -531,9 +531,7 @@ def test_strip_thinking_from_history_default(model_name: str, renderer_class):
         f"First turn thinking should be stripped:\n{decoded}"
     )
     # Second (last) assistant message should preserve thinking
-    assert "Second turn reasoning" in decoded, (
-        f"Last turn thinking should be preserved:\n{decoded}"
-    )
+    assert "Second turn reasoning" in decoded, f"Last turn thinking should be preserved:\n{decoded}"
 
 
 @pytest.mark.parametrize(
@@ -559,9 +557,7 @@ def test_strip_thinking_from_history_false(model_name: str, renderer_class):
     assert "First turn reasoning" in decoded, (
         f"First thinking should be preserved with strip_thinking_from_history=False: {decoded}"
     )
-    assert "Second turn reasoning" in decoded, (
-        f"Second thinking should be preserved: {decoded}"
-    )
+    assert "Second turn reasoning" in decoded, f"Second thinking should be preserved: {decoded}"
 
 
 # =============================================================================
@@ -972,10 +968,6 @@ def _verify_extension_property(renderer, messages: list[Message], tokenizer):
         asst_idx = assistant_indices[i]
         next_asst_idx = assistant_indices[i + 1]
 
-        # Build prompt before this assistant message (observation_t)
-        context_before = messages[:asst_idx]
-        prompt_before = renderer.build_generation_prompt(context_before).to_ints()
-
         # Build the assistant's completion - we need to render the assistant message
         # as it would appear when generated (with thinking preserved), not as it
         # would appear in history. We do this by building a supervised example and
@@ -1061,7 +1053,9 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
     "model_name,renderer_name_or_class,renderer_kwargs,conversation_fn",
     _EXTENSION_PROPERTY_TEST_PARAMS,
 )
-def test_extension_property_holds(model_name, renderer_name_or_class, renderer_kwargs, conversation_fn):
+def test_extension_property_holds(
+    model_name, renderer_name_or_class, renderer_kwargs, conversation_fn
+):
     """
     Test that renderers with grows_by_extension=True actually satisfy the property.
     For each conversation, verify that build_generation_prompt at successive assistant
