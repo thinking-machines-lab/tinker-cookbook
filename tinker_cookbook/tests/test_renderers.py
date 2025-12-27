@@ -973,18 +973,20 @@ def test_parse_content_blocks_no_special_tags():
 def test_parse_content_blocks_single_think_block():
     """Test parse_content_blocks with a single think block."""
     parts = parse_content_blocks("<think>reasoning</think>visible answer")
+    assert parts is not None
 
     assert len(parts) == 2
     assert parts[0]["type"] == "thinking"
-    assert parts[0]["thinking"] == "reasoning"
+    assert parts[0]["thinking"] == "reasoning"  # type: ignore[typeddict-item]
     assert parts[1]["type"] == "text"
-    assert parts[1]["text"] == "visible answer"
+    assert parts[1]["text"] == "visible answer"  # type: ignore[typeddict-item]
 
 
 def test_parse_content_blocks_multiple_think_blocks():
     """Test parse_content_blocks with multiple interleaved think blocks."""
     content = "<think>step 1</think>partial<think>step 2</think>final"
     parts = parse_content_blocks(content)
+    assert parts is not None
 
     assert len(parts) == 4
     assert parts[0] == ThinkingPart(type="thinking", thinking="step 1")
@@ -996,30 +998,33 @@ def test_parse_content_blocks_multiple_think_blocks():
 def test_parse_content_blocks_empty_blocks_omitted():
     """Test parse_content_blocks omits empty think blocks."""
     parts = parse_content_blocks("<think></think>visible")
+    assert parts is not None
 
     assert len(parts) == 1
     assert parts[0]["type"] == "text"
-    assert parts[0]["text"] == "visible"
+    assert parts[0]["text"] == "visible"  # type: ignore[typeddict-item]
 
 
 def test_parse_content_blocks_whitespace_handling():
     """Test parse_content_blocks preserves whitespace for identity roundtrip."""
     parts = parse_content_blocks("<think>  thinking  </think>  answer  ")
+    assert parts is not None
 
     assert len(parts) == 2
     # Whitespace is preserved exactly for identity roundtrip
-    assert parts[0]["type"] == "thinking" and parts[0]["thinking"] == "  thinking  "
-    assert parts[1]["type"] == "text" and parts[1]["text"] == "  answer  "
+    assert parts[0]["type"] == "thinking" and parts[0]["thinking"] == "  thinking  "  # type: ignore[typeddict-item]
+    assert parts[1]["type"] == "text" and parts[1]["text"] == "  answer  "  # type: ignore[typeddict-item]
 
 
 def test_parse_content_blocks_tool_call_only():
     """Test parse_content_blocks parses tool calls."""
     content = '<tool_call>{"name": "search", "arguments": {"query": "test"}}</tool_call>'
     parts = parse_content_blocks(content)
+    assert parts is not None
 
     assert len(parts) == 1
     assert parts[0]["type"] == "tool_call"
-    tool_call = parts[0]["tool_call"]
+    tool_call = parts[0]["tool_call"]  # type: ignore[typeddict-item]
     assert tool_call.function.name == "search"
     assert tool_call.function.arguments == '{"query": "test"}'
 
@@ -1028,12 +1033,13 @@ def test_parse_content_blocks_interleaved():
     """Test parse_content_blocks handles interleaved think and tool_call blocks."""
     content = '<think>Let me search</think>Searching...<tool_call>{"name": "search", "arguments": {"q": "test"}}</tool_call>Done'
     parts = parse_content_blocks(content)
+    assert parts is not None
 
     assert len(parts) == 4
     assert parts[0] == ThinkingPart(type="thinking", thinking="Let me search")
     assert parts[1] == TextPart(type="text", text="Searching...")
     assert parts[2]["type"] == "tool_call"
-    assert parts[2]["tool_call"].function.name == "search"
+    assert parts[2]["tool_call"].function.name == "search"  # type: ignore[typeddict-item]
     assert parts[3] == TextPart(type="text", text="Done")
 
 
@@ -1041,11 +1047,12 @@ def test_parse_content_blocks_invalid_tool_call():
     """Test parse_content_blocks handles invalid tool call JSON as UnparsedToolCallPart."""
     content = "<tool_call>not valid json</tool_call>text after"
     parts = parse_content_blocks(content)
+    assert parts is not None
 
     # Invalid tool call is included as UnparsedToolCallPart, text is still captured
     assert len(parts) == 2
     assert parts[0]["type"] == "unparsed_tool_call"
-    assert "Invalid JSON" in parts[0]["error"]
+    assert "Invalid JSON" in parts[0]["error"]  # type: ignore[typeddict-item]
     assert parts[1] == TextPart(type="text", text="text after")
 
 
