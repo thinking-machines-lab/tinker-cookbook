@@ -14,20 +14,24 @@ from tinker_cookbook.renderers.base import (
     ContentPart,
     ImagePart,
     Message,
+    RenderedMessage,
     Role,
     TextPart,
     ThinkingPart,
     ToolCall,
     ToolSpec,
+    UnparsedToolCall,
     # Renderer base
     RenderContext,
     Renderer,
     TrainOnWhat,
     # Utility functions
+    ensure_list,
     ensure_text,
     format_content_as_string,
     get_text_content,
     parse_content_blocks,
+    remove_thinking,
 )
 
 # Renderer classes used directly by tests

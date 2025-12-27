@@ -321,3 +321,265 @@ def test_kimi_k2_parse_invalid_tool_call_json():
     assert "unparsed_tool_calls" in message
     assert len(message["unparsed_tool_calls"]) == 1
     assert "Invalid JSON" in message["unparsed_tool_calls"][0].error
+
+
+# =============================================================================
+# GptOss (OpenAI Harmony Format) Tool Calling Tests
+# =============================================================================
+
+
+def test_gptoss_tool_response_rendering():
+    """Test that GptOss renders tool responses in Harmony format.
+
+    Tool responses should use functions.{name} to=assistant routing in the
+    commentary channel.
+    """
+    model_name = "openai/gpt-oss-20b"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("gpt_oss_medium_reasoning", tokenizer)
+
+    tool_message: Message = {
+        "role": "tool",
+        "content": '{"weather": "sunny", "temp": 22}',
+        "tool_call_id": "functions.get_weather:0",
+    }
+
+    ctx = RenderContext(idx=0, is_last=False, prev_message=None)
+    rendered = renderer.render_message(tool_message, ctx)
+    header = rendered.header
+    assert header is not None, "Expected header in rendered message"
+    output = rendered.output
+    assert len(output) > 0, "Expected output in rendered message"
+
+    header_str = tokenizer.decode(list(header.tokens))
+    output_chunk = output[0]
+    assert isinstance(output_chunk, tinker.EncodedTextChunk), "Expected EncodedTextChunk"
+    output_str = tokenizer.decode(list(output_chunk.tokens))
+
+    # Tool responses should use functions.{name} to=assistant format
+    assert "functions.get_weather" in header_str
+    assert "to=assistant" in header_str
+    assert "commentary" in header_str
+    # Output should contain the response
+    assert '"weather": "sunny"' in output_str
+
+
+def test_gptoss_tool_call_rendering():
+    """Test that GptOss renders assistant messages with tool_calls correctly.
+
+    When an assistant message has tool_calls, they should be rendered in
+    the commentary channel with to=functions.{name} routing.
+    """
+    from tinker_cookbook.renderers import ToolCall
+
+    model_name = "openai/gpt-oss-20b"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("gpt_oss_medium_reasoning", tokenizer)
+
+    tool_call = ToolCall(
+        function=ToolCall.FunctionBody(
+            name="get_weather",
+            arguments='{"city": "Tokyo"}',
+        ),
+    )
+    assistant_message: Message = {
+        "role": "assistant",
+        "content": "",  # Tool-only message
+        "tool_calls": [tool_call],
+    }
+
+    ctx = RenderContext(idx=0, is_last=False, prev_message=None)
+    rendered = renderer.render_message(assistant_message, ctx)
+    output_chunk = rendered.output[0]
+    assert isinstance(output_chunk, tinker.EncodedTextChunk), "Expected EncodedTextChunk"
+    output_str = tokenizer.decode(list(output_chunk.tokens))
+
+    # Tool calls should use commentary channel with to=functions.{name}
+    assert "<|channel|>commentary to=functions.get_weather" in output_str
+    assert "<|constrain|>json" in output_str
+    assert '{"city": "Tokyo"}' in output_str
+    assert "<|call|>" in output_str
+
+
+def test_gptoss_tool_call_with_content_rendering():
+    """Test that GptOss renders tool calls followed by content correctly."""
+    from tinker_cookbook.renderers import ToolCall
+
+    model_name = "openai/gpt-oss-20b"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("gpt_oss_medium_reasoning", tokenizer)
+
+    tool_call = ToolCall(
+        function=ToolCall.FunctionBody(
+            name="get_weather",
+            arguments='{"city": "Tokyo"}',
+        ),
+    )
+    assistant_message: Message = {
+        "role": "assistant",
+        "content": "Let me check the weather.",
+        "tool_calls": [tool_call],
+    }
+
+    ctx = RenderContext(idx=0, is_last=False, prev_message=None)
+    rendered = renderer.render_message(assistant_message, ctx)
+    output_chunk = rendered.output[0]
+    assert isinstance(output_chunk, tinker.EncodedTextChunk), "Expected EncodedTextChunk"
+    output_str = tokenizer.decode(list(output_chunk.tokens))
+
+    # Should have tool call followed by final channel
+    assert "<|channel|>commentary to=functions.get_weather" in output_str
+    assert "<|call|>" in output_str
+    assert "<|channel|>final<|message|>Let me check the weather." in output_str
+
+
+def test_gptoss_parse_single_tool_call():
+    """Test parsing a single tool call from GptOss response."""
+    model_name = "openai/gpt-oss-20b"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("gpt_oss_medium_reasoning", tokenizer)
+
+    # Simulate model response with tool call in Harmony format
+    response_text = """<|channel|>commentary to=functions.get_weather<|constrain|>json<|message|>{"city": "Tokyo"}<|call|>"""
+
+    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success is True
+    assert message["role"] == "assistant"
+    assert "tool_calls" in message
+    assert len(message["tool_calls"]) == 1
+    assert message["tool_calls"][0].function.name == "get_weather"
+    assert "Tokyo" in message["tool_calls"][0].function.arguments
+
+
+def test_gptoss_parse_invalid_tool_call_json():
+    """Test that invalid JSON in GptOss tool call is captured as unparsed."""
+    model_name = "openai/gpt-oss-20b"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("gpt_oss_medium_reasoning", tokenizer)
+
+    response_text = """<|channel|>commentary to=functions.get_weather<|constrain|>json<|message|>{invalid json}<|call|>"""
+
+    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success is True
+    assert "tool_calls" not in message or len(message.get("tool_calls", [])) == 0
+    assert "unparsed_tool_calls" in message
+    assert len(message["unparsed_tool_calls"]) == 1
+    assert "Invalid JSON" in message["unparsed_tool_calls"][0].error
+
+
+def test_gptoss_parse_thinking_from_analysis_channel():
+    """Test that GptOss extracts CoT/reasoning from analysis channel into ThinkingPart.
+
+    Per the Harmony format, the analysis channel contains chain-of-thought reasoning
+    that should be exposed via ThinkingPart in the content list.
+    See: https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot
+    """
+    model_name = "openai/gpt-oss-20b"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("gpt_oss_medium_reasoning", tokenizer)
+
+    # Simulate model response with analysis (CoT) and final channels
+    response_text = """<|channel|>analysis<|message|>Let me think about this step by step.
+The sky appears blue due to Rayleigh scattering.
+Shorter wavelengths (blue) scatter more than longer ones.<|end|><|start|>assistant<|channel|>final<|message|>The sky is blue because of Rayleigh scattering of sunlight.<|return|>"""
+
+    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success is True
+    assert message["role"] == "assistant"
+    # Content should be a list with ThinkingPart and TextPart
+    content = message["content"]
+    assert isinstance(content, list), f"Expected list content, got {type(content)}"
+    # Find ThinkingPart and TextPart
+    thinking_parts = [p for p in content if p["type"] == "thinking"]
+    text_parts = [p for p in content if p["type"] == "text"]
+    assert len(thinking_parts) == 1, "Expected one ThinkingPart"
+    thinking = thinking_parts[0]
+    assert thinking["type"] == "thinking"  # Type narrowing
+    assert "Rayleigh scattering" in thinking["thinking"]
+    assert "step by step" in thinking["thinking"]
+    # Text should be from final channel only
+    assert len(text_parts) == 1, "Expected one TextPart"
+    text = text_parts[0]
+    assert text["type"] == "text"  # Type narrowing
+    assert text["text"] == "The sky is blue because of Rayleigh scattering of sunlight."
+
+
+def test_gptoss_parse_thinking_with_tool_calls():
+    """Test that GptOss correctly parses thinking alongside tool calls."""
+    model_name = "openai/gpt-oss-20b"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("gpt_oss_medium_reasoning", tokenizer)
+
+    # Response with analysis channel, tool call, and final channel
+    response_text = """<|channel|>analysis<|message|>I need to check the weather for the user.<|end|><|start|>assistant<|channel|>commentary to=functions.get_weather<|constrain|>json<|message|>{"city": "Tokyo"}<|call|>"""
+
+    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success is True
+    # Content should contain ThinkingPart
+    content = message["content"]
+    assert isinstance(content, list), f"Expected list content, got {type(content)}"
+    thinking_parts = [p for p in content if p["type"] == "thinking"]
+    assert len(thinking_parts) == 1
+    thinking = thinking_parts[0]
+    assert thinking["type"] == "thinking"  # Type narrowing
+    assert "check the weather" in thinking["thinking"]
+    # Tool call from commentary channel
+    assert "tool_calls" in message
+    assert len(message["tool_calls"]) == 1
+    assert message["tool_calls"][0].function.name == "get_weather"
+
+
+def test_gptoss_create_system_prefix_with_tools():
+    """Test that GptOss creates developer message with TypeScript-style tool definitions."""
+    from tinker_cookbook.renderers import GptOssRenderer, ToolSpec
+
+    model_name = "openai/gpt-oss-20b"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("gpt_oss_medium_reasoning", tokenizer)
+    assert isinstance(renderer, GptOssRenderer)
+
+    tools: list[ToolSpec] = [
+        {
+            "name": "get_weather",
+            "description": "Get weather for a city",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"},
+                    "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]},
+                },
+                "required": ["city"],
+            },
+        },
+    ]
+
+    messages = renderer.create_system_prefix_with_tools(tools, system_prompt="You are helpful.")
+    assert len(messages) == 2
+
+    # First message is developer with tool definitions
+    assert messages[0]["role"] == "system"
+    # Second message is system prompt
+    assert messages[1]["role"] == "system"
+    assert messages[1]["content"] == "You are helpful."
+
+    # Developer message should have TypeScript-style definitions
+    dev_content = messages[0]["content"]
+    assert "namespace functions" in dev_content
+    assert "type get_weather" in dev_content
+    assert "city: string" in dev_content
+    assert 'unit?: "celsius" | "fahrenheit"' in dev_content
+    assert "// Get weather for a city" in dev_content
+
+    # Verify create_conversation_prefix_with_tools delegates correctly
+    messages2 = renderer.create_conversation_prefix_with_tools(
+        tools, system_prompt="You are helpful."
+    )
+    assert messages == messages2
