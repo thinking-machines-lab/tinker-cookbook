@@ -34,7 +34,9 @@ from tinker_cookbook.renderers.base import (
 
 
 _TOOL_CALLS_SECTION_RE = re.compile(
-    r"<\|tool_calls_section_begin\|>(.*?)<\|tool_calls_section_end\|>", re.DOTALL
+    r"<\|tool_calls_section_begin\|>(.*?)<\|tool_calls_section_end\|>"
+    r"|<\|tool_call_section_begin\|>(.*?)<\|tool_call_section_end\|>",
+    re.DOTALL,
 )
 _TOOL_CALL_RE = re.compile(
     r"<\|tool_call_begin\|>(.*?)<\|tool_call_argument_begin\|>(.*?)<\|tool_call_end\|>",
@@ -46,14 +48,17 @@ def _split_tool_calls_section(content: str) -> tuple[str, str | None]:
     match = _TOOL_CALLS_SECTION_RE.search(content)
     if not match:
         return content, None
-    return content[: match.start()], match.group(1)
+    tool_section = match.group(1) if match.group(1) is not None else match.group(2)
+    return content[: match.start()], tool_section
 
 
 def _extract_tool_name(tool_id: str) -> str:
-    if not tool_id or "." not in tool_id:
+    if not tool_id:
         return ""
-    _, remainder = tool_id.split(".", 1)
-    return remainder.split(":", 1)[0] if remainder else ""
+    name_part = tool_id.split(":", 1)[0]
+    if "." in name_part:
+        _, name_part = name_part.split(".", 1)
+    return name_part
 
 
 def _parse_tool_calls_section(
