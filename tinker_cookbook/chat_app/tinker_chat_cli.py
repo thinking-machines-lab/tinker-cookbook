@@ -84,10 +84,30 @@ class ChatSession:
 
             # Parse the response
             parsed_message, _ = self.renderer.parse_response(response.sequences[0].tokens)
-            content = renderers.ensure_text(parsed_message["content"])
+            content = parsed_message["content"]
 
-            self.add_assistant_message(content)
-            return content
+            # Format content for display
+            if isinstance(content, str):
+                display_content = content
+            else:
+                # List content - format each part
+                parts = []
+                for p in content:
+                    if p["type"] == "thinking":
+                        parts.append(f"<thinking>{p['thinking']}</thinking>")
+                    elif p["type"] == "text":
+                        parts.append(p["text"])
+                    elif p["type"] == "tool_call":
+                        tc = p["tool_call"]
+                        parts.append(f"<tool_call>{tc.function.name}({tc.function.arguments})</tool_call>")
+                    elif p["type"] == "unparsed_tool_call":
+                        parts.append(f"<unparsed_tool_call>{p['raw_text']}</unparsed_tool_call>")
+                    else:
+                        raise ValueError(f"Unknown content part type: {p['type']}")
+                display_content = "\n--------\n".join(parts)
+
+            self.add_assistant_message(display_content)
+            return display_content
 
         except Exception as e:
             logger.error(f"Error generating response: {e}")

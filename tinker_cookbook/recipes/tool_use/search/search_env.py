@@ -198,6 +198,8 @@ class SearchEnv(ProblemEnv):
             else:
                 return failure_result
         else:
+            # TODO: Refactor to use get_text_content once this example is updated
+            # to better use tool use functionalities
             content = renderers.ensure_text(message["content"])
             correct_format = float(parse_success) and float(self.check_format(content))
             correct_answer = float(self.check_answer(content))

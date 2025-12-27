@@ -1237,12 +1237,18 @@ class Qwen3DisableThinkingRenderer(Qwen3Renderer):
         # Add empty thinking block only to the LAST assistant message (matching HF behavior)
         if message["role"] == "assistant" and ctx.is_last:
             content = message.get("content", "")
-            assert isinstance(content, str), (
-                "Qwen3DisableThinkingRenderer only supports message with string content"
-            )
-            if "<think>" not in content:
-                message = message.copy()
-                message["content"] = "<think>\n\n</think>\n\n" + content
+            message = message.copy()
+            if isinstance(content, str):
+                if "<think>" not in content:
+                    message["content"] = "<think>\n\n</think>\n\n" + content
+            else:
+                # List content - prepend empty ThinkingPart if no thinking already present
+                has_thinking = any(p["type"] == "thinking" for p in content)
+                if not has_thinking:
+                    message["content"] = [
+                        ThinkingPart(type="thinking", thinking="\n\n"),
+                        *content,
+                    ]
         return super().render_message(message, ctx)
 
     def build_generation_prompt(
