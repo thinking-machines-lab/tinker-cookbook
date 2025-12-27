@@ -325,6 +325,10 @@ class Qwen3InstructRenderer(Qwen3Renderer):
     @property
     def grows_by_extension(self) -> bool:
         """Qwen3 Instruct always satisfies extension - no thinking to strip from history."""
+        # TODO: If callers include ThinkingPart in history, Qwen3Renderer may still strip it
+        # when strip_thinking_from_history=True, so extension can break. We should resolve this.
+        # This is a rare case because we shouldn't have thinking blocks when using instruct models;
+        # it'll only occur if we prompt the instruct model with a prompt from a different model.
         return True
 
     def _should_add_think_prefix(
