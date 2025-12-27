@@ -20,7 +20,6 @@ from tinker_cookbook.renderers.base import (
     ToolSpec,
     ensure_text,
 )
-from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
 class RoleColonRenderer(Renderer):

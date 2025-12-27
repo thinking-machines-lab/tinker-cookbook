@@ -13,14 +13,13 @@ import urllib.request
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal, NotRequired, Optional, Protocol, TypedDict, cast
+from typing import Literal, NotRequired, Optional, Protocol, TypedDict
 
 import pydantic
 import tinker
 import torch
 from PIL import Image
 
-from tinker_cookbook.image_processing_utils import ImageProcessor
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
 logger = logging.getLogger(__name__)

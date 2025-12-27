@@ -13,11 +13,9 @@ import json
 from typing import cast
 
 import tinker
-import torch
 
 from tinker_cookbook.image_processing_utils import ImageProcessor
 from tinker_cookbook.renderers.base import (
-    ContentPart,
     ImagePart,
     ImageProcessorProtocol,
     Message,
@@ -27,11 +25,9 @@ from tinker_cookbook.renderers.base import (
     Role,
     TextPart,
     ThinkingPart,
-    ToolCall,
     ToolSpec,
     UnparsedToolCall,
     _tool_call_payload,
-    ensure_text,
     image_to_chunk,
     parse_content_blocks,
     parse_response_for_stop_token,

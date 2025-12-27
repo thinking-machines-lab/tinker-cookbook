@@ -29,7 +29,6 @@ from tinker_cookbook.renderers.base import (
     ensure_text,
     parse_response_for_stop_token,
 )
-from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
 class Llama3Renderer(Renderer):
