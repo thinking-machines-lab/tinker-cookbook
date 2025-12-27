@@ -152,8 +152,27 @@ class ThinkingPart(TypedDict):
     thinking: str
 
 
+class ToolCallPart(TypedDict):
+    """
+    Container for a tool call part in a message content list.
+
+    This represents a tool/function call as a content part, preserving its
+    position relative to other content like thinking and text blocks.
+
+    Args:
+
+    type: Literal['tool_call']
+        The type of the content part, which must be tool_call in this case.
+    tool_call: ToolCall
+        The tool call object.
+    """
+
+    type: Literal["tool_call"]
+    tool_call: ToolCall
+
+
 # Container for a part of a multimodal message content
-ContentPart = TextPart | ImagePart | ThinkingPart
+ContentPart = TextPart | ImagePart | ThinkingPart | ToolCallPart
 
 
 # NOTE: we use a broad type definition for the role to be flexible
@@ -289,6 +308,117 @@ def remove_thinking(content: Content) -> list[ContentPart]:
     return [p for p in ensure_list(content) if p["type"] != "thinking"]
 
 
+def _parse_tool_call_json(
+    tool_call_str: str, raw_text: str
+) -> ToolCall | UnparsedToolCall:
+    """Parse a tool call JSON string into a ToolCall object.
+
+    Args:
+        tool_call_str: The JSON content inside the tool_call tags.
+        raw_text: The full raw text including tags (for error reporting).
+
+    Returns:
+        ToolCall on success, UnparsedToolCall on failure.
+    """
+    try:
+        tool_call = json.loads(tool_call_str.strip())
+    except json.JSONDecodeError as e:
+        return UnparsedToolCall(raw_text=raw_text, error=f"Invalid JSON: {e}")
+
+    if not isinstance(tool_call, dict):
+        return UnparsedToolCall(raw_text=raw_text, error="Tool call is not a JSON object")
+
+    name = tool_call.get("name")
+    arguments = tool_call.get("arguments")
+    tool_id = tool_call.get("id")
+
+    if not isinstance(name, str):
+        return UnparsedToolCall(raw_text=raw_text, error="Missing or invalid 'name' field")
+    if not isinstance(arguments, dict):
+        return UnparsedToolCall(raw_text=raw_text, error="Missing or invalid 'arguments' field")
+
+    if tool_id is not None and not isinstance(tool_id, str):
+        tool_id = None
+
+    return ToolCall(
+        function=ToolCall.FunctionBody(name=name, arguments=json.dumps(arguments)),
+        id=tool_id,
+    )
+
+
+def parse_content_blocks(
+    content: str,
+) -> tuple[list[ContentPart], list[UnparsedToolCall]]:
+    """
+    Parse a string with <think>...</think> and <tool_call>...</tool_call> tags.
+
+    Handles interleaved thinking, tool call, and text blocks, returning parts
+    in order. Empty parts are omitted.
+
+    Args:
+        content: String potentially containing <think> and/or <tool_call> blocks.
+
+    Returns:
+        Tuple of:
+        - List of ThinkingPart, TextPart, and ToolCallPart in order
+        - List of UnparsedToolCall for failed tool call parses
+
+        If no special tags are found, returns ([], []) - caller should use the
+        original string for backward compatibility.
+
+    Example:
+        >>> parse_content_blocks("<think>step 1</think>answer<tool_call>{...}</tool_call>more")
+        ([
+            ThinkingPart(type="thinking", thinking="step 1"),
+            TextPart(type="text", text="answer"),
+            ToolCallPart(type="tool_call", tool_call=ToolCall(...)),
+            TextPart(type="text", text="more"),
+        ], [])
+    """
+    if "<think>" not in content and "<tool_call>" not in content:
+        return [], []  # No special blocks, caller should use original string
+
+    parts: list[ContentPart] = []
+    unparsed_tool_calls: list[UnparsedToolCall] = []
+    pos = 0
+
+    # Pattern to find both <think>...</think> and <tool_call>...</tool_call> blocks
+    # Named groups to distinguish which type matched
+    pattern = re.compile(
+        r"<think>(.*?)</think>|<tool_call>(.*?)</tool_call>", re.DOTALL
+    )
+
+    for match in pattern.finditer(content):
+        # Add any text before this block
+        text_before = content[pos:match.start()]
+        if text_before.strip():  # Skip empty/whitespace-only text
+            parts.append(TextPart(type="text", text=text_before.strip()))
+
+        if match.group(1) is not None:
+            # This is a <think> block
+            thinking = match.group(1)
+            if thinking.strip():
+                parts.append(ThinkingPart(type="thinking", thinking=thinking))
+        else:
+            # This is a <tool_call> block
+            tool_call_json = match.group(2)
+            raw_text = match.group(0)  # Full match including tags
+            parsed = _parse_tool_call_json(tool_call_json, raw_text)
+            if isinstance(parsed, UnparsedToolCall):
+                unparsed_tool_calls.append(parsed)
+            else:
+                parts.append(ToolCallPart(type="tool_call", tool_call=parsed))
+
+        pos = match.end()
+
+    # Add any remaining text after the last block
+    remaining = content[pos:]
+    if remaining.strip():
+        parts.append(TextPart(type="text", text=remaining.strip()))
+
+    return parts, unparsed_tool_calls
+
+
 def _tool_call_payload(tool_call: ToolCall) -> dict[str, object]:
     """Minimal JSON payload for embedding in <tool_call> blocks."""
     # Convert from nested structure to flat format for compatibility
@@ -372,16 +502,17 @@ class Renderer(ABC):
         self.tokenizer = tokenizer
 
     def _preprocess_message_parts(self, message: Message) -> list[ImagePart | TextPart]:
-        """Convert message content to list form, filtering out ThinkingPart.
+        """Convert message content to list form, filtering out ThinkingPart and ToolCallPart.
 
-        ThinkingPart is filtered because most renderers (especially VL renderers)
-        don't support thinking content in the message parts.
+        ThinkingPart and ToolCallPart are filtered because most renderers
+        (especially VL renderers) don't support them in the message parts.
         """
         content = message["content"]
         if isinstance(content, str):
             return [TextPart(type="text", text=content)]
-        # Filter out ThinkingPart - VL renderers don't support thinking
-        return [p for p in content if p["type"] != "thinking"]
+        # Filter out ThinkingPart and ToolCallPart - VL renderers don't support them
+        filtered = [p for p in content if p["type"] in ("text", "image")]
+        return cast(list[ImagePart | TextPart], filtered)
 
     @property
     def _bos_tokens(self) -> list[int]:
@@ -1024,43 +1155,6 @@ class Qwen3Renderer(Renderer):
     def get_stop_sequences(self) -> list[int]:
         return [self._end_message_token]
 
-    def _parse_single_tool_call(
-        self, tool_call_str: str, raw_text: str
-    ) -> ToolCall | UnparsedToolCall:
-        """Parse a single tool call JSON string into a ToolCall object.
-
-        Args:
-            tool_call_str: The JSON content inside the tool_call tags.
-            raw_text: The full raw text including tags (for error reporting).
-
-        Returns:
-            ToolCall on success, UnparsedToolCall on failure.
-        """
-        try:
-            tool_call = json.loads(tool_call_str.strip())
-        except json.JSONDecodeError as e:
-            return UnparsedToolCall(raw_text=raw_text, error=f"Invalid JSON: {e}")
-
-        if not isinstance(tool_call, dict):
-            return UnparsedToolCall(raw_text=raw_text, error="Tool call is not a JSON object")
-
-        name = tool_call.get("name")
-        arguments = tool_call.get("arguments")
-        tool_id = tool_call.get("id")
-
-        if not isinstance(name, str):
-            return UnparsedToolCall(raw_text=raw_text, error="Missing or invalid 'name' field")
-        if not isinstance(arguments, dict):
-            return UnparsedToolCall(raw_text=raw_text, error="Missing or invalid 'arguments' field")
-
-        if tool_id is not None and not isinstance(tool_id, str):
-            tool_id = None
-
-        return ToolCall(
-            function=ToolCall.FunctionBody(name=name, arguments=json.dumps(arguments)),
-            id=tool_id,
-        )
-
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
         assistant_message, parse_success = parse_response_for_stop_token(
             response, self.tokenizer, self._end_message_token
@@ -1068,33 +1162,31 @@ class Qwen3Renderer(Renderer):
         if not parse_success:
             return assistant_message, False
 
-        # Follow Qwen docs and Qwen-Agent's tool calling prompt to use <tool_call>...</tool_call> tags to wrap the tool call.
+        # Parse <think>...</think> and <tool_call>...</tool_call> blocks together
+        # to preserve ordering. Tool calls use Qwen's format:
         # - https://qwen.readthedocs.io/en/latest/getting_started/concepts.html#tool-calling
         # - https://github.com/QwenLM/Qwen-Agent/blob/main/qwen_agent/llm/fncall_prompts/nous_fncall_prompt.py#L279-L282
         assert isinstance(assistant_message["content"], str)
         content = assistant_message["content"]
 
-        # Find all tool calls in the response
-        tool_calls: list[ToolCall] = []
-        unparsed_tool_calls: list[UnparsedToolCall] = []
+        # Parse all blocks in one pass, preserving order
+        parts, unparsed_tool_calls = parse_content_blocks(content)
 
-        for match in re.finditer(r"<tool_call>(.*?)</tool_call>", content, re.DOTALL):
-            raw_text = match.group(0)  # Full match including tags
-            parsed = self._parse_single_tool_call(match.group(1), raw_text)
-            if isinstance(parsed, UnparsedToolCall):
-                unparsed_tool_calls.append(parsed)
-            else:
-                tool_calls.append(parsed)
+        if parts:
+            assistant_message["content"] = parts
 
-        if tool_calls:
-            assistant_message["tool_calls"] = tool_calls
+            # Also populate tool_calls field for backward compatibility
+            tool_calls = [
+                p["tool_call"] for p in parts if p["type"] == "tool_call"
+            ]
+            if tool_calls:
+                assistant_message["tool_calls"] = tool_calls
+        else:
+            # No special blocks found - keep as string for backward compatibility
+            assistant_message["content"] = content
+
         if unparsed_tool_calls:
             assistant_message["unparsed_tool_calls"] = unparsed_tool_calls
-
-        # Strip all tool_call blocks from content (both parsed and unparsed)
-        if tool_calls or unparsed_tool_calls:
-            content = re.sub(r"\n?<tool_call>.*?</tool_call>", "", content, flags=re.DOTALL)
-            assistant_message["content"] = content.strip()
 
         return assistant_message, True
 

@@ -38,9 +38,11 @@ from tinker_cookbook.renderers import (
     TextPart,
     ThinkingPart,
     ToolCall,
+    ToolCallPart,
     ensure_list,
     ensure_text,
     get_renderer,
+    parse_content_blocks,
     remove_thinking,
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
@@ -1147,3 +1149,220 @@ def test_deepseek_stripping_with_thinking_part():
     # Should serialize thinking to <think>...</think> format
     assert "<think>Deep reasoning here...</think>" in output_str
     assert "The conclusion." in output_str
+
+
+# =============================================================================
+# parse_content_blocks Tests
+# =============================================================================
+
+
+def test_parse_content_blocks_no_special_tags():
+    """Test parse_content_blocks returns empty when no special tags."""
+    parts, unparsed = parse_content_blocks("Just plain text")
+    assert parts == []
+    assert unparsed == []
+
+
+def test_parse_content_blocks_single_think_block():
+    """Test parse_content_blocks with a single think block."""
+    parts, unparsed = parse_content_blocks("<think>reasoning</think>visible answer")
+
+    assert len(parts) == 2
+    assert len(unparsed) == 0
+    assert parts[0]["type"] == "thinking"
+    assert parts[0]["thinking"] == "reasoning"
+    assert parts[1]["type"] == "text"
+    assert parts[1]["text"] == "visible answer"
+
+
+def test_parse_content_blocks_multiple_think_blocks():
+    """Test parse_content_blocks with multiple interleaved think blocks."""
+    content = "<think>step 1</think>partial<think>step 2</think>final"
+    parts, unparsed = parse_content_blocks(content)
+
+    assert len(parts) == 4
+    assert len(unparsed) == 0
+    assert parts[0] == ThinkingPart(type="thinking", thinking="step 1")
+    assert parts[1] == TextPart(type="text", text="partial")
+    assert parts[2] == ThinkingPart(type="thinking", thinking="step 2")
+    assert parts[3] == TextPart(type="text", text="final")
+
+
+def test_parse_content_blocks_empty_blocks_omitted():
+    """Test parse_content_blocks omits empty think blocks."""
+    parts, unparsed = parse_content_blocks("<think></think>visible")
+
+    assert len(parts) == 1
+    assert parts[0]["type"] == "text"
+    assert parts[0]["text"] == "visible"
+
+
+def test_parse_content_blocks_whitespace_handling():
+    """Test parse_content_blocks handles whitespace correctly."""
+    parts, unparsed = parse_content_blocks("<think>  thinking  </think>  answer  ")
+
+    assert len(parts) == 2
+    # Thinking content preserves internal whitespace but text gets stripped
+    assert parts[0]["thinking"] == "  thinking  "
+    assert parts[1]["text"] == "answer"
+
+
+def test_parse_content_blocks_tool_call_only():
+    """Test parse_content_blocks parses tool calls."""
+    content = '<tool_call>{"name": "search", "arguments": {"query": "test"}}</tool_call>'
+    parts, unparsed = parse_content_blocks(content)
+
+    assert len(parts) == 1
+    assert len(unparsed) == 0
+
+    assert parts[0]["type"] == "tool_call"
+    tool_call = parts[0]["tool_call"]
+    assert tool_call.function.name == "search"
+    assert tool_call.function.arguments == '{"query": "test"}'
+
+
+def test_parse_content_blocks_interleaved():
+    """Test parse_content_blocks handles interleaved think and tool_call blocks."""
+    content = '<think>Let me search</think>Searching...<tool_call>{"name": "search", "arguments": {"q": "test"}}</tool_call>Done'
+    parts, unparsed = parse_content_blocks(content)
+
+    assert len(parts) == 4
+    assert len(unparsed) == 0
+
+    assert parts[0] == ThinkingPart(type="thinking", thinking="Let me search")
+    assert parts[1] == TextPart(type="text", text="Searching...")
+    assert parts[2]["type"] == "tool_call"
+    assert parts[2]["tool_call"].function.name == "search"
+    assert parts[3] == TextPart(type="text", text="Done")
+
+
+def test_parse_content_blocks_invalid_tool_call():
+    """Test parse_content_blocks handles invalid tool call JSON."""
+    content = '<tool_call>not valid json</tool_call>text after'
+    parts, unparsed = parse_content_blocks(content)
+
+    # Invalid tool call goes to unparsed, text is still captured
+    assert len(parts) == 1
+    assert len(unparsed) == 1
+
+    assert parts[0] == TextPart(type="text", text="text after")
+    assert "Invalid JSON" in unparsed[0].error
+
+
+# =============================================================================
+# Qwen3 parse_response Tests
+# =============================================================================
+
+
+def test_qwen3_parse_response_extracts_thinking():
+    """Test Qwen3Renderer.parse_response extracts thinking to ThinkingPart."""
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
+    renderer = Qwen3Renderer(tokenizer)
+
+    # Simulate a response with thinking
+    response_str = "<think>Let me reason about this.</think>The answer is 42.<|im_end|>"
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success
+    assert message["role"] == "assistant"
+
+    # Content should be a list with ThinkingPart and TextPart
+    content = message["content"]
+    assert isinstance(content, list)
+
+    thinking_parts = [p for p in content if p["type"] == "thinking"]
+    text_parts = [p for p in content if p["type"] == "text"]
+
+    assert len(thinking_parts) == 1
+    assert thinking_parts[0]["thinking"] == "Let me reason about this."
+
+    assert len(text_parts) == 1
+    assert text_parts[0]["text"] == "The answer is 42."
+
+
+def test_qwen3_parse_response_multiple_think_blocks():
+    """Test Qwen3Renderer.parse_response handles multiple interleaved think blocks."""
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
+    renderer = Qwen3Renderer(tokenizer)
+
+    response_str = "<think>step 1</think>partial answer<think>step 2</think>final answer<|im_end|>"
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success
+    content = message["content"]
+    assert isinstance(content, list)
+    assert len(content) == 4
+
+    assert content[0] == ThinkingPart(type="thinking", thinking="step 1")
+    assert content[1] == TextPart(type="text", text="partial answer")
+    assert content[2] == ThinkingPart(type="thinking", thinking="step 2")
+    assert content[3] == TextPart(type="text", text="final answer")
+
+
+def test_qwen3_parse_response_no_thinking_returns_string():
+    """Test Qwen3Renderer.parse_response returns string when no thinking."""
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
+    renderer = Qwen3Renderer(tokenizer)
+
+    response_str = "Just a plain response without thinking.<|im_end|>"
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success
+    # Content should remain a string for backward compatibility
+    assert isinstance(message["content"], str)
+    assert message["content"] == "Just a plain response without thinking."
+
+
+def test_qwen3_parse_response_with_tool_calls():
+    """Test Qwen3Renderer.parse_response parses tool calls into ToolCallPart."""
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
+    renderer = Qwen3Renderer(tokenizer)
+
+    response_str = '<think>Let me search</think>I will search for that.<tool_call>{"name": "web_search", "arguments": {"query": "weather"}}</tool_call><|im_end|>'
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success
+    content = message["content"]
+    assert isinstance(content, list)
+
+    # Should have ThinkingPart, TextPart, ToolCallPart in order
+    assert len(content) == 3
+    assert content[0]["type"] == "thinking"
+    assert content[0]["thinking"] == "Let me search"
+    assert content[1]["type"] == "text"
+    assert content[1]["text"] == "I will search for that."
+    assert content[2]["type"] == "tool_call"
+    assert content[2]["tool_call"].function.name == "web_search"
+
+    # Also check backward-compatible tool_calls field
+    assert "tool_calls" in message
+    assert len(message["tool_calls"]) == 1
+    assert message["tool_calls"][0].function.name == "web_search"
+
+
+def test_qwen3_parse_response_tool_call_only():
+    """Test Qwen3Renderer.parse_response with only a tool call."""
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
+    renderer = Qwen3Renderer(tokenizer)
+
+    response_str = '<tool_call>{"name": "calculator", "arguments": {"expr": "2+2"}}</tool_call><|im_end|>'
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success
+    content = message["content"]
+    assert isinstance(content, list)
+    assert len(content) == 1
+    assert content[0]["type"] == "tool_call"
+
+    # Backward-compatible field
+    assert len(message["tool_calls"]) == 1
