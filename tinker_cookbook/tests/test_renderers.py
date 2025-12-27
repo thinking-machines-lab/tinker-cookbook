@@ -420,7 +420,7 @@ def test_tool_call_supervised_rendering(model_name: str):
     # - Llama3: <function=get_weather>...</function>
     # - DeepSeek: <｜tool▁sep｜>get_weather
     # - Kimi K2: Uses tool_id (functions.name:idx or just the id) + arguments
-    # - GptOss: <|channel|>commentary to=functions.get_weather <|constrain|>json<|message|>{args}
+    # - GptOss: to=functions.get_weather<|channel|>commentary <|constrain|>json<|message|>{args}
     # Check for tool arguments which all formats include
     assert "San Francisco" in decoded, f"Tool argument should appear in rendered output: {decoded}"
 
@@ -893,7 +893,7 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         test_response_double_eot, add_special_tokens=False
     )
 
-    with pytest.raises(ValueError, match="expected to split into 1 or 2 pieces"):
+    with pytest.raises(ValueError, match="expected .* 1"):
         _ = renderer.parse_response(response_tokens_double_eot)
 
 

@@ -434,3 +434,40 @@ def test_gptoss_parse_response_invalid_tool_call_json():
     assert "unparsed_tool_calls" in message
     assert len(message["unparsed_tool_calls"]) == 1
     assert "Invalid JSON" in message["unparsed_tool_calls"][0].error
+
+
+def test_gptoss_parse_response_tool_call_recipient_before_channel():
+    """Test GptOssRenderer.parse_response handles recipient before channel."""
+    tokenizer = get_tokenizer("openai/gpt-oss-20b")
+    renderer = GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="medium")
+
+    response_str = '<|start|>assistant to=functions.get_weather<|channel|>commentary<|constrain|>json<|message|>{"location": "Tokyo"}<|call|>'
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success
+    assert "tool_calls" in message
+    assert len(message["tool_calls"]) == 1
+    assert message["tool_calls"][0].function.name == "get_weather"
+
+
+def test_gptoss_parse_response_commentary_preamble():
+    """Test GptOssRenderer.parse_response keeps commentary preamble text."""
+    tokenizer = get_tokenizer("openai/gpt-oss-20b")
+    renderer = GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="medium")
+
+    response_str = (
+        "<|channel|>commentary<|message|>Checking now.<|end|>"
+        '<|start|>assistant to=functions.get_weather<|channel|>commentary <|constrain|>json<|message|>{"location": "SF"}<|call|>'
+    )
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success
+    content = message["content"]
+    assert isinstance(content, list)
+    assert len(content) == 1
+    assert content[0] == TextPart(type="text", text="Checking now.")
+    assert "tool_calls" in message and len(message["tool_calls"]) == 1
