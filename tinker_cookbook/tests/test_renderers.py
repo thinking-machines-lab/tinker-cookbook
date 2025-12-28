@@ -609,7 +609,7 @@ def test_tokenization_boundary_with_whitespace(model_name: str):
     "model_name",
     [
         "Qwen/Qwen3-30B-A3B",
-        "meta-llama/Llama-3.2-1B-Instruct",
+        # Llama3 does not support tool calling - see llama3.py docstring
         "deepseek-ai/DeepSeek-V3.1",
         "moonshotai/Kimi-K2-Thinking",
         "openai/gpt-oss-20b",

@@ -31,7 +31,7 @@ class Llama3Renderer(Renderer):
     Tool calling is NOT supported for Llama 3. The Llama 3 tool calling format
     uses bare JSON without delimiters, making it impossible to reliably distinguish
     tool calls from regular JSON content in model responses. Use a different model
-    (Qwen3, DeepSeek V3, etc.) if you need tool calling.
+    or develop your own renderer if you need tool calling.
     """
 
     @property
