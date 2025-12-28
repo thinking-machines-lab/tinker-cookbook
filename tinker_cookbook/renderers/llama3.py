@@ -14,7 +14,6 @@ Note: We intentionally differ from HF's stock Llama template:
 - HF prepends "Cutting Knowledge Date..." to system messages; we don't (add manually if needed)
 - HF drops assistant content when tool_calls are present; we preserve it
 - HF double-encodes tool args via |tojson; we use clean single-encoding
-- HF escapes tool result content; we pass it through as-is
 
 These differences are intentional - the stock Llama format has quirks not worth matching.
 Our format works with vllm's Llama tool parser which accepts both single and double encoding.
@@ -60,14 +59,19 @@ class Llama3Renderer(Renderer):
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         # Determine role for header
         # Tool responses use "ipython" role in Llama 3 format
-        role = message["role"]
-        if role == "tool":
-            role = "ipython"
+        original_role = message["role"]
+        role = "ipython" if original_role == "tool" else original_role
 
         header_str = f"<|start_header_id|>{role}<|end_header_id|>\n\n"
 
         # Build output content
-        output_str = ensure_text(message["content"])
+        content = ensure_text(message["content"])
+
+        # Tool results are wrapped in {"output": ...} to match vLLM's Llama template
+        if original_role == "tool":
+            output_str = json.dumps({"output": content})
+        else:
+            output_str = content
 
         # Handle tool calls in assistant messages
         # JSON format: {"name": "func_name", "parameters": {"arg": "value"}}
