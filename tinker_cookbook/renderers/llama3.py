@@ -20,7 +20,6 @@ Our format works with vllm's Llama tool parser which accepts both single and dou
 """
 
 import json
-import re
 
 import tinker
 

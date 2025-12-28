@@ -481,7 +481,8 @@ class Qwen3VLRenderer(Qwen3Renderer):
             output_chunks += [
                 TextPart(
                     type="text",
-                    text="\n" + "\n".join(
+                    text="\n"
+                    + "\n".join(
                         [
                             f"<tool_call>\n{json.dumps(_tool_call_payload(tool_call))}\n</tool_call>"
                             for tool_call in message["tool_calls"]

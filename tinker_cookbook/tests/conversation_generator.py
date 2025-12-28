@@ -98,12 +98,15 @@ def generate_conversation(
             tool_call = _rand_tool_call(rng)
             messages.append(Message(role="assistant", content=content, tool_calls=[tool_call]))
             # Tool response
-            messages.append(Message(
-                role="tool",
-                content=json.dumps({"result": _rand_str(rng)}),
-                tool_call_id=tool_call.id,
-                name=tool_call.function.name,
-            ))
+            assert tool_call.id is not None  # Always set by _rand_tool_call
+            messages.append(
+                Message(
+                    role="tool",
+                    content=json.dumps({"result": _rand_str(rng)}),
+                    tool_call_id=tool_call.id,
+                    name=tool_call.function.name,
+                )
+            )
             # Follow-up assistant
             messages.append(Message(role="assistant", content=f"followup_{_rand_str(rng)}"))
         else:
@@ -114,4 +117,9 @@ def generate_conversation(
 
 def generate_simple_conversation(seed: int, end_with_assistant: bool = True) -> list[Message]:
     """No tools or thinking."""
-    return generate_conversation(seed, include_tool_calls=False, include_thinking=False, end_with_assistant=end_with_assistant)
+    return generate_conversation(
+        seed,
+        include_tool_calls=False,
+        include_thinking=False,
+        end_with_assistant=end_with_assistant,
+    )
