@@ -298,7 +298,11 @@ class Qwen3Renderer(Renderer):
         """
         tools_text = ""
         if tools:
-            tool_lines = "\n".join(json.dumps(tool, separators=(",", ":")) for tool in tools)
+            # Wrap tools in OpenAI-style format to match HuggingFace Qwen3 chat template
+            tool_lines = "\n".join(
+                json.dumps({"type": "function", "function": tool}, separators=(",", ":"))
+                for tool in tools
+            )
             tools_text = f"""
 
 # Tools
