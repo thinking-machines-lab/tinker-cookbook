@@ -34,6 +34,28 @@ from tinker_cookbook.renderers.base import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
+def _merge_consecutive_text_parts(
+    chunks: list[ImagePart | TextPart],
+) -> list[ImagePart | TextPart]:
+    """Merge consecutive TextParts into single parts.
+
+    This ensures text is tokenized as a single string, matching HuggingFace's
+    apply_chat_template behavior which tokenizes the full rendered string at once.
+    Without merging, tokenization boundaries between chunks can produce different
+    token sequences (though they decode to identical strings).
+    """
+    if not chunks:
+        return chunks
+
+    merged: list[ImagePart | TextPart] = [chunks[0]]
+    for chunk in chunks[1:]:
+        if chunk["type"] == "text" and merged[-1]["type"] == "text":
+            merged[-1] = TextPart(type="text", text=merged[-1]["text"] + chunk["text"])
+        else:
+            merged.append(chunk)
+    return merged
+
+
 class Qwen3Renderer(Renderer):
     """
     Renderer for Qwen3 models with thinking enabled.
@@ -212,6 +234,58 @@ class Qwen3Renderer(Renderer):
 
         return assistant_message, True
 
+    def to_openai_message(self, message: Message) -> dict:
+        """Convert a Message to OpenAI API format with reasoning_content for thinking.
+
+        Qwen3's HF template accepts either:
+        - message['reasoning_content'] as a separate field
+        - <think>...</think> embedded in content
+
+        We use reasoning_content for cleaner separation.
+        """
+        result: dict = {"role": message["role"]}
+
+        content = message["content"]
+        if isinstance(content, str):
+            result["content"] = content
+        else:
+            # Extract thinking into reasoning_content, keep text in content
+            thinking_parts = []
+            text_parts = []
+            for p in content:
+                if p["type"] == "thinking":
+                    thinking_parts.append(p["thinking"])
+                elif p["type"] == "text":
+                    text_parts.append(p["text"])
+                # Skip tool_call/unparsed_tool_call - handled via tool_calls field
+
+            result["content"] = "".join(text_parts)
+            if thinking_parts:
+                result["reasoning_content"] = "".join(thinking_parts)
+
+        # Handle tool_calls
+        if "tool_calls" in message and message["tool_calls"]:
+            result["tool_calls"] = [
+                {
+                    "type": "function",
+                    "id": tc.id,
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in message["tool_calls"]
+            ]
+
+        # Handle tool response fields
+        if message["role"] == "tool":
+            if "tool_call_id" in message:
+                result["tool_call_id"] = message["tool_call_id"]
+            if "name" in message:
+                result["name"] = message["name"]
+
+        return result
+
     def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
     ) -> list[Message]:
@@ -327,10 +401,12 @@ class Qwen3VLRenderer(Qwen3Renderer):
         tokenizer: Tokenizer,
         image_processor: ImageProcessor,
         strip_thinking_from_history: bool = True,
+        merge_text_chunks: bool = True,
     ):
         self.tokenizer = tokenizer
         self.image_processor = image_processor
         self.strip_thinking_from_history = strip_thinking_from_history
+        self.merge_text_chunks = merge_text_chunks
 
     def _preprocess_message_parts(
         self, message: Message, *, strip_thinking: bool = False
@@ -401,10 +477,12 @@ class Qwen3VLRenderer(Qwen3Renderer):
             output_chunks = self._wrap_qwen_tool_response_chunks(output_chunks)
 
         if "tool_calls" in message:
+            # Add leading newline to match HF template behavior
             output_chunks += [
                 TextPart(
                     type="text",
-                    text="\n".join(
+                    text="\n"
+                    + "\n".join(
                         [
                             f"<tool_call>\n{json.dumps(_tool_call_payload(tool_call))}\n</tool_call>"
                             for tool_call in message["tool_calls"]
@@ -413,6 +491,9 @@ class Qwen3VLRenderer(Qwen3Renderer):
                 )
             ]
         output_chunks += [TextPart(type="text", text="<|im_end|>")]
+
+        if self.merge_text_chunks:
+            output_chunks = _merge_consecutive_text_parts(output_chunks)
 
         output_chunks_encoded: list[tinker.ModelInputChunk] = [
             image_to_chunk(

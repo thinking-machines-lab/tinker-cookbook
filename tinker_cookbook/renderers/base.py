@@ -608,6 +608,79 @@ class Renderer(ABC):
         """
         ...
 
+    def to_openai_message(self, message: Message) -> dict:
+        """
+        Convert a Message to OpenAI chat completions API format.
+
+        The returned object can be passed into the transformers library's
+        apply_chat_template function, which is useful for testing purposes.
+
+        It's also useful for querying models that are being served through
+        OpenAI-compatible APIs (OpenRouter, vLLM, etc.).
+
+        The base implementation handles:
+        - Basic role/content conversion
+        - tool_calls conversion from ToolCall objects to OpenAI dict format
+        - tool_call_id and name for tool response messages
+
+        Subclasses should override this to handle model-specific features like
+        reasoning_content for thinking models.
+
+        Args:
+            message: The Message to convert.
+
+        Returns:
+            A dict in OpenAI API message format.
+        """
+        result: dict = {"role": message["role"]}
+
+        # Handle content
+        content = message["content"]
+        if isinstance(content, str):
+            result["content"] = content
+        else:
+            # Structured content with ThinkingPart/TextPart/etc.
+            # Base implementation: concatenate text parts, render thinking as <think> tags
+            # TODO: Add proper support for ImagePart by converting to OpenAI-style content parts
+            # (list of {"type": "image_url", "image_url": {...}} dicts)
+            parts = []
+            for p in content:
+                if p["type"] == "text":
+                    parts.append(p["text"])
+                elif p["type"] == "thinking":
+                    parts.append(f"<think>{p['thinking']}</think>")
+                elif p["type"] == "image":
+                    raise NotImplementedError(
+                        "to_openai_message does not support ImagePart content. "
+                        "Images would be silently dropped, leading to incorrect HF template "
+                        "comparisons or OpenAI API calls. Use build_generation_prompt for VL models."
+                    )
+                # Skip tool_call and unparsed_tool_call parts - handled via tool_calls field
+            result["content"] = "".join(parts)
+
+        # Handle tool_calls (convert ToolCall objects to OpenAI format)
+        if "tool_calls" in message and message["tool_calls"]:
+            result["tool_calls"] = [
+                {
+                    "type": "function",
+                    "id": tc.id,
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in message["tool_calls"]
+            ]
+
+        # Handle tool response fields
+        if message["role"] == "tool":
+            if "tool_call_id" in message:
+                result["tool_call_id"] = message["tool_call_id"]
+            if "name" in message:
+                result["name"] = message["name"]
+
+        return result
+
     def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
     ) -> list[Message]:

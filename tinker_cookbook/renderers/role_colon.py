@@ -1,14 +1,4 @@
-"""
-RoleColonRenderer - Simple role:content format.
-
-Format like this:
-    User: <content>
-
-    Assistant: <content>
-
-This is basically the format used by DeepSeek, and similar to the format used by Anthropic,
-except that they use "Human" instead of "User".
-"""
+"""Simple role:content format renderer."""
 
 import tinker
 
@@ -23,14 +13,16 @@ from tinker_cookbook.renderers.base import (
 
 
 class RoleColonRenderer(Renderer):
-    """
-    format like this:
+    """Simple role:content format renderer.
+
+    Format::
+
         User: <content>
 
         Assistant: <content>
 
-    This is basically the format used by DeepSeek, and similar to the format used by Anthropic,
-    except that they use "Human" instead of "User".
+    This is basically the format used by DeepSeek R1-Zero, and similar to the format
+    used by Anthropic, except that they use "Human" instead of "User".
     """
 
     @property

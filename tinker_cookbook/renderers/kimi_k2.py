@@ -1,11 +1,4 @@
-"""
-KimiK2Renderer - Moonshot AI's Kimi K2 format.
-
-Format for moonshotai/Kimi-K2-Thinking:
-    <|im_system|>system<|im_middle|>You are Kimi, an AI assistant created by Moonshot AI.<|im_end|>
-    <|im_user|>user<|im_middle|>What can you help me with?<|im_end|>
-    <|im_assistant|>assistant<|im_middle|><think>reasoning</think>I can help you with...<|im_end|>
-"""
+"""Renderer for Moonshot AI's Kimi K2 models."""
 
 import json
 import re
@@ -133,7 +126,9 @@ class KimiK2Renderer(Renderer):
             # Tool declaration uses system token but with "tool_declare" as display name
             header_str = f"<|im_system|>{role}<|im_middle|>"
         elif role == "tool":
-            header_str = f"<|im_system|>{role}<|im_middle|>"
+            # HF template uses message.name if present, otherwise role
+            role_name = message.get("name") or role
+            header_str = f"<|im_system|>{role_name}<|im_middle|>"
             # Tool responses have special formatting - need tool_call_id to correlate with the call
             tool_call_id = message.get("tool_call_id", "")
             if not tool_call_id:
@@ -322,6 +317,53 @@ class KimiK2Renderer(Renderer):
         assistant_message["content"] = content_parts if content_parts is not None else text_content
 
         return assistant_message, True
+
+    def to_openai_message(self, message: Message) -> dict:
+        """Convert a Message to OpenAI API format with reasoning_content for thinking.
+
+        Kimi K2's HF template explicitly expects reasoning_content as a separate field.
+        """
+        result: dict = {"role": message["role"]}
+
+        content = message["content"]
+        if isinstance(content, str):
+            result["content"] = content
+        else:
+            # Extract thinking into reasoning_content, keep text in content
+            thinking_parts = []
+            text_parts = []
+            for p in content:
+                if p["type"] == "thinking":
+                    thinking_parts.append(p["thinking"])
+                elif p["type"] == "text":
+                    text_parts.append(p["text"])
+
+            result["content"] = "".join(text_parts)
+            if thinking_parts:
+                result["reasoning_content"] = "".join(thinking_parts)
+
+        # Handle tool_calls
+        if "tool_calls" in message and message["tool_calls"]:
+            result["tool_calls"] = [
+                {
+                    "type": "function",
+                    "id": tc.id,
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in message["tool_calls"]
+            ]
+
+        # Handle tool response fields
+        if message["role"] == "tool":
+            if "tool_call_id" in message:
+                result["tool_call_id"] = message["tool_call_id"]
+            if "name" in message:
+                result["name"] = message["name"]
+
+        return result
 
     def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""

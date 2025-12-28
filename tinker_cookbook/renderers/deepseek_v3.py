@@ -272,6 +272,53 @@ class DeepSeekV3ThinkingRenderer(Renderer):
 
         return assistant_message, True
 
+    def to_openai_message(self, message: Message) -> dict:
+        """Convert a Message to OpenAI API format with reasoning_content for thinking.
+
+        DeepSeek's API uses reasoning_content for thinking models, similar to OpenAI's o1.
+        """
+        result: dict = {"role": message["role"]}
+
+        content = message["content"]
+        if isinstance(content, str):
+            result["content"] = content
+        else:
+            # Extract thinking into reasoning_content, keep text in content
+            thinking_parts = []
+            text_parts = []
+            for p in content:
+                if p["type"] == "thinking":
+                    thinking_parts.append(p["thinking"])
+                elif p["type"] == "text":
+                    text_parts.append(p["text"])
+
+            result["content"] = "".join(text_parts)
+            if thinking_parts:
+                result["reasoning_content"] = "".join(thinking_parts)
+
+        # Handle tool_calls
+        if "tool_calls" in message and message["tool_calls"]:
+            result["tool_calls"] = [
+                {
+                    "type": "function",
+                    "id": tc.id,
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in message["tool_calls"]
+            ]
+
+        # Handle tool response fields
+        if message["role"] == "tool":
+            if "tool_call_id" in message:
+                result["tool_call_id"] = message["tool_call_id"]
+            if "name" in message:
+                result["name"] = message["name"]
+
+        return result
+
     def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
     ) -> list[Message]:
