@@ -11,20 +11,22 @@ Rendering converts list-of-message datatypes into their token representations fo
 1. **The [OpenAI-compatible endpoint](/compatible-apis/openai)** (`/chat/completions`) uses HuggingFace chat templates to convert messages to tokens
 2. **If you train with a non-HF-compatible renderer**, your model may not work correctly with the OpenAI endpoint
 
-The default renderers (`qwen3`, `llama3`, `deepseekv3`, etc.) match HF behavior. The one exception is `Qwen3Renderer` with `strip_thinking_from_history=False`, which is a special mode for multi-turn RL efficiency that does NOT match HF (see [Sequence Extension](/rl/sequence-extension)).
+The default renderers (`qwen3`, `llama3`, `deepseekv3`, etc.) match HF behavior. The exception is when using `strip_thinking_from_history=False` on thinking-enabled renderers (`Qwen3Renderer`, `DeepSeekV3ThinkingRenderer`)—this is a special mode for multi-turn RL efficiency that does NOT match HF (see [Sequence Extension](/rl/sequence-extension)).
 
 | Renderer                 | HF Equivalent                                              |
 | ------------------------ | ---------------------------------------------------------- |
 | `qwen3`                  | `apply_chat_template(..., enable_thinking=True)` (default) |
 | `qwen3_disable_thinking` | `apply_chat_template(..., enable_thinking=False)`          |
-| `llama3`                 | `apply_chat_template(...)`                                 |
+| `llama3`                 | `apply_chat_template(...)` *                               |
 | `deepseekv3`             | `apply_chat_template(...)`                                 |
+
+\* The Llama3 renderer omits the "Cutting Knowledge Date..." preamble that HF prepends to system messages. Add this manually if you need exact HF compatibility.
 
 **Recommendation:** If you plan to use the OpenAI endpoint for inference, always use the default renderers with default options.
 
 ## The Renderer class
 
-The Renderer class is the main interface used for rendering. It can be found in <CookbookLink path="tinker_cookbook/renderers.py">`renderers.py`</CookbookLink>.
+The Renderer class is the main interface used for rendering. It can be found in <CookbookLink path="tinker_cookbook/renderers/">`tinker_cookbook/renderers/`</CookbookLink>.
 
 **Example conversation:**
 
@@ -228,4 +230,12 @@ See the [Sequence Extension](/rl/sequence-extension) documentation for details o
 
 ## Appendix: Why not Jinja templates?
 
-In our experience, the Jinja2 templates are harder to write than Python code, especially when we need to get the whitespace exactly right. They are also unwieldy for supervised learning, where you need to put different labels on different tokens.
+HuggingFace chat templates (Jinja2) are designed for a single use case: converting messages to tokens for inference. Tinker's renderer system handles the full training lifecycle, which requires capabilities that chat templates don't provide:
+
+1. **Supervised learning requires per-token loss weights.** Chat templates produce a flat token sequence; they can't distinguish which tokens are prompt (weight=0) vs completion (weight=1). The renderer's `build_supervised_example` method returns both tokens and weights.
+
+2. **Parsing model output back into messages.** After sampling, you need to convert tokens back into structured messages. This includes knowing the stop sequences (`get_stop_sequences`), extracting thinking blocks (`<think>...</think>`), and parsing tool calls. The `parse_response` method handles all of this, including graceful handling of malformed output.
+
+3. **Tool calling details vary by model.** Each model family has its own tool calling format (Qwen uses `<tool_call>` XML tags, DeepSeek uses special tokens, Llama3 doesn't support tool calling reliably). The renderers encode these formats correctly and parse tool calls from model output, including handling parse failures.
+
+4. **Precise tokenization control.** Tokenization can produce different results depending on how strings are split. For example, tokenizing `"Hello" + " world"` separately may differ from `"Hello world"`. The renderers directly construct a token sequence, rather than strings, so they give you precise control over the token sequence, which is important for ensuring train-test consistency and KV-cache friendliness.

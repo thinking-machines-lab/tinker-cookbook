@@ -85,9 +85,9 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.D
     """
 ```
 
-When rendering your conversations, be aware of whether your renderer has the extension property. For `Qwen3Renderer`:
-- `strip_thinking_from_history=False` → Extension holds
-- `strip_thinking_from_history=True` (default) → Extension breaks
+When rendering your conversations, be aware of whether your renderer has the extension property. You can check programmatically via `renderer.has_extension_property`. For `Qwen3Renderer`:
+- `strip_thinking_from_history=False` → `has_extension_property=True`
+- `strip_thinking_from_history=True` (default) → `has_extension_property=False`
 
 **Note on sampling:** The training code automatically merges timesteps when possible. Sampling infrastructure doesn't yet adjust billing based on KV-cache hits, but this is planned for a future release.
 

@@ -20,6 +20,38 @@ Coefficient used for computing running averages of gradient square
 
 Term added to the denominator to improve numerical stability
 
+#### `weight_decay`
+
+Weight decay for the optimizer. Uses decoupled weight decay.
+
+#### `grad_clip_norm`
+
+Gradient clip norm for the optimizer. 0.0 means no clipping.
+
+## `SupportedModel` Objects
+
+```python
+class SupportedModel(BaseModel)
+```
+
+Information about a model supported by the server.
+
+#### `model_name`
+
+The name of the supported model.
+
+## `GetServerCapabilitiesResponse` Objects
+
+```python
+class GetServerCapabilitiesResponse(BaseModel)
+```
+
+Response containing the server's supported models and capabilities.
+
+#### `supported_models`
+
+List of models available on the server.
+
 ## `OptimStepResponse` Objects
 
 ```python
@@ -405,7 +437,7 @@ class ForwardBackwardOutput(BaseModel)
 
 #### `loss_fn_output_type`
 
-The type of the ForwardBackward output. Can be one of [...] TODO
+The class name of the loss function output records (e.g., 'TorchLossReturn', 'ArrayRecord').
 
 #### `loss_fn_outputs`
 
@@ -444,6 +476,58 @@ class CreateSamplingSessionResponse(BaseModel)
 
 The generated sampling session ID
 
+## `ModelData` Objects
+
+```python
+class ModelData(BaseModel)
+```
+
+Metadata about a model's architecture and configuration.
+
+#### `arch`
+
+The model architecture identifier.
+
+#### `model_name`
+
+The human-readable model name.
+
+#### `tokenizer_id`
+
+The identifier of the tokenizer used by this model.
+
+## `GetInfoResponse` Objects
+
+```python
+class GetInfoResponse(BaseModel)
+```
+
+Response containing information about a training client's model.
+
+#### `type`
+
+Response type identifier.
+
+#### `model_data`
+
+Detailed metadata about the model.
+
+#### `model_id`
+
+Unique identifier for the model.
+
+#### `is_lora`
+
+Whether this is a LoRA fine-tuned model.
+
+#### `lora_rank`
+
+The rank of the LoRA adaptation, if applicable.
+
+#### `model_name`
+
+The name of the model.
+
 ## `Cursor` Objects
 
 ```python
@@ -470,7 +554,15 @@ class CreateModelRequest(StrictBase)
 
 #### `base_model`
 
-Optional metadata about this model/training run, set by the end-user
+The name of the base model to fine-tune (e.g., 'Qwen/Qwen3-8B').
+
+#### `user_metadata`
+
+Optional metadata about this model/training run, set by the end-user.
+
+#### `lora_config`
+
+LoRA configuration
 
 ## `Datum` Objects
 

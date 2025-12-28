@@ -74,7 +74,7 @@ def create_lora_training_client(
 Create a TrainingClient for LoRA fine-tuning.
 
 Args:
-- `base_model`: Name of the base model to fine-tune (e.g., "Qwen/Qwen2.5-7B")
+- `base_model`: Name of the base model to fine-tune (e.g., "Qwen/Qwen3-8B")
 - `rank`: LoRA rank controlling the size of adaptation matrices (default 32)
 - `seed`: Random seed for initialization. None means random seed.
 - `train_mlp`: Whether to train MLP layers (default True)
@@ -88,7 +88,7 @@ Returns:
 Example:
 ```python
 training_client = service_client.create_lora_training_client(
-    base_model="Qwen/Qwen2.5-7B",
+    base_model="Qwen/Qwen3-8B",
     rank=16,
     train_mlp=True,
     train_attn=True
@@ -203,7 +203,7 @@ Create a SamplingClient for text generation.
 
 Args:
 - `model_path`: Path to saved model weights (e.g., "tinker://run-id/weights/checkpoint-001")
-- `base_model`: Name of base model to use (e.g., "Qwen/Qwen2.5-7B")
+- `base_model`: Name of base model to use (e.g., "Qwen/Qwen3-8B")
 - `retry_config`: Optional configuration for retrying failed requests
 
 Returns:
@@ -216,7 +216,7 @@ Example:
 ```python
 # Use a base model
 sampling_client = service_client.create_sampling_client(
-    base_model="Qwen/Qwen2.5-7B"
+    base_model="Qwen/Qwen3-8B"
 )
 
 # Or use saved weights
