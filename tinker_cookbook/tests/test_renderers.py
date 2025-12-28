@@ -45,6 +45,7 @@ from tinker_cookbook.renderers import (
     get_renderer,
 )
 from tinker_cookbook.renderers.base import ensure_list
+from tinker_cookbook.tests.conversation_generator import generate_conversation
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
@@ -201,6 +202,20 @@ def get_4turn_thinking_conversation() -> list[Message]:
     ]
 
 
+def get_thinking_with_whitespace_conversation() -> list[Message]:
+    """Conversation with leading whitespace in ThinkingPart and TextPart."""
+    return [
+        {"role": "user", "content": "Hello, how are you?"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="\nLet me respond politely.\n"),
+                TextPart(type="text", text="\n\nI'm fine, thank you!"),
+            ],
+        },
+    ]
+
+
 def get_multiturn_thinking_conversation() -> list[Message]:
     """Multi-turn conversation with thinking in assistant messages.
 
@@ -326,10 +341,6 @@ def get_multiturn_thinking_and_tool_conversation() -> list[Message]:
 
 # Conversation registry for parametrized tests
 # Maps conversation ID to (factory_function, description, requires_tools)
-from tinker_cookbook.tests.conversation_generator import (
-    generate_conversation,
-)
-
 CONVERSATION_REGISTRY: dict[str, tuple[Callable[[], list[Message]], str, bool]] = {
     "basic_3turn": (get_basic_3turn_conversation, "basic 3-turn conversation", False),
     "basic_2turn": (get_basic_2turn_conversation, "basic 2-turn conversation", False),
@@ -367,6 +378,7 @@ CONVERSATION_REGISTRY: dict[str, tuple[Callable[[], list[Message]], str, bool]] 
 # Models that support tool calling in their renderers
 TOOL_CAPABLE_MODELS = {
     "Qwen/Qwen3-30B-A3B",
+    "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "Qwen/Qwen3-VL-30B-A3B-Instruct",
     "meta-llama/Llama-3.2-1B-Instruct",
     "deepseek-ai/DeepSeek-V3.1",
@@ -384,6 +396,7 @@ TOOL_CAPABLE_MODELS = {
 _HF_TEST_MODELS = [
     "meta-llama/Llama-3.2-1B-Instruct",
     "Qwen/Qwen3-30B-A3B",
+    "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "deepseek-ai/DeepSeek-V3.1",
     "openai/gpt-oss-20b",
     "moonshotai/Kimi-K2-Thinking",
@@ -391,10 +404,15 @@ _HF_TEST_MODELS = [
 ]
 
 # Models whose tool call format matches HF's apply_chat_template exactly.
-# Other models have intentional differences (see renderer docstrings for details).
+# Excluded models with intentional differences:
+# - Llama3: see llama3.py docstring (double-encoding, assistant content handling)
+# - gpt-oss: no HF template
 _HF_TOOL_COMPATIBLE_MODELS = {
     "Qwen/Qwen3-30B-A3B",
+    "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    "Qwen/Qwen3-VL-30B-A3B-Instruct",
     "deepseek-ai/DeepSeek-V3.1",
+    "moonshotai/Kimi-K2-Thinking",
 }
 
 # Conversations for generation tests (end with user message or tool response)
@@ -459,7 +477,7 @@ def test_generation_against_hf_chat_templates(model_name: str, conv_id: str):
         _add_llama3_date_prefix(convo) if model_name.startswith("meta") else convo
     )
     # ^^^ modify the cookbook convo just for llama3, where we chose not to match the HF template
-    hf_convo = cookbook_renderer.to_openai_messages(convo)
+    hf_convo = [cookbook_renderer.to_openai_message(m) for m in convo]
 
     cookbook_tokens = cookbook_renderer.build_generation_prompt(modified_cookbook_convo).to_ints()
     hf_tokens = tokenizer.apply_chat_template(hf_convo, add_generation_prompt=True, tokenize=True)
@@ -474,10 +492,11 @@ def test_generation_against_hf_chat_templates(model_name: str, conv_id: str):
 
 # Models for supervised tests
 # Excluded:
-# - OpenAI: analysis channel diverges from HF template
+# - gpt-oss: analysis channel diverges from HF template
 # - Qwen/Qwen3-30B-A3B: HF template adds empty <think> blocks to non-thinking messages
 _SUPERVISED_TEST_MODELS = [
     "meta-llama/Llama-3.2-1B-Instruct",
+    "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "deepseek-ai/DeepSeek-V3.1",
     "moonshotai/Kimi-K2-Thinking",
     "Qwen/Qwen3-VL-30B-A3B-Instruct",
@@ -523,7 +542,7 @@ def test_supervised_example_against_hf_chat_templates(model_name: str, conv_id: 
         _add_llama3_date_prefix(convo) if model_name.startswith("meta") else convo
     )
     # ^^^ modify the cookbook convo just for llama3, where we chose not to match the HF template
-    hf_convo = cookbook_renderer.to_openai_messages(convo)
+    hf_convo = [cookbook_renderer.to_openai_message(m) for m in convo]
 
     cookbook_model_input, _ = cookbook_renderer.build_supervised_example(modified_cookbook_convo)
     cookbook_tokens = cookbook_model_input.to_ints()
@@ -539,53 +558,19 @@ def test_supervised_example_against_hf_chat_templates(model_name: str, conv_id: 
     )
 
 
-# =============================================================================
-# Tokenization Boundary Difference Tests
-# =============================================================================
-
-
-def _get_conversation_with_whitespace_boundary() -> list[Message]:
-    """Conversation with leading whitespace in TextPart - triggers tokenization boundary issue.
-
-    When content parts start with whitespace (like '\\n\\n'), our renderer tokenizes
-    piece-by-piece (header, then content) while HF's apply_chat_template tokenizes
-    the full string at once. This produces different token sequences that decode
-    to identical strings.
-
-    Example with Qwen3:
-    - Piece-wise: encode("<|im_start|>assistant\\n") + encode("\\n\\nasst_text")
-      → [..., 198, 271, ...] (newline + double-newline as separate tokens)
-    - All-at-once: encode("<|im_start|>assistant\\n\\n\\nasst_text")
-      → [..., 1406, ...] (triple-newline as single token)
-
-    Both decode to the same string, but the token sequences differ.
-    """
-    return [
-        {"role": "user", "content": "Hello, how are you?"},
-        {
-            "role": "assistant",
-            "content": [
-                ThinkingPart(type="thinking", thinking="\nLet me respond politely.\n"),
-                TextPart(type="text", text="\n\nI'm fine, thank you!"),
-            ],
-        },
-    ]
-
-
 @pytest.mark.parametrize(
     "model_name",
     [
-        "Qwen/Qwen3-30B-A3B",  # Uses <|im_start|>assistant\n header
+        "Qwen/Qwen3-30B-A3B",
     ],
 )
 def test_tokenization_boundary_with_whitespace(model_name: str):
-    """Test that tokenization boundaries work correctly with whitespace in content.
+    """Test that whitespace in ThinkingPart/TextPart tokenizes correctly vs HF.
 
-    This test verifies that our piece-wise tokenization produces identical tokens
-    to HF's all-at-once tokenization, even when ThinkingPart or TextPart content
-    contains leading/trailing whitespace.
+    Qwen3 is excluded from supervised HF tests (empty <think> blocks), so we
+    test the whitespace case separately here.
     """
-    convo = _get_conversation_with_whitespace_boundary()
+    convo = get_thinking_with_whitespace_conversation()
 
     tokenizer = get_tokenizer(model_name)
     attributes = get_model_attributes(model_name)
@@ -593,7 +578,7 @@ def test_tokenization_boundary_with_whitespace(model_name: str):
     render_name = get_recommended_renderer_name(model_name)
     cookbook_renderer = get_renderer(render_name, tokenizer, image_processor)
 
-    hf_convo = cookbook_renderer.to_openai_messages(convo)
+    hf_convo = [cookbook_renderer.to_openai_message(m) for m in convo]
 
     cookbook_model_input, _ = cookbook_renderer.build_supervised_example(convo)
     cookbook_tokens = cookbook_model_input.to_ints()

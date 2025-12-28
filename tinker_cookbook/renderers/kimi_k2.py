@@ -133,7 +133,9 @@ class KimiK2Renderer(Renderer):
             # Tool declaration uses system token but with "tool_declare" as display name
             header_str = f"<|im_system|>{role}<|im_middle|>"
         elif role == "tool":
-            header_str = f"<|im_system|>{role}<|im_middle|>"
+            # HF template uses message.name if present, otherwise role
+            role_name = message.get("name") or role
+            header_str = f"<|im_system|>{role_name}<|im_middle|>"
             # Tool responses have special formatting - need tool_call_id to correlate with the call
             tool_call_id = message.get("tool_call_id", "")
             if not tool_call_id:

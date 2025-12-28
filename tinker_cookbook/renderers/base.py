@@ -610,10 +610,13 @@ class Renderer(ABC):
 
     def to_openai_message(self, message: Message) -> dict:
         """
-        Convert a Message to OpenAI API format.
+        Convert a Message to OpenAI chat completions API format.
 
-        This enables compatibility with HuggingFace's apply_chat_template (which accepts
-        OpenAI format) and with OpenAI-compatible APIs (OpenRouter, vLLM, etc.).
+        The returned object can be passed into the transformers library's
+        apply_chat_template function, which is useful for testing purposes.
+
+        It's also useful for querying models that are being served through
+        OpenAI-compatible APIs (OpenRouter, vLLM, etc.).
 
         The base implementation handles:
         - Basic role/content conversion
@@ -669,18 +672,6 @@ class Renderer(ABC):
                 result["name"] = message["name"]
 
         return result
-
-    def to_openai_messages(self, messages: list[Message]) -> list[dict]:
-        """
-        Convert a list of Messages to OpenAI API format.
-
-        Args:
-            messages: The Messages to convert.
-
-        Returns:
-            A list of dicts in OpenAI API message format.
-        """
-        return [self.to_openai_message(m) for m in messages]
 
     def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
