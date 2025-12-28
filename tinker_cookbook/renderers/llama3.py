@@ -1,23 +1,4 @@
-"""
-Llama3Renderer - Llama 3 chat format.
-
-Format like this:
-    <|begin_of_text|><|start_header_id|>system<|end_header_id|>
-
-    You are a helpful AI assistant<|eot_id|><|start_header_id|>user<|end_header_id|>
-
-    What can you help me with?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
-
-Tool calls use JSON format: {"name": "func_name", "parameters": {"arg": "value"}}
-
-Note: We intentionally differ from HF's stock Llama template:
-- HF prepends "Cutting Knowledge Date..." to system messages; we don't (add manually if needed)
-- HF drops assistant content when tool_calls are present; we preserve it
-- HF double-encodes tool args via |tojson; we use clean single-encoding
-
-These differences are intentional - the stock Llama format has quirks not worth matching.
-Our format works with vllm's Llama tool parser which accepts both single and double encoding.
-"""
+"""Renderer for Llama 3 chat format."""
 
 import json
 
@@ -37,17 +18,28 @@ from tinker_cookbook.renderers.base import (
 
 
 class Llama3Renderer(Renderer):
-    """
-    Format like this:
+    """Renderer for Llama 3 Instruct models.
+
+    Format::
+
         <|begin_of_text|><|start_header_id|>system<|end_header_id|>
 
-        You are a helpful AI assistant for travel tips and recommendations<|eot_id|><|start_header_id|>user<|end_header_id|>
+        You are a helpful AI assistant<|eot_id|><|start_header_id|>user<|end_header_id|>
 
         What can you help me with?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 
     Tool calls use JSON format: {"name": "func", "parameters": {"arg": "value"}}
 
-    See module docstring for intentional differences from HF's Llama template.
+    Note: We intentionally differ from HF's stock Llama template:
+
+    - HF prepends "Cutting Knowledge Date..." to system messages; we don't
+      (add manually if needed)
+    - HF drops assistant content when tool_calls are present; we preserve it
+    - HF double-encodes tool args via |tojson; we use clean single-encoding
+
+    These differences are intentional - the stock Llama format has quirks not
+    worth matching. Our format works with vLLM's Llama tool parser which accepts
+    both single and double encoding.
     """
 
     @property
@@ -115,6 +107,17 @@ class Llama3Renderer(Renderer):
 
         Format: {"name": "func_name", "parameters": {"arg": "value"}}
 
+        Known limitation: This parser treats ANY JSON object with "name" and
+        "parameters"/"arguments" keys as a tool call, even if it's regular assistant
+        content (e.g., user asked for a JSON schema). This can incorrectly strip
+        JSON from content and turn it into a tool call. We require parameters to be
+        a dict to mitigate this, but the ambiguity remains.
+
+        We're leaving this behavior as-is because we don't know if anyone is using
+        Llama 3 for serious tool calling work. If this becomes an issue, consider
+        adding a delimiter/marker that the model is instructed to use, e.g.,
+        <tool_call>...</tool_call>.
+
         Returns:
             Tuple of (successfully parsed tool calls, failed parses, remaining content).
         """
@@ -136,17 +139,22 @@ class Llama3Renderer(Renderer):
                 raw_text = content[brace_pos : brace_pos + end_idx]
 
                 # Check if it's a tool call (has name and parameters/arguments)
+                # We require parameters to be a dict to avoid treating arbitrary JSON
+                # (e.g., user asking for a JSON schema) as tool calls.
                 if "name" in obj and ("parameters" in obj or "arguments" in obj):
                     func_name = obj["name"]
                     params = obj.get("parameters") or obj.get("arguments")
-                    args_str = json.dumps(params) if isinstance(params, dict) else params
 
-                    tool_calls.append(
-                        ToolCall(
-                            function=ToolCall.FunctionBody(name=func_name, arguments=args_str),
+                    if isinstance(params, dict):
+                        tool_calls.append(
+                            ToolCall(
+                                function=ToolCall.FunctionBody(
+                                    name=func_name, arguments=json.dumps(params)
+                                ),
+                            )
                         )
-                    )
-                    remaining_content = remaining_content.replace(raw_text, "", 1)
+                        remaining_content = remaining_content.replace(raw_text, "", 1)
+                    # If params is not a dict, leave the JSON in content (don't treat as tool call)
 
                 search_start = brace_pos + end_idx
             except (json.JSONDecodeError, KeyError):

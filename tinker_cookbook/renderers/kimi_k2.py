@@ -1,11 +1,4 @@
-"""
-KimiK2Renderer - Moonshot AI's Kimi K2 format.
-
-Format for moonshotai/Kimi-K2-Thinking:
-    <|im_system|>system<|im_middle|>You are Kimi, an AI assistant created by Moonshot AI.<|im_end|>
-    <|im_user|>user<|im_middle|>What can you help me with?<|im_end|>
-    <|im_assistant|>assistant<|im_middle|><think>reasoning</think>I can help you with...<|im_end|>
-"""
+"""Renderer for Moonshot AI's Kimi K2 models."""
 
 import json
 import re

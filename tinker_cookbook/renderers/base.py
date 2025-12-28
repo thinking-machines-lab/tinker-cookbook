@@ -641,12 +641,20 @@ class Renderer(ABC):
         else:
             # Structured content with ThinkingPart/TextPart/etc.
             # Base implementation: concatenate text parts, render thinking as <think> tags
+            # TODO: Add proper support for ImagePart by converting to OpenAI-style content parts
+            # (list of {"type": "image_url", "image_url": {...}} dicts)
             parts = []
             for p in content:
                 if p["type"] == "text":
                     parts.append(p["text"])
                 elif p["type"] == "thinking":
                     parts.append(f"<think>{p['thinking']}</think>")
+                elif p["type"] == "image":
+                    raise NotImplementedError(
+                        "to_openai_message does not support ImagePart content. "
+                        "Images would be silently dropped, leading to incorrect HF template "
+                        "comparisons or OpenAI API calls. Use build_generation_prompt for VL models."
+                    )
                 # Skip tool_call and unparsed_tool_call parts - handled via tool_calls field
             result["content"] = "".join(parts)
 
