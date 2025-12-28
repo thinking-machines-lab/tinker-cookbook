@@ -1255,10 +1255,8 @@ def _verify_extension_property(renderer, messages: list[Message], tokenizer):
 # Format: (model_name, renderer_name_or_class, renderer_kwargs, conversation_fn)
 # If renderer_name_or_class is a string, use get_renderer; if a class, instantiate directly
 _EXTENSION_PROPERTY_TEST_PARAMS = [
-    # Llama3 with basic multi-turn
+    # Llama3 with basic multi-turn (tool calling not supported - see llama3.py docstring)
     ("meta-llama/Llama-3.2-1B-Instruct", "llama3", {}, get_basic_4turn_conversation),
-    # Llama3 with tool calls
-    ("meta-llama/Llama-3.2-1B-Instruct", "llama3", {}, get_multiturn_tool_conversation),
     # RoleColon with basic multi-turn (doesn't support tools)
     ("meta-llama/Llama-3.2-1B-Instruct", "role_colon", {}, get_basic_4turn_conversation),
     # Qwen3 Instruct with basic multi-turn

@@ -155,31 +155,6 @@ def test_kimi_k2_parse_tool_call():
     assert message["tool_calls"][0].id == "functions.search:0"
 
 
-def test_llama3_parse_tool_call():
-    """Test parsing tool call from Llama 3 response.
-
-    Llama 3 uses <function=name>{"args"}</function> format.
-    """
-    model_name = "meta-llama/Llama-3.2-1B-Instruct"
-    tokenizer = get_tokenizer(model_name)
-    renderer = get_renderer("llama3", tokenizer)
-
-    response_text = """I'll get the weather for you.
-<function=get_weather>{"location": "San Francisco"}</function><|eot_id|>"""
-
-    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
-    message, success = renderer.parse_response(response_tokens)
-
-    assert success is True
-    assert "tool_calls" in message
-    assert len(message["tool_calls"]) == 1
-    assert message["tool_calls"][0].function.name == "get_weather"
-    assert "San Francisco" in message["tool_calls"][0].function.arguments
-    # Content should have function block stripped (text content only)
-    text_content = get_text_content(message)
-    assert "<function=" not in text_content
-
-
 def test_deepseek_parse_tool_call():
     """Test parsing tool call from DeepSeek V3 response.
 
@@ -261,25 +236,6 @@ def test_qwen3_mixed_valid_invalid_tool_calls():
     assert len(message["tool_calls"]) == 1
     assert message["tool_calls"][0].function.name == "search"
     # Invalid tool call should be in unparsed_tool_calls
-    assert "unparsed_tool_calls" in message
-    assert len(message["unparsed_tool_calls"]) == 1
-    assert "Invalid JSON" in message["unparsed_tool_calls"][0].error
-
-
-def test_llama3_parse_invalid_tool_call_json():
-    """Test that invalid JSON in Llama 3 tool call is captured as unparsed."""
-    model_name = "meta-llama/Llama-3.2-1B-Instruct"
-    tokenizer = get_tokenizer(model_name)
-    renderer = get_renderer("llama3", tokenizer)
-
-    response_text = """I'll get the weather.
-<function=get_weather>{invalid json}</function><|eot_id|>"""
-
-    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
-    message, success = renderer.parse_response(response_tokens)
-
-    assert success is True
-    assert "tool_calls" not in message or len(message.get("tool_calls", [])) == 0
     assert "unparsed_tool_calls" in message
     assert len(message["unparsed_tool_calls"]) == 1
     assert "Invalid JSON" in message["unparsed_tool_calls"][0].error
