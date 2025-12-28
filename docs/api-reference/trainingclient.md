@@ -21,7 +21,7 @@ Args:
 
 Example:
 ```python
-training_client = service_client.create_lora_training_client(base_model="Qwen/Qwen2.5-7B")
+training_client = service_client.create_lora_training_client(base_model="Qwen/Qwen3-8B")
 fwdbwd_future = training_client.forward_backward(training_data, "cross_entropy")
 optim_future = training_client.optim_step(types.AdamParams(learning_rate=1e-4))
 fwdbwd_result = fwdbwd_future.result()  # Wait for gradients

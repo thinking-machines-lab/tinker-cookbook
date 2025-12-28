@@ -1004,11 +1004,11 @@ Let's create some training examples and convert them to a format expected by Tin
 examples = [
     {
         "input": "banana split",
-        "output": "anana-bay it-splay"
+        "output": "anana-bay plit-say"
     },
     {
         "input": "quantum physics",
-        "output": "antum-quay ysics-phay"
+        "output": "uantum-qay ysics-phay"
     },
     {
         "input": "donut shop",
@@ -1656,7 +1656,7 @@ The table below shows the models that are currently available in Tinker. We plan
 
 - In general, use MoE models, which are more cost effective than the dense models.
 - Use Base models only if you're doing research or are running the full post-training pipeline yourself
-- If you want to create a model that is good at a specific task or domain, use an existing post-trained model, and fine-tune it on your own data or environment.
+- If you want to create a model that is good at a specific task or domain, use an existing post-trained model model, and fine-tune it on your own data or environment.
     - If you care about latency, use one of the Instruction models, which will start outputting tokens without a chain-of-thought.
     - If you care about intelligence and robustness, use one of the Hybrid or Reasoning models, which can use long chain-of-thought.
 

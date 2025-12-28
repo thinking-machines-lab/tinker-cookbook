@@ -76,7 +76,7 @@ $$
 \mathcal{L}(\theta) = \mathbb{E}_{x\sim p_\theta}\bigl[A(x)\bigr]
 $$
 
-is not computed in an unbiased way due to $x \sim q$ (sampler) not exactly matching the desired $x \sim p_\theta$ (learner). To correct the bias, we use a modified "importance sampling" objective:
+is not computed in an unbiased why due to $x \sim q$ (sampler) not exactly matching the desired $x \sim p_\theta$ (learner). To correct the bias, we use a modified "importance sampling" objective:
 
 $$
 \mathcal{L}_{\text{IS}}(\theta) = \mathbb{E}_{x\sim q}\Bigl[\frac{p_\theta(x)}{q(x)}A(x)\Bigr],
