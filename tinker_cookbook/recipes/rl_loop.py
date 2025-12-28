@@ -1,5 +1,5 @@
 """
-Minimal RL training loop using GRPO-style advantage normalization.
+Minimal RL training loop using GRPO-style reward centering.
 
 Variable naming convention (see CONTRIBUTING.md):
     _P: Problem dimension (different questions/prompts in a batch)
@@ -10,6 +10,7 @@ Variable naming convention (see CONTRIBUTING.md):
 Example: `tokens_G_T` is a list of token sequences, one per group member.
 In this script, datums_D has size P*G (one datum per rollout).
 """
+
 import logging
 import time
 from concurrent.futures import Future
@@ -141,7 +142,9 @@ def main(config: Config):
         batch_end = min((batch_idx + 1) * config.batch_size, len(train_dataset))
         batch_rows = train_dataset.select(range(batch_start, batch_end))
 
-        sampling_path = training_client.save_weights_for_sampler(name=f"{batch_idx:06d}").result().path
+        sampling_path = (
+            training_client.save_weights_for_sampler(name=f"{batch_idx:06d}").result().path
+        )
         sampling_client = service_client.create_sampling_client(model_path=sampling_path)
 
         datums_D: list[types.Datum] = []
@@ -227,9 +230,7 @@ def main(config: Config):
                 datums_D.append(datum)
 
         # Training step
-        fwd_bwd_future = training_client.forward_backward(
-            datums_D, loss_fn="importance_sampling"
-        )
+        fwd_bwd_future = training_client.forward_backward(datums_D, loss_fn="importance_sampling")
         optim_step_future = training_client.optim_step(adam_params)
         _fwd_bwd_result = fwd_bwd_future.result()
         _optim_result = optim_step_future.result()
