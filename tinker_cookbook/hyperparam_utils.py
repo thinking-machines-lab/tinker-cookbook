@@ -86,17 +86,12 @@ def _get_hidden_size(model_name: str) -> int:
             "meta-llama/Llama-3.3-70B-Instruct": 8192,
         }[model_name]
 
-    if model_name == "moonshotai/Kimi-K2-Thinking":
+    if model_name in (
+        "deepseek-ai/DeepSeek-V3.1",
+        "deepseek-ai/DeepSeek-V3.1-Base",
+        "moonshotai/Kimi-K2-Thinking",
+    ):
         return 7168
-
-    if "deepseek-ai/DeepSeek-V3" in model_name:
-        return {
-            "deepseek-ai/DeepSeek-V3.1": 7168,
-            "deepseek-ai/DeepSeek-V3.1-Base": 7168,
-        }[model_name]
-
-    if model_name in ("openai/gpt-oss-20b", "openai/gpt-oss-120b"):
-        return 2880
 
     config = AutoConfig.from_pretrained(model_name)
     return config.hidden_size
