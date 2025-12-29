@@ -30,33 +30,7 @@ logger = logging.getLogger(__name__)
 
 _CONNECTION_SEMAPHORE = asyncio.Semaphore(128)
 
-SEARCH_TOOL_SYSTEM_PROMPT = """
-You are an expert assistant who solves tasks using a Wikipedia search tool.
-Tool calling. Execute the tool by wrapping calls in <tool_call>...</tool_call>
-
-The search tool you are given has the following schema:
-```
-{
-    "name": "search",
-    "title": "Wikipedia search",
-    "description": "Searches Wikipedia for relevant information based on the given query.",
-    "inputSchema": {
-        "type": "object",
-        "properties": {
-            "query_list": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "A list of fully-formed semantic queries. The tool will return search results for each query.",
-            }
-        },
-        "required": ["query_list"],
-    },
-    "outputSchema": {
-        "type": "string",
-        "description": "The search results in JSON format",
-    },
-}
-```
+SEARCH_TASK_INSTRUCTIONS = """You are an expert assistant who solves tasks using a Wikipedia search tool.
 
 Here are instructions for how to solve a problem:
 1. Think step by step before calling the tool and after you receive the result of the tool call. Decide what queries to call the tool with.
@@ -66,7 +40,7 @@ Here are instructions for how to solve a problem:
 5. Include your final answer after the "Answer:" prefix. The answer should be between one to five words.
 
 Here is an example of solving a real question:
-“Between 2020 and 2025, which year did New York City see the most population growth and how did San Francisco population change in that year?”
+"Between 2020 and 2025, which year did New York City see the most population growth and how did San Francisco population change in that year?"
 
 1. Think step by step: In order to answer this question, I need to know the population of New York City and San Francisco between 2020 and 2025. I will search for the population of New York City in each year
 2. Calling search tool: <tool_call>{"name": "search", "arguments": {"query_list": ["Population New York city between 2020 and 2025"]}}</tool_call> (Output omitted for brevity)
@@ -178,7 +152,6 @@ class SearchEnv(ProblemEnv):
                 self.current_num_calls += 1
                 if self.current_num_calls > self.max_num_calls:
                     return failure_result
-                # NOTE(tianyi): seems wasteful: we should share the client somehow
                 try:
                     tool_return_message = await self.call_search_tool(tool_calls[0])
                     self.past_messages.extend(tool_return_message)
@@ -192,15 +165,13 @@ class SearchEnv(ProblemEnv):
                 return StepResult(
                     reward=0.0,
                     episode_done=False,
-                    next_observation=self.renderer.build_generation_prompt(self.past_messages),
+                    next_observation=next_observation,
                     next_stop_condition=self.stop_condition,
                 )
             else:
                 return failure_result
         else:
-            # TODO: Refactor to use get_text_content once this example is updated
-            # to better use tool use functionalities
-            content = renderers.ensure_text(message["content"])
+            content = renderers.get_text_content(message)
             correct_format = float(parse_success) and float(self.check_format(content))
             correct_answer = float(self.check_answer(content))
             total_reward = self.format_coef * (correct_format - 1) + correct_answer
@@ -216,13 +187,14 @@ class SearchEnv(ProblemEnv):
             )
 
     @staticmethod
-    def standard_fewshot_prefix() -> list[renderers.Message]:
-        return [
-            {
-                "role": "system",
-                "content": SEARCH_TOOL_SYSTEM_PROMPT,
-            },
-        ]
+    def standard_fewshot_prefix(
+        renderer: renderers.Renderer, tool_schemas: list[renderers.ToolSpec]
+    ) -> list[renderers.Message]:
+        """Create conversation prefix with tool specs formatted for the model."""
+        return renderer.create_conversation_prefix_with_tools(
+            tools=tool_schemas,
+            system_prompt=SEARCH_TASK_INSTRUCTIONS,
+        )
 
 
 class SearchR1Datum(TypedDict):
@@ -360,14 +332,15 @@ class SearchR1DatasetBuilder(RLDatasetBuilder):
     max_trajectory_tokens: int = 32 * 1024
 
     async def __call__(self) -> tuple[SearchR1Dataset, None]:
-        if self.convo_prefix == "standard":
-            convo_prefix = SearchEnv.standard_fewshot_prefix()
-        else:
-            convo_prefix = self.convo_prefix
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
         renderer = renderers.get_renderer(self.renderer_name, tokenizer=tokenizer)
-
         chroma_tool_client = await ChromaToolClient.create(self.chroma_tool_config)
+
+        if self.convo_prefix == "standard":
+            tool_schemas = chroma_tool_client.get_tool_schemas()
+            convo_prefix = SearchEnv.standard_fewshot_prefix(renderer, tool_schemas)
+        else:
+            convo_prefix = self.convo_prefix
 
         train_dataset = SearchR1Dataset(
             batch_size=self.batch_size,

@@ -71,7 +71,9 @@ async def evaluate_single_item(
         item["answer"],
         chroma_tool_client,
         renderer,
-        convo_prefix=SearchEnv.standard_fewshot_prefix(),
+        convo_prefix=SearchEnv.standard_fewshot_prefix(
+            renderer, chroma_tool_client.get_tool_schemas()
+        ),
     )
     async with rollout_semaphore:
         trajectory = await do_single_rollout(policy, env)
