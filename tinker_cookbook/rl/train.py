@@ -60,16 +60,13 @@ async def gather_with_progress(
     This preserves the order of results (like asyncio.gather) while providing
     real-time progress feedback as individual coroutines complete.
     """
-    pbar: tqdm[None] | None = None
+    coroutine_list = list(coroutines)
+    pbar = tqdm(total=len(coroutine_list), desc=desc)
 
     async def track(coro: Coroutine[Any, Any, T]) -> T:
         result = await coro
-        if pbar is not None:
-            pbar.update(1)
+        pbar.update(1)
         return result
-
-    coroutine_list = list(coroutines)
-    pbar = tqdm(total=len(coroutine_list), desc=desc)
 
     try:
         results = await asyncio.gather(*[track(coro) for coro in coroutine_list])
