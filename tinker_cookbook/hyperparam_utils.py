@@ -165,14 +165,9 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
         exponent_model = 0.781
     elif "qwen" in model_name.lower():
         exponent_model = 0.0775
-    elif model_name == "moonshotai/Kimi-K2-Thinking":
-        exponent_model = 0.0775
-    elif "deepseek-v3" in model_name.lower():
-        exponent_model = 0.0775
-    elif model_name in ("openai/gpt-oss-20b", "openai/gpt-oss-120b"):
-        exponent_model = 0.0775
     else:
-        assert False, f"Unknown model: {model_name}"
+        raise ValueError(f"Unknown model: {model_name}")
+    # TODO: sweep to determine LR multipliers for other models
     lr = lr * (2000 / _get_hidden_size(model_name)) ** exponent_model
     return lr
 
