@@ -291,14 +291,20 @@ class Qwen3Renderer(Renderer):
     ) -> list[Message]:
         """Create system message with Qwen3 tool specifications.
 
-        Qwen3 uses XML `<tools>` tags with JSON tool definitions appended to the
-        system message content.
+        Qwen3 uses XML `<tools>` tags containing JSON tool definitions in OpenAI format,
+        appended to the system message content.
 
-        Reference: https://huggingface.co/Qwen/Qwen3-8B/blob/main/tokenizer_config.json
+        References:
+        - https://qwen.readthedocs.io/en/latest/getting_started/concepts.html#tool-calling
+        - https://huggingface.co/Qwen/Qwen3-8B/blob/main/tokenizer_config.json
         """
         tools_text = ""
         if tools:
-            tool_lines = "\n".join(json.dumps(tool, separators=(",", ":")) for tool in tools)
+            # Each tool is wrapped in {"type": "function", "function": {...}} per OpenAI format
+            tool_lines = "\n".join(
+                json.dumps({"type": "function", "function": tool}, separators=(",", ":"))
+                for tool in tools
+            )
             tools_text = f"""
 
 # Tools
