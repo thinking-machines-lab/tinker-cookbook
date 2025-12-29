@@ -51,7 +51,7 @@ from tinker_cookbook.tokenizer_utils import Tokenizer
 
 # TEMPORARY: get_tokenizer uses a mirror for Llama 3 to avoid needing the HF_TOKEN,
 # however, the mirrored tokenizer does not include the chat template.
-# Remove this once the mirrored tokenizer (thinkingmachineslabinc/meta-llama-3-tokenizer)
+# Remove this once the mirrored tokenizer (thinkingmachineslabinc/meta-llama-3-instruct-tokenizer)
 # includes the chat template.
 @cache
 def get_tokenizer(model_name: str) -> Tokenizer:

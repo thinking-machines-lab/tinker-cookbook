@@ -26,7 +26,7 @@ def get_tokenizer(model_name: str) -> Tokenizer:
 
     # Avoid gating of Llama 3 models:
     if model_name.startswith("meta-llama/Llama-3"):
-        model_name = "thinkingmachineslabinc/meta-llama-3-tokenizer"
+        model_name = "thinkingmachineslabinc/meta-llama-3-instruct-tokenizer"
 
     kwargs: dict[str, Any] = {}
     if model_name == "moonshotai/Kimi-K2-Thinking":
