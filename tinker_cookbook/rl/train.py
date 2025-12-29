@@ -8,7 +8,9 @@ import logging
 import os
 import time
 from contextlib import contextmanager
-from typing import Any, Callable, Iterator, List, Sequence
+from typing import Any, Callable, Coroutine, Iterable, Iterator, List, Sequence, TypeVar
+
+from tqdm import tqdm
 
 import chz
 import numpy as np
@@ -44,6 +46,34 @@ from tinker_cookbook.utils.misc_utils import safezip, split_list, timed, all_sam
 from tinker_cookbook.utils.trace import scope, update_scope_context, trace_init
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+
+async def gather_with_progress(
+    coroutines: Iterable[Coroutine[Any, Any, T]],
+    desc: str,
+) -> list[T]:
+    """
+    Run coroutines concurrently with a progress bar that updates as each completes.
+
+    This preserves the order of results (like asyncio.gather) while providing
+    real-time progress feedback as individual coroutines complete.
+    """
+    coroutine_list = list(coroutines)
+    pbar = tqdm(total=len(coroutine_list), desc=desc)
+
+    async def track(coro: Coroutine[Any, Any, T]) -> T:
+        result = await coro
+        pbar.update(1)
+        return result
+
+    try:
+        results = await asyncio.gather(*[track(coro) for coro in coroutine_list])
+    finally:
+        pbar.close()
+
+    return results
 
 
 def _get_evaluator_name(evaluator: SamplingClientEvaluator) -> str:
@@ -1002,21 +1032,19 @@ async def do_sync_training(
         ):
             # Note: do_remove_constant_reward_groups=False here because we remove
             # constant reward groups after all rollouts are collected (below)
-            trajectory_groups_P = await asyncio.gather(
-                *[
-                    asyncio.create_task(
-                        do_group_rollout_and_filter_constant_reward(
-                            sampling_client,
-                            builder,
-                            max_tokens=cfg.max_tokens,
-                            temperature=cfg.temperature,
-                            do_remove_constant_reward_groups=False,
-                            enable_logging=i < cfg.num_groups_to_log,
-                        ),
-                        name=f"sample_task_{i}",
+            trajectory_groups_P = await gather_with_progress(
+                (
+                    do_group_rollout_and_filter_constant_reward(
+                        sampling_client,
+                        builder,
+                        max_tokens=cfg.max_tokens,
+                        temperature=cfg.temperature,
+                        do_remove_constant_reward_groups=False,
+                        enable_logging=i < cfg.num_groups_to_log,
                     )
                     for i, builder in enumerate(env_group_builders_P)
-                ],
+                ),
+                desc=f"Sampling batch {i_batch}",
             )
 
         if cfg.remove_constant_reward_groups:
