@@ -129,12 +129,9 @@ class _DeepSeekV3BaseRenderer(Renderer):
                     # ToolCallPart handled via message's tool_calls field
                 output_content = "".join(rendered_parts)
             else:
-                # String content
-                if should_strip_thinking:
-                    # Strip <think>...</think> blocks from string content
-                    output_content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
-                else:
-                    output_content = content
+                # String content - pass through as-is.
+                # Stripping only works with structured content (ThinkingPart).
+                output_content = content
 
             if follows_tool:
                 # Post-tool assistant: no role token, content flows directly after tool output
