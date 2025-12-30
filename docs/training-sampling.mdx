@@ -50,6 +50,31 @@ As the name suggests, this model was already finetuned for chat/instruction-foll
 
 Now we can do training updates on the model. This quickstart example won't show best practices for LLM fine-tuning; it's just an API demo. Check out [Rendering](/rendering), [Supervised Fine-tuning](/supervised-learning) and the other Cookbook examples for guidance on how to use Tinker in real applications.
 
+### Getting a tokenizer
+
+The `SamplingClient` does not provide direct access to a `get_tokenizer()` method. To tokenize inputs, use one of these approaches:
+
+**Option 1: Via TrainingClient**
+
+```python
+import tinker
+from tinker import types
+
+service_client = tinker.ServiceClient()
+base_model = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+training_client = service_client.create_lora_training_client(base_model=base_model)
+tokenizer = training_client.get_tokenizer()
+```
+
+**Option 2: Via HuggingFace AutoTokenizer**
+
+```python
+from transformers import AutoTokenizer
+
+base_model = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+tokenizer = AutoTokenizer.from_pretrained(base_model)
+```
+
 For this model, we'll train a model that can translate words into Pig Latin. The rules for Pig Latin are simple:
 
 - If a word begins with a consonant, move it to the end and add "ay"

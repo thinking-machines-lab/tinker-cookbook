@@ -46,35 +46,3 @@ class MessageCompleter:
 For training purposes the `TokenCompleter` is the class we will use for RL training as we need to optimize the same set of tokens during the update step that the model output during rollout. The `MessageCompleter` is useful for sampling where we need to use the model output for semantic purposes such as Judge models or multi-agent environments.
 
 The Tinker Cookbook uses two concrete implementations of these interfaces - <CookbookLink path="tinker_cookbook/completers.py">`TinkerTokenCompleter`</CookbookLink> and <CookbookLink path="tinker_cookbook/completers.py">`TinkerMessageCompleter`</CookbookLink> which are both wrappers around a `tinker.SamplingClient`. While the TinkerTokenCompleter operates directly on tokens, the TinkerMessageCompleter needs to be instantiated with a renderer to make it compatible with the inputs expected by the sampling client.
-
-### Note on Tokenizers
-
-The `SamplingClient` does not provide direct access to a `get_tokenizer()` method. To tokenize inputs for sampling, use one of these approaches:
-
-**Option 1: Via TrainingClient**
-
-```python
-# Create a training client to get the tokenizer
-base_model = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-training_client = service_client.create_lora_training_client(base_model=base_model)
-tokenizer = training_client.get_tokenizer()
-
-# Save weights and get sampling client
-sampling_client = training_client.save_weights_and_get_sampling_client(name="my-model")
-
-# Use the tokenizer to prepare prompts for sampling
-prompt = types.ModelInput.from_ints(tokenizer.encode("Hello, world!"))
-result = sampling_client.sample(prompt=prompt, sampling_params=params, num_samples=1).result()
-```
-
-**Option 2: Via HuggingFace AutoTokenizer**
-
-```python
-from transformers import AutoTokenizer
-
-base_model = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-tokenizer = AutoTokenizer.from_pretrained(base_model)
-
-# Use with your sampling client
-prompt = types.ModelInput.from_ints(tokenizer.encode("Hello, world!"))
-```
