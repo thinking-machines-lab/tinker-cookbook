@@ -392,17 +392,16 @@ class DeepSeekV3ThinkingRenderer(_DeepSeekV3BaseRenderer):
         """
         rendered = super().render_message(message, ctx)
 
-        # Add </think> to header for assistant messages with content when stripping thinking
-        # This matches HF's thinking=True format: <|Assistant|></think>answer
-        # Applied to assistant messages with content (historical and supervised), but NOT to
-        # empty generation prompt placeholders (which get <think> prefill instead).
+        # Add </think> to header for historical assistant messages when stripping thinking.
+        # This matches the base class's should_strip_thinking logic - only historical messages
+        # (not the last one) get </think> added. The last message is the supervised target and
+        # should preserve its format (including any ThinkingPart).
         follows_tool = ctx.prev_message is not None and ctx.prev_message["role"] == "tool"
-        has_content = bool(message["content"])
         should_add_think_close = (
             message["role"] == "assistant"
             and not follows_tool
             and self.strip_thinking_from_history
-            and has_content
+            and not ctx.is_last
         )
 
         if should_add_think_close:

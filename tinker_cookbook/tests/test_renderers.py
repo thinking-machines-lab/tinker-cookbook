@@ -544,6 +544,13 @@ def test_supervised_example_against_hf_chat_templates(
             f"{model_name} has intentional tool format differences from HF (see renderer docstring)"
         )
 
+    # Skip supervised tests for thinking renderer - we intentionally don't add </think> to the
+    # last message (supervised target) so it can preserve ThinkingPart, unlike HF which always adds it
+    if renderer_override in _RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS:
+        pytest.skip(
+            f"{renderer_override} intentionally differs from HF for supervised target (no </think>)"
+        )
+
     tokenizer = get_tokenizer(model_name)
     attributes = get_model_attributes(model_name)
     image_processor = get_image_processor(model_name) if attributes.is_vl else None
