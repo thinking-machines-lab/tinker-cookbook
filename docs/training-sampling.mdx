@@ -226,7 +226,7 @@ You must:
 For example, for a 448x448 image using Qwen3-VL, where the compression ratio is 32x:
 
 ```python
-# Qwen3-VL at 448x448: (448*448)/1024 = 196 tokens
+# Qwen3-VL at 448x448: (448*448)/(32*32) = 196 tokens
 height, width = 448, 448
 VISION_TOKEN_COUNT = height * width // (32 * 32)
 
