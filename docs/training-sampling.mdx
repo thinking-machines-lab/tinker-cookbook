@@ -1,4 +1,4 @@
-import { Callout } from 'nextra/components'
+import { Callout } from "nextra/components";
 
 # Getting started with training and sampling
 
@@ -9,7 +9,9 @@ In this guide, we'll step you through using the Tinker Python library to do the 
 
 The main object we'll be using is the `TrainingClient`, which corresponds to a fine-tuned model that we can train and sample from.
 
-First, set your Tinker API key environment variable. In the terminal where you'll run Python, or in your `.bashrc`, put `export TINKER_API_KEY=<your key>`.
+First, get your Tinker API key from the [Tinker Console](https://tinker-console.thinkingmachines.ai/keys).
+
+Then, set the Tinker API key environment variable. In the terminal where you'll run Python, or in your `.bashrc`, put `export TINKER_API_KEY=<tlm-your-key>`.
 
 Then, create a `ServiceInterface`. This lets you find out what base models are available to be fine-tuned.
 
@@ -20,7 +22,9 @@ print("Available models:")
 for item in service_client.get_server_capabilities().supported_models:
     print("- " + item.model_name)
 ```
+
 You'll see a list of model names:
+
 ```
 - meta-llama/Llama-3.1-70B
 - meta-llama/Llama-3.1-8B
@@ -28,15 +32,18 @@ You'll see a list of model names:
 - Qwen/Qwen3-VL-30B-A3B-Instruct
 - Qwen/Qwen3-VL-235B-A22B-Instruct
 ```
+
 We currently support models from the Qwen3, Qwen3-VL, and Llama3 series. We'll use Qwen3-VL-30B-A3B-Instruct for these examples, as it's a vision-language model that can also handle text-only tasks. See [Available Models in Tinker](/model-lineup) for the full list.
 
 Now we can create the `TrainingClient`:
+
 ```python
 base_model = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 training_client = service_client.create_lora_training_client(
     base_model=base_model
 )
 ```
+
 As the name suggests, this model was already finetuned for chat/instruction-following. You should check the details of the model you're using in their system cards.
 
 ## Preparing the training data
@@ -44,14 +51,19 @@ As the name suggests, this model was already finetuned for chat/instruction-foll
 Now we can do training updates on the model. This quickstart example won't show best practices for LLM fine-tuning; it's just an API demo. Check out [Rendering](/rendering), [Supervised Fine-tuning](/supervised-learning) and the other Cookbook examples for guidance on how to use Tinker in real applications.
 
 For this model, we'll train a model that can translate words into Pig Latin. The rules for Pig Latin are simple:
+
 - If a word begins with a consonant, move it to the end and add "ay"
 - If a word begins with a vowel, just add "way" to the end
 
 Here are some example completions we'd like the model to perform, where the prompt is in green and the model's completion is in red:
 
 <div className="example">
-<span className="prompt">English: hello world<br/>
-Pig Latin: </span><span className="completion">ello-hay orld-way</span>
+  <span className="prompt">
+    English: hello world
+    <br />
+    Pig Latin:{" "}
+  </span>
+  <span className="completion">ello-hay orld-way</span>
 </div>
 
 Let's create some training examples and convert them to a format expected by Tinker.
@@ -171,6 +183,59 @@ model_input = tinker.ModelInput(chunks=[
 
 Note that Qwen3-VL was trained with special tokens like `<|vision_start|>` and `<|vision_end|>`. The cookbook's `Qwen3VLRenderer` handles these automatically—see [Rendering: Vision Inputs](/rendering#vision-inputs) for details and a complete example.
 
+> [!IMPORTANT]
+> Tinker enforces a maximum size of **2MB** for image assets. You must resize or compress images on the client side before creating an `ImageChunk`.
+
+### Manual Token Padding
+
+When training VLMs (e.g., Qwen3-VL), `ImageChunk`s are expanded into vision tokens by the model. The `weights` and `target_tokens` arrays in `loss_fn_inputs` must account for these tokens to match the server-side sequence length.
+
+You must:
+
+1. Use a fixed image resolution to ensure a predictable token count (e.g., 448x448 → 196 tokens for Qwen3-VL).
+2. Set `expected_tokens` on the `ImageChunk`.
+3. Insert placeholder values (usually 0) into your `weights` and `target_tokens` arrays at the position where the image appears.
+
+```python
+# Qwen3-VL: 448x448 image -> 196 tokens
+VISION_TOKEN_COUNT = 196
+
+# Tokenize text portions
+prefix_tokens = tokenizer.encode("<|im_start|>user\n<|vision_start|>")
+suffix_tokens = tokenizer.encode("<|vision_end|>Describe this image<|im_end|>\n<|im_start|>assistant\n")
+completion_tokens = tokenizer.encode("A photo of a cat.")
+
+model_input = types.ModelInput(chunks=[
+    types.EncodedTextChunk(tokens=prefix_tokens),
+    types.ImageChunk(
+        data=image_bytes,
+        format="jpeg",
+        expected_tokens=VISION_TOKEN_COUNT
+    ),
+    types.EncodedTextChunk(tokens=suffix_tokens + completion_tokens),
+])
+
+# Build weights: 0 for prompt (prefix + image + suffix), 1 for completion
+prefix_weights = [0] * len(prefix_tokens)
+vision_padding = [0] * VISION_TOKEN_COUNT
+suffix_weights = [0] * len(suffix_tokens)
+completion_weights = [1] * len(completion_tokens)
+
+full_weights = prefix_weights + vision_padding + suffix_weights + completion_weights
+
+# Build target_tokens (shifted by 1 for next-token prediction)
+full_target_tokens = prefix_tokens[1:] + [0] * VISION_TOKEN_COUNT + suffix_tokens + completion_tokens
+
+# Create the datum (shift weights to align with targets)
+datum = types.Datum(
+    model_input=model_input,
+    loss_fn_inputs=dict(
+        weights=full_weights[1:],
+        target_tokens=full_target_tokens,
+    )
+)
+```
+
 ## Performing a training update
 
 Now we can use this data to perform a training update. We'll do 6 updates on the same batch of data. (Note that this is not typically a good way to train!)
@@ -192,8 +257,14 @@ for _ in range(6):
     print(f"Loss per token: {-np.dot(logprobs, weights) / weights.sum():.4f}")
 ```
 
-Note that the `forward_backward` and `optim_step` functions immediately return *futures*, which acknowledge that the task has been queued up by the server. For improved speed, we submitted both operations before waiting for the result by calling `result()` on the futures.
+Note that the `forward_backward` and `optim_step` functions immediately return _futures_, which acknowledge that the task has been queued up by the server. For improved speed, we submitted both operations before waiting for the result by calling `result()` on the futures.
 
+> [!IMPORTANT]
+> When calling `forward()` (e.g., for validation loops where you only want to compute loss without updating gradients), you must still specify the `loss_fn` argument:
+
+```python
+fwd_result = training_client.forward(batch, loss_fn="cross_entropy").result()
+```
 
 ## Sampling from the model
 

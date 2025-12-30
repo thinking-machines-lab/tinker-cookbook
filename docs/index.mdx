@@ -8,10 +8,10 @@ Tinker gives you full control over the training loop and all the algorithmic det
 
 Here's how the division of responsibilities works in practice:
 
-| **You focus on** | **You write** | **We handle** |
-|---|---|---|
-|  **Datasets and RL environments**<br />Your custom training data |  **Simple Python script**<br />Runs on your CPU |  **Efficient distributed training of large models**<br />Llama 70B, Qwen 235B |
-|  **Training logic**<br />Your loss functions, training loop, and evals |  **API calls**<br />`forward_backward()`<br />`optim_step()`<br />`sample()`<br />`save_state()` |  **Reliability**<br />Hardware failures handled transparently |
+| **You focus on**                                                      | **You write**                                                                                   | **We handle**                                                                |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **Datasets and RL environments**<br />Your custom training data       | **Simple Python script**<br />Runs on your CPU                                                  | **Efficient distributed training of large models**<br />Llama 70B, Qwen 235B |
+| **Training logic**<br />Your loss functions, training loop, and evals | **API calls**<br />`forward_backward()`<br />`optim_step()`<br />`sample()`<br />`save_state()` | **Reliability**<br />Hardware failures handled transparently                 |
 
 ## Features
 
