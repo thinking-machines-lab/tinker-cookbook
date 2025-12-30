@@ -183,8 +183,9 @@ model_input = tinker.ModelInput(chunks=[
 
 Note that Qwen3-VL was trained with special tokens like `<|vision_start|>` and `<|vision_end|>`. The cookbook's `Qwen3VLRenderer` handles these automatically—see [Rendering: Vision Inputs](/rendering#vision-inputs) for details and a complete example.
 
-> [!IMPORTANT]
-> Tinker enforces a maximum size of **2MB** for image assets. You must resize or compress images on the client side before creating an `ImageChunk`.
+<Callout type="warning">
+**Important:** Tinker enforces a maximum size of **2MB** for image assets. You must resize or compress images on the client side before creating an `ImageChunk`.
+</Callout>
 
 ### Manual Token Padding
 
@@ -215,23 +216,19 @@ model_input = types.ModelInput(chunks=[
     types.EncodedTextChunk(tokens=suffix_tokens + completion_tokens),
 ])
 
+# Build full token sequence (with 0 placeholders for image tokens)
+all_tokens = prefix_tokens + [0] * VISION_TOKEN_COUNT + suffix_tokens + completion_tokens
+
 # Build weights: 0 for prompt (prefix + image + suffix), 1 for completion
-prefix_weights = [0] * len(prefix_tokens)
-vision_padding = [0] * VISION_TOKEN_COUNT
-suffix_weights = [0] * len(suffix_tokens)
-completion_weights = [1] * len(completion_tokens)
+prompt_length = len(prefix_tokens) + VISION_TOKEN_COUNT + len(suffix_tokens)
+full_weights = [0] * prompt_length + [1] * len(completion_tokens)
 
-full_weights = prefix_weights + vision_padding + suffix_weights + completion_weights
-
-# Build target_tokens (shifted by 1 for next-token prediction)
-full_target_tokens = prefix_tokens[1:] + [0] * VISION_TOKEN_COUNT + suffix_tokens + completion_tokens
-
-# Create the datum (shift weights to align with targets)
+# Create the datum (shift by 1 for next-token prediction)
 datum = types.Datum(
     model_input=model_input,
     loss_fn_inputs=dict(
         weights=full_weights[1:],
-        target_tokens=full_target_tokens,
+        target_tokens=all_tokens[1:],
     )
 )
 ```
@@ -259,8 +256,9 @@ for _ in range(6):
 
 Note that the `forward_backward` and `optim_step` functions immediately return _futures_, which acknowledge that the task has been queued up by the server. For improved speed, we submitted both operations before waiting for the result by calling `result()` on the futures.
 
-> [!IMPORTANT]
-> When calling `forward()` (e.g., for validation loops where you only want to compute loss without updating gradients), you must still specify the `loss_fn` argument:
+<Callout type="info">
+**Note:** When calling `forward()` (e.g., for validation loops where you only want to compute loss without updating gradients), you must still specify the `loss_fn` argument:
+</Callout>
 
 ```python
 fwd_result = training_client.forward(batch, loss_fn="cross_entropy").result()
