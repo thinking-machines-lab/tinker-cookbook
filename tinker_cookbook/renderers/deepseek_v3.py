@@ -103,28 +103,38 @@ class _DeepSeekV3BaseRenderer(Renderer):
         elif message["role"] == "assistant":
             has_tool_calls = "tool_calls" in message and message["tool_calls"]
 
+            # Determine if we should strip thinking content from this message
+            should_strip_thinking = (
+                self.strip_thinking_from_history
+                and not has_tool_calls
+                and not ctx.is_last
+            )
+
             if isinstance(content, list):
                 # Structured content - handle with list operations
                 parts = content
-                if self.strip_thinking_from_history and not has_tool_calls and not ctx.is_last:
-                    # Remove thinking parts for historical messages
-                    parts = remove_thinking(parts)
                 # Render parts in order, preserving interleaved thinking/text structure.
                 # No separator needed - whitespace is preserved in TextPart for roundtrip identity.
                 rendered_parts = []
                 for p in parts:
                     if p["type"] == "thinking":
-                        rendered_parts.append(f"<think>{p['thinking']}</think>")
+                        if should_strip_thinking:
+                            # Skip thinking content entirely when stripping
+                            # (header gets </think> added separately to match HF format)
+                            pass
+                        else:
+                            rendered_parts.append(f"<think>{p['thinking']}</think>")
                     elif p["type"] == "text":
                         rendered_parts.append(p["text"])
                     # ToolCallPart handled via message's tool_calls field
                 output_content = "".join(rendered_parts)
             else:
-                # String content - pass through as-is.
-                # Note: strip_thinking_from_history only works with list-based content.
-                # For stripping to work on historical messages, use structured content
-                # with ThinkingPart separated from text (as returned by parse_response).
-                output_content = content
+                # String content
+                if should_strip_thinking:
+                    # Strip <think>...</think> blocks from string content
+                    output_content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
+                else:
+                    output_content = content
 
             if follows_tool:
                 # Post-tool assistant: no role token, content flows directly after tool output
@@ -370,31 +380,34 @@ class DeepSeekV3ThinkingRenderer(_DeepSeekV3BaseRenderer):
 
     For non-thinking mode, use DeepSeekV3DisableThinkingRenderer instead.
 
-    Generation prompts include <think> to trigger thinking mode, matching HF template
-    behavior with thinking=True. Historical assistant messages get </think> to signal
-    thinking was stripped (when strip_thinking_from_history=True).
+    Generation prompts include <think> prefill to trigger thinking mode.
+    Think tags in message content come from ThinkPart rendering.
+
+    When strip_thinking_from_history=True (default), historical assistant messages
+    get </think> added to header and thinking content stripped, matching HF behavior.
     """
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
-        """Render message with </think> header for assistant messages.
+        """Render message, adding </think> to header when stripping thinking from history.
 
-        When strip_thinking_from_history=True (default), ALL assistant messages
-        (not following tool) get </think> added to their header. This matches
-        HF template behavior with thinking=True.
+        HF's thinking=True template uses </think> at the start of historical assistant
+        messages to signal "we're past the thinking phase, here's the answer".
         """
         rendered = super().render_message(message, ctx)
 
-        # Add </think> to header for assistant messages with content (not following tool)
-        # when strip_thinking_from_history is True. This matches HF thinking=True behavior.
-        # Skip empty assistant messages (used for generation prompt position).
+        # Add </think> to header for assistant messages with content when stripping thinking
+        # This matches HF's thinking=True format: <|Assistant|></think>answer
+        # Applied to assistant messages with content (historical and supervised), but NOT to
+        # empty generation prompt placeholders (which get <think> prefill instead).
         follows_tool = ctx.prev_message is not None and ctx.prev_message["role"] == "tool"
-        has_content = bool(message.get("content"))
+        has_content = bool(message["content"])
         should_add_think_close = (
             message["role"] == "assistant"
             and not follows_tool
             and self.strip_thinking_from_history
             and has_content
         )
+
         if should_add_think_close:
             think_close_tokens = self.tokenizer.encode("</think>", add_special_tokens=False)
             old_header_tokens = list(rendered.header.tokens) if rendered.header else []
@@ -409,21 +422,17 @@ class DeepSeekV3ThinkingRenderer(_DeepSeekV3BaseRenderer):
         role: str = "assistant",
         prefill: str | None = None,
     ) -> tinker.ModelInput:
-        """Build generation prompt with <think> token to trigger thinking mode.
+        """Build generation prompt with <think> prefill to trigger thinking mode.
 
-        This matches HF template behavior with thinking=True, where the generation
-        prompt ends with <｜Assistant｜><think> to signal the model should reason.
-        Only adds <think> when last message is user (not tool), matching HF.
+        Does NOT add <think> when the previous message is a tool response,
+        as tool-use conversations stay in non-thinking mode (matching HF behavior).
         """
-        # HF only adds generation prompt (with <think>) when last message is user, not tool
+        # Don't add <think> prefill after tool responses - tool use is non-thinking mode
         if messages and messages[-1]["role"] == "tool":
-            # After tool response, don't add <think> - just use base behavior
             return super().build_generation_prompt(messages, role, prefill)
 
-        # Use prefill to add <think> at the end of the generation prompt
-        think_prefill = "<think>"
-        if prefill:
-            think_prefill = think_prefill + prefill
+        # Add <think> prefill to trigger thinking, combined with any user-provided prefill
+        think_prefill = "<think>" + (prefill or "")
         return super().build_generation_prompt(messages, role, think_prefill)
 
 
