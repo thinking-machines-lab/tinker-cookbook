@@ -22,7 +22,6 @@ from tinker_cookbook.renderers.base import (
     ensure_text,
     parse_response_for_stop_token,
     parse_think_blocks,
-    remove_thinking,
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
@@ -105,9 +104,7 @@ class _DeepSeekV3BaseRenderer(Renderer):
 
             # Determine if we should strip thinking content from this message
             should_strip_thinking = (
-                self.strip_thinking_from_history
-                and not has_tool_calls
-                and not ctx.is_last
+                self.strip_thinking_from_history and not has_tool_calls and not ctx.is_last
             )
 
             if isinstance(content, list):
