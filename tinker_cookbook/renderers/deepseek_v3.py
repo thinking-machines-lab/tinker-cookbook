@@ -27,14 +27,12 @@ from tinker_cookbook.renderers.base import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
-class DeepSeekV3ThinkingRenderer(Renderer):
+class _DeepSeekV3BaseRenderer(Renderer):
     """
-    Renderer for DeepSeek V3 models in THINKING mode.
+    Base renderer for DeepSeek V3 models with common rendering logic.
 
-    Format:
-        <|begin_of_sentence|><|User|>question<|Assistant|><think>reasoning</think>answer<|end_of_sentence|>
-
-    For non-thinking mode, use DeepSeekV3DisableThinkingRenderer instead.
+    This is a private base class. Use DeepSeekV3ThinkingRenderer or
+    DeepSeekV3DisableThinkingRenderer instead.
 
     System messages at position 0 are rendered without role tokens (matching HF template).
     System messages at later positions require system_role_as_user=True to convert to user role.
@@ -363,7 +361,73 @@ Where:
         return [Message(role="system", content=system_prompt + tools_text)]
 
 
-class DeepSeekV3DisableThinkingRenderer(DeepSeekV3ThinkingRenderer):
+class DeepSeekV3ThinkingRenderer(_DeepSeekV3BaseRenderer):
+    """
+    Renderer for DeepSeek V3 models in THINKING mode.
+
+    Format:
+        <|begin_of_sentence|><|User|>question<|Assistant|><think>reasoning</think>answer<|end_of_sentence|>
+
+    For non-thinking mode, use DeepSeekV3DisableThinkingRenderer instead.
+
+    Generation prompts include <think> to trigger thinking mode, matching HF template
+    behavior with thinking=True. Historical assistant messages get </think> to signal
+    thinking was stripped (when strip_thinking_from_history=True).
+    """
+
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        """Render message with </think> header for assistant messages.
+
+        When strip_thinking_from_history=True (default), ALL assistant messages
+        (not following tool) get </think> added to their header. This matches
+        HF template behavior with thinking=True.
+        """
+        rendered = super().render_message(message, ctx)
+
+        # Add </think> to header for assistant messages with content (not following tool)
+        # when strip_thinking_from_history is True. This matches HF thinking=True behavior.
+        # Skip empty assistant messages (used for generation prompt position).
+        follows_tool = ctx.prev_message is not None and ctx.prev_message["role"] == "tool"
+        has_content = bool(message.get("content"))
+        should_add_think_close = (
+            message["role"] == "assistant"
+            and not follows_tool
+            and self.strip_thinking_from_history
+            and has_content
+        )
+        if should_add_think_close:
+            think_close_tokens = self.tokenizer.encode("</think>", add_special_tokens=False)
+            old_header_tokens = list(rendered.header.tokens) if rendered.header else []
+            new_header = tinker.EncodedTextChunk(tokens=old_header_tokens + think_close_tokens)
+            rendered = RenderedMessage(header=new_header, output=rendered.output)
+
+        return rendered
+
+    def build_generation_prompt(
+        self,
+        messages: list[Message],
+        role: str = "assistant",
+        prefill: str | None = None,
+    ) -> tinker.ModelInput:
+        """Build generation prompt with <think> token to trigger thinking mode.
+
+        This matches HF template behavior with thinking=True, where the generation
+        prompt ends with <｜Assistant｜><think> to signal the model should reason.
+        Only adds <think> when last message is user (not tool), matching HF.
+        """
+        # HF only adds generation prompt (with <think>) when last message is user, not tool
+        if messages and messages[-1]["role"] == "tool":
+            # After tool response, don't add <think> - just use base behavior
+            return super().build_generation_prompt(messages, role, prefill)
+
+        # Use prefill to add <think> at the end of the generation prompt
+        think_prefill = "<think>"
+        if prefill:
+            think_prefill = think_prefill + prefill
+        return super().build_generation_prompt(messages, role, think_prefill)
+
+
+class DeepSeekV3DisableThinkingRenderer(_DeepSeekV3BaseRenderer):
     """
     Renderer for DeepSeek V3 models in NON-THINKING mode.
 
