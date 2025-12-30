@@ -26,12 +26,15 @@ class InspectEvaluatorBuilder:
     tasks: Tasks
     renderer_name: str
     model_name: str | None = None
+    seed: int | None = None
+    verbose: bool = False
 
     # Generation parameters
     temperature: float = 1.0
     max_tokens: int = 1000
     top_p: float = 1.0
     top_k: int = -1
+    num_choices: int = 1
 
     # Evaluation parameters
     limit: Optional[int] = None
@@ -70,7 +73,7 @@ class InspectEvaluator(SamplingClientEvaluator):
             renderer_name=self.config.renderer_name,  # pyright: ignore[reportCallIssue]
             model_name=self.config.model_name,
             sampling_client=sampling_client,  # pyright: ignore[reportCallIssue]
-            verbose=False,  # pyright: ignore[reportCallIssue]
+            verbose=self.config.verbose,
         )
         # Create the inspect model
         model = InspectAIModel(
@@ -80,6 +83,8 @@ class InspectEvaluator(SamplingClientEvaluator):
                 max_tokens=self.config.max_tokens,
                 top_p=self.config.top_p,
                 top_k=self.config.top_k,
+                seed=self.config.seed,
+                num_choices=self.config.num_choices,
             ),
         )
 
