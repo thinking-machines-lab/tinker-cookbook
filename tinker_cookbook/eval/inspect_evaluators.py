@@ -103,9 +103,6 @@ class InspectEvaluator(SamplingClientEvaluator):
             log_dir=self.config.log_dir or os.path.expanduser("~/inspect-logs"),
             max_connections=self.config.max_connections,
             log_level=self.config.log_level,
-            # XXX Not sure if arguments are used from here or the InspectGenerateConfig
-            temperature=self.config.temperature,
-            max_tokens=self.config.max_tokens,
             log_realtime=False,
             log_buffer=1000,
         )
