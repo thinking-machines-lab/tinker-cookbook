@@ -73,7 +73,7 @@ class InspectEvaluator(SamplingClientEvaluator):
             renderer_name=self.config.renderer_name,  # pyright: ignore[reportCallIssue]
             model_name=self.config.model_name,
             sampling_client=sampling_client,  # pyright: ignore[reportCallIssue]
-            verbose=self.config.verbose,
+            verbose=self.config.verbose,  # pyright: ignore[reportCallIssue]
         )
         # Create the inspect model
         model = InspectAIModel(
