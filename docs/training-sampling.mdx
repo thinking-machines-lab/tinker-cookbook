@@ -183,9 +183,8 @@ model_input = tinker.ModelInput(chunks=[
 
 Note that Qwen3-VL was trained with special tokens like `<|vision_start|>` and `<|vision_end|>`. The cookbook's `Qwen3VLRenderer` handles these automatically—see [Rendering: Vision Inputs](/rendering#vision-inputs) for details and a complete example.
 
-<Callout type="warning">
-**Important:** Tinker enforces a maximum size of **2MB** for image assets. You must resize or compress images on the client side before creating an `ImageChunk`.
-</Callout>
+> [!IMPORTANT]
+> Tinker enforces a maximum size of **2MB** for image assets. You must resize or compress images on the client side before creating an `ImageChunk`.
 
 ### Manual Token Padding
 
@@ -193,12 +192,33 @@ When training VLMs (e.g., Qwen3-VL), `ImageChunk`s are expanded into vision toke
 
 You must:
 
-1. Use a fixed image resolution to ensure a predictable token count (e.g., 448x448 → 196 tokens for Qwen3-VL).
+1. Control the image resolution to get a predictable token count.
 2. Set `expected_tokens` on the `ImageChunk`.
 3. Insert placeholder values (usually 0) into your `weights` and `target_tokens` arrays at the position where the image appears.
 
+**Computing vision token count:** Qwen3-VL uses a ~32x compression ratio (`patch_size=16`, `merge_size=2`), so:
+
+```
+visual_tokens ≈ (H × W) / (32 × 32) = (H × W) / 1024
+```
+
+For a 448×448 image: `448 × 448 / 1024 = 196 tokens`. The actual count may differ if preprocessing resizes or pads the image—use the image processor for exact values:
+
 ```python
-# Qwen3-VL: 448x448 image -> 196 tokens
+from tinker_cookbook.image_processing_utils import get_image_processor
+
+image_processor = get_image_processor("Qwen/Qwen3-VL-30B-A3B-Instruct")
+height, width = 448, 448
+num_tokens = (
+    image_processor.get_number_of_image_patches(height, width, images_kwargs={})
+    // image_processor.merge_size**2
+)
+```
+
+**Example with fixed 448×448 resolution:**
+
+```python
+# Qwen3-VL at 448x448: (448*448)/1024 = 196 tokens
 VISION_TOKEN_COUNT = 196
 
 # Tokenize text portions
@@ -256,9 +276,8 @@ for _ in range(6):
 
 Note that the `forward_backward` and `optim_step` functions immediately return _futures_, which acknowledge that the task has been queued up by the server. For improved speed, we submitted both operations before waiting for the result by calling `result()` on the futures.
 
-<Callout type="info">
-**Note:** When calling `forward()` (e.g., for validation loops where you only want to compute loss without updating gradients), you must still specify the `loss_fn` argument:
-</Callout>
+> [!IMPORTANT]
+> When calling `forward()` (e.g., for validation loops where you only want to compute loss without updating gradients), you must still specify the `loss_fn` argument:
 
 ```python
 fwd_result = training_client.forward(batch, loss_fn="cross_entropy").result()
