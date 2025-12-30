@@ -50,31 +50,6 @@ As the name suggests, this model was already finetuned for chat/instruction-foll
 
 Now we can do training updates on the model. This quickstart example won't show best practices for LLM fine-tuning; it's just an API demo. Check out [Rendering](/rendering), [Supervised Fine-tuning](/supervised-learning) and the other Cookbook examples for guidance on how to use Tinker in real applications.
 
-### Getting a tokenizer
-
-The `SamplingClient` does not provide direct access to a `get_tokenizer()` method. To tokenize inputs, use one of these approaches:
-
-**Option 1: Via TrainingClient**
-
-```python
-import tinker
-from tinker import types
-
-service_client = tinker.ServiceClient()
-base_model = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-training_client = service_client.create_lora_training_client(base_model=base_model)
-tokenizer = training_client.get_tokenizer()
-```
-
-**Option 2: Via HuggingFace AutoTokenizer**
-
-```python
-from transformers import AutoTokenizer
-
-base_model = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-tokenizer = AutoTokenizer.from_pretrained(base_model)
-```
-
 For this model, we'll train a model that can translate words into Pig Latin. The rules for Pig Latin are simple:
 
 - If a word begins with a consonant, move it to the end and add "ay"
@@ -193,6 +168,33 @@ Input                Target               Weight
 'ay'                 '\n\n'               1.0
 ```
 
+### Getting a tokenizer
+
+The `SamplingClient` does not provide direct access to a `get_tokenizer()` method.
+
+To tokenize inputs, use one of these approaches:
+
+**Option 1: Via TrainingClient**
+
+```python
+import tinker
+from tinker import types
+
+service_client = tinker.ServiceClient()
+base_model = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+training_client = service_client.create_lora_training_client(base_model=base_model)
+tokenizer = training_client.get_tokenizer()
+```
+
+**Option 2: Via HuggingFace AutoTokenizer**
+
+```python
+from transformers import AutoTokenizer
+
+base_model = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+tokenizer = AutoTokenizer.from_pretrained(base_model)
+```
+
 ## Vision inputs
 
 The above example is text-only, but adding vision inputs is also straightforward. The `ModelInput` type takes a list of chunks, which can be either `EncodedTextChunk` or `ImageChunk`. For instance:
@@ -211,9 +213,9 @@ Note that Qwen3-VL was trained with special tokens like `<|vision_start|>` and `
 > [!IMPORTANT]
 > Tinker enforces a maximum size of **2MB** for image assets. You must resize or compress images on the client side before creating an `ImageChunk`.
 
-### Manual Token Padding
+### Manual Token Padding for VLMs
 
-When training VLMs (e.g., Qwen3-VL), `ImageChunk`s are expanded into vision tokens by the model. The `weights` and `target_tokens` arrays in `loss_fn_inputs` must account for these tokens to match the server-side sequence length.
+When training VLMs, `ImageChunk`s are expanded into vision tokens by the model. The `weights` and `target_tokens` arrays in `loss_fn_inputs` must account for these tokens to match the server-side sequence length.
 
 You must:
 
@@ -221,30 +223,12 @@ You must:
 2. Set `expected_tokens` on the `ImageChunk`.
 3. Insert placeholder values (usually 0) into your `weights` and `target_tokens` arrays at the position where the image appears.
 
-**Computing vision token count:** Qwen3-VL uses a ~32x compression ratio (`patch_size=16`, `merge_size=2`), so:
-
-```
-visual_tokens ≈ (H × W) / (32 × 32) = (H × W) / 1024
-```
-
-For a 448×448 image: `448 × 448 / 1024 = 196 tokens`. The actual count may differ if preprocessing resizes or pads the image—use the image processor for exact values:
-
-```python
-from tinker_cookbook.image_processing_utils import get_image_processor
-
-image_processor = get_image_processor("Qwen/Qwen3-VL-30B-A3B-Instruct")
-height, width = 448, 448
-num_tokens = (
-    image_processor.get_number_of_image_patches(height, width, images_kwargs={})
-    // image_processor.merge_size**2
-)
-```
-
-**Example with fixed 448×448 resolution:**
+For example, for a 448x448 image using Qwen3-VL, where the compression ratio is 32x:
 
 ```python
 # Qwen3-VL at 448x448: (448*448)/1024 = 196 tokens
-VISION_TOKEN_COUNT = 196
+height, width = 448, 448
+VISION_TOKEN_COUNT = height * width // (32 * 32)
 
 # Tokenize text portions
 prefix_tokens = tokenizer.encode("<|im_start|>user\n<|vision_start|>")
@@ -275,6 +259,24 @@ datum = types.Datum(
         weights=full_weights[1:],
         target_tokens=all_tokens[1:],
     )
+)
+```
+
+Alternative, you can get `vision_token_count` using the `ImageProcessor` class helper:
+
+Qwen3-VL uses a ~32x compression ratio (`patch_size=16`, `merge_size=2`), so:
+
+```
+visual_tokens ≈ (H × W) / (32 × 32) = (H × W) / 1024
+```
+
+Making this calculation in code looks like this:
+
+```python
+image_processor = get_image_processor("Qwen/Qwen3-VL-30B-A3B-Instruct")
+height, width = 448, 448
+vision_token_count = (
+    image_processor.get_number_of_image_patches(height, width, images_kwargs={})
 )
 ```
 
