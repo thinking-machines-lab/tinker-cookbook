@@ -22,11 +22,8 @@ Testing guidelines:
 - Keep tests focused on tricky logic, not trivial operations.
 """
 
-from functools import cache
-from typing import Any, Callable, cast
+from typing import Callable, cast
 import copy
-from datetime import date
-
 
 import pytest
 import tinker
@@ -46,22 +43,7 @@ from tinker_cookbook.renderers import (
 )
 from tinker_cookbook.renderers.base import ensure_list
 from tinker_cookbook.tests.conversation_generator import generate_conversation
-from tinker_cookbook.tokenizer_utils import Tokenizer
-
-
-# TEMPORARY: get_tokenizer uses a mirror for Llama 3 to avoid needing the HF_TOKEN,
-# however, the mirrored tokenizer does not include the chat template.
-# Remove this once the mirrored tokenizer (thinkingmachineslabinc/meta-llama-3-tokenizer)
-# includes the chat template.
-@cache
-def get_tokenizer(model_name: str) -> Tokenizer:
-    """Get tokenizer with chat template."""
-    kwargs: dict[str, Any] = {}
-    if model_name == "moonshotai/Kimi-K2-Thinking":
-        kwargs["trust_remote_code"] = True
-        kwargs["revision"] = "612681931a8c906ddb349f8ad0f582cb552189cd"
-
-    return AutoTokenizer.from_pretrained(model_name, use_fast=True, **kwargs)
+from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 
 # =============================================================================
@@ -435,8 +417,8 @@ def _conversation_has_tools(messages: list[Message]) -> bool:
 
 def _add_llama3_date_prefix(messages: list[Message]) -> list[Message]:
     """Add date prefix to messages for Llama models."""
-    today = date.today().strftime("%d %b %Y")
-    date_prefix = f"Cutting Knowledge Date: December 2023\nToday Date: {today}\n\n"
+    # Use the hardcoded date from the mirrored tokenizer's chat template
+    date_prefix = "Cutting Knowledge Date: December 2023\nToday Date: 26 Jul 2024\n\n"
     messages = copy.deepcopy(messages)
     if messages and messages[0]["role"] == "system":
         assert isinstance(messages[0]["content"], str)
