@@ -1,5 +1,5 @@
 import asyncio
-from typing import Sequence
+from typing import Any, Sequence
 
 from tinker_cookbook.completers import TokenCompleter
 from tinker_cookbook.rl.types import (
@@ -10,6 +10,17 @@ from tinker_cookbook.rl.types import (
     Transition,
 )
 from tinker_cookbook.utils import logtree
+
+# Max characters for log values in table cells before truncation
+LOG_VALUE_MAX_LEN = 100
+
+
+def _truncate_log_value(value: Any, max_len: int = LOG_VALUE_MAX_LEN) -> tuple[str, bool]:
+    """Truncate a log value if it's too long. Returns (display_value, was_truncated)."""
+    str_value = str(value)
+    if len(str_value) > max_len:
+        return str_value[:max_len] + "...", True
+    return str_value, False
 
 
 @logtree.scope_header_decorator
@@ -25,6 +36,7 @@ async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
             reward=step_result.reward,
             episode_done=step_result.episode_done,
             metrics=step_result.metrics,
+            logs=step_result.logs,
         )
         transitions.append(transition)
         ob = step_result.next_observation
@@ -47,17 +59,24 @@ async def do_group_rollout(
     with logtree.scope_header("Trajectory Summary"):
         for i, (traj, final_reward) in enumerate(zip(trajectories_G, rewards_G, strict=True)):
             rows = []
+            truncated_values: list[tuple[int, str, str]] = []  # (step, key, full_value)
             step_reward_sum = 0.0
             for t_idx, t in enumerate(traj.transitions):
                 step_reward_sum += t.reward
-                rows.append(
-                    {
-                        "step": t_idx,
-                        "ob_len": t.ob.length,
-                        "ac_len": len(t.ac.tokens),
-                        "reward": f"{t.reward:.3f}",
-                    }
-                )
+                row: dict[str, Any] = {
+                    "step": t_idx,
+                    "ob_len": t.ob.length,
+                    "ac_len": len(t.ac.tokens),
+                    "reward": f"{t.reward:.3f}",
+                }
+                # Add any display fields from logs (not aggregated like metrics)
+                if t.logs:
+                    for key, value in t.logs.items():
+                        display_val, was_truncated = _truncate_log_value(value)
+                        row[key] = display_val
+                        if was_truncated:
+                            truncated_values.append((t_idx, key, str(value)))
+                rows.append(row)
             # Add final row with final observation and computed reward
             rows.append(
                 {
@@ -77,5 +96,13 @@ async def do_group_rollout(
                 }
             )
             logtree.table(rows, caption=f"Trajectory {i}")
+
+            # Show full content for any truncated values in collapsible blocks
+            for step_idx, key, full_value in truncated_values:
+                logtree.details(
+                    full_value,
+                    summary=f"Step {step_idx} - {key} (full, {len(full_value)} chars)",
+                    pre=True,
+                )
 
     return TrajectoryGroup(trajectories_G, list(rewards_G), list(metrics_G))

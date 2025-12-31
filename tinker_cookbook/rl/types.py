@@ -15,6 +15,7 @@ Action: TypeAlias = list[int]
 Observation: TypeAlias = tinker.ModelInput
 Logprobs: TypeAlias = list[float]
 Metrics: TypeAlias = dict[str, float | int]
+Logs: TypeAlias = dict[str, str | int | float]
 
 
 @dataclass
@@ -24,6 +25,7 @@ class StepResult:
     next_observation: Observation
     next_stop_condition: StopCondition
     metrics: Metrics = field(default_factory=dict)
+    logs: Logs = field(default_factory=dict)
 
 
 @dataclass
@@ -33,6 +35,7 @@ class Transition:
     reward: float
     episode_done: bool
     metrics: Metrics = field(default_factory=dict)
+    logs: Logs = field(default_factory=dict)
 
 
 class Env(ABC):
