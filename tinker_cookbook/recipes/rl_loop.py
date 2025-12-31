@@ -43,6 +43,9 @@ class Config:
     lora_rank: int = 32
     save_every: int = 20  # 0 = disabled
     max_tokens: int = 256
+    temperature: float = 1.0
+    top_k: int = -1
+    top_p: float = 1
 
 
 def get_reward(response: str, answer: str) -> float:
@@ -110,6 +113,9 @@ def main(config: Config):
     sampling_params = tinker.types.SamplingParams(
         max_tokens=config.max_tokens,
         stop=renderer.get_stop_sequences(),
+        temperature=config.temperature,
+        top_k=config.top_k,
+        top_p=config.top_p,
     )
     # Optimizer step
     adam_params = types.AdamParams(
