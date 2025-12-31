@@ -375,14 +375,19 @@ TOOL_CAPABLE_MODELS = {
 
 
 # Models for HF generation/supervised tests
+# Format: (model_name, renderer_override, hf_kwargs)
+# - model_name: HuggingFace model ID
+# - renderer_override: None to use get_recommended_renderer_name, or a specific renderer name
+# - hf_kwargs: Extra kwargs to pass to apply_chat_template (e.g., {"thinking": True})
 _HF_TEST_MODELS = [
-    "meta-llama/Llama-3.2-1B-Instruct",
-    "Qwen/Qwen3-30B-A3B",
-    "Qwen/Qwen3-30B-A3B-Instruct-2507",
-    "deepseek-ai/DeepSeek-V3.1",
-    "openai/gpt-oss-20b",
-    "moonshotai/Kimi-K2-Thinking",
-    "Qwen/Qwen3-VL-30B-A3B-Instruct",
+    ("meta-llama/Llama-3.2-1B-Instruct", None, {}),
+    ("Qwen/Qwen3-30B-A3B", None, {}),
+    ("Qwen/Qwen3-30B-A3B-Instruct-2507", None, {}),
+    ("deepseek-ai/DeepSeek-V3.1", None, {}),  # non-thinking (default)
+    ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking", {"thinking": True}),  # thinking mode
+    ("openai/gpt-oss-20b", None, {}),
+    ("moonshotai/Kimi-K2-Thinking", None, {}),
+    ("Qwen/Qwen3-VL-30B-A3B-Instruct", None, {}),
 ]
 
 # Models whose tool call format matches HF's apply_chat_template exactly.
@@ -429,8 +434,10 @@ def _add_llama3_date_prefix(messages: list[Message]) -> list[Message]:
 
 
 @pytest.mark.parametrize("conv_id", _GENERATION_CONVERSATIONS)
-@pytest.mark.parametrize("model_name", _HF_TEST_MODELS)
-def test_generation_against_hf_chat_templates(model_name: str, conv_id: str):
+@pytest.mark.parametrize("model_name,renderer_override,hf_kwargs", _HF_TEST_MODELS)
+def test_generation_against_hf_chat_templates(
+    model_name: str, renderer_override: str | None, hf_kwargs: dict, conv_id: str
+):
     """Test generation prompt against HF chat templates.
 
     Parametrized by model and conversation type. Tests that our renderer produces
@@ -448,11 +455,14 @@ def test_generation_against_hf_chat_templates(model_name: str, conv_id: str):
     tokenizer = get_tokenizer(model_name)
     attributes = get_model_attributes(model_name)
     image_processor = get_image_processor(model_name) if attributes.is_vl else None
-    render_name = (
-        get_recommended_renderer_name(model_name)
-        if not model_name.startswith("openai")
-        else "gpt_oss_medium_reasoning"
-    )
+
+    # Use renderer_override if provided, otherwise use default logic
+    if renderer_override is not None:
+        render_name = renderer_override
+    elif model_name.startswith("openai"):
+        render_name = "gpt_oss_medium_reasoning"
+    else:
+        render_name = get_recommended_renderer_name(model_name)
     cookbook_renderer = get_renderer(render_name, tokenizer, image_processor)
 
     modified_cookbook_convo = (
@@ -462,7 +472,9 @@ def test_generation_against_hf_chat_templates(model_name: str, conv_id: str):
     hf_convo = [cookbook_renderer.to_openai_message(m) for m in convo]
 
     cookbook_tokens = cookbook_renderer.build_generation_prompt(modified_cookbook_convo).to_ints()
-    hf_tokens = tokenizer.apply_chat_template(hf_convo, add_generation_prompt=True, tokenize=True)
+    hf_tokens = tokenizer.apply_chat_template(
+        hf_convo, add_generation_prompt=True, tokenize=True, **hf_kwargs
+    )
 
     assert cookbook_tokens == hf_tokens, (
         f"[{conv_desc}] Cookbook tokens: {cookbook_tokens}\n"
@@ -476,12 +488,14 @@ def test_generation_against_hf_chat_templates(model_name: str, conv_id: str):
 # Excluded:
 # - gpt-oss: analysis channel diverges from HF template
 # - Qwen/Qwen3-30B-A3B: HF template adds empty <think> blocks to non-thinking messages
+# Format: (model_name, renderer_override, hf_kwargs) - same as _HF_TEST_MODELS
 _SUPERVISED_TEST_MODELS = [
-    "meta-llama/Llama-3.2-1B-Instruct",
-    "Qwen/Qwen3-30B-A3B-Instruct-2507",
-    "deepseek-ai/DeepSeek-V3.1",
-    "moonshotai/Kimi-K2-Thinking",
-    "Qwen/Qwen3-VL-30B-A3B-Instruct",
+    ("meta-llama/Llama-3.2-1B-Instruct", None, {}),
+    ("Qwen/Qwen3-30B-A3B-Instruct-2507", None, {}),
+    ("deepseek-ai/DeepSeek-V3.1", None, {}),  # non-thinking (default)
+    ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking", {"thinking": True}),  # thinking mode
+    ("moonshotai/Kimi-K2-Thinking", None, {}),
+    ("Qwen/Qwen3-VL-30B-A3B-Instruct", None, {}),
 ]
 
 # Conversations for supervised tests (end with assistant message)
@@ -494,8 +508,10 @@ _SUPERVISED_CONVERSATIONS = [
 
 
 @pytest.mark.parametrize("conv_id", _SUPERVISED_CONVERSATIONS)
-@pytest.mark.parametrize("model_name", _SUPERVISED_TEST_MODELS)
-def test_supervised_example_against_hf_chat_templates(model_name: str, conv_id: str):
+@pytest.mark.parametrize("model_name,renderer_override,hf_kwargs", _SUPERVISED_TEST_MODELS)
+def test_supervised_example_against_hf_chat_templates(
+    model_name: str, renderer_override: str | None, hf_kwargs: dict, conv_id: str
+):
     """Test supervised example against HF chat templates.
 
     Parametrized by model and conversation type. Tests that our renderer produces
@@ -510,14 +526,24 @@ def test_supervised_example_against_hf_chat_templates(model_name: str, conv_id: 
             f"{model_name} has intentional tool format differences from HF (see renderer docstring)"
         )
 
+    # Skip supervised tests for thinking renderer - we intentionally don't add </think> to the
+    # last message (supervised target) so it can preserve ThinkingPart, unlike HF which always adds it
+    if renderer_override in _RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS:
+        pytest.skip(
+            f"{renderer_override} intentionally differs from HF for supervised target (no </think>)"
+        )
+
     tokenizer = get_tokenizer(model_name)
     attributes = get_model_attributes(model_name)
     image_processor = get_image_processor(model_name) if attributes.is_vl else None
-    render_name = (
-        get_recommended_renderer_name(model_name)
-        if not model_name.startswith("openai")
-        else "gpt_oss_medium_reasoning"
-    )
+
+    # Use renderer_override if provided, otherwise use default logic
+    if renderer_override is not None:
+        render_name = renderer_override
+    elif model_name.startswith("openai"):
+        render_name = "gpt_oss_medium_reasoning"
+    else:
+        render_name = get_recommended_renderer_name(model_name)
     cookbook_renderer = get_renderer(render_name, tokenizer, image_processor)
 
     modified_cookbook_convo = (
@@ -528,7 +554,9 @@ def test_supervised_example_against_hf_chat_templates(model_name: str, conv_id: 
 
     cookbook_model_input, _ = cookbook_renderer.build_supervised_example(modified_cookbook_convo)
     cookbook_tokens = cookbook_model_input.to_ints()
-    hf_output = tokenizer.apply_chat_template(hf_convo, tokenize=False, add_generation_prompt=False)
+    hf_output = tokenizer.apply_chat_template(
+        hf_convo, tokenize=False, add_generation_prompt=False, **hf_kwargs
+    )
     assert isinstance(hf_output, str)
     hf_tokens = tokenizer.encode(hf_output.rstrip("\n"), add_special_tokens=False)
 
@@ -872,6 +900,11 @@ _RENDERERS_WITHOUT_TOOL_SUPPORT = {"role_colon"}
 # Renderers that strip thinking in non-thinking mode (conversation must not have ThinkingPart)
 _RENDERERS_WITH_THINKING_STRIPPING = {"qwen3_disable_thinking", "deepseekv3", "kimi_k2"}
 
+# Renderers where supervised and generation have different headers (HF thinking=True behavior).
+# These add </think> to supervised assistant headers but <think> to generation prompt,
+# so observation != generation_prompt by design.
+_RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS = {"deepseekv3_thinking"}
+
 
 @pytest.mark.parametrize("conversation_fn", _CONSISTENCY_CONVERSATIONS)
 @pytest.mark.parametrize("model_name,renderer_name", _CONSISTENCY_RENDERERS)
@@ -920,6 +953,10 @@ def test_supervised_generation_parse_consistency(
         pytest.skip(f"{renderer_name} strips thinking content, breaking roundtrip consistency")
     if has_tool_content and renderer_name in _RENDERERS_WITHOUT_TOOL_SUPPORT:
         pytest.skip(f"{renderer_name} doesn't support tool calling")
+    if renderer_name in _RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS:
+        pytest.skip(
+            f"{renderer_name} has different headers for supervised (</think>) vs generation (<think>)"
+        )
     assert len(messages) >= 2, "Need at least 2 messages for this test"
     assert messages[-1]["role"] == "assistant", "Last message must be assistant"
 
