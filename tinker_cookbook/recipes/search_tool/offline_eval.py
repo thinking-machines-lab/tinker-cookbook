@@ -7,12 +7,12 @@ import chz
 import tinker
 from tinker_cookbook import model_info, renderers
 from tinker_cookbook.completers import TinkerTokenCompleter
-from tinker_cookbook.recipes.tool_use.search.search_env import (
+from tinker_cookbook.recipes.search_tool.search_env import (
     SearchEnv,
     SearchR1Datum,
     download_search_r1_dataset,
 )
-from tinker_cookbook.recipes.tool_use.search.tools import (
+from tinker_cookbook.recipes.search_tool.tools import (
     ChromaToolClient,
     ChromaToolClientConfig,
     EmbeddingConfig,
