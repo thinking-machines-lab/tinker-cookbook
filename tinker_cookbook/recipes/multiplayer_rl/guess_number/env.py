@@ -90,7 +90,7 @@ class GuessNumberEnv(Env):
             reward=reward,
             logs={
                 "guess": action_content,
-                "feedback": user_turn["content"],
+                "feedback": ensure_text(user_turn["content"]),
                 "target": self.gold_answer,
             },
         )
