@@ -8,7 +8,7 @@ from chromadb.api import AsyncClientAPI
 from chromadb.api.types import QueryResult
 from chromadb.config import Settings
 import google.genai as genai
-from tinker_cookbook.recipes.tool_use.search.embedding import (
+from tinker_cookbook.recipes.search_tool.embedding import (
     get_gemini_client,
     get_gemini_embedding,
 )
