@@ -8,12 +8,12 @@ This recipe trains models using RL on the [IFBench test dataset](https://hugging
 
 The environment supports four reward strategies:
 
-| Type | Description |
-|------|-------------|
-| `FULL_STRICT` | 1.0 if ALL instructions pass strict eval, else 0.0 |
-| `FULL_LOOSE` | 1.0 if ALL instructions pass loose eval, else 0.0 |
-| `PARTIAL_STRICT` | Fraction of instructions passing strict eval |
-| `PARTIAL_LOOSE` | Fraction of instructions passing loose eval |
+| Type             | Description                                        |
+| ---------------- | -------------------------------------------------- |
+| `FULL_STRICT`    | 1.0 if ALL instructions pass strict eval, else 0.0 |
+| `FULL_LOOSE`     | 1.0 if ALL instructions pass loose eval, else 0.0  |
+| `PARTIAL_STRICT` | Fraction of instructions passing strict eval       |
+| `PARTIAL_LOOSE`  | Fraction of instructions passing loose eval        |
 
 ## Example Command
 

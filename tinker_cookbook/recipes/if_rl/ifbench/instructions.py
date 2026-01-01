@@ -718,7 +718,6 @@ class NestedParenthesesChecker(Instruction):
         levels = []
         min_levels = 5
         max_depth = 0
-        depth_stack = []  # Track depth per matched group
 
         for char in value:
             if char in "([{":

@@ -1548,6 +1548,7 @@ WORD_LIST = [
     "apartment",
 ]  # pylint: disable=line-too-long
 
+
 def download_nltk_resources():
     """Download all required NLTK resources quietly at startup."""
     resources = [
@@ -1643,11 +1644,12 @@ def _get_sentence_tokenizer():
 def count_stopwords(text):
     """Counts the number of stopwords."""
     # NLTK resources downloaded at startup
-    stopwords = nltk.corpus.stopwords.words('english')
+    stopwords = nltk.corpus.stopwords.words("english")
     tokenizer = nltk.tokenize.RegexpTokenizer(r"\w+")
     tokens = tokenizer.tokenize(text)
     num_stopwords = len([t for t in tokens if t.lower() in stopwords])
     return num_stopwords
+
 
 def generate_keywords(num_keywords):
     """Randomly generates a few keywords."""

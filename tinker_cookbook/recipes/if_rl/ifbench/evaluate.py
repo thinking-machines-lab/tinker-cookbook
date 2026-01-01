@@ -122,7 +122,7 @@ def evaluate_instructions(
 
     strict_correct = sum(r.strict_pass for r in results)
     loose_correct = sum(r.loose_pass for r in results)
- 
+
     return results, {
         # Instruction-level: fraction of instructions that pass
         "strict": strict_correct / num_instructions,
