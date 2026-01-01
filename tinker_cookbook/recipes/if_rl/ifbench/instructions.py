@@ -28,7 +28,7 @@ from collections import Counter
 import csv
 import io
 
-from tinker_cookbook.recipes.if_rl.ifbench_eval import instructions_util
+from tinker_cookbook.recipes.if_rl.ifbench import instructions_util
 
 download("en_core_web_sm")
 

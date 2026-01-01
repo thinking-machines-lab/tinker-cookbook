@@ -14,7 +14,7 @@
 
 """Registry of all instructions."""
 
-from tinker_cookbook.recipes.if_rl.ifbench_eval import instructions
+from tinker_cookbook.recipes.if_rl.ifbench import instructions
 
 
 INSTRUCTION_DICT = {

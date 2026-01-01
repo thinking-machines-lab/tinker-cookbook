@@ -2,7 +2,7 @@ import enum
 from dataclasses import dataclass
 from typing import Any
 
-from tinker_cookbook.recipes.if_rl.ifbench_eval.instructions_registry import INSTRUCTION_DICT
+from tinker_cookbook.recipes.if_rl.ifbench.instructions_registry import INSTRUCTION_DICT
 
 
 class RewardType(enum.Enum):
@@ -122,7 +122,7 @@ def evaluate_instructions(
 
     strict_correct = sum(r.strict_pass for r in results)
     loose_correct = sum(r.loose_pass for r in results)
-
+ 
     return results, {
         # Instruction-level: fraction of instructions that pass
         "strict": strict_correct / num_instructions,

@@ -7,12 +7,8 @@ from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.recipes.if_rl.env import IfBenchDatasetBuilder
 from tinker_cookbook.recipes.if_rl.ifbench.evaluate import RewardType
 from tinker_cookbook.rl import train
-from dotenv import load_dotenv
-
-load_dotenv()
 
 
-# TODO: implement eval
 @chz.chz
 class CLIConfig:
     # Model parameters
