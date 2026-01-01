@@ -19,7 +19,7 @@ from tinker_cookbook.rl.types import (
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import logtree
-from tinker_cookbook.recipes.if_rl.ifbench_eval.evaluate import (
+from tinker_cookbook.recipes.if_rl.ifbench.evaluate import (
     RewardType,
     evaluate_instructions,
     strip_thinking,

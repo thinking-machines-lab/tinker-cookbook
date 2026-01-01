@@ -5,7 +5,7 @@ from pathlib import Path
 import chz
 from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.recipes.if_rl.env import IfBenchDatasetBuilder
-from tinker_cookbook.recipes.if_rl.ifbench_eval.evaluate import RewardType
+from tinker_cookbook.recipes.if_rl.ifbench.evaluate import RewardType
 from tinker_cookbook.rl import train
 from dotenv import load_dotenv
 
@@ -18,15 +18,15 @@ class CLIConfig:
     # Model parameters
     model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
     lora_rank: int = 32
+    seed: int = 42
     renderer_name: str | None = None
+    eval_every: int = 0
 
     # Training parameters
     learning_rate: float = 1e-5
     batch_size: int = 32
     group_size: int = 16
     max_tokens: int = 2048
-    seed: int = 42
-    eval_every: int = 0
     num_epochs: int = 1
 
     # IFBench-specific
@@ -89,7 +89,6 @@ async def cli_main(cli_config: CLIConfig):
         lora_rank=cli_config.lora_rank,
     )
 
-    # Run training
     await train.main(config)
 
 
