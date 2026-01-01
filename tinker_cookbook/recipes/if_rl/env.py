@@ -60,16 +60,16 @@ class IfBenchEnv(ProblemEnv):
     def get_question(self) -> str:
         return self.prompt
 
-    def check_answer(self, response: str) -> bool:
+    def check_answer(self, sample_str: str) -> bool:
         """Check if all instructions are satisfied (used by parent class logging)."""
         _, scores = evaluate_instructions(
-            response, self.instruction_id_list, self.kwargs_list, self.prompt
+            sample_str, self.instruction_id_list, self.kwargs_list, self.prompt
         )
         if self.reward_type in (RewardType.FULL_LOOSE, RewardType.PARTIAL_LOOSE):
             return scores["all_loose"] > 0
         return scores["all_strict"] > 0
 
-    def check_format(self, response: str) -> bool:
+    def check_format(self, sample_str: str) -> bool:
         """For IFBench, format checking is part of instruction evaluation."""
         return True  # Format is checked via instructions
 

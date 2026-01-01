@@ -12,7 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Library of instructions."""
+"""Library of instructions.
+
+This module is adapted from Allen AI's IFBench. The design pattern used here
+(setting instance vars in build_description, using them in check_following)
+causes pyright to emit false positive type errors. We suppress these at the
+module level since the calling code guarantees build_description is called first.
+"""
+
+# pyright: reportIncompatibleMethodOverride=false
+# pyright: reportOperatorIssue=false
+# pyright: reportOptionalOperand=false
+# pyright: reportArgumentType=false
 
 import logging
 import random
@@ -20,7 +31,7 @@ import re
 import string
 from typing import Dict, Optional, Sequence, Union
 import nltk
-from spacy.cli import download
+from spacy.cli.download import download
 import emoji
 import syllapy
 import unicodedata
@@ -998,11 +1009,11 @@ class NthWordJapaneseChecker(Instruction):
             self._japanese_position = random.randint(1, _NUM_WORD_CYCLE)
 
         self._description_pattern = "Every {N}th word of your response must be in Japanese."
-        if N % 10 == 1:
+        if self._japanese_position % 10 == 1:
             self._description_pattern = "Every {N}st of your response must be in Japanese."
-        if N % 10 == 2:
+        if self._japanese_position % 10 == 2:
             self._description_pattern = "Every {N}nd of your response must be in Japanese."
-        elif N % 10 == 3:
+        elif self._japanese_position % 10 == 3:
             self._description_pattern = "Every {N}rd of your response must be in Japanese."
         return self._description_pattern.format(N=self._japanese_position)
 
