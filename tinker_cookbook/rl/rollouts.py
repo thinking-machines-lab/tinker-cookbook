@@ -83,21 +83,25 @@ async def do_group_rollout(
                         row[key] = "-"
                 rows.append(row)
             # Add final row with final observation and computed reward
-            rows.append({
-                "step": "final",
-                "ob_len": traj.final_ob.length,
-                "ac_len": "-",
-                "reward": f"{final_reward:.3f}",
-                **{key: "-" for key in all_log_keys},
-            })
+            rows.append(
+                {
+                    "step": "final",
+                    "ob_len": traj.final_ob.length,
+                    "ac_len": "-",
+                    "reward": f"{final_reward:.3f}",
+                    **{key: "-" for key in all_log_keys},
+                }
+            )
             # Add total reward row
-            rows.append({
-                "step": "total",
-                "ob_len": "-",
-                "ac_len": "-",
-                "reward": f"{step_reward_sum + final_reward:.3f}",
-                **{key: "-" for key in all_log_keys},
-            })
+            rows.append(
+                {
+                    "step": "total",
+                    "ob_len": "-",
+                    "ac_len": "-",
+                    "reward": f"{step_reward_sum + final_reward:.3f}",
+                    **{key: "-" for key in all_log_keys},
+                }
+            )
             logtree.table(rows, caption=f"Trajectory {i}")
 
             # Show full content for any truncated values in collapsible blocks
