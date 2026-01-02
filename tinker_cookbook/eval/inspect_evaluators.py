@@ -26,20 +26,27 @@ class InspectEvaluatorBuilder:
     tasks: Tasks
     renderer_name: str
     model_name: str | None = None
+    # Random seed for sampling. If None, sampling is non-deterministic.
     seed: int | None = None
+    # If True, logs prompts and responses to the console (useful for debugging).
     verbose: bool = False
 
     # Generation parameters
     temperature: float = 1.0
     max_tokens: int = 1000
     top_p: float = 1.0
+    # Top-k sampling. -1 disables top-k filtering (uses all tokens).
     top_k: int = -1
+    # Number of independent responses to generate per prompt. Used for majority
+    # voting or best-of-n evaluation strategies.
     num_choices: int = 1
 
     # Evaluation parameters
+    # Maximum number of samples to evaluate. If None, evaluates all samples.
     limit: Optional[int] = None
     debug_errors: bool = True
     log_dir: Optional[str] = None
+    # Maximum concurrent sampling requests to Tinker.
     max_connections: int = 512
     log_level: str = "INFO"
 
