@@ -4,8 +4,7 @@ from pathlib import Path
 
 import chz
 from tinker_cookbook import cli_utils, model_info
-from tinker_cookbook.recipes.if_rl.env import IfBenchDatasetBuilder
-from tinker_cookbook.recipes.if_rl.ifbench.evaluate import RewardType
+from tinker_cookbook.recipes.if_rl.env import IfBenchDatasetBuilder, RewardType
 from tinker_cookbook.rl import train
 
 
@@ -21,7 +20,7 @@ class CLIConfig:
     # Training parameters
     learning_rate: float = 1e-5
     batch_size: int = 32
-    group_size: int = 16
+    group_size: int = 8
     max_tokens: int = 2048
     num_epochs: int = 1
 
