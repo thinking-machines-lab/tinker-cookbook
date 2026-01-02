@@ -86,8 +86,7 @@ class IfBenchEnv(ProblemEnv):
     async def step(self, action: Action) -> StepResult:
         message, parse_success = self.renderer.parse_response(action)
         content = renderers.get_text_content(message)
-        content = strip_thinking(content)
-        content = content.replace("<|im_end|>", "").strip()
+        content = strip_thinking(content).strip()
 
         results, scores = evaluate_instructions(
             content, self.instruction_id_list, self.kwargs_list, self.prompt

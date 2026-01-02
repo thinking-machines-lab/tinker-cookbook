@@ -31,7 +31,6 @@ import re
 import string
 from typing import Dict, Optional, Sequence, Union
 import nltk
-from spacy.cli.download import download
 import emoji
 import syllapy
 import unicodedata
@@ -40,8 +39,6 @@ import csv
 import io
 
 from tinker_cookbook.recipes.if_rl.ifbench import instructions_util
-
-download("en_core_web_sm")
 
 logger = logging.getLogger(__name__)
 

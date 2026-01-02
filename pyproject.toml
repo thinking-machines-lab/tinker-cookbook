@@ -64,10 +64,8 @@ verifiers = [
     "openai",
 ]
 if_rl = [
-    "spacy>=3.8.11",
     "emoji>=2.15.0",
     "syllapy>=0.7.2",
-    "pip>=25.3",
 ]
 all = [
     "tinker_cookbook[vector-search]",
