@@ -10,13 +10,15 @@ Set CODE_SANDBOX_BACKEND environment variable to switch backends.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
+import uuid
 from typing import Any, Literal
 
 from tinker_cookbook.execution import SandboxFusionClient
-from tinker_cookbook.recipes.code_rl.lcb_utils import TEST_UTIL, TEST_CODE
+from tinker_cookbook.recipes.code_rl.lcb_utils import TEST_CODE, TEST_UTIL
 
 # Backend selection
 BackendType = Literal["sandboxfusion", "modal"]
@@ -97,33 +99,55 @@ async def _check_with_sandboxfusion(
     )
 
 
+def _check_with_modal_sync(
+    test_cases: dict[str, str],
+    generation: str,
+    timeout: int,
+    total_timeout: int,
+) -> tuple[bool, dict[str, Any]]:
+    """Execute tests using Modal sandbox backend (sync implementation)."""
+    sandbox = _get_modal_sandbox()
+
+    # Use unique workdir to avoid concurrent call collisions
+    workdir = f"/workspace/lcb/{uuid.uuid4().hex[:12]}"
+
+    try:
+        sandbox.mkdir(workdir)
+
+        # Write files to sandbox
+        sandbox.write_file(f"{workdir}/test_cases.txt", json.dumps(test_cases))
+        sandbox.write_file(f"{workdir}/code.py", generation)
+        sandbox.write_file(f"{workdir}/testing_util.py", TEST_UTIL)
+        sandbox.write_file(f"{workdir}/run.py", TEST_CODE % {"timeout": timeout})
+
+        # Execute test runner
+        exit_code, stdout, stderr = sandbox.exec(
+            "python", "run.py", workdir=workdir, timeout=total_timeout
+        )
+
+        success = exit_code == 0
+        details = {"exit_code": exit_code, "stdout": stdout, "stderr": stderr}
+        return success, details
+    finally:
+        # TODO(tgriggs): Improve the modal sandbox cleanup and error handling
+        # Clean up workdir
+        try:
+            sandbox.cleanup(workdir)
+        except Exception:
+            pass  # Best effort cleanup
+
+
 async def _check_with_modal(
     test_cases: dict[str, str],
     generation: str,
     timeout: int,
     total_timeout: int,
 ) -> tuple[bool, dict[str, Any]]:
-    """Execute tests using Modal sandbox backend."""
-    sandbox = _get_modal_sandbox()
-
-    workdir = "/workspace/lcb"
-    sandbox.cleanup(workdir)
-    sandbox.mkdir(workdir)
-
-    # Write files to sandbox
-    sandbox.write_file(f"{workdir}/test_cases.txt", json.dumps(test_cases))
-    sandbox.write_file(f"{workdir}/code.py", generation)
-    sandbox.write_file(f"{workdir}/testing_util.py", TEST_UTIL)
-    sandbox.write_file(f"{workdir}/run.py", TEST_CODE % {"timeout": timeout})
-
-    # Execute test runner
-    exit_code, stdout, stderr = sandbox.exec(
-        "python", "run.py", workdir=workdir, timeout=total_timeout
+    """Execute tests using Modal sandbox backend (async wrapper)."""
+    # Run sync Modal operations in thread pool to avoid blocking event loop
+    return await asyncio.to_thread(
+        _check_with_modal_sync, test_cases, generation, timeout, total_timeout
     )
-
-    success = exit_code == 0
-    details = {"exit_code": exit_code, "stdout": stdout, "stderr": stderr}
-    return success, details
 
 
 async def sandbox_check_correctness(

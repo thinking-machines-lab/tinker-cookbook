@@ -74,21 +74,48 @@ class ModalSandbox:
             stdout = proc.stdout.read()
             stderr = proc.stderr.read()
             exit_code = proc.wait()
+
+            # Decode bytes to str if needed
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode("utf-8", errors="replace")
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
+
             return exit_code, stdout, stderr
         except Exception as e:
             return -1, "", str(e)
 
     def cleanup(self, path: str) -> None:
-        """Remove a file or directory from the sandbox."""
+        """
+        Remove a file or directory from the sandbox.
+
+        Raises RuntimeError if the cleanup fails.
+        """
         sandbox = self._ensure_sandbox()
         proc = sandbox.exec("rm", "-rf", path)
         _ = proc.stdout.read()
+        exit_code = proc.wait()
+        if exit_code != 0:
+            stderr = proc.stderr.read()
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
+            raise RuntimeError(f"Failed to cleanup {path}: {stderr}")
 
     def mkdir(self, path: str) -> None:
-        """Create a directory in the sandbox."""
+        """
+        Create a directory in the sandbox.
+
+        Raises RuntimeError if mkdir fails.
+        """
         sandbox = self._ensure_sandbox()
         proc = sandbox.exec("mkdir", "-p", path)
         _ = proc.stdout.read()
+        exit_code = proc.wait()
+        if exit_code != 0:
+            stderr = proc.stderr.read()
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
+            raise RuntimeError(f"Failed to mkdir {path}: {stderr}")
 
     def close(self) -> None:
         """Terminate the sandbox and release resources."""
