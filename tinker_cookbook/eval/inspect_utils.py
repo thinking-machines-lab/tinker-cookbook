@@ -13,11 +13,12 @@ import tinker
 from inspect_ai.model import ChatCompletionChoice as InspectAIModelOutputChoice
 from inspect_ai.model import ChatMessage as InspectAIChatMessage
 from inspect_ai.model import ChatMessageAssistant as InspectAIChatMessageAssistant
-from inspect_ai.model import ChatMessageSystem, Content, modelapi
+from inspect_ai.model import ChatMessageSystem, Content
 from inspect_ai.model import GenerateConfig as InspectAIGenerateConfig
 from inspect_ai.model import ModelAPI as InspectAIModelAPI
 from inspect_ai.model import ModelOutput as InspectAIModelOutput
 from inspect_ai.model import ModelUsage as InspectAIModelUsage
+from inspect_ai.model._registry import modelapi_register
 from inspect_ai.tool import ToolChoice as InspectAIToolChoice
 from inspect_ai.tool import ToolInfo as InspectAIToolInfo
 from termcolor import colored
@@ -54,7 +55,6 @@ def convert_inspect_messages(messages: list[InspectAIChatMessage]) -> list[rende
     ]
 
 
-@modelapi(name="tinker-sampling")
 class InspectAPIFromTinkerSampling(InspectAIModelAPI):
     """
     A model API wrapper that adapts tinker sampling clients to the inspect API interface.
@@ -118,10 +118,10 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
             stop=self.renderer.get_stop_sequences(),
             top_p=config.top_p if config.top_p is not None else 1.0,
             top_k=config.top_k if config.top_k is not None else -1,
+            seed=config.seed,
         )
 
         start_time = time.time()
-        assert num_responses == 1
         sample_result = await self.sampling_client.sample_async(
             prompt=prompt, sampling_params=sampling_params, num_samples=num_responses
         )
@@ -129,10 +129,11 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
 
         # Optional verbose output (only for standalone use)
         if self.verbose:
-            logger.info(
-                colored(self.renderer.tokenizer.decode(prompt.to_ints()), "green")
-                + colored(self.renderer.tokenizer.decode(sampled_token_sequences[0].tokens), "red")
-            )
+            prompt_text = colored(self.renderer.tokenizer.decode(prompt.to_ints()), "green")
+            logger.info(f"[Prompt]\n{prompt_text}")
+            for i, seq in enumerate(sampled_token_sequences):
+                response_text = colored(self.renderer.tokenizer.decode(seq.tokens), "red")
+                logger.info(f"[Response {i + 1}/{num_responses}]\n{response_text}")
 
         end_time = time.time()
 
@@ -156,3 +157,8 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
         return InspectAIModelOutput(
             model=self.model_name, choices=all_choices, time=end_time - start_time, usage=usage
         )
+
+
+# Register with inspect_ai's model registry.
+# Using modelapi_register instead of @modelapi decorator preserves the __init__ signature for pyright.
+modelapi_register(InspectAPIFromTinkerSampling, "tinker-sampling")
