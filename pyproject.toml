@@ -64,9 +64,7 @@ verifiers = [
     "openai",
 ]
 if_rl = [
-    "emoji>=2.15.0",
-    "nltk>=3.8",
-    "syllapy>=0.7.2",
+    "if-verifiable==0.1.1",
 ]
 all = [
     "tinker_cookbook[vector-search]",
@@ -89,3 +87,4 @@ python_files = ["test_*.py", "*_test.py"]
 
 [tool.ruff]
 line-length = 100
+
