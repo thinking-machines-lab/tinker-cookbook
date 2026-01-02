@@ -150,14 +150,13 @@ def main(config: Config):
         datums_D: list[types.Datum] = []
         rewards_P: list[float] = []
         futures_P: list[Future[types.SampleResponse]] = []
-        prompts_P: list[list[int]] = []
+        prompts_P: list[types.ModelInput] = []
         for question in batch_rows["question"]:
             convo = [
                 *convo_prefix,
                 {"role": "user", "content": question + question_suffix},
             ]
             model_input = renderer.build_generation_prompt(convo)
-            prompt_tokens = model_input.to_ints()
 
             # Generate group_size responses in a single call
             future = sampling_client.sample(
@@ -166,26 +165,23 @@ def main(config: Config):
                 sampling_params=sampling_params,
             )
             futures_P.append(future)
-            prompts_P.append(prompt_tokens)
+            prompts_P.append(model_input)
 
-        for future, prompt_tokens, answer in tqdm(
+        for future, prompt, answer in tqdm(
             zip(futures_P, prompts_P, batch_rows["answer"]),
             total=len(futures_P),
             desc=f"Sampling batch {batch_idx}",
         ):
             sample_result = future.result()
             rewards_G: list[float] = []
-            tokens_G_T: list[list[int]] = []
+            sampled_tokens_G_T: list[list[int]] = []
             logprobs_G_T: list[list[float]] = []
-            ob_lens_G: list[int] = []
             for sequence in sample_result.sequences:
                 sampled_tokens = sequence.tokens
                 sampled_logprobs = sequence.logprobs
                 assert sampled_logprobs is not None
 
-                all_tokens = prompt_tokens + sampled_tokens
-                tokens_G_T.append(all_tokens)
-                ob_lens_G.append(len(prompt_tokens) - 1)
+                sampled_tokens_G_T.append(sampled_tokens)
                 logprobs_G_T.append(sampled_logprobs)
 
                 parsed_message, _ = renderer.parse_response(sampled_tokens)
@@ -202,25 +198,25 @@ def main(config: Config):
                 # Skip question because all advantages are the same
                 continue
 
-            for tokens, logprobs, advantage, ob_len in zip(
-                tokens_G_T, logprobs_G_T, advantages_G, ob_lens_G
+            for sampled_tokens, logprobs, advantage in zip(
+                sampled_tokens_G_T, logprobs_G_T, advantages_G
             ):
-                input_tokens = tokens[:-1]
-                input_tokens = [int(token) for token in input_tokens]
-                target_tokens = tokens[1:]
+                ob_len = prompt.length - 1
+                model_input = prompt.append(types.EncodedTextChunk(tokens=sampled_tokens[:-1]))                
+                target_tokens = [0] * ob_len + sampled_tokens
                 padded_logprobs = [0.0] * ob_len + logprobs
-                padded_advantages = [0.0] * ob_len + [advantage] * (len(input_tokens) - ob_len)
+                padded_advantages = [0.0] * ob_len + [advantage] * (model_input.length - ob_len)
                 assert (
-                    len(input_tokens)
+                    model_input.length
                     == len(target_tokens)
                     == len(padded_logprobs)
                     == len(padded_advantages)
                 ), (
-                    f"len(input_tokens): {len(input_tokens)}, len(target_tokens): {len(target_tokens)}, "
+                    f"model_input.length: {model_input.length}, len(target_tokens): {len(target_tokens)}, "
                     f"len(padded_logprobs): {len(padded_logprobs)}, len(padded_advantages): {len(padded_advantages)}"
                 )
                 datum = types.Datum(
-                    model_input=types.ModelInput.from_ints(tokens=input_tokens),
+                    model_input=model_input,
                     loss_fn_inputs={
                         "target_tokens": TensorData.from_torch(torch.tensor(target_tokens)),
                         "logprobs": TensorData.from_torch(torch.tensor(padded_logprobs)),
