@@ -26,7 +26,7 @@ If you launch the chroma service locally, you generally need 160+ GB RAM to load
 This default command trains a `Qwen3-4B-Instruct-2507` with reasonable hyperparameters.
 
 ```bash
-python -m tinker_cookbook.recipes.tool_use.search.train
+python -m tinker_cookbook.recipes.search_tool.train
 ```
 
 With the default hyperparameters, you can expect performance like:
