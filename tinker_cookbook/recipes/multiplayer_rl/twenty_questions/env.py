@@ -26,9 +26,6 @@ from tinker_cookbook.rl.types import (
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import logtree
 from tinker_cookbook.model_info import get_recommended_renderer_name
-from dotenv import load_dotenv
-
-load_dotenv()
 
 ANSWERER_SYSTEM_PROMPT = """
 You are the answerer in a game of 20 questions. You should only ever respond with 'yes' or 'no'. Your secret word is {answer}. If the other player guesses it with Guess: <answer>, respond with 'yes' only if the answer is precisely your secret word.
