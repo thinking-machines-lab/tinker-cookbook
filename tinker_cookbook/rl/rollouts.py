@@ -58,6 +58,9 @@ async def do_group_rollout(
     # Log trajectory tables with final rewards
     with logtree.scope_header("Trajectory Summary"):
         for i, (traj, final_reward) in enumerate(zip(trajectories_G, rewards_G, strict=True)):
+            # Pre-scan to collect all log keys across all transitions (preserving order, deduped)
+            all_log_keys = list(dict.fromkeys(key for t in traj.transitions for key in t.logs))
+
             rows = []
             truncated_values: list[tuple[int, str, str]] = []  # (step, key, full_value)
             step_reward_sum = 0.0
@@ -69,32 +72,32 @@ async def do_group_rollout(
                     "ac_len": len(t.ac.tokens),
                     "reward": f"{t.reward:.3f}",
                 }
-                # Add any display fields from logs (not aggregated like metrics)
-                if t.logs:
-                    for key, value in t.logs.items():
-                        display_val, was_truncated = _truncate_log_value(value)
+                # Add log fields (user is responsible for avoiding collision with core columns)
+                for key in all_log_keys:
+                    if key in t.logs:
+                        display_val, was_truncated = _truncate_log_value(t.logs[key])
                         row[key] = display_val
                         if was_truncated:
-                            truncated_values.append((t_idx, key, str(value)))
+                            truncated_values.append((t_idx, key, str(t.logs[key])))
+                    else:
+                        row[key] = "-"
                 rows.append(row)
             # Add final row with final observation and computed reward
-            rows.append(
-                {
-                    "step": "final",
-                    "ob_len": traj.final_ob.length,
-                    "ac_len": "-",
-                    "reward": f"{final_reward:.3f}",
-                }
-            )
+            rows.append({
+                "step": "final",
+                "ob_len": traj.final_ob.length,
+                "ac_len": "-",
+                "reward": f"{final_reward:.3f}",
+                **{key: "-" for key in all_log_keys},
+            })
             # Add total reward row
-            rows.append(
-                {
-                    "step": "total",
-                    "ob_len": "-",
-                    "ac_len": "-",
-                    "reward": f"{step_reward_sum + final_reward:.3f}",
-                }
-            )
+            rows.append({
+                "step": "total",
+                "ob_len": "-",
+                "ac_len": "-",
+                "reward": f"{step_reward_sum + final_reward:.3f}",
+                **{key: "-" for key in all_log_keys},
+            })
             logtree.table(rows, caption=f"Trajectory {i}")
 
             # Show full content for any truncated values in collapsible blocks
