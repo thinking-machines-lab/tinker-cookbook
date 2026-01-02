@@ -1,63 +1,52 @@
 """
 Code grading utilities for RL training.
 
-Uses Sandbox Fusion for safe code execution.
+Supports two execution backends:
+- sandboxfusion: Local Docker-based sandbox (default)
+- modal: Cloud-based Modal sandbox
+
+Set CODE_SANDBOX_BACKEND environment variable to switch backends.
 """
 
 from __future__ import annotations
 
-import asyncio
-import base64
 import json
 import os
 import re
-from typing import Any
+from typing import Any, Literal
 
-import aiohttp
-
+from tinker_cookbook.execution import SandboxFusionClient
 from tinker_cookbook.recipes.code_rl.lcb_utils import TEST_UTIL, TEST_CODE
 
-# Sandbox configuration
-SANDBOX_URL = os.getenv("SANDBOX_URL", "http://localhost:8080/run_code")
-SANDBOX_MAX_CONCURRENCY = int(os.getenv("SANDBOX_MAX_CONCURRENCY", "4"))
+# Backend selection
+BackendType = Literal["sandboxfusion", "modal"]
+SANDBOX_BACKEND: BackendType = os.getenv("CODE_SANDBOX_BACKEND", "sandboxfusion")  # type: ignore[assignment]
 
-# Sandbox session management
-_SANDBOX_SESSION: aiohttp.ClientSession | None = None
-_SANDBOX_SESSION_LOCK = asyncio.Lock()
-
-
-async def _get_sandbox_session() -> aiohttp.ClientSession:
-    """
-    Get or create a shared aiohttp session with connection limits.
-
-    The TCPConnector limits concurrent connections to SANDBOX_MAX_CONCURRENCY.
-    When all connections are busy, additional requests automatically wait in a queue
-    until a connection becomes available.
-    """
-    global _SANDBOX_SESSION
-
-    async with _SANDBOX_SESSION_LOCK:
-        if _SANDBOX_SESSION is None or _SANDBOX_SESSION.closed:
-            connector = aiohttp.TCPConnector(
-                limit=SANDBOX_MAX_CONCURRENCY,
-                limit_per_host=SANDBOX_MAX_CONCURRENCY,
-            )
-            timeout = aiohttp.ClientTimeout(total=6000)
-            _SANDBOX_SESSION = aiohttp.ClientSession(
-                connector=connector,
-                timeout=timeout,
-            )
-        return _SANDBOX_SESSION
+# Global clients (lazily initialized)
+_sandboxfusion_client: SandboxFusionClient | None = None
+_modal_sandbox: Any = None  # ModalSandbox, but avoid import at module level
 
 
-def _b64encode(content: str) -> str:
-    return base64.b64encode(content.encode("utf-8")).decode("utf-8")
+def _get_sandboxfusion_client() -> SandboxFusionClient:
+    """Get or create the SandboxFusion client."""
+    global _sandboxfusion_client
+    if _sandboxfusion_client is None:
+        _sandboxfusion_client = SandboxFusionClient()
+    return _sandboxfusion_client
+
+
+def _get_modal_sandbox():
+    """Get or create the Modal sandbox."""
+    global _modal_sandbox
+    if _modal_sandbox is None:
+        from tinker_cookbook.execution.modal_sandbox import ModalSandbox
+
+        _modal_sandbox = ModalSandbox()
+    return _modal_sandbox
 
 
 def extract_code_from_model(model_response: str) -> str | None:
-    """
-    Extract the last fenced code block from a model response.
-    """
+    """Extract the last fenced code block from a model response."""
     code_blocks = re.findall(r"```(?:\w+)?\n(.*?)```", model_response, re.DOTALL)
     if not code_blocks:
         return None
@@ -65,6 +54,7 @@ def extract_code_from_model(model_response: str) -> str | None:
 
 
 def postprocess_lcb_sample(sample: list[dict[str, Any]]) -> dict[str, str]:
+    """Convert test cases to LiveCodeBench format for the test runner."""
     sample_inputs = [item["input"] for item in sample]
     sample_outputs = [item["output"] for item in sample]
 
@@ -77,7 +67,9 @@ def postprocess_lcb_sample(sample: list[dict[str, Any]]) -> dict[str, str]:
         metadata = sample[0].get("metadata", {})
         fn_name = metadata.get("func_name")
         if fn_name is None:
-            raise AssertionError(f"Function name missing in metadata: {metadata}. Sample: {sample}")
+            raise AssertionError(
+                f"Function name missing in metadata: {metadata}. Sample: {sample}"
+            )
         sample_dict["fn_name"] = fn_name
 
     return {
@@ -85,10 +77,73 @@ def postprocess_lcb_sample(sample: list[dict[str, Any]]) -> dict[str, str]:
     }
 
 
-async def sandbox_check_correctness(
-    sample: list[dict[str, Any]], generation: str, timeout: int = 6
+async def _check_with_sandboxfusion(
+    test_cases: dict[str, str],
+    generation: str,
+    timeout: int,
+    total_timeout: int,
 ) -> tuple[bool, dict[str, Any]]:
-    """Check correctness of generated code using sandbox execution."""
+    """Execute tests using SandboxFusion backend."""
+    client = _get_sandboxfusion_client()
+
+    return await client.run(
+        code=TEST_CODE % {"timeout": timeout},
+        files={
+            "test_cases.txt": json.dumps(test_cases),
+            "code.py": generation,
+            "testing_util.py": TEST_UTIL,
+        },
+        timeout=total_timeout,
+    )
+
+
+async def _check_with_modal(
+    test_cases: dict[str, str],
+    generation: str,
+    timeout: int,
+    total_timeout: int,
+) -> tuple[bool, dict[str, Any]]:
+    """Execute tests using Modal sandbox backend."""
+    sandbox = _get_modal_sandbox()
+
+    workdir = "/workspace/lcb"
+    sandbox.cleanup(workdir)
+    sandbox.mkdir(workdir)
+
+    # Write files to sandbox
+    sandbox.write_file(f"{workdir}/test_cases.txt", json.dumps(test_cases))
+    sandbox.write_file(f"{workdir}/code.py", generation)
+    sandbox.write_file(f"{workdir}/testing_util.py", TEST_UTIL)
+    sandbox.write_file(f"{workdir}/run.py", TEST_CODE % {"timeout": timeout})
+
+    # Execute test runner
+    exit_code, stdout, stderr = sandbox.exec(
+        "python", "run.py", workdir=workdir, timeout=total_timeout
+    )
+
+    success = exit_code == 0
+    details = {"exit_code": exit_code, "stdout": stdout, "stderr": stderr}
+    return success, details
+
+
+async def sandbox_check_correctness(
+    sample: list[dict[str, Any]],
+    generation: str,
+    timeout: int = 6,
+    backend: BackendType | None = None,
+) -> tuple[bool, dict[str, Any]]:
+    """
+    Check correctness of generated code using sandbox execution.
+
+    Args:
+        sample: List of test cases in LiveCodeBench format
+        generation: Generated code to test
+        timeout: Per-test timeout in seconds
+        backend: Override default backend ("sandboxfusion" or "modal")
+
+    Returns:
+        Tuple of (all_passed: bool, details: dict)
+    """
     assert len(sample) >= 1, "Sample must contain at least one test case"
 
     # Process test cases
@@ -98,41 +153,24 @@ async def sandbox_check_correctness(
         test_cnt = len(json.loads(test_cases["input_output"])["inputs"])
         total_timeout = (timeout + 1) * test_cnt + 5
 
-        test_code = TEST_CODE % {"timeout": timeout}
-        asset = {
-            "test_cases.txt": _b64encode(json.dumps(test_cases)),
-            "code.py": _b64encode(generation),
-            "testing_util.py": _b64encode(TEST_UTIL),
-        }
+        # Select backend
+        use_backend = backend or SANDBOX_BACKEND
 
-        payload = {
-            "code": test_code,
-            "language": "python",
-            "run_timeout": total_timeout,
-            "files": asset,
-        }
+        if use_backend == "modal":
+            return await _check_with_modal(
+                test_cases, generation, timeout, total_timeout
+            )
+        else:
+            return await _check_with_sandboxfusion(
+                test_cases, generation, timeout, total_timeout
+            )
 
-        session = await _get_sandbox_session()
-        async with session.post(SANDBOX_URL, json=payload) as result:
-            if result.status != 200:
-                raise Exception(
-                    f"Sandbox API responded with code {result.status}: {await result.text()}"
-                )
-            resp = await result.json()
-            if resp.get("status") == "SandboxError":
-                raise Exception(f"Sandbox responded with error: {resp.get('message')}")
-
-            # Check if all tests passed
-            all_passed = resp.get("status") == "Success"
-            return all_passed, resp
     except Exception as e:
         return False, {"error": str(e)}
 
 
 def taco_to_lcb_format(tests: dict[str, Any]) -> list[dict[str, Any]]:
-    """
-    Convert TACO-style tests to LiveCodeBench format.
-    """
+    """Convert TACO-style tests to LiveCodeBench format."""
     inputs = tests.get("inputs", [])
     outputs = tests.get("outputs", [])
 
@@ -157,3 +195,16 @@ def taco_to_lcb_format(tests: dict[str, Any]) -> list[dict[str, Any]]:
         test_cases.append(case)
 
     return test_cases
+
+
+async def close_clients() -> None:
+    """Close all sandbox clients. Call at end of training."""
+    global _sandboxfusion_client, _modal_sandbox
+
+    if _sandboxfusion_client is not None:
+        await _sandboxfusion_client.close()
+        _sandboxfusion_client = None
+
+    if _modal_sandbox is not None:
+        _modal_sandbox.close()
+        _modal_sandbox = None
