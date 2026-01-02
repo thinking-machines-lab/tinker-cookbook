@@ -25,6 +25,7 @@ class InspectEvaluatorBuilder:
     # Required parameters
     tasks: Tasks
     renderer_name: str
+    # TODO: remove model_name once the SDK adds a get_tokenizer method to sampling client
     model_name: str | None = None
     # Random seed for sampling. If None, sampling is non-deterministic.
     seed: int | None = None
@@ -75,12 +76,14 @@ class InspectEvaluator(SamplingClientEvaluator):
         Returns:
             Dictionary of metrics from inspect evaluation
         """
+        if self.config.model_name is None:
+            raise ValueError("model_name must be set before running evaluation")
         # Create the inspect API wrapper
         api = InspectAPIFromTinkerSampling(
-            renderer_name=self.config.renderer_name,  # pyright: ignore[reportCallIssue]
+            renderer_name=self.config.renderer_name,
             model_name=self.config.model_name,
-            sampling_client=sampling_client,  # pyright: ignore[reportCallIssue]
-            verbose=self.config.verbose,  # pyright: ignore[reportCallIssue]
+            sampling_client=sampling_client,
+            verbose=self.config.verbose,
         )
         # Create the inspect model
         model = InspectAIModel(

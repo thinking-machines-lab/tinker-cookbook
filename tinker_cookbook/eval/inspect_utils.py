@@ -13,11 +13,12 @@ import tinker
 from inspect_ai.model import ChatCompletionChoice as InspectAIModelOutputChoice
 from inspect_ai.model import ChatMessage as InspectAIChatMessage
 from inspect_ai.model import ChatMessageAssistant as InspectAIChatMessageAssistant
-from inspect_ai.model import ChatMessageSystem, Content, modelapi
+from inspect_ai.model import ChatMessageSystem, Content
 from inspect_ai.model import GenerateConfig as InspectAIGenerateConfig
 from inspect_ai.model import ModelAPI as InspectAIModelAPI
 from inspect_ai.model import ModelOutput as InspectAIModelOutput
 from inspect_ai.model import ModelUsage as InspectAIModelUsage
+from inspect_ai.model._registry import modelapi_register
 from inspect_ai.tool import ToolChoice as InspectAIToolChoice
 from inspect_ai.tool import ToolInfo as InspectAIToolInfo
 from termcolor import colored
@@ -54,7 +55,6 @@ def convert_inspect_messages(messages: list[InspectAIChatMessage]) -> list[rende
     ]
 
 
-@modelapi(name="tinker-sampling")
 class InspectAPIFromTinkerSampling(InspectAIModelAPI):
     """
     A model API wrapper that adapts tinker sampling clients to the inspect API interface.
@@ -157,3 +157,8 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
         return InspectAIModelOutput(
             model=self.model_name, choices=all_choices, time=end_time - start_time, usage=usage
         )
+
+
+# Register with inspect_ai's model registry.
+# Using modelapi_register instead of @modelapi decorator preserves the __init__ signature for pyright.
+modelapi_register(InspectAPIFromTinkerSampling, "tinker-sampling")
