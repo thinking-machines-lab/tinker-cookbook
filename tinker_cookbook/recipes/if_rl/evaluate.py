@@ -1,9 +1,6 @@
 """Unified evaluation for IFEval and IFBench using if-verifiable library.
 
-Usage:
-    python -m tinker_cookbook.recipes.if_rl.evaluate --benchmark ifeval
-    python -m tinker_cookbook.recipes.if_rl.evaluate --benchmark ifbench
-    python -m tinker_cookbook.recipes.if_rl.evaluate --benchmark ifeval --tinker_checkpoint_url "tinker://..."
+Usage: python -m tinker_cookbook.recipes.if_rl.evaluate benchmark=ifeval
 """
 
 import asyncio
@@ -75,11 +72,19 @@ async def run_evaluation(config: CLIConfig) -> dict[str, float]:
     if config.output_file:
         with open(config.output_file, "w") as f:
             for sample, response, _, scores in results:
+                # Filter kwargs to only non-null values for each instruction
+                filtered_kwargs = []
+                for kw in sample.kwargs:
+                    filtered = {k: v for k, v in kw.items() if v is not None}
+                    filtered_kwargs.append(filtered)
+
                 f.write(
                     json.dumps(
                         {
                             "prompt": sample.prompt,
                             "response": response,
+                            "instruction_id_list": sample.instruction_id_list,
+                            "kwargs": filtered_kwargs,
                             "partial_strict": scores.partial_strict,
                             "partial_loose": scores.partial_loose,
                             "binary_strict": scores.binary_strict,
