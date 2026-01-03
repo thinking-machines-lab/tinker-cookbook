@@ -1,17 +1,19 @@
 """
 Code execution backends for sandboxed code evaluation.
 
-This package provides thin wrappers around different sandbox backends:
+The execution/ directory provides thin wrappers around different sandbox backends:
 - SandboxFusionClient: HTTP-based sandbox using SandboxFusion Docker container
 - ModalSandbox: Cloud sandbox using Modal's infrastructure
-
-Each wrapper exposes its native API. Dataset code (e.g., code_rl, bigcodebench)
-is responsible for using these primitives appropriately for their test formats.
 """
+
+from typing import Literal
 
 from tinker_cookbook.execution.sandboxfusion import SandboxFusionClient
 
+SandboxBackend = Literal["sandboxfusion", "modal"]
+
 __all__ = [
+    "SandboxBackend",
     "SandboxFusionClient",
 ]
 

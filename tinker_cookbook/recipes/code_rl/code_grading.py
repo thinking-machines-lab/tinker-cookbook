@@ -4,25 +4,18 @@ Code grading utilities for RL training.
 Supports two execution backends:
 - sandboxfusion: Local Docker-based sandbox (default)
 - modal: Cloud-based Modal sandbox
-
-Set CODE_SANDBOX_BACKEND environment variable to switch backends.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 import uuid
-from typing import Any, Literal
+from typing import Any
 
-from tinker_cookbook.execution import SandboxFusionClient
+from tinker_cookbook.execution import SandboxBackend, SandboxFusionClient
 from tinker_cookbook.recipes.code_rl.lcb_utils import TEST_CODE, TEST_UTIL
-
-# Backend selection
-BackendType = Literal["sandboxfusion", "modal"]
-SANDBOX_BACKEND: BackendType = os.getenv("CODE_SANDBOX_BACKEND", "sandboxfusion")  # type: ignore[assignment]
 
 # Global clients (lazily initialized)
 _sandboxfusion_client: SandboxFusionClient | None = None
@@ -154,7 +147,7 @@ async def sandbox_check_correctness(
     sample: list[dict[str, Any]],
     generation: str,
     timeout: int = 6,
-    backend: BackendType | None = None,
+    backend: SandboxBackend | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """
     Check correctness of generated code using sandbox execution.
@@ -163,7 +156,7 @@ async def sandbox_check_correctness(
         sample: List of test cases in LiveCodeBench format
         generation: Generated code to test
         timeout: Per-test timeout in seconds
-        backend: Override default backend ("sandboxfusion" or "modal")
+        backend: Sandbox backend to use (defaults to "sandboxfusion")
 
     Returns:
         Tuple of (all_passed: bool, details: dict)
@@ -172,13 +165,11 @@ async def sandbox_check_correctness(
 
     # Process test cases
     test_cases = postprocess_lcb_sample(sample)
+    use_backend: SandboxBackend = backend or "sandboxfusion"
 
     try:
         test_cnt = len(json.loads(test_cases["input_output"])["inputs"])
         total_timeout = (timeout + 1) * test_cnt + 5
-
-        # Select backend
-        use_backend = backend or SANDBOX_BACKEND
 
         if use_backend == "modal":
             return await _check_with_modal(

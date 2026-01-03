@@ -47,7 +47,12 @@ class SandboxFusionClient:
         self._session_lock = asyncio.Lock()
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create shared HTTP session with connection pooling."""
+        """Get or create shared HTTP session with connection pooling.
+
+        The TCPConnector limits concurrent connections to max_concurrency.
+        When all connections are busy, additional requests automatically wait
+        in a queue until a connection becomes available.
+        """
         async with self._session_lock:
             if self._session is None or self._session.closed:
                 connector = aiohttp.TCPConnector(
