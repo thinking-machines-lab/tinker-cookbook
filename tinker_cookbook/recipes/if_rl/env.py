@@ -1,7 +1,7 @@
 import enum
 import random
 from functools import partial
-from typing import Sequence
+from typing import Sequence, cast
 
 import chz
 import tinker
@@ -49,8 +49,8 @@ class IfBenchEnv(ProblemEnv):
     def check_answer(self, sample_str: str) -> bool:
         _, scores = evaluate_output_for_sample("ifbench", self.sample, sample_str)
         if self.reward_type in (RewardType.FULL_LOOSE, RewardType.PARTIAL_LOOSE):
-            return scores.binary_loose
-        return scores.binary_strict
+            return bool(scores.binary_loose)
+        return bool(scores.binary_strict)
 
     def check_format(self, sample_str: str) -> bool:
         return True
@@ -118,7 +118,7 @@ class IfBenchDataset(RLDataset):
         self.renderer = renderer
         self.convo_prefix = convo_prefix or []
         self.reward_type = reward_type
-        self.data = list(get_eval_data("ifbench")) * num_epochs
+        self.data: list[IFBenchSample] = list(cast(Sequence[IFBenchSample], get_eval_data("ifbench"))) * num_epochs
         random.Random(seed).shuffle(self.data)
 
     def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:

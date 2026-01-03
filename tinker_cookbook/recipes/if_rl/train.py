@@ -27,6 +27,9 @@ class CLIConfig:
     # IFBench-specific
     reward_type: RewardType = RewardType.FULL_STRICT
 
+    # Resume from checkpoint (use state path, not sampler_weights path)
+    load_checkpoint_path: str | None = None
+
     # Logging parameters
     log_path: str | None = None
     wandb_project: str | None = None
@@ -82,6 +85,7 @@ async def cli_main(cli_config: CLIConfig):
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
         lora_rank=cli_config.lora_rank,
+        load_checkpoint_path=cli_config.load_checkpoint_path,
     )
 
     await train.main(config)
