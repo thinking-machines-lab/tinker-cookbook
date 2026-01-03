@@ -269,6 +269,7 @@ class Config:
     kl_discount_factor: float = 0.0
 
     # Loss function to use for training: "importance_sampling" or "ppo"
+    # TODO: no clipping option, or high clipping options for ppo?
     loss_fn: LossFnType = "importance_sampling"
 
     # Number of optimizer steps per training iteration.
@@ -282,9 +283,11 @@ class Config:
     base_url: str | None = None
     enable_trace: bool = False
 
+    # TODO: why isn't this set to true by default?
     remove_constant_reward_groups: bool = False
     eval_every: int = 20  # 0 = disabled
     save_every: int = 20  # 0 = disabled
+    # TODO: should not load only the checkpoint but also sync train logs wandb (?)
     load_checkpoint_path: str | None = None
 
     async_config: AsyncConfig | None = None
