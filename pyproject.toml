@@ -3,9 +3,7 @@ name = "tinker_cookbook"
 version = "0.1.0"
 description = "Implementations of post-training algorithms using the Tinker API"
 readme = "README.md"
-authors = [
-{ name = "Tinker authors", email = "tinker@thinkingmachines.ai" },
-]
+authors = [{ name = "Tinker authors", email = "tinker@thinkingmachines.ai" }]
 requires-python = ">=3.11"
 dependencies = [
     "chz",
@@ -29,7 +27,7 @@ dependencies = [
     "math-verify",
     "scipy",
     "pytest>=9.0.2",
-    "tiktoken>=0.12.0", # Required for Kimi tokenizer
+    "tiktoken>=0.12.0",             # Required for Kimi tokenizer
     "tqdm",
 ]
 
@@ -39,33 +37,13 @@ Repository = "https://github.com/thinking-machines-lab/tinker"
 Documentation = "https://tinker-docs.thinkingmachines.ai/"
 
 [project.optional-dependencies]
-dev = [
-    "pytest",
-    "pytest-asyncio",
-    "ruff",
-    "pyright",
-]
-vector-search = [
-    "chromadb",
-    "google-genai",
-    "huggingface_hub"
-]
-wandb = [
-    "wandb",
-]
-neptune-scale = [
-    "neptune-scale>=0.27.0",
-]
-trackio = [
-    "trackio<1.0.0",
-]
-verifiers = [
-    "verifiers>=0.1.8.post0",
-    "openai",
-]
-if_rl = [
-    "if-verifiable==0.1.2",
-]
+dev = ["pytest", "pytest-asyncio", "ruff", "pyright"]
+vector-search = ["chromadb", "google-genai", "huggingface_hub"]
+wandb = ["wandb"]
+neptune-scale = ["neptune-scale>=0.27.0"]
+trackio = ["trackio<1.0.0"]
+verifiers = ["verifiers>=0.1.8.post0", "openai"]
+if_rl = ["if-verifiable==0.1.2"]
 all = [
     "tinker_cookbook[vector-search]",
     "tinker_cookbook[wandb]",
@@ -87,4 +65,3 @@ python_files = ["test_*.py", "*_test.py"]
 
 [tool.ruff]
 line-length = 100
-
