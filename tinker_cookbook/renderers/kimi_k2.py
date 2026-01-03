@@ -19,10 +19,9 @@ from tinker_cookbook.renderers.base import (
     UnparsedToolCall,
     ensure_list,
     ensure_text,
-    parse_think_blocks,
     parse_response_for_stop_token,
+    parse_think_blocks,
 )
-
 
 _TOOL_CALLS_SECTION_RE = re.compile(
     r"<\|tool_calls_section_begin\|>(.*?)<\|tool_calls_section_end\|>"
@@ -98,14 +97,33 @@ class KimiK2Renderer(Renderer):
     DEFAULT_SYSTEM_PROMPT = "You are Kimi, an AI assistant created by Moonshot AI."
 
     def _ensure_system_message(self, messages: list[Message]) -> list[Message]:
-        """Prepend default system message if no system message is present.
+        """Ensure a default system message is present if none exists.
 
         This matches the HuggingFace chat template behavior where a default system
         message is automatically added when none is provided.
+
+        The default system message is inserted at the appropriate position:
+        - If messages is empty: adds default system message
+        - If starting with tool_declare: inserts default system after tool_declare (if no system message follows)
+        - Otherwise: prepends default system message before first message (if first message isn't system)
         """
-        if not messages or messages[0]["role"] != "system":
+        if not messages:
+            default_system = Message(role="system", content=self.DEFAULT_SYSTEM_PROMPT)
+            return [default_system]
+
+        # Accept both system and tool_declare as valid starting messages
+        first_role = messages[0]["role"]
+        if first_role == "tool_declare":
+            # Check if a system message already exists after tool_declare
+            if len(messages) >= 2 and messages[1]["role"] == "system":
+                return messages
+            # No system message, insert default after tool_declare
+            default_system = Message(role="system", content=self.DEFAULT_SYSTEM_PROMPT)
+            return [messages[0], default_system] + list(messages[1:])
+        elif first_role != "system":
             default_system = Message(role="system", content=self.DEFAULT_SYSTEM_PROMPT)
             return [default_system] + list(messages)
+
         return messages
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
@@ -127,8 +145,17 @@ class KimiK2Renderer(Renderer):
             header_str = f"<|im_system|>{role}<|im_middle|>"
         elif role == "tool":
             # HF template uses message.name if present, otherwise role
-            role_name = message.get("name") or role
+            role_name = message.get("name")
+            if not role_name:
+                warnings.warn(
+                    "Tool message missing 'name' field. Using 'tool' as fallback. "
+                    "Consider setting 'name' to match the tool function name for better context.",
+                    UserWarning,
+                    stacklevel=3,
+                )
+                role_name = role
             header_str = f"<|im_system|>{role_name}<|im_middle|>"
+
             # Tool responses have special formatting - need tool_call_id to correlate with the call
             tool_call_id = message.get("tool_call_id", "")
             if not tool_call_id:
@@ -383,7 +410,8 @@ class KimiK2Renderer(Renderer):
         # Tool declaration message comes first (per HF chat template)
         if tools:
             tools_payload = [{"type": "function", "function": tool} for tool in tools]
-            tools_json = json.dumps(tools_payload, separators=(",", ":"))
+            # Use sort_keys=True since Kimi K2 sorts keys alphabetically with its own custom apply_chat_template function
+            tools_json = json.dumps(tools_payload, separators=(",", ":"), sort_keys=True)
             messages.append(Message(role="tool_declare", content=tools_json))
 
         # Regular system message second (use default if none provided)
