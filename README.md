@@ -38,6 +38,7 @@ sampling_client.sample(...)
 See [tinker_cookbook/recipes/sl_loop.py](tinker_cookbook/recipes/sl_loop.py) and [tinker_cookbook/recipes/rl_loop.py](tinker_cookbook/recipes/rl_loop.py) for minimal examples of using these primitives to fine-tune LLMs.
 
 To download the weights of any model:
+
 ```python
 rest_client = service_client.create_rest_client()
 future = rest_client.get_checkpoint_archive_url_from_tinker_path(sampling_client.model_path)
@@ -51,6 +52,7 @@ Besides these primitives, we also offer **Tinker Cookbook** (a.k.a. this repo), 
 [`tinker_cookbook/recipes/sl_basic.py`](tinker_cookbook/recipes/sl_basic.py) and [`tinker_cookbook/recipes/rl_basic.py`](tinker_cookbook/recipes/rl_basic.py) contain minimal examples to configure supervised learning and reinforcement learning.
 
 We also include a wide range of more sophisticated examples in the [`tinker_cookbook/recipes/`](tinker_cookbook/recipes/) folder:
+
 1. **[Chat supervised learning](tinker_cookbook/recipes/chat_sl/)**: supervised fine-tuning on conversational datasets like Tulu3.
 2. **[Math reasoning](tinker_cookbook/recipes/math_rl/)**: improve LLM reasoning capability by rewarding it for answering math questions correctly.
 3. **[Preference learning](tinker_cookbook/recipes/preference/)**: showcase a three-stage RLHF pipeline: 1) supervised fine-tuning, 2) learning a reward model, 3) RL against the reward model.
@@ -73,6 +75,7 @@ For the rendered documentation, visit [tinker-docs.thinkingmachines.ai](https://
 ### Import our utilities
 
 Tinker cookbook includes several utilities. Here's a quick overview:
+
 - [`renderers`](tinker_cookbook/renderers.py) converts tokens from/to structured chat message objects
 - [`hyperparam_utils`](tinker_cookbook/hyperparam_utils.py) helps calculate hyperparameters suitable for LoRAs
 - [`evaluation`](tinker_cookbook/eval/evaluators.py) provides abstractions for evaluating Tinker models and [`inspect_evaluation`](tinker_cookbook/eval/inspect_evaluators.py) shows how to integrate with InspectAI to make evaluating on standard benchmarks easy.
@@ -84,12 +87,15 @@ This project is built in the spirit of open science and collaborative developmen
 We welcome PR contributions after our private beta is over. If you have any feedback, please email us at tinker@thinkingmachines.ai.
 
 ## Citation
+
 If you use Tinker for your research, please cite it as:
+
 ```
 Thinking Machines Lab, 2025. Tinker. https://thinkingmachines.ai/tinker/.
 ```
 
 Or use this BibTeX citation:
+
 ```
 @misc{tml2025tinker,
   author = {Thinking Machines Lab},
