@@ -1,5 +1,3 @@
-import { CookbookLink } from "../../components/CookbookLink";
-
 # VLM Training Guide
 
 This guide covers the details of preparing training data for vision-language models (VLMs) in Tinker.
@@ -79,11 +77,3 @@ image_processor = get_image_processor("Qwen/Qwen3-VL-30B-A3B-Instruct")
 height, width = 448, 448
 vision_token_count = image_processor.get_number_of_image_patches(height, width, images_kwargs={})
 ```
-
-## Higher-level abstractions
-
-For most use cases, you don't need to manually pad tokens. The cookbook provides higher-level abstractions:
-
-- **Renderers**: `Qwen3VLRenderer` and `Qwen3VLInstructRenderer` handle vision special tokens automatically. See [Rendering: Vision Inputs](/rendering#vision-inputs).
-
-- **VLM Classifier recipe**: The <CookbookLink path="tinker_cookbook/recipes/vlm_classifier">VLM Classifier recipe</CookbookLink> shows a complete example of training a VLM image classifier, including data preparation and evaluation.
