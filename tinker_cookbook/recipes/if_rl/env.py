@@ -118,7 +118,9 @@ class IfBenchDataset(RLDataset):
         self.renderer = renderer
         self.convo_prefix = convo_prefix or []
         self.reward_type = reward_type
-        self.data: list[IFBenchSample] = list(cast(Sequence[IFBenchSample], get_eval_data("ifbench"))) * num_epochs
+        self.data: list[IFBenchSample] = (
+            list(cast(Sequence[IFBenchSample], get_eval_data("ifbench"))) * num_epochs
+        )
         random.Random(seed).shuffle(self.data)
 
     def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
