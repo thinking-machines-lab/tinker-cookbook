@@ -301,13 +301,12 @@ class Qwen3Renderer(Renderer):
         tools_text = ""
         if tools:
             # Each tool is wrapped in {"type": "function", "function": {...}} per OpenAI format
+            # Use separators=(", ", ": ") to match HF's tojson filter output
             tool_lines = "\n".join(
-                json.dumps({"type": "function", "function": tool}, separators=(",", ":"))
+                json.dumps({"type": "function", "function": tool}, separators=(", ", ": "))
                 for tool in tools
             )
-            tools_text = f"""
-
-# Tools
+            tools_text = f"""# Tools
 
 You may call one or more functions to assist with the user query.
 
@@ -321,7 +320,13 @@ For each function call, return a json object with function name and arguments wi
 {{"name": <function-name>, "arguments": <args-json-object>}}
 </tool_call>"""
 
-        return [Message(role="system", content=system_prompt + tools_text)]
+        # Add separator between system prompt and tools if system prompt exists
+        if system_prompt:
+            content = system_prompt + "\n\n" + tools_text
+        else:
+            content = tools_text
+
+        return [Message(role="system", content=content)]
 
 
 class Qwen3DisableThinkingRenderer(Qwen3Renderer):
