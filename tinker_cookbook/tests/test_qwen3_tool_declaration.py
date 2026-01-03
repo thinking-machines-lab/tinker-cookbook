@@ -10,6 +10,7 @@ import pytest
 from transformers import AutoTokenizer
 
 from tinker_cookbook.renderers import get_renderer
+from tinker_cookbook.renderers.base import ToolSpec, Message, ensure_text
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 # Test against multiple Qwen3 model variants
@@ -31,7 +32,7 @@ def test_qwen3_tool_json_formatting(model_name: str, renderer_name: str):
     renderer = get_renderer(renderer_name, tokenizer)
 
     # Tools with nested structure
-    tools = [
+    tools: list[ToolSpec] = [
         {
             "name": "search",
             "description": "Search the web",
@@ -48,14 +49,14 @@ def test_qwen3_tool_json_formatting(model_name: str, renderer_name: str):
 
     messages = renderer.create_conversation_prefix_with_tools(tools, "")
     system_msg = messages[0]
-    content = system_msg["content"]
+    content_str = ensure_text(system_msg["content"])
 
     # Extract the JSON from the <tools>...</tools> section
     start_marker = "<tools>\n"
     end_marker = "\n</tools>"
-    start_idx = content.index(start_marker) + len(start_marker)
-    end_idx = content.index(end_marker)
-    tool_json_str = content[start_idx:end_idx]
+    start_idx = content_str.index(start_marker) + len(start_marker)
+    end_idx = content_str.index(end_marker)
+    tool_json_str = content_str[start_idx:end_idx]
 
     # Parse to verify it's valid JSON
     _ = json.loads(tool_json_str)
@@ -89,7 +90,7 @@ def test_qwen3_tool_declaration_matches_hf_tokens(model_name: str, renderer_name
     renderer = get_renderer(renderer_name, tokenizer)
 
     # Define tools in ToolSpec format (what tinker-cookbook accepts)
-    tools_toolspec = [
+    tools_toolspec: list[ToolSpec] = [
         {
             "name": "get_weather",
             "description": "Get current weather",
@@ -107,15 +108,15 @@ def test_qwen3_tool_declaration_matches_hf_tokens(model_name: str, renderer_name
     # Convert to OpenAI format for HF
     tools_openai = [{"type": "function", "function": tool} for tool in tools_toolspec]
 
-    messages = [{"role": "user", "content": "What's the weather in SF?"}]
+    messages_list: list[Message] = [{"role": "user", "content": "What's the weather in SF?"}]
 
     # Tinker-cookbook approach
-    convo = renderer.create_conversation_prefix_with_tools(tools_toolspec, "") + messages
+    convo = renderer.create_conversation_prefix_with_tools(tools_toolspec, "") + messages_list
     cookbook_tokens = renderer.build_generation_prompt(convo).to_ints()
 
     # HuggingFace approach
     hf_tokens = hf_tokenizer.apply_chat_template(
-        messages, tools=tools_openai, tokenize=True, add_generation_prompt=True
+        messages_list, tools=tools_openai, tokenize=True, add_generation_prompt=True
     )
 
     assert cookbook_tokens == hf_tokens, (
@@ -134,7 +135,7 @@ def test_qwen3_tool_declaration_string_matches_hf(model_name: str, renderer_name
     hf_tokenizer = AutoTokenizer.from_pretrained(model_name)
     renderer = get_renderer(renderer_name, tokenizer)
 
-    tools_toolspec = [
+    tools_toolspec: list[ToolSpec] = [
         {
             "name": "calculate",
             "description": "Perform calculation",
@@ -149,16 +150,16 @@ def test_qwen3_tool_declaration_string_matches_hf(model_name: str, renderer_name
     ]
 
     tools_openai = [{"type": "function", "function": tool} for tool in tools_toolspec]
-    messages = [{"role": "user", "content": "What is 2+2?"}]
+    messages_list: list[Message] = [{"role": "user", "content": "What is 2+2?"}]
 
     # Tinker-cookbook approach
-    convo = renderer.create_conversation_prefix_with_tools(tools_toolspec, "") + messages
+    convo = renderer.create_conversation_prefix_with_tools(tools_toolspec, "") + messages_list
     cookbook_tokens = renderer.build_generation_prompt(convo).to_ints()
     cookbook_string = tokenizer.decode(cookbook_tokens)
 
     # HuggingFace approach
     hf_string = hf_tokenizer.apply_chat_template(
-        messages, tools=tools_openai, tokenize=False, add_generation_prompt=True
+        messages_list, tools=tools_openai, tokenize=False, add_generation_prompt=True
     )
 
     assert cookbook_string == hf_string, (
@@ -175,7 +176,7 @@ def test_qwen3_multiple_tools(model_name: str, renderer_name: str):
     hf_tokenizer = AutoTokenizer.from_pretrained(model_name)
     renderer = get_renderer(renderer_name, tokenizer)
 
-    tools_toolspec = [
+    tools_toolspec: list[ToolSpec] = [
         {
             "name": "get_weather",
             "description": "Get weather",
@@ -189,15 +190,15 @@ def test_qwen3_multiple_tools(model_name: str, renderer_name: str):
     ]
 
     tools_openai = [{"type": "function", "function": tool} for tool in tools_toolspec]
-    messages = [{"role": "user", "content": "Hello"}]
+    messages_list: list[Message] = [{"role": "user", "content": "Hello"}]
 
     # Tinker-cookbook approach
-    convo = renderer.create_conversation_prefix_with_tools(tools_toolspec, "") + messages
+    convo = renderer.create_conversation_prefix_with_tools(tools_toolspec, "") + messages_list
     cookbook_tokens = renderer.build_generation_prompt(convo).to_ints()
 
     # HuggingFace approach
     hf_tokens = hf_tokenizer.apply_chat_template(
-        messages, tools=tools_openai, tokenize=True, add_generation_prompt=True
+        messages_list, tools=tools_openai, tokenize=True, add_generation_prompt=True
     )
 
     assert cookbook_tokens == hf_tokens, (
@@ -230,7 +231,7 @@ def test_qwen3_custom_system_prompt_with_tools(model_name: str, renderer_name: s
     renderer = get_renderer(renderer_name, tokenizer)
 
     custom_prompt = "You are a helpful assistant."
-    tools_toolspec = [
+    tools_toolspec: list[ToolSpec] = [
         {
             "name": "search",
             "description": "Search",
@@ -239,14 +240,17 @@ def test_qwen3_custom_system_prompt_with_tools(model_name: str, renderer_name: s
     ]
 
     tools_openai = [{"type": "function", "function": tool} for tool in tools_toolspec]
-    messages = [{"role": "user", "content": "Help me"}]
+    messages_list: list[Message] = [{"role": "user", "content": "Help me"}]
 
     # Tinker-cookbook approach
-    convo = renderer.create_conversation_prefix_with_tools(tools_toolspec, custom_prompt) + messages
+    convo = (
+        renderer.create_conversation_prefix_with_tools(tools_toolspec, custom_prompt)
+        + messages_list
+    )
     cookbook_tokens = renderer.build_generation_prompt(convo).to_ints()
 
     # HuggingFace approach - need to manually add system message
-    hf_messages = [{"role": "system", "content": custom_prompt}] + messages
+    hf_messages = [{"role": "system", "content": custom_prompt}] + messages_list
     hf_tokens = hf_tokenizer.apply_chat_template(
         hf_messages, tools=tools_openai, tokenize=True, add_generation_prompt=True
     )
@@ -266,7 +270,7 @@ def test_qwen3_preserves_insertion_order(model_name: str, renderer_name: str):
     renderer = get_renderer(renderer_name, tokenizer)
 
     # Tool with properties in specific order
-    tools_toolspec = [
+    tools_toolspec: list[ToolSpec] = [
         {
             "name": "complex_tool",
             "description": "A complex tool",
@@ -281,15 +285,15 @@ def test_qwen3_preserves_insertion_order(model_name: str, renderer_name: str):
     ]
 
     tools_openai = [{"type": "function", "function": tool} for tool in tools_toolspec]
-    messages = [{"role": "user", "content": "Test"}]
+    messages_list: list[Message] = [{"role": "user", "content": "Test"}]
 
     # Tinker-cookbook approach
-    convo = renderer.create_conversation_prefix_with_tools(tools_toolspec, "") + messages
+    convo = renderer.create_conversation_prefix_with_tools(tools_toolspec, "") + messages_list
     cookbook_tokens = renderer.build_generation_prompt(convo).to_ints()
 
     # HuggingFace approach
     hf_tokens = hf_tokenizer.apply_chat_template(
-        messages, tools=tools_openai, tokenize=True, add_generation_prompt=True
+        messages_list, tools=tools_openai, tokenize=True, add_generation_prompt=True
     )
 
     # Should match exactly (HF doesn't sort, preserves insertion order)

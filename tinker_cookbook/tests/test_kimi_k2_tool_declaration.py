@@ -6,6 +6,7 @@ import pytest
 from transformers import AutoTokenizer
 
 from tinker_cookbook.renderers import get_renderer
+from tinker_cookbook.renderers.base import ToolSpec, Message, ensure_text
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 
@@ -64,7 +65,7 @@ def test_tool_declaration_no_duplicate_system():
     tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
     renderer = get_renderer("kimi_k2", tokenizer)
 
-    tools = [
+    tools: list[ToolSpec] = [
         {"name": "test", "description": "Test", "parameters": {"type": "object", "properties": {}}}
     ]
     prefix = renderer.create_conversation_prefix_with_tools(tools, "")
@@ -87,7 +88,7 @@ def test_tool_json_keys_are_sorted():
     tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
     renderer = get_renderer("kimi_k2", tokenizer)
 
-    tools = [
+    tools: list[ToolSpec] = [
         {
             "name": "get_weather",
             "description": "Get weather",
@@ -103,7 +104,7 @@ def test_tool_json_keys_are_sorted():
     ]
 
     messages = renderer.create_conversation_prefix_with_tools(tools, "")
-    tool_declare_content = messages[0]["content"]
+    tool_declare_content = ensure_text(messages[0]["content"])
 
     # Parse the JSON to check key ordering
     tools_parsed = json.loads(tool_declare_content)
@@ -133,7 +134,7 @@ def test_tool_json_keys_are_sorted():
 def test_tool_declaration_matches_hf_tokens():
     """Test that tool declaration produces identical tokens to HuggingFace."""
     # Define tools in ToolSpec format (what tinker-cookbook accepts)
-    tools_toolspec = [
+    tools_toolspec: list[ToolSpec] = [
         {
             "name": "get_weather",
             "description": "Get current weather",
@@ -155,7 +156,7 @@ def test_tool_declaration_matches_hf_tokens():
     # Convert to OpenAI format for HF (tinker-cookbook does this wrapping internally)
     tools_openai = [{"type": "function", "function": tool} for tool in tools_toolspec]
 
-    messages = [{"role": "user", "content": "What's the weather in SF?"}]
+    messages: list[Message] = [{"role": "user", "content": "What's the weather in SF?"}]
 
     # Tinker-cookbook approach
     tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
@@ -188,7 +189,7 @@ def test_tool_declaration_matches_hf_tokens():
 def test_tool_declaration_string_matches_hf():
     """Test that tool declaration string matches HuggingFace exactly."""
     # ToolSpec format for tinker-cookbook
-    tools_toolspec = [
+    tools_toolspec: list[ToolSpec] = [
         {
             "name": "test",
             "description": "Test tool",
@@ -197,12 +198,12 @@ def test_tool_declaration_string_matches_hf():
     ]
     # OpenAI format for HF
     tools_openai = [{"type": "function", "function": tool} for tool in tools_toolspec]
-    messages = [{"role": "user", "content": "Test"}]
+    messages_list: list[Message] = [{"role": "user", "content": "Test"}]
 
     # Tinker-cookbook
     tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
     renderer = get_renderer("kimi_k2", tokenizer)
-    convo = renderer.create_conversation_prefix_with_tools(tools_toolspec, "") + messages
+    convo = renderer.create_conversation_prefix_with_tools(tools_toolspec, "") + messages_list
     cookbook_prompt = renderer.build_generation_prompt(convo)
     cookbook_str = tokenizer.decode(cookbook_prompt.to_ints())
 
@@ -211,7 +212,7 @@ def test_tool_declaration_string_matches_hf():
         "moonshotai/Kimi-K2-Thinking", trust_remote_code=True
     )
     hf_str = hf_tokenizer.apply_chat_template(
-        messages, tools=tools_openai, tokenize=False, add_generation_prompt=True
+        messages_list, tools=tools_openai, tokenize=False, add_generation_prompt=True
     )
 
     assert cookbook_str == hf_str, (
@@ -238,7 +239,7 @@ def test_custom_system_prompt_with_tools():
     tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
     renderer = get_renderer("kimi_k2", tokenizer)
 
-    tools = [
+    tools: list[ToolSpec] = [
         {"name": "test", "description": "Test", "parameters": {"type": "object", "properties": {}}}
     ]
     custom_prompt = "You are a helpful assistant specialized in weather."
