@@ -1,0 +1,89 @@
+import { CookbookLink } from "../../components/CookbookLink";
+
+# VLM Training Guide
+
+This guide covers the details of preparing training data for vision-language models (VLMs) in Tinker.
+
+For basic usage of `ImageChunk` in sampling, see [Vision inputs](/training-sampling#vision-inputs). This page focuses on the additional considerations needed for **training**.
+
+## Image size limits
+
+> [!IMPORTANT]
+> Tinker enforces a maximum size of **2MB** for image assets. You must resize or compress images on the client side before creating an `ImageChunk`.
+
+## Manual token padding for VLMs
+
+When training VLMs, `ImageChunk`s are expanded into vision tokens by the model.
+
+The `weights` and `target_tokens` arrays in `loss_fn_inputs` must account for these tokens to match the server-side sequence length.
+
+You must:
+
+1. Control the image resolution to get a predictable token count.
+2. Set `expected_tokens` on the `ImageChunk`.
+3. Insert placeholder values (usually 0) into your `weights` and `target_tokens` arrays at the position where the image appears.
+
+For example, for a 448x448 image using Qwen3-VL, where the compression ratio is 32x:
+
+```python
+# Qwen3-VL at 448x448: (448*448)/(32*32) = 196 tokens
+height, width = 448, 448
+VISION_TOKEN_COUNT = height * width // (32 * 32)
+
+# Tokenize text portions
+prefix_tokens = tokenizer.encode("<|im_start|>user\n<|vision_start|>")
+suffix_tokens = tokenizer.encode("<|vision_end|>Describe this image<|im_end|>\n<|im_start|>assistant\n")
+completion_tokens = tokenizer.encode("A photo of a cat.")
+
+model_input = types.ModelInput(chunks=[
+    types.EncodedTextChunk(tokens=prefix_tokens),
+    types.ImageChunk(
+        data=image_bytes,
+        format="jpeg",
+        expected_tokens=VISION_TOKEN_COUNT
+    ),
+    types.EncodedTextChunk(tokens=suffix_tokens + completion_tokens),
+])
+
+# Build full token sequence (with 0 placeholders for image tokens)
+all_tokens = prefix_tokens + [0] * VISION_TOKEN_COUNT + suffix_tokens + completion_tokens
+
+# Build weights: 0 for prompt (prefix + image + suffix), 1 for completion
+prompt_length = len(prefix_tokens) + VISION_TOKEN_COUNT + len(suffix_tokens)
+full_weights = [0] * prompt_length + [1] * len(completion_tokens)
+
+# Create the datum (shift by 1 for next-token prediction)
+datum = types.Datum(
+    model_input=model_input,
+    loss_fn_inputs=dict(
+        weights=full_weights[1:],
+        target_tokens=all_tokens[1:],
+    )
+)
+```
+
+## Calculating vision token counts
+
+Qwen3-VL uses a [~32x compression ratio](https://github.com/QwenLM/Qwen3-VL?tab=readme-ov-file#using--transformers-to-chat) (`patch_size=16`, `merge_size=2`), so:
+
+```
+visual_tokens ≈ (H × W) / (32 × 32) = (H × W) / 1024
+```
+
+You can calculate this programmatically using the `ImageProcessor`:
+
+```python
+from tinker_cookbook.image_processing_utils import get_image_processor
+
+image_processor = get_image_processor("Qwen/Qwen3-VL-30B-A3B-Instruct")
+height, width = 448, 448
+vision_token_count = image_processor.get_number_of_image_patches(height, width, images_kwargs={})
+```
+
+## Higher-level abstractions
+
+For most use cases, you don't need to manually pad tokens. The cookbook provides higher-level abstractions:
+
+- **Renderers**: `Qwen3VLRenderer` and `Qwen3VLInstructRenderer` handle vision special tokens automatically. See [Rendering: Vision Inputs](/rendering#vision-inputs).
+
+- **VLM Classifier recipe**: The <CookbookLink path="tinker_cookbook/recipes/vlm_classifier">VLM Classifier recipe</CookbookLink> shows a complete example of training a VLM image classifier, including data preparation and evaluation.
