@@ -9,6 +9,8 @@ See: https://modal.com/docs/guide/sandbox
 
 from __future__ import annotations
 
+import uuid
+
 import modal
 
 
@@ -85,44 +87,32 @@ class ModalSandbox:
         except Exception as e:
             return -1, "", str(e)
 
-    def cleanup(self, path: str) -> None:
+    def run_in_workdir(
+        self,
+        files: dict[str, str],
+        command: list[str],
+        timeout: int | None = None,
+    ) -> tuple[int, str, str]:
         """
-        Remove a file or directory from the sandbox.
+        Execute a command in an isolated workdir with the given files.
 
-        Raises RuntimeError if the cleanup fails.
-        """
-        sandbox = self._ensure_sandbox()
-        proc = sandbox.exec("rm", "-rf", path)
-        _ = proc.stdout.read()
-        exit_code = proc.wait()
-        if exit_code != 0:
-            stderr = proc.stderr.read()
-            if isinstance(stderr, bytes):
-                stderr = stderr.decode("utf-8", errors="replace")
-            raise RuntimeError(f"Failed to cleanup {path}: {stderr}")
+        Creates a unique workdir, writes files, runs command, then cleans up.
 
-    def mkdir(self, path: str) -> None:
-        """
-        Create a directory in the sandbox.
+        Args:
+            files: Files to write {filename: content}
+            command: Command and arguments (e.g., ["python", "run.py"])
+            timeout: Execution timeout in seconds
 
-        Raises RuntimeError if mkdir fails.
+        Returns:
+            Tuple of (exit_code, stdout, stderr)
         """
         sandbox = self._ensure_sandbox()
-        proc = sandbox.exec("mkdir", "-p", path)
-        _ = proc.stdout.read()
-        exit_code = proc.wait()
-        if exit_code != 0:
-            stderr = proc.stderr.read()
-            if isinstance(stderr, bytes):
-                stderr = stderr.decode("utf-8", errors="replace")
-            raise RuntimeError(f"Failed to mkdir {path}: {stderr}")
+        workdir = f"/workspace/{uuid.uuid4().hex[:12]}"
+        try:
+            sandbox.exec("mkdir", "-p", workdir).wait()
+            for filename, content in files.items():
+                self.write_file(f"{workdir}/{filename}", content)
+            return self.exec(*command, workdir=workdir, timeout=timeout)
+        finally:
+            sandbox.exec("rm", "-rf", workdir).wait()
 
-    def close(self) -> None:
-        """Terminate the sandbox and release resources."""
-        if self._sandbox is not None:
-            try:
-                self._sandbox.terminate()
-            except Exception:
-                pass
-            self._sandbox = None
-            self._app = None

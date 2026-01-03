@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import uuid
 from typing import Any
 
 from tinker_cookbook.execution import SandboxBackend, SandboxFusionClient
@@ -98,36 +97,18 @@ def _check_with_modal_sync(
     timeout: int,
     total_timeout: int,
 ) -> tuple[bool, dict[str, Any]]:
-    """Execute tests using Modal sandbox backend (sync implementation)."""
-    sandbox = _get_modal_sandbox()
-
-    # Use unique workdir to avoid concurrent call collisions
-    workdir = f"/workspace/lcb/{uuid.uuid4().hex[:12]}"
-
-    try:
-        sandbox.mkdir(workdir)
-
-        # Write files to sandbox
-        sandbox.write_file(f"{workdir}/test_cases.txt", json.dumps(test_cases))
-        sandbox.write_file(f"{workdir}/code.py", generation)
-        sandbox.write_file(f"{workdir}/testing_util.py", TEST_UTIL)
-        sandbox.write_file(f"{workdir}/run.py", TEST_CODE % {"timeout": timeout})
-
-        # Execute test runner
-        exit_code, stdout, stderr = sandbox.exec(
-            "python", "run.py", workdir=workdir, timeout=total_timeout
-        )
-
-        success = exit_code == 0
-        details = {"exit_code": exit_code, "stdout": stdout, "stderr": stderr}
-        return success, details
-    finally:
-        # TODO(tgriggs): Improve the modal sandbox cleanup and error handling
-        # Clean up workdir
-        try:
-            sandbox.cleanup(workdir)
-        except Exception:
-            pass  # Best effort cleanup
+    """Execute tests using Modal sandbox backend."""
+    exit_code, stdout, stderr = _get_modal_sandbox().run_in_workdir(
+        files={
+            "test_cases.txt": json.dumps(test_cases),
+            "code.py": generation,
+            "testing_util.py": TEST_UTIL,
+            "run.py": TEST_CODE % {"timeout": timeout},
+        },
+        command=["python", "run.py"],
+        timeout=total_timeout,
+    )
+    return exit_code == 0, {"exit_code": exit_code, "stdout": stdout, "stderr": stderr}
 
 
 async def _check_with_modal(
@@ -175,10 +156,12 @@ async def sandbox_check_correctness(
             return await _check_with_modal(
                 test_cases, generation, timeout, total_timeout
             )
-        else:
+        elif use_backend == "sandboxfusion":
             return await _check_with_sandboxfusion(
                 test_cases, generation, timeout, total_timeout
             )
+        else:
+            raise ValueError(f"Invalid sandbox backend: {use_backend}")
 
     except Exception as e:
         return False, {"error": str(e)}
@@ -210,16 +193,3 @@ def taco_to_lcb_format(tests: dict[str, Any]) -> list[dict[str, Any]]:
         test_cases.append(case)
 
     return test_cases
-
-
-async def close_clients() -> None:
-    """Close all sandbox clients. Call at end of training."""
-    global _sandboxfusion_client, _modal_sandbox
-
-    if _sandboxfusion_client is not None:
-        await _sandboxfusion_client.close()
-        _sandboxfusion_client = None
-
-    if _modal_sandbox is not None:
-        _modal_sandbox.close()
-        _modal_sandbox = None
