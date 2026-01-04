@@ -30,7 +30,7 @@ class RewardType(enum.Enum):
 
 
 class IfBenchEnv(ProblemEnv):
-    """Environment for IFBench instruction-following tasks."""
+    """Environment for IFBench (ai2) instruction-following tasks."""
 
     def __init__(
         self,
