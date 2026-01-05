@@ -5,7 +5,7 @@ from datetime import datetime
 import chz
 
 from tinker_cookbook import cli_utils, model_info
-from tinker_cookbook.execution import SandboxBackend
+from tinker_cookbook.sandbox import SandboxBackend
 from tinker_cookbook.recipes.code_rl.code_env import DeepcoderDatasetBuilder
 from tinker_cookbook.rl.train import AsyncConfig, Config, main
 

@@ -13,7 +13,7 @@ import json
 import re
 from typing import Any
 
-from tinker_cookbook.execution import SandboxBackend, SandboxFusionClient
+from tinker_cookbook.sandbox import SandboxBackend, SandboxFusionClient
 from tinker_cookbook.recipes.code_rl.lcb_utils import TEST_CODE, TEST_UTIL
 
 # Global clients (lazily initialized)
@@ -33,7 +33,7 @@ def _get_modal_sandbox():
     """Get or create the Modal sandbox."""
     global _modal_sandbox
     if _modal_sandbox is None:
-        from tinker_cookbook.execution.modal_sandbox import ModalSandbox
+        from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
 
         _modal_sandbox = ModalSandbox()
     return _modal_sandbox

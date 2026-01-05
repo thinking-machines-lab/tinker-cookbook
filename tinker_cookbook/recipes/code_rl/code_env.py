@@ -6,7 +6,7 @@ import chz
 from datasets import Dataset, concatenate_datasets, load_dataset
 
 import tinker
-from tinker_cookbook.execution import SandboxBackend
+from tinker_cookbook.sandbox import SandboxBackend
 from tinker_cookbook.recipes.code_rl.code_grading import (
     extract_code_from_model,
     sandbox_check_correctness,
