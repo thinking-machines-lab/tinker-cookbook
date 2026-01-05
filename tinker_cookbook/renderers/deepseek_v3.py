@@ -266,11 +266,6 @@ class _DeepSeekV3BaseRenderer(Renderer):
             content = content.strip()
 
         # Parse <think>...</think> blocks into ThinkingPart/TextPart list
-        # Handle responses from sampling: if </think> exists but no <think>,
-        # the <think> was part of the prefill - prepend it for parsing
-        if "</think>" in content and "<think>" not in content:
-            content = "<think>" + content
-
         parts = parse_think_blocks(content)
         if parts is not None:
             assistant_message["content"] = parts
@@ -432,6 +427,22 @@ class DeepSeekV3ThinkingRenderer(_DeepSeekV3BaseRenderer):
         # Add <think> prefill to trigger thinking, combined with any user-provided prefill
         think_prefill = "<think>" + (prefill or "")
         return super().build_generation_prompt(messages, role, think_prefill)
+
+    def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+        """Parse response, prepending <think> since we prefill with it.
+
+        When sampling with build_generation_prompt, the <think> tag is part of the
+        prefill and not included in the sampled tokens. The response will be
+        "reasoning</think>answer" - we prepend <think> so parse_think_blocks works.
+        """
+        content = self.tokenizer.decode(response)
+        # prefill case that satisfies both tests:
+        # - test_deepseek_parse_response_no_thinking_returns_string()
+        # - test_deepseek_parse_response_multiple_think_blocks()
+        if "</think>" in content:
+            content = "<think>" + content
+            response = self.tokenizer.encode(content, add_special_tokens=False)
+        return super().parse_response(response)  # pyright: ignore[reportCallIssue]
 
 
 class DeepSeekV3DisableThinkingRenderer(_DeepSeekV3BaseRenderer):

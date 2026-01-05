@@ -242,7 +242,7 @@ def test_deepseek_parse_response_extracts_thinking():
     renderer = DeepSeekV3ThinkingRenderer(tokenizer)
 
     # Note: DeepSeek uses full-width pipes in special tokens
-    response_str = "<think>Let me think about this.</think>The answer is 42.<｜end▁of▁sentence｜>"
+    response_str = "Let me think about this.</think>The answer is 42.<｜end▁of▁sentence｜>"
     response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
 
     message, success = renderer.parse_response(response_tokens)
@@ -280,7 +280,7 @@ def test_deepseek_parse_response_multiple_think_blocks():
     tokenizer = get_tokenizer("deepseek-ai/DeepSeek-V3.1")
     renderer = DeepSeekV3ThinkingRenderer(tokenizer)
 
-    response_str = "<think>step 1</think>partial<think>step 2</think>final<｜end▁of▁sentence｜>"
+    response_str = "step 1</think>partial<think>step 2</think>final<｜end▁of▁sentence｜>"
     response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
 
     message, success = renderer.parse_response(response_tokens)
