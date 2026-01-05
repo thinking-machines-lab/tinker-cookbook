@@ -286,6 +286,43 @@ def test_deepseek_parse_response_multiple_think_blocks():
     assert content[3] == TextPart(type="text", text="final")
 
 
+def test_deepseek_parse_response_without_think_prefix():
+    """Test DeepSeekV3ThinkingRenderer.parse_response handles prefilled <think>.
+
+    When using build_generation_prompt, <think> is added as a prefill to trigger
+    thinking mode. The model's response tokens don't include this prefix.
+
+    This test verifies that parse_response correctly prepends <think> so that
+    the thinking content is properly extracted into ThinkingPart.
+
+    See: https://github.com/thinking-machines-lab/tinker-cookbook/issues/283
+    """
+    tokenizer = get_tokenizer("deepseek-ai/DeepSeek-V3.1")
+    renderer = DeepSeekV3ThinkingRenderer(tokenizer)
+
+    # Response WITHOUT <think> prefix - this is what the model actually generates
+    # since <think> was prefilled by build_generation_prompt
+    response_str = "\nLet me reason through this.\n</think>\nThe answer is 42.<｜end▁of▁sentence｜>"
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    message, success = renderer.parse_response(response_tokens)
+
+    assert success
+    content = message["content"]
+    assert isinstance(content, list), (
+        "Expected list content with ThinkingPart, got string. "
+        "This indicates parse_response is not prepending <think> to account for prefill."
+    )
+
+    thinking_parts = [p for p in content if p["type"] == "thinking"]
+    text_parts = [p for p in content if p["type"] == "text"]
+
+    assert len(thinking_parts) == 1, f"Expected 1 ThinkingPart, got {len(thinking_parts)}"
+    assert "\nLet me reason through this.\n" in thinking_parts[0]["thinking"]
+    assert len(text_parts) == 1
+    assert "The answer is 42." in text_parts[0]["text"]
+
+
 # =============================================================================
 # GptOss parse_response Tests
 # =============================================================================

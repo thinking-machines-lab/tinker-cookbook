@@ -428,6 +428,38 @@ class DeepSeekV3ThinkingRenderer(_DeepSeekV3BaseRenderer):
         think_prefill = "<think>" + (prefill or "")
         return super().build_generation_prompt(messages, role, think_prefill)
 
+    def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+        """Parse response, prepending <think> if needed to account for prefill.
+
+        Since build_generation_prompt adds <think> as a prefill, the model's response
+        tokens don't include this prefix. We need to prepend it before parsing so that
+        parse_think_blocks can correctly identify and extract the thinking content.
+
+        Without this, the response would look like:
+            "\\nThe user asks...\\n</think>\\nThe answer is..."
+
+        With the <think> prefix prepended:
+            "<think>\\nThe user asks...\\n</think>\\nThe answer is..."
+
+        Which correctly parses into ThinkingPart + TextPart.
+
+        Note: If the response already starts with <think>, we don't prepend again.
+        This handles cases where the response is manually constructed with the full
+        <think>...</think> structure (e.g., in tests).
+        """
+        think_prefix_tokens = self.tokenizer.encode("<think>", add_special_tokens=False)
+        response_list = list(response)
+
+        # Only prepend <think> if the response doesn't already start with it
+        starts_with_think = (
+            len(response_list) >= len(think_prefix_tokens)
+            and response_list[: len(think_prefix_tokens)] == think_prefix_tokens
+        )
+        if not starts_with_think:
+            response_list = think_prefix_tokens + response_list
+
+        return super().parse_response(response_list)
+
 
 class DeepSeekV3DisableThinkingRenderer(_DeepSeekV3BaseRenderer):
     """
