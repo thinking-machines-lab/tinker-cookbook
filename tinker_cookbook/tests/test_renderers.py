@@ -24,6 +24,7 @@ Testing guidelines:
 
 from typing import Callable, cast
 import copy
+import json
 
 import pytest
 import tinker
@@ -41,7 +42,7 @@ from tinker_cookbook.renderers import (
     ToolCall,
     get_renderer,
 )
-from tinker_cookbook.renderers.base import ensure_list
+from tinker_cookbook.renderers.base import ensure_list, ensure_text
 from tinker_cookbook.tests.conversation_generator import generate_conversation
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
@@ -469,18 +470,31 @@ def test_generation_against_hf_chat_templates(
         _add_llama3_date_prefix(convo) if model_name.startswith("meta") else convo
     )
     # ^^^ modify the cookbook convo just for llama3, where we chose not to match the HF template
-    hf_convo = [cookbook_renderer.to_openai_message(m) for m in convo]
+
+    # Extract tools from tool_declare messages and filter them out when converting to OpenAI format
+    tools_for_hf = None
+    hf_convo = []
+    for m in convo:
+        if m["role"] == "tool_declare":
+            # Parse the JSON content to extract tools for HF
+            tools_for_hf = json.loads(ensure_text(m["content"]))
+        else:
+            openai_msg = cookbook_renderer.to_openai_message(m)
+            hf_convo.append(openai_msg)
 
     cookbook_tokens = cookbook_renderer.build_generation_prompt(modified_cookbook_convo).to_ints()
     hf_tokens = tokenizer.apply_chat_template(
-        hf_convo, add_generation_prompt=True, tokenize=True, **hf_kwargs
+        hf_convo, tools=tools_for_hf, add_generation_prompt=True, tokenize=True, **hf_kwargs
     )
 
-    assert cookbook_tokens == hf_tokens, (
+    # Cast hf_tokens to list[int] for type checker - apply_chat_template with tokenize=True returns list[int]
+    hf_tokens_list = cast(list[int], hf_tokens)
+
+    assert cookbook_tokens == hf_tokens_list, (
         f"[{conv_desc}] Cookbook tokens: {cookbook_tokens}\n"
         f"Cookbook string: {tokenizer.decode(cookbook_tokens)}\n"
-        f"HF tokens: {hf_tokens}\n"
-        f"HF string: {tokenizer.decode(hf_tokens)}"
+        f"HF tokens: {hf_tokens_list}\n"
+        f"HF string: {tokenizer.decode(hf_tokens_list)}"
     )
 
 
@@ -550,12 +564,22 @@ def test_supervised_example_against_hf_chat_templates(
         _add_llama3_date_prefix(convo) if model_name.startswith("meta") else convo
     )
     # ^^^ modify the cookbook convo just for llama3, where we chose not to match the HF template
-    hf_convo = [cookbook_renderer.to_openai_message(m) for m in convo]
+
+    # Extract tools from tool_declare messages and filter them out when converting to OpenAI format
+    tools_for_hf = None
+    hf_convo = []
+    for m in convo:
+        if m["role"] == "tool_declare":
+            # Parse the JSON content to extract tools for HF
+            tools_for_hf = json.loads(ensure_text(m["content"]))
+        else:
+            openai_msg = cookbook_renderer.to_openai_message(m)
+            hf_convo.append(openai_msg)
 
     cookbook_model_input, _ = cookbook_renderer.build_supervised_example(modified_cookbook_convo)
     cookbook_tokens = cookbook_model_input.to_ints()
     hf_output = tokenizer.apply_chat_template(
-        hf_convo, tokenize=False, add_generation_prompt=False, **hf_kwargs
+        hf_convo, tools=tools_for_hf, tokenize=False, add_generation_prompt=False, **hf_kwargs
     )
     assert isinstance(hf_output, str)
     hf_tokens = tokenizer.encode(hf_output.rstrip("\n"), add_special_tokens=False)
@@ -778,11 +802,14 @@ def test_qwen3_disable_thinking_generation():
         enable_thinking=False,
     )
 
-    assert cookbook_tokens == hf_tokens, (
+    # Cast hf_tokens to list[int] for type checker - apply_chat_template with tokenize=True returns list[int]
+    hf_tokens_list = cast(list[int], hf_tokens)
+
+    assert cookbook_tokens == hf_tokens_list, (
         f"Cookbook tokens: {cookbook_tokens}\n"
         f"Cookbook string: {tokenizer.decode(cookbook_tokens)}\n"
-        f"HF tokens: {hf_tokens}\n"
-        f"HF string: {tokenizer.decode(hf_tokens)}"
+        f"HF tokens: {hf_tokens_list}\n"
+        f"HF string: {tokenizer.decode(hf_tokens_list)}"
     )
 
 
