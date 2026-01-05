@@ -1,13 +1,16 @@
 import pytest
 
-from tinker_cookbook.renderers import parse_content_blocks, ThinkingPart, TextPart
+from tinker_cookbook.renderers import parse_content_blocks, ThinkingPart, TextPart, ContentPart
+from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3DisableThinkingRenderer
 from tinker_cookbook.tests.test_renderers import get_tokenizer
 from tinker_cookbook.renderers import (
+    Message,
     Qwen3Renderer,
     DeepSeekV3ThinkingRenderer,
     GptOssRenderer,
 )
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
+from tinker_cookbook.renderers.base import ensure_list
 
 
 # =============================================================================
@@ -484,6 +487,7 @@ def test_gptoss_parse_response_commentary_preamble():
     "model_name,renderer_cls,renderer_kwargs",
     [
         ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3ThinkingRenderer, {}),
+        ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3DisableThinkingRenderer, {}),
         (
             "openai/gpt-oss-20b",
             GptOssRenderer,
@@ -509,16 +513,14 @@ def test_thinking_generation_parse_correspondence(model_name, renderer_cls, rend
     renderer = renderer_cls(tokenizer, **renderer_kwargs)
 
     # User message
-    user_message = {"role": "user", "content": "What is 2+2?"}
+    user_message: Message = {"role": "user", "content": "What is 2+2?"}
 
     # Expected parsed message (what we want parse_response to produce)
-    expected_message = {
-        "role": "assistant",
-        "content": [
-            ThinkingPart(type="thinking", thinking="Let me work through this."),
-            TextPart(type="text", text="The answer is 42."),
-        ],
-    }
+    thinking: list[ContentPart] = []
+    if "DisableThinking" not in renderer_cls.__name__:
+        thinking = [ThinkingPart(type="thinking", thinking="Let me work through this.")]
+    expected_content = thinking + [TextPart(type="text", text="The answer is 42.")]
+    expected_message: Message = {"role": "assistant", "content": expected_content}
 
     # Render expected message to get full response tokens
     rendered = renderer.render_message(
@@ -544,7 +546,7 @@ def test_thinking_generation_parse_correspondence(model_name, renderer_cls, rend
     parsed_message, _ = renderer.parse_response(continuation_tokens)
 
     # Should recover the expected message
-    assert parsed_message["content"] == expected_message["content"], (
+    assert ensure_list(parsed_message["content"]) == ensure_list(expected_message["content"]), (
         f"Roundtrip failed: parsed_message != expected_message for {model_name} {renderer_cls.__name__}"
     )
 
