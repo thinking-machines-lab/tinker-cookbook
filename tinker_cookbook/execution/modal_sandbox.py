@@ -19,22 +19,22 @@ class ModalSandbox:
     Persistent Modal sandbox for code execution.
 
     The sandbox is created on first use and reused across executions.
-    Call close() to terminate the sandbox when done.
 
     Usage:
         sandbox = ModalSandbox()
         sandbox.write_file("/workspace/code.py", "print('hello')")
         exit_code, stdout, stderr = sandbox.exec("python", "code.py", workdir="/workspace")
-        sandbox.close()
     """
 
     def __init__(
         self,
         app_name: str = "tinker-cookbook-runner",
         default_timeout: int = 240,
+        image: modal.Image | None = None,
     ):
         self._app_name = app_name
         self._default_timeout = default_timeout
+        self._image = image or modal.Image.debian_slim()
         self._app: modal.App | None = None
         self._sandbox: modal.Sandbox | None = None
 
@@ -42,7 +42,7 @@ class ModalSandbox:
         """Get or create the persistent sandbox."""
         if self._sandbox is None:
             self._app = modal.App.lookup(self._app_name, create_if_missing=True)
-            self._sandbox = modal.Sandbox.create(app=self._app)
+            self._sandbox = modal.Sandbox.create(app=self._app, image=self._image)
         return self._sandbox
 
     def write_file(self, path: str, content: str) -> None:
