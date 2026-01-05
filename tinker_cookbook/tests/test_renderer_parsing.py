@@ -1,6 +1,13 @@
+import pytest
+
 from tinker_cookbook.renderers import parse_content_blocks, ThinkingPart, TextPart
 from tinker_cookbook.tests.test_renderers import get_tokenizer
-from tinker_cookbook.renderers import Qwen3Renderer, DeepSeekV3ThinkingRenderer, GptOssRenderer
+from tinker_cookbook.renderers import (
+    Qwen3Renderer,
+    DeepSeekV3ThinkingRenderer,
+    GptOssRenderer,
+)
+from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 
 
 # =============================================================================
@@ -471,3 +478,77 @@ def test_gptoss_parse_response_commentary_preamble():
     assert len(content) == 1
     assert content[0] == TextPart(type="text", text="Checking now.")
     assert "tool_calls" in message and len(message["tool_calls"]) == 1
+
+
+@pytest.mark.parametrize(
+    "model_name,renderer_cls,renderer_kwargs",
+    [
+        ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3ThinkingRenderer, {}),
+        (
+            "openai/gpt-oss-20b",
+            GptOssRenderer,
+            {"use_system_prompt": True, "reasoning_effort": "medium"},
+        ),
+        ("Qwen/Qwen3-30B-A3B", Qwen3Renderer, {}),
+        ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer, {}),
+    ],
+)
+def test_thinking_generation_parse_correspondence(model_name, renderer_cls, renderer_kwargs):
+    """Test that parse_response handles sampled output after thinking prefill.
+
+    Pattern for thinking model tests:
+    1. Build generation prompt (may include thinking prefill)
+    2. Render expected message to get full response tokens
+    3. Strip prefill to simulate what sampling returns
+    4. Parse continuation → should recover the expected message
+    5. Roundtrip: prompt + continuation = full supervised example
+    """
+    from tinker_cookbook.renderers import RenderContext
+
+    tokenizer = get_tokenizer(model_name)
+    renderer = renderer_cls(tokenizer, **renderer_kwargs)
+
+    # User message
+    user_message = {"role": "user", "content": "What is 2+2?"}
+
+    # Expected parsed message (what we want parse_response to produce)
+    expected_message = {
+        "role": "assistant",
+        "content": [
+            ThinkingPart(type="thinking", thinking="Let me work through this."),
+            TextPart(type="text", text="The answer is 42."),
+        ],
+    }
+
+    # Render expected message to get full response tokens
+    rendered = renderer.render_message(
+        expected_message, RenderContext(idx=1, is_last=True, prev_message=user_message)
+    )
+    full_response_tokens = [t for chunk in rendered.output for t in chunk.tokens]
+
+    # Build prompt (may include prefill like <think>)
+    prompt = renderer.build_generation_prompt([user_message])
+    prompt_tokens = prompt.to_ints()
+
+    # Find prefill by matching end of prompt with start of rendered response
+    # This is renderer-agnostic: whatever prefill the renderer adds will be found
+    prefill_len = 0
+    for i in range(1, min(len(prompt_tokens), len(full_response_tokens)) + 1):
+        if prompt_tokens[-i:] == full_response_tokens[:i]:
+            prefill_len = i
+
+    # Simulate smpling: strip prefill
+    continuation_tokens = full_response_tokens[prefill_len:]
+
+    # Parse the continuation
+    parsed_message, _ = renderer.parse_response(continuation_tokens)
+
+    # Should recover the expected message
+    assert parsed_message["content"] == expected_message["content"], (
+        f"Roundtrip failed: parsed_message != expected_message for {model_name} {renderer_cls.__name__}"
+    )
+
+    # Roundtrip: full conversation should match prompt + continuation
+    full_convo = [user_message, parsed_message]
+    supervised, _ = renderer.build_supervised_example(full_convo)
+    assert supervised.to_ints() == prompt_tokens + continuation_tokens

@@ -266,6 +266,11 @@ class _DeepSeekV3BaseRenderer(Renderer):
             content = content.strip()
 
         # Parse <think>...</think> blocks into ThinkingPart/TextPart list
+        # Handle responses from sampling: if </think> exists but no <think>,
+        # the <think> was part of the prefill - prepend it for parsing
+        if "</think>" in content and "<think>" not in content:
+            content = "<think>" + content
+
         parts = parse_think_blocks(content)
         if parts is not None:
             assistant_message["content"] = parts
