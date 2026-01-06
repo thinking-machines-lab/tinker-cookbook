@@ -15,6 +15,7 @@ class SandboxBackend(StrEnum):
     SANDBOXFUSION = "sandboxfusion"
     MODAL = "modal"
 
+
 __all__ = [
     "SandboxBackend",
     "SandboxFusionClient",
