@@ -51,7 +51,7 @@ class CLIConfig:
     max_steps_off_policy: int | None = None
 
     # Code execution sandbox configuration
-    sandbox_backend: SandboxBackend = "sandboxfusion"
+    sandbox_backend: SandboxBackend = SandboxBackend.SANDBOXFUSION
 
 
 async def cli_main(cli_config: CLIConfig) -> None:

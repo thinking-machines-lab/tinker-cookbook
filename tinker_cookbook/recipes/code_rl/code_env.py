@@ -11,6 +11,7 @@ from tinker_cookbook.recipes.code_rl.code_grading import (
     sandbox_check_correctness,
     taco_to_lcb_format,
 )
+from tinker_cookbook.sandbox import SandboxBackend
 from tinker_cookbook.recipes.code_rl.lcb_utils import fetch_live_code_bench_system_prompt
 from tinker_cookbook import renderers
 from tinker_cookbook.rl.problem_env import ProblemEnv, ProblemGroupBuilder, logger
@@ -111,7 +112,7 @@ class CodeEnv(ProblemEnv):
         convo_prefix: list[renderers.Message] | None = None,
         format_coef: float = 0.1,
         reward_timeout: int = 6,
-        sandbox_backend: str | None = None,
+        sandbox_backend: SandboxBackend | None = None,
     ):
         super().__init__(renderer, convo_prefix, format_coef=format_coef)
         self.problem = problem
@@ -195,7 +196,7 @@ class DeepcoderDataset(RLDataset):
         seed: int = 0,
         format_coef: float = 0.1,
         reward_timeout: int = 6,
-        sandbox_backend: str | None = None,
+        sandbox_backend: SandboxBackend | None = None,
     ):
         self.ds = _load_deepcoder_split(split)
         if split == "train":
@@ -261,7 +262,7 @@ class DeepcoderDatasetBuilder(RLDatasetBuilder):
     seed: int = 0
     format_coef: float = 0.1
     reward_timeout: int = 6
-    sandbox_backend: str | None = None
+    sandbox_backend: SandboxBackend | None = None
 
     async def __call__(self) -> tuple[DeepcoderDataset, DeepcoderDataset]:
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)

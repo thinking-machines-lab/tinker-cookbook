@@ -134,15 +134,15 @@ async def sandbox_check_correctness(
 
     # Process test cases
     test_cases = postprocess_lcb_sample(sample)
-    use_backend: SandboxBackend = backend or "sandboxfusion"
+    use_backend = backend or SandboxBackend.SANDBOXFUSION
 
     try:
         test_cnt = len(json.loads(test_cases["input_output"])["inputs"])
         total_timeout = (timeout + 1) * test_cnt + 5
 
-        if use_backend == "modal":
+        if use_backend == SandboxBackend.MODAL:
             return await _check_with_modal(test_cases, generation, timeout, total_timeout)
-        elif use_backend == "sandboxfusion":
+        elif use_backend == SandboxBackend.SANDBOXFUSION:
             return await _check_with_sandboxfusion(test_cases, generation, timeout, total_timeout)
         else:
             raise ValueError(f"Invalid sandbox backend: {use_backend}")

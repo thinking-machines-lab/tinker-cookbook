@@ -6,11 +6,14 @@ The sandbox/ directory provides thin wrappers around different sandbox backends:
 - ModalSandbox: Cloud sandbox using Modal's infrastructure
 """
 
-from typing import Literal
+from enum import StrEnum
 
 from tinker_cookbook.sandbox.sandboxfusion import SandboxFusionClient
 
-SandboxBackend = Literal["sandboxfusion", "modal"]
+
+class SandboxBackend(StrEnum):
+    SANDBOXFUSION = "sandboxfusion"
+    MODAL = "modal"
 
 __all__ = [
     "SandboxBackend",
