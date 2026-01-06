@@ -18,9 +18,9 @@ __all__ = [
 ]
 
 
-# ModalSandbox is lazily imported to avoid requiring modal as a dependency
-def get_modal_sandbox(**kwargs):
-    """Factory to avoid importing modal at module load."""
-    from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
+# ModalSandbox and ModalSandboxPool are lazily imported to avoid requiring modal as a dependency
+def get_modal_sandbox_pool(**kwargs):
+    """Factory to create a ModalSandboxPool without importing modal at module load."""
+    from tinker_cookbook.sandbox.modal_sandbox import ModalSandboxPool
 
-    return ModalSandbox(**kwargs)
+    return ModalSandboxPool(**kwargs)

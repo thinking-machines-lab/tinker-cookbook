@@ -6,7 +6,6 @@ import chz
 from datasets import Dataset, concatenate_datasets, load_dataset
 
 import tinker
-from tinker_cookbook.sandbox import SandboxBackend
 from tinker_cookbook.recipes.code_rl.code_grading import (
     extract_code_from_model,
     sandbox_check_correctness,
@@ -112,7 +111,7 @@ class CodeEnv(ProblemEnv):
         convo_prefix: list[renderers.Message] | None = None,
         format_coef: float = 0.1,
         reward_timeout: int = 6,
-        sandbox_backend: SandboxBackend | None = None,
+        sandbox_backend: str | None = None,
     ):
         super().__init__(renderer, convo_prefix, format_coef=format_coef)
         self.problem = problem
@@ -196,7 +195,7 @@ class DeepcoderDataset(RLDataset):
         seed: int = 0,
         format_coef: float = 0.1,
         reward_timeout: int = 6,
-        sandbox_backend: SandboxBackend | None = None,
+        sandbox_backend: str | None = None,
     ):
         self.ds = _load_deepcoder_split(split)
         if split == "train":
@@ -262,7 +261,7 @@ class DeepcoderDatasetBuilder(RLDatasetBuilder):
     seed: int = 0
     format_coef: float = 0.1
     reward_timeout: int = 6
-    sandbox_backend: SandboxBackend | None = None
+    sandbox_backend: str | None = None
 
     async def __call__(self) -> tuple[DeepcoderDataset, DeepcoderDataset]:
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)

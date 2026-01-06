@@ -40,9 +40,7 @@ class SandboxFusionClient:
         max_concurrency: int | None = None,
     ):
         self._url = url or os.getenv("SANDBOX_URL", "http://localhost:8080/run_code")
-        self._max_concurrency = max_concurrency or int(
-            os.getenv("SANDBOX_MAX_CONCURRENCY", "4")
-        )
+        self._max_concurrency = max_concurrency or int(os.getenv("SANDBOX_MAX_CONCURRENCY", "4"))
         self._session: aiohttp.ClientSession | None = None
         self._session_lock = asyncio.Lock()
 
@@ -88,8 +86,7 @@ class SandboxFusionClient:
             - response contains the full API response or error details
         """
         encoded_files = {
-            k: base64.b64encode(v.encode("utf-8")).decode("utf-8")
-            for k, v in files.items()
+            k: base64.b64encode(v.encode("utf-8")).decode("utf-8") for k, v in files.items()
         }
 
         payload = {

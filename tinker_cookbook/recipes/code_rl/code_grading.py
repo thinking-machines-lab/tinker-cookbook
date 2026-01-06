@@ -8,17 +8,20 @@ Supports two execution backends:
 
 from __future__ import annotations
 
-import asyncio
 import json
+import os
 import re
 from typing import Any
 
-from tinker_cookbook.sandbox import SandboxBackend, SandboxFusionClient
 from tinker_cookbook.recipes.code_rl.lcb_utils import TEST_CODE, TEST_UTIL
+from tinker_cookbook.sandbox import SandboxBackend, SandboxFusionClient
 
-# Global clients (lazily initialized)
+# Modal pool configuration
+MODAL_POOL_SIZE = int(os.getenv("MODAL_POOL_SIZE", "32"))
+
+# Global sandbox backend clients (lazily initialized)
 _sandboxfusion_client: SandboxFusionClient | None = None
-_modal_sandbox: Any = None  # ModalSandbox, but avoid import at module level
+_modal_pool: Any = None  # ModalSandboxPool, but avoid import at module level
 
 
 def _get_sandboxfusion_client() -> SandboxFusionClient:
@@ -29,14 +32,17 @@ def _get_sandboxfusion_client() -> SandboxFusionClient:
     return _sandboxfusion_client
 
 
-def _get_modal_sandbox():
-    """Get or create the Modal sandbox."""
-    global _modal_sandbox
-    if _modal_sandbox is None:
-        from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
+def _get_modal_pool():
+    """Get or create the Modal sandbox pool."""
+    global _modal_pool
+    if _modal_pool is None:
+        import modal
 
-        _modal_sandbox = ModalSandbox()
-    return _modal_sandbox
+        from tinker_cookbook.sandbox.modal_sandbox import ModalSandboxPool
+
+        image = modal.Image.debian_slim().pip_install("numpy")
+        _modal_pool = ModalSandboxPool(pool_size=MODAL_POOL_SIZE, image=image)
+    return _modal_pool
 
 
 def extract_code_from_model(model_response: str) -> str | None:
@@ -61,9 +67,7 @@ def postprocess_lcb_sample(sample: list[dict[str, Any]]) -> dict[str, str]:
         metadata = sample[0].get("metadata", {})
         fn_name = metadata.get("func_name")
         if fn_name is None:
-            raise AssertionError(
-                f"Function name missing in metadata: {metadata}. Sample: {sample}"
-            )
+            raise AssertionError(f"Function name missing in metadata: {metadata}. Sample: {sample}")
         sample_dict["fn_name"] = fn_name
 
     return {
@@ -91,14 +95,15 @@ async def _check_with_sandboxfusion(
     )
 
 
-def _check_with_modal_sync(
+async def _check_with_modal(
     test_cases: dict[str, str],
     generation: str,
     timeout: int,
     total_timeout: int,
 ) -> tuple[bool, dict[str, Any]]:
-    """Execute tests using Modal sandbox backend."""
-    exit_code, stdout, stderr = _get_modal_sandbox().run_in_workdir(
+    """Execute tests using Modal sandbox."""
+    pool = _get_modal_pool()
+    exit_code, stdout, stderr = await pool.run_in_workdir(
         files={
             "test_cases.txt": json.dumps(test_cases),
             "code.py": generation,
@@ -109,19 +114,6 @@ def _check_with_modal_sync(
         timeout=total_timeout,
     )
     return exit_code == 0, {"exit_code": exit_code, "stdout": stdout, "stderr": stderr}
-
-
-async def _check_with_modal(
-    test_cases: dict[str, str],
-    generation: str,
-    timeout: int,
-    total_timeout: int,
-) -> tuple[bool, dict[str, Any]]:
-    """Execute tests using Modal sandbox backend (async wrapper)."""
-    # Run sync Modal operations in thread pool to avoid blocking event loop
-    return await asyncio.to_thread(
-        _check_with_modal_sync, test_cases, generation, timeout, total_timeout
-    )
 
 
 async def sandbox_check_correctness(
@@ -153,13 +145,9 @@ async def sandbox_check_correctness(
         total_timeout = (timeout + 1) * test_cnt + 5
 
         if use_backend == "modal":
-            return await _check_with_modal(
-                test_cases, generation, timeout, total_timeout
-            )
+            return await _check_with_modal(test_cases, generation, timeout, total_timeout)
         elif use_backend == "sandboxfusion":
-            return await _check_with_sandboxfusion(
-                test_cases, generation, timeout, total_timeout
-            )
+            return await _check_with_sandboxfusion(test_cases, generation, timeout, total_timeout)
         else:
             raise ValueError(f"Invalid sandbox backend: {use_backend}")
 
