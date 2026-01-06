@@ -32,6 +32,7 @@ We observe an AIME'24 score of ~65% using a rank-128 LoRA after 100 steps. For o
 ```bash
 python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
     model_name=Qwen/Qwen3-8B-Base \
+    load_checkpoint_path=tinker://4a1939e6-04be-5a77-9e4e-910ccff9f27e:train:0/weights/final \
     dataset=deepmath \
     learning_rate=1e-4 \
     groups_per_batch=512 \
@@ -40,6 +41,17 @@ python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
 ```
 
 This script can also be used to replicate the experiments in our Discussion section, after you have run RL to obtain an appropriate checkpoint for the teacher model.
+
+### Checkpoints
+
+The results of running the above scripts with various LoRA ranks can be found here:
+
+| Stage | Rank 8 | Rank 32 | Rank 128 |
+|-------|--------|---------|----------|
+| Supervised finetuning (SFT) | `tinker://c15f09f1-f225-5f98-bab1-ec8dfac5da2a:train:0/weights/final` | `tinker://b9190d16-c849-51d5-a690-1b5de146a284:train:0/weights/final` | `tinker://4a1939e6-04be-5a77-9e4e-910ccff9f27e:train:0/weights/final` |
+| On-policy distillation | `tinker://4a97bc02-f4d0-5ecd-888a-3e8cc5b0f7f6:train:0/sampler_weights/000080` | `tinker://bfffa2b2-a78f-59be-a2ef-cc9188bfce7e:train:0/sampler_weights/000080` | `tinker://1dd8de47-be86-54d3-9355-ebf80827be26:train:0/sampler_weights/000080` |
+
+See the on-policy distillation launch command above for an example of how to load the checkpoint path.
 
 ## Distillation for personalization
 

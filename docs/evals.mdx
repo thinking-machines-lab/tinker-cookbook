@@ -1,0 +1,234 @@
+import { Callout } from 'nextra/components'
+import { CookbookLink } from '../components/CookbookLink'
+
+# Evaluations
+
+Our training scripts will print out training and test loss. Two common workflows for evaluations are to do inline evals during training and to do offline evals on various checkpoints from a run.
+
+## Inline Evals
+
+You can add inline evaluations to your training runs by configuring evaluator builders in advance for both supervised fine-tuning and RL training jobs.
+
+### Supervised Fine-Tuning (`supervised.train`)
+Add one or both of the following to your config:
+
+- **`evaluator_builders: list[EvaluatorBuilder]`** - Runs evaluations every `eval_every` steps
+- **`infrequent_evaluator_builders: list[EvaluatorBuilder]`** - Runs evaluations every `infrequent_eval_every` steps
+
+### RL Training (`rl.train`)
+
+Add the following to your config:
+
+- **`evaluator_builders: list[SamplingClientEvaluator]`** - Runs evaluations every `eval_every` steps
+
+For implementation guidance and a detailed example, see <CookbookLink path="tinker_cookbook/eval/evaluators.py">here</CookbookLink> and
+ <CookbookLink path="tinker_cookbook/eval/inspect_evaluators.py">here</CookbookLink> respectively.
+
+
+## Offline evals
+
+We support and recommend several ways for creating and running your offline evaluations on your model checkpoints.
+
+### Running Standard Evaluations with Inspect AI.
+
+We support running many of the standard cited evaluations using the [Inspect AI library](https://github.com/UKGovernmentBEIS/inspect_ai).
+
+We have provided a <CookbookLink path="tinker_cookbook/eval/run_inspect_evals.py">script</CookbookLink> to evaluate models using Tinker's internal sampling functionality as shown below.
+
+```bash
+MODEL_PATH=tinker://FIXME # YOUR MODEL PATH HERE
+python -m tinker_cookbook.eval.run_inspect_evals \
+    model_path=$MODEL_PATH \
+    model_name=MODEL_NAME \ # YOUR MODEL_NAME HERE
+    tasks=inspect_evals/ifeval,inspect_evals/mmlu_0_shot \
+    renderer_name=RENDERER_NAME # YOUR RENDERER_NAME HERE
+```
+
+Click [here](https://github.com/UKGovernmentBEIS/inspect_ai/blob/main/docs/evals/listing.yml) to view additional supported evaluations.
+
+### Creating your own Sampling Evaluations
+
+We recommend two ways to create your own evaluations:
+- creating your own tasks with Inspect AI and running like above
+- creating your own SamplingClientEvaluator
+
+#### Create tasks with Inspect AI
+
+In addition to passing in standard evaluations, you can create your own tasks using inspect ai as detailed [here](https://inspect.aisi.org.uk/tasks.html).
+
+Here is a toy example of how to create an evaluation with an LLM-as-a-judge where we use a model produced by tinker as a grader.
+
+```python
+import tinker
+from inspect_ai import Task, task
+from inspect_ai.dataset import MemoryDataset, Sample
+from inspect_ai.model import GenerateConfig as InspectAIGenerateConfig
+from inspect_ai.model import Model as InspectAIModel
+from inspect_ai.scorer import model_graded_qa
+from inspect_ai.solver import generate
+from tinker_cookbook.eval.inspect_utils import InspectAPIFromTinkerSampling
+
+QA_DATASET = MemoryDataset(
+    name="qa_dataset",
+    samples=[
+        Sample(
+            input="What is the capital of France?",
+            target="Paris",
+        ),
+        Sample(
+            input="What is the capital of Italy?",
+            target="Rome",
+        ),
+    ],
+)
+
+service_client = tinker.ServiceClient()
+sampling_client = service_client.create_sampling_client(
+    base_model="meta-llama/Llama-3.1-8B-Instruct"
+)
+
+api = InspectAPIFromTinkerSampling(
+    renderer_name="llama3",
+    model_name="meta-llama/Llama-3.1-8B-Instruct",
+    sampling_client=sampling_client,
+    verbose=False,
+)
+
+GRADER_MODEL = InspectAIModel(api=api, config=InspectAIGenerateConfig())
+
+
+@task
+def example_lm_as_judge() -> Task:
+    """
+    Example task using LLM-as-a-judge scoring.
+
+    Note: The grader model defaults to the model being evaluated.
+    To use a different grader model, specify it with --model-grader when using inspect directly.
+    """
+    return Task(
+        name="llm_as_judge",
+        dataset=QA_DATASET,
+        solver=generate(),
+        scorer=model_graded_qa(
+            instructions="Grade strictly against the target text as general answer key and rubric. "
+            "Respond 'GRADE: C' if correct or 'GRADE: I' otherwise.",
+            partial_credit=False,
+            # model parameter is optional - if not specified, uses the model being evaluated
+            model=GRADER_MODEL,
+        ),
+    )
+```
+
+Inspect also natively supports replacing our `GRADER_MODEL` with any openai-chat-completion style api (e.g. openrouter).
+
+#### Create your own SamplingClientEvaluator
+
+Alternatively, you can create your own SamplingClientEvaluator class instead of using Inspect AI. This is a lower
+level abstraction than the above with finer-grain control over running your evaluations.
+
+We expose this interface to allow users more control over their datasets and metrics. To illustrate, see this
+<CookbookLink path="tinker_cookbook/eval/custom_evaluators.py">custom evaluators</CookbookLink> example of how one might create their own complex SamplingClientEvaluator.
+
+For a more illustrative toy instructive example see below.
+
+```python
+from typing import Any, Callable
+
+import tinker
+from tinker import types
+
+from tinker_cookbook import renderers
+from tinker_cookbook.evaluators import SamplingClientEvaluator
+from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+class CustomEvaluator(SamplingClientEvaluator):
+    """
+    A toy SamplingClientEvaluator that runs a custom evaluation and returns its metrics.
+    """
+
+    def __init__(
+        self,
+        dataset: Any,
+        grader_fn: Callable[[str, str], bool],
+        model_name: str,
+        renderer_name: str,
+    ):
+        """
+        Initialize the CustomEvaluator.
+        Args:
+            config: Configuration object containing all evaluation parameters
+        """
+        self.dataset = dataset
+        self.grader_fn = grader_fn
+
+        tokenizer = get_tokenizer(model_name)
+        self.renderer = renderers.get_renderer(name=renderer_name, tokenizer=tokenizer)
+
+    async def __call__(self, sampling_client: tinker.SamplingClient) -> dict[str, float]:
+        """
+        Run custom evaluation on the given sampling client and return metrics.
+        Args:
+            sampling_client: The sampling client to evaluate
+        Returns:
+            Dictionary of metrics from inspect evaluation
+        """
+
+        metrics = {}
+
+        num_examples = len(self.dataset)
+        num_correct = 0
+
+        sampling_params = types.SamplingParams(
+            max_tokens=100,
+            temperature=0.7,
+            top_p=1.0,
+            stop=self.renderer.get_stop_sequences(),
+        )
+
+        for datum in self.dataset:
+            model_input: types.ModelInput = self.renderer.build_generation_prompt(
+                [renderers.Message(role="user", content=datum["input"])]
+            )
+            # Generate response
+            r: types.SampleResponse = await sampling_client.sample_async(
+                prompt=model_input, num_samples=1, sampling_params=sampling_params
+            )
+            tokens: list[int] = r.sequences[0].tokens
+            response: renderers.Message = self.renderer.parse_response(tokens)[0]
+            if self.grader_fn(response["content"], datum["output"]):
+                num_correct += 1
+
+        metrics["accuracy"] = num_correct / num_examples
+        return metrics
+```
+
+Here is an example of how we can use the above CustomEvaluator on a toy dataset and grader.
+
+
+```python
+QA_DATASET = [
+    {"input": "What is the capital of France?", "output": "Paris"},
+    {"input": "What is the capital of Germany?", "output": "Berlin"},
+    {"input": "What is the capital of Italy?", "output": "Rome"},
+]
+
+def grader_fn(response: str, target: str) -> bool:
+    return target.lower() in response.lower()
+
+evaluator = CustomEvaluator(
+    dataset=QA_DATASET,
+    grader_fn=grader_fn,
+    renderer_name="llama3",
+    model_name="meta-llama/Llama-3.1-8B-Instruct",
+
+)
+
+service_client = tinker.ServiceClient()
+sampling_client = service_client.create_sampling_client(base_model="meta-llama/Llama-3.1-8B-Instruct")
+
+async def main():
+    result = await evaluator(sampling_client)
+    print(result)
+
+asyncio.run(main())
+```

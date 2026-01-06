@@ -15,24 +15,43 @@ Action: TypeAlias = list[int]
 Observation: TypeAlias = tinker.ModelInput
 Logprobs: TypeAlias = list[float]
 Metrics: TypeAlias = dict[str, float | int]
+Logs: TypeAlias = dict[str, str | int | float]
 
 
 @dataclass
 class StepResult:
+    """Result returned by Env.step()."""
+
     reward: float
+    """Immediate reward for this step."""
     episode_done: bool
+    """Whether the episode has ended."""
     next_observation: Observation
+    """Observation for the next step (or final observation if episode_done)."""
     next_stop_condition: StopCondition
+    """Stop condition for the next generation."""
     metrics: Metrics = field(default_factory=dict)
+    """Numeric values aggregated and reported in training logs (e.g., timing, counts)."""
+    logs: Logs = field(default_factory=dict)
+    """Diagnostic info for display/debugging tools (not aggregated like metrics)."""
 
 
 @dataclass
 class Transition:
+    """A single (observation, action, reward) tuple from a trajectory."""
+
     ob: Observation
+    """Observation the agent saw before taking the action."""
     ac: TokensWithLogprobs
+    """Action taken (tokens and their log-probabilities)."""
     reward: float
+    """Immediate reward received after taking the action."""
     episode_done: bool
+    """Whether this transition ended the episode."""
     metrics: Metrics = field(default_factory=dict)
+    """Numeric values aggregated and reported in training logs."""
+    logs: Logs = field(default_factory=dict)
+    """Diagnostic info for display/debugging tools (not aggregated like metrics)."""
 
 
 class Env(ABC):

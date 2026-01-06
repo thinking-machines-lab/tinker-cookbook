@@ -53,6 +53,7 @@ class ChatDatasetBuilderCommonConfig:
     """
 
     model_name_for_tokenizer: str
+
     renderer_name: str
     max_length: int | None
     batch_size: int
@@ -80,4 +81,7 @@ class ChatDatasetBuilder(SupervisedDatasetBuilder):
 
     @property
     def renderer(self) -> renderers.Renderer:
-        return renderers.get_renderer(self.common_config.renderer_name, self.tokenizer)
+        return renderers.get_renderer(
+            self.common_config.renderer_name,
+            self.tokenizer,
+        )

@@ -12,6 +12,9 @@ import tinker
 import torch
 from tinker import TensorData
 from tinker_cookbook.rl.types import Trajectory, TrajectoryGroup
+from tinker_cookbook.supervised.common import (
+    create_rightshifted_model_input_and_leftshifted_targets,
+)
 from tinker_cookbook.utils.misc_utils import all_same, safezip
 
 logger = logging.getLogger(__name__)
@@ -49,12 +52,6 @@ def _flat_ob_token_len(flat_ob: FlatOb) -> int:
         else:
             out += elem.length
     return out
-
-
-def _to_input_targets(model_input: tinker.ModelInput) -> tuple[tinker.ModelInput, list[int]]:
-    # TODO: make this work with multimodal data
-    all_ints = model_input.to_ints()
-    return tinker.ModelInput.from_ints(tokens=all_ints[:-1]), all_ints[1:]
 
 
 def _flat_ob_to_model_input(flat_ob: FlatOb) -> tinker.ModelInput:
@@ -120,9 +117,10 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.D
             cls.mask = []
 
     def make_datum_from_state():
-        # TODO: generalize to multimodal
         all_tokens_T = _flat_ob_to_model_input(SequenceAccumulator.full_sequence)
-        input_tokens_T, target_tokens_T = _to_input_targets(all_tokens_T)
+        input_tokens_T, target_tokens_T = create_rightshifted_model_input_and_leftshifted_targets(
+            list(all_tokens_T.chunks)
+        )
         sampled_logprobs_T = SequenceAccumulator.sampled_logprobs[1:]
         advantages_T = SequenceAccumulator.advantages[1:]
         mask_T = SequenceAccumulator.mask[1:]

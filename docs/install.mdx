@@ -1,0 +1,35 @@
+# Installing Tinker
+
+Install the Tinker SDK with:
+
+```bash
+pip install tinker
+```
+
+Installation makes two components available: the python SDK and the tinker CLI.
+
+#### Python SDK
+
+The python SDK provides low-level operations like `forward_backward`, `sample`, `optim_step`, and `save_state`.
+
+#### Tinker CLI
+
+The tinker CLI is available as `tinker` or through `python -m tinker`. The CLI provides management functionality similar to that of the web console.
+
+Run `tinker --help` to see which functionality is available.
+
+## Tinker Cookbook
+
+We also release [tinker-cookbook](https://github.com/thinking-machines-lab/tinker-cookbook), which is a collection of training code and experiment tools built on top of Tinker.
+For the Cookbook, we'd recommend doing a local editable install, as you'll probably want to browse and edit the code:
+
+```bash
+git clone https://github.com/thinking-machines-lab/tinker-cookbook.git
+cd tinker-cookbook
+# Switch to your virtual environment
+pip install -e .
+```
+
+## Getting an API key
+
+Create an API key from the [console](https://tinker-console.thinkingmachines.ai). You'll then want to set the `TINKER_API_KEY` environment variable to your newly generated API key.

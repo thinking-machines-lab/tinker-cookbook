@@ -1,0 +1,48 @@
+# Publishing weights
+
+If you've trained a model that you'd like to share with the community, you can
+publish any number of checkpoints you've previously saved.
+
+Once published, your checkpoint can be loaded by any tinker user and used to
+further train a new model or be sampled against.
+
+### Publishing
+
+```bash
+tinker checkpoint publish $TINKER_CHECKPOINT_PATH
+```
+
+where `$TINKER_CHECKPOINT_PATH` is a checkpoint path in the form of `tinker://14bdf3a1-0b95-55c7-8659-5edb1bc870af:train:17/weights/checkpoint_id_to_publish`.
+
+You may confirm your checkpoint is published by dumping the checkpoint info and checking the `Public` property:
+
+```bash
+tinker checkpoint info tinker://14bdf3a1-0b95-55c7-8659-5edb1bc870af/weights/checkpoint_id_to_publish
+                              Checkpoint: weights/checkpoint_id_to_publish
+┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Property        ┃ Value                                                                          ┃
+┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ Checkpoint ID   │ weights/checkpoint_id_to_publish                                               │
+│ Type            │ training                                                                       │
+│ Tinker Path     │ tinker://14bdf3a1-0b95-55c7-8659-5edb1bc870af/weights/checkpoint_id_to_publish │
+│ Size            │ 342.4 MB                                                                       │
+│ Public          │ No                                                                             │
+│ Created         │ 23 minutes ago                                                                 │
+│ Training Run ID │ 14bdf3a1-0b95-55c7-8659-5edb1bc870af                                           │
+└─────────────────┴────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Unpublishing
+
+```bash
+tinker checkpoint unpublish $TINKER_CHECKPOINT_PATH
+```
+
+### Loading public weights
+
+Loading public weights is exactly the same as loading a non-public one:
+
+```python
+ckpt_path = ...
+training_client = service_client.create_training_client_from_state(ckpt_path)
+```

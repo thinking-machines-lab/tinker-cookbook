@@ -12,11 +12,14 @@ dependencies = [
     "cloudpickle",
     "datasets",
     "numpy",
+    "pillow",
     "rich",
     "termcolor",
     "tinker>=0.6.1",
     "torch",
-    "transformers",
+    "torchvision",
+    # <4.57: mistral regex bug makes API calls even with local_files_only=True (fixed in PR #42743)
+    "transformers>=4.45.0,<4.57.0",
     "blobfile",
     "inspect-ai",
     "anyio",
@@ -25,6 +28,9 @@ dependencies = [
     "textarena>=0.7.4",
     "math-verify",
     "scipy",
+    "pytest>=9.0.2",
+    "tiktoken>=0.12.0", # Required for Kimi tokenizer
+    "tqdm",
 ]
 
 [project.urls]

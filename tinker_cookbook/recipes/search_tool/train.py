@@ -8,8 +8,8 @@ from pathlib import Path
 
 import chz
 from tinker_cookbook import cli_utils, model_info
-from tinker_cookbook.recipes.tool_use.search.search_env import SearchR1DatasetBuilder
-from tinker_cookbook.recipes.tool_use.search.tools import (
+from tinker_cookbook.recipes.search_tool.search_env import SearchR1DatasetBuilder
+from tinker_cookbook.recipes.search_tool.tools import (
     ChromaToolClientConfig,
     EmbeddingConfig,
     RetrievalConfig,

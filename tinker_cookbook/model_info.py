@@ -30,9 +30,12 @@ def get_llama_info() -> dict[str, ModelAttributes]:
     }
 
 
+@cache
 def get_qwen_info() -> dict[str, ModelAttributes]:
     org = "Qwen"
     return {
+        "Qwen3-VL-30B-A3B-Instruct": ModelAttributes(org, "3", "30B-A3B", True, is_vl=True),
+        "Qwen3-VL-235B-A22B-Instruct": ModelAttributes(org, "3", "235B-A22B", True, is_vl=True),
         "Qwen3-4B-Base": ModelAttributes(org, "3", "4B", False),
         "Qwen3-8B-Base": ModelAttributes(org, "3", "8B", False),
         "Qwen3-14B-Base": ModelAttributes(org, "3", "14B", False),
@@ -50,6 +53,7 @@ def get_qwen_info() -> dict[str, ModelAttributes]:
     }
 
 
+@cache
 def get_deepseek_info() -> dict[str, ModelAttributes]:
     org = "deepseek-ai"
     return {
@@ -58,11 +62,20 @@ def get_deepseek_info() -> dict[str, ModelAttributes]:
     }
 
 
+@cache
 def get_gpt_oss_info() -> dict[str, ModelAttributes]:
     org = "openai"
     return {
         "gpt-oss-20b": ModelAttributes(org, "1", "21B-A3.6B", True),
         "gpt-oss-120b": ModelAttributes(org, "1", "117B-A5.1B", True),
+    }
+
+
+@cache
+def get_moonshot_info() -> dict[str, ModelAttributes]:
+    org = "moonshotai"
+    return {
+        "Kimi-K2-Thinking": ModelAttributes(org, "K2", "1T-A32B", True),
     }
 
 
@@ -76,6 +89,8 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
         return get_deepseek_info()[model_version_full]
     elif org == "openai":
         return get_gpt_oss_info()[model_version_full]
+    elif org == "moonshotai":
+        return get_moonshot_info()[model_version_full]
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
@@ -93,16 +108,25 @@ def get_recommended_renderer_names(model_name: str) -> list[str]:
         return ["llama3"]
     elif attributes.organization == "Qwen":
         if attributes.version_str == "3":
-            if "-Instruct" in model_name:
+            if attributes.is_vl:
+                if "-Instruct" in model_name:
+                    return ["qwen3_vl_instruct"]
+                else:
+                    return ["qwen3_vl"]
+            elif "-Instruct" in model_name:
                 return ["qwen3_instruct"]
             else:
                 return ["qwen3", "qwen3_disable_thinking"]
         else:
             raise ValueError(f"Unknown model: {model_name}")
     elif attributes.organization == "deepseek-ai":
-        return ["deepseekv3_disable_thinking", "deepseekv3"]
+        # deepseekv3 defaults to non-thinking mode (matches HF template)
+        # Use deepseekv3_thinking for thinking mode
+        return ["deepseekv3", "deepseekv3_thinking"]
     elif attributes.organization == "openai":
         return ["gpt_oss_no_sysprompt", "gpt_oss_medium_reasoning"]
+    elif attributes.organization == "moonshotai":
+        return ["kimi_k2"]
     else:
         raise ValueError(f"Unknown model: {model_name}")
 

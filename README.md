@@ -10,7 +10,7 @@ We provide two libraries for the broader community to customize their language m
 
 ## Installation
 
-1. Sign up for Tinker through the [waitlist](https://thinkingmachines.ai/tinker).
+1. Sign up for Tinker [here](https://auth.thinkingmachines.ai/sign-up).
 2. Once you have access, create an API key from the [console](https://tinker-console.thinkingmachines.ai) and export it as environment variable `TINKER_API_KEY`.
 3. Install tinker python client via `pip install tinker`
 4. We recommend installing `tinker-cookbook` in a virtual env either with `conda` or `uv`. For running most examples, you can install via `pip install -e .`.
@@ -59,6 +59,16 @@ We also include a wide range of more sophisticated examples in the [`tinker_cook
 6. **[Multi-Agent](tinker_cookbook/recipes/multiplayer_rl/)**: optimize LLMs to play against another LLM or themselves.
 
 These examples are located in each subfolder, and their `README.md` files will walk you through the key implementation details, the commands to run them, and the expected performance.
+
+### Documentation
+
+The `docs/` directory contains a mirror of the Tinker documentation. These files are synced from our internal documentation site.
+
+**Note:** The documentation files use MDX format (Markdown with JSX), which includes some syntax that isn't standard Markdown. You may see things like `import` statements, `<Callout>` components, or curly-brace expressions. These are artifacts of our documentation framework - the actual content should still be readable as Markdown.
+
+If you find errors or want to improve the documentation, feel free to submit a PR editing files in `docs/`. We'll sync the changes back to our documentation site.
+
+For the rendered documentation, visit [tinker-docs.thinkingmachines.ai](https://tinker-docs.thinkingmachines.ai).
 
 ### Import our utilities
 

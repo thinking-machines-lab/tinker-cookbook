@@ -1,0 +1,59 @@
+# Available Models in Tinker
+
+The table below shows the models that are currently available in Tinker. We plan to update this list as new models are released.
+
+## What model should I use?
+
+- In general, use MoE models, which are more cost effective than the dense models.
+- Use Base models only if you're doing research or are running the full post-training pipeline yourself
+- If you want to create a model that is good at a specific task or domain, use an existing post-trained model, and fine-tune it on your own data or environment.
+    - If you care about latency, use one of the Instruction models, which will start outputting tokens without a chain-of-thought.
+    - If you care about intelligence and robustness, use one of the Hybrid or Reasoning models, which can use long chain-of-thought.
+
+## Full Listing
+
+| Model Name                                                                                      | Training Type | Architecture | Size      |
+| ----------------------------------------------------------------------------------------------- | ------------- | ------------ | --------- |
+| [Qwen/Qwen3-VL-235B-A22B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-235B-A22B-Instruct)     | Vision        | MoE          | Large     |
+| [Qwen/Qwen3-VL-30B-A3B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct)         | Vision        | MoE          | Medium    |
+| [Qwen/Qwen3-235B-A22B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-235B-A22B-Instruct-2507) | Instruction   | MoE          | Large     |
+| [Qwen/Qwen3-30B-A3B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507)     | Instruction   | MoE          | Medium    |
+| [Qwen/Qwen3-30B-A3B](https://huggingface.co/Qwen/Qwen3-30B-A3B)                                 | Hybrid        | MoE          | Medium    |
+| [Qwen/Qwen3-30B-A3B-Base](https://huggingface.co/Qwen/Qwen3-30B-A3B-Base)                       | Base          | MoE          | Medium    |
+| [Qwen/Qwen3-32B](https://huggingface.co/Qwen/Qwen3-32B)                                         | Hybrid        | Dense        | Medium    |
+| [Qwen/Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B)                                           | Hybrid        | Dense        | Small     |
+| [Qwen/Qwen3-8B-Base](https://huggingface.co/Qwen/Qwen3-8B-Base)                                 | Base          | Dense        | Small     |
+| [Qwen/Qwen3-4B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507)               | Instruction   | Dense        | Compact   |
+| [openai/gpt-oss-120b](https://huggingface.co/openai/gpt-oss-120b)                               | Reasoning     | MoE          | Medium    |
+| [openai/gpt-oss-20b](https://huggingface.co/openai/gpt-oss-20b)                                 | Reasoning     | MoE          | Small     |
+| [deepseek-ai/DeepSeek-V3.1](https://huggingface.co/deepseek-ai/DeepSeek-V3.1)                   | Hybrid        | MoE          | Large     |
+| [deepseek-ai/DeepSeek-V3.1-Base](https://huggingface.co/deepseek-ai/DeepSeek-V3.1-Base)         | Base          | MoE          | Large     |
+| [meta-llama/Llama-3.1-70B](https://huggingface.co/meta-llama/Llama-3.1-70B)                     | Base          | Dense        | Large     |
+| [meta-llama/Llama-3.3-70B-Instruct](https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct)   | Instruction   | Dense        | Large     |
+| [meta-llama/Llama-3.1-8B](https://huggingface.co/meta-llama/Llama-3.1-8B)                       | Base          | Dense        | Small     |
+| [meta-llama/Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct)     | Instruction   | Dense        | Small     |
+| [meta-llama/Llama-3.2-3B](https://huggingface.co/meta-llama/Llama-3.2-3B)                       | Base          | Dense        | Compact   |
+| [meta-llama/Llama-3.2-1B](https://huggingface.co/meta-llama/Llama-3.2-1B)                       | Base          | Dense        | Compact   |
+| [moonshotai/Kimi-K2-Thinking](https://huggingface.co/moonshotai/Kimi-K2-Thinking)               | Reasoning     | MoE          | Large     |
+
+## Legend
+
+### Training Types
+- **Base**: Foundation models trained on raw text data, suitable for post-training research and custom fine-tuning.
+- **Instruction**: Models fine-tuned for following instructions and chat, optimized for fast inference.
+- **Reasoning**: Models that always use chain-of-thought reasoning before their "visible" output that responds to the prompt.
+- **Hybrid**: Models that can operate in both thinking and non-thinking modes, where the non-thinking mode requires using a special renderer or argument that disables chain-of-thought.
+- **Vision**: Vision-language models (VLMs) that can process images alongside text. See [Vision Inputs](/rendering#vision-inputs) for usage.
+
+### Architecture
+- **Dense**: Standard transformer architecture with all parameters active
+- **MoE**: Mixture of Experts architecture with sparse activation
+
+### Model Sizes
+
+- **Compact**: 1B-4B parameters
+- **Small**: 8B parameters
+- **Medium**: 30B-32B parameters
+- **Large**: 70B+ parameters
+
+Note that the MoE models are much more cost effective than the dense models as their cost is proportional to the number of active parameters and not the total number of parameters.

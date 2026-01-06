@@ -2,26 +2,24 @@ import asyncio
 import json
 import logging
 from abc import ABC, abstractmethod
-from typing import Any
-
 import chromadb
 import chz
 from chromadb.api import AsyncClientAPI
 from chromadb.api.types import QueryResult
 from chromadb.config import Settings
 import google.genai as genai
-from tinker_cookbook.recipes.tool_use.search.embedding import (
+from tinker_cookbook.recipes.search_tool.embedding import (
     get_gemini_client,
     get_gemini_embedding,
 )
-from tinker_cookbook.renderers import Message, ToolCall
+from tinker_cookbook.renderers import Message, ToolCall, ToolSpec
 
 logger = logging.getLogger(__name__)
 
 
 class ToolClientInterface(ABC):
     @abstractmethod
-    def get_tool_schemas(self) -> list[dict[str, Any]]: ...
+    def get_tool_schemas(self) -> list[ToolSpec]: ...
 
     @abstractmethod
     async def invoke(self, tool_call: ToolCall) -> list[Message]: ...
@@ -89,13 +87,12 @@ class ChromaToolClient(ToolClientInterface):
             chroma_config.retrieval_config.embedding_config,
         )
 
-    def get_tool_schemas(self) -> list[dict[str, Any]]:
+    def get_tool_schemas(self) -> list[ToolSpec]:
         return [
             {
                 "name": "search",
-                "title": "Wikipedia search",
                 "description": "Searches Wikipedia for relevant information based on the given query.",
-                "inputSchema": {
+                "parameters": {
                     "type": "object",
                     "properties": {
                         "query_list": {
@@ -105,10 +102,6 @@ class ChromaToolClient(ToolClientInterface):
                         }
                     },
                     "required": ["query_list"],
-                },
-                "outputSchema": {
-                    "type": "string",
-                    "description": "The search results in JSON format",
                 },
             }
         ]

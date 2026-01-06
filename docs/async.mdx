@@ -1,0 +1,58 @@
+# Async and Futures
+
+## Sync and Async APIs
+
+Every method in the Tinker Python library has both a synchronous (sync) and an asynchronous (async) version. The async variants end with `_async`:
+
+| **Client** | **Sync method** | **Async method** |
+|---|---|---|
+| `ServiceClient` | `create_lora_training_client()` | `create_lora_training_client_async()` |
+| `TrainingClient` | `forward()` | `forward_async()` |
+| `SamplingClient` | `sample()` | `sample_async()` |
+| `RestClient` | `list_training_run_ids()` | `list_training_run_ids_async()` |
+
+Tinker's `async` functionality requires an `asyncio` event loop, which you typically run like `asyncio.run(main())`.
+
+**When to use each:**
+
+- **Async:** Best for high-performance workflows where you need concurrency, especially when waiting on multiple network calls.
+- **Sync:** Simpler for scripts and learning examples. Easier to reason about but blocks on each operation.
+
+The Tinker Cookbook generally uses `async` for implementations where performance is critical and sync for pedagogical examples.
+
+## Understanding Futures
+
+Most Tinker API methods are **non-blocking**, but may take a little while to run. They return immediately with a `Future` object that acknowledges that your request has been submitted. To get the actual result, you must explicitly wait:
+
+**Sync Python:**
+```python
+future = client.forward_backward(data, loss_fn)
+result = future.result() # Blocks until complete
+```
+
+**Async Python (note the double await):**
+```python
+future = await client.forward_backward_async(data, loss_fn)
+result = await future
+```
+
+After the first `await`, you're guaranteed that the request has been submitted, which ensures that it'll be ordered correctly relative to other requests. The second `await` waits for the actual computation to finish and returns the numerical outputs. For operations like `forward_backward`, the second `await` also guarantees that operation has been applied to the model---for `forward_backward`, this means that the gradients have been accumulated in the model's optimizer state.
+
+## Performance tips: overlap requests
+
+For best performance, you should aim to submit your next request while the current one is running. Doing so is more important with Tinker than with other training systems because Tinker training runs on discrete [clock cycles](./under-the-hood#clock-cycles) (~10 seconds each). If you don't have a request queued when a cycle starts, you'll miss that cycle entirely.
+
+**Example pattern for overlapping forward_backward and optim_step:**
+```python
+# Submit forward_backward
+fwd_bwd_future = await client.forward_backward_async(batch, loss_fn)
+
+# Submit optim_step immediately (don't wait for forward_backward to finish)
+optim_future = await client.optim_step_async(adam_params)
+
+# Now retrieve results
+fwd_bwd_result = await fwd_bwd_future
+optim_result = await optim_future
+```
+
+This pattern ensures both operations are queued and can be processed in the same [clock cycle](./under-the-hood#clock-cycles). In contrast, if you waited for `forward_backward` to complete before submitting `optim_step`, you might miss the next [clock cycle](./under-the-hood#clock-cycles).

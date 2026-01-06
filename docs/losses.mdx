@@ -1,0 +1,308 @@
+import { CookbookLink } from '../components/CookbookLink'
+
+# Loss functions in Tinker
+
+For most use cases, you can use the Tinker API's built-in loss functions by passing in a string identifier to `forward_backward`, which supports cross-entropy and policy gradient objectives. When you need more control, `forward_backward_custom` enables arbitrary differentiable loss functions at the cost of an additional forward pass; we explain both approaches in this doc.
+
+When you call `forward_backward`, you specify a loss function using a string that selects from a predetermined set of options, comprising the most common losses used for language model training.
+- **Input:** `forward_backward` expects a certain set of input tensors, passed in via `datum.loss_fn_inputs`, which is a dict mapping `str` to either a numpy or torch tensor
+- **Output:** `forward_backward` returns a `ForwardBackwardOutput`, which has a set of output tensors in `fwd_bwd_result.loss_fn_outputs`
+
+For an example of using `forward_backward`, see `rl/train.py` in the Cookbook:
+```python
+import tinker
+import torch
+from tinker import TensorData
+
+# Create training data with required inputs
+datum = tinker.Datum(
+    model_input=input_tokens,
+    loss_fn_inputs={
+        "target_tokens": TensorData.from_torch(torch.tensor(target_tokens)),
+        "logprobs": TensorData.from_torch(torch.tensor(sampling_logprobs)),  # Reference logprobs
+        "advantages": TensorData.from_torch(torch.tensor(advantages)),
+    }
+)
+
+# Option 1: Use importance sampling REINFORCE
+fwd_bwd_result = await training_client.forward_backward_async(
+    [datum], loss_fn="importance_sampling"
+)
+
+# Option 2: Use PPO with clipping
+fwd_bwd_result = await training_client.forward_backward_async(
+    [datum], loss_fn="ppo"
+)
+```
+
+## Basic loss functions
+
+Currently, the Tinker API supports `cross_entropy` (for supervised learning), `importance_sampling`, `ppo`, `cispo` and `dro` for RL. We denote the training model as $p_{\theta}$, the sampling distribution as $q$, and advantages as $A$. Also, for notation simplicity we omit the query and denote the full model completion sequence of tokens as $x$.
+
+All losses are applied at the token level and tensors below have shape `(N,)` where `N` is `model_input.length`. They can be provided as `numpy.ndarray` or `torch.Tensor`, and the return values will use the same tensor type.
+
+### Supervised learning: `cross_entropy`
+
+For SL, we implement the standard cross-entropy loss (i.e., negative log-likelihood), which optimizes the policy $p_\theta$ to maximize the log-probability of the tokens $x$:
+
+$$
+\mathcal{L(\theta)} = -\mathbb{E}_x[\log p_\theta(x)]
+$$
+
+where `weights` is either 0 or 1, typically generated from `renderer.build_supervised_example()` which returns `(model_input, weights)` (i.e., to specify the desired assistant turns to train on).
+
+This is implemented as:
+
+```python
+# Apply weights and compute elementwise loss
+elementwise_loss = -target_logprobs * weights
+# Apply sum reduction to get the total loss
+loss = elementwise_loss.sum()  # scalar
+```
+
+- **Input tensors:**
+  - `target_tokens: array[(N,), int]` - Target token IDs
+  - `weights: array[(N,), float]` - Token-level loss weights (typically from the renderer)
+- **Output tensors:**
+  - `logprobs: array[(N,), float]` - Log probabilities of predicted tokens
+- **Output diagnostics:**
+  - `loss:sum` (scalar) - Sum of weighted cross-entropy losses
+
+### Policy gradient: `importance_sampling`
+
+For RL, we implement a common variant of the policy gradient objective, used in practical settings where the *learner policy* $p$ may differ from the *sampling policy* $q$, which is common due to, e.g., [non-determinism](https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/). The issue is that if these policies differ, then the objective:
+
+$$
+\mathcal{L}(\theta) = \mathbb{E}_{x\sim p_\theta}\bigl[A(x)\bigr]
+$$
+
+is not computed in an unbiased why due to $x \sim q$ (sampler) not exactly matching the desired $x \sim p_\theta$ (learner). To correct the bias, we use a modified "importance sampling" objective:
+
+$$
+\mathcal{L}_{\text{IS}}(\theta) = \mathbb{E}_{x\sim q}\Bigl[\frac{p_\theta(x)}{q(x)}A(x)\Bigr],
+$$
+
+which yields the correct expected reward. In the formula above:
+
+- $\log p_\theta(x)$ – `target_logprobs` is from the learner, on the forward part of the `forward_backward` pass.
+- $\log q(x)$ – `sampling_logprobs` is from the sampler, recorded during sampling as a correction term.
+
+This is implemented as:
+
+```python
+# Compute probability ratio
+prob_ratio = torch.exp(target_logprobs - sampling_logprobs)
+# Compute importance-weighted loss
+loss = -(prob_ratio * advantages).sum()
+```
+
+- **Input tensors:**
+  - `target_tokens: array[(N,), int]` - Target token IDs (from the sampler $q$)
+  - `logprobs: array[(N,), float]` - `sampling_logprobs` for the tokens
+  - `advantages: array[(N,), float]` - Advantage values for RL (positive to reinforce, negative to discourage)
+- **Output tensors:**
+  - `logprobs: array[(N,), float]` - `target_logprobs` for the tokens
+- **Output diagnostics:**
+  - `loss:sum` (scalar) - Sum of importance-weighted policy gradient losses $\mathcal L_{\text{IS}}$
+
+### Proximal Policy Optimization: `ppo`
+
+PPO ([Schulman et al., 2017](https://arxiv.org/abs/1707.06347)) addresses issues with standard policy gradient methods by introducing a clipping objective that limits policy updates within a close neighborhood of the sampling distribution. This prevents updates that are too large in policy space, especially when taking multiple gradient steps on the same rollout distribution.
+
+The objective clips the importance ratio $\frac{p_\theta(x)}{q(x)}$ to prevent large policy updates, where $p_\theta$ is the learner policy and $q$ is the sampling policy. Note that the PPO clipping and loss computation is applied token-wise, computing the loss for each token independently.
+
+The PPO clipping objective is:
+
+$$
+\mathcal{L}_{\text{CLIP}}(\theta) = -\mathbb{E}_{x \sim q}\left[\text{clip}\left(\frac{p_\theta(x)}{q(x)}, 1-\epsilon_{\text{low}}, 1+\epsilon_{\text{high}}\right) \cdot A(x)\right]
+$$
+
+The final PPO loss combines the clipped and unclipped objectives:
+
+$$
+\mathcal{L}_{\text{PPO}}(\theta) = -\mathbb{E}_{x \sim q}\left[\min\left(\frac{p_\theta(x)}{q(x)} \cdot A(x), \text{clip}\left(\frac{p_\theta(x)}{q(x)}, 1-\epsilon_{\text{low}}, 1+\epsilon_{\text{high}}\right) \cdot A(x)\right)\right]
+$$
+
+where $\epsilon_{\text{low}}$ and $\epsilon_{\text{high}}$ are hyperparameters (currently fixed to 0.2 in Tinker).
+
+This is implemented as:
+
+```python
+# Compute probability ratio
+prob_ratio = torch.exp(target_logprobs - sampling_logprobs)
+# Apply clipping
+clipped_ratio = torch.clamp(prob_ratio, clip_low_threshold, clip_high_threshold)
+# Compute both objectives
+unclipped_objective = prob_ratio * advantages
+clipped_objective = clipped_ratio * advantages
+# Take minimum (most conservative)
+ppo_objective = torch.min(unclipped_objective, clipped_objective)
+# PPO loss is negative of objective
+loss = -ppo_objective.sum()
+```
+
+
+**Example with custom clipping thresholds:**
+```python
+fwd_bwd_result = await training_client.forward_backward_async(
+    data=data,
+    loss_fn="ppo",
+    loss_fn_config={"clip_low_threshold": 0.9, "clip_high_threshold": 1.1}
+)
+```
+
+**Additional Notes:**
+- The loss formulation above is quite general, since the user can organize the data generation and advantage estimation in their own code. For example, the main RL training scripts in the Tinker Cookbook use group-based rollouts with per-group advantage centering similar to GRPO ([Shao et al., 2024](https://arxiv.org/abs/2402.03300)).
+- The functional implementations of REINFORCE and PPO do not use an additional KL term like the original GRPO work, which has been noted to be mathematically inconsistent ([Zhang et al., 2025](https://arxiv.org/abs/2505.17508); [Tang et al., 2025](https://arxiv.org/abs/2506.09477)). However, it is possible to include a KL regularization term as part of the reward, which is mathematically correct and we provide this option in our RL training <CookbookLink path="tinker_cookbook/rl/train.py">code and examples</CookbookLink>  (consider the incorporate_kl_penalty function).
+- Notice that for all objectives we sum the token-level losses over the sequence length unlike some other loss implementations. If you would like to explore different aggregation schemes, you can include that in the advantage tensor computation.
+
+### Clipped Importance Sampling Policy Optimization: `cispo`
+
+CISPO ([Chen et al., 2024](https://arxiv.org/abs/2506.13585); [Khatri et al., 2024](https://arxiv.org/abs/2510.13786)) is a policy gradient method that uses a clipped importance ratio as a coefficient for the policy gradient. Unlike PPO which clips the objective directly, CISPO clips the ratio and uses it to weight the log probability. Mathematically the objective is:
+The CISPO objective is:
+
+$$
+\mathcal{L}_{\text{CISPO}}(\theta) = \mathbb{E}_{x \sim q}\left[\textbf{sg}\left( \text{clip}\left(\frac{p_\theta(x)}{q(x)}, 1-\epsilon_{\text{low}}, 1+\epsilon_{\text{high}}\right) \right) \cdot \log p_\theta(x) \cdot A(x)\right]
+$$
+
+This is implemented as:
+
+```python
+# Compute probability ratio
+prob_ratio = torch.exp(target_logprobs - sampling_logprobs)
+# Apply clipping
+clipped_ratio = torch.clamp(prob_ratio, clip_low_threshold, clip_high_threshold)
+# Compute CISPO objective (detach the clipped ratio)
+cispo_objective = clipped_ratio.detach() * target_logprobs * advantages
+# CISPO loss is negative of objective
+loss = -cispo_objective.sum()
+```
+
+
+Similarly to the PPO objective you can pass loss function parameters in the following way:
+
+```python
+fwd_bwd_result = await training_client.forward_backward_async(
+    data=data,
+    loss_fn="cispo",
+    loss_fn_config={"clip_low_threshold": 0.8, "clip_high_threshold": 1.2}
+)
+```
+
+### Direct Reward Optimization: `dro`
+
+DRO ([Richemond et al., 2024](https://arxiv.org/abs/2405.19107); [Kimi Team et al., 2025](https://arxiv.org/abs/2501.12599)) is a general off-policy (and even offline) reinforcement learning method that uses a quadratic penalty term to constrain the policy update. Notice that this loss uses a dfferent (soft) formulation of the advantage estimation, which needs to be implemented on the client side.
+The DRO objective is:
+
+$$
+\mathcal{L}_{\text{DRO}}(\theta) = \mathbb{E}_{x \sim q}\left[\log p_\theta(x) \cdot A(x) - \frac{1}{2}\beta \left(\log \frac{p_\theta(x)}{q(x)}\right)^2\right]
+$$
+
+
+This is implemented as:
+
+```python
+# Compute quadratic penalty term
+quadratic_term = (target_logprobs - sampling_logprobs) ** 2
+# Compute DRO objective
+dro_objective = target_logprobs * advantages - 0.5 * beta * quadratic_term
+# DRO loss is negative of objective
+loss = -dro_objective.sum()
+```
+
+And similarly to other objectives, can specify the loss hyper-parameter as:
+
+```python
+fwd_bwd_result = await training_client.forward_backward_async(
+    data=data,
+    loss_fn="dro",
+    loss_fn_config={"beta": 0.05}
+)
+```
+
+## Flexible loss functions: `forward_backward_custom`
+
+For use cases outside of the above, we've provided the more flexible (but slower) methods `forward_backward_custom` and `forward_backward_custom_async` to compute a more general class of loss functions.
+
+### Usage
+
+Here's a simple example of a custom loss function:
+
+```python
+def logprob_squared_loss(data: list[Datum], logprobs: list[torch.Tensor]) -> tuple[torch.Tensor, dict[str, float]]:
+    loss = (logprobs ** 2).sum()
+    return loss, {"logprob_squared_loss": loss.item()}
+```
+
+You can call this loss function with `forward_backward_custom` like:
+
+```python
+loss, metrics = training_client.forward_backward_custom(data, logprob_squared_loss)
+```
+
+You can also define loss functions which operate on multiple sequences at a time. For example, a loss function that computes the variance across the sequences (although practically useless) can be implemented as:
+
+```python
+def variance_loss(data: list[Datum], logprobs: list[torch.Tensor]) -> tuple[torch.Tensor, dict[str, float]]:
+    flat_logprobs = torch.cat(logprobs)
+    variance = torch.var(flat_logprobs)
+    return variance, {"variance_loss": variance.item()}
+```
+
+A more practical use case would be to compute a Bradley-Terry loss on pairwise comparison data -- a classic approach in RL from human feedback, as introduced and popularized by [Learning to Summarize](https://arxiv.org/abs/2009.01325). Similarly, we can also implement [Direct Preference Optimization](https://arxiv.org/abs/2305.18290), which also computes a loss involving pairs of sequences; see the [DPO guide](/preferences/dpo-guide) for more details.
+
+If you're using a custom loss function that you think is generally useful, please let us know, and we'll add it to the list of built-in loss functions.
+
+We detail the `async` version of methods in the [Async and Futures](./async) of these docs.
+
+### How `forward_backward_custom` works
+
+You don't need to read the following section to use `forward_backward_custom`, but read on if you're curious about how it works under the hood. Tinker does NOT pickle your function or send it to the server. Instead, Tinker decomposes the gradient computation into a `forward` call followed by a `forward_backward` call on an appropriately designed weighted cross-entropy loss, which lets it compute exactly the right gradient.
+
+Mathematically, this works as follows. First, consider the full nonlinear loss function:
+
+```python
+loss = compute_loss_from_logprobs(compute_target_logprobs(params))
+```
+
+We construct a loss function that is linear in the logprobs, but has the same gradient with respect to params as the full nonlinear loss:
+
+```python
+logprobs = compute_target_logprobs(params)
+surrogate_loss = (logprobs * logprob_grads).sum()
+# where logprob_grads = dLoss/dLogprobs
+```
+
+Here's a diagram showing what happens under the hood, on the client and server.
+
+```mermaid
+%%{init: {'theme':'base', 'themeVariables': {'fontSize':'11px'}}}%%
+flowchart TD
+
+    subgraph Server ["Server Side"]
+        B["<b>Initial Forward Pass</b><br/><i>→ model outputs (logprobs)</i>"]
+        I["<b>Forward-Backward Pass</b><br/>Linear loss: sum(outputs * grad_outputs)<br/><i>→ final gradients on weights</i>"]
+    end
+
+    subgraph Client ["Client Side"]
+        A["<b>Prepare Data</b><br/>List of Datum objects<br/><i>→ training data</i>"]
+        A1["<b>Call forward function</b><br/>"]
+        C["<b>Compute Custom Loss on Model Outputs</b><br/>loss = custom_fn(logprobs)<br/><i>→ loss tensor</i>"]
+        G["<b>Backward Pass</b><br/>Call loss.backward()<br/><i>→ grad_outputs</i> (dLoss/dLogprobs)"]
+    end
+
+
+    A --> A1
+    A1 --> B
+    B --> C
+    C --> G
+    G --> I
+
+    classDef clientBox fill:#e1f5fe,stroke:#0277bd,color:#000
+    classDef serverBox fill:#f3e5f5,stroke:#7b1fa2,color:#000
+
+    class A,C,G clientBox
+    class B,I serverBox
+```
+
+Since `forward_backward_custom` does an extra forward pass, it requires 1.5x as many FLOPs as a single `forward_backward`. It'll also take up to 3x as long (wall time), due to implementation details of how `forward_backward` operations are scheduled.

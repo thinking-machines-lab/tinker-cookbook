@@ -1,0 +1,112 @@
+import { Callout } from 'nextra/components'
+import { CookbookLink } from '../../components/CookbookLink'
+
+# Direct Preference Optimization (DPO)
+
+Direct Preference Optimization (DPO) is a method for training language models to align with human preferences without requiring a separate reward model. Instead of using reinforcement learning with human feedback (RLHF), DPO directly optimizes the model to prefer chosen responses over rejected ones using a simple classification loss.
+
+## DPO Algorithm Details
+
+The core DPO loss is computed as:
+
+$$
+\mathcal{L}_{\theta} = -\mathbb{E}_{x, y_\text{chosen}, y_\text{rejected} \sim \mathcal{D}}\left[\log\sigma\left(\beta\log \frac{\pi_{\theta}(y_\text{chosen}|x)}{\pi_{\text{ref}}(y_\text{chosen}|x)} - \beta\log \frac{\pi_{\theta}(y_\text{rejected}|x)}{\pi_{\text{ref}}(y_\text{rejected}|x)}\right)\right]
+$$
+
+Where:
+- $\pi_{\theta}$ is the current policy
+- $\pi_{\text{ref}}$ is the reference model (typically the initial model before DPO training)
+- $\beta$ is the DPO beta parameter
+- Where $\mathcal{D}$ is a dataset of prompts $x$, a chosen response $y_{\text{chosen}}$ and a rejected response $y_{\text{rejected}}$
+
+This optimizes the classical constrained RLHF objective, where the reference model constrains deviation from the initial distribution.
+
+<Callout type="info">
+**DPO vs RLHF**: DPO eliminates the need for a separate reward model by directly optimizing the policy to prefer chosen responses. This makes training simpler and computationally cheaper than classical RLHF.
+</Callout>
+
+
+## Running DPO Training
+
+The implementation is in <CookbookLink path="tinker_cookbook/preference/train_dpo.py">train_dpo.py</CookbookLink> with a CLI interface in <CookbookLink path="tinker_cookbook/recipes/preference/dpo/train.py">train.py</CookbookLink>. You can run it from the command line:
+
+```bash
+python -m tinker_cookbook.recipes.preference.train \
+    log_path=/tmp/dpo-hhh-experiment \
+    model_name=meta-llama/Llama-3.2-1B \
+    dataset=hhh \
+    renderer_name=role_colon \
+    learning_rate=1e-5 \
+    dpo_beta=0.1
+```
+
+### Key Parameters
+
+- `log_relpath`: Directory where results and checkpoints are saved
+- `model_name`: Base model used as initialization and for the reference policy
+- `dataset`: Dataset name (`hhh`, `helpsteer3`, `ultrafeedback`)
+- `renderer_name`: How conversations are formatted (see [Rendering](../rendering.mdx))
+- `learning_rate`: Learning rate for optimization
+- `dpo_beta`: DPO beta parameter (controls the strength of preference learning)
+
+### Available Datasets
+
+There are several pre-defined datasets:
+
+- **`hhh`**: Anthropic's Helpful-Harmless-Honest dataset
+- **`helpsteer3`**: NVIDIA's HelpSteer3 preference dataset
+- **`ultrafeedback`**: UltraFeedback binarized preferences dataset
+
+These are implemented as `DPODatasetBuilder` classes and you can implement a custom dataset builder following the `tinker_cookbook.preference.preference_datasets` interface.
+
+## Training Process
+
+During training, you'll see output like this showing the DPO metrics:
+
+```
+                   Step 50
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
+┃ Metric                         ┃ Value     ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━┩
+│ accuracy                       │ 0.568627  │
+│ batch_time                     │ 27.953704 │
+│ chosen_reward                  │ 0.053621  │
+│ dpo_loss                       │ 0.683825  │
+│ learning_rate                  │ 0.000009  │
+│ margin                         │ 0.002147  │
+│ num_pairs                      │ 255       │
+│ num_tokens                     │ 112638    │
+│ progress                       │ 0.081210  │
+│ rejected_reward                │ 0.032152  │
+│ test/nll                       │ 1.871778  │
+└────────────────────────────────┴───────────┘
+```
+
+The key metrics are:
+- **`dpo_loss`**: The DPO classification loss
+- **`accuracy`**: Accuracy of the implicit reward model evaluated on the preference dataset
+- **`margin`**: Average difference between chosen and rejected rewards
+- **`chosen_reward`/`rejected_reward`**: Average rewards for chosen/rejected responses
+
+## Evaluating DPO Models
+
+After training, you can evaluate your DPO model using the inspect evaluation framework:
+
+```bash
+MODEL_PATH=tinker://YOUR_MODEL_PATH_HERE
+python -m tinker_cookbook.eval.run_inspect_evals \
+    model_path=$MODEL_PATH \
+    model_name=meta-llama/Llama-3.2-1B \
+    tasks=inspect_evals/ifeval \
+    renderer_name=role_colon
+```
+
+This will evaluate the model on various benchmarks to measure the impact of preference optimization.
+
+## Tips for DPO Training
+
+1. **Beta Parameter**: Start with `dpo_beta=0.1` and adjust based on your dataset.
+
+2. **Learning Rate**: Use a lower learning rate than supervised fine-tuning (typically 1e-5 to 1e-6).
+
+3. **Base Model**: The base model should already be in-distribution with the preference data. Either start with a light SFT phase or collect on-policy preferences. While training would still work, sharp distribution mis-match will create strange model behaviors.
