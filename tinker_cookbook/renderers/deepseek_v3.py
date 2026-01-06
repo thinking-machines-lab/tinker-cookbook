@@ -433,16 +433,17 @@ class DeepSeekV3ThinkingRenderer(_DeepSeekV3BaseRenderer):
 
         When sampling with build_generation_prompt, the <think> tag is part of the
         prefill and not included in the sampled tokens. The response will be
-        "reasoning</think>answer" - we prepend <think> so parse_think_blocks works.
+        "reasoning</think>answer" so we prepend <think> if necessary.
         """
-        content = self.tokenizer.decode(response)
-        # prefill case that satisfies both tests:
-        # - test_deepseek_parse_response_no_thinking_returns_string()
-        # - test_deepseek_parse_response_multiple_think_blocks()
-        if "</think>" in content:
-            content = "<think>" + content
-            response = self.tokenizer.encode(content, add_special_tokens=False)
-        return super().parse_response(response)  # pyright: ignore[reportCallIssue]
+        think_prefix_token: int = self.tokenizer.convert_tokens_to_ids("<think>")  # type: ignore[assignment]
+        think_suffix_token: int = self.tokenizer.convert_tokens_to_ids("</think>")  # type: ignore[assignment]
+
+        # Only prepend <think> if the response doesn't already start with it and contains </think>
+        starts_with_think = len(response) > 0 and response[0] == think_prefix_token
+        if not starts_with_think and think_suffix_token in response:
+            response = [think_prefix_token] + response
+
+        return super().parse_response(response)
 
 
 class DeepSeekV3DisableThinkingRenderer(_DeepSeekV3BaseRenderer):
