@@ -9,15 +9,11 @@ Supports two execution backends:
 from __future__ import annotations
 
 import json
-import os
 import re
 from typing import Any
 
 from tinker_cookbook.recipes.code_rl.lcb_utils import TEST_CODE, TEST_UTIL
 from tinker_cookbook.sandbox import SandboxBackend, SandboxFusionClient
-
-# Modal pool configuration
-MODAL_POOL_SIZE = int(os.getenv("MODAL_POOL_SIZE", "32"))
 
 # Global sandbox backend clients (lazily initialized)
 _sandboxfusion_client: SandboxFusionClient | None = None
@@ -41,7 +37,7 @@ def _get_modal_pool():
         from tinker_cookbook.sandbox.modal_sandbox import ModalSandboxPool
 
         image = modal.Image.debian_slim().pip_install("numpy")
-        _modal_pool = ModalSandboxPool(pool_size=MODAL_POOL_SIZE, image=image)
+        _modal_pool = ModalSandboxPool(image=image)
     return _modal_pool
 
 

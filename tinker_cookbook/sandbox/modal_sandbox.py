@@ -4,12 +4,16 @@ Thin wrapper around Modal Sandbox API.
 Modal provides cloud-based sandboxed execution environments.
 Requires Modal authentication: `modal token new`
 
+Configuration via environment variables:
+    MODAL_POOL_SIZE: Number of sandboxes in the pool (default: 32)
+
 See: https://modal.com/docs/guide/sandbox
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import uuid
 
 import modal
@@ -127,12 +131,12 @@ class ModalSandboxPool:
 
     def __init__(
         self,
-        pool_size: int = 8,
+        pool_size: int | None = None,
         image: modal.Image | None = None,
         app_name: str = "tinker-cookbook-runner",
         default_timeout: int = 240,
     ):
-        self._pool_size = pool_size
+        self._pool_size = pool_size or int(os.getenv("MODAL_POOL_SIZE", "32"))
         self._image = image
         self._app_name = app_name
         self._default_timeout = default_timeout
@@ -144,7 +148,7 @@ class ModalSandboxPool:
                 image=image,
                 default_timeout=default_timeout,
             )
-            for _ in range(pool_size)
+            for _ in range(self._pool_size)
         ]
 
         # Queue for borrowing/returning sandboxes
