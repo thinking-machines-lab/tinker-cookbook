@@ -20,11 +20,3 @@ __all__ = [
     "SandboxBackend",
     "SandboxFusionClient",
 ]
-
-
-# ModalSandbox and ModalSandboxPool are lazily imported to avoid requiring modal as a dependency
-def get_modal_sandbox_pool(**kwargs):
-    """Factory to create a ModalSandboxPool without importing modal at module load."""
-    from tinker_cookbook.sandbox.modal_sandbox import ModalSandboxPool
-
-    return ModalSandboxPool(**kwargs)
