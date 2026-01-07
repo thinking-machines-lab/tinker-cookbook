@@ -27,11 +27,11 @@ class ModalSandbox:
         sandbox = ModalSandbox()
 
         # Manual file write and exec:
-        sandbox.write_file("/workspace/code.py", "print('hello')")
-        exit_code, stdout, stderr = sandbox.exec("python", "code.py", workdir="/workspace")
+        await sandbox.write_file("/workspace/code.py", "print('hello')")
+        exit_code, stdout, stderr = await sandbox.exec("python", "code.py", workdir="/workspace")
 
         # Run in isolated workdir with files:
-        exit_code, stdout, stderr = sandbox.run_in_workdir(
+        exit_code, stdout, stderr = await sandbox.run_in_workdir(
             files={"code.py": "print('hello')"},
             command=["python", "code.py"],
         )
@@ -51,12 +51,12 @@ class ModalSandbox:
         self._app = modal.App.lookup(self._app_name, create_if_missing=True)
         self._sandbox = modal.Sandbox.create(app=self._app, image=self._image)
 
-    def write_file(self, path: str, content: str) -> None:
+    async def write_file(self, path: str, content: str) -> None:
         """Write a file into the sandbox filesystem."""
-        with self._sandbox.open(path, "w") as f:
-            f.write(content)
+        async with await self._sandbox.open.aio(path, "w") as f:
+            await f.write.aio(content)
 
-    def exec(
+    async def exec(
         self,
         *args: str,
         workdir: str = "/workspace",
@@ -76,10 +76,10 @@ class ModalSandbox:
         timeout = timeout if timeout is not None else self._default_timeout
 
         try:
-            proc = self._sandbox.exec(*args, workdir=workdir, timeout=timeout)
-            stdout = proc.stdout.read()
-            stderr = proc.stderr.read()
-            exit_code = proc.wait()
+            proc = await self._sandbox.exec.aio(*args, workdir=workdir, timeout=timeout)
+            stdout = await proc.stdout.read.aio()
+            stderr = await proc.stderr.read.aio()
+            exit_code = await proc.wait.aio()
 
             # Decode bytes to str if needed
             if isinstance(stdout, bytes):
@@ -91,7 +91,7 @@ class ModalSandbox:
         except Exception as e:
             return -1, "", str(e)
 
-    def run_in_workdir(
+    async def run_in_workdir(
         self,
         files: dict[str, str],
         command: list[str],
@@ -112,13 +112,19 @@ class ModalSandbox:
         """
         workdir = f"/workspace/{uuid.uuid4().hex[:12]}"
         try:
-            self._sandbox.exec("mkdir", "-p", workdir).wait()
+            # Create workdir and check return code
+            proc = await self._sandbox.exec.aio("mkdir", "-p", workdir)
+            ret = await proc.wait.aio()
+            if ret != 0:
+                return ret, "", f"Failed to create workdir: {workdir}"
+
             for filename, content in files.items():
-                self.write_file(f"{workdir}/{filename}", content)
-            exit_code, stdout, stderr = self.exec(*command, workdir=workdir, timeout=timeout)
+                await self.write_file(f"{workdir}/{filename}", content)
+            exit_code, stdout, stderr = await self.exec(*command, workdir=workdir, timeout=timeout)
             return exit_code, stdout, stderr
         finally:
-            self._sandbox.exec("rm", "-rf", workdir).wait()
+            proc = await self._sandbox.exec.aio("rm", "-rf", workdir)
+            await proc.wait.aio()
 
 
 class ModalSandboxPool:
@@ -176,6 +182,6 @@ class ModalSandboxPool:
         """
         sandbox = await self._queue.get()
         try:
-            return await asyncio.to_thread(sandbox.run_in_workdir, files, command, timeout)
+            return await sandbox.run_in_workdir(files, command, timeout)
         finally:
             await self._queue.put(sandbox)
