@@ -112,7 +112,6 @@ class ModalSandbox:
         """
         workdir = f"/workspace/{uuid.uuid4().hex[:12]}"
         try:
-            # Create workdir and check return code
             proc = await self._sandbox.exec.aio("mkdir", "-p", workdir)
             ret = await proc.wait.aio()
             if ret != 0:
