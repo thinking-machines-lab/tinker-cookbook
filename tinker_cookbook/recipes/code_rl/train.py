@@ -3,9 +3,11 @@ import logging
 from datetime import datetime
 
 import chz
+
 from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.recipes.code_rl.code_env import DeepcoderDatasetBuilder
 from tinker_cookbook.rl.train import AsyncConfig, Config, main
+from tinker_cookbook.sandbox import SandboxBackend
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,9 @@ class CLIConfig:
     # Async rollout configuration
     max_steps_off_policy: int | None = None
 
+    # Code execution sandbox configuration
+    sandbox_backend: SandboxBackend = SandboxBackend.SANDBOXFUSION
+
 
 async def cli_main(cli_config: CLIConfig) -> None:
     renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(
@@ -76,6 +81,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
         renderer_name=renderer_name,
         group_size=cli_config.group_size,
         seed=cli_config.seed,
+        sandbox_backend=cli_config.sandbox_backend,
     )
 
     config = Config(

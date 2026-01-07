@@ -11,6 +11,7 @@ from tinker_cookbook.recipes.code_rl.code_grading import (
     sandbox_check_correctness,
     taco_to_lcb_format,
 )
+from tinker_cookbook.sandbox import SandboxBackend
 from tinker_cookbook.recipes.code_rl.lcb_utils import fetch_live_code_bench_system_prompt
 from tinker_cookbook import renderers
 from tinker_cookbook.rl.problem_env import ProblemEnv, ProblemGroupBuilder, logger
@@ -111,11 +112,13 @@ class CodeEnv(ProblemEnv):
         convo_prefix: list[renderers.Message] | None = None,
         format_coef: float = 0.1,
         reward_timeout: int = 6,
+        sandbox_backend: SandboxBackend | None = None,
     ):
         super().__init__(renderer, convo_prefix, format_coef=format_coef)
         self.problem = problem
         self.tests = tests
         self.reward_timeout = reward_timeout
+        self.sandbox_backend = sandbox_backend
 
     def get_question(self) -> str:
         return self.problem
@@ -136,7 +139,7 @@ class CodeEnv(ProblemEnv):
 
         try:
             success, details = await sandbox_check_correctness(
-                self.tests, code, timeout=self.reward_timeout
+                self.tests, code, timeout=self.reward_timeout, backend=self.sandbox_backend
             )
             status = "✓" if success else "✗"
             logtree.log_text(
@@ -193,6 +196,7 @@ class DeepcoderDataset(RLDataset):
         seed: int = 0,
         format_coef: float = 0.1,
         reward_timeout: int = 6,
+        sandbox_backend: SandboxBackend | None = None,
     ):
         self.ds = _load_deepcoder_split(split)
         if split == "train":
@@ -203,6 +207,7 @@ class DeepcoderDataset(RLDataset):
         self.convo_prefix = convo_prefix
         self.format_coef = format_coef
         self.reward_timeout = reward_timeout
+        self.sandbox_backend = sandbox_backend
 
     def __len__(self) -> int:
         return (len(self.ds) + self.batch_size - 1) // self.batch_size
@@ -240,6 +245,7 @@ class DeepcoderDataset(RLDataset):
                 convo_prefix=self.convo_prefix,
                 format_coef=self.format_coef,
                 reward_timeout=self.reward_timeout,
+                sandbox_backend=self.sandbox_backend,
             ),
             num_envs=group_size,
             dataset_name="deepcoder",
@@ -256,6 +262,7 @@ class DeepcoderDatasetBuilder(RLDatasetBuilder):
     seed: int = 0
     format_coef: float = 0.1
     reward_timeout: int = 6
+    sandbox_backend: SandboxBackend | None = None
 
     async def __call__(self) -> tuple[DeepcoderDataset, DeepcoderDataset]:
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
@@ -269,6 +276,7 @@ class DeepcoderDatasetBuilder(RLDatasetBuilder):
             seed=self.seed,
             format_coef=self.format_coef,
             reward_timeout=self.reward_timeout,
+            sandbox_backend=self.sandbox_backend,
         )
         test_ds = DeepcoderDataset(
             batch_size=self.batch_size,
@@ -279,5 +287,6 @@ class DeepcoderDatasetBuilder(RLDatasetBuilder):
             seed=self.seed,
             format_coef=self.format_coef,
             reward_timeout=self.reward_timeout,
+            sandbox_backend=self.sandbox_backend,
         )
         return train_ds, test_ds
