@@ -117,8 +117,13 @@ class ModalSandbox:
             if ret != 0:
                 return ret, "", f"Failed to create workdir: {workdir}"
 
-            for filename, content in files.items():
-                await self.write_file(f"{workdir}/{filename}", content)
+            if files:
+                await asyncio.gather(
+                    *(
+                        self.write_file(f"{workdir}/{filename}", content)
+                        for filename, content in files.items()
+                    )
+                )
             exit_code, stdout, stderr = await self.exec(*command, workdir=workdir, timeout=timeout)
             return exit_code, stdout, stderr
         finally:
