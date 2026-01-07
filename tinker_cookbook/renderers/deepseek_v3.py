@@ -428,6 +428,23 @@ class DeepSeekV3ThinkingRenderer(_DeepSeekV3BaseRenderer):
         think_prefill = "<think>" + (prefill or "")
         return super().build_generation_prompt(messages, role, think_prefill)
 
+    def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+        """Parse response, prepending <think> since we prefill with it.
+
+        When sampling with build_generation_prompt, the <think> tag is part of the
+        prefill and not included in the sampled tokens. The response will be
+        "reasoning</think>answer" so we prepend <think> if necessary.
+        """
+        think_prefix_token: int = self.tokenizer.convert_tokens_to_ids("<think>")  # type: ignore[assignment]
+        think_suffix_token: int = self.tokenizer.convert_tokens_to_ids("</think>")  # type: ignore[assignment]
+
+        # Only prepend <think> if the response doesn't already start with it and contains </think>
+        starts_with_think = len(response) > 0 and response[0] == think_prefix_token
+        if not starts_with_think and think_suffix_token in response:
+            response = [think_prefix_token] + response
+
+        return super().parse_response(response)
+
 
 class DeepSeekV3DisableThinkingRenderer(_DeepSeekV3BaseRenderer):
     """
