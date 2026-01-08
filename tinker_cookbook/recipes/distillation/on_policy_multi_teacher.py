@@ -21,8 +21,10 @@ import asyncio
 import logging
 import os
 from datetime import datetime
+from typing import Any
 
 import chz
+from tinker.types import LossFnType
 from tinker_cookbook import cli_utils
 from tinker_cookbook.distillation import train_on_policy
 from tinker_cookbook.distillation.datasets import (
@@ -64,7 +66,11 @@ class CLIConfig:
 
     # Optimizer configuration
     num_substeps: int = 1
-    loss_fn: str = "importance_sampling"
+
+    # Loss function and configuration.
+    # See https://tinker-docs.thinkingmachines.ai/losses
+    loss_fn: LossFnType = "importance_sampling"
+    loss_fn_config: dict[str, Any] | None = None
 
     # Logging configuration
     log_path: str | None = None
@@ -156,7 +162,8 @@ async def cli_main(cli_config: CLIConfig):
         kl_penalty_coef=cli_config.kl_penalty_coef,
         kl_discount_factor=cli_config.kl_discount_factor,
         num_substeps=cli_config.num_substeps,
-        loss_fn=cli_config.loss_fn,  # type: ignore
+        loss_fn=cli_config.loss_fn,
+        loss_fn_config=cli_config.loss_fn_config,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
         log_path=log_path,

@@ -184,6 +184,7 @@ async def train_step(
     learning_rate: float,
     num_substeps: int,
     loss_fn: LossFnType,
+    loss_fn_config: dict[str, Any] | None = None,
 ) -> List[torch.Tensor]:
     """Train the model on collected trajectories.
 
@@ -198,7 +199,7 @@ async def train_step(
 
     # Enqueue first batch
     fwd_bwd_future = await training_client.forward_backward_async(
-        [_remove_mask(d) for d in batches[0]], loss_fn=loss_fn
+        [_remove_mask(d) for d in batches[0]], loss_fn=loss_fn, loss_fn_config=loss_fn_config
     )
     optim_future = await training_client.optim_step_async(adam_params)
 
@@ -206,7 +207,9 @@ async def train_step(
         # Enqueue next batch before consuming current results (to stay on same clock cycle)
         if i + 1 < len(batches):
             next_fwd_bwd_future = await training_client.forward_backward_async(
-                [_remove_mask(d) for d in batches[i + 1]], loss_fn=loss_fn
+                [_remove_mask(d) for d in batches[i + 1]],
+                loss_fn=loss_fn,
+                loss_fn_config=loss_fn_config,
             )
             next_optim_future = await training_client.optim_step_async(adam_params)
         else:
@@ -268,8 +271,10 @@ class Config:
     kl_penalty_coef: float = 0.0
     kl_discount_factor: float = 0.0
 
-    # Loss function to use for training: "importance_sampling" or "ppo"
+    # Loss function and configuration.
+    # See https://tinker-docs.thinkingmachines.ai/losses
     loss_fn: LossFnType = "importance_sampling"
+    loss_fn_config: dict[str, Any] | None = None
 
     # Number of optimizer steps per training iteration.
     # Useful for very large batch sizes.
@@ -888,7 +893,9 @@ async def do_train_step_streaming_and_get_sampling_client(
             with timed(f"train/fwd_bwd_substep_{i_substep}_mb_{i_minibatch}_enqueue", metrics):
                 forward_backward_futures.append(
                     await training_client.forward_backward_async(
-                        [_remove_mask(d) for d in data_D], loss_fn=cfg.loss_fn
+                        [_remove_mask(d) for d in data_D],
+                        loss_fn=cfg.loss_fn,
+                        loss_fn_config=cfg.loss_fn_config,
                     )
                 )
             all_data_D.extend(data_D)
@@ -963,11 +970,12 @@ async def do_train_step_and_get_sampling_client(
 
     with timed("train", metrics):
         training_logprobs_D = await train_step(
-            data_D,
-            training_client,
-            cfg.learning_rate,
-            cfg.num_substeps,
-            cfg.loss_fn,
+            data_D=data_D,
+            training_client=training_client,
+            learning_rate=cfg.learning_rate,
+            num_substeps=cfg.num_substeps,
+            loss_fn=cfg.loss_fn,
+            loss_fn_config=cfg.loss_fn_config,
         )
 
     sampling_client, full_batch_metrics = await compute_full_batch_metrics_and_get_sampling_client(
