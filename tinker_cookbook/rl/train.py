@@ -199,7 +199,9 @@ async def train_step(
 
     # Enqueue first batch
     fwd_bwd_future = await training_client.forward_backward_async(
-        [_remove_mask(d) for d in batches[0]], loss_fn=loss_fn, loss_fn_config=loss_fn_config
+        [_remove_mask(d) for d in batches[0]],
+        loss_fn=loss_fn,
+        loss_fn_config=loss_fn_config
     )
     optim_future = await training_client.optim_step_async(adam_params)
 
@@ -207,7 +209,9 @@ async def train_step(
         # Enqueue next batch before consuming current results (to stay on same clock cycle)
         if i + 1 < len(batches):
             next_fwd_bwd_future = await training_client.forward_backward_async(
-                [_remove_mask(d) for d in batches[i + 1]], loss_fn=loss_fn, loss_fn_config=loss_fn_config
+                [_remove_mask(d) for d in batches[i + 1]],
+                loss_fn=loss_fn,
+                loss_fn_config=loss_fn_config
             )
             next_optim_future = await training_client.optim_step_async(adam_params)
         else:
