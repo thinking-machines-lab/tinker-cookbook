@@ -312,7 +312,10 @@ async def main(config: Config):
 
         with timed("step", metrics):
             fwd_bwd_result = await submitted.fwd_bwd_future.result_async()
-            await submitted.optim_step_future.result_async()
+            optim_step_result = await submitted.optim_step_future.result_async()
+
+        if hasattr(optim_step_result, "metrics") and optim_step_result.metrics:
+            metrics.update(optim_step_result.metrics)
 
         logprobs = [x["logprobs"] for x in fwd_bwd_result.loss_fn_outputs]
         weights = [datum.loss_fn_inputs["weights"] for datum in submitted.data]
@@ -371,3 +374,4 @@ async def main(config: Config):
 
 if __name__ == "__main__":
     chz.nested_entrypoint(lambda config: asyncio.run(main(config)), allow_hyphens=True)
+
