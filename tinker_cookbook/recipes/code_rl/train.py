@@ -1,4 +1,4 @@
-"""Code RL training CLI launcher with tool-use infrastructure."""
+"""Code RL training CLI launcher."""
 
 import asyncio
 import logging

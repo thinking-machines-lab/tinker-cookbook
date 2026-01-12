@@ -1,7 +1,4 @@
-"""Code execution tool and reward function.
-
-Provides @tool-decorated method for code testing using sandbox execution.
-"""
+"""Code execution tool and reward function."""
 
 from __future__ import annotations
 
@@ -61,11 +58,11 @@ class CodeTool:
                 backend=self._sandbox_backend,
             )
             return json.dumps(
-                {"passed_all": passed, "details": _truncate_details(details)},
+                {"passed": passed, "details": details},
                 ensure_ascii=False,
             )
         except Exception as e:
-            return json.dumps({"error": str(e), "passed_all": False})
+            return json.dumps({"error": str(e), "passed": False})
 
     async def grade_code(self, code: str) -> tuple[bool, dict]:
         """Grade code against tests. Used by reward_fn."""
@@ -84,17 +81,6 @@ class CodeTool:
         except Exception as exc:
             logtree.log_text(f"Sandbox check failed: {exc}")
             return False, {}
-
-
-def _truncate_details(details: dict) -> dict:
-    """Truncate verbose details to avoid token bloat."""
-    result = {}
-    for key, value in details.items():
-        if isinstance(value, str) and len(value) > 500:
-            result[key] = value[:500] + "...[truncated]"
-        else:
-            result[key] = value
-    return result
 
 
 @dataclass
