@@ -7,6 +7,7 @@ providing a generic environment for tool-using agents.
 from __future__ import annotations
 
 import asyncio
+import inspect
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -73,7 +74,10 @@ class AgentToolMessageEnv(MessageEnv):
             results = await self._handle_tool_calls(tool_calls)
 
         # TODO: should probably give reward_fn the full history.
-        reward_delta, done_from_reward, reward_metrics = self.reward_fn(results, message)
+        reward_result = self.reward_fn(results, message)
+        if inspect.iscoroutine(reward_result):
+            reward_result = await reward_result
+        reward_delta, done_from_reward, reward_metrics = reward_result
         reward += reward_delta
         metrics.update(reward_metrics)
 
