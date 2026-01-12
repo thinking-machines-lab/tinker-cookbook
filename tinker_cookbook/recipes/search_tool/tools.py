@@ -147,6 +147,12 @@ class TextAnswerReward:
     def __call__(
         self, results: list[Message], message: Message
     ) -> tuple[float, bool, dict[str, float]]:
+        # If message has tool calls, this is a tool-call turn (not final answer)
+        # Return 0 reward and continue episode
+        if message.get("tool_calls"):
+            return 0.0, False, {}
+
+        # Otherwise, grade the final answer
         content = message.get("content", "")
         if not isinstance(content, str):
             content = str(content)
