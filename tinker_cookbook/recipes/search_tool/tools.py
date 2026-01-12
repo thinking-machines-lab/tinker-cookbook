@@ -32,17 +32,32 @@ _CONNECTION_SEMAPHORE = asyncio.Semaphore(128)
 
 
 @chz.chz
+class EmbeddingConfig:
+    """Configuration for embedding model."""
+
+    model_name: str = "gemini-embedding-001"
+    embedding_dim: int = 768
+    task_type: str = "RETRIEVAL_QUERY"
+
+
+@chz.chz
+class RetrievalConfig:
+    """Configuration for retrieval."""
+
+    n_results: int = 3
+    embedding_config: EmbeddingConfig = EmbeddingConfig()
+
+
+@chz.chz
 class ChromaToolConfig:
-    """Config for ChromaTool - mirrors ChromaToolClientConfig structure."""
+    """Config for ChromaTool - matches original ChromaToolClientConfig structure."""
 
     chroma_host: str
     chroma_port: int
     chroma_collection_name: str
-    n_results: int = 3
+    retrieval_config: RetrievalConfig = RetrievalConfig()
     max_retries: int = 10
     initial_retry_delay: int = 1
-    embedding_model: str = "gemini-embedding-001"
-    embedding_dim: int = 768
 
 
 class ChromaTool:
@@ -77,12 +92,13 @@ class ChromaTool:
     # === Copy-pasted internals from ChromaToolClient ===
 
     async def _get_embeddings_with_retry(self, query_list: list[str]) -> list[list[float]]:
+        embedding_config = self._config.retrieval_config.embedding_config
         return await get_gemini_embedding(
             self._gemini_client,
             query_list,
-            self._config.embedding_model,
-            self._config.embedding_dim,
-            "RETRIEVAL_QUERY",
+            embedding_config.model_name,
+            embedding_config.embedding_dim,
+            embedding_config.task_type,
         )
 
     async def _query_chroma_with_retry(self, query_embeddings: list[list[float]]) -> QueryResult:
@@ -93,7 +109,7 @@ class ChromaTool:
             try:
                 results = await collection.query(
                     query_embeddings=query_embeddings,  # pyright: ignore[reportArgumentType]
-                    n_results=self._config.n_results,
+                    n_results=self._config.retrieval_config.n_results,
                 )
                 return results
             except Exception as e:

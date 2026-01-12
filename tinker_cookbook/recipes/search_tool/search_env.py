@@ -140,7 +140,6 @@ def _initial_messages(
     chroma_tool: ChromaTool,
 ) -> list[Message]:
     """Build initial messages with tool schemas and task question."""
-    # Get tool schema from our @tool-decorated method
     tool_schemas = [chroma_tool.search.to_spec()]
     prefix = renderer.create_conversation_prefix_with_tools(
         tools=tool_schemas,
@@ -251,7 +250,6 @@ class SearchR1DatasetBuilder(types.RLDatasetBuilder):
         # Create shared ChromaTool
         chroma_tool = await ChromaTool.create(self.chroma_tool_config)
 
-        # Load and shuffle tasks - always use train split like original
         data = download_search_r1_dataset("train")
         rng = random.Random(self.seed)
         rng.shuffle(data)

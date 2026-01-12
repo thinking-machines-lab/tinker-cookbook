@@ -16,6 +16,8 @@ from tinker_cookbook.recipes.search_tool.search_env import (
 from tinker_cookbook.recipes.search_tool.tools import (
     ChromaTool,
     ChromaToolConfig,
+    EmbeddingConfig,
+    RetrievalConfig,
 )
 from tinker_cookbook.rl.rollouts import do_single_rollout
 
@@ -110,9 +112,13 @@ async def evaluate_one_dataset(data: list[SearchR1Datum], config: CLIConfig):
         chroma_host="localhost",
         chroma_port=8000,
         chroma_collection_name="wiki_embeddings",
-        n_results=3,
-        embedding_model="gemini-embedding-001",
-        embedding_dim=768,
+        retrieval_config=RetrievalConfig(
+            n_results=3,
+            embedding_config=EmbeddingConfig(
+                model_name="gemini-embedding-001",
+                embedding_dim=768,
+            ),
+        ),
     )
     chroma_tool = await ChromaTool.create(chroma_config)
 

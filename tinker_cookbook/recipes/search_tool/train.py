@@ -1,4 +1,4 @@
-"""CLI for Search-R1 replication with tool-use infrastructure."""
+"""CLI for Search-R1 replication."""
 
 import asyncio
 from datetime import datetime
@@ -8,7 +8,11 @@ import chz
 
 from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.recipes.search_tool.search_env import SearchR1DatasetBuilder
-from tinker_cookbook.recipes.search_tool.tools import ChromaToolConfig
+from tinker_cookbook.recipes.search_tool.tools import (
+    ChromaToolConfig,
+    EmbeddingConfig,
+    RetrievalConfig,
+)
 from tinker_cookbook.rl import train
 
 
@@ -36,8 +40,12 @@ class CLIConfig:
     chroma_port: int = 8000
     chroma_collection_name: str = "wiki_embeddings"
     n_results: int = 3
-    embedding_model: str = "gemini-embedding-001"
+    embedding_model_name: str = "gemini-embedding-001"
     embedding_dim: int = 768
+
+    # Streaming configuration
+    stream_minibatch: bool = False
+    num_minibatches: int = 4
 
     # Logging parameters
     log_path: str | None = None
@@ -48,14 +56,18 @@ class CLIConfig:
 
 
 async def cli_main(cli_config: CLIConfig) -> None:
-    # Build chroma tool config
+    # Build chroma tool config with nested structure
     chroma_tool_config = ChromaToolConfig(
         chroma_host=cli_config.chroma_host,
         chroma_port=cli_config.chroma_port,
         chroma_collection_name=cli_config.chroma_collection_name,
-        n_results=cli_config.n_results,
-        embedding_model=cli_config.embedding_model,
-        embedding_dim=cli_config.embedding_dim,
+        retrieval_config=RetrievalConfig(
+            n_results=cli_config.n_results,
+            embedding_config=EmbeddingConfig(
+                model_name=cli_config.embedding_model_name,
+                embedding_dim=cli_config.embedding_dim,
+            ),
+        ),
     )
 
     # Get renderer name
@@ -75,13 +87,24 @@ async def cli_main(cli_config: CLIConfig) -> None:
         format_coef=cli_config.format_coef,
     )
 
+    # Configure streaming minibatch
+    if cli_config.stream_minibatch:
+        stream_minibatch_config = train.StreamMinibatchConfig(
+            groups_per_batch=cli_config.batch_size,
+            num_minibatches=cli_config.num_minibatches,
+        )
+        bs_str = f"bs{cli_config.batch_size}_stream"
+    else:
+        stream_minibatch_config = None
+        bs_str = f"bs{cli_config.batch_size}"
+
     # Build run name
     model_name_short = cli_config.model_name.lower().replace("/", "-")
     date_and_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
     run_name = (
-        f"search_r1_{model_name_short}_bs{cli_config.batch_size}_"
-        f"gs{cli_config.group_size}_seed{cli_config.seed}_"
-        f"lr{cli_config.learning_rate}_rank{cli_config.lora_rank}_{date_and_time}"
+        f"search_r1_{model_name_short}_{bs_str}_gs{cli_config.group_size}_"
+        f"seed{cli_config.seed}_lr{cli_config.learning_rate}_"
+        f"rank{cli_config.lora_rank}_{date_and_time}"
     )
 
     # Set log path
@@ -113,6 +136,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
         lora_rank=cli_config.lora_rank,
+        stream_minibatch_config=stream_minibatch_config,
     )
 
     # Run training
