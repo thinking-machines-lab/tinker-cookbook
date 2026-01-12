@@ -38,11 +38,21 @@ A successful run generally learns multi-turn search within 10-25 steps, which ca
 
 To speed up training, you may consider turning on `--stream_minibatch`. In principle, this system improvement should have minimal effect on training.
 
+### Implementation Details
+
+This recipe uses the new tool-use infrastructure:
+- **`AgentToolMessageEnv`**: Message-level environment that handles tool execution automatically
+- **`@tool` decorator**: Defines tools using simple Python functions with type hints
+- **`ChromaTool`**: Search tool using Chroma DB + Gemini embeddings
+- **`TextAnswerReward`**: Reward function that grades answers based on format and correctness
+
+The old `SearchEnv` class has been replaced with this more modular approach. See `./train.py` for the implementation.
+
 ### Extensions: How to Include Other Tools?
 
-1. The tool call rendering / parsing logic is in [tinker_cookbook/renderers.py](../../../renderers.py). Currently, tool calling is only demonstrated on the Qwen series renderer. Currently, the system prompt necessary for enabling tool calling is included in `./search_env.py`. Changing the tool calling parsing format also requires updating the system prompt accordingly.
+1. The tool call rendering / parsing logic is in [tinker_cookbook/renderers/](../../renderers/). Tool calling is supported on multiple renderers (Qwen, GPT-OSS, DeepSeek, Kimi). The system prompt is in `./search_env.py` (`SEARCH_TASK_INSTRUCTIONS`).
 2. Extend `./embedding.py` to replace the Gemini embedding.
-3. Extend `./tools.py` to replace the Chroma vector search service.
+3. Extend `./tools.py` to add new tools using the `@tool` decorator - see `ChromaTool.search()` as an example.
 
 ### Replication Results
 
