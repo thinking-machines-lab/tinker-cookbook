@@ -13,7 +13,7 @@ import asyncio
 import chz
 
 from tinker_cookbook import cli_utils, model_info
-from tinker_cookbook.recipes.search_tool.search_env import RLDatasetBuilder
+from tinker_cookbook.recipes.search_tool.search_env import SearchR1DatasetBuilder
 from tinker_cookbook.recipes.search_tool.tools import ChromaToolConfig
 from tinker_cookbook.rl import train
 
@@ -29,14 +29,13 @@ def build_config_blueprint() -> chz.Blueprint[train.Config]:
         chroma_collection_name="wiki_embeddings",
     )
 
-    dataset_builder = RLDatasetBuilder(
-        model_name=model_name,
-        chroma_config=chroma_config,
+    dataset_builder = SearchR1DatasetBuilder(
+        model_name_for_tokenizer=model_name,
+        chroma_tool_config=chroma_config,
         renderer_name=renderer_name,
         batch_size=4,
         group_size=4,
         max_turns=5,
-        max_tasks=100,
     )
 
     return chz.Blueprint(train.Config).apply(

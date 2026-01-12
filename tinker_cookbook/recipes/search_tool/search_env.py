@@ -4,11 +4,11 @@ import os
 import random
 import re
 import string
-from dataclasses import dataclass
 from functools import reduce
 from pathlib import Path
 from typing import Literal, Sequence, TypedDict, cast
 
+import chz
 import pandas as pd
 from huggingface_hub import hf_hub_download
 
@@ -234,16 +234,14 @@ class RLDataset(types.RLDataset):
         return len(self.env_group_builders) // self.batch_size
 
 
-@dataclass(frozen=True)
-class RLDatasetBuilder(types.RLDatasetBuilder):
+@chz.chz
+class SearchR1DatasetBuilder(types.RLDatasetBuilder):
     """Build an RL dataset over SearchR1 tasks with ChromaTool."""
 
-    model_name: str
-    chroma_config: ChromaToolConfig
-    split: Literal["train", "test"] = "train"
-    max_tasks: int | None = 100
-    batch_size: int = 4
-    group_size: int = 4
+    model_name_for_tokenizer: str
+    chroma_tool_config: ChromaToolConfig
+    batch_size: int
+    group_size: int
     renderer_name: str | None = None
     max_turns: int = 5
     format_coef: float = 0.1
@@ -251,19 +249,17 @@ class RLDatasetBuilder(types.RLDatasetBuilder):
 
     async def __call__(self) -> tuple[types.RLDataset, types.RLDataset | None]:
         # Create shared ChromaTool
-        chroma_tool = await ChromaTool.create(self.chroma_config)
+        chroma_tool = await ChromaTool.create(self.chroma_tool_config)
 
-        # Load and shuffle tasks
-        data = download_search_r1_dataset(self.split)
+        # Load and shuffle tasks - always use train split like original
+        data = download_search_r1_dataset("train")
         rng = random.Random(self.seed)
         rng.shuffle(data)
-        if self.max_tasks is not None:
-            data = data[: self.max_tasks]
 
         env_builders = [
             EnvGroupBuilder(
                 datum=datum,
-                model_name=self.model_name,
+                model_name=self.model_name_for_tokenizer,
                 renderer_name=self.renderer_name,
                 max_turns=self.max_turns,
                 group_size=self.group_size,
