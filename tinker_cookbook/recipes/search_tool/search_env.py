@@ -1,10 +1,3 @@
-"""Search environment and task utilities.
-
-This module provides:
-- Task definition: SEARCH_TASK_INSTRUCTIONS, SearchR1Datum, dataset loading
-- Environment construction: build_env(), EnvGroupBuilder, RLDataset, RLDatasetBuilder
-"""
-
 from __future__ import annotations
 
 import os
@@ -24,7 +17,6 @@ from tinker_cookbook.recipes.search_tool.tools import (
     ChromaTool,
     ChromaToolConfig,
     TextAnswerReward,
-    build_tools,
 )
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import Message, Renderer
@@ -120,14 +112,6 @@ def process_single_row(row_series: pd.Series) -> SearchR1Datum:
 
 
 def download_search_r1_dataset(split: Literal["train", "test"]) -> list[SearchR1Datum]:
-    """Download and process the SearchR1 dataset.
-
-    Args:
-        split: Which split to download ("train" or "test")
-
-    Returns:
-        List of SearchR1Datum instances
-    """
     hf_repo_id: str = "PeterJinGo/nq_hotpotqa_train"
     parquet_filename: str = f"{split}.parquet"
     # TODO(tianyi): make download dir configurable for release
@@ -174,14 +158,13 @@ def build_env(
     chroma_tool: ChromaTool,
     format_coef: float = 0.1,
 ) -> EnvFromMessageEnv:
-    """Build an RL environment for a single search task."""
+    """Build the environment for a single search task."""
     tokenizer = tokenizer_utils.get_tokenizer(model_name)
     chosen_renderer = renderer_name or model_info.get_recommended_renderer_name(model_name)
     renderer = get_renderer(chosen_renderer, tokenizer)
 
-    tools = build_tools(chroma_tool)
     msg_env = AgentToolMessageEnv(
-        tools=tools,
+        tools=[chroma_tool.search],
         initial_messages=_initial_messages(datum, renderer, chroma_tool),
         max_turns=max_turns,
         reward_fn=TextAnswerReward(gold_answers=datum["answer"], format_coef=format_coef),

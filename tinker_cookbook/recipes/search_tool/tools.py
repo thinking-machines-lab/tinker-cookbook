@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Annotated, cast
+from typing import Annotated
 
 import chromadb
 import chz
@@ -17,13 +17,14 @@ import google.genai as genai
 from chromadb.api import AsyncClientAPI
 from chromadb.api.types import QueryResult
 from chromadb.config import Settings
+
 from tinker_cookbook.recipes.search_tool.embedding import (
     get_gemini_client,
     get_gemini_embedding,
 )
 from tinker_cookbook.recipes.search_tool.search_env import normalize_answer
 from tinker_cookbook.renderers.base import Message
-from tinker_cookbook.tool_use import ToolInterface, tool
+from tinker_cookbook.tool_use import tool
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +109,6 @@ class ChromaTool:
 
         raise RuntimeError("All ChromaDB query attempts failed")
 
-    # === New @tool interface ===
-
     @tool
     async def search(
         self,
@@ -133,11 +132,6 @@ class ChromaTool:
                 message_content += f"{doc}\n"
 
         return message_content
-
-
-def build_tools(chroma_tool: ChromaTool) -> list[ToolInterface]:
-    """Build list of tools from ChromaTool instance."""
-    return cast(list[ToolInterface], [chroma_tool.search])
 
 
 @dataclass
