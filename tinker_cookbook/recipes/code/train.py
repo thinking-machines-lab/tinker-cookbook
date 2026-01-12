@@ -1,8 +1,8 @@
-"""Search tool RL training CLI launcher.
+"""Code RL training CLI launcher.
 
 Usage:
 ```bash
-python -m tinker_cookbook.recipes.search_tool.train model_name=<model>
+python -m tinker_cookbook.recipes.code.train model_name=<model>
 ```
 """
 
@@ -13,16 +13,16 @@ from datetime import datetime
 import chz
 
 from tinker_cookbook import cli_utils, model_info
-from tinker_cookbook.recipes.search_tool.search_env import SearchR1DatasetBuilder
-from tinker_cookbook.recipes.search_tool.tools import ChromaToolConfig
+from tinker_cookbook.recipes.code.code_env import CodeDatasetBuilder
 from tinker_cookbook.rl.train import AsyncConfig, Config, main
+from tinker_cookbook.sandbox import SandboxBackend
 
 logger = logging.getLogger(__name__)
 
 
 @chz.chz
 class CLIConfig:
-    """Command-line configuration for Search Tool RL training."""
+    """Command-line configuration for Code RL training with tool-use."""
 
     # Model configuration
     model_name: str = "meta-llama/Llama-3.1-8B-Instruct"
@@ -32,19 +32,15 @@ class CLIConfig:
 
     # Data / environment configuration
     seed: int = 0
-    max_turns: int = 5
+    max_turns: int = 1
     format_coef: float = 0.1
-
-    # Chroma configuration
-    chroma_host: str = "localhost"
-    chroma_port: int = 8000
-    chroma_collection_name: str = "wiki_embeddings"
+    timeout: int = 6
 
     # Training hyperparameters
     group_size: int = 4
     groups_per_batch: int = 100
-    learning_rate: float = 4e-5
-    max_tokens: int = 512
+    learning_rate: float = 1e-5
+    max_tokens: int = 5
     kl_penalty_coef: float = 0.0
     num_substeps: int = 1
 
@@ -65,6 +61,9 @@ class CLIConfig:
     # Async rollout configuration
     max_steps_off_policy: int | None = None
 
+    # Code execution sandbox configuration
+    sandbox_backend: SandboxBackend = SandboxBackend.SANDBOXFUSION
+
 
 async def cli_main(cli_config: CLIConfig) -> None:
     renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(
@@ -73,7 +72,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
 
     model_tag = cli_config.model_name.replace("/", "-")
     run_name = (
-        f"search-{model_tag}-{cli_config.lora_rank}rank-"
+        f"code-{model_tag}-{cli_config.lora_rank}rank-"
         f"{cli_config.learning_rate}lr-{cli_config.group_size}group-"
         f"{cli_config.groups_per_batch}batch-seed{cli_config.seed}-"
         f"{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
@@ -83,25 +82,20 @@ async def cli_main(cli_config: CLIConfig) -> None:
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
     else:
-        log_path = f"/tmp/tinker-examples/search_tool/{run_name}"
+        log_path = f"/tmp/tinker-examples/code/{run_name}"
 
     wandb_name = cli_config.wandb_name or run_name
 
-    chroma_config = ChromaToolConfig(
-        chroma_host=cli_config.chroma_host,
-        chroma_port=cli_config.chroma_port,
-        chroma_collection_name=cli_config.chroma_collection_name,
-    )
-
-    dataset_builder = SearchR1DatasetBuilder(
+    dataset_builder = CodeDatasetBuilder(
         batch_size=cli_config.groups_per_batch,
         model_name_for_tokenizer=cli_config.model_name,
-        chroma_tool_config=chroma_config,
         renderer_name=renderer_name,
         group_size=cli_config.group_size,
         max_turns=cli_config.max_turns,
         format_coef=cli_config.format_coef,
+        timeout=cli_config.timeout,
         seed=cli_config.seed,
+        sandbox_backend=cli_config.sandbox_backend,
     )
 
     config = Config(
