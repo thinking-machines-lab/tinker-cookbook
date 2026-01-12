@@ -1,10 +1,4 @@
-"""Code RL training CLI launcher.
-
-Usage:
-```bash
-python -m tinker_cookbook.recipes.code.train model_name=<model>
-```
-"""
+"""Code RL training CLI launcher with tool-use infrastructure."""
 
 import asyncio
 import logging
@@ -22,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 @chz.chz
 class CLIConfig:
-    """Command-line configuration for Code RL training with tool-use."""
+    """Command-line configuration for Code RL training."""
 
     # Model configuration
     model_name: str = "meta-llama/Llama-3.1-8B-Instruct"
@@ -32,9 +26,6 @@ class CLIConfig:
 
     # Data / environment configuration
     seed: int = 0
-    max_turns: int = 1
-    format_coef: float = 0.1
-    timeout: int = 6
 
     # Training hyperparameters
     group_size: int = 4
@@ -91,9 +82,6 @@ async def cli_main(cli_config: CLIConfig) -> None:
         model_name_for_tokenizer=cli_config.model_name,
         renderer_name=renderer_name,
         group_size=cli_config.group_size,
-        max_turns=cli_config.max_turns,
-        format_coef=cli_config.format_coef,
-        timeout=cli_config.timeout,
         seed=cli_config.seed,
         sandbox_backend=cli_config.sandbox_backend,
     )
