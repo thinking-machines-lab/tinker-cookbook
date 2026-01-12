@@ -1,32 +1,40 @@
+"""Code environment with tool-use infrastructure.
+
+This module provides:
+- Task loading: load_deepcoder_tasks() for DeepCoder dataset
+- Environment construction: build_env(), EnvGroupBuilder, DeepcoderDataset, DeepcoderDatasetBuilder
+"""
+
+from __future__ import annotations
+
 import json
-from functools import partial
+import logging
 from typing import Any, Literal, Sequence, cast
 
 import chz
 from datasets import Dataset, concatenate_datasets, load_dataset
 
-import tinker
-from tinker_cookbook.recipes.code_rl.code_grading import (
-    extract_code_from_model,
-    sandbox_check_correctness,
-    taco_to_lcb_format,
-)
-from tinker_cookbook.sandbox import SandboxBackend
+from tinker_cookbook import model_info, tokenizer_utils
+from tinker_cookbook.recipes.code_rl.code_grading import taco_to_lcb_format
 from tinker_cookbook.recipes.code_rl.lcb_utils import fetch_live_code_bench_system_prompt
-from tinker_cookbook import renderers
-from tinker_cookbook.rl.problem_env import ProblemEnv, ProblemGroupBuilder, logger
-from tinker_cookbook.rl.types import (
-    Action,
-    EnvGroupBuilder,
-    RLDataset,
-    RLDatasetBuilder,
-    StepResult,
-)
-from tinker_cookbook.tokenizer_utils import get_tokenizer
-from tinker_cookbook.utils import logtree
+from tinker_cookbook.recipes.code_rl.tools import CodeReward, CodeTask, CodeTool
+from tinker_cookbook.renderers import get_renderer
+from tinker_cookbook.renderers.base import Message, Renderer
+from tinker_cookbook.rl import types
+from tinker_cookbook.rl.message_env import EnvFromMessageEnv
+from tinker_cookbook.sandbox import SandboxBackend
+from tinker_cookbook.tool_use import AgentToolMessageEnv
+
+logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Dataset Loading Helpers
+# ============================================================================
 
 
 def _load_deepcoder_split(split: Literal["train", "test"]) -> Dataset:
+    """Load a split from the DeepCoder dataset."""
     if split == "train":
         datasets = [
             cast(
@@ -47,6 +55,7 @@ def _load_deepcoder_split(split: Literal["train", "test"]) -> Dataset:
 
 
 def _ensure_dict(metadata: Any) -> dict[str, Any]:
+    """Parse JSON metadata if needed."""
     if isinstance(metadata, str):
         try:
             metadata = json.loads(metadata)
@@ -59,6 +68,7 @@ def _ensure_dict(metadata: Any) -> dict[str, Any]:
 
 
 def _normalize_tests(raw_tests: Any, metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize test cases to standard format."""
     tests = raw_tests
     if isinstance(tests, str):
         try:
@@ -93,7 +103,7 @@ def _normalize_tests(raw_tests: Any, metadata: dict[str, Any]) -> list[dict[str,
 
 
 def _build_question(example: dict[str, Any]) -> str | None:
-    # Prefer preprocessed question if available.
+    """Build the question text with LCB system prompt."""
     question = example.get("question") or example.get("prompt") or example.get("problem")
     if not isinstance(question, str) or not question.strip():
         return None
@@ -103,190 +113,227 @@ def _build_question(example: dict[str, Any]) -> str | None:
     return fetch_live_code_bench_system_prompt(question)
 
 
-class CodeEnv(ProblemEnv):
-    def __init__(
-        self,
-        problem: str,
-        tests: list[dict[str, Any]],
-        renderer: renderers.Renderer,
-        convo_prefix: list[renderers.Message] | None = None,
-        format_coef: float = 0.1,
-        reward_timeout: int = 6,
-        sandbox_backend: SandboxBackend | None = None,
-    ):
-        super().__init__(renderer, convo_prefix, format_coef=format_coef)
-        self.problem = problem
-        self.tests = tests
-        self.reward_timeout = reward_timeout
-        self.sandbox_backend = sandbox_backend
+# ============================================================================
+# Task Loading
+# ============================================================================
 
-    def get_question(self) -> str:
-        return self.problem
 
-    def check_format(self, sample_str: str) -> bool:
-        return extract_code_from_model(sample_str) is not None
+def load_deepcoder_tasks(
+    split: Literal["train", "test"] = "train",
+    seed: int = 0,
+) -> list[CodeTask]:
+    """Load tasks from the DeepCoder dataset.
 
-    def check_answer(self, sample_str: str) -> bool:
-        """Not used - CodeEnv uses async check_sandbox_correctness instead."""
-        return False
+    Args:
+        split: Which split to load ("train" or "test")
+        seed: Random seed for shuffling (train split only)
 
-    async def check_sandbox_correctness(self, sample_str: str) -> bool:
-        """Check if the code passes all test cases using sandbox execution."""
-        code = extract_code_from_model(sample_str)
-        if code is None:
-            logtree.log_text("No code block detected in response.")
-            return False
+    Returns:
+        List of CodeTask instances with normalized test cases
+    """
+    ds: Dataset = _load_deepcoder_split(split)
+    if split == "train":
+        ds = ds.shuffle(seed=seed)
 
-        try:
-            success, details = await sandbox_check_correctness(
-                self.tests, code, timeout=self.reward_timeout, backend=self.sandbox_backend
+    tasks: list[CodeTask] = []
+    for item in ds:
+        row = cast(dict[str, Any], item)
+
+        # Extract and normalize metadata
+        metadata = _ensure_dict(row.get("metadata", {}))
+
+        # Normalize test cases
+        raw_tests = row.get("tests") or row.get("ground_truth")
+        tests = _normalize_tests(raw_tests, metadata)
+        if not tests:
+            continue
+
+        # Build problem prompt
+        problem = _build_question(row)
+        if problem is None:
+            continue
+
+        # Extract starter code if present
+        starter_code = row.get("starter_code")
+        if isinstance(starter_code, str) and not starter_code.strip():
+            starter_code = None
+
+        tasks.append(
+            CodeTask(
+                problem=problem,
+                tests=tests,
+                starter_code=starter_code if isinstance(starter_code, str) else None,
             )
-            status = "✓" if success else "✗"
-            logtree.log_text(
-                f"Sandbox result {status}: {'All tests passed' if success else 'Failed'}"
-            )
-            return success
-        except Exception as exc:
-            logger.warning("Sandbox check failed: %s", exc, exc_info=True)
-            logtree.log_text(f"Sandbox check failed: {exc}")
-            return False
-
-    def get_reference_answer(self) -> str:
-        return ""
-
-    async def step(self, action: Action) -> StepResult:
-        message, parse_success = self.renderer.parse_response(action)
-        content = renderers.get_text_content(message)
-        format_ok_bool = bool(parse_success) and self.check_format(content)
-        correct_answer_bool = await self.check_sandbox_correctness(content)
-        format_score = float(format_ok_bool)
-        correct_score = float(correct_answer_bool)
-        total_reward = self.format_coef * (format_score - 1.0) + correct_score
-
-        logtree.log_text(f"Problem: {self.get_question()}")
-        logtree.log_text(f"Response: {content}")
-        if reference := self.get_reference_answer():
-            logtree.log_text(f"Reference Answer: {reference}")
-        logtree.log_text(
-            f"Format Valid: {'✓' if format_ok_bool else '✗'}, "
-            f"Correct: {'✓' if correct_answer_bool else '✗'}, "
-            f"Reward: {total_reward:.2f}"
         )
 
-        return StepResult(
-            reward=total_reward,
-            episode_done=True,
-            next_observation=tinker.ModelInput.empty(),
-            next_stop_condition=self.stop_condition,
-            metrics={
-                "format": format_score,
-                "correct": correct_score,
-            },
-        )
+    return tasks
 
 
-class DeepcoderDataset(RLDataset):
+# ============================================================================
+# Environment Construction
+# ============================================================================
+
+
+def _initial_messages(
+    task: CodeTask,
+    renderer: Renderer,
+    code_tool: CodeTool,
+) -> list[Message]:
+    """Build initial messages with tool schemas and task problem.
+
+    Note: task.problem already contains the full LCB system prompt (via _build_question),
+    including starter code if present. The renderer adds tool-specific formatting
+    automatically via create_conversation_prefix_with_tools().
+    """
+    tool_schemas = [code_tool.run_python.to_spec()]
+    prefix = renderer.create_conversation_prefix_with_tools(tools=tool_schemas)
+    return prefix + [{"role": "user", "content": task.problem}]
+
+
+def build_env(
+    task: CodeTask,
+    model_name: str,
+    *,
+    renderer_name: str | None = None,
+    max_turns: int = 1,
+    sandbox_backend: SandboxBackend | None = None,
+    timeout: int = 6,
+    format_coef: float = 0.1,
+) -> EnvFromMessageEnv:
+    """Build an RL environment for a single code task."""
+    tokenizer = tokenizer_utils.get_tokenizer(model_name)
+    chosen_renderer = renderer_name or model_info.get_recommended_renderer_name(model_name)
+    renderer = get_renderer(chosen_renderer, tokenizer)
+
+    code_tool = CodeTool(task, sandbox_backend=sandbox_backend, timeout=timeout)
+    msg_env = AgentToolMessageEnv(
+        tools=[code_tool.run_python],
+        initial_messages=_initial_messages(task, renderer, code_tool),
+        max_turns=max_turns,
+        reward_fn=CodeReward(code_tool=code_tool, format_coef=format_coef),
+    )
+    return EnvFromMessageEnv(
+        renderer=renderer,
+        message_env=msg_env,
+        failed_parse_reward=-0.1,
+    )
+
+
+class EnvGroupBuilder(types.EnvGroupBuilder):
+    """EnvGroupBuilder that creates code environments with shared sandbox backend."""
+
     def __init__(
         self,
-        batch_size: int,
+        task: CodeTask,
+        model_name: str,
+        renderer_name: str | None,
+        max_turns: int,
         group_size: int,
-        renderer: renderers.Renderer,
-        convo_prefix: list[renderers.Message] | None = None,
-        split: Literal["train", "test"] = "train",
-        seed: int = 0,
+        sandbox_backend: SandboxBackend | None,
+        timeout: int = 6,
         format_coef: float = 0.1,
-        reward_timeout: int = 6,
-        sandbox_backend: SandboxBackend | None = None,
     ):
-        self.ds = _load_deepcoder_split(split)
-        if split == "train":
-            self.ds = self.ds.shuffle(seed=seed)
-        self.batch_size = batch_size
-        self.group_size = group_size if split == "train" else 1
-        self.renderer = renderer
-        self.convo_prefix = convo_prefix
-        self.format_coef = format_coef
-        self.reward_timeout = reward_timeout
+        self.task = task
+        self.model_name = model_name
+        self.renderer_name = renderer_name
+        self.max_turns = max_turns
+        self.group_size = group_size
         self.sandbox_backend = sandbox_backend
+        self.timeout = timeout
+        self.format_coef = format_coef
+
+    async def make_envs(self) -> Sequence[types.Env]:
+        return [
+            build_env(
+                task=self.task,
+                model_name=self.model_name,
+                renderer_name=self.renderer_name,
+                max_turns=self.max_turns,
+                sandbox_backend=self.sandbox_backend,
+                timeout=self.timeout,
+                format_coef=self.format_coef,
+            )
+            for _ in range(self.group_size)
+        ]
+
+    def logging_tags(self) -> list[str]:
+        return ["deepcoder"]
+
+
+class DeepcoderDataset(types.RLDataset):
+    """Dataset that processes code EnvGroupBuilders once per epoch."""
+
+    def __init__(
+        self,
+        env_group_builders: list[EnvGroupBuilder],
+        batch_size: int,
+    ):
+        self.env_group_builders = env_group_builders
+        self.batch_size = batch_size
+
+    def get_batch(self, index: int) -> Sequence[types.EnvGroupBuilder]:
+        start = index * self.batch_size
+        end = start + self.batch_size
+        return self.env_group_builders[start:end]
 
     def __len__(self) -> int:
-        return (len(self.ds) + self.batch_size - 1) // self.batch_size
-
-    def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
-        start = index * self.batch_size
-        end = min((index + 1) * self.batch_size, len(self.ds))
-        if start >= end:
-            raise IndexError("Incorrect batch index for DeepcoderDataset")
-        builders: list[EnvGroupBuilder] = []
-        for row in self.ds.select(range(start, end)):
-            builder = self._make_env_group_builder(cast(dict[str, Any], row), self.group_size)
-            if builder is not None:
-                builders.append(builder)
-        return builders
-
-    def _make_env_group_builder(
-        self, example: dict[str, Any], group_size: int
-    ) -> ProblemGroupBuilder | None:
-        metadata = _ensure_dict(example.get("metadata", {}))
-        tests = _normalize_tests(example.get("tests") or example.get("ground_truth"), metadata)
-        if not tests:
-            logger.warning("Skipping sample without valid tests.")
-            return None
-        question = _build_question(example)
-        if question is None:
-            logger.warning("Skipping sample without question text.")
-            return None
-        return ProblemGroupBuilder(
-            env_thunk=partial(
-                CodeEnv,
-                question,
-                tests,
-                self.renderer,
-                convo_prefix=self.convo_prefix,
-                format_coef=self.format_coef,
-                reward_timeout=self.reward_timeout,
-                sandbox_backend=self.sandbox_backend,
-            ),
-            num_envs=group_size,
-            dataset_name="deepcoder",
-        )
+        # Ceiling division to include partial batches
+        return (len(self.env_group_builders) + self.batch_size - 1) // self.batch_size
 
 
 @chz.chz
-class DeepcoderDatasetBuilder(RLDatasetBuilder):
-    batch_size: int
-    model_name_for_tokenizer: str
-    renderer_name: str
-    group_size: int
-    convo_prefix: list[renderers.Message] | None = None
-    seed: int = 0
-    format_coef: float = 0.1
-    reward_timeout: int = 6
-    sandbox_backend: SandboxBackend | None = None
+class DeepcoderDatasetBuilder(types.RLDatasetBuilder):
+    """Build an RL dataset over DeepCoder tasks with tool-use infrastructure."""
 
-    async def __call__(self) -> tuple[DeepcoderDataset, DeepcoderDataset]:
-        tokenizer = get_tokenizer(self.model_name_for_tokenizer)
-        renderer = renderers.get_renderer(self.renderer_name, tokenizer=tokenizer)
-        train_ds = DeepcoderDataset(
+    model_name_for_tokenizer: str
+    batch_size: int
+    group_size: int
+    renderer_name: str | None = None
+    max_turns: int = 1
+    format_coef: float = 0.1
+    timeout: int = 6
+    sandbox_backend: SandboxBackend | None = None
+    seed: int = 0
+
+    async def __call__(self) -> tuple[types.RLDataset, types.RLDataset | None]:
+        # Load train tasks
+        train_tasks = load_deepcoder_tasks("train", seed=self.seed)
+        train_builders = [
+            EnvGroupBuilder(
+                task=task,
+                model_name=self.model_name_for_tokenizer,
+                renderer_name=self.renderer_name,
+                max_turns=self.max_turns,
+                group_size=self.group_size,
+                sandbox_backend=self.sandbox_backend,
+                timeout=self.timeout,
+                format_coef=self.format_coef,
+            )
+            for task in train_tasks
+        ]
+        train_dataset = DeepcoderDataset(
+            env_group_builders=train_builders,
             batch_size=self.batch_size,
-            group_size=self.group_size,
-            renderer=renderer,
-            convo_prefix=self.convo_prefix,
-            split="train",
-            seed=self.seed,
-            format_coef=self.format_coef,
-            reward_timeout=self.reward_timeout,
-            sandbox_backend=self.sandbox_backend,
         )
-        test_ds = DeepcoderDataset(
+
+        # Load test tasks (group_size=1 for eval)
+        test_tasks = load_deepcoder_tasks("test", seed=self.seed)
+        test_builders = [
+            EnvGroupBuilder(
+                task=task,
+                model_name=self.model_name_for_tokenizer,
+                renderer_name=self.renderer_name,
+                max_turns=self.max_turns,
+                group_size=1,  # Single sample per task for evaluation
+                sandbox_backend=self.sandbox_backend,
+                timeout=self.timeout,
+                format_coef=self.format_coef,
+            )
+            for task in test_tasks
+        ]
+        test_dataset = DeepcoderDataset(
+            env_group_builders=test_builders,
             batch_size=self.batch_size,
-            group_size=1,
-            renderer=renderer,
-            convo_prefix=self.convo_prefix,
-            split="test",
-            seed=self.seed,
-            format_coef=self.format_coef,
-            reward_timeout=self.reward_timeout,
-            sandbox_backend=self.sandbox_backend,
         )
-        return train_ds, test_ds
+
+        return train_dataset, test_dataset
