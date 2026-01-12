@@ -6,14 +6,14 @@ This module provides:
 - AgentToolMessageEnv: Environment for tool-using agents
 """
 
-from tinker_cookbook.tool_use.llm_tools import (
+from tinker_cookbook.tool_use.tools import (
     FunctionTool,
     ToolInterface,
     extract_tool_payload,
     handle_tool_call,
     tool,
 )
-from tinker_cookbook.tool_use.tool_env import AgentToolMessageEnv
+from tinker_cookbook.tool_use.agent_tool_message_env import AgentToolMessageEnv
 
 __all__ = [
     "AgentToolMessageEnv",

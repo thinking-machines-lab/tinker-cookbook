@@ -12,7 +12,7 @@ from typing import Callable
 
 from tinker_cookbook.renderers.base import Message, ToolCall
 from tinker_cookbook.rl.message_env import MessageEnv, MessageStepResult
-from tinker_cookbook.tool_use.llm_tools import (
+from tinker_cookbook.tool_use.tools import (
     ToolInterface,
     handle_tool_call,
 )
