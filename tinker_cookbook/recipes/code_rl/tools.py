@@ -1,5 +1,3 @@
-"""Code execution tool and reward function."""
-
 from __future__ import annotations
 
 import json
@@ -63,25 +61,6 @@ class DeepcoderTool:
             )
         except Exception as e:
             return json.dumps({"error": str(e), "passed": False})
-
-    async def grade_code(self, code: str) -> tuple[bool, dict]:
-        """Grade code against tests. Used by reward_fn."""
-        try:
-            passed, details = await sandbox_check_correctness(
-                self._task.tests,
-                code,
-                timeout=self._timeout,
-                backend=self._sandbox_backend,
-            )
-            status = "✓" if passed else "✗"
-            logtree.log_text(
-                f"Sandbox result {status}: {'All tests passed' if passed else 'Failed'}"
-            )
-            return passed, details
-        except Exception as exc:
-            logtree.log_text(f"Sandbox check failed: {exc}")
-            return False, {}
-
 
 @dataclass
 class DeepcoderReward:
@@ -156,10 +135,14 @@ class DeepcoderReward:
         code = extract_code_from_model(content)
         has_code_block = code is not None
 
-        # Grade the code using the same tool
+        # Grade the code using check_solution tool
         if code is not None:
-            passed, _ = await self.code_tool.grade_code(code)
-            correct = float(passed)
+            result = await self.code_tool.check_solution(code)
+            try:
+                data = json.loads(result)
+                correct = float(data.get("passed", False))
+            except (json.JSONDecodeError, TypeError):
+                correct = 0.0
         else:
             logtree.log_text("No code block detected in response.")
             correct = 0.0
