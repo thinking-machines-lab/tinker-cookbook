@@ -62,6 +62,7 @@ class DeepcoderTool:
         except Exception as e:
             return json.dumps({"error": str(e), "passed": False})
 
+
 @dataclass
 class DeepcoderReward:
     """Reward function for code tasks.
@@ -109,9 +110,7 @@ class DeepcoderReward:
                     reward = self.format_coef * (format_score - 1.0) + correct
 
                     logtree.log_text(f"Problem: {self.code_tool._task.problem}")
-                    logtree.log_text(
-                        f"Grading from tool result: Correct: ✓, Reward: {reward:.2f}"
-                    )
+                    logtree.log_text(f"Grading from tool result: Correct: ✓, Reward: {reward:.2f}")
                     return reward, True, {"format": format_score, "correct": correct}
                 else:
                     # Failed - let model continue to iterate
@@ -123,9 +122,7 @@ class DeepcoderReward:
         # No check_solution result found - intermediate step, no reward yet
         return 0.0, False, {}
 
-    async def _grade_from_content(
-        self, message: Message
-    ) -> tuple[float, bool, dict[str, float]]:
+    async def _grade_from_content(self, message: Message) -> tuple[float, bool, dict[str, float]]:
         """Grade code block extracted from message content."""
         content = message.get("content", "")
         if not isinstance(content, str):

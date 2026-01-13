@@ -132,7 +132,6 @@ def download_search_r1_dataset(split: Literal["train", "test"]) -> list[SearchR1
     return df_raw.apply(process_single_row, axis=1).tolist()
 
 
-
 def _initial_messages(
     datum: SearchR1Datum,
     renderer: Renderer,
@@ -170,12 +169,16 @@ class SearchEnvGroupBuilder(EnvGroupBuilder):
 
     async def make_envs(self) -> Sequence[Env]:
         tokenizer = tokenizer_utils.get_tokenizer(self.model_name)
-        renderer_name = self.renderer_name or model_info.get_recommended_renderer_name(self.model_name)
+        renderer_name = self.renderer_name or model_info.get_recommended_renderer_name(
+            self.model_name
+        )
         renderer = get_renderer(renderer_name, tokenizer)
 
         # Tool, initial_messages, reward_fn are all stateless - can share
         initial_messages = _initial_messages(self.datum, renderer, self.chroma_tool)
-        reward_fn = TextAnswerReward(gold_answers=self.datum["answer"], format_coef=self.format_coef)
+        reward_fn = TextAnswerReward(
+            gold_answers=self.datum["answer"], format_coef=self.format_coef
+        )
 
         return [
             build_agent_tool_env(
