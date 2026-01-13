@@ -6,19 +6,22 @@ from typing import Literal, TypedDict
 import chz
 import tinker
 
-from tinker_cookbook import model_info
+from tinker_cookbook import model_info, tokenizer_utils
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.recipes.search_tool.search_env import (
+    SEARCH_TASK_INSTRUCTIONS,
     SearchR1Datum,
-    build_env,
     download_search_r1_dataset,
 )
 from tinker_cookbook.recipes.search_tool.tools import (
     ChromaTool,
     EmbeddingConfig,
     RetrievalConfig,
+    TextAnswerReward,
 )
+from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.rl.rollouts import do_single_rollout
+from tinker_cookbook.tool_use import build_agent_tool_env
 
 ROLLOUT_CONCURRENCY = 1024
 rollout_semaphore = asyncio.Semaphore(ROLLOUT_CONCURRENCY)
@@ -80,13 +83,23 @@ async def evaluate_single_item(
     model_name: str,
     renderer_name: str | None = None,
 ) -> EvaluationResult:
-    env = build_env(
-        datum=item,
-        model_name=model_name,
-        renderer_name=renderer_name,
+    # Build env inline using build_agent_tool_env
+    tokenizer = tokenizer_utils.get_tokenizer(model_name)
+    chosen_renderer_name = renderer_name or model_info.get_recommended_renderer_name(model_name)
+    renderer = get_renderer(chosen_renderer_name, tokenizer)
+
+    tool_schemas = [chroma_tool.search.to_spec()]
+    initial_messages = renderer.create_conversation_prefix_with_tools(
+        tools=tool_schemas,
+        system_prompt=SEARCH_TASK_INSTRUCTIONS,
+    ) + [{"role": "user", "content": item["question"]}]
+
+    env = build_agent_tool_env(
+        renderer=renderer,
+        tools=[chroma_tool.search],
+        initial_messages=initial_messages,
+        reward_fn=TextAnswerReward(gold_answers=item["answer"], format_coef=0.1),
         max_turns=5,
-        chroma_tool=chroma_tool,
-        format_coef=0.1,
     )
     async with rollout_semaphore:
         trajectory = await do_single_rollout(policy, env)
