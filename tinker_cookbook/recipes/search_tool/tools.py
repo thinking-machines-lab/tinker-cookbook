@@ -89,8 +89,6 @@ class ChromaTool:
         gemini_client = get_gemini_client()
         return ChromaTool(chroma_client, gemini_client, config)
 
-    # === Copy-pasted internals from ChromaToolClient ===
-
     async def _get_embeddings_with_retry(self, query_list: list[str]) -> list[list[float]]:
         embedding_config = self._config.retrieval_config.embedding_config
         return await get_gemini_embedding(

@@ -20,8 +20,8 @@ from tinker_cookbook.recipes.search_tool.tools import (
 )
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import Message, Renderer
-from tinker_cookbook.rl import types
 from tinker_cookbook.rl.message_env import EnvFromMessageEnv
+from tinker_cookbook.rl.types import Env, EnvGroupBuilder, RLDataset, RLDatasetBuilder
 from tinker_cookbook.tool_use import AgentToolMessageEnv
 
 SEARCH_TASK_INSTRUCTIONS = """You are an expert assistant who solves tasks using a Wikipedia search tool.
@@ -175,7 +175,7 @@ def build_env(
     )
 
 
-class EnvGroupBuilder(types.EnvGroupBuilder):
+class SearchEnvGroupBuilder(EnvGroupBuilder):
     """EnvGroupBuilder that creates search environments with a shared ChromaTool."""
 
     def __init__(
@@ -196,7 +196,7 @@ class EnvGroupBuilder(types.EnvGroupBuilder):
         self.chroma_tool = chroma_tool
         self.format_coef = format_coef
 
-    async def make_envs(self) -> Sequence[types.Env]:
+    async def make_envs(self) -> Sequence[Env]:
         return [
             build_env(
                 datum=self.datum,
@@ -213,18 +213,18 @@ class EnvGroupBuilder(types.EnvGroupBuilder):
         return [self.datum.get("data_source", "unknown")]
 
 
-class RLDataset(types.RLDataset):
+class SearchRLDataset(RLDataset):
     """Dataset that processes search EnvGroupBuilders once per epoch."""
 
     def __init__(
         self,
-        env_group_builders: list[EnvGroupBuilder],
+        env_group_builders: list[SearchEnvGroupBuilder],
         batch_size: int,
     ):
         self.env_group_builders = env_group_builders
         self.batch_size = batch_size
 
-    def get_batch(self, index: int) -> Sequence[types.EnvGroupBuilder]:
+    def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
         start = index * self.batch_size
         end = start + self.batch_size
         return self.env_group_builders[start:end]
@@ -234,7 +234,7 @@ class RLDataset(types.RLDataset):
 
 
 @chz.chz
-class SearchR1DatasetBuilder(types.RLDatasetBuilder):
+class SearchR1DatasetBuilder(RLDatasetBuilder):
     """Build an RL dataset over SearchR1 tasks with ChromaTool."""
 
     model_name_for_tokenizer: str
@@ -246,7 +246,7 @@ class SearchR1DatasetBuilder(types.RLDatasetBuilder):
     format_coef: float = 0.1
     seed: int = 0
 
-    async def __call__(self) -> tuple[types.RLDataset, types.RLDataset | None]:
+    async def __call__(self) -> tuple[RLDataset, RLDataset | None]:
         # Create shared ChromaTool
         chroma_tool = await ChromaTool.create(self.chroma_tool_config)
 
@@ -255,7 +255,7 @@ class SearchR1DatasetBuilder(types.RLDatasetBuilder):
         rng.shuffle(data)
 
         env_builders = [
-            EnvGroupBuilder(
+            SearchEnvGroupBuilder(
                 datum=datum,
                 model_name=self.model_name_for_tokenizer,
                 renderer_name=self.renderer_name,
@@ -266,7 +266,7 @@ class SearchR1DatasetBuilder(types.RLDatasetBuilder):
             )
             for datum in data
         ]
-        dataset = RLDataset(
+        dataset = SearchRLDataset(
             env_group_builders=env_builders,
             batch_size=self.batch_size,
         )

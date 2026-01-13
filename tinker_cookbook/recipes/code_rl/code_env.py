@@ -1,10 +1,3 @@
-"""Code environment with tool-use infrastructure.
-
-This module provides:
-- Task loading: load_deepcoder_tasks() for DeepCoder dataset
-- Environment construction: build_env(), EnvGroupBuilder, DeepcoderDataset, DeepcoderDatasetBuilder
-"""
-
 from __future__ import annotations
 
 import json
@@ -20,21 +13,15 @@ from tinker_cookbook.recipes.code_rl.lcb_utils import fetch_live_code_bench_syst
 from tinker_cookbook.recipes.code_rl.tools import CodeReward, CodeTask, CodeTool
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import Message, Renderer
-from tinker_cookbook.rl import types
 from tinker_cookbook.rl.message_env import EnvFromMessageEnv
+from tinker_cookbook.rl.types import Env, EnvGroupBuilder, RLDataset, RLDatasetBuilder
 from tinker_cookbook.sandbox import SandboxBackend
 from tinker_cookbook.tool_use import AgentToolMessageEnv
 
 logger = logging.getLogger(__name__)
 
 
-# ============================================================================
-# Dataset Loading Helpers
-# ============================================================================
-
-
 def _load_deepcoder_split(split: Literal["train", "test"]) -> Dataset:
-    """Load a split from the DeepCoder dataset."""
     if split == "train":
         datasets = [
             cast(
@@ -55,7 +42,6 @@ def _load_deepcoder_split(split: Literal["train", "test"]) -> Dataset:
 
 
 def _ensure_dict(metadata: Any) -> dict[str, Any]:
-    """Parse JSON metadata if needed."""
     if isinstance(metadata, str):
         try:
             metadata = json.loads(metadata)
@@ -68,7 +54,7 @@ def _ensure_dict(metadata: Any) -> dict[str, Any]:
 
 
 def _normalize_tests(raw_tests: Any, metadata: dict[str, Any]) -> list[dict[str, Any]]:
-    """Normalize test cases to standard format."""
+    """Normalize test cases to a unified format."""
     tests = raw_tests
     if isinstance(tests, str):
         try:
@@ -111,11 +97,6 @@ def _build_question(example: dict[str, Any]) -> str | None:
     if isinstance(starter_code, str) and starter_code.strip():
         return fetch_live_code_bench_system_prompt(question, starter_code)
     return fetch_live_code_bench_system_prompt(question)
-
-
-# ============================================================================
-# Task Loading
-# ============================================================================
 
 
 def load_deepcoder_tasks(
@@ -169,11 +150,6 @@ def load_deepcoder_tasks(
     return tasks
 
 
-# ============================================================================
-# Environment Construction
-# ============================================================================
-
-
 def _initial_messages(
     task: CodeTask,
     renderer: Renderer,
@@ -219,7 +195,7 @@ def build_env(
     )
 
 
-class EnvGroupBuilder(types.EnvGroupBuilder):
+class CodeEnvGroupBuilder(EnvGroupBuilder):
     """EnvGroupBuilder that creates code environments with shared sandbox backend."""
 
     def __init__(
@@ -242,7 +218,7 @@ class EnvGroupBuilder(types.EnvGroupBuilder):
         self.timeout = timeout
         self.format_coef = format_coef
 
-    async def make_envs(self) -> Sequence[types.Env]:
+    async def make_envs(self) -> Sequence[Env]:
         return [
             build_env(
                 task=self.task,
@@ -260,30 +236,29 @@ class EnvGroupBuilder(types.EnvGroupBuilder):
         return ["deepcoder"]
 
 
-class DeepcoderDataset(types.RLDataset):
+class DeepcoderDataset(RLDataset):
     """Dataset that processes code EnvGroupBuilders once per epoch."""
 
     def __init__(
         self,
-        env_group_builders: list[EnvGroupBuilder],
+        env_group_builders: list[CodeEnvGroupBuilder],
         batch_size: int,
     ):
         self.env_group_builders = env_group_builders
         self.batch_size = batch_size
 
-    def get_batch(self, index: int) -> Sequence[types.EnvGroupBuilder]:
+    def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
         start = index * self.batch_size
         end = start + self.batch_size
         return self.env_group_builders[start:end]
 
     def __len__(self) -> int:
-        # Ceiling division to include partial batches
         return (len(self.env_group_builders) + self.batch_size - 1) // self.batch_size
 
 
 @chz.chz
-class DeepcoderDatasetBuilder(types.RLDatasetBuilder):
-    """Build an RL dataset over DeepCoder tasks with tool-use infrastructure."""
+class DeepcoderDatasetBuilder(RLDatasetBuilder):
+    """Build an RL dataset over DeepCoder tasks."""
 
     model_name_for_tokenizer: str
     batch_size: int
@@ -295,11 +270,11 @@ class DeepcoderDatasetBuilder(types.RLDatasetBuilder):
     sandbox_backend: SandboxBackend | None = None
     seed: int = 0
 
-    async def __call__(self) -> tuple[types.RLDataset, types.RLDataset | None]:
+    async def __call__(self) -> tuple[RLDataset, RLDataset | None]:
         # Load train tasks
         train_tasks = load_deepcoder_tasks("train", seed=self.seed)
         train_builders = [
-            EnvGroupBuilder(
+            CodeEnvGroupBuilder(
                 task=task,
                 model_name=self.model_name_for_tokenizer,
                 renderer_name=self.renderer_name,
@@ -319,7 +294,7 @@ class DeepcoderDatasetBuilder(types.RLDatasetBuilder):
         # Load test tasks (group_size=1 for eval)
         test_tasks = load_deepcoder_tasks("test", seed=self.seed)
         test_builders = [
-            EnvGroupBuilder(
+            CodeEnvGroupBuilder(
                 task=task,
                 model_name=self.model_name_for_tokenizer,
                 renderer_name=self.renderer_name,
