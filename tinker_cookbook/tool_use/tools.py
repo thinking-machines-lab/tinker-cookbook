@@ -86,7 +86,7 @@ class FunctionTool(ToolInterface):
     """
     A tool created from a decorated function or method.
 
-    A user would rarely interact with this class directly, it's just used internally by the @tool decorator.
+    Used internally by the @tool decorator.
     """
 
     def __init__(self, fn: Callable[..., Any]):
@@ -186,12 +186,13 @@ def tool(fn: Callable[..., Any]) -> FunctionTool:
             return json.dumps({"results": await do_search(query)})
 
         # As class method with shared state:
-        class MyTools:
+        class MySharedStateTools:
             def __init__(self, api_key: str):
                 self.api_key = api_key
 
             @tool
             async def search(self, query: Annotated[str, "Query"]) -> str:
+                '''Search for information.'''
                 return json.dumps(await do_search(query, api_key=self.api_key))
     """
     return FunctionTool(fn)
