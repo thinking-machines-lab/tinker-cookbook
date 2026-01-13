@@ -17,7 +17,7 @@ from tinker_cookbook.utils import logtree
 
 
 @dataclass(frozen=True)
-class CodeTask:
+class DeepcoderTask:
     """A single code task with problem statement and test cases."""
 
     problem: str
@@ -25,15 +25,15 @@ class CodeTask:
     starter_code: str | None = None
 
 
-class CodeTool:
+class DeepcoderTool:
     """Tool for testing code against a task's test cases.
 
-    Each CodeTool instance is bound to a specific task (its tests).
+    Each DeepcoderTool instance is bound to a specific task (its tests).
     """
 
     def __init__(
         self,
-        task: CodeTask,
+        task: DeepcoderTask,
         sandbox_backend: SandboxBackend | None = None,
         timeout: int = 6,
     ):
@@ -42,7 +42,7 @@ class CodeTool:
         self._timeout = timeout
 
     @tool
-    async def run_python(
+    async def check_solution(
         self,
         code: Annotated[str, "Python code implementing the solution."],
     ) -> str:
@@ -84,7 +84,7 @@ class CodeTool:
 
 
 @dataclass
-class CodeReward:
+class DeepcoderReward:
     """Reward function for code tasks.
 
     Grades the final answer by extracting code from message content
@@ -93,7 +93,7 @@ class CodeReward:
     Formula: format_coef * (has_code_block - 1) + correct
     """
 
-    code_tool: CodeTool
+    code_tool: DeepcoderTool
     format_coef: float = 0.1
 
     async def __call__(

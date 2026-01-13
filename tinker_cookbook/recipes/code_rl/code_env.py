@@ -10,7 +10,7 @@ from datasets import Dataset, concatenate_datasets, load_dataset
 from tinker_cookbook import model_info, tokenizer_utils
 from tinker_cookbook.recipes.code_rl.code_grading import taco_to_lcb_format
 from tinker_cookbook.recipes.code_rl.lcb_utils import fetch_live_code_bench_system_prompt
-from tinker_cookbook.recipes.code_rl.tools import CodeReward, CodeTask, CodeTool
+from tinker_cookbook.recipes.code_rl.tools import DeepcoderReward, DeepcoderTask, DeepcoderTool
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import Message, Renderer
 from tinker_cookbook.rl.message_env import EnvFromMessageEnv
@@ -102,7 +102,7 @@ def _build_question(example: dict[str, Any]) -> str | None:
 def load_deepcoder_tasks(
     split: Literal["train", "test"] = "train",
     seed: int = 0,
-) -> list[CodeTask]:
+) -> list[DeepcoderTask]:
     """Load tasks from the DeepCoder dataset.
 
     Args:
@@ -110,13 +110,13 @@ def load_deepcoder_tasks(
         seed: Random seed for shuffling (train split only)
 
     Returns:
-        List of CodeTask instances with normalized test cases
+        List of DeepcoderTask instances with normalized test cases
     """
     ds: Dataset = _load_deepcoder_split(split)
     if split == "train":
         ds = ds.shuffle(seed=seed)
 
-    tasks: list[CodeTask] = []
+    tasks: list[DeepcoderTask] = []
     for item in ds:
         row = cast(dict[str, Any], item)
 
@@ -140,7 +140,7 @@ def load_deepcoder_tasks(
             starter_code = None
 
         tasks.append(
-            CodeTask(
+            DeepcoderTask(
                 problem=problem,
                 tests=tests,
                 starter_code=starter_code if isinstance(starter_code, str) else None,
@@ -151,9 +151,9 @@ def load_deepcoder_tasks(
 
 
 def _initial_messages(
-    task: CodeTask,
+    task: DeepcoderTask,
     renderer: Renderer,
-    code_tool: CodeTool,
+    code_tool: DeepcoderTool,
 ) -> list[Message]:
     """Build initial messages with tool schemas and task problem.
 
@@ -167,7 +167,7 @@ def _initial_messages(
 
 
 def build_env(
-    task: CodeTask,
+    task: DeepcoderTask,
     model_name: str,
     *,
     renderer_name: str | None = None,
@@ -181,12 +181,12 @@ def build_env(
     chosen_renderer = renderer_name or model_info.get_recommended_renderer_name(model_name)
     renderer = get_renderer(chosen_renderer, tokenizer)
 
-    code_tool = CodeTool(task, sandbox_backend=sandbox_backend, timeout=timeout)
+    code_tool = DeepcoderTool(task, sandbox_backend=sandbox_backend, timeout=timeout)
     msg_env = AgentToolMessageEnv(
         tools=[code_tool.run_python],
         initial_messages=_initial_messages(task, renderer, code_tool),
         max_turns=max_turns,
-        reward_fn=CodeReward(code_tool=code_tool, format_coef=format_coef),
+        reward_fn=DeepcoderReward(code_tool=code_tool, format_coef=format_coef),
     )
     return EnvFromMessageEnv(
         renderer=renderer,
@@ -195,12 +195,12 @@ def build_env(
     )
 
 
-class CodeEnvGroupBuilder(EnvGroupBuilder):
+class DeepcoderEnvGroupBuilder(EnvGroupBuilder):
     """EnvGroupBuilder that creates code environments with shared sandbox backend."""
 
     def __init__(
         self,
-        task: CodeTask,
+        task: DeepcoderTask,
         model_name: str,
         renderer_name: str | None,
         max_turns: int,
@@ -241,7 +241,7 @@ class DeepcoderDataset(RLDataset):
 
     def __init__(
         self,
-        env_group_builders: list[CodeEnvGroupBuilder],
+        env_group_builders: list[DeepcoderEnvGroupBuilder],
         batch_size: int,
     ):
         self.env_group_builders = env_group_builders
@@ -274,7 +274,7 @@ class DeepcoderDatasetBuilder(RLDatasetBuilder):
         # Load train tasks
         train_tasks = load_deepcoder_tasks("train", seed=self.seed)
         train_builders = [
-            CodeEnvGroupBuilder(
+            DeepcoderEnvGroupBuilder(
                 task=task,
                 model_name=self.model_name_for_tokenizer,
                 renderer_name=self.renderer_name,
@@ -294,7 +294,7 @@ class DeepcoderDatasetBuilder(RLDatasetBuilder):
         # Load test tasks (group_size=1 for eval)
         test_tasks = load_deepcoder_tasks("test", seed=self.seed)
         test_builders = [
-            CodeEnvGroupBuilder(
+            DeepcoderEnvGroupBuilder(
                 task=task,
                 model_name=self.model_name_for_tokenizer,
                 renderer_name=self.renderer_name,
