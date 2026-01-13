@@ -1,9 +1,4 @@
-"""
-Tool system for LLM agents.
-
-Provides types, utilities, and a decorator-based approach for defining tools
-that can be called by language models.
-"""
+"""Tool-use library for LLM agents."""
 
 from __future__ import annotations
 
@@ -23,11 +18,12 @@ from typing import (
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
+
 from tinker_cookbook.renderers.base import Message, ToolCall, ToolSpec
 
 
 class ToolInterface(ABC):
-    """Abstract base class for tools. Implement this for custom tool behavior."""
+    """Abstract base class for tools."""
 
     @property
     @abstractmethod
@@ -44,7 +40,7 @@ class ToolInterface(ABC):
     @property
     @abstractmethod
     def parameters_schema(self) -> dict[str, Any]:
-        """JSON Schema for tool parameters."""
+        """JSON Schema for tool parameters shown to the model."""
         ...
 
     @abstractmethod
@@ -235,11 +231,3 @@ async def handle_tool_call(
         "tool_call_id": tool_call_id,
         "name": tool_name,
     }
-
-
-def extract_tool_payload(content: str) -> dict[str, Any] | None:
-    """Parse tool content string into a JSON dict if possible."""
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        return None

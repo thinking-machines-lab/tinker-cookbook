@@ -1,21 +1,14 @@
-"""Tool-use infrastructure for LLM agents.
+"""Tool-use library."""
 
-This module provides:
-- ToolInterface: Abstract base class for tools
-- @tool decorator: Create tools from functions/methods
-- AgentToolMessageEnv: Environment for tool-using agents
-"""
-
-from tinker_cookbook.tool_use.tools import (
-    FunctionTool,
-    ToolInterface,
-    extract_tool_payload,
-    handle_tool_call,
-    tool,
-)
 from tinker_cookbook.tool_use.agent_tool_message_env import (
     AgentToolMessageEnv,
     build_agent_tool_env,
+)
+from tinker_cookbook.tool_use.tools import (
+    FunctionTool,
+    ToolInterface,
+    handle_tool_call,
+    tool,
 )
 
 __all__ = [
@@ -23,7 +16,6 @@ __all__ = [
     "build_agent_tool_env",
     "FunctionTool",
     "ToolInterface",
-    "extract_tool_payload",
     "handle_tool_call",
     "tool",
 ]

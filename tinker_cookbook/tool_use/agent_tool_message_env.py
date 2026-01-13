@@ -1,8 +1,4 @@
-"""Tool-using agent environment.
-
-AgentToolMessageEnv combines the MessageEnv abstraction with tool execution,
-providing a generic environment for tool-using agents.
-"""
+"""Tool-using agent environment."""
 
 from __future__ import annotations
 
@@ -22,24 +18,21 @@ from tinker_cookbook.tool_use.tools import (
 
 @dataclass
 class AgentToolMessageEnv(MessageEnv):
-    """Generic MessageEnv for tool-using agents.
-
-    Episode ends when the model emits no tool calls or when max_turns is reached.
-    """
+    """Generic tool-use MessageEnv for agents."""
 
     tools: list[ToolInterface]
     initial_messages: list[Message]
     max_turns: int
     reward_fn: Callable[[list[Message], Message], tuple[float, bool, dict[str, float]]]
     history: list[Message] = field(default_factory=list)
-    turns: int = 0
+
+    _turn_count: int = 0
     _tool_dict: dict[str, ToolInterface] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         self._tool_dict = {t.name: t for t in self.tools}
 
     async def initial_observation(self) -> list[Message]:
-        """Return initial messages."""
         if not self.history:
             self.history = list(self.initial_messages)
         return self.history
@@ -54,14 +47,14 @@ class AgentToolMessageEnv(MessageEnv):
         return list(results)
 
     async def step(self, message: Message) -> MessageStepResult:
-        """Apply an assistant message, execute any tools, update rewards, and return next messages.
+        """Execute any tools, update rewards, and return next messages.
 
-        Termination follows chat_rollouts pattern that the episode ends when:
+        The episode ends when one of the following conditions is met:
         - No tool calls in message
         - reward_fn returns done=True
         - max_turns reached
         """
-        self.turns += 1
+        self._turn_count += 1
         reward = 0.0
         metrics: dict[str, float] = {}
 
@@ -74,7 +67,7 @@ class AgentToolMessageEnv(MessageEnv):
         if tool_calls:
             results = await self._handle_tool_calls(tool_calls)
 
-        # TODO: should probably give reward_fn the full history.
+        # TODO: Update reward_fn to take the full history as input.
         reward_result = self.reward_fn(results, message)
         if inspect.iscoroutine(reward_result):
             reward_result = await reward_result
@@ -85,7 +78,7 @@ class AgentToolMessageEnv(MessageEnv):
         no_tool_calls = len(tool_calls) == 0
         done = no_tool_calls or done_from_reward
 
-        if self.turns >= self.max_turns and not done:
+        if self._turn_count >= self.max_turns and not done:
             done = True
             metrics["max_turns"] = 1.0
 
@@ -106,7 +99,7 @@ def build_agent_tool_env(
     max_turns: int = 5,
     failed_parse_reward: float = -0.1,
 ) -> EnvFromMessageEnv:
-    """Build an EnvFromMessageEnv for tool-using agents.
+    """Convenience method to build an EnvFromMessageEnv for tool-using agents.
 
     Args:
         renderer: The renderer for tokenizing messages.

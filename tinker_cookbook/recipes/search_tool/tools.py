@@ -1,9 +1,3 @@
-"""Search tool using ChromaDB + Gemini embeddings.
-
-ChromaTool replaces ChromaToolClient with @tool interface.
-Internals copy-pasted from tinker_cookbook/recipes/search_tool/tools.py.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -33,8 +27,6 @@ _CONNECTION_SEMAPHORE = asyncio.Semaphore(128)
 
 @chz.chz
 class EmbeddingConfig:
-    """Configuration for embedding model."""
-
     model_name: str = "gemini-embedding-001"
     embedding_dim: int = 768
     task_type: str = "RETRIEVAL_QUERY"
@@ -42,17 +34,12 @@ class EmbeddingConfig:
 
 @chz.chz
 class RetrievalConfig:
-    """Configuration for retrieval."""
-
     n_results: int = 3
     embedding_config: EmbeddingConfig = EmbeddingConfig()
 
 
 class ChromaTool:
-    """Search tool using ChromaDB + Gemini embeddings.
-
-    Replaces ChromaToolClient with @tool interface.
-    """
+    """Search tool using ChromaDB + Gemini embeddings."""
 
     def __init__(
         self,
@@ -199,7 +186,6 @@ class TextAnswerReward:
         return reward, True, {"format": correct_format, "correct": correct_answer}
 
     def _extract_answer(self, text: str) -> str | None:
-        """Matches SearchEnv._extract_answer exactly."""
         if "Answer:" not in text:
             return None
         parts = text.split("Answer:")
@@ -208,7 +194,6 @@ class TextAnswerReward:
         return parts[1].strip()
 
     def _check_answer(self, text: str) -> bool:
-        """Matches SearchEnv.check_answer exactly."""
         model_answer = self._extract_answer(text)
         if model_answer is None or len(self.gold_answers) == 0:
             return False

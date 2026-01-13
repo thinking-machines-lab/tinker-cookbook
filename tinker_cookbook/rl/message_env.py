@@ -1,7 +1,6 @@
 """Message-level environment abstraction.
 
-MessageEnv operates at the message level (list[Message]) rather than token level,
-making it easier to implement environments for tool-using agents.
+MessageEnv operates at the message level (list[Message]) rather than token level.
 
 EnvFromMessageEnv bridges MessageEnv to the token-level Env interface used by
 the RL training loop.
@@ -22,7 +21,7 @@ from tinker_cookbook.rl import types
 
 @dataclass
 class MessageStepResult:
-    """Result of a message-level step: reward, done flag, next messages, metrics."""
+    """Result of a message-level step."""
 
     reward: float
     episode_done: bool
@@ -32,11 +31,7 @@ class MessageStepResult:
 
 
 class MessageEnv(ABC):
-    """Abstract base class for message-level environments.
-
-    Unlike the token-level Env, MessageEnv works with Message dicts directly,
-    making it easier to implement environments for conversational agents.
-    """
+    """Abstract base class for message-level environments."""
 
     @abstractmethod
     async def initial_observation(self) -> list[Message]:
@@ -70,7 +65,6 @@ class EnvFromMessageEnv(types.Env):
         self._base_stop_condition = renderer.get_stop_sequences()
 
     async def initial_observation(self) -> tuple[tinker.ModelInput, StopCondition]:
-        """Render initial messages into ModelInput plus stop condition."""
         messages = await self.message_env.initial_observation()
         return self.renderer.build_generation_prompt(messages), self._base_stop_condition
 
