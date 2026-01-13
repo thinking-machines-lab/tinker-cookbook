@@ -23,21 +23,16 @@ logger = logging.getLogger(__name__)
 
 def _load_deepcoder_split(split: Literal["train", "test"]) -> Dataset:
     if split == "train":
-        datasets = [
-            cast(
-                Dataset,
-                load_dataset("agentica-org/DeepCoder-Preview-Dataset", name=name, split="train"),
-            )
-            for name in ("primeintellect", "taco", "lcbv5")
-        ]
-    elif split == "test":
-        datasets = [
-            cast(
-                Dataset,
-                load_dataset("agentica-org/DeepCoder-Preview-Dataset", name=name, split="test"),
-            )
-            for name in ("codeforces", "lcbv5")
-        ]
+        names = ("primeintellect", "taco", "lcbv5")
+    else:
+        names = ("codeforces", "lcbv5")
+
+    datasets = []
+    for name in names:
+        logger.info(f"  Loading {name}...")
+        ds = load_dataset("agentica-org/DeepCoder-Preview-Dataset", name=name, split=split)
+        datasets.append(cast(Dataset, ds))
+
     return cast(Dataset, concatenate_datasets(datasets))
 
 
@@ -116,6 +111,7 @@ def load_deepcoder_tasks(
     if split == "train":
         ds = ds.shuffle(seed=seed)
 
+    logger.info(f"Processing {len(ds)} examples into tasks...")
     tasks: list[DeepcoderTask] = []
     for item in ds:
         row = cast(dict[str, Any], item)
@@ -161,7 +157,7 @@ def _initial_messages(
     including starter code if present. The renderer adds tool-specific formatting
     automatically via create_conversation_prefix_with_tools().
     """
-    tool_schemas = [code_tool.run_python.to_spec()]
+    tool_schemas = [code_tool.check_solution.to_spec()]
     prefix = renderer.create_conversation_prefix_with_tools(tools=tool_schemas)
     return prefix + [{"role": "user", "content": task.problem}]
 
@@ -183,7 +179,7 @@ def build_env(
 
     code_tool = DeepcoderTool(task, sandbox_backend=sandbox_backend, timeout=timeout)
     msg_env = AgentToolMessageEnv(
-        tools=[code_tool.run_python],
+        tools=[code_tool.check_solution],
         initial_messages=_initial_messages(task, renderer, code_tool),
         max_turns=max_turns,
         reward_fn=DeepcoderReward(code_tool=code_tool, format_coef=format_coef),

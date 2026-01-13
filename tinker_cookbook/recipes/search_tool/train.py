@@ -9,7 +9,6 @@ import chz
 from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.recipes.search_tool.search_env import SearchR1DatasetBuilder
 from tinker_cookbook.recipes.search_tool.tools import (
-    ChromaToolConfig,
     EmbeddingConfig,
     RetrievalConfig,
 )
@@ -56,17 +55,12 @@ class CLIConfig:
 
 
 async def cli_main(cli_config: CLIConfig) -> None:
-    # Build chroma tool config with nested structure
-    chroma_tool_config = ChromaToolConfig(
-        chroma_host=cli_config.chroma_host,
-        chroma_port=cli_config.chroma_port,
-        chroma_collection_name=cli_config.chroma_collection_name,
-        retrieval_config=RetrievalConfig(
-            n_results=cli_config.n_results,
-            embedding_config=EmbeddingConfig(
-                model_name=cli_config.embedding_model_name,
-                embedding_dim=cli_config.embedding_dim,
-            ),
+    # Build retrieval config
+    retrieval_config = RetrievalConfig(
+        n_results=cli_config.n_results,
+        embedding_config=EmbeddingConfig(
+            model_name=cli_config.embedding_model_name,
+            embedding_dim=cli_config.embedding_dim,
         ),
     )
 
@@ -75,13 +69,15 @@ async def cli_main(cli_config: CLIConfig) -> None:
         cli_config.model_name
     )
 
-    # Build dataset builder
     builder = SearchR1DatasetBuilder(
         batch_size=cli_config.batch_size,
         group_size=cli_config.group_size,
         renderer_name=renderer_name,
         model_name_for_tokenizer=cli_config.model_name,
-        chroma_tool_config=chroma_tool_config,
+        chroma_host=cli_config.chroma_host,
+        chroma_port=cli_config.chroma_port,
+        chroma_collection_name=cli_config.chroma_collection_name,
+        retrieval_config=retrieval_config,
         seed=cli_config.seed,
         max_turns=cli_config.max_turns,
         format_coef=cli_config.format_coef,

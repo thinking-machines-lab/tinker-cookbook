@@ -15,7 +15,7 @@ from huggingface_hub import hf_hub_download
 from tinker_cookbook import model_info, tokenizer_utils
 from tinker_cookbook.recipes.search_tool.tools import (
     ChromaTool,
-    ChromaToolConfig,
+    RetrievalConfig,
     TextAnswerReward,
 )
 from tinker_cookbook.renderers import get_renderer
@@ -238,7 +238,12 @@ class SearchR1DatasetBuilder(RLDatasetBuilder):
     """Build an RL dataset over SearchR1 tasks with ChromaTool."""
 
     model_name_for_tokenizer: str
-    chroma_tool_config: ChromaToolConfig
+    # ChromaTool connection params
+    chroma_host: str
+    chroma_port: int
+    chroma_collection_name: str
+    retrieval_config: RetrievalConfig = RetrievalConfig()
+    # Dataset params
     batch_size: int
     group_size: int
     renderer_name: str | None = None
@@ -248,7 +253,12 @@ class SearchR1DatasetBuilder(RLDatasetBuilder):
 
     async def __call__(self) -> tuple[RLDataset, RLDataset | None]:
         # Create shared ChromaTool
-        chroma_tool = await ChromaTool.create(self.chroma_tool_config)
+        chroma_tool = await ChromaTool.build(
+            chroma_host=self.chroma_host,
+            chroma_port=self.chroma_port,
+            collection_name=self.chroma_collection_name,
+            retrieval_config=self.retrieval_config,
+        )
 
         data = download_search_r1_dataset("train")
         rng = random.Random(self.seed)

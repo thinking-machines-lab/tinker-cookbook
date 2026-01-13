@@ -99,11 +99,55 @@ class DeepcoderReward:
     async def __call__(
         self, results: list[Message], message: Message
     ) -> tuple[float, bool, dict[str, float]]:
-        # If message has tool calls, this is an intermediate step
+        # If message has tool calls, check the tool results for grading
         if message.get("tool_calls"):
-            return 0.0, False, {}
+            return self._grade_from_tool_results(results)
 
-        # No tool calls - this is the final answer, grade it
+        # No tool calls - this is the final answer, grade code block in content
+        return await self._grade_from_content(message)
+
+    def _grade_from_tool_results(
+        self, results: list[Message]
+    ) -> tuple[float, bool, dict[str, float]]:
+        """Grade based on check_solution tool results.
+
+        If the model called check_solution and it passed, end the episode with reward.
+        If it failed, let the model continue to iterate (return done=False).
+        """
+        for result in results:
+            if result.get("name") != "check_solution":
+                continue
+
+            content = result.get("content", "")
+            try:
+                data = json.loads(content)
+                passed = data.get("passed", False)
+
+                if passed:
+                    # Success - end episode with reward
+                    format_score = 1.0
+                    correct = 1.0
+                    reward = self.format_coef * (format_score - 1.0) + correct
+
+                    logtree.log_text(f"Problem: {self.code_tool._task.problem}")
+                    logtree.log_text(
+                        f"Grading from tool result: Correct: ✓, Reward: {reward:.2f}"
+                    )
+                    return reward, True, {"format": format_score, "correct": correct}
+                else:
+                    # Failed - let model continue to iterate
+                    logtree.log_text("Tool call failed, continuing episode.")
+                    return 0.0, False, {}
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+        # No check_solution result found - intermediate step, no reward yet
+        return 0.0, False, {}
+
+    async def _grade_from_content(
+        self, message: Message
+    ) -> tuple[float, bool, dict[str, float]]:
+        """Grade code block extracted from message content."""
         content = message.get("content", "")
         if not isinstance(content, str):
             content = str(content)

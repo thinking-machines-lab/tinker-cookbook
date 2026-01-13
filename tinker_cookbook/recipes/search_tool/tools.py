@@ -48,49 +48,71 @@ class RetrievalConfig:
     embedding_config: EmbeddingConfig = EmbeddingConfig()
 
 
-@chz.chz
-class ChromaToolConfig:
-    """Config for ChromaTool - matches original ChromaToolClientConfig structure."""
-
-    chroma_host: str
-    chroma_port: int
-    chroma_collection_name: str
-    retrieval_config: RetrievalConfig = RetrievalConfig()
-    max_retries: int = 10
-    initial_retry_delay: int = 1
-
-
 class ChromaTool:
     """Search tool using ChromaDB + Gemini embeddings.
 
     Replaces ChromaToolClient with @tool interface.
-    Internals copy-pasted from tinker_cookbook/recipes/search_tool/tools.py.
     """
 
     def __init__(
         self,
         chroma_client: AsyncClientAPI,
         gemini_client: genai.Client,
-        config: ChromaToolConfig,
+        collection_name: str,
+        retrieval_config: RetrievalConfig,
+        max_retries: int,
+        initial_retry_delay: int,
     ):
         self._chroma_client = chroma_client
         self._gemini_client = gemini_client
-        self._config = config
+        self._collection_name = collection_name
+        self._retrieval_config = retrieval_config
+        self._max_retries = max_retries
+        self._initial_retry_delay = initial_retry_delay
 
-    # TODO(tgriggs): Change this factory function method. Do it in ctor?
     @staticmethod
-    async def create(config: ChromaToolConfig) -> ChromaTool:
-        """Async factory - same pattern as ChromaToolClient.create()."""
-        chroma_client = await chromadb.AsyncHttpClient(
-            host=config.chroma_host,
-            port=config.chroma_port,
-            settings=Settings(anonymized_telemetry=False),
+    async def build(
+        chroma_host: str,
+        chroma_port: int,
+        collection_name: str,
+        retrieval_config: RetrievalConfig = RetrievalConfig(),
+        max_retries: int = 10,
+        initial_retry_delay: int = 1,
+        # Optional shared resources - None means build your own
+        chroma_client: AsyncClientAPI | None = None,
+        gemini_client: genai.Client | None = None,
+    ) -> "ChromaTool":
+        """Async factory for building ChromaTool.
+
+        Args:
+            chroma_host: ChromaDB server host.
+            chroma_port: ChromaDB server port.
+            collection_name: Name of the ChromaDB collection to query.
+            retrieval_config: Configuration for retrieval (n_results, embedding settings).
+            max_retries: Max retries for ChromaDB queries.
+            initial_retry_delay: Initial delay between retries (exponential backoff).
+            chroma_client: Optional pre-built ChromaDB client (for sharing across tools).
+            gemini_client: Optional pre-built Gemini client (for sharing across tools).
+        """
+        if chroma_client is None:
+            chroma_client = await chromadb.AsyncHttpClient(
+                host=chroma_host,
+                port=chroma_port,
+                settings=Settings(anonymized_telemetry=False),
+            )
+        if gemini_client is None:
+            gemini_client = get_gemini_client()
+        return ChromaTool(
+            chroma_client,
+            gemini_client,
+            collection_name,
+            retrieval_config,
+            max_retries,
+            initial_retry_delay,
         )
-        gemini_client = get_gemini_client()
-        return ChromaTool(chroma_client, gemini_client, config)
 
     async def _get_embeddings_with_retry(self, query_list: list[str]) -> list[list[float]]:
-        embedding_config = self._config.retrieval_config.embedding_config
+        embedding_config = self._retrieval_config.embedding_config
         return await get_gemini_embedding(
             self._gemini_client,
             query_list,
@@ -100,21 +122,19 @@ class ChromaTool:
         )
 
     async def _query_chroma_with_retry(self, query_embeddings: list[list[float]]) -> QueryResult:
-        for attempt in range(self._config.max_retries):
-            collection = await self._chroma_client.get_collection(
-                self._config.chroma_collection_name
-            )
+        for attempt in range(self._max_retries):
+            collection = await self._chroma_client.get_collection(self._collection_name)
             try:
                 results = await collection.query(
                     query_embeddings=query_embeddings,  # pyright: ignore[reportArgumentType]
-                    n_results=self._config.retrieval_config.n_results,
+                    n_results=self._retrieval_config.n_results,
                 )
                 return results
             except Exception as e:
-                if attempt < self._config.max_retries - 1:
-                    wait_time = self._config.initial_retry_delay * (1.5**attempt)
+                if attempt < self._max_retries - 1:
+                    wait_time = self._initial_retry_delay * (1.5**attempt)
                     logger.error(
-                        f"ChromaDB query attempt {attempt + 1}/{self._config.max_retries} "
+                        f"ChromaDB query attempt {attempt + 1}/{self._max_retries} "
                         f"failed: {e}. Retrying in {wait_time}s..."
                     )
                     await asyncio.sleep(wait_time)

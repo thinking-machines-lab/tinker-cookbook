@@ -15,7 +15,6 @@ from tinker_cookbook.recipes.search_tool.search_env import (
 )
 from tinker_cookbook.recipes.search_tool.tools import (
     ChromaTool,
-    ChromaToolConfig,
     EmbeddingConfig,
     RetrievalConfig,
 )
@@ -108,10 +107,10 @@ async def evaluate_one_dataset(data: list[SearchR1Datum], config: CLIConfig):
 
     renderer_name = model_info.get_recommended_renderer_name(config.base_model)
 
-    chroma_config = ChromaToolConfig(
+    chroma_tool = await ChromaTool.build(
         chroma_host="localhost",
         chroma_port=8000,
-        chroma_collection_name="wiki_embeddings",
+        collection_name="wiki_embeddings",
         retrieval_config=RetrievalConfig(
             n_results=3,
             embedding_config=EmbeddingConfig(
@@ -120,7 +119,6 @@ async def evaluate_one_dataset(data: list[SearchR1Datum], config: CLIConfig):
             ),
         ),
     )
-    chroma_tool = await ChromaTool.create(chroma_config)
 
     # Run evaluations in parallel using asyncio.gather
     tasks = [
