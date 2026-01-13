@@ -20,9 +20,8 @@ from tinker_cookbook.recipes.search_tool.tools import (
 )
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import Message, Renderer
-from tinker_cookbook.rl.message_env import EnvFromMessageEnv
 from tinker_cookbook.rl.types import Env, EnvGroupBuilder, RLDataset, RLDatasetBuilder
-from tinker_cookbook.tool_use import AgentToolMessageEnv
+from tinker_cookbook.tool_use import build_agent_tool_env
 
 SEARCH_TASK_INSTRUCTIONS = """You are an expert assistant who solves tasks using a Wikipedia search tool.
 
@@ -148,33 +147,6 @@ def _initial_messages(
     return prefix + [{"role": "user", "content": datum["question"]}]
 
 
-def build_env(
-    datum: SearchR1Datum,
-    model_name: str,
-    *,
-    renderer_name: str | None = None,
-    max_turns: int = 5,
-    chroma_tool: ChromaTool,
-    format_coef: float = 0.1,
-) -> EnvFromMessageEnv:
-    """Build the environment for a single search task."""
-    tokenizer = tokenizer_utils.get_tokenizer(model_name)
-    chosen_renderer = renderer_name or model_info.get_recommended_renderer_name(model_name)
-    renderer = get_renderer(chosen_renderer, tokenizer)
-
-    msg_env = AgentToolMessageEnv(
-        tools=[chroma_tool.search],
-        initial_messages=_initial_messages(datum, renderer, chroma_tool),
-        max_turns=max_turns,
-        reward_fn=TextAnswerReward(gold_answers=datum["answer"], format_coef=format_coef),
-    )
-    return EnvFromMessageEnv(
-        renderer=renderer,
-        message_env=msg_env,
-        failed_parse_reward=-0.1,
-    )
-
-
 class SearchEnvGroupBuilder(EnvGroupBuilder):
     """EnvGroupBuilder that creates search environments with a shared ChromaTool."""
 
@@ -197,14 +169,21 @@ class SearchEnvGroupBuilder(EnvGroupBuilder):
         self.format_coef = format_coef
 
     async def make_envs(self) -> Sequence[Env]:
+        tokenizer = tokenizer_utils.get_tokenizer(self.model_name)
+        renderer_name = self.renderer_name or model_info.get_recommended_renderer_name(self.model_name)
+        renderer = get_renderer(renderer_name, tokenizer)
+
+        # Tool, initial_messages, reward_fn are all stateless - can share
+        initial_messages = _initial_messages(self.datum, renderer, self.chroma_tool)
+        reward_fn = TextAnswerReward(gold_answers=self.datum["answer"], format_coef=self.format_coef)
+
         return [
-            build_env(
-                datum=self.datum,
-                model_name=self.model_name,
-                renderer_name=self.renderer_name,
+            build_agent_tool_env(
+                renderer=renderer,
+                tools=[self.chroma_tool.search],
+                initial_messages=initial_messages,
+                reward_fn=reward_fn,
                 max_turns=self.max_turns,
-                chroma_tool=self.chroma_tool,
-                format_coef=self.format_coef,
             )
             for _ in range(self.group_size)
         ]
@@ -256,7 +235,7 @@ class SearchR1DatasetBuilder(RLDatasetBuilder):
         chroma_tool = await ChromaTool.build(
             chroma_host=self.chroma_host,
             chroma_port=self.chroma_port,
-            collection_name=self.chroma_collection_name,
+            chroma_collection_name=self.chroma_collection_name,
             retrieval_config=self.retrieval_config,
         )
 

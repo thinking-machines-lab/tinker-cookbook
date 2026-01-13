@@ -13,15 +13,15 @@ from tinker_cookbook.recipes.code_rl.lcb_utils import fetch_live_code_bench_syst
 from tinker_cookbook.recipes.code_rl.tools import DeepcoderReward, DeepcoderTask, DeepcoderTool
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import Message, Renderer
-from tinker_cookbook.rl.message_env import EnvFromMessageEnv
 from tinker_cookbook.rl.types import Env, EnvGroupBuilder, RLDataset, RLDatasetBuilder
 from tinker_cookbook.sandbox import SandboxBackend
-from tinker_cookbook.tool_use import AgentToolMessageEnv
+from tinker_cookbook.tool_use import build_agent_tool_env
 
 logger = logging.getLogger(__name__)
 
 
 def _load_deepcoder_split(split: Literal["train", "test"]) -> Dataset:
+    logger.info("Loading DeepCoder dataset split: %s", split)
     if split == "train":
         names = ("primeintellect", "taco", "lcbv5")
     else:
@@ -162,35 +162,6 @@ def _initial_messages(
     return prefix + [{"role": "user", "content": task.problem}]
 
 
-def build_env(
-    task: DeepcoderTask,
-    model_name: str,
-    *,
-    renderer_name: str | None = None,
-    max_turns: int = 1,
-    sandbox_backend: SandboxBackend | None = None,
-    timeout: int = 6,
-    format_coef: float = 0.1,
-) -> EnvFromMessageEnv:
-    """Build an RL environment for a single code task."""
-    tokenizer = tokenizer_utils.get_tokenizer(model_name)
-    chosen_renderer = renderer_name or model_info.get_recommended_renderer_name(model_name)
-    renderer = get_renderer(chosen_renderer, tokenizer)
-
-    code_tool = DeepcoderTool(task, sandbox_backend=sandbox_backend, timeout=timeout)
-    msg_env = AgentToolMessageEnv(
-        tools=[code_tool.check_solution],
-        initial_messages=_initial_messages(task, renderer, code_tool),
-        max_turns=max_turns,
-        reward_fn=DeepcoderReward(code_tool=code_tool, format_coef=format_coef),
-    )
-    return EnvFromMessageEnv(
-        renderer=renderer,
-        message_env=msg_env,
-        failed_parse_reward=-0.1,
-    )
-
-
 class DeepcoderEnvGroupBuilder(EnvGroupBuilder):
     """EnvGroupBuilder that creates code environments with shared sandbox backend."""
 
@@ -215,18 +186,24 @@ class DeepcoderEnvGroupBuilder(EnvGroupBuilder):
         self.format_coef = format_coef
 
     async def make_envs(self) -> Sequence[Env]:
-        return [
-            build_env(
-                task=self.task,
-                model_name=self.model_name,
-                renderer_name=self.renderer_name,
-                max_turns=self.max_turns,
-                sandbox_backend=self.sandbox_backend,
-                timeout=self.timeout,
-                format_coef=self.format_coef,
+        # Renderer is stateless, share across all envs in group
+        tokenizer = tokenizer_utils.get_tokenizer(self.model_name)
+        renderer_name = self.renderer_name or model_info.get_recommended_renderer_name(self.model_name)
+        renderer = get_renderer(renderer_name, tokenizer)
+
+        envs = []
+        for _ in range(self.group_size):
+            tool = DeepcoderTool(self.task, self.sandbox_backend, self.timeout)
+            envs.append(
+                build_agent_tool_env(
+                    renderer=renderer,
+                    tools=[tool.check_solution],
+                    initial_messages=_initial_messages(self.task, renderer, tool),
+                    reward_fn=DeepcoderReward(code_tool=tool, format_coef=self.format_coef),
+                    max_turns=self.max_turns,
+                )
             )
-            for _ in range(self.group_size)
-        ]
+        return envs
 
     def logging_tags(self) -> list[str]:
         return ["deepcoder"]

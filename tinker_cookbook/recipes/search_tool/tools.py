@@ -74,7 +74,7 @@ class ChromaTool:
     async def build(
         chroma_host: str,
         chroma_port: int,
-        collection_name: str,
+        chroma_collection_name: str,
         retrieval_config: RetrievalConfig = RetrievalConfig(),
         max_retries: int = 10,
         initial_retry_delay: int = 1,
@@ -87,7 +87,7 @@ class ChromaTool:
         Args:
             chroma_host: ChromaDB server host.
             chroma_port: ChromaDB server port.
-            collection_name: Name of the ChromaDB collection to query.
+            chroma_collection_name: Name of the ChromaDB collection to query.
             retrieval_config: Configuration for retrieval (n_results, embedding settings).
             max_retries: Max retries for ChromaDB queries.
             initial_retry_delay: Initial delay between retries (exponential backoff).
@@ -105,7 +105,7 @@ class ChromaTool:
         return ChromaTool(
             chroma_client,
             gemini_client,
-            collection_name,
+            chroma_collection_name,
             retrieval_config,
             max_retries,
             initial_retry_delay,

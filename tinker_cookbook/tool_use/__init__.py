@@ -13,10 +13,14 @@ from tinker_cookbook.tool_use.tools import (
     handle_tool_call,
     tool,
 )
-from tinker_cookbook.tool_use.agent_tool_message_env import AgentToolMessageEnv
+from tinker_cookbook.tool_use.agent_tool_message_env import (
+    AgentToolMessageEnv,
+    build_agent_tool_env,
+)
 
 __all__ = [
     "AgentToolMessageEnv",
+    "build_agent_tool_env",
     "FunctionTool",
     "ToolInterface",
     "extract_tool_payload",

@@ -1,5 +1,3 @@
-"""Code RL training CLI launcher."""
-
 import asyncio
 import logging
 from datetime import datetime

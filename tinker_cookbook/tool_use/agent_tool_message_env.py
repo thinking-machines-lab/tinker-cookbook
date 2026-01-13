@@ -11,8 +11,9 @@ import inspect
 from dataclasses import dataclass, field
 from typing import Callable
 
+from tinker_cookbook.renderers import Renderer
 from tinker_cookbook.renderers.base import Message, ToolCall
-from tinker_cookbook.rl.message_env import MessageEnv, MessageStepResult
+from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
 from tinker_cookbook.tool_use.tools import (
     ToolInterface,
     handle_tool_call,
@@ -94,3 +95,39 @@ class AgentToolMessageEnv(MessageEnv):
             next_messages=self.history,
             metrics=metrics,
         )
+
+
+def build_agent_tool_env(
+    renderer: Renderer,
+    tools: list[ToolInterface],
+    initial_messages: list[Message],
+    reward_fn: Callable[[list[Message], Message], tuple[float, bool, dict[str, float]]],
+    *,
+    max_turns: int = 5,
+    failed_parse_reward: float = -0.1,
+) -> EnvFromMessageEnv:
+    """Build an EnvFromMessageEnv for tool-using agents.
+
+    Args:
+        renderer: The renderer for tokenizing messages.
+        tools: List of tools the agent can call.
+        initial_messages: Initial conversation history (system prompt, user message, etc.).
+        reward_fn: Function that grades each step. Takes (tool_results, assistant_message)
+            and returns (reward, done, metrics).
+        max_turns: Maximum turns before episode ends.
+        failed_parse_reward: Reward when model output fails to parse.
+
+    Returns:
+        An EnvFromMessageEnv ready for RL training.
+    """
+    msg_env = AgentToolMessageEnv(
+        tools=tools,
+        initial_messages=initial_messages,
+        max_turns=max_turns,
+        reward_fn=reward_fn,
+    )
+    return EnvFromMessageEnv(
+        renderer=renderer,
+        message_env=msg_env,
+        failed_parse_reward=failed_parse_reward,
+    )

@@ -100,7 +100,7 @@ async def evaluate_single_item(
 
 
 async def evaluate_one_dataset(data: list[SearchR1Datum], config: CLIConfig):
-    # load model and policy
+    # load model
     service_client = tinker.ServiceClient()
     sampling_client = service_client.create_sampling_client(model_path=config.tinker_checkpoint_url)
     policy = TinkerTokenCompleter(sampling_client, max_tokens=config.max_tokens)
@@ -110,7 +110,7 @@ async def evaluate_one_dataset(data: list[SearchR1Datum], config: CLIConfig):
     chroma_tool = await ChromaTool.build(
         chroma_host="localhost",
         chroma_port=8000,
-        collection_name="wiki_embeddings",
+        chroma_collection_name="wiki_embeddings",
         retrieval_config=RetrievalConfig(
             n_results=3,
             embedding_config=EmbeddingConfig(
