@@ -212,7 +212,7 @@ class ModalSandboxPool:
             else:
                 self._warm_pool.append(sb)
         if failures:
-            raise ExceptionGroup(f"Errors creating {len(failures)} Modal sandboxes", failures)
+            raise BaseExceptionGroup(f"Errors creating {len(failures)} Modal sandboxes", failures)
 
     async def run_in_workdir(
         self,
