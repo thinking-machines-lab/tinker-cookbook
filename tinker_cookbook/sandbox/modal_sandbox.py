@@ -51,7 +51,7 @@ class ModalSandbox:
     async def create(
         cls,
         app_name: str = "tinker-cookbook-runner",
-        timeout: int = 1800,
+        timeout: int = 600,
         image: modal.Image | None = None,
     ) -> ModalSandbox:
         # Create the Modal sandbox
@@ -153,12 +153,12 @@ class ModalSandboxPool:
         self,
         *,
         pool_size: int | None = None,  # Number of warm sandboxes to maintain during the job run.
-        pool_recycle_timeout_secs: float = 1800,  # Time after which a sandbox is too old and removed from pool.
-        pool_sandbox_timeout_secs: float = 2400,  # Time after which a sandbox is terminated.
+        pool_recycle_timeout_secs: float = 600,  # Time after which a sandbox is too old and removed from pool.
+        pool_sandbox_timeout_secs: float = 1200,  # Time after which a sandbox is terminated.
         image: modal.Image | None = None,
         app_name: str = "tinker-cookbook-runner",
     ):
-        self._pool_size = pool_size or int(os.getenv("MODAL_POOL_SIZE", "16"))
+        self._pool_size = pool_size or int(os.getenv("MODAL_POOL_SIZE", "32"))
 
         # The difference between these timeouts is the guaranteed "remaining
         # lifetime" of a sandbox when borrowed from the pool.
@@ -183,9 +183,10 @@ class ModalSandboxPool:
                 await self._maintain_pool_step()
             except Exception as e:
                 print(f"Error maintaining ModalSandboxPool: {e}", file=sys.stderr)
-            await asyncio.sleep(5)
+            await asyncio.sleep(2.0)
 
     async def _maintain_pool_step(self) -> None:
+        # Atomically recycle old sandboxes, removing them from the pool.
         now = asyncio.get_running_loop().time()
         new_pool: list[ModalSandbox] = []
         for sandbox in self._warm_pool:
@@ -193,17 +194,27 @@ class ModalSandboxPool:
             if age < self._pool_recycle_timeout_secs:
                 new_pool.append(sandbox)
             else:
-                await sandbox._sandbox.terminate.aio()
+                # Sandbox is too old, remove from pool and terminate so we don't
+                # continue paying for it unnecessarily.
+                asyncio.create_task(sandbox.terminate())
         self._warm_pool = new_pool
 
-        if len(self._warm_pool) >= self._pool_size:
+        if len(self._warm_pool) >= self._pool_size or self._terminated:
             return
 
-        # Fill pool with sandbox instances
+        # Fill pool with new sandbox instances
         new_sandboxes = await asyncio.gather(
-            self._create() for _ in range(self._pool_size - len(self._warm_pool))
+            *(self._create() for _ in range(self._pool_size - len(self._warm_pool))),
+            return_exceptions=True,
         )
-        self._warm_pool.extend(new_sandboxes)
+        failures: list[BaseException] = []
+        for sb in new_sandboxes:
+            if isinstance(sb, BaseException):
+                failures.append(sb)
+            else:
+                self._warm_pool.append(sb)
+        if failures:
+            raise ExceptionGroup(f"Errors creating {len(failures)} Modal sandboxes", failures)
 
     async def run_in_workdir(
         self,
@@ -236,5 +247,7 @@ class ModalSandboxPool:
 
     async def terminate(self) -> None:
         """Exit the pool and terminate all sandboxes."""
+        pool = self._warm_pool
         self._terminated = True
-        await asyncio.gather(*(sb.terminate() for sb in self._warm_pool))
+        self._warm_pool = []
+        await asyncio.gather(*(sb.terminate() for sb in pool))
