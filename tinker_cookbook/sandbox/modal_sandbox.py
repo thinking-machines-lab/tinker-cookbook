@@ -5,7 +5,7 @@ Modal provides cloud-based sandboxed execution environments.
 Requires Modal authentication: `modal token new`
 
 Configuration via environment variables:
-    MODAL_POOL_SIZE: Number of sandboxes in the pool (default: 32)
+    MODAL_POOL_SIZE: Number of sandboxes in the warm pool (default: 32)
 
 See: https://modal.com/docs/guide/sandbox
 """
@@ -108,8 +108,6 @@ class ModalSandbox:
     ) -> tuple[int, str, str]:
         """
         Execute a command in an isolated workdir with the given files.
-
-        Creates a unique workdir, writes files, runs command, then cleans up.
 
         Args:
             files: Files to write {filename: content}
