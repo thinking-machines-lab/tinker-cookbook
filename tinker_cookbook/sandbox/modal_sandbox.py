@@ -25,7 +25,7 @@ class ModalSandbox:
     Persistent Modal sandbox for code execution.
 
     Usage:
-        sandbox = ModalSandbox()
+        sandbox = await ModalSandbox.create()
 
         # Manual file write and exec:
         await sandbox.write_file("/workspace/code.py", "print('hello')")
@@ -186,7 +186,6 @@ class ModalSandboxPool:
             await asyncio.sleep(5)
 
     async def _maintain_pool_step(self) -> None:
-        # Fill pool with sandbox instances
         now = asyncio.get_running_loop().time()
         new_pool: list[ModalSandbox] = []
         for sandbox in self._warm_pool:
@@ -200,6 +199,7 @@ class ModalSandboxPool:
         if len(self._warm_pool) >= self._pool_size:
             return
 
+        # Fill pool with sandbox instances
         new_sandboxes = await asyncio.gather(
             self._create() for _ in range(self._pool_size - len(self._warm_pool))
         )

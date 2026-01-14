@@ -47,7 +47,7 @@ Example usage:
 from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox, ModalSandboxPool
 
 # Single sandbox
-sandbox = ModalSandbox()
+sandbox = await ModalSandbox.create()
 exit_code, stdout, stderr = await sandbox.run_in_workdir(
     files={"code.py": "print('hello')"},
     command=["python", "code.py"],
