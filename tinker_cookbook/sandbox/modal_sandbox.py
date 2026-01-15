@@ -44,7 +44,7 @@ class ModalSandbox:
     def __init__(
         self, timeout: int, image: modal.Image, app: modal.App, sandbox: modal.Sandbox
     ) -> None:
-        self._timeout = timeout
+        self._timeout = timeout   # Timeout for the entire Sandbox instance
         self._image = image
         self._app = app
         self._sandbox = sandbox
@@ -157,26 +157,26 @@ class ModalSandboxPool:
         self,
         *,
         pool_size: int | None = None,  # Number of warm sandboxes to maintain during the job run.
-        sandbox_timeout: int = 1200,  # Time after which a sandbox is terminated.
+        sandbox_timeout_secs: int = 1200,  # Time after which a sandbox is terminated.
         image: modal.Image | None = None,
         app_name: str = "tinker-cookbook-runner",
     ):
         self._pool_size = pool_size or int(os.getenv("MODAL_POOL_SIZE", "32"))
         self._creation_rate_limit = int(os.getenv("MODAL_CREATION_RATE_LIMIT", "4"))
-        self._sandbox_timeout = sandbox_timeout
+        self._sandbox_timeout_secs = sandbox_timeout_secs
         self._image = image
         self._app_name = app_name
         self._terminated = False
 
-        self._warm_pool: asyncio.Queue[ModalSandbox] = asyncio.Queue()
-        self._to_terminate: list[ModalSandbox] = []
-        self._active_count = 0
+        self._warm_pool: asyncio.Queue[ModalSandbox] = asyncio.Queue()  # Warm pool of sandboxes.
+        self._to_terminate: list[ModalSandbox] = []  # Sandboxes pending termination.
+        self._active_count = 0  # Number of in-use sandboxes.
 
         asyncio.create_task(self._maintain_pool())
 
     async def _create(self) -> ModalSandbox:
         return await ModalSandbox.create(
-            app_name=self._app_name, timeout=self._sandbox_timeout, image=self._image
+            app_name=self._app_name, timeout=self._sandbox_timeout_secs, image=self._image
         )
 
     async def _maintain_pool(self) -> None:
@@ -237,7 +237,7 @@ class ModalSandboxPool:
             return await sandbox.run_in_workdir(files, command, timeout)
         finally:
             self._active_count -= 1
-            self._to_terminate.append(sandbox)
+            self._to_terminate.append(sandbox)  # Don't reuse sandboxes after intial use
 
     async def terminate(self) -> None:
         """Exit the pool and terminate all sandboxes."""
