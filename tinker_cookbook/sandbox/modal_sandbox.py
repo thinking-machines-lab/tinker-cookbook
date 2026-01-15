@@ -44,7 +44,7 @@ class ModalSandbox:
     def __init__(
         self, timeout: int, image: modal.Image, app: modal.App, sandbox: modal.Sandbox
     ) -> None:
-        self._timeout = timeout   # Timeout for the entire Sandbox instance
+        self._timeout = timeout  # Timeout for the entire Sandbox instance
         self._image = image
         self._app = app
         self._sandbox = sandbox
