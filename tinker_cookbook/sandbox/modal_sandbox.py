@@ -151,8 +151,8 @@ class ModalSandboxPool:
         self,
         *,
         pool_size: int | None = None,  # Number of warm sandboxes to maintain during the job run.
-        pool_recycle_timeout_secs: float = 600,  # Time after which a sandbox is too old and removed from pool.
-        pool_sandbox_timeout_secs: float = 1200,  # Time after which a sandbox is terminated.
+        pool_recycle_timeout_secs: int = 600,  # Time after which a sandbox is too old and removed from pool.
+        pool_sandbox_timeout_secs: int = 1200,  # Time after which a sandbox is terminated.
         image: modal.Image | None = None,
         app_name: str = "tinker-cookbook-runner",
     ):
