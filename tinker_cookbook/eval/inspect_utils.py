@@ -140,11 +140,7 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
         parsed_responses = [
             self.renderer.parse_response(r.tokens)[0] for r in sampled_token_sequences
         ]
-        responses_text: list[str] = []
-        for r in parsed_responses:
-            content = r["content"]
-            assert isinstance(content, str), "Expected string content from parser"
-            responses_text.append(content)
+        responses_text: list[str] = [renderers.get_text_content(r) for r in parsed_responses]
         all_choices = [
             InspectAIModelOutputChoice(
                 message=InspectAIChatMessageAssistant(content=r, model=self.model_name),
