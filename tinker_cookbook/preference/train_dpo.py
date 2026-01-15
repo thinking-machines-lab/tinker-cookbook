@@ -223,7 +223,7 @@ def do_update(
             print_example(rejected_data[i], tokenizer, "Rejected")
 
     with timed("get_ref_logprobs", metrics):
-        # Get reference log probabilities using synchronous compute_logprobs
+        # Get reference log probabilities
         # Need to reconstruct full sequences for the sampling client
         full_sequences = []
         for datum in data:
