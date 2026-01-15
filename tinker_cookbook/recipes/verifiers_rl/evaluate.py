@@ -33,7 +33,11 @@ def log_results(
     printable_prompts = [messages_to_printable(p) for p in results["prompt"]]
     printable_completions = [messages_to_printable(c) for c in results["completion"]]
     vf.print_prompt_completions_sample(
-        printable_prompts, printable_completions, results["reward"], step=0
+        prompts=printable_prompts,
+        completions=printable_completions,
+        errors=[],  # Required argument added in verifiers 0.1.9
+        rewards=results["reward"],
+        step=0,
     )
     print("--- All ---")
     print("Rewards:")
