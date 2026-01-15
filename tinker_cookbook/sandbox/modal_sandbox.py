@@ -137,8 +137,9 @@ class ModalSandbox:
         return exit_code, stdout, stderr
 
     async def terminate(self) -> None:
-        """Terminate the Modal sandbox."""
+        """Terminate the Modal sandbox and wait for it to fully shut down."""
         await self._sandbox.terminate.aio()
+        await self._sandbox.wait.aio(raise_on_termination=False)
 
 
 class ModalSandboxPool:
