@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import string
 from dataclasses import dataclass
+from functools import reduce
 from typing import Annotated
 
 import chromadb
@@ -16,9 +19,29 @@ from tinker_cookbook.recipes.search_tool.embedding import (
     get_gemini_client,
     get_gemini_embedding,
 )
-from tinker_cookbook.recipes.search_tool.search_env import normalize_answer
 from tinker_cookbook.renderers.base import Message
 from tinker_cookbook.tool_use import tool
+
+
+def normalize_answer(s: str) -> str:
+    """Normalize answer by lowercasing, removing punctuation, articles, and fixing whitespace."""
+
+    def remove_articles(text: str) -> str:
+        return re.sub(r"\b(a|an|the)\b", " ", text)
+
+    def white_space_fix(text: str) -> str:
+        return " ".join(text.split())
+
+    def remove_punc(text: str) -> str:
+        exclude = set(string.punctuation)
+        return "".join(ch for ch in text if ch not in exclude)
+
+    def lower(text: str) -> str:
+        return text.lower()
+
+    # Apply transformations in order using reduce
+    transformations = [lower, remove_punc, remove_articles, white_space_fix]
+    return reduce(lambda text, func: func(text), transformations, s)
 
 logger = logging.getLogger(__name__)
 

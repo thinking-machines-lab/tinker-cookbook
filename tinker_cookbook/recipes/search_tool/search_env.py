@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import os
 import random
-import re
-import string
-from functools import reduce
 from pathlib import Path
 from typing import Literal, Sequence, TypedDict, cast
 
@@ -41,27 +38,6 @@ Here is an example of solving a real question:
 <tool_call>{"name": "search", "arguments": {"query_list": ["Population San Francisco between 2023 and 2024"]}}</tool_call> (Output omitted for brevity)
 4. Answer: The population of New York City grew the most in 2024, and the population of San Francisco changed by XXXX in 2024.
 """
-
-
-def normalize_answer(s: str) -> str:
-    """Normalize answer by lowercasing, removing punctuation, articles, and fixing whitespace."""
-
-    def remove_articles(text: str) -> str:
-        return re.sub(r"\b(a|an|the)\b", " ", text)
-
-    def white_space_fix(text: str) -> str:
-        return " ".join(text.split())
-
-    def remove_punc(text: str) -> str:
-        exclude = set(string.punctuation)
-        return "".join(ch for ch in text if ch not in exclude)
-
-    def lower(text: str) -> str:
-        return text.lower()
-
-    # Apply transformations in order using reduce
-    transformations = [lower, remove_punc, remove_articles, white_space_fix]
-    return reduce(lambda text, func: func(text), transformations, s)
 
 
 class SearchR1Datum(TypedDict):
