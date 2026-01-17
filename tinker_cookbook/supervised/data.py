@@ -88,9 +88,20 @@ class StreamingSupervisedDatasetFromHFDataset(SupervisedDataset):
         self.length = length
 
     def get_batch(self, index: int) -> list[tinker.Datum]:
-        # TODO: this is a hack to make sure the index is correct
-        # should maybe think about a more robust way to do this
-        assert index == self.index + 1
+        # Error on backward seeks
+        if index < self.index + 1:
+            raise ValueError(
+                f"StreamingSupervisedDatasetFromHFDataset only supports forward iteration. "
+                f"Cannot seek backward from batch {self.index} to {index}."
+            )
+
+        # Skip forward if needed by consuming intermediate batches
+        batches_to_skip = index - self.index - 1
+        for _ in range(batches_to_skip):
+            next(self.dataset_iterator)
+            self.index += 1
+
+        # Get the actual batch
         self.index = index
         batch = next(self.dataset_iterator)
         rows = [dict(zip(batch.keys(), values)) for values in zip(*batch.values())]
