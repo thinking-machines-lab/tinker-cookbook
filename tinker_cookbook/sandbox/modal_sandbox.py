@@ -5,7 +5,8 @@ Modal provides cloud-based sandboxed execution environments.
 Requires Modal authentication: `modal token new`
 
 Configuration via environment variables:
-    MODAL_POOL_SIZE: Number of sandboxes in the warm pool (default: 32)
+    MODAL_POOL_SIZE: Number of sandboxes in the pool (default: 32)
+    MODAL_CREATION_RATE_LIMIT: Max sandboxes created per second (default: 4)
 
 See: https://modal.com/docs/guide/sandbox
 """
@@ -13,11 +14,13 @@ See: https://modal.com/docs/guide/sandbox
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
-import sys
 import uuid
 
 import modal
+
+logger = logging.getLogger(__name__)
 
 
 class ModalSandbox:
@@ -45,7 +48,6 @@ class ModalSandbox:
         self._image = image
         self._app = app
         self._sandbox = sandbox
-        self._created_at = asyncio.get_running_loop().time()
 
     @classmethod
     async def create(
@@ -54,7 +56,7 @@ class ModalSandbox:
         timeout: int = 600,
         image: modal.Image | None = None,
     ) -> ModalSandbox:
-        # Create the Modal sandbox
+        """Create a new Modal sandbox."""
         image = image or modal.Image.debian_slim()
         app = await modal.App.lookup.aio(app_name, create_if_missing=True)
         sandbox = await modal.Sandbox.create.aio(app=app, image=image, timeout=timeout)
@@ -135,8 +137,9 @@ class ModalSandbox:
         return exit_code, stdout, stderr
 
     async def terminate(self) -> None:
-        """Terminate the Modal sandbox."""
+        """Terminate the Modal sandbox and wait for it to fully shut down."""
         await self._sandbox.terminate.aio()
+        await self._sandbox.wait.aio(raise_on_termination=False)
 
 
 class ModalSandboxPool:
@@ -145,74 +148,67 @@ class ModalSandboxPool:
 
     Each sandbox handles one request at a time. The pool manages
     borrowing and returning sandboxes automatically.
+
+    Configuration via environment variables:
+        MODAL_POOL_SIZE: Number of sandboxes in the pool (default: 32)
+        MODAL_CREATION_RATE_LIMIT: Max sandboxes created per second (default: 4)
     """
 
     def __init__(
         self,
         *,
         pool_size: int | None = None,  # Number of warm sandboxes to maintain during the job run.
-        pool_recycle_timeout_secs: int = 600,  # Time after which a sandbox is too old and removed from pool.
-        pool_sandbox_timeout_secs: int = 1200,  # Time after which a sandbox is terminated.
+        sandbox_timeout_secs: int = 1200,  # Time after which a sandbox is terminated.
         image: modal.Image | None = None,
         app_name: str = "tinker-cookbook-runner",
     ):
         self._pool_size = pool_size or int(os.getenv("MODAL_POOL_SIZE", "32"))
-
-        # The difference between these timeouts is the guaranteed "remaining
-        # lifetime" of a sandbox when borrowed from the pool.
-        self._pool_recycle_timeout_secs = pool_recycle_timeout_secs
-        self._pool_sandbox_timeout_secs = pool_sandbox_timeout_secs
-
+        self._creation_rate_limit = int(os.getenv("MODAL_CREATION_RATE_LIMIT", "4"))
+        self._sandbox_timeout_secs = sandbox_timeout_secs
         self._image = image
         self._app_name = app_name
         self._terminated = False
 
-        self._warm_pool: list[ModalSandbox] = []
+        self._warm_pool: asyncio.Queue[ModalSandbox] = asyncio.Queue()  # Warm pool of sandboxes.
+        self._to_terminate: list[ModalSandbox] = []  # Sandboxes pending termination.
+        self._active_count = 0  # Number of in-use sandboxes.
+
         asyncio.create_task(self._maintain_pool())
 
     async def _create(self) -> ModalSandbox:
         return await ModalSandbox.create(
-            app_name=self._app_name, timeout=self._pool_sandbox_timeout_secs, image=self._image
+            app_name=self._app_name, timeout=self._sandbox_timeout_secs, image=self._image
         )
 
     async def _maintain_pool(self) -> None:
+        """Background task to handle all sandbox creation and termination."""
         while not self._terminated:
             try:
                 await self._maintain_pool_step()
             except Exception as e:
-                print(f"Error maintaining ModalSandboxPool: {e}", file=sys.stderr)
-            await asyncio.sleep(2.0)
+                logger.error(f"Error maintaining ModalSandboxPool: {e}")
+            await asyncio.sleep(1.0)
 
     async def _maintain_pool_step(self) -> None:
-        # Atomically recycle old sandboxes, removing them from the pool.
-        now = asyncio.get_running_loop().time()
-        new_pool: list[ModalSandbox] = []
-        for sandbox in self._warm_pool:
-            age = now - sandbox._created_at
-            if age < self._pool_recycle_timeout_secs:
-                new_pool.append(sandbox)
-            else:
-                # Sandbox is too old, remove from pool and terminate so we don't
-                # continue paying for it unnecessarily.
-                asyncio.create_task(sandbox.terminate())
-        self._warm_pool = new_pool
+        """Single iteration of pool maintenance: terminate used sandboxes, create new ones."""
+        # Batch terminate used sandboxes
+        if self._to_terminate:
+            to_terminate, self._to_terminate = self._to_terminate, []
+            await asyncio.gather(*(sb.terminate() for sb in to_terminate))
 
-        if len(self._warm_pool) >= self._pool_size or self._terminated:
-            return
-
-        # Fill pool with new sandbox instances
-        new_sandboxes = await asyncio.gather(
-            *(self._create() for _ in range(self._pool_size - len(self._warm_pool))),
-            return_exceptions=True,
-        )
-        failures: list[BaseException] = []
-        for sb in new_sandboxes:
-            if isinstance(sb, BaseException):
-                failures.append(sb)
-            else:
-                self._warm_pool.append(sb)
-        if failures:
-            raise BaseExceptionGroup(f"Errors creating {len(failures)} Modal sandboxes", failures)
+        # Create new sandboxes in parallel (respecting rate limit)
+        total = self._warm_pool.qsize() + self._active_count
+        need = min(self._creation_rate_limit, self._pool_size - total)
+        if need > 0:
+            new_sandboxes = await asyncio.gather(
+                *(self._create() for _ in range(need)),
+                return_exceptions=True,
+            )
+            for sb in new_sandboxes:
+                if isinstance(sb, BaseException):
+                    logger.error(f"Error creating Modal sandbox: {sb}")
+                else:
+                    await self._warm_pool.put(sb)
 
     async def run_in_workdir(
         self,
@@ -233,19 +229,30 @@ class ModalSandboxPool:
             Tuple of (exit_code, stdout, stderr)
         """
         if self._terminated:
-            raise RuntimeError("ModalSandboxPool has been terminated and cannot run new tasks.")
-        if self._warm_pool:
-            sandbox = self._warm_pool.pop(0)
-        else:
-            sandbox = await self._create()
+            raise RuntimeError("ModalSandboxPool has been terminated.")
+
+        sandbox = await self._warm_pool.get()
+        self._active_count += 1
+
         try:
             return await sandbox.run_in_workdir(files, command, timeout)
         finally:
-            asyncio.create_task(sandbox.terminate())  # Don't reuse sandboxes after intial use
+            self._active_count -= 1
+            self._to_terminate.append(sandbox)  # Don't reuse sandboxes after intial use
 
     async def terminate(self) -> None:
         """Exit the pool and terminate all sandboxes."""
-        pool = self._warm_pool
         self._terminated = True
-        self._warm_pool = []
-        await asyncio.gather(*(sb.terminate() for sb in pool))
+
+        # Wait for active sandboxes to finish and be added to _to_terminate
+        while self._active_count > 0:
+            await asyncio.sleep(0.5)
+
+        # Collect and terminate all sandboxes
+        all_sandboxes = list(self._to_terminate)
+        while not self._warm_pool.empty():
+            try:
+                all_sandboxes.append(self._warm_pool.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        await asyncio.gather(*(sb.terminate() for sb in all_sandboxes))
