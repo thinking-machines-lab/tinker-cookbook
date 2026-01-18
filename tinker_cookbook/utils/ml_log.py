@@ -263,7 +263,9 @@ class WandbLogger(Logger):
         try:
             # Fallback: try to get from run summary
             if self.run.summary and "_step" in self.run.summary:
-                return self.run.summary["_step"] + 1
+                step_value = self.run.summary["_step"]
+                if isinstance(step_value, (int, float)):
+                    return int(step_value) + 1
         except Exception as e:
             logger.warning(f"Could not determine last step from WandB summary: {e}")
 
