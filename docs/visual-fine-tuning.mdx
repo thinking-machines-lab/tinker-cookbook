@@ -1,0 +1,38 @@
+import { CookbookLink } from "../components/CookbookLink";
+
+{/* TODO_CONSIDER: Moving vision-based docs that are dispersed across the codebase into this section */}
+
+# Cookbook: Visual Fine-Tuning
+
+This section covers fine-tuning vision-language models (VLMs) with Tinker.
+
+Tinker supports VLMs like `Qwen/Qwen3-VL-30B-A3B-Instruct` and `Qwen/Qwen3-VL-235B-A22B-Instruct`. These models can process both text and images, enabling use cases like:
+
+- **Image classification**: Train models to categorize images into custom classes
+- **Visual question answering**: Fine-tune for domain-specific image understanding
+- **Document analysis**: Process screenshots, diagrams, or scanned documents
+- **Multi-modal chat**: Build assistants that can discuss images in context
+
+Check the [Model Lineup](/model-lineup) page for available vision model types.
+
+## Quick links
+
+- [VLM Training Guide](/visual-fine-tuning/vlm-training): Detailed guide on preparing data and training VLMs
+- [Rendering: Vision Inputs](/rendering#vision-inputs): Higher-level message abstractions for VLMs
+- [Putting it together: Sampling from an image](/training-sampling#putting-it-together-sampling-from-an-image): Complete sampling example with vision
+- <CookbookLink path="tinker_cookbook/recipes/vlm_classifier">
+    VLM Classifier recipe
+  </CookbookLink>
+  : Complete example of training a VLM image classifier
+
+## Key Concepts & Considerations
+
+When training VLMs, there are a few important considerations:
+
+1. **Image size limits**: Tinker enforces a maximum of **2MB** per image. Resize or compress images client-side before training.
+
+2. **Vision tokens**: Images are converted to vision tokens by the model. You need to account for these when constructing training data.
+
+3. **Renderers**: Use `Qwen3VLRenderer` or `Qwen3VLInstructRenderer` which handle vision special tokens (`<|vision_start|>`, `<|vision_end|>`) automatically.
+
+The library code for VLM support can be found in <CookbookLink path="tinker_cookbook/image_processing_utils.py">`image_processing_utils.py`</CookbookLink> and the renderers module.

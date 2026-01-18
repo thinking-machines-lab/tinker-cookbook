@@ -1,4 +1,4 @@
-import { CookbookLink } from '../components/CookbookLink'
+import { CookbookLink } from "../components/CookbookLink";
 
 # Completers
 
@@ -25,10 +25,12 @@ class TokenCompleter:
 ```
 
 This interface takes:
+
 - `model_input`: The input to the model (of type `types.ModelInput`)
 - `stop`: Stop conditions, either a list of strings or token IDs (combined into a `StopCondition` class). When training with reinforcement learning, this should be defined by the `initial_observation` function of the environment.
 
 It returns a `TokensWithLogprobs` object containing:
+
 - `tokens`: The generated token sequence
 - `maybe_logprobs`: Optional log probabilities for each token
 
@@ -41,6 +43,6 @@ class MessageCompleter:
     async def __call__(self, messages: list[renderers.Message]) -> renderers.Message:
 ```
 
-For training purposes the `TokenCompleter` is the class we will use for RL training as we need to optimize the same same set of tokens during the update step that the model output during rollout. The `MessageCompleter` is useful for sampling where we need to use the model output for semantic purposes such as Judge models or multi-agent environments.
+For training purposes the `TokenCompleter` is the class we will use for RL training as we need to optimize the same set of tokens during the update step that the model output during rollout. The `MessageCompleter` is useful for sampling where we need to use the model output for semantic purposes such as Judge models or multi-agent environments.
 
 The Tinker Cookbook uses two concrete implementations of these interfaces - <CookbookLink path="tinker_cookbook/completers.py">`TinkerTokenCompleter`</CookbookLink> and <CookbookLink path="tinker_cookbook/completers.py">`TinkerMessageCompleter`</CookbookLink> which are both wrappers around a `tinker.SamplingClient`. While the TinkerTokenCompleter operates directly on tokens, the TinkerMessageCompleter needs to be instantiated with a renderer to make it compatible with the inputs expected by the sampling client.
