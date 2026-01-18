@@ -50,6 +50,7 @@ class CLIConfig:
     # Logging parameters
     wandb_project: str | None = None
     wandb_name: str | None = None
+    resume_wandb_run_id: str | None = None
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
@@ -153,6 +154,7 @@ def cli_main(cli_config: CLIConfig):
         base_url=cli_config.base_url,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
+        resume_wandb_run_id=cli_config.resume_wandb_run_id,
         lora_rank=cli_config.lora_rank,
         save_every=cli_config.save_every,
         eval_every=cli_config.eval_every,
