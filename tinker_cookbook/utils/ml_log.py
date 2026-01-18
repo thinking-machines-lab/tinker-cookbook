@@ -207,6 +207,7 @@ class WandbLogger(Logger):
         config: Any | None = None,
         log_dir: str | Path | None = None,
         wandb_name: str | None = None,
+        resume_run_id: str | None = None,
     ):
         if not _wandb_available:
             raise ImportError(
@@ -219,22 +220,72 @@ class WandbLogger(Logger):
 
         # Initialize wandb run
         assert wandb is not None  # For type checker
-        self.run = wandb.init(
-            project=project,
-            config=dump_config(config) if config else None,
-            dir=str(log_dir) if log_dir else None,
-            name=wandb_name,
-        )
+
+        self.step_offset = 0
+        self._is_resumed = resume_run_id is not None
+
+        if resume_run_id:
+            # Resume an existing run
+            self.run = wandb.init(
+                project=project,
+                id=resume_run_id,
+                resume="must",
+                dir=str(log_dir) if log_dir else None,
+            )
+            # Determine step offset from the resumed run's history
+            self.step_offset = self._get_last_step_from_run()
+            logger.info(f"Resumed WandB run {resume_run_id}, step offset: {self.step_offset}")
+        else:
+            self.run = wandb.init(
+                project=project,
+                config=dump_config(config) if config else None,
+                dir=str(log_dir) if log_dir else None,
+                name=wandb_name,
+            )
+
+    def _get_last_step_from_run(self) -> int:
+        """Get the last logged step from a resumed WandB run."""
+        assert wandb is not None
+        if self.run is None:
+            return 0
+
+        try:
+            # Try to get the last step from run history via API
+            api = wandb.Api()
+            run = api.run(f"{self.run.entity}/{self.run.project}/{self.run.id}")
+            history = run.history(keys=["_step"], pandas=False)
+            if history:
+                last_step = max(row.get("_step", 0) for row in history)
+                return last_step + 1  # Offset should be one after the last logged step
+        except Exception as e:
+            logger.warning(f"Could not determine last step from WandB run history: {e}")
+
+        try:
+            # Fallback: try to get from run summary
+            if self.run.summary and "_step" in self.run.summary:
+                return self.run.summary["_step"] + 1
+        except Exception as e:
+            logger.warning(f"Could not determine last step from WandB summary: {e}")
+
+        logger.warning("Could not auto-detect step offset, defaulting to 0")
+        return 0
 
     def log_hparams(self, config: Any) -> None:
         """Log hyperparameters to wandb."""
         if self.run and wandb is not None:
+            if self._is_resumed:
+                # Skip config updates when resuming - the original config is preserved
+                # and updating would fail if values differ
+                logger.info("Skipping WandB config update for resumed run")
+                return
             wandb.config.update(dump_config(config))
 
     def log_metrics(self, metrics: Dict[str, Any], step: int | None = None) -> None:
         """Log metrics to wandb."""
         if self.run and wandb is not None:
-            wandb.log(metrics, step=step)
+            # Apply step offset for resumed runs
+            effective_step = step + self.step_offset if step is not None else None
+            wandb.log(metrics, step=effective_step)
             logger.info("Logging to: %s", self.run.url)
 
     def close(self) -> None:
@@ -387,6 +438,7 @@ def setup_logging(
     wandb_name: str | None = None,
     config: Any | None = None,
     do_configure_logging_module: bool = True,
+    resume_wandb_run_id: str | None = None,
 ) -> Logger:
     """
     Set up logging infrastructure with multiple backends.
@@ -397,6 +449,8 @@ def setup_logging(
         wandb_name: W&B run name
         config: Configuration object to log
         do_configure_logging_module: Whether to configure the logging module
+        resume_wandb_run_id: W&B run ID to resume (if provided, continues an existing run
+            and auto-detects step offset from the run's history)
 
     Returns:
         MultiplexLogger that combines all enabled loggers
@@ -415,7 +469,7 @@ def setup_logging(
     loggers.append(PrettyPrintLogger())
 
     # Add W&B logger if available and configured
-    if wandb_project:
+    if wandb_project or resume_wandb_run_id:
         if not _wandb_available:
             print("WARNING: wandb is not installed. Skipping W&B logging.")
         elif not os.environ.get("WANDB_API_KEY"):
@@ -427,6 +481,7 @@ def setup_logging(
                     config=config,
                     log_dir=log_dir_path,
                     wandb_name=wandb_name,
+                    resume_run_id=resume_wandb_run_id,
                 )
             )
 
