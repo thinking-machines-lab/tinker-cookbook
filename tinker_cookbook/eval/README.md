@@ -1,1 +1,1 @@
-Tinker can integrate with oss eval framework like inspect ai easily (`run_inspect_evals.py`), or you can create a simple evaluator yourself {`custom_evaluators.py`}. Check out our [docs](https://tinker-docs.thinkingmachines.ai/evals).
+Tinker can integrate with oss eval framework like Inspect AI easily (`run_inspect_evals.py`), or you can create a simple evaluator yourself ([`custom_evaluators.py`](./custom_evaluators.py)). Check out our [docs](https://tinker-docs.thinkingmachines.ai/evals).
