@@ -374,4 +374,3 @@ async def main(config: Config):
 
 if __name__ == "__main__":
     chz.nested_entrypoint(lambda config: asyncio.run(main(config)), allow_hyphens=True)
-
