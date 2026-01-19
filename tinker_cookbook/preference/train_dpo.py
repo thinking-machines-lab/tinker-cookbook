@@ -11,6 +11,7 @@ from typing import Any, cast
 import chz
 import tinker
 import torch
+import torch.nn.functional as F
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.eval.evaluators import Evaluator, EvaluatorBuilder
 from tinker_cookbook.supervised.train import run_evals
@@ -133,14 +134,14 @@ def compute_dpo_loss(
     )
 
     # Compute DPO loss
-    losses = -torch.log(torch.sigmoid(dpo_beta * (chosen_log_ratio - rejected_log_ratio)))
+    losses = -F.logsigmoid(dpo_beta * (chosen_log_ratio - rejected_log_ratio))
     loss = losses.mean()
 
     # Compute metrics
     accuracy = (chosen_log_ratio > rejected_log_ratio).float().mean().item()
     chosen_rewards = dpo_beta * chosen_log_ratio
     rejected_rewards = dpo_beta * rejected_log_ratio
-    margin = dpo_beta * (chosen_rewards - rejected_rewards).mean().item()
+    margin = (chosen_rewards - rejected_rewards).mean().item()
 
     metrics = {
         "dpo_loss": loss.item(),
@@ -222,7 +223,7 @@ def do_update(
             print_example(rejected_data[i], tokenizer, "Rejected")
 
     with timed("get_ref_logprobs", metrics):
-        # Get reference log probabilities using synchronous compute_logprobs
+        # Get reference log probabilities
         # Need to reconstruct full sequences for the sampling client
         full_sequences = []
         for datum in data:

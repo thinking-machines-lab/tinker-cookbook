@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime
+from typing import Any
 
 import chz
 from tinker_cookbook import cli_utils, model_info
@@ -59,7 +60,11 @@ class CLIConfig:
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
     max_steps_off_policy: int | None = None
+
+    # Loss function and configuration.
+    # See https://tinker-docs.thinkingmachines.ai/losses
     loss_fn: LossFnType = "importance_sampling"
+    loss_fn_config: dict[str, Any] | None = None
 
 
 def get_dataset_builder(
@@ -143,6 +148,7 @@ async def cli_main(cli_config: CLIConfig):
         if cli_config.max_steps_off_policy is not None
         else None,
         loss_fn=cli_config.loss_fn,
+        loss_fn_config=cli_config.loss_fn_config,
     )
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)

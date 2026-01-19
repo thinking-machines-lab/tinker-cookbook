@@ -50,9 +50,11 @@ def dump_config(config: Any) -> Any:
     if hasattr(config, "to_dict"):
         return config.to_dict()
     elif chz.is_chz(config):
-        return chz.asdict(config)
+        # Recursively dump values to handle nested non-serializable fields
+        return {k: dump_config(v) for k, v in chz.asdict(config).items()}
     elif is_dataclass(config) and not isinstance(config, type):
-        return asdict(config)
+        # Recursively dump values to handle nested non-serializable fields
+        return {k: dump_config(v) for k, v in asdict(config).items()}
     elif isinstance(config, dict):
         return {k: dump_config(v) for k, v in config.items()}
     elif isinstance(config, (list, tuple)):

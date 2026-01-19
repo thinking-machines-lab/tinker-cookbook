@@ -88,6 +88,11 @@ class GuessNumberEnv(Env):
             next_stop_condition=self.stop_condition,
             episode_done=episode_done,
             reward=reward,
+            logs={
+                "guess": action_content,
+                "feedback": ensure_text(user_turn["content"]),
+                "target": self.gold_answer,
+            },
         )
 
         return step_result

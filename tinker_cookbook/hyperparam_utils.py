@@ -86,6 +86,13 @@ def _get_hidden_size(model_name: str) -> int:
             "meta-llama/Llama-3.3-70B-Instruct": 8192,
         }[model_name]
 
+    if model_name in (
+        "deepseek-ai/DeepSeek-V3.1",
+        "deepseek-ai/DeepSeek-V3.1-Base",
+        "moonshotai/Kimi-K2-Thinking",
+    ):
+        return 7168
+
     config = AutoConfig.from_pretrained(model_name)
     return config.hidden_size
 
@@ -154,7 +161,8 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
     elif "qwen" in model_name.lower():
         exponent_model = 0.0775
     else:
-        assert False, f"Unknown model: {model_name}"
+        raise ValueError(f"Unknown model: {model_name}")
+    # TODO: sweep to determine LR multipliers for other models
     lr = lr * (2000 / _get_hidden_size(model_name)) ** exponent_model
     return lr
 

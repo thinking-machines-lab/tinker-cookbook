@@ -10,7 +10,7 @@ from tinker_cookbook.preference.types import (
     Comparison,
     PreferenceModel,
 )
-from tinker_cookbook.renderers import get_renderer, ensure_text
+from tinker_cookbook.renderers import get_renderer, get_text_content
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 
@@ -45,7 +45,7 @@ class ComparisonEvaluator(SamplingClientEvaluator):
 
         async def process_comparison(comparison: Comparison) -> float:
             new_completion_message = await policy(comparison.prompt_conversation)
-            new_completion_content = ensure_text(new_completion_message["content"])
+            new_completion_content = get_text_content(new_completion_message)
             new_completion_message = {
                 "role": "assistant",
                 "content": self.content_preprocessor(new_completion_content),

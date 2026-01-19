@@ -1,18 +1,18 @@
-import argparse
 import asyncio
 import random
 from collections import defaultdict
-from typing import TypedDict
+from typing import Literal, TypedDict
 
+import chz
 import tinker
 from tinker_cookbook import model_info, renderers
 from tinker_cookbook.completers import TinkerTokenCompleter
-from tinker_cookbook.recipes.tool_use.search.search_env import (
+from tinker_cookbook.recipes.search_tool.search_env import (
     SearchEnv,
     SearchR1Datum,
     download_search_r1_dataset,
 )
-from tinker_cookbook.recipes.tool_use.search.tools import (
+from tinker_cookbook.recipes.search_tool.tools import (
     ChromaToolClient,
     ChromaToolClientConfig,
     EmbeddingConfig,
@@ -23,6 +23,21 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 ROLLOUT_CONCURRENCY = 1024
 rollout_semaphore = asyncio.Semaphore(ROLLOUT_CONCURRENCY)
+
+
+@chz.chz
+class CLIConfig:
+    # Evaluation parameters
+    max_eval_samples: int = chz.field(
+        default=100, doc="Maximum number of samples to evaluate per data source"
+    )
+    seed: int = chz.field(default=42, doc="Random seed for sampling")
+    split: Literal["train", "test"] = chz.field(default="test", doc="Dataset split to use")
+
+    # Model parameters
+    base_model: str = chz.field(default="Qwen/Qwen3-4B-Instruct-2507", doc="Base model to use")
+    tinker_checkpoint_url: str = chz.field(doc="Tinker checkpoint URL (required)")
+    max_tokens: int = chz.field(default=1024, doc="Maximum number of tokens to generate")
 
 
 class EvaluationResult(TypedDict):
@@ -61,7 +76,6 @@ def sample_k_from_each_source(
 
 async def evaluate_single_item(
     item: SearchR1Datum,
-    args: argparse.Namespace,
     chroma_tool_client: ChromaToolClient,
     policy: TinkerTokenCompleter,
     renderer: renderers.Renderer,
@@ -71,7 +85,9 @@ async def evaluate_single_item(
         item["answer"],
         chroma_tool_client,
         renderer,
-        convo_prefix=SearchEnv.standard_fewshot_prefix(),
+        convo_prefix=SearchEnv.standard_fewshot_prefix(
+            renderer, chroma_tool_client.get_tool_schemas()
+        ),
     )
     async with rollout_semaphore:
         trajectory = await do_single_rollout(policy, env)
@@ -84,14 +100,14 @@ async def evaluate_single_item(
     return {"question": item["question"], "correct_score": correct_score, "trajectory": trajectory}
 
 
-async def evaluate_one_dataset(data: list[SearchR1Datum], args: argparse.Namespace):
+async def evaluate_one_dataset(data: list[SearchR1Datum], config: CLIConfig):
     # load model and renderer
-    tokenizer = get_tokenizer(args.base_model)
-    renderer_name = model_info.get_recommended_renderer_name(args.base_model)
+    tokenizer = get_tokenizer(config.base_model)
+    renderer_name = model_info.get_recommended_renderer_name(config.base_model)
     renderer = renderers.get_renderer(renderer_name, tokenizer=tokenizer)
     service_client = tinker.ServiceClient()
-    sampling_client = service_client.create_sampling_client(model_path=args.tinker_checkpoint_url)
-    policy = TinkerTokenCompleter(sampling_client, max_tokens=args.max_tokens)
+    sampling_client = service_client.create_sampling_client(model_path=config.tinker_checkpoint_url)
+    policy = TinkerTokenCompleter(sampling_client, max_tokens=config.max_tokens)
 
     chroma_config = ChromaToolClientConfig(
         chroma_host="localhost",
@@ -108,9 +124,7 @@ async def evaluate_one_dataset(data: list[SearchR1Datum], args: argparse.Namespa
     chroma_tool_client = await ChromaToolClient.create(chroma_config)
 
     # Run evaluations in parallel using asyncio.gather
-    tasks = [
-        evaluate_single_item(item, args, chroma_tool_client, policy, renderer) for item in data
-    ]
+    tasks = [evaluate_single_item(item, chroma_tool_client, policy, renderer) for item in data]
 
     print(f"Evaluating {len(tasks)} items")
     results = await asyncio.gather(*tasks)
@@ -130,33 +144,10 @@ async def evaluate_one_dataset(data: list[SearchR1Datum], args: argparse.Namespa
     return {"total_samples": 0, "total_correct": 0, "accuracy": 0.0}
 
 
-async def main():
-    parser = argparse.ArgumentParser(description="Offline evaluation with data source sampling")
-    parser.add_argument(
-        "--max-eval-samples",
-        type=int,
-        default=100,
-        help="Maximum number of samples to evaluate per data source",
-    )
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for sampling")
-    parser.add_argument(
-        "--split", choices=["train", "test"], default="test", help="Dataset split to use"
-    )
-    parser.add_argument(
-        "--base-model", type=str, default="Qwen/Qwen3-4B-Instruct-2507", help="Base model to use"
-    )
-    parser.add_argument(
-        "--tinker-checkpoint-url", type=str, required=True, help="Tinker checkpoint URL"
-    )
-    parser.add_argument(
-        "--max-tokens", type=int, default=1024, help="Maximum number of tokens to generate"
-    )
-
-    args = parser.parse_args()
-
+async def cli_main(config: CLIConfig):
     # Download the data
-    print(f"Downloading {args.split} split...")
-    data = download_search_r1_dataset(args.split)
+    print(f"Downloading {config.split} split...")
+    data = download_search_r1_dataset(config.split)
     print(f"Total data points: {len(data)}")
 
     # Split by data source
@@ -167,16 +158,16 @@ async def main():
         print(f"  {source}: {len(items)}")
 
     # Sample K from each source
-    print(f"\nSampling up to {args.max_eval_samples} samples from each source...")
+    print(f"\nSampling up to {config.max_eval_samples} samples from each source...")
     sampled_data_by_source = sample_k_from_each_source(
-        data_by_source, args.max_eval_samples, args.seed
+        data_by_source, config.max_eval_samples, config.seed
     )
 
     # Collect results from all datasets
     dataset_results = {}
     for source, data in sampled_data_by_source.items():
         print(f"Evaluating {source}...")
-        result = await evaluate_one_dataset(data, args)
+        result = await evaluate_one_dataset(data, config)
         dataset_results[source] = result
 
     # Print results table
@@ -207,4 +198,5 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    config = chz.entrypoint(CLIConfig)
+    asyncio.run(cli_main(config))

@@ -10,7 +10,7 @@ We provide two libraries for the broader community to customize their language m
 
 ## Installation
 
-1. Sign up for Tinker through the [waitlist](https://thinkingmachines.ai/tinker).
+1. Sign up for Tinker [here](https://auth.thinkingmachines.ai/sign-up).
 2. Once you have access, create an API key from the [console](https://tinker-console.thinkingmachines.ai) and export it as environment variable `TINKER_API_KEY`.
 3. Install tinker python client via `pip install tinker`
 4. We recommend installing `tinker-cookbook` in a virtual env either with `conda` or `uv`. For running most examples, you can install via `pip install -e .`.
@@ -54,16 +54,26 @@ We also include a wide range of more sophisticated examples in the [`tinker_cook
 1. **[Chat supervised learning](tinker_cookbook/recipes/chat_sl/)**: supervised fine-tuning on conversational datasets like Tulu3.
 2. **[Math reasoning](tinker_cookbook/recipes/math_rl/)**: improve LLM reasoning capability by rewarding it for answering math questions correctly.
 3. **[Preference learning](tinker_cookbook/recipes/preference/)**: showcase a three-stage RLHF pipeline: 1) supervised fine-tuning, 2) learning a reward model, 3) RL against the reward model.
-4. **[Tool use](tinker_cookbook/recipes/tool_use/)**: train LLMs to better use retrieval tools to answer questions more accurately.
+4. **[Tool use](tinker_cookbook/recipes/search_tool/)**: train LLMs to better use retrieval tools to answer questions more accurately.
 5. **[Prompt distillation](tinker_cookbook/recipes/prompt_distillation/)**: internalize long and complex instructions into LLMs.
 6. **[Multi-Agent](tinker_cookbook/recipes/multiplayer_rl/)**: optimize LLMs to play against another LLM or themselves.
 
 These examples are located in each subfolder, and their `README.md` files will walk you through the key implementation details, the commands to run them, and the expected performance.
 
+### Documentation
+
+The `docs/` directory contains a mirror of the Tinker documentation. These files are synced from our internal documentation site.
+
+**Note:** The documentation files use MDX format (Markdown with JSX), which includes some syntax that isn't standard Markdown. You may see things like `import` statements, `<Callout>` components, or curly-brace expressions. These are artifacts of our documentation framework - the actual content should still be readable as Markdown.
+
+If you find errors or want to improve the documentation, feel free to submit a PR editing files in `docs/`. We'll sync the changes back to our documentation site.
+
+For the rendered documentation, visit [tinker-docs.thinkingmachines.ai](https://tinker-docs.thinkingmachines.ai).
+
 ### Import our utilities
 
 Tinker cookbook includes several utilities. Here's a quick overview:
-- [`renderers`](tinker_cookbook/renderers.py) converts tokens from/to structured chat message objects
+- [`renderers`](tinker_cookbook/renderers/) converts tokens from/to structured chat message objects
 - [`hyperparam_utils`](tinker_cookbook/hyperparam_utils.py) helps calculate hyperparameters suitable for LoRAs
 - [`evaluation`](tinker_cookbook/eval/evaluators.py) provides abstractions for evaluating Tinker models and [`inspect_evaluation`](tinker_cookbook/eval/inspect_evaluators.py) shows how to integrate with InspectAI to make evaluating on standard benchmarks easy.
 

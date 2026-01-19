@@ -1,0 +1,22 @@
+# Navigating these docs
+
+These docs provide guides to both Tinker and the Tinker Cookbook.
+
+The first half, "Using the Tinker API", walks you through the fundamentals of Tinker:
+
+- [Installation](./install) explains how to install both `tinker` and `tinker-cookbook`, and points you to the Tinker Console for your API key.
+- [Training and Sampling](./training-sampling) takes you through your first training run: setting up your training data, performing the run, and sampling from the model to test the run.
+- [Loss Functions](./losses) starts to get into the detail. Tinker supports a variety of built-in loss functions, but also allows you to use arbitrary differentiable loss functions.
+- [Saving and Loading](./save-load) explains the checkpoint types available in Tinker, and how to restart a run from a checkpoint.
+- [Async and Futures](./async) explains Tinker's `sync` and `async` API variants, and how Futures works as Tinker's requests structure.
+- [Model Lineup](./model-lineup) is regularly updated with the models available to fine-tune in Tinker.
+
+The second half, "The Tinker Cookbook", provides recipes for how to use the Tinker API for research and applications. You are welcome to adapt these directly for your own use cases.
+
+- [Rendering](./rendering) explains how we convert from a conversation data structure to a list of tokens.
+- [Supervised Learning](./supervised-learning) explains basic SL and walks you through your first SL training loop. We make some suggestions for hyperparameter selection and detail how you can run your own hyperparameter sweep. We also show you how to perform prompt distillation.
+- [Reinforcement Learning](./rl) explains the basics of RL and walks you through your first RL run. We explain and provide code for creating your own RL environments and training on them. We provide a simple training loop for you to use and adapt, and explain RL hyperparameters and loss functions in detail.
+- [Preferences](./preferences) is a guide to learning from pairwise feedback, where  we have preference data indicating which of two completions is better for a given prompt. We walk you through two approaches to learning from pairwise preference data: direct preference optimization (DPO) and reinforcement learning from human feedback (RLHF).
+- [Evaluations](./evals) explains how you can use Tinker's outputs to run inline and offline evals on your runs.
+- [Completers](./completers) explains how Tinker implements policies, and provides two examples of how to use these in training.
+- [LoRA Primer](./lora-primer) explains the basic background of LoRA, and how to choose hyperparameters.

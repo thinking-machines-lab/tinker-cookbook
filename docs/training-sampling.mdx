@@ -1,0 +1,308 @@
+import { Callout } from 'nextra/components'
+
+# Getting started with training and sampling
+
+In this guide, we'll step you through using the Tinker Python library to do the basic operations needed for training and sampling.
+[View the complete Python script →](/quickstart.py.txt)
+
+## Creating the training client
+
+The main object we'll be using is the `TrainingClient`, which corresponds to a fine-tuned model that we can train and sample from.
+
+First, set your Tinker API key environment variable. In the terminal where you'll run Python, or in your `.bashrc`, put `export TINKER_API_KEY=<your key>`.
+
+Then, create a `ServiceInterface`. This lets you find out what base models are available to be fine-tuned.
+
+```python
+import tinker
+service_client = tinker.ServiceClient()
+print("Available models:")
+for item in service_client.get_server_capabilities().supported_models:
+    print("- " + item.model_name)
+```
+You'll see a list of model names:
+```
+- meta-llama/Llama-3.1-70B
+- meta-llama/Llama-3.1-8B
+...
+- Qwen/Qwen3-VL-30B-A3B-Instruct
+- Qwen/Qwen3-VL-235B-A22B-Instruct
+```
+We currently support models from the Qwen3, Qwen3-VL, and Llama3 series. We'll use Qwen3-VL-30B-A3B-Instruct for these examples, as it's a vision-language model that can also handle text-only tasks. See [Available Models in Tinker](/model-lineup) for the full list.
+
+Now we can create the `TrainingClient`:
+```python
+base_model = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+training_client = service_client.create_lora_training_client(
+    base_model=base_model
+)
+```
+As the name suggests, this model was already finetuned for chat/instruction-following. You should check the details of the model you're using in their system cards.
+
+## Preparing the training data
+
+Now we can do training updates on the model. This quickstart example won't show best practices for LLM fine-tuning; it's just an API demo. Check out [Rendering](/rendering), [Supervised Fine-tuning](/supervised-learning) and the other Cookbook examples for guidance on how to use Tinker in real applications.
+
+For this model, we'll train a model that can translate words into Pig Latin. The rules for Pig Latin are simple:
+- If a word begins with a consonant, move it to the end and add "ay"
+- If a word begins with a vowel, just add "way" to the end
+
+Here are some example completions we'd like the model to perform, where the prompt is in green and the model's completion is in red:
+
+<div className="example">
+<span className="prompt">English: hello world<br/>
+Pig Latin: </span><span className="completion">ello-hay orld-way</span>
+</div>
+
+Let's create some training examples and convert them to a format expected by Tinker.
+
+```python
+# Create some training examples
+examples = [
+    {
+        "input": "banana split",
+        "output": "anana-bay plit-say"
+    },
+    {
+        "input": "quantum physics",
+        "output": "uantum-qay ysics-phay"
+    },
+    {
+        "input": "donut shop",
+        "output": "onut-day op-shay"
+    },
+    {
+        "input": "pickle jar",
+        "output": "ickle-pay ar-jay"
+    },
+    {
+        "input": "space exploration",
+        "output": "ace-spay exploration-way"
+    },
+    {
+        "input": "rubber duck",
+        "output": "ubber-ray uck-day"
+    },
+    {
+        "input": "coding wizard",
+        "output": "oding-cay izard-way"
+    },
+]
+
+# Convert examples into the format expected by the training client
+from tinker import types
+
+# Get the tokenizer from the training client
+tokenizer = training_client.get_tokenizer()
+
+def process_example(example: dict, tokenizer) -> types.Datum:
+    # Format the input with Input/Output template
+    # For most real use cases, you'll want to use a renderer / chat template,
+    # (see later docs) but here, we'll keep it simple.
+    prompt = f"English: {example['input']}\nPig Latin:"
+
+    prompt_tokens = tokenizer.encode(prompt, add_special_tokens=True)
+    prompt_weights = [0] * len(prompt_tokens)
+    # Add a space before the output string, and finish with double newline
+    completion_tokens = tokenizer.encode(f" {example['output']}\n\n", add_special_tokens=False)
+    completion_weights = [1] * len(completion_tokens)
+
+    tokens = prompt_tokens + completion_tokens
+    weights = prompt_weights + completion_weights
+
+    input_tokens = tokens[:-1]
+    target_tokens = tokens[1:] # We're predicting the next token, so targets need to be shifted.
+    weights = weights[1:]
+
+    # A datum is a single training example for the loss function.
+    # It has model_input, which is the input sequence that'll be passed into the LLM,
+    # loss_fn_inputs, which is a dictionary of extra inputs used by the loss function.
+    return types.Datum(
+        model_input=types.ModelInput.from_ints(tokens=input_tokens),
+        loss_fn_inputs=dict(weights=weights, target_tokens=target_tokens)
+    )
+
+processed_examples = [process_example(ex, tokenizer) for ex in examples]
+
+# Visualize the first example for debugging purposes
+datum0 = processed_examples[0]
+print(f"{'Input':<20} {'Target':<20} {'Weight':<10}")
+print("-" * 50)
+for i, (inp, tgt, wgt) in enumerate(zip(datum0.model_input.to_ints(), datum0.loss_fn_inputs['target_tokens'].tolist(), datum0.loss_fn_inputs['weights'].tolist())):
+    print(f"{repr(tokenizer.decode([inp])):<20} {repr(tokenizer.decode([tgt])):<20} {wgt:<10}")
+```
+
+The visualization of the first example is:
+
+```
+Input                Target               Weight
+--------------------------------------------------
+'English'            ':'                  0.0
+':'                  ' banana'            0.0
+' banana'            ' split'             0.0
+' split'             '\n'                 0.0
+'\n'                 'P'                  0.0
+'P'                  'ig'                 0.0
+'ig'                 ' Latin'             0.0
+' Latin'             ':'                  0.0
+':'                  ' an'                1.0
+' an'                'ana'                1.0
+'ana'                '-b'                 1.0
+'-b'                 'ay'                 1.0
+'ay'                 ' pl'                1.0
+' pl'                'it'                 1.0
+'it'                 '-s'                 1.0
+'-s'                 'ay'                 1.0
+'ay'                 '\n\n'               1.0
+```
+
+## Vision inputs
+
+The above example is text-only, but adding vision inputs is also straightforward. The `ModelInput` type takes a list of chunks, which can be either `EncodedTextChunk` or `ImageChunk`. For instance:
+
+```python
+image_data = requests.get("https://thinkingmachines.ai/blog/on-policy-distillation/images/chess.png").content
+model_input = tinker.ModelInput(chunks=[
+  types.EncodedTextChunk(tokens=tokenizer.encode("<|im_start|>user\n<|vision_start|>")),
+  types.ImageChunk(data=image_data, format="png"),
+  types.EncodedTextChunk(tokens=tokenizer.encode("<|vision_end|>What is this?<|im_end|>\n<|im_start|>assistant\n")),
+])
+```
+
+Note that Qwen3-VL was trained with special tokens like `<|vision_start|>` and `<|vision_end|>`. The cookbook's `Qwen3VLRenderer` handles these automatically—see [Rendering: Vision Inputs](/rendering#vision-inputs) for details and a complete example.
+
+## Performing a training update
+
+Now we can use this data to perform a training update. We'll do 6 updates on the same batch of data. (Note that this is not typically a good way to train!)
+
+```python
+import numpy as np
+for _ in range(6):
+    fwdbwd_future = training_client.forward_backward(processed_examples, "cross_entropy")
+    optim_future = training_client.optim_step(types.AdamParams(learning_rate=1e-4))
+
+    # Wait for the results
+    fwdbwd_result = fwdbwd_future.result()
+    optim_result = optim_future.result()
+
+    # fwdbwd_result contains the logprobs of all the tokens we put in. Now we can compute the weighted
+    # average log loss per token.
+    logprobs = np.concatenate([output['logprobs'].tolist() for output in fwdbwd_result.loss_fn_outputs])
+    weights = np.concatenate([example.loss_fn_inputs['weights'].tolist() for example in processed_examples])
+    print(f"Loss per token: {-np.dot(logprobs, weights) / weights.sum():.4f}")
+```
+
+Note that the `forward_backward` and `optim_step` functions immediately return *futures*, which acknowledge that the task has been queued up by the server. For improved speed, we submitted both operations before waiting for the result by calling `result()` on the futures.
+
+
+## Sampling from the model
+
+Now we can test our model by sampling from it. In this case, we'll translate the phrase "coffee break" into Pig Latin.
+
+```python
+# First, create a sampling client. We need to transfer weights
+sampling_client = training_client.save_weights_and_get_sampling_client(name='pig-latin-model')
+
+# Now, we can sample from the model.
+prompt = types.ModelInput.from_ints(tokenizer.encode("English: coffee break\nPig Latin:"))
+params = types.SamplingParams(max_tokens=20, temperature=0.0, stop=["\n"]) # Greedy sampling
+future = sampling_client.sample(prompt=prompt, sampling_params=params, num_samples=8)
+result = future.result()
+print("Responses:")
+for i, seq in enumerate(result.sequences):
+    print(f"{i}: {repr(tokenizer.decode(seq.tokens))}")
+```
+
+Since sampling is nondeterministic (sadly, even with temperature=0.0, [due to batching](https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/)), the output will be different each time. You should see something like this:
+
+```
+Responses:
+0: ' offe-bay eak-bay\n\n'
+1: ' offey-coy eak-bray\n\n'
+2: ' offecay eakbray\n\n'
+3: ' offeec-cay eak-brcay\n\n\n'
+4: ' offecay akebay\n\n'
+5: ' offee-Cay ake-bay\n\n\n'
+6: ' offey-pay eak-bray\n\n'
+7: ' offee – cay eak – bray\n\n'
+```
+
+### Computing logprobs for a sequence
+
+We can use the sampler to compute logprobs for a given sequence as well. This uses the prefill step and is returned as _prompt logprobs_.
+
+```python
+prompt = types.ModelInput.from_ints(tokenizer.encode("How many r's are in the word strawberry?"))
+sample_response = sampling_client.sample(
+    prompt=prompt,
+    num_samples=1,
+    sampling_params=tinker.SamplingParams(max_tokens=1),  # Must be at least 1 token, represents prefill step
+    include_prompt_logprobs=True,
+).result()
+
+# example: [None, -9.54505, -1.64629, -8.81116, -3.50217, -8.25927, ...]
+print(sample_response.prompt_logprobs)
+```
+
+The first logprob is `None` (corresponding to the first token), and subsequent entries are logprobs of each token in the prompt.
+
+The sampling client also has a helper function, which is the same as above:
+
+```python
+sampling_client.compute_logprobs(prompt).result()
+```
+
+### Top-k logprobs
+
+For distillation, it may be especially useful to compute _top-k logprobs_ for each token as well, which can get you a sense for what the model "would have said" after each prefix instead of the actual prompt.
+
+```python
+sample_response = sampling_client.sample(
+    prompt=prompt,
+    num_samples=1,
+    sampling_params=tinker.SamplingParams(max_tokens=1),
+    include_prompt_logprobs=True,
+    topk_prompt_logprobs=5,
+).result()
+
+# example:
+# [None,
+#  [(14924, -1.17005), (755, -2.23255), (2, -2.73255), (791, -3.67005), (16309, -4.29505)],
+#  [(25, -1.64629), (3137, -2.39629), (11630, -2.89629), (21460, -3.83379), (14881, -4.02129)],
+#  [(41, -3.49866), (42, -3.49866), (49, -4.24866), (38, -4.37366), (54, -4.49866)],
+#  [(311, -1.00217), (656, -2.25217), (2057, -2.75217), (649, -3.25217), (10470, -3.37717)],
+#  ...]
+sample_response.topk_prompt_logprobs
+```
+
+For each position in the response, this returns a list of `(token_id, logprob)` pairs for the top-k most likely tokens at that position.
+
+## Putting it together: Sampling from an image
+
+Here's a complete example that creates a training client, saves weights for sampling, and asks a question about an image. You can copy-paste it into an iPython notebook:
+
+```python
+import requests
+import tinker
+from transformers import AutoTokenizer
+
+model_name = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+service_client = tinker.ServiceClient()
+training_client = await service_client.create_lora_training_client_async(base_model=model_name, rank=32)
+sampling_client = await training_client.save_weights_and_get_sampling_client_async(name="sampler")
+
+# Grab an image and ask a question
+image_data = requests.get("https://thinkingmachines.ai/blog/on-policy-distillation/images/chess.png").content
+model_input = tinker.ModelInput(chunks=[
+    tinker.types.EncodedTextChunk(tokens=tokenizer.encode("<|im_start|>user\n<|vision_start|>")),
+    tinker.types.ImageChunk(data=image_data, format="png"),
+    tinker.types.EncodedTextChunk(tokens=tokenizer.encode("<|vision_end|>What is this?<|im_end|>\n<|im_start|>assistant\n")),
+])
+
+result = await sampling_client.sample_async(prompt=model_input, num_samples=1, sampling_params=tinker.types.SamplingParams(max_tokens=100))
+print(tokenizer.decode(result.sequences[0].tokens))
+```
+
+For higher-level abstractions that handle special tokens automatically, see [Rendering: Vision Inputs](/rendering#vision-inputs).

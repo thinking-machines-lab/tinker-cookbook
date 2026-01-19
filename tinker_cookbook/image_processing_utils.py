@@ -26,7 +26,9 @@ else:
 def get_image_processor(model_name: str) -> ImageProcessor:
     from transformers.models.auto.image_processing_auto import AutoImageProcessor
 
-    return AutoImageProcessor.from_pretrained(model_name, use_fast=True)
+    processor = AutoImageProcessor.from_pretrained(model_name, use_fast=True)
+    assert processor.is_fast, f"Could not load fast image processor for {model_name}"
+    return processor
 
 
 def resize_image(image: Image.Image, max_size: int) -> Image.Image:

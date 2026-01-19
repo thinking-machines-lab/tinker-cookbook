@@ -1,3 +1,16 @@
+"""
+Minimal RL training loop using GRPO-style reward centering.
+
+Variable naming convention (see CONTRIBUTING.md):
+    _P: Problem dimension (different questions/prompts in a batch)
+    _G: Group dimension (multiple rollouts per problem for variance reduction)
+    _T: Token/Time dimension (sequence positions)
+    _D: Datum dimension (training examples after flattening)
+
+Example: `tokens_G_T` is a list of token sequences, one per group member.
+In this script, datums_D has size P*G (one datum per rollout).
+"""
+
 import logging
 import time
 from concurrent.futures import Future
@@ -7,6 +20,7 @@ import datasets
 import tinker
 import torch
 from tinker import types
+from tqdm import tqdm
 from tinker.types.tensor_data import TensorData
 from tinker_cookbook import checkpoint_utils, model_info, renderers
 from tinker_cookbook.recipes.math_rl.math_env import extract_gsm8k_final_answer
@@ -26,7 +40,6 @@ class Config:
     batch_size: int = 128
     group_size: int = 16
     learning_rate: float = 4e-5
-    max_length: int = 32768
     lora_rank: int = 32
     save_every: int = 20  # 0 = disabled
     max_tokens: int = 256
@@ -105,11 +118,9 @@ def main(config: Config):
 
     logger.info(f"Training for {n_train_batches} batches")
 
-    #  Main training loop
+    # Main training loop
     for batch_idx in range(start_batch, n_train_batches):
-        # Setup metrics for logging
         t_start = time.time()
-        step = batch_idx
         metrics: dict[str, float] = {
             "progress/batch": batch_idx,
             "optim/lr": config.learning_rate,
@@ -117,10 +128,10 @@ def main(config: Config):
         }
 
         # Save checkpoint
-        if config.save_every > 0 and step % config.save_every == 0 and step > 0:
+        if config.save_every > 0 and batch_idx % config.save_every == 0 and batch_idx > 0:
             checkpoint_utils.save_checkpoint(
                 training_client=training_client,
-                name=f"{step:06d}",
+                name=f"{batch_idx:06d}",
                 log_path=config.log_path,
                 kind="state",
                 loop_state={"batch": batch_idx},
@@ -131,106 +142,98 @@ def main(config: Config):
         batch_end = min((batch_idx + 1) * config.batch_size, len(train_dataset))
         batch_rows = train_dataset.select(range(batch_start, batch_end))
 
-        sampling_path = training_client.save_weights_for_sampler(name=f"{step:06d}").result().path
+        sampling_path = (
+            training_client.save_weights_for_sampler(name=f"{batch_idx:06d}").result().path
+        )
         sampling_client = service_client.create_sampling_client(model_path=sampling_path)
-        # Set up sampling parameters
 
-        training_datums: list[types.Datum] = []
-        batch_rewards: list[float] = []
-        batch_futures: list[list[Future[types.SampleResponse]]] = []
-        batch_prompts: list[list[int]] = []
+        datums_D: list[types.Datum] = []
+        rewards_P: list[float] = []
+        futures_P: list[Future[types.SampleResponse]] = []
+        prompts_P: list[types.ModelInput] = []
         for question in batch_rows["question"]:
             convo = [
                 *convo_prefix,
                 {"role": "user", "content": question + question_suffix},
             ]
             model_input = renderer.build_generation_prompt(convo)
-            prompt_tokens = model_input.to_ints()
 
-            # Generate response
-            sample_futures: list[Future[types.SampleResponse]] = []
-            for _ in range(config.group_size):
-                sample_futures.append(
-                    sampling_client.sample(
-                        prompt=model_input,
-                        num_samples=1,
-                        sampling_params=sampling_params,
-                    )
-                )
+            # Generate group_size responses in a single call
+            future = sampling_client.sample(
+                prompt=model_input,
+                num_samples=config.group_size,
+                sampling_params=sampling_params,
+            )
+            futures_P.append(future)
+            prompts_P.append(model_input)
 
-            batch_futures.append(sample_futures)
-            batch_prompts.append(prompt_tokens)
-
-        for sample_futures, prompt_tokens, answer in zip(
-            batch_futures, batch_prompts, batch_rows["answer"]
+        for future, prompt, answer in tqdm(
+            zip(futures_P, prompts_P, batch_rows["answer"]),
+            total=len(futures_P),
+            desc=f"Sampling batch {batch_idx}",
         ):
-            group_rewards: list[float] = []
-            group_tokens: list[list[int]] = []
-            group_logprobs: list[list[float]] = []
-            group_ob_lens: list[int] = []
-            for future in sample_futures:
-                sample_result = future.result()
-                sampled_tokens = sample_result.sequences[0].tokens
-                sampled_logprobs = sample_result.sequences[0].logprobs
+            sample_result = future.result()
+            rewards_G: list[float] = []
+            sampled_tokens_G_T: list[list[int]] = []
+            logprobs_G_T: list[list[float]] = []
+            for sequence in sample_result.sequences:
+                sampled_tokens = sequence.tokens
+                sampled_logprobs = sequence.logprobs
                 assert sampled_logprobs is not None
 
-                all_tokens = prompt_tokens + sampled_tokens
-                group_tokens.append(all_tokens)
-                group_ob_lens.append(len(prompt_tokens) - 1)
-                group_logprobs.append(sampled_logprobs)
+                sampled_tokens_G_T.append(sampled_tokens)
+                logprobs_G_T.append(sampled_logprobs)
 
                 parsed_message, _ = renderer.parse_response(sampled_tokens)
-                content = renderers.ensure_text(parsed_message["content"])
+                content = renderers.get_text_content(parsed_message)
                 reward = get_reward(content, answer)
-                group_rewards.append(reward)
+                rewards_G.append(reward)
 
-            advantages = [
-                reward - (sum(group_rewards) / len(group_rewards)) for reward in group_rewards
-            ]
-            batch_rewards.append(sum(group_rewards) / len(group_rewards))
+            mean_reward = sum(rewards_G) / len(rewards_G)
+            advantages_G = [reward - mean_reward for reward in rewards_G]
+            rewards_P.append(mean_reward)
 
             # check if all advantages are zero
-            if all(advantage == 0.0 for advantage in advantages):
+            if all(advantage == 0.0 for advantage in advantages_G):
                 # Skip question because all advantages are the same
                 continue
 
-            for tokens, logprob, advantage, ob_len in zip(
-                group_tokens, group_logprobs, advantages, group_ob_lens
+            for sampled_tokens, logprobs, advantage in zip(
+                sampled_tokens_G_T, logprobs_G_T, advantages_G
             ):
-                input_tokens = tokens[:-1]
-                input_tokens = [int(token) for token in input_tokens]
-                target_tokens = tokens[1:]
-                all_logprobs = [0.0] * ob_len + logprob
-                all_advantages = [0.0] * ob_len + [advantage] * (len(input_tokens) - ob_len)
+                ob_len = prompt.length - 1
+                model_input = prompt.append(types.EncodedTextChunk(tokens=sampled_tokens[:-1]))
+                target_tokens = [0] * ob_len + sampled_tokens
+                padded_logprobs = [0.0] * ob_len + logprobs
+                padded_advantages = [0.0] * ob_len + [advantage] * (model_input.length - ob_len)
                 assert (
-                    len(input_tokens)
+                    model_input.length
                     == len(target_tokens)
-                    == len(all_logprobs)
-                    == len(all_advantages)
+                    == len(padded_logprobs)
+                    == len(padded_advantages)
                 ), (
-                    f"len(input_tokens): {len(input_tokens)}, len(target_tokens): {len(target_tokens)}, len(all_logprobs): {len(all_logprobs)}, len(all_advantages): {len(all_advantages)}"
+                    f"model_input.length: {model_input.length}, len(target_tokens): {len(target_tokens)}, "
+                    f"len(padded_logprobs): {len(padded_logprobs)}, len(padded_advantages): {len(padded_advantages)}"
                 )
                 datum = types.Datum(
-                    model_input=types.ModelInput.from_ints(tokens=input_tokens),
+                    model_input=model_input,
                     loss_fn_inputs={
                         "target_tokens": TensorData.from_torch(torch.tensor(target_tokens)),
-                        "logprobs": TensorData.from_torch(torch.tensor(all_logprobs)),
-                        "advantages": TensorData.from_torch(torch.tensor(all_advantages)),
+                        "logprobs": TensorData.from_torch(torch.tensor(padded_logprobs)),
+                        "advantages": TensorData.from_torch(torch.tensor(padded_advantages)),
                     },
                 )
-                training_datums.append(datum)
+                datums_D.append(datum)
 
         # Training step
-        fwd_bwd_future = training_client.forward_backward(
-            training_datums, loss_fn="importance_sampling"
-        )
+        fwd_bwd_future = training_client.forward_backward(datums_D, loss_fn="importance_sampling")
         optim_step_future = training_client.optim_step(adam_params)
         _fwd_bwd_result = fwd_bwd_future.result()
         _optim_result = optim_step_future.result()
 
-        # Log metrics[]
+        # Log metrics
         metrics["time/total"] = time.time() - t_start
-        metrics["reward/total"] = sum(batch_rewards) / len(batch_rewards)
+        metrics["reward/total"] = sum(rewards_P) / len(rewards_P)
         ml_logger.log_metrics(metrics, step=batch_idx)
 
         # Save final checkpoint

@@ -13,6 +13,27 @@ Each entry includes:
 
 ---
 
+### Major renderer overhaul: tool calling, structured content ([#220](https://github.com/thinking-machines-lab/tinker-cookbook/pull/220), [#221](https://github.com/thinking-machines-lab/tinker-cookbook/pull/221), [#238](https://github.com/thinking-machines-lab/tinker-cookbook/pull/238), [#243](https://github.com/thinking-machines-lab/tinker-cookbook/pull/243), [#244](https://github.com/thinking-machines-lab/tinker-cookbook/pull/244), [#250](https://github.com/thinking-machines-lab/tinker-cookbook/pull/250))
+**Date:** 2025-12-26 to 2025-12-28
+**Type:** improvement
+**Tags:** renderers, rl
+
+A series of PRs that significantly improve the renderer system:
+
+**Tool calling support:** New `ToolSpec` type for defining tools and `create_conversation_prefix_with_tools()` API on all renderers. Tool call parsing supported for Qwen3, DeepSeek V3, and Kimi K2. `UnparsedToolCall` captures tool calls that fail to parse.
+
+**Structured message content:** The `Message.thinking` field is removed (**breaking**). Thinking content is now represented as `ThinkingPart` in the content list, alongside `TextPart`, `ImagePart`, and `ToolCallPart`. Use `get_text_content(message)` to extract text after `parse_response`.
+
+**Clearer field names:** `RenderedMessage` fields renamed (**breaking**): `prefix` → `header`, `content` → `output`, `suffix` → `stop_overlap`. `Renderer` changed from Protocol to ABC.
+
+**Sequence extension property:** New `has_extension_property` on `Renderer` indicates whether consecutive timesteps can be merged for O(T) instead of O(T²) compute in multi-turn RL.
+
+**Modular architecture:** `renderers.py` split into `tinker_cookbook/renderers/` package with per-model modules (`qwen3.py`, `deepseek_v3.py`, `kimi_k2.py`, etc.). Imports unchanged.
+
+**HF compatibility:** Various fixes to match HuggingFace chat templates, with expanded test coverage using random conversation generation.
+
+---
+
 ### Qwen3 thinking blocks can now be preserved in history ([#142](https://github.com/thinking-machines-lab/tinker-cookbook/pull/142))
 **Date:** 2025-12-06
 **Type:** new

@@ -1,0 +1,19 @@
+import { CookbookLink } from '../components/CookbookLink'
+
+# Reinforcement learning
+
+Reinforcement learning (RL) means learning from trial and error. Whereas in supervised learning, we're given input-output pairs, in RL, we're given inputs (prompts) and reward functions (i.e., a function for scoring candidate outputs). RL algorithms need to discover what good outputs look like.
+
+Here are a few different types of RL training that we support in the Tinker Cookbook:
+
+- *RL with Verifiable Rewards*: this is when we do RL on a reward function that checks model outputs using a program. Typically, the reward function checks the candidate answer against a reference answer, or, in coding cases, it may check if the candidate solution passes some unit tests. RLVR is especially suitable for teaching models to do reasoning (with chain-of-thought) and multi-step tool use (e.g., debugging and iterative modification of programs).
+- *RL on Human Feedback*: here, we assume we have an objective that can't be calculated by a simple program, and it requires some human judgement. For example, we typically want to optimize our models for helpfulness, which includes being clear, informative, and interesting. For RLHF, we train a *preference model* using supervised learning to match human judgement, scoring or ranking candidate outputs. Then we do RL on the preference model's scores. See the [Preferences](/preferences) section for more details.
+
+We'll first show how to do small RL runs in the RLVR setting, then we'll show you how to define your own RL environments and train on them, then we'll provide examples for larger-scale or more complicated training setups.
+
+
+We anticipate that people will want to use Tinker for RL in a few different ways:
+
+- Creating a specialist model that's SoTA at a specific skill, which existing models haven't been trained on. In this case, you'll want to start with a post-trained model that's already strong, and then do RL on an environment you've defined. See [RL Environments](/rl/rl-envs).
+- Doing research on post-training pipelines. In this case, you'll probably want to chain together SL and RL and runs with different data mixes, environments, and reward functions. See our [RLHF example](/preferences/rlhf-example).
+- Doing research on RL algorithms. Here, you'll probably want to find some existing environments to use as benchmarks, and either modify our provided training code (<CookbookLink path="tinker_cookbook/rl/train.py">rl/train.py</CookbookLink>) or write your own minimal training loop. We've provided a [minimal training loop](/rl/rl-loops) that you can use as a starting point.

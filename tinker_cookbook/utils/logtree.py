@@ -827,6 +827,9 @@ def table_from_dict(
     Example:
         logtree.table_from_dict({"lr": 0.001, "batch_size": 32}, caption="Hyperparams")
     """
+    if not _is_logging_enabled():
+        return
+
     items = list(data.items())
     if sort_by == "key":
         items.sort(key=lambda x: x[0])
@@ -857,6 +860,9 @@ def table_from_dict_of_lists(
             "score": [95, 87]
         })
     """
+    if not _is_logging_enabled():
+        return
+
     if not columns:
         return
 
@@ -1015,3 +1021,18 @@ def render_with_jinja(
             f.write(html)
 
     return html
+
+
+def flush_trace() -> bool:
+    """
+    Flush the current trace to the saved path even if the trace has not been exited.
+    This is useful for long-running programs where we wanna inspect some logs early.
+
+    Returns:
+        True if the trace was flushed, False otherwise.
+    """
+    trace = _current_trace.get()
+    if trace is not None and trace.path is not None:
+        _write_trace(trace)
+        return True
+    return False

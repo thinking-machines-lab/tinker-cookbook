@@ -105,6 +105,26 @@ class TinkerChatCompletions(OpenAIAsyncChatCompletions):
             completion_token_ids
         )
         finish_reason = "stop" if parse_success else "length"
+
+        # Convert list content to string for OpenAI compatibility
+        openai_content = renderers.format_content_as_string(assistant_message["content"])
+
+        # Build OpenAI-compatible message
+        openai_message: Dict[str, Any] = {
+            "role": "assistant",
+            "content": openai_content,
+        }
+        # Include tool_calls if present
+        if "tool_calls" in assistant_message:
+            openai_message["tool_calls"] = [
+                {
+                    "id": tc.id or f"call_{i}",
+                    "type": "function",
+                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                }
+                for i, tc in enumerate(assistant_message["tool_calls"])
+            ]
+
         response_dict: Dict[str, Any] = {
             "id": "tinker-chatcmpl",
             "object": "chat.completion",
@@ -113,7 +133,7 @@ class TinkerChatCompletions(OpenAIAsyncChatCompletions):
             "choices": [
                 {
                     "index": 0,
-                    "message": assistant_message,
+                    "message": openai_message,
                     "finish_reason": finish_reason,
                     "logprobs": {
                         "content": [

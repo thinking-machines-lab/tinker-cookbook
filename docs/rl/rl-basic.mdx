@@ -1,0 +1,27 @@
+import { CookbookLink } from '../../components/CookbookLink'
+
+# Your First RL Run
+
+We've provided a minimal script that runs RL on the [GSM8K dataset](https://huggingface.co/datasets/openai/gsm8k): <CookbookLink path="tinker_cookbook/recipes/rl_basic.py">rl_basic.py</CookbookLink>. You can run the minimal RL script from the command line as follows:
+
+```bash
+python -m tinker_cookbook.recipes.rl_basic
+```
+
+This script will fine-tune the Llama-3.1-8B base (pretrained) model on this dataset with the following reward function:
+
+$$
+1[\text{answer is correct}] + 0.1 \times (1[\text{answer is formatted correctly}] - 1)
+$$
+
+The training should take about 1 minute per iteration and climb to about 63% accuracy after 15 iterations (`env/all/correct`). You can look at the printouts for some other metrics of interest:
+
+- `ac_tokens_per_turn`: the number of each tokens in each generated completion
+- `env/all/format`: the fraction of completions that are formatted correctly
+- `env/all/reward/total`: mean total reward (combining format and correctness as defined above)
+- `entropy`: per-token entropy (mean negative log-probability of sampled tokens)
+- `kl_sample_train_{v1,v2}`: two different approximations/estimators of KL divergence between the sampler's and learner's probability distribution (contributed to by numerical differences and rounding noise)
+- `progress/done_frac`: what fraction of the total number of iterations we've completed so far
+- `time/...`: time for different parts of the training loop
+
+You can also look at the `log_path` directory for more detailed metrics. There are several files of interest, which are mostly the same as in the [Supervised Learning](/supervised-learning/sl-basic) case.
