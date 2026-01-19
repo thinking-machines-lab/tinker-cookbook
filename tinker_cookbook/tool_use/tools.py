@@ -44,7 +44,7 @@ class ToolInterface(ABC):
         ...
 
     @abstractmethod
-    async def call(self, arguments: dict[str, Any]) -> str:
+    async def invoke(self, arguments: dict[str, Any]) -> str:
         """Execute the tool with validated arguments. Returns content string."""
         ...
 
@@ -136,8 +136,8 @@ class FunctionTool(ToolInterface):
         """JSON Schema for tool parameters."""
         return self._params_model.model_json_schema()
 
-    async def call(self, arguments: dict[str, Any]) -> str:
-        """Call the tool with the given arguments dict."""
+    async def invoke(self, arguments: dict[str, Any]) -> str:
+        """Invoke the tool with the given arguments dict."""
         try:
             validated = self._params_model.model_validate(arguments)
         except Exception as e:
@@ -225,7 +225,7 @@ async def handle_tool_call(
             "name": tool_name,
         }
 
-    content = await tool_obj.call(arguments)
+    content = await tool_obj.invoke(arguments)
     return {
         "role": "tool",
         "content": content,

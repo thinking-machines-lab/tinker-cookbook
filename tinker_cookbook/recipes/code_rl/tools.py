@@ -134,7 +134,7 @@ class DeepcoderReward:
 
         # Grade the code using check_solution tool
         if code is not None:
-            result = await self.code_tool.check_solution.call({"code": code})
+            result = await self.code_tool.check_solution.invoke({"code": code})
             try:
                 data = json.loads(result)
                 correct = float(data.get("passed", False))
