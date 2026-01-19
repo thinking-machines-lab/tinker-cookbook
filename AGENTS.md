@@ -80,7 +80,7 @@ Agents often struggle with the nested type hierarchy. Key resources:
 - SL: `tinker_cookbook/supervised/train.py`
 - RL: `tinker_cookbook/rl/train.py`
 - DPO: `tinker_cookbook/preference/train_dpo.py`
-- Renderers: `tinker_cookbook/renderers.py`
+- Renderers: `tinker_cookbook/renderers/`
 - Completers: `tinker_cookbook/completers.py`
 - RL types: `tinker_cookbook/rl/types.py`
 - Recipes: `tinker_cookbook/recipes/`
