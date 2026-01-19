@@ -29,3 +29,22 @@ urllib.request.urlretrieve(checkpoint_archive_url_response.url, "archive.tar")
 ```
 
 Replace `<unique_id>` with your Training Run ID. This will save the LoRA adapter weights and config inside the `archive.tar` file.
+
+## Merging Adapter Weights with a Base Model
+
+After downloading your LoRA adapter weights, you can merge them with the base HuggingFace model to create a standalone model. This is useful if you want to deploy your fine-tuned model outside of Tinker (e.g., with vLLM or on your own infrastructure).
+
+Use the [`merge_tinker_adapter_to_hf_model.py`](https://github.com/thinking-machines-lab/tinker-cookbook/blob/main/tinker_cookbook/scripts/merge_tinker_adapter_to_hf_model.py) script from the cookbook:
+
+```bash
+python tinker_cookbook/scripts/merge_tinker_adapter_to_hf_model.py \
+  --hf-model Qwen/Qwen3-8B \
+  --tinker-adapter-path ./extracted_adapter \
+  --output-path ./merged_model
+```
+
+This will:
+1. Load the base HuggingFace model
+2. Load your Tinker LoRA adapter weights
+3. Merge the adapter weights into the base model
+4. Save the merged model and tokenizer to the output path in HuggingFace format
