@@ -10,6 +10,10 @@ The table below shows the models that are currently available in Tinker. We plan
     - If you care about latency, use one of the Instruction models, which will start outputting tokens without a chain-of-thought.
     - If you care about intelligence and robustness, use one of the Hybrid or Reasoning models, which can use long chain-of-thought.
 
+## Context Window
+
+The Tinker hosted service currently limits context windows to **32k tokens** for all models. This applies even to models with larger native context windows (e.g., Kimi K2 Thinking supports 256k natively).
+
 ## Full Listing
 
 | Model Name                                                                                      | Training Type | Architecture | Size      |
