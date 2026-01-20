@@ -10,13 +10,13 @@ import time
 from contextlib import contextmanager
 from typing import Any, Callable, Coroutine, Iterable, Iterator, List, Sequence, TypeVar
 
-from tqdm import tqdm
-
 import chz
 import numpy as np
 import tinker
 import torch
 from tinker.types import LossFnType
+from tqdm import tqdm
+
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.display import colorize_example
@@ -42,8 +42,8 @@ from tinker_cookbook.rl.types import (
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import logtree, ml_log
-from tinker_cookbook.utils.misc_utils import safezip, split_list, timed, all_same
-from tinker_cookbook.utils.trace import scope, update_scope_context, trace_init
+from tinker_cookbook.utils.misc_utils import all_same, safezip, split_list, timed
+from tinker_cookbook.utils.trace import scope, trace_init, update_scope_context
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +185,7 @@ async def train_step(
     num_substeps: int,
     loss_fn: LossFnType,
     loss_fn_config: dict[str, Any] | None = None,
+    metrics: dict[str, Any] | None = None,
 ) -> List[torch.Tensor]:
     """Train the model on collected trajectories.
 
@@ -218,11 +219,14 @@ async def train_step(
         # Consume current results
         fwd_bwd_result = await fwd_bwd_future.result_async()
         training_logprobs_D.extend(_training_logprobs_from_fwd_bwd(fwd_bwd_result))
-        await optim_future.result_async()
+        optim_result = await optim_future.result_async()
         # Move to next iteration
         if next_fwd_bwd_future is not None and next_optim_future is not None:
             fwd_bwd_future = next_fwd_bwd_future
             optim_future = next_optim_future
+
+    if metrics is not None and optim_result.metrics:
+        metrics.update(optim_result.metrics)
 
     return training_logprobs_D
 
@@ -917,7 +921,10 @@ async def do_train_step_streaming_and_get_sampling_client(
                 all_training_logprobs_D.extend(_training_logprobs_from_fwd_bwd(fwd_bwd_result))
 
         with timed(f"train/optim_substep_{i_substep}_consume", metrics):
-            await optim_future.result_async()
+            optim_result = await optim_future.result_async()
+
+        if optim_result.metrics:
+            metrics.update(optim_result.metrics)
 
     # Aggregate metrics across the entire batch
     metrics.update(compute_sampling_client_metrics(all_wrapped_trajectory_groups))
@@ -976,6 +983,7 @@ async def do_train_step_and_get_sampling_client(
             num_substeps=cfg.num_substeps,
             loss_fn=cfg.loss_fn,
             loss_fn_config=cfg.loss_fn_config,
+            metrics=metrics,
         )
 
     sampling_client, full_batch_metrics = await compute_full_batch_metrics_and_get_sampling_client(
