@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Awaitable, Callable
 
 from tinker_cookbook.renderers import Renderer
 from tinker_cookbook.renderers.base import Message, ToolCall
@@ -15,6 +14,9 @@ from tinker_cookbook.tool_use.tools import (
     handle_tool_call,
 )
 
+RewardResult = tuple[float, dict[str, float]]
+RewardFn = Callable[[list[Message]], Awaitable[RewardResult]]
+
 
 @dataclass
 class AgentToolMessageEnv(MessageEnv):
@@ -23,7 +25,7 @@ class AgentToolMessageEnv(MessageEnv):
     tools: list[ToolInterface]
     initial_messages: list[Message]
     max_turns: int
-    reward_fn: Callable[[list[Message]], tuple[float, dict[str, float]]]
+    reward_fn: RewardFn
     history: list[Message] = field(default_factory=list)
 
     _turn_count: int = 0
@@ -76,10 +78,7 @@ class AgentToolMessageEnv(MessageEnv):
 
         reward = 0.0
         if done:
-            reward_result = self.reward_fn(self.history)
-            if inspect.iscoroutine(reward_result):
-                reward_result = await reward_result
-            reward, reward_metrics = reward_result
+            reward, reward_metrics = await self.reward_fn(self.history)
             metrics.update(reward_metrics)
 
         return MessageStepResult(
@@ -94,7 +93,7 @@ def build_agent_tool_env(
     renderer: Renderer,
     tools: list[ToolInterface],
     initial_messages: list[Message],
-    reward_fn: Callable[[list[Message]], tuple[float, dict[str, float]]],
+    reward_fn: RewardFn,
     *,
     max_turns: int = 5,
     failed_parse_reward: float = -0.1,

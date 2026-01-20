@@ -6,7 +6,7 @@ A library for training tool-use agents with Tinker.
 
 ## Overview
 
-The tool_use library provides:
+The `tool_use` library provides:
 
 - **`@tool` decorator** - Define tools from Python functions with automatic schema extraction
 - **`ToolInterface`** - ABC for advanced tool patterns (dynamic schemas, shared base classes)

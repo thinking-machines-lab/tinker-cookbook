@@ -43,6 +43,7 @@ def normalize_answer(s: str) -> str:
     transformations = [lower, remove_punc, remove_articles, white_space_fix]
     return reduce(lambda text, func: func(text), transformations, s)
 
+
 logger = logging.getLogger(__name__)
 
 _CONNECTION_SEMAPHORE = asyncio.Semaphore(128)
@@ -188,7 +189,7 @@ class TextAnswerReward:
     gold_answers: list[str]
     format_coef: float = 0.1
 
-    def __call__(self, history: list[Message]) -> tuple[float, dict[str, float]]:
+    async def __call__(self, history: list[Message]) -> tuple[float, dict[str, float]]:
         """Grade the completed episode by checking the final assistant message."""
         # Find the last assistant message
         final_message = None
