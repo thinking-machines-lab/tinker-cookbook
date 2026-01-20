@@ -197,6 +197,7 @@ async def train_step(
 
     adam_params = tinker.AdamParams(learning_rate=learning_rate, beta1=0.9, beta2=0.95, eps=1e-8)
     training_logprobs_D: list[torch.Tensor] = []
+    optim_result: tinker.OptimStepResponse | None = None
 
     # Enqueue first batch
     fwd_bwd_future = await training_client.forward_backward_async(
@@ -225,7 +226,7 @@ async def train_step(
             fwd_bwd_future = next_fwd_bwd_future
             optim_future = next_optim_future
 
-    if metrics is not None and optim_result.metrics:
+    if metrics is not None and optim_result is not None and optim_result.metrics:
         metrics.update(optim_result.metrics)
 
     return training_logprobs_D
