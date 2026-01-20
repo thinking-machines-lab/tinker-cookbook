@@ -252,6 +252,7 @@ async def do_train_step_and_get_sampling_client(
             num_substeps=cfg.num_substeps,
             loss_fn=cfg.loss_fn,
             loss_fn_config=cfg.loss_fn_config,
+            metrics=metrics,
         )
 
     sampling_client, full_batch_metrics = await compute_full_batch_metrics_and_get_sampling_client(

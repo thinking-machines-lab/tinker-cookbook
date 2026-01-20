@@ -1,6 +1,12 @@
 import pytest
 
-from tinker_cookbook.renderers import parse_content_blocks, ThinkingPart, TextPart, ContentPart
+from tinker_cookbook.renderers import (
+    parse_content_blocks,
+    format_content_as_string,
+    ThinkingPart,
+    TextPart,
+    ContentPart,
+)
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3DisableThinkingRenderer
 from tinker_cookbook.tests.test_renderers import get_tokenizer
 from tinker_cookbook.renderers import (
@@ -108,6 +114,18 @@ def test_parse_content_blocks_invalid_tool_call():
     assert parts[0]["type"] == "unparsed_tool_call"
     assert "Invalid JSON" in parts[0]["error"]  # type: ignore[typeddict-item]
     assert parts[1] == TextPart(type="text", text="text after")
+
+
+def test_format_content_as_string_roundtrip():
+    """Formatted content should be parseable back to original."""
+    content = [
+        ThinkingPart(type="thinking", thinking="reasoning"),
+        TextPart(type="text", text="answer"),
+    ]
+    # Use empty separator for true roundtrip (default separator adds newlines between parts)
+    formatted = format_content_as_string(content, separator="")
+    parsed = parse_content_blocks(formatted)
+    assert parsed == content
 
 
 # =============================================================================

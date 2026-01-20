@@ -305,7 +305,7 @@ def format_content_as_string(content: Content, separator: str = "\n") -> str:
     parts = []
     for p in content:
         if p["type"] == "thinking":
-            parts.append(f"<thinking>{p['thinking']}</thinking>")
+            parts.append(f"<think>{p['thinking']}</think>")
         elif p["type"] == "text":
             parts.append(p["text"])
         elif p["type"] == "tool_call":
