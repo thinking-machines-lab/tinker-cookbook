@@ -314,7 +314,7 @@ async def main(config: Config):
             fwd_bwd_result = await submitted.fwd_bwd_future.result_async()
             optim_step_result = await submitted.optim_step_future.result_async()
 
-        if hasattr(optim_step_result, "metrics") and optim_step_result.metrics:
+        if optim_step_result.metrics:
             metrics.update(optim_step_result.metrics)
 
         logprobs = [x["logprobs"] for x in fwd_bwd_result.loss_fn_outputs]
