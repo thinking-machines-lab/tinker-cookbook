@@ -19,7 +19,7 @@ from tinker_cookbook.recipes.search_tool.tools import (
     RetrievalConfig,
     TextAnswerReward,
 )
-from tinker_cookbook.renderers import get_renderer
+from tinker_cookbook.renderers import Renderer, get_renderer
 from tinker_cookbook.rl.rollouts import do_single_rollout
 from tinker_cookbook.tool_use import build_agent_tool_env
 
@@ -80,14 +80,8 @@ async def evaluate_single_item(
     item: SearchR1Datum,
     chroma_tool: ChromaTool,
     policy: TinkerTokenCompleter,
-    model_name: str,
-    renderer_name: str | None = None,
+    renderer: Renderer,
 ) -> EvaluationResult:
-    # Build env inline using build_agent_tool_env
-    tokenizer = tokenizer_utils.get_tokenizer(model_name)
-    chosen_renderer_name = renderer_name or model_info.get_recommended_renderer_name(model_name)
-    renderer = get_renderer(chosen_renderer_name, tokenizer)
-
     tool_schemas = [chroma_tool.search.to_spec()]
     initial_messages = renderer.create_conversation_prefix_with_tools(
         tools=tool_schemas,
@@ -113,12 +107,14 @@ async def evaluate_single_item(
 
 
 async def evaluate_one_dataset(data: list[SearchR1Datum], config: CLIConfig):
-    # load model
+    # Load model
     service_client = tinker.ServiceClient()
     sampling_client = service_client.create_sampling_client(model_path=config.tinker_checkpoint_url)
     policy = TinkerTokenCompleter(sampling_client, max_tokens=config.max_tokens)
 
+    tokenizer = tokenizer_utils.get_tokenizer(config.base_model)
     renderer_name = model_info.get_recommended_renderer_name(config.base_model)
+    renderer = get_renderer(renderer_name, tokenizer)
 
     chroma_tool = await ChromaTool.build(
         chroma_host="localhost",
@@ -134,10 +130,7 @@ async def evaluate_one_dataset(data: list[SearchR1Datum], config: CLIConfig):
     )
 
     # Run evaluations in parallel using asyncio.gather
-    tasks = [
-        evaluate_single_item(item, chroma_tool, policy, config.base_model, renderer_name)
-        for item in data
-    ]
+    tasks = [evaluate_single_item(item, chroma_tool, policy, renderer) for item in data]
 
     print(f"Evaluating {len(tasks)} items")
     results = await asyncio.gather(*tasks)

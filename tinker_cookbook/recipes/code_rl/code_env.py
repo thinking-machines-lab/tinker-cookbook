@@ -244,7 +244,7 @@ class DeepcoderDatasetBuilder(RLDatasetBuilder):
     batch_size: int
     group_size: int
     renderer_name: str | None = None
-    max_turns: int = 1
+    max_turns: int = 2
     format_coef: float = 0.1
     timeout: int = 6
     sandbox_backend: SandboxBackend | None = None
