@@ -201,7 +201,12 @@ class DeepcoderEnvGroupBuilder(EnvGroupBuilder):
                     renderer=renderer,
                     tools=[tool.check_solution],
                     initial_messages=_initial_messages(self.task, renderer, tool),
-                    reward_fn=DeepcoderReward(code_tool=tool, format_coef=self.format_coef),
+                    reward_fn=DeepcoderReward(
+                        task=self.task,
+                        sandbox_backend=self.sandbox_backend,
+                        timeout=self.timeout,
+                        format_coef=self.format_coef,
+                    ),
                     max_turns=self.max_turns,
                 )
             )

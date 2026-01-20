@@ -180,7 +180,7 @@ class ChromaTool:
 
 @dataclass
 class TextAnswerReward:
-    """Reward function matching original SearchEnv logic exactly.
+    """Reward function to check text answer against gold answers.
 
     formula: format_coef * (correct_format - 1) + correct_answer
     """
@@ -188,25 +188,27 @@ class TextAnswerReward:
     gold_answers: list[str]
     format_coef: float = 0.1
 
-    def __call__(
-        self, results: list[Message], message: Message
-    ) -> tuple[float, bool, dict[str, float]]:
-        # If message has tool calls, this is a tool-call turn (not final answer)
-        # Return 0 reward and continue episode
-        if message.get("tool_calls"):
-            return 0.0, False, {}
+    def __call__(self, history: list[Message]) -> tuple[float, dict[str, float]]:
+        """Grade the completed episode by checking the final assistant message."""
+        # Find the last assistant message
+        final_message = None
+        for msg in reversed(history):
+            if msg.get("role") == "assistant":
+                final_message = msg
+                break
 
-        # Otherwise, grade the final answer
-        content = message.get("content", "")
+        if final_message is None:
+            return 0.0, {"format": 0.0, "correct": 0.0}
+
+        content = final_message.get("content", "")
         if not isinstance(content, str):
             content = str(content)
 
-        # Matches SearchEnv.check_format and check_answer
         correct_format = float(self._extract_answer(content) is not None)
         correct_answer = float(self._check_answer(content))
 
         reward = self.format_coef * (correct_format - 1) + correct_answer
-        return reward, True, {"format": correct_format, "correct": correct_answer}
+        return reward, {"format": correct_format, "correct": correct_answer}
 
     def _extract_answer(self, text: str) -> str | None:
         if "Answer:" not in text:

@@ -67,64 +67,33 @@ class DeepcoderTool:
 class DeepcoderReward:
     """Reward function for code tasks.
 
-    Grades the final answer by extracting code from message content
-    and running it against the task's tests using the same tool.
+    Grades the final answer by extracting code from the last assistant message
+    and running it against the task's tests.
 
     Formula: format_coef * (has_code_block - 1) + correct
+
+    Called once at episode end with the full message history.
     """
 
-    code_tool: DeepcoderTool
+    task: DeepcoderTask
+    sandbox_backend: SandboxBackend | None = None
+    timeout: int = 6
     format_coef: float = 0.1
 
-    async def __call__(
-        self, results: list[Message], message: Message
-    ) -> tuple[float, bool, dict[str, float]]:
-        # If message has tool calls, check the tool results for grading
-        if message.get("tool_calls"):
-            return self._grade_from_tool_results(results)
+    async def __call__(self, history: list[Message]) -> tuple[float, dict[str, float]]:
+        """Grade the completed episode by extracting code from final assistant message."""
+        # Find the last assistant message
+        final_message = None
+        for msg in reversed(history):
+            if msg.get("role") == "assistant":
+                final_message = msg
+                break
 
-        # No tool calls - this is the final answer, grade code block in content
-        return await self._grade_from_content(message)
+        if final_message is None:
+            logtree.log_text("No assistant message found in history.")
+            return 0.0, {"format": 0.0, "correct": 0.0}
 
-    def _grade_from_tool_results(
-        self, results: list[Message]
-    ) -> tuple[float, bool, dict[str, float]]:
-        """Grade based on check_solution tool results.
-
-        If the model called check_solution and it passed, end the episode with reward.
-        If it failed, let the model continue to iterate (return done=False).
-        """
-        for result in results:
-            if result.get("name") != "check_solution":
-                continue
-
-            content = result.get("content", "")
-            try:
-                data = json.loads(content)
-                passed = data.get("passed", False)
-
-                if passed:
-                    # Success - end episode with reward
-                    format_score = 1.0
-                    correct = 1.0
-                    reward = self.format_coef * (format_score - 1.0) + correct
-
-                    logtree.log_text(f"Problem: {self.code_tool._task.problem}")
-                    logtree.log_text(f"Grading from tool result: Correct: ✓, Reward: {reward:.2f}")
-                    return reward, True, {"format": format_score, "correct": correct}
-                else:
-                    # Failed - let model continue to iterate
-                    logtree.log_text("Tool call failed, continuing episode.")
-                    return 0.0, False, {}
-            except (json.JSONDecodeError, TypeError):
-                continue
-
-        # No check_solution result found - intermediate step, no reward yet
-        return 0.0, False, {}
-
-    async def _grade_from_content(self, message: Message) -> tuple[float, bool, dict[str, float]]:
-        """Grade code block extracted from message content."""
-        content = message.get("content", "")
+        content = final_message.get("content", "")
         if not isinstance(content, str):
             content = str(content)
 
@@ -132,24 +101,29 @@ class DeepcoderReward:
         code = extract_code_from_model(content)
         has_code_block = code is not None
 
-        # Grade the code using check_solution tool
+        # Grade the code by running tests
         if code is not None:
-            result = await self.code_tool.check_solution.invoke({"code": code})
             try:
-                data = json.loads(result)
-                correct = float(data.get("passed", False))
-            except (json.JSONDecodeError, TypeError):
+                passed, _details = await sandbox_check_correctness(
+                    self.task.tests,
+                    code,
+                    timeout=self.timeout,
+                    backend=self.sandbox_backend,
+                )
+                correct = float(passed)
+            except Exception as e:
+                logtree.log_text(f"Error running tests: {e}")
                 correct = 0.0
         else:
             logtree.log_text("No code block detected in response.")
             correct = 0.0
 
-        # Reward formula matches old CodeEnv
+        # Reward formula
         format_score = float(has_code_block)
         reward = self.format_coef * (format_score - 1.0) + correct
 
-        # Log results (matching old CodeEnv behavior)
-        logtree.log_text(f"Problem: {self.code_tool._task.problem}")
+        # Log results
+        logtree.log_text(f"Problem: {self.task.problem}")
         logtree.log_text(f"Response: {content}")
         logtree.log_text(
             f"Format Valid: {'✓' if has_code_block else '✗'}, "
@@ -157,4 +131,4 @@ class DeepcoderReward:
             f"Reward: {reward:.2f}"
         )
 
-        return reward, True, {"format": format_score, "correct": correct}
+        return reward, {"format": format_score, "correct": correct}

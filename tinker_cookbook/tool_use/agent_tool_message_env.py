@@ -23,7 +23,7 @@ class AgentToolMessageEnv(MessageEnv):
     tools: list[ToolInterface]
     initial_messages: list[Message]
     max_turns: int
-    reward_fn: Callable[[list[Message], Message], tuple[float, bool, dict[str, float]]]
+    reward_fn: Callable[[list[Message]], tuple[float, dict[str, float]]]
     history: list[Message] = field(default_factory=list)
 
     _turn_count: int = 0
@@ -47,15 +47,15 @@ class AgentToolMessageEnv(MessageEnv):
         return list(results)
 
     async def step(self, message: Message) -> MessageStepResult:
-        """Execute any tools, update rewards, and return next messages.
+        """Execute any tools and return next messages.
 
-        The episode ends when one of the following conditions is met:
-        - No tool calls in message
-        - reward_fn returns done=True
+        The episode ends when:
+        - no tool calls in message (model decided to stop)
         - max_turns reached
+
+        reward_fn is called once at episode end to grade the full trajectory.
         """
         self._turn_count += 1
-        reward = 0.0
         metrics: dict[str, float] = {}
 
         # Append the message to history
@@ -63,24 +63,24 @@ class AgentToolMessageEnv(MessageEnv):
 
         # Extract and execute tool calls if present
         tool_calls: list[ToolCall] = list(message.get("tool_calls") or [])
-        results: list[Message] = []
         if tool_calls:
-            results = await self._handle_tool_calls(tool_calls)
+            await self._handle_tool_calls(tool_calls)
 
-        # TODO: Update reward_fn to take the full history as input.
-        reward_result = self.reward_fn(results, message)
-        if inspect.iscoroutine(reward_result):
-            reward_result = await reward_result
-        reward_delta, done_from_reward, reward_metrics = reward_result
-        reward += reward_delta
-        metrics.update(reward_metrics)
-
+        # Determine if episode is done
         no_tool_calls = len(tool_calls) == 0
-        done = no_tool_calls or done_from_reward
+        max_turns_reached = self._turn_count >= self.max_turns
+        done = no_tool_calls or max_turns_reached
 
-        if self._turn_count >= self.max_turns and not done:
-            done = True
+        if max_turns_reached and not no_tool_calls:
             metrics["max_turns"] = 1.0
+
+        reward = 0.0
+        if done:
+            reward_result = self.reward_fn(self.history)
+            if inspect.iscoroutine(reward_result):
+                reward_result = await reward_result
+            reward, reward_metrics = reward_result
+            metrics.update(reward_metrics)
 
         return MessageStepResult(
             reward=reward,
@@ -94,7 +94,7 @@ def build_agent_tool_env(
     renderer: Renderer,
     tools: list[ToolInterface],
     initial_messages: list[Message],
-    reward_fn: Callable[[list[Message], Message], tuple[float, bool, dict[str, float]]],
+    reward_fn: Callable[[list[Message]], tuple[float, dict[str, float]]],
     *,
     max_turns: int = 5,
     failed_parse_reward: float = -0.1,
@@ -105,8 +105,8 @@ def build_agent_tool_env(
         renderer: The renderer for tokenizing messages.
         tools: List of tools the agent can call.
         initial_messages: Initial conversation history (system prompt, user message, etc.).
-        reward_fn: Function that grades each step. Takes (tool_results, assistant_message)
-            and returns (reward, done, metrics).
+        reward_fn: Function that grades a completed episode. Takes the full message
+            history and returns (reward, metrics). Called once at episode end.
         max_turns: Maximum turns before episode ends.
         failed_parse_reward: Reward when model output fails to parse.
 
