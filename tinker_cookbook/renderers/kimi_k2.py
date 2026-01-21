@@ -90,6 +90,41 @@ def _parse_tool_calls_section(
 # Streaming Parser
 # =============================================================================
 
+# Tags we need to detect during streaming
+_THINK_OPEN_TAG = "<think>"
+_THINK_CLOSE_TAG = "</think>"
+
+
+def _longest_matching_suffix_prefix(text: str, tag: str) -> int:
+    """Find longest suffix of text that matches a prefix of tag.
+
+    This is used during streaming to determine how many characters at the end
+    of accumulated text might be the beginning of a tag, and thus shouldn't
+    be emitted yet.
+
+    Args:
+        text: The accumulated text to check.
+        tag: The tag we're looking for (e.g., "<think>").
+
+    Returns:
+        Length of the longest suffix of text that matches a prefix of tag.
+
+    Examples:
+        >>> _longest_matching_suffix_prefix("hello", "<think>")
+        0  # no suffix matches any prefix
+        >>> _longest_matching_suffix_prefix("hello<", "<think>")
+        1  # "<" matches prefix "<"
+        >>> _longest_matching_suffix_prefix("hello<th", "<think>")
+        3  # "<th" matches prefix "<th"
+        >>> _longest_matching_suffix_prefix("hello<thx", "<think>")
+        0  # "<thx" doesn't match any prefix of "<think>"
+    """
+    max_check = min(len(text), len(tag) - 1)  # -1 because full tag would be found, not buffered
+    for length in range(max_check, 0, -1):
+        if text.endswith(tag[:length]):
+            return length
+    return 0
+
 
 @dataclass
 class KimiK2StreamingParser:
@@ -173,11 +208,13 @@ class KimiK2StreamingParser:
         while pos < len(text):
             if not self._in_thinking:
                 # Look for <think> tag
-                think_start = text.find("<think>", pos)
+                think_start = text.find(_THINK_OPEN_TAG, pos)
                 if think_start == -1:
-                    # No <think> tag found - emit text up to a safe point
-                    # Keep last 7 chars in case "<think>" is being split
-                    safe_end = max(pos, len(text) - 7)
+                    # No <think> tag found - emit text up to a safe point.
+                    # Keep any trailing chars that could be the start of "<think>".
+                    suffix_from_pos = text[pos:]
+                    keep = _longest_matching_suffix_prefix(suffix_from_pos, _THINK_OPEN_TAG)
+                    safe_end = len(text) - keep
                     if safe_end > pos:
                         new_text = text[pos:safe_end]
                         if new_text:
@@ -195,18 +232,21 @@ class KimiK2StreamingParser:
                         )
                     pos = think_start
 
-                if text[pos:].startswith("<think>"):
+                if text[pos:].startswith(_THINK_OPEN_TAG):
                     # Enter thinking mode
                     self._in_thinking = True
                     self._content_index += 1
-                    pos += len("<think>")
+                    pos += len(_THINK_OPEN_TAG)
                     self._last_emitted_pos = pos
             else:
                 # In thinking mode - look for </think>
-                think_end = text.find("</think>", pos)
+                think_end = text.find(_THINK_CLOSE_TAG, pos)
                 if think_end == -1:
-                    # No </think> found - emit thinking up to safe point
-                    safe_end = max(pos, len(text) - 8)
+                    # No </think> found - emit thinking up to safe point.
+                    # Keep any trailing chars that could be the start of "</think>".
+                    suffix_from_pos = text[pos:]
+                    keep = _longest_matching_suffix_prefix(suffix_from_pos, _THINK_CLOSE_TAG)
+                    safe_end = len(text) - keep
                     if safe_end > pos:
                         new_thinking = text[pos:safe_end]
                         if new_thinking:
@@ -225,7 +265,7 @@ class KimiK2StreamingParser:
                     # Exit thinking mode
                     self._in_thinking = False
                     self._content_index += 1
-                    pos = think_end + len("</think>")
+                    pos = think_end + len(_THINK_CLOSE_TAG)
                     self._last_emitted_pos = pos
 
     def finish(self) -> Iterator[MessageDelta]:

@@ -144,8 +144,6 @@ ContentPart = TextPart | ImagePart | ThinkingPart | ToolCallPart | UnparsedToolC
 
 
 # Streaming types to enable incremental parsing of model output for real-time display.
-# These types enable incremental parsing of model output for real-time display.
-
 
 @dataclass
 class StreamingMessageHeader:
@@ -209,6 +207,11 @@ class Utf8TokenDecoder:
         if self._pending_tokens is None:
             self._pending_tokens = []
 
+    # Max tokens to try removing from the end when looking for decodable prefix.
+    # UTF-8 chars are max 4 bytes, tokens typically 1-4 bytes each,
+    # so 8 tokens is plenty to cover any incomplete trailing sequence.
+    _MAX_TRAILING_TOKENS_TO_TRY: int = 8
+
     def decode(self, tokens: list[int]) -> str | None:
         """Decode tokens to string, buffering incomplete UTF-8 sequences.
 
@@ -221,7 +224,7 @@ class Utf8TokenDecoder:
         """
         self._pending_tokens.extend(tokens)
 
-        # Try to decode all pending tokens
+        # Try to decode all pending tokens (common case)
         try:
             text = self.tokenizer.decode(self._pending_tokens)
             self._pending_tokens = []
@@ -229,29 +232,24 @@ class Utf8TokenDecoder:
         except Exception:
             pass
 
-        # Binary search to find longest decodable prefix
-        # This handles cases where tokens split UTF-8 sequences
-        if len(self._pending_tokens) <= 1:
-            return None
-
-        low, high = 0, len(self._pending_tokens)
-        decodable_end = 0
-
-        while low < high:
-            mid = (low + high + 1) // 2
+        # Scan backwards to find longest decodable prefix.
+        # We can't use binary search because decodability isn't monotonic:
+        # e.g., [partial_A, complete_B] might decode even though [partial_A] fails.
+        # But we only need to try removing a few tokens since UTF-8 sequences
+        # are at most 4 bytes and tokens are typically 1-4 bytes each.
+        for remove in range(1, min(len(self._pending_tokens), self._MAX_TRAILING_TOKENS_TO_TRY) + 1):
+            prefix = self._pending_tokens[:-remove]
+            if not prefix:
+                break
             try:
-                self.tokenizer.decode(self._pending_tokens[:mid])
-                decodable_end = mid
-                low = mid
+                text = self.tokenizer.decode(prefix)
+                self._pending_tokens = self._pending_tokens[-remove:]
+                return text
             except Exception:
-                high = mid - 1
+                continue
 
-        if decodable_end == 0:
-            return None
-
-        text = self.tokenizer.decode(self._pending_tokens[:decodable_end])
-        self._pending_tokens = self._pending_tokens[decodable_end:]
-        return text
+        # All tokens buffered - need more data
+        return None
 
     def flush(self) -> str:
         """Force decode any remaining tokens.

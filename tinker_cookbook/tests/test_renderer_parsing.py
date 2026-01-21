@@ -734,3 +734,60 @@ def test_kimi_streaming_empty_response():
     # Should still get header and final message
     assert isinstance(deltas[0], StreamingMessageHeader)
     assert _is_message(deltas[-1])
+
+
+# =============================================================================
+# Streaming Helper Function Tests
+# =============================================================================
+
+
+def test_longest_matching_suffix_prefix():
+    """Test the suffix-prefix matching helper function."""
+    from tinker_cookbook.renderers.kimi_k2 import _longest_matching_suffix_prefix
+
+    # No match cases
+    assert _longest_matching_suffix_prefix("hello", "<think>") == 0
+    assert _longest_matching_suffix_prefix("hello world", "<think>") == 0
+    assert _longest_matching_suffix_prefix("", "<think>") == 0
+
+    # Partial matches
+    assert _longest_matching_suffix_prefix("hello<", "<think>") == 1
+    assert _longest_matching_suffix_prefix("hello<t", "<think>") == 2
+    assert _longest_matching_suffix_prefix("hello<th", "<think>") == 3
+    assert _longest_matching_suffix_prefix("hello<thi", "<think>") == 4
+    assert _longest_matching_suffix_prefix("hello<thin", "<think>") == 5
+    assert _longest_matching_suffix_prefix("hello<think", "<think>") == 6
+
+    # Non-matching partial (doesn't match prefix)
+    assert _longest_matching_suffix_prefix("hello<thx", "<think>") == 0
+    assert _longest_matching_suffix_prefix("hello<tx", "<think>") == 0
+
+    # For </think>
+    assert _longest_matching_suffix_prefix("thinking</", "</think>") == 2
+    assert _longest_matching_suffix_prefix("thinking</t", "</think>") == 3
+    assert _longest_matching_suffix_prefix("thinking</think", "</think>") == 7
+
+    # Edge: text shorter than tag
+    assert _longest_matching_suffix_prefix("<t", "<think>") == 2
+    assert _longest_matching_suffix_prefix("<", "<think>") == 1
+
+
+def test_kimi_streaming_no_unnecessary_buffering():
+    """Test that we don't buffer more than necessary when no tag prefix matches."""
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    renderer = KimiK2Renderer(tokenizer)
+
+    # "Hello world" has no suffix matching any prefix of "<think>"
+    # So all of it should be emitted without buffering
+    response_str = "Hello world<|im_end|>"
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    deltas = list(renderer.parse_response_streaming(response_tokens))
+
+    # Collect all text deltas
+    text_content = "".join(
+        d.text for d in deltas if isinstance(d, StreamingTextDelta)
+    )
+
+    # Should contain the full text
+    assert text_content == "Hello world"
