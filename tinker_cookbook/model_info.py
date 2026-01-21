@@ -80,6 +80,7 @@ def get_moonshot_info() -> dict[str, ModelAttributes]:
 
 
 def get_model_attributes(model_name: str) -> ModelAttributes:
+    model_name = model_name.split(":")[0]
     org, model_version_full = model_name.split("/")
     if org == "meta-llama":
         return get_llama_info()[model_version_full]
