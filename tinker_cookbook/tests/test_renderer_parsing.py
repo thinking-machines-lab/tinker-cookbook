@@ -6,14 +6,18 @@ from tinker_cookbook.renderers import (
     GptOssRenderer,
     Message,
     Qwen3Renderer,
+    RenderContext,
+    StreamingMessageHeader,
+    StreamingTextDelta,
+    StreamingThinkingDelta,
     TextPart,
     ThinkingPart,
     format_content_as_string,
     parse_content_blocks,
 )
-from tinker_cookbook.renderers.base import ensure_list
+from tinker_cookbook.renderers.base import Utf8TokenDecoder, ensure_list
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3DisableThinkingRenderer
-from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
+from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer, _longest_matching_suffix_prefix
 from tinker_cookbook.tests.test_renderers import get_tokenizer
 
 # =============================================================================
@@ -522,8 +526,6 @@ def test_thinking_generation_parse_correspondence(model_name, renderer_cls, rend
     4. Parse continuation → should recover the expected message
     5. Roundtrip: prompt + continuation = full supervised example
     """
-    from tinker_cookbook.renderers import RenderContext
-
     tokenizer = get_tokenizer(model_name)
     renderer = renderer_cls(tokenizer, **renderer_kwargs)
 
@@ -574,13 +576,6 @@ def test_thinking_generation_parse_correspondence(model_name, renderer_cls, rend
 # =============================================================================
 # Kimi K2 Streaming Parsing Tests
 # =============================================================================
-
-
-from tinker_cookbook.renderers import (
-    StreamingMessageHeader,
-    StreamingTextDelta,
-    StreamingThinkingDelta,
-)
 
 
 def _is_message(obj) -> bool:
@@ -740,8 +735,6 @@ def test_kimi_streaming_empty_response():
 
 def test_longest_matching_suffix_prefix():
     """Test the suffix-prefix matching helper function."""
-    from tinker_cookbook.renderers.kimi_k2 import _longest_matching_suffix_prefix
-
     # No match cases
     assert _longest_matching_suffix_prefix("hello", "<think>") == 0
     assert _longest_matching_suffix_prefix("hello world", "<think>") == 0
@@ -809,8 +802,6 @@ def test_utf8_decoder_non_monotonic_decodability():
     Backwards scan:
     - Try removing 1 token: decode([A,B,C]) succeeds → return it ✓
     """
-    from tinker_cookbook.renderers.base import Utf8TokenDecoder
-
     class MockTokenizer:
         """Mock tokenizer that simulates non-monotonic UTF-8 decodability."""
 
@@ -848,7 +839,6 @@ def test_utf8_decoder_with_real_tokenizer_ascii():
     so the decoder should work correctly.
     """
     tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
-    from tinker_cookbook.renderers.base import Utf8TokenDecoder
 
     # ASCII-only text won't have UTF-8 splitting issues
     test_str = "Hello World! How are you today?"

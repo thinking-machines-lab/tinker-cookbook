@@ -307,8 +307,6 @@ class KimiK2StreamingParser:
 
         # Build and yield the final complete Message
         # Use the batch parser for consistency
-        from tinker_cookbook.renderers.base import parse_response_for_stop_token
-
         message, _success = parse_response_for_stop_token(
             self._all_tokens, self.tokenizer, self.end_message_token
         )
