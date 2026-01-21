@@ -226,14 +226,15 @@ class WandbLogger(Logger):
             name=wandb_name,
         )
 
-        resume_run_id = os.environ.get("WANDB_RUN_ID")
-        resume = os.environ.get("WANDB_RESUME")
-        self._is_resumed = resume_run_id is not None and resume == "must"
-
         self.step_offset = 0
-        if self._is_resumed:
+
+        is_resumed = os.environ.get("WANDB_RUN_ID") is not None
+        if is_resumed:
+            assert self.run.id == os.environ.get("WANDB_RUN_ID"), (
+                "WANDB_RUN_ID does not match run ID"
+            )
             self.step_offset = self._get_last_step_from_run()
-            logger.info(f"Resumed WandB run {resume_run_id}, step offset: {self.step_offset}")
+            print(f"Resumed WandB run {self.run.id}, step offset: {self.step_offset}")
 
     def _get_last_step_from_run(self) -> int:
         """Get the last logged step from a resumed WandB run."""
@@ -242,36 +243,29 @@ class WandbLogger(Logger):
             return 0
 
         try:
-            # Try to get the last step from run history via API
             api = wandb.Api()
             run = api.run(f"{self.run.entity}/{self.run.project}/{self.run.id}")
-            history = run.history(keys=["_step"], pandas=False)
-            if history:
-                last_step = max(row.get("_step", 0) for row in history)
-                return last_step + 1  # Offset should be one after the last logged step
-        except Exception as e:
-            logger.warning(f"Could not determine last step from WandB run history: {e}")
 
-        try:
+            # Try lastHistoryStep first
+            if hasattr(run, "lastHistoryStep") and run.lastHistoryStep is not None:
+                print(f"Detected last step {run.lastHistoryStep} from lastHistoryStep")
+                return run.lastHistoryStep + 1
+
             # Fallback: try to get from run summary
-            if self.run.summary and "_step" in self.run.summary:
-                step_value = self.run.summary["_step"]
+            if run.summary and "_step" in run.summary:
+                step_value = run.summary["_step"]
                 if isinstance(step_value, (int, float)):
+                    print(f"Detected last step {int(step_value)} from summary")
                     return int(step_value) + 1
-        except Exception as e:
-            logger.warning(f"Could not determine last step from WandB summary: {e}")
 
-        logger.warning("Could not auto-detect step offset, defaulting to 0")
-        return 0
+        except Exception as e:
+            print(f"WARNING: Could not determine last step from WandB run: {e}")
+
+        raise ValueError("Couldn't determine step offset to resume WandB run")
 
     def log_hparams(self, config: Any) -> None:
         """Log hyperparameters to wandb."""
         if self.run and wandb is not None:
-            # if self._is_resumed:
-            #     # Skip config updates when resuming - the original config is preserved
-            #     # and updating would fail if values differ
-            #     logger.info("Skipping WandB config update for resumed run")
-            #     return
             wandb.config.update(dump_config(config))
 
     def log_metrics(self, metrics: Dict[str, Any], step: int | None = None) -> None:
