@@ -437,10 +437,6 @@ def setup_logging(
         config: Configuration object to log
         do_configure_logging_module: Whether to configure the logging module
 
-    Environment Variables:
-        WANDB_RUN_ID: W&B run ID to resume. If set, continues an existing run
-            and auto-detects step offset from the run's history.
-
     Returns:
         MultiplexLogger that combines all enabled loggers
     """
