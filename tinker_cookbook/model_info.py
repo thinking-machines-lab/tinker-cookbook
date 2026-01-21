@@ -81,6 +81,7 @@ def get_moonshot_info() -> dict[str, ModelAttributes]:
 
 def get_model_attributes(model_name: str) -> ModelAttributes:
     org, model_version_full = model_name.split("/")
+    model_version_full = model_version_full.split(":")[0]
     if org == "meta-llama":
         return get_llama_info()[model_version_full]
     elif org == "Qwen":
