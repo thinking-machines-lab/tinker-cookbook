@@ -233,10 +233,8 @@ class Utf8TokenDecoder:
             pass
 
         # Scan backwards to find longest decodable prefix.
-        # We can't use binary search because decodability isn't monotonic:
-        # e.g., [partial_A, complete_B] might decode even though [partial_A] fails.
-        # But we only need to try removing a few tokens since UTF-8 sequences
-        # are at most 4 bytes and tokens are typically 1-4 bytes each.
+        # We only need to try removing a few tokens since UTF-8 sequences are at
+        # most 4 bytes and tokens are typically 1-4 bytes each.
         for remove in range(1, min(len(self._pending_tokens), self._MAX_TRAILING_TOKENS_TO_TRY) + 1):
             prefix = self._pending_tokens[:-remove]
             if not prefix:
