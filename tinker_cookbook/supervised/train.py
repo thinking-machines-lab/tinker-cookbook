@@ -73,7 +73,6 @@ class Config:
     # Logging parameters
     wandb_project: str | None = None
     wandb_name: str | None = None
-    resume_wandb_run_id: str | None = None  # Resume an existing W&B run by ID
 
     enable_trace: bool = False
 
@@ -176,7 +175,6 @@ async def main(config: Config):
         wandb_name=config.wandb_name,
         config=config,
         do_configure_logging_module=True,
-        resume_wandb_run_id=config.resume_wandb_run_id,
     )
     if config.enable_trace:
         # Get and rename the current (main) task
