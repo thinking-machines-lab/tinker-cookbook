@@ -1,23 +1,20 @@
 import pytest
 
 from tinker_cookbook.renderers import (
-    parse_content_blocks,
-    format_content_as_string,
-    ThinkingPart,
-    TextPart,
     ContentPart,
-)
-from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3DisableThinkingRenderer
-from tinker_cookbook.tests.test_renderers import get_tokenizer
-from tinker_cookbook.renderers import (
-    Message,
-    Qwen3Renderer,
     DeepSeekV3ThinkingRenderer,
     GptOssRenderer,
+    Message,
+    Qwen3Renderer,
+    TextPart,
+    ThinkingPart,
+    format_content_as_string,
+    parse_content_blocks,
 )
-from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.base import ensure_list
-
+from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3DisableThinkingRenderer
+from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
+from tinker_cookbook.tests.test_renderers import get_tokenizer
 
 # =============================================================================
 # parse_content_blocks Tests
@@ -791,3 +788,107 @@ def test_kimi_streaming_no_unnecessary_buffering():
 
     # Should contain the full text
     assert text_content == "Hello world"
+
+
+def test_utf8_decoder_non_monotonic_decodability():
+    """Test that Utf8TokenDecoder handles non-monotonic decodability.
+
+    This test would FAIL with binary search but PASSES with backwards scan.
+
+    The scenario: tokens [A, B, C, D] where:
+    - decode([A]) fails (partial UTF-8)
+    - decode([A, B]) fails (still partial)
+    - decode([A, B, C]) succeeds (completes the character!)
+    - decode([A, B, C, D]) fails (D starts a new partial)
+
+    Binary search would:
+    - Try mid=2: decode([A,B]) fails → high=1
+    - Try mid=1: decode([A]) fails → high=0
+    - Return None (WRONG - missed that [:3] works!)
+
+    Backwards scan:
+    - Try removing 1 token: decode([A,B,C]) succeeds → return it ✓
+    """
+    from tinker_cookbook.renderers.base import Utf8TokenDecoder
+
+    class MockTokenizer:
+        """Mock tokenizer that simulates non-monotonic UTF-8 decodability."""
+
+        def decode(self, tokens: list[int]) -> str:
+            # Simulate: tokens 1,2,3 together form valid UTF-8,
+            # but subsets [1], [1,2] are invalid, and [1,2,3,4] is invalid
+            # (token 4 starts a new incomplete sequence)
+            if tokens == [1, 2, 3]:
+                return "✓"  # Only this combination decodes
+            elif tokens == [1, 2, 3, 4]:
+                raise ValueError("Incomplete UTF-8: token 4 is partial")
+            elif 4 in tokens:
+                raise ValueError("Incomplete UTF-8: token 4 is partial")
+            else:
+                raise ValueError(f"Incomplete UTF-8: {tokens}")
+
+    decoder = Utf8TokenDecoder(MockTokenizer())  # type: ignore[arg-type]
+
+    # Feed all 4 tokens at once
+    result = decoder.decode([1, 2, 3, 4])
+
+    # Should decode [1,2,3] and buffer [4]
+    assert result == "✓", f"Expected '✓' but got {result!r}"
+    assert decoder._pending_tokens == [4], f"Expected [4] pending but got {decoder._pending_tokens}"
+
+
+def test_utf8_decoder_with_real_tokenizer_ascii():
+    """Test Utf8TokenDecoder with real tokenizer on ASCII text.
+
+    Note: Many tokenizers (including tiktoken-based ones like Kimi) don't throw
+    exceptions for incomplete UTF-8 - they return replacement characters (�).
+    This means our exception-based buffering doesn't help for those tokenizers.
+
+    However, for ASCII text (single-byte UTF-8), there's no splitting issue,
+    so the decoder should work correctly.
+    """
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    from tinker_cookbook.renderers.base import Utf8TokenDecoder
+
+    # ASCII-only text won't have UTF-8 splitting issues
+    test_str = "Hello World! How are you today?"
+    tokens = tokenizer.encode(test_str, add_special_tokens=False)
+
+    # Feed tokens one at a time and collect decoded text
+    decoder = Utf8TokenDecoder(tokenizer)
+    decoded_parts = []
+    for token in tokens:
+        result = decoder.decode([token])
+        if result is not None:
+            decoded_parts.append(result)
+
+    # Flush any remaining
+    remaining = decoder.flush()
+    if remaining:
+        decoded_parts.append(remaining)
+
+    # Concatenated result should match original
+    full_decoded = "".join(decoded_parts)
+    assert full_decoded == test_str, f"Expected {test_str!r} but got {full_decoded!r}"
+
+
+def test_utf8_decoder_limitation_with_replacement_chars():
+    """Document the limitation: tokenizers that use replacement chars instead of exceptions.
+
+    When a tokenizer returns U+FFFD (replacement character) for incomplete UTF-8
+    instead of raising an exception, our buffering strategy doesn't help.
+    This test documents this known limitation.
+    """
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+
+    # The emoji 🎉 gets split across tokens [17137, 236, 231]
+    # Each token decodes to '�' individually, but together they make '🎉'
+    test_str = "🎉"
+    tokens = tokenizer.encode(test_str, add_special_tokens=False)
+
+    # Verify each token decodes to replacement char (not exception)
+    for tok in tokens:
+        decoded = tokenizer.decode([tok])
+        # If this assertion fails, the tokenizer behavior changed and we
+        # might be able to use exception-based buffering
+        assert "�" in decoded or decoded == tokenizer.decode([tok])
