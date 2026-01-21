@@ -207,7 +207,6 @@ class WandbLogger(Logger):
         config: Any | None = None,
         log_dir: str | Path | None = None,
         wandb_name: str | None = None,
-        resume_run_id: str | None = None,
     ):
         if not _wandb_available:
             raise ImportError(
@@ -220,7 +219,6 @@ class WandbLogger(Logger):
 
         # Initialize wandb run
         assert wandb is not None  # For type checker
-
         self.run = wandb.init(
             project=project,
             config=dump_config(config) if config else None,
@@ -228,9 +226,11 @@ class WandbLogger(Logger):
             name=wandb_name,
         )
 
-        self.step_offset = 0
-        self._is_resumed = resume_run_id is not None
+        resume_run_id = os.environ.get("WANDB_RUN_ID")
+        resume = os.environ.get("WANDB_RESUME")
+        self._is_resumed = resume_run_id is not None and resume == "must"
 
+        self.step_offset = 0
         if self._is_resumed:
             self.step_offset = self._get_last_step_from_run()
             logger.info(f"Resumed WandB run {resume_run_id}, step offset: {self.step_offset}")
@@ -464,8 +464,7 @@ def setup_logging(
     loggers.append(PrettyPrintLogger())
 
     # Add W&B logger if available and configured
-    resume_wandb_run_id = os.environ.get("WANDB_RUN_ID")
-    if wandb_project or resume_wandb_run_id:
+    if wandb_project:
         if not _wandb_available:
             print("WARNING: wandb is not installed. Skipping W&B logging.")
         elif not os.environ.get("WANDB_API_KEY"):
@@ -477,7 +476,6 @@ def setup_logging(
                     config=config,
                     log_dir=log_dir_path,
                     wandb_name=wandb_name,
-                    resume_run_id=resume_wandb_run_id,
                 )
             )
 
