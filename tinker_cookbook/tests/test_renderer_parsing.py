@@ -572,3 +572,165 @@ def test_thinking_generation_parse_correspondence(model_name, renderer_cls, rend
     full_convo = [user_message, parsed_message]
     supervised, _ = renderer.build_supervised_example(full_convo)
     assert supervised.to_ints() == prompt_tokens + continuation_tokens
+
+
+# =============================================================================
+# Kimi K2 Streaming Parsing Tests
+# =============================================================================
+
+
+from tinker_cookbook.renderers import (
+    StreamingMessageHeader,
+    StreamingTextDelta,
+    StreamingThinkingDelta,
+)
+
+
+def _is_message(obj) -> bool:
+    """Check if object is a Message dict (TypedDict doesn't support isinstance)."""
+    return isinstance(obj, dict) and "role" in obj and "content" in obj
+
+
+def test_kimi_streaming_simple_text():
+    """Test streaming parsing of simple text response."""
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    renderer = KimiK2Renderer(tokenizer)
+
+    response_str = "Hello, world!<|im_end|>"
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    deltas = list(renderer.parse_response_streaming(response_tokens))
+
+    # First delta should be header
+    assert isinstance(deltas[0], StreamingMessageHeader)
+    assert deltas[0].role == "assistant"
+
+    # Last delta should be complete Message
+    assert _is_message(deltas[-1])
+    assert deltas[-1]["role"] == "assistant"
+
+    # Collect all text deltas
+    text_content = "".join(
+        d.text for d in deltas if isinstance(d, StreamingTextDelta)
+    )
+    assert "Hello, world!" in text_content
+
+
+def test_kimi_streaming_with_thinking():
+    """Test streaming parsing with thinking blocks."""
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    renderer = KimiK2Renderer(tokenizer)
+
+    response_str = "<think>Let me reason about this.</think>The answer is 42.<|im_end|>"
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    deltas = list(renderer.parse_response_streaming(response_tokens))
+
+    # First delta should be header
+    assert isinstance(deltas[0], StreamingMessageHeader)
+    assert deltas[0].role == "assistant"
+
+    # Collect thinking and text deltas
+    thinking_content = "".join(
+        d.thinking for d in deltas if isinstance(d, StreamingThinkingDelta)
+    )
+    text_content = "".join(
+        d.text for d in deltas if isinstance(d, StreamingTextDelta)
+    )
+
+    assert "Let me reason about this." in thinking_content
+    assert "The answer is 42." in text_content
+
+    # Last delta should be complete Message
+    final_message = deltas[-1]
+    assert _is_message(final_message)
+
+
+def test_kimi_streaming_matches_batch():
+    """Test that streaming parse produces same final message as batch parse."""
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    renderer = KimiK2Renderer(tokenizer)
+
+    response_str = "<think>Step 1: Analyze.\nStep 2: Compute.</think>The result is 123.<|im_end|>"
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    # Batch parse
+    batch_message, batch_success = renderer.parse_response(response_tokens)
+    assert batch_success
+
+    # Streaming parse
+    deltas = list(renderer.parse_response_streaming(response_tokens))
+    streaming_message = deltas[-1]
+
+    assert _is_message(streaming_message)
+    assert streaming_message["role"] == batch_message["role"]
+    assert ensure_list(streaming_message["content"]) == ensure_list(batch_message["content"])
+
+
+def test_kimi_streaming_content_index_increments():
+    """Test that content_index increments when switching content types."""
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    renderer = KimiK2Renderer(tokenizer)
+
+    response_str = "<think>thinking</think>text<|im_end|>"
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    deltas = list(renderer.parse_response_streaming(response_tokens))
+
+    # Get content indices from deltas
+    thinking_indices = [d.content_index for d in deltas if isinstance(d, StreamingThinkingDelta)]
+    text_indices = [d.content_index for d in deltas if isinstance(d, StreamingTextDelta)]
+
+    # Thinking should have content_index > 0 (after header is emitted, we enter thinking)
+    # Text should have higher content_index than thinking
+    if thinking_indices and text_indices:
+        # Text comes after thinking closes, so its index should be higher
+        assert max(text_indices) > min(thinking_indices)
+
+
+def test_kimi_streaming_multiple_think_blocks():
+    """Test streaming with multiple interleaved think blocks."""
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    renderer = KimiK2Renderer(tokenizer)
+
+    response_str = "<think>first thought</think>partial<think>second thought</think>final<|im_end|>"
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    # Batch parse for reference
+    batch_message, _ = renderer.parse_response(response_tokens)
+
+    # Streaming parse
+    deltas = list(renderer.parse_response_streaming(response_tokens))
+
+    # Collect all content
+    thinking_content = "".join(
+        d.thinking for d in deltas if isinstance(d, StreamingThinkingDelta)
+    )
+    text_content = "".join(
+        d.text for d in deltas if isinstance(d, StreamingTextDelta)
+    )
+
+    assert "first thought" in thinking_content
+    assert "second thought" in thinking_content
+    assert "partial" in text_content
+    assert "final" in text_content
+
+    # Final message should match batch
+    streaming_message = deltas[-1]
+    assert _is_message(streaming_message)
+    assert ensure_list(streaming_message["content"]) == ensure_list(batch_message["content"])
+
+
+def test_kimi_streaming_empty_response():
+    """Test streaming parsing of empty/minimal response."""
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    renderer = KimiK2Renderer(tokenizer)
+
+    response_str = "<|im_end|>"
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    deltas = list(renderer.parse_response_streaming(response_tokens))
+
+    # Should still get header and final message
+    assert isinstance(deltas[0], StreamingMessageHeader)
+    assert _is_message(deltas[-1])

@@ -13,7 +13,7 @@ import urllib.request
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal, NotRequired, Optional, Protocol, TypedDict
+from typing import Literal, NotRequired, Optional, Protocol, TypedDict, Union
 
 import pydantic
 import tinker
@@ -141,6 +141,142 @@ class UnparsedToolCallPart(TypedDict):
 
 # Container for a part of a multimodal message content
 ContentPart = TextPart | ImagePart | ThinkingPart | ToolCallPart | UnparsedToolCallPart
+
+
+# Streaming types to enable incremental parsing of model output for real-time display.
+# These types enable incremental parsing of model output for real-time display.
+
+
+@dataclass
+class StreamingMessageHeader:
+    """Emitted at the start of a new message during streaming.
+
+    This signals that a new message is beginning and provides the author info.
+    """
+
+    role: str
+    name: str | None = None
+
+
+@dataclass
+class StreamingTextDelta:
+    """Incremental text content during streaming.
+
+    Contains only the new text since the last delta, not the accumulated text.
+    The recipient should concatenate deltas to build the full content.
+    """
+
+    text: str
+    content_index: int = 0
+    """Index of this content block within the message. Increments when content type changes."""
+
+
+@dataclass
+class StreamingThinkingDelta:
+    """Incremental thinking/reasoning content during streaming.
+
+    Contains only the new thinking text since the last delta.
+    """
+
+    thinking: str
+    content_index: int = 0
+    """Index of this content block within the message. Increments when content type changes."""
+
+
+# Union of all streaming update types.
+# A streaming parser yields these in sequence:
+# 1. StreamingMessageHeader (once at start)
+# 2. StreamingTextDelta / StreamingThinkingDelta (as content arrives)
+# 3. Message (once at end, containing the complete parsed message)
+MessageDelta = Union[StreamingMessageHeader, StreamingTextDelta, StreamingThinkingDelta, "Message"]
+
+
+@dataclass
+class Utf8TokenDecoder:
+    """Handles incremental UTF-8 decoding from tokens.
+
+    Tokens can split multi-byte UTF-8 sequences (e.g., a 3-byte character
+    might be split across 2 tokens). This class buffers tokens until a
+    valid UTF-8 string can be decoded.
+
+    Based on the pattern from hash_role2_renderer.py's Utf8TokenDecoder.
+    """
+
+    tokenizer: "Tokenizer"
+    _pending_tokens: list[int] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self._pending_tokens is None:
+            self._pending_tokens = []
+
+    def decode(self, tokens: list[int]) -> str | None:
+        """Decode tokens to string, buffering incomplete UTF-8 sequences.
+
+        Args:
+            tokens: New tokens to decode.
+
+        Returns:
+            Decoded string if complete UTF-8 sequences are available,
+            None if all tokens were buffered (incomplete sequence).
+        """
+        self._pending_tokens.extend(tokens)
+
+        # Try to decode all pending tokens
+        try:
+            text = self.tokenizer.decode(self._pending_tokens)
+            self._pending_tokens = []
+            return text
+        except Exception:
+            pass
+
+        # Binary search to find longest decodable prefix
+        # This handles cases where tokens split UTF-8 sequences
+        if len(self._pending_tokens) <= 1:
+            return None
+
+        low, high = 0, len(self._pending_tokens)
+        decodable_end = 0
+
+        while low < high:
+            mid = (low + high + 1) // 2
+            try:
+                self.tokenizer.decode(self._pending_tokens[:mid])
+                decodable_end = mid
+                low = mid
+            except Exception:
+                high = mid - 1
+
+        if decodable_end == 0:
+            return None
+
+        text = self.tokenizer.decode(self._pending_tokens[:decodable_end])
+        self._pending_tokens = self._pending_tokens[decodable_end:]
+        return text
+
+    def flush(self) -> str:
+        """Force decode any remaining tokens.
+
+        Call this at end of stream. May produce replacement characters
+        for incomplete sequences.
+        """
+        if not self._pending_tokens:
+            return ""
+        try:
+            text = self.tokenizer.decode(self._pending_tokens)
+        except Exception:
+            # Last resort: decode with errors='replace' behavior
+            # Most tokenizers handle this, but fall back to empty string
+            text = ""
+        self._pending_tokens = []
+        return text
+
+    def reset(self) -> None:
+        """Clear any buffered tokens."""
+        self._pending_tokens = []
+
+    def has_pending(self) -> bool:
+        """Check if there are buffered tokens waiting for more data."""
+        return len(self._pending_tokens) > 0
 
 
 # NOTE: we use a broad type definition for the role to be flexible
@@ -925,9 +1061,7 @@ def parse_response_for_stop_token(
         )
 
 
-# ============================================================================
 # Image processing utilities (used by VL renderers)
-# ============================================================================
 
 
 class ImageProcessorProtocol(Protocol):

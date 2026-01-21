@@ -3,20 +3,27 @@
 import json
 import re
 import warnings
+from dataclasses import dataclass, field
+from typing import Iterator
 
 import tinker
 import torch
 
 from tinker_cookbook.renderers.base import (
     Message,
+    MessageDelta,
     RenderContext,
     RenderedMessage,
     Renderer,
     Role,
+    StreamingMessageHeader,
+    StreamingTextDelta,
+    StreamingThinkingDelta,
     ToolCall,
     ToolSpec,
     TrainOnWhat,
     UnparsedToolCall,
+    Utf8TokenDecoder,
     ensure_list,
     ensure_text,
     parse_response_for_stop_token,
@@ -77,6 +84,221 @@ def _parse_tool_calls_section(
             )
 
     return tool_calls, unparsed_tool_calls
+
+
+# =============================================================================
+# Streaming Parser
+# =============================================================================
+
+
+@dataclass
+class KimiK2StreamingParser:
+    """Stateful streaming parser for Kimi K2 model output.
+
+    Parses tokens incrementally, yielding deltas as content becomes available.
+    Handles UTF-8 token boundaries and <think>...</think> block transitions.
+
+    Usage:
+        parser = KimiK2StreamingParser(tokenizer, end_token)
+        for token in response_tokens:
+            for delta in parser.feed(token):
+                # Handle delta (StreamingMessageHeader, StreamingTextDelta, etc.)
+        for delta in parser.finish():
+            # Handle final deltas including complete Message
+    """
+
+    tokenizer: "tinker_cookbook.tokenizer_utils.Tokenizer"  # type: ignore[name-defined]
+    end_message_token: int
+
+    # Internal state
+    _utf8_decoder: Utf8TokenDecoder = field(init=False)
+    _accumulated_text: str = field(init=False, default="")
+    _header_emitted: bool = field(init=False, default=False)
+    _in_thinking: bool = field(init=False, default=False)
+    _content_index: int = field(init=False, default=0)
+    _last_emitted_pos: int = field(init=False, default=0)
+    _finished: bool = field(init=False, default=False)
+    _all_tokens: list[int] = field(init=False, default_factory=list)
+
+    def __post_init__(self) -> None:
+        self._utf8_decoder = Utf8TokenDecoder(self.tokenizer)
+        self._accumulated_text = ""
+        self._header_emitted = False
+        self._in_thinking = False
+        self._content_index = 0
+        self._last_emitted_pos = 0
+        self._finished = False
+        self._all_tokens = []
+
+    def feed(self, token: int) -> Iterator[MessageDelta]:
+        """Feed a single token and yield any resulting deltas.
+
+        Args:
+            token: A single token ID from the model output.
+
+        Yields:
+            MessageDelta objects as content becomes available.
+        """
+        if self._finished:
+            return
+
+        self._all_tokens.append(token)
+
+        # Check for end token
+        if token == self.end_message_token:
+            self._finished = True
+            return
+
+        # Try to decode the token
+        decoded = self._utf8_decoder.decode([token])
+        if decoded is None:
+            # Token was buffered (incomplete UTF-8 sequence)
+            return
+
+        self._accumulated_text += decoded
+
+        # Emit header on first content
+        if not self._header_emitted:
+            self._header_emitted = True
+            yield StreamingMessageHeader(role="assistant")
+
+        # Process the new text for deltas
+        yield from self._emit_deltas()
+
+    def _emit_deltas(self) -> Iterator[MessageDelta]:
+        """Emit deltas for any new content since last emission."""
+        text = self._accumulated_text
+        pos = self._last_emitted_pos
+
+        while pos < len(text):
+            if not self._in_thinking:
+                # Look for <think> tag
+                think_start = text.find("<think>", pos)
+                if think_start == -1:
+                    # No <think> tag found - emit text up to a safe point
+                    # Keep last 7 chars in case "<think>" is being split
+                    safe_end = max(pos, len(text) - 7)
+                    if safe_end > pos:
+                        new_text = text[pos:safe_end]
+                        if new_text:
+                            yield StreamingTextDelta(
+                                text=new_text, content_index=self._content_index
+                            )
+                        self._last_emitted_pos = safe_end
+                    break
+                elif think_start > pos:
+                    # Emit text before <think>
+                    new_text = text[pos:think_start]
+                    if new_text:
+                        yield StreamingTextDelta(
+                            text=new_text, content_index=self._content_index
+                        )
+                    pos = think_start
+
+                if text[pos:].startswith("<think>"):
+                    # Enter thinking mode
+                    self._in_thinking = True
+                    self._content_index += 1
+                    pos += len("<think>")
+                    self._last_emitted_pos = pos
+            else:
+                # In thinking mode - look for </think>
+                think_end = text.find("</think>", pos)
+                if think_end == -1:
+                    # No </think> found - emit thinking up to safe point
+                    safe_end = max(pos, len(text) - 8)
+                    if safe_end > pos:
+                        new_thinking = text[pos:safe_end]
+                        if new_thinking:
+                            yield StreamingThinkingDelta(
+                                thinking=new_thinking, content_index=self._content_index
+                            )
+                        self._last_emitted_pos = safe_end
+                    break
+                else:
+                    # Emit thinking before </think>
+                    new_thinking = text[pos:think_end]
+                    if new_thinking:
+                        yield StreamingThinkingDelta(
+                            thinking=new_thinking, content_index=self._content_index
+                        )
+                    # Exit thinking mode
+                    self._in_thinking = False
+                    self._content_index += 1
+                    pos = think_end + len("</think>")
+                    self._last_emitted_pos = pos
+
+    def finish(self) -> Iterator[MessageDelta]:
+        """Finish parsing and yield any remaining content plus final Message.
+
+        Call this after all tokens have been fed (either naturally when
+        end_message_token is seen, or when the stream ends).
+
+        Yields:
+            Any remaining deltas and the complete Message.
+        """
+        # Flush any buffered UTF-8 tokens
+        remaining = self._utf8_decoder.flush()
+        if remaining:
+            self._accumulated_text += remaining
+
+        # Emit header if we haven't yet (empty response edge case)
+        if not self._header_emitted:
+            self._header_emitted = True
+            yield StreamingMessageHeader(role="assistant")
+
+        # Emit any remaining content
+        text = self._accumulated_text
+        pos = self._last_emitted_pos
+
+        if pos < len(text):
+            remaining_text = text[pos:]
+            if self._in_thinking:
+                # Unclosed thinking block - emit as thinking
+                if remaining_text:
+                    yield StreamingThinkingDelta(
+                        thinking=remaining_text, content_index=self._content_index
+                    )
+            else:
+                if remaining_text:
+                    yield StreamingTextDelta(
+                        text=remaining_text, content_index=self._content_index
+                    )
+
+        # Build and yield the final complete Message
+        # Use the batch parser for consistency
+        from tinker_cookbook.renderers.base import parse_response_for_stop_token
+
+        message, _success = parse_response_for_stop_token(
+            self._all_tokens, self.tokenizer, self.end_message_token
+        )
+
+        content = message.get("content", "")
+        if isinstance(content, str):
+            # Handle tool calls if present
+            text_content, tool_section = _split_tool_calls_section(content)
+            if tool_section is not None:
+                tool_calls, unparsed_tool_calls = _parse_tool_calls_section(tool_section)
+                if tool_calls:
+                    message["tool_calls"] = tool_calls
+                if unparsed_tool_calls:
+                    message["unparsed_tool_calls"] = unparsed_tool_calls
+
+            content_parts = parse_think_blocks(text_content)
+            message["content"] = content_parts if content_parts is not None else text_content
+
+        yield message
+
+    def reset(self) -> None:
+        """Reset parser state for reuse."""
+        self._utf8_decoder.reset()
+        self._accumulated_text = ""
+        self._header_emitted = False
+        self._in_thinking = False
+        self._content_index = 0
+        self._last_emitted_pos = 0
+        self._finished = False
+        self._all_tokens = []
 
 
 class KimiK2Renderer(Renderer):
@@ -344,6 +566,43 @@ class KimiK2Renderer(Renderer):
         assistant_message["content"] = content_parts if content_parts is not None else text_content
 
         return assistant_message, True
+
+    def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
+        """Parse response tokens with streaming, yielding incremental deltas.
+
+        This method enables real-time display of model output by yielding
+        partial content as it becomes available, rather than waiting for
+        the complete response.
+
+        Args:
+            response: Token IDs from the model.
+
+        Yields:
+            StreamingMessageHeader: Once at the start of the message.
+            StreamingTextDelta: Incremental text content.
+            StreamingThinkingDelta: Incremental thinking content.
+            Message: The complete parsed message at the end.
+
+        Example:
+            for delta in renderer.parse_response_streaming(tokens):
+                if isinstance(delta, StreamingMessageHeader):
+                    print(f"New message from {delta.role}")
+                elif isinstance(delta, StreamingThinkingDelta):
+                    print(f"[thinking] {delta.thinking}", end="")
+                elif isinstance(delta, StreamingTextDelta):
+                    print(delta.text, end="")
+                elif isinstance(delta, Message):
+                    print(f"\\nComplete: {delta}")
+        """
+        parser = KimiK2StreamingParser(
+            tokenizer=self.tokenizer,
+            end_message_token=self._end_message_token,
+        )
+
+        for token in response:
+            yield from parser.feed(token)
+
+        yield from parser.finish()
 
     def to_openai_message(self, message: Message) -> dict:
         """Convert a Message to OpenAI API format with reasoning_content for thinking.
