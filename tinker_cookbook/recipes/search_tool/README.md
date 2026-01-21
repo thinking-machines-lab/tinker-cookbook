@@ -40,7 +40,7 @@ To speed up training, you may consider turning on `--stream_minibatch`. In princ
 
 ### Extensions: How to Include Other Tools?
 
-1. The tool call rendering / parsing logic is in [tinker_cookbook/renderers.py](../../../renderers.py). Currently, tool calling is only demonstrated on the Qwen series renderer. Currently, the system prompt necessary for enabling tool calling is included in `./search_env.py`. Changing the tool calling parsing format also requires updating the system prompt accordingly.
+1. The tool call rendering / parsing logic is in [tinker_cookbook/renderers/](../../../renderers/). Currently, tool calling is only demonstrated on the Qwen series renderer. Currently, the system prompt necessary for enabling tool calling is included in `./search_env.py`. Changing the tool calling parsing format also requires updating the system prompt accordingly.
 2. Extend `./embedding.py` to replace the Gemini embedding.
 3. Extend `./tools.py` to replace the Chroma vector search service.
 

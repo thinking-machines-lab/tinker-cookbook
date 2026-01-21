@@ -20,7 +20,7 @@ We provide the following examples:
 1. **[Chat supervised learning](./chat_sl/)**: supervised fine-tuning on conversational datasets like Tulu3.
 2. **[Math reasoning](./math_rl/)**: improve LLM reasoning capability by rewarding it for answering math questions correctly.
 3. **[Preference learning](./preference/)**: showcase a three-stage RLHF pipeline: 1) supervised fine-tuning, 2) learning a reward model, 3) RL against the reward model.
-4. **[Tool use](./tool_use/)**: train LLMs to better use retrieval tools to answer questions more accurately.
+4. **[Tool use](./search_tool/)**: train LLMs to better use retrieval tools to answer questions more accurately.
 5. **[Prompt distillation](./prompt_distillation/)**: internalize long and complex instructions into LLMs.
 6. **[Multi-Agent](./multiplayer_rl/)**: optimize LLMs to play against another LLM or themselves.
 7. **[Model distillation](./distillation/)**: use on-policy distillation or SFT to distill intelligence from a teacher model.

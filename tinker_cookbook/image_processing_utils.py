@@ -24,6 +24,8 @@ else:
 
 @cache
 def get_image_processor(model_name: str) -> ImageProcessor:
+    model_name = model_name.split(":")[0]
+
     from transformers.models.auto.image_processing_auto import AutoImageProcessor
 
     processor = AutoImageProcessor.from_pretrained(model_name, use_fast=True)

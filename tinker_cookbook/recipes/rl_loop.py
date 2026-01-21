@@ -229,7 +229,10 @@ def main(config: Config):
         fwd_bwd_future = training_client.forward_backward(datums_D, loss_fn="importance_sampling")
         optim_step_future = training_client.optim_step(adam_params)
         _fwd_bwd_result = fwd_bwd_future.result()
-        _optim_result = optim_step_future.result()
+        optim_result = optim_step_future.result()
+
+        if optim_result.metrics:
+            metrics.update(optim_result.metrics)
 
         # Log metrics
         metrics["time/total"] = time.time() - t_start
