@@ -71,13 +71,13 @@ def parse_terminus_json_plain(content: str) -> ParsedTerminalPolicyOutput:
         raise TerminalActionParseError("'commands' must be a list")
 
     # Keep only dict-like entries; the executor will further validate fields.
-    commands_typed: list[TerminusCommand] = [
-        cmd for cmd in commands if isinstance(cmd, dict)
-    ]
+    commands_typed: list[TerminusCommand] = [cmd for cmd in commands if isinstance(cmd, dict)]
 
     task_complete = bool(data.get("task_complete", False))
 
-    return ParsedTerminalPolicyOutput(commands=commands_typed, task_complete=task_complete, raw=data)
+    return ParsedTerminalPolicyOutput(
+        commands=commands_typed, task_complete=task_complete, raw=data
+    )
 
 
 class HarborTerminalTinkerEnv:
@@ -115,7 +115,9 @@ class HarborTerminalTinkerEnv:
 
     def _fits_context_window(self, prompt_tokens: int) -> bool:
         """Return True if prompt + reserved generation tokens fits context window."""
-        return (int(prompt_tokens) + self._reserved_generation_tokens) <= self._max_trajectory_tokens
+        return (
+            int(prompt_tokens) + self._reserved_generation_tokens
+        ) <= self._max_trajectory_tokens
 
     @property
     def stop_condition(self) -> StopCondition:

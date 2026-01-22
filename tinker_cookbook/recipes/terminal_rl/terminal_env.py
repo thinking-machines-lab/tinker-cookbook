@@ -214,7 +214,7 @@ class AsyncTerminalGymEnv:
             "initial_terminal_state": terminal_obs,
             "initial_prompt": initial_prompt,
         }
-        
+
         return initial_prompt, info
 
     async def step(self, action: TerminalAction) -> StepResult:
