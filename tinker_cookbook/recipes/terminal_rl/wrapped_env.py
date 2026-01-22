@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence, TypeAlias, TypedDict
 
-from harbor.models.trial.config import EnvironmentConfig as TrialEnvironmentConfig
-
 from tinker_cookbook.recipes.terminal_rl.terminal_env import AsyncTerminalGymEnv, TerminalAction
 
 
@@ -70,8 +68,27 @@ def parse_terminus_json_plain(content: str) -> ParsedTerminalPolicyOutput:
     if not isinstance(commands, list):
         raise TerminalActionParseError("'commands' must be a list")
 
-    # Keep only dict-like entries; the executor will further validate fields.
-    commands_typed: list[TerminusCommand] = [cmd for cmd in commands if isinstance(cmd, dict)]
+    # Normalize to the expected schema to keep pyright happy.
+    commands_typed: list[TerminusCommand] = []
+    for cmd in commands:
+        if not isinstance(cmd, dict):
+            continue
+
+        typed: TerminusCommand = {}
+        keystrokes = cmd.get("keystrokes")
+        if isinstance(keystrokes, str):
+            typed["keystrokes"] = keystrokes
+
+        duration = cmd.get("duration")
+        if isinstance(duration, (int, float)):
+            typed["duration"] = float(duration)
+        elif isinstance(duration, str):
+            try:
+                typed["duration"] = float(duration)
+            except Exception:
+                pass
+
+        commands_typed.append(typed)
 
     task_complete = bool(data.get("task_complete", False))
 
@@ -269,7 +286,7 @@ class HarborSingleTaskEnvGroupBuilder:
         *,
         task_dir: Path | str,
         group_size: int,
-        environment: TrialEnvironmentConfig,
+        environment: Any,
         renderer: RendererProtocol,
         max_trajectory_tokens: int = 32 * 1024,
         gym_env_kwargs: dict[str, Any] | None = None,
@@ -346,7 +363,7 @@ class HarborSingleTaskRLDatasetBuilder:
         *,
         task_dir: Path | str,
         group_size: int,
-        environment: TrialEnvironmentConfig,
+        environment: Any,
         renderer: RendererProtocol | None = None,
         renderer_name: str | None = None,
         model_name_for_tokenizer: str | None = None,

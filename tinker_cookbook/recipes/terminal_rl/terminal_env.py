@@ -1,19 +1,49 @@
 from __future__ import annotations
 
+import importlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
-from harbor.agents.terminus_2.tmux_session import TmuxSession
-from harbor.environments.base import BaseEnvironment
-from harbor.environments.factory import EnvironmentFactory
-from harbor.models.trial.config import EnvironmentConfig as TrialEnvironmentConfig
-from harbor.models.trial.paths import TrialPaths
-from harbor.models.task.task import Task
-from harbor.utils.logger import logger as global_logger
-from harbor.verifier.verifier import Verifier
+
+def _import_harbor() -> dict[str, Any]:
+    """Import Harbor symbols lazily.
+
+    The terminal_rl recipes depend on the external `harbor` package, which is not
+    installed in the default tinker-cookbook dev/CI environment.
+    """
+
+    try:
+        return {
+            "TmuxSession": getattr(
+                importlib.import_module("harbor.agents.terminus_2.tmux_session"),
+                "TmuxSession",
+            ),
+            "BaseEnvironment": getattr(
+                importlib.import_module("harbor.environments.base"),
+                "BaseEnvironment",
+            ),
+            "EnvironmentFactory": getattr(
+                importlib.import_module("harbor.environments.factory"),
+                "EnvironmentFactory",
+            ),
+            "TrialPaths": getattr(
+                importlib.import_module("harbor.models.trial.paths"),
+                "TrialPaths",
+            ),
+            "Task": getattr(importlib.import_module("harbor.models.task.task"), "Task"),
+            "Verifier": getattr(
+                importlib.import_module("harbor.verifier.verifier"),
+                "Verifier",
+            ),
+        }
+    except Exception as e:  # pragma: no cover
+        raise ImportError(
+            "terminal_rl recipes require the optional 'harbor' dependency. "
+            "Install it in your environment (and ensure it is importable) to use these recipes."
+        ) from e
 
 
 TERMINUS_JSON_PLAIN_INITIAL_PROMPT_TEMPLATE = """You are an AI assistant tasked with solving command-line tasks in a Linux environment. You will be given a task description and the output from previously executed commands. Your goal is to solve the task by providing batches of shell commands.
@@ -117,7 +147,7 @@ class AsyncTerminalGymEnv:
         self,
         task_dir: Path | str,
         *,
-        environment: TrialEnvironmentConfig,
+        environment: Any,
         runs_dir: Path = Path("rl_runs"),
         force_build: bool = False,
         delete_env: bool | None = None,
@@ -127,7 +157,12 @@ class AsyncTerminalGymEnv:
         reward_reduce: Literal["sum", "single"] = "sum",
         logger: logging.Logger | None = None,
     ):
-        self._logger = (logger or global_logger).getChild(__name__)
+        self._logger = (logger or logging.getLogger(__name__)).getChild(__name__)
+
+        harbor = _import_harbor()
+        Task = harbor["Task"]
+        TrialPaths = harbor["TrialPaths"]
+        EnvironmentFactory = harbor["EnvironmentFactory"]
 
         self._task = Task(task_dir=task_dir)
         self._trial_name = f"{self._task.name}__{uuid4().hex[:8]}"
@@ -143,7 +178,7 @@ class AsyncTerminalGymEnv:
         self._trial_paths = TrialPaths(self._runs_dir / self._trial_name)
         self._trial_paths.mkdir()
 
-        self._environment: BaseEnvironment = EnvironmentFactory.create_environment_from_config(
+        self._environment: Any = EnvironmentFactory.create_environment_from_config(
             config=environment,
             environment_dir=self._task.paths.environment_dir,
             environment_name=self._task.name,
@@ -153,8 +188,8 @@ class AsyncTerminalGymEnv:
             logger=self._logger,
         )
 
-        self._tmux: TmuxSession | None = None
-        self._verifier: Verifier | None = None
+        self._tmux: Any | None = None
+        self._verifier: Any | None = None
         self._started = False
 
         self._tmux_pane_width = tmux_pane_width
@@ -179,12 +214,16 @@ class AsyncTerminalGymEnv:
         if self._started:
             await self.close()
 
+        harbor = _import_harbor()
+        TmuxSession = harbor["TmuxSession"]
+        Verifier = harbor["Verifier"]
+
         await self._environment.start(force_build=self._force_build)
 
         # Tmux log lives inside the sandbox/container. We don't rely on it.
         remote_log_path = Path("/tmp/harbor_tmux_pane.log")
 
-        self._tmux = TmuxSession(
+        tmux = TmuxSession(
             session_name=self._trial_name,
             environment=self._environment,
             logging_path=remote_log_path,
@@ -193,7 +232,8 @@ class AsyncTerminalGymEnv:
             pane_width=self._tmux_pane_width,
             pane_height=self._tmux_pane_height,
         )
-        await self._tmux.start()
+        self._tmux = tmux
+        await tmux.start()
 
         self._verifier = Verifier(
             task=self._task,
@@ -204,7 +244,7 @@ class AsyncTerminalGymEnv:
 
         self._started = True
 
-        terminal_obs = await self._tmux.get_incremental_output()
+        terminal_obs = await tmux.get_incremental_output()
         initial_prompt = self.build_initial_prompt(terminal_state=terminal_obs)
         info = {
             "trial_name": self._trial_name,

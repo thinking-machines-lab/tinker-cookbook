@@ -32,8 +32,19 @@ import asyncio
 import importlib
 from pathlib import Path
 
-from harbor.models.trial.config import EnvironmentConfig as TrialEnvironmentConfig
 from tinker_cookbook.recipes.terminal_rl.wrapped_env import HarborSingleTaskRLDatasetBuilder
+
+
+def _make_harbor_env_config(env_type: str):
+    try:
+        cfg_mod = importlib.import_module("harbor.models.trial.config")
+        EnvCfg = getattr(cfg_mod, "EnvironmentConfig")
+        return EnvCfg(type=env_type)
+    except Exception as e:  # pragma: no cover
+        raise ImportError(
+            "terminal_rl recipes require the optional 'harbor' dependency. "
+            "Install it in your environment (and ensure it is importable) to run training."
+        ) from e
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,7 +79,7 @@ async def main() -> None:
     train_mod = importlib.import_module("tinker_cookbook.rl.train")
     TrainConfig = getattr(train_mod, "Config")
 
-    env_cfg = TrialEnvironmentConfig(type=args.env)
+    env_cfg = _make_harbor_env_config(args.env)
 
     dataset_builder = HarborSingleTaskRLDatasetBuilder(
         task_dir=Path(args.task_dir),
