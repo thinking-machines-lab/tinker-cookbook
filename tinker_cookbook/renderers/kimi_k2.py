@@ -29,6 +29,7 @@ from tinker_cookbook.renderers.base import (
     parse_response_for_stop_token,
     parse_think_blocks,
 )
+from tinker_cookbook.tokenizer_utils import Tokenizer
 
 _TOOL_CALLS_SECTION_RE = re.compile(
     r"<\|tool_calls_section_begin\|>(.*?)<\|tool_calls_section_end\|>"
@@ -142,7 +143,7 @@ class KimiK2StreamingParser:
             # Handle final deltas including complete Message
     """
 
-    tokenizer: "tinker_cookbook.tokenizer_utils.Tokenizer"  # type: ignore[name-defined]
+    tokenizer: Tokenizer
     end_message_token: int
 
     # Internal state
@@ -227,9 +228,7 @@ class KimiK2StreamingParser:
                     # Emit text before <think>
                     new_text = text[pos:think_start]
                     if new_text:
-                        yield StreamingTextDelta(
-                            text=new_text, content_index=self._content_index
-                        )
+                        yield StreamingTextDelta(text=new_text, content_index=self._content_index)
                     pos = think_start
 
                 if text[pos:].startswith(_THINK_OPEN_TAG):
@@ -301,9 +300,7 @@ class KimiK2StreamingParser:
                     )
             else:
                 if remaining_text:
-                    yield StreamingTextDelta(
-                        text=remaining_text, content_index=self._content_index
-                    )
+                    yield StreamingTextDelta(text=remaining_text, content_index=self._content_index)
 
         # Build and yield the final complete Message
         # Use the batch parser for consistency

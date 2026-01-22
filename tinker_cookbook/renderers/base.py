@@ -145,6 +145,7 @@ ContentPart = TextPart | ImagePart | ThinkingPart | ToolCallPart | UnparsedToolC
 
 # Streaming types to enable incremental parsing of model output for real-time display.
 
+
 @dataclass
 class StreamingMessageHeader:
     """Emitted at the start of a new message during streaming.
@@ -235,7 +236,9 @@ class Utf8TokenDecoder:
         # Scan backwards to find longest decodable prefix.
         # We only need to try removing a few tokens since UTF-8 sequences are at
         # most 4 bytes and tokens are typically 1-4 bytes each.
-        for remove in range(1, min(len(self._pending_tokens), self._MAX_TRAILING_TOKENS_TO_TRY) + 1):
+        for remove in range(
+            1, min(len(self._pending_tokens), self._MAX_TRAILING_TOKENS_TO_TRY) + 1
+        ):
             prefix = self._pending_tokens[:-remove]
             if not prefix:
                 break

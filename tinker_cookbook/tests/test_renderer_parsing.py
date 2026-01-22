@@ -602,9 +602,7 @@ def test_kimi_streaming_simple_text():
     assert deltas[-1]["role"] == "assistant"
 
     # Collect all text deltas
-    text_content = "".join(
-        d.text for d in deltas if isinstance(d, StreamingTextDelta)
-    )
+    text_content = "".join(d.text for d in deltas if isinstance(d, StreamingTextDelta))
     assert "Hello, world!" in text_content
 
 
@@ -623,12 +621,8 @@ def test_kimi_streaming_with_thinking():
     assert deltas[0].role == "assistant"
 
     # Collect thinking and text deltas
-    thinking_content = "".join(
-        d.thinking for d in deltas if isinstance(d, StreamingThinkingDelta)
-    )
-    text_content = "".join(
-        d.text for d in deltas if isinstance(d, StreamingTextDelta)
-    )
+    thinking_content = "".join(d.thinking for d in deltas if isinstance(d, StreamingThinkingDelta))
+    text_content = "".join(d.text for d in deltas if isinstance(d, StreamingTextDelta))
 
     assert "Let me reason about this." in thinking_content
     assert "The answer is 42." in text_content
@@ -695,12 +689,8 @@ def test_kimi_streaming_multiple_think_blocks():
     deltas = list(renderer.parse_response_streaming(response_tokens))
 
     # Collect all content
-    thinking_content = "".join(
-        d.thinking for d in deltas if isinstance(d, StreamingThinkingDelta)
-    )
-    text_content = "".join(
-        d.text for d in deltas if isinstance(d, StreamingTextDelta)
-    )
+    thinking_content = "".join(d.thinking for d in deltas if isinstance(d, StreamingThinkingDelta))
+    text_content = "".join(d.text for d in deltas if isinstance(d, StreamingTextDelta))
 
     assert "first thought" in thinking_content
     assert "second thought" in thinking_content
@@ -775,9 +765,7 @@ def test_kimi_streaming_no_unnecessary_buffering():
     deltas = list(renderer.parse_response_streaming(response_tokens))
 
     # Collect all text deltas
-    text_content = "".join(
-        d.text for d in deltas if isinstance(d, StreamingTextDelta)
-    )
+    text_content = "".join(d.text for d in deltas if isinstance(d, StreamingTextDelta))
 
     # Should contain the full text
     assert text_content == "Hello world"
@@ -802,6 +790,7 @@ def test_utf8_decoder_non_monotonic_decodability():
     Backwards scan:
     - Try removing 1 token: decode([A,B,C]) succeeds → return it ✓
     """
+
     class MockTokenizer:
         """Mock tokenizer that simulates non-monotonic UTF-8 decodability."""
 
