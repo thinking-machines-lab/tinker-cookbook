@@ -1,3 +1,5 @@
+from typing import TypeGuard
+
 import pytest
 
 from tinker_cookbook.renderers import (
@@ -578,7 +580,7 @@ def test_thinking_generation_parse_correspondence(model_name, renderer_cls, rend
 # =============================================================================
 
 
-def _is_message(obj) -> bool:
+def _is_message(obj) -> TypeGuard[Message]:
     """Check if object is a Message dict (TypedDict doesn't support isinstance)."""
     return isinstance(obj, dict) and "role" in obj and "content" in obj
 
