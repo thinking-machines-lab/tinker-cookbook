@@ -276,9 +276,12 @@ class HarborTerminalTinkerEnv:
 class HarborSingleTaskEnvGroupBuilder:
     """Build a group of Harbor terminal envs for a single fixed task.
 
-    This matches your GRPO usage: for each rollout group, instantiate N environments
-    for the *same* task (different sandbox instances), collect N trajectories, and
-    let the algorithm center rewards within the group.
+    This currently supports exactly one fixed task directory and is intended for GRPO-style
+    usage: for each rollout group, instantiate N environments for the *same* task (different
+    sandbox instances), collect N trajectories, and let the algorithm center rewards within
+    the group.
+
+    TODO: Support multiple tasks (e.g., sample task dirs per group/batch).
     """
 
     def __init__(
@@ -356,7 +359,12 @@ class HarborSingleTaskRLDataset:
 
 
 class HarborSingleTaskRLDatasetBuilder:
-    """tinker-cookbook-compatible RLDatasetBuilder for a single terminal task."""
+    """tinker-cookbook-compatible RLDatasetBuilder for a single terminal task.
+
+    This builder currently supports exactly one fixed task directory.
+
+    TODO: Support multiple tasks (e.g., a list of task dirs and a sampling strategy).
+    """
 
     def __init__(
         self,
