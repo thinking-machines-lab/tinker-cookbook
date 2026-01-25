@@ -1269,7 +1269,7 @@ Rendering converts list-of-message datatypes into their token representations fo
 
 ## The Renderer class
 
-The Renderer class is the main interface used for rendering. It can be found in <CookbookLink path="tinker_cookbook/renderers.py">`renderers.py`</CookbookLink>.
+The Renderer class is the main interface used for rendering. It can be found in <CookbookLink path="tinker_cookbook/renderers/">`tinker_cookbook/renderers/`</CookbookLink>.
 
 **Eample conversation:**
 
@@ -1746,7 +1746,7 @@ This optimizes the classical constrianed RLHF objective, where the reference mod
 The implementation is in <CookbookLink path="tinker_cookbook/preference/train_dpo.py">train_dpo.py</CookbookLink> with a CLI interface in <CookbookLink path="tinker_cookbook/recipes/preference/dpo/train.py">train.py</CookbookLink>. You can run it from the command line:
 
 ```bash
-python -m tinker_cookbook.recipes.preference.train \
+python -m tinker_cookbook.recipes.preference.dpo.train \
     log_path=/tmp/dpo-hhh-experiment \
     model_name=meta-llama/Llama-3.2-1B \
     dataset=hhh \
@@ -2206,7 +2206,7 @@ The player model (which we fine-tune) is also based on that same model.
 You can run the training script as follows:
 
 ```bash
-python -m tinker_cookbook.recipes.twenty_questions.train
+python -m tinker_cookbook.recipes.multiplayer_rl.twenty_questions.train
 ```
 
 
@@ -2308,7 +2308,7 @@ You should see a plot like this:
 - `checkpoints.jsonl`: the checkpoints that were saved during training. Recall from [Saving and Loading](/save-load) that there are (currently) two kinds of checkpoints: one that has "/sampler_weights/" in the path (used for sampling), and the other that has "/weights/" in the path (includes full optimizer state, used for resuming training). If you interrupt the training script, then run it again, it will ask you if you want to resume training. If you choose to do so, it'll load the last (full state) checkpoint from this file.
 - `config.json`: the configuration that you used for training.
 
-In the `sl_basic` script, you'll see that there's also some disabled code (under `if 0:`) that shows how to use your own dataset, specified as a JSONL file, provided in the format of <CookbookLink path="example-data/conversations.jsonl">conversations.jsonl</CookbookLink>.
+In the `sl_basic` script, you'll see that there's also some disabled code (under `if 0:`) that shows how to use your own dataset, specified as a JSONL file, provided in the format of <CookbookLink path="tinker_cookbook/example_data/conversations.jsonl">conversations.jsonl</CookbookLink>.
 
 
 ---
