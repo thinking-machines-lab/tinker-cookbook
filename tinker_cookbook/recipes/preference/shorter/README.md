@@ -15,7 +15,7 @@ We implement the `PairwisePreferenceRLDatasetBuilder` class to make it easier to
 - returns a floating point number; a larger number means that `completion_B` is better.
 
 **ComparisonBuilder** will be used in our code to create a list of `Comparison` objects. We need to implement two functions
-- `get_train_and_test_datasets`: which returns training and test huggingface `Dataset` objects
+- `get_train_and_test_datasets`: which returns training and test Hugging Face `Dataset` objects
 - `example_to_labeled_comparison`: which converts each datapoint (a `dict` in the `Dataset` object) to a `Comparison` object.
 
 Note that `completion_A` and `completion_B` will NOT be used during training, and only `completion_A` will be used during `Eval`.

@@ -9,7 +9,7 @@ The most important hyperparameter is generally the learning rate (LR). Our curre
 
 $$ LR(m) = lr_{base} · M_{LoRA} · \Big(\frac{2000}{H_m}\Big)^{P_m} $$
 
-where $lr_{base}$ is a constant base LR, $M_{LoRA}$ is a multiplier applied when using LoRA (1 if using full-finetuning), $H_m$ is the hidden size of the model $m$, and $P_m$ is a model-specific exponent adjustment. Importantly, this function is independent of the LoRA rank.
+where $lr_{base}$ is a constant base LR, $M_{LoRA}$ is a multiplier applied when using LoRA (1 if using full fine-tuning), $H_m$ is the hidden size of the model $m$, and $P_m$ is a model-specific exponent adjustment. Importantly, this function is independent of the LoRA rank.
 
 Our current best estimates are the following: $lr_{base} = 5e-5$,
 $M_{LoRA} = 10$, $P_m = 0.0775$ for Qwen models and $P_m = 0.781$ for Llama models.

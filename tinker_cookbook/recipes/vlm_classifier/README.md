@@ -31,7 +31,7 @@ This will print the test accuracy of your model.
 
 ### Custom Datasets
 
-You can add custom datasets by creating a custom `SupervisedDatasetBuilder` in `tinker_cookbook.recipes.vlm_classifier.data` if your dataset is available for download on Huggingface, and has a column with your image, and a column with the image labels (note, you must also define a `ClassLabel` for mapping integer labels to a human-readable class name).
+You can add custom datasets by creating a custom `SupervisedDatasetBuilder` in `tinker_cookbook.recipes.vlm_classifier.data` if your dataset is available for download on Hugging Face, and has a column with your image, and a column with the image labels (note, you must also define a `ClassLabel` for mapping integer labels to a human-readable class name).
 
 For more general datasets, you can subclass the base `ClassifierDataset` to load arbitrary image classification datasets in the provided classifier tooling.
 
@@ -39,4 +39,4 @@ For more general datasets, you can subclass the base `ClassifierDataset` to load
 
 We provide a suite of evaluators in `tinker_cookbook.recipes.vlm_classifier.eval` for sampling from VLMs, parsing the predicted class name from the response, and computing evaluation metrics.
 
-To define a custom evaluator for a new dataset, you can create a new `EvaluatorBuilder` if your dataset is available on Huggingface, or you can subclass `ClassifierEvaluator` to add an arbitrary custom dataset and parsing strategy.
+To define a custom evaluator for a new dataset, you can create a new `EvaluatorBuilder` if your dataset is available on Hugging Face, or you can subclass `ClassifierEvaluator` to add an arbitrary custom dataset and parsing strategy.
