@@ -226,6 +226,43 @@ class WandbLogger(Logger):
             name=wandb_name,
         )
 
+        self.step_offset = 0
+
+        is_resumed = os.environ.get("WANDB_RUN_ID") is not None
+        if is_resumed:
+            assert self.run.id == os.environ.get("WANDB_RUN_ID"), (
+                "WANDB_RUN_ID does not match run ID"
+            )
+            self.step_offset = self._get_last_step_from_run()
+            print(f"Resumed WandB run {self.run.id}, step offset: {self.step_offset}")
+
+    def _get_last_step_from_run(self) -> int:
+        """Get the last logged step from a resumed WandB run."""
+        assert wandb is not None
+        if self.run is None:
+            return 0
+
+        try:
+            api = wandb.Api()
+            run = api.run(f"{self.run.entity}/{self.run.project}/{self.run.id}")
+
+            # Try lastHistoryStep first
+            if hasattr(run, "lastHistoryStep") and run.lastHistoryStep is not None:
+                print(f"Detected last step {run.lastHistoryStep} from lastHistoryStep")
+                return run.lastHistoryStep + 1
+
+            # Fallback: try to get from run summary
+            if run.summary and "_step" in run.summary:
+                step_value = run.summary["_step"]
+                if isinstance(step_value, (int, float)):
+                    print(f"Detected last step {int(step_value)} from summary")
+                    return int(step_value) + 1
+
+        except Exception as e:
+            print(f"WARNING: Could not determine last step from WandB run: {e}")
+
+        raise ValueError("Couldn't determine step offset to resume WandB run")
+
     def log_hparams(self, config: Any) -> None:
         """Log hyperparameters to wandb."""
         if self.run and wandb is not None:
@@ -234,7 +271,9 @@ class WandbLogger(Logger):
     def log_metrics(self, metrics: Dict[str, Any], step: int | None = None) -> None:
         """Log metrics to wandb."""
         if self.run and wandb is not None:
-            wandb.log(metrics, step=step)
+            # Apply step offset for resumed runs
+            effective_step = step + self.step_offset if step is not None else None
+            wandb.log(metrics, step=effective_step)
             logger.info("Logging to: %s", self.run.url)
 
     def close(self) -> None:
