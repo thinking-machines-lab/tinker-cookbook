@@ -295,6 +295,7 @@ class Config:
     remove_constant_reward_groups: bool = False
     eval_every: int = 20  # 0 = disabled
     save_every: int = 20  # 0 = disabled
+    ttl_seconds: int = 604800  # 7 days
     load_checkpoint_path: str | None = None
 
     async_config: AsyncConfig | None = None
@@ -368,7 +369,7 @@ async def do_sync_training_with_stream_minibatch(
     """
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        training_client, start_batch, cfg.log_path, cfg.save_every, start_batch
+        training_client, start_batch, cfg.log_path, cfg.save_every, start_batch, cfg.ttl_seconds
     )
 
     for i_batch in range(start_batch, end_batch):
@@ -500,6 +501,7 @@ async def do_async_training(
         log_path=cfg.log_path,
         loop_state={"batch": start_batch},
         kind="both",
+        ttl_seconds=cfg.ttl_seconds,
     )
 
     # This will be updated by the training loop
@@ -727,6 +729,7 @@ async def save_checkpoint_and_get_sampling_client(
     log_path: str,
     save_every: int,
     start_batch: int = 0,
+    ttl_seconds: int | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     metrics = {}
     with timed("save_checkpoint", metrics):
@@ -737,6 +740,7 @@ async def save_checkpoint_and_get_sampling_client(
                 log_path=log_path,
                 loop_state={"batch": i_batch},
                 kind="both",
+                ttl_seconds=ttl_seconds,
             )
             return training_client.create_sampling_client(path_dict["sampler_path"]), metrics
         else:
@@ -793,6 +797,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     log_path: str,
     save_every: int,
     do_compute_post_kl: bool,
+    ttl_seconds: int | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """
     At the end of the iteration, this will compute metrics for the full batch
@@ -810,7 +815,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
 
     # Get a sampling client using the new weights
     sampling_client, checkpoint_metrics = await save_checkpoint_and_get_sampling_client(
-        training_client, i_batch, log_path, save_every
+        training_client, i_batch, log_path, save_every, ttl_seconds=ttl_seconds
     )
     metrics.update(checkpoint_metrics)
 
@@ -947,6 +952,7 @@ async def do_train_step_streaming_and_get_sampling_client(
         cfg.log_path,
         cfg.save_every,
         cfg.compute_post_kl,
+        cfg.ttl_seconds,
     )
     metrics.update(full_batch_metrics)
     return sampling_client, metrics
@@ -996,6 +1002,7 @@ async def do_train_step_and_get_sampling_client(
         cfg.log_path,
         cfg.save_every,
         cfg.compute_post_kl,
+        cfg.ttl_seconds,
     )
     metrics.update(full_batch_metrics)
 
@@ -1018,7 +1025,7 @@ async def do_sync_training(
     """Implements fully synchronous on-policy training"""
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        training_client, start_batch, cfg.log_path, cfg.save_every, start_batch
+        training_client, start_batch, cfg.log_path, cfg.save_every, start_batch, cfg.ttl_seconds
     )
 
     for i_batch in range(start_batch, end_batch):
@@ -1176,6 +1183,7 @@ async def main(
             log_path=cfg.log_path,
             kind="both",
             loop_state={"batch": num_batches},
+            ttl_seconds=cfg.ttl_seconds,
         )
     else:
         logger.info("Training was already complete; nothing to do")
