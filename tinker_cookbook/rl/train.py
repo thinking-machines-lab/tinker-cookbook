@@ -766,7 +766,7 @@ def create_kl_reference_client(
 ) -> tinker.SamplingClient:
     """Create a sampling client for KL penalty computation.
 
-    If kl_reference_config is None, uses the base model_name (backward compatible behavior).
+    If kl_reference_config is None, uses the base model_name.
     If kl_reference_config is provided, uses its base_model and optionally load_checkpoint_path.
     """
     if kl_reference_config is None:
