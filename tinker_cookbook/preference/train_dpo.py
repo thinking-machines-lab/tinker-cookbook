@@ -55,6 +55,7 @@ class Config:
     save_every: int = 20
     eval_every: int = 10
     infrequent_eval_every: int = 100
+    ttl_seconds: int = 604800  # 7 days
 
     # Adam optimizer parameters
     adam_beta1: float = 0.9
@@ -183,6 +184,7 @@ def do_update(
                 log_path=log_path,
                 kind="both",
                 loop_state={"epoch": epoch_idx, "batch": batch_idx},
+                ttl_seconds=config.ttl_seconds,
             )
         if "state_path" in save_result:
             metrics["state_path"] = save_result["state_path"]
@@ -380,6 +382,7 @@ def main(config: Config):
             log_path=config.log_path,
             kind="both",
             loop_state={"epoch": config.num_epochs, "batch": n_batches},
+            ttl_seconds=config.ttl_seconds,
         )
     else:
         logger.info("Training was already complete; nothing to do")
