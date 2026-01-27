@@ -13,6 +13,8 @@ dependencies = [
     "datasets",
     "numpy",
     "pillow",
+    "python-dotenv",  # For .env file loading
+    "pyyaml",  # For YAML config files
     "rich",
     "termcolor",
     "tinker>=0.9.0",

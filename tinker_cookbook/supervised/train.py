@@ -74,6 +74,7 @@ class Config:
     # Logging parameters
     wandb_project: str | None = None
     wandb_name: str | None = None
+    print_examples_every: int = 1  # Print colorized examples every N steps (0 = disabled)
 
     enable_trace: bool = False
 
@@ -256,7 +257,7 @@ async def main(config: Config):
 
         with timed("get_batch", metrics):
             data = dataset.get_batch(batch_idx)
-        if data:
+        if data and config.print_examples_every > 0 and step % config.print_examples_every == 0:
             logger.info(colorize_example(data[0], tokenizer))
 
         # Trigger evaluations BEFORE submitting training operations so they snapshot pre-step weights

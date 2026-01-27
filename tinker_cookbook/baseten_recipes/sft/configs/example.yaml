@@ -1,0 +1,49 @@
+# SFT Recipe Configuration
+# Copy this to config.yaml and customize for your training run
+
+# Model configuration
+model:
+  name: "meta-llama/Llama-3.1-8B"  # HuggingFace model name
+  lora_rank: 32                     # LoRA rank (higher = more capacity, slower training)
+  renderer_name: null               # Auto-detect if null (llama3, qwen3, etc.)
+
+# Dataset configuration
+dataset:
+  name: "no_robots"                 # Built-in: "no_robots", "tulu3", or path to .jsonl file
+  max_length: 16384                 # Maximum sequence length
+  batch_size: 256                   # Training batch size
+  train_on_what: null               # null=default, or "ALL_ASSISTANT_MESSAGES", "LAST_ASSISTANT_MESSAGE", "ALL_TEXT"
+  num_examples: null                # Limit number of training examples (null = use all)
+
+# Training parameters
+training:
+  learning_rate: null               # Auto-compute if null (recommended)
+  lr_schedule: "linear"             # "linear", "cosine", or "constant"
+  num_epochs: 1                     # Number of training epochs
+
+# Checkpointing
+checkpointing:
+  save_every: 20                    # Save checkpoint every N steps
+  eval_every: 20                    # Run evaluation every N steps
+  ttl_seconds: 604800               # Checkpoint TTL (7 days = 604800)
+
+# Post-training pipeline (optional)
+post_training:
+  enabled: false                    # Set to true to merge and upload to HuggingFace
+  hf_repo_id: null                  # HuggingFace repo (e.g., "username/model-name")
+  hf_private: true                  # Make HuggingFace repo private
+  download_dir: "/tmp/tinker-merged-models"  # Local directory for merge
+
+# Logging
+logging:
+  log_path: null                    # Custom log path (auto-generated if null)
+  wandb_entity: null                # Weights & Biases team/entity (e.g., "all-parsed")
+  wandb_project: null               # Weights & Biases project name
+  wandb_name: null                  # Weights & Biases run name (auto-generated from hyperparameters if null)
+  print_examples_every: 10          # Print colorized examples every N steps (0 = disabled)
+
+# Infrastructure
+infrastructure:
+  base_url: null                    # Tinker API base URL (uses default if null)
+  load_checkpoint_path: null        # Resume from checkpoint (tinker://xxx/state/checkpoint-N)
+  behavior_if_log_dir_exists: "ask" # "ask", "overwrite", or "fail"

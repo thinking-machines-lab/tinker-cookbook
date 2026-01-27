@@ -1,0 +1,48 @@
+# Phare Silver Messages Training Configuration
+
+# Model configuration
+model:
+  name: "Qwen/Qwen3-30B-A3B-Instruct-2507"
+  lora_rank: 64
+  renderer_name: null  # Auto-detect (will use qwen3)
+
+# Dataset configuration
+dataset:
+  name: "parsed/phare-silver-messages"  # HuggingFace dataset
+  max_length: 32768
+  batch_size: 32
+  train_on_what: null  # Use dataset default
+  num_examples: null   # Use full dataset
+
+# Training parameters
+training:
+  learning_rate: null   # Auto-compute based on model and LoRA rank
+  lr_schedule: "linear"
+  num_epochs: 1
+
+# Checkpointing
+checkpointing:
+  save_every: 20
+  eval_every: 0  # 0 = disabled (no test eval)
+  ttl_seconds: 604800  # 7 days
+
+# Post-training pipeline (disabled by default)
+post_training:
+  enabled: false
+  hf_repo_id: null  # Set to "username/model-name" to enable upload
+  hf_private: true
+  download_dir: "/tmp/tinker-merged-models"
+
+# Logging
+logging:
+  log_path: null  # Auto-generated
+  wandb_entity: "all-parsed"  # Wandb team/entity
+  wandb_project: "phare"      # Wandb project name
+  wandb_name: null  # Auto-generated from hyperparameters (model, lora_rank, batch_size, lr, etc.)
+  print_examples_every: 10  # Print colorized examples every N steps (0 = disabled)
+
+# Infrastructure
+infrastructure:
+  base_url: null
+  load_checkpoint_path: null
+  behavior_if_log_dir_exists: "ask"
