@@ -43,6 +43,7 @@ class Config:
     lora_rank: int = 32
     save_every: int = 20  # 0 = disabled
     max_tokens: int = 256
+    ttl_seconds: int = 604800  # 7 days
 
 
 def get_reward(response: str, answer: str) -> float:
@@ -135,6 +136,7 @@ def main(config: Config):
                 log_path=config.log_path,
                 kind="state",
                 loop_state={"batch": batch_idx},
+                ttl_seconds=config.ttl_seconds,
             )
 
         # Get training batch and convert to datums online
@@ -143,7 +145,11 @@ def main(config: Config):
         batch_rows = train_dataset.select(range(batch_start, batch_end))
 
         sampling_path = (
-            training_client.save_weights_for_sampler(name=f"{batch_idx:06d}").result().path
+            training_client.save_weights_for_sampler(
+                name=f"{batch_idx:06d}", ttl_seconds=config.ttl_seconds
+            )
+            .result()
+            .path
         )
         sampling_client = service_client.create_sampling_client(model_path=sampling_path)
 
@@ -246,6 +252,7 @@ def main(config: Config):
         log_path=config.log_path,
         kind="both",
         loop_state={"batch": n_train_batches},
+        ttl_seconds=config.ttl_seconds,
     )
     ml_logger.close()
     logger.info("Training completed")

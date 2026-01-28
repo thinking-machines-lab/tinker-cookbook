@@ -50,6 +50,17 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
+@chz.chz
+class KLReferenceConfig:
+    """Configuration for the KL penalty reference model.
+
+    If not specified in Config, the training model's base model is used.
+    """
+
+    base_model: str
+    load_checkpoint_path: str | None = None
+
+
 async def gather_with_progress(
     coroutines: Iterable[Coroutine[Any, Any, T]],
     desc: str,
@@ -275,6 +286,7 @@ class Config:
 
     kl_penalty_coef: float = 0.0
     kl_discount_factor: float = 0.0
+    kl_reference_config: KLReferenceConfig | None = None  # If None, uses base model_name
 
     # Loss function and configuration.
     # See https://tinker-docs.thinkingmachines.ai/losses
@@ -295,6 +307,7 @@ class Config:
     remove_constant_reward_groups: bool = False
     eval_every: int = 20  # 0 = disabled
     save_every: int = 20  # 0 = disabled
+    ttl_seconds: int = 604800  # 7 days
     load_checkpoint_path: str | None = None
 
     async_config: AsyncConfig | None = None
@@ -368,7 +381,7 @@ async def do_sync_training_with_stream_minibatch(
     """
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        training_client, start_batch, cfg.log_path, cfg.save_every, start_batch
+        training_client, start_batch, cfg.log_path, cfg.save_every, start_batch, cfg.ttl_seconds
     )
 
     for i_batch in range(start_batch, end_batch):
@@ -500,6 +513,7 @@ async def do_async_training(
         log_path=cfg.log_path,
         loop_state={"batch": start_batch},
         kind="both",
+        ttl_seconds=cfg.ttl_seconds,
     )
 
     # This will be updated by the training loop
@@ -727,6 +741,7 @@ async def save_checkpoint_and_get_sampling_client(
     log_path: str,
     save_every: int,
     start_batch: int = 0,
+    ttl_seconds: int | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     metrics = {}
     with timed("save_checkpoint", metrics):
@@ -737,10 +752,33 @@ async def save_checkpoint_and_get_sampling_client(
                 log_path=log_path,
                 loop_state={"batch": i_batch},
                 kind="both",
+                ttl_seconds=ttl_seconds,
             )
             return training_client.create_sampling_client(path_dict["sampler_path"]), metrics
         else:
             return await training_client.save_weights_and_get_sampling_client_async(), metrics
+
+
+def create_kl_reference_client(
+    service_client: tinker.ServiceClient,
+    model_name: str,
+    kl_reference_config: KLReferenceConfig | None,
+) -> tinker.SamplingClient:
+    """Create a sampling client for KL penalty computation.
+
+    If kl_reference_config is None, uses the base model_name.
+    If kl_reference_config is provided, uses its base_model and optionally load_checkpoint_path.
+    """
+    if kl_reference_config is None:
+        return service_client.create_sampling_client(base_model=model_name)
+
+    if kl_reference_config.load_checkpoint_path is not None:
+        return service_client.create_sampling_client(
+            base_model=kl_reference_config.base_model,
+            model_path=kl_reference_config.load_checkpoint_path,
+        )
+    else:
+        return service_client.create_sampling_client(base_model=kl_reference_config.base_model)
 
 
 @scope
@@ -752,6 +790,7 @@ async def prepare_minibatch(
     model_name: str,
     kl_penalty_coef: float,
     kl_discount_factor: float,
+    kl_reference_config: KLReferenceConfig | None = None,
 ) -> tuple[list[tinker.Datum], dict[str, Any]]:
     """Converts the trajectories into a minibatch, and provides metrics about the minibatch"""
 
@@ -772,10 +811,12 @@ async def prepare_minibatch(
     # Incorporate KL penalty if configured
     if kl_penalty_coef > 0:
         with timed("kl_vs_base", metrics):
+            kl_reference_client = create_kl_reference_client(
+                service_client, model_name, kl_reference_config
+            )
             kl_penalty_metrics = await incorporate_kl_penalty(
                 data_D,
-                service_client.create_sampling_client(base_model=model_name),
-                # ^^^ TODO: replace with the model we load, if relevant
+                kl_reference_client,
                 kl_penalty_coef,
                 kl_discount_factor,
             )
@@ -793,6 +834,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     log_path: str,
     save_every: int,
     do_compute_post_kl: bool,
+    ttl_seconds: int | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """
     At the end of the iteration, this will compute metrics for the full batch
@@ -810,7 +852,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
 
     # Get a sampling client using the new weights
     sampling_client, checkpoint_metrics = await save_checkpoint_and_get_sampling_client(
-        training_client, i_batch, log_path, save_every
+        training_client, i_batch, log_path, save_every, ttl_seconds=ttl_seconds
     )
     metrics.update(checkpoint_metrics)
 
@@ -891,6 +933,7 @@ async def do_train_step_streaming_and_get_sampling_client(
                 model_name=cfg.model_name,
                 kl_penalty_coef=cfg.kl_penalty_coef,
                 kl_discount_factor=cfg.kl_discount_factor,
+                kl_reference_config=cfg.kl_reference_config,
             )
             metrics.update(prepare_minibatch_metrics)
 
@@ -947,6 +990,7 @@ async def do_train_step_streaming_and_get_sampling_client(
         cfg.log_path,
         cfg.save_every,
         cfg.compute_post_kl,
+        cfg.ttl_seconds,
     )
     metrics.update(full_batch_metrics)
     return sampling_client, metrics
@@ -973,6 +1017,7 @@ async def do_train_step_and_get_sampling_client(
         model_name=cfg.model_name,
         kl_penalty_coef=cfg.kl_penalty_coef,
         kl_discount_factor=cfg.kl_discount_factor,
+        kl_reference_config=cfg.kl_reference_config,
     )
     metrics.update(prepare_minibatch_metrics)
 
@@ -996,6 +1041,7 @@ async def do_train_step_and_get_sampling_client(
         cfg.log_path,
         cfg.save_every,
         cfg.compute_post_kl,
+        cfg.ttl_seconds,
     )
     metrics.update(full_batch_metrics)
 
@@ -1018,7 +1064,7 @@ async def do_sync_training(
     """Implements fully synchronous on-policy training"""
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        training_client, start_batch, cfg.log_path, cfg.save_every, start_batch
+        training_client, start_batch, cfg.log_path, cfg.save_every, start_batch, cfg.ttl_seconds
     )
 
     for i_batch in range(start_batch, end_batch):
@@ -1176,6 +1222,7 @@ async def main(
             log_path=cfg.log_path,
             kind="both",
             loop_state={"batch": num_batches},
+            ttl_seconds=cfg.ttl_seconds,
         )
     else:
         logger.info("Training was already complete; nothing to do")
