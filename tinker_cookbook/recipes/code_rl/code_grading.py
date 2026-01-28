@@ -163,7 +163,7 @@ def taco_to_lcb_format(tests: dict[str, Any]) -> list[dict[str, Any]]:
         inp = inputs[i] if i < len(inputs) else (inputs[0] if inputs else "")
         out = outputs[i] if i < len(outputs) else (outputs[0] if outputs else "")
         if isinstance(out, list):
-            out = out[0]
+            out = out[0] if out else ""
         case: dict[str, Any] = {
             "input": inp,
             "output": out,

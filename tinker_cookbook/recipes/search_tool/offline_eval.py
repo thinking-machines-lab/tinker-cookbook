@@ -5,21 +5,23 @@ from typing import Literal, TypedDict
 
 import chz
 import tinker
-from tinker_cookbook import model_info, renderers
+
+from tinker_cookbook import model_info, tokenizer_utils
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.recipes.search_tool.search_env import (
-    SearchEnv,
+    SEARCH_TASK_INSTRUCTIONS,
     SearchR1Datum,
     download_search_r1_dataset,
 )
 from tinker_cookbook.recipes.search_tool.tools import (
-    ChromaToolClient,
-    ChromaToolClientConfig,
+    ChromaTool,
     EmbeddingConfig,
     RetrievalConfig,
+    TextAnswerReward,
 )
+from tinker_cookbook.renderers import Renderer, get_renderer
 from tinker_cookbook.rl.rollouts import do_single_rollout
-from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.tool_use import build_agent_tool_env
 
 ROLLOUT_CONCURRENCY = 1024
 rollout_semaphore = asyncio.Semaphore(ROLLOUT_CONCURRENCY)
@@ -76,18 +78,22 @@ def sample_k_from_each_source(
 
 async def evaluate_single_item(
     item: SearchR1Datum,
-    chroma_tool_client: ChromaToolClient,
+    chroma_tool: ChromaTool,
     policy: TinkerTokenCompleter,
-    renderer: renderers.Renderer,
+    renderer: Renderer,
 ) -> EvaluationResult:
-    env = SearchEnv(
-        item["question"],
-        item["answer"],
-        chroma_tool_client,
-        renderer,
-        convo_prefix=SearchEnv.standard_fewshot_prefix(
-            renderer, chroma_tool_client.get_tool_schemas()
-        ),
+    tool_schemas = [chroma_tool.search.to_spec()]
+    initial_messages = renderer.create_conversation_prefix_with_tools(
+        tools=tool_schemas,
+        system_prompt=SEARCH_TASK_INSTRUCTIONS,
+    ) + [{"role": "user", "content": item["question"]}]
+
+    env = build_agent_tool_env(
+        renderer=renderer,
+        tools=[chroma_tool.search],
+        initial_messages=initial_messages,
+        reward_fn=TextAnswerReward(gold_answers=item["answer"], format_coef=0.1),
+        max_turns=5,
     )
     async with rollout_semaphore:
         trajectory = await do_single_rollout(policy, env)
@@ -101,15 +107,16 @@ async def evaluate_single_item(
 
 
 async def evaluate_one_dataset(data: list[SearchR1Datum], config: CLIConfig):
-    # load model and renderer
-    tokenizer = get_tokenizer(config.base_model)
-    renderer_name = model_info.get_recommended_renderer_name(config.base_model)
-    renderer = renderers.get_renderer(renderer_name, tokenizer=tokenizer)
+    # Load model
     service_client = tinker.ServiceClient()
     sampling_client = service_client.create_sampling_client(model_path=config.tinker_checkpoint_url)
     policy = TinkerTokenCompleter(sampling_client, max_tokens=config.max_tokens)
 
-    chroma_config = ChromaToolClientConfig(
+    tokenizer = tokenizer_utils.get_tokenizer(config.base_model)
+    renderer_name = model_info.get_recommended_renderer_name(config.base_model)
+    renderer = get_renderer(renderer_name, tokenizer)
+
+    chroma_tool = await ChromaTool.build(
         chroma_host="localhost",
         chroma_port=8000,
         chroma_collection_name="wiki_embeddings",
@@ -121,10 +128,9 @@ async def evaluate_one_dataset(data: list[SearchR1Datum], config: CLIConfig):
             ),
         ),
     )
-    chroma_tool_client = await ChromaToolClient.create(chroma_config)
 
     # Run evaluations in parallel using asyncio.gather
-    tasks = [evaluate_single_item(item, chroma_tool_client, policy, renderer) for item in data]
+    tasks = [evaluate_single_item(item, chroma_tool, policy, renderer) for item in data]
 
     print(f"Evaluating {len(tasks)} items")
     results = await asyncio.gather(*tasks)
