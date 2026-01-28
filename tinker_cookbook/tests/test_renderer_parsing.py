@@ -853,23 +853,107 @@ def test_utf8_decoder_with_real_tokenizer_ascii():
     assert full_decoded == test_str, f"Expected {test_str!r} but got {full_decoded!r}"
 
 
-def test_utf8_decoder_limitation_with_replacement_chars():
-    """Document the limitation: tokenizers that use replacement chars instead of exceptions.
+def test_utf8_decoder_handles_replacement_chars():
+    """Test that Utf8TokenDecoder handles tokenizers that return replacement chars.
 
-    When a tokenizer returns U+FFFD (replacement character) for incomplete UTF-8
-    instead of raising an exception, our buffering strategy doesn't help.
-    This test documents this known limitation.
+    Tiktoken-based tokenizers (like Kimi's) return U+FFFD (replacement character)
+    for incomplete UTF-8 instead of raising exceptions. The decoder detects these
+    and buffers tokens until the sequence completes.
     """
     tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
 
-    # The emoji 🎉 gets split across tokens [17137, 236, 231]
-    # Each token decodes to '�' individually, but together they make '🎉'
+    # The emoji 🎉 is encoded as multiple tokens
     test_str = "🎉"
     tokens = tokenizer.encode(test_str, add_special_tokens=False)
 
-    # Verify each token decodes to replacement char (not exception)
+    # Verify tokens individually decode to replacement chars (confirming tiktoken behavior)
     for tok in tokens:
         decoded = tokenizer.decode([tok])
-        # If this assertion fails, the tokenizer behavior changed and we
-        # might be able to use exception-based buffering
-        assert "�" in decoded or decoded == tokenizer.decode([tok])
+        assert "�" in decoded, f"Expected replacement char for token {tok}, got {decoded!r}"
+
+    # Now test that our decoder handles this correctly
+    decoder = Utf8TokenDecoder(tokenizer)
+    decoded_parts = []
+
+    for token in tokens:
+        result = decoder.decode([token])
+        if result is not None:
+            decoded_parts.append(result)
+
+    # Flush any remaining
+    remaining = decoder.flush()
+    if remaining:
+        decoded_parts.append(remaining)
+
+    # The concatenated result should be the original emoji (no replacement chars)
+    full_decoded = "".join(decoded_parts)
+    assert full_decoded == test_str, f"Expected {test_str!r} but got {full_decoded!r}"
+    assert "�" not in full_decoded, "Should not contain replacement characters"
+
+
+def test_utf8_decoder_mixed_ascii_and_emoji():
+    """Test streaming with mixed ASCII and multi-byte Unicode."""
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+
+    # Mix of ASCII and emoji
+    test_str = "Hello 🎉 World 🌍!"
+    tokens = tokenizer.encode(test_str, add_special_tokens=False)
+
+    decoder = Utf8TokenDecoder(tokenizer)
+    decoded_parts = []
+
+    for token in tokens:
+        result = decoder.decode([token])
+        if result is not None:
+            decoded_parts.append(result)
+
+    remaining = decoder.flush()
+    if remaining:
+        decoded_parts.append(remaining)
+
+    full_decoded = "".join(decoded_parts)
+    assert full_decoded == test_str, f"Expected {test_str!r} but got {full_decoded!r}"
+    assert "�" not in full_decoded, "Should not contain replacement characters"
+
+
+def test_kimi_streaming_with_emoji():
+    """Test that streaming parser handles emoji correctly."""
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    renderer = KimiK2Renderer(tokenizer)
+
+    # Response with emoji in both thinking and text
+    response_str = "<think>Let me think 🤔</think>Here's a party 🎉!<|im_end|>"
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    deltas = list(renderer.parse_response_streaming(response_tokens))
+
+    # Collect thinking content
+    thinking_content = "".join(d.thinking for d in deltas if isinstance(d, StreamingThinkingDelta))
+
+    # Collect text content
+    text_content = "".join(d.text for d in deltas if isinstance(d, StreamingTextDelta))
+
+    # Verify no replacement characters in streamed content
+    assert "�" not in thinking_content, f"Thinking has replacement chars: {thinking_content!r}"
+    assert "�" not in text_content, f"Text has replacement chars: {text_content!r}"
+
+    # Verify emoji are preserved
+    assert "🤔" in thinking_content, f"Missing thinking emoji in: {thinking_content!r}"
+    assert "🎉" in text_content, f"Missing party emoji in: {text_content!r}"
+
+    # Verify final message also has correct emoji
+    final_messages = [d for d in deltas if isinstance(d, dict) and "role" in d]
+    assert len(final_messages) == 1
+    final = final_messages[0]
+
+    # Get text from final message
+    content = final["content"]
+    if isinstance(content, list):
+        final_thinking = "".join(p["thinking"] for p in content if p["type"] == "thinking")
+        final_text = "".join(p["text"] for p in content if p["type"] == "text")
+    else:
+        final_thinking = ""
+        final_text = content
+
+    assert "🤔" in final_thinking, "Final message missing thinking emoji"
+    assert "🎉" in final_text, "Final message missing party emoji"

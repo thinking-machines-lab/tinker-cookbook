@@ -190,6 +190,10 @@ class StreamingThinkingDelta:
 MessageDelta = Union[StreamingMessageHeader, StreamingTextDelta, StreamingThinkingDelta, "Message"]
 
 
+# Unicode replacement character - indicates incomplete/invalid UTF-8 sequence
+_REPLACEMENT_CHAR = "\ufffd"
+
+
 @dataclass
 class Utf8TokenDecoder:
     """Handles incremental UTF-8 decoding from tokens.
@@ -198,7 +202,14 @@ class Utf8TokenDecoder:
     might be split across 2 tokens). This class buffers tokens until a
     valid UTF-8 string can be decoded.
 
-    Based on the pattern from hash_role2_renderer.py's Utf8TokenDecoder.
+    Detection strategy:
+    1. Try decoding all pending + new tokens
+    2. If result contains trailing U+FFFD (replacement char), it's incomplete
+    3. Scan backwards to find longest prefix without trailing replacement chars
+    4. Emit that prefix, buffer the rest
+
+    This handles tiktoken-style tokenizers that return replacement chars
+    instead of throwing exceptions for incomplete UTF-8.
     """
 
     tokenizer: "Tokenizer"
@@ -212,6 +223,15 @@ class Utf8TokenDecoder:
     # UTF-8 chars are max 4 bytes, tokens typically 1-4 bytes each,
     # so 8 tokens is plenty to cover any incomplete trailing sequence.
     _MAX_TRAILING_TOKENS_TO_TRY: int = 8
+
+    def _is_valid_decode(self, text: str) -> bool:
+        """Check if decoded text represents a complete UTF-8 sequence.
+
+        Returns False if the text ends with a replacement character,
+        which indicates an incomplete multi-byte sequence that needs
+        more tokens to complete.
+        """
+        return not text.endswith(_REPLACEMENT_CHAR)
 
     def decode(self, tokens: list[int]) -> str | None:
         """Decode tokens to string, buffering incomplete UTF-8 sequences.
@@ -228,12 +248,14 @@ class Utf8TokenDecoder:
         # Try to decode all pending tokens (common case)
         try:
             text = self.tokenizer.decode(self._pending_tokens)
-            self._pending_tokens = []
-            return text
+            if self._is_valid_decode(text):
+                self._pending_tokens = []
+                return text
+            # Has trailing replacement chars - fall through to find valid prefix
         except Exception:
             pass
 
-        # Scan backwards to find longest decodable prefix.
+        # Scan backwards to find longest decodable prefix without replacement chars.
         # We only need to try removing a few tokens since UTF-8 sequences are at
         # most 4 bytes and tokens are typically 1-4 bytes each.
         for remove in range(
@@ -244,8 +266,9 @@ class Utf8TokenDecoder:
                 break
             try:
                 text = self.tokenizer.decode(prefix)
-                self._pending_tokens = self._pending_tokens[-remove:]
-                return text
+                if self._is_valid_decode(text):
+                    self._pending_tokens = self._pending_tokens[-remove:]
+                    return text
             except Exception:
                 continue
 
