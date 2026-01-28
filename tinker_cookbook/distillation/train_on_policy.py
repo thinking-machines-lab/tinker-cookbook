@@ -435,7 +435,7 @@ async def main(
     composite_dataset = CompositeDataset(datasets, groups_per_batch_list)
     num_batches = len(composite_dataset)
     num_batches = min(cfg.max_step, num_batches) if cfg.max_step is not None else num_batches
-    logger.info(f"Will train on {end_batch} batches (dataset has {num_batches})")
+    logger.info(f"Will train on {num_batches} batches (dataset has {num_batches})")
 
     # Training loop
     await do_sync_training(
