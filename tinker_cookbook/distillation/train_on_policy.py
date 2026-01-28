@@ -162,6 +162,9 @@ class Config:
     save_every: int = 20
     load_checkpoint_path: str | None = None
 
+    # Maximum number of training steps. If None, train on the full dataset.
+    max_step: int | None = None
+
 
 @scope
 async def prepare_minibatch(
@@ -431,7 +434,8 @@ async def main(
     # Wrap datasets in CompositeDataset
     composite_dataset = CompositeDataset(datasets, groups_per_batch_list)
     num_batches = len(composite_dataset)
-    logger.info(f"Will train on {num_batches} batches")
+    num_batches = min(cfg.max_step, num_batches) if cfg.max_step is not None else num_batches
+    logger.info(f"Will train on {end_batch} batches (dataset has {num_batches})")
 
     # Training loop
     await do_sync_training(
