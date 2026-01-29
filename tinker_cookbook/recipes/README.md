@@ -38,3 +38,9 @@ Our examples support the following CLI arguments to log the results.
     - `{log_path}/metrics.jsonl` saves training metrics.
     - `{log_path}/checkpoints.jsonl` records all the checkpoints saved during training. You can share these checkpoints for model release, offline evaluation, etc.
   - Resuming: When using an existing `log_path`, you can either overwrite the previous run or resume training. This is particularly useful for recovering from runtime interruptions.
+3. **Resuming W&B Runs**: To resume logging to an existing W&B run (e.g., after a training interruption), set the following environment variables before running your training script:
+   ```bash
+   export WANDB_RUN_ID=<run_id>
+   export WANDB_RESUME=must
+   ```
+   Replace `<run_id>` with the ID of the W&B run you want to resume. W&B will automatically pick up these variables and continue logging to the same run.
