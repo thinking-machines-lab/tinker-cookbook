@@ -6,7 +6,6 @@ Use viz_sft_dataset to visualize the output of different renderers. E.g.,
 """
 
 from tinker_cookbook.image_processing_utils import ImageProcessor
-from tinker_cookbook.tokenizer_utils import Tokenizer
 
 # Types and utilities used by external code
 from tinker_cookbook.renderers.base import (
@@ -14,14 +13,14 @@ from tinker_cookbook.renderers.base import (
     ContentPart,
     ImagePart,
     Message,
+    # Renderer base
+    RenderContext,
+    Renderer,
     Role,
     TextPart,
     ThinkingPart,
     ToolCall,
     ToolSpec,
-    # Renderer base
-    RenderContext,
-    Renderer,
     TrainOnWhat,
     # Utility functions
     ensure_text,
@@ -34,6 +33,7 @@ from tinker_cookbook.renderers.base import (
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3ThinkingRenderer
 from tinker_cookbook.renderers.gpt_oss import GptOssRenderer
 from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
+from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
 def get_renderer(
