@@ -397,6 +397,31 @@ def test_formatter():
         assert "lt-message-role" in content
 
 
+def test_formatter_html_escaping():
+    """Test that ConversationFormatter properly escapes HTML in message content to prevent XSS."""
+    from tinker_cookbook.utils.logtree_formatters import ConversationFormatter
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_path = Path(tmpdir) / "xss.html"
+
+        messages = [
+            {"role": "user", "content": "What is <script>alert('xss')</script>?"},
+            {"role": "assistant", "content": "That's a <b>script</b> tag: <img onerror=alert(1)>"},
+        ]
+
+        with logtree.init_trace("XSS Test", path=output_path):
+            logtree.log_formatter(ConversationFormatter(messages=messages))
+
+        content = output_path.read_text()
+
+        # HTML tags should be escaped (< and > become &lt; and &gt;), not rendered
+        assert "<script>" not in content
+        assert "&lt;script&gt;" in content
+        # The <img> tag should also be escaped
+        assert "<img onerror=" not in content
+        assert "&lt;img onerror=" in content
+
+
 def test_formatter_css_deduplication():
     """Test that formatter CSS is deduplicated per trace."""
     from tinker_cookbook.utils.logtree_formatters import ConversationFormatter
