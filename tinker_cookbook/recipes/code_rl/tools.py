@@ -59,18 +59,9 @@ class DeepcoderTool:
                 {"passed": passed, "details": details},
                 ensure_ascii=False,
             )
-            return simple_tool_result(
-                content,
-                metrics={
-                    "tests_passed": float(passed),
-                    "test_count": len(self._task.tests),
-                },
-            )
+            return simple_tool_result(content)
         except Exception as e:
-            return simple_tool_result(
-                json.dumps({"error": str(e), "passed": False}),
-                metadata={"error": "execution_failed"},
-            )
+            return simple_tool_result(json.dumps({"error": str(e), "passed": False}))
 
 
 @dataclass

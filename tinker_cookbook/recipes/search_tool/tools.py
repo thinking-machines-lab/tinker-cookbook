@@ -170,21 +170,13 @@ class ChromaTool:
         # Format same as original ChromaToolClient.invoke()
         message_content = ""
         documents_list = results["documents"] or []
-        total_docs = 0
         for query, documents in zip(query_list, documents_list):
             message_content += f"Query: {query}\n"
             for doc_i, doc in enumerate(documents):
                 message_content += f"Document {doc_i + 1}:\n"
                 message_content += f"{doc}\n"
-                total_docs += 1
 
-        return simple_tool_result(
-            message_content,
-            metrics={
-                "search_queries": len(query_list),
-                "total_documents": total_docs,
-            },
-        )
+        return simple_tool_result(message_content)
 
 
 @dataclass
