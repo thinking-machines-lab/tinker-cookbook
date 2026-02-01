@@ -13,6 +13,112 @@ Each entry includes:
 
 ---
 
+### [cookbook] Cap training steps with `max_step` parameter ([#328](https://github.com/thinking-machines-lab/tinker-cookbook/pull/328))
+**Date:** 2026-01-28
+**Type:** new
+**Tags:** rl, supervised
+
+Adds optional `max_step` config parameter to cap training steps in on-policy distillation. When set, trains for `min(max_step, dataset_length)`. Default `None` preserves existing behavior.
+
+---
+
+### [cookbook] Configurable KL penalty reference model ([#326](https://github.com/thinking-machines-lab/tinker-cookbook/pull/326))
+**Date:** 2026-01-27
+**Type:** new
+**Tags:** rl
+
+Makes the KL penalty reference model configurable in RL training. Users can now specify a different base model or a checkpoint for the KL penalty computation, rather than using the default.
+
+---
+
+### [cookbook] Checkpoints now have 7-day TTL by default ([#324](https://github.com/thinking-machines-lab/tinker-cookbook/pull/324))
+**Date:** 2026-01-27
+**Type:** improvement
+**Tags:** infrastructure
+
+Checkpoints are now set to auto-expire after 7 days by default, helping users avoid unexpected storage costs.
+
+---
+
+### [cookbook] Support for dedicated capacity ([#315](https://github.com/thinking-machines-lab/tinker-cookbook/pull/315))
+**Date:** 2026-01-21
+**Type:** new
+**Tags:** infrastructure
+
+Adds support for dedicated capacity in training configurations.
+
+---
+
+### [cookbook] Modal sandbox backend for code execution ([#278](https://github.com/thinking-machines-lab/tinker-cookbook/pull/278), [#291](https://github.com/thinking-machines-lab/tinker-cookbook/pull/291), [#300](https://github.com/thinking-machines-lab/tinker-cookbook/pull/300), [#302](https://github.com/thinking-machines-lab/tinker-cookbook/pull/302))
+**Date:** 2026-01-07 to 2026-01-15
+**Type:** new
+**Tags:** sandboxes, rl
+
+Adds Modal as an alternative sandbox backend for code execution alongside SandboxFusion. Includes:
+- `ModalSandbox` and `ModalSandboxPool` for managing sandboxes
+- Warm pool maintenance with configurable timeouts
+- Rate limiting to respect Modal account limits
+- Async API calls for better performance
+- Documentation for both sandbox backends
+
+See `tinker_cookbook/sandbox/` for the new module structure.
+
+---
+
+### [cookbook] Fix streaming dataset batch skipping ([#295](https://github.com/thinking-machines-lab/tinker-cookbook/pull/295))
+**Date:** 2026-01-19
+**Type:** fix
+**Tags:** supervised
+
+HuggingFace's shuffle is deterministic, so batch skipping now works correctly with streaming datasets. Forward skipping through batches no longer causes data inconsistencies.
+
+---
+
+### [cookbook] Fix supervised metrics from OptimStepResponse ([#286](https://github.com/thinking-machines-lab/tinker-cookbook/pull/286))
+**Date:** 2026-01-20
+**Type:** fix
+**Tags:** supervised
+
+Previously, optimization metrics (like gradient norms) from `OptimStepResponse` were being dropped in `finish_batch`. Metrics are now properly captured and merged into the step's metrics dictionary.
+
+---
+
+### [cookbook] Adapter to base-model merge script ([#292](https://github.com/thinking-machines-lab/tinker-cookbook/pull/292))
+**Date:** 2026-01-08
+**Type:** new
+**Tags:** tools
+
+New script to merge LoRA/adapter weights back into the base model.
+
+---
+
+### [cookbook] Fix inspect_utils for list content from parse_response ([#299](https://github.com/thinking-machines-lab/tinker-cookbook/pull/299))
+**Date:** 2026-01-12
+**Type:** fix
+**Tags:** eval
+
+Fixed `inspect_utils.py` which assumed `parse_response` always returns string content. Renderers like `Qwen3Renderer` return list content (with `ThinkingPart`, `ToolCallPart`, etc.) when responses contain `<think>` or `<tool_call>` blocks. Now uses `renderers.get_text_content()` which handles both formats.
+
+---
+
+### [cookbook] Fix Kimi K2 and DeepSeek V3 renderer parsing ([#279](https://github.com/thinking-machines-lab/tinker-cookbook/pull/279), [#285](https://github.com/thinking-machines-lab/tinker-cookbook/pull/285))
+**Date:** 2026-01-05 to 2026-01-07
+**Type:** fix
+**Tags:** renderers
+
+Fixes tool declaration rendering for Kimi K2 and Qwen3 to match HuggingFace templates. Also fixes DeepSeekV3ThinkingRenderer to properly parse thinking traces via a round-trip test ensuring `build_supervised_example` and `parse_response` correspondence.
+
+---
+
+### [sdk] Torch is now an optional dependency ([#15](https://github.com/thinking-machines-lab/tinker/pull/15))
+**Date:** 2026-01-20
+**Type:** improvement
+**Tags:** dependencies
+
+Moves torch to an optional dependency in the SDK. Applications that don't need torch for training can now use the SDK without installing it. Import guards added to `training_client.py`.
+
+---
+
 ### Major renderer overhaul: tool calling, structured content ([#220](https://github.com/thinking-machines-lab/tinker-cookbook/pull/220), [#221](https://github.com/thinking-machines-lab/tinker-cookbook/pull/221), [#238](https://github.com/thinking-machines-lab/tinker-cookbook/pull/238), [#243](https://github.com/thinking-machines-lab/tinker-cookbook/pull/243), [#244](https://github.com/thinking-machines-lab/tinker-cookbook/pull/244), [#250](https://github.com/thinking-machines-lab/tinker-cookbook/pull/250))
 **Date:** 2025-12-26 to 2025-12-28
 **Type:** improvement

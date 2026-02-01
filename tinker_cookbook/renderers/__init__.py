@@ -21,6 +21,12 @@ from tinker_cookbook.renderers.base import (
     ThinkingPart,
     ToolCall,
     ToolSpec,
+    # Streaming types
+    MessageDelta,
+    StreamingMessageHeader,
+    StreamingTextDelta,
+    StreamingThinkingDelta,
+    Utf8TokenDecoder,
     TrainOnWhat,
     # Utility functions
     ensure_text,
@@ -129,6 +135,12 @@ __all__ = [
     "ThinkingPart",
     "ToolCall",
     "ToolSpec",
+    # Streaming types
+    "MessageDelta",
+    "StreamingMessageHeader",
+    "StreamingTextDelta",
+    "StreamingThinkingDelta",
+    "Utf8TokenDecoder",
     # Renderer base
     "RenderContext",
     "Renderer",

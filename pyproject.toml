@@ -15,7 +15,7 @@ dependencies = [
     "pillow",
     "rich",
     "termcolor",
-    "tinker>=0.6.1",
+    "tinker>=0.9.0",
     "torch",
     "torchvision",
     # <4.57: mistral regex bug makes API calls even with local_files_only=True (fixed in PR #42743)
