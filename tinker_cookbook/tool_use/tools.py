@@ -22,6 +22,52 @@ from tinker_cookbook.renderers.base import Message, ToolCall
 from tinker_cookbook.tool_use.types import Tool, ToolInput, ToolResult, ToolSpec
 
 
+def simple_tool_result(
+    content: str,
+    *,
+    call_id: str = "",
+    name: str = "",
+    should_stop: bool = False,
+    metrics: dict[str, float] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> ToolResult:
+    """Helper function to create a simple ToolResult from a content string.
+
+    Args:
+        content: The content to return to the model.
+        call_id: The tool call ID (usually passed from ToolInput).
+        name: The tool name (usually self.name in a tool method).
+        should_stop: Whether to stop the episode after this tool call.
+        metrics: Optional metrics dict (e.g., {"latency": 0.5, "count": 1}).
+        metadata: Optional metadata dict for debugging.
+
+    Returns:
+        A ToolResult with the given content and options.
+
+    Example:
+        @tool
+        async def search(query: str) -> ToolResult:
+            results = await do_search(query)
+            return simple_tool_result(
+                json.dumps(results),
+                metrics={"result_count": len(results)}
+            )
+    """
+    return ToolResult(
+        messages=[
+            {
+                "role": "tool",
+                "content": content,
+                "tool_call_id": call_id,
+                "name": name,
+            }
+        ],
+        should_stop=should_stop,
+        metrics=metrics or {},
+        metadata=metadata or {},
+    )
+
+
 def _extract_annotated_info(annotation: Any) -> tuple[Any, FieldInfo | None, str | None]:
     """
     Extract the base type, FieldInfo, and description from an Annotated type.
@@ -139,27 +185,22 @@ class FunctionTool:
             else:
                 result = self._fn(*args, **kwargs)
 
-            # Serialize result to string
-            if isinstance(result, str):
-                content = result
-            elif isinstance(result, (dict, list)):
-                content = json.dumps(result)
-            else:
-                content = str(result)
+            # Function must return ToolResult
+            if not isinstance(result, ToolResult):
+                raise TypeError(
+                    f"Tool function '{self.name}' must return ToolResult, "
+                    f"got {type(result).__name__}. "
+                    f"Use simple_tool_result() helper for simple cases."
+                )
 
-            return ToolResult(
-                messages=[
-                    {
-                        "role": "tool",
-                        "content": content,
-                        "tool_call_id": input.call_id or "",
-                        "name": self.name,
-                    }
-                ],
-                should_stop=False,
-                metrics={},
-                metadata={},
-            )
+            # Fill in call_id and name if not provided
+            for msg in result.messages:
+                if not msg.get("tool_call_id"):
+                    msg["tool_call_id"] = input.call_id or ""
+                if not msg.get("name"):
+                    msg["name"] = self.name
+
+            return result
 
         except Exception as e:
             error_msg = json.dumps({"error": f"Tool execution failed: {e}"})
@@ -195,14 +236,18 @@ def tool(fn: Callable[..., Any]) -> FunctionTool:
     """
     Decorator to create a tool from a function or method.
 
-    The decorated function should return a string (JSON for structured data).
-    It will automatically be wrapped to implement the Tool protocol.
+    The decorated function must return a ToolResult. Use simple_tool_result() helper
+    for basic cases, or construct ToolResult directly for metrics/metadata.
 
     Usage:
         @tool
-        async def search(query: Annotated[str, "The search query"]) -> str:
+        async def search(query: Annotated[str, "The search query"]) -> ToolResult:
             '''Search for information.'''
-            return json.dumps({"results": await do_search(query)})
+            results = await do_search(query)
+            return simple_tool_result(
+                json.dumps({"results": results}),
+                metrics={"result_count": len(results)}
+            )
 
         # As class method with shared state:
         class MySharedStateTools:
@@ -210,9 +255,10 @@ def tool(fn: Callable[..., Any]) -> FunctionTool:
                 self.api_key = api_key
 
             @tool
-            async def search(self, query: Annotated[str, "Query"]) -> str:
+            async def search(self, query: Annotated[str, "Query"]) -> ToolResult:
                 '''Search for information.'''
-                return json.dumps(await do_search(query, api_key=self.api_key))
+                results = await do_search(query, api_key=self.api_key)
+                return simple_tool_result(json.dumps(results))
     """
     return FunctionTool(fn)
 

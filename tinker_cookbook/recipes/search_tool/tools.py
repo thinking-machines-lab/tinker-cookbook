@@ -20,7 +20,7 @@ from tinker_cookbook.recipes.search_tool.embedding import (
     get_gemini_embedding,
 )
 from tinker_cookbook.renderers.base import Message
-from tinker_cookbook.tool_use import tool
+from tinker_cookbook.tool_use import ToolResult, simple_tool_result, tool
 
 
 def normalize_answer(s: str) -> str:
@@ -161,7 +161,7 @@ class ChromaTool:
             list[str],
             "A list of fully-formed semantic queries. The tool will return search results for each query.",
         ],
-    ) -> str:
+    ) -> ToolResult:
         """Search Wikipedia for relevant information based on the given query."""
         async with _CONNECTION_SEMAPHORE:
             embeddings = await self._get_embeddings_with_retry(query_list)
@@ -170,13 +170,21 @@ class ChromaTool:
         # Format same as original ChromaToolClient.invoke()
         message_content = ""
         documents_list = results["documents"] or []
+        total_docs = 0
         for query, documents in zip(query_list, documents_list):
             message_content += f"Query: {query}\n"
             for doc_i, doc in enumerate(documents):
                 message_content += f"Document {doc_i + 1}:\n"
                 message_content += f"{doc}\n"
+                total_docs += 1
 
-        return message_content
+        return simple_tool_result(
+            message_content,
+            metrics={
+                "search_queries": len(query_list),
+                "total_documents": total_docs,
+            },
+        )
 
 
 @dataclass

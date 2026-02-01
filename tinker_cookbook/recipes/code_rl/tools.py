@@ -10,7 +10,7 @@ from tinker_cookbook.recipes.code_rl.code_grading import (
 )
 from tinker_cookbook.renderers.base import Message
 from tinker_cookbook.sandbox import SandboxBackend
-from tinker_cookbook.tool_use import tool
+from tinker_cookbook.tool_use import ToolResult, simple_tool_result, tool
 from tinker_cookbook.utils import logtree
 
 
@@ -43,7 +43,7 @@ class DeepcoderTool:
     async def check_solution(
         self,
         code: Annotated[str, "Python code implementing the solution."],
-    ) -> str:
+    ) -> ToolResult:
         """Execute the proposed solution against the task's test cases.
 
         Use this to test your code before providing your final answer.
@@ -55,12 +55,22 @@ class DeepcoderTool:
                 timeout=self._timeout,
                 backend=self._sandbox_backend,
             )
-            return json.dumps(
+            content = json.dumps(
                 {"passed": passed, "details": details},
                 ensure_ascii=False,
             )
+            return simple_tool_result(
+                content,
+                metrics={
+                    "tests_passed": float(passed),
+                    "test_count": len(self._task.tests),
+                },
+            )
         except Exception as e:
-            return json.dumps({"error": str(e), "passed": False})
+            return simple_tool_result(
+                json.dumps({"error": str(e), "passed": False}),
+                metadata={"error": "execution_failed"},
+            )
 
 
 @dataclass
