@@ -6,16 +6,24 @@ from tinker_cookbook.tool_use.agent_tool_message_env import (
 )
 from tinker_cookbook.tool_use.tools import (
     FunctionTool,
-    ToolInterface,
     handle_tool_call,
     tool,
+)
+from tinker_cookbook.tool_use.types import (
+    Tool,
+    ToolInput,
+    ToolResult,
+    ToolSpec,
 )
 
 __all__ = [
     "AgentToolMessageEnv",
     "build_agent_tool_env",
     "FunctionTool",
-    "ToolInterface",
+    "Tool",
+    "ToolInput",
+    "ToolResult",
+    "ToolSpec",
     "handle_tool_call",
     "tool",
 ]

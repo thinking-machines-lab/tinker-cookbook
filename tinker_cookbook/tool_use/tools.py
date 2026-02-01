@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
-from abc import ABC, abstractmethod
 from typing import (
     Annotated,
     Any,
@@ -19,42 +18,8 @@ from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
-from tinker_cookbook.renderers.base import Message, ToolCall, ToolSpec
-
-
-class ToolInterface(ABC):
-    """Abstract base class for tools."""
-
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """Tool name shown to the model."""
-        ...
-
-    @property
-    @abstractmethod
-    def description(self) -> str:
-        """Tool description shown to the model."""
-        ...
-
-    @property
-    @abstractmethod
-    def parameters_schema(self) -> dict[str, Any]:
-        """JSON Schema for tool parameters shown to the model."""
-        ...
-
-    @abstractmethod
-    async def invoke(self, arguments: dict[str, Any]) -> str:
-        """Execute the tool with validated arguments. Returns content string."""
-        ...
-
-    def to_spec(self) -> ToolSpec:
-        """Convert to ToolSpec for renderer integration."""
-        return {
-            "name": self.name,
-            "description": self.description,
-            "parameters": self.parameters_schema,
-        }
+from tinker_cookbook.renderers.base import Message, ToolCall
+from tinker_cookbook.tool_use.types import Tool, ToolInput, ToolResult, ToolSpec
 
 
 def _extract_annotated_info(annotation: Any) -> tuple[Any, FieldInfo | None, str | None]:
@@ -82,11 +47,11 @@ def _extract_annotated_info(annotation: Any) -> tuple[Any, FieldInfo | None, str
     return base_type, field_info, description
 
 
-class FunctionTool(ToolInterface):
+class FunctionTool:
     """
     A tool created from a decorated function or method.
 
-    Used internally by the @tool decorator.
+    Implements the Tool protocol. Used internally by the @tool decorator.
     """
 
     def __init__(self, fn: Callable[..., Any]):
@@ -136,13 +101,36 @@ class FunctionTool(ToolInterface):
         """JSON Schema for tool parameters."""
         return self._params_model.model_json_schema()
 
-    async def invoke(self, arguments: dict[str, Any]) -> str:
-        """Invoke the tool with the given arguments dict."""
-        try:
-            validated = self._params_model.model_validate(arguments)
-        except Exception as e:
-            return json.dumps({"error": f"Parameter validation failed: {e}"})
+    def to_spec(self) -> ToolSpec:
+        """Convert to ToolSpec for renderer integration."""
+        return ToolSpec(
+            name=self.name,
+            description=self.description,
+            parameters=self.parameters_schema,
+        )
 
+    async def run(self, input: ToolInput) -> ToolResult:
+        """Execute the tool with validated arguments. Returns a ToolResult."""
+        # Validate arguments
+        try:
+            validated = self._params_model.model_validate(input.arguments)
+        except Exception as e:
+            error_msg = json.dumps({"error": f"Parameter validation failed: {e}"})
+            return ToolResult(
+                messages=[
+                    {
+                        "role": "tool",
+                        "content": error_msg,
+                        "tool_call_id": input.call_id or "",
+                        "name": self.name,
+                    }
+                ],
+                should_stop=False,
+                metrics={},
+                metadata={"error": "validation_failed"},
+            )
+
+        # Execute function
         try:
             kwargs = validated.model_dump()
             args = (self._instance,) if self._instance is not None else ()
@@ -153,13 +141,41 @@ class FunctionTool(ToolInterface):
 
             # Serialize result to string
             if isinstance(result, str):
-                return result
-            if isinstance(result, (dict, list)):
-                return json.dumps(result)
-            return str(result)
+                content = result
+            elif isinstance(result, (dict, list)):
+                content = json.dumps(result)
+            else:
+                content = str(result)
+
+            return ToolResult(
+                messages=[
+                    {
+                        "role": "tool",
+                        "content": content,
+                        "tool_call_id": input.call_id or "",
+                        "name": self.name,
+                    }
+                ],
+                should_stop=False,
+                metrics={},
+                metadata={},
+            )
 
         except Exception as e:
-            return json.dumps({"error": f"Tool execution failed: {e}"})
+            error_msg = json.dumps({"error": f"Tool execution failed: {e}"})
+            return ToolResult(
+                messages=[
+                    {
+                        "role": "tool",
+                        "content": error_msg,
+                        "tool_call_id": input.call_id or "",
+                        "name": self.name,
+                    }
+                ],
+                should_stop=False,
+                metrics={},
+                metadata={"error": "execution_failed"},
+            )
 
     def __get__(self, obj: Any, objtype: type | None = None) -> FunctionTool:
         """Descriptor protocol: bind to instance when accessed as method."""
@@ -178,6 +194,9 @@ class FunctionTool(ToolInterface):
 def tool(fn: Callable[..., Any]) -> FunctionTool:
     """
     Decorator to create a tool from a function or method.
+
+    The decorated function should return a string (JSON for structured data).
+    It will automatically be wrapped to implement the Tool protocol.
 
     Usage:
         @tool
@@ -199,36 +218,44 @@ def tool(fn: Callable[..., Any]) -> FunctionTool:
 
 
 async def handle_tool_call(
-    tools: dict[str, ToolInterface],
+    tools: dict[str, Tool],
     tool_call: ToolCall,
-) -> Message:
-    """Handle a single tool call, returning a tool result message."""
+) -> ToolResult:
+    """Handle a single tool call, returning a ToolResult."""
     tool_name = tool_call.function.name
     tool_call_id = tool_call.id or ""
 
     if tool_name not in tools:
-        return {
-            "role": "tool",
-            "content": json.dumps({"error": f"Tool '{tool_name}' not found"}),
-            "tool_call_id": tool_call_id,
-            "name": tool_name,
-        }
+        return ToolResult(
+            messages=[
+                {
+                    "role": "tool",
+                    "content": json.dumps({"error": f"Tool '{tool_name}' not found"}),
+                    "tool_call_id": tool_call_id,
+                    "name": tool_name,
+                }
+            ],
+            should_stop=False,
+            metrics={},
+            metadata={"error": "tool_not_found"},
+        )
 
     tool_obj = tools[tool_name]
     try:
         arguments = json.loads(tool_call.function.arguments)
     except json.JSONDecodeError as e:
-        return {
-            "role": "tool",
-            "content": json.dumps({"error": f"Failed to parse tool arguments: {e}"}),
-            "tool_call_id": tool_call_id,
-            "name": tool_name,
-        }
+        return ToolResult(
+            messages=[
+                {
+                    "role": "tool",
+                    "content": json.dumps({"error": f"Failed to parse tool arguments: {e}"}),
+                    "tool_call_id": tool_call_id,
+                    "name": tool_name,
+                }
+            ],
+            should_stop=False,
+            metrics={},
+            metadata={"error": "json_decode_failed"},
+        )
 
-    content = await tool_obj.invoke(arguments)
-    return {
-        "role": "tool",
-        "content": content,
-        "tool_call_id": tool_call_id,
-        "name": tool_name,
-    }
+    return await tool_obj.run(ToolInput(arguments=arguments, call_id=tool_call_id))

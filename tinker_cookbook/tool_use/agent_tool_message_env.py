@@ -9,10 +9,8 @@ from typing import Awaitable, Callable
 from tinker_cookbook.renderers import Renderer
 from tinker_cookbook.renderers.base import Message, ToolCall
 from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
-from tinker_cookbook.tool_use.tools import (
-    ToolInterface,
-    handle_tool_call,
-)
+from tinker_cookbook.tool_use.tools import handle_tool_call
+from tinker_cookbook.tool_use.types import Tool
 
 RewardResult = tuple[float, dict[str, float]]
 RewardFn = Callable[[list[Message]], Awaitable[RewardResult]]
@@ -22,14 +20,15 @@ RewardFn = Callable[[list[Message]], Awaitable[RewardResult]]
 class AgentToolMessageEnv(MessageEnv):
     """Generic tool-use MessageEnv for agents."""
 
-    tools: list[ToolInterface]
+    tools: list[Tool]
     initial_messages: list[Message]
     max_turns: int
     reward_fn: RewardFn
     history: list[Message] = field(default_factory=list)
 
     _turn_count: int = 0
-    _tool_dict: dict[str, ToolInterface] = field(default_factory=dict, init=False)
+    _tool_dict: dict[str, Tool] = field(default_factory=dict, init=False)
+    _should_stop: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
         self._tool_dict = {t.name: t for t in self.tools}
@@ -39,20 +38,45 @@ class AgentToolMessageEnv(MessageEnv):
             self.history = list(self.initial_messages)
         return self.history
 
-    async def _handle_tool_calls(self, tool_calls: list[ToolCall]) -> list[Message]:
-        """Execute tool calls and append results to history."""
-        results = await asyncio.gather(
+    async def _handle_tool_calls(
+        self, tool_calls: list[ToolCall]
+    ) -> tuple[list[Message], dict[str, float]]:
+        """Execute tool calls and append results to history.
+
+        Returns the messages and accumulated metrics from all tool calls.
+        """
+        tool_results = await asyncio.gather(
             *[handle_tool_call(self._tool_dict, tc) for tc in tool_calls]
         )
-        for msg in results:
-            self.history.append(msg)
-        return list(results)
+
+        all_metrics: dict[str, float] = {}
+        all_messages: list[Message] = []
+
+        for tool_result in tool_results:
+            # Append messages to history
+            for msg in tool_result.messages:
+                self.history.append(msg)
+                all_messages.append(msg)
+
+            # Check if any tool signals to stop
+            if tool_result.should_stop:
+                self._should_stop = True
+
+            # Accumulate metrics
+            for key, value in tool_result.metrics.items():
+                if key in all_metrics:
+                    all_metrics[key] += value
+                else:
+                    all_metrics[key] = value
+
+        return all_messages, all_metrics
 
     async def step(self, message: Message) -> MessageStepResult:
         """Execute any tools and return next messages.
 
         The episode ends when:
         - no tool calls in message (model decided to stop)
+        - a tool returns should_stop=True
         - max_turns reached
 
         reward_fn is called once at episode end to grade the full trajectory.
@@ -66,15 +90,18 @@ class AgentToolMessageEnv(MessageEnv):
         # Extract and execute tool calls if present
         tool_calls: list[ToolCall] = list(message.get("tool_calls") or [])
         if tool_calls:
-            await self._handle_tool_calls(tool_calls)
+            _, tool_metrics = await self._handle_tool_calls(tool_calls)
+            metrics.update(tool_metrics)
 
         # Determine if episode is done
         no_tool_calls = len(tool_calls) == 0
         max_turns_reached = self._turn_count >= self.max_turns
-        done = no_tool_calls or max_turns_reached
+        done = no_tool_calls or max_turns_reached or self._should_stop
 
         if max_turns_reached and not no_tool_calls:
             metrics["max_turns"] = 1.0
+        if self._should_stop:
+            metrics["tool_stopped"] = 1.0
 
         reward = 0.0
         if done:
@@ -91,7 +118,7 @@ class AgentToolMessageEnv(MessageEnv):
 
 def build_agent_tool_env(
     renderer: Renderer,
-    tools: list[ToolInterface],
+    tools: list[Tool],
     initial_messages: list[Message],
     reward_fn: RewardFn,
     *,
@@ -102,7 +129,7 @@ def build_agent_tool_env(
 
     Args:
         renderer: The renderer for tokenizing messages.
-        tools: List of tools the agent can call.
+        tools: List of tools the agent can call (must implement Tool protocol).
         initial_messages: Initial conversation history (system prompt, user message, etc.).
         reward_fn: Function that grades a completed episode. Takes the full message
             history and returns (reward, metrics). Called once at episode end.
