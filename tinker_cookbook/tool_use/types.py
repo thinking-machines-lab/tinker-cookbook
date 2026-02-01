@@ -1,4 +1,4 @@
-"""Core types for tool-use library, compatible with worm's tool interface."""
+"""Core types for tool-use library."""
 
 from __future__ import annotations
 
@@ -37,10 +37,7 @@ class ToolSpec:
 
 @runtime_checkable
 class Tool(Protocol):
-    """Protocol for tools that can be used by LLM agents.
-
-    This protocol matches worm's Tool interface for easy sharing of tool implementations.
-    """
+    """Protocol for tools that can be used by LLM agents."""
 
     @property
     def name(self) -> str:
