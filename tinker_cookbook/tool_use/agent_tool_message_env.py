@@ -38,18 +38,16 @@ class AgentToolMessageEnv(MessageEnv):
             self.history = list(self.initial_messages)
         return self.history
 
-    async def _handle_tool_calls(
-        self, tool_calls: list[ToolCall]
-    ) -> tuple[list[Message], dict[str, float]]:
+    async def _handle_tool_calls(self, tool_calls: list[ToolCall]) -> list[Message]:
         """Execute tool calls and append results to history.
 
-        Returns the messages and accumulated metrics from all tool calls.
+        Note: Tool metrics are not accumulated (following worm's approach).
+        Only messages and should_stop are used from ToolResult.
         """
         tool_results = await asyncio.gather(
             *[handle_tool_call(self._tool_dict, tc) for tc in tool_calls]
         )
 
-        all_metrics: dict[str, float] = {}
         all_messages: list[Message] = []
 
         for tool_result in tool_results:
@@ -62,14 +60,7 @@ class AgentToolMessageEnv(MessageEnv):
             if tool_result.should_stop:
                 self._should_stop = True
 
-            # Accumulate metrics
-            for key, value in tool_result.metrics.items():
-                if key in all_metrics:
-                    all_metrics[key] += value
-                else:
-                    all_metrics[key] = value
-
-        return all_messages, all_metrics
+        return all_messages
 
     async def step(self, message: Message) -> MessageStepResult:
         """Execute any tools and return next messages.
@@ -90,8 +81,7 @@ class AgentToolMessageEnv(MessageEnv):
         # Extract and execute tool calls if present
         tool_calls: list[ToolCall] = list(message.get("tool_calls") or [])
         if tool_calls:
-            _, tool_metrics = await self._handle_tool_calls(tool_calls)
-            metrics.update(tool_metrics)
+            await self._handle_tool_calls(tool_calls)
 
         # Determine if episode is done
         no_tool_calls = len(tool_calls) == 0
