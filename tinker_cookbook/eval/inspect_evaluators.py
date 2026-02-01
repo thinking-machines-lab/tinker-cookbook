@@ -1,3 +1,4 @@
+import importlib
 import logging
 import os
 from typing import Optional
@@ -5,6 +6,7 @@ from typing import Optional
 import chz
 import tinker
 from inspect_ai import Tasks, eval_async
+from inspect_ai._util.registry import registry_lookup
 from inspect_ai.model import GenerateConfig as InspectAIGenerateConfig
 from inspect_ai.model import Model as InspectAIModel
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
@@ -12,6 +14,44 @@ from tinker_cookbook.eval.inspect_utils import InspectAPIFromTinkerSampling
 
 # Set up logger
 logger = logging.getLogger(__name__)
+
+
+def validate_tasks(tasks: Tasks) -> None:
+    """Validate that all task names are valid.
+
+    Raises ValueError if any task is invalid.
+    """
+    # Parse task string into list
+    if isinstance(tasks, str):
+        task_names: list[str] = [t.strip() for t in tasks.split(",") if t.strip()]
+    elif isinstance(tasks, list):
+        # Extract string names from the list (skip non-string task objects)
+        task_names = [t for t in tasks if isinstance(t, str)]
+    else:
+        # Single non-string task object, nothing to validate by name
+        return
+
+    invalid_tasks: list[str] = []
+    for task_name in task_names:
+        # For packaged tasks like "inspect_evals/gpqa_diamond", import the package first
+        if "/" in task_name:
+            package = task_name.split("/")[0]
+            importlib.import_module(package)
+
+        # Check if task is registered
+        task_obj = registry_lookup("task", task_name)
+        if task_obj is None:
+            invalid_tasks.append(task_name)
+
+    if invalid_tasks:
+        raise ValueError(
+            f"Invalid task name(s): {invalid_tasks}. "
+            f"These tasks were not found in the registry. "
+            f"Check spelling and ensure packages are installed. "
+            f"Common tasks: inspect_evals/gpqa_diamond, inspect_evals/ifeval, inspect_evals/gsm8k"
+        )
+
+    logger.info(f"Validated {len(task_names)} task(s): {task_names}")
 
 
 @chz.chz
@@ -78,6 +118,10 @@ class InspectEvaluator(SamplingClientEvaluator):
         """
         if self.config.model_name is None:
             raise ValueError("model_name must be set before running evaluation")
+
+        # Validate tasks upfront - fail fast if any task name is invalid
+        validate_tasks(self.config.tasks)
+
         # Create the inspect API wrapper
         api = InspectAPIFromTinkerSampling(
             renderer_name=self.config.renderer_name,
