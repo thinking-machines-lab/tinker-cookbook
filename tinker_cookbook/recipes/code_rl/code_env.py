@@ -162,28 +162,18 @@ def _initial_messages(
     return prefix + [{"role": "user", "content": task.problem}]
 
 
+@chz.chz
 class DeepcoderEnvGroupBuilder(EnvGroupBuilder):
     """EnvGroupBuilder that creates code environments with shared sandbox backend."""
 
-    def __init__(
-        self,
-        task: DeepcoderTask,
-        model_name: str,
-        renderer_name: str | None,
-        max_turns: int,
-        group_size: int,
-        sandbox_backend: SandboxBackend | None,
-        timeout: int = 6,
-        format_coef: float = 0.1,
-    ):
-        self.task = task
-        self.model_name = model_name
-        self.renderer_name = renderer_name
-        self.max_turns = max_turns
-        self.group_size = group_size
-        self.sandbox_backend = sandbox_backend
-        self.timeout = timeout
-        self.format_coef = format_coef
+    task: DeepcoderTask
+    model_name: str
+    renderer_name: str | None
+    max_turns: int
+    group_size: int
+    sandbox_backend: SandboxBackend | None
+    timeout: int = 6
+    format_coef: float = 0.1
 
     async def make_envs(self) -> Sequence[Env]:
         # Renderer is stateless, share across all envs in group
