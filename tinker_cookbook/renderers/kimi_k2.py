@@ -343,8 +343,8 @@ class KimiK2Renderer(Renderer):
         <|im_user|>user<|im_middle|>What can you help me with?<|im_end|>
         <|im_assistant|>assistant<|im_middle|><think>reasoning</think>I can help you with...<|im_end|>
 
-    Historical assistant messages use empty <think></think> blocks, while the final assistant
-    response preserves reasoning_content in the thinking block.
+    Historical assistant messages use empty <think></think> blocks, while the assistant messages after the
+    last non-tool-call assistant message preserves reasoning_content in the thinking block.
 
     Note: Per the HuggingFace chat template, the default system message is automatically
     prepended if no system message is provided. This ensures train-eval consistency when
@@ -436,7 +436,8 @@ class KimiK2Renderer(Renderer):
             thinking_content = "".join(p["thinking"] for p in parts if p["type"] == "thinking")
             text_content = "".join(p["text"] for p in parts if p["type"] == "text")
 
-            # For the last assistant message (is_last=True), preserve thinking; otherwise use empty think block
+            # Preserve thinking only for the suffix after the last non-tool-call assistant.
+            # Note: is_last might not be unique as it captures all assistant messages after the last non-tool-call assistant message
             if ctx.is_last and thinking_content:
                 output_str = f"<think>{thinking_content}</think>"
             else:
@@ -502,10 +503,10 @@ class KimiK2Renderer(Renderer):
         """
         messages = self._ensure_system_message(messages)
 
-        # Find last non-tool-call assistant message index
+        # Find last assistant message without tool calls (matches HF template behavior).
         last_assistant_idx = -1
         for idx in range(len(messages) - 1, -1, -1):
-            if messages[idx]["role"] == "assistant" and "tool_calls" not in messages[idx]:
+            if messages[idx]["role"] == "assistant" and not messages[idx].get("tool_calls"):
                 last_assistant_idx = idx
                 break
 
@@ -526,8 +527,10 @@ class KimiK2Renderer(Renderer):
             is_user_or_system = message["role"] in ["user", "system"]
 
             # For Kimi K2, preserve thinking only for the suffix after the last non-tool-call assistant.
-            is_last_assistant = (
-                is_assistant and last_assistant_idx != -1 and idx >= last_assistant_idx
+            # If no such assistant exists, the suffix is the entire message list.
+            # Preserve thinking only for assistants after the last non-tool-call assistant.
+            is_last_assistant = is_assistant and (
+                last_assistant_idx == -1 or idx > last_assistant_idx
             )
             ctx = RenderContext(
                 idx=idx,

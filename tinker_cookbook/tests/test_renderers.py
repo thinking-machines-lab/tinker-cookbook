@@ -22,9 +22,9 @@ Testing guidelines:
 - Keep tests focused on tricky logic, not trivial operations.
 """
 
-from typing import Callable, cast
 import copy
 import json
+from typing import Callable, cast
 
 import pytest
 import tinker
@@ -45,7 +45,6 @@ from tinker_cookbook.renderers import (
 from tinker_cookbook.renderers.base import ensure_list, ensure_text
 from tinker_cookbook.tests.conversation_generator import generate_conversation
 from tinker_cookbook.tokenizer_utils import get_tokenizer
-
 
 # =============================================================================
 # Test Conversation Definitions
@@ -1221,6 +1220,131 @@ def test_deepseek_post_tool_formatting():
             assert not output_str.startswith("</think>"), (
                 f"Post-tool assistant should not have </think> prefix: {output_str}"
             )
+
+
+def test_kimi_k2_thinking_stripped_when_no_suffix_messages():
+    """
+    Kimi K2 should preserve thinking only after the last non-tool-call assistant.
+    This test checks that the history thinking is stripped with the presence of a non-tool-call assistant.
+    """
+    model_name = "moonshotai/Kimi-K2-Thinking"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("kimi_k2", tokenizer)
+
+    messages: list[Message] = [
+        {"role": "user", "content": "Q"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="think A"),
+            ],
+            "tool_calls": [
+                ToolCall(
+                    function=ToolCall.FunctionBody(
+                        name="get_weather",
+                        arguments='{"location":"NYC"}',
+                    ),
+                    id="call_1",
+                )
+            ],
+        },
+        {"role": "tool", "content": '{"temperature": 72}', "tool_call_id": "call_1"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="think B"),
+                TextPart(type="text", text="A"),
+            ],
+        },
+    ]
+
+    model_input, _ = renderer.build_supervised_example(messages)
+    decoded = tokenizer.decode(model_input.to_ints())
+
+    assert "think A" not in decoded, f"Suffix thinking should be stripped: {decoded}"
+    assert "think B" not in decoded, f"Suffix thinking should be stripped: {decoded}"
+    assert "A" in decoded, f"Suffix text should be preserved: {decoded}"
+
+
+def test_kimi_k2_thinking_preserved_in_suffix_after_last_non_tool_call():
+    """
+    Kimi K2 should preserve thinking only after the last non-tool-call assistant.
+    This test checks that the suffix thinking is preserved but the history thinking is stripped relative to the position of the last non-tool-call assistant.
+    """
+    model_name = "moonshotai/Kimi-K2-Thinking"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("kimi_k2", tokenizer)
+
+    messages: list[Message] = [
+        {"role": "user", "content": "Q1"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="think A"),
+                TextPart(type="text", text="A1"),
+            ],
+            "tool_calls": [],
+        },
+        {"role": "user", "content": "Q2"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="think B"),
+            ],
+            "tool_calls": [
+                ToolCall(
+                    function=ToolCall.FunctionBody(
+                        name="get_weather",
+                        arguments='{"location":"NYC"}',
+                    ),
+                    id="call_1",
+                )
+            ],
+        },
+        {"role": "tool", "content": '{"temperature": 72}', "tool_call_id": "call_1"},
+    ]
+
+    model_input, _ = renderer.build_supervised_example(messages)
+    decoded = tokenizer.decode(model_input.to_ints())
+
+    assert "think A" not in decoded, f"Suffix thinking should be stripped: {decoded}"
+    assert "A1" in decoded, f"Suffix text should be preserved: {decoded}"
+    assert "think B" in decoded, f"Suffix thinking should be preserved: {decoded}"
+
+
+def test_kimi_k2_thinking_preserved_when_no_non_tool_call_assistant():
+    """
+    Kimi K2 should preserve thinking only after the last non-tool-call assistant.
+    This test checks that the suffix thinking is preserved but the history thinking is stripped relative to the position of the last non-tool-call assistant.
+    """
+    model_name = "moonshotai/Kimi-K2-Thinking"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("kimi_k2", tokenizer)
+
+    messages: list[Message] = [
+        {"role": "user", "content": "Q"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="think A"),
+            ],
+            "tool_calls": [
+                ToolCall(
+                    function=ToolCall.FunctionBody(
+                        name="get_weather",
+                        arguments='{"location":"NYC"}',
+                    ),
+                    id="call_1",
+                )
+            ],
+        },
+        {"role": "tool", "content": '{"temperature": 72}', "tool_call_id": "call_1"},
+    ]
+
+    model_input, _ = renderer.build_supervised_example(messages)
+    decoded = tokenizer.decode(model_input.to_ints())
+
+    assert "think A" in decoded, f"Suffix thinking should be preserved: {decoded}"
 
 
 # =============================================================================
