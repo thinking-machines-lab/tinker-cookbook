@@ -50,6 +50,8 @@ class InspectEvaluatorBuilder:
     # Maximum concurrent sampling requests to Tinker.
     max_connections: int = 512
     log_level: str = "INFO"
+    # Metadata to associate with this evaluation run (visible in inspect logs)
+    metadata: Optional[dict[str, str]] = None
 
     def __call__(self) -> SamplingClientEvaluator:
         return InspectEvaluator(self)
@@ -115,6 +117,7 @@ class InspectEvaluator(SamplingClientEvaluator):
             log_level=self.config.log_level,
             log_realtime=False,
             log_buffer=1000,
+            metadata=self.config.metadata,
         )
 
         # Extract metrics from results
