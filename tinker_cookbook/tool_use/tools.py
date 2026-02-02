@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
-from tinker_cookbook.renderers.base import Message, ToolCall
+from tinker_cookbook.renderers.base import ToolCall
 from tinker_cookbook.tool_use.types import Tool, ToolInput, ToolResult, ToolSpec
 
 

@@ -88,7 +88,10 @@ class EnvFromMessageEnv(types.Env):
         next_stop_condition = msg_step.next_stop_condition or self._base_stop_condition
 
         # Check if trajectory exceeds max token limit
-        if self.max_trajectory_tokens is not None and next_observation.length > self.max_trajectory_tokens:
+        if (
+            self.max_trajectory_tokens is not None
+            and next_observation.length > self.max_trajectory_tokens
+        ):
             return types.StepResult(
                 reward=0.0,
                 episode_done=True,
