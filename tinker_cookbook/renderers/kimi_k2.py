@@ -522,7 +522,6 @@ class KimiK2Renderer(Renderer):
                     "When using non-CUSTOMIZED train_on_what, each message must not have a trainable field"
                 )
 
-            is_last_message = idx == len(messages) - 1
             is_assistant = message["role"] == "assistant"
             is_user_or_system = message["role"] in ["user", "system"]
 
@@ -546,9 +545,10 @@ class KimiK2Renderer(Renderer):
             if header_part:
                 model_input_chunks_weights += [(header_part, header_weight)]
 
+            # We include all assistant messages in the last round of assistant-tool interactions as the last assistant message.
             match train_on_what:
                 case TrainOnWhat.LAST_ASSISTANT_MESSAGE:
-                    output_has_weight = is_last_message and is_assistant
+                    output_has_weight = is_last_assistant
                 case TrainOnWhat.ALL_ASSISTANT_MESSAGES:
                     output_has_weight = is_assistant
                 case TrainOnWhat.ALL_MESSAGES:
