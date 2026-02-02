@@ -16,8 +16,7 @@ RewardResult = tuple[float, dict[str, float]]
 RewardFn = Callable[[list[Message]], Awaitable[RewardResult]]
 # TODO(tyler): Consider supporting stateful tools that need to grade rollouts based on
 # information not contained in the message history (e.g., internal tool state that changes
-# during execution). Current design uses closures to capture static state at construction,
-# but may need to pass tools/env to reward_fn for dynamic state access.
+# during execution).
 
 
 @dataclass
