@@ -8,6 +8,7 @@ from tinker_cookbook.recipes.code_rl.code_grading import (
     extract_code_from_model,
     sandbox_check_correctness,
 )
+from tinker_cookbook.renderers import get_text_content
 from tinker_cookbook.renderers.base import Message
 from tinker_cookbook.sandbox import SandboxBackend
 from tinker_cookbook.tool_use import ToolResult, simple_tool_result, tool
@@ -94,9 +95,8 @@ class DeepcoderReward:
             logtree.log_text("No assistant message found in history.")
             return 0.0, {"format": 0.0, "correct": 0.0}
 
-        content = final_message.get("content", "")
-        if not isinstance(content, str):
-            content = str(content)
+        # Use get_text_content to properly handle thinking models (o1, o3)
+        content = get_text_content(final_message)
 
         # Extract code from content
         code = extract_code_from_model(content)

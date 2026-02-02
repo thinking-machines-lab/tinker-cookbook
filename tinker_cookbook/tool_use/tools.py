@@ -195,8 +195,8 @@ class FunctionTool:
 
             # Fill in call_id and name if not provided
             for msg in result.messages:
-                if not msg.get("tool_call_id"):
-                    msg["tool_call_id"] = input.call_id or ""
+                if not msg.get("tool_call_id") and input.call_id:
+                    msg["tool_call_id"] = input.call_id
                 if not msg.get("name"):
                     msg["name"] = self.name
 
@@ -204,15 +204,15 @@ class FunctionTool:
 
         except Exception as e:
             error_msg = json.dumps({"error": f"Tool execution failed: {e}"})
+            error_message = {
+                "role": "tool",
+                "content": error_msg,
+                "name": self.name,
+            }
+            if input.call_id:
+                error_message["tool_call_id"] = input.call_id
             return ToolResult(
-                messages=[
-                    {
-                        "role": "tool",
-                        "content": error_msg,
-                        "tool_call_id": input.call_id or "",
-                        "name": self.name,
-                    }
-                ],
+                messages=[error_message],
                 should_stop=False,
                 metrics={},
                 metadata={"error": "execution_failed"},

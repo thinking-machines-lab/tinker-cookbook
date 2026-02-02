@@ -19,6 +19,7 @@ from tinker_cookbook.recipes.search_tool.embedding import (
     get_gemini_client,
     get_gemini_embedding,
 )
+from tinker_cookbook.renderers import get_text_content
 from tinker_cookbook.renderers.base import Message
 from tinker_cookbook.tool_use import ToolResult, simple_tool_result, tool
 
@@ -201,9 +202,8 @@ class TextAnswerReward:
         if final_message is None:
             return 0.0, {"format": 0.0, "correct": 0.0}
 
-        content = final_message.get("content", "")
-        if not isinstance(content, str):
-            content = str(content)
+        # Use get_text_content to properly handle thinking models (o1, o3)
+        content = get_text_content(final_message)
 
         correct_format = float(self._extract_answer(content) is not None)
         correct_answer = float(self._check_answer(content))
