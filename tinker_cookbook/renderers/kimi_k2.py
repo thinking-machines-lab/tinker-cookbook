@@ -471,11 +471,24 @@ class KimiK2Renderer(Renderer):
         messages = self._ensure_system_message(messages)
         chunks: list[tinker.types.ModelInputChunk] = []
 
+        # Find last assistant message without tool calls (matches hf template behavior).
+        last_assistant_idx = -1
+        for idx in range(len(messages) - 1, -1, -1):
+            if messages[idx]["role"] == "assistant" and not messages[idx].get("tool_calls"):
+                last_assistant_idx = idx
+                break
+
         for idx, message in enumerate(messages):
-            # For generation prompt, no message is "last assistant" since we're generating new response
+            is_assistant = message["role"] == "assistant"
+            is_last_assistant = is_assistant and (
+                last_assistant_idx == -1 or idx > last_assistant_idx
+            )
+
+            # We cannot simply set is_last=False since we might be generating a new assistant message following a tool response,
+            # and we need to preserve the thinking that leads to the tool call.
             ctx = RenderContext(
                 idx=idx,
-                is_last=False,
+                is_last=is_last_assistant,
                 prev_message=messages[idx - 1] if idx > 0 else None,
             )
             rendered_message = self.render_message(message, ctx)
