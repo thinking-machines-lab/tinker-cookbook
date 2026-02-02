@@ -134,6 +134,7 @@ class SearchEnvGroupBuilder(EnvGroupBuilder):
         group_size: int,
         chroma_tool: ChromaTool,
         format_coef: float = 0.1,
+        max_trajectory_tokens: int = 32 * 1024,
     ):
         self.datum = datum
         self.model_name = model_name
@@ -142,6 +143,7 @@ class SearchEnvGroupBuilder(EnvGroupBuilder):
         self.group_size = group_size
         self.chroma_tool = chroma_tool
         self.format_coef = format_coef
+        self.max_trajectory_tokens = max_trajectory_tokens
 
     async def make_envs(self) -> Sequence[Env]:
         tokenizer = tokenizer_utils.get_tokenizer(self.model_name)
@@ -163,6 +165,7 @@ class SearchEnvGroupBuilder(EnvGroupBuilder):
                 initial_messages=initial_messages,
                 reward_fn=reward_fn,
                 max_turns=self.max_turns,
+                max_trajectory_tokens=self.max_trajectory_tokens,
             )
             for _ in range(self.group_size)
         ]

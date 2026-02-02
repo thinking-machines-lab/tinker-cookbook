@@ -174,6 +174,7 @@ class DeepcoderEnvGroupBuilder(EnvGroupBuilder):
     sandbox_backend: SandboxBackend | None
     timeout: int = 6
     format_coef: float = 0.1
+    max_trajectory_tokens: int = 32 * 1024
 
     async def make_envs(self) -> Sequence[Env]:
         # Renderer is stateless, share across all envs in group
@@ -197,6 +198,7 @@ class DeepcoderEnvGroupBuilder(EnvGroupBuilder):
                         timeout=self.timeout,
                         format_coef=self.format_coef,
                     ),
+                    max_trajectory_tokens=self.max_trajectory_tokens,
                     max_turns=self.max_turns,
                 )
             )

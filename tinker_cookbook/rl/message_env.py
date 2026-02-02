@@ -57,11 +57,13 @@ class EnvFromMessageEnv(types.Env):
         message_env: MessageEnv,
         failed_parse_reward: float = -1.0,
         terminate_on_parse_error: bool = True,
+        max_trajectory_tokens: int | None = None,
     ):
         self.renderer = renderer
         self.message_env = message_env
         self.failed_parse_reward = failed_parse_reward
         self.terminate_on_parse_error = terminate_on_parse_error
+        self.max_trajectory_tokens = max_trajectory_tokens
         self._base_stop_condition = renderer.get_stop_sequences()
 
     async def initial_observation(self) -> tuple[tinker.ModelInput, StopCondition]:
@@ -84,6 +86,16 @@ class EnvFromMessageEnv(types.Env):
         msg_step = await self.message_env.step(assistant_message)
         next_observation = self.renderer.build_generation_prompt(msg_step.next_messages)
         next_stop_condition = msg_step.next_stop_condition or self._base_stop_condition
+
+        # Check if trajectory exceeds max token limit
+        if self.max_trajectory_tokens is not None and next_observation.length > self.max_trajectory_tokens:
+            return types.StepResult(
+                reward=0.0,
+                episode_done=True,
+                next_observation=tinker.ModelInput.empty(),
+                next_stop_condition=self._base_stop_condition,
+                metrics={**msg_step.metrics, "context_overflow": 1.0},
+            )
 
         return types.StepResult(
             reward=msg_step.reward,
