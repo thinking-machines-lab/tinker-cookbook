@@ -40,9 +40,11 @@ from tinker_cookbook.renderers import (
     TextPart,
     ThinkingPart,
     ToolCall,
+    TrainOnWhat,
     get_renderer,
 )
 from tinker_cookbook.renderers.base import ensure_list, ensure_text
+from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.tests.conversation_generator import generate_conversation
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
@@ -1261,9 +1263,17 @@ def test_kimi_k2_thinking_stripped_when_no_suffix_messages():
     model_input, _ = renderer.build_supervised_example(messages)
     decoded = tokenizer.decode(model_input.to_ints())
 
-    assert "think A" not in decoded, f"Suffix thinking should be stripped: {decoded}"
-    assert "think B" not in decoded, f"Suffix thinking should be stripped: {decoded}"
-    assert "A" in decoded, f"Suffix text should be preserved: {decoded}"
+    assert "think A" in decoded, f"Non-suffix thinking should be preserved: {decoded}"
+    assert "think B" in decoded, f"Non-suffix thinking should be preserved: {decoded}"
+    assert "A" in decoded, f"Non-suffix text should be preserved: {decoded}"
+
+    # all messages in `messages` will be history since we have a non-tool-call assistant before the newly added assistant (in the generated prompt)
+    model_input = renderer.build_generation_prompt(messages)
+    decoded = tokenizer.decode(model_input.to_ints())
+
+    assert "think A" not in decoded, f"History thinking should be stripped: {decoded}"
+    assert "think B" not in decoded, f"History thinking should be stripped: {decoded}"
+    assert "A" in decoded, f"History text should be preserved: {decoded}"
 
 
 def test_kimi_k2_thinking_preserved_in_suffix_after_last_non_tool_call():
@@ -1307,8 +1317,15 @@ def test_kimi_k2_thinking_preserved_in_suffix_after_last_non_tool_call():
     model_input, _ = renderer.build_supervised_example(messages)
     decoded = tokenizer.decode(model_input.to_ints())
 
-    assert "think A" not in decoded, f"Suffix thinking should be stripped: {decoded}"
-    assert "A1" in decoded, f"Suffix text should be preserved: {decoded}"
+    assert "think A" not in decoded, f"History thinking should be stripped: {decoded}"
+    assert "A1" in decoded, f"History text should be preserved: {decoded}"
+    assert "think B" in decoded, f"Suffix thinking should be preserved: {decoded}"
+
+    model_input = renderer.build_generation_prompt(messages)
+    decoded = tokenizer.decode(model_input.to_ints())
+
+    assert "think A" not in decoded, f"History thinking should be stripped: {decoded}"
+    assert "A1" in decoded, f"History text should be preserved: {decoded}"
     assert "think B" in decoded, f"Suffix thinking should be preserved: {decoded}"
 
 
@@ -1345,6 +1362,190 @@ def test_kimi_k2_thinking_preserved_when_no_non_tool_call_assistant():
     decoded = tokenizer.decode(model_input.to_ints())
 
     assert "think A" in decoded, f"Suffix thinking should be preserved: {decoded}"
+
+
+# =============================================================================
+# Kimi K2 build_supervised_examples Tests
+# =============================================================================
+
+
+def test_kimi_k2_build_supervised_examples_last_assistant_matches():
+    model_name = "moonshotai/Kimi-K2-Thinking"
+    tokenizer = get_tokenizer(model_name)
+    renderer: KimiK2Renderer = get_renderer("kimi_k2", tokenizer)  # type: ignore
+
+    messages = get_basic_4turn_conversation()
+
+    single_input, single_weights = renderer.build_supervised_example(messages)
+    examples = renderer.build_supervised_examples(
+        messages, train_on_what=TrainOnWhat.LAST_ASSISTANT_MESSAGE
+    )
+
+    assert len(examples) == 1, "Expected a single supervised example"
+    list_input, list_weights = examples[0]
+    assert list_input.to_ints() == single_input.to_ints()
+    assert list_weights.tolist() == single_weights.tolist()
+
+
+def test_kimi_k2_build_supervised_examples_all_assistant_matches():
+    model_name = "moonshotai/Kimi-K2-Thinking"
+    tokenizer = get_tokenizer(model_name)
+    renderer: KimiK2Renderer = get_renderer("kimi_k2", tokenizer)  # type: ignore
+
+    messages: list[Message] = [
+        {"role": "user", "content": "Q1"},
+        {"role": "assistant", "content": "A1"},
+        {"role": "user", "content": "Q2"},
+        {"role": "assistant", "content": "A2"},
+        {"role": "user", "content": "Q3"},
+        {"role": "assistant", "content": "A3"},
+    ]
+
+    examples = renderer.build_supervised_examples(
+        messages, train_on_what=TrainOnWhat.ALL_ASSISTANT_MESSAGES
+    )
+
+    assert len(examples) == 3, (
+        "Expected one example per user turn after the first and one for the full conversation"
+    )
+
+    ex0_tokens = examples[0][0].to_ints()
+    ex1_tokens = examples[1][0].to_ints()
+    ex2_tokens = examples[2][0].to_ints()
+    ex0_decoded = tokenizer.decode(ex0_tokens)
+    ex1_decoded = tokenizer.decode(ex1_tokens)
+    ex2_decoded = tokenizer.decode(ex2_tokens)
+
+    assert "A1" in ex0_decoded
+    assert "A2" not in ex0_decoded
+    assert "A3" not in ex0_decoded
+
+    assert "A1" in ex1_decoded
+    assert "A2" in ex1_decoded
+    assert "A3" not in ex1_decoded
+
+    assert "A1" in ex2_decoded
+    assert "A2" in ex2_decoded
+    assert "A3" in ex2_decoded
+
+
+def test_kimi_k2_build_supervised_examples_warns_on_non_assistant_mode():
+    model_name = "moonshotai/Kimi-K2-Thinking"
+    tokenizer = get_tokenizer(model_name)
+    renderer: KimiK2Renderer = get_renderer("kimi_k2", tokenizer)  # type: ignore
+
+    messages = get_basic_4turn_conversation()
+
+    with pytest.warns(UserWarning, match="does not satisfy the extension property"):
+        examples = renderer.build_supervised_examples(
+            messages, train_on_what=TrainOnWhat.ALL_MESSAGES
+        )
+
+    assert len(examples) == 2, (
+        "Expected one example for the full conversation and one for the last user turn"
+    )
+    ex0_tokens = examples[0][0].to_ints()
+    ex1_tokens = examples[1][0].to_ints()
+    ex0_decoded = tokenizer.decode(ex0_tokens)
+    ex1_decoded = tokenizer.decode(ex1_tokens)
+
+    assert "2+2" in ex0_decoded
+    assert "4" in ex0_decoded
+    assert "3+3" not in ex0_decoded
+    assert "6" not in ex0_decoded
+
+    assert "2+2" in ex1_decoded
+    assert "4" in ex1_decoded
+    assert "3+3" in ex1_decoded
+    assert "6" in ex1_decoded
+
+
+def test_kimi_k2_build_supervised_examples_all_assistant_matches_with_tool_calls():
+    model_name = "moonshotai/Kimi-K2-Thinking"
+    tokenizer = get_tokenizer(model_name)
+    renderer: KimiK2Renderer = get_renderer("kimi_k2", tokenizer)  # type: ignore
+
+    messages: list[Message] = [
+        {"role": "user", "content": "Q"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="think A"),
+            ],
+            "tool_calls": [
+                ToolCall(
+                    function=ToolCall.FunctionBody(
+                        name="get_weather",
+                        arguments='{"location":"NYC"}',
+                    ),
+                    id="call_1",
+                )
+            ],
+        },
+        {"role": "tool", "content": '{"temperature": 72}', "tool_call_id": "call_1"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="think B"),
+                TextPart(type="text", text="A"),
+            ],
+        },
+        {"role": "user", "content": "Q2"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="think C"),
+            ],
+            "tool_calls": [
+                ToolCall(
+                    function=ToolCall.FunctionBody(
+                        name="get_weather",
+                        arguments='{"location":"NYC"}',
+                    ),
+                    id="call_1",
+                )
+            ],
+        },
+        {"role": "tool", "content": '{"temperature": 72}', "tool_call_id": "call_1"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="think D"),
+                TextPart(type="text", text="A2"),
+            ],
+        },
+    ]
+
+    examples = renderer.build_supervised_examples(
+        messages, train_on_what=TrainOnWhat.ALL_ASSISTANT_MESSAGES
+    )
+
+    assert len(examples) == 2
+    example0_input, example0_weights = examples[0]
+    example1_input, example1_weights = examples[1]
+
+    expected_input, expected_weights = renderer.build_supervised_example(
+        messages[:4], train_on_what=TrainOnWhat.LAST_ASSISTANT_TURN
+    )
+    all_assist_input, all_assist_weights = renderer.build_supervised_example(
+        messages[:4], train_on_what=TrainOnWhat.ALL_ASSISTANT_MESSAGES
+    )
+
+    assert example0_input.to_ints() == expected_input.to_ints()
+    assert example0_weights.tolist() == expected_weights.tolist()
+    # since we only have one turn in `messages[:4]`, the weights should be the same
+    assert example0_weights.tolist() == all_assist_weights.tolist()
+
+    expected_input, expected_weights = renderer.build_supervised_example(
+        messages, train_on_what=TrainOnWhat.LAST_ASSISTANT_TURN
+    )
+    all_assist_input, all_assist_weights = renderer.build_supervised_example(
+        messages, train_on_what=TrainOnWhat.ALL_ASSISTANT_MESSAGES
+    )
+
+    assert example1_input.to_ints() == expected_input.to_ints()
+    assert example1_weights.tolist() == expected_weights.tolist()
+    assert example1_weights.tolist() != all_assist_weights.tolist()
 
 
 # =============================================================================
