@@ -937,6 +937,8 @@ class Renderer(ABC):
     ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
         """
         Build tokens and per-token weights for supervised fine-tuning.
+        This function returns a list of examples in the form of tuples, where each tuple contains a model input and a tensor of weights.
+        This is needed because some renderers do not satisfy the extension property, so we need to return a list of examples instead of a single example.
 
         This default implementation concatenates rendered messages in order, which assumes the renderer satisfies the extension property.
         Override this method if your renderer does not satisfy the extension property.
@@ -945,6 +947,7 @@ class Renderer(ABC):
         if self.has_extension_property:
             return [self.build_supervised_example(messages, train_on_what=train_on_what)]
         else:
+            # TODO: Add a default implementation that calls `build_supervised_example` for each message and merges examples with shared prefixes.
             raise NotImplementedError(
                 "build_supervised_examples has not been implemented for this renderer."
             )
