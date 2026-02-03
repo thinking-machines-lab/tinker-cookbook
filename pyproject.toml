@@ -84,3 +84,13 @@ python_files = ["test_*.py", "*_test.py"]
 
 [tool.ruff]
 line-length = 100
+exclude = [
+    # Vendored from HuggingFace, kept identical to upstream
+    "kimi-k2.5-hf-tokenizer/tool_declaration_ts.py",
+]
+
+[tool.pyright]
+exclude = [
+    # Vendored from HuggingFace, kept identical to upstream
+    "kimi-k2.5-hf-tokenizer/tool_declaration_ts.py",
+]

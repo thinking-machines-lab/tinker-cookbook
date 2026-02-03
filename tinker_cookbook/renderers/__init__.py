@@ -60,6 +60,8 @@ def get_renderer(
             - "deepseekv3_disable_thinking": DeepSeek V3 non-thinking (alias)
             - "deepseekv3_thinking": DeepSeek V3 thinking mode
             - "kimi_k2": Kimi K2 Thinking format
+            - "kimi_k25": Kimi K2.5 with thinking enabled
+            - "kimi_k25_disable_thinking": Kimi K2.5 with thinking disabled
             - "gpt_oss_no_sysprompt": GPT-OSS without system prompt
             - "gpt_oss_low_reasoning": GPT-OSS with low reasoning
             - "gpt_oss_medium_reasoning": GPT-OSS with medium reasoning
@@ -78,6 +80,7 @@ def get_renderer(
     from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3DisableThinkingRenderer
     from tinker_cookbook.renderers.gpt_oss import GptOssRenderer
     from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
+    from tinker_cookbook.renderers.kimi_k25 import KimiK25DisableThinkingRenderer, KimiK25Renderer
     from tinker_cookbook.renderers.llama3 import Llama3Renderer
     from tinker_cookbook.renderers.qwen3 import (
         Qwen3DisableThinkingRenderer,
@@ -113,6 +116,10 @@ def get_renderer(
         return DeepSeekV3ThinkingRenderer(tokenizer)
     elif name == "kimi_k2":
         return KimiK2Renderer(tokenizer)
+    elif name == "kimi_k25":
+        return KimiK25Renderer(tokenizer)
+    elif name == "kimi_k25_disable_thinking":
+        return KimiK25DisableThinkingRenderer(tokenizer)
     elif name == "gpt_oss_no_sysprompt":
         return GptOssRenderer(tokenizer, use_system_prompt=False)
     elif name == "gpt_oss_low_reasoning":

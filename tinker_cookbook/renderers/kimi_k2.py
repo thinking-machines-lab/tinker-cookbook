@@ -353,6 +353,20 @@ class KimiK2Renderer(Renderer):
 
     DEFAULT_SYSTEM_PROMPT = "You are Kimi, an AI assistant created by Moonshot AI."
 
+    def _find_last_non_tool_call_assistant_idx(self, messages: list[Message]) -> int:
+        """Find the index of the last assistant message without tool_calls.
+
+        Per the HF template, messages are split into "history" and "suffix":
+        - hist_msgs = messages[:last_non_tool_call_assistant_idx+1] (strip thinking)
+        - suffix_msgs = messages[last_non_tool_call_assistant_idx+1:] (preserve thinking)
+
+        Returns -1 if no such message exists.
+        """
+        for idx in range(len(messages) - 1, -1, -1):
+            if messages[idx]["role"] == "assistant" and "tool_calls" not in messages[idx]:
+                return idx
+        return -1
+
     def _ensure_system_message(self, messages: list[Message]) -> list[Message]:
         """Ensure a default system message is present if none exists.
 
@@ -470,11 +484,16 @@ class KimiK2Renderer(Renderer):
         messages = self._ensure_system_message(messages)
         chunks: list[tinker.types.ModelInputChunk] = []
 
+        last_assistant_idx = self._find_last_non_tool_call_assistant_idx(messages)
+
         for idx, message in enumerate(messages):
-            # For generation prompt, no message is "last assistant" since we're generating new response
+            # For Kimi K2, preserve thinking only for the suffix AFTER the last non-tool-call assistant.
+            # Per HF template: hist_msgs includes the last non-tool-call assistant (strip thinking),
+            # suffix_msgs is everything after it (preserve thinking).
+            is_in_suffix = message["role"] == "assistant" and idx > last_assistant_idx
             ctx = RenderContext(
                 idx=idx,
-                is_last=False,
+                is_last=is_in_suffix,
                 prev_message=messages[idx - 1] if idx > 0 else None,
             )
             rendered_message = self.render_message(message, ctx)
@@ -502,12 +521,7 @@ class KimiK2Renderer(Renderer):
         """
         messages = self._ensure_system_message(messages)
 
-        # Find last non-tool-call assistant message index
-        last_assistant_idx = -1
-        for idx in range(len(messages) - 1, -1, -1):
-            if messages[idx]["role"] == "assistant" and "tool_calls" not in messages[idx]:
-                last_assistant_idx = idx
-                break
+        last_assistant_idx = self._find_last_non_tool_call_assistant_idx(messages)
 
         model_input_chunks_weights: list[tuple[tinker.types.ModelInputChunk, float]] = []
 
