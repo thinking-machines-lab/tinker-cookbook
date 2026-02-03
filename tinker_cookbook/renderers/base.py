@@ -678,6 +678,7 @@ class RenderedMessage:
 
 class TrainOnWhat(StrEnum):
     LAST_ASSISTANT_MESSAGE = "last_assistant_message"
+    LAST_ASSISTANT_TURN = "last_assistant_turn"
     ALL_ASSISTANT_MESSAGES = "all_assistant_messages"
     ALL_MESSAGES = "all_messages"
     ALL_TOKENS = "all_tokens"
@@ -929,6 +930,28 @@ class Renderer(ABC):
             )
         return tinker.ModelInput(chunks=chunks)
 
+    def build_supervised_examples(
+        self,
+        messages: list[Message],
+        train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_TURN,
+    ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
+        """
+        Build tokens and per-token weights for supervised fine-tuning.
+        This function returns a list of examples in the form of tuples, where each tuple contains a model input and a tensor of weights.
+        This is needed because some renderers do not satisfy the extension property, so we need to return a list of examples instead of a single example.
+
+        This default implementation concatenates rendered messages in order, which assumes the renderer satisfies the extension property.
+        Override this method if your renderer does not satisfy the extension property.
+        """
+
+        if self.has_extension_property:
+            return [self.build_supervised_example(messages, train_on_what=train_on_what)]
+        else:
+            # TODO: Add a default implementation that calls `build_supervised_example` for each message and merges examples with shared prefixes.
+            raise NotImplementedError(
+                "build_supervised_examples has not been implemented for this renderer."
+            )
+
     def build_supervised_example(
         self,
         messages: list[Message],
@@ -951,6 +974,7 @@ class Renderer(ABC):
             messages: A list of messages to render.
             train_on_what: Controls which tokens receive non-zero training weight:
                 - LAST_ASSISTANT_MESSAGE: Only the last assistant message
+                - LAST_ASSISTANT_TURN: The last assistant message after the last user message
                 - ALL_ASSISTANT_MESSAGES: All assistant messages
                 - ALL_MESSAGES: All messages (but not headers)
                 - ALL_TOKENS: Everything including headers
@@ -984,6 +1008,10 @@ class Renderer(ABC):
                 (tinker.types.EncodedTextChunk(tokens=self._bos_tokens), 0.0)
             )
 
+        last_user_idx = max(
+            idx for idx, message in enumerate(messages) if message["role"] == "user"
+        )
+
         for idx, message in enumerate(messages):
             if train_on_what == TrainOnWhat.CUSTOMIZED:
                 assert "trainable" in message, (
@@ -997,6 +1025,7 @@ class Renderer(ABC):
             is_last_message = idx == len(messages) - 1
             is_assistant = message["role"] == "assistant"
             is_user_or_system = message["role"] in ["user", "system"]
+            is_after_last_user = last_user_idx == -1 or idx > last_user_idx
 
             # only apply weight to header if train_on_what is ALL_TOKENS
             ctx = RenderContext(
@@ -1016,6 +1045,8 @@ class Renderer(ABC):
             match train_on_what:
                 case TrainOnWhat.LAST_ASSISTANT_MESSAGE:
                     output_has_weight = is_last_message and is_assistant
+                case TrainOnWhat.LAST_ASSISTANT_TURN:
+                    output_has_weight = is_assistant and is_after_last_user
                 case TrainOnWhat.ALL_ASSISTANT_MESSAGES:
                     output_has_weight = is_assistant
                 case TrainOnWhat.ALL_MESSAGES:
