@@ -34,6 +34,14 @@ class ToolSpec:
     description: str
     parameters: dict[str, Any]
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict for JSON serialization."""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters,
+        }
+
 
 @runtime_checkable
 class Tool(Protocol):
