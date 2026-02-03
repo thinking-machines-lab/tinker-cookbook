@@ -14,11 +14,16 @@ from datetime import datetime
 
 import torch
 from safetensors.torch import load_file
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import (
+    AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText, AutoTokenizer)
 
 
 def load_model(model_path: str):
-    return AutoModelForCausalLM.from_pretrained(model_path, device_map="auto", dtype=torch.bfloat16)
+    config = AutoConfig.from_pretrained(model_path)
+    cls = AutoModelForCausalLM
+    if getattr(config, "vision_config") is not None:
+        cls = AutoModelForImageTextToText
+    return cls.from_pretrained(model_path, device_map="auto", dtype=torch.bfloat16)
 
 
 def load_adapter_weights(adapter_path: str):
@@ -49,11 +54,14 @@ def merge_adapter_weights(
 
     model_state_dict = base_model.state_dict()
     is_gpt_oss = "GptOss" in str(type(base_model))
+    is_qwen3vl_moe = "Qwen3VLMoe" in str(type(base_model))
 
     for n in adapter_weight_names:
         target_key = n.replace("base_model.model.", "").replace("model.unembed_tokens", "lm_head")
         lora_A = adapter_weights[n.replace(".weight", ".lora_A.weight")].float()
         lora_B = adapter_weights[n.replace(".weight", ".lora_B.weight")].float() * scaling
+        if is_qwen3vl_moe:
+            target_key = target_key.replace("model.layers.", "model.language_model.layers.")
         if ".experts" not in n:
             if is_gpt_oss:
                 target_key = target_key.replace(".attn", ".self_attn")
@@ -82,7 +90,7 @@ def merge_adapter_weights(
             target_key = target_key.replace(".w3.weight", ".up_proj.weight")
             target_key = target_key.replace(".w2.weight", ".down_proj.weight")
 
-            if not is_gpt_oss:
+            if not (is_gpt_oss or is_qwen3vl_moe):
                 # Separate linear/weight per expert, target shape is <out_dim, in_dim>
                 merged_lora = merged_lora.transpose(-1, -2)  # -> (num_experts, out_dim, in_dim)
                 for exp_idx in range(merged_lora.shape[0]):
