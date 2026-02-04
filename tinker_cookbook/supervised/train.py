@@ -64,7 +64,7 @@ class Config:
     save_every: int = 20
     eval_every: int = 10
     infrequent_eval_every: int = 100
-    ttl_seconds: int = 604800  # 7 days
+    ttl_seconds: int | None = 604800  # 7 days
 
     # Adam optimizer parameters
     adam_beta1: float = 0.9

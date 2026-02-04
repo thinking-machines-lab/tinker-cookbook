@@ -27,7 +27,7 @@ async def get_row(
     timeout_sec: float,
     saved_path_for_trainer: str | None = None,
     saved_path_for_sampler: str | None = None,
-    ttl_seconds: int = 604800,
+    ttl_seconds: int | None = 604800,
 ) -> dict:
     async def _inner():
         tstart = time.time()
@@ -98,7 +98,7 @@ class Config:
     model_name_filter: list[str] | None = chz.field(default_factory=lambda: ["loadtest"])
     state_for_trainer: str | None = None
     state_for_sampler: str | None = None
-    ttl_seconds: int = 604800  # 7 days
+    ttl_seconds: int | None = 604800  # 7 days
 
 
 async def main(config: Config):
