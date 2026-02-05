@@ -304,10 +304,7 @@ class Qwen3Renderer(Renderer):
             # Use separators=(", ", ": ") to match HF's tojson filter output
             tool_lines = "\n".join(
                 json.dumps(
-                    {
-                        "type": "function",
-                        "function": tool.to_dict() if hasattr(tool, "to_dict") else tool,
-                    },
+                    {"type": "function", "function": tool},
                     separators=(", ", ": "),
                 )
                 for tool in tools
