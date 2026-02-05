@@ -22,9 +22,9 @@ Testing guidelines:
 - Keep tests focused on tricky logic, not trivial operations.
 """
 
-from typing import Callable, cast
 import copy
 import json
+from typing import Callable, cast
 
 import pytest
 import tinker
@@ -40,12 +40,23 @@ from tinker_cookbook.renderers import (
     TextPart,
     ThinkingPart,
     ToolCall,
+    TrainOnWhat,
+    get_registered_renderer_names,
     get_renderer,
+    is_renderer_registered,
+    register_renderer,
+    unregister_renderer,
 )
 from tinker_cookbook.renderers.base import ensure_list, ensure_text
+from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.tests.conversation_generator import generate_conversation
-from tinker_cookbook.tokenizer_utils import get_tokenizer
-
+from tinker_cookbook.tokenizer_utils import (
+    get_registered_tokenizer_names,
+    get_tokenizer,
+    is_tokenizer_registered,
+    register_tokenizer,
+    unregister_tokenizer,
+)
 
 # =============================================================================
 # Test Conversation Definitions
@@ -1223,6 +1234,330 @@ def test_deepseek_post_tool_formatting():
             )
 
 
+def test_kimi_k2_thinking_stripped_when_no_suffix_messages():
+    """
+    Kimi K2 should preserve thinking only after the last non-tool-call assistant.
+    This test checks that the history thinking is stripped with the presence of a non-tool-call assistant.
+    """
+    model_name = "moonshotai/Kimi-K2-Thinking"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("kimi_k2", tokenizer)
+
+    messages: list[Message] = [
+        {"role": "user", "content": "Q"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="think A"),
+            ],
+            "tool_calls": [
+                ToolCall(
+                    function=ToolCall.FunctionBody(
+                        name="get_weather",
+                        arguments='{"location":"NYC"}',
+                    ),
+                    id="call_1",
+                )
+            ],
+        },
+        {"role": "tool", "content": '{"temperature": 72}', "tool_call_id": "call_1"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="think B"),
+                TextPart(type="text", text="A"),
+            ],
+        },
+    ]
+
+    model_input, _ = renderer.build_supervised_example(messages)
+    decoded = tokenizer.decode(model_input.to_ints())
+
+    assert "think A" in decoded, f"Non-suffix thinking should be preserved: {decoded}"
+    assert "think B" in decoded, f"Non-suffix thinking should be preserved: {decoded}"
+    assert "A" in decoded, f"Non-suffix text should be preserved: {decoded}"
+
+    # all messages in `messages` will be history since we have a non-tool-call assistant before the newly added assistant (in the generated prompt)
+    model_input = renderer.build_generation_prompt(messages)
+    decoded = tokenizer.decode(model_input.to_ints())
+
+    assert "think A" not in decoded, f"History thinking should be stripped: {decoded}"
+    assert "think B" not in decoded, f"History thinking should be stripped: {decoded}"
+    assert "A" in decoded, f"History text should be preserved: {decoded}"
+
+
+def test_kimi_k2_thinking_preserved_in_suffix_after_last_non_tool_call():
+    """
+    Kimi K2 should preserve thinking only after the last non-tool-call assistant.
+    This test checks that the suffix thinking is preserved but the history thinking is stripped relative to the position of the last non-tool-call assistant.
+    """
+    model_name = "moonshotai/Kimi-K2-Thinking"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("kimi_k2", tokenizer)
+
+    messages: list[Message] = [
+        {"role": "user", "content": "Q1"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="think A"),
+                TextPart(type="text", text="A1"),
+            ],
+            "tool_calls": [],
+        },
+        {"role": "user", "content": "Q2"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="think B"),
+            ],
+            "tool_calls": [
+                ToolCall(
+                    function=ToolCall.FunctionBody(
+                        name="get_weather",
+                        arguments='{"location":"NYC"}',
+                    ),
+                    id="call_1",
+                )
+            ],
+        },
+        {"role": "tool", "content": '{"temperature": 72}', "tool_call_id": "call_1"},
+    ]
+
+    model_input, _ = renderer.build_supervised_example(messages)
+    decoded = tokenizer.decode(model_input.to_ints())
+
+    assert "think A" not in decoded, f"History thinking should be stripped: {decoded}"
+    assert "A1" in decoded, f"History text should be preserved: {decoded}"
+    assert "think B" in decoded, f"Suffix thinking should be preserved: {decoded}"
+
+    model_input = renderer.build_generation_prompt(messages)
+    decoded = tokenizer.decode(model_input.to_ints())
+
+    assert "think A" not in decoded, f"History thinking should be stripped: {decoded}"
+    assert "A1" in decoded, f"History text should be preserved: {decoded}"
+    assert "think B" in decoded, f"Suffix thinking should be preserved: {decoded}"
+
+
+def test_kimi_k2_thinking_preserved_when_no_non_tool_call_assistant():
+    """
+    Kimi K2 should preserve thinking only after the last non-tool-call assistant.
+    This test checks that the suffix thinking is preserved but the history thinking is stripped relative to the position of the last non-tool-call assistant.
+    """
+    model_name = "moonshotai/Kimi-K2-Thinking"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("kimi_k2", tokenizer)
+
+    messages: list[Message] = [
+        {"role": "user", "content": "Q"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="think A"),
+            ],
+            "tool_calls": [
+                ToolCall(
+                    function=ToolCall.FunctionBody(
+                        name="get_weather",
+                        arguments='{"location":"NYC"}',
+                    ),
+                    id="call_1",
+                )
+            ],
+        },
+        {"role": "tool", "content": '{"temperature": 72}', "tool_call_id": "call_1"},
+    ]
+
+    model_input, _ = renderer.build_supervised_example(messages)
+    decoded = tokenizer.decode(model_input.to_ints())
+
+    assert "think A" in decoded, f"Suffix thinking should be preserved: {decoded}"
+
+
+# =============================================================================
+# Kimi K2 build_supervised_examples Tests
+# =============================================================================
+
+
+def test_kimi_k2_build_supervised_examples_last_assistant_matches():
+    model_name = "moonshotai/Kimi-K2-Thinking"
+    tokenizer = get_tokenizer(model_name)
+    renderer: KimiK2Renderer = get_renderer("kimi_k2", tokenizer)  # type: ignore
+
+    messages = get_basic_4turn_conversation()
+
+    single_input, single_weights = renderer.build_supervised_example(messages)
+    examples = renderer.build_supervised_examples(
+        messages, train_on_what=TrainOnWhat.LAST_ASSISTANT_MESSAGE
+    )
+
+    assert len(examples) == 1, "Expected a single supervised example"
+    list_input, list_weights = examples[0]
+    assert list_input.to_ints() == single_input.to_ints()
+    assert list_weights.tolist() == single_weights.tolist()
+
+
+def test_kimi_k2_build_supervised_examples_all_assistant_matches():
+    model_name = "moonshotai/Kimi-K2-Thinking"
+    tokenizer = get_tokenizer(model_name)
+    renderer: KimiK2Renderer = get_renderer("kimi_k2", tokenizer)  # type: ignore
+
+    messages: list[Message] = [
+        {"role": "user", "content": "Q1"},
+        {"role": "assistant", "content": "A1"},
+        {"role": "user", "content": "Q2"},
+        {"role": "assistant", "content": "A2"},
+        {"role": "user", "content": "Q3"},
+        {"role": "assistant", "content": "A3"},
+    ]
+
+    examples = renderer.build_supervised_examples(
+        messages, train_on_what=TrainOnWhat.ALL_ASSISTANT_MESSAGES
+    )
+
+    assert len(examples) == 3, (
+        "Expected one example per user turn after the first and one for the full conversation"
+    )
+
+    ex0_tokens = examples[0][0].to_ints()
+    ex1_tokens = examples[1][0].to_ints()
+    ex2_tokens = examples[2][0].to_ints()
+    ex0_decoded = tokenizer.decode(ex0_tokens)
+    ex1_decoded = tokenizer.decode(ex1_tokens)
+    ex2_decoded = tokenizer.decode(ex2_tokens)
+
+    assert "A1" in ex0_decoded
+    assert "A2" not in ex0_decoded
+    assert "A3" not in ex0_decoded
+
+    assert "A1" in ex1_decoded
+    assert "A2" in ex1_decoded
+    assert "A3" not in ex1_decoded
+
+    assert "A1" in ex2_decoded
+    assert "A2" in ex2_decoded
+    assert "A3" in ex2_decoded
+
+
+def test_kimi_k2_build_supervised_examples_warns_on_non_assistant_mode():
+    model_name = "moonshotai/Kimi-K2-Thinking"
+    tokenizer = get_tokenizer(model_name)
+    renderer: KimiK2Renderer = get_renderer("kimi_k2", tokenizer)  # type: ignore
+
+    messages = get_basic_4turn_conversation()
+
+    with pytest.warns(UserWarning, match="does not satisfy the extension property"):
+        examples = renderer.build_supervised_examples(
+            messages, train_on_what=TrainOnWhat.ALL_MESSAGES
+        )
+
+    assert len(examples) == 2, (
+        "Expected one example for the full conversation and one for the last user turn"
+    )
+    ex0_tokens = examples[0][0].to_ints()
+    ex1_tokens = examples[1][0].to_ints()
+    ex0_decoded = tokenizer.decode(ex0_tokens)
+    ex1_decoded = tokenizer.decode(ex1_tokens)
+
+    assert "2+2" in ex0_decoded
+    assert "4" in ex0_decoded
+    assert "3+3" not in ex0_decoded
+    assert "6" not in ex0_decoded
+
+    assert "2+2" in ex1_decoded
+    assert "4" in ex1_decoded
+    assert "3+3" in ex1_decoded
+    assert "6" in ex1_decoded
+
+
+def test_kimi_k2_build_supervised_examples_all_assistant_matches_with_tool_calls():
+    model_name = "moonshotai/Kimi-K2-Thinking"
+    tokenizer = get_tokenizer(model_name)
+    renderer: KimiK2Renderer = get_renderer("kimi_k2", tokenizer)  # type: ignore
+
+    messages: list[Message] = [
+        {"role": "user", "content": "Q"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="think A"),
+            ],
+            "tool_calls": [
+                ToolCall(
+                    function=ToolCall.FunctionBody(
+                        name="get_weather",
+                        arguments='{"location":"NYC"}',
+                    ),
+                    id="call_1",
+                )
+            ],
+        },
+        {"role": "tool", "content": '{"temperature": 72}', "tool_call_id": "call_1"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="think B"),
+                TextPart(type="text", text="A"),
+            ],
+        },
+        {"role": "user", "content": "Q2"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="think C"),
+            ],
+            "tool_calls": [
+                ToolCall(
+                    function=ToolCall.FunctionBody(
+                        name="get_weather",
+                        arguments='{"location":"NYC"}',
+                    ),
+                    id="call_1",
+                )
+            ],
+        },
+        {"role": "tool", "content": '{"temperature": 72}', "tool_call_id": "call_1"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="think D"),
+                TextPart(type="text", text="A2"),
+            ],
+        },
+    ]
+
+    examples = renderer.build_supervised_examples(
+        messages, train_on_what=TrainOnWhat.ALL_ASSISTANT_MESSAGES
+    )
+
+    assert len(examples) == 2
+    example0_input, example0_weights = examples[0]
+    example1_input, example1_weights = examples[1]
+
+    expected_input, expected_weights = renderer.build_supervised_example(
+        messages[:4], train_on_what=TrainOnWhat.LAST_ASSISTANT_TURN
+    )
+    all_assist_input, all_assist_weights = renderer.build_supervised_example(
+        messages[:4], train_on_what=TrainOnWhat.ALL_ASSISTANT_MESSAGES
+    )
+
+    assert example0_input.to_ints() == expected_input.to_ints()
+    assert example0_weights.tolist() == expected_weights.tolist()
+    # since we only have one turn in `messages[:4]`, the weights should be the same
+    assert example0_weights.tolist() == all_assist_weights.tolist()
+
+    expected_input, expected_weights = renderer.build_supervised_example(
+        messages, train_on_what=TrainOnWhat.LAST_ASSISTANT_TURN
+    )
+    all_assist_input, all_assist_weights = renderer.build_supervised_example(
+        messages, train_on_what=TrainOnWhat.ALL_ASSISTANT_MESSAGES
+    )
+
+    assert example1_input.to_ints() == expected_input.to_ints()
+    assert example1_weights.tolist() == expected_weights.tolist()
+    assert example1_weights.tolist() != all_assist_weights.tolist()
+
+
 # =============================================================================
 # Sequence Extension Property Tests
 # =============================================================================
@@ -1379,3 +1714,86 @@ def test_extension_property_breaks_when_expected():
     # Extension should break - expect an assertion error
     with pytest.raises(AssertionError, match="Extension property violated"):
         _verify_extension_property(renderer, messages, tokenizer)
+
+
+@pytest.fixture
+def cleanup_custom_renderer():
+    """Fixture to ensure custom renderers are cleaned up after tests."""
+    registered_names: list[str] = []
+    yield registered_names
+    # Cleanup: unregister any renderers that were registered during the test
+    for name in registered_names:
+        unregister_renderer(name)
+
+
+def test_register_and_get_custom_renderer(cleanup_custom_renderer):
+    """Test that a custom renderer can be registered and retrieved via get_renderer."""
+    custom_name = "_test_custom_renderer_abc123"
+    cleanup_custom_renderer.append(custom_name)
+
+    # Should not be registered initially
+    assert not is_renderer_registered(custom_name)
+
+    # Create a simple factory that returns a Qwen3Renderer
+    def custom_factory(tokenizer, image_processor=None):
+        return Qwen3Renderer(tokenizer)
+
+    # Register the custom renderer
+    register_renderer(custom_name, custom_factory)
+
+    # Should now be registered
+    assert is_renderer_registered(custom_name)
+    names = get_registered_renderer_names()
+    assert custom_name in names
+
+    # Verify it can be retrieved
+    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+    renderer = get_renderer(custom_name, tokenizer)
+
+    assert isinstance(renderer, Qwen3Renderer)
+
+    unregister_renderer(custom_name)
+
+    with pytest.raises(ValueError, match="Unknown renderer"):
+        renderer = get_renderer(custom_name, tokenizer)
+
+
+@pytest.fixture
+def cleanup_custom_tokenizer():
+    """Fixture to ensure custom tokenizers are cleaned up after tests."""
+    registered_names: list[str] = []
+    yield registered_names
+    # Cleanup: unregister any tokenizers that were registered during the test
+    for name in registered_names:
+        unregister_tokenizer(name)
+
+
+def test_register_and_get_custom_tokenizer(cleanup_custom_tokenizer):
+    """Test that a custom tokenizer can be registered and retrieved via get_tokenizer."""
+    custom_name = "_test_custom_tokenizer_abc123"
+    cleanup_custom_tokenizer.append(custom_name)
+
+    # Should not be registered initially
+    assert not is_tokenizer_registered(custom_name)
+
+    # Create a simple factory that returns an existing tokenizer
+    real_tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+
+    def custom_factory():
+        return real_tokenizer
+
+    # Register the custom tokenizer
+    register_tokenizer(custom_name, custom_factory)
+
+    # Should now be registered
+    assert is_tokenizer_registered(custom_name)
+    names = get_registered_tokenizer_names()
+    assert custom_name in names
+
+    # Verify it can be retrieved
+    tokenizer = get_tokenizer(custom_name)
+    assert tokenizer is real_tokenizer
+
+    # Unregister and verify it falls back to HF (which will fail for fake name)
+    unregister_tokenizer(custom_name)
+    assert not is_tokenizer_registered(custom_name)

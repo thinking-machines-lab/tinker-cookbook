@@ -780,6 +780,11 @@ def table(obj: Any, *, caption: str | None = None) -> None:
             "table() does not accept dict directly. Use table_from_dict() or table_from_dict_of_lists()."
         )
 
+    if isinstance(obj, list) and not obj:
+        if caption:
+            _append(Node("div", {"class": "lt-table-caption"}, [html_module.escape(caption)]))
+        return
+
     # Try DataFrame
     try:
         import pandas as pd
