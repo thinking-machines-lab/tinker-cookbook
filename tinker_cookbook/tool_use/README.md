@@ -88,14 +88,6 @@ async def make_envs(self) -> Sequence[Env]:
     ]
 ```
 
-## Remaining TODOs
-
-- [ ] Upgrade `reward_fn` to an extensible `Grader` framework
-- [ ] Improve explicit lifecycle of stateful environments (e.g., `setup()`, `teardown()`)
-- [ ] Support tool retries, timeouts, and monitoring
-- [ ] Improve customizability of the rollout loop logic
-- [ ] Improve asynchronous execution of tool calls
-
 ## Examples
 
 For examples of using the tool-use library, see the the following:

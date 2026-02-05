@@ -68,6 +68,50 @@ def simple_tool_result(
     )
 
 
+def error_tool_result(
+    error_msg: str,
+    *,
+    call_id: str = "",
+    name: str = "",
+    error_type: str = "execution_error",
+    should_stop: bool = False,
+) -> ToolResult:
+    """Helper function to create an error ToolResult.
+
+    Args:
+        error_msg: The error message to return.
+        call_id: The tool call ID (usually from ToolInput).
+        name: The tool name.
+        error_type: Error category for metadata (e.g., "validation_failed").
+        should_stop: Whether to stop the episode after this error.
+
+    Returns:
+        A ToolResult with error message and metadata.
+
+    Example:
+        except Exception as e:
+            return error_tool_result(
+                f"Parameter validation failed: {e}",
+                call_id=input.call_id or "",
+                name=self.name,
+                error_type="validation_failed"
+            )
+    """
+    return ToolResult(
+        messages=[
+            {
+                "role": "tool",
+                "content": json.dumps({"error": error_msg}),
+                "tool_call_id": call_id,
+                "name": name,
+            }
+        ],
+        should_stop=should_stop,
+        metrics={},
+        metadata={"error": error_type},
+    )
+
+
 def _extract_annotated_info(annotation: Any) -> tuple[Any, FieldInfo | None, str | None]:
     """
     Extract the base type, FieldInfo, and description from an Annotated type.
@@ -161,19 +205,11 @@ class FunctionTool:
         try:
             validated = self._params_model.model_validate(input.arguments)
         except Exception as e:
-            error_msg = json.dumps({"error": f"Parameter validation failed: {e}"})
-            return ToolResult(
-                messages=[
-                    {
-                        "role": "tool",
-                        "content": error_msg,
-                        "tool_call_id": input.call_id or "",
-                        "name": self.name,
-                    }
-                ],
-                should_stop=False,
-                metrics={},
-                metadata={"error": "validation_failed"},
+            return error_tool_result(
+                f"Parameter validation failed: {e}",
+                call_id=input.call_id or "",
+                name=self.name,
+                error_type="validation_failed",
             )
 
         # Execute function
@@ -203,19 +239,11 @@ class FunctionTool:
             return result
 
         except Exception as e:
-            error_msg = json.dumps({"error": f"Tool execution failed: {e}"})
-            error_message = {
-                "role": "tool",
-                "content": error_msg,
-                "name": self.name,
-            }
-            if input.call_id:
-                error_message["tool_call_id"] = input.call_id
-            return ToolResult(
-                messages=[error_message],
-                should_stop=False,
-                metrics={},
-                metadata={"error": "execution_failed"},
+            return error_tool_result(
+                f"Tool execution failed: {e}",
+                call_id=input.call_id or "",
+                name=self.name,
+                error_type="execution_failed",
             )
 
     def __get__(self, obj: Any, objtype: type | None = None) -> FunctionTool:
@@ -272,36 +300,22 @@ async def handle_tool_call(
     tool_call_id = tool_call.id or ""
 
     if tool_name not in tools:
-        return ToolResult(
-            messages=[
-                {
-                    "role": "tool",
-                    "content": json.dumps({"error": f"Tool '{tool_name}' not found"}),
-                    "tool_call_id": tool_call_id,
-                    "name": tool_name,
-                }
-            ],
-            should_stop=False,
-            metrics={},
-            metadata={"error": "tool_not_found"},
+        return error_tool_result(
+            f"Tool '{tool_name}' not found",
+            call_id=tool_call_id,
+            name=tool_name,
+            error_type="tool_not_found",
         )
 
     tool_obj = tools[tool_name]
     try:
         arguments = json.loads(tool_call.function.arguments)
     except json.JSONDecodeError as e:
-        return ToolResult(
-            messages=[
-                {
-                    "role": "tool",
-                    "content": json.dumps({"error": f"Failed to parse tool arguments: {e}"}),
-                    "tool_call_id": tool_call_id,
-                    "name": tool_name,
-                }
-            ],
-            should_stop=False,
-            metrics={},
-            metadata={"error": "json_decode_failed"},
+        return error_tool_result(
+            f"Failed to parse tool arguments: {e}",
+            call_id=tool_call_id,
+            name=tool_name,
+            error_type="json_decode_failed",
         )
 
     return await tool_obj.run(ToolInput(arguments=arguments, call_id=tool_call_id))

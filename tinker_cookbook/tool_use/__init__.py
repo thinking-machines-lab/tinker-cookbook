@@ -6,6 +6,7 @@ from tinker_cookbook.tool_use.agent_tool_message_env import (
 )
 from tinker_cookbook.tool_use.tools import (
     FunctionTool,
+    error_tool_result,
     handle_tool_call,
     simple_tool_result,
     tool,
@@ -25,6 +26,7 @@ __all__ = [
     "ToolInput",
     "ToolResult",
     "ToolSpec",
+    "error_tool_result",
     "handle_tool_call",
     "simple_tool_result",
     "tool",
