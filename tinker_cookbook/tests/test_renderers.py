@@ -41,12 +41,22 @@ from tinker_cookbook.renderers import (
     ThinkingPart,
     ToolCall,
     TrainOnWhat,
+    get_registered_renderer_names,
     get_renderer,
+    is_renderer_registered,
+    register_renderer,
+    unregister_renderer,
 )
 from tinker_cookbook.renderers.base import ensure_list, ensure_text
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.tests.conversation_generator import generate_conversation
-from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.tokenizer_utils import (
+    get_registered_tokenizer_names,
+    get_tokenizer,
+    is_tokenizer_registered,
+    register_tokenizer,
+    unregister_tokenizer,
+)
 
 # =============================================================================
 # Test Conversation Definitions
@@ -1704,3 +1714,86 @@ def test_extension_property_breaks_when_expected():
     # Extension should break - expect an assertion error
     with pytest.raises(AssertionError, match="Extension property violated"):
         _verify_extension_property(renderer, messages, tokenizer)
+
+
+@pytest.fixture
+def cleanup_custom_renderer():
+    """Fixture to ensure custom renderers are cleaned up after tests."""
+    registered_names: list[str] = []
+    yield registered_names
+    # Cleanup: unregister any renderers that were registered during the test
+    for name in registered_names:
+        unregister_renderer(name)
+
+
+def test_register_and_get_custom_renderer(cleanup_custom_renderer):
+    """Test that a custom renderer can be registered and retrieved via get_renderer."""
+    custom_name = "_test_custom_renderer_abc123"
+    cleanup_custom_renderer.append(custom_name)
+
+    # Should not be registered initially
+    assert not is_renderer_registered(custom_name)
+
+    # Create a simple factory that returns a Qwen3Renderer
+    def custom_factory(tokenizer, image_processor=None):
+        return Qwen3Renderer(tokenizer)
+
+    # Register the custom renderer
+    register_renderer(custom_name, custom_factory)
+
+    # Should now be registered
+    assert is_renderer_registered(custom_name)
+    names = get_registered_renderer_names()
+    assert custom_name in names
+
+    # Verify it can be retrieved
+    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+    renderer = get_renderer(custom_name, tokenizer)
+
+    assert isinstance(renderer, Qwen3Renderer)
+
+    unregister_renderer(custom_name)
+
+    with pytest.raises(ValueError, match="Unknown renderer"):
+        renderer = get_renderer(custom_name, tokenizer)
+
+
+@pytest.fixture
+def cleanup_custom_tokenizer():
+    """Fixture to ensure custom tokenizers are cleaned up after tests."""
+    registered_names: list[str] = []
+    yield registered_names
+    # Cleanup: unregister any tokenizers that were registered during the test
+    for name in registered_names:
+        unregister_tokenizer(name)
+
+
+def test_register_and_get_custom_tokenizer(cleanup_custom_tokenizer):
+    """Test that a custom tokenizer can be registered and retrieved via get_tokenizer."""
+    custom_name = "_test_custom_tokenizer_abc123"
+    cleanup_custom_tokenizer.append(custom_name)
+
+    # Should not be registered initially
+    assert not is_tokenizer_registered(custom_name)
+
+    # Create a simple factory that returns an existing tokenizer
+    real_tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+
+    def custom_factory():
+        return real_tokenizer
+
+    # Register the custom tokenizer
+    register_tokenizer(custom_name, custom_factory)
+
+    # Should now be registered
+    assert is_tokenizer_registered(custom_name)
+    names = get_registered_tokenizer_names()
+    assert custom_name in names
+
+    # Verify it can be retrieved
+    tokenizer = get_tokenizer(custom_name)
+    assert tokenizer is real_tokenizer
+
+    # Unregister and verify it falls back to HF (which will fail for fake name)
+    unregister_tokenizer(custom_name)
+    assert not is_tokenizer_registered(custom_name)
