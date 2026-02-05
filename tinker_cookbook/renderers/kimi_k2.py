@@ -343,8 +343,8 @@ class KimiK2Renderer(Renderer):
         <|im_user|>user<|im_middle|>What can you help me with?<|im_end|>
         <|im_assistant|>assistant<|im_middle|><think>reasoning</think>I can help you with...<|im_end|>
 
-    Historical assistant messages use empty <think></think> blocks, while the final assistant
-    response preserves reasoning_content in the thinking block.
+    Historical assistant messages use empty <think></think> blocks, while the assistant messages after the
+    last non-tool-call assistant message preserves reasoning_content in the thinking block.
 
     Note: Per the HuggingFace chat template, the default system message is automatically
     prepended if no system message is provided. This ensures train-eval consistency when
@@ -436,7 +436,8 @@ class KimiK2Renderer(Renderer):
             thinking_content = "".join(p["thinking"] for p in parts if p["type"] == "thinking")
             text_content = "".join(p["text"] for p in parts if p["type"] == "text")
 
-            # For the last assistant message (is_last=True), preserve thinking; otherwise use empty think block
+            # Preserve thinking only for the suffix after the last non-tool-call assistant.
+            # Note: is_last might not be unique as it captures all assistant messages after the last non-tool-call assistant message
             if ctx.is_last and thinking_content:
                 output_str = f"<think>{thinking_content}</think>"
             else:
@@ -470,11 +471,24 @@ class KimiK2Renderer(Renderer):
         messages = self._ensure_system_message(messages)
         chunks: list[tinker.types.ModelInputChunk] = []
 
+        # Find last assistant message without tool calls (matches hf template behavior).
+        last_assistant_idx = -1
+        for idx in range(len(messages) - 1, -1, -1):
+            if messages[idx]["role"] == "assistant" and not messages[idx].get("tool_calls"):
+                last_assistant_idx = idx
+                break
+
         for idx, message in enumerate(messages):
-            # For generation prompt, no message is "last assistant" since we're generating new response
+            is_assistant = message["role"] == "assistant"
+            is_last_assistant = is_assistant and (
+                last_assistant_idx == -1 or idx > last_assistant_idx
+            )
+
+            # We cannot simply set is_last=False since we might be generating a new assistant message following a tool response,
+            # and we need to preserve the thinking that leads to the tool call.
             ctx = RenderContext(
                 idx=idx,
-                is_last=False,
+                is_last=is_last_assistant,
                 prev_message=messages[idx - 1] if idx > 0 else None,
             )
             rendered_message = self.render_message(message, ctx)
@@ -491,6 +505,53 @@ class KimiK2Renderer(Renderer):
             chunks.append(tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(prefill)))
         return tinker.ModelInput(chunks=chunks)
 
+    def build_supervised_examples(
+        self,
+        messages: list[Message],
+        train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_TURN,
+    ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
+        """
+        Build tokens and per-token weights for supervised fine-tuning. Since Kimi K2 renderer does not satisfy the extension property, this method is provided to return multiple examples in case we want to train on multiple assistant messages, potentially across multiple turns of user-assistant conversation.
+        """
+
+        if (
+            train_on_what == TrainOnWhat.LAST_ASSISTANT_MESSAGE
+            or train_on_what == TrainOnWhat.LAST_ASSISTANT_TURN
+        ):
+            return [self.build_supervised_example(messages, train_on_what=train_on_what)]
+
+        # split the messages into turns by user messages
+        user_message_idxs = [
+            idx for idx, message in enumerate(messages) if message["role"] == "user"
+        ]
+
+        supervised_examples: list[tuple[tinker.ModelInput, torch.Tensor]] = []
+
+        if train_on_what != TrainOnWhat.ALL_ASSISTANT_MESSAGES:
+            warnings.warn(
+                "WARNING: Using train_on_what=ALL_MESSAGES/ALL_TOKENS/ALL_USER_AND_SYSTEM_MESSAGES/CUSTOMIZED with a renderer that "
+                "does not satisfy the extension property (has_extension_property=False). "
+                "The behavior is we apply the same `train_on_what` to all turns. This may not be the desired behavior.",
+                UserWarning,
+                stacklevel=3,
+            )
+
+        # We separate the turns by user messages. The first turn is the messages before the second user message.
+        for user_message_idx in [*user_message_idxs[1:], len(messages)]:
+            current_messages = messages[:user_message_idx]
+            if train_on_what == TrainOnWhat.ALL_ASSISTANT_MESSAGES:
+                supervised_examples.append(
+                    self.build_supervised_example(
+                        current_messages, train_on_what=TrainOnWhat.LAST_ASSISTANT_TURN
+                    )
+                )
+            else:
+                supervised_examples.append(
+                    self.build_supervised_example(current_messages, train_on_what=train_on_what)
+                )
+
+        return supervised_examples
+
     def build_supervised_example(
         self,
         messages: list[Message],
@@ -502,10 +563,13 @@ class KimiK2Renderer(Renderer):
         """
         messages = self._ensure_system_message(messages)
 
-        # Find last non-tool-call assistant message index
+        # Kimi K2 hf template preserves the thinking of the assistant messages after the last non-tool-call assistant message.
+        # We do the same in general. However, we intentionally skip the last message (which differs from HF template behavior) since for a complete conversation,
+        # we would want to preserve the thinking of the last round of conversation between the user and the assistant (which could include multiple assistant messages and tool calls).
+        # This is because the trajectory would then be taken for SFT without losing all the thinking content.
         last_assistant_idx = -1
-        for idx in range(len(messages) - 1, -1, -1):
-            if messages[idx]["role"] == "assistant" and "tool_calls" not in messages[idx]:
+        for idx in range(len(messages) - 2, -1, -1):
+            if messages[idx]["role"] == "assistant" and not messages[idx].get("tool_calls"):
                 last_assistant_idx = idx
                 break
 
@@ -521,17 +585,21 @@ class KimiK2Renderer(Renderer):
                     "When using non-CUSTOMIZED train_on_what, each message must not have a trainable field"
                 )
 
-            is_last_message = idx == len(messages) - 1
             is_assistant = message["role"] == "assistant"
+            is_last_message = idx == len(messages) - 1
             is_user_or_system = message["role"] in ["user", "system"]
 
             # For Kimi K2, preserve thinking only for the suffix after the last non-tool-call assistant.
-            is_last_assistant = (
-                is_assistant and last_assistant_idx != -1 and idx >= last_assistant_idx
+            # If no such assistant exists, the suffix is the entire message list.
+            # Preserve thinking only for assistants after the last non-tool-call assistant.
+            is_last_assistant_turn = is_assistant and (
+                last_assistant_idx == -1 or idx > last_assistant_idx
             )
+
+            is_last_assistant = is_assistant and is_last_message
             ctx = RenderContext(
                 idx=idx,
-                is_last=is_last_assistant,
+                is_last=is_last_assistant_turn,
                 prev_message=messages[idx - 1] if idx > 0 else None,
             )
             rendered_message = self.render_message(message, ctx)
@@ -543,9 +611,12 @@ class KimiK2Renderer(Renderer):
             if header_part:
                 model_input_chunks_weights += [(header_part, header_weight)]
 
+            # We include all assistant messages in the last round of assistant-tool interactions as the last assistant message.
             match train_on_what:
                 case TrainOnWhat.LAST_ASSISTANT_MESSAGE:
-                    output_has_weight = is_last_message and is_assistant
+                    output_has_weight = is_last_assistant
+                case TrainOnWhat.LAST_ASSISTANT_TURN:
+                    output_has_weight = is_last_assistant_turn
                 case TrainOnWhat.ALL_ASSISTANT_MESSAGES:
                     output_has_weight = is_assistant
                 case TrainOnWhat.ALL_MESSAGES:
