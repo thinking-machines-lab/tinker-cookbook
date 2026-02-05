@@ -33,6 +33,7 @@ class CLIConfig:
     group_size: int = 8
     max_turns: int = 5
     format_coef: float = 0.1
+    max_trajectory_tokens: int = 32 * 1024
 
     # Chroma configuration
     chroma_host: str = "localhost"
@@ -81,6 +82,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
         seed=cli_config.seed,
         max_turns=cli_config.max_turns,
         format_coef=cli_config.format_coef,
+        max_trajectory_tokens=cli_config.max_trajectory_tokens,
     )
 
     # Configure streaming minibatch

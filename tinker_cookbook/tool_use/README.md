@@ -100,5 +100,5 @@ async def make_envs(self) -> Sequence[Env]:
 
 For examples of using the tool-use library, see the the following:
 
-- [code_rl recipe](/tinker_cookbook/recipes/code_rl/) - Code generation with python execution tool
-- [search_tool recipe](/tinker_cookbook/recipes/search_tool/) - Multi-hop QA with search tool
+- [code_rl recipe](../recipes/code_rl/) - Code generation with python execution tool
+- [search_tool recipe](../recipes/search_tool/) - Multi-hop QA with search tool

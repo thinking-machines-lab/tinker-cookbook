@@ -210,6 +210,7 @@ class SearchR1DatasetBuilder(RLDatasetBuilder):
     renderer_name: str | None = None
     max_turns: int = 5
     format_coef: float = 0.1
+    max_trajectory_tokens: int = 32 * 1024
     seed: int = 0
 
     async def __call__(self) -> tuple[RLDataset, RLDataset | None]:
@@ -234,6 +235,7 @@ class SearchR1DatasetBuilder(RLDatasetBuilder):
                 group_size=self.group_size,
                 chroma_tool=chroma_tool,
                 format_coef=self.format_coef,
+                max_trajectory_tokens=self.max_trajectory_tokens,
             )
             for datum in data
         ]

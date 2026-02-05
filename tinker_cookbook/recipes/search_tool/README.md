@@ -38,6 +38,8 @@ With the default hyperparameters, you can expect performance like:
 
 A successful run generally learns multi-turn search within 10-25 steps, which can be monitored by checking if `env/all/turns_per_episode` has increased over 2 turns.
 
+**Note:** The `max_trajectory_tokens` parameter (default: 32,768) limits the total context length for multi-turn interactions. If your searches require longer contexts, you can adjust it with `max_trajectory_tokens=<value>`.
+
 To speed up training, you may consider turning on `--stream_minibatch`. In principle, this system improvement should have minimal effect on training.
 
 ### Extensions: How to Include Other Tools?
