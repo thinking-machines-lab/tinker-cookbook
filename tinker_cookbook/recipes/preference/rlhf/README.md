@@ -11,7 +11,7 @@ There are three stages:
 
 ### Stage 1 and 2: Supervised Fine-Tuning
 
-The first two stages are supervised fine-tuning, which is relatively straightforward (see `recipes.sl_basic` for an example). In the first stage, we perform supervised fine-tuning to initialize the policy on the `no_robot` dataset from Huggingface; in the second stage, we perform supervised fine-tuning to learn the reward model on the `HHH` dataset from Anthropic.
+The first two stages are supervised fine-tuning, which is relatively straightforward (see `recipes.sl_basic` for an example). In the first stage, we perform supervised fine-tuning to initialize the policy on the `no_robots` dataset from Hugging Face; in the second stage, we perform supervised fine-tuning to learn the reward model on the `HHH` dataset from Anthropic.
 
 ### Stage 3: RL against the Reward Model
 
