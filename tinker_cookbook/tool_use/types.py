@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
-from tinker_cookbook.renderers.base import Message
+from tinker_cookbook.renderers.base import Message, ToolSpec
 
 
 @dataclass
@@ -24,23 +24,6 @@ class ToolResult:
     should_stop: bool = False
     metrics: dict[str, float] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class ToolSpec:
-    """Tool specification for renderer integration."""
-
-    name: str
-    description: str
-    parameters: dict[str, Any]
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dict for JSON serialization."""
-        return {
-            "name": self.name,
-            "description": self.description,
-            "parameters": self.parameters,
-        }
 
 
 @runtime_checkable
@@ -68,8 +51,8 @@ class Tool(Protocol):
 
     def to_spec(self) -> ToolSpec:
         """Convert to ToolSpec for renderer integration."""
-        return ToolSpec(
-            name=self.name,
-            description=self.description,
-            parameters=self.parameters_schema,
-        )
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters_schema,
+        }

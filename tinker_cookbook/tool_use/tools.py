@@ -18,8 +18,8 @@ from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
-from tinker_cookbook.renderers.base import ToolCall
-from tinker_cookbook.tool_use.types import Tool, ToolInput, ToolResult, ToolSpec
+from tinker_cookbook.renderers.base import ToolCall, ToolSpec
+from tinker_cookbook.tool_use.types import Tool, ToolInput, ToolResult
 
 
 def simple_tool_result(
@@ -193,11 +193,11 @@ class FunctionTool:
 
     def to_spec(self) -> ToolSpec:
         """Convert to ToolSpec for renderer integration."""
-        return ToolSpec(
-            name=self.name,
-            description=self.description,
-            parameters=self.parameters_schema,
-        )
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters_schema,
+        }
 
     async def run(self, input: ToolInput) -> ToolResult:
         """Execute the tool with validated arguments. Returns a ToolResult."""
