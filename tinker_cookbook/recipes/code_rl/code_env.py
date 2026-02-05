@@ -9,8 +9,12 @@ from datasets import Dataset, concatenate_datasets, load_dataset
 
 from tinker_cookbook import model_info, tokenizer_utils
 from tinker_cookbook.recipes.code_rl.code_grading import taco_to_lcb_format
+from tinker_cookbook.recipes.code_rl.deepcoder_tool import (
+    DeepcoderReward,
+    DeepcoderTask,
+    DeepcoderTool,
+)
 from tinker_cookbook.recipes.code_rl.lcb_utils import fetch_live_code_bench_system_prompt
-from tinker_cookbook.recipes.code_rl.tools import DeepcoderReward, DeepcoderTask, DeepcoderTool
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import Message, Renderer
 from tinker_cookbook.rl.types import Env, EnvGroupBuilder, RLDataset, RLDatasetBuilder

@@ -9,18 +9,19 @@ A library for training tool-use agents with Tinker.
 The `tool_use` library provides:
 
 - **`@tool` decorator** - Define tools from Python functions with automatic schema extraction
-- **`ToolInterface`** - ABC for advanced tool patterns (dynamic schemas, shared base classes)
+- **`Tool` protocol** - Interface for implementing custom tools
 - **`AgentToolMessageEnv`** - RL environment for training tool-use agents
 
 ## Quick Example
 
 ```python
-from tinker_cookbook.tool_use import tool, build_agent_tool_env
+from tinker_cookbook.tool_use import tool, simple_tool_result, build_agent_tool_env
 
 @tool
-async def search(query: Annotated[str, "Search query"]) -> str:
+async def search(query: Annotated[str, "Search query"]) -> ToolResult:
     """Search for information."""
-    return json.dumps(await do_search(query))
+    results = await do_search(query)
+    return simple_tool_result(json.dumps(results))
 
 env = build_agent_tool_env(
     renderer=renderer,
@@ -41,14 +42,16 @@ class MyTools:
         self._api_key = api_key
 
     @tool
-    async def search(self, query: Annotated[str, "Query"]) -> str:
+    async def search(self, query: Annotated[str, "Query"]) -> ToolResult:
         """Search using the configured API."""
-        return json.dumps(await search_api(query, self._api_key))
+        results = await search_api(query, self._api_key)
+        return simple_tool_result(json.dumps(results))
 
     @tool
-    async def lookup(self, id: Annotated[str, "Document ID"]) -> str:
+    async def lookup(self, id: Annotated[str, "Document ID"]) -> ToolResult:
         """Look up a document by ID."""
-        return json.dumps(await lookup_api(id, self._api_key))
+        result = await lookup_api(id, self._api_key)
+        return simple_tool_result(json.dumps(result))
 
 # Usage - both tools share the same api_key
 tools_obj = MyTools(api_key="...")
