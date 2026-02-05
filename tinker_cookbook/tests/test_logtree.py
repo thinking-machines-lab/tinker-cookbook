@@ -405,7 +405,7 @@ def test_formatter_html_escaping():
     with tempfile.TemporaryDirectory() as tmpdir:
         output_path = Path(tmpdir) / "xss.html"
 
-        messages = [
+        messages: list[Message] = [
             {"role": "user", "content": "What is <script>alert('xss')</script>?"},
             {"role": "assistant", "content": "That's a <b>script</b> tag: <img onerror=alert(1)>"},
         ]
