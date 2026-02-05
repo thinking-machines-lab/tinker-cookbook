@@ -124,23 +124,9 @@ class ThinkingPart(TypedDict):
     thinking: str  # The thinking/reasoning content
 
 
-class ToolCallPart(TypedDict):
-    """Tool/function call as a content part, preserving position in content list."""
-
-    type: Literal["tool_call"]
-    tool_call: ToolCall  # The parsed tool call object
-
-
-class UnparsedToolCallPart(TypedDict):
-    """Tool call that failed to parse, preserving raw text for debugging."""
-
-    type: Literal["unparsed_tool_call"]
-    raw_text: str  # Raw text of the tool call block including tags
-    error: str  # Description of what went wrong during parsing
-
-
-# Container for a part of a multimodal message content
-ContentPart = TextPart | ImagePart | ThinkingPart | ToolCallPart | UnparsedToolCallPart
+# Container for a part of a multimodal message content.
+# Tool calls live exclusively in message["tool_calls"] / message["unparsed_tool_calls"].
+ContentPart = TextPart | ImagePart | ThinkingPart
 
 
 # Streaming types to enable incremental parsing of model output for real-time display.
@@ -443,7 +429,7 @@ def format_content_as_string(content: Content, separator: str = "\n") -> str:
     """Format message content as a string, preserving all part types.
 
     Unlike get_text_content which only extracts text parts, this formats
-    all content parts (thinking, text, tool_call, etc.) as a readable string.
+    all content parts (thinking, text) as a readable string.
 
     This is useful for compatibility with APIs that expect string content
     (e.g., OpenAI Chat Completions API), but we don't recommend it if you
@@ -466,11 +452,6 @@ def format_content_as_string(content: Content, separator: str = "\n") -> str:
             parts.append(f"<think>{p['thinking']}</think>")
         elif p["type"] == "text":
             parts.append(p["text"])
-        elif p["type"] == "tool_call":
-            tc = p["tool_call"]
-            parts.append(f"<tool_call>{tc.function.name}({tc.function.arguments})</tool_call>")
-        elif p["type"] == "unparsed_tool_call":
-            parts.append(f"<unparsed_tool_call>{p['raw_text']}</unparsed_tool_call>")
         else:
             raise ValueError(f"Unknown content part type: {p['type']}")
     return separator.join(parts)
@@ -508,37 +489,42 @@ def _parse_tool_call_json(tool_call_str: str, raw_text: str) -> ToolCall | Unpar
     )
 
 
-def parse_content_blocks(content: str) -> list[ContentPart] | None:
+def parse_content_blocks(
+    content: str,
+) -> tuple[list[ContentPart], list[ToolCall | UnparsedToolCall]] | None:
     """
     Parse a string with <think>...</think> and <tool_call>...</tool_call> tags.
 
-    Handles interleaved thinking, tool call, and text blocks, returning parts
-    in order. Empty parts are omitted. Failed tool call parses are included as
-    UnparsedToolCallPart to preserve ordering.
+    Handles interleaved thinking, tool call, and text blocks. Content parts
+    (ThinkingPart, TextPart) are returned in the first element; tool calls
+    (ToolCall, UnparsedToolCall) are returned separately in the second element,
+    preserving their relative order.
 
-    Whitespace is preserved exactly - roundtrip (parse then render) is identity.
+    Whitespace in non-tool-call regions is preserved exactly - roundtrip
+    (parse then render) is identity for the content parts.
 
     Args:
         content: String potentially containing <think> and/or <tool_call> blocks.
 
     Returns:
-        List of ContentPart (ThinkingPart, TextPart, ToolCallPart, UnparsedToolCallPart)
-        in order. Returns None if no special tags are found - caller should use
-        the original string for backward compatibility.
+        Tuple of (content_parts, tool_calls), or None if no special tags are found.
+        content_parts contains only ThinkingPart/TextPart.
+        tool_calls contains ToolCall and UnparsedToolCall in order.
 
     Example:
         >>> parse_content_blocks("<think>step 1</think>answer<tool_call>{...}</tool_call>more")
-        [
-            ThinkingPart(type="thinking", thinking="step 1"),
-            TextPart(type="text", text="answer"),
-            ToolCallPart(type="tool_call", tool_call=ToolCall(...)),
-            TextPart(type="text", text="more"),
-        ]
+        (
+            [ThinkingPart(type="thinking", thinking="step 1"),
+             TextPart(type="text", text="answer"),
+             TextPart(type="text", text="more")],
+            [ToolCall(...)],
+        )
     """
     if "<think>" not in content and "<tool_call>" not in content:
         return None  # No special blocks, caller should use original string
 
     parts: list[ContentPart] = []
+    tool_calls: list[ToolCall | UnparsedToolCall] = []
     pos = 0
 
     # Pattern to find both <think>...</think> and <tool_call>...</tool_call> blocks
@@ -556,21 +542,10 @@ def parse_content_blocks(content: str) -> list[ContentPart] | None:
             if thinking:  # Skip empty thinking blocks
                 parts.append(ThinkingPart(type="thinking", thinking=thinking))
         else:
-            # This is a <tool_call> block
+            # This is a <tool_call> block — goes into separate tool_calls list
             tool_call_json = match.group(2)
             raw_text = match.group(0)  # Full match including tags
-            parsed = _parse_tool_call_json(tool_call_json, raw_text)
-            if isinstance(parsed, UnparsedToolCall):
-                # Include unparsed tool calls as UnparsedToolCallPart to preserve order
-                parts.append(
-                    UnparsedToolCallPart(
-                        type="unparsed_tool_call",
-                        raw_text=parsed.raw_text,
-                        error=parsed.error,
-                    )
-                )
-            else:
-                parts.append(ToolCallPart(type="tool_call", tool_call=parsed))
+            tool_calls.append(_parse_tool_call_json(tool_call_json, raw_text))
 
         pos = match.end()
 
@@ -579,7 +554,7 @@ def parse_content_blocks(content: str) -> list[ContentPart] | None:
     if remaining:  # Skip only truly empty strings
         parts.append(TextPart(type="text", text=remaining))
 
-    return parts
+    return parts, tool_calls
 
 
 def parse_think_blocks(content: str) -> list[ContentPart] | None:
@@ -814,7 +789,6 @@ class Renderer(ABC):
                         "Images would be silently dropped, leading to incorrect HF template "
                         "comparisons or OpenAI API calls. Use build_generation_prompt for VL models."
                     )
-                # Skip tool_call and unparsed_tool_call parts - handled via tool_calls field
             result["content"] = "".join(parts)
 
         # Handle tool_calls (convert ToolCall objects to OpenAI format)

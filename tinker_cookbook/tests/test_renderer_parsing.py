@@ -17,7 +17,12 @@ from tinker_cookbook.renderers import (
     format_content_as_string,
     parse_content_blocks,
 )
-from tinker_cookbook.renderers.base import Utf8TokenDecoder, ensure_list
+from tinker_cookbook.renderers.base import (
+    ToolCall,
+    UnparsedToolCall,
+    Utf8TokenDecoder,
+    ensure_list,
+)
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3DisableThinkingRenderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer, _longest_matching_suffix_prefix
 from tinker_cookbook.tests.test_renderers import get_tokenizer
@@ -35,88 +40,106 @@ def test_parse_content_blocks_no_special_tags():
 
 def test_parse_content_blocks_single_think_block():
     """Test parse_content_blocks with a single think block."""
-    parts = parse_content_blocks("<think>reasoning</think>visible answer")
-    assert parts is not None
+    result = parse_content_blocks("<think>reasoning</think>visible answer")
+    assert result is not None
+    parts, tool_calls = result
 
     assert len(parts) == 2
     assert parts[0]["type"] == "thinking"
     assert parts[0]["thinking"] == "reasoning"  # type: ignore[typeddict-item]
     assert parts[1]["type"] == "text"
     assert parts[1]["text"] == "visible answer"  # type: ignore[typeddict-item]
+    assert tool_calls == []
 
 
 def test_parse_content_blocks_multiple_think_blocks():
     """Test parse_content_blocks with multiple interleaved think blocks."""
     content = "<think>step 1</think>partial<think>step 2</think>final"
-    parts = parse_content_blocks(content)
-    assert parts is not None
+    result = parse_content_blocks(content)
+    assert result is not None
+    parts, tool_calls = result
 
     assert len(parts) == 4
     assert parts[0] == ThinkingPart(type="thinking", thinking="step 1")
     assert parts[1] == TextPart(type="text", text="partial")
     assert parts[2] == ThinkingPart(type="thinking", thinking="step 2")
     assert parts[3] == TextPart(type="text", text="final")
+    assert tool_calls == []
 
 
 def test_parse_content_blocks_empty_blocks_omitted():
     """Test parse_content_blocks omits empty think blocks."""
-    parts = parse_content_blocks("<think></think>visible")
-    assert parts is not None
+    result = parse_content_blocks("<think></think>visible")
+    assert result is not None
+    parts, tool_calls = result
 
     assert len(parts) == 1
     assert parts[0]["type"] == "text"
     assert parts[0]["text"] == "visible"  # type: ignore[typeddict-item]
+    assert tool_calls == []
 
 
 def test_parse_content_blocks_whitespace_handling():
     """Test parse_content_blocks preserves whitespace for identity roundtrip."""
-    parts = parse_content_blocks("<think>  thinking  </think>  answer  ")
-    assert parts is not None
+    result = parse_content_blocks("<think>  thinking  </think>  answer  ")
+    assert result is not None
+    parts, tool_calls = result
 
     assert len(parts) == 2
     # Whitespace is preserved exactly for identity roundtrip
     assert parts[0]["type"] == "thinking" and parts[0]["thinking"] == "  thinking  "  # type: ignore[typeddict-item]
     assert parts[1]["type"] == "text" and parts[1]["text"] == "  answer  "  # type: ignore[typeddict-item]
+    assert tool_calls == []
 
 
 def test_parse_content_blocks_tool_call_only():
-    """Test parse_content_blocks parses tool calls."""
+    """Test parse_content_blocks parses tool calls into separate list."""
     content = '<tool_call>{"name": "search", "arguments": {"query": "test"}}</tool_call>'
-    parts = parse_content_blocks(content)
-    assert parts is not None
+    result = parse_content_blocks(content)
+    assert result is not None
+    parts, tool_calls = result
 
-    assert len(parts) == 1
-    assert parts[0]["type"] == "tool_call"
-    tool_call = parts[0]["tool_call"]  # type: ignore[typeddict-item]
-    assert tool_call.function.name == "search"
-    assert tool_call.function.arguments == '{"query": "test"}'
+    assert len(parts) == 0
+    assert len(tool_calls) == 1
+    assert isinstance(tool_calls[0], ToolCall)
+    assert tool_calls[0].function.name == "search"
+    assert tool_calls[0].function.arguments == '{"query": "test"}'
 
 
 def test_parse_content_blocks_interleaved():
     """Test parse_content_blocks handles interleaved think and tool_call blocks."""
     content = '<think>Let me search</think>Searching...<tool_call>{"name": "search", "arguments": {"q": "test"}}</tool_call>Done'
-    parts = parse_content_blocks(content)
-    assert parts is not None
+    result = parse_content_blocks(content)
+    assert result is not None
+    parts, tool_calls = result
 
-    assert len(parts) == 4
+    # Content parts: think, text before tool_call, text after tool_call
+    assert len(parts) == 3
     assert parts[0] == ThinkingPart(type="thinking", thinking="Let me search")
     assert parts[1] == TextPart(type="text", text="Searching...")
-    assert parts[2]["type"] == "tool_call"
-    assert parts[2]["tool_call"].function.name == "search"  # type: ignore[typeddict-item]
-    assert parts[3] == TextPart(type="text", text="Done")
+    assert parts[2] == TextPart(type="text", text="Done")
+
+    # Tool call extracted separately
+    assert len(tool_calls) == 1
+    assert isinstance(tool_calls[0], ToolCall)
+    assert tool_calls[0].function.name == "search"
 
 
 def test_parse_content_blocks_invalid_tool_call():
-    """Test parse_content_blocks handles invalid tool call JSON as UnparsedToolCallPart."""
+    """Test parse_content_blocks handles invalid tool call JSON as UnparsedToolCall."""
     content = "<tool_call>not valid json</tool_call>text after"
-    parts = parse_content_blocks(content)
-    assert parts is not None
+    result = parse_content_blocks(content)
+    assert result is not None
+    parts, tool_calls = result
 
-    # Invalid tool call is included as UnparsedToolCallPart, text is still captured
-    assert len(parts) == 2
-    assert parts[0]["type"] == "unparsed_tool_call"
-    assert "Invalid JSON" in parts[0]["error"]  # type: ignore[typeddict-item]
-    assert parts[1] == TextPart(type="text", text="text after")
+    # Text after tool call is captured in content parts
+    assert len(parts) == 1
+    assert parts[0] == TextPart(type="text", text="text after")
+
+    # Invalid tool call is in tool_calls list as UnparsedToolCall
+    assert len(tool_calls) == 1
+    assert isinstance(tool_calls[0], UnparsedToolCall)
+    assert "Invalid JSON" in tool_calls[0].error
 
 
 def test_format_content_as_string_roundtrip():
@@ -127,8 +150,11 @@ def test_format_content_as_string_roundtrip():
     ]
     # Use empty separator for true roundtrip (default separator adds newlines between parts)
     formatted = format_content_as_string(content, separator="")
-    parsed = parse_content_blocks(formatted)
-    assert parsed == content
+    result = parse_content_blocks(formatted)
+    assert result is not None
+    parts, tool_calls = result
+    assert parts == content
+    assert tool_calls == []
 
 
 # =============================================================================
@@ -202,7 +228,7 @@ def test_qwen3_parse_response_no_thinking_returns_string():
 
 
 def test_qwen3_parse_response_with_tool_calls():
-    """Test Qwen3Renderer.parse_response parses tool calls into ToolCallPart."""
+    """Test Qwen3Renderer.parse_response puts tool calls in message['tool_calls'], not content."""
     tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = Qwen3Renderer(tokenizer)
 
@@ -215,16 +241,14 @@ def test_qwen3_parse_response_with_tool_calls():
     content = message["content"]
     assert isinstance(content, list)
 
-    # Should have ThinkingPart, TextPart, ToolCallPart in order
-    assert len(content) == 3
+    # Content should only have ThinkingPart and TextPart — no tool calls
+    assert len(content) == 2
     assert content[0]["type"] == "thinking"
     assert content[0]["thinking"] == "Let me search"
     assert content[1]["type"] == "text"
     assert content[1]["text"] == "I will search for that."
-    assert content[2]["type"] == "tool_call"
-    assert content[2]["tool_call"].function.name == "web_search"
 
-    # Also check backward-compatible tool_calls field
+    # Tool calls live exclusively in message["tool_calls"]
     assert "tool_calls" in message
     assert len(message["tool_calls"]) == 1
     assert message["tool_calls"][0].function.name == "web_search"
@@ -245,11 +269,12 @@ def test_qwen3_parse_response_tool_call_only():
     assert success
     content = message["content"]
     assert isinstance(content, list)
-    assert len(content) == 1
-    assert content[0]["type"] == "tool_call"
+    # Content should be empty — only a tool call, no text or thinking
+    assert len(content) == 0
 
-    # Backward-compatible field
+    # Tool call lives in message["tool_calls"]
     assert "tool_calls" in message and len(message["tool_calls"]) == 1
+    assert message["tool_calls"][0].function.name == "calculator"
 
 
 # =============================================================================
