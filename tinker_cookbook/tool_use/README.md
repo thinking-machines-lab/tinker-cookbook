@@ -1,6 +1,6 @@
 # Tool Use Library
 
-> **Note:** This library is currently experimental and may change without warning. See the section `Remaining TODOs` below for some pending work.
+> **Note:** This library is currently experimental and may change without warning.
 
 A library for training tool-use agents with Tinker.
 
