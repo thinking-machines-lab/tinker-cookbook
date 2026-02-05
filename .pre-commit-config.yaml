@@ -19,5 +19,7 @@ repos:
   hooks:
     # Run the linter.
     - id: ruff-check
+      exclude: tool_declaration_ts\.py$
     # Run the formatter.
     - id: ruff-format
+      exclude: tool_declaration_ts\.py$

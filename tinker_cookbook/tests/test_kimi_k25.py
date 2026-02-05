@@ -68,7 +68,9 @@ def hf_generation_prompt_length(kimi_tokenizer):
     return len(tokens_with) - len(tokens_without)
 
 
-def get_hf_tokens(tokenizer, hf_messages, gen_prompt_length: int, tools=None, for_generation: bool = True) -> list[int]:
+def get_hf_tokens(
+    tokenizer, hf_messages, gen_prompt_length: int, tools=None, for_generation: bool = True
+) -> list[int]:
     """Get HF tokens for generation or supervised mode.
 
     For supervised mode, slices off the generation prompt tokens.
@@ -361,7 +363,11 @@ def test_typescript_tool_declaration_multiple_tools():
             "function": ToolSpec(
                 name="get_weather",
                 description="Get the current weather for a location",
-                parameters={"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]},
+                parameters={
+                    "type": "object",
+                    "properties": {"location": {"type": "string"}},
+                    "required": ["location"],
+                },
             ),
         },
         {
@@ -369,7 +375,11 @@ def test_typescript_tool_declaration_multiple_tools():
             "function": ToolSpec(
                 name="search_web",
                 description="Search the web for information",
-                parameters={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+                parameters={
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
             ),
         },
     ]
@@ -395,7 +405,9 @@ def test_kimi_k25_generation_prompt_has_think_prefill(kimi_tokenizer, kimi_rende
     assert decoded.endswith("<|im_assistant|>assistant<|im_middle|><think>")
 
 
-def test_kimi_k25_disable_thinking_generation_prompt(kimi_tokenizer, kimi_renderer_disable_thinking):
+def test_kimi_k25_disable_thinking_generation_prompt(
+    kimi_tokenizer, kimi_renderer_disable_thinking
+):
     """Test that KimiK25DisableThinkingRenderer adds <think></think> prefill."""
     messages = get_basic_conversation_for_generation()
     gen_prompt = kimi_renderer_disable_thinking.build_generation_prompt(messages)
@@ -455,8 +467,11 @@ def test_kimi_k25_tool_call_conversation_matches_hf(
 
     hf_messages = [kimi_renderer.to_openai_message(m) for m in messages]
     hf_tokens = get_hf_tokens(
-        kimi_tokenizer, hf_messages, hf_generation_prompt_length,
-        tools=openai_tools, for_generation=True
+        kimi_tokenizer,
+        hf_messages,
+        hf_generation_prompt_length,
+        tools=openai_tools,
+        for_generation=True,
     )
 
     assert cookbook_tokens == hf_tokens, (
@@ -482,8 +497,11 @@ def test_kimi_k25_multi_tool_calls_matches_hf(
 
     hf_messages = [kimi_renderer.to_openai_message(m) for m in messages]
     hf_tokens = get_hf_tokens(
-        kimi_tokenizer, hf_messages, hf_generation_prompt_length,
-        tools=openai_tools, for_generation=True
+        kimi_tokenizer,
+        hf_messages,
+        hf_generation_prompt_length,
+        tools=openai_tools,
+        for_generation=True,
     )
 
     assert cookbook_tokens == hf_tokens, (
@@ -509,8 +527,11 @@ def test_kimi_k25_multi_step_tool_calls_matches_hf(
 
     hf_messages = [kimi_renderer.to_openai_message(m) for m in messages]
     hf_tokens = get_hf_tokens(
-        kimi_tokenizer, hf_messages, hf_generation_prompt_length,
-        tools=openai_tools, for_generation=True
+        kimi_tokenizer,
+        hf_messages,
+        hf_generation_prompt_length,
+        tools=openai_tools,
+        for_generation=True,
     )
 
     assert cookbook_tokens == hf_tokens, (
@@ -570,8 +591,11 @@ def test_kimi_k25_tool_declaration_matches_hf(
         hf_messages.append({"role": "assistant", "content": "Let me check that for you."})
 
     hf_tokens = get_hf_tokens(
-        kimi_tokenizer, hf_messages, hf_generation_prompt_length,
-        tools=openai_tools, for_generation=(build_mode == "generation")
+        kimi_tokenizer,
+        hf_messages,
+        hf_generation_prompt_length,
+        tools=openai_tools,
+        for_generation=(build_mode == "generation"),
     )
 
     assert cookbook_tokens == hf_tokens, (
@@ -641,13 +665,15 @@ def test_kimi_k25_thinking_stripped_in_history(build_mode: str, kimi_tokenizer, 
     ]
 
     if build_mode == "supervised":
-        messages.append({
-            "role": "assistant",
-            "content": [
-                {"type": "thinking", "thinking": "SUFFIX_THINKING_PRESERVED"},
-                {"type": "text", "text": "The answer is 6."},
-            ],
-        })
+        messages.append(
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "SUFFIX_THINKING_PRESERVED"},
+                    {"type": "text", "text": "The answer is 6."},
+                ],
+            }
+        )
         model_input, _ = kimi_renderer.build_supervised_example(messages)
         decoded = kimi_tokenizer.decode(model_input.to_ints())
     else:
