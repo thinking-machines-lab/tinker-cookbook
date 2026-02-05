@@ -44,7 +44,7 @@ class AgentToolMessageEnv(MessageEnv):
     async def _handle_tool_calls(self, tool_calls: list[ToolCall]) -> list[Message]:
         """Execute tool calls and append results to history.
 
-        Note: Tool metrics are not accumulated (following worm's approach).
+        Note: Tool metrics are not accumulated in the message history.
         Only messages and should_stop are used from ToolResult.
         """
         tool_results = await asyncio.gather(
