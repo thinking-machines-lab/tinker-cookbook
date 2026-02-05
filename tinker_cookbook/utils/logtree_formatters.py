@@ -26,9 +26,9 @@ def _render_content_html(content: Content) -> str:
             escaped = html.escape(part["thinking"])
             parts_html.append(
                 f'<details class="lt-thinking-part">'
-                f'<summary>💭 Thinking</summary>'
-                f'<pre>{escaped}</pre>'
-                f'</details>'
+                f"<summary>💭 Thinking</summary>"
+                f"<pre>{escaped}</pre>"
+                f"</details>"
             )
         elif part["type"] == "tool_call":
             tc = part["tool_call"]
@@ -37,8 +37,8 @@ def _render_content_html(content: Content) -> str:
             parts_html.append(
                 f'<div class="lt-tool-call-part">'
                 f'<span class="lt-tool-call-label">🔧 Tool Call:</span> '
-                f'<code>{name}({args})</code>'
-                f'</div>'
+                f"<code>{name}({args})</code>"
+                f"</div>"
             )
         elif part["type"] == "unparsed_tool_call":
             raw = html.escape(part["raw_text"])
@@ -46,9 +46,9 @@ def _render_content_html(content: Content) -> str:
             parts_html.append(
                 f'<div class="lt-unparsed-tool-call-part">'
                 f'<span class="lt-tool-call-label">⚠️ Unparsed Tool Call:</span> '
-                f'<code>{raw}</code>'
+                f"<code>{raw}</code>"
                 f'<div class="lt-error">{error}</div>'
-                f'</div>'
+                f"</div>"
             )
         elif part["type"] == "image":
             parts_html.append('<span class="lt-image-part">🖼️ [Image]</span>')

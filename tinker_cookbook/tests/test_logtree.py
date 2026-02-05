@@ -5,6 +5,7 @@ import os
 import tempfile
 from pathlib import Path
 
+from tinker_cookbook.renderers.base import Message
 from tinker_cookbook.utils import logtree
 
 
@@ -375,7 +376,7 @@ def test_formatter():
     with tempfile.TemporaryDirectory() as tmpdir:
         output_path = Path(tmpdir) / "formatter.html"
 
-        messages = [
+        messages: list[Message] = [
             {"role": "user", "content": "Hello"},
             {"role": "assistant", "content": "Hi there!"},
             {"role": "user", "content": "How are you?"},
@@ -404,9 +405,9 @@ def test_formatter_css_deduplication():
     with tempfile.TemporaryDirectory() as tmpdir:
         output_path = Path(tmpdir) / "dedup.html"
 
-        messages1 = [{"role": "user", "content": "Message 1"}]
-        messages2 = [{"role": "assistant", "content": "Message 2"}]
-        messages3 = [{"role": "user", "content": "Message 3"}]
+        messages1: list[Message] = [{"role": "user", "content": "Message 1"}]
+        messages2: list[Message] = [{"role": "assistant", "content": "Message 2"}]
+        messages3: list[Message] = [{"role": "user", "content": "Message 3"}]
 
         with logtree.init_trace("Dedup Test", path=output_path):
             # Log three conversation formatters
