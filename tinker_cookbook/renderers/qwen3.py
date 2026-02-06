@@ -296,7 +296,10 @@ class Qwen3Renderer(Renderer):
             # Each tool is wrapped in {"type": "function", "function": {...}} per OpenAI format
             # Use separators=(", ", ": ") to match HF's tojson filter output
             tool_lines = "\n".join(
-                json.dumps({"type": "function", "function": tool}, separators=(", ", ": "))
+                json.dumps(
+                    {"type": "function", "function": tool},
+                    separators=(", ", ": "),
+                )
                 for tool in tools
             )
             tools_text = f"""# Tools
