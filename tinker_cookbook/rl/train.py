@@ -316,7 +316,7 @@ class Config:
     remove_constant_reward_groups: bool = False
     eval_every: int = 20  # 0 = disabled
     save_every: int = 20  # 0 = disabled
-    ttl_seconds: int = 604800  # 7 days
+    ttl_seconds: int | None = 604800  # 7 days
     load_checkpoint_path: str | None = None
 
     async_config: AsyncConfig | None = None

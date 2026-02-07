@@ -43,7 +43,7 @@ class Config:
     lora_rank: int = 32
     save_every: int = 20  # 0 = disabled
     max_tokens: int = 256
-    ttl_seconds: int = 604800  # 7 days
+    ttl_seconds: int | None = 604800  # 7 days
 
 
 def get_reward(response: str, answer: str) -> float:
