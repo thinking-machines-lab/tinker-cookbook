@@ -983,7 +983,8 @@ class Renderer(ABC):
             )
 
         last_user_idx = max(
-            idx for idx, message in enumerate(messages) if message["role"] == "user"
+            (idx for idx, message in enumerate(messages) if message["role"] == "user"),
+            default=-1,
         )
 
         for idx, message in enumerate(messages):
