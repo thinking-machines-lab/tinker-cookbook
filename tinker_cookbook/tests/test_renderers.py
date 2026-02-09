@@ -1559,6 +1559,51 @@ def test_kimi_k2_build_supervised_examples_all_assistant_matches_with_tool_calls
 
 
 # =============================================================================
+# No User Messages Edge Case Tests
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "model_name,renderer_name",
+    [
+        ("meta-llama/Llama-3.2-1B-Instruct", "llama3"),
+        ("Qwen/Qwen3-8B", "qwen3"),
+        ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
+    ],
+)
+def test_supervised_example_no_user_messages(model_name: str, renderer_name: str):
+    """Test that build_supervised_example doesn't crash when there are no user messages.
+
+    Regression test: previously, `max(idx for ... if role == 'user')` raised ValueError
+    on an empty sequence when no user messages were present. Now uses `default=-1`.
+    With LAST_ASSISTANT_MESSAGE and no user messages, all assistant tokens should be trained on
+    (since every message is "after the last user").
+    """
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer(renderer_name, tokenizer)
+
+    messages: list[Message] = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "assistant", "content": "Hello! How can I help you?"},
+    ]
+
+    # Should not raise ValueError
+    model_input, weights = renderer.build_supervised_example(
+        messages, train_on_what=TrainOnWhat.LAST_ASSISTANT_MESSAGE
+    )
+    tokens = model_input.to_ints()
+
+    assert len(tokens) > 0, "Should produce non-empty token sequence"
+    assert len(weights) == len(tokens), "Weights should match token count"
+
+    # With no user messages, the assistant message is "after the last user" (last_user_idx == -1),
+    # so the assistant tokens should have weight=1
+    assert any(w > 0 for w in weights.tolist()), (
+        "At least some tokens should have non-zero weight for LAST_ASSISTANT_MESSAGE with no user messages"
+    )
+
+
+# =============================================================================
 # Sequence Extension Property Tests
 # =============================================================================
 
