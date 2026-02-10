@@ -10,6 +10,7 @@ import tinker
 import torch
 
 from tinker_cookbook.renderers.base import (
+    ContentPart,
     Message,
     MessageDelta,
     RenderContext,
@@ -19,6 +20,7 @@ from tinker_cookbook.renderers.base import (
     StreamingMessageHeader,
     StreamingTextDelta,
     StreamingThinkingDelta,
+    TextPart,
     ToolCall,
     ToolSpec,
     TrainOnWhat,
@@ -429,10 +431,12 @@ class KimiK2Renderer(Renderer):
             header_str = f"<|im_system|>{role}<|im_middle|>"
 
         # Build output content
-        output_str = ""
+        content = message["content"]
+        output: list[tinker.ModelInputChunk] = []
         if role == "assistant":
+            output_str = ""
             # Extract thinking and text from content list
-            parts = ensure_list(message["content"])
+            parts = ensure_list(content)
             thinking_content = "".join(p["thinking"] for p in parts if p["type"] == "thinking")
             text_content = "".join(p["text"] for p in parts if p["type"] == "text")
 
@@ -454,16 +458,23 @@ class KimiK2Renderer(Renderer):
                     args = tool_call.function.arguments
                     output_str += f"<|tool_call_begin|>{tool_id}<|tool_call_argument_begin|>{args}<|tool_call_end|>"
                 output_str += "<|tool_calls_section_end|>"
+            output_str += "<|im_end|>"
+            output.append(tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(output_str)))
+        elif isinstance(content, str) or (len(content) == 1 and content[0]["type"] == "text"):
+            # Single-part/text content
+            output_str = ensure_text(content) + "<|im_end|>"
+            output.append(tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(output_str)))
         else:
-            output_str = ensure_text(message["content"])
-
-        output_str += "<|im_end|>"
+            # Mult-part content (e.g. text+image(s))
+            assert isinstance(content, list), f"Expected list of content parts, got {type(content)}"
+            output = self._encode_multipart_content(content + [TextPart(type="text", text="<|im_end|>")])
 
         header = tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(header_str))
-        output: list[tinker.ModelInputChunk] = [
-            tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(output_str))
-        ]
+        
         return RenderedMessage(header=header, output=output)
+
+    def _encode_multipart_content(self, content: list[ContentPart]) -> list[tinker.ModelInputChunk]:
+        raise NotImplementedError("Multipart/Image content encoding is not supported for Kimi K2 renderer")
 
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None

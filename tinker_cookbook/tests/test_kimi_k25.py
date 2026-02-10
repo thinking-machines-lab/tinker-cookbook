@@ -9,12 +9,14 @@ Tests verify that the KimiK25Renderer produces correct output:
 """
 
 from typing import cast
-
+from PIL import Image
 import pytest
-
+import tinker
 from tinker_cookbook.renderers import Message, ToolCall, ToolSpec, get_renderer
 from tinker_cookbook.renderers.kimi_k2_5_tool_declaration_ts import encode_tools_to_typescript_style
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.image_processing_utils import get_image_processor
+
 
 KIMI_K25_MODEL = "moonshotai/Kimi-K2.5"
 
@@ -713,3 +715,49 @@ def test_kimi_k25_eot_parsing(kimi_tokenizer, kimi_renderer):
     assert message["role"] == "assistant"
     assert message["content"] == "The answer is 42."
     assert format_correct is False
+
+
+# =============================================================================
+# Image Content Tests
+# =============================================================================
+
+
+@pytest.mark.parametrize("image_dimensions_and_expected_tokens", [(2048, 1365, 3626), (17, 64, 3), (5000, 6000, 4189)])
+def test_kimi_k25_image_content(image_dimensions_and_expected_tokens: tuple[int, int, int]):
+    """Test that image-content is encoded properly for kimi2.5"""
+    width, height, expected_tokens = image_dimensions_and_expected_tokens
+    dummy_image = Image.new("RGB", (width, height))
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {
+            "role": "user", "content": [
+                {"type": "image", "image": dummy_image},
+                {"type": "text", "text": "Can you describe this image?"},
+            ]
+        },
+        {"role": "assistant", "content": "That looks like a blank image?"},
+    ]
+
+    tokenizer = get_tokenizer(KIMI_K25_MODEL)
+    image_processor = get_image_processor(KIMI_K25_MODEL)
+
+    hf_output = tokenizer.apply_chat_template(messages, tokenize=True)
+    hf_output = cast(list[int], hf_output)
+
+    renderer = get_renderer("kimi_k25", tokenizer, image_processor)
+    renderer_output = renderer.build_generation_prompt(messages)
+    
+    # Compare HF and renderer tokens
+    hf_offset = 0
+    for chunk in renderer_output.chunks:
+        if isinstance(chunk, tinker.EncodedTextChunk):
+            assert list(chunk.tokens) == hf_output[hf_offset:hf_offset + len(chunk.tokens)]
+            hf_offset += len(chunk.tokens)
+        elif isinstance(chunk, tinker.types.image_chunk.ImageChunk):
+            assert hf_output[hf_offset:hf_offset+1] == tokenizer.encode("<|media_pad|>")
+            assert chunk.expected_tokens == expected_tokens, f"Expected {expected_tokens} tokens for image, got {chunk.expected_tokens}"
+            hf_offset += 1
+        else:
+            raise ValueError(f"Unknown chunk type: {type(chunk)}")
+    assert hf_offset == len(hf_output)
+    
