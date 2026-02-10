@@ -1101,6 +1101,9 @@ class ImageProcessorProtocol(Protocol):
     ) -> int:
         raise NotImplementedError()
 
+    def get_resize_config(self, image_data: dict) -> dict:
+        raise NotImplementedError()
+
 
 def image_to_chunk(
     image_or_str: Image.Image | str, image_processor: ImageProcessorProtocol
