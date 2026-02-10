@@ -722,7 +722,9 @@ def test_kimi_k25_eot_parsing(kimi_tokenizer, kimi_renderer):
 # =============================================================================
 
 
-@pytest.mark.parametrize("image_dimensions_and_expected_tokens", [(2048, 1365, 3626), (17, 64, 3), (5000, 6000, 4189)])
+@pytest.mark.parametrize(
+    "image_dimensions_and_expected_tokens", [(2048, 1365, 3626), (17, 64, 3), (5000, 6000, 4189)]
+)
 def test_kimi_k25_image_content(image_dimensions_and_expected_tokens: tuple[int, int, int]):
     """Test that image-content is encoded properly for kimi2.5"""
     width, height, expected_tokens = image_dimensions_and_expected_tokens
@@ -730,10 +732,11 @@ def test_kimi_k25_image_content(image_dimensions_and_expected_tokens: tuple[int,
     messages = [
         {"role": "system", "content": "You are a helpful assistant."},
         {
-            "role": "user", "content": [
+            "role": "user",
+            "content": [
                 {"type": "image", "image": dummy_image},
                 {"type": "text", "text": "Can you describe this image?"},
-            ]
+            ],
         },
         {"role": "assistant", "content": "That looks like a blank image?"},
     ]
@@ -746,18 +749,19 @@ def test_kimi_k25_image_content(image_dimensions_and_expected_tokens: tuple[int,
 
     renderer = get_renderer("kimi_k25", tokenizer, image_processor)
     renderer_output = renderer.build_generation_prompt(messages)
-    
+
     # Compare HF and renderer tokens
     hf_offset = 0
     for chunk in renderer_output.chunks:
         if isinstance(chunk, tinker.EncodedTextChunk):
-            assert list(chunk.tokens) == hf_output[hf_offset:hf_offset + len(chunk.tokens)]
+            assert list(chunk.tokens) == hf_output[hf_offset : hf_offset + len(chunk.tokens)]
             hf_offset += len(chunk.tokens)
         elif isinstance(chunk, tinker.types.image_chunk.ImageChunk):
-            assert hf_output[hf_offset:hf_offset+1] == tokenizer.encode("<|media_pad|>")
-            assert chunk.expected_tokens == expected_tokens, f"Expected {expected_tokens} tokens for image, got {chunk.expected_tokens}"
+            assert hf_output[hf_offset : hf_offset + 1] == tokenizer.encode("<|media_pad|>")
+            assert chunk.expected_tokens == expected_tokens, (
+                f"Expected {expected_tokens} tokens for image, got {chunk.expected_tokens}"
+            )
             hf_offset += 1
         else:
             raise ValueError(f"Unknown chunk type: {type(chunk)}")
     assert hf_offset == len(hf_output)
-    

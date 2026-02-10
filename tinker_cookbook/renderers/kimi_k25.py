@@ -8,7 +8,7 @@ from tinker_cookbook.renderers.base import (
     ImageProcessorProtocol,
     image_to_chunk,
     Role,
-    ToolSpec,    
+    ToolSpec,
 )
 from tinker_cookbook.image_processing_utils import ImageProcessor
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
@@ -43,12 +43,24 @@ class KimiK25Renderer(KimiK2Renderer):
         chunks = []
         for part in content:
             if part["type"] == "text":
-                chunks.append(tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(part["text"])))                
+                chunks.append(
+                    tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(part["text"]))
+                )
             elif part["type"] == "image":
-                assert self.image_processor is not None, "KimiK25Renderer must be initialized with an image processor in order to support image content parts"
-                chunks.append(tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(self._image_prefix)))
-                chunks.append(image_to_chunk(part["image"], cast(ImageProcessorProtocol, self.image_processor)))
-                chunks.append(tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(self._image_suffix)))
+                assert self.image_processor is not None, (
+                    "KimiK25Renderer must be initialized with an image processor in order to support image content parts"
+                )
+                chunks.append(
+                    tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(self._image_prefix))
+                )
+                chunks.append(
+                    image_to_chunk(
+                        part["image"], cast(ImageProcessorProtocol, self.image_processor)
+                    )
+                )
+                chunks.append(
+                    tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(self._image_suffix))
+                )
             else:
                 raise ValueError(f"Unsupported content type: {part['type']}")
         return chunks
@@ -56,11 +68,11 @@ class KimiK25Renderer(KimiK2Renderer):
     @property
     def _image_prefix(self) -> str:
         return "<|media_begin|>image<|media_content|>"
-    
+
     @property
     def _image_suffix(self) -> str:
         return "<|media_end|>\n"
-    
+
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:

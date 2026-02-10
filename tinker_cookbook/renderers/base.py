@@ -1142,7 +1142,9 @@ def image_to_chunk(
         config = image_processor.get_resize_config({"type": "image", "image": pil_image})
         num_image_tokens = config["num_tokens"]
     else:
-        raise ValueError(f"Don't know how to get the number of image tokens for image processor: {image_processor}")
+        raise ValueError(
+            f"Don't know how to get the number of image tokens for image processor: {image_processor}"
+        )
 
     return tinker.types.ImageChunk(
         data=image_data,

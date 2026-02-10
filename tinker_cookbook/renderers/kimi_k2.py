@@ -467,14 +467,18 @@ class KimiK2Renderer(Renderer):
         else:
             # Mult-part content (e.g. text+image(s))
             assert isinstance(content, list), f"Expected list of content parts, got {type(content)}"
-            output = self._encode_multipart_content(content + [TextPart(type="text", text="<|im_end|>")])
+            output = self._encode_multipart_content(
+                content + [TextPart(type="text", text="<|im_end|>")]
+            )
 
         header = tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(header_str))
-        
+
         return RenderedMessage(header=header, output=output)
 
     def _encode_multipart_content(self, content: list[ContentPart]) -> list[tinker.ModelInputChunk]:
-        raise NotImplementedError("Multipart/Image content encoding is not supported for Kimi K2 renderer")
+        raise NotImplementedError(
+            "Multipart/Image content encoding is not supported for Kimi K2 renderer"
+        )
 
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
