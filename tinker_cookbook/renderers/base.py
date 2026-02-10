@@ -13,7 +13,7 @@ import urllib.request
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal, NotRequired, Optional, Protocol, TypedDict, Union
+from typing import Any, Literal, NotRequired, Optional, Protocol, TypedDict, Union
 
 import pydantic
 import tinker
@@ -1101,7 +1101,7 @@ class ImageProcessorProtocol(Protocol):
     ) -> int:
         raise NotImplementedError()
 
-    def get_resize_config(self, image_data: dict) -> dict:
+    def get_resize_config(self, image_data: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError()
 
 
