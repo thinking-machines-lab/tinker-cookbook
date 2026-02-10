@@ -13,7 +13,7 @@ import urllib.request
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal, NotRequired, Optional, Protocol, TypedDict, Union
+from typing import Any, Literal, NotRequired, Optional, Protocol, TypedDict, Union
 
 import pydantic
 import tinker
@@ -1101,6 +1101,9 @@ class ImageProcessorProtocol(Protocol):
     ) -> int:
         raise NotImplementedError()
 
+    def get_resize_config(self, image_data: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError()
+
 
 def image_to_chunk(
     image_or_str: Image.Image | str, image_processor: ImageProcessorProtocol
@@ -1130,11 +1133,21 @@ def image_to_chunk(
     pil_image.save(img_byte_arr, format="JPEG")
     image_data = img_byte_arr.getvalue()
 
-    width, height = pil_image.size
-    num_image_tokens = (
-        image_processor.get_number_of_image_patches(height, width, images_kwargs={})
-        // image_processor.merge_size**2
-    )
+    # Get the number of expected tokens for the image. The way to do this is not consistent between
+    # image processors (qwen3vl supports get_number_of_image_patches, kimi2.5 doesn't but has get_resize_config)
+    if hasattr(image_processor, "get_number_of_image_patches"):
+        width, height = pil_image.size
+        num_image_tokens = (
+            image_processor.get_number_of_image_patches(height, width, images_kwargs={})
+            // image_processor.merge_size**2
+        )
+    elif hasattr(image_processor, "get_resize_config"):
+        config = image_processor.get_resize_config({"type": "image", "image": pil_image})
+        num_image_tokens = config["num_tokens"]
+    else:
+        raise ValueError(
+            f"Don't know how to get the number of image tokens for image processor: {image_processor}"
+        )
 
     return tinker.types.ImageChunk(
         data=image_data,

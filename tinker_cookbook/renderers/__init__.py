@@ -172,9 +172,9 @@ def get_renderer(
     elif name == "kimi_k2":
         return KimiK2Renderer(tokenizer)
     elif name == "kimi_k25":
-        return KimiK25Renderer(tokenizer)
+        return KimiK25Renderer(tokenizer, image_processor=image_processor)
     elif name == "kimi_k25_disable_thinking":
-        return KimiK25DisableThinkingRenderer(tokenizer)
+        return KimiK25DisableThinkingRenderer(tokenizer, image_processor=image_processor)
     elif name == "gpt_oss_no_sysprompt":
         return GptOssRenderer(tokenizer, use_system_prompt=False)
     elif name == "gpt_oss_low_reasoning":

@@ -76,7 +76,7 @@ def get_moonshot_info() -> dict[str, ModelAttributes]:
     org = "moonshotai"
     return {
         "Kimi-K2-Thinking": ModelAttributes(org, "K2", "1T-A32B", True),
-        "Kimi-K2.5": ModelAttributes(org, "K2.5", "1T-A32B", True),
+        "Kimi-K2.5": ModelAttributes(org, "K2.5", "1T-A32B", True, is_vl=True),
     }
 
 

@@ -1,18 +1,19 @@
 """Renderer for Moonshot AI's Kimi K2.5 models."""
 
 import tinker
-
+from typing import cast
 from tinker_cookbook.renderers.base import (
     Message,
-    RenderContext,
-    RenderedMessage,
+    ContentPart,
+    ImageProcessorProtocol,
+    image_to_chunk,
     Role,
     ToolSpec,
 )
+from tinker_cookbook.image_processing_utils import ImageProcessor
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
-from tinker_cookbook.renderers.kimi_k2_5_tool_declaration_ts import (
-    encode_tools_to_typescript_style,
-)
+from tinker_cookbook.renderers.kimi_k2_5_tool_declaration_ts import encode_tools_to_typescript_style
+from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
 class KimiK25Renderer(KimiK2Renderer):
@@ -32,16 +33,45 @@ class KimiK25Renderer(KimiK2Renderer):
     while the generation prompt adds an open <think> tag to enable thinking.
     """
 
-    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
-        content = message["content"]
-        if not isinstance(content, str):
-            for p in content:
-                if p["type"] == "image":
-                    raise NotImplementedError(
-                        "Image content is not supported for Kimi K2.5 yet. It's coming soon!"
-                    )
+    image_processor: ImageProcessor | None
 
-        return super().render_message(message, ctx)
+    def __init__(self, tokenizer: Tokenizer, image_processor: ImageProcessor | None = None):
+        super().__init__(tokenizer)
+        self.image_processor = image_processor
+
+    def _encode_multipart_content(self, content: list[ContentPart]) -> list[tinker.ModelInputChunk]:
+        chunks = []
+        for part in content:
+            if part["type"] == "text":
+                chunks.append(
+                    tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(part["text"]))
+                )
+            elif part["type"] == "image":
+                assert self.image_processor is not None, (
+                    "KimiK25Renderer must be initialized with an image processor in order to support image content parts"
+                )
+                chunks.append(
+                    tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(self._image_prefix))
+                )
+                chunks.append(
+                    image_to_chunk(
+                        part["image"], cast(ImageProcessorProtocol, self.image_processor)
+                    )
+                )
+                chunks.append(
+                    tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(self._image_suffix))
+                )
+            else:
+                raise ValueError(f"Unsupported content type: {part['type']}")
+        return chunks
+
+    @property
+    def _image_prefix(self) -> str:
+        return "<|media_begin|>image<|media_content|>"
+
+    @property
+    def _image_suffix(self) -> str:
+        return "<|media_end|>\n"
 
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
