@@ -60,6 +60,7 @@ async def save_checkpoint_async(
     log_path: str,
     loop_state: dict[str, Any],
     kind: Literal["state", "sampler", "both"] = "state",
+    ttl_seconds: int | None = None,
 ) -> dict[str, str]:
     """Save model checkpoint.
     Args:
@@ -71,9 +72,11 @@ async def save_checkpoint_async(
     """
     futures = {}
     if kind in ["state", "both"]:
-        futures["state"] = await training_client.save_state_async(name)
+        futures["state"] = await training_client.save_state_async(name, ttl_seconds=ttl_seconds)
     if kind in ["sampler", "both"]:
-        futures["sampler"] = await training_client.save_weights_for_sampler_async(name)
+        futures["sampler"] = await training_client.save_weights_for_sampler_async(
+            name, ttl_seconds=ttl_seconds
+        )
 
     results = {k: await v.result_async() for k, v in futures.items()}
     paths = {k + "_path": v.path for k, v in results.items()}
@@ -93,6 +96,7 @@ def save_checkpoint(
     log_path: str,
     loop_state: dict[str, Any],
     kind: Literal["state", "sampler", "both"] = "state",
+    ttl_seconds: int | None = None,
 ) -> dict[str, str]:
     """Save model checkpoint.
     Args:
@@ -104,6 +108,11 @@ def save_checkpoint(
     """
     return asyncio.run(
         save_checkpoint_async(
-            training_client, name=name, log_path=log_path, kind=kind, loop_state=loop_state
+            training_client,
+            name=name,
+            log_path=log_path,
+            kind=kind,
+            loop_state=loop_state,
+            ttl_seconds=ttl_seconds,
         )
     )

@@ -1,28 +1,53 @@
+from __future__ import annotations
+
 import asyncio
-import json
 import logging
-from abc import ABC, abstractmethod
+import re
+import string
+from dataclasses import dataclass
+from functools import reduce
+from typing import Annotated
+
 import chromadb
 import chz
+import google.genai as genai
 from chromadb.api import AsyncClientAPI
 from chromadb.api.types import QueryResult
 from chromadb.config import Settings
-import google.genai as genai
+
 from tinker_cookbook.recipes.search_tool.embedding import (
     get_gemini_client,
     get_gemini_embedding,
 )
-from tinker_cookbook.renderers import Message, ToolCall, ToolSpec
+from tinker_cookbook.renderers import get_text_content
+from tinker_cookbook.renderers.base import Message
+from tinker_cookbook.tool_use import ToolResult, simple_tool_result, tool
+
+
+def normalize_answer(s: str) -> str:
+    """Normalize answer by lowercasing, removing punctuation, articles, and fixing whitespace."""
+
+    def remove_articles(text: str) -> str:
+        return re.sub(r"\b(a|an|the)\b", " ", text)
+
+    def white_space_fix(text: str) -> str:
+        return " ".join(text.split())
+
+    def remove_punc(text: str) -> str:
+        exclude = set(string.punctuation)
+        return "".join(ch for ch in text if ch not in exclude)
+
+    def lower(text: str) -> str:
+        return text.lower()
+
+    # Apply transformations in order using reduce
+    transformations = [lower, remove_punc, remove_articles, white_space_fix]
+    return reduce(lambda text, func: func(text), transformations, s)
+
 
 logger = logging.getLogger(__name__)
 
-
-class ToolClientInterface(ABC):
-    @abstractmethod
-    def get_tool_schemas(self) -> list[ToolSpec]: ...
-
-    @abstractmethod
-    async def invoke(self, tool_call: ToolCall) -> list[Message]: ...
+_CONNECTION_SEMAPHORE = asyncio.Semaphore(128)
 
 
 @chz.chz
@@ -38,146 +63,167 @@ class RetrievalConfig:
     embedding_config: EmbeddingConfig = EmbeddingConfig()
 
 
-@chz.chz
-class ChromaToolClientConfig:
-    chroma_host: str
-    chroma_port: int
-    chroma_collection_name: str
-    retrieval_config: RetrievalConfig
-    max_retries: int = 10
-    initial_retry_delay: int = 1
+class ChromaTool:
+    """Search tool using ChromaDB + Gemini embeddings."""
 
-
-class ChromaToolClient(ToolClientInterface):
     def __init__(
         self,
         chroma_client: AsyncClientAPI,
         gemini_client: genai.Client,
-        chroma_collection_name: str,
+        collection_name: str,
         retrieval_config: RetrievalConfig,
         max_retries: int,
         initial_retry_delay: int,
-        embedding_config: EmbeddingConfig,
     ):
-        self.chroma_client: AsyncClientAPI = chroma_client
-        self.gemini_client: genai.Client = gemini_client
-        self.chroma_collection_name: str = chroma_collection_name
-        self.n_results: int = retrieval_config.n_results
-        self.max_retries: int = max_retries
-        self.initial_retry_delay: int = initial_retry_delay
-        self.embedding_model: str = embedding_config.model_name
-        self.embedding_dim: int = embedding_config.embedding_dim
+        self._chroma_client = chroma_client
+        self._gemini_client = gemini_client
+        self._collection_name = collection_name
+        self._retrieval_config = retrieval_config
+        self._max_retries = max_retries
+        self._initial_retry_delay = initial_retry_delay
 
     @staticmethod
-    async def create(chroma_config: ChromaToolClientConfig) -> "ChromaToolClient":
-        chroma_client = await chromadb.AsyncHttpClient(
-            host=chroma_config.chroma_host,
-            port=chroma_config.chroma_port,
-            settings=Settings(anonymized_telemetry=False),
-        )
-        gemini_client = get_gemini_client()
-        # list available collections
-        return ChromaToolClient(
+    async def build(
+        chroma_host: str,
+        chroma_port: int,
+        chroma_collection_name: str,
+        retrieval_config: RetrievalConfig = RetrievalConfig(),
+        max_retries: int = 10,
+        initial_retry_delay: int = 1,
+        # Optional shared resources - None means build your own
+        chroma_client: AsyncClientAPI | None = None,
+        gemini_client: genai.Client | None = None,
+    ) -> "ChromaTool":
+        """Async factory for building ChromaTool.
+
+        Args:
+            chroma_host: ChromaDB server host.
+            chroma_port: ChromaDB server port.
+            chroma_collection_name: Name of the ChromaDB collection to query.
+            retrieval_config: Configuration for retrieval (n_results, embedding settings).
+            max_retries: Max retries for ChromaDB queries.
+            initial_retry_delay: Initial delay between retries (exponential backoff).
+            chroma_client: Optional pre-built ChromaDB client (for sharing across tools).
+            gemini_client: Optional pre-built Gemini client (for sharing across tools).
+        """
+        if chroma_client is None:
+            chroma_client = await chromadb.AsyncHttpClient(
+                host=chroma_host,
+                port=chroma_port,
+                settings=Settings(anonymized_telemetry=False),
+            )
+        if gemini_client is None:
+            gemini_client = get_gemini_client()
+        return ChromaTool(
             chroma_client,
             gemini_client,
-            chroma_config.chroma_collection_name,
-            chroma_config.retrieval_config,
-            chroma_config.max_retries,
-            chroma_config.initial_retry_delay,
-            chroma_config.retrieval_config.embedding_config,
+            chroma_collection_name,
+            retrieval_config,
+            max_retries,
+            initial_retry_delay,
         )
 
-    def get_tool_schemas(self) -> list[ToolSpec]:
-        return [
-            {
-                "name": "search",
-                "description": "Searches Wikipedia for relevant information based on the given query.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query_list": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "A list of fully-formed semantic queries. The tool will return search results for each query.",
-                        }
-                    },
-                    "required": ["query_list"],
-                },
-            }
-        ]
-
     async def _get_embeddings_with_retry(self, query_list: list[str]) -> list[list[float]]:
+        embedding_config = self._retrieval_config.embedding_config
         return await get_gemini_embedding(
-            self.gemini_client,
+            self._gemini_client,
             query_list,
-            self.embedding_model,
-            self.embedding_dim,
-            "RETRIEVAL_QUERY",
+            embedding_config.model_name,
+            embedding_config.embedding_dim,
+            embedding_config.task_type,
         )
 
     async def _query_chroma_with_retry(self, query_embeddings: list[list[float]]) -> QueryResult:
-        for attempt in range(self.max_retries):
-            collection = await self.chroma_client.get_collection(self.chroma_collection_name)
+        for attempt in range(self._max_retries):
+            collection = await self._chroma_client.get_collection(self._collection_name)
             try:
                 results = await collection.query(
-                    query_embeddings=query_embeddings,  # pyright: ignore - ChromaDB supports batch queries natively
-                    n_results=self.n_results,
+                    query_embeddings=query_embeddings,  # pyright: ignore[reportArgumentType]
+                    n_results=self._retrieval_config.n_results,
                 )
                 return results
             except Exception as e:
-                if attempt < self.max_retries - 1:
+                if attempt < self._max_retries - 1:
+                    wait_time = self._initial_retry_delay * (1.5**attempt)
                     logger.error(
-                        f"ChromaDB query attempt {attempt + 1}/{self.max_retries} failed: {e}. Retrying in {self.initial_retry_delay * (1.5**attempt)}s..."
+                        f"ChromaDB query attempt {attempt + 1}/{self._max_retries} "
+                        f"failed: {e}. Retrying in {wait_time}s..."
                     )
-                    await asyncio.sleep(self.initial_retry_delay * (1.5**attempt))
+                    await asyncio.sleep(wait_time)
                     continue
                 raise e
 
         raise RuntimeError("All ChromaDB query attempts failed")
 
-    async def invoke(self, tool_call: ToolCall) -> list[Message]:
-        if tool_call.function.name != "search":
-            raise ValueError(f"Invalid tool name: {tool_call.function.name}")
+    @tool
+    async def search(
+        self,
+        query_list: Annotated[
+            list[str],
+            "A list of fully-formed semantic queries. The tool will return search results for each query.",
+        ],
+    ) -> ToolResult:
+        """Search Wikipedia for relevant information based on the given query."""
+        async with _CONNECTION_SEMAPHORE:
+            embeddings = await self._get_embeddings_with_retry(query_list)
+            results = await self._query_chroma_with_retry(embeddings)
 
-        # Parse arguments with error handling
-        try:
-            args = json.loads(tool_call.function.arguments)
-        except json.JSONDecodeError as e:
-            return [
-                Message(
-                    role="tool",
-                    content=f"Error invoking search tool: Invalid JSON in arguments - {str(e)}",
-                )
-            ]
-
-        query_list = args.get("query_list")
-        if not isinstance(query_list, list):
-            return [
-                Message(role="tool", content="Error invoking search tool: query_list is required")
-            ]
-        if not query_list or not all(
-            isinstance(query, str) and query.strip() for query in query_list
-        ):
-            return [
-                Message(
-                    role="tool",
-                    content="Error invoking search tool: query_list must be a list of non-empty strings",
-                )
-            ]
-
-        query_embeddings = await self._get_embeddings_with_retry(query_list)
-
-        results = await self._query_chroma_with_retry(
-            query_embeddings=query_embeddings,
-        )
-        assert results["documents"] is not None
-
-        # assemble into a single tool call return message
+        # Format same as original ChromaToolClient.invoke()
         message_content = ""
-        for query, documents in zip(query_list, results["documents"]):
+        documents_list = results["documents"] or []
+        for query, documents in zip(query_list, documents_list):
             message_content += f"Query: {query}\n"
-            for document_i, document in enumerate(documents):
-                message_content += f"Document {document_i + 1}:\n"
-                message_content += f"{document}\n"
+            for doc_i, doc in enumerate(documents):
+                message_content += f"Document {doc_i + 1}:\n"
+                message_content += f"{doc}\n"
 
-        return [Message(role="tool", content=message_content)]
+        return simple_tool_result(message_content)
+
+
+@dataclass
+class TextAnswerReward:
+    """Reward function to check text answer against gold answers.
+
+    formula: format_coef * (correct_format - 1) + correct_answer
+    """
+
+    gold_answers: list[str]
+    format_coef: float = 0.1
+
+    async def __call__(self, history: list[Message]) -> tuple[float, dict[str, float]]:
+        """Grade the completed episode by checking the final assistant message."""
+        # Find the last assistant message
+        final_message = None
+        for msg in reversed(history):
+            if msg.get("role") == "assistant":
+                final_message = msg
+                break
+
+        if final_message is None:
+            return 0.0, {"format": 0.0, "correct": 0.0}
+
+        # Use get_text_content to properly handle thinking models (o1, o3)
+        content = get_text_content(final_message)
+
+        correct_format = float(self._extract_answer(content) is not None)
+        correct_answer = float(self._check_answer(content))
+
+        reward = self.format_coef * (correct_format - 1) + correct_answer
+        return reward, {"format": correct_format, "correct": correct_answer}
+
+    def _extract_answer(self, text: str) -> str | None:
+        if "Answer:" not in text:
+            return None
+        parts = text.split("Answer:")
+        if len(parts) != 2:
+            return None
+        return parts[1].strip()
+
+    def _check_answer(self, text: str) -> bool:
+        model_answer = self._extract_answer(text)
+        if model_answer is None or len(self.gold_answers) == 0:
+            return False
+        for gold in self.gold_answers:
+            if normalize_answer(model_answer) == normalize_answer(gold):
+                return True
+        return False

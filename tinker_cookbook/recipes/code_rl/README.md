@@ -6,7 +6,11 @@ Competitive programming problems are a common testbed for RL with LLMs. The rece
 
 ### Sandboxing
 
-Sandboxing is essential for safely executing generated code during training and evaluation. We use [Sandbox Fusion](https://bytedance.github.io/SandboxFusion/) to sandbox code execution. You can start a local sandbox in Docker with:
+Sandboxing is essential for safely executing generated code during training and evaluation. Two sandbox backends are supported:
+
+#### SandboxFusion (Default)
+
+[Sandbox Fusion](https://bytedance.github.io/SandboxFusion/) provides local Docker-based sandboxing. You can start a local sandbox in Docker with:
 
 ```bash
 docker run -it -p 8080:8080 \
@@ -21,6 +25,27 @@ export SANDBOX_URL=http://localhost:8080/run_code
 ```
 
 If you prefer not to use Docker, you can set up the sandbox manually by following the instructions in the [Sandbox Fusion repository](https://github.com/bytedance/SandboxFusion?tab=readme-ov-file#installation).
+
+#### Modal (Alternative)
+
+[Modal](https://modal.com/docs/guide/sandbox) provides cloud-based sandboxed execution without local Docker setup. To use Modal:
+
+1. Install Modal and authenticate:
+```bash
+pip install modal
+modal token new
+```
+
+2. Set the sandbox backend in your training command:
+```bash
+python -m tinker_cookbook.recipes.code_rl.train \
+    sandbox_backend=modal \
+    ...
+```
+
+Optional environment variables for Modal:
+- `MODAL_POOL_SIZE`: Number of concurrent sandboxes (default: 32)
+- `MODAL_CREATION_RATE_LIMIT`: Max sandboxes created per second (default: 4)
 
 ### Example command
 

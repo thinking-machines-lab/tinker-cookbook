@@ -27,6 +27,7 @@ async def get_row(
     timeout_sec: float,
     saved_path_for_trainer: str | None = None,
     saved_path_for_sampler: str | None = None,
+    ttl_seconds: int | None = 604800,
 ) -> dict:
     async def _inner():
         tstart = time.time()
@@ -56,7 +57,9 @@ async def get_row(
         fwd_result = await fwd_future.result_async()
         training_logprobs = fwd_result.loss_fn_outputs[0]["logprobs"].to_torch()
         if saved_path_for_sampler is None:
-            state_for_trainer_future = await training_client.save_state_async(name="tmp-checkpoint")
+            state_for_trainer_future = await training_client.save_state_async(
+                name="tmp-checkpoint", ttl_seconds=ttl_seconds
+            )
             state_for_trainer = await state_for_trainer_future.result_async()
             print(f"Saved state for trainer: {state_for_trainer.path}")
             sampling_client = await training_client.save_weights_and_get_sampling_client_async(
@@ -95,6 +98,7 @@ class Config:
     model_name_filter: list[str] | None = chz.field(default_factory=lambda: ["loadtest"])
     state_for_trainer: str | None = None
     state_for_sampler: str | None = None
+    ttl_seconds: int | None = 604800  # 7 days
 
 
 async def main(config: Config):
@@ -132,6 +136,7 @@ async def main(config: Config):
                 timeout_sec,
                 config.state_for_trainer,
                 config.state_for_sampler,
+                config.ttl_seconds,
             )
             for model_name in model_names
         ]

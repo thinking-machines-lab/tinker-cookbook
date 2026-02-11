@@ -37,7 +37,7 @@ training_client = service_client.create_lora_training_client(
     base_model=base_model
 )
 ```
-As the name suggests, this model was already finetuned for chat/instruction-following. You should check the details of the model you're using in their system cards.
+As the name suggests, this model was already fine-tuned for chat/instruction-following. You should check the details of the model you're using in their system cards.
 
 ## Preparing the training data
 
@@ -161,7 +161,7 @@ Input                Target               Weight
 The above example is text-only, but adding vision inputs is also straightforward. The `ModelInput` type takes a list of chunks, which can be either `EncodedTextChunk` or `ImageChunk`. For instance:
 
 ```python
-image_data = requests.get("https://thinkingmachines.ai/blog/on-policy-distillation/images/chess.png").content
+image_data = requests.get("https://raw.githubusercontent.com/thinking-machines-lab/tinker-cookbook/main/assets/tinker-cover.png").content
 model_input = tinker.ModelInput(chunks=[
   types.EncodedTextChunk(tokens=tokenizer.encode("<|im_start|>user\n<|vision_start|>")),
   types.ImageChunk(data=image_data, format="png"),
@@ -169,7 +169,7 @@ model_input = tinker.ModelInput(chunks=[
 ])
 ```
 
-Note that Qwen3-VL was trained with special tokens like `<|vision_start|>` and `<|vision_end|>`. The cookbook's `Qwen3VLRenderer` handles these automatically—see [Rendering: Vision Inputs](/rendering#vision-inputs) for details and a complete example.
+Note that Qwen3-VL was trained with special tokens like `<|vision_start|>` and `<|vision_end|>`. The cookbook's `Qwen3VLRenderer` handles these automatically—see [Rendering: Vision Inputs](/rendering#vision-inputs) for details and a complete example. Image assets are limited to 2MB.
 
 ## Performing a training update
 
@@ -294,7 +294,7 @@ training_client = await service_client.create_lora_training_client_async(base_mo
 sampling_client = await training_client.save_weights_and_get_sampling_client_async(name="sampler")
 
 # Grab an image and ask a question
-image_data = requests.get("https://thinkingmachines.ai/blog/on-policy-distillation/images/chess.png").content
+image_data = requests.get("https://raw.githubusercontent.com/thinking-machines-lab/tinker-cookbook/main/assets/tinker-cover.png").content
 model_input = tinker.ModelInput(chunks=[
     tinker.types.EncodedTextChunk(tokens=tokenizer.encode("<|im_start|>user\n<|vision_start|>")),
     tinker.types.ImageChunk(data=image_data, format="png"),

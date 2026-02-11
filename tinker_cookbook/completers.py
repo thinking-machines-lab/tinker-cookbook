@@ -88,10 +88,12 @@ class TinkerMessageCompleter(MessageCompleter):
         renderer: renderers.Renderer,
         max_tokens: int,
         stop_condition: StopCondition | None = None,
+        temperature: float = 1.0,
     ):
         self.sampling_client = sampling_client
         self.renderer = renderer
         self.max_tokens = max_tokens
+        self.temperature = temperature
         if stop_condition is None:
             self.stop_condition = self.renderer.get_stop_sequences()
         else:
@@ -106,7 +108,7 @@ class TinkerMessageCompleter(MessageCompleter):
             model_input,
             num_samples=1,
             sampling_params=tinker.SamplingParams(
-                temperature=1.0,
+                temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 stop=self.stop_condition,
             ),
