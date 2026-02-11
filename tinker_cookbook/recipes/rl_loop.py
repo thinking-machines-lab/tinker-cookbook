@@ -144,9 +144,7 @@ def main(config: Config):
         batch_end = min((batch_idx + 1) * config.batch_size, len(train_dataset))
         batch_rows = train_dataset.select(range(batch_start, batch_end))
 
-        sampling_client = training_client.save_weights_and_get_sampling_client(
-            name=f"{batch_idx:06d}"
-        )
+        sampling_client = training_client.save_weights_and_get_sampling_client()
 
         datums_D: list[types.Datum] = []
         rewards_P: list[float] = []
