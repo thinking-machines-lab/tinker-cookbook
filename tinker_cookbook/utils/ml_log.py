@@ -90,6 +90,10 @@ class Logger(ABC):
         """Log long text content (optional to implement)."""
         pass
 
+    def log_trajectories(self, step: int, trajectory_groups, tokenizer) -> None:
+        """Log trajectory data (optional to implement)."""
+        pass
+
     def close(self) -> None:
         """Cleanup when done (optional to implement)."""
         pass
@@ -361,6 +365,12 @@ class MultiplexLogger(Logger):
             if hasattr(logger, "log_long_text"):
                 logger.log_long_text(key, text)
 
+    def log_trajectories(self, step: int, trajectory_groups, tokenizer) -> None:
+        """Forward log_trajectories to all child loggers."""
+        for logger in self.loggers:
+            if hasattr(logger, "log_trajectories"):
+                logger.log_trajectories(step, trajectory_groups, tokenizer)
+
     def close(self) -> None:
         """Close all child loggers."""
         for logger in self.loggers:
@@ -387,6 +397,8 @@ def setup_logging(
     wandb_name: str | None = None,
     config: Any | None = None,
     do_configure_logging_module: bool = True,
+    hf_dataset_repo: str | None = None,
+    hf_dataset_private: bool = True,
 ) -> Logger:
     """
     Set up logging infrastructure with multiple backends.
@@ -463,6 +475,23 @@ def setup_logging(
             )
         )
         print(f"Trackio logging enabled for project: {wandb_project}")
+
+    # Add HF dataset logger if configured
+    if hf_dataset_repo:
+        try:
+            from tinker_cookbook.utils.hf_dataset_logger import HfDatasetLogger
+
+            loggers.append(
+                HfDatasetLogger(
+                    repo_id=hf_dataset_repo,
+                    log_dir=log_dir_path,
+                    private=hf_dataset_private,
+                )
+            )
+        except ImportError:
+            print("WARNING: huggingface_hub not installed. Skipping HF dataset logging.")
+        except Exception as e:
+            print(f"WARNING: Failed to set up HF dataset logging: {e}")
 
     # Create multiplex logger
     ml_logger = MultiplexLogger(loggers)

@@ -165,6 +165,10 @@ class Config:
     # Maximum number of training steps. If None, train on the full dataset.
     max_step: int | None = None
 
+    # HuggingFace dataset logging
+    hf_dataset_repo: str | None = None  # e.g. "username/my-distillation-completions"
+    hf_dataset_private: bool = True  # Create repo as private
+
 
 @scope
 async def prepare_minibatch(
@@ -333,6 +337,10 @@ async def do_sync_training(
             if trajectory_group is not None
         ]
 
+        # Log trajectories to HF dataset if configured
+        if cfg.hf_dataset_repo:
+            ml_logger.log_trajectories(i_batch, trajectory_groups_P, tokenizer)
+
         # Train step
         sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(
             cfg,
@@ -362,6 +370,8 @@ async def main(
         wandb_project=cfg.wandb_project,
         config=cfg,
         wandb_name=cfg.wandb_name,
+        hf_dataset_repo=cfg.hf_dataset_repo,
+        hf_dataset_private=cfg.hf_dataset_private,
     )
     if cfg.enable_trace:
         # Get and rename the current (main) task
