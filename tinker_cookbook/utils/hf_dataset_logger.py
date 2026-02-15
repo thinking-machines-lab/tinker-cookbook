@@ -5,6 +5,7 @@ files to a HuggingFace Hub dataset repo using CommitScheduler for background
 uploads.
 """
 
+import itertools
 import logging
 from pathlib import Path
 from typing import Any
@@ -152,6 +153,7 @@ class HfDatasetLogger(Logger):
             exist_ok=True,
         )
         self._api = api
+        self._write_counter = itertools.count()
 
         self.scheduler = CommitScheduler(
             repo_id=repo_id,
@@ -278,7 +280,8 @@ class HfDatasetLogger(Logger):
 
         if rows["step"]:
             ds = Dataset.from_dict(rows)
-            path = self.parquet_dir / f"completions_{step:06d}.parquet"
+            seq = next(self._write_counter)
+            path = self.parquet_dir / f"completions_{step:06d}_{seq:04d}.parquet"
             ds.to_parquet(str(path))
             logger.info("HfDatasetLogger: wrote %d rows to %s", len(ds), path)
 
