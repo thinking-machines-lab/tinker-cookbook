@@ -12,6 +12,7 @@ from tinker_cookbook import model_info
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.recipes.math_with_confidence.env import (
     BrierRewardMode,
+    DEFAULT_CONSISTENCY_GRADER_MODEL,
     MathWithConfidenceEnv,
     get_dataset_builder,
     parse_answer_and_confidence,
@@ -33,8 +34,11 @@ class InteractiveConfig:
     seed: int = 0
 
     alpha: float = 0.2
+    consistency_coef: float = 0.1
     brier_reward_mode: BrierRewardMode = "negative_squared_error"
     include_fewshot: bool = True
+    consistency_grader_model_name: str = DEFAULT_CONSISTENCY_GRADER_MODEL
+    consistency_grader_max_tokens: int = 256
 
     max_tokens: int = 768
     temperature: float = 0.7
@@ -51,6 +55,7 @@ def _make_result_table(
     correct: float,
     confidence: float,
     brier_term: float,
+    consistency: float,
     valid_format: bool,
 ) -> Table:
     table = Table(title="Grading Result")
@@ -61,6 +66,7 @@ def _make_result_table(
     table.add_row("correct", f"[{_metric_style(correct)}]{correct:.3f}[/]")
     table.add_row("confidence", f"[cyan]{confidence:.3f}[/]")
     table.add_row("brier_term", f"[{_metric_style(brier_term)}]{brier_term:.4f}[/]")
+    table.add_row("consistency", f"[{_metric_style(consistency)}]{consistency:.4f}[/]")
     table.add_row("total_reward", f"[{_metric_style(reward)}]{reward:.4f}[/]")
     return table
 
@@ -75,8 +81,12 @@ async def cli_main(cfg: InteractiveConfig):
         renderer_name=renderer_name,
         group_size=1,
         alpha=cfg.alpha,
+        consistency_coef=cfg.consistency_coef,
         brier_reward_mode=cfg.brier_reward_mode,
         include_fewshot=cfg.include_fewshot,
+        base_url=cfg.base_url,
+        consistency_grader_model_name=cfg.consistency_grader_model_name,
+        consistency_grader_max_tokens=cfg.consistency_grader_max_tokens,
         seed=cfg.seed,
     )
     train_ds, test_ds = await dataset_builder()
@@ -119,6 +129,7 @@ async def cli_main(cfg: InteractiveConfig):
         confidence = float(step.metrics.get("confidence", 0.0))
         correct = float(step.metrics.get("correct", 0.0))
         brier_term = float(step.metrics.get("brier_term", 0.0))
+        consistency = float(step.metrics.get("consistency", 0.0))
 
         console.rule(f"Example batch={batch_index}")
         console.print(Panel(prompt_text, title="Prompt", border_style="blue"))
@@ -141,7 +152,25 @@ async def cli_main(cfg: InteractiveConfig):
             console.print(
                 Panel(parsed.parse_error, title="Format Parse Error", border_style="red"),
             )
-        console.print(_make_result_table(step.reward, correct, confidence, brier_term, parsed.valid_format))
+        grader_response = str(step.logs.get("consistency_grader_response", "")).strip()
+        if grader_response:
+            console.print(
+                Panel(
+                    grader_response,
+                    title="Consistency Grader Response",
+                    border_style="yellow",
+                )
+            )
+        console.print(
+            _make_result_table(
+                step.reward,
+                correct,
+                confidence,
+                brier_term,
+                consistency,
+                parsed.valid_format,
+            )
+        )
 
         if cfg.pause_between_examples and batch_index < cfg.start_batch_index + cfg.num_examples - 1:
             if not Confirm.ask("Continue to next example?", default=True):

@@ -8,6 +8,7 @@ from tinker.types import LossFnType
 from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.recipes.math_with_confidence.env import (
     BrierRewardMode,
+    DEFAULT_CONSISTENCY_GRADER_MODEL,
     get_dataset_builder,
 )
 from tinker_cookbook.rl.train import AsyncConfig, Config, main
@@ -25,8 +26,11 @@ class CLIConfig:
     dataset_name: Literal["math", "polaris", "deepmath", "gsm8k"] = "math"
     seed: int = 0
     alpha: float = 0.2
+    consistency_coef: float = 0.1
     brier_reward_mode: BrierRewardMode = "negative_squared_error"
     include_fewshot: bool = True
+    consistency_grader_model_name: str = DEFAULT_CONSISTENCY_GRADER_MODEL
+    consistency_grader_max_tokens: int = 256
 
     # Training hyperparameters
     group_size: int = 32
@@ -61,13 +65,24 @@ async def cli_main(cli_config: CLIConfig):
         cli_config.model_name
     )
     model_name_slug = cli_config.model_name.replace("/", "-")
-    run_name = (
-        f"{cli_config.dataset_name}-{model_name_slug}"
-        f"-alpha{cli_config.alpha}-brier-{cli_config.brier_reward_mode}"
-        f"-{cli_config.group_size}group-{cli_config.groups_per_batch}batch"
-        f"-{cli_config.learning_rate}lr-seed{cli_config.seed}"
-        f"-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
-    )
+    default_cfg = CLIConfig()
+    run_parts = [f"{cli_config.dataset_name}-{model_name_slug}"]
+    if cli_config.alpha != default_cfg.alpha:
+        run_parts.append(f"alpha{cli_config.alpha:g}")
+    if cli_config.consistency_coef != default_cfg.consistency_coef:
+        run_parts.append(f"consis{cli_config.consistency_coef:g}")
+    if cli_config.brier_reward_mode != default_cfg.brier_reward_mode:
+        run_parts.append(f"brier-{cli_config.brier_reward_mode}")
+    if cli_config.group_size != default_cfg.group_size:
+        run_parts.append(f"{cli_config.group_size}group")
+    if cli_config.groups_per_batch != default_cfg.groups_per_batch:
+        run_parts.append(f"{cli_config.groups_per_batch}batch")
+    if cli_config.learning_rate != default_cfg.learning_rate:
+        run_parts.append(f"{cli_config.learning_rate:g}lr")
+    if cli_config.seed != default_cfg.seed:
+        run_parts.append(f"seed{cli_config.seed}")
+    run_parts.append(datetime.now().strftime("%Y-%m-%d-%H-%M"))
+    run_name = "-".join(run_parts)
     log_path = cli_config.log_path or f"/tmp/tinker-examples/math_with_confidence/{run_name}"
     wandb_name = cli_config.wandb_name or run_name
 
@@ -80,8 +95,12 @@ async def cli_main(cli_config: CLIConfig):
             renderer_name=renderer_name,
             group_size=cli_config.group_size,
             alpha=cli_config.alpha,
+            consistency_coef=cli_config.consistency_coef,
             brier_reward_mode=cli_config.brier_reward_mode,
             include_fewshot=cli_config.include_fewshot,
+            base_url=cli_config.base_url,
+            consistency_grader_model_name=cli_config.consistency_grader_model_name,
+            consistency_grader_max_tokens=cli_config.consistency_grader_max_tokens,
             seed=cli_config.seed,
         ),
         model_name=cli_config.model_name,
