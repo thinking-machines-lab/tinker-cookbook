@@ -25,9 +25,9 @@ class CLIConfig:
     # Environment configuration
     dataset_name: Literal["math", "polaris", "deepmath", "gsm8k"] = "math"
     seed: int = 0
-    alpha: float = 0.2
-    consistency_coef: float = 0.1
-    brier_reward_mode: BrierRewardMode = "negative_squared_error"
+    alpha: float = 0.5
+    consistency_coef: float = 0.2
+    brier_reward_mode: BrierRewardMode = "one_minus_squared_error"
     include_fewshot: bool = True
     consistency_grader_model_name: str = DEFAULT_CONSISTENCY_GRADER_MODEL
     consistency_grader_max_tokens: int = 256

@@ -168,9 +168,9 @@ class MathWithConfidenceEnv(ProblemEnv):
         convo_prefix: list[renderers.Message] | None = None,
         grader: Literal["sympy", "math_verify"] = "sympy",
         timeout: float = 1.0,
-        alpha: float = 0.2,
-        consistency_coef: float = 0.0,
-        brier_reward_mode: BrierRewardMode = "negative_squared_error",
+        alpha: float = 0.5,
+        consistency_coef: float = 0.2,
+        brier_reward_mode: BrierRewardMode = "one_minus_squared_error",
         consistency_grader: MessageCompleter | None = None,
     ):
         # format_coef is set to 0.0 because reward is handled explicitly in step()
@@ -203,7 +203,7 @@ class MathWithConfidenceEnv(ProblemEnv):
                 "role": "assistant",
                 "content": (
                     "Let's spell it out: s t r a w b e r r y, so there are three r's. "
-                    "<answer>3</answer><confidence>0.99</confidence>"
+                    "<answer>3</answer><confidence>0.9</confidence>"
                 ),
             },
         ]
@@ -311,9 +311,9 @@ class MathWithConfidenceDataset(math_env.MathDataset):
         convo_prefix: list[renderers.Message] | None = None,
         split: Literal["train", "test"] = "train",
         seed: int = 0,
-        alpha: float = 0.2,
-        consistency_coef: float = 0.0,
-        brier_reward_mode: BrierRewardMode = "negative_squared_error",
+        alpha: float = 0.5,
+        consistency_coef: float = 0.2,
+        brier_reward_mode: BrierRewardMode = "one_minus_squared_error",
         consistency_grader: MessageCompleter | None = None,
     ):
         super().__init__(
@@ -361,9 +361,9 @@ class PolarisWithConfidenceDataset(math_env.PolarisDataset):
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None = None,
         seed: int = 0,
-        alpha: float = 0.2,
-        consistency_coef: float = 0.0,
-        brier_reward_mode: BrierRewardMode = "negative_squared_error",
+        alpha: float = 0.5,
+        consistency_coef: float = 0.2,
+        brier_reward_mode: BrierRewardMode = "one_minus_squared_error",
         consistency_grader: MessageCompleter | None = None,
     ):
         super().__init__(
@@ -410,9 +410,9 @@ class DeepMathWithConfidenceDataset(math_env.DeepMathDataset):
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None = None,
         seed: int = 0,
-        alpha: float = 0.2,
-        consistency_coef: float = 0.0,
-        brier_reward_mode: BrierRewardMode = "negative_squared_error",
+        alpha: float = 0.5,
+        consistency_coef: float = 0.2,
+        brier_reward_mode: BrierRewardMode = "one_minus_squared_error",
         consistency_grader: MessageCompleter | None = None,
     ):
         super().__init__(
@@ -460,9 +460,9 @@ class Gsm8kWithConfidenceDataset(math_env.Gsm8kDataset):
         convo_prefix: list[renderers.Message] | None = None,
         split: Literal["train", "test"] = "train",
         seed: int = 0,
-        alpha: float = 0.2,
-        consistency_coef: float = 0.0,
-        brier_reward_mode: BrierRewardMode = "negative_squared_error",
+        alpha: float = 0.5,
+        consistency_coef: float = 0.2,
+        brier_reward_mode: BrierRewardMode = "one_minus_squared_error",
         consistency_grader: MessageCompleter | None = None,
     ):
         super().__init__(
@@ -510,9 +510,9 @@ class MathWithConfidenceDatasetBuilder(RLDatasetBuilder):
     model_name_for_tokenizer: str
     renderer_name: str
     group_size: int
-    alpha: float = 0.2
-    consistency_coef: float = 0.1
-    brier_reward_mode: BrierRewardMode = "negative_squared_error"
+    alpha: float = 0.5
+    consistency_coef: float = 0.2
+    brier_reward_mode: BrierRewardMode = "one_minus_squared_error"
     include_fewshot: bool = True
     base_url: str | None = None
     consistency_grader_model_name: str = DEFAULT_CONSISTENCY_GRADER_MODEL
