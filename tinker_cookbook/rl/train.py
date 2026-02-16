@@ -284,19 +284,58 @@ class AsyncConfig:
 
 @chz.chz
 class Config:
+    """Configuration for RL training.
+
+    Start with the "Core parameters" section below. Most users only need to set
+    those fields. The later sections are for advanced training modes and
+    algorithmic customization.
+    """
+
+    # -------------------------------------------------------------------------
+    # Core parameters (recommended to set for nearly all runs)
+    # -------------------------------------------------------------------------
+    # Base learning rate used by Adam.
     learning_rate: float
-    dataset_builder: RLDatasetBuilder  # also determines batch size
+    # Builds the RL dataset; also determines number of groups per batch.
+    dataset_builder: RLDatasetBuilder
+    # Base model to train.
     model_name: str
+    # Maximum number of generated tokens per rollout trajectory.
     max_tokens: int
-    temperature: float = 1.0  # Changing sampling temperature is not generally recommended; does not currently play well with KL penalty
-    compute_post_kl: bool = False
-    evaluator_builders: list[SamplingClientEvaluatorBuilder] = chz.field(default_factory=list)
+    # Directory for checkpoints, logs, and traces.
+    log_path: str = chz.field(munger=lambda _, s: os.path.expanduser(s))
+    # LoRA rank for the training adapter.
     lora_rank: int = 32
+    # Evaluation cadence in training iterations (0 = disabled).
+    eval_every: int = 20
+    # Checkpoint cadence in training iterations (0 = disabled).
+    save_every: int = 20
+    # Optional evaluators run during training.
+    evaluator_builders: list[SamplingClientEvaluatorBuilder] = chz.field(default_factory=list)
+    # TTL for checkpoints in seconds, i.e. how long checkpoints should live
+    # before expiry (None = no expiry).
+    ttl_seconds: int | None = 604800  # 7 days
+    # Start training from weights at this checkpoint (fresh optimizer state).
+    load_checkpoint_path: str | None = None
+    # Optional service base URL override.
+    base_url: str | None = None
+    # Optional W&B project and run name.
+    wandb_project: str | None = None
+    wandb_name: str | None = None
 
+    # -------------------------------------------------------------------------
+    # KL penalty configuration (advanced)
+    # -------------------------------------------------------------------------
+    # KL penalty coefficient against reference policy (0 = disabled).
     kl_penalty_coef: float = 0.0
+    # Optional position discount for KL penalty terms.
     kl_discount_factor: float = 0.0
-    kl_reference_config: KLReferenceConfig | None = None  # Required when kl_penalty_coef > 0
+    # Required when kl_penalty_coef > 0.
+    kl_reference_config: KLReferenceConfig | None = None
 
+    # -------------------------------------------------------------------------
+    # Loss and optimizer behavior (advanced)
+    # -------------------------------------------------------------------------
     # Loss function and configuration.
     # See https://tinker-docs.thinkingmachines.ai/losses
     loss_fn: LossFnType = "importance_sampling"
@@ -306,23 +345,31 @@ class Config:
     # Useful for very large batch sizes.
     num_substeps: int = 1
 
-    wandb_project: str | None = None
-    wandb_name: str | None = None
-
-    log_path: str = chz.field(munger=lambda _, s: os.path.expanduser(s))
-    base_url: str | None = None
+    # -------------------------------------------------------------------------
+    # Sampling and diagnostics (advanced)
+    # -------------------------------------------------------------------------
+    # Changing sampling temperature is not generally recommended; T=1 is near-optimal
+    # for most post-trained models, and non-1 temperatures currently do not play
+    # well with KL penalty.
+    temperature: float = 1.0
+    # Compute extra post-update KL metrics (adds overhead).
+    compute_post_kl: bool = False
+    # Remove groups where all trajectories have identical reward.
+    remove_constant_reward_groups: bool = False
+    # Emit async trace events for debugging/profiling.
     enable_trace: bool = False
 
-    remove_constant_reward_groups: bool = False
-    eval_every: int = 20  # 0 = disabled
-    save_every: int = 20  # 0 = disabled
-    ttl_seconds: int | None = 604800  # 7 days
-    load_checkpoint_path: str | None = None
-
+    # -------------------------------------------------------------------------
+    # Execution mode knobs (advanced)
+    # -------------------------------------------------------------------------
+    # Enable async/off-policy training mode when set.
     async_config: AsyncConfig | None = None
+    # Enable sync training with streaming minibatches when set.
     stream_minibatch_config: StreamMinibatchConfig | None = None
 
-    # Logtree configuration
+    # -------------------------------------------------------------------------
+    # Logging detail (advanced)
+    # -------------------------------------------------------------------------
     num_groups_to_log: int = 4  # Number of groups to log per iteration (0 = disable logging)
 
 
