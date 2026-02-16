@@ -1,4 +1,4 @@
-"""HuggingFace Dataset logger for tinker-cookbook RL training.
+"""HuggingFace Dataset logger for tinker-cookbook on-policy training.
 
 Pushes trajectory data (prompts, completions, rewards, advantages) as parquet
 files to a HuggingFace Hub dataset repo using CommitScheduler for background
@@ -91,7 +91,7 @@ def _build_dataset_card(config_dict: dict[str, Any], repo_id: str) -> str:
 
     return f"""\
 ---
-pretty_name: "tinker-cookbook RL completion logs"
+pretty_name: "tinker-cookbook completion logs"
 tags:
 {tags_yaml}
 ---
@@ -227,7 +227,7 @@ class HfDatasetLogger(Logger):
                 prompt_text = tokenizer.decode(prompt_tokens)
 
                 # Collect per-step detail and aggregate totals
-                total_action_tokens = 0
+                all_action_tokens: list[int] = []
                 per_step_observations: list[str] = []
                 per_step_completions: list[str] = []
                 per_step_rewards: list[float] = []
@@ -245,7 +245,7 @@ class HfDatasetLogger(Logger):
                     # Decode action/completion at this step
                     per_step_completions.append(tokenizer.decode(transition.ac.tokens))
                     per_step_response_lengths.append(len(transition.ac.tokens))
-                    total_action_tokens += len(transition.ac.tokens)
+                    all_action_tokens.extend(transition.ac.tokens)
 
                     per_step_rewards.append(transition.reward)
                     per_step_logprobs.append(
@@ -254,8 +254,8 @@ class HfDatasetLogger(Logger):
                         else []
                     )
 
-                # Full completion = concatenation of all action texts
-                completion_text = "".join(per_step_completions)
+                # Decode all action tokens together for BPE-correct completion text
+                completion_text = tokenizer.decode(all_action_tokens)
 
                 # Episode done from last transition
                 episode_done = traj.transitions[-1].episode_done
@@ -268,7 +268,7 @@ class HfDatasetLogger(Logger):
                 rows["reward"].append(float(total_reward))
                 rows["advantage"].append(float(advantage))
                 rows["prompt_length"].append(len(prompt_tokens))
-                rows["response_length"].append(total_action_tokens)
+                rows["response_length"].append(len(all_action_tokens))
                 rows["final_reward"].append(float(traj_group.final_rewards_G[i_traj]))
                 rows["episode_done"].append(episode_done)
                 rows["num_steps"].append(len(traj.transitions))

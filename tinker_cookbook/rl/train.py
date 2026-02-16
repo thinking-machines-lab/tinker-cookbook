@@ -440,8 +440,7 @@ async def do_sync_training_with_stream_minibatch(
                 )
                 metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
                 if trajectory_group is not None:
-                    if cfg.hf_dataset_repo:
-                        ml_logger.log_trajectories(i_batch, [trajectory_group], tokenizer)
+                    ml_logger.log_trajectories(i_batch, [trajectory_group], tokenizer)
                     trajectory_groups_queue.put_nowait(
                         WrappedTrajectoryGroup(
                             trajectory_group=trajectory_group,
@@ -579,10 +578,7 @@ async def do_async_training(
             if trajectory_group is None:
                 trajectory_groups_queue.put_nowait(None)
             else:
-                if cfg.hf_dataset_repo:
-                    ml_logger.log_trajectories(
-                        sampling_client_step_copy, [trajectory_group], tokenizer
-                    )
+                ml_logger.log_trajectories(sampling_client_step_copy, [trajectory_group], tokenizer)
                 metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
                 trajectory_groups_queue.put_nowait(
                     WrappedTrajectoryGroup(
@@ -1101,9 +1097,7 @@ async def do_sync_training(
         if cfg.remove_constant_reward_groups:
             trajectory_groups_P = remove_constant_reward_groups(trajectory_groups_P)
 
-        # Log trajectories to HF dataset if configured
-        if cfg.hf_dataset_repo:
-            ml_logger.log_trajectories(i_batch, trajectory_groups_P, tokenizer)
+        ml_logger.log_trajectories(i_batch, trajectory_groups_P, tokenizer)
 
         # Train step
         sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(

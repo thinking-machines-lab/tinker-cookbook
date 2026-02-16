@@ -337,9 +337,7 @@ async def do_sync_training(
             if trajectory_group is not None
         ]
 
-        # Log trajectories to HF dataset if configured
-        if cfg.hf_dataset_repo:
-            ml_logger.log_trajectories(i_batch, trajectory_groups_P, tokenizer)
+        ml_logger.log_trajectories(i_batch, trajectory_groups_P, tokenizer)
 
         # Train step
         sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(
