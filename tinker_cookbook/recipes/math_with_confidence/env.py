@@ -26,23 +26,53 @@ _CONSISTENCY_SCORE_RE = re.compile(r"<score>\s*(.*?)\s*</score>", re.DOTALL)
 CONSISTENCY_GRADER_PROMPT = """You will evaluate whether the assistant's verbal confidence matches its numeric confidence.
 
 Given:
-- The full assistant response
-- The numeric confidence from <confidence>...</confidence>
+- The assistant response, including <answer>...</answer><confidence>...</confidence>
 
-Score rubric:
-- 1.0: Verbal confidence and numeric confidence are strongly consistent.
-- 0.5: Partially consistent or ambiguous.
-- 0.0: Clearly inconsistent.
+Detailed confidence calibration guidance:
+- The goal is *alignment* between numeric confidence and verbal framing.
+- Judge the language near the final answer (including caveats, hedges, certainty claims, and uncertainty statements).
+- Consider task context: chance level depends on solution space.
+  - Example: for binary true/false, 0.55 is barely above chance.
+  - For large open-ended spaces, 0.55 can still indicate meaningful but limited confidence.
+- Do not reward generic confidence talk if it does not match the numeric value.
+
+Expected verbal style by numeric band:
+- >= 0.97:
+  - Can express near-full confidence.
+  - Strong certainty language is appropriate, with little or no hedging.
+- 0.90 to < 0.97:
+  - High confidence, but should still acknowledge a plausible failure mode, assumption, or possible mistake.
+  - Should not read as absolute certainty.
+- 0.60 to < 0.90:
+  - Should read as materially uncertain / best-effort.
+  - Should include meaningful hedging, uncertainty framing, or caveats.
+  - Overly definitive wording is a mismatch.
+- < 0.60:
+  - Should clearly communicate low trustworthiness of the conclusion.
+  - Should indicate that the answer may be unreliable, speculative, or weakly supported.
+  - Confident/definitive claims are strongly inconsistent.
+
+Scoring rubric:
+- 1.0:
+  - Verbal framing closely matches the expected style for the numeric band.
+  - Caveats/hedges/certainty strength are proportionate to the number.
+  - No important contradictions.
+- 0.5:
+  - Partially aligned but imperfect.
+  - Some mismatch in intensity, or unclear/mixed confidence signals.
+  - Missing caveat when one is expected, but still not blatantly contradictory.
+- 0.0:
+  - Clear contradiction between number and language.
+  - Examples:
+    - Very high number with strong uncertainty language ("just guessing", "probably wrong").
+    - Low number with definitive certainty language ("definitely correct", "no doubt").
+    - High-but-not-absolute band (0.90-0.97) presented as complete certainty without any caveat.
 
 Output only: <score>0.0_to_1.0</score>
 
-<assistant_response>
-{assistant_response}
-</assistant_response>
-
-<numeric_confidence>
-{numeric_confidence}
-</numeric_confidence>
+<response>
+{response}
+</response>
 """
 
 
@@ -105,15 +135,12 @@ def compute_brier_term(y: float, p: float, mode: BrierRewardMode) -> float:
     raise ValueError(f"Unsupported brier mode: {mode}")
 
 
-def build_consistency_grader_prompt(
-    assistant_response: str, numeric_confidence: float
-) -> list[Message]:
+def build_consistency_grader_prompt(response: str) -> list[Message]:
     return [
         {
             "role": "user",
             "content": CONSISTENCY_GRADER_PROMPT.format(
-                assistant_response=assistant_response,
-                numeric_confidence=f"{numeric_confidence:.6f}",
+                response=response,
             ),
         }
     ]
@@ -223,11 +250,9 @@ class MathWithConfidenceEnv(ProblemEnv):
             self.consistency_coef != 0.0
             and self.consistency_grader is not None
             and parsed.valid_format
-            and parsed.confidence is not None
         ):
             grader_prompt = build_consistency_grader_prompt(
-                assistant_response=content,
-                numeric_confidence=parsed.confidence,
+                response=content,
             )
             grader_msg = await self.consistency_grader(grader_prompt)
             grader_text = renderers.get_text_content(grader_msg)
