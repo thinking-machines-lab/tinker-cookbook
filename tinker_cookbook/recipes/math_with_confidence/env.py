@@ -173,11 +173,12 @@ def build_consistency_v2_grader_prompt(response_body: str) -> list[Message]:
 
 def extract_consistency_score(grader_response: str) -> float:
     match = _CONSISTENCY_SCORE_RE.search(grader_response)
-    if match is None:
-        logger.warning("Consistency grader returned no <score> tag. Response: %s", grader_response[:300])
-        return 0.0
+    if match is not None:
+        score_str = match.group(1)
+    else:
+        score_str = grader_response.strip()
     try:
-        value = float(match.group(1))
+        value = float(score_str)
     except ValueError:
         logger.warning("Consistency grader returned invalid score: %s", grader_response[:100])
         return 0.0
