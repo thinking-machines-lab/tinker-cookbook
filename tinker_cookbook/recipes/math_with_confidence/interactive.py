@@ -34,7 +34,6 @@ class InteractiveConfig:
     seed: int = 0
 
     alpha: float = 0.5
-    consistency_coef: float = 0.0
     consistency_v2_coef: float = 0.0
     brier_reward_mode: BrierRewardMode = "one_minus_squared_error"
     include_fewshot: bool = True
@@ -56,7 +55,6 @@ def _make_result_table(
     correct: float,
     confidence: float,
     brier_term: float,
-    consistency: float,
     consistency_v2: float,
     valid_format: bool,
 ) -> Table:
@@ -68,7 +66,6 @@ def _make_result_table(
     table.add_row("correct", f"[{_metric_style(correct)}]{correct:.3f}[/]")
     table.add_row("confidence", f"[cyan]{confidence:.3f}[/]")
     table.add_row("brier_term", f"[{_metric_style(brier_term)}]{brier_term:.4f}[/]")
-    table.add_row("consistency", f"[{_metric_style(consistency)}]{consistency:.4f}[/]")
     table.add_row("consistency_v2", f"[{_metric_style(consistency_v2)}]{consistency_v2:.4f}[/]")
     table.add_row("total_reward", f"[{_metric_style(reward)}]{reward:.4f}[/]")
     return table
@@ -84,7 +81,6 @@ async def cli_main(cfg: InteractiveConfig):
         renderer_name=renderer_name,
         group_size=1,
         alpha=cfg.alpha,
-        consistency_coef=cfg.consistency_coef,
         consistency_v2_coef=cfg.consistency_v2_coef,
         brier_reward_mode=cfg.brier_reward_mode,
         include_fewshot=cfg.include_fewshot,
@@ -133,7 +129,6 @@ async def cli_main(cfg: InteractiveConfig):
         confidence = float(step.metrics.get("confidence", 0.0))
         correct = float(step.metrics.get("correct", 0.0))
         brier_term = float(step.metrics.get("brier_term", 0.0))
-        consistency = float(step.metrics.get("consistency", 0.0))
         consistency_v2 = float(step.metrics.get("consistency_v2", 0.0))
 
         console.rule(f"Example batch={batch_index}")
@@ -157,15 +152,6 @@ async def cli_main(cfg: InteractiveConfig):
             console.print(
                 Panel(parsed.parse_error, title="Format Parse Error", border_style="red"),
             )
-        grader_response = str(step.logs.get("consistency_grader_response", "")).strip()
-        if grader_response:
-            console.print(
-                Panel(
-                    grader_response,
-                    title="Consistency Grader Response",
-                    border_style="yellow",
-                )
-            )
         grader_response_v2 = str(step.logs.get("consistency_v2_grader_response", "")).strip()
         if grader_response_v2:
             console.print(
@@ -181,7 +167,6 @@ async def cli_main(cfg: InteractiveConfig):
                 correct,
                 confidence,
                 brier_term,
-                consistency,
                 consistency_v2,
                 parsed.valid_format,
             )

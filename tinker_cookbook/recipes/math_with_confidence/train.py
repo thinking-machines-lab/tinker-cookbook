@@ -26,7 +26,6 @@ class CLIConfig:
     dataset_name: Literal["math", "polaris", "deepmath", "gsm8k"] = "math"
     seed: int = 0
     alpha: float = 0.5
-    consistency_coef: float = 0.0
     consistency_v2_coef: float = 0.0
     brier_reward_mode: BrierRewardMode = "one_minus_squared_error"
     include_fewshot: bool = True
@@ -70,8 +69,6 @@ async def cli_main(cli_config: CLIConfig):
     run_parts = [f"{cli_config.dataset_name}-{model_name_slug}"]
     if cli_config.alpha != default_cfg.alpha:
         run_parts.append(f"alpha{cli_config.alpha:g}")
-    if cli_config.consistency_coef != default_cfg.consistency_coef:
-        run_parts.append(f"consis{cli_config.consistency_coef:g}")
     if cli_config.consistency_v2_coef != default_cfg.consistency_v2_coef:
         run_parts.append(f"consisv2{cli_config.consistency_v2_coef:g}")
     if cli_config.brier_reward_mode != default_cfg.brier_reward_mode:
@@ -98,7 +95,6 @@ async def cli_main(cli_config: CLIConfig):
             renderer_name=renderer_name,
             group_size=cli_config.group_size,
             alpha=cli_config.alpha,
-            consistency_coef=cli_config.consistency_coef,
             consistency_v2_coef=cli_config.consistency_v2_coef,
             brier_reward_mode=cli_config.brier_reward_mode,
             include_fewshot=cli_config.include_fewshot,

@@ -23,58 +23,6 @@ _ANSWER_CONFIDENCE_RE = re.compile(
 )
 _CONSISTENCY_SCORE_RE = re.compile(r"<score>\s*(.*?)\s*</score>", re.DOTALL)
 
-CONSISTENCY_GRADER_PROMPT = """You will evaluate whether the assistant's verbal confidence matches its numeric confidence.
-
-Given:
-- The assistant response, including <answer>...</answer><confidence>...</confidence>
-
-Detailed confidence calibration guidance:
-- The goal is *alignment* between numeric confidence and verbal framing.
-- Judge the language near the final answer (including caveats, hedges, certainty claims, and uncertainty statements).
-- Consider task context: chance level depends on solution space.
-  - Example: for binary true/false, 0.55 is barely above chance.
-  - For large open-ended spaces, 0.55 can still indicate meaningful but limited confidence.
-- Do not reward generic confidence talk if it does not match the numeric value.
-
-Expected verbal style by numeric band:
-- >= 0.97:
-  - Can express near-full confidence.
-  - Strong certainty language is appropriate, with little or no hedging.
-- 0.90 to < 0.97:
-  - High confidence, but should still acknowledge a plausible failure mode, assumption, or possible mistake.
-  - Should not read as absolute certainty.
-- 0.60 to < 0.90:
-  - Should read as materially uncertain / best-effort.
-  - Should include meaningful hedging, uncertainty framing, or caveats.
-  - Overly definitive wording is a mismatch.
-- < 0.60:
-  - Should clearly communicate low trustworthiness of the conclusion.
-  - Should indicate that the answer may be unreliable, speculative, or weakly supported.
-  - Confident/definitive claims are strongly inconsistent.
-
-Scoring rubric:
-- 1.0:
-  - Verbal framing closely matches the expected style for the numeric band.
-  - Caveats/hedges/certainty strength are proportionate to the number.
-  - No important contradictions.
-- 0.5:
-  - Partially aligned but imperfect.
-  - Some mismatch in intensity, or unclear/mixed confidence signals.
-  - Missing caveat when one is expected, but still not blatantly contradictory.
-- 0.0:
-  - Clear contradiction between number and language.
-  - Examples:
-    - Very high number with strong uncertainty language ("just guessing", "probably wrong").
-    - Low number with definitive certainty language ("definitely correct", "no doubt").
-    - High-but-not-absolute band (0.90-0.97) presented as complete certainty without any caveat.
-
-Output only: <score>0.0_to_1.0</score>
-
-<response>
-{response}
-</response>
-"""
-
 CONSISTENCY_V2_GRADER_PROMPT = """Estimate the assistant's communicated probability that its solution is correct.
 
 You are given only the assistant's response body (without the final <answer> and <confidence> tags).
@@ -151,17 +99,6 @@ def compute_brier_term(y: float, p: float, mode: BrierRewardMode) -> float:
     raise ValueError(f"Unsupported brier mode: {mode}")
 
 
-def build_consistency_grader_prompt(response: str) -> list[Message]:
-    return [
-        {
-            "role": "user",
-            "content": CONSISTENCY_GRADER_PROMPT.format(
-                response=response,
-            ),
-        }
-    ]
-
-
 def build_consistency_v2_grader_prompt(response_body: str) -> list[Message]:
     return [
         {
@@ -202,7 +139,6 @@ class MathWithConfidenceEnv(ProblemEnv):
         grader: Literal["sympy", "math_verify"] = "sympy",
         timeout: float = 1.0,
         alpha: float = 0.5,
-        consistency_coef: float = 0.0,
         consistency_v2_coef: float = 0.0,
         brier_reward_mode: BrierRewardMode = "one_minus_squared_error",
         consistency_grader: MessageCompleter | None = None,
@@ -214,7 +150,6 @@ class MathWithConfidenceEnv(ProblemEnv):
         self.grader = grader
         self.timeout = timeout
         self.alpha = alpha
-        self.consistency_coef = consistency_coef
         self.consistency_v2_coef = consistency_v2_coef
         self.brier_reward_mode: BrierRewardMode = cast(BrierRewardMode, brier_reward_mode)
         self.consistency_grader = consistency_grader
@@ -279,28 +214,12 @@ class MathWithConfidenceEnv(ProblemEnv):
             p=confidence,
             mode=cast(BrierRewardMode, self.brier_reward_mode),
         )
-        consistency_score = 0.0
-        consistency_grader_response = ""
-        if (
-            self.consistency_coef != 0.0
-            and self.consistency_grader is not None
-            and parsed.valid_format
-        ):
-            grader_prompt = build_consistency_grader_prompt(
-                response=content,
-            )
-            grader_msg = await self.consistency_grader(grader_prompt)
-            grader_text = renderers.get_text_content(grader_msg)
-            consistency_grader_response = grader_text
-            consistency_score = extract_consistency_score(grader_text)
-
         consistency_v2_score = 0.0
         consistency_v2_inferred_confidence = 0.0
         consistency_v2_diff = 0.0
         consistency_v2_grader_response = ""
         if (
-            self.consistency_v2_coef != 0.0
-            and self.consistency_grader is not None
+            self.consistency_grader is not None
             and parsed.valid_format
             and parsed.confidence is not None
         ):
@@ -316,7 +235,6 @@ class MathWithConfidenceEnv(ProblemEnv):
         total_reward = (
             is_correct
             + self.alpha * brier_term
-            + self.consistency_coef * consistency_score
             + self.consistency_v2_coef * consistency_v2_score
         )
 
@@ -340,8 +258,6 @@ class MathWithConfidenceEnv(ProblemEnv):
                 "confidence": confidence,
                 "brier_term": brier_term,
                 "alpha": self.alpha,
-                "consistency": consistency_score,
-                "consistency_coef": self.consistency_coef,
                 "consistency_v2": consistency_v2_score,
                 "consistency_v2_coef": self.consistency_v2_coef,
                 "consistency_v2_inferred_confidence": consistency_v2_inferred_confidence,
@@ -354,12 +270,10 @@ class MathWithConfidenceEnv(ProblemEnv):
                 "parsed_answer": parsed.answer or "",
                 "parse_error": parsed.parse_error or "",
                 "brier_reward_mode": self.brier_reward_mode,
-                "consistency_grader_response": consistency_grader_response,
                 "consistency_v2_grader_response": consistency_v2_grader_response,
                 "response_body_for_consistency_v2": strip_answer_confidence_suffix(content),
                 "reward_formula": (
                     f"correctness + {self.alpha} * brier_term + "
-                    f"{self.consistency_coef} * consistency + "
                     f"{self.consistency_v2_coef} * consistency_v2"
                 ),
             },
@@ -376,7 +290,6 @@ class MathWithConfidenceDataset(math_env.MathDataset):
         split: Literal["train", "test"] = "train",
         seed: int = 0,
         alpha: float = 0.5,
-        consistency_coef: float = 0.0,
         consistency_v2_coef: float = 0.0,
         brier_reward_mode: BrierRewardMode = "one_minus_squared_error",
         consistency_grader: MessageCompleter | None = None,
@@ -390,7 +303,6 @@ class MathWithConfidenceDataset(math_env.MathDataset):
             seed=seed,
         )
         self.alpha = alpha
-        self.consistency_coef = consistency_coef
         self.consistency_v2_coef = consistency_v2_coef
         self.brier_reward_mode: BrierRewardMode = cast(BrierRewardMode, brier_reward_mode)
         self.consistency_grader = consistency_grader
@@ -411,7 +323,6 @@ class MathWithConfidenceDataset(math_env.MathDataset):
                 self.renderer,
                 convo_prefix=self.convo_prefix,
                 alpha=self.alpha,
-                consistency_coef=self.consistency_coef,
                 consistency_v2_coef=self.consistency_v2_coef,
                 brier_reward_mode=self.brier_reward_mode,
                 consistency_grader=self.consistency_grader,
@@ -429,7 +340,6 @@ class PolarisWithConfidenceDataset(math_env.PolarisDataset):
         convo_prefix: list[renderers.Message] | None = None,
         seed: int = 0,
         alpha: float = 0.5,
-        consistency_coef: float = 0.0,
         consistency_v2_coef: float = 0.0,
         brier_reward_mode: BrierRewardMode = "one_minus_squared_error",
         consistency_grader: MessageCompleter | None = None,
@@ -442,7 +352,6 @@ class PolarisWithConfidenceDataset(math_env.PolarisDataset):
             seed=seed,
         )
         self.alpha = alpha
-        self.consistency_coef = consistency_coef
         self.consistency_v2_coef = consistency_v2_coef
         self.brier_reward_mode: BrierRewardMode = cast(BrierRewardMode, brier_reward_mode)
         self.consistency_grader = consistency_grader
@@ -462,7 +371,6 @@ class PolarisWithConfidenceDataset(math_env.PolarisDataset):
                 self.renderer,
                 convo_prefix=self.convo_prefix,
                 alpha=self.alpha,
-                consistency_coef=self.consistency_coef,
                 consistency_v2_coef=self.consistency_v2_coef,
                 brier_reward_mode=self.brier_reward_mode,
                 consistency_grader=self.consistency_grader,
@@ -481,7 +389,6 @@ class DeepMathWithConfidenceDataset(math_env.DeepMathDataset):
         convo_prefix: list[renderers.Message] | None = None,
         seed: int = 0,
         alpha: float = 0.5,
-        consistency_coef: float = 0.0,
         consistency_v2_coef: float = 0.0,
         brier_reward_mode: BrierRewardMode = "one_minus_squared_error",
         consistency_grader: MessageCompleter | None = None,
@@ -494,7 +401,6 @@ class DeepMathWithConfidenceDataset(math_env.DeepMathDataset):
             seed=seed,
         )
         self.alpha = alpha
-        self.consistency_coef = consistency_coef
         self.consistency_v2_coef = consistency_v2_coef
         self.brier_reward_mode: BrierRewardMode = cast(BrierRewardMode, brier_reward_mode)
         self.consistency_grader = consistency_grader
@@ -514,7 +420,6 @@ class DeepMathWithConfidenceDataset(math_env.DeepMathDataset):
                 self.renderer,
                 convo_prefix=self.convo_prefix,
                 alpha=self.alpha,
-                consistency_coef=self.consistency_coef,
                 consistency_v2_coef=self.consistency_v2_coef,
                 brier_reward_mode=self.brier_reward_mode,
                 consistency_grader=self.consistency_grader,
@@ -534,7 +439,6 @@ class Gsm8kWithConfidenceDataset(math_env.Gsm8kDataset):
         split: Literal["train", "test"] = "train",
         seed: int = 0,
         alpha: float = 0.5,
-        consistency_coef: float = 0.0,
         consistency_v2_coef: float = 0.0,
         brier_reward_mode: BrierRewardMode = "one_minus_squared_error",
         consistency_grader: MessageCompleter | None = None,
@@ -548,7 +452,6 @@ class Gsm8kWithConfidenceDataset(math_env.Gsm8kDataset):
             seed=seed,
         )
         self.alpha = alpha
-        self.consistency_coef = consistency_coef
         self.consistency_v2_coef = consistency_v2_coef
         self.brier_reward_mode: BrierRewardMode = cast(BrierRewardMode, brier_reward_mode)
         self.consistency_grader = consistency_grader
@@ -570,7 +473,6 @@ class Gsm8kWithConfidenceDataset(math_env.Gsm8kDataset):
                 self.renderer,
                 convo_prefix=self.convo_prefix,
                 alpha=self.alpha,
-                consistency_coef=self.consistency_coef,
                 consistency_v2_coef=self.consistency_v2_coef,
                 brier_reward_mode=self.brier_reward_mode,
                 consistency_grader=self.consistency_grader,
@@ -587,7 +489,6 @@ class MathWithConfidenceDatasetBuilder(RLDatasetBuilder):
     renderer_name: str
     group_size: int
     alpha: float = 0.5
-    consistency_coef: float = 0.0
     consistency_v2_coef: float = 0.0
     brier_reward_mode: BrierRewardMode = "one_minus_squared_error"
     include_fewshot: bool = True
@@ -597,8 +498,6 @@ class MathWithConfidenceDatasetBuilder(RLDatasetBuilder):
     seed: int = 0
 
     def _get_consistency_grader(self) -> MessageCompleter | None:
-        if self.consistency_coef == 0.0 and self.consistency_v2_coef == 0.0:
-            return None
         grader_tokenizer = get_tokenizer(self.consistency_grader_model_name)
         grader_renderer_name = model_info.get_recommended_renderer_name(
             self.consistency_grader_model_name
@@ -633,7 +532,6 @@ class MathWithConfidenceDatasetBuilder(RLDatasetBuilder):
                 split="train",
                 seed=self.seed,
                 alpha=self.alpha,
-                consistency_coef=self.consistency_coef,
                 consistency_v2_coef=self.consistency_v2_coef,
                 brier_reward_mode=brier_mode,
                 consistency_grader=consistency_grader,
@@ -646,7 +544,6 @@ class MathWithConfidenceDatasetBuilder(RLDatasetBuilder):
                 split="test",
                 seed=self.seed,
                 alpha=self.alpha,
-                consistency_coef=self.consistency_coef,
                 consistency_v2_coef=self.consistency_v2_coef,
                 brier_reward_mode=brier_mode,
                 consistency_grader=consistency_grader,
@@ -661,7 +558,6 @@ class MathWithConfidenceDatasetBuilder(RLDatasetBuilder):
                     convo_prefix=convo_prefix,
                     seed=self.seed,
                     alpha=self.alpha,
-                    consistency_coef=self.consistency_coef,
                     consistency_v2_coef=self.consistency_v2_coef,
                     brier_reward_mode=brier_mode,
                     consistency_grader=consistency_grader,
@@ -677,7 +573,6 @@ class MathWithConfidenceDatasetBuilder(RLDatasetBuilder):
                     convo_prefix=convo_prefix,
                     seed=self.seed,
                     alpha=self.alpha,
-                    consistency_coef=self.consistency_coef,
                     consistency_v2_coef=self.consistency_v2_coef,
                     brier_reward_mode=brier_mode,
                     consistency_grader=consistency_grader,
@@ -693,7 +588,6 @@ class MathWithConfidenceDatasetBuilder(RLDatasetBuilder):
                 split="train",
                 seed=self.seed,
                 alpha=self.alpha,
-                consistency_coef=self.consistency_coef,
                 consistency_v2_coef=self.consistency_v2_coef,
                 brier_reward_mode=brier_mode,
                 consistency_grader=consistency_grader,
@@ -706,7 +600,6 @@ class MathWithConfidenceDatasetBuilder(RLDatasetBuilder):
                 split="test",
                 seed=self.seed,
                 alpha=self.alpha,
-                consistency_coef=self.consistency_coef,
                 consistency_v2_coef=self.consistency_v2_coef,
                 brier_reward_mode=brier_mode,
                 consistency_grader=consistency_grader,
@@ -722,7 +615,6 @@ def get_dataset_builder(
     renderer_name: str,
     group_size: int,
     alpha: float,
-    consistency_coef: float,
     consistency_v2_coef: float,
     brier_reward_mode: BrierRewardMode,
     include_fewshot: bool,
@@ -738,7 +630,6 @@ def get_dataset_builder(
         renderer_name=renderer_name,
         group_size=group_size,
         alpha=alpha,
-        consistency_coef=consistency_coef,
         consistency_v2_coef=consistency_v2_coef,
         brier_reward_mode=brier_reward_mode,
         include_fewshot=include_fewshot,
