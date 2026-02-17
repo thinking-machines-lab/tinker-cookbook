@@ -12,6 +12,8 @@ from tinker_cookbook.rl.problem_env import ProblemEnv, ProblemGroupBuilder, logg
 from tinker_cookbook.rl.types import RLDataset, RLDatasetBuilder, StepResult
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.utils import logtree
+from tinker_cookbook.utils.logtree_formatters import ConversationFormatter
 
 
 BrierRewardMode = Literal["negative_squared_error", "one_minus_squared_error", "squared_error"]
@@ -195,8 +197,15 @@ class MathWithConfidenceEnv(ProblemEnv):
         return self.answer
 
     async def step(self, action: list[int]) -> StepResult:
+        convo = self.convo_prefix + [{"role": "user", "content": self.get_question()}]
+        with logtree.scope_header("Prompt"):
+            logtree.log_formatter(ConversationFormatter(messages=convo))
+
         message, parse_success = self.renderer.parse_response(action)
         content = renderers.get_text_content(message)
+        with logtree.scope_header("Policy Response"):
+            logtree.log_formatter(ConversationFormatter(messages=[message]))
+            logtree.log_text(f"Parse success: {parse_success}")
 
         parsed = parse_answer_and_confidence(content)
         correct_format = float(parse_success) and float(parsed.valid_format)
@@ -217,7 +226,6 @@ class MathWithConfidenceEnv(ProblemEnv):
         consistency_v2_score = 0.0
         consistency_v2_inferred_confidence = 0.0
         consistency_v2_diff = 0.0
-        consistency_v2_grader_response = ""
         if (
             self.consistency_grader is not None
             and parsed.valid_format
@@ -227,10 +235,14 @@ class MathWithConfidenceEnv(ProblemEnv):
             grader_prompt = build_consistency_v2_grader_prompt(response_body=response_body)
             grader_msg = await self.consistency_grader(grader_prompt)
             grader_text = renderers.get_text_content(grader_msg)
-            consistency_v2_grader_response = grader_text
             consistency_v2_inferred_confidence = extract_consistency_score(grader_text)
             consistency_v2_diff = consistency_v2_inferred_confidence - parsed.confidence
             consistency_v2_score = 1.0 - consistency_v2_diff**2
+            logtree.details(
+                grader_text,
+                summary="Consistency grader response",
+                pre=True,
+            )
 
         total_reward = (
             is_correct
@@ -246,6 +258,25 @@ class MathWithConfidenceEnv(ProblemEnv):
             brier_term,
             total_reward,
         )
+        with logtree.scope_header("Reward"):
+            logtree.table_from_dict(
+                {
+                    "format_valid": bool(correct_format),
+                    "correct": bool(is_correct),
+                    "confidence": f"{confidence:.3f}",
+                    "brier_reward_mode": self.brier_reward_mode,
+                    "brier_term": f"{brier_term:.4f}",
+                    "alpha": self.alpha,
+                    "consistency_v2": f"{consistency_v2_score:.4f}",
+                    "consistency_v2_coef": self.consistency_v2_coef,
+                    "consistency_v2_inferred_confidence": f"{consistency_v2_inferred_confidence:.3f}",
+                    "consistency_v2_diff": f"{consistency_v2_diff:.3f}",
+                    "reward": f"{total_reward:.4f}",
+                },
+                caption="Reward components",
+            )
+            if parsed.parse_error is not None:
+                logtree.log_text(f"Parse error: {parsed.parse_error}")
 
         return StepResult(
             reward=total_reward,
@@ -264,18 +295,10 @@ class MathWithConfidenceEnv(ProblemEnv):
                 "consistency_v2_diff": consistency_v2_diff,
             },
             logs={
-                "problem": self.get_question(),
-                "response": content,
-                "reference_answer": self.get_reference_answer(),
+                "format_valid": int(parsed.valid_format),
                 "parsed_answer": parsed.answer or "",
                 "parse_error": parsed.parse_error or "",
                 "brier_reward_mode": self.brier_reward_mode,
-                "consistency_v2_grader_response": consistency_v2_grader_response,
-                "response_body_for_consistency_v2": strip_answer_confidence_suffix(content),
-                "reward_formula": (
-                    f"correctness + {self.alpha} * brier_term + "
-                    f"{self.consistency_v2_coef} * consistency_v2"
-                ),
             },
         )
 

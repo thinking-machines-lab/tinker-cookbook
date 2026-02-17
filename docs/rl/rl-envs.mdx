@@ -61,3 +61,24 @@ You can run the training script as follows:
 ```bash
 python -m tinker_cookbook.recipes.multiplayer_rl.twenty_questions.train
 ```
+
+## Logging defaults for new environments
+
+The RL HTML logs are easiest to read when each environment follows this fixed structure:
+
+1. `Prompt`: show the input conversation.
+2. `Policy Response`: show the sampled assistant output.
+3. Task-specific diagnostics (grader outputs, tool traces, etc.), preferably in collapsible `details`.
+4. `Reward`: a compact key-value table of reward components.
+
+In code, prefer:
+
+- `logtree.scope_header(...)` for section layout.
+- `logtree.log_formatter(ConversationFormatter(...))` for conversations.
+- `logtree.table_from_dict(...)` for short numeric summaries.
+- `logtree.details(...)` for long text (raw grader responses, long outputs).
+
+For `StepResult`, use:
+
+- `metrics` for numeric values you want aggregated across batches.
+- `logs` for short per-step diagnostics only (avoid large prompt/response blobs in `logs`).
