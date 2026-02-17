@@ -22,7 +22,8 @@ reward term `1 - (inferred_confidence - tagged_confidence)^2`.
 python -m tinker_cookbook.recipes.math_with_confidence.train \
   model_name="Qwen/Qwen3-30B-A3B-Base" \
   dataset_name=math \
-  alpha=0.5 \
+  alpha=1.0 \
+  consistency_v2_coef=0.5 \
   group_size=8 \
   groups_per_batch=64 \
   learning_rate=2e-5 \

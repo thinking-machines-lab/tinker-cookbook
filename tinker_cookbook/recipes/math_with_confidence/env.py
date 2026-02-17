@@ -138,8 +138,8 @@ class MathWithConfidenceEnv(ProblemEnv):
         convo_prefix: list[renderers.Message] | None = None,
         grader: Literal["sympy", "math_verify"] = "sympy",
         timeout: float = 1.0,
-        alpha: float = 0.5,
-        consistency_v2_coef: float = 0.0,
+        alpha: float = 1.0,
+        consistency_v2_coef: float = 0.5,
         brier_reward_mode: BrierRewardMode = "one_minus_squared_error",
         consistency_grader: MessageCompleter | None = None,
     ):
@@ -289,8 +289,8 @@ class MathWithConfidenceDataset(math_env.MathDataset):
         convo_prefix: list[renderers.Message] | None = None,
         split: Literal["train", "test"] = "train",
         seed: int = 0,
-        alpha: float = 0.5,
-        consistency_v2_coef: float = 0.0,
+        alpha: float = 1.0,
+        consistency_v2_coef: float = 0.5,
         brier_reward_mode: BrierRewardMode = "one_minus_squared_error",
         consistency_grader: MessageCompleter | None = None,
     ):
@@ -339,8 +339,8 @@ class PolarisWithConfidenceDataset(math_env.PolarisDataset):
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None = None,
         seed: int = 0,
-        alpha: float = 0.5,
-        consistency_v2_coef: float = 0.0,
+        alpha: float = 1.0,
+        consistency_v2_coef: float = 0.5,
         brier_reward_mode: BrierRewardMode = "one_minus_squared_error",
         consistency_grader: MessageCompleter | None = None,
     ):
@@ -388,8 +388,8 @@ class DeepMathWithConfidenceDataset(math_env.DeepMathDataset):
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None = None,
         seed: int = 0,
-        alpha: float = 0.5,
-        consistency_v2_coef: float = 0.0,
+        alpha: float = 1.0,
+        consistency_v2_coef: float = 0.5,
         brier_reward_mode: BrierRewardMode = "one_minus_squared_error",
         consistency_grader: MessageCompleter | None = None,
     ):
@@ -438,8 +438,8 @@ class Gsm8kWithConfidenceDataset(math_env.Gsm8kDataset):
         convo_prefix: list[renderers.Message] | None = None,
         split: Literal["train", "test"] = "train",
         seed: int = 0,
-        alpha: float = 0.5,
-        consistency_v2_coef: float = 0.0,
+        alpha: float = 1.0,
+        consistency_v2_coef: float = 0.5,
         brier_reward_mode: BrierRewardMode = "one_minus_squared_error",
         consistency_grader: MessageCompleter | None = None,
     ):
@@ -488,8 +488,8 @@ class MathWithConfidenceDatasetBuilder(RLDatasetBuilder):
     model_name_for_tokenizer: str
     renderer_name: str
     group_size: int
-    alpha: float = 0.5
-    consistency_v2_coef: float = 0.0
+    alpha: float = 1.0
+    consistency_v2_coef: float = 0.5
     brier_reward_mode: BrierRewardMode = "one_minus_squared_error"
     include_fewshot: bool = True
     base_url: str | None = None
