@@ -22,4 +22,4 @@ jobs:
         run: uv venv && uv sync --all-extras
 
       - name: pyright
-        run: uv run pyright
+        run: uv run pyright tinker_cookbook
