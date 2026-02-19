@@ -61,7 +61,11 @@ async def main():
     for problem in problems:
         question = problem["question"]
         messages: list[renderers.Message] = [
-            {"role": "user", "content": question + " Write your answer in \\boxed{} format."},
+            {
+                "role": "user",
+                "content": question
+                + " Write your answer in \\boxed{} format. Don't think for too long unnecessarily, especially when you have a reasonable degree of confidence.",
+            },
         ]
         prompts.append(renderer.build_generation_prompt(messages))
 
