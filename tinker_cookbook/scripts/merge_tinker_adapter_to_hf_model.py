@@ -1,5 +1,8 @@
 """
-Merge Tinker adapter weights to a HuggingFace model, and save the new model to a given path.
+Merge Tinker adapter weights to a HuggingFace model shard-by-shard, and save the new model to a given path.
+
+This approach processes one safetensor shard at a time, so peak memory is proportional to the
+largest shard rather than the full model.
 
 Please refer to the following documentation for how to download a Tinker sampler adapter weights: https://tinker-docs.thinkingmachines.ai/download-weights
 
@@ -10,18 +13,96 @@ python merge_tinker_adapter_to_hf_model.py --hf-model <name_or_path_to_hf_model>
 import argparse
 import json
 import os
+import shutil
+from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 import torch
-from safetensors.torch import load_file
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from safetensors.torch import load_file, save_file
+
+# Lightweight files needed to load model structure and tokenizer.
+CONFIG_FILE_PATTERNS = ["*.json", "*.py"]
 
 
-def load_model(model_path: str):
-    return AutoModelForCausalLM.from_pretrained(model_path, device_map="auto", dtype=torch.bfloat16)
+@dataclass
+class MergeOp:
+    """A single LoRA merge operation to apply to a base model weight.
+
+    Stores the small lora_A/B matrices (rank-sized). The full delta is computed
+    on the fly during shard processing to avoid holding model-sized tensors.
+    """
+
+    target_key: str
+    lora_A: torch.Tensor  # (rank, in_dim) or (num_experts, rank, in_dim) for gpt-oss experts
+    lora_B: torch.Tensor  # (out_dim, rank) or (num_experts, out_dim, rank), pre-scaled by alpha/r
+    # True for gpt-oss expert weights where lora_A/B are 3D and need bmm
+    is_expert_3d: bool = False
+    # For gpt-oss interleaved expert weights (gate_up_proj): 0 for gate, 1 for up
+    gpt_oss_interleave_idx: int | None = None
 
 
-def load_adapter_weights(adapter_path: str):
+def log(s: str):
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {s}")
+
+
+def resolve_model_dir(hf_model: str) -> Path:
+    """Download config files to local disk (or use existing local path).
+
+    Only fetches lightweight files (configs, tokenizer, model code).
+    Safetensors weight shards are downloaded separately later.
+    """
+    if os.path.isdir(hf_model):
+        log(f"Using local model directory: {hf_model}")
+        return Path(hf_model)
+
+    from huggingface_hub import snapshot_download
+
+    log(f"Downloading config files for {hf_model}")
+    local_dir = snapshot_download(repo_id=hf_model, allow_patterns=CONFIG_FILE_PATTERNS)
+    return Path(local_dir)
+
+
+def download_safetensors(hf_model: str):
+    """Download safetensors weight shards for a remote model."""
+    if os.path.isdir(hf_model):
+        return  # Already local
+
+    from huggingface_hub import snapshot_download
+
+    log("Downloading weight shards")
+    snapshot_download(repo_id=hf_model, allow_patterns=["*.safetensors"])
+
+
+def load_meta_model(model_dir: Path) -> torch.nn.Module:
+    """Load model on meta device (no memory) to get architecture and state dict keys."""
+    from transformers import AutoConfig, AutoModelForCausalLM
+
+    config = AutoConfig.from_pretrained(str(model_dir))
+    with torch.device("meta"):
+        model = AutoModelForCausalLM.from_config(config)
+    return model
+
+
+def load_weight_map(model_dir: Path, model_state_keys: set[str]) -> dict[str, str]:
+    """Build a mapping from weight name to shard filename."""
+    index_path = model_dir / "model.safetensors.index.json"
+    if index_path.exists():
+        with open(index_path) as f:
+            index = json.load(f)
+        return index["weight_map"]
+
+    # Single-file model: glob for the actual filename
+    shard_files = sorted(model_dir.glob("*.safetensors"))
+    assert len(shard_files) >= 1, f"No .safetensors files found in {model_dir}"
+    assert len(shard_files) == 1, (
+        f"Multiple .safetensors files found without an index.json: {[f.name for f in shard_files]}"
+    )
+    return {key: shard_files[0].name for key in model_state_keys}
+
+
+def load_adapter_weights(adapter_path: str) -> tuple[dict[str, torch.Tensor], dict]:
+    """Load adapter weights and config from disk."""
     device = "cuda" if torch.cuda.is_available() else "cpu"
     weights = load_file(
         os.path.expanduser(adapter_path + "/adapter_model.safetensors"), device=device
@@ -31,85 +112,151 @@ def load_adapter_weights(adapter_path: str):
     return weights, config
 
 
-def log(s: str):
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {s}")
+def build_merge_plan(
+    adapter_weights: dict[str, torch.Tensor],
+    config: dict,
+    weight_map: dict[str, str],
+    is_gpt_oss: bool,
+) -> dict[str, list[MergeOp]]:
+    """Build a mapping from shard filename to list of merge operations.
 
-
-def apply_merged_weight(target: torch.Tensor, merged_lora: torch.Tensor):
-    assert target.shape == merged_lora.shape, (target.shape, merged_lora.shape)
-    new_data = target.float() + merged_lora.float().to(target.device)
-    target.copy_(new_data.to(target.dtype))
-
-
-def merge_adapter_weights(
-    base_model: torch.nn.Module, adapter_weights: dict[str, torch.Tensor], config: dict
-):
+    Stores only the small lora_A/B matrices. For non-gpt-oss MoE, pre-slices
+    per expert so each op holds 2D tensors using the same code path as non-expert.
+    """
     scaling = config["lora_alpha"] / config["r"]
     adapter_weight_names = [n.replace(".lora_A", "") for n in adapter_weights if ".lora_A" in n]
 
-    model_state_dict = base_model.state_dict()
-    is_gpt_oss = "GptOss" in str(type(base_model))
+    merge_plan: dict[str, list[MergeOp]] = {}
 
     for n in adapter_weight_names:
         target_key = n.replace("base_model.model.", "").replace("model.unembed_tokens", "lm_head")
         lora_A = adapter_weights[n.replace(".weight", ".lora_A.weight")].float()
         lora_B = adapter_weights[n.replace(".weight", ".lora_B.weight")].float() * scaling
+
         if ".experts" not in n:
             if is_gpt_oss:
                 target_key = target_key.replace(".attn", ".self_attn")
-            assert target_key in model_state_dict, (n, target_key)
-            # (lora_rank, in_dim), (out_dim lora_rank) -> (out_dim, in_dim)
-            merged_lora = torch.nn.functional.linear(lora_A.T, lora_B).T
-            assert merged_lora.shape == model_state_dict[target_key].shape, (
-                n,
-                merged_lora.shape,
-                model_state_dict[target_key].shape,
+
+            assert target_key in weight_map, (
+                f"Target key '{target_key}' (from adapter key '{n}') not found in model weight map"
             )
-            apply_merged_weight(model_state_dict[target_key], merged_lora)
+            shard = weight_map[target_key]
+            merge_plan.setdefault(shard, []).append(
+                MergeOp(target_key=target_key, lora_A=lora_A, lora_B=lora_B)
+            )
         else:
-            # Experts weights are fused together, and some are potentially shared across experts
-            assert len(lora_A.shape) == 3 and len(lora_B.shape) == 3, (lora_A.shape, lora_B.shape)
+            # Expert weights: 3D tensors (num_experts, rank, dim)
+            assert len(lora_A.shape) == 3 and len(lora_B.shape) == 3, (
+                lora_A.shape,
+                lora_B.shape,
+            )
             if lora_A.shape[0] == 1:
                 assert lora_B.shape[0] > 1
                 lora_A = lora_A.expand(lora_B.shape[0], -1, -1)
             elif lora_B.shape[0] == 1:
                 assert lora_A.shape[0] > 1
                 lora_B = lora_B.expand(lora_A.shape[0], -1, -1)
-            # (num_experts, lora_rank, in_dim),(num_experts, out_dim, lora_rank) -> (num_experts, in_dim, out_dim)
-            merged_lora = torch.bmm(lora_A.transpose(-1, -2), lora_B.transpose(-1, -2))
 
             target_key = target_key.replace(".w1.weight", ".gate_proj.weight")
             target_key = target_key.replace(".w3.weight", ".up_proj.weight")
             target_key = target_key.replace(".w2.weight", ".down_proj.weight")
 
             if not is_gpt_oss:
-                # Separate linear/weight per expert, target shape is <out_dim, in_dim>
-                merged_lora = merged_lora.transpose(-1, -2)  # -> (num_experts, out_dim, in_dim)
-                for exp_idx in range(merged_lora.shape[0]):
+                # Pre-slice per expert: each slice is 2D (rank, dim), same math as non-expert
+                for exp_idx in range(lora_A.shape[0]):
                     target_key_exp = target_key.replace(".experts", f".experts.{exp_idx}")
-                    assert target_key_exp in model_state_dict, (n, target_key_exp)
-                    assert merged_lora[exp_idx].shape == model_state_dict[target_key_exp].shape, (
-                        target_key_exp,
-                        merged_lora[exp_idx].shape,
-                        model_state_dict[target_key_exp].shape,
+                    assert target_key_exp in weight_map, (
+                        f"Target key '{target_key_exp}' (from adapter key '{n}') not found in model weight map"
                     )
-                    apply_merged_weight(model_state_dict[target_key_exp], merged_lora[exp_idx])
+                    shard = weight_map[target_key_exp]
+                    merge_plan.setdefault(shard, []).append(
+                        MergeOp(
+                            target_key=target_key_exp,
+                            lora_A=lora_A[exp_idx],
+                            lora_B=lora_B[exp_idx],
+                        )
+                    )
             else:
-                # Single/fused weight and interleaved w13 for gpt-oss, shape is <num_experts, in_dim, out_dim>
+                # gpt-oss: fused/interleaved weights, keep 3D for bmm
                 if target_key.endswith((".gate_proj.weight", ".up_proj.weight")):
                     target_key = target_key.replace(".gate_proj.weight", ".gate_up_proj").replace(
                         ".up_proj.weight", ".gate_up_proj"
                     )
                     idx = 0 if target_key.endswith(".gate_up_proj") else 1
-                    target = model_state_dict[target_key][:, :, idx::2]
+                    assert target_key in weight_map, (
+                        f"Target key '{target_key}' (from adapter key '{n}') not found in model weight map"
+                    )
+                    shard = weight_map[target_key]
+                    merge_plan.setdefault(shard, []).append(
+                        MergeOp(
+                            target_key=target_key,
+                            lora_A=lora_A,
+                            lora_B=lora_B,
+                            is_expert_3d=True,
+                            gpt_oss_interleave_idx=idx,
+                        )
+                    )
                 else:
                     target_key = target_key.replace(".down_proj.weight", ".down_proj")
-                    target = model_state_dict[target_key]
-                apply_merged_weight(target, merged_lora)
+                    assert target_key in weight_map, (
+                        f"Target key '{target_key}' (from adapter key '{n}') not found in model weight map"
+                    )
+                    shard = weight_map[target_key]
+                    merge_plan.setdefault(shard, []).append(
+                        MergeOp(
+                            target_key=target_key,
+                            lora_A=lora_A,
+                            lora_B=lora_B,
+                            is_expert_3d=True,
+                        )
+                    )
+
+    return merge_plan
+
+
+def apply_merge_op(tensors: dict[str, torch.Tensor], op: MergeOp):
+    """Compute LoRA delta on the fly and merge it into the shard's tensors."""
+    target = tensors[op.target_key]
+
+    if op.is_expert_3d:
+        # gpt-oss expert: 3D bmm
+        # (num_experts, lora_rank, in_dim), (num_experts, out_dim, lora_rank)
+        # -> (num_experts, in_dim, out_dim)
+        delta = torch.bmm(op.lora_A.transpose(-1, -2), op.lora_B.transpose(-1, -2)).to(
+            target.device
+        )
+        if op.gpt_oss_interleave_idx is not None:
+            target_view = target[:, :, op.gpt_oss_interleave_idx :: 2]
+            assert target_view.shape == delta.shape, (
+                op.target_key,
+                target_view.shape,
+                delta.shape,
+            )
+            new_data = target_view.float() + delta
+            target[:, :, op.gpt_oss_interleave_idx :: 2] = new_data.to(target_view.dtype)
+        else:
+            assert target.shape == delta.shape, (op.target_key, target.shape, delta.shape)
+            tensors[op.target_key] = (target.float() + delta).to(target.dtype)
+    else:
+        # 2D: non-expert or pre-sliced per-expert
+        # (lora_rank, in_dim), (out_dim, lora_rank) -> (out_dim, in_dim)
+        delta = torch.nn.functional.linear(op.lora_A.T, op.lora_B).T.to(target.device)
+        assert target.shape == delta.shape, (op.target_key, target.shape, delta.shape)
+        tensors[op.target_key] = (target.float() + delta).to(target.dtype)
+
+
+def copy_non_weight_files(model_dir: Path, output_path: Path):
+    """Copy config and tokenizer files from model dir to output."""
+    for pattern in CONFIG_FILE_PATTERNS:
+        for item in sorted(model_dir.glob(pattern)):
+            shutil.copy2(item, output_path / item.name)
+            log(f"  Copied {item.name}")
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="Merge Tinker adapter weights into a HuggingFace model shard-by-shard."
+    )
     parser.add_argument(
         "--tinker-adapter-path", type=str, required=True, help="Path to the Tinker adapter"
     )
@@ -121,21 +268,67 @@ def main():
     )
     args = parser.parse_args()
 
-    os.makedirs(args.output_path, exist_ok=False)
+    # Step 1: Download config files (lightweight)
+    model_dir = resolve_model_dir(args.hf_model)
 
-    log("Loading HF Model")
-    hf_model = load_model(args.hf_model)
+    # Step 2: Load model on meta device for architecture info and state dict keys
+    log("Loading model structure (meta device)")
+    meta_model = load_meta_model(model_dir)
+    is_gpt_oss = "GptOss" in str(type(meta_model))
+    model_state_keys = set(meta_model.state_dict().keys())
+    del meta_model
+    if is_gpt_oss:
+        log("Detected gpt-oss model architecture")
 
-    log("Loading Adapter Weights")
+    # Step 3: Download safetensors weight files
+    download_safetensors(args.hf_model)
+
+    # Step 4: Build weight map
+    log("Building weight map")
+    weight_map = load_weight_map(model_dir, model_state_keys)
+    shard_files = sorted(set(weight_map.values()))
+    log(f"Found {len(weight_map)} weights across {len(shard_files)} shard(s)")
+
+    # Step 5: Load adapter, build merge plan
+    log("Loading adapter weights")
     adapter_weights, adapter_config = load_adapter_weights(args.tinker_adapter_path)
 
-    log("Merging Adapter Weights")
-    merge_adapter_weights(hf_model, adapter_weights, adapter_config)
+    log("Building merge plan")
+    merge_plan = build_merge_plan(adapter_weights, adapter_config, weight_map, is_gpt_oss)
+    total_ops = sum(len(ops) for ops in merge_plan.values())
+    log(f"Merge plan: {total_ops} operations across {len(merge_plan)} shard(s)")
 
-    log("Saving Merged Model")
-    hf_model.save_pretrained(args.output_path)
-    tokenizer = AutoTokenizer.from_pretrained(args.hf_model)
-    tokenizer.save_pretrained(args.output_path)
+    # Step 6: Process each shard
+    os.makedirs(args.output_path, exist_ok=True)
+    output_path = Path(args.output_path)
+
+    total_size = 0
+    for i, shard_file in enumerate(shard_files):
+        ops = merge_plan.get(shard_file, [])
+        log(f"Processing shard {i + 1}/{len(shard_files)}: {shard_file} ({len(ops)} merges)")
+
+        tensors = load_file(str(model_dir / shard_file))
+        for op in ops:
+            apply_merge_op(tensors, op)
+        save_file(tensors, str(output_path / shard_file))
+        for t in tensors.values():
+            total_size += t.nelement() * t.element_size()
+        del tensors
+
+    # Step 7: Copy non-weight files (config, tokenizer, etc.)
+    log("Copying non-weight files")
+    copy_non_weight_files(model_dir, output_path)
+
+    # Step 8: Generate index from what we actually wrote (overwrites any copied original)
+    index = {
+        "metadata": {"total_size": total_size},
+        "weight_map": dict(sorted(weight_map.items())),
+    }
+    index_path = output_path / "model.safetensors.index.json"
+    with open(index_path, "w") as f:
+        json.dump(index, f, indent=2)
+    log(f"Wrote {index_path.name}")
+
     log(f"Merged model saved to {args.output_path}")
 
 
