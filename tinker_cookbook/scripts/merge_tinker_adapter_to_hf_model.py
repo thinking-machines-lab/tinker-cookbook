@@ -2,7 +2,7 @@
 Merge Tinker adapter weights to a HuggingFace model shard-by-shard, and save the new model to a given path.
 
 This approach processes one safetensor shard at a time, so peak memory is proportional to the
-largest shard rather than the full model.
+largest shard rather than the full model. Supports dequantizing quantized checkpoints on the fly.
 
 Please refer to the following documentation for how to download a Tinker sampler adapter weights: https://tinker-docs.thinkingmachines.ai/download-weights
 
@@ -11,6 +11,7 @@ python merge_tinker_adapter_to_hf_model.py --hf-model <name_or_path_to_hf_model>
 """
 
 import argparse
+import collections
 import json
 import os
 import shutil
@@ -23,6 +24,8 @@ from safetensors.torch import load_file, save_file
 
 # Lightweight files needed to load model structure and tokenizer.
 CONFIG_FILE_PATTERNS = ["*.json", "*.py"]
+
+MAX_SHARD_SIZE = 10 * (1024**3)  # 10 GB
 
 
 @dataclass
@@ -40,6 +43,57 @@ class MergeOp:
     is_expert_3d: bool = False
     # For gpt-oss interleaved expert weights (gate_up_proj): 0 for gate, 1 for up
     gpt_oss_interleave_idx: int | None = None
+
+
+class ShardWriter:
+    """Accumulates tensors and writes to numbered shard files with a size limit."""
+
+    def __init__(self, output_path: Path, max_shard_size: int = MAX_SHARD_SIZE):
+        self.output_path = output_path
+        self.max_shard_size = max_shard_size
+        self.pending: dict[str, torch.Tensor] = {}
+        self.pending_size: int = 0
+        self.shard_count: int = 0
+        self.shard_keys: list[list[str]] = []  # keys written per shard
+        self.total_size: int = 0
+
+    def add_tensor(self, key: str, tensor: torch.Tensor):
+        size = tensor.nelement() * tensor.element_size()
+        if self.pending and self.pending_size + size > self.max_shard_size:
+            self.flush()
+        self.pending[key] = tensor
+        self.pending_size += size
+        self.total_size += size
+
+    def flush(self):
+        if not self.pending:
+            return
+        self.shard_count += 1
+        temp_name = f"shard-{self.shard_count:05d}.tmp.safetensors"
+        save_file(self.pending, str(self.output_path / temp_name))
+        self.shard_keys.append(list(self.pending.keys()))
+        log(f"  Flushed {len(self.pending)} tensors to {temp_name}")
+        self.pending = {}
+        self.pending_size = 0
+
+    def finalize(self) -> tuple[dict[str, str], int]:
+        """Flush remaining tensors, rename to final names, return (weight_map, total_size)."""
+        self.flush()
+        total = self.shard_count
+        weight_map: dict[str, str] = {}
+
+        for i in range(total):
+            temp_name = f"shard-{i + 1:05d}.tmp.safetensors"
+            if total == 1:
+                final_name = "model.safetensors"
+            else:
+                final_name = f"model-{i + 1:05d}-of-{total:05d}.safetensors"
+            (self.output_path / temp_name).rename(self.output_path / final_name)
+            for key in self.shard_keys[i]:
+                weight_map[key] = final_name
+
+        log(f"  {total} output shard(s), total size {self.total_size / (1024**3):.1f} GB")
+        return weight_map, self.total_size
 
 
 def log(s: str):
@@ -77,28 +131,27 @@ def download_safetensors(hf_model: str):
 def load_meta_model(model_dir: Path) -> torch.nn.Module:
     """Load model on meta device (no memory) to get architecture and state dict keys."""
     from transformers import AutoConfig, AutoModelForCausalLM
+    from transformers.utils import import_utils
 
-    config = AutoConfig.from_pretrained(str(model_dir))
+    # Some custom model code references is_torch_fx_available, removed in newer transformers.
+    if not hasattr(import_utils, "is_torch_fx_available"):
+        import_utils.is_torch_fx_available = lambda: False
+
+    config = AutoConfig.from_pretrained(str(model_dir), trust_remote_code=True)
     with torch.device("meta"):
-        model = AutoModelForCausalLM.from_config(config)
+        model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
     return model
 
 
-def load_weight_map(model_dir: Path, model_state_keys: set[str]) -> dict[str, str]:
-    """Build a mapping from weight name to shard filename."""
+def get_input_shard_files(model_dir: Path) -> list[str]:
+    """Get sorted list of safetensors shard filenames in the model directory."""
     index_path = model_dir / "model.safetensors.index.json"
     if index_path.exists():
         with open(index_path) as f:
-            index = json.load(f)
-        return index["weight_map"]
-
-    # Single-file model: glob for the actual filename
+            return sorted(set(json.load(f)["weight_map"].values()))
     shard_files = sorted(model_dir.glob("*.safetensors"))
-    assert len(shard_files) >= 1, f"No .safetensors files found in {model_dir}"
-    assert len(shard_files) == 1, (
-        f"Multiple .safetensors files found without an index.json: {[f.name for f in shard_files]}"
-    )
-    return {key: shard_files[0].name for key in model_state_keys}
+    assert shard_files, f"No .safetensors files found in {model_dir}"
+    return [f.name for f in shard_files]
 
 
 def load_adapter_weights(adapter_path: str) -> tuple[dict[str, torch.Tensor], dict]:
@@ -112,21 +165,21 @@ def load_adapter_weights(adapter_path: str) -> tuple[dict[str, torch.Tensor], di
     return weights, config
 
 
-def build_merge_plan(
+def build_merge_ops(
     adapter_weights: dict[str, torch.Tensor],
     config: dict,
-    weight_map: dict[str, str],
+    model_state_keys: set[str],
     is_gpt_oss: bool,
 ) -> dict[str, list[MergeOp]]:
-    """Build a mapping from shard filename to list of merge operations.
+    """Build a mapping from target weight key to merge operations.
 
-    Stores only the small lora_A/B matrices. For non-gpt-oss MoE, pre-slices
-    per expert so each op holds 2D tensors using the same code path as non-expert.
+    Validates target keys against the model's state dict. Stores only the small
+    lora_A/B matrices; the full delta is computed on the fly during shard processing.
     """
     scaling = config["lora_alpha"] / config["r"]
     adapter_weight_names = [n.replace(".lora_A", "") for n in adapter_weights if ".lora_A" in n]
 
-    merge_plan: dict[str, list[MergeOp]] = {}
+    merge_ops: dict[str, list[MergeOp]] = {}
 
     for n in adapter_weight_names:
         target_key = n.replace("base_model.model.", "").replace("model.unembed_tokens", "lm_head")
@@ -137,11 +190,10 @@ def build_merge_plan(
             if is_gpt_oss:
                 target_key = target_key.replace(".attn", ".self_attn")
 
-            assert target_key in weight_map, (
-                f"Target key '{target_key}' (from adapter key '{n}') not found in model weight map"
+            assert target_key in model_state_keys, (
+                f"Target key '{target_key}' (from adapter key '{n}') not found in model state dict"
             )
-            shard = weight_map[target_key]
-            merge_plan.setdefault(shard, []).append(
+            merge_ops.setdefault(target_key, []).append(
                 MergeOp(target_key=target_key, lora_A=lora_A, lora_B=lora_B)
             )
         else:
@@ -165,11 +217,10 @@ def build_merge_plan(
                 # Pre-slice per expert: each slice is 2D (rank, dim), same math as non-expert
                 for exp_idx in range(lora_A.shape[0]):
                     target_key_exp = target_key.replace(".experts", f".experts.{exp_idx}")
-                    assert target_key_exp in weight_map, (
-                        f"Target key '{target_key_exp}' (from adapter key '{n}') not found in model weight map"
+                    assert target_key_exp in model_state_keys, (
+                        f"Target key '{target_key_exp}' (from adapter key '{n}') not found in model state dict"
                     )
-                    shard = weight_map[target_key_exp]
-                    merge_plan.setdefault(shard, []).append(
+                    merge_ops.setdefault(target_key_exp, []).append(
                         MergeOp(
                             target_key=target_key_exp,
                             lora_A=lora_A[exp_idx],
@@ -183,11 +234,10 @@ def build_merge_plan(
                         ".up_proj.weight", ".gate_up_proj"
                     )
                     idx = 0 if target_key.endswith(".gate_up_proj") else 1
-                    assert target_key in weight_map, (
-                        f"Target key '{target_key}' (from adapter key '{n}') not found in model weight map"
+                    assert target_key in model_state_keys, (
+                        f"Target key '{target_key}' (from adapter key '{n}') not found in model state dict"
                     )
-                    shard = weight_map[target_key]
-                    merge_plan.setdefault(shard, []).append(
+                    merge_ops.setdefault(target_key, []).append(
                         MergeOp(
                             target_key=target_key,
                             lora_A=lora_A,
@@ -198,11 +248,10 @@ def build_merge_plan(
                     )
                 else:
                     target_key = target_key.replace(".down_proj.weight", ".down_proj")
-                    assert target_key in weight_map, (
-                        f"Target key '{target_key}' (from adapter key '{n}') not found in model weight map"
+                    assert target_key in model_state_keys, (
+                        f"Target key '{target_key}' (from adapter key '{n}') not found in model state dict"
                     )
-                    shard = weight_map[target_key]
-                    merge_plan.setdefault(shard, []).append(
+                    merge_ops.setdefault(target_key, []).append(
                         MergeOp(
                             target_key=target_key,
                             lora_A=lora_A,
@@ -211,7 +260,7 @@ def build_merge_plan(
                         )
                     )
 
-    return merge_plan
+    return merge_ops
 
 
 def apply_merge_op(tensors: dict[str, torch.Tensor], op: MergeOp):
@@ -245,6 +294,54 @@ def apply_merge_op(tensors: dict[str, torch.Tensor], op: MergeOp):
         tensors[op.target_key] = (target.float() + delta).to(target.dtype)
 
 
+def setup_dequantization(model_dir: Path) -> tuple | None:
+    """Set up decompressor if model config has quantization_config.
+
+    Returns (quant_compressor, quant_scheme) or None.
+    """
+    config_path = model_dir / "config.json"
+    if not config_path.exists():
+        return None
+    with open(config_path) as f:
+        loaded_config = json.load(f)
+    if "quantization_config" not in loaded_config:
+        return None
+
+    quant_config = loaded_config["quantization_config"]
+    from compressed_tensors.compressors import ModelCompressor
+    from compressed_tensors.quantization.quant_scheme import QuantizationScheme
+
+    model_compressor = ModelCompressor.from_compression_config(quant_config)
+    assert model_compressor is not None, "Model compressor not found"
+    assert model_compressor.quantization_compressor is not None, "Quantization compressor not found"
+
+    quant_compressor = model_compressor.quantization_compressor[quant_config["format"]]
+    quant_scheme = QuantizationScheme.model_validate(quant_config["config_groups"]["group_0"])
+    return quant_compressor, quant_scheme
+
+
+def dequantize_tensors(
+    tensors: dict[str, torch.Tensor],
+    quant_compressor: object,
+    quant_scheme: object,
+) -> dict[str, torch.Tensor]:
+    """Dequantize quantized tensors, keeping non-quantized ones as-is."""
+    decompressed: dict[str, torch.Tensor] = {}
+    decompressed_module_paths: set[str] = set()
+
+    for module_path, weight_data in quant_compressor.decompress_from_state_dict(
+        tensors, collections.defaultdict(lambda: quant_scheme)
+    ):
+        decompressed[f"{module_path}.weight"] = weight_data["weight"]
+        decompressed_module_paths.add(module_path)
+
+    for name, param in tensors.items():
+        if name.rsplit(".", 1)[0] not in decompressed_module_paths:
+            decompressed[name] = param
+
+    return decompressed
+
+
 def copy_non_weight_files(model_dir: Path, output_path: Path):
     """Copy config and tokenizer files from model dir to output."""
     for pattern in CONFIG_FILE_PATTERNS:
@@ -266,6 +363,11 @@ def main():
     parser.add_argument(
         "--output-path", type=str, required=True, help="Path to save the merged model"
     )
+    parser.add_argument(
+        "--dequantize",
+        action="store_true",
+        help="Dequantize quantized weights to full precision",
+    )
     args = parser.parse_args()
 
     # Step 1: Download config files (lightweight)
@@ -283,51 +385,70 @@ def main():
     # Step 3: Download safetensors weight files
     download_safetensors(args.hf_model)
 
-    # Step 4: Build weight map
-    log("Building weight map")
-    weight_map = load_weight_map(model_dir, model_state_keys)
-    shard_files = sorted(set(weight_map.values()))
-    log(f"Found {len(weight_map)} weights across {len(shard_files)} shard(s)")
+    # Step 4: Discover input shard files
+    shard_files = get_input_shard_files(model_dir)
+    log(f"Found {len(shard_files)} input shard(s)")
 
-    # Step 5: Load adapter, build merge plan
+    # Step 5: Load adapter, build merge ops
     log("Loading adapter weights")
     adapter_weights, adapter_config = load_adapter_weights(args.tinker_adapter_path)
 
-    log("Building merge plan")
-    merge_plan = build_merge_plan(adapter_weights, adapter_config, weight_map, is_gpt_oss)
-    total_ops = sum(len(ops) for ops in merge_plan.values())
-    log(f"Merge plan: {total_ops} operations across {len(merge_plan)} shard(s)")
+    log("Building merge ops")
+    merge_ops = build_merge_ops(adapter_weights, adapter_config, model_state_keys, is_gpt_oss)
+    total_ops = sum(len(ops) for ops in merge_ops.values())
+    log(f"Merge ops: {total_ops} operations across {len(merge_ops)} target keys")
 
-    # Step 6: Process each shard
+    # Step 6: Set up dequantization if requested
+    dequant_info = setup_dequantization(model_dir)
+    if dequant_info:
+        log("Dequantization enabled")
+
+    # Step 7: Process each input shard → dequantize → merge LoRA → write output shards
     os.makedirs(args.output_path, exist_ok=True)
     output_path = Path(args.output_path)
+    writer = ShardWriter(output_path)
 
-    total_size = 0
     for i, shard_file in enumerate(shard_files):
-        ops = merge_plan.get(shard_file, [])
-        log(f"Processing shard {i + 1}/{len(shard_files)}: {shard_file} ({len(ops)} merges)")
+        log(f"Processing shard {i + 1}/{len(shard_files)}: {shard_file}")
 
         tensors = load_file(str(model_dir / shard_file))
-        for op in ops:
-            apply_merge_op(tensors, op)
-        save_file(tensors, str(output_path / shard_file))
-        for t in tensors.values():
-            total_size += t.nelement() * t.element_size()
-        del tensors
 
-    # Step 7: Copy non-weight files (config, tokenizer, etc.)
+        if dequant_info:
+            tensors = dequantize_tensors(tensors, *dequant_info)
+
+        for key in list(tensors.keys()):
+            ops = merge_ops.pop(key, [])
+            for op in ops:
+                apply_merge_op(tensors, op)
+
+        for key, tensor in tensors.items():
+            writer.add_tensor(key, tensor)
+        del tensors
+        writer.flush()
+
+    output_weight_map, total_size = writer.finalize()
+    assert len(merge_ops) == 0, f"Merge ops not applied: {merge_ops}"
+
+    # Step 8: Copy non-weight files (config, tokenizer, etc.)
     log("Copying non-weight files")
     copy_non_weight_files(model_dir, output_path)
 
-    # Step 8: Generate index from what we actually wrote (overwrites any copied original)
+    # Step 9: Generate index from what we actually wrote
     index = {
         "metadata": {"total_size": total_size},
-        "weight_map": dict(sorted(weight_map.items())),
+        "weight_map": dict(sorted(output_weight_map.items())),
     }
     index_path = output_path / "model.safetensors.index.json"
     with open(index_path, "w") as f:
         json.dump(index, f, indent=2)
     log(f"Wrote {index_path.name}")
+
+    if dequant_info:
+        from transformers import AutoConfig
+
+        config = AutoConfig.from_pretrained(args.output_path, trust_remote_code=True)
+        del config.quantization_config
+        config.save_pretrained(args.output_path)
 
     log(f"Merged model saved to {args.output_path}")
 
