@@ -4,7 +4,7 @@ RL training on Harbor formatted tasks (e.g., Terminal Bench 2.0) with sandboxed 
 
 ## HarborTask
 Harbor offers a standardized format for SWE/Terminal-Bench style task.
-Adhering to this allows seperation between task creation layer and evaluation/training harness layer. 
+Adhering to this allows seperation between task creation layer and evaluation/training harness layer.
 We can download the harbor datasets through `uvx harbor datasets download terminal-bench@2.0`.
 By default, the task will land in `~/.cache/harbor/tasks/` with the structure
 ```
