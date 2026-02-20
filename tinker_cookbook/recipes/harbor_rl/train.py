@@ -25,12 +25,12 @@ class CLIConfig:
     lora_rank: int = 32
     renderer_name: str | None = None
     load_checkpoint_path: str | None = None
-    max_tokens: int = 16384
+    max_tokens: int = 8192
     temperature: float = 1.0
 
     # Environment configuration
     max_turns: int = 10
-    sandbox_timeout: int = 600
+    sandbox_timeout: int = 3600
     command_timeout: int = 120
     grader_timeout: int = 60
 
