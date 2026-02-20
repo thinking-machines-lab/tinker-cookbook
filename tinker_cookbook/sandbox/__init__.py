@@ -8,6 +8,7 @@ The sandbox/ directory provides thin wrappers around different sandbox backends:
 
 from enum import StrEnum
 
+from tinker_cookbook.sandbox.sandbox_protocol import Sandbox
 from tinker_cookbook.sandbox.sandboxfusion import SandboxFusionClient
 
 
@@ -17,6 +18,7 @@ class SandboxBackend(StrEnum):
 
 
 __all__ = [
+    "Sandbox",
     "SandboxBackend",
     "SandboxFusionClient",
 ]
