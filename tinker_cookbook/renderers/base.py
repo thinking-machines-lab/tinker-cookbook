@@ -885,7 +885,10 @@ class Renderer(ABC):
             output_chunks = rendered_message.output
             if header_chunk:
                 chunks.append(header_chunk)
-            chunks.extend([x for x in output_chunks if x and x.tokens])
+            chunks.extend([
+                x for x in output_chunks
+                if not isinstance(x, tinker.EncodedTextChunk) or x.tokens
+            ])
 
         suffix_ctx = RenderContext(
             idx=len(messages),
