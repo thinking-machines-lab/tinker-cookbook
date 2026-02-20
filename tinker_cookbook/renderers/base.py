@@ -885,7 +885,7 @@ class Renderer(ABC):
             output_chunks = rendered_message.output
             if header_chunk:
                 chunks.append(header_chunk)
-            chunks.extend([x for x in output_chunks if x])
+            chunks.extend([x for x in output_chunks if x and x.tokens])
 
         suffix_ctx = RenderContext(
             idx=len(messages),
