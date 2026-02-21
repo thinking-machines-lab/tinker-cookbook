@@ -89,7 +89,9 @@ exclude = [
 ]
 
 [tool.pyright]
+include = ["tinker_cookbook"]
 exclude = [
+    ".venv",
     # Vendored from HuggingFace, kept identical to upstream
     "kimi-k2.5-hf-tokenizer/tool_declaration_ts.py",
 ]
