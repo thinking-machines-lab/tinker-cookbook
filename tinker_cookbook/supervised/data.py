@@ -38,6 +38,7 @@ class SupervisedDatasetFromHFDataset(SupervisedDataset):
         batch_size: int,
         map_fn: Callable[[dict], tinker.Datum] | None = None,
         flatmap_fn: Callable[[dict], list[tinker.Datum]] | None = None,
+        shuffle: bool = True,
     ):
         assert _one_of(map_fn, flatmap_fn), "Only one of map_fn or flatmap_fn can be provided"
         self.hf_dataset = hf_dataset
@@ -47,6 +48,7 @@ class SupervisedDatasetFromHFDataset(SupervisedDataset):
         self.batch_size = batch_size
         self.map_fn = map_fn
         self.flatmap_fn = flatmap_fn
+        self.shuffle = shuffle
 
     def get_batch(self, index: int) -> list[tinker.Datum]:
         rows = self.shuffle_dataset.select(
@@ -59,7 +61,8 @@ class SupervisedDatasetFromHFDataset(SupervisedDataset):
             return [datum for row in rows.to_list() for datum in self.flatmap_fn(row)]
 
     def set_epoch(self, seed: int = 0):
-        self.shuffle_dataset = self.hf_dataset.shuffle(seed=seed)
+        if self.shuffle:
+            self.shuffle_dataset = self.hf_dataset.shuffle(seed=seed)
 
     def __len__(self) -> int:
         return len(self.hf_dataset) // self.batch_size
@@ -125,6 +128,7 @@ class FromConversationFileBuilder(ChatDatasetBuilder):
     file_path: str
     test_size: int = 0
     shuffle_seed: int = 0
+    shuffle: bool = True
 
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
         # Load conversations from JSONL file
@@ -169,7 +173,8 @@ class FromConversationFileBuilder(ChatDatasetBuilder):
 
         # Create supervised dataset
         supervised_dataset = SupervisedDatasetFromHFDataset(
-            train_ds, batch_size=self.common_config.batch_size, map_fn=map_fn
+            train_ds, batch_size=self.common_config.batch_size, map_fn=map_fn,
+            shuffle=self.shuffle,
         )
 
         # Create evaluator if we have test data
