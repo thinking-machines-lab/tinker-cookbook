@@ -173,7 +173,9 @@ class FromConversationFileBuilder(ChatDatasetBuilder):
 
         # Create supervised dataset
         supervised_dataset = SupervisedDatasetFromHFDataset(
-            train_ds, batch_size=self.common_config.batch_size, map_fn=map_fn,
+            train_ds,
+            batch_size=self.common_config.batch_size,
+            map_fn=map_fn,
             shuffle=self.shuffle,
         )
 
