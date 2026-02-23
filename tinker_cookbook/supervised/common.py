@@ -67,6 +67,7 @@ def datum_from_model_input_weights(
     model_input: tinker.ModelInput,
     weights: torch.Tensor,
     max_length: int | None = None,
+    normalize_weights: bool = True,
 ) -> tinker.Datum:
     """
     Create a Datum from a ModelInput and weights tensor.
@@ -80,6 +81,10 @@ def datum_from_model_input_weights(
         weights: The weights tensor aligned with the model_input length
         max_length: Optional maximum sequence length. If provided, truncates to this length.
                    Image chunks are discarded entirely if they would exceed max_length.
+        normalize_weights: If True (default), normalize weights to sum to 1.0 per example.
+                          This produces a token-mean loss instead of a token-sum loss,
+                          making gradient magnitudes consistent across variable-length
+                          examples.
 
     Returns:
         A Datum with model_input (input tokens) and loss_fn_inputs (target tokens and weights)
@@ -120,6 +125,11 @@ def datum_from_model_input_weights(
         model_input_chunks
     )
     weights = weights[1 : len(target_tokens) + 1]
+
+    if normalize_weights:
+        total_weight = float(weights.sum())
+        if total_weight > 0:
+            weights = weights / total_weight
 
     return tinker.Datum(
         model_input=input_model_input,
