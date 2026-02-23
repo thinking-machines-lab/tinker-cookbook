@@ -20,7 +20,6 @@ dependencies = [
     "torchvision",
     "transformers>=4.57.6,<5.0.0",
     "blobfile",
-    "inspect-ai",
     "anyio",
     "pylatexenc",
     "sympy",
@@ -63,6 +62,11 @@ verifiers = [
     "verifiers>=0.1.9,<0.1.10",
     "openai",
 ]
+inspect = [
+    "inspect-ai",
+    "inspect-evals>=0.3.106",
+    "instruction-following-eval",
+]
 if_rl = ["if-verifiable==0.1.2"]
 all = [
     "tinker_cookbook[vector-search]",
@@ -70,6 +74,7 @@ all = [
     "tinker_cookbook[neptune-scale]",
     "tinker_cookbook[trackio]",
     "tinker_cookbook[verifiers]",
+    "tinker_cookbook[inspect]",
     "tinker_cookbook[if_rl]",
 ]
 
@@ -97,3 +102,6 @@ exclude = [
     # Vendored from HuggingFace, kept identical to upstream
     "kimi-k2.5-hf-tokenizer/tool_declaration_ts.py",
 ]
+
+[tool.uv.sources]
+instruction-following-eval = { git = "https://github.com/josejg/instruction_following_eval", rev = "0c495b2f95155e8b10acb919ae283bfb4d5be6e2" }
