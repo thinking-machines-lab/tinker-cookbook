@@ -27,7 +27,6 @@ class CLIConfig:
     output_file: str | None = chz.field(default=None, doc="Path to save results as JSONL")
     max_tokens: int = chz.field(default=2048, doc="Maximum tokens to generate")
     temperature: float = chz.field(default=0.0, doc="Sampling temperature")
-    seed: int = chz.field(default=42, doc="Random seed")
 
 
 async def run_evaluation(config: CLIConfig) -> dict[str, float]:
