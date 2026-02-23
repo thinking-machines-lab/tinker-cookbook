@@ -14,11 +14,24 @@ from datetime import datetime
 
 import torch
 from safetensors.torch import load_file
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import (
+    AutoConfig,
+    AutoModelForCausalLM,
+    AutoModelForImageTextToText,
+    AutoProcessor,
+    AutoTokenizer,
+)
+
+
+def get_model_config(model_path: str):
+    return AutoConfig.from_pretrained(model_path)
 
 
 def load_model(model_path: str):
-    return AutoModelForCausalLM.from_pretrained(model_path, device_map="auto", dtype=torch.bfloat16)
+    config = get_model_config(model_path)
+    auto_cls = AutoModelForImageTextToText if "vision_config" in config else AutoModelForCausalLM
+
+    return auto_cls.from_pretrained(model_path, device_map="auto", dtype=torch.bfloat16)
 
 
 def load_adapter_weights(adapter_path: str):
@@ -49,9 +62,19 @@ def merge_adapter_weights(
 
     model_state_dict = base_model.state_dict()
     is_gpt_oss = "GptOss" in str(type(base_model))
+    is_fused_experts = any([k.endswith(".experts.gate_up_proj") for k in model_state_dict])
+    name_remaps = {
+        "base_model.model.": "",
+        "model.unembed_tokens": "lm_head",
+    }
+    if any([k.startswith("model.language_model.") for k in model_state_dict]):
+        # Tinker adapter doesn't include the language_model prefix for vision models
+        name_remaps["model."] = "model.language_model."
 
     for n in adapter_weight_names:
-        target_key = n.replace("base_model.model.", "").replace("model.unembed_tokens", "lm_head")
+        target_key = n
+        for old, new in name_remaps.items():
+            target_key = target_key.replace(old, new)
         lora_A = adapter_weights[n.replace(".weight", ".lora_A.weight")].float()
         lora_B = adapter_weights[n.replace(".weight", ".lora_B.weight")].float() * scaling
         if ".experts" not in n:
@@ -82,7 +105,7 @@ def merge_adapter_weights(
             target_key = target_key.replace(".w3.weight", ".up_proj.weight")
             target_key = target_key.replace(".w2.weight", ".down_proj.weight")
 
-            if not is_gpt_oss:
+            if not is_fused_experts:
                 # Separate linear/weight per expert, target shape is <out_dim, in_dim>
                 merged_lora = merged_lora.transpose(-1, -2)  # -> (num_experts, out_dim, in_dim)
                 for exp_idx in range(merged_lora.shape[0]):
@@ -95,13 +118,18 @@ def merge_adapter_weights(
                     )
                     apply_merged_weight(model_state_dict[target_key_exp], merged_lora[exp_idx])
             else:
-                # Single/fused weight and interleaved w13 for gpt-oss, shape is <num_experts, in_dim, out_dim>
+                # Single/fused weight and shared w13, shape is <num_experts, in_dim, out_dim>
                 if target_key.endswith((".gate_proj.weight", ".up_proj.weight")):
                     target_key = target_key.replace(".gate_proj.weight", ".gate_up_proj").replace(
                         ".up_proj.weight", ".gate_up_proj"
                     )
                     idx = 0 if target_key.endswith(".gate_up_proj") else 1
-                    target = model_state_dict[target_key][:, :, idx::2]
+                    if is_gpt_oss:
+                        # gpt-oss has interleaved w13
+                        target = model_state_dict[target_key][:, :, idx::2]
+                    else:
+                        sz = model_state_dict[target_key].shape[-1] // 2
+                        target = model_state_dict[target_key][:, :, idx * sz : (idx + 1) * sz]
                 else:
                     target_key = target_key.replace(".down_proj.weight", ".down_proj")
                     target = model_state_dict[target_key]
@@ -136,6 +164,12 @@ def main():
     hf_model.save_pretrained(args.output_path)
     tokenizer = AutoTokenizer.from_pretrained(args.hf_model)
     tokenizer.save_pretrained(args.output_path)
+    try:
+        # Optionally save the processor if exists
+        processor = AutoProcessor.from_pretrained(args.hf_model)
+        processor.save_pretrained(args.output_path)
+    except Exception:
+        pass
     log(f"Merged model saved to {args.output_path}")
 
 
