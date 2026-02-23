@@ -96,9 +96,7 @@ class IfBenchEnv(ProblemEnv):
                 "all_loose": float(scores.binary_loose),
                 "num_instructions": len(results),
                 **{
-                    f"instr/{r.instruction_id}": float(
-                        r.loose_pass if use_loose else r.strict_pass
-                    )
+                    f"instr/{r.instruction_id}": float(r.loose_pass if use_loose else r.strict_pass)
                     for r in results
                 },
             },
