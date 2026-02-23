@@ -67,6 +67,7 @@ inspect = [
     "inspect-evals>=0.3.106",
     "instruction-following-eval",
 ]
+if_rl = ["if-verifiable==0.1.2"]
 all = [
     "tinker_cookbook[vector-search]",
     "tinker_cookbook[wandb]",
@@ -74,6 +75,7 @@ all = [
     "tinker_cookbook[trackio]",
     "tinker_cookbook[verifiers]",
     "tinker_cookbook[inspect]",
+    "tinker_cookbook[if_rl]",
 ]
 
 [build-system]
@@ -94,7 +96,9 @@ exclude = [
 ]
 
 [tool.pyright]
+include = ["tinker_cookbook"]
 exclude = [
+    ".venv",
     # Vendored from HuggingFace, kept identical to upstream
     "kimi-k2.5-hf-tokenizer/tool_declaration_ts.py",
 ]
