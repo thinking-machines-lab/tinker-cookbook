@@ -104,4 +104,4 @@ exclude = [
 ]
 
 [tool.uv.sources]
-instruction-following-eval = { git = "https://github.com/josejg/instruction_following_eval" }
+instruction-following-eval = { git = "https://github.com/josejg/instruction_following_eval", rev = "0c495b2f95155e8b10acb919ae283bfb4d5be6e2" }
