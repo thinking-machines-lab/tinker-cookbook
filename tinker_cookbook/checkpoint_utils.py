@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 import tinker
 
+from tinker_cookbook import model_info
 from tinker_cookbook.utils.file_utils import read_jsonl
 from tinker_cookbook.utils.trace import scope, update_scope_context
 
@@ -109,8 +110,6 @@ def resolve_renderer_name_from_checkpoint_or_default(
             )
             return renderer_name
 
-    from tinker_cookbook import model_info
-
     return model_info.get_recommended_renderer_name(model_name)
 
 
@@ -139,8 +138,6 @@ async def resolve_renderer_name_from_checkpoint_or_default_async(
                 renderer_name,
             )
             return renderer_name
-
-    from tinker_cookbook import model_info
 
     return model_info.get_recommended_renderer_name(model_name)
 
