@@ -105,10 +105,16 @@ async def check_renderer_name_for_checkpoint_async(
     expected_renderer_name: str | None,
 ) -> str | None:
     """
-    Async version of check_renderer_name_for_checkpoint.
+    Compare an expected renderer with renderer metadata attached to a checkpoint's training run.
+
+    Behavior:
+    - If ``expected_renderer_name`` is None, returns None and does no check.
+    - Otherwise fetches ``renderer_name`` from the run referenced by ``checkpoint_path``.
+    - Logs info if metadata is missing or matches.
+    - Logs warning if the checkpoint renderer differs from the expected renderer.
 
     Returns:
-        The renderer name found in checkpoint metadata, if present.
+        The renderer name found in checkpoint metadata, or None if unavailable.
     """
     if expected_renderer_name is None:
         return None
