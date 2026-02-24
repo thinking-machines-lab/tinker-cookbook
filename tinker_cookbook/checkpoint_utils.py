@@ -44,6 +44,40 @@ def _handle_checkpoint_renderer_check_result(
     return checkpoint_renderer_name
 
 
+def get_renderer_name_from_checkpoint(
+    service_client: tinker.ServiceClient, checkpoint_path: str
+) -> str | None:
+    """Read renderer_name metadata from the training run referenced by a checkpoint path."""
+    try:
+        rest_client = service_client.create_rest_client()
+        training_run = rest_client.get_training_run_by_tinker_path(checkpoint_path).result()
+        return (training_run.user_metadata or {}).get(RENDERER_NAME_METADATA_KEY)
+    except (tinker.TinkerError, ValueError) as e:
+        logger.warning(
+            "Could not fetch renderer metadata for checkpoint %s: %s",
+            checkpoint_path,
+            e,
+        )
+        return None
+
+
+async def get_renderer_name_from_checkpoint_async(
+    service_client: tinker.ServiceClient, checkpoint_path: str
+) -> str | None:
+    """Async version of get_renderer_name_from_checkpoint."""
+    try:
+        rest_client = service_client.create_rest_client()
+        training_run = await rest_client.get_training_run_by_tinker_path_async(checkpoint_path)
+        return (training_run.user_metadata or {}).get(RENDERER_NAME_METADATA_KEY)
+    except (tinker.TinkerError, ValueError) as e:
+        logger.warning(
+            "Could not fetch renderer metadata for checkpoint %s: %s",
+            checkpoint_path,
+            e,
+        )
+        return None
+
+
 def check_renderer_name_for_checkpoint(
     service_client: tinker.ServiceClient,
     checkpoint_path: str,
