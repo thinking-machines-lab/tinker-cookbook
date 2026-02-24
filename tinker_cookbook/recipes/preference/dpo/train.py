@@ -5,7 +5,7 @@ Basic CLI for training with Direct Preference Optimization (DPO). It only suppor
 from datetime import datetime
 
 import chz
-from tinker_cookbook import cli_utils, model_info
+from tinker_cookbook import checkpoint_utils, cli_utils
 from tinker_cookbook.preference import train_dpo
 from tinker_cookbook.preference.dpo_datasets import (
     DPODatasetBuilderFromComparisons,
@@ -81,8 +81,11 @@ def get_dataset_builder(
 def cli_main(cli_config: CLIConfig):
     """Main CLI function that builds the full config and calls the training function."""
     # Build full config
-    renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(
-        cli_config.model_name
+    renderer_name = checkpoint_utils.resolve_renderer_name_from_checkpoint_or_default(
+        model_name=cli_config.model_name,
+        explicit_renderer_name=cli_config.renderer_name,
+        load_checkpoint_path=cli_config.load_checkpoint_path,
+        base_url=cli_config.base_url,
     )
     date_and_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
     model_name = cli_config.model_name.replace("/", "-")

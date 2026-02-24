@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 
 import chz
-from tinker_cookbook import cli_utils, model_info
+from tinker_cookbook import checkpoint_utils, cli_utils
 from tinker_cookbook.recipes.math_rl import (
     arithmetic_env,
     math_env,
@@ -101,8 +101,11 @@ async def cli_main(cli_config: CLIConfig):
     """Convert CLI config to full config and run training."""
 
     # Get tokenizer for stop sequences
-    renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(
-        cli_config.model_name
+    renderer_name = await checkpoint_utils.resolve_renderer_name_from_checkpoint_or_default_async(
+        model_name=cli_config.model_name,
+        explicit_renderer_name=cli_config.renderer_name,
+        load_checkpoint_path=cli_config.load_checkpoint_path,
+        base_url=cli_config.base_url,
     )
     model_name = cli_config.model_name.replace("/", "-")
     run_name = f"{cli_config.env}-{model_name}-{cli_config.lora_rank}rank-{cli_config.learning_rate}lr-{cli_config.group_size}group-{cli_config.groups_per_batch}batch-{cli_config.loss_fn}-seed{cli_config.seed}-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"

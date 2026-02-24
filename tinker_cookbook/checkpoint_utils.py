@@ -80,6 +80,71 @@ async def get_renderer_name_from_checkpoint_async(
         return None
 
 
+def resolve_renderer_name_from_checkpoint_or_default(
+    *,
+    model_name: str,
+    explicit_renderer_name: str | None,
+    load_checkpoint_path: str | None,
+    base_url: str | None = None,
+) -> str:
+    """
+    Resolve renderer name for training/eval setup.
+
+    Precedence:
+    1) explicit renderer name, if provided
+    2) renderer metadata from load checkpoint path, if available
+    3) recommended renderer for model_name
+    """
+    if explicit_renderer_name is not None:
+        return explicit_renderer_name
+
+    if load_checkpoint_path is not None:
+        service_client = tinker.ServiceClient(base_url=base_url)
+        renderer_name = get_renderer_name_from_checkpoint(service_client, load_checkpoint_path)
+        if renderer_name is not None:
+            logger.info(
+                "Using renderer from checkpoint metadata for %s: %s",
+                load_checkpoint_path,
+                renderer_name,
+            )
+            return renderer_name
+
+    from tinker_cookbook import model_info
+
+    return model_info.get_recommended_renderer_name(model_name)
+
+
+async def resolve_renderer_name_from_checkpoint_or_default_async(
+    *,
+    model_name: str,
+    explicit_renderer_name: str | None,
+    load_checkpoint_path: str | None,
+    base_url: str | None = None,
+) -> str:
+    """
+    Async version of resolve_renderer_name_from_checkpoint_or_default.
+    """
+    if explicit_renderer_name is not None:
+        return explicit_renderer_name
+
+    if load_checkpoint_path is not None:
+        service_client = tinker.ServiceClient(base_url=base_url)
+        renderer_name = await get_renderer_name_from_checkpoint_async(
+            service_client, load_checkpoint_path
+        )
+        if renderer_name is not None:
+            logger.info(
+                "Using renderer from checkpoint metadata for %s: %s",
+                load_checkpoint_path,
+                renderer_name,
+            )
+            return renderer_name
+
+    from tinker_cookbook import model_info
+
+    return model_info.get_recommended_renderer_name(model_name)
+
+
 def check_renderer_name_for_checkpoint(
     service_client: tinker.ServiceClient,
     checkpoint_path: str,

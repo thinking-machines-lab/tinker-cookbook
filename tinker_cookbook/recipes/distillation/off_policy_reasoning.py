@@ -22,7 +22,7 @@ from typing import cast
 import chz
 import datasets
 import tinker
-from tinker_cookbook import cli_utils, model_info
+from tinker_cookbook import checkpoint_utils, cli_utils
 from tinker_cookbook.renderers import Message, TrainOnWhat
 from tinker_cookbook.supervised import train
 from tinker_cookbook.supervised.data import (
@@ -126,8 +126,11 @@ def cli_main(cli_config: CLIConfig):
     """Convert CLI config to full config and run training."""
 
     # Get renderer name
-    renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(
-        cli_config.model_name
+    renderer_name = checkpoint_utils.resolve_renderer_name_from_checkpoint_or_default(
+        model_name=cli_config.model_name,
+        explicit_renderer_name=cli_config.renderer_name,
+        load_checkpoint_path=cli_config.load_checkpoint_path,
+        base_url=cli_config.base_url,
     )
 
     # Create log path if not specified
