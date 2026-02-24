@@ -19,36 +19,32 @@ async def main(config: Config):
 
     # Create a sampling client from the model path
     service_client = tinker.ServiceClient()
+    model_path = config.model_path
+    model_name = config.model_name
+    renderer_name = config.renderer_name
 
-    if config.model_path is None and config.model_name is None:
-        raise ValueError("model_path or model_name must be provided")
-
-    if config.model_path is not None:
-        model_path = config.model_path
+    # Resolve model name from checkpoint when needed, and validate explicit model_name if provided.
+    if model_path is not None:
         rest_client = service_client.create_rest_client()
         training_run = await rest_client.get_training_run_by_tinker_path_async(model_path)
-        if config.model_name:
-            if config.model_name != training_run.base_model:
-                raise ValueError(
-                    f"Model name {config.model_name} does not match training run base model {training_run.base_model}"
-                )
-        else:
-            config = chz.replace(config, model_name=training_run.base_model)
-
-        if config.renderer_name is None:
-            renderer_name = await checkpoint_utils.get_renderer_name_from_checkpoint_async(
-                service_client, model_path
+        if model_name is not None and model_name != training_run.base_model:
+            raise ValueError(
+                f"Model name {model_name} does not match training run base model {training_run.base_model}"
             )
-            if renderer_name is None:
-                assert config.model_name is not None
-                renderer_name = model_info.get_recommended_renderer_name(config.model_name)
-            config = chz.replace(config, renderer_name=renderer_name)
-    elif config.renderer_name is None:
-        # No checkpoint metadata available; fall back to model default.
-        assert config.model_name is not None
-        config = chz.replace(
-            config, renderer_name=model_info.get_recommended_renderer_name(config.model_name)
+        model_name = model_name or training_run.base_model
+
+    if model_name is None:
+        raise ValueError("model_path or model_name must be provided")
+
+    # Resolve renderer with precedence: explicit config > checkpoint metadata > model default.
+    if renderer_name is None and model_path is not None:
+        renderer_name = await checkpoint_utils.get_renderer_name_from_checkpoint_async(
+            service_client, model_path
         )
+    if renderer_name is None:
+        renderer_name = model_info.get_recommended_renderer_name(model_name)
+
+    config = chz.replace(config, model_name=model_name, renderer_name=renderer_name)
 
     logger.info(f"Using base model: {config.model_name}")
     logger.info(f"Using renderer: {config.renderer_name}")
