@@ -4,6 +4,7 @@ Uses existing modules but with a simple, flat training loop.
 """
 
 import logging
+import math
 import time
 
 import chz
@@ -55,7 +56,7 @@ def main(config: Config):
     assert isinstance(dataset, datasets.DatasetDict)
     train_dataset = dataset["train"]
 
-    n_train_batches = len(train_dataset) // config.batch_size
+    n_train_batches = math.ceil(len(train_dataset) / config.batch_size)
     logger.info(f"Train batches: {n_train_batches}")
 
     # Setup training client
