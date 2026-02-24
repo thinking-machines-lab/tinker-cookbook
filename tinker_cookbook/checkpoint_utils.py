@@ -25,7 +25,7 @@ def _handle_checkpoint_renderer_check_result(
     checkpoint_path: str,
     expected_renderer_name: str,
     checkpoint_renderer_name: str | None,
-) -> str | None:
+) -> None:
     if checkpoint_renderer_name is None:
         logger.info("Checkpoint %s has no renderer metadata.", checkpoint_path)
     elif checkpoint_renderer_name != expected_renderer_name:
@@ -41,7 +41,7 @@ def _handle_checkpoint_renderer_check_result(
             checkpoint_path,
             expected_renderer_name,
         )
-    return checkpoint_renderer_name
+    return None
 
 
 def get_renderer_name_from_checkpoint(
@@ -82,28 +82,27 @@ def check_renderer_name_for_checkpoint(
     service_client: tinker.ServiceClient,
     checkpoint_path: str,
     expected_renderer_name: str | None,
-) -> str | None:
+) -> None:
     """
     Inspect a checkpoint's originating training run metadata and compare renderer name.
 
-    Returns:
-        The renderer name found in checkpoint metadata, if present.
     """
     if expected_renderer_name is None:
         return None
 
     checkpoint_renderer_name = get_renderer_name_from_checkpoint(service_client, checkpoint_path)
 
-    return _handle_checkpoint_renderer_check_result(
+    _handle_checkpoint_renderer_check_result(
         checkpoint_path, expected_renderer_name, checkpoint_renderer_name
     )
+    return None
 
 
 async def check_renderer_name_for_checkpoint_async(
     service_client: tinker.ServiceClient,
     checkpoint_path: str,
     expected_renderer_name: str | None,
-) -> str | None:
+) -> None:
     """
     Compare an expected renderer with renderer metadata attached to a checkpoint's training run.
 
@@ -113,8 +112,6 @@ async def check_renderer_name_for_checkpoint_async(
     - Logs info if metadata is missing or matches.
     - Logs warning if the checkpoint renderer differs from the expected renderer.
 
-    Returns:
-        The renderer name found in checkpoint metadata, or None if unavailable.
     """
     if expected_renderer_name is None:
         return None
@@ -123,9 +120,10 @@ async def check_renderer_name_for_checkpoint_async(
         service_client, checkpoint_path
     )
 
-    return _handle_checkpoint_renderer_check_result(
+    _handle_checkpoint_renderer_check_result(
         checkpoint_path, expected_renderer_name, checkpoint_renderer_name
     )
+    return None
 
 
 @scope
