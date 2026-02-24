@@ -133,6 +133,7 @@ def run_experiment(experiment_config: ExperimentConfig):
     config = train.Config(
         log_path=experiment_path,
         model_name=experiment_config.model_name,
+        renderer_name=experiment_config.renderer_name,
         load_checkpoint_path=experiment_config.load_checkpoint_path,
         dataset_builder=dataset_builder,
         evaluator_builders=evaluator_builders,

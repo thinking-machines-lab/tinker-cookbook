@@ -25,7 +25,7 @@ from typing import Any
 
 import chz
 from tinker.types import LossFnType
-from tinker_cookbook import cli_utils
+from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.distillation import train_on_policy
 from tinker_cookbook.distillation.datasets import (
     DistillationDatasetConfig,
@@ -43,7 +43,7 @@ class CLIConfig:
     # Model configuration
     model_name: str = "Qwen/Qwen3-8B"  # Student model
     lora_rank: int = 128
-    renderer_name: str = "qwen3_instruct"
+    renderer_name: str | None = None
     load_checkpoint_path: str | None = None  # Student checkpoint
 
     # Teacher configurations
@@ -90,6 +90,9 @@ class CLIConfig:
 
 async def cli_main(cli_config: CLIConfig):
     """Convert CLI config to full config and run training."""
+    renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(
+        cli_config.model_name
+    )
 
     # Create log path if not specified
     if cli_config.log_path is not None:
@@ -116,7 +119,7 @@ async def cli_main(cli_config: CLIConfig):
         groups_per_batch=cli_config.deepmath_groups_per_batch,
         group_size=cli_config.group_size,
         model_name_for_tokenizer=cli_config.model_name,
-        renderer_name=cli_config.renderer_name,
+        renderer_name=renderer_name,
     )
 
     # Create Tulu3 dataset builder
@@ -125,7 +128,7 @@ async def cli_main(cli_config: CLIConfig):
         groups_per_batch=cli_config.tulu3_groups_per_batch,
         group_size=cli_config.group_size,
         model_name_for_tokenizer=cli_config.model_name,
-        renderer_name=cli_config.renderer_name,
+        renderer_name=renderer_name,
     )
 
     # Create teacher configs
@@ -157,6 +160,7 @@ async def cli_main(cli_config: CLIConfig):
         learning_rate=cli_config.learning_rate,
         dataset_configs=[deepmath_dataset_config, tulu3_dataset_config],
         model_name=cli_config.model_name,
+        renderer_name=renderer_name,
         lora_rank=cli_config.lora_rank,
         max_tokens=cli_config.max_tokens,
         kl_penalty_coef=cli_config.kl_penalty_coef,

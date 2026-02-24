@@ -26,6 +26,7 @@ def build_config() -> train.Config:
 
     return train.Config(
         model_name=model_name,
+        renderer_name=renderer_name,
         log_path=f"/tmp/tinker-examples/shorter/{int(time())}",
         dataset_builder=dataset_builder,
         learning_rate=3e-5,

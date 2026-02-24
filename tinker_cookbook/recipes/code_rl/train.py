@@ -88,6 +88,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
         learning_rate=cli_config.learning_rate,
         dataset_builder=dataset_builder,
         model_name=cli_config.model_name,
+        renderer_name=renderer_name,
         lora_rank=cli_config.lora_rank,
         max_tokens=cli_config.max_tokens,
         wandb_project=cli_config.wandb_project,

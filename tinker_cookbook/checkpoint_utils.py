@@ -12,6 +12,98 @@ from tinker_cookbook.utils.trace import scope, update_scope_context
 CHECKPOINTS_BASE_NAME = "checkpoints.jsonl"
 
 logger = logging.getLogger(__name__)
+RENDERER_NAME_METADATA_KEY = "renderer_name"
+
+
+def add_renderer_name_to_user_metadata(user_metadata: dict[str, str], renderer_name: str | None) -> None:
+    """Attach renderer name to training-run metadata when available."""
+    if renderer_name:
+        user_metadata[RENDERER_NAME_METADATA_KEY] = renderer_name
+
+
+def _handle_checkpoint_renderer_check_result(
+    checkpoint_path: str,
+    expected_renderer_name: str,
+    checkpoint_renderer_name: str | None,
+) -> str | None:
+    if checkpoint_renderer_name is None:
+        logger.info("Checkpoint %s has no renderer metadata.", checkpoint_path)
+    elif checkpoint_renderer_name != expected_renderer_name:
+        logger.warning(
+            "Renderer mismatch for checkpoint %s: checkpoint=%s current=%s",
+            checkpoint_path,
+            checkpoint_renderer_name,
+            expected_renderer_name,
+        )
+    else:
+        logger.info(
+            "Renderer metadata matches for checkpoint %s: %s",
+            checkpoint_path,
+            expected_renderer_name,
+        )
+    return checkpoint_renderer_name
+
+
+def check_renderer_name_for_checkpoint(
+    service_client: tinker.ServiceClient,
+    checkpoint_path: str,
+    expected_renderer_name: str | None,
+) -> str | None:
+    """
+    Inspect a checkpoint's originating training run metadata and compare renderer name.
+
+    Returns:
+        The renderer name found in checkpoint metadata, if present.
+    """
+    if expected_renderer_name is None:
+        return None
+
+    try:
+        rest_client = service_client.create_rest_client()
+        training_run = rest_client.get_training_run_by_tinker_path(checkpoint_path).result()
+        checkpoint_renderer_name = (training_run.user_metadata or {}).get(RENDERER_NAME_METADATA_KEY)
+    except (tinker.TinkerError, ValueError) as e:
+        logger.warning(
+            "Could not verify renderer metadata for checkpoint %s: %s",
+            checkpoint_path,
+            e,
+        )
+        return None
+
+    return _handle_checkpoint_renderer_check_result(
+        checkpoint_path, expected_renderer_name, checkpoint_renderer_name
+    )
+
+
+async def check_renderer_name_for_checkpoint_async(
+    service_client: tinker.ServiceClient,
+    checkpoint_path: str,
+    expected_renderer_name: str | None,
+) -> str | None:
+    """
+    Async version of check_renderer_name_for_checkpoint.
+
+    Returns:
+        The renderer name found in checkpoint metadata, if present.
+    """
+    if expected_renderer_name is None:
+        return None
+
+    try:
+        rest_client = service_client.create_rest_client()
+        training_run = await rest_client.get_training_run_by_tinker_path_async(checkpoint_path)
+        checkpoint_renderer_name = (training_run.user_metadata or {}).get(RENDERER_NAME_METADATA_KEY)
+    except (tinker.TinkerError, ValueError) as e:
+        logger.warning(
+            "Could not verify renderer metadata for checkpoint %s: %s",
+            checkpoint_path,
+            e,
+        )
+        return None
+
+    return _handle_checkpoint_renderer_check_result(
+        checkpoint_path, expected_renderer_name, checkpoint_renderer_name
+    )
 
 
 @scope

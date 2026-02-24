@@ -170,6 +170,7 @@ def cli_main(cli_config: CLIConfig):
     config = train.Config(
         log_path=log_path,
         model_name=cli_config.model_name,
+        renderer_name=renderer_name,
         load_checkpoint_path=cli_config.load_checkpoint_path,
         dataset_builder=dataset_builder,
         evaluator_builders=[],

@@ -77,6 +77,7 @@ def sft_stage(
     config = supervised_train.Config(
         log_path=log_path,
         model_name=base_model,
+        renderer_name=renderer_name,
         dataset_builder=dataset_builder,
         evaluator_builders=[],  # Could add evaluators here
         num_epochs=1,
@@ -129,6 +130,7 @@ def train_rm(
     config = supervised_train.Config(
         log_path=log_path,
         model_name=base_model,
+        renderer_name=renderer_name,
         dataset_builder=dataset_builder,
         evaluator_builders=[],  # Could add evaluators here
         num_epochs=1,
@@ -212,6 +214,7 @@ async def train_rl(
 
     config = train.Config(
         model_name=base_model,
+        renderer_name=renderer_name,
         dataset_builder=rl_dataset_builder,
         load_checkpoint_path=sft_checkpoint,
         learning_rate=learning_rate,

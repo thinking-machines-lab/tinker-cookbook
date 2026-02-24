@@ -28,6 +28,7 @@ def build_rl_basic_config(max_steps_off_policy: int, name: str) -> rl_train.Conf
     )
     return rl_train.Config(
         model_name=model_name,
+        renderer_name=renderer_name,
         log_path=f"/tmp/tinker-examples/async_rl_sweep_{name}",
         dataset_builder=builder,
         learning_rate=4e-5,

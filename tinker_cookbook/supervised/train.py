@@ -45,6 +45,7 @@ class Config:
     log_path: str = chz.field(munger=lambda _, s: os.path.expanduser(s))
     model_name: str
     load_checkpoint_path: str | None = None
+    renderer_name: str | None = None
     dataset_builder: SupervisedDatasetBuilder
 
     # Training parameters
@@ -194,19 +195,26 @@ async def main(config: Config):
     user_metadata: dict[str, str] = {}
     if wandb_link := ml_logger.get_logger_url():
         user_metadata["wandb_link"] = wandb_link
+    checkpoint_utils.add_renderer_name_to_user_metadata(user_metadata, config.renderer_name)
 
     if resume_info:
         # Resuming interrupted training - load optimizer state for proper continuation
+        await checkpoint_utils.check_renderer_name_for_checkpoint_async(
+            service_client, resume_info["state_path"], config.renderer_name
+        )
         training_client = (
             await service_client.create_training_client_from_state_with_optimizer_async(
-                resume_info["state_path"], user_metadata
+                resume_info["state_path"], user_metadata=user_metadata
             )
         )
         logger.info(f"Resumed training from {resume_info['state_path']}")
     elif config.load_checkpoint_path:
         # Starting fresh from a checkpoint - load weights only (fresh optimizer)
+        await checkpoint_utils.check_renderer_name_for_checkpoint_async(
+            service_client, config.load_checkpoint_path, config.renderer_name
+        )
         training_client = await service_client.create_training_client_from_state_async(
-            config.load_checkpoint_path, user_metadata
+            config.load_checkpoint_path, user_metadata=user_metadata
         )
         logger.info(f"Loaded weights from {config.load_checkpoint_path}")
     else:
