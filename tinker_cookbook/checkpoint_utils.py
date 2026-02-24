@@ -15,7 +15,9 @@ logger = logging.getLogger(__name__)
 RENDERER_NAME_METADATA_KEY = "renderer_name"
 
 
-def add_renderer_name_to_user_metadata(user_metadata: dict[str, str], renderer_name: str | None) -> None:
+def add_renderer_name_to_user_metadata(
+    user_metadata: dict[str, str], renderer_name: str | None
+) -> None:
     """Attach renderer name to training-run metadata when available."""
     if renderer_name:
         user_metadata[RENDERER_NAME_METADATA_KEY] = renderer_name
