@@ -92,17 +92,7 @@ def check_renderer_name_for_checkpoint(
     if expected_renderer_name is None:
         return None
 
-    try:
-        rest_client = service_client.create_rest_client()
-        training_run = rest_client.get_training_run_by_tinker_path(checkpoint_path).result()
-        checkpoint_renderer_name = (training_run.user_metadata or {}).get(RENDERER_NAME_METADATA_KEY)
-    except (tinker.TinkerError, ValueError) as e:
-        logger.warning(
-            "Could not verify renderer metadata for checkpoint %s: %s",
-            checkpoint_path,
-            e,
-        )
-        return None
+    checkpoint_renderer_name = get_renderer_name_from_checkpoint(service_client, checkpoint_path)
 
     return _handle_checkpoint_renderer_check_result(
         checkpoint_path, expected_renderer_name, checkpoint_renderer_name
@@ -123,17 +113,9 @@ async def check_renderer_name_for_checkpoint_async(
     if expected_renderer_name is None:
         return None
 
-    try:
-        rest_client = service_client.create_rest_client()
-        training_run = await rest_client.get_training_run_by_tinker_path_async(checkpoint_path)
-        checkpoint_renderer_name = (training_run.user_metadata or {}).get(RENDERER_NAME_METADATA_KEY)
-    except (tinker.TinkerError, ValueError) as e:
-        logger.warning(
-            "Could not verify renderer metadata for checkpoint %s: %s",
-            checkpoint_path,
-            e,
-        )
-        return None
+    checkpoint_renderer_name = await get_renderer_name_from_checkpoint_async(
+        service_client, checkpoint_path
+    )
 
     return _handle_checkpoint_renderer_check_result(
         checkpoint_path, expected_renderer_name, checkpoint_renderer_name
