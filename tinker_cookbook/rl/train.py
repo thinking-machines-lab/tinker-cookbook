@@ -307,6 +307,8 @@ class Config:
     evaluator_builders: list[SamplingClientEvaluatorBuilder] = chz.field(default_factory=list)
     # Start training from weights at this checkpoint (fresh optimizer state).
     load_checkpoint_path: str | None = None
+    # Renderer used by the training dataset/environment.
+    renderer_name: str | None = None
     # Optional W&B project and run name.
     wandb_project: str | None = None
     wandb_name: str | None = None
@@ -1183,23 +1185,34 @@ async def main(
         start_batch = 0
 
     service_client = tinker.ServiceClient(base_url=cfg.base_url)
+    user_metadata: dict[str, str] = {}
+    if wandb_link := ml_logger.get_logger_url():
+        user_metadata["wandb_link"] = wandb_link
+    checkpoint_utils.add_renderer_name_to_user_metadata(user_metadata, cfg.renderer_name)
+
     if resume_info:
         # Resuming interrupted training - load optimizer state for proper continuation
+        await checkpoint_utils.check_renderer_name_for_checkpoint_async(
+            service_client, resume_info["state_path"], cfg.renderer_name
+        )
         training_client = (
             await service_client.create_training_client_from_state_with_optimizer_async(
-                resume_info["state_path"]
+                resume_info["state_path"], user_metadata=user_metadata
             )
         )
         logger.info(f"Resumed training from {resume_info['state_path']}")
     elif cfg.load_checkpoint_path:
         # Starting fresh from a checkpoint - load weights only (fresh optimizer)
+        await checkpoint_utils.check_renderer_name_for_checkpoint_async(
+            service_client, cfg.load_checkpoint_path, cfg.renderer_name
+        )
         training_client = await service_client.create_training_client_from_state_async(
-            cfg.load_checkpoint_path
+            cfg.load_checkpoint_path, user_metadata=user_metadata
         )
         logger.info(f"Loaded weights from {cfg.load_checkpoint_path}")
     else:
         training_client = await service_client.create_lora_training_client_async(
-            cfg.model_name, rank=cfg.lora_rank
+            cfg.model_name, rank=cfg.lora_rank, user_metadata=user_metadata
         )
 
     # Get tokenizer from training client

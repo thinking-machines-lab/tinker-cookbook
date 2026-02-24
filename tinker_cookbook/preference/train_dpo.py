@@ -34,6 +34,7 @@ class Config:
     model_name: str
     dataset_builder: ChatDatasetBuilder
     load_checkpoint_path: str | None = None
+    renderer_name: str | None = None
     # dataset_builder optionally returns an evaluator (test set)
 
     # Training parameters
@@ -73,6 +74,7 @@ class Config:
 def create_dpo_clients(
     config: Config,
     resume_info: dict[str, Any] | None = None,
+    user_metadata: dict[str, str] | None = None,
 ) -> tuple[tinker.TrainingClient, tinker.SamplingClient]:
     """Create and configure the training client and reference sampling client for DPO.
 
@@ -90,16 +92,22 @@ def create_dpo_clients(
     # Create shared service client for both training and reference clients
     service_client = tinker.ServiceClient(base_url=config.base_url)
     training_client = service_client.create_lora_training_client(
-        base_model=config.model_name, rank=config.lora_rank
+        base_model=config.model_name, rank=config.lora_rank, user_metadata=user_metadata
     )
 
     # Load state - differentiate between resuming DPO training vs starting fresh from SFT
     if resume_info:
         # Resuming interrupted DPO training - load optimizer state for proper continuation
+        checkpoint_utils.check_renderer_name_for_checkpoint(
+            service_client, resume_info["state_path"], config.renderer_name
+        )
         training_client.load_state_with_optimizer(resume_info["state_path"]).result()
         logger.info(f"Resumed DPO training from {resume_info['state_path']}")
     elif config.load_checkpoint_path:
         # Starting fresh DPO from SFT checkpoint - load weights only (fresh optimizer)
+        checkpoint_utils.check_renderer_name_for_checkpoint(
+            service_client, config.load_checkpoint_path, config.renderer_name
+        )
         training_client.load_state(config.load_checkpoint_path).result()
         logger.info(f"Loaded weights from {config.load_checkpoint_path}")
     # Create a sampling client for the reference model from the training client
@@ -337,7 +345,11 @@ def main(config: Config):
         config=config,
         do_configure_logging_module=True,
     )
-    training_client, reference_client = create_dpo_clients(config, resume_info)
+    user_metadata: dict[str, str] = {}
+    if wandb_link := ml_logger.get_logger_url():
+        user_metadata["wandb_link"] = wandb_link
+    checkpoint_utils.add_renderer_name_to_user_metadata(user_metadata, config.renderer_name)
+    training_client, reference_client = create_dpo_clients(config, resume_info, user_metadata)
     tokenizer = get_tokenizer(config.model_name)
 
     # Training setup

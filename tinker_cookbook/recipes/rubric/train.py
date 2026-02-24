@@ -1,7 +1,7 @@
 import chz
 import asyncio
 from datetime import datetime
-from tinker_cookbook import cli_utils, model_info
+from tinker_cookbook import checkpoint_utils, cli_utils
 from tinker_cookbook.rl.train import AsyncConfig, Config, main
 from tinker_cookbook.rl.types import RLDatasetBuilder
 from tinker.types import LossFnType
@@ -88,8 +88,11 @@ async def cli_main(cli_config: CLIConfig):
     """Convert CLI config to full config and run training."""
 
     # Get tokenizer for stop sequences
-    renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(
-        cli_config.model_name
+    renderer_name = await checkpoint_utils.resolve_renderer_name_from_checkpoint_or_default_async(
+        model_name=cli_config.model_name,
+        explicit_renderer_name=cli_config.renderer_name,
+        load_checkpoint_path=cli_config.load_checkpoint_path,
+        base_url=cli_config.base_url,
     )
     model_name = cli_config.model_name.replace("/", "-")
     run_name = f"{model_name}-{cli_config.lora_rank}rank-{cli_config.learning_rate}lr-{cli_config.train_group_size}group_size-{cli_config.groups_per_batch}batch-{cli_config.loss_fn}-seed{cli_config.seed}-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
@@ -118,6 +121,7 @@ async def cli_main(cli_config: CLIConfig):
             test_group_size=cli_config.test_group_size,
         ),
         model_name=cli_config.model_name,
+        renderer_name=renderer_name,
         lora_rank=cli_config.lora_rank,
         max_tokens=cli_config.max_tokens,
         temperature=cli_config.temperature,

@@ -133,6 +133,7 @@ class Config:
     learning_rate: float
     dataset_configs: List[DistillationDatasetConfig]
     model_name: str
+    renderer_name: str | None = None
     max_tokens: int
     temperature: float = 1.0
     compute_post_kl: bool = False
@@ -385,14 +386,22 @@ async def main(
         start_batch = 0
 
     service_client = tinker.ServiceClient(base_url=cfg.base_url)
+    user_metadata: dict[str, str] = {}
+    if wandb_link := ml_logger.get_logger_url():
+        user_metadata["wandb_link"] = wandb_link
+    checkpoint_utils.add_renderer_name_to_user_metadata(user_metadata, cfg.renderer_name)
+
     training_client = await service_client.create_lora_training_client_async(
-        cfg.model_name, rank=cfg.lora_rank
+        cfg.model_name, rank=cfg.lora_rank, user_metadata=user_metadata
     )
 
     load_state_path: str | None = (
         resume_info["state_path"] if resume_info else cfg.load_checkpoint_path
     )
     if load_state_path:
+        await checkpoint_utils.check_renderer_name_for_checkpoint_async(
+            service_client, load_state_path, cfg.renderer_name
+        )
         future = await training_client.load_state_with_optimizer_async(load_state_path)
         _ = await future.result_async()
         logger.info(f"Loaded state from {load_state_path}")

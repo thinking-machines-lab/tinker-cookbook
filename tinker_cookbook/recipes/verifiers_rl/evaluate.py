@@ -10,7 +10,7 @@ import numpy as np
 import verifiers as vf
 from verifiers.utils.message_utils import messages_to_printable
 
-from tinker_cookbook import model_info, renderers
+from tinker_cookbook import checkpoint_utils, model_info, renderers
 from tinker_cookbook.recipes.verifiers_rl.tinker_openai import TinkerAsyncOpenAIClient
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
@@ -91,7 +91,14 @@ async def evaluate(
 
     env = vf.load_environment(vf_env_id, **vf_env_args)
     tokenizer = get_tokenizer(model_name)
-    renderer_name = model_info.get_recommended_renderer_name(model_name)
+    renderer_name = None
+    if model_path is not None:
+        renderer_name = await checkpoint_utils.get_renderer_name_from_checkpoint_async(
+            service, model_path
+        )
+    if renderer_name is None:
+        renderer_name = model_info.get_recommended_renderer_name(model_name)
+    print(f"Using renderer: {renderer_name}")
     renderer = renderers.get_renderer(renderer_name, tokenizer)
 
     # Create sampling client from checkpoint path or base model

@@ -6,12 +6,188 @@ from typing import Any, Literal
 
 import tinker
 
+from tinker_cookbook import model_info
 from tinker_cookbook.utils.file_utils import read_jsonl
 from tinker_cookbook.utils.trace import scope, update_scope_context
 
 CHECKPOINTS_BASE_NAME = "checkpoints.jsonl"
 
 logger = logging.getLogger(__name__)
+RENDERER_NAME_METADATA_KEY = "renderer_name"
+
+
+def add_renderer_name_to_user_metadata(
+    user_metadata: dict[str, str], renderer_name: str | None
+) -> None:
+    """Attach renderer name to training-run metadata when available."""
+    if renderer_name:
+        user_metadata[RENDERER_NAME_METADATA_KEY] = renderer_name
+
+
+def _handle_checkpoint_renderer_check_result(
+    checkpoint_path: str,
+    expected_renderer_name: str,
+    checkpoint_renderer_name: str | None,
+) -> None:
+    if checkpoint_renderer_name is None:
+        logger.info("Checkpoint %s has no renderer metadata.", checkpoint_path)
+    elif checkpoint_renderer_name != expected_renderer_name:
+        logger.warning(
+            "Renderer mismatch for checkpoint %s: checkpoint=%s current=%s",
+            checkpoint_path,
+            checkpoint_renderer_name,
+            expected_renderer_name,
+        )
+    else:
+        logger.info(
+            "Renderer metadata matches for checkpoint %s: %s",
+            checkpoint_path,
+            expected_renderer_name,
+        )
+    return None
+
+
+def get_renderer_name_from_checkpoint(
+    service_client: tinker.ServiceClient, checkpoint_path: str
+) -> str | None:
+    """Read renderer_name metadata from the training run referenced by a checkpoint path."""
+    try:
+        rest_client = service_client.create_rest_client()
+        training_run = rest_client.get_training_run_by_tinker_path(checkpoint_path).result()
+        return (training_run.user_metadata or {}).get(RENDERER_NAME_METADATA_KEY)
+    except (tinker.TinkerError, ValueError) as e:
+        logger.warning(
+            "Could not fetch renderer metadata for checkpoint %s: %s",
+            checkpoint_path,
+            e,
+        )
+        return None
+
+
+async def get_renderer_name_from_checkpoint_async(
+    service_client: tinker.ServiceClient, checkpoint_path: str
+) -> str | None:
+    """Async version of get_renderer_name_from_checkpoint."""
+    try:
+        rest_client = service_client.create_rest_client()
+        training_run = await rest_client.get_training_run_by_tinker_path_async(checkpoint_path)
+        return (training_run.user_metadata or {}).get(RENDERER_NAME_METADATA_KEY)
+    except (tinker.TinkerError, ValueError) as e:
+        logger.warning(
+            "Could not fetch renderer metadata for checkpoint %s: %s",
+            checkpoint_path,
+            e,
+        )
+        return None
+
+
+def resolve_renderer_name_from_checkpoint_or_default(
+    *,
+    model_name: str,
+    explicit_renderer_name: str | None,
+    load_checkpoint_path: str | None,
+    base_url: str | None = None,
+) -> str:
+    """
+    Resolve renderer name for training/eval setup.
+
+    Precedence:
+    1) explicit renderer name, if provided
+    2) renderer metadata from load checkpoint path, if available
+    3) recommended renderer for model_name
+    """
+    if explicit_renderer_name is not None:
+        return explicit_renderer_name
+
+    if load_checkpoint_path is not None:
+        service_client = tinker.ServiceClient(base_url=base_url)
+        renderer_name = get_renderer_name_from_checkpoint(service_client, load_checkpoint_path)
+        if renderer_name is not None:
+            logger.info(
+                "Using renderer from checkpoint metadata for %s: %s",
+                load_checkpoint_path,
+                renderer_name,
+            )
+            return renderer_name
+
+    return model_info.get_recommended_renderer_name(model_name)
+
+
+async def resolve_renderer_name_from_checkpoint_or_default_async(
+    *,
+    model_name: str,
+    explicit_renderer_name: str | None,
+    load_checkpoint_path: str | None,
+    base_url: str | None = None,
+) -> str:
+    """
+    Async version of resolve_renderer_name_from_checkpoint_or_default.
+    """
+    if explicit_renderer_name is not None:
+        return explicit_renderer_name
+
+    if load_checkpoint_path is not None:
+        service_client = tinker.ServiceClient(base_url=base_url)
+        renderer_name = await get_renderer_name_from_checkpoint_async(
+            service_client, load_checkpoint_path
+        )
+        if renderer_name is not None:
+            logger.info(
+                "Using renderer from checkpoint metadata for %s: %s",
+                load_checkpoint_path,
+                renderer_name,
+            )
+            return renderer_name
+
+    return model_info.get_recommended_renderer_name(model_name)
+
+
+def check_renderer_name_for_checkpoint(
+    service_client: tinker.ServiceClient,
+    checkpoint_path: str,
+    expected_renderer_name: str | None,
+) -> None:
+    """
+    Inspect a checkpoint's originating training run metadata and compare renderer name.
+
+    """
+    if expected_renderer_name is None:
+        return None
+
+    checkpoint_renderer_name = get_renderer_name_from_checkpoint(service_client, checkpoint_path)
+
+    _handle_checkpoint_renderer_check_result(
+        checkpoint_path, expected_renderer_name, checkpoint_renderer_name
+    )
+    return None
+
+
+async def check_renderer_name_for_checkpoint_async(
+    service_client: tinker.ServiceClient,
+    checkpoint_path: str,
+    expected_renderer_name: str | None,
+) -> None:
+    """
+    Compare an expected renderer with renderer metadata attached to a checkpoint's training run.
+
+    Behavior:
+    - If ``expected_renderer_name`` is None, returns None and does no check.
+    - Otherwise fetches ``renderer_name`` from the run referenced by ``checkpoint_path``.
+    - Logs info if metadata is missing or matches.
+    - Logs warning if the checkpoint renderer differs from the expected renderer.
+
+    """
+    if expected_renderer_name is None:
+        return None
+
+    checkpoint_renderer_name = await get_renderer_name_from_checkpoint_async(
+        service_client, checkpoint_path
+    )
+
+    _handle_checkpoint_renderer_check_result(
+        checkpoint_path, expected_renderer_name, checkpoint_renderer_name
+    )
+    return None
 
 
 @scope
