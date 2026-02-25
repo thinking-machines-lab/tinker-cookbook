@@ -369,6 +369,10 @@ class Config:
     ttl_seconds: int | None = 604800  # 7 days
     num_groups_to_log: int = 4  # Number of groups to log per iteration (0 = disable logging)
 
+    # HuggingFace dataset logging
+    hf_dataset_repo: str | None = None  # e.g. "username/my-rl-completions"
+    hf_dataset_private: bool = True  # Create repo as private
+
 
 @scope
 async def run_single_evaluation(evaluator, cfg, i_batch, sampling_client):
@@ -480,6 +484,7 @@ async def do_sync_training_with_stream_minibatch(
                 )
                 metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
                 if trajectory_group is not None:
+                    ml_logger.log_trajectories(i_batch, [trajectory_group], tokenizer)
                     trajectory_groups_queue.put_nowait(
                         WrappedTrajectoryGroup(
                             trajectory_group=trajectory_group,
@@ -617,6 +622,7 @@ async def do_async_training(
             if trajectory_group is None:
                 trajectory_groups_queue.put_nowait(None)
             else:
+                ml_logger.log_trajectories(sampling_client_step_copy, [trajectory_group], tokenizer)
                 metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
                 trajectory_groups_queue.put_nowait(
                     WrappedTrajectoryGroup(
@@ -1135,6 +1141,8 @@ async def do_sync_training(
         if cfg.remove_constant_reward_groups:
             trajectory_groups_P = remove_constant_reward_groups(trajectory_groups_P)
 
+        ml_logger.log_trajectories(i_batch, trajectory_groups_P, tokenizer)
+
         # Train step
         sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(
             cfg,
@@ -1162,6 +1170,8 @@ async def main(
         wandb_project=cfg.wandb_project,
         config=cfg,
         wandb_name=cfg.wandb_name,
+        hf_dataset_repo=cfg.hf_dataset_repo,
+        hf_dataset_private=cfg.hf_dataset_private,
     )
     if cfg.enable_trace:
         # Get and rename the current (main) task
