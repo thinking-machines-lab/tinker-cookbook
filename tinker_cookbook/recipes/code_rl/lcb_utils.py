@@ -175,7 +175,7 @@ def run_test(sample, test=None, debug=False, timeout=6):
                             + "\n"
                             + ast.unparse(last_block.body)
                         )
-            except:
+            except Exception:
                 pass
 
             tmp_test = test.split("\n")
@@ -227,7 +227,7 @@ def run_test(sample, test=None, debug=False, timeout=6):
 
         try:
             method = getattr(tmp, method_name)  # get_attr second arg must be str
-        except:
+        except Exception:
             signal.alarm(0)
             e = sys.exc_info()
             print(f"unable to get function error = {e}")
@@ -260,21 +260,21 @@ def run_test(sample, test=None, debug=False, timeout=6):
             try:
                 if isinstance(inputs[0], dict):
                     inputs = [{int(k): v for k, v in inputs[0].items()}]
-            except:
+            except Exception:
                 True
             try:
                 if isinstance(in_outs["outputs"][index], dict):
                     in_outs["outputs"][index] = [
                         {int(k): v for k, v in in_outs["outputs"][index].items()}
                     ]
-            except:
+            except Exception:
                 True
             try:
                 if isinstance(in_outs["outputs"][index][0], dict):
                     in_outs["outputs"][index] = [
                         {int(k): v for k, v in in_outs["outputs"][index][0].items()}
                     ]
-            except:
+            except Exception:
                 True
 
             if debug:
@@ -311,7 +311,7 @@ def run_test(sample, test=None, debug=False, timeout=6):
                                 [list(x) for x in output]
                                 == in_outs["outputs"][index][0]
                             )
-                    except:
+                    except Exception:
                         True
                     results.append(tmp_result)
                     if tmp_result != True:
