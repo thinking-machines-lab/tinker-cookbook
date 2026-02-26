@@ -10,7 +10,8 @@ Includes:
 """
 
 import json
-from typing import cast
+from dataclasses import dataclass, field
+from typing import Callable, Iterator, cast
 
 import tinker
 
@@ -19,13 +20,18 @@ from tinker_cookbook.renderers.base import (
     ImagePart,
     ImageProcessorProtocol,
     Message,
+    MessageDelta,
     RenderContext,
     RenderedMessage,
     Renderer,
+    StreamingMessageHeader,
+    StreamingTextDelta,
+    StreamingThinkingDelta,
     TextPart,
     ToolCall,
     ToolSpec,
     UnparsedToolCall,
+    Utf8TokenDecoder,
     _tool_call_payload,
     image_to_chunk,
     parse_content_blocks,
@@ -55,6 +61,140 @@ def _merge_consecutive_text_parts(
         else:
             merged.append(chunk)
     return merged
+
+
+_THINK_OPEN_TAG = "<think>"
+_THINK_CLOSE_TAG = "</think>"
+
+
+def _longest_matching_suffix_prefix(text: str, tag: str) -> int:
+    """Find longest suffix of text that matches a prefix of tag."""
+    max_check = min(len(text), len(tag) - 1)
+    for length in range(max_check, 0, -1):
+        if text.endswith(tag[:length]):
+            return length
+    return 0
+
+
+@dataclass
+class Qwen3StreamingParser:
+    """Stateful streaming parser for Qwen3 text output."""
+
+    tokenizer: Tokenizer
+    end_message_token: int
+    parse_final_response: Callable[[list[int]], tuple[Message, bool]]
+
+    _utf8_decoder: Utf8TokenDecoder = field(init=False)
+    _accumulated_text: str = field(init=False, default="")
+    _header_emitted: bool = field(init=False, default=False)
+    _in_thinking: bool = field(init=False, default=False)
+    _content_index: int = field(init=False, default=0)
+    _last_emitted_pos: int = field(init=False, default=0)
+    _finished: bool = field(init=False, default=False)
+    _all_tokens: list[int] = field(init=False, default_factory=list)
+
+    def __post_init__(self) -> None:
+        self._utf8_decoder = Utf8TokenDecoder(self.tokenizer)
+
+    def feed(self, token: int) -> Iterator[MessageDelta]:
+        if self._finished:
+            return
+
+        self._all_tokens.append(token)
+
+        if token == self.end_message_token:
+            self._finished = True
+            return
+
+        decoded = self._utf8_decoder.decode([token])
+        if decoded is None:
+            return
+
+        self._accumulated_text += decoded
+
+        if not self._header_emitted:
+            self._header_emitted = True
+            yield StreamingMessageHeader(role="assistant")
+
+        yield from self._emit_deltas()
+
+    def _emit_deltas(self) -> Iterator[MessageDelta]:
+        text = self._accumulated_text
+        pos = self._last_emitted_pos
+
+        while pos < len(text):
+            if not self._in_thinking:
+                think_start = text.find(_THINK_OPEN_TAG, pos)
+                if think_start == -1:
+                    suffix_from_pos = text[pos:]
+                    keep = _longest_matching_suffix_prefix(suffix_from_pos, _THINK_OPEN_TAG)
+                    safe_end = len(text) - keep
+                    if safe_end > pos:
+                        new_text = text[pos:safe_end]
+                        if new_text:
+                            yield StreamingTextDelta(text=new_text, content_index=self._content_index)
+                        self._last_emitted_pos = safe_end
+                    break
+                if think_start > pos:
+                    new_text = text[pos:think_start]
+                    if new_text:
+                        yield StreamingTextDelta(text=new_text, content_index=self._content_index)
+                    pos = think_start
+
+                if text[pos:].startswith(_THINK_OPEN_TAG):
+                    self._in_thinking = True
+                    self._content_index += 1
+                    pos += len(_THINK_OPEN_TAG)
+                    self._last_emitted_pos = pos
+            else:
+                think_end = text.find(_THINK_CLOSE_TAG, pos)
+                if think_end == -1:
+                    suffix_from_pos = text[pos:]
+                    keep = _longest_matching_suffix_prefix(suffix_from_pos, _THINK_CLOSE_TAG)
+                    safe_end = len(text) - keep
+                    if safe_end > pos:
+                        new_thinking = text[pos:safe_end]
+                        if new_thinking:
+                            yield StreamingThinkingDelta(
+                                thinking=new_thinking, content_index=self._content_index
+                            )
+                        self._last_emitted_pos = safe_end
+                    break
+
+                new_thinking = text[pos:think_end]
+                if new_thinking:
+                    yield StreamingThinkingDelta(
+                        thinking=new_thinking, content_index=self._content_index
+                    )
+                self._in_thinking = False
+                self._content_index += 1
+                pos = think_end + len(_THINK_CLOSE_TAG)
+                self._last_emitted_pos = pos
+
+    def finish(self) -> Iterator[MessageDelta]:
+        remaining = self._utf8_decoder.flush()
+        if remaining:
+            self._accumulated_text += remaining
+
+        if not self._header_emitted:
+            self._header_emitted = True
+            yield StreamingMessageHeader(role="assistant")
+
+        text = self._accumulated_text
+        pos = self._last_emitted_pos
+        if pos < len(text):
+            remaining_text = text[pos:]
+            if self._in_thinking:
+                if remaining_text:
+                    yield StreamingThinkingDelta(
+                        thinking=remaining_text, content_index=self._content_index
+                    )
+            else:
+                if remaining_text:
+                    yield StreamingTextDelta(text=remaining_text, content_index=self._content_index)
+
+        message, _success = self.parse_final_response(self._all_tokens)
+        yield message
 
 
 class Qwen3Renderer(Renderer):
@@ -226,6 +366,19 @@ class Qwen3Renderer(Renderer):
             assistant_message["content"] = content
 
         return assistant_message, True
+
+    def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
+        """Parse response tokens with streaming, yielding incremental deltas."""
+        parser = Qwen3StreamingParser(
+            tokenizer=self.tokenizer,
+            end_message_token=self._end_message_token,
+            parse_final_response=self.parse_response,
+        )
+
+        for token in response:
+            yield from parser.feed(token)
+
+        yield from parser.finish()
 
     def to_openai_message(self, message: Message) -> dict:
         """Convert a Message to OpenAI API format with reasoning_content for thinking.
