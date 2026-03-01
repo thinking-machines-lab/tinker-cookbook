@@ -1,0 +1,5 @@
+{
+    "test_all_archives_extracted": 0.4,
+    "test_extracted_content_correctness": 0.4,
+    "test_extraction_report_exists": 0.2
+}
