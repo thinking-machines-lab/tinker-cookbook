@@ -60,8 +60,8 @@ def write_rollout_summaries_jsonl(
                             "ac_len": len(transition.ac.tokens),
                             "reward": transition.reward,
                             "episode_done": transition.episode_done,
-                            "metrics": _json_safe(transition.metrics),
-                            "logs": _json_safe(transition.logs),
+                            "metrics": transition.metrics,
+                            "logs": transition.logs,
                         }
                     )
 
@@ -75,8 +75,8 @@ def write_rollout_summaries_jsonl(
                     "sampling_client_step": sampling_step,
                     "total_reward": total_rewards_G[traj_idx],
                     "final_reward": trajectory_group.final_rewards_G[traj_idx],
-                    "trajectory_metrics": _json_safe(trajectory_group.metrics_G[traj_idx]),
+                    "trajectory_metrics": trajectory_group.metrics_G[traj_idx],
                     "steps": steps,
                     "final_ob_len": trajectory.final_ob.length,
                 }
-                f.write(json.dumps(record) + "\n")
+                f.write(json.dumps(_json_safe(record)) + "\n")

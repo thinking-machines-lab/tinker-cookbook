@@ -137,6 +137,8 @@ def _write_rollout_summaries_from_wrapped(
     iteration: int,
     wrapped_trajectory_groups: Sequence["WrappedTrajectoryGroup"],
 ) -> None:
+    if not cfg.rollout_json_export:
+        return
     if not wrapped_trajectory_groups:
         return
     _write_rollout_summaries(
