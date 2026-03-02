@@ -1,11 +1,31 @@
 """Utilities for exporting per-rollout records to JSONL."""
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
 from tinker_cookbook.rl.types import TrajectoryGroup
 from tinker_cookbook.utils.misc_utils import safezip
+
+
+@dataclass(frozen=True)
+class RolloutSummaryExportConfig:
+    """Location and metadata for one rollout-summary JSONL export."""
+
+    path: Path
+    split: str
+    iteration: int
+    sampling_client_step: int | None = None
+
+
+@dataclass(frozen=True)
+class RolloutSummaryGroup:
+    """One group of trajectories to serialize into rollout-summary JSONL records."""
+
+    trajectory_group: TrajectoryGroup
+    tags: list[str]
+    sampling_client_step: int | None = None
 
 
 def _json_safe(value: Any) -> Any:
@@ -31,7 +51,7 @@ def write_rollout_summaries_jsonl(
     iteration: int,
     trajectory_groups_P: Sequence[TrajectoryGroup],
     taglist_P: Sequence[list[str]],
-    sampling_client_steps_P: Sequence[int] | None = None,
+    sampling_client_steps_P: Sequence[int | None] | None = None,
 ) -> None:
     """
     Write one JSON record per rollout trajectory.
@@ -80,3 +100,26 @@ def write_rollout_summaries_jsonl(
                     "final_ob_len": trajectory.final_ob.length,
                 }
                 f.write(json.dumps(_json_safe(record)) + "\n")
+
+
+def rollout_summaries_jsonl_path(log_path: str, file_prefix: str) -> Path:
+    """Build the rollout-summary JSONL path for a train/eval file prefix."""
+    return Path(log_path) / f"{file_prefix}_rollout_summaries.jsonl"
+
+
+def write_rollout_summaries_jsonl_from_groups(
+    path: Path,
+    *,
+    split: str,
+    iteration: int,
+    groups_P: Sequence[RolloutSummaryGroup],
+) -> None:
+    """Serialize rollout summaries from grouped records with tags and sampler step metadata."""
+    write_rollout_summaries_jsonl(
+        path,
+        split=split,
+        iteration=iteration,
+        trajectory_groups_P=[group.trajectory_group for group in groups_P],
+        taglist_P=[group.tags for group in groups_P],
+        sampling_client_steps_P=[group.sampling_client_step for group in groups_P],
+    )
