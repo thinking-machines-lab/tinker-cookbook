@@ -2,6 +2,8 @@
 Implements RL on general MDPs
 """
 
+from __future__ import annotations
+
 import asyncio
 import io
 import logging
@@ -34,7 +36,12 @@ from tinker_cookbook.rl.metrics import (
     compute_sampling_client_metrics,
     incorporate_kl_penalty,
 )
-from tinker_cookbook.rl.rollout_logging import write_rollout_summaries_jsonl
+from tinker_cookbook.rl.rollout_logging import (
+    RolloutSummaryExportConfig,
+    RolloutSummaryGroup,
+    rollout_summaries_jsonl_path,
+    write_rollout_summaries_jsonl_from_groups,
+)
 from tinker_cookbook.rl.rollouts import do_group_rollout
 from tinker_cookbook.rl.types import (
     EnvGroupBuilder,
@@ -103,52 +110,28 @@ def _sanitize_filename_component(text: str) -> str:
     return sanitized.strip("._") or "unnamed"
 
 
-def _rollout_summaries_path(log_path: str, f_name: str) -> str:
-    return os.path.join(log_path, f"{f_name}_rollout_summaries.jsonl")
-
-
-def _write_rollout_summaries(
+def _maybe_export_rollout_summary_jsonl(
     *,
-    cfg: "Config",
-    f_name: str,
+    cfg: Config,
+    file_prefix: str,
     split: str,
     iteration: int,
-    trajectory_groups_P: Sequence[TrajectoryGroup],
-    taglist_P: Sequence[list[str]],
-    sampling_client_steps_P: Sequence[int] | None = None,
+    groups_P: Sequence[RolloutSummaryGroup],
 ) -> None:
+    """
+    Write per-trajectory rollout summaries for one train/eval pass when enabled.
+
+    This is a thin policy gate around rollout_logging utilities:
+    - path naming (`<file_prefix>_rollout_summaries.jsonl`)
+    - on/off switch (`cfg.rollout_json_export`)
+    """
     if not cfg.rollout_json_export:
         return
-    write_rollout_summaries_jsonl(
-        _rollout_summaries_path(cfg.log_path, f_name),
+    write_rollout_summaries_jsonl_from_groups(
+        rollout_summaries_jsonl_path(cfg.log_path, file_prefix),
         split=split,
         iteration=iteration,
-        trajectory_groups_P=trajectory_groups_P,
-        taglist_P=taglist_P,
-        sampling_client_steps_P=sampling_client_steps_P,
-    )
-
-
-def _write_rollout_summaries_from_wrapped(
-    *,
-    cfg: "Config",
-    f_name: str,
-    split: str,
-    iteration: int,
-    wrapped_trajectory_groups: Sequence["WrappedTrajectoryGroup"],
-) -> None:
-    if not cfg.rollout_json_export:
-        return
-    if not wrapped_trajectory_groups:
-        return
-    _write_rollout_summaries(
-        cfg=cfg,
-        f_name=f_name,
-        split=split,
-        iteration=iteration,
-        trajectory_groups_P=[g.trajectory_group for g in wrapped_trajectory_groups],
-        taglist_P=[g.env_group_builder.logging_tags() for g in wrapped_trajectory_groups],
-        sampling_client_steps_P=[g.sampling_client_step for g in wrapped_trajectory_groups],
+        groups_P=groups_P,
     )
 
 
@@ -452,16 +435,19 @@ async def run_single_evaluation(
         scope_name=f"Running evaluation {ev_name} {i_batch}",
     ):
         if isinstance(evaluator, RLTestSetEvaluator):
+            rollout_summary_export = (
+                RolloutSummaryExportConfig(
+                    path=rollout_summaries_jsonl_path(cfg.log_path, eval_file_prefix),
+                    split=f"eval/{evaluator_label}",
+                    iteration=i_batch,
+                    sampling_client_step=i_batch,
+                )
+                if cfg.rollout_json_export
+                else None
+            )
             eval_metrics = await evaluator(
                 sampling_client,
-                rollout_summaries_path=(
-                    _rollout_summaries_path(cfg.log_path, eval_file_prefix)
-                    if cfg.rollout_json_export
-                    else None
-                ),
-                iteration=i_batch,
-                split=f"eval/{evaluator_label}",
-                sampling_client_step=i_batch,
+                rollout_summary_export=rollout_summary_export,
             )
         else:
             eval_metrics = await evaluator(sampling_client)
@@ -599,12 +585,19 @@ async def do_sync_training_with_stream_minibatch(
                 tokenizer,
             )
 
-        _write_rollout_summaries_from_wrapped(
+        _maybe_export_rollout_summary_jsonl(
             cfg=cfg,
-            f_name=f"train_iteration_{i_batch:06d}",
+            file_prefix=f"train_iteration_{i_batch:06d}",
             split="train",
             iteration=i_batch,
-            wrapped_trajectory_groups=full_batch_wrapped_trajectory_groups,
+            groups_P=[
+                RolloutSummaryGroup(
+                    trajectory_group=group.trajectory_group,
+                    tags=group.env_group_builder.logging_tags(),
+                    sampling_client_step=group.sampling_client_step,
+                )
+                for group in full_batch_wrapped_trajectory_groups
+            ],
         )
 
         # Log metrics
@@ -784,12 +777,19 @@ async def do_async_training(
                     tokenizer,
                     filter_stale_trajectory_group,
                 )
-                _write_rollout_summaries_from_wrapped(
+                _maybe_export_rollout_summary_jsonl(
                     cfg=cfg,
-                    f_name=f"train_iteration_{i_batch:06d}",
+                    file_prefix=f"train_iteration_{i_batch:06d}",
                     split="train",
                     iteration=i_batch,
-                    wrapped_trajectory_groups=full_batch_wrapped_trajectory_groups,
+                    groups_P=[
+                        RolloutSummaryGroup(
+                            trajectory_group=group.trajectory_group,
+                            tags=group.env_group_builder.logging_tags(),
+                            sampling_client_step=group.sampling_client_step,
+                        )
+                        for group in full_batch_wrapped_trajectory_groups
+                    ],
                 )
             else:
                 if not filter_stale_trajectory_group(wrapped_trajectory_group):
@@ -820,12 +820,19 @@ async def do_async_training(
                     [g.env_group_builder for g in wrapped_trajectory_groups],
                     [g.trajectory_group for g in wrapped_trajectory_groups],
                 )
-                _write_rollout_summaries_from_wrapped(
+                _maybe_export_rollout_summary_jsonl(
                     cfg=cfg,
-                    f_name=f"train_iteration_{i_batch:06d}",
+                    file_prefix=f"train_iteration_{i_batch:06d}",
                     split="train",
                     iteration=i_batch,
-                    wrapped_trajectory_groups=wrapped_trajectory_groups,
+                    groups_P=[
+                        RolloutSummaryGroup(
+                            trajectory_group=group.trajectory_group,
+                            tags=group.env_group_builder.logging_tags(),
+                            sampling_client_step=group.sampling_client_step,
+                        )
+                        for group in wrapped_trajectory_groups
+                    ],
                 )
             sampling_client_step = i_batch + 1
             sampling_client_updated_event.set()
@@ -1010,7 +1017,7 @@ async def do_train_step_streaming_and_get_sampling_client(
     kl_reference_client: tinker.SamplingClient | None,
     tokenizer: Tokenizer,
     trajectory_group_filter: Callable[[WrappedTrajectoryGroup | None], bool] = lambda _: True,
-) -> tuple[tinker.SamplingClient, dict[str, Any], list["WrappedTrajectoryGroup"]]:
+) -> tuple[tinker.SamplingClient, dict[str, Any], list[WrappedTrajectoryGroup]]:
     """
     As soon as we have enough trajectories for a minibatch, we will train on them.
     This allows us to overlap sampling and training.
@@ -1242,14 +1249,21 @@ async def do_sync_training(
                 desc=f"Sampling batch {i_batch}",
             )
 
-        _write_rollout_summaries(
+        _maybe_export_rollout_summary_jsonl(
             cfg=cfg,
-            f_name=f"train_iteration_{i_batch:06d}",
+            file_prefix=f"train_iteration_{i_batch:06d}",
             split="train",
             iteration=i_batch,
-            trajectory_groups_P=trajectory_groups_P,
-            taglist_P=[builder.logging_tags() for builder in env_group_builders_P],
-            sampling_client_steps_P=[i_batch] * len(trajectory_groups_P),
+            groups_P=[
+                RolloutSummaryGroup(
+                    trajectory_group=trajectory_group,
+                    tags=env_group_builder.logging_tags(),
+                    sampling_client_step=i_batch,
+                )
+                for env_group_builder, trajectory_group in safezip(
+                    env_group_builders_P, trajectory_groups_P
+                )
+            ],
         )
 
         if cfg.remove_constant_reward_groups:
