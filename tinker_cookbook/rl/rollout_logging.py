@@ -13,7 +13,7 @@ from tinker_cookbook.utils.misc_utils import safezip
 class RolloutSummaryExportConfig:
     """Location and metadata for one rollout-summary JSONL export."""
 
-    path: str | Path
+    path: Path
     split: str
     iteration: int
     sampling_client_step: int | None = None
@@ -102,13 +102,13 @@ def write_rollout_summaries_jsonl(
                 f.write(json.dumps(_json_safe(record)) + "\n")
 
 
-def rollout_summaries_jsonl_path(log_path: str, file_prefix: str) -> str:
+def rollout_summaries_jsonl_path(log_path: str, file_prefix: str) -> Path:
     """Build the rollout-summary JSONL path for a train/eval file prefix."""
-    return str(Path(log_path) / f"{file_prefix}_rollout_summaries.jsonl")
+    return Path(log_path) / f"{file_prefix}_rollout_summaries.jsonl"
 
 
 def write_rollout_summaries_jsonl_from_groups(
-    path: str | Path,
+    path: Path,
     *,
     split: str,
     iteration: int,
