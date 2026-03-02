@@ -22,6 +22,7 @@ Example usage:
 import functools
 import html as html_module
 import inspect
+import json
 import os
 import traceback
 from contextlib import contextmanager
@@ -76,6 +77,16 @@ class Node:
                 lines.append(child.to_html(indent + 1))
         lines.append(f"{ind}</{self.tag}>\n")
         return "".join(lines)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert node to a JSON-serializable dictionary."""
+        return {
+            "tag": self.tag,
+            "attrs": dict(self.attrs),
+            "children": [
+                child if isinstance(child, str) else child.to_dict() for child in self.children
+            ],
+        }
 
 
 @dataclass
@@ -157,6 +168,15 @@ class Trace:
             parts.append(extra_head)
 
         return "\n".join(parts)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert the trace to a JSON-serializable dictionary."""
+        return {
+            "title": self.title,
+            "started_at": self.started_at.isoformat(),
+            "path": str(self.path) if self.path is not None else None,
+            "root": self.root.to_dict(),
+        }
 
 
 # Default CSS styling
@@ -974,6 +994,20 @@ def write_html_with_default_style(
         else:
             f.write(body_html)
         f.write("</html>\n")
+
+
+def write_trace_json(trace: Trace, path: str | os.PathLike) -> None:
+    """
+    Write the trace structure to JSON.
+
+    Args:
+        trace: Trace object to serialize.
+        path: Output JSON file path.
+    """
+    path_obj = Path(path)
+    path_obj.parent.mkdir(parents=True, exist_ok=True)
+    with open(path_obj, "w") as f:
+        json.dump(trace.to_dict(), f, indent=2)
 
 
 def jinja_context(trace: Trace, **extra: Any) -> dict[str, Any]:

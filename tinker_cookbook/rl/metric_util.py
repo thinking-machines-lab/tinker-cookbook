@@ -7,6 +7,7 @@ import numpy as np
 import tinker
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
+from tinker_cookbook.rl.rollout_logging import write_rollout_summaries_jsonl
 from tinker_cookbook.rl.rollouts import do_group_rollout
 from tinker_cookbook.rl.types import EnvGroupBuilder, RLDataset, TrajectoryGroup
 from tinker_cookbook.utils.misc_utils import all_same, dict_mean
@@ -116,7 +117,15 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         self.name = name
         self.num_groups_to_log = num_groups_to_log
 
-    async def eval_token_completer(self, policy: TokenCompleter) -> dict[str, float]:
+    async def eval_token_completer(
+        self,
+        policy: TokenCompleter,
+        *,
+        rollout_summaries_path: str | None = None,
+        iteration: int | None = None,
+        split: str = "eval",
+        sampling_client_step: int | None = None,
+    ) -> dict[str, float]:
         async def run_group_rollout(builder, i):
             enable_logging = i < self.num_groups_to_log
             with logtree.optional_enable_logging(enable=enable_logging):
@@ -126,11 +135,39 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
             *[run_group_rollout(builder, i) for i, builder in enumerate(self.env_group_builders_P)]
         )
         taglist_P = [builder.logging_tags() for builder in self.env_group_builders_P]
+        if rollout_summaries_path is not None and iteration is not None:
+            sampling_client_steps_P = (
+                [sampling_client_step] * len(trajectory_groups_P)
+                if sampling_client_step is not None
+                else None
+            )
+            write_rollout_summaries_jsonl(
+                rollout_summaries_path,
+                split=split,
+                iteration=iteration,
+                trajectory_groups_P=trajectory_groups_P,
+                taglist_P=taglist_P,
+                sampling_client_steps_P=sampling_client_steps_P,
+            )
         metrics = compute_trajectory_metrics(trajectory_groups_P, taglist_P)
 
         metrics = {f"{self.name}/{k}": v for k, v in metrics.items()}
         return metrics
 
-    async def __call__(self, sampling_client: tinker.SamplingClient) -> dict[str, float]:
+    async def __call__(
+        self,
+        sampling_client: tinker.SamplingClient,
+        *,
+        rollout_summaries_path: str | None = None,
+        iteration: int | None = None,
+        split: str = "eval",
+        sampling_client_step: int | None = None,
+    ) -> dict[str, float]:
         policy = TinkerTokenCompleter(sampling_client, max_tokens=self.max_tokens)
-        return await self.eval_token_completer(policy)
+        return await self.eval_token_completer(
+            policy,
+            rollout_summaries_path=rollout_summaries_path,
+            iteration=iteration,
+            split=split,
+            sampling_client_step=sampling_client_step,
+        )
