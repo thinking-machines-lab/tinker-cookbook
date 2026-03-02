@@ -90,6 +90,17 @@ class RubricGradedEnv(Env):
         with logtree.scope_header("Prompt"):
             logtree.log_formatter(ConversationFormatter(messages=self.convo))
 
+        with logtree.scope_header("Rubric"):
+            rows = [
+                {
+                    "#": idx,
+                    "criterion": rubric_item.rubric_str[:160]
+                    + ("..." if len(rubric_item.rubric_str) > 160 else ""),
+                }
+                for idx, rubric_item in enumerate(self.rubric_items, start=1)
+            ]
+            logtree.table(rows, caption=f"{len(self.rubric_items)} rubric items")
+
         # obtain the policy action message
         (policy_action_message, parse_success) = self.renderer.parse_response(action)
         correct_format = float(parse_success)
@@ -112,16 +123,11 @@ class RubricGradedEnv(Env):
 
         convo = self.convo + [policy_action_message]
 
-        results = await asyncio.gather(
-            *[self._grade_with_rubric(convo, rubric_item) for rubric_item in self.rubric_items]
-        )
-        scores = [score for score, _ in results]
-        avg_score = sum(scores) / len(scores)
-
-        # Apply format penalty similar to ProblemEnv
-        total_reward = self.format_coef * (correct_format - 1) + avg_score
-
-        with logtree.scope_header("Rubric Grades"):
+        with logtree.scope_header("Grading Results"):
+            results = await asyncio.gather(
+                *[self._grade_with_rubric(convo, rubric_item) for rubric_item in self.rubric_items]
+            )
+            scores = [score for score, _ in results]
             rows = []
             for idx, (rubric_item, (score, grader_response)) in enumerate(
                 zip(self.rubric_items, results, strict=True),
@@ -131,18 +137,26 @@ class RubricGradedEnv(Env):
                     {
                         "#": idx,
                         "score": f"{score:.3f}",
-                        "rubric": rubric_item.rubric_str[:120]
+                        "criterion": rubric_item.rubric_str[:120]
                         + ("..." if len(rubric_item.rubric_str) > 120 else ""),
                     }
                 )
-                logtree.details(grader_response, summary=f"Rubric {idx}: grader response", pre=True)
+                with logtree.scope_details(f"Rubric {idx}: score={score:.3f}"):
+                    logtree.log_text(f"Criterion: {rubric_item.rubric_str}")
+                    logtree.details(grader_response, summary="Grader response", pre=True)
             logtree.table(rows, caption="Per-rubric scores")
 
-        with logtree.scope_header("Reward"):
+        avg_score = sum(scores) / len(scores)
+
+        # Apply format penalty similar to ProblemEnv
+        total_reward = self.format_coef * (correct_format - 1) + avg_score
+
+        with logtree.scope_header("Reward Summary"):
             logtree.table_from_dict(
                 {
                     "rubric_score_mean": f"{avg_score:.3f}",
                     "format_parse": bool(correct_format),
+                    "parse_penalty": f"{self.format_coef * (correct_format - 1):.3f}",
                     "format_coef": self.format_coef,
                     "reward": f"{total_reward:.3f}",
                 },
