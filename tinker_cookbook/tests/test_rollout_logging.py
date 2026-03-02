@@ -1,27 +1,29 @@
 import json
 from pathlib import Path
-from types import SimpleNamespace
+from typing import cast
 
 import numpy as np
+import tinker
 
+from tinker_cookbook.completers import TokensWithLogprobs
 from tinker_cookbook.rl.rollout_logging import write_rollout_summaries_jsonl
-from tinker_cookbook.rl.types import Trajectory, TrajectoryGroup, Transition
+from tinker_cookbook.rl.types import Logs, Metrics, Trajectory, TrajectoryGroup, Transition
 
 
 def test_write_rollout_summaries_jsonl_handles_numpy_scalars(tmp_path: Path):
     transition = Transition(
-        ob=SimpleNamespace(length=np.int64(5)),
-        ac=SimpleNamespace(tokens=[1, 2, 3]),
-        reward=np.float32(0.25),
+        ob=tinker.ModelInput.from_ints([101, 102, 103, 104, 105]),
+        ac=TokensWithLogprobs(tokens=[1, 2, 3], maybe_logprobs=[-0.1, -0.2, -0.3]),
+        reward=cast(float, np.float32(0.25)),
         episode_done=True,
-        metrics={"score": np.float32(1.5)},
-        logs={"rank": np.int64(2)},
+        metrics=cast(Metrics, {"score": np.float32(1.5)}),
+        logs=cast(Logs, {"rank": np.int64(2)}),
     )
-    trajectory = Trajectory(transitions=[transition], final_ob=SimpleNamespace(length=np.int64(8)))
+    trajectory = Trajectory(transitions=[transition], final_ob=tinker.ModelInput.from_ints([1] * 8))
     trajectory_group = TrajectoryGroup(
         trajectories_G=[trajectory],
-        final_rewards_G=[np.float32(0.75)],
-        metrics_G=[{"traj_metric": np.float32(3.0)}],
+        final_rewards_G=[cast(float, np.float32(0.75))],
+        metrics_G=[cast(Metrics, {"traj_metric": np.float32(3.0)})],
     )
     output_path = tmp_path / "rollouts.jsonl"
 
