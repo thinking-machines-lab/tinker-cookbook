@@ -11,6 +11,7 @@ from tinker_cookbook.rl.types import (
 )
 from tinker_cookbook.utils import logtree
 
+
 def _log_transition_logs(logs: dict[str, Any]) -> None:
     """Render transition logs in a readable structure without truncating table cells."""
     if not logs:
@@ -85,7 +86,9 @@ async def do_group_rollout(
     # Log compact group summary plus per-trajectory sections.
     with logtree.scope_header("Trajectory Summary"):
         summary_rows: list[dict[str, Any]] = []
-        for traj_idx, (traj, final_reward) in enumerate(zip(trajectories_G, rewards_G, strict=True)):
+        for traj_idx, (traj, final_reward) in enumerate(
+            zip(trajectories_G, rewards_G, strict=True)
+        ):
             step_reward_sum = sum(t.reward for t in traj.transitions)
             total_return = step_reward_sum + final_reward
             summary_rows.append(
@@ -99,7 +102,9 @@ async def do_group_rollout(
             )
         logtree.table(summary_rows, caption="Per-trajectory totals")
 
-        for traj_idx, (traj, final_reward) in enumerate(zip(trajectories_G, rewards_G, strict=True)):
+        for traj_idx, (traj, final_reward) in enumerate(
+            zip(trajectories_G, rewards_G, strict=True)
+        ):
             with logtree.scope_header(f"Trajectory {traj_idx}"):
                 _log_single_trajectory_details(traj, final_reward)
 
