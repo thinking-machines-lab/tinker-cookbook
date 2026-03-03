@@ -132,7 +132,9 @@ class Qwen3StreamingParser:
                     if safe_end > pos:
                         new_text = text[pos:safe_end]
                         if new_text:
-                            yield StreamingTextDelta(text=new_text, content_index=self._content_index)
+                            yield StreamingTextDelta(
+                                text=new_text, content_index=self._content_index
+                            )
                         self._last_emitted_pos = safe_end
                     break
                 if think_start > pos:
