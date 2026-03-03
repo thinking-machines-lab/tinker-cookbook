@@ -30,6 +30,18 @@ def test_basic_trace():
         assert "Content in section 1" in content
 
 
+def test_log_text_renders_inline_text_node():
+    """Text-only paragraphs should render inline, without leading newline whitespace."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_path = Path(tmpdir) / "inline_text.html"
+
+        with logtree.init_trace("Inline Text Test", path=output_path):
+            logtree.log_text("parse_success: 0")
+
+        content = output_path.read_text()
+        assert '<p class="lt-p">parse_success: 0</p>' in content
+
+
 def test_nested_scopes():
     """Test nested scopes and auto header levels."""
     with tempfile.TemporaryDirectory() as tmpdir:
