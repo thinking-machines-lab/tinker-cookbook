@@ -90,20 +90,10 @@ class RubricGradedEnv(Env):
         with logtree.scope_header("Prompt"):
             logtree.log_formatter(ConversationFormatter(messages=self.convo))
 
-        with logtree.scope_header("Rubric"):
-            rows = [
-                {
-                    "#": idx,
-                    "criterion": rubric_item.rubric_str[:160]
-                    + ("..." if len(rubric_item.rubric_str) > 160 else ""),
-                }
-                for idx, rubric_item in enumerate(self.rubric_items, start=1)
-            ]
-            logtree.table(rows, caption=f"{len(self.rubric_items)} rubric items")
-
         # obtain the policy action message
         (policy_action_message, parse_success) = self.renderer.parse_response(action)
-        correct_format = float(parse_success)
+        parse_success_bool = bool(parse_success)
+        format_score = float(parse_success_bool)
 
         if self.debug:
             print("\n" + colored("=" * 80, "blue"))
@@ -141,26 +131,26 @@ class RubricGradedEnv(Env):
                         + ("..." if len(rubric_item.rubric_str) > 120 else ""),
                     }
                 )
-                with logtree.scope_details(f"Rubric {idx}: score={score:.3f}"):
+                with logtree.scope_header(f"Rubric {idx}: score={score:.3f}"):
                     logtree.log_text(f"Criterion: {rubric_item.rubric_str}")
-                    logtree.details(grader_response, summary="Grader response", pre=True)
+                    logtree.details(grader_response, summary="Model output", pre=True)
             logtree.table(rows, caption="Per-rubric scores")
 
         avg_score = sum(scores) / len(scores)
 
         # Apply format penalty similar to ProblemEnv
-        total_reward = self.format_coef * (correct_format - 1) + avg_score
+        format_penalty = self.format_coef * (format_score - 1)
+        total_reward = format_penalty + avg_score
 
-        with logtree.scope_header("Reward Summary"):
+        with logtree.scope_header("Reward Terms"):
             logtree.table_from_dict(
                 {
                     "rubric_score_mean": f"{avg_score:.3f}",
-                    "format_parse": bool(correct_format),
-                    "parse_penalty": f"{self.format_coef * (correct_format - 1):.3f}",
-                    "format_coef": self.format_coef,
-                    "reward": f"{total_reward:.3f}",
+                    "format_parse_success": parse_success_bool,
+                    "format_penalty": f"{format_penalty:.3f}",
+                    "total_reward": f"{total_reward:.3f}",
                 },
-                caption="Reward components",
+                caption="Per-step reward breakdown",
             )
 
         return StepResult(
@@ -169,11 +159,11 @@ class RubricGradedEnv(Env):
             next_observation=self.renderer.build_generation_prompt(convo),
             next_stop_condition=self.stop_condition,
             metrics={
-                "format": correct_format,
+                "format": format_score,
                 "rubric_score": avg_score,
             },
             logs={
-                "parse_success": int(bool(parse_success)),
+                "parse_success": int(parse_success_bool),
                 "num_rubrics": len(self.rubric_items),
             },
         )

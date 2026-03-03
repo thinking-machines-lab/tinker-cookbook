@@ -68,6 +68,12 @@ class Node:
         if not self.children:
             return f"{ind}<{self.tag}{attrs_str}></{self.tag}>\n"
 
+        # Keep simple text-only nodes on one line to avoid extra rendered
+        # whitespace when CSS uses `white-space: pre-wrap` (e.g., lt-p).
+        if all(isinstance(child, str) for child in self.children):
+            text = "".join(child for child in self.children if isinstance(child, str))
+            return f"{ind}<{self.tag}{attrs_str}>{text}</{self.tag}>\n"
+
         lines = [f"{ind}<{self.tag}{attrs_str}>\n"]
         for child in self.children:
             if isinstance(child, str):
@@ -163,17 +169,17 @@ class Trace:
 _DEFAULT_CSS = """
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    line-height: 1.6;
+    line-height: 1.45;
     max-width: 1200px;
     margin: 0 auto;
-    padding: 20px;
+    padding: 14px;
     background: var(--lt-bg, #f5f5f5);
     color: var(--lt-text, #333);
 }
 
 .lt-root {
     background: var(--lt-card, white);
-    padding: 2rem;
+    padding: 1.2rem 1.4rem;
     border-radius: 8px;
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
@@ -188,34 +194,41 @@ body {
 .lt-subtitle {
     color: var(--lt-sub, #666);
     font-size: 0.875rem;
-    margin-bottom: 2rem;
+    margin-bottom: 1.2rem;
 }
 
 .lt-section {
-    margin: 1.5rem 0;
-    padding-left: 1rem;
+    margin: 0.95rem 0;
+    padding-left: 0.75rem;
     border-left: 2px solid var(--lt-border, #e5e7eb);
 }
 
 .lt-section-body {
-    margin-top: 0.5rem;
+    margin-top: 0.12rem;
 }
 
 .lt-section h2, .lt-section h3, .lt-section h4, .lt-section h5, .lt-section h6 {
-    margin: 0.5rem 0;
+    margin: 0.2rem 0;
+    line-height: 1.3;
     color: var(--lt-accent, #2563eb);
 }
 
+.lt-h2 { font-size: 1.15rem; }
+.lt-h3 { font-size: 1.05rem; }
+.lt-h4 { font-size: 0.98rem; }
+.lt-h5 { font-size: 0.95rem; }
+.lt-h6 { font-size: 0.92rem; }
+
 .lt-p {
-    margin: 0.5rem 0;
+    margin: 0.2rem 0;
     white-space: pre-wrap;
 }
 
 .lt-details {
-    margin: 0.5rem 0;
+    margin: 0.35rem 0;
     border: 1px solid var(--lt-border, #e5e7eb);
     border-radius: 4px;
-    padding: 0.5rem;
+    padding: 0.35rem 0.45rem;
 }
 
 .lt-details summary {
@@ -225,8 +238,8 @@ body {
 }
 
 .lt-details-body {
-    margin-top: 0.5rem;
-    padding: 0.5rem;
+    margin-top: 0.25rem;
+    padding: 0.35rem 0.45rem;
     background: var(--lt-bg, #f5f5f5);
     border-radius: 4px;
     overflow-x: auto;
@@ -240,18 +253,24 @@ body {
 }
 
 .lt-table {
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0;
     width: 100%;
-    margin: 1rem 0;
+    margin: 0.6rem 0;
     font-size: 0.875rem;
+    border: 1px solid var(--lt-border, #d5dbe3);
+    border-radius: 6px;
+    background: #fff;
+    overflow: hidden;
 }
 
 .lt-table th {
-    background: var(--lt-accent, #2563eb);
-    color: white;
+    background: var(--lt-table-head-bg, #eef2f7);
+    color: var(--lt-text, #1f2937);
     padding: 0.5rem;
     text-align: left;
     font-weight: 600;
+    border-bottom: 1px solid var(--lt-border, #d5dbe3);
 }
 
 .lt-table td {
@@ -260,7 +279,7 @@ body {
 }
 
 .lt-table tr:nth-child(even) {
-    background: var(--lt-bg, #f5f5f5);
+    background: #f8fafc;
 }
 
 .lt-table-caption {
@@ -273,8 +292,8 @@ body {
     background: #fee;
     border: 2px solid #c00;
     border-radius: 4px;
-    padding: 1rem;
-    margin: 1rem 0;
+    padding: 0.75rem;
+    margin: 0.5rem 0;
 }
 
 .lt-exc summary {

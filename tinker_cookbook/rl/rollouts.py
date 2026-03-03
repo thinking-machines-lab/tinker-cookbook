@@ -1,4 +1,5 @@
 import asyncio
+import numbers
 from typing import Any, Sequence
 
 from tinker_cookbook.completers import TokenCompleter
@@ -25,8 +26,25 @@ def _log_transition_logs(logs: dict[str, Any]) -> None:
                 logtree.log_text(f"{key}: {text}")
 
 
+def _log_transition_metrics(metrics: dict[str, Any] | None) -> None:
+    """Render transition metrics in a compact, always-visible table."""
+    if not metrics:
+        return
+    formatted_metrics = {}
+    for key, value in metrics.items():
+        if isinstance(value, numbers.Real):
+            formatted_metrics[key] = f"{float(value):.3f}"
+        else:
+            formatted_metrics[key] = str(value)
+    with logtree.scope_header("Step Metrics"):
+        logtree.table_from_dict(
+            formatted_metrics,
+            caption="Metrics emitted by env.step",
+        )
+
+
 def _log_single_trajectory_details(traj: Trajectory, final_reward: float) -> None:
-    with logtree.scope_header("Rollout"):
+    with logtree.scope_header("Episode Details"):
         for turn_idx, transition in enumerate(traj.transitions, start=1):
             with logtree.scope_header(f"Turn {turn_idx}"):
                 logtree.table_from_dict(
@@ -37,6 +55,7 @@ def _log_single_trajectory_details(traj: Trajectory, final_reward: float) -> Non
                     },
                     caption="Step stats",
                 )
+                _log_transition_metrics(transition.metrics)
                 _log_transition_logs(transition.logs)
 
         logtree.table_from_dict(
@@ -83,29 +102,11 @@ async def do_group_rollout(
     rewards_and_metrics_G = await env_group_builder.compute_group_rewards(trajectories_G, envs_G)
     rewards_G, metrics_G = zip(*rewards_and_metrics_G, strict=True)
 
-    # Log compact group summary plus per-trajectory sections.
-    with logtree.scope_header("Trajectory Summary"):
-        summary_rows: list[dict[str, Any]] = []
+    with logtree.scope_header("Trajectory Details"):
         for traj_idx, (traj, final_reward) in enumerate(
             zip(trajectories_G, rewards_G, strict=True)
         ):
-            step_reward_sum = sum(t.reward for t in traj.transitions)
-            total_return = step_reward_sum + final_reward
-            summary_rows.append(
-                {
-                    "trajectory": traj_idx,
-                    "turns": len(traj.transitions),
-                    "step_reward_sum": f"{step_reward_sum:.3f}",
-                    "final_group_reward": f"{final_reward:.3f}",
-                    "total_return": f"{total_return:.3f}",
-                }
-            )
-        logtree.table(summary_rows, caption="Per-trajectory totals")
-
-        for traj_idx, (traj, final_reward) in enumerate(
-            zip(trajectories_G, rewards_G, strict=True)
-        ):
-            with logtree.scope_header(f"Trajectory {traj_idx}"):
+            with logtree.scope_header(f"Trajectory {traj_idx} Episode"):
                 _log_single_trajectory_details(traj, final_reward)
 
     return TrajectoryGroup(trajectories_G, list(rewards_G), list(metrics_G))
