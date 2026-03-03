@@ -16,6 +16,7 @@ from tinker_cookbook.rl.types import (
     Trajectory,
 )
 from tinker_cookbook.utils import logtree
+from tinker_cookbook.utils.logtree_formatters import ConversationFormatter
 
 logger = logging.getLogger(__name__)
 
@@ -59,19 +60,29 @@ class ProblemEnv(Env):
         return self.renderer.build_generation_prompt(convo), self.stop_condition
 
     async def step(self, action: Action) -> StepResult:
+        convo = self.convo_prefix + [{"role": "user", "content": self.get_question()}]
         message, parse_success = self.renderer.parse_response(action)
         content = renderers.get_text_content(message)
         correct_format = float(parse_success) and float(self.check_format(content))
         correct_answer = float(self.check_answer(content))
         total_reward = self.format_coef * (correct_format - 1) + correct_answer
 
-        # Log the attempt
-        logtree.log_text(f"Problem: {self.get_question()}")
-        logtree.log_text(f"Response: {message['content']}")
-        logtree.log_text(f"Reference Answer: {self.get_reference_answer()}")
-        logtree.log_text(
-            f"Format Valid: {'✓' if correct_format else '✗'}, Correct: {'✓' if correct_answer else '✗'}, Reward: {total_reward:.2f}"
-        )
+        # Log the attempt in a fixed structure that scales to longer content.
+        with logtree.scope_header("Prompt"):
+            logtree.log_formatter(ConversationFormatter(messages=convo))
+        with logtree.scope_header("Policy Response"):
+            logtree.log_formatter(ConversationFormatter(messages=[message]))
+        with logtree.scope_header("Reward"):
+            logtree.table_from_dict(
+                {
+                    "reference_answer": self.get_reference_answer(),
+                    "format_valid": bool(correct_format),
+                    "correct": bool(correct_answer),
+                    "format_coef": self.format_coef,
+                    "reward": f"{total_reward:.3f}",
+                },
+                caption="Reward components",
+            )
 
         return StepResult(
             reward=total_reward,
