@@ -17,6 +17,7 @@ class SandboxResult:
 
 class SandboxTerminatedError(Exception):
     """Raised when a sandbox has been terminated or died unexpectedly."""
+
     pass
 
 
@@ -61,7 +62,9 @@ class SandboxInterface(Protocol):
         """
         ...
 
-    async def read_file(self, path: str, max_bytes: int | None = None, timeout: int = 60) -> SandboxResult:
+    async def read_file(
+        self, path: str, max_bytes: int | None = None, timeout: int = 60
+    ) -> SandboxResult:
         """Read the content of a file from the sandbox.
 
         Args:

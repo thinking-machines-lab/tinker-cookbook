@@ -47,7 +47,9 @@ class FakeSandbox:
             return self._command_results[command]
         return self._default_result
 
-    async def read_file(self, path: str, max_bytes: int | None = None, timeout: int = 60) -> SandboxResult:
+    async def read_file(
+        self, path: str, max_bytes: int | None = None, timeout: int = 60
+    ) -> SandboxResult:
         if path in self.files:
             return SandboxResult(stdout=self.files[path], stderr="", exit_code=0)
         return SandboxResult(stdout="", stderr=f"No such file: {path}", exit_code=1)
@@ -112,7 +114,13 @@ class TestHarborReward:
         """Sandbox exception during grading returns 0 reward with error flag."""
 
         class ExplodingSandbox(FakeSandbox):
-            async def run_command(self, command: str, **kwargs) -> SandboxResult:
+            async def run_command(
+                self,
+                command: str,
+                workdir: str | None = None,
+                timeout: int = 60,
+                max_output_bytes: int | None = None,
+            ) -> SandboxResult:
                 raise RuntimeError("sandbox died")
 
         sandbox = ExplodingSandbox()
@@ -157,7 +165,9 @@ class TestHarborBashTool:
         tool_obj = HarborBashTool(sandbox)
 
         result = asyncio.run(tool_obj.bash.run(ToolInput(arguments={"command": "echo hello"})))
-        output = json.loads(result.messages[0]["content"])
+        content = result.messages[0]["content"]
+        assert isinstance(content, str)
+        output = json.loads(content)
         assert output["exit_code"] == 0
         assert output["stdout"] == "hello\n"
         assert output["stderr"] == ""
@@ -173,7 +183,9 @@ class TestHarborBashTool:
         tool_obj = HarborBashTool(sandbox)
 
         result = asyncio.run(tool_obj.bash.run(ToolInput(arguments={"command": "big_cmd"})))
-        output = json.loads(result.messages[0]["content"])
+        content = result.messages[0]["content"]
+        assert isinstance(content, str)
+        output = json.loads(content)
         assert len(output["stdout"]) == MAX_OUTPUT_CHARS
         assert len(output["stderr"]) == MAX_OUTPUT_CHARS
         assert output["exit_code"] == 1
@@ -185,26 +197,23 @@ class TestHarborBashTool:
 
 
 class TestHarborEnvGroupBuilderPickle:
-    def _make_builder(self, tmp_path: Path, **kwargs) -> HarborEnvGroupBuilder:
-        task = HarborTask(
+    def _make_task(self, tmp_path: Path) -> HarborTask:
+        return HarborTask(
             task_name="test-task",
             instruction="Fix the bug",
             task_dir=tmp_path,
             config={"difficulty": "easy"},
         )
-        defaults = dict(
-            task=task,
+
+    def test_pickle_roundtrip(self, tmp_path: Path) -> None:
+        """HarborEnvGroupBuilder survives pickle/unpickle with default sandbox_factory."""
+        builder = HarborEnvGroupBuilder(
+            task=self._make_task(tmp_path),
             model_name="meta-llama/Llama-3.1-8B-Instruct",
             renderer_name="llama3",
             max_turns=5,
             group_size=2,
         )
-        defaults.update(kwargs)
-        return HarborEnvGroupBuilder(**defaults)
-
-    def test_pickle_roundtrip(self, tmp_path: Path) -> None:
-        """HarborEnvGroupBuilder survives pickle/unpickle with default sandbox_factory."""
-        builder = self._make_builder(tmp_path)
 
         restored = pickle.loads(pickle.dumps(builder))
 
@@ -221,8 +230,12 @@ class TestHarborEnvGroupBuilderPickle:
 
     def test_pickle_with_custom_params(self, tmp_path: Path) -> None:
         """Non-default scalar parameters survive pickle roundtrip."""
-        builder = self._make_builder(
-            tmp_path,
+        builder = HarborEnvGroupBuilder(
+            task=self._make_task(tmp_path),
+            model_name="meta-llama/Llama-3.1-8B-Instruct",
+            renderer_name="llama3",
+            max_turns=5,
+            group_size=2,
             sandbox_timeout=300,
             command_timeout=60,
             grader_timeout=30,
