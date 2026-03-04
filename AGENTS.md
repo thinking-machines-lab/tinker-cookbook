@@ -101,6 +101,44 @@ Agents often struggle with the nested type hierarchy. Key resources:
 
 ---
 
+## CLI Syntax (chz)
+
+Config classes use `chz` for CLI parsing. **Arguments use `key=value` format, not `--key value`.**
+
+```bash
+# CORRECT
+uv run python tinker_cookbook/recipes/harbor_rl/launch_swebench.py \
+    model_name=Qwen/Qwen3-8B \
+    max_tokens=8192 \
+    sandbox_timeout=3600
+
+# WRONG — will fail with "Invalid argument"
+uv run python tinker_cookbook/recipes/harbor_rl/launch_swebench.py \
+    --model-name Qwen/Qwen3-8B \
+    --max-tokens 8192
+```
+
+---
+
+## CLI Syntax (chz)
+
+Config classes use `chz` for CLI parsing. **Arguments use `key=value` format, not `--key value`.**
+
+```bash
+# CORRECT
+uv run python tinker_cookbook/recipes/harbor_rl/launch_swebench.py \
+    model_name=Qwen/Qwen3-8B \
+    max_tokens=8192 \
+    sandbox_timeout=3600
+
+# WRONG — will fail with "Invalid argument"
+uv run python tinker_cookbook/recipes/harbor_rl/launch_swebench.py \
+    --model-name Qwen/Qwen3-8B \
+    --max-tokens 8192
+```
+
+---
+
 ## Common Pitfalls
 
 1. **LoRA LR:** Use `hyperparam_utils.get_lr(model_name)` - LoRA needs ~10x higher LR than full fine-tuning.
