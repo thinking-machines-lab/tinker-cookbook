@@ -49,6 +49,7 @@ from tinker_cookbook.renderers import (
 )
 from tinker_cookbook.renderers.base import ensure_list, ensure_text
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
+from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
 from tinker_cookbook.tests.conversation_generator import generate_conversation
 from tinker_cookbook.tokenizer_utils import (
     get_registered_tokenizer_names,
@@ -712,6 +713,8 @@ def test_tool_call_supervised_rendering(model_name: str):
     [
         ("Qwen/Qwen3-8B", Qwen3Renderer),
         ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3ThinkingRenderer),
+        ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer),
+        ("moonshotai/Kimi-K2.5", KimiK25Renderer),
     ],
 )
 def test_strip_thinking_from_history_default(model_name: str, renderer_class):
@@ -739,6 +742,8 @@ def test_strip_thinking_from_history_default(model_name: str, renderer_class):
     [
         ("Qwen/Qwen3-8B", Qwen3Renderer),
         ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3ThinkingRenderer),
+        ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer),
+        ("moonshotai/Kimi-K2.5", KimiK25Renderer),
     ],
 )
 def test_strip_thinking_from_history_false(model_name: str, renderer_class):
