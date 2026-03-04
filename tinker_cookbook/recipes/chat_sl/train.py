@@ -7,7 +7,7 @@ import asyncio
 from datetime import datetime
 
 import chz
-from tinker_cookbook import cli_utils, model_info, renderers
+from tinker_cookbook import checkpoint_utils, cli_utils, renderers
 from tinker_cookbook.eval.evaluators import EvaluatorBuilder
 from tinker_cookbook.recipes.chat_sl import chat_datasets
 from tinker_cookbook.supervised import train
@@ -126,12 +126,16 @@ def cli_main(cli_config: CLIConfig):
         wandb_name = run_name
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
-    renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(
-        cli_config.model_name
+    renderer_name = checkpoint_utils.resolve_renderer_name_from_checkpoint_or_default(
+        model_name=cli_config.model_name,
+        explicit_renderer_name=cli_config.renderer_name,
+        load_checkpoint_path=cli_config.load_checkpoint_path,
+        base_url=cli_config.base_url,
     )
     config = train.Config(
         log_path=log_path,
         model_name=cli_config.model_name,
+        renderer_name=renderer_name,
         load_checkpoint_path=cli_config.load_checkpoint_path,
         dataset_builder=get_dataset_builder(
             cli_config.dataset,

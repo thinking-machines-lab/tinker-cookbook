@@ -4,7 +4,7 @@ from datetime import datetime
 
 import chz
 
-from tinker_cookbook import cli_utils, model_info
+from tinker_cookbook import checkpoint_utils, cli_utils
 from tinker_cookbook.recipes.code_rl.code_env import DeepcoderDatasetBuilder
 from tinker_cookbook.rl.train import AsyncConfig, Config, main
 from tinker_cookbook.sandbox import SandboxBackend
@@ -55,8 +55,11 @@ class CLIConfig:
 
 
 async def cli_main(cli_config: CLIConfig) -> None:
-    renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(
-        cli_config.model_name
+    renderer_name = await checkpoint_utils.resolve_renderer_name_from_checkpoint_or_default_async(
+        model_name=cli_config.model_name,
+        explicit_renderer_name=cli_config.renderer_name,
+        load_checkpoint_path=cli_config.load_checkpoint_path,
+        base_url=cli_config.base_url,
     )
 
     model_tag = cli_config.model_name.replace("/", "-")
@@ -88,6 +91,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
         learning_rate=cli_config.learning_rate,
         dataset_builder=dataset_builder,
         model_name=cli_config.model_name,
+        renderer_name=renderer_name,
         lora_rank=cli_config.lora_rank,
         max_tokens=cli_config.max_tokens,
         wandb_project=cli_config.wandb_project,

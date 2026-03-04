@@ -52,6 +52,7 @@ def build_config(cli_config: CLIConfig) -> train.Config:
 
     return train.Config(
         model_name=model_name,
+        renderer_name=renderer_name,
         log_path=log_path,
         dataset_builder=dataset_builder,
         learning_rate=cli_config.learning_rate,
