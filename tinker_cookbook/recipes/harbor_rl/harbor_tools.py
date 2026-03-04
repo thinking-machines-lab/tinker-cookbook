@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated
 
 from tinker_cookbook.renderers.base import Message
-from tinker_cookbook.sandbox import Sandbox
+from tinker_cookbook.sandbox import SandboxInterface
 from tinker_cookbook.tool_use import ToolResult, simple_tool_result, tool
 
 logger = logging.getLogger(__name__)
@@ -20,10 +20,10 @@ MAX_OUTPUT_CHARS = 16384
 class HarborBashTool:
     """Bash tool that executes commands in a sandbox.
 
-    Wraps a Sandbox as a tinker_cookbook Tool via the @tool decorator.
+    Wraps a SandboxInterface as a tinker_cookbook Tool via the @tool decorator.
     """
 
-    def __init__(self, sandbox: Sandbox, command_timeout: int = 120) -> None:
+    def __init__(self, sandbox: SandboxInterface, command_timeout: int = 120) -> None:
         self._sandbox = sandbox
         self._command_timeout = command_timeout
 
@@ -36,14 +36,12 @@ class HarborBashTool:
 
         Use this to run shell commands, install packages, edit files, etc.
         """
-        exit_code, stdout, stderr = await self._sandbox.exec(
-            "bash", "-c", command, workdir="/", timeout=self._command_timeout
+        result = await self._sandbox.run_command(
+            command, workdir="/", timeout=self._command_timeout, max_output_bytes=MAX_OUTPUT_CHARS
         )
-        if len(stdout) > MAX_OUTPUT_CHARS:
-            stdout = stdout[:MAX_OUTPUT_CHARS]
-        if len(stderr) > MAX_OUTPUT_CHARS:
-            stderr = stderr[:MAX_OUTPUT_CHARS]
-        output = json.dumps({"exit_code": exit_code, "stdout": stdout, "stderr": stderr})
+        stdout = result.stdout[:MAX_OUTPUT_CHARS]
+        stderr = result.stderr[:MAX_OUTPUT_CHARS]
+        output = json.dumps({"exit_code": result.exit_code, "stdout": stdout, "stderr": stderr})
         return simple_tool_result(output)
 
 
@@ -58,7 +56,7 @@ class HarborReward:
     """
 
     tests_dir: Path
-    sandbox: Sandbox
+    sandbox: SandboxInterface
     grader_timeout: int = 60
 
     async def __call__(self, history: list[Message]) -> tuple[float, dict[str, float]]:
@@ -69,19 +67,17 @@ class HarborReward:
 
             # 2. Create log directory and run test.sh
             # Run from /root (not /) because test.sh checks if PWD=/ and exits early
-            await self.sandbox.exec("bash", "-c", "mkdir -p /logs/verifier", workdir="/root")
-            exit_code, stdout, stderr = await self.sandbox.exec(
-                "bash",
-                "-c",
+            await self.sandbox.run_command("mkdir -p /logs/verifier", workdir="/root")
+            result = await self.sandbox.run_command(
                 "bash /tests/test.sh",
                 workdir="/root",
                 timeout=self.grader_timeout,
             )
-            logger.info("test.sh completed with exit_code=%d", exit_code)
-            if stdout:
-                logger.debug("test.sh stdout: %s", stdout[:500])
-            if stderr:
-                logger.debug("test.sh stderr: %s", stderr[:500])
+            logger.info("test.sh completed with exit_code=%d", result.exit_code)
+            if result.stdout:
+                logger.debug("test.sh stdout: %s", result.stdout[:500])
+            if result.stderr:
+                logger.debug("test.sh stderr: %s", result.stderr[:500])
 
             # 3. Parse reward
             reward = await self._parse_reward()
@@ -93,34 +89,27 @@ class HarborReward:
 
     async def _upload_tests(self) -> None:
         """Upload test files from local tests_dir to /tests/ in sandbox."""
-        await self.sandbox.exec("bash", "-c", "mkdir -p /tests", workdir="/")
+        await self.sandbox.run_command("mkdir -p /tests", workdir="/")
         for file_path in self.tests_dir.iterdir():
             if not file_path.is_file():
                 continue
             content = file_path.read_text()
             target = f"/tests/{file_path.name}"
-            await self.sandbox.write_file(target, content)
-            # Make .sh files executable
-            if file_path.suffix == ".sh":
-                await self.sandbox.exec("bash", "-c", f"chmod +x {target}", workdir="/")
+            await self.sandbox.write_file(target, content, executable=(file_path.suffix == ".sh"))
 
     async def _parse_reward(self) -> float:
         """Parse reward from /logs/verifier/reward.txt or reward.json."""
         # Try reward.txt first
-        exit_code, stdout, _ = await self.sandbox.exec(
-            "bash", "-c", "cat /logs/verifier/reward.txt", workdir="/"
-        )
-        if exit_code == 0 and stdout.strip():
-            reward = float(stdout.strip())
+        result = await self.sandbox.read_file("/logs/verifier/reward.txt")
+        if result.exit_code == 0 and result.stdout.strip():
+            reward = float(result.stdout.strip())
             logger.info("Parsed reward from reward.txt: %s", reward)
             return reward
 
         # Try reward.json
-        exit_code, stdout, _ = await self.sandbox.exec(
-            "bash", "-c", "cat /logs/verifier/reward.json", workdir="/"
-        )
-        if exit_code == 0 and stdout.strip():
-            data = json.loads(stdout)
+        result = await self.sandbox.read_file("/logs/verifier/reward.json")
+        if result.exit_code == 0 and result.stdout.strip():
+            data = json.loads(result.stdout)
             reward = float(data.get("reward", 0.0))
             logger.info("Parsed reward from reward.json: %s", reward)
             return reward

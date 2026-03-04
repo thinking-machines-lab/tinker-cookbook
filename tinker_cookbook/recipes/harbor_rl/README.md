@@ -46,26 +46,28 @@ You can customize your own task as long as they conforms to the interface above.
 
 ### The Protocol
 
-`tinker_cookbook.sandbox.sandbox_protocol` defines a minimal `Sandbox` Protocol:
+`tinker_cookbook.sandbox.sandbox_interface` defines `SandboxInterface`:
 
 ```python
 @runtime_checkable
-class Sandbox(Protocol):
-    async def exec(self, *args: str, workdir: str = "/workspace", timeout: int | None = None) -> tuple[int, str, str]: ...
-    async def write_file(self, path: str, content: str) -> None: ...
-    async def terminate(self) -> None: ...
+class SandboxInterface(Protocol):
+    async def run_command(self, command: str, workdir: str | None = None, timeout: int = 60, max_output_bytes: int | None = None) -> SandboxResult: ...
+    async def read_file(self, path: str, max_bytes: int | None = None, timeout: int = 60) -> SandboxResult: ...
+    async def write_file(self, path: str, content: str | bytes, executable: bool = False, timeout: int = 60) -> SandboxResult: ...
+    async def send_heartbeat(self) -> None: ...
+    async def cleanup(self) -> None: ...
 ```
 
-The Protocol was designed to match `ModalSandbox`'s existing API, so `ModalSandbox` conforms without modification.
+`ModalSandbox` implements this interface.
 
 ### SandboxFactory and injection
 
 `harbor_env.py` defines a factory type and default:
 
 ```python
-SandboxFactory = Callable[[modal.Image, int], Awaitable[Sandbox]]
+SandboxFactory = Callable[[modal.Image, int], Awaitable[SandboxInterface]]
 
-async def default_sandbox_factory(image: modal.Image, timeout: int) -> Sandbox:
+async def default_sandbox_factory(image: modal.Image, timeout: int) -> SandboxInterface:
     return await ModalSandbox.create(image=image, timeout=timeout)
 ```
 

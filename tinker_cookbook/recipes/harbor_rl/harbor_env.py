@@ -16,7 +16,7 @@ from tinker_cookbook.recipes.harbor_rl.harbor_tools import HarborBashTool, Harbo
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import Message, Renderer
 from tinker_cookbook.rl.types import Env, EnvGroupBuilder, RLDataset, RLDatasetBuilder
-from tinker_cookbook.sandbox import Sandbox
+from tinker_cookbook.sandbox import SandboxInterface
 from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
 from tinker_cookbook.tool_use import build_agent_tool_env
 
@@ -28,10 +28,10 @@ HARBOR_SYSTEM_PROMPT = (
     "Complete the task described by the user."
 )
 
-SandboxFactory = Callable[[modal.Image, int], Awaitable[Sandbox]]
+SandboxFactory = Callable[[modal.Image, int], Awaitable[SandboxInterface]]
 
 
-async def default_sandbox_factory(image: modal.Image, timeout: int) -> Sandbox:
+async def default_sandbox_factory(image: modal.Image, timeout: int) -> SandboxInterface:
     return await ModalSandbox.create(image=image, timeout=timeout)
 
 
@@ -85,7 +85,7 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
         self.grader_timeout = grader_timeout
         self.max_trajectory_tokens = max_trajectory_tokens
         self.sandbox_factory = sandbox_factory or default_sandbox_factory
-        self._sandboxes: list[Sandbox] = []
+        self._sandboxes: list[SandboxInterface] = []
 
     async def make_envs(self) -> Sequence[Env]:
         self._sandboxes = []
@@ -131,7 +131,7 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
         """Cleanup sandboxes after rollouts + grading complete."""
         for sandbox in self._sandboxes:
             try:
-                await sandbox.terminate()
+                await sandbox.cleanup()
             except Exception as e:
                 logger.warning("Sandbox cleanup failed: %s", e)
         self._sandboxes.clear()
