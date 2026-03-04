@@ -46,19 +46,20 @@ Example usage:
 ```python
 from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox, ModalSandboxPool
 
-# Single sandbox
+# Single sandbox (conforms to SandboxInterface)
 sandbox = await ModalSandbox.create()
-exit_code, stdout, stderr = await sandbox.run_in_workdir(
-    files={"code.py": "print('hello')"},
-    command=["python", "code.py"],
-)
+await sandbox.write_file("/workspace/code.py", "print('hello')")
+result = await sandbox.run_command("python /workspace/code.py", workdir="/workspace")
+print(result.stdout)
+await sandbox.cleanup()
 
 # Pool for concurrent execution (recommended for RL workloads)
 pool = ModalSandboxPool(pool_size=32)
-exit_code, stdout, stderr = await pool.run_in_workdir(
+result = await pool.run_in_workdir(
     files={"code.py": "print('hello')"},
     command=["python", "code.py"],
 )
+print(result.stdout)
 ```
 
 Environment variables:
