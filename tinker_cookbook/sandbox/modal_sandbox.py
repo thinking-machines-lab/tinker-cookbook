@@ -126,10 +126,9 @@ class ModalSandbox:
         """Run a shell command in the sandbox."""
         cap = max_output_bytes if max_output_bytes is not None else self._max_stream_output_bytes
         try:
-            kwargs: dict[str, object] = {"timeout": timeout}
-            if workdir is not None:
-                kwargs["workdir"] = workdir
-            proc = await self._sandbox.exec.aio("bash", "-lc", command, **kwargs)
+            proc = await self._sandbox.exec.aio(
+                "bash", "-lc", command, timeout=timeout, workdir=workdir
+            )
             stdout, stderr, exit_code = await asyncio.gather(
                 _read_stream_capped(proc.stdout, cap),
                 _read_stream_capped(proc.stderr, cap),
