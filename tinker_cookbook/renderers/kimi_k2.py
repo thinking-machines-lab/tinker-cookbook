@@ -355,6 +355,10 @@ class KimiK2Renderer(Renderer):
 
     DEFAULT_SYSTEM_PROMPT = "You are Kimi, an AI assistant created by Moonshot AI."
 
+    def __init__(self, tokenizer: Tokenizer, strip_thinking_from_history: bool = True):
+        super().__init__(tokenizer)
+        self.strip_thinking_from_history = strip_thinking_from_history
+
     def _ensure_system_message(self, messages: list[Message]) -> list[Message]:
         """Ensure a default system message is present if none exists.
 
@@ -440,9 +444,9 @@ class KimiK2Renderer(Renderer):
             thinking_content = "".join(p["thinking"] for p in parts if p["type"] == "thinking")
             text_content = "".join(p["text"] for p in parts if p["type"] == "text")
 
-            # Preserve thinking only for the suffix after the last non-tool-call assistant.
-            # Note: is_last might not be unique as it captures all assistant messages after the last non-tool-call assistant message
-            if ctx.is_last and thinking_content:
+            # Preserve thinking for the last assistant message, or for all messages
+            # when strip_thinking_from_history is False.
+            if (ctx.is_last or not self.strip_thinking_from_history) and thinking_content:
                 output_str = f"<think>{thinking_content}</think>"
             else:
                 output_str = "<think></think>"

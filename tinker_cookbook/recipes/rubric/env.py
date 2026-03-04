@@ -18,6 +18,8 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.renderers import get_renderer
 import asyncio
 from tinker_cookbook import model_info
+from tinker_cookbook.utils import logtree
+from tinker_cookbook.utils.logtree_formatters import ConversationFormatter
 from tinker_cookbook.recipes.rubric.data import (
     RubricBasedDatapoint,
     Rubric,
@@ -61,7 +63,7 @@ class RubricGradedEnv(Env):
     async def initial_observation(self) -> tuple[ModelInput, StopCondition]:
         return self.renderer.build_generation_prompt(self.convo), self.stop_condition
 
-    async def _grade_with_rubric(self, convo: Conversation, rubric: Rubric) -> float:
+    async def _grade_with_rubric(self, convo: Conversation, rubric: Rubric) -> tuple[float, str]:
         # this is the conversation for the grader
         # effectively it's just one user turn
         grader_prompt = rubric.get_grader_prompt(convo)
@@ -82,12 +84,16 @@ class RubricGradedEnv(Env):
             print(colored("=" * 80, "magenta"))
             print(colored(f"Grader Response: {grader_response_content}", "magenta") + "\n")
             print(colored(f"Extracted Score: {score}", "magenta") + "\n")
-        return score
+        return score, grader_response_content
 
     async def step(self, action: Action) -> StepResult:
+        with logtree.scope_header("Prompt"):
+            logtree.log_formatter(ConversationFormatter(messages=self.convo))
+
         # obtain the policy action message
         (policy_action_message, parse_success) = self.renderer.parse_response(action)
-        correct_format = float(parse_success)
+        parse_success_bool = bool(parse_success)
+        format_score = float(parse_success_bool)
 
         if self.debug:
             print("\n" + colored("=" * 80, "blue"))
@@ -101,15 +107,50 @@ class RubricGradedEnv(Env):
             print(colored(json.dumps(policy_action_message, indent=2), "green") + "\n")
             print(colored(f"Parse Success: {parse_success}", "green") + "\n")
 
-        convo = self.convo + [policy_action_message]
+        with logtree.scope_header("Policy Response"):
+            logtree.log_formatter(ConversationFormatter(messages=[policy_action_message]))
+            logtree.log_text(f"Parse success: {parse_success}")
 
-        scores = await asyncio.gather(
+        convo = self.convo + [policy_action_message]
+        results = await asyncio.gather(
             *[self._grade_with_rubric(convo, rubric_item) for rubric_item in self.rubric_items]
         )
+        scores = [score for score, _ in results]
         avg_score = sum(scores) / len(scores)
 
+        with logtree.scope_header("Rubric Grades"):
+            rows = []
+            for idx, (rubric_item, (score, grader_response)) in enumerate(
+                zip(self.rubric_items, results, strict=True),
+                start=1,
+            ):
+                rows.append(
+                    {
+                        "#": idx,
+                        "score": f"{score:.3f}",
+                        "criterion": rubric_item.rubric_str[:120]
+                        + ("..." if len(rubric_item.rubric_str) > 120 else ""),
+                    }
+                )
+                with logtree.scope_header(f"Rubric {idx}: score={score:.3f}"):
+                    logtree.log_text(f"Criterion: {rubric_item.rubric_str}")
+                    logtree.details(grader_response, summary="Model output", pre=True)
+            logtree.table(rows, caption="Per-rubric scores")
+
         # Apply format penalty similar to ProblemEnv
-        total_reward = self.format_coef * (correct_format - 1) + avg_score
+        format_penalty = self.format_coef * (format_score - 1)
+        total_reward = format_penalty + avg_score
+
+        with logtree.scope_header("Reward Terms"):
+            logtree.table_from_dict(
+                {
+                    "rubric_score_mean": f"{avg_score:.3f}",
+                    "format_parse_success": parse_success_bool,
+                    "format_penalty": f"{format_penalty:.3f}",
+                    "total_reward": f"{total_reward:.3f}",
+                },
+                caption="Per-step reward breakdown",
+            )
 
         return StepResult(
             reward=total_reward,
@@ -117,8 +158,12 @@ class RubricGradedEnv(Env):
             next_observation=self.renderer.build_generation_prompt(convo),
             next_stop_condition=self.stop_condition,
             metrics={
-                "format": correct_format,
+                "format": format_score,
                 "rubric_score": avg_score,
+            },
+            logs={
+                "parse_success": int(parse_success_bool),
+                "num_rubrics": len(self.rubric_items),
             },
         )
 

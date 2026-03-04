@@ -93,23 +93,23 @@ CONVERSATION_CSS = """
 .lt-conversation {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
-    margin: 0.5rem 0;
+    gap: 0.35rem;
+    margin: 0.25rem 0;
 }
 
 .lt-message {
-    padding: 0.75rem;
+    padding: 0.5rem 0.6rem;
     border-radius: 6px;
     border-left: 3px solid var(--lt-accent, #2563eb);
     background: var(--lt-bg, #f9fafb);
-    line-height: 1.5;
+    line-height: 1.4;
 }
 
 .lt-message-role {
     font-weight: 600;
     color: var(--lt-accent, #2563eb);
     display: inline-block;
-    min-width: 80px;
+    min-width: 64px;
 }
 
 .lt-message-content {

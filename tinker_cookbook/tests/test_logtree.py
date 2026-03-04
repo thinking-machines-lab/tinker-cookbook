@@ -1,6 +1,7 @@
 """Tests for the logtree module."""
 
 import asyncio
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -28,6 +29,18 @@ def test_basic_trace():
         assert "Hello world" in content
         assert "Section 1" in content
         assert "Content in section 1" in content
+
+
+def test_log_text_renders_inline_text_node():
+    """Text-only paragraphs should render inline, without leading newline whitespace."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_path = Path(tmpdir) / "inline_text.html"
+
+        with logtree.init_trace("Inline Text Test", path=output_path):
+            logtree.log_text("parse_success: 0")
+
+        content = output_path.read_text()
+        assert '<p class="lt-p">parse_success: 0</p>' in content
 
 
 def test_nested_scopes():
@@ -327,6 +340,27 @@ def test_export_helpers():
         assert "<title>Export Test</title>" in content
         assert "Test content" in content
         assert "<!doctype html>" in content.lower()
+
+
+def test_write_trace_json():
+    """Test writing trace structure to JSON."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_path = Path(tmpdir) / "trace.json"
+
+        with logtree.init_trace("Trace JSON Test", path=None) as trace:
+            logtree.log_text("Hello JSON")
+            with logtree.scope_header("Section"):
+                logtree.log_text("Nested text")
+
+        logtree.write_trace_json(trace, output_path)
+        content = json.loads(output_path.read_text())
+
+        assert content["title"] == "Trace JSON Test"
+        assert content["root"]["tag"] == "body"
+        assert "children" in content["root"]
+        serialized = json.dumps(content)
+        assert "Hello JSON" in serialized
+        assert "Section" in serialized
 
 
 def test_graceful_degradation():
