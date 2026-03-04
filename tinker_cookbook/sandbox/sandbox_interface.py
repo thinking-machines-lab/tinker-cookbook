@@ -4,8 +4,6 @@ from typing import Any, Protocol, runtime_checkable
 
 import chz
 
-DEFAULT_MAX_OUTPUT_BYTES: int = 128 * 1024  # 128 KB per stream
-
 
 @chz.chz
 class SandboxResult:
@@ -19,7 +17,6 @@ class SandboxResult:
 
 class SandboxTerminatedError(Exception):
     """Raised when a sandbox has been terminated or died unexpectedly."""
-
     pass
 
 
@@ -31,10 +28,10 @@ class SandboxInterface(Protocol):
     send_heartbeat, and cleanup.
     """
 
-    @staticmethod
-    def resolve_max_output_bytes(max_output_bytes: int | None) -> int:
-        """Resolve an optional max_output_bytes to a concrete value, falling back to DEFAULT_MAX_OUTPUT_BYTES."""
-        return max_output_bytes if max_output_bytes is not None else DEFAULT_MAX_OUTPUT_BYTES
+    @property
+    def sandbox_id(self) -> str:
+        """Identifier for the sandbox instance (e.g. Modal object_id)."""
+        ...
 
     async def send_heartbeat(self) -> None:
         """Send a heartbeat to keep the sandbox alive.
