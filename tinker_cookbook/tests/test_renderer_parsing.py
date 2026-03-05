@@ -25,6 +25,7 @@ from tinker_cookbook.renderers.base import (
 )
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3DisableThinkingRenderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer, _longest_matching_suffix_prefix
+from tinker_cookbook.renderers.qwen3 import Qwen3DisableThinkingRenderer, Qwen3InstructRenderer
 from tinker_cookbook.tests.test_renderers import get_tokenizer
 
 # =============================================================================
@@ -601,13 +602,125 @@ def test_thinking_generation_parse_correspondence(model_name, renderer_cls, rend
 
 
 # =============================================================================
-# Kimi K2 Streaming Parsing Tests
+# Qwen3 Streaming Parsing Tests
 # =============================================================================
 
 
 def _is_message(obj) -> TypeGuard[Message]:
     """Check if object is a Message dict (TypedDict doesn't support isinstance)."""
     return isinstance(obj, dict) and "role" in obj and "content" in obj
+
+
+def test_qwen3_streaming_simple_text():
+    """Test streaming parsing of simple text response."""
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
+    renderer = Qwen3Renderer(tokenizer)
+
+    response_str = "Hello, world!<|im_end|>"
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    deltas = list(renderer.parse_response_streaming(response_tokens))
+
+    assert isinstance(deltas[0], StreamingMessageHeader)
+    assert deltas[0].role == "assistant"
+    assert _is_message(deltas[-1])
+    assert deltas[-1]["role"] == "assistant"
+
+    text_content = "".join(d.text for d in deltas if isinstance(d, StreamingTextDelta))
+    assert text_content == "Hello, world!"
+
+
+def test_qwen3_streaming_with_thinking():
+    """Test streaming parsing with thinking blocks."""
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
+    renderer = Qwen3Renderer(tokenizer)
+
+    response_str = "<think>Let me reason about this.</think>The answer is 42.<|im_end|>"
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    deltas = list(renderer.parse_response_streaming(response_tokens))
+
+    assert isinstance(deltas[0], StreamingMessageHeader)
+    assert deltas[0].role == "assistant"
+
+    thinking_content = "".join(d.thinking for d in deltas if isinstance(d, StreamingThinkingDelta))
+    text_content = "".join(d.text for d in deltas if isinstance(d, StreamingTextDelta))
+
+    assert "Let me reason about this." in thinking_content
+    assert "The answer is 42." in text_content
+    assert _is_message(deltas[-1])
+
+
+def test_qwen3_streaming_matches_batch():
+    """Test that streaming parse produces same final message as batch parse."""
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
+    renderer = Qwen3Renderer(tokenizer)
+
+    response_str = "<think>Step 1: Analyze.\nStep 2: Compute.</think>The result is 123.<|im_end|>"
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    batch_message, batch_success = renderer.parse_response(response_tokens)
+    assert batch_success
+
+    deltas = list(renderer.parse_response_streaming(response_tokens))
+    streaming_message = deltas[-1]
+
+    assert _is_message(streaming_message)
+    assert streaming_message["role"] == batch_message["role"]
+    assert ensure_list(streaming_message["content"]) == ensure_list(batch_message["content"])
+
+
+def test_qwen3_streaming_content_index_increments():
+    """Test that content_index increments when switching content types."""
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
+    renderer = Qwen3Renderer(tokenizer)
+
+    response_str = "<think>thinking</think>text<|im_end|>"
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    deltas = list(renderer.parse_response_streaming(response_tokens))
+
+    thinking_indices = [d.content_index for d in deltas if isinstance(d, StreamingThinkingDelta)]
+    text_indices = [d.content_index for d in deltas if isinstance(d, StreamingTextDelta)]
+
+    if thinking_indices and text_indices:
+        assert max(text_indices) > min(thinking_indices)
+
+
+def test_qwen3_streaming_empty_response():
+    """Test streaming parsing of empty/minimal response."""
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
+    renderer = Qwen3Renderer(tokenizer)
+
+    response_str = "<|im_end|>"
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    deltas = list(renderer.parse_response_streaming(response_tokens))
+
+    assert isinstance(deltas[0], StreamingMessageHeader)
+    assert _is_message(deltas[-1])
+
+
+@pytest.mark.parametrize(
+    "renderer_cls",
+    [Qwen3Renderer, Qwen3DisableThinkingRenderer, Qwen3InstructRenderer],
+)
+def test_qwen3_streaming_supported_by_text_variants(renderer_cls):
+    """Streaming should be available across Qwen3 text renderer variants."""
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
+    renderer = renderer_cls(tokenizer)
+
+    response_str = "Variant coverage<|im_end|>"
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+    deltas = list(renderer.parse_response_streaming(response_tokens))
+
+    assert isinstance(deltas[0], StreamingMessageHeader)
+    assert _is_message(deltas[-1])
+
+
+# =============================================================================
+# Kimi K2 Streaming Parsing Tests
+# =============================================================================
 
 
 def test_kimi_streaming_simple_text():
