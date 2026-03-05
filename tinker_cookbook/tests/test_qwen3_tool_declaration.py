@@ -1,9 +1,10 @@
-"""Tests for Qwen3 tool declaration format compatibility with HuggingFace.
+"""Tests for Qwen tool declaration format compatibility with HuggingFace.
 
-These tests verify that Qwen3 renderers produce identical tool declarations
+These tests verify that Qwen-family renderers produce identical tool declarations
 to HuggingFace's chat templates when using the tools parameter.
 """
 
+from collections.abc import Mapping, Sequence
 import json
 
 import pytest
@@ -13,11 +14,35 @@ from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import ToolSpec, Message, ensure_text
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-# Test against multiple Qwen3 model variants
+# Qwen3 models use JSON tool calls with OpenAI-style tool wrapper in tool declarations.
 QWEN3_MODELS = [
     ("Qwen/Qwen3-30B-A3B", "qwen3"),
     ("Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3_instruct"),
 ]
+
+# Qwen3.5 models use XML tool calls and raw function specs in tool declarations.
+QWEN3_5_MODELS = [
+    ("Qwen/Qwen3.5-35B-A3B", "qwen3_5"),
+    ("Qwen/Qwen3.5-35B-A3B", "qwen3_5_disable_thinking"),
+]
+
+ALL_QWEN_MODELS = QWEN3_MODELS + QWEN3_5_MODELS
+
+
+def _hf_tools_for_model(
+    model_name: str, tools_toolspec: list[ToolSpec]
+) -> Sequence[Mapping[str, object]]:
+    """Build the tools payload matching each model family's HF chat-template contract."""
+    if "Qwen3.5" in model_name:
+        return list(tools_toolspec)
+    return [{"type": "function", "function": tool} for tool in tools_toolspec]
+
+
+def _hf_template_kwargs(renderer_name: str) -> dict:
+    """Return renderer-specific kwargs for HF apply_chat_template."""
+    if renderer_name == "qwen3_5_disable_thinking":
+        return {"enable_thinking": False}
+    return {}
 
 
 @pytest.mark.parametrize("model_name,renderer_name", QWEN3_MODELS)
@@ -82,7 +107,7 @@ def test_qwen3_tool_json_formatting(model_name: str, renderer_name: str):
     assert '", ' in tool_json_str, "JSON should have space after commas"
 
 
-@pytest.mark.parametrize("model_name,renderer_name", QWEN3_MODELS)
+@pytest.mark.parametrize("model_name,renderer_name", ALL_QWEN_MODELS)
 def test_qwen3_tool_declaration_matches_hf_tokens(model_name: str, renderer_name: str):
     """Test that tool declaration produces identical tokens to HuggingFace."""
     tokenizer = get_tokenizer(model_name)
@@ -105,8 +130,7 @@ def test_qwen3_tool_declaration_matches_hf_tokens(model_name: str, renderer_name
         }
     ]
 
-    # Convert to OpenAI format for HF
-    tools_openai = [{"type": "function", "function": tool} for tool in tools_toolspec]
+    tools_for_hf = _hf_tools_for_model(model_name, tools_toolspec)
 
     messages_list: list[Message] = [{"role": "user", "content": "What's the weather in SF?"}]
 
@@ -116,7 +140,11 @@ def test_qwen3_tool_declaration_matches_hf_tokens(model_name: str, renderer_name
 
     # HuggingFace approach
     hf_tokens = hf_tokenizer.apply_chat_template(
-        messages_list, tools=tools_openai, tokenize=True, add_generation_prompt=True
+        messages_list,
+        tools=tools_for_hf,
+        tokenize=True,
+        add_generation_prompt=True,
+        **_hf_template_kwargs(renderer_name),
     )
 
     assert cookbook_tokens == hf_tokens, (
@@ -128,7 +156,7 @@ def test_qwen3_tool_declaration_matches_hf_tokens(model_name: str, renderer_name
     )
 
 
-@pytest.mark.parametrize("model_name,renderer_name", QWEN3_MODELS)
+@pytest.mark.parametrize("model_name,renderer_name", ALL_QWEN_MODELS)
 def test_qwen3_tool_declaration_string_matches_hf(model_name: str, renderer_name: str):
     """Test that tool declaration produces identical string to HuggingFace."""
     tokenizer = get_tokenizer(model_name)
@@ -149,7 +177,7 @@ def test_qwen3_tool_declaration_string_matches_hf(model_name: str, renderer_name
         }
     ]
 
-    tools_openai = [{"type": "function", "function": tool} for tool in tools_toolspec]
+    tools_for_hf = _hf_tools_for_model(model_name, tools_toolspec)
     messages_list: list[Message] = [{"role": "user", "content": "What is 2+2?"}]
 
     # Tinker-cookbook approach
@@ -159,7 +187,11 @@ def test_qwen3_tool_declaration_string_matches_hf(model_name: str, renderer_name
 
     # HuggingFace approach
     hf_string = hf_tokenizer.apply_chat_template(
-        messages_list, tools=tools_openai, tokenize=False, add_generation_prompt=True
+        messages_list,
+        tools=tools_for_hf,
+        tokenize=False,
+        add_generation_prompt=True,
+        **_hf_template_kwargs(renderer_name),
     )
 
     assert cookbook_string == hf_string, (
@@ -169,7 +201,7 @@ def test_qwen3_tool_declaration_string_matches_hf(model_name: str, renderer_name
     )
 
 
-@pytest.mark.parametrize("model_name,renderer_name", QWEN3_MODELS)
+@pytest.mark.parametrize("model_name,renderer_name", ALL_QWEN_MODELS)
 def test_qwen3_multiple_tools(model_name: str, renderer_name: str):
     """Test that multiple tools are formatted correctly."""
     tokenizer = get_tokenizer(model_name)
@@ -189,7 +221,7 @@ def test_qwen3_multiple_tools(model_name: str, renderer_name: str):
         },
     ]
 
-    tools_openai = [{"type": "function", "function": tool} for tool in tools_toolspec]
+    tools_for_hf = _hf_tools_for_model(model_name, tools_toolspec)
     messages_list: list[Message] = [{"role": "user", "content": "Hello"}]
 
     # Tinker-cookbook approach
@@ -198,7 +230,11 @@ def test_qwen3_multiple_tools(model_name: str, renderer_name: str):
 
     # HuggingFace approach
     hf_tokens = hf_tokenizer.apply_chat_template(
-        messages_list, tools=tools_openai, tokenize=True, add_generation_prompt=True
+        messages_list,
+        tools=tools_for_hf,
+        tokenize=True,
+        add_generation_prompt=True,
+        **_hf_template_kwargs(renderer_name),
     )
 
     assert cookbook_tokens == hf_tokens, (
@@ -208,7 +244,7 @@ def test_qwen3_multiple_tools(model_name: str, renderer_name: str):
     )
 
 
-@pytest.mark.parametrize("model_name,renderer_name", QWEN3_MODELS)
+@pytest.mark.parametrize("model_name,renderer_name", ALL_QWEN_MODELS)
 def test_qwen3_empty_tools_list(model_name: str, renderer_name: str):
     """Test that empty tools list doesn't include tool section."""
     tokenizer = get_tokenizer(model_name)
@@ -223,7 +259,7 @@ def test_qwen3_empty_tools_list(model_name: str, renderer_name: str):
     assert "<tools>" not in messages[0]["content"]
 
 
-@pytest.mark.parametrize("model_name,renderer_name", QWEN3_MODELS)
+@pytest.mark.parametrize("model_name,renderer_name", ALL_QWEN_MODELS)
 def test_qwen3_custom_system_prompt_with_tools(model_name: str, renderer_name: str):
     """Test that custom system prompt is combined with tools."""
     tokenizer = get_tokenizer(model_name)
@@ -239,7 +275,7 @@ def test_qwen3_custom_system_prompt_with_tools(model_name: str, renderer_name: s
         }
     ]
 
-    tools_openai = [{"type": "function", "function": tool} for tool in tools_toolspec]
+    tools_for_hf = _hf_tools_for_model(model_name, tools_toolspec)
     messages_list: list[Message] = [{"role": "user", "content": "Help me"}]
 
     # Tinker-cookbook approach
@@ -252,7 +288,11 @@ def test_qwen3_custom_system_prompt_with_tools(model_name: str, renderer_name: s
     # HuggingFace approach - need to manually add system message
     hf_messages = [{"role": "system", "content": custom_prompt}] + messages_list
     hf_tokens = hf_tokenizer.apply_chat_template(
-        hf_messages, tools=tools_openai, tokenize=True, add_generation_prompt=True
+        hf_messages,
+        tools=tools_for_hf,
+        tokenize=True,
+        add_generation_prompt=True,
+        **_hf_template_kwargs(renderer_name),
     )
 
     assert cookbook_tokens == hf_tokens, (
@@ -262,7 +302,7 @@ def test_qwen3_custom_system_prompt_with_tools(model_name: str, renderer_name: s
     )
 
 
-@pytest.mark.parametrize("model_name,renderer_name", QWEN3_MODELS)
+@pytest.mark.parametrize("model_name,renderer_name", ALL_QWEN_MODELS)
 def test_qwen3_preserves_insertion_order(model_name: str, renderer_name: str):
     """Test that JSON keys preserve insertion order (not sorted)."""
     tokenizer = get_tokenizer(model_name)
@@ -284,7 +324,7 @@ def test_qwen3_preserves_insertion_order(model_name: str, renderer_name: str):
         }
     ]
 
-    tools_openai = [{"type": "function", "function": tool} for tool in tools_toolspec]
+    tools_for_hf = _hf_tools_for_model(model_name, tools_toolspec)
     messages_list: list[Message] = [{"role": "user", "content": "Test"}]
 
     # Tinker-cookbook approach
@@ -293,7 +333,11 @@ def test_qwen3_preserves_insertion_order(model_name: str, renderer_name: str):
 
     # HuggingFace approach
     hf_tokens = hf_tokenizer.apply_chat_template(
-        messages_list, tools=tools_openai, tokenize=True, add_generation_prompt=True
+        messages_list,
+        tools=tools_for_hf,
+        tokenize=True,
+        add_generation_prompt=True,
+        **_hf_template_kwargs(renderer_name),
     )
 
     # Should match exactly (HF doesn't sort, preserves insertion order)
