@@ -2,15 +2,6 @@
 
 This project is built in the spirit of open science and collaborative development. We believe that the best tools emerge through community involvement and shared learning.
 
-## How contributions work
-
-Tinker is developed across an internal monorepo and this public GitHub repository. Changes sync bidirectionally on a daily cadence:
-
-- **Internal -> GitHub**: Internal commits are synced out to the public repo daily.
-- **GitHub -> Internal**: Merged PRs on GitHub are synced back into the internal monorepo daily.
-
-This means your contributions land in both places automatically — you just open a PR on GitHub.
-
 ## Contribution process
 
 ### 1. Find or propose work
@@ -42,9 +33,15 @@ Follow the conventions below when writing code.
 ### 4. Test
 
 ```bash
-pytest tinker-cookbook/tests/test_renderers.py
-pytest tinker-cookbook/tests/test_utils.py
+# Unit tests (no API key needed)
+pytest tinker_cookbook/tests/test_renderers.py
+pytest tinker_cookbook/tests/test_utils.py
+
+# Smoke tests (requires API key + network)
+pytest tinker_cookbook/tests/smoke_tests.py
 ```
+
+If your change touches training or sampling behavior, run the relevant smoke tests. If you're adding a new recipe, include a smoke-level test that exercises the happy path.
 
 ### 5. Submit a PR
 
@@ -66,8 +63,8 @@ The codebase is designed around three goals:
 
 The structure:
 
-- A main training function (e.g., [rl/train.py](tinker-cookbook/rl/train.py), [supervised/train.py](tinker-cookbook/supervised/train.py)) contains the main loop with a detailed `Config` object.
-- Launch scripts (e.g., [recipes/math_rl/train.py](tinker-cookbook/recipes/math_rl/train.py)) assemble training configs and expose a smaller `CLIConfig` for the command line.
+- A main training function (e.g., [rl/train.py](tinker_cookbook/rl/train.py), [supervised/train.py](tinker_cookbook/supervised/train.py)) contains the main loop with a detailed `Config` object.
+- Launch scripts (e.g., [recipes/math_rl/train.py](tinker_cookbook/recipes/math_rl/train.py)) assemble training configs and expose a smaller `CLIConfig` for the command line.
 
 Config members that specify datasets and evals should be `chz` configs (with `.build()`) or callables (we recommend `functools.partial`), keeping configs serializable for sweeps.
 
@@ -77,7 +74,7 @@ Use typing wherever possible. Avoid `Any` and `type: ignore`; prefer casting. Do
 
 ### Async
 
-Async is useful for RL, where it allows many parallel queries (e.g., sampling calls). All methods that take nontrivial time in RL interfaces (like `Env`) should be async. Some non-RL code (e.g., [recipes/sl_loop.py](tinker-cookbook/recipes/sl_loop.py)) intentionally avoids async to stay beginner-friendly.
+Async is useful for RL, where it allows many parallel queries (e.g., sampling calls). All methods that take nontrivial time in RL interfaces (like `Env`) should be async. Some non-RL code (e.g., [recipes/sl_loop.py](tinker_cookbook/recipes/sl_loop.py)) intentionally avoids async to stay beginner-friendly.
 
 ### Classes and the builder pattern
 
@@ -100,7 +97,7 @@ An `Env` is an RL environment, roughly analogous to OpenAI Gym but single-use (n
 
 Good contributions to Tinker tend to be:
 
-- **New recipes** that demonstrate real fine-tuning workflows (math reasoning, tool use, preference learning, etc.)
+- **New recipes** that demonstrate real post-training workflows (math reasoning, tool use, preference learning, etc.)
 - **Improved documentation** — clearer explanations, better examples, fixed errors
 - **Bug fixes** with minimal, focused diffs
 - **Evaluation integrations** — new evaluators or benchmark support
