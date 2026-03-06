@@ -77,6 +77,15 @@ Tinker cookbook includes several utilities. Here's a quick overview:
 - [`hyperparam_utils`](tinker_cookbook/hyperparam_utils.py) helps calculate hyperparameters suitable for LoRAs
 - [`evaluation`](tinker_cookbook/eval/evaluators.py) provides abstractions for evaluating Tinker models and [`inspect_evaluation`](tinker_cookbook/eval/inspect_evaluators.py) shows how to integrate with InspectAI to make evaluating on standard benchmarks easy.
 
+## Development Setup
+
+```bash
+uv sync --extra dev
+pre-commit install
+```
+
+This installs dev dependencies and registers pre-commit hooks that run `ruff` formatting and linting on every commit. CI enforces these checks on all pull requests.
+
 ## Contributing
 
 This project is built in the spirit of open science and collaborative development. We believe that the best tools emerge through community involvement and shared learning.
