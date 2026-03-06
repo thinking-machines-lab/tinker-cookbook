@@ -25,6 +25,7 @@ from tinker_cookbook.renderers.base import (
 )
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3DisableThinkingRenderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer, _longest_matching_suffix_prefix
+from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
 from tinker_cookbook.tests.test_renderers import get_tokenizer
 
 # =============================================================================
@@ -540,6 +541,8 @@ def test_gptoss_parse_response_commentary_preamble():
             {"use_system_prompt": True, "reasoning_effort": "medium"},
         ),
         ("Qwen/Qwen3-30B-A3B", Qwen3Renderer, {}),
+        ("Qwen/Qwen3.5-35B-A3B", Qwen3_5Renderer, {}),
+        ("Qwen/Qwen3.5-35B-A3B", Qwen3_5DisableThinkingRenderer, {}),
         ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer, {}),
     ],
 )
