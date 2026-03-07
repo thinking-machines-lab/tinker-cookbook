@@ -48,6 +48,7 @@ from tinker_cookbook.renderers import (
     unregister_renderer,
 )
 from tinker_cookbook.renderers.base import ensure_list, ensure_text
+from tinker_cookbook.renderers.granite4 import Granite4Renderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
 from tinker_cookbook.tests.conversation_generator import generate_conversation
@@ -401,6 +402,7 @@ _HF_TEST_MODELS = [
     ("openai/gpt-oss-20b", None, {}),
     ("moonshotai/Kimi-K2-Thinking", None, {}),
     ("Qwen/Qwen3-VL-30B-A3B-Instruct", None, {}),
+    ("ibm-granite/granite-4.0-tiny-preview", None, {}),
 ]
 
 # Models whose tool call format matches HF's apply_chat_template exactly.
@@ -446,6 +448,22 @@ def _add_llama3_date_prefix(messages: list[Message]) -> list[Message]:
     return messages
 
 
+def _add_granite4_system_message(messages: list[Message]) -> list[Message]:
+    """Add default system message for Granite 4.0 models.
+
+    The HF Granite 4.0 chat template always injects a system message (with a dynamic
+    date via strftime_now). Our renderer uses a static default instead. For HF
+    equivalence tests, we explicitly provide the system message to HF so both sides
+    use the same static content and the comparison is deterministic.
+    """
+    from tinker_cookbook.renderers.granite4 import Granite4Renderer
+
+    messages = copy.deepcopy(messages)
+    if not messages or messages[0]["role"] != "system":
+        messages = [Message(role="system", content=Granite4Renderer.DEFAULT_SYSTEM_PROMPT)] + messages
+    return messages
+
+
 @pytest.mark.parametrize("conv_id", _GENERATION_CONVERSATIONS)
 @pytest.mark.parametrize("model_name,renderer_override,hf_kwargs", _HF_TEST_MODELS)
 def test_generation_against_hf_chat_templates(
@@ -478,15 +496,26 @@ def test_generation_against_hf_chat_templates(
         render_name = get_recommended_renderer_name(model_name)
     cookbook_renderer = get_renderer(render_name, tokenizer, image_processor)
 
-    modified_cookbook_convo = (
-        _add_llama3_date_prefix(convo) if model_name.startswith("meta") else convo
-    )
-    # ^^^ modify the cookbook convo just for llama3, where we chose not to match the HF template
+    # Some models auto-inject content in their HF chat templates that our renderers
+    # handle differently. We add it explicitly so both sides see the same content:
+    # - Llama3: HF injects a date prefix; we add it to cookbook convo only (HF does it itself)
+    # - Granite: HF injects a dynamic-date system message; we add a static one to BOTH
+    #   sides so the comparison is deterministic (our renderer also auto-injects it via
+    #   _ensure_system_message, but we need HF to see it too to avoid the dynamic date)
+    if model_name.startswith("meta"):
+        modified_cookbook_convo = _add_llama3_date_prefix(convo)
+        hf_source_convo = convo  # HF Llama template injects the date itself
+    elif model_name.startswith("ibm-granite"):
+        modified_cookbook_convo = _add_granite4_system_message(convo)
+        hf_source_convo = modified_cookbook_convo  # same — feed HF the static system message
+    else:
+        modified_cookbook_convo = convo
+        hf_source_convo = convo
 
     # Extract tools from tool_declare messages and filter them out when converting to OpenAI format
     tools_for_hf = None
     hf_convo = []
-    for m in convo:
+    for m in hf_source_convo:
         if m["role"] == "tool_declare":
             # Parse the JSON content to extract tools for HF
             tools_for_hf = json.loads(ensure_text(m["content"]))
@@ -495,12 +524,14 @@ def test_generation_against_hf_chat_templates(
             hf_convo.append(openai_msg)
 
     cookbook_tokens = cookbook_renderer.build_generation_prompt(modified_cookbook_convo).to_ints()
-    hf_tokens = tokenizer.apply_chat_template(
+    hf_result = tokenizer.apply_chat_template(
         hf_convo, tools=tools_for_hf, add_generation_prompt=True, tokenize=True, **hf_kwargs
     )
 
-    # Cast hf_tokens to list[int] for type checker - apply_chat_template with tokenize=True returns list[int]
-    hf_tokens_list = cast(list[int], hf_tokens)
+    # Some tokenizers return a BatchEncoding with 'input_ids', others return a plain list
+    hf_tokens_list: list[int] = (
+        hf_result["input_ids"] if hasattr(hf_result, "input_ids") else cast(list[int], hf_result)
+    )
 
     assert cookbook_tokens == hf_tokens_list, (
         f"[{conv_desc}] Cookbook tokens: {cookbook_tokens}\n"
@@ -522,6 +553,7 @@ _SUPERVISED_TEST_MODELS = [
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking", {"thinking": True}),  # thinking mode
     ("moonshotai/Kimi-K2-Thinking", None, {}),
     ("Qwen/Qwen3-VL-30B-A3B-Instruct", None, {}),
+    ("ibm-granite/granite-4.0-tiny-preview", None, {}),
 ]
 
 # Conversations for supervised tests (end with assistant message)
@@ -572,15 +604,21 @@ def test_supervised_example_against_hf_chat_templates(
         render_name = get_recommended_renderer_name(model_name)
     cookbook_renderer = get_renderer(render_name, tokenizer, image_processor)
 
-    modified_cookbook_convo = (
-        _add_llama3_date_prefix(convo) if model_name.startswith("meta") else convo
-    )
-    # ^^^ modify the cookbook convo just for llama3, where we chose not to match the HF template
+    # See comment in test_generation_against_hf_chat_templates for why this is needed
+    if model_name.startswith("meta"):
+        modified_cookbook_convo = _add_llama3_date_prefix(convo)
+        hf_source_convo = convo
+    elif model_name.startswith("ibm-granite"):
+        modified_cookbook_convo = _add_granite4_system_message(convo)
+        hf_source_convo = modified_cookbook_convo
+    else:
+        modified_cookbook_convo = convo
+        hf_source_convo = convo
 
     # Extract tools from tool_declare messages and filter them out when converting to OpenAI format
     tools_for_hf = None
     hf_convo = []
-    for m in convo:
+    for m in hf_source_convo:
         if m["role"] == "tool_declare":
             # Parse the JSON content to extract tools for HF
             tools_for_hf = json.loads(ensure_text(m["content"]))
@@ -715,6 +753,7 @@ def test_tool_call_supervised_rendering(model_name: str):
         ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3ThinkingRenderer),
         ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer),
         ("moonshotai/Kimi-K2.5", KimiK25Renderer),
+        ("ibm-granite/granite-4.0-tiny-preview", Granite4Renderer),
     ],
 )
 def test_strip_thinking_from_history_default(model_name: str, renderer_class):
@@ -744,6 +783,7 @@ def test_strip_thinking_from_history_default(model_name: str, renderer_class):
         ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3ThinkingRenderer),
         ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer),
         ("moonshotai/Kimi-K2.5", KimiK25Renderer),
+        ("ibm-granite/granite-4.0-tiny-preview", Granite4Renderer),
     ],
 )
 def test_strip_thinking_from_history_false(model_name: str, renderer_class):
@@ -920,6 +960,8 @@ _CONSISTENCY_RENDERERS = [
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking"),
     ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning"),
     ("moonshotai/Kimi-K2-Thinking", "kimi_k2"),
+    ("ibm-granite/granite-4.0-tiny-preview", "granite4"),
+    ("ibm-granite/granite-4.0-tiny-preview", "granite4_disable_thinking"),
 ]
 
 # Conversations for the consistency test
@@ -941,7 +983,7 @@ _RENDERERS_WITHOUT_THINKING_SUPPORT = {"llama3", "role_colon"}
 _RENDERERS_WITHOUT_TOOL_SUPPORT = {"role_colon"}
 
 # Renderers that strip thinking in non-thinking mode (conversation must not have ThinkingPart)
-_RENDERERS_WITH_THINKING_STRIPPING = {"qwen3_disable_thinking", "deepseekv3", "kimi_k2"}
+_RENDERERS_WITH_THINKING_STRIPPING = {"qwen3_disable_thinking", "deepseekv3", "kimi_k2", "granite4_disable_thinking"}
 
 # Renderers where supervised and generation have different headers (HF thinking=True behavior).
 # These add </think> to supervised assistant headers but <think> to generation prompt,
@@ -1084,6 +1126,7 @@ def test_supervised_generation_parse_consistency(
         ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking"),
         ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning"),
         ("moonshotai/Kimi-K2-Thinking", "kimi_k2"),
+        ("ibm-granite/granite-4.0-tiny-preview", "granite4"),
     ],
 )
 def test_eot_parsing(model_name: str, renderer_name: str):
@@ -1102,6 +1145,7 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         "deepseekv3_disable_thinking": "<｜end▁of▁sentence｜>",  # Full-width pipes (alias)
         "gpt_oss_medium_reasoning": "<|return|>",
         "kimi_k2": "<|im_end|>",
+        "granite4": "<|end_of_text|>",
     }
     eot_token = eot_tokens.get(renderer_name)
     if eot_token is None:

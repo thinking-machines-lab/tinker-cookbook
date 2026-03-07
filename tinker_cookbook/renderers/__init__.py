@@ -116,6 +116,8 @@ def get_renderer(
             - "gpt_oss_low_reasoning": GPT-OSS with low reasoning
             - "gpt_oss_medium_reasoning": GPT-OSS with medium reasoning
             - "gpt_oss_high_reasoning": GPT-OSS with high reasoning
+            - "granite4": Granite 4.0 with thinking enabled
+            - "granite4_disable_thinking": Granite 4.0 with thinking disabled
             - Custom renderers registered via register_renderer()
         tokenizer: The tokenizer to use.
         image_processor: Required for VL renderers.
@@ -183,6 +185,12 @@ def get_renderer(
         return GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="medium")
     elif name == "gpt_oss_high_reasoning":
         return GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="high")
+    elif name == "granite4":
+        from tinker_cookbook.renderers.granite4 import Granite4Renderer
+        return Granite4Renderer(tokenizer)
+    elif name == "granite4_disable_thinking":
+        from tinker_cookbook.renderers.granite4 import Granite4DisableThinkingRenderer
+        return Granite4DisableThinkingRenderer(tokenizer)
     else:
         raise ValueError(
             f"Unknown renderer: {name}. If this is a custom renderer, please register it via register_renderer()."

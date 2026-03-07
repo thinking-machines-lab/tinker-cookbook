@@ -80,6 +80,21 @@ def get_moonshot_info() -> dict[str, ModelAttributes]:
     }
 
 
+@cache
+def get_granite_info() -> dict[str, ModelAttributes]:
+    org = "ibm-granite"
+    return {
+        "granite-4.0-tiny-preview": ModelAttributes(org, "4.0", "tiny", True),
+        "granite-4.0-small-preview": ModelAttributes(org, "4.0", "small", True),
+        "granite-4.0-medium-preview": ModelAttributes(org, "4.0", "medium", True),
+        "granite-4.0-large-preview": ModelAttributes(org, "4.0", "large", True),
+        "granite-4.0-tiny-preview-instruct": ModelAttributes(org, "4.0", "tiny", True),
+        "granite-4.0-small-preview-instruct": ModelAttributes(org, "4.0", "small", True),
+        "granite-4.0-medium-preview-instruct": ModelAttributes(org, "4.0", "medium", True),
+        "granite-4.0-large-preview-instruct": ModelAttributes(org, "4.0", "large", True),
+    }
+
+
 def get_model_attributes(model_name: str) -> ModelAttributes:
     model_name = model_name.split(":")[0]
     org, model_version_full = model_name.split("/")
@@ -94,6 +109,8 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
         return get_gpt_oss_info()[model_version_full]
     elif org == "moonshotai":
         return get_moonshot_info()[model_version_full]
+    elif org == "ibm-granite":
+        return get_granite_info()[model_version_full]
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
@@ -130,6 +147,8 @@ def get_recommended_renderer_names(model_name: str) -> list[str]:
         return ["gpt_oss_no_sysprompt", "gpt_oss_medium_reasoning"]
     elif attributes.organization == "moonshotai":
         return ["kimi_k2"]
+    elif attributes.organization == "ibm-granite":
+        return ["granite4", "granite4_disable_thinking"]
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
