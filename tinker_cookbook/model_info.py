@@ -84,14 +84,16 @@ def get_moonshot_info() -> dict[str, ModelAttributes]:
 def get_granite_info() -> dict[str, ModelAttributes]:
     org = "ibm-granite"
     return {
+        "granite-4.0-micro": ModelAttributes(org, "4.0", "micro", True),
+        "granite-4.0-micro-base": ModelAttributes(org, "4.0", "micro", False),
+        "granite-4.0-h-micro": ModelAttributes(org, "4.0", "h-micro", True),
+        "granite-4.0-h-micro-base": ModelAttributes(org, "4.0", "h-micro", False),
+        "granite-4.0-h-tiny": ModelAttributes(org, "4.0", "h-tiny", True),
+        "granite-4.0-h-tiny-base": ModelAttributes(org, "4.0", "h-tiny", False),
+        "granite-4.0-h-small": ModelAttributes(org, "4.0", "h-small", True),
+        "granite-4.0-h-small-base": ModelAttributes(org, "4.0", "h-small", False),
         "granite-4.0-tiny-preview": ModelAttributes(org, "4.0", "tiny", True),
-        "granite-4.0-small-preview": ModelAttributes(org, "4.0", "small", True),
-        "granite-4.0-medium-preview": ModelAttributes(org, "4.0", "medium", True),
-        "granite-4.0-large-preview": ModelAttributes(org, "4.0", "large", True),
-        "granite-4.0-tiny-preview-instruct": ModelAttributes(org, "4.0", "tiny", True),
-        "granite-4.0-small-preview-instruct": ModelAttributes(org, "4.0", "small", True),
-        "granite-4.0-medium-preview-instruct": ModelAttributes(org, "4.0", "medium", True),
-        "granite-4.0-large-preview-instruct": ModelAttributes(org, "4.0", "large", True),
+        "granite-4.0-tiny-base-preview": ModelAttributes(org, "4.0", "tiny", False),
     }
 
 
