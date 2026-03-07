@@ -8,6 +8,7 @@ the RL training loop.
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
@@ -66,9 +67,19 @@ class EnvFromMessageEnv(types.Env):
         self.max_trajectory_tokens = max_trajectory_tokens
         self._base_stop_condition = renderer.get_stop_sequences()
 
+    async def _render_in_thread(self, messages: list[Message], **kwargs) -> tinker.ModelInput:
+        """Run build_generation_prompt in a thread to avoid blocking the event loop.
+
+        Tokenization is CPU-bound. With many concurrent tasks on the same event
+        loop, running it synchronously starves other coroutines. HuggingFace
+        tokenizers release the GIL, so threads give true parallelism.
+        """
+        return await asyncio.to_thread(self.renderer.build_generation_prompt, messages, **kwargs)
+
     async def initial_observation(self) -> tuple[tinker.ModelInput, StopCondition]:
         messages = await self.message_env.initial_observation()
-        return self.renderer.build_generation_prompt(messages), self._base_stop_condition
+        model_input = await self._render_in_thread(messages)
+        return model_input, self._base_stop_condition
 
     async def step(self, action: types.Action) -> types.StepResult:
         """Parse tokens to a message, delegate to MessageEnv, and render response."""
@@ -84,7 +95,7 @@ class EnvFromMessageEnv(types.Env):
             )
 
         msg_step = await self.message_env.step(assistant_message)
-        next_observation = self.renderer.build_generation_prompt(msg_step.next_messages)
+        next_observation = await self._render_in_thread(msg_step.next_messages)
         next_stop_condition = msg_step.next_stop_condition or self._base_stop_condition
 
         # Check if trajectory exceeds max token limit
