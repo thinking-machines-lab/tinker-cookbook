@@ -30,9 +30,12 @@ from tinker_cookbook.supervised.nll_evaluator import NLLEvaluator
 from tinker_cookbook.supervised.types import SupervisedDatasetBuilder
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log
-from tinker_cookbook.utils.lr_scheduling import compute_schedule_lr_multiplier, LRSchedule
+from tinker_cookbook.utils.lr_scheduling import (
+    LRSchedule,
+    compute_schedule_lr_multiplier,
+)
 from tinker_cookbook.utils.misc_utils import timed
-from tinker_cookbook.utils.trace import scope, update_scope_context, trace_init
+from tinker_cookbook.utils.trace import scope, trace_init, update_scope_context
 
 logger = logging.getLogger(__name__)
 
@@ -329,7 +332,7 @@ async def main(config: Config):
 
         logprobs = [x["logprobs"] for x in fwd_bwd_result.loss_fn_outputs]
         weights = [datum.loss_fn_inputs["weights"] for datum in submitted.data]
-        train_nll = compute_mean_nll(logprobs, weights)
+        # train_nll = compute_mean_nll(logprobs, weights)
 
         metrics.update(
             num_sequences=len(submitted.data),
@@ -337,7 +340,7 @@ async def main(config: Config):
             num_loss_tokens=sum(
                 sum(datum.loss_fn_inputs["weights"].data) for datum in submitted.data
             ),
-            train_mean_nll=train_nll,
+            # train_mean_nll=train_nll,
         )
         metrics["time/total"] = time.time() - submitted.batch_start_time
 
@@ -382,6 +385,9 @@ async def main(config: Config):
     ml_logger.close()
     logger.info("Training completed successfully")
 
+
+if __name__ == "__main__":
+    chz.nested_entrypoint(lambda config: asyncio.run(main(config)), allow_hyphens=True)
 
 if __name__ == "__main__":
     chz.nested_entrypoint(lambda config: asyncio.run(main(config)), allow_hyphens=True)
