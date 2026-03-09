@@ -106,6 +106,8 @@ def get_renderer(
             - "qwen3_vl_instruct": Qwen3 vision-language instruct (no thinking)
             - "qwen3_disable_thinking": Qwen3 with thinking disabled
             - "qwen3_instruct": Qwen3 instruct 2507 (no thinking)
+            - "qwen3_5": Qwen3.5 VL with thinking
+            - "qwen3_5_disable_thinking": Qwen3.5 VL with thinking disabled
             - "deepseekv3": DeepSeek V3 (defaults to non-thinking mode)
             - "deepseekv3_disable_thinking": DeepSeek V3 non-thinking (alias)
             - "deepseekv3_thinking": DeepSeek V3 thinking mode
@@ -145,6 +147,7 @@ def get_renderer(
         Qwen3VLInstructRenderer,
         Qwen3VLRenderer,
     )
+    from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
     from tinker_cookbook.renderers.role_colon import RoleColonRenderer
 
     if name == "role_colon":
@@ -163,6 +166,10 @@ def get_renderer(
         return Qwen3DisableThinkingRenderer(tokenizer)
     elif name == "qwen3_instruct":
         return Qwen3InstructRenderer(tokenizer)
+    elif name == "qwen3_5":
+        return Qwen3_5Renderer(tokenizer, image_processor=image_processor)
+    elif name == "qwen3_5_disable_thinking":
+        return Qwen3_5DisableThinkingRenderer(tokenizer, image_processor=image_processor)
     elif name == "deepseekv3":
         # Default to non-thinking mode (matches HF template default behavior)
         return DeepSeekV3DisableThinkingRenderer(tokenizer)
