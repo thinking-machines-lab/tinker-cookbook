@@ -135,7 +135,12 @@ def get_recommended_renderer_names(model_name: str) -> list[str]:
     elif attributes.organization == "openai":
         return ["gpt_oss_no_sysprompt", "gpt_oss_medium_reasoning"]
     elif attributes.organization == "moonshotai":
-        return ["kimi_k2"]
+        if attributes.version_str == "K2.5":
+            return ["kimi_k25", "kimi_k25_disable_thinking"]
+        elif attributes.version_str == "K2":
+            return ["kimi_k2"]
+        else:
+            raise ValueError(f"Unknown model: {model_name}")
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
