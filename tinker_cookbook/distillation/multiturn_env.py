@@ -8,6 +8,7 @@ KL divergence against a teacher model (computed in the training loop).
 from __future__ import annotations
 
 import logging
+import math
 from typing import Sequence
 
 import chz
@@ -122,7 +123,7 @@ class HarborDistillationDataset(RLDataset):
         return self.env_group_builders[start:end]
 
     def __len__(self) -> int:
-        return len(self.env_group_builders) // self.batch_size
+        return math.ceil(len(self.env_group_builders) / self.batch_size)
 
 
 @chz.chz
