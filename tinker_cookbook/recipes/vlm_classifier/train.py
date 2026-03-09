@@ -154,4 +154,5 @@ def run_experiment(experiment_config: ExperimentConfig):
 
 
 if __name__ == "__main__":
-    chz.nested_entrypoint(run_experiment)
+    experiment_config = chz.entrypoint(ExperimentConfig)
+    run_experiment(experiment_config)

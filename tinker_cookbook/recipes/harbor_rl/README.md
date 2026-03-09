@@ -72,3 +72,23 @@ async def default_sandbox_factory(image: modal.Image, timeout: int) -> SandboxIn
 ```
 
 `cli_main()` accepts an optional `sandbox_factory` parameter. When `None`, it falls back to `default_sandbox_factory` (Modal). The factory flows through: `cli_main` -> `HarborDatasetBuilder` -> `HarborEnvGroupBuilder.make_envs()`.
+
+## Running
+
+First, download the Terminal-Bench tasks:
+
+```bash
+uvx harbor datasets download terminal-bench@2.0
+```
+
+Then launch training:
+
+```bash
+python -m tinker_cookbook.recipes.harbor_rl.launch_terminal_bench \
+    model_name="moonshotai/Kimi-K2-Thinking" \
+    group_size=4 \
+    groups_per_batch=8 \
+    learning_rate=1e-5 \
+    lora_rank=32 \
+    max_tokens=8192
+```

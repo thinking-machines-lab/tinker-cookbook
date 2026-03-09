@@ -232,7 +232,7 @@ async def train_rl(
 
 
 def cli_main(cli_config: CLIConfig):
-    log_path_root = os.path.expanduser(f"~/experiments/rlhf-{cli_config.short_name}")
+    log_path_root = f"/tmp/tinker-examples/rlhf-{cli_config.short_name}"
     sft_log_path = os.path.join(log_path_root, "sft")
     rm_log_path = os.path.join(log_path_root, "rm")
     rl_log_path = os.path.join(log_path_root, "rl")
