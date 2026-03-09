@@ -32,6 +32,7 @@ from tinker_cookbook.renderers import Message as TinkerMessage
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import ToolCall
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.model_info import get_recommended_renderer_names
 
 
 @lru_cache(maxsize=4)
@@ -40,7 +41,8 @@ def _get_tokenizer(base_model: str):
 
 
 @lru_cache(maxsize=4)
-def _get_renderer(base_model: str, renderer_name: str):
+def _get_renderer(base_model: str):
+    renderer_name = get_recommended_renderer_names(base_model)[0]
     return get_renderer(renderer_name, _get_tokenizer(base_model))
 
 
@@ -96,7 +98,7 @@ class TinkerCookbookLLM(CustomLLM):
         # base_model is a known litellm kwarg routed to litellm_params
         base_model: str = litellm_params["base_model"]
 
-        renderer = _get_renderer(base_model, "kimi_k25")
+        renderer = _get_renderer(base_model)
         sampling_client = _get_sampling_client(base_model)
 
         # Render messages -> token IDs
