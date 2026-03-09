@@ -67,5 +67,7 @@ if __name__ == "__main__":
     cli_config = chz.entrypoint(CLIConfig)
     config = build_config(cli_config)
     # Avoid clobbering log dir from your previous run:
-    cli_utils.check_log_dir(config.log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
+    cli_utils.check_log_dir(
+        config.log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists
+    )
     asyncio.run(train.main(config))

@@ -33,9 +33,7 @@ class CLIConfig:
 
 def cli_main(cli_config: CLIConfig):
     model_name = cli_config.model_name
-    renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(
-        model_name
-    )
+    renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(model_name)
 
     date_and_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
     model_tag = model_name.replace("/", "-")
