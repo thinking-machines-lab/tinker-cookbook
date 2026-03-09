@@ -21,6 +21,8 @@ class CLIConfig:
     wandb_name: str | None = None
     log_path: str | None = None
 
+    behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
+
 
 def build_config(cli_config: CLIConfig) -> train.Config:
     model_name = cli_config.model_name
@@ -61,13 +63,9 @@ def build_config(cli_config: CLIConfig) -> train.Config:
     )
 
 
-def main():
+if __name__ == "__main__":
     cli_config = chz.entrypoint(CLIConfig)
     config = build_config(cli_config)
     # Avoid clobbering log dir from your previous run:
-    cli_utils.check_log_dir(config.log_path, behavior_if_exists="ask")
+    cli_utils.check_log_dir(config.log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
     asyncio.run(train.main(config))
-
-
-if __name__ == "__main__":
-    main()
