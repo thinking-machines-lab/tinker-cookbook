@@ -17,19 +17,18 @@ To explain what goes under-the-hood, we also provide minimal, self-contained scr
 
 Building on Tinker and Tinker Cookbook, we can easily customize a wide range of training environments for LLMs.
 We provide the following examples:
-1. **[Chat supervised learning](./chat_sl/)**: supervised fine-tuning on conversational datasets like Tulu3.
-2. **[Math reasoning](./math_rl/)**: improve LLM reasoning capability by rewarding it for answering math questions correctly.
-3. **[Code reasoning](./code_rl/)**: train LLMs on competitive programming problems with sandboxed code execution (DeepCoder replication).
-4. **[Instruction following](./if_rl/)**: train LLMs to precisely follow instructions using IFBench.
-5. **[Preference learning](./preference/)**: showcase a three-stage RLHF pipeline: 1) supervised fine-tuning, 2) learning a reward model, 3) RL against the reward model.
-6. **[Tool use](./search_tool/)**: train LLMs to better use retrieval tools to answer questions more accurately.
-7. **[Prompt distillation](./prompt_distillation/)**: internalize long and complex instructions into LLMs.
-8. **[Multi-Agent](./multiplayer_rl/)**: optimize LLMs to play against another LLM or themselves.
-9. **[Model distillation](./distillation/)**: use on-policy distillation or SFT to distill intelligence from a teacher model.
-10. **[Rubric-based grading](./rubric/)**: use an LLM grader with rubrics to provide rewards for RL training.
-11. **[Verifiers environments](./verifiers_rl/)**: use RL environments from Prime Intellect's Environments Hub with Tinker.
-12. **[VLM image classification](./vlm_classifier/)**: train vision-language models as image classifiers.
-13. **[Harbor RL](./harbor_rl/)**: RL training on Harbor-formatted tasks (e.g., Terminal-Bench) with sandboxed code execution.
+- **[Chat supervised learning](./chat_sl/)**: supervised fine-tuning on conversational datasets like Tulu3.
+- **[Math reasoning](./math_rl/)**: improve LLM reasoning capability by rewarding it for answering math questions correctly.
+- **[Code reasoning](./code_rl/)**: train LLMs on competitive programming problems with sandboxed code execution (DeepCoder replication).
+- **[Preference learning](./preference/)**: showcase a three-stage RLHF pipeline: 1) supervised fine-tuning, 2) learning a reward model, 3) RL against the reward model.
+- **[Tool use](./search_tool/)**: train LLMs to better use retrieval tools to answer questions more accurately.
+- **[Prompt distillation](./prompt_distillation/)**: internalize long and complex instructions into LLMs.
+- **[Multi-Agent](./multiplayer_rl/)**: optimize LLMs to play against another LLM or themselves.
+- **[Model distillation](./distillation/)**: use on-policy distillation or SFT to distill intelligence from a teacher model.
+- **[Rubric-based grading](./rubric/)**: use an LLM grader with rubrics to provide rewards for RL training.
+- **[Verifiers environments](./verifiers_rl/)**: use RL environments from Prime Intellect's Environments Hub with Tinker.
+- **[VLM image classification](./vlm_classifier/)**: train vision-language models as image classifiers.
+- **[Harbor RL](./harbor_rl/)**: RL training on Harbor-formatted tasks (e.g., Terminal-Bench) with sandboxed code execution.
 
 These examples are located in each subfolder, and their `README.md` file will walk you through the key implementation details, the commands to run them, and the expected performance.
 
