@@ -176,31 +176,34 @@ def _make_stub_renderer():
     renderer = MagicMock()
     renderer.get_stop_sequences.return_value = ["<stop>"]
 
-    parse_results = iter([
-        # Call 1: model makes a tool call
-        (
-            Message(
-                role="assistant",
-                content="",
-                tool_calls=[
-                    ToolCall(
-                        function=ToolCall.FunctionBody(
-                            name="_stub_tool", arguments="{}"
-                        ),
-                        id="call_1",
-                    )
-                ],
+    # Side-channel to pass action tokens from _parse to _build (can't stash on
+    # Message since it's a TypedDict).
+    action_tokens_by_id: dict[int, list[int]] = {}
+
+    parse_results = iter(
+        [
+            # Call 1: model makes a tool call
+            (
+                Message(
+                    role="assistant",
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            function=ToolCall.FunctionBody(name="_stub_tool", arguments="{}"),
+                            id="call_1",
+                        )
+                    ],
+                ),
+                True,
             ),
-            True,
-        ),
-        # Call 2: model gives final answer (no tool calls)
-        (Message(role="assistant", content="done"), True),
-    ])
+            # Call 2: model gives final answer (no tool calls)
+            (Message(role="assistant", content="done"), True),
+        ]
+    )
 
     def _parse(tokens):
         msg, success = next(parse_results)
-        # Stash action tokens so build_generation_prompt can reproduce them
-        msg["_action_tokens"] = list(tokens)
+        action_tokens_by_id[id(msg)] = list(tokens)
         return msg, success
 
     renderer.parse_response.side_effect = _parse
@@ -215,7 +218,7 @@ def _make_stub_renderer():
                 tokens.extend([200, 201])
             elif r == "assistant":
                 tokens.extend([500])  # assistant header
-                tokens.extend(msg.get("_action_tokens", []))
+                tokens.extend(action_tokens_by_id.get(id(msg), []))
             elif r == "tool":
                 tokens.extend([400, 401])
         tokens.extend([500])  # suffix: assistant generation header
@@ -227,10 +230,12 @@ def _make_stub_renderer():
 
 def _make_stub_policy():
     """TokenCompleter returning predetermined responses."""
-    responses = iter([
-        TokensWithLogprobs(tokens=[300, 301], maybe_logprobs=[-0.5, -0.3]),
-        TokensWithLogprobs(tokens=[310, 311], maybe_logprobs=[-0.4, -0.2]),
-    ])
+    responses = iter(
+        [
+            TokensWithLogprobs(tokens=[300, 301], maybe_logprobs=[-0.5, -0.3]),
+            TokensWithLogprobs(tokens=[310, 311], maybe_logprobs=[-0.4, -0.2]),
+        ]
+    )
 
     class StubPolicy(TokenCompleter):
         async def __call__(self, model_input, stop):
