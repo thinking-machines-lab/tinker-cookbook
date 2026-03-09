@@ -1,0 +1,116 @@
+name: smoke-test-recipes
+
+on:
+  workflow_dispatch:  # manual trigger
+  schedule:
+    - cron: "0 6 * * *"  # daily at 6am UTC
+
+# Only one smoke test run at a time to avoid API contention
+concurrency:
+  group: smoke-test-recipes
+  cancel-in-progress: true
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        recipe:
+          - name: chat_sl
+            module: tinker_cookbook.recipes.chat_sl.train
+            args: "behavior_if_log_dir_exists=delete"
+          - name: dpo
+            module: tinker_cookbook.recipes.preference.dpo.train
+            args: "behavior_if_log_dir_exists=delete"
+          - name: vlm_classifier
+            module: tinker_cookbook.recipes.vlm_classifier.train
+            args: "experiment_dir=/tmp/tinker-smoke-test/vlm_classifier behavior_if_log_dir_exists=delete"
+          - name: off_policy_reasoning
+            module: tinker_cookbook.recipes.distillation.off_policy_reasoning
+            args: "batch_size=128 behavior_if_log_dir_exists=delete"
+          - name: shorter
+            module: tinker_cookbook.recipes.preference.shorter.train
+            args: "behavior_if_log_dir_exists=delete"
+          - name: on_policy_distillation
+            module: tinker_cookbook.recipes.distillation.on_policy_distillation
+            args: "behavior_if_log_dir_exists=delete"
+          - name: on_policy_multi_teacher
+            module: tinker_cookbook.recipes.distillation.on_policy_multi_teacher
+            args: "behavior_if_log_dir_exists=delete"
+          - name: rlhf_pipeline
+            module: tinker_cookbook.recipes.preference.rlhf.rlhf_pipeline
+            args: "short_name=smoke-test"
+          - name: guess_number
+            module: tinker_cookbook.recipes.multiplayer_rl.guess_number.train
+            args: "behavior_if_log_dir_exists=delete"
+          - name: text_arena
+            module: tinker_cookbook.recipes.multiplayer_rl.text_arena.train
+            args: "behavior_if_log_dir_exists=delete"
+          - name: twenty_questions
+            module: tinker_cookbook.recipes.multiplayer_rl.twenty_questions.train
+            args: "behavior_if_log_dir_exists=delete"
+
+    name: ${{ matrix.recipe.name }}
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install-uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: venv
+        run: uv venv && uv sync --all-extras
+
+      - name: run recipe until step 1
+        env:
+          TINKER_API_KEY: ${{ secrets.TINKER_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          LOGFILE=$(mktemp)
+          TIMEOUT=300
+
+          # Start recipe in background, tee output
+          uv run python -m ${{ matrix.recipe.module }} ${{ matrix.recipe.args }} 2>&1 | tee "$LOGFILE" &
+          TEE_PID=$!
+
+          # Wait for step 1 to appear (meaning step 0 completed)
+          ELAPSED=0
+          STEP1_SEEN=false
+          while kill -0 "$TEE_PID" 2>/dev/null; do
+            if grep -qE "Step 1|Sampling batch 1|batch_idx=1" "$LOGFILE" 2>/dev/null; then
+              STEP1_SEEN=true
+              break
+            fi
+            sleep 2
+            ELAPSED=$((ELAPSED + 2))
+            if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
+              break
+            fi
+          done
+
+          # Kill the process
+          pkill -P "$TEE_PID" 2>/dev/null || true
+          kill "$TEE_PID" 2>/dev/null || true
+          wait "$TEE_PID" 2>/dev/null || true
+
+          if $STEP1_SEEN; then
+            echo "Recipe ${{ matrix.recipe.name }} passed: step 1 reached after ${ELAPSED}s"
+            exit 0
+          fi
+
+          # Process may have exited on its own — check if step 0 ran
+          if grep -qE "Step 0|Sampling batch 0|batch_idx=0" "$LOGFILE" 2>/dev/null; then
+            echo "Recipe ${{ matrix.recipe.name }} passed: completed with step 0"
+            exit 0
+          fi
+
+          echo "Recipe ${{ matrix.recipe.name }} failed: no training steps detected"
+          echo "--- Last 30 lines ---"
+          tail -30 "$LOGFILE"
+          exit 1
