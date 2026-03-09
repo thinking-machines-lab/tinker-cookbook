@@ -5,18 +5,20 @@ This module associates model names with metadata, which helps  training code cho
 from dataclasses import dataclass
 from functools import cache
 
-# Common renderer lists, defined once to reduce repetition.
-_LLAMA3 = ["llama3"]
-_ROLE_COLON = ["role_colon"]
-_QWEN3 = ["qwen3", "qwen3_disable_thinking"]
-_QWEN3_INSTRUCT = ["qwen3_instruct"]
-_QWEN3_VL = ["qwen3_vl"]
-_QWEN3_VL_INSTRUCT = ["qwen3_vl_instruct"]
-_QWEN3_5 = ["qwen3_5", "qwen3_5_disable_thinking"]
-_DEEPSEEKV3 = ["deepseekv3", "deepseekv3_thinking"]
-_GPT_OSS = ["gpt_oss_no_sysprompt", "gpt_oss_medium_reasoning"]
-_KIMI_K2 = ["kimi_k2"]
-_KIMI_K25 = ["kimi_k25", "kimi_k25_disable_thinking"]
+# Common renderer tuples, defined once to reduce repetition.
+# Tuples (not lists) because these are shared across ModelAttributes instances
+# — a mutable list would risk silent cross-model corruption if mutated.
+_LLAMA3 = ("llama3",)
+_ROLE_COLON = ("role_colon",)
+_QWEN3 = ("qwen3", "qwen3_disable_thinking")
+_QWEN3_INSTRUCT = ("qwen3_instruct",)
+_QWEN3_VL = ("qwen3_vl",)
+_QWEN3_VL_INSTRUCT = ("qwen3_vl_instruct",)
+_QWEN3_5 = ("qwen3_5", "qwen3_5_disable_thinking")
+_DEEPSEEKV3 = ("deepseekv3", "deepseekv3_thinking")
+_GPT_OSS = ("gpt_oss_no_sysprompt", "gpt_oss_medium_reasoning")
+_KIMI_K2 = ("kimi_k2",)
+_KIMI_K25 = ("kimi_k25", "kimi_k25_disable_thinking")
 
 
 @dataclass
@@ -25,7 +27,7 @@ class ModelAttributes:
     version_str: str  # just the version number e.g. "3.1", "2.5"
     size_str: str  # size of the model e.g. "8B", "72B", "1.5B"
     is_chat: bool  # is chat/instruct model
-    recommended_renderers: list[str]  # first entry is the most recommended
+    recommended_renderers: tuple[str, ...]  # first entry is the most recommended
     is_vl: bool = False  # is vision-language model
 
 
@@ -128,7 +130,7 @@ def get_recommended_renderer_names(model_name: str) -> list[str]:
     Used so we can emit a warning if you use a non-recommended renderer.
     The first result is the most recommended renderer for the model.
     """
-    return get_model_attributes(model_name).recommended_renderers
+    return list(get_model_attributes(model_name).recommended_renderers)
 
 
 def get_recommended_renderer_name(model_name: str) -> str:
