@@ -24,7 +24,7 @@ Testing guidelines:
 
 import copy
 import json
-from typing import Callable, cast
+from typing import Any, Callable, cast
 
 import pytest
 import tinker
@@ -535,9 +535,11 @@ def test_generation_against_hf_chat_templates(
         hf_convo, tools=tools_for_hf, add_generation_prompt=True, tokenize=True, **hf_kwargs
     )
 
-    # Some tokenizers return a BatchEncoding with 'input_ids', others return a plain list
-    hf_tokens_list: list[int] = cast(
-        list[int], hf_result["input_ids"] if hasattr(hf_result, "input_ids") else hf_result
+    # Some tokenizers (e.g. Granite) return a BatchEncoding with 'input_ids', others a plain list.
+    # pyright doesn't know about BatchEncoding in the return type, so we go through Any.
+    hf_result_any: Any = hf_result
+    hf_tokens_list: list[int] = (
+        hf_result_any["input_ids"] if hasattr(hf_result_any, "input_ids") else hf_result_any
     )
 
     assert cookbook_tokens == hf_tokens_list, (
