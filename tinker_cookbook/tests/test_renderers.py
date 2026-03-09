@@ -536,8 +536,8 @@ def test_generation_against_hf_chat_templates(
     )
 
     # Some tokenizers return a BatchEncoding with 'input_ids', others return a plain list
-    hf_tokens_list: list[int] = (
-        hf_result["input_ids"] if hasattr(hf_result, "input_ids") else cast(list[int], hf_result)
+    hf_tokens_list: list[int] = cast(
+        list[int], hf_result["input_ids"] if hasattr(hf_result, "input_ids") else hf_result
     )
 
     assert cookbook_tokens == hf_tokens_list, (
