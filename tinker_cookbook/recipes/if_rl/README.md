@@ -17,12 +17,14 @@ The environment supports four reward strategies:
 
 ## Example Command
 
+```bash
 python -m tinker_cookbook.recipes.if_rl.train \
     model_name="Qwen/Qwen3-4B-Instruct-2507" \
     batch_size=32 group_size=16 \
     learning_rate=1e-5 \
     reward_type=FULL_STRICT \
     lora_rank=32
+```
 
 - [IFBench Paper (NeurIPS 2025 D&B)](https://arxiv.org/pdf/2507.02833)
 - [IFBench GitHub](https://github.com/allenai/IFBench)
