@@ -110,10 +110,7 @@ class Granite4Renderer(Renderer):
         if role == "assistant":
             if isinstance(content, list):
                 parts = content
-                if (
-                    self.strip_thinking_from_history
-                    and not ctx.is_last
-                ):
+                if self.strip_thinking_from_history and not ctx.is_last:
                     parts = [p for p in parts if p["type"] != "thinking"]
                 rendered_parts = []
                 for p in parts:
@@ -133,9 +130,7 @@ class Granite4Renderer(Renderer):
                         "name": tool_call.function.name,
                         "arguments": json.loads(tool_call.function.arguments),
                     }
-                    tool_call_strs.append(
-                        f"<tool_call>\n{json.dumps(payload)}\n</tool_call>"
-                    )
+                    tool_call_strs.append(f"<tool_call>\n{json.dumps(payload)}\n</tool_call>")
                 output_content += "\n" + "\n".join(tool_call_strs)
 
         elif role == "tool":
@@ -192,9 +187,7 @@ class Granite4Renderer(Renderer):
                     )
                 )
             except (json.JSONDecodeError, KeyError) as e:
-                unparsed_tool_calls.append(
-                    UnparsedToolCall(raw_text=raw_text, error=str(e))
-                )
+                unparsed_tool_calls.append(UnparsedToolCall(raw_text=raw_text, error=str(e)))
 
         if tool_calls:
             assistant_message["tool_calls"] = tool_calls
@@ -203,9 +196,7 @@ class Granite4Renderer(Renderer):
 
         # Strip tool call sections from content
         if tool_calls or unparsed_tool_calls:
-            content = re.sub(
-                r"\s*<tool_call>.*?</tool_call>", "", content, flags=re.DOTALL
-            )
+            content = re.sub(r"\s*<tool_call>.*?</tool_call>", "", content, flags=re.DOTALL)
             content = content.strip()
 
         # Parse <think>...</think> blocks

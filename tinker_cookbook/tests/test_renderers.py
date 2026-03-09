@@ -465,7 +465,9 @@ def _add_granite4_system_message(messages: list[Message]) -> list[Message]:
 
     messages = copy.deepcopy(messages)
     if not messages or messages[0]["role"] != "system":
-        messages = [Message(role="system", content=Granite4Renderer.DEFAULT_SYSTEM_PROMPT)] + messages
+        messages = [
+            Message(role="system", content=Granite4Renderer.DEFAULT_SYSTEM_PROMPT)
+        ] + messages
     return messages
 
 
@@ -1000,7 +1002,7 @@ _RENDERERS_WITH_THINKING_STRIPPING = {
     "qwen3_5_disable_thinking",
     "deepseekv3",
     "kimi_k2",
-    "granite4_disable_thinking"
+    "granite4_disable_thinking",
 }
 
 # Renderers where supervised and generation have different headers (HF thinking=True behavior).

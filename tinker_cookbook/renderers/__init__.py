@@ -194,9 +194,11 @@ def get_renderer(
         return GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="high")
     elif name == "granite4":
         from tinker_cookbook.renderers.granite4 import Granite4Renderer
+
         return Granite4Renderer(tokenizer)
     elif name == "granite4_disable_thinking":
         from tinker_cookbook.renderers.granite4 import Granite4DisableThinkingRenderer
+
         return Granite4DisableThinkingRenderer(tokenizer)
     else:
         raise ValueError(
