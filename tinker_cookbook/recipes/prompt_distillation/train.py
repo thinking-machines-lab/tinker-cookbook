@@ -60,7 +60,7 @@ def cli_main(cli_config: CLIConfig):
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
     else:
-        log_path = f"/tmp/tinker-cookbook/prompt_distillation/{run_name}"
+        log_path = f"/tmp/tinker-examples/prompt_distillation/{run_name}"
 
     if cli_config.wandb_name is not None:
         wandb_name = cli_config.wandb_name
@@ -113,4 +113,5 @@ def cli_main(cli_config: CLIConfig):
 
 
 if __name__ == "__main__":
-    chz.nested_entrypoint(cli_main)
+    cli_config = chz.entrypoint(CLIConfig)
+    cli_main(cli_config)
