@@ -86,6 +86,7 @@ build-backend = "hatchling.build"
 packages = ["tinker_cookbook"]
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 
 [tool.ruff]

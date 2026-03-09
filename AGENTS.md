@@ -123,11 +123,10 @@ Agents often struggle with the nested type hierarchy. Key resources:
 
 ```bash
 # Unit tests (no API needed)
-pytest tinker_cookbook/tests/test_renderers.py
-pytest tinker_cookbook/tests/test_utils.py
+pytest tests/unit
 
-# Smoke tests (requires API key + network)
-pytest tinker_cookbook/tests/smoke_tests.py
+# Smoke tests (requires TINKER_API_KEY + network)
+pytest tests/smoke
 ```
 
 For debugging, shrink workloads via `n_batches`, `batch_size`, `group_size` in dataset builders.

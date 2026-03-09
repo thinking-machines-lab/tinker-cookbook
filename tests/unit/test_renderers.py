@@ -51,7 +51,7 @@ from tinker_cookbook.renderers.base import ensure_list, ensure_text
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
 from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
-from tinker_cookbook.tests.conversation_generator import generate_conversation
+from tests.conversation_generator import generate_conversation
 from tinker_cookbook.tokenizer_utils import (
     get_registered_tokenizer_names,
     get_tokenizer,
