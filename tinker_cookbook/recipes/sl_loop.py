@@ -55,6 +55,8 @@ def main(config: Config):
     assert isinstance(dataset, datasets.DatasetDict)
     train_dataset = dataset["train"]
 
+    # Drop the last incomplete batch (like PyTorch's drop_last=True) — a partial
+    # batch has different effective gradient magnitude, which can cause a training spike.
     n_train_batches = len(train_dataset) // config.batch_size
     n_dropped = len(train_dataset) % config.batch_size
     if n_dropped:
