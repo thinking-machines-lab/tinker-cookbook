@@ -57,4 +57,4 @@ jobs:
         env:
           TINKER_API_KEY: ${{ secrets.TINKER_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: uv run pytest tests/${{ matrix.test }}.py -v -x
+        run: uv run pytest tests/${{ matrix.test }}.py -v -x -s
