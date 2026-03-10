@@ -22,8 +22,7 @@ Example usage:
         command_timeout=120 \
         save_every=5 \
         eval_every=5 \
-        wandb_project=tinkercookbook-cpt \
-        wandb_name=onpodi-kimiharbormultiturn-20260305-231347
+        wandb_name=cookbook-multiturn-onpodi
 """
 
 import asyncio

@@ -141,7 +141,7 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
         return [(0.0, {}) for _ in trajectory_group]
 
     def logging_tags(self) -> list[str]:
-        return ["harbor", self.task.task_name]
+        return ["harbor"]
 
 
 class HarborDataset(RLDataset):
