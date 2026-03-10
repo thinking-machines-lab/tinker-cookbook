@@ -1,8 +1,11 @@
-from tests.smoke.conftest import run_recipe
+from tests.smoke.helpers import run_recipe
 
 
 def test_text_arena():
     run_recipe(
         "tinker_cookbook.recipes.multiplayer_rl.text_arena.train",
-        ["behavior_if_log_dir_exists=delete"],
+        [
+            "batch_size=16",
+            "num_train_datapoints=128",
+        ],
     )

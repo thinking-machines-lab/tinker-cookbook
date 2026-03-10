@@ -1,4 +1,4 @@
-from tests.smoke.conftest import run_recipe
+from tests.smoke.helpers import run_recipe
 
 
 def test_dpo():
