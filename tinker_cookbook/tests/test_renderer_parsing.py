@@ -986,3 +986,272 @@ def test_kimi_streaming_with_emoji():
 
     assert "🤔" in final_thinking, "Final message missing thinking emoji"
     assert "🎉" in final_text, "Final message missing party emoji"
+
+
+# =============================================================================
+# Streaming vs Batch Equivalence Tests
+#
+# These tests verify that parse_response_streaming produces identical final
+# messages to parse_response across diverse response patterns. Each test:
+# 1. Encodes a response string to tokens
+# 2. Parses via batch (parse_response) and streaming (parse_response_streaming)
+# 3. Asserts the final Message from streaming matches batch exactly
+# 4. Asserts streamed deltas reconstruct the correct content
+# =============================================================================
+
+
+def _assert_streaming_matches_batch(renderer, response_str: str, end_token: str = "<|im_end|>"):
+    """Helper: verify streaming and batch parsing produce identical results.
+
+    Args:
+        renderer: The renderer to test.
+        response_str: Raw response string (including end token).
+        end_token: The end-of-message token string.
+    """
+    tokenizer = renderer.tokenizer
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    # Batch parse
+    batch_message, batch_success = renderer.parse_response(response_tokens)
+
+    # Streaming parse
+    deltas = list(renderer.parse_response_streaming(response_tokens))
+
+    # Structure checks
+    assert len(deltas) >= 2, "Should have at least header + final message"
+    assert isinstance(deltas[0], StreamingMessageHeader), "First delta should be header"
+    assert deltas[0].role == "assistant"
+    assert _is_message(deltas[-1]), "Last delta should be complete Message"
+
+    streaming_message = deltas[-1]
+
+    # Content equivalence
+    assert streaming_message["role"] == batch_message["role"]
+    assert ensure_list(streaming_message["content"]) == ensure_list(batch_message["content"])
+
+    # Tool calls equivalence
+    assert streaming_message.get("tool_calls") == batch_message.get("tool_calls")
+    assert streaming_message.get("unparsed_tool_calls") == batch_message.get("unparsed_tool_calls")
+
+    # Verify streamed deltas reconstruct the content
+    thinking_from_deltas = "".join(
+        d.thinking for d in deltas if isinstance(d, StreamingThinkingDelta)
+    )
+    text_from_deltas = "".join(d.text for d in deltas if isinstance(d, StreamingTextDelta))
+
+    # Extract expected content from batch message
+    batch_content = batch_message["content"]
+    if isinstance(batch_content, list):
+        expected_thinking = "".join(
+            p["thinking"] for p in batch_content if p["type"] == "thinking"
+        )
+        expected_text = "".join(p["text"] for p in batch_content if p["type"] == "text")
+    else:
+        expected_thinking = ""
+        expected_text = batch_content
+
+    assert thinking_from_deltas == expected_thinking, (
+        f"Thinking mismatch:\n  deltas: {thinking_from_deltas!r}\n  batch:  {expected_thinking!r}"
+    )
+    # Text may include tool call markup in the streamed version (since deltas
+    # emit raw text before final parsing strips it). Only compare when no tool calls.
+    if not batch_message.get("tool_calls") and not batch_message.get("unparsed_tool_calls"):
+        assert text_from_deltas == expected_text, (
+            f"Text mismatch:\n  deltas: {text_from_deltas!r}\n  batch:  {expected_text!r}"
+        )
+
+    return deltas, batch_message
+
+
+class TestKimiK2StreamingBatchEquivalence:
+    """Verify streaming matches batch for all Kimi K2 response patterns."""
+
+    @pytest.fixture
+    def renderer(self):
+        tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+        return KimiK2Renderer(tokenizer)
+
+    def test_simple_text(self, renderer):
+        """Plain text response without thinking."""
+        _assert_streaming_matches_batch(renderer, "Hello, world!<|im_end|>")
+
+    def test_thinking_then_text(self, renderer):
+        """Standard thinking + answer pattern."""
+        _assert_streaming_matches_batch(
+            renderer,
+            "<think>Let me reason step by step.\n1. First...\n2. Then...</think>"
+            "The answer is 42.<|im_end|>",
+        )
+
+    def test_empty_thinking(self, renderer):
+        """Empty think block (non-thinking mode)."""
+        _assert_streaming_matches_batch(
+            renderer, "<think></think>Direct answer.<|im_end|>"
+        )
+
+    def test_long_thinking(self, renderer):
+        """Extended reasoning with multiple paragraphs."""
+        thinking = (
+            "First, let me understand the problem. The user is asking about "
+            "quantum entanglement.\n\n"
+            "Key concepts:\n"
+            "1. Superposition - particles exist in multiple states\n"
+            "2. Measurement - observing collapses the state\n"
+            "3. Non-locality - entangled particles correlate instantly\n\n"
+            "I should explain this clearly without jargon."
+        )
+        _assert_streaming_matches_batch(
+            renderer,
+            f"<think>{thinking}</think>"
+            "Quantum entanglement is a phenomenon where two particles become linked.<|im_end|>",
+        )
+
+    def test_multiple_think_blocks(self, renderer):
+        """Multiple interleaved think/text blocks."""
+        _assert_streaming_matches_batch(
+            renderer,
+            "<think>first thought</think>partial answer"
+            "<think>second thought</think>final answer<|im_end|>",
+        )
+
+    def test_empty_response(self, renderer):
+        """Response with only end token."""
+        _assert_streaming_matches_batch(renderer, "<|im_end|>")
+
+    def test_whitespace_only(self, renderer):
+        """Response with only whitespace before end token."""
+        _assert_streaming_matches_batch(renderer, "   \n\t  <|im_end|>")
+
+    def test_special_characters(self, renderer):
+        """Response with special characters, newlines, unicode."""
+        _assert_streaming_matches_batch(
+            renderer,
+            "<think>Analysis of x² + y² = r²\nwhere r > 0</think>"
+            "The equation x² + y² = r² defines a circle.\n"
+            "Special chars: <>&\"'`~!@#$%^&*()<|im_end|>",
+        )
+
+    def test_emoji_in_thinking_and_text(self, renderer):
+        """Emoji in both thinking and text content."""
+        _assert_streaming_matches_batch(
+            renderer,
+            "<think>🤔 Let me think about this carefully 💭</think>"
+            "Here's the answer 🎉✨!<|im_end|>",
+        )
+
+    def test_code_blocks(self, renderer):
+        """Response containing code blocks."""
+        _assert_streaming_matches_batch(
+            renderer,
+            "<think>The user needs a Python function.</think>"
+            "Here's the code:\n```python\ndef hello():\n    print('world')\n```<|im_end|>",
+        )
+
+    def test_html_like_content(self, renderer):
+        """Response with HTML-like tags that aren't think tags."""
+        _assert_streaming_matches_batch(
+            renderer,
+            "<think>Generating HTML example</think>"
+            "Use <div class=\"container\"><p>Hello</p></div><|im_end|>",
+        )
+
+    def test_tool_call_with_thinking(self, renderer):
+        """Thinking followed by a tool call."""
+        _assert_streaming_matches_batch(
+            renderer,
+            "<think>I need to search for this.</think>"
+            "<|tool_calls_section_begin|>"
+            "<|tool_call_begin|>functions.search:0<|tool_call_argument_begin|>"
+            '{"query": "quantum physics"}'
+            "<|tool_call_end|>"
+            "<|tool_calls_section_end|><|im_end|>",
+        )
+
+    def test_tool_call_without_thinking(self, renderer):
+        """Direct tool call with no thinking block."""
+        _assert_streaming_matches_batch(
+            renderer,
+            "<|tool_calls_section_begin|>"
+            "<|tool_call_begin|>functions.get_weather:0<|tool_call_argument_begin|>"
+            '{"city": "San Francisco"}'
+            "<|tool_call_end|>"
+            "<|tool_calls_section_end|><|im_end|>",
+        )
+
+    def test_text_then_tool_call(self, renderer):
+        """Text content followed by a tool call."""
+        _assert_streaming_matches_batch(
+            renderer,
+            "Let me look that up for you."
+            "<|tool_calls_section_begin|>"
+            "<|tool_call_begin|>functions.search:0<|tool_call_argument_begin|>"
+            '{"query": "weather today"}'
+            "<|tool_call_end|>"
+            "<|tool_calls_section_end|><|im_end|>",
+        )
+
+    def test_multiple_tool_calls(self, renderer):
+        """Multiple tool calls in a single response."""
+        _assert_streaming_matches_batch(
+            renderer,
+            "<think>I need to call two functions.</think>"
+            "<|tool_calls_section_begin|>"
+            "<|tool_call_begin|>functions.search:0<|tool_call_argument_begin|>"
+            '{"query": "python"}'
+            "<|tool_call_end|>"
+            "<|tool_call_begin|>functions.calculate:1<|tool_call_argument_begin|>"
+            '{"expression": "2+2"}'
+            "<|tool_call_end|>"
+            "<|tool_calls_section_end|><|im_end|>",
+        )
+
+    def test_multiline_thinking_with_newlines(self, renderer):
+        """Thinking with many newlines and varied formatting."""
+        _assert_streaming_matches_batch(
+            renderer,
+            "<think>\nStep 1: Parse the input\n\nStep 2: Process\n\n\nStep 3: Output\n</think>"
+            "\nHere is the result.\n<|im_end|>",
+        )
+
+    def test_no_end_token(self, renderer):
+        """Response that was truncated (no end token). Both should return success=False."""
+        tokenizer = renderer.tokenizer
+        response_str = "<think>reasoning</think>partial answer"
+        response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+        batch_message, batch_success = renderer.parse_response(response_tokens)
+        assert not batch_success
+
+        deltas = list(renderer.parse_response_streaming(response_tokens))
+        streaming_message = deltas[-1]
+        assert _is_message(streaming_message)
+        assert streaming_message["role"] == batch_message["role"]
+
+    def test_content_index_ordering(self, renderer):
+        """Verify content_index strictly increases across type transitions."""
+        tokenizer = renderer.tokenizer
+        response_str = (
+            "<think>thought 1</think>text 1<think>thought 2</think>text 2<|im_end|>"
+        )
+        response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+        deltas = list(renderer.parse_response_streaming(response_tokens))
+
+        # Collect (type, content_index) pairs in order
+        indexed = []
+        for d in deltas:
+            if isinstance(d, StreamingThinkingDelta):
+                indexed.append(("thinking", d.content_index))
+            elif isinstance(d, StreamingTextDelta):
+                indexed.append(("text", d.content_index))
+
+        # Content index should never decrease
+        indices = [idx for _, idx in indexed]
+        assert indices == sorted(indices), f"Content indices not monotonic: {indexed}"
+
+        # Each type transition should increment the index
+        for i in range(1, len(indexed)):
+            if indexed[i][0] != indexed[i - 1][0]:
+                assert indexed[i][1] > indexed[i - 1][1], (
+                    f"Index didn't increment on type change: {indexed[i-1]} -> {indexed[i]}"
+                )
