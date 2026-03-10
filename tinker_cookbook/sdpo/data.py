@@ -25,9 +25,7 @@ def extract_response_logprobs(traj: Trajectory) -> list[float]:
     return logprobs
 
 
-def build_full_sequence(
-    ob: tinker.ModelInput, response_tokens: list[int]
-) -> tinker.ModelInput:
+def build_full_sequence(ob: tinker.ModelInput, response_tokens: list[int]) -> tinker.ModelInput:
     """Append response tokens to an observation ModelInput."""
     chunks = list(ob.chunks) + [tinker.EncodedTextChunk(tokens=response_tokens)]
     return tinker.ModelInput(chunks=chunks)
