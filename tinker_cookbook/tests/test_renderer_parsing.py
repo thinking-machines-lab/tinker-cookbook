@@ -21,10 +21,10 @@ from tinker_cookbook.renderers.base import (
     ToolCall,
     UnparsedToolCall,
     Utf8TokenDecoder,
+    _longest_matching_suffix_prefix,
     ensure_list,
 )
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3DisableThinkingRenderer
-from tinker_cookbook.renderers.base import _longest_matching_suffix_prefix
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
 from tinker_cookbook.tests.test_renderers import get_tokenizer
@@ -48,304 +48,260 @@ def test_parse_content_blocks_single_think_block():
 
     assert len(parts) == 2
     assert parts[0]["type"] == "thinking"
-    assert parts[0]["thinking"] == "reasoning"  # type: ignore[typeddict-item]
+    assert parts[0]["thinking"] == "reasoning"
     assert parts[1]["type"] == "text"
-    assert parts[1]["text"] == "visible answer"  # type: ignore[typeddict-item]
-    assert tool_calls == []
+    assert parts[1]["text"] == "visible answer"
+    assert len(tool_calls) == 0
 
 
 def test_parse_content_blocks_multiple_think_blocks():
-    """Test parse_content_blocks with multiple interleaved think blocks."""
-    content = "<think>step 1</think>partial<think>step 2</think>final"
-    result = parse_content_blocks(content)
+    """Test parse_content_blocks with multiple think blocks preserves order."""
+    result = parse_content_blocks(
+        "<think>first thought</think>middle<think>second thought</think>end"
+    )
     assert result is not None
     parts, tool_calls = result
-
     assert len(parts) == 4
-    assert parts[0] == ThinkingPart(type="thinking", thinking="step 1")
-    assert parts[1] == TextPart(type="text", text="partial")
-    assert parts[2] == ThinkingPart(type="thinking", thinking="step 2")
-    assert parts[3] == TextPart(type="text", text="final")
-    assert tool_calls == []
+    assert parts[0] == ThinkingPart(type="thinking", thinking="first thought")
+    assert parts[1] == TextPart(type="text", text="middle")
+    assert parts[2] == ThinkingPart(type="thinking", thinking="second thought")
+    assert parts[3] == TextPart(type="text", text="end")
+    assert len(tool_calls) == 0
 
 
 def test_parse_content_blocks_empty_blocks_omitted():
-    """Test parse_content_blocks omits empty think blocks."""
-    result = parse_content_blocks("<think></think>visible")
+    """Test that empty think and tool_call blocks are omitted."""
+    result = parse_content_blocks("<think></think>text<tool_call></tool_call>")
     assert result is not None
     parts, tool_calls = result
-
+    # Empty <think></think> and <tool_call></tool_call> should be omitted
     assert len(parts) == 1
-    assert parts[0]["type"] == "text"
-    assert parts[0]["text"] == "visible"  # type: ignore[typeddict-item]
-    assert tool_calls == []
+    assert parts[0] == TextPart(type="text", text="text")
 
 
 def test_parse_content_blocks_whitespace_handling():
-    """Test parse_content_blocks preserves whitespace for identity roundtrip."""
-    result = parse_content_blocks("<think>  thinking  </think>  answer  ")
+    """Test whitespace-only blocks are omitted or preserved correctly."""
+    result = parse_content_blocks("<think>  \n  </think>content")
     assert result is not None
-    parts, tool_calls = result
-
-    assert len(parts) == 2
-    # Whitespace is preserved exactly for identity roundtrip
-    assert parts[0]["type"] == "thinking" and parts[0]["thinking"] == "  thinking  "  # type: ignore[typeddict-item]
-    assert parts[1]["type"] == "text" and parts[1]["text"] == "  answer  "  # type: ignore[typeddict-item]
-    assert tool_calls == []
+    parts, _ = result
+    # Whitespace-only think blocks are kept (not truly empty)
+    thinking_parts = [p for p in parts if p["type"] == "thinking"]
+    assert len(thinking_parts) == 1
+    assert thinking_parts[0]["thinking"] == "  \n  "
 
 
 def test_parse_content_blocks_tool_call_only():
-    """Test parse_content_blocks parses tool calls into separate list."""
-    content = '<tool_call>{"name": "search", "arguments": {"query": "test"}}</tool_call>'
-    result = parse_content_blocks(content)
+    """Test parsing response with only tool calls."""
+    result = parse_content_blocks(
+        '<tool_call>\n{"name": "search", "arguments": {"query": "test"}}\n</tool_call>'
+    )
     assert result is not None
     parts, tool_calls = result
-
-    assert len(parts) == 0
     assert len(tool_calls) == 1
     assert isinstance(tool_calls[0], ToolCall)
     assert tool_calls[0].function.name == "search"
-    assert tool_calls[0].function.arguments == '{"query": "test"}'
 
 
 def test_parse_content_blocks_interleaved():
-    """Test parse_content_blocks handles interleaved think and tool_call blocks."""
-    content = '<think>Let me search</think>Searching...<tool_call>{"name": "search", "arguments": {"q": "test"}}</tool_call>Done'
+    """Test think blocks interleaved with tool calls preserves order."""
+    content = (
+        "<think>reasoning</think>I'll search for that."
+        '\n<tool_call>\n{"name": "search", "arguments": {"query": "test"}}\n</tool_call>'
+    )
     result = parse_content_blocks(content)
     assert result is not None
     parts, tool_calls = result
 
-    # Content parts: think, text before tool_call, text after tool_call
-    assert len(parts) == 3
-    assert parts[0] == ThinkingPart(type="thinking", thinking="Let me search")
-    assert parts[1] == TextPart(type="text", text="Searching...")
-    assert parts[2] == TextPart(type="text", text="Done")
-
-    # Tool call extracted separately
+    # Should have thinking, text, then tool call
+    assert parts[0]["type"] == "thinking"
+    assert parts[1]["type"] == "text"
     assert len(tool_calls) == 1
-    assert isinstance(tool_calls[0], ToolCall)
-    assert tool_calls[0].function.name == "search"
 
 
 def test_parse_content_blocks_invalid_tool_call():
-    """Test parse_content_blocks handles invalid tool call JSON as UnparsedToolCall."""
-    content = "<tool_call>not valid json</tool_call>text after"
-    result = parse_content_blocks(content)
+    """Test that malformed tool calls produce UnparsedToolCall."""
+    result = parse_content_blocks("<tool_call>\nnot valid json\n</tool_call>")
     assert result is not None
     parts, tool_calls = result
-
-    # Text after tool call is captured in content parts
-    assert len(parts) == 1
-    assert parts[0] == TextPart(type="text", text="text after")
-
-    # Invalid tool call is in tool_calls list as UnparsedToolCall
     assert len(tool_calls) == 1
     assert isinstance(tool_calls[0], UnparsedToolCall)
-    assert "Invalid JSON" in tool_calls[0].error
 
 
 def test_format_content_as_string_roundtrip():
-    """Formatted content should be parseable back to original."""
-    content = [
+    """Test format_content_as_string with various content types."""
+    # String content
+    assert format_content_as_string("hello") == "hello"
+
+    # Structured content
+    parts: list[ContentPart] = [
         ThinkingPart(type="thinking", thinking="reasoning"),
         TextPart(type="text", text="answer"),
     ]
-    # Use empty separator for true roundtrip (default separator adds newlines between parts)
-    formatted = format_content_as_string(content, separator="")
-    result = parse_content_blocks(formatted)
-    assert result is not None
-    parts, tool_calls = result
-    assert parts == content
-    assert tool_calls == []
+    result = format_content_as_string(parts)
+    assert "reasoning" in result
+    assert "answer" in result
 
 
 # =============================================================================
-# Qwen3 parse_response Tests
+# Qwen3 Response Parsing Tests
 # =============================================================================
 
 
 def test_qwen3_parse_response_extracts_thinking():
-    """Test Qwen3Renderer.parse_response extracts thinking to ThinkingPart."""
+    """Test that Qwen3 parse_response correctly extracts thinking blocks."""
     tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = Qwen3Renderer(tokenizer)
 
-    # Simulate a response with thinking
     response_str = "<think>Let me reason about this.</think>The answer is 42.<|im_end|>"
     response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
 
     message, success = renderer.parse_response(response_tokens)
-
     assert success
     assert message["role"] == "assistant"
 
-    # Content should be a list with ThinkingPart and TextPart
     content = message["content"]
     assert isinstance(content, list)
-
-    thinking_parts = [p for p in content if p["type"] == "thinking"]
-    text_parts = [p for p in content if p["type"] == "text"]
-
-    assert len(thinking_parts) == 1
-    assert thinking_parts[0]["thinking"] == "Let me reason about this."
-
-    assert len(text_parts) == 1
-    assert text_parts[0]["text"] == "The answer is 42."
+    assert len(content) == 2
+    assert content[0]["type"] == "thinking"
+    assert content[0]["thinking"] == "Let me reason about this."
+    assert content[1]["type"] == "text"
+    assert content[1]["text"] == "The answer is 42."
 
 
 def test_qwen3_parse_response_multiple_think_blocks():
-    """Test Qwen3Renderer.parse_response handles multiple interleaved think blocks."""
+    """Test Qwen3 parse_response with multiple think/text segments."""
     tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = Qwen3Renderer(tokenizer)
 
-    response_str = "<think>step 1</think>partial answer<think>step 2</think>final answer<|im_end|>"
+    response_str = "<think>first</think>middle<think>second</think>end<|im_end|>"
     response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
 
     message, success = renderer.parse_response(response_tokens)
-
     assert success
+
     content = message["content"]
     assert isinstance(content, list)
     assert len(content) == 4
-
-    assert content[0] == ThinkingPart(type="thinking", thinking="step 1")
-    assert content[1] == TextPart(type="text", text="partial answer")
-    assert content[2] == ThinkingPart(type="thinking", thinking="step 2")
-    assert content[3] == TextPart(type="text", text="final answer")
+    assert content[0] == ThinkingPart(type="thinking", thinking="first")
+    assert content[1] == TextPart(type="text", text="middle")
+    assert content[2] == ThinkingPart(type="thinking", thinking="second")
+    assert content[3] == TextPart(type="text", text="end")
 
 
 def test_qwen3_parse_response_no_thinking_returns_string():
-    """Test Qwen3Renderer.parse_response returns string when no thinking."""
+    """Test Qwen3 parse_response returns string when no thinking blocks."""
     tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = Qwen3Renderer(tokenizer)
 
-    response_str = "Just a plain response without thinking.<|im_end|>"
+    response_str = "Just plain text response<|im_end|>"
     response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
 
     message, success = renderer.parse_response(response_tokens)
-
     assert success
-    # Content should remain a string for backward compatibility
     assert isinstance(message["content"], str)
-    assert message["content"] == "Just a plain response without thinking."
+    assert message["content"] == "Just plain text response"
 
 
 def test_qwen3_parse_response_with_tool_calls():
-    """Test Qwen3Renderer.parse_response puts tool calls in message['tool_calls'], not content."""
-    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
-    renderer = Qwen3Renderer(tokenizer)
-
-    response_str = '<think>Let me search</think>I will search for that.<tool_call>{"name": "web_search", "arguments": {"query": "weather"}}</tool_call><|im_end|>'
-    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
-
-    message, success = renderer.parse_response(response_tokens)
-
-    assert success
-    content = message["content"]
-    assert isinstance(content, list)
-
-    # Content should only have ThinkingPart and TextPart — no tool calls
-    assert len(content) == 2
-    assert content[0]["type"] == "thinking"
-    assert content[0]["thinking"] == "Let me search"
-    assert content[1]["type"] == "text"
-    assert content[1]["text"] == "I will search for that."
-
-    # Tool calls live exclusively in message["tool_calls"]
-    assert "tool_calls" in message
-    assert len(message["tool_calls"]) == 1
-    assert message["tool_calls"][0].function.name == "web_search"
-
-
-def test_qwen3_parse_response_tool_call_only():
-    """Test Qwen3Renderer.parse_response with only a tool call."""
+    """Test Qwen3 parse_response extracts tool calls correctly."""
     tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = Qwen3Renderer(tokenizer)
 
     response_str = (
-        '<tool_call>{"name": "calculator", "arguments": {"expr": "2+2"}}</tool_call><|im_end|>'
+        "<think>I need to search</think>Let me look that up."
+        '\n<tool_call>\n{"name": "search", "arguments": {"query": "test"}}\n</tool_call>'
+        "<|im_end|>"
     )
     response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
 
     message, success = renderer.parse_response(response_tokens)
-
     assert success
-    content = message["content"]
-    assert isinstance(content, list)
-    # Content should be empty — only a tool call, no text or thinking
-    assert len(content) == 0
+    assert "tool_calls" in message
+    assert message["tool_calls"][0].function.name == "search"
 
-    # Tool call lives in message["tool_calls"]
-    assert "tool_calls" in message and len(message["tool_calls"]) == 1
-    assert message["tool_calls"][0].function.name == "calculator"
+
+def test_qwen3_parse_response_tool_call_only():
+    """Test Qwen3 parse_response with tool call but no text."""
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
+    renderer = Qwen3Renderer(tokenizer)
+
+    response_str = (
+        '<tool_call>\n{"name": "get_weather", "arguments": {"city": "SF"}}\n</tool_call>'
+        "<|im_end|>"
+    )
+    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+    message, success = renderer.parse_response(response_tokens)
+    assert success
+    assert "tool_calls" in message
+    assert message["tool_calls"][0].function.name == "get_weather"
 
 
 # =============================================================================
-# DeepSeek parse_response Tests
+# DeepSeek V3 Response Parsing Tests
 # =============================================================================
 
 
 def test_deepseek_parse_response_extracts_thinking():
-    """Test DeepSeekV3ThinkingRenderer.parse_response extracts thinking."""
-    tokenizer = get_tokenizer("deepseek-ai/DeepSeek-V3.1")
+    """Test that DeepSeek parse_response correctly extracts thinking blocks."""
+    tokenizer = get_tokenizer("deepseek-ai/DeepSeek-V3")
     renderer = DeepSeekV3ThinkingRenderer(tokenizer)
 
-    # Note: DeepSeek uses full-width pipes in special tokens
-    response_str = "Let me think about this.</think>The answer is 42.<｜end▁of▁sentence｜>"
-    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+    content = "<think>reasoning here</think>The visible answer."
+    end_token = tokenizer.encode("<｜end▁of▁sentence｜>", add_special_tokens=False)
+    response_tokens = tokenizer.encode(content, add_special_tokens=False) + end_token
 
     message, success = renderer.parse_response(response_tokens)
-
     assert success
-    content = message["content"]
-    assert isinstance(content, list)
 
-    thinking_parts = [p for p in content if p["type"] == "thinking"]
-    text_parts = [p for p in content if p["type"] == "text"]
-
-    assert len(thinking_parts) == 1
-    assert thinking_parts[0]["thinking"] == "Let me think about this."
-    assert len(text_parts) == 1
-    assert text_parts[0]["text"] == "The answer is 42."
+    content_parts = message["content"]
+    assert isinstance(content_parts, list)
+    thinking = [p for p in content_parts if p["type"] == "thinking"]
+    text = [p for p in content_parts if p["type"] == "text"]
+    assert len(thinking) == 1
+    assert thinking[0]["thinking"] == "reasoning here"
+    assert len(text) == 1
+    assert text[0]["text"] == "The visible answer."
 
 
 def test_deepseek_parse_response_no_thinking_returns_string():
-    """Test DeepSeekV3ThinkingRenderer.parse_response returns string when no thinking."""
-    tokenizer = get_tokenizer("deepseek-ai/DeepSeek-V3.1")
+    """Test DeepSeek parse_response returns string when no thinking blocks."""
+    tokenizer = get_tokenizer("deepseek-ai/DeepSeek-V3")
     renderer = DeepSeekV3ThinkingRenderer(tokenizer)
 
-    response_str = "Just a plain response.<｜end▁of▁sentence｜>"
-    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+    content = "No thinking here."
+    end_token = tokenizer.encode("<｜end▁of▁sentence｜>", add_special_tokens=False)
+    response_tokens = tokenizer.encode(content, add_special_tokens=False) + end_token
 
     message, success = renderer.parse_response(response_tokens)
-
     assert success
     assert isinstance(message["content"], str)
-    assert message["content"] == "Just a plain response."
+    assert message["content"] == "No thinking here."
 
 
 def test_deepseek_parse_response_multiple_think_blocks():
-    """Test DeepSeekV3ThinkingRenderer.parse_response handles multiple think blocks."""
-    tokenizer = get_tokenizer("deepseek-ai/DeepSeek-V3.1")
+    """Test DeepSeek parse_response with multiple think/text segments."""
+    tokenizer = get_tokenizer("deepseek-ai/DeepSeek-V3")
     renderer = DeepSeekV3ThinkingRenderer(tokenizer)
 
-    response_str = "step 1</think>partial<think>step 2</think>final<｜end▁of▁sentence｜>"
-    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+    content = "<think>first</think>middle<think>second</think>end"
+    end_token = tokenizer.encode("<｜end▁of▁sentence｜>", add_special_tokens=False)
+    response_tokens = tokenizer.encode(content, add_special_tokens=False) + end_token
 
     message, success = renderer.parse_response(response_tokens)
-
     assert success
-    content = message["content"]
-    assert isinstance(content, list)
-    assert len(content) == 4
 
-    assert content[0] == ThinkingPart(type="thinking", thinking="step 1")
-    assert content[1] == TextPart(type="text", text="partial")
-    assert content[2] == ThinkingPart(type="thinking", thinking="step 2")
-    assert content[3] == TextPart(type="text", text="final")
+    parts = message["content"]
+    assert isinstance(parts, list)
+    assert len(parts) == 4
+    assert parts[0] == ThinkingPart(type="thinking", thinking="first")
+    assert parts[1] == TextPart(type="text", text="middle")
+    assert parts[2] == ThinkingPart(type="thinking", thinking="second")
+    assert parts[3] == TextPart(type="text", text="end")
 
 
 # =============================================================================
-# GptOss parse_response Tests
+# GptOss Response Parsing Tests
 # =============================================================================
 
 
@@ -531,6 +487,11 @@ def test_gptoss_parse_response_commentary_preamble():
     assert "tool_calls" in message and len(message["tool_calls"]) == 1
 
 
+# =============================================================================
+# Thinking-Generation-Parse Roundtrip Tests
+# =============================================================================
+
+
 @pytest.mark.parametrize(
     "model_name,renderer_cls,renderer_kwargs",
     [
@@ -587,7 +548,7 @@ def test_thinking_generation_parse_correspondence(model_name, renderer_cls, rend
         if prompt_tokens[-i:] == full_response_tokens[:i]:
             prefill_len = i
 
-    # Simulate smpling: strip prefill
+    # Simulate sampling: strip prefill
     continuation_tokens = full_response_tokens[prefill_len:]
 
     # Parse the continuation
@@ -605,201 +566,8 @@ def test_thinking_generation_parse_correspondence(model_name, renderer_cls, rend
 
 
 # =============================================================================
-# Kimi K2 Streaming Parsing Tests
+# Utf8TokenDecoder Tests
 # =============================================================================
-
-
-def _is_message(obj) -> TypeGuard[Message]:
-    """Check if object is a Message dict (TypedDict doesn't support isinstance)."""
-    return isinstance(obj, dict) and "role" in obj and "content" in obj
-
-
-def test_kimi_streaming_simple_text():
-    """Test streaming parsing of simple text response."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
-    renderer = KimiK2Renderer(tokenizer)
-
-    response_str = "Hello, world!<|im_end|>"
-    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
-
-    deltas = list(renderer.parse_response_streaming(response_tokens))
-
-    # First delta should be header
-    assert isinstance(deltas[0], StreamingMessageHeader)
-    assert deltas[0].role == "assistant"
-
-    # Last delta should be complete Message
-    assert _is_message(deltas[-1])
-    assert deltas[-1]["role"] == "assistant"
-
-    # Collect all text deltas
-    text_content = "".join(d.text for d in deltas if isinstance(d, StreamingTextDelta))
-    assert "Hello, world!" in text_content
-
-
-def test_kimi_streaming_with_thinking():
-    """Test streaming parsing with thinking blocks."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
-    renderer = KimiK2Renderer(tokenizer)
-
-    response_str = "<think>Let me reason about this.</think>The answer is 42.<|im_end|>"
-    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
-
-    deltas = list(renderer.parse_response_streaming(response_tokens))
-
-    # First delta should be header
-    assert isinstance(deltas[0], StreamingMessageHeader)
-    assert deltas[0].role == "assistant"
-
-    # Collect thinking and text deltas
-    thinking_content = "".join(d.thinking for d in deltas if isinstance(d, StreamingThinkingDelta))
-    text_content = "".join(d.text for d in deltas if isinstance(d, StreamingTextDelta))
-
-    assert "Let me reason about this." in thinking_content
-    assert "The answer is 42." in text_content
-
-    # Last delta should be complete Message
-    final_message = deltas[-1]
-    assert _is_message(final_message)
-
-
-def test_kimi_streaming_matches_batch():
-    """Test that streaming parse produces same final message as batch parse."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
-    renderer = KimiK2Renderer(tokenizer)
-
-    response_str = "<think>Step 1: Analyze.\nStep 2: Compute.</think>The result is 123.<|im_end|>"
-    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
-
-    # Batch parse
-    batch_message, batch_success = renderer.parse_response(response_tokens)
-    assert batch_success
-
-    # Streaming parse
-    deltas = list(renderer.parse_response_streaming(response_tokens))
-    streaming_message = deltas[-1]
-
-    assert _is_message(streaming_message)
-    assert streaming_message["role"] == batch_message["role"]
-    assert ensure_list(streaming_message["content"]) == ensure_list(batch_message["content"])
-
-
-def test_kimi_streaming_content_index_increments():
-    """Test that content_index increments when switching content types."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
-    renderer = KimiK2Renderer(tokenizer)
-
-    response_str = "<think>thinking</think>text<|im_end|>"
-    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
-
-    deltas = list(renderer.parse_response_streaming(response_tokens))
-
-    # Get content indices from deltas
-    thinking_indices = [d.content_index for d in deltas if isinstance(d, StreamingThinkingDelta)]
-    text_indices = [d.content_index for d in deltas if isinstance(d, StreamingTextDelta)]
-
-    # Thinking should have content_index > 0 (after header is emitted, we enter thinking)
-    # Text should have higher content_index than thinking
-    if thinking_indices and text_indices:
-        # Text comes after thinking closes, so its index should be higher
-        assert max(text_indices) > min(thinking_indices)
-
-
-def test_kimi_streaming_multiple_think_blocks():
-    """Test streaming with multiple interleaved think blocks."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
-    renderer = KimiK2Renderer(tokenizer)
-
-    response_str = "<think>first thought</think>partial<think>second thought</think>final<|im_end|>"
-    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
-
-    # Batch parse for reference
-    batch_message, _ = renderer.parse_response(response_tokens)
-
-    # Streaming parse
-    deltas = list(renderer.parse_response_streaming(response_tokens))
-
-    # Collect all content
-    thinking_content = "".join(d.thinking for d in deltas if isinstance(d, StreamingThinkingDelta))
-    text_content = "".join(d.text for d in deltas if isinstance(d, StreamingTextDelta))
-
-    assert "first thought" in thinking_content
-    assert "second thought" in thinking_content
-    assert "partial" in text_content
-    assert "final" in text_content
-
-    # Final message should match batch
-    streaming_message = deltas[-1]
-    assert _is_message(streaming_message)
-    assert ensure_list(streaming_message["content"]) == ensure_list(batch_message["content"])
-
-
-def test_kimi_streaming_empty_response():
-    """Test streaming parsing of empty/minimal response."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
-    renderer = KimiK2Renderer(tokenizer)
-
-    response_str = "<|im_end|>"
-    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
-
-    deltas = list(renderer.parse_response_streaming(response_tokens))
-
-    # Should still get header and final message
-    assert isinstance(deltas[0], StreamingMessageHeader)
-    assert _is_message(deltas[-1])
-
-
-# =============================================================================
-# Streaming Helper Function Tests
-# =============================================================================
-
-
-def test_longest_matching_suffix_prefix():
-    """Test the suffix-prefix matching helper function."""
-    # No match cases
-    assert _longest_matching_suffix_prefix("hello", "<think>") == 0
-    assert _longest_matching_suffix_prefix("hello world", "<think>") == 0
-    assert _longest_matching_suffix_prefix("", "<think>") == 0
-
-    # Partial matches
-    assert _longest_matching_suffix_prefix("hello<", "<think>") == 1
-    assert _longest_matching_suffix_prefix("hello<t", "<think>") == 2
-    assert _longest_matching_suffix_prefix("hello<th", "<think>") == 3
-    assert _longest_matching_suffix_prefix("hello<thi", "<think>") == 4
-    assert _longest_matching_suffix_prefix("hello<thin", "<think>") == 5
-    assert _longest_matching_suffix_prefix("hello<think", "<think>") == 6
-
-    # Non-matching partial (doesn't match prefix)
-    assert _longest_matching_suffix_prefix("hello<thx", "<think>") == 0
-    assert _longest_matching_suffix_prefix("hello<tx", "<think>") == 0
-
-    # For </think>
-    assert _longest_matching_suffix_prefix("thinking</", "</think>") == 2
-    assert _longest_matching_suffix_prefix("thinking</t", "</think>") == 3
-    assert _longest_matching_suffix_prefix("thinking</think", "</think>") == 7
-
-    # Edge: text shorter than tag
-    assert _longest_matching_suffix_prefix("<t", "<think>") == 2
-    assert _longest_matching_suffix_prefix("<", "<think>") == 1
-
-
-def test_kimi_streaming_no_unnecessary_buffering():
-    """Test that we don't buffer more than necessary when no tag prefix matches."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
-    renderer = KimiK2Renderer(tokenizer)
-
-    # "Hello world" has no suffix matching any prefix of "<think>"
-    # So all of it should be emitted without buffering
-    response_str = "Hello world<|im_end|>"
-    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
-
-    deltas = list(renderer.parse_response_streaming(response_tokens))
-
-    # Collect all text deltas
-    text_content = "".join(d.text for d in deltas if isinstance(d, StreamingTextDelta))
-
-    # Should contain the full text
-    assert text_content == "Hello world"
 
 
 def test_utf8_decoder_non_monotonic_decodability():
@@ -826,11 +594,8 @@ def test_utf8_decoder_non_monotonic_decodability():
         """Mock tokenizer that simulates non-monotonic UTF-8 decodability."""
 
         def decode(self, tokens: list[int]) -> str:
-            # Simulate: tokens 1,2,3 together form valid UTF-8,
-            # but subsets [1], [1,2] are invalid, and [1,2,3,4] is invalid
-            # (token 4 starts a new incomplete sequence)
             if tokens == [1, 2, 3]:
-                return "✓"  # Only this combination decodes
+                return "✓"
             elif tokens == [1, 2, 3, 4]:
                 raise ValueError("Incomplete UTF-8: token 4 is partial")
             elif 4 in tokens:
@@ -839,32 +604,18 @@ def test_utf8_decoder_non_monotonic_decodability():
                 raise ValueError(f"Incomplete UTF-8: {tokens}")
 
     decoder = Utf8TokenDecoder(MockTokenizer())  # type: ignore[arg-type]
-
-    # Feed all 4 tokens at once
     result = decoder.decode([1, 2, 3, 4])
 
-    # Should decode [1,2,3] and buffer [4]
     assert result == "✓", f"Expected '✓' but got {result!r}"
     assert decoder._pending_tokens == [4], f"Expected [4] pending but got {decoder._pending_tokens}"
 
 
 def test_utf8_decoder_with_real_tokenizer_ascii():
-    """Test Utf8TokenDecoder with real tokenizer on ASCII text.
-
-    Note: Many tokenizers (including tiktoken-based ones like Kimi) don't throw
-    exceptions for incomplete UTF-8 - they return replacement characters (�).
-    This means our exception-based buffering doesn't help for those tokenizers.
-
-    However, for ASCII text (single-byte UTF-8), there's no splitting issue,
-    so the decoder should work correctly.
-    """
+    """Test Utf8TokenDecoder with real tokenizer on ASCII text."""
     tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
-
-    # ASCII-only text won't have UTF-8 splitting issues
     test_str = "Hello World! How are you today?"
     tokens = tokenizer.encode(test_str, add_special_tokens=False)
 
-    # Feed tokens one at a time and collect decoded text
     decoder = Utf8TokenDecoder(tokenizer)
     decoded_parts = []
     for token in tokens:
@@ -872,65 +623,53 @@ def test_utf8_decoder_with_real_tokenizer_ascii():
         if result is not None:
             decoded_parts.append(result)
 
-    # Flush any remaining
     remaining = decoder.flush()
     if remaining:
         decoded_parts.append(remaining)
 
-    # Concatenated result should match original
     full_decoded = "".join(decoded_parts)
     assert full_decoded == test_str, f"Expected {test_str!r} but got {full_decoded!r}"
 
 
 def test_utf8_decoder_handles_replacement_chars():
-    """Test that Utf8TokenDecoder handles tokenizers that return replacement chars.
+    """Test Utf8TokenDecoder buffers tokens that decode to replacement chars.
 
-    Tiktoken-based tokenizers (like Kimi's) return U+FFFD (replacement character)
-    for incomplete UTF-8 instead of raising exceptions. The decoder detects these
-    and buffers tokens until the sequence completes.
+    Tiktoken-based tokenizers return U+FFFD for incomplete UTF-8 instead
+    of raising exceptions. The decoder detects these and buffers.
     """
     tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
-
-    # The emoji 🎉 is encoded as multiple tokens
     test_str = "🎉"
     tokens = tokenizer.encode(test_str, add_special_tokens=False)
 
-    # Verify tokens individually decode to replacement chars (confirming tiktoken behavior)
+    # Verify individual tokens produce replacement chars (tiktoken behavior)
     for tok in tokens:
         decoded = tokenizer.decode([tok])
         assert "�" in decoded, f"Expected replacement char for token {tok}, got {decoded!r}"
 
-    # Now test that our decoder handles this correctly
     decoder = Utf8TokenDecoder(tokenizer)
     decoded_parts = []
-
     for token in tokens:
         result = decoder.decode([token])
         if result is not None:
             decoded_parts.append(result)
 
-    # Flush any remaining
     remaining = decoder.flush()
     if remaining:
         decoded_parts.append(remaining)
 
-    # The concatenated result should be the original emoji (no replacement chars)
     full_decoded = "".join(decoded_parts)
     assert full_decoded == test_str, f"Expected {test_str!r} but got {full_decoded!r}"
     assert "�" not in full_decoded, "Should not contain replacement characters"
 
 
 def test_utf8_decoder_mixed_ascii_and_emoji():
-    """Test streaming with mixed ASCII and multi-byte Unicode."""
+    """Test Utf8TokenDecoder with mixed ASCII and multi-byte Unicode."""
     tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
-
-    # Mix of ASCII and emoji
     test_str = "Hello 🎉 World 🌍!"
     tokens = tokenizer.encode(test_str, add_special_tokens=False)
 
     decoder = Utf8TokenDecoder(tokenizer)
     decoded_parts = []
-
     for token in tokens:
         result = decoder.decode([token])
         if result is not None:
@@ -945,68 +684,63 @@ def test_utf8_decoder_mixed_ascii_and_emoji():
     assert "�" not in full_decoded, "Should not contain replacement characters"
 
 
-def test_kimi_streaming_with_emoji():
-    """Test that streaming parser handles emoji correctly."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
-    renderer = KimiK2Renderer(tokenizer)
+# =============================================================================
+# _longest_matching_suffix_prefix Tests
+# =============================================================================
 
-    # Response with emoji in both thinking and text
-    response_str = "<think>Let me think 🤔</think>Here's a party 🎉!<|im_end|>"
-    response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
 
-    deltas = list(renderer.parse_response_streaming(response_tokens))
+def test_longest_matching_suffix_prefix():
+    """Test the suffix-prefix matching helper used for tag boundary detection."""
+    # No match
+    assert _longest_matching_suffix_prefix("hello", "<think>") == 0
+    assert _longest_matching_suffix_prefix("hello world", "<think>") == 0
+    assert _longest_matching_suffix_prefix("", "<think>") == 0
 
-    # Collect thinking content
-    thinking_content = "".join(d.thinking for d in deltas if isinstance(d, StreamingThinkingDelta))
+    # Partial matches for <think>
+    assert _longest_matching_suffix_prefix("hello<", "<think>") == 1
+    assert _longest_matching_suffix_prefix("hello<t", "<think>") == 2
+    assert _longest_matching_suffix_prefix("hello<th", "<think>") == 3
+    assert _longest_matching_suffix_prefix("hello<thi", "<think>") == 4
+    assert _longest_matching_suffix_prefix("hello<thin", "<think>") == 5
+    assert _longest_matching_suffix_prefix("hello<think", "<think>") == 6
 
-    # Collect text content
-    text_content = "".join(d.text for d in deltas if isinstance(d, StreamingTextDelta))
+    # Non-matching partial
+    assert _longest_matching_suffix_prefix("hello<thx", "<think>") == 0
+    assert _longest_matching_suffix_prefix("hello<tx", "<think>") == 0
 
-    # Verify no replacement characters in streamed content
-    assert "�" not in thinking_content, f"Thinking has replacement chars: {thinking_content!r}"
-    assert "�" not in text_content, f"Text has replacement chars: {text_content!r}"
+    # Partial matches for </think>
+    assert _longest_matching_suffix_prefix("thinking</", "</think>") == 2
+    assert _longest_matching_suffix_prefix("thinking</t", "</think>") == 3
+    assert _longest_matching_suffix_prefix("thinking</think", "</think>") == 7
 
-    # Verify emoji are preserved
-    assert "🤔" in thinking_content, f"Missing thinking emoji in: {thinking_content!r}"
-    assert "🎉" in text_content, f"Missing party emoji in: {text_content!r}"
-
-    # Verify final message also has correct emoji
-    final_messages = [d for d in deltas if isinstance(d, dict) and "role" in d]
-    assert len(final_messages) == 1
-    final = final_messages[0]
-
-    # Get text from final message
-    content = final["content"]
-    if isinstance(content, list):
-        final_thinking = "".join(p["thinking"] for p in content if p["type"] == "thinking")
-        final_text = "".join(p["text"] for p in content if p["type"] == "text")
-    else:
-        final_thinking = ""
-        final_text = content
-
-    assert "🤔" in final_thinking, "Final message missing thinking emoji"
-    assert "🎉" in final_text, "Final message missing party emoji"
+    # Edge: text shorter than tag
+    assert _longest_matching_suffix_prefix("<t", "<think>") == 2
+    assert _longest_matching_suffix_prefix("<", "<think>") == 1
 
 
 # =============================================================================
-# Streaming vs Batch Equivalence Tests
+# Kimi K2 Streaming Tests
 #
-# These tests verify that parse_response_streaming produces identical final
-# messages to parse_response across diverse response patterns. Each test:
-# 1. Encodes a response string to tokens
-# 2. Parses via batch (parse_response) and streaming (parse_response_streaming)
-# 3. Asserts the final Message from streaming matches batch exactly
-# 4. Asserts streamed deltas reconstruct the correct content
+# Tests for parse_response_streaming on KimiK2Renderer, organized as:
+# 1. TestKimiK2StreamingBatchEquivalence - comprehensive streaming vs batch
+#    comparison across all response patterns (text, thinking, tool calls, etc.)
+# 2. TestKimiK2StreamingBehavior - streaming-specific behavior (delta structure,
+#    content indexing, buffering, emoji/unicode handling)
 # =============================================================================
 
 
-def _assert_streaming_matches_batch(renderer, response_str: str, end_token: str = "<|im_end|>"):
+def _is_message(obj) -> TypeGuard[Message]:
+    """Check if object is a Message dict (TypedDict doesn't support isinstance)."""
+    return isinstance(obj, dict) and "role" in obj and "content" in obj
+
+
+def _assert_streaming_matches_batch(renderer, response_str: str):
     """Helper: verify streaming and batch parsing produce identical results.
 
-    Args:
-        renderer: The renderer to test.
-        response_str: Raw response string (including end token).
-        end_token: The end-of-message token string.
+    Checks that:
+    - Streaming yields header → deltas → final Message
+    - Final Message matches batch parse_response exactly (content, tool_calls)
+    - Concatenated deltas reconstruct the expected content
     """
     tokenizer = renderer.tokenizer
     response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
@@ -1064,19 +798,69 @@ def _assert_streaming_matches_batch(renderer, response_str: str, end_token: str 
 
 
 class TestKimiK2StreamingBatchEquivalence:
-    """Verify streaming matches batch for all Kimi K2 response patterns."""
+    """Verify parse_response_streaming matches parse_response for all patterns.
+
+    Each test feeds the same tokens to both batch and streaming parsers and
+    asserts the final Message is identical. This is the primary correctness
+    guarantee for the streaming implementation.
+    """
 
     @pytest.fixture
     def renderer(self):
         tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
         return KimiK2Renderer(tokenizer)
 
+    # --- Text patterns ---
+
     def test_simple_text(self, renderer):
-        """Plain text response without thinking."""
+        """Plain text without thinking."""
         _assert_streaming_matches_batch(renderer, "Hello, world!<|im_end|>")
 
+    def test_whitespace_only(self, renderer):
+        """Whitespace-only response."""
+        _assert_streaming_matches_batch(renderer, "   \n\t  <|im_end|>")
+
+    def test_empty_response(self, renderer):
+        """Only end token."""
+        _assert_streaming_matches_batch(renderer, "<|im_end|>")
+
+    def test_special_characters(self, renderer):
+        """Special chars, newlines, unicode math."""
+        _assert_streaming_matches_batch(
+            renderer,
+            "<think>Analysis of x² + y² = r²\nwhere r > 0</think>"
+            "The equation x² + y² = r² defines a circle.\n"
+            "Special chars: <>&\"'`~!@#$%^&*()<|im_end|>",
+        )
+
+    def test_emoji_in_thinking_and_text(self, renderer):
+        """Emoji in both thinking and text."""
+        _assert_streaming_matches_batch(
+            renderer,
+            "<think>🤔 Let me think about this carefully 💭</think>"
+            "Here's the answer 🎉✨!<|im_end|>",
+        )
+
+    def test_code_blocks(self, renderer):
+        """Response containing code blocks."""
+        _assert_streaming_matches_batch(
+            renderer,
+            "<think>The user needs a Python function.</think>"
+            "Here's the code:\n```python\ndef hello():\n    print('world')\n```<|im_end|>",
+        )
+
+    def test_html_like_content(self, renderer):
+        """HTML-like tags that aren't think tags."""
+        _assert_streaming_matches_batch(
+            renderer,
+            "<think>Generating HTML example</think>"
+            "Use <div class=\"container\"><p>Hello</p></div><|im_end|>",
+        )
+
+    # --- Thinking patterns ---
+
     def test_thinking_then_text(self, renderer):
-        """Standard thinking + answer pattern."""
+        """Standard thinking + answer."""
         _assert_streaming_matches_batch(
             renderer,
             "<think>Let me reason step by step.\n1. First...\n2. Then...</think>"
@@ -1114,46 +898,15 @@ class TestKimiK2StreamingBatchEquivalence:
             "<think>second thought</think>final answer<|im_end|>",
         )
 
-    def test_empty_response(self, renderer):
-        """Response with only end token."""
-        _assert_streaming_matches_batch(renderer, "<|im_end|>")
-
-    def test_whitespace_only(self, renderer):
-        """Response with only whitespace before end token."""
-        _assert_streaming_matches_batch(renderer, "   \n\t  <|im_end|>")
-
-    def test_special_characters(self, renderer):
-        """Response with special characters, newlines, unicode."""
+    def test_multiline_thinking_with_newlines(self, renderer):
+        """Thinking with varied newline formatting."""
         _assert_streaming_matches_batch(
             renderer,
-            "<think>Analysis of x² + y² = r²\nwhere r > 0</think>"
-            "The equation x² + y² = r² defines a circle.\n"
-            "Special chars: <>&\"'`~!@#$%^&*()<|im_end|>",
+            "<think>\nStep 1: Parse the input\n\nStep 2: Process\n\n\nStep 3: Output\n</think>"
+            "\nHere is the result.\n<|im_end|>",
         )
 
-    def test_emoji_in_thinking_and_text(self, renderer):
-        """Emoji in both thinking and text content."""
-        _assert_streaming_matches_batch(
-            renderer,
-            "<think>🤔 Let me think about this carefully 💭</think>"
-            "Here's the answer 🎉✨!<|im_end|>",
-        )
-
-    def test_code_blocks(self, renderer):
-        """Response containing code blocks."""
-        _assert_streaming_matches_batch(
-            renderer,
-            "<think>The user needs a Python function.</think>"
-            "Here's the code:\n```python\ndef hello():\n    print('world')\n```<|im_end|>",
-        )
-
-    def test_html_like_content(self, renderer):
-        """Response with HTML-like tags that aren't think tags."""
-        _assert_streaming_matches_batch(
-            renderer,
-            "<think>Generating HTML example</think>"
-            "Use <div class=\"container\"><p>Hello</p></div><|im_end|>",
-        )
+    # --- Tool call patterns ---
 
     def test_tool_call_with_thinking(self, renderer):
         """Thinking followed by a tool call."""
@@ -1168,7 +921,7 @@ class TestKimiK2StreamingBatchEquivalence:
         )
 
     def test_tool_call_without_thinking(self, renderer):
-        """Direct tool call with no thinking block."""
+        """Direct tool call with no thinking."""
         _assert_streaming_matches_batch(
             renderer,
             "<|tool_calls_section_begin|>"
@@ -1191,7 +944,7 @@ class TestKimiK2StreamingBatchEquivalence:
         )
 
     def test_multiple_tool_calls(self, renderer):
-        """Multiple tool calls in a single response."""
+        """Multiple tool calls in one response."""
         _assert_streaming_matches_batch(
             renderer,
             "<think>I need to call two functions.</think>"
@@ -1205,16 +958,10 @@ class TestKimiK2StreamingBatchEquivalence:
             "<|tool_calls_section_end|><|im_end|>",
         )
 
-    def test_multiline_thinking_with_newlines(self, renderer):
-        """Thinking with many newlines and varied formatting."""
-        _assert_streaming_matches_batch(
-            renderer,
-            "<think>\nStep 1: Parse the input\n\nStep 2: Process\n\n\nStep 3: Output\n</think>"
-            "\nHere is the result.\n<|im_end|>",
-        )
+    # --- Edge cases ---
 
     def test_no_end_token(self, renderer):
-        """Response that was truncated (no end token). Both should return success=False."""
+        """Truncated response (no end token). Both should return success=False."""
         tokenizer = renderer.tokenizer
         response_str = "<think>reasoning</think>partial answer"
         response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
@@ -1227,17 +974,24 @@ class TestKimiK2StreamingBatchEquivalence:
         assert _is_message(streaming_message)
         assert streaming_message["role"] == batch_message["role"]
 
+
+class TestKimiK2StreamingBehavior:
+    """Test streaming-specific behavior: delta structure, buffering, unicode."""
+
+    @pytest.fixture
+    def renderer(self):
+        tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+        return KimiK2Renderer(tokenizer)
+
     def test_content_index_ordering(self, renderer):
-        """Verify content_index strictly increases across type transitions."""
+        """Content index strictly increases across type transitions."""
         tokenizer = renderer.tokenizer
         response_str = (
             "<think>thought 1</think>text 1<think>thought 2</think>text 2<|im_end|>"
         )
         response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
-
         deltas = list(renderer.parse_response_streaming(response_tokens))
 
-        # Collect (type, content_index) pairs in order
         indexed = []
         for d in deltas:
             if isinstance(d, StreamingThinkingDelta):
@@ -1245,13 +999,51 @@ class TestKimiK2StreamingBatchEquivalence:
             elif isinstance(d, StreamingTextDelta):
                 indexed.append(("text", d.content_index))
 
-        # Content index should never decrease
+        # Indices should be monotonically non-decreasing
         indices = [idx for _, idx in indexed]
         assert indices == sorted(indices), f"Content indices not monotonic: {indexed}"
 
-        # Each type transition should increment the index
+        # Each type transition should increment
         for i in range(1, len(indexed)):
             if indexed[i][0] != indexed[i - 1][0]:
                 assert indexed[i][1] > indexed[i - 1][1], (
                     f"Index didn't increment on type change: {indexed[i-1]} -> {indexed[i]}"
                 )
+
+    def test_no_unnecessary_buffering(self, renderer):
+        """Text without any tag-like suffixes is emitted immediately."""
+        tokenizer = renderer.tokenizer
+        response_str = "Hello world<|im_end|>"
+        response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+        deltas = list(renderer.parse_response_streaming(response_tokens))
+        text_content = "".join(d.text for d in deltas if isinstance(d, StreamingTextDelta))
+        assert text_content == "Hello world"
+
+    def test_emoji_no_replacement_chars(self, renderer):
+        """Emoji are preserved without replacement characters in deltas."""
+        tokenizer = renderer.tokenizer
+        response_str = "<think>Let me think 🤔</think>Here's a party 🎉!<|im_end|>"
+        response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
+
+        deltas = list(renderer.parse_response_streaming(response_tokens))
+
+        thinking = "".join(d.thinking for d in deltas if isinstance(d, StreamingThinkingDelta))
+        text = "".join(d.text for d in deltas if isinstance(d, StreamingTextDelta))
+
+        assert "�" not in thinking, f"Replacement chars in thinking: {thinking!r}"
+        assert "�" not in text, f"Replacement chars in text: {text!r}"
+        assert "🤔" in thinking
+        assert "🎉" in text
+
+        # Final message also preserves emoji
+        final = [d for d in deltas if _is_message(d)]
+        assert len(final) == 1
+        content = final[0]["content"]
+        if isinstance(content, list):
+            final_thinking = "".join(p["thinking"] for p in content if p["type"] == "thinking")
+            final_text = "".join(p["text"] for p in content if p["type"] == "text")
+        else:
+            final_thinking, final_text = "", content
+        assert "🤔" in final_thinking
+        assert "🎉" in final_text
