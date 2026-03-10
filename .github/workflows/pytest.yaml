@@ -22,6 +22,6 @@ jobs:
         run: uv venv && uv sync --all-extras
 
       - name: pytest (unit)
-        run: uv run pytest tests/unit
+        run: uv run pytest tinker_cookbook/
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}

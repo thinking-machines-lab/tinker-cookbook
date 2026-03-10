@@ -1,4 +1,4 @@
-"""Tests for picklability of Renderers and EnvGroupBuilders.
+"""Tests for picklability of Renderers.
 
 Renderers created via get_renderer() must survive pickle roundtrips so that
 EnvGroupBuilder instances (which often hold Renderer references) can be
@@ -6,17 +6,12 @@ serialized for distributed rollout execution.
 """
 
 import pickle
-from functools import partial
 
 import pytest
 
 from tinker_cookbook.renderers import Message, get_renderer, register_renderer, unregister_renderer
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 # Models that don't require special access / are commonly available in CI.
 # Each entry is (renderer_name, model_name).
@@ -35,11 +30,6 @@ _TEXT_RENDERERS = [
 @pytest.fixture(params=_TEXT_RENDERERS, ids=[r[0] for r in _TEXT_RENDERERS])
 def renderer_and_model(request: pytest.FixtureRequest) -> tuple[str, str]:
     return request.param
-
-
-# ---------------------------------------------------------------------------
-# Renderer pickle tests
-# ---------------------------------------------------------------------------
 
 
 class TestRendererPickle:
@@ -137,54 +127,6 @@ class TestRendererPickle:
             unregister_renderer("test_custom_pickle")
 
 
-# ---------------------------------------------------------------------------
-# EnvGroupBuilder pickle tests
-# ---------------------------------------------------------------------------
-
-
-class TestProblemGroupBuilderPickle:
-    def test_pickle_roundtrip(self) -> None:
-        """ProblemGroupBuilder with a Renderer-bound env_thunk survives pickle.
-
-        Uses the real MathEnv class, matching how recipes actually construct builders.
-        """
-        from tinker_cookbook.recipes.math_rl.math_env import MathEnv
-        from tinker_cookbook.rl.problem_env import ProblemGroupBuilder
-
-        tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
-        renderer = get_renderer("llama3", tokenizer)
-
-        builder = ProblemGroupBuilder(
-            env_thunk=partial(MathEnv, "What is 2+2?", "4", renderer),
-            num_envs=4,
-            dataset_name="test_math",
-        )
-
-        restored = pickle.loads(pickle.dumps(builder))
-
-        assert restored.num_envs == 4
-        assert restored.dataset_name == "test_math"
-        # Verify the renderer inside the partial survived
-        assert restored.env_thunk.args[2]._renderer_name == "llama3"
-
-    def test_pickle_with_convo_prefix(self) -> None:
-        """ProblemGroupBuilder with convo_prefix in the partial survives pickle."""
-        from tinker_cookbook.recipes.math_rl.math_env import MathEnv
-        from tinker_cookbook.rl.problem_env import ProblemGroupBuilder
-
-        tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
-        renderer = get_renderer("llama3", tokenizer)
-        convo_prefix: list[Message] = [{"role": "system", "content": "You are helpful."}]
-
-        builder = ProblemGroupBuilder(
-            env_thunk=partial(MathEnv, "What is 2+2?", "4", renderer, convo_prefix=convo_prefix),
-            num_envs=2,
-        )
-
-        restored = pickle.loads(pickle.dumps(builder))
-        assert restored.env_thunk.keywords["convo_prefix"] == convo_prefix
-
-
 class TestMessageCompleterPickle:
     def test_tinker_message_completer_pickle_structure(self) -> None:
         """TinkerMessageCompleter fields are individually pickleable (Renderer + SamplingClient).
@@ -198,79 +140,3 @@ class TestMessageCompleterPickle:
         restored_renderer = pickle.loads(pickle.dumps(renderer))
         assert type(restored_renderer) is type(renderer)
         assert restored_renderer.get_stop_sequences() == renderer.get_stop_sequences()
-
-
-# ---------------------------------------------------------------------------
-# ChromaTool pickle tests
-# ---------------------------------------------------------------------------
-
-
-try:
-    import chromadb as _chromadb  # noqa: F401
-
-    _has_chromadb = True
-except ImportError:
-    _has_chromadb = False
-
-
-@pytest.mark.skipif(not _has_chromadb, reason="chromadb not installed")
-class TestChromatoolPickle:
-    def test_pickle_excludes_clients(self) -> None:
-        """ChromaTool excludes async clients from pickle state and preserves connection params."""
-        from unittest.mock import MagicMock
-
-        from tinker_cookbook.recipes.search_tool.tools import ChromaTool, RetrievalConfig
-
-        tool = ChromaTool(
-            chroma_client=MagicMock(),
-            gemini_client=MagicMock(),
-            collection_name="wiki_chunks",
-            retrieval_config=RetrievalConfig(),
-            max_retries=5,
-            initial_retry_delay=2,
-            chroma_host="localhost",
-            chroma_port=8000,
-        )
-        state = tool.__getstate__()
-        assert state["_chroma_client"] is None
-        assert state["_gemini_client"] is None
-        assert state["_chroma_host"] == "localhost"
-        assert state["_chroma_port"] == 8000
-        assert state["_collection_name"] == "wiki_chunks"
-        assert state["_max_retries"] == 5
-
-
-# ---------------------------------------------------------------------------
-# VerifiersEnvGroupBuilder pickle tests
-# ---------------------------------------------------------------------------
-
-
-try:
-    import verifiers as _verifiers  # noqa: F401
-
-    _has_verifiers = True
-except ImportError:
-    _has_verifiers = False
-
-
-@pytest.mark.skipif(not _has_verifiers, reason="verifiers not installed")
-class TestVerifiersEnvGroupBuilderPickle:
-    def test_pickle_excludes_vf_env(self) -> None:
-        """VerifiersEnvGroupBuilder excludes vf_env from pickle state."""
-        from unittest.mock import MagicMock
-
-        from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersEnvGroupBuilder
-
-        builder = VerifiersEnvGroupBuilder(
-            vf_env=MagicMock(),
-            prompt=[{"role": "user", "content": "What is 2+2?"}],
-            example_id=42,
-            task="arithmetic",
-            answer="4",
-        )
-        state = builder.__getstate__()
-        assert state["vf_env"] is None
-        assert state["prompt"] == [{"role": "user", "content": "What is 2+2?"}]
-        assert state["example_id"] == 42
-        assert state["task"] == "arithmetic"
-        assert state["answer"] == "4"

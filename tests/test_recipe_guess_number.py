@@ -1,4 +1,4 @@
-from tests.smoke.helpers import run_recipe
+from tests.helpers import run_recipe
 
 
 def test_guess_number():

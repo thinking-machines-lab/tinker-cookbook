@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   # Discover all smoke test files so the matrix is auto-generated.
-  # Adding a new test file in tests/smoke/ automatically adds a CI job.
+  # Adding a new test file in tests/ automatically adds a CI job.
   discover:
     runs-on: ubuntu-latest
     outputs:
@@ -24,7 +24,7 @@ jobs:
       - name: find smoke tests
         id: find
         run: |
-          tests=$(find tests/smoke -name 'test_*.py' -printf '%f\n' \
+          tests=$(find tests -maxdepth 1 -name 'test_*.py' -printf '%f\n' \
             | sed 's/\.py$//' \
             | jq -R -s -c 'split("\n") | map(select(length > 0))')
           echo "tests=$tests" >> "$GITHUB_OUTPUT"
@@ -57,4 +57,4 @@ jobs:
         env:
           TINKER_API_KEY: ${{ secrets.TINKER_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: uv run pytest tests/smoke/${{ matrix.test }}.py -v -x
+        run: uv run pytest tests/${{ matrix.test }}.py -v -x
