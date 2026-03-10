@@ -24,7 +24,8 @@ from tinker_cookbook.renderers.base import (
     ensure_list,
 )
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3DisableThinkingRenderer
-from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer, _longest_matching_suffix_prefix
+from tinker_cookbook.renderers.base import _longest_matching_suffix_prefix
+from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
 from tinker_cookbook.tests.test_renderers import get_tokenizer
 

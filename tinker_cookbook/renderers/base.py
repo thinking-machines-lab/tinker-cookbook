@@ -11,9 +11,9 @@ import logging
 import re
 import urllib.request
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Literal, NotRequired, Optional, Protocol, TypedDict, Union
+from typing import Any, Callable, Iterator, Literal, NotRequired, Optional, Protocol, TypedDict, Union
 
 import pydantic
 import tinker
@@ -285,6 +285,276 @@ class Utf8TokenDecoder:
     def has_pending(self) -> bool:
         """Check if there are buffered tokens waiting for more data."""
         return len(self._pending_tokens) > 0
+
+
+# =============================================================================
+# Streaming Parsers
+# =============================================================================
+
+
+def _longest_matching_suffix_prefix(text: str, tag: str) -> int:
+    """Find longest suffix of text that matches a prefix of tag.
+
+    This is used during streaming to determine how many characters at the end
+    of accumulated text might be the beginning of a tag, and thus shouldn't
+    be emitted yet.
+
+    Args:
+        text: The accumulated text to check.
+        tag: The tag we're looking for (e.g., "<think>").
+
+    Returns:
+        Length of the longest suffix of text that matches a prefix of tag.
+
+    Examples:
+        >>> _longest_matching_suffix_prefix("hello", "<think>")
+        0  # no suffix matches any prefix
+        >>> _longest_matching_suffix_prefix("hello<", "<think>")
+        1  # "<" matches prefix "<"
+        >>> _longest_matching_suffix_prefix("hello<th", "<think>")
+        3  # "<th" matches prefix "<th"
+        >>> _longest_matching_suffix_prefix("hello<thx", "<think>")
+        0  # "<thx" doesn't match any prefix of "<think>"
+    """
+    max_check = min(len(text), len(tag) - 1)  # -1 because full tag would be found, not buffered
+    for length in range(max_check, 0, -1):
+        if text.endswith(tag[:length]):
+            return length
+    return 0
+
+
+@dataclass
+class StreamingParser:
+    """Base streaming parser for incremental token-to-delta conversion.
+
+    Handles the generic plumbing shared by all streaming parsers:
+    - Token-by-token feeding with end-token detection
+    - UTF-8 decoding across token boundaries
+    - Header emission on first content
+    - Final message construction via callback
+
+    Subclasses override ``_emit_deltas`` to implement model-specific parsing
+    (e.g., detecting ``<think>`` tags for reasoning models).
+
+    Usage::
+
+        parser = StreamingParser(tokenizer, end_token, parse_final_response)
+        for token in response_tokens:
+            for delta in parser.feed(token):
+                # Handle delta
+        for delta in parser.finish():
+            # Handle final deltas including complete Message
+    """
+
+    tokenizer: "Tokenizer"
+    end_message_token: int
+    parse_final_response: Callable[[list[int]], tuple["Message", bool]]
+
+    _utf8_decoder: Utf8TokenDecoder = field(init=False)
+    _accumulated_text: str = field(init=False, default="")
+    _header_emitted: bool = field(init=False, default=False)
+    _content_index: int = field(init=False, default=0)
+    _last_emitted_pos: int = field(init=False, default=0)
+    _finished: bool = field(init=False, default=False)
+    _all_tokens: list[int] = field(init=False, default_factory=list)
+
+    def __post_init__(self) -> None:
+        self._utf8_decoder = Utf8TokenDecoder(self.tokenizer)
+        self._accumulated_text = ""
+        self._header_emitted = False
+        self._content_index = 0
+        self._last_emitted_pos = 0
+        self._finished = False
+        self._all_tokens = []
+
+    def feed(self, token: int) -> Iterator["MessageDelta"]:
+        """Feed a single token and yield any resulting deltas."""
+        if self._finished:
+            return
+
+        self._all_tokens.append(token)
+
+        if token == self.end_message_token:
+            self._finished = True
+            return
+
+        decoded = self._utf8_decoder.decode([token])
+        if decoded is None:
+            return
+
+        self._accumulated_text += decoded
+
+        if not self._header_emitted:
+            self._header_emitted = True
+            yield StreamingMessageHeader(role="assistant")
+
+        yield from self._emit_deltas()
+
+    def _emit_deltas(self) -> Iterator["MessageDelta"]:
+        """Emit deltas for any new content since last emission.
+
+        The base implementation emits all new text as StreamingTextDelta.
+        Subclasses override this to handle model-specific markup.
+        """
+        text = self._accumulated_text
+        pos = self._last_emitted_pos
+        if pos < len(text):
+            new_text = text[pos:]
+            if new_text:
+                yield StreamingTextDelta(text=new_text, content_index=self._content_index)
+            self._last_emitted_pos = len(text)
+
+    def _emit_remaining(self) -> Iterator["MessageDelta"]:
+        """Emit any remaining buffered content at end of stream.
+
+        The base implementation emits remaining text as StreamingTextDelta.
+        Subclasses override this for type-aware emission (e.g., thinking vs text).
+        """
+        text = self._accumulated_text
+        pos = self._last_emitted_pos
+        if pos < len(text):
+            remaining = text[pos:]
+            if remaining:
+                yield StreamingTextDelta(text=remaining, content_index=self._content_index)
+
+    def finish(self) -> Iterator["MessageDelta"]:
+        """Finish parsing and yield any remaining content plus final Message.
+
+        Call this after all tokens have been fed.
+        """
+        remaining = self._utf8_decoder.flush()
+        if remaining:
+            self._accumulated_text += remaining
+
+        if not self._header_emitted:
+            self._header_emitted = True
+            yield StreamingMessageHeader(role="assistant")
+
+        yield from self._emit_remaining()
+
+        message, _success = self.parse_final_response(self._all_tokens)
+        yield message
+
+    def reset(self) -> None:
+        """Reset parser state for reuse."""
+        self._utf8_decoder.reset()
+        self._accumulated_text = ""
+        self._header_emitted = False
+        self._content_index = 0
+        self._last_emitted_pos = 0
+        self._finished = False
+        self._all_tokens = []
+
+
+# Tags used by reasoning models (Qwen3, Kimi K2, DeepSeek, etc.)
+_THINK_OPEN_TAG = "<think>"
+_THINK_CLOSE_TAG = "</think>"
+
+
+@dataclass
+class ReasoningStreamingParser(StreamingParser):
+    """Streaming parser for models that use ``<think>...</think>`` reasoning blocks.
+
+    Extends StreamingParser with a state machine that detects ``<think>`` and
+    ``</think>`` tag boundaries, emitting StreamingThinkingDelta for reasoning
+    content and StreamingTextDelta for regular content. Handles partial tags
+    that may be split across token boundaries.
+
+    Used by renderers for Qwen3, Kimi K2, and other models that follow the
+    ``<think>...</think>`` convention for chain-of-thought reasoning.
+    """
+
+    _in_thinking: bool = field(init=False, default=False)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self._in_thinking = False
+
+    def _emit_deltas(self) -> Iterator["MessageDelta"]:
+        """Emit deltas with <think>/<think> tag awareness."""
+        text = self._accumulated_text
+        pos = self._last_emitted_pos
+
+        while pos < len(text):
+            if not self._in_thinking:
+                # Look for <think> tag
+                think_start = text.find(_THINK_OPEN_TAG, pos)
+                if think_start == -1:
+                    # No <think> tag found - emit text up to a safe point.
+                    # Keep any trailing chars that could be the start of "<think>".
+                    suffix_from_pos = text[pos:]
+                    keep = _longest_matching_suffix_prefix(suffix_from_pos, _THINK_OPEN_TAG)
+                    safe_end = len(text) - keep
+                    if safe_end > pos:
+                        new_text = text[pos:safe_end]
+                        if new_text:
+                            yield StreamingTextDelta(
+                                text=new_text, content_index=self._content_index
+                            )
+                        self._last_emitted_pos = safe_end
+                    break
+                elif think_start > pos:
+                    # Emit text before <think>
+                    new_text = text[pos:think_start]
+                    if new_text:
+                        yield StreamingTextDelta(text=new_text, content_index=self._content_index)
+                    pos = think_start
+
+                if text[pos:].startswith(_THINK_OPEN_TAG):
+                    # Enter thinking mode
+                    self._in_thinking = True
+                    self._content_index += 1
+                    pos += len(_THINK_OPEN_TAG)
+                    self._last_emitted_pos = pos
+            else:
+                # In thinking mode - look for </think>
+                think_end = text.find(_THINK_CLOSE_TAG, pos)
+                if think_end == -1:
+                    # No </think> found - emit thinking up to safe point.
+                    # Keep any trailing chars that could be the start of "</think>".
+                    suffix_from_pos = text[pos:]
+                    keep = _longest_matching_suffix_prefix(suffix_from_pos, _THINK_CLOSE_TAG)
+                    safe_end = len(text) - keep
+                    if safe_end > pos:
+                        new_thinking = text[pos:safe_end]
+                        if new_thinking:
+                            yield StreamingThinkingDelta(
+                                thinking=new_thinking, content_index=self._content_index
+                            )
+                        self._last_emitted_pos = safe_end
+                    break
+                else:
+                    # Emit thinking before </think>
+                    new_thinking = text[pos:think_end]
+                    if new_thinking:
+                        yield StreamingThinkingDelta(
+                            thinking=new_thinking, content_index=self._content_index
+                        )
+                    # Exit thinking mode
+                    self._in_thinking = False
+                    self._content_index += 1
+                    pos = think_end + len(_THINK_CLOSE_TAG)
+                    self._last_emitted_pos = pos
+
+    def _emit_remaining(self) -> Iterator["MessageDelta"]:
+        """Emit remaining content, respecting thinking state."""
+        text = self._accumulated_text
+        pos = self._last_emitted_pos
+        if pos < len(text):
+            remaining = text[pos:]
+            if self._in_thinking:
+                if remaining:
+                    yield StreamingThinkingDelta(
+                        thinking=remaining, content_index=self._content_index
+                    )
+            else:
+                if remaining:
+                    yield StreamingTextDelta(text=remaining, content_index=self._content_index)
+
+    def reset(self) -> None:
+        """Reset parser state for reuse."""
+        super().reset()
+        self._in_thinking = False
 
 
 # NOTE: we use a broad type definition for the role to be flexible
@@ -749,6 +1019,28 @@ class Renderer(ABC):
             be parsed (e.g., missing stop token), but a best-effort message is still returned.
         """
         ...
+
+    def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
+        """Parse response tokens with streaming, yielding incremental deltas.
+
+        This enables real-time display of model output by yielding partial
+        content as tokens arrive, rather than waiting for the complete response.
+
+        Not all renderers support streaming. The default raises NotImplementedError.
+        Override this in subclasses that support streaming.
+
+        Args:
+            response: Token IDs from the model.
+
+        Yields:
+            StreamingMessageHeader: Once at the start of the message.
+            StreamingTextDelta: Incremental text content.
+            StreamingThinkingDelta: Incremental thinking/reasoning content.
+            Message: The complete parsed message at the end.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support streaming response parsing"
+        )
 
     def to_openai_message(self, message: Message) -> dict:
         """
