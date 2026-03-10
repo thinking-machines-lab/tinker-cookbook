@@ -1155,17 +1155,22 @@ class TestKimiK2StreamingBatchEquivalence:
         )
 
     def test_no_end_token(self, renderer):
-        """Truncated response — both should return success=False."""
+        """Truncated response — streaming should still parse think blocks."""
         tokenizer = renderer.tokenizer
         response_tokens = tokenizer.encode(
             "<think>reasoning</think>partial", add_special_tokens=False
         )
-        batch_message, batch_success = renderer.parse_response(response_tokens)
-        assert not batch_success
 
         deltas = list(renderer.parse_response_streaming(response_tokens))
-        assert _is_message(deltas[-1])
-        assert deltas[-1]["role"] == batch_message["role"]
+        final = deltas[-1]
+        assert _is_message(final)
+        # Even without end token, streaming should parse think blocks
+        content = final["content"]
+        assert isinstance(content, list), "Truncated response should still parse think blocks"
+        thinking = [p for p in content if p["type"] == "thinking"]
+        text = [p for p in content if p["type"] == "text"]
+        assert len(thinking) == 1 and thinking[0]["thinking"] == "reasoning"
+        assert len(text) == 1 and text[0]["text"] == "partial"
 
     def test_content_index_ordering(self, renderer):
         """Content index strictly increases across type transitions."""

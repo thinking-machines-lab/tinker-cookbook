@@ -439,12 +439,39 @@ class KimiK2Renderer(Renderer):
 
         return assistant_message, True
 
+    def _parse_response_for_streaming(self, response: list[int]) -> tuple[Message, bool]:
+        """Parse response for streaming, always applying full content parsing.
+
+        Unlike parse_response which short-circuits on missing stop token,
+        this always parses think blocks and tool calls from the content.
+        This matches the original KimiK2StreamingParser.finish() behavior
+        where content parsing was applied regardless of stop token presence.
+        """
+        message, parse_success = parse_response_for_stop_token(
+            response, self.tokenizer, self._end_message_token
+        )
+
+        content = message.get("content", "")
+        if isinstance(content, str):
+            text_content, tool_section = _split_tool_calls_section(content)
+            if tool_section is not None:
+                tool_calls, unparsed_tool_calls = _parse_tool_calls_section(tool_section)
+                if tool_calls:
+                    message["tool_calls"] = tool_calls
+                if unparsed_tool_calls:
+                    message["unparsed_tool_calls"] = unparsed_tool_calls
+
+            content_parts = parse_think_blocks(text_content)
+            message["content"] = content_parts if content_parts is not None else text_content
+
+        return message, parse_success
+
     def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
         """Parse response tokens with streaming, yielding incremental deltas."""
         parser = ReasoningStreamingParser(
             tokenizer=self.tokenizer,
             end_message_token=self._end_message_token,
-            parse_final_response=self.parse_response,
+            parse_final_response=self._parse_response_for_streaming,
         )
 
         for token in response:
