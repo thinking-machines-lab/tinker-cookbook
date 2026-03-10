@@ -39,6 +39,13 @@ uv run python -m tinker_cookbook.recipes.sdpo.train \
     max_tokens=2048
 ```
 
+After 180 steps of training on Hendrycks MATH with Qwen3-8B, we observe MATH-500 accuracy improving from 43.0% to 63.0%:
+
+| Step | `test/env/all/correct` | `sdpo/success_fraction` | `sdpo/mean_group_success_rate` |
+|------|------------------------|-------------------------|-------------------------------|
+| 0    | 0.430                  | 0.547                   | 0.408                         |
+| 180  | 0.630                  | 0.781                   | 0.645                         |
+
 ## Evaluation
 
 Evaluation on the test set runs automatically during training:
