@@ -30,6 +30,22 @@ def extract_response_logprobs(traj: Trajectory) -> list[float]:
     return logprobs
 
 
+def extract_feedback(traj: Trajectory) -> str | None:
+    """Extract environment feedback from a trajectory's logs.
+
+    Looks for a ``"feedback"`` key in the last transition's logs. Environments
+    that produce diagnostic output (e.g. compiler errors, failing test cases)
+    should store it under this key for SDPO to use as a conditioning signal.
+    """
+    if not traj.transitions:
+        return None
+    last_logs = traj.transitions[-1].logs
+    feedback = last_logs.get("feedback")
+    if isinstance(feedback, str) and feedback.strip():
+        return feedback.strip()
+    return None
+
+
 def build_full_sequence(ob: tinker.ModelInput, response_tokens: list[int]) -> tinker.ModelInput:
     """Append response tokens to an observation ModelInput."""
     chunks = list(ob.chunks) + [tinker.EncodedTextChunk(tokens=response_tokens)]

@@ -1,10 +1,10 @@
 """Teacher prompt construction and logprob computation for SDPO.
 
-The "teacher" in SDPO is the reference model conditioned on a successful
-solution. By prepending the solution to the prompt, the teacher sees the
-answer in-context before scoring each response token. The difference between
-teacher and student logprobs (teacher can see the answer, student cannot)
-becomes the per-token advantage for training.
+The "teacher" in SDPO is the reference model conditioned on additional
+information that the student doesn't have — a successful solution from
+another rollout in the group, and/or environment feedback (e.g. compiler
+errors) from the current trajectory. The difference between teacher and
+student logprobs becomes the per-token advantage for training.
 """
 
 import re
@@ -24,28 +24,55 @@ def strip_thinking_blocks(text: str) -> str:
 
 def build_teacher_prompt(
     env: ProblemEnv,
-    solution_text: str,
     reprompt_suffix: str,
+    solution_text: str | None = None,
+    feedback_text: str | None = None,
+    solution_template: str = "Correct solution:\n\n{successful_previous_attempt}\n",
+    feedback_template: str = (
+        "The following is feedback from your unsuccessful earlier attempt:\n\n{feedback_raw}\n"
+    ),
 ) -> tinker.ModelInput:
-    """Build a teacher prompt by conditioning on a successful solution.
+    """Build a teacher prompt by conditioning on solutions and/or environment feedback.
 
     The teacher conversation is::
 
         [few-shot prefix]
         User: <question>
-        Assistant: <successful solution>
+        Assistant: <content with solution and/or feedback>
         User: "Correctly solve the original question."
         Assistant: ...  <- model generates / scores from here
 
-    The key idea: the reference model sees the correct answer in-context
-    before it scores the response tokens, giving it an informational
-    advantage over the student (which only sees the question).
+    The content can include:
+
+    - **A successful solution** from another rollout in the group (the primary
+      SDPO signal for verifiable tasks like math and MCQ).
+    - **Environment feedback** from the current trajectory's execution (e.g.
+      compiler errors, failing test cases). This is especially useful for code
+      tasks where error messages provide rich diagnostic information.
+    - **Both** — the paper (Table 6) shows these are complementary: solution
+      alone gets 42.6%, feedback alone gets 39.9%, both together get 48.3%.
+
+    The key idea: the reference model sees additional information in-context
+    before scoring the response tokens, giving it an informational advantage
+    over the student (which only sees the question).
     """
+    # Assemble the conditioning content following the paper's template:
+    # {prompt}{solution}{feedback}\n\nCorrectly solve the original question.
+    content_parts: list[str] = []
+    if solution_text is not None:
+        content_parts.append(solution_template.format(successful_previous_attempt=solution_text))
+    if feedback_text is not None:
+        content_parts.append(feedback_template.format(feedback_raw=feedback_text))
+
+    conditioning_content = "\n".join(content_parts) if content_parts else ""
+
     teacher_convo: list[renderers.Message] = env.convo_prefix + [
         {"role": "user", "content": env.get_question()},
-        {"role": "assistant", "content": solution_text},
-        {"role": "user", "content": reprompt_suffix},
     ]
+    if conditioning_content:
+        teacher_convo.append({"role": "assistant", "content": conditioning_content})
+    teacher_convo.append({"role": "user", "content": reprompt_suffix})
+
     return env.renderer.build_generation_prompt(teacher_convo)
 
 
