@@ -177,46 +177,35 @@ class HarborDatasetBuilder(RLDatasetBuilder):
     sandbox_timeout: int = 600
     command_timeout: int = 120
     grader_timeout: int = 60
+    max_trajectory_tokens: int = 32 * 1024
     sandbox_factory: SandboxFactory | None = None
+    reward_fn: RewardFn | None = None
+
+    def _make_env_group_builders(self, group_size: int) -> list[HarborEnvGroupBuilder]:
+        return [
+            HarborEnvGroupBuilder(
+                task=task,
+                model_name=self.model_name,
+                renderer_name=self.renderer_name,
+                max_turns=self.max_turns,
+                group_size=group_size,
+                sandbox_timeout=self.sandbox_timeout,
+                command_timeout=self.command_timeout,
+                grader_timeout=self.grader_timeout,
+                max_trajectory_tokens=self.max_trajectory_tokens,
+                sandbox_factory=self.sandbox_factory,
+                reward_fn=self.reward_fn,
+            )
+            for task in self.tasks
+        ]
 
     async def __call__(self) -> tuple[RLDataset, RLDataset | None]:
-        builders = [
-            HarborEnvGroupBuilder(
-                task=task,
-                model_name=self.model_name,
-                renderer_name=self.renderer_name,
-                max_turns=self.max_turns,
-                group_size=self.group_size,
-                sandbox_timeout=self.sandbox_timeout,
-                command_timeout=self.command_timeout,
-                grader_timeout=self.grader_timeout,
-                sandbox_factory=self.sandbox_factory,
-            )
-            for task in self.tasks
-        ]
         train_dataset = HarborDataset(
-            env_group_builders=builders,
+            env_group_builders=self._make_env_group_builders(self.group_size),
             batch_size=self.batch_size,
         )
-
-        # Same tasks for eval (overfit experiment), group_size=1
-        eval_builders = [
-            HarborEnvGroupBuilder(
-                task=task,
-                model_name=self.model_name,
-                renderer_name=self.renderer_name,
-                max_turns=self.max_turns,
-                group_size=1,
-                sandbox_timeout=self.sandbox_timeout,
-                command_timeout=self.command_timeout,
-                grader_timeout=self.grader_timeout,
-                sandbox_factory=self.sandbox_factory,
-            )
-            for task in self.tasks
-        ]
         eval_dataset = HarborDataset(
-            env_group_builders=eval_builders,
+            env_group_builders=self._make_env_group_builders(group_size=1),
             batch_size=self.batch_size,
         )
-
         return train_dataset, eval_dataset

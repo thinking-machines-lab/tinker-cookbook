@@ -38,7 +38,10 @@ from tinker.types import LossFnType
 from tinker_cookbook import checkpoint_utils, cli_utils
 from tinker_cookbook.distillation import train_on_policy
 from tinker_cookbook.distillation.datasets import DistillationDatasetConfig, TeacherConfig
-from tinker_cookbook.distillation.multiturn_env import HarborDistillationDatasetBuilder
+from tinker_cookbook.recipes.distillation.harbor_multiturn import (
+    HarborDistillationDatasetBuilder,
+    zero_reward,
+)
 from tinker_cookbook.recipes.harbor_rl.harbor_env import default_sandbox_factory
 from tinker_cookbook.recipes.harbor_rl.launch_terminal_bench import load_terminal_bench_tasks
 
@@ -139,6 +142,7 @@ async def cli_main(cli_config: CLIConfig):
         command_timeout=cli_config.command_timeout,
         max_trajectory_tokens=cli_config.max_trajectory_tokens,
         sandbox_factory=default_sandbox_factory,
+        reward_fn=zero_reward,
     )
 
     teacher_config = TeacherConfig(
