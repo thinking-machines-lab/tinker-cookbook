@@ -108,7 +108,7 @@ async def cli_main(cli_config: CLIConfig):
             f"dm{cli_config.deepmath_groups_per_batch}-t3{cli_config.tulu3_groups_per_batch}-"
             f"{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
         )
-        log_path = os.path.expanduser(f"~/tinker-examples/distillation/{run_name}")
+        log_path = f"/tmp/tinker-examples/distillation/{run_name}"
 
     # Create wandb name if not specified
     if cli_config.wandb_name is not None:
