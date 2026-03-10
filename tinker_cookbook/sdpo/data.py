@@ -1,4 +1,9 @@
-"""Student datum construction utilities for SDPO."""
+"""Datum construction for SDPO.
+
+Builds datums compatible with tinker's ``importance_sampling`` loss. Each datum
+contains per-token advantages (teacher_lp - student_lp) that encode the SDPO
+training signal. See ``sdpo/train.py`` for how these datums are used.
+"""
 
 import tinker
 import torch
@@ -37,12 +42,21 @@ def build_sdpo_datum(
     sampled_logprobs: list[float],
     teacher_logprobs: torch.Tensor,
 ) -> tinker.Datum:
-    """Build a datum for importance_sampling loss with SDPO advantages.
+    """Build a datum encoding the SDPO training signal.
 
     The datum is structured for ``forward_backward(..., loss_fn="importance_sampling")``:
-      - target_tokens: next-token targets (left-shifted)
-      - logprobs: sampled student logprobs (for importance weight correction)
-      - advantages: teacher_lp - student_lp for response tokens (0 for prompt)
+
+      - **target_tokens**: Next-token prediction targets (left-shifted).
+      - **logprobs**: Student's sampled logprobs. The importance_sampling loss uses
+        these to compute the importance weight ``exp(current_lp - sampled_lp)``,
+        which corrects for any drift between the current policy and the sampling
+        policy.
+      - **advantages**: ``teacher_lp - student_lp`` for response tokens, 0 for
+        prompt tokens. This is the SDPO signal — tokens where the teacher (which
+        can see the solution) is more confident get positive advantage.
+
+    Prompt positions have logprobs=0 and advantages=0, so they don't contribute
+    to the loss.
 
     Args:
         ob: The prompt ModelInput (observation from rollout).

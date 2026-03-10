@@ -1,4 +1,11 @@
-"""Teacher prompt construction and logprob computation for SDPO."""
+"""Teacher prompt construction and logprob computation for SDPO.
+
+The "teacher" in SDPO is the reference model conditioned on a successful
+solution. By prepending the solution to the prompt, the teacher sees the
+answer in-context before scoring each response token. The difference between
+teacher and student logprobs (teacher can see the answer, student cannot)
+becomes the per-token advantage for training.
+"""
 
 import re
 
@@ -20,10 +27,19 @@ def build_teacher_prompt(
     solution_text: str,
     reprompt_suffix: str,
 ) -> tinker.ModelInput:
-    """Build a teacher prompt following the paper's format.
+    """Build a teacher prompt by conditioning on a successful solution.
 
-    The teacher conversation is:
-      [few-shot prefix] + user question + assistant solution + user re-prompt
+    The teacher conversation is::
+
+        [few-shot prefix]
+        User: <question>
+        Assistant: <successful solution>
+        User: "Correctly solve the original question."
+        Assistant: ...  <- model generates / scores from here
+
+    The key idea: the reference model sees the correct answer in-context
+    before it scores the response tokens, giving it an informational
+    advantage over the student (which only sees the question).
     """
     teacher_convo: list[renderers.Message] = env.convo_prefix + [
         {"role": "user", "content": env.get_question()},
@@ -38,11 +54,13 @@ async def compute_teacher_logprobs(
     teacher_ob: tinker.ModelInput,
     response_tokens: list[int],
 ) -> torch.Tensor:
-    """Compute reference model logprobs for response tokens under the teacher prompt.
+    """Score response tokens using the reference model conditioned on the teacher prompt.
 
-    Returns a tensor of length len(response_tokens) containing the log probability
-    of each response token conditioned on the teacher prompt and preceding response
-    tokens.
+    Sends the full sequence (teacher_prompt + response) to the reference model,
+    then extracts only the logprobs for response token positions. These represent
+    "how likely is each response token if you already know the solution?"
+
+    Returns a tensor of length ``len(response_tokens)``.
     """
     teacher_full = build_full_sequence(teacher_ob, response_tokens)
     all_logprobs = await reference_client.compute_logprobs_async(teacher_full)
