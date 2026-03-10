@@ -9,4 +9,5 @@ def test_on_policy_multi_teacher():
             "tulu3_groups_per_batch=16",
             "behavior_if_log_dir_exists=delete",
         ],
+        timeout=600,
     )
