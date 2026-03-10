@@ -471,7 +471,7 @@ class ReasoningStreamingParser(StreamingParser):
         self._in_thinking = False
 
     def _emit_deltas(self) -> Iterator["MessageDelta"]:
-        """Emit deltas with <think>/<think> tag awareness."""
+        """Emit deltas with <think>/</think> tag awareness."""
         text = self._accumulated_text
         pos = self._last_emitted_pos
 
