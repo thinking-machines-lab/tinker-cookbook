@@ -1,22 +1,24 @@
 """
-Core SDPO training logic.
+Self-Distilled Policy Optimization (SDPO) — core training logic.
 
-Self-Distilled Policy Optimization (SDPO) augments on-policy RL by distilling
-from the model's own successful trajectories. For each problem group, successful
-solutions are used to construct "teacher prompts" that condition a frozen
-reference model on the solution.
+SDPO (https://arxiv.org/abs/2601.20802) is an on-policy RL algorithm that
+provides dense, token-level credit assignment by distilling from the model's
+own successful trajectories.
 
-The SDPO gradient (Proposition 2.1) is a policy gradient with per-token
-advantages equal to the log-ratio of teacher to student probabilities:
+Standard RL (e.g. GRPO) assigns a single scalar reward per sequence — every
+token in a correct solution gets the same credit. SDPO instead constructs a
+"teacher" by conditioning a reference model on a successful solution, then
+computes per-token advantages as:
 
-    nabla L = E[ sum_t (teacher_lp - student_lp) * nabla log pi_student ]
+    advantage_t = log pi_teacher(y_t) - log pi_student(y_t)
 
-This maps directly to tinker's ``importance_sampling`` loss, where we set
-``advantages = teacher_lp - student_lp``. The importance weight automatically
-corrects for off-policy drift. This avoids the 1.5-3x overhead of
-``forward_backward_custom``.
-
-Reference: https://arxiv.org/abs/2601.20802
+Tokens where the teacher is more confident than the student get positive
+advantage (reinforced), and vice versa. From Proposition 2.1, this is
+mathematically a policy gradient — so it maps directly to tinker's
+``importance_sampling`` loss. We encode the SDPO signal as advantages in
+the datum and use ``forward_backward(..., loss_fn="importance_sampling")``,
+which is faster than ``forward_backward_custom`` and also provides free
+off-policy correction via the importance weight.
 """
 
 from __future__ import annotations
@@ -111,10 +113,22 @@ async def sdpo_training_iteration(
 ) -> dict[str, float | int]:
     """Run one SDPO training iteration.
 
-    1. For each group with a successful trajectory, build teacher prompts.
-    2. Compute teacher logprobs from the frozen reference model.
-    3. Build datums with advantages = teacher_lp - student_lp.
-    4. Train with ``forward_backward(..., loss_fn="importance_sampling")``.
+    For each batch of trajectory groups:
+
+    1. **Identify successes**: Find groups where at least one rollout solved
+       the problem. Groups with no successes are skipped (no teacher signal).
+    2. **Build teacher prompts**: For each group, pick a successful rollout
+       and construct a prompt: [question] + [solution] + "Correctly solve
+       the original question." This gives the reference model the answer
+       in-context before it scores the response.
+    3. **Compute teacher logprobs**: The frozen reference model scores each
+       trajectory's response tokens under the teacher prompt. This tells us
+       "how likely is each token if you already know the answer?"
+    4. **Build datums**: Set per-token advantages = teacher_lp - student_lp.
+       Positive advantage means the teacher is more confident → reinforce.
+       Near-zero means the student already matches → no gradient.
+    5. **Train**: ``forward_backward(datums, loss_fn="importance_sampling")``
+       followed by ``optim_step()``.
     """
     datums: list[tinker.Datum] = []
     teacher_logprob_coros: list = []
@@ -235,7 +249,15 @@ async def sdpo_training_iteration(
 
 
 async def main(config: Config):
-    """SDPO training loop: rollout -> identify successes -> distill -> repeat."""
+    """Main SDPO training loop.
+
+    Each iteration: (1) evaluate, (2) sample rollouts from the current policy,
+    (3) run ``sdpo_training_iteration`` to compute teacher logprobs and update,
+    (4) refresh the sampling client with updated weights.
+
+    The reference model (``reference_client``) is frozen at initialization and
+    never updated — this is the theta_ref teacher from the paper (Table 4).
+    """
     ml_logger = ml_log.setup_logging(
         log_dir=config.log_path,
         wandb_project=config.wandb_project,
