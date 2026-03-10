@@ -6,9 +6,12 @@ SDPO [1] augments on-policy RL by distilling from the model's own successful tra
 
 1. **Rollout**: Generate multiple responses per problem using the current policy.
 2. **Identify successes**: Find trajectories that solve the problem correctly.
-3. **Build teacher prompts**: Prepend the successful solution to the original question, then append "Correctly solve the original question."
-4. **Compute teacher logprobs**: A frozen reference model scores each response under the solution-conditioned teacher prompt.
-5. **SDPO loss**: Minimize the token-level reverse KL between the student (current policy, normal prompt) and the teacher (reference model, solution-conditioned prompt). From Proposition 2.1 in the paper, this is equivalent to a policy gradient with per-token advantages equal to the log-ratio of teacher to student probabilities.
+3. **Build teacher prompts**: Condition the reference model on additional information that the student doesn't have. This can include:
+   - A **successful solution** from another rollout in the group (the primary signal for math/MCQ tasks).
+   - **Environment feedback** from the current trajectory's execution, e.g. compiler errors or failing test cases (especially useful for code tasks).
+   - **Both** — the paper (Table 6) shows these are complementary: solution alone 42.6%, feedback alone 39.9%, both together 48.3%.
+4. **Compute teacher logprobs**: The frozen reference model scores each response under the teacher prompt.
+5. **SDPO loss**: Per-token advantages = teacher_lp - student_lp. From Proposition 2.1, this is a policy gradient that we implement via tinker's `importance_sampling` loss.
 
 The frozen reference teacher (theta_ref) is used for regularization. Table 4 in the paper shows this achieves 48.8 accuracy vs 36.1 for the unregularized variant, while being simpler than EMA.
 
@@ -73,6 +76,7 @@ Key SDPO-specific parameters:
 | `reprompt_suffix` | "Correctly solve the original question." | Text appended after the solution in the teacher prompt |
 | `dont_reprompt_on_self_success` | True | Exclude a trajectory's own output from being its teacher solution |
 | `remove_thinking_from_demonstration` | True | Strip `<think>...</think>` blocks from the demonstration solution |
+| `include_environment_feedback` | False | Include env feedback (e.g. compiler errors) in teacher prompt |
 | `eval_every` | 10 | Evaluate on test set every N steps (0 to disable) |
 | `save_every` | 10 | Save checkpoint every N steps (0 to disable) |
 

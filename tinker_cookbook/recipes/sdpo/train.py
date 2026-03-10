@@ -46,6 +46,9 @@ class CLIConfig:
     reprompt_suffix: str = "Correctly solve the original question."
     dont_reprompt_on_self_success: bool = True
     remove_thinking_from_demonstration: bool = True
+    # Include environment feedback (e.g. compiler errors) in teacher prompt.
+    # Useful for code tasks where error messages provide rich signal.
+    include_environment_feedback: bool = False
 
     # Logging
     log_path: str | None = None
@@ -120,6 +123,7 @@ async def cli_main(cli_config: CLIConfig):
         reprompt_suffix=cli_config.reprompt_suffix,
         dont_reprompt_on_self_success=cli_config.dont_reprompt_on_self_success,
         remove_thinking_from_demonstration=cli_config.remove_thinking_from_demonstration,
+        include_environment_feedback=cli_config.include_environment_feedback,
         renderer_name=renderer_name,
         base_url=cli_config.base_url,
         load_checkpoint_path=cli_config.load_checkpoint_path,
