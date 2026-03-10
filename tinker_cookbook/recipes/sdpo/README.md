@@ -15,7 +15,34 @@ The frozen reference teacher (theta_ref) is used for regularization. Table 4 in 
 ## Quick start
 
 ```bash
-python -m tinker_cookbook.recipes.sdpo.train \
+uv run python -m tinker_cookbook.recipes.sdpo.train \
+    model_name="Qwen/Qwen3-8B" \
+    env=math \
+    group_size=8 \
+    groups_per_batch=64 \
+    learning_rate=1e-5 \
+    max_tokens=2048
+```
+
+## Evaluation
+
+Evaluation on the MATH-500 test set runs automatically during training:
+
+- **Step 0** (before any training): provides the baseline accuracy.
+- **Every `eval_every` steps** (default 10): tracks accuracy as training progresses.
+
+The key metric is `test/env/all/correct` (fraction of MATH-500 problems solved). Results are logged to the metrics file:
+
+```bash
+# View eval results (path is printed at startup)
+cat /tmp/tinker-examples/sdpo/<run-name>/metrics.jsonl | grep "test/env"
+```
+
+To track with Weights & Biases:
+
+```bash
+uv run python -m tinker_cookbook.recipes.sdpo.train \
+    wandb_project="sdpo-math" \
     model_name="Qwen/Qwen3-8B" \
     env=math \
     group_size=8 \
@@ -33,8 +60,20 @@ Key SDPO-specific parameters:
 | `group_size` | 8 | Number of responses sampled per problem |
 | `success_reward_threshold` | 0.5 | Minimum reward to count a trajectory as successful |
 | `reprompt_template` | "The above is a correct solution..." | Text appended after the solution in the teacher prompt |
+| `eval_every` | 10 | Evaluate on test set every N steps (0 to disable) |
+| `save_every` | 10 | Save checkpoint every N steps (0 to disable) |
 
 Other parameters (model, dataset, logging, checkpointing) follow the same conventions as the [math_rl](../math_rl/) recipe.
+
+### Debugging with a smaller run
+
+```bash
+uv run python -m tinker_cookbook.recipes.sdpo.train \
+    groups_per_batch=8 \
+    group_size=4 \
+    max_tokens=512 \
+    eval_every=5
+```
 
 ## Supported environments
 
