@@ -24,6 +24,8 @@ Testing guidelines:
 
 import copy
 import json
+import random
+import uuid
 from typing import Callable, cast
 
 import pytest
@@ -47,11 +49,10 @@ from tinker_cookbook.renderers import (
     register_renderer,
     unregister_renderer,
 )
-from tinker_cookbook.renderers.base import ensure_list, ensure_text
+from tinker_cookbook.renderers.base import ContentPart, ensure_list, ensure_text
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
 from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
-from tinker_cookbook.renderers.conversation_generator import generate_conversation
 from tinker_cookbook.tokenizer_utils import (
     get_registered_tokenizer_names,
     get_tokenizer,
@@ -59,6 +60,80 @@ from tinker_cookbook.tokenizer_utils import (
     register_tokenizer,
     unregister_tokenizer,
 )
+
+
+# =============================================================================
+# Conversation Generator (seeded random conversations for parametrized tests)
+# =============================================================================
+
+
+def _rand_str(rng: random.Random, length: int = 8) -> str:
+    return uuid.UUID(int=rng.getrandbits(128)).hex[:length]
+
+
+def _rand_tool_call(rng: random.Random) -> ToolCall:
+    return ToolCall(
+        function=ToolCall.FunctionBody(
+            name=f"tool_{_rand_str(rng, 6)}",
+            arguments=json.dumps({"arg": _rand_str(rng)}),
+        ),
+        id=f"call_{_rand_str(rng)}",
+    )
+
+
+def generate_conversation(
+    seed: int,
+    *,
+    include_system: bool = True,
+    include_tool_calls: bool = True,
+    include_thinking: bool = True,
+    min_turns: int = 2,
+    max_turns: int = 10,
+    end_with_assistant: bool = True,
+) -> list[Message]:
+    rng = random.Random(seed)
+    messages: list[Message] = []
+
+    if include_system and rng.random() < 0.5:
+        messages.append(Message(role="system", content=f"system_{_rand_str(rng)}"))
+
+    num_turns = rng.randint(min_turns, max_turns)
+
+    for turn in range(num_turns):
+        is_last_turn = turn == num_turns - 1
+        messages.append(Message(role="user", content=f"user_{_rand_str(rng)}"))
+
+        if is_last_turn and not end_with_assistant:
+            break
+
+        has_thinking = include_thinking and rng.random() < 0.5
+        has_tool_call = include_tool_calls and rng.random() < 0.3
+
+        if has_thinking:
+            content: str | list[ContentPart] = [
+                ThinkingPart(type="thinking", thinking=f"think_{_rand_str(rng)}"),
+                TextPart(type="text", text=f"asst_{_rand_str(rng)}"),
+            ]
+        else:
+            content = f"asst_{_rand_str(rng)}"
+
+        if has_tool_call:
+            tool_call = _rand_tool_call(rng)
+            messages.append(Message(role="assistant", content=content, tool_calls=[tool_call]))
+            assert tool_call.id is not None
+            messages.append(
+                Message(
+                    role="tool",
+                    content=json.dumps({"result": _rand_str(rng)}),
+                    tool_call_id=tool_call.id,
+                    name=tool_call.function.name,
+                )
+            )
+            messages.append(Message(role="assistant", content=f"followup_{_rand_str(rng)}"))
+        else:
+            messages.append(Message(role="assistant", content=content))
+
+    return messages
 
 # =============================================================================
 # Test Conversation Definitions

@@ -84,7 +84,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["tinker_cookbook"]
-exclude = ["*_test.py", "tinker_cookbook/renderers/conversation_generator.py", "tinker_cookbook/utils/mock_logger.py"]
+exclude = ["*_test.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tinker_cookbook", "tests"]

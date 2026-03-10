@@ -5,18 +5,47 @@ import contextlib
 import json
 import os
 import tempfile
-from unittest.mock import patch
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 from tinker_cookbook import renderers
 from tinker_cookbook.recipes.chat_sl import chat_datasets
 from tinker_cookbook.supervised import train
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
-from tinker_cookbook.utils.mock_logger import create_mock_logger_with_jsonl
 from tinker_cookbook.utils.file_utils import read_jsonl
 
 
 class StopTrainingException(Exception):
     """Exception to stop training at a specific step."""
+
+
+def create_mock_logger_with_jsonl(
+    log_path: str,
+    interrupt_at_step: int | None = None,
+    interrupt_exception_class: type[Exception] | None = None,
+    metrics_filename: str = "metrics.jsonl",
+) -> MagicMock:
+    """Create a mock logger that writes metrics to JSONL and optionally interrupts at a specific step."""
+    mock_logger = MagicMock()
+
+    def log_metrics(metrics: dict[str, Any], step: int):
+        jsonl_path = os.path.join(log_path, metrics_filename)
+        with open(jsonl_path, "a") as f:
+            f.write(json.dumps({"step": step, **metrics}) + "\n")
+            print(f"Step {step} metrics: {metrics}")
+
+        if interrupt_at_step is not None and step == interrupt_at_step:
+            if interrupt_exception_class is None:
+                raise ValueError(
+                    "interrupt_exception_class must be provided if interrupt_at_step is set"
+                )
+            raise interrupt_exception_class(f"Interrupting at step {step}")
+
+    mock_logger.log_metrics = log_metrics
+    mock_logger.close = MagicMock()
+    mock_logger.get_logger_url = MagicMock(return_value=None)
+
+    return mock_logger
 
     pass
 
