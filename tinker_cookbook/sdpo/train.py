@@ -179,16 +179,12 @@ async def sdpo_training_iteration(
             else:
                 solution_idx = successful_indices[0]
 
-            solution_tokens = extract_response_tokens(
-                group.trajectories_G[solution_idx]
-            )
+            solution_tokens = extract_response_tokens(group.trajectories_G[solution_idx])
             solution_text = tokenizer.decode(solution_tokens)
             if config.remove_thinking_from_demonstration:
                 solution_text = strip_thinking_blocks(solution_text)
 
-            teacher_ob = build_teacher_prompt(
-                env, solution_text, config.reprompt_suffix
-            )
+            teacher_ob = build_teacher_prompt(env, solution_text, config.reprompt_suffix)
 
             student_ob = traj.transitions[0].ob
             pending.append((student_ob, response_tokens, sampled_logprobs))
@@ -217,15 +213,13 @@ async def sdpo_training_iteration(
     for (student_ob, response_tokens, sampled_lps), teacher_lps in zip(
         pending, teacher_logprobs_list, strict=True
     ):
-        datums.append(
-            build_sdpo_datum(student_ob, response_tokens, sampled_lps, teacher_lps)
-        )
+        datums.append(build_sdpo_datum(student_ob, response_tokens, sampled_lps, teacher_lps))
         # Track mean advantage for logging.
         min_len = min(len(sampled_lps), len(teacher_lps))
         if min_len > 0:
-            mean_advantage += sum(
-                teacher_lps[k].item() - sampled_lps[k] for k in range(min_len)
-            ) / min_len
+            mean_advantage += (
+                sum(teacher_lps[k].item() - sampled_lps[k] for k in range(min_len)) / min_len
+            )
 
     mean_advantage /= max(len(datums), 1)
 
@@ -280,9 +274,7 @@ async def main(config: Config):
     user_metadata: dict[str, str] = {}
     if wandb_link := ml_logger.get_logger_url():
         user_metadata["wandb_link"] = wandb_link
-    checkpoint_utils.add_renderer_name_to_user_metadata(
-        user_metadata, config.renderer_name
-    )
+    checkpoint_utils.add_renderer_name_to_user_metadata(user_metadata, config.renderer_name)
 
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
 
@@ -312,9 +304,7 @@ async def main(config: Config):
         )
 
     # Frozen reference model for teacher logprobs (theta_ref).
-    reference_client = await training_client.save_weights_and_get_sampling_client_async(
-        "reference"
-    )
+    reference_client = await training_client.save_weights_and_get_sampling_client_async("reference")
 
     tokenizer = training_client.get_tokenizer()
 
@@ -331,9 +321,7 @@ async def main(config: Config):
 
     evaluators: list[SamplingClientEvaluator] = [e() for e in config.evaluator_builders]
     if maybe_test_dataset is not None:
-        evaluators.append(
-            RLTestSetEvaluator(maybe_test_dataset, max_tokens=config.max_tokens)
-        )
+        evaluators.append(RLTestSetEvaluator(maybe_test_dataset, max_tokens=config.max_tokens))
 
     # Initial sampling client for rollouts.
     sampling_client = await training_client.save_weights_and_get_sampling_client_async()
@@ -349,22 +337,14 @@ async def main(config: Config):
         t_start = time.time()
 
         # ---- Evaluation ----
-        if (
-            evaluators
-            and config.eval_every > 0
-            and i_batch % config.eval_every == 0
-        ):
+        if evaluators and config.eval_every > 0 and i_batch % config.eval_every == 0:
             with timed("eval", metrics):
                 for evaluator in evaluators:
                     eval_metrics = await evaluator(sampling_client)
                     metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
 
         # ---- Checkpoint ----
-        if (
-            config.save_every > 0
-            and i_batch > start_batch
-            and i_batch % config.save_every == 0
-        ):
+        if config.save_every > 0 and i_batch > start_batch and i_batch % config.save_every == 0:
             with timed("checkpoint", metrics):
                 await checkpoint_utils.save_checkpoint_async(
                     training_client=training_client,
@@ -385,10 +365,7 @@ async def main(config: Config):
 
         with timed("rollout", metrics):
             trajectory_groups: list[TrajectoryGroup] = await _gather_with_progress(
-                [
-                    do_group_rollout(builder, policy)
-                    for builder in env_group_builders
-                ],
+                [do_group_rollout(builder, policy) for builder in env_group_builders],
                 desc=f"Rollouts batch {i_batch}",
             )
 
@@ -405,9 +382,7 @@ async def main(config: Config):
         metrics.update(sdpo_metrics)
 
         # Refresh sampling client with updated policy weights.
-        sampling_client = (
-            await training_client.save_weights_and_get_sampling_client_async()
-        )
+        sampling_client = await training_client.save_weights_and_get_sampling_client_async()
 
         metrics["time/total"] = time.time() - t_start
         ml_logger.log_metrics(metrics, step=i_batch)

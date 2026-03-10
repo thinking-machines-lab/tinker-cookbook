@@ -140,6 +140,7 @@ class TestComputeSDPOLoss:
             create_rightshifted_model_input_and_leftshifted_targets,
         )
         from tinker_cookbook.sdpo.data import build_full_sequence
+
         full_seq = build_full_sequence(ob, response)
         input_mi, target_tokens = create_rightshifted_model_input_and_leftshifted_targets(
             list(full_seq.chunks)
@@ -148,7 +149,9 @@ class TestComputeSDPOLoss:
             model_input=input_mi,
             loss_fn_inputs={
                 "weights": tinker.TensorData(data=weights, dtype="float32", shape=[len(weights)]),
-                "target_tokens": tinker.TensorData(data=target_tokens, dtype="int64", shape=[len(target_tokens)]),
+                "target_tokens": tinker.TensorData(
+                    data=target_tokens, dtype="int64", shape=[len(target_tokens)]
+                ),
             },
         )
 

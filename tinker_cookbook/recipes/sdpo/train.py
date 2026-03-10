@@ -61,9 +61,7 @@ class CLIConfig:
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
 
-def _get_dataset_builder(
-    cli_config: CLIConfig, renderer_name: str
-) -> RLDatasetBuilder:
+def _get_dataset_builder(cli_config: CLIConfig, renderer_name: str) -> RLDatasetBuilder:
     if cli_config.env == "sciknoweval":
         return SciKnowEvalDatasetBuilder(
             batch_size=cli_config.groups_per_batch,
@@ -86,13 +84,11 @@ def _get_dataset_builder(
 
 async def cli_main(cli_config: CLIConfig):
     """Build full config from CLI args and run training."""
-    renderer_name = (
-        await checkpoint_utils.resolve_renderer_name_from_checkpoint_or_default_async(
-            model_name=cli_config.model_name,
-            explicit_renderer_name=cli_config.renderer_name,
-            load_checkpoint_path=cli_config.load_checkpoint_path,
-            base_url=cli_config.base_url,
-        )
+    renderer_name = await checkpoint_utils.resolve_renderer_name_from_checkpoint_or_default_async(
+        model_name=cli_config.model_name,
+        explicit_renderer_name=cli_config.renderer_name,
+        load_checkpoint_path=cli_config.load_checkpoint_path,
+        base_url=cli_config.base_url,
     )
 
     model_slug = cli_config.model_name.replace("/", "-")
@@ -110,9 +106,7 @@ async def cli_main(cli_config: CLIConfig):
     log_path = cli_config.log_path or f"/tmp/tinker-examples/sdpo/{run_name}"
     wandb_name = cli_config.wandb_name or run_name
 
-    cli_utils.check_log_dir(
-        log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists
-    )
+    cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
 
     config = Config(
         log_path=log_path,

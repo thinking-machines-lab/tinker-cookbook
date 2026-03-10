@@ -10,7 +10,7 @@ Domains: Biology, Chemistry, Material, Physics
 import math
 import re
 from functools import partial
-from typing import Literal, Sequence, cast
+from typing import Any, Literal, Sequence, cast
 
 import chz
 from datasets import Dataset, load_dataset
@@ -130,7 +130,7 @@ class SciKnowEvalDataset(RLDataset):
         assert batch_start < batch_end, "Incorrect batch size"
         builders = []
         for row in self.ds.select(range(batch_start, batch_end)):
-            builder = self._make_env_group_builder(row)
+            builder = self._make_env_group_builder(row)  # pyright: ignore[reportArgumentType]
             if builder is not None:
                 builders.append(builder)
         return builders
@@ -138,7 +138,7 @@ class SciKnowEvalDataset(RLDataset):
     def __len__(self) -> int:
         return math.ceil(len(self.ds) / self.batch_size)
 
-    def _make_env_group_builder(self, row: dict) -> ProblemGroupBuilder | None:
+    def _make_env_group_builder(self, row: dict[str, Any]) -> ProblemGroupBuilder | None:
         question = row.get("question", "")
         choices = row.get("choices", {})
         answer_key = row.get("answerKey", "")
@@ -147,9 +147,7 @@ class SciKnowEvalDataset(RLDataset):
             return None
 
         choices_str = _format_choices(choices)
-        convo_prefix: list[renderers.Message] = [
-            {"role": "system", "content": self.system_prompt}
-        ]
+        convo_prefix: list[renderers.Message] = [{"role": "system", "content": self.system_prompt}]
 
         return ProblemGroupBuilder(
             env_thunk=partial(
@@ -180,9 +178,7 @@ class SciKnowEvalDatasetBuilder(RLDatasetBuilder):
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
         renderer = renderers.get_renderer(self.renderer_name, tokenizer=tokenizer)
 
-        train_ds, test_ds = _load_sciknoweval(
-            domain=self.domain, seed=self.seed
-        )
+        train_ds, test_ds = _load_sciknoweval(domain=self.domain, seed=self.seed)
 
         train_dataset = SciKnowEvalDataset(
             ds=train_ds,
