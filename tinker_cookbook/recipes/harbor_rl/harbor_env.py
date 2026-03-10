@@ -19,6 +19,7 @@ from tinker_cookbook.rl.types import Env, EnvGroupBuilder, RLDataset, RLDatasetB
 from tinker_cookbook.sandbox import SandboxInterface
 from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
 from tinker_cookbook.tool_use import build_agent_tool_env
+from tinker_cookbook.tool_use.agent_tool_message_env import RewardFn
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,7 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
         grader_timeout: int = 60,
         max_trajectory_tokens: int = 32 * 1024,
         sandbox_factory: SandboxFactory | None = None,
+        reward_fn: RewardFn | None = None,
     ):
         self.task = task
         self.model_name = model_name
@@ -85,6 +87,7 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
         self.grader_timeout = grader_timeout
         self.max_trajectory_tokens = max_trajectory_tokens
         self.sandbox_factory = sandbox_factory or default_sandbox_factory
+        self.reward_fn = reward_fn
         self._sandboxes: list[SandboxInterface] = []
 
     async def make_envs(self) -> Sequence[Env]:
@@ -110,7 +113,7 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
             self._sandboxes.append(sandbox)
 
             bash_tool = HarborBashTool(sandbox, command_timeout=self.command_timeout)
-            reward_fn = HarborReward(
+            reward_fn = self.reward_fn or HarborReward(
                 tests_dir=tests_dir,
                 sandbox=sandbox,
                 grader_timeout=self.grader_timeout,

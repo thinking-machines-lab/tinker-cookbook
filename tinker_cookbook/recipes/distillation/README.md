@@ -85,7 +85,7 @@ Multi-turn distillation reuses three layers of infrastructure:
 
 2. **`harbor_rl` recipe** (`tinker_cookbook/recipes/harbor_rl/`) — Applies `tool_use` to Harbor sandbox tasks. `HarborBashTool` wraps a sandbox as a `@tool`-decorated bash command. `HarborEnvGroupBuilder` creates sandboxed environments with task-specific grading via `HarborReward`.
 
-3. **Multi-turn distillation** (`tinker_cookbook/distillation/multiturn_env.py`) — Reuses Harbor components but replaces `HarborReward` with `_zero_reward` (always returns 0.0). The only training signal is KL divergence against the teacher. `HarborDistillationEnvGroupBuilder` imports `HarborBashTool`, `_initial_messages`, and `HarborTask` from `harbor_rl` directly.
+3. **Multi-turn distillation** (`tinker_cookbook/distillation/multiturn_env.py`) — Reuses `HarborEnvGroupBuilder` directly, passing `reward_fn=_zero_reward` (always returns 0.0) to override the default `HarborReward`. The only training signal is KL divergence against the teacher.
 
 Environment-provided tokens (system prompt, user message, tool responses, assistant headers) are masked out during training — only the student's generated tokens contribute to the loss.
 

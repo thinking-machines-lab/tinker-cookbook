@@ -313,12 +313,17 @@ class TestZeroReward:
             "tinker_cookbook.distillation.multiturn_env",
             reason="requires modal",
         )
-        builder = mod.HarborDistillationEnvGroupBuilder(
+        harbor_env = pytest.importorskip(
+            "tinker_cookbook.recipes.harbor_rl.harbor_env",
+            reason="requires modal",
+        )
+        builder = harbor_env.HarborEnvGroupBuilder(
             task=MagicMock(),
             model_name="test",
             renderer_name="test",
             max_turns=5,
             group_size=2,
+            reward_fn=mod._zero_reward,
         )
         builder._sandboxes = []
         trajectories = [MagicMock(), MagicMock()]
