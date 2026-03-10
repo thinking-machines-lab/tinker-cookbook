@@ -38,9 +38,7 @@ def compute_sdpo_loss(
     for datum, student_lps, teacher_response_lps in zip(
         data, student_logprobs_list, teacher_logprobs_list, strict=True
     ):
-        weights = torch.tensor(
-            datum.loss_fn_inputs["weights"].data, dtype=torch.float32
-        )
+        weights = torch.tensor(datum.loss_fn_inputs["weights"].data, dtype=torch.float32)
 
         # Response tokens start where weights become 1.
         response_start = int((weights == 0).sum().item())
