@@ -95,11 +95,11 @@ def _load_sciknoweval(
     ds = load_dataset("hicai-zju/SciKnowEval", split="test")
     ds = cast(Dataset, ds)
 
-    # Filter by domain, level, and type
+    # Filter by domain, level (nested in details), and type
     ds = ds.filter(
         lambda x: (
             x["domain"].lower() == domain
-            and x["level"] == "L3"
+            and x["details"]["level"] == "L3"
             and x["type"] in ("mcq-4-choices", "mcq-2-choices")
         )
     )
