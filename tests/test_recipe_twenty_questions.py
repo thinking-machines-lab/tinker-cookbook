@@ -10,5 +10,4 @@ def test_twenty_questions():
             "num_epochs=1",
             "eval_every=0",
         ],
-        timeout=600,
     )

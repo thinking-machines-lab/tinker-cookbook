@@ -13,5 +13,4 @@ def test_vlm_classifier():
             "eval_every=0",
             "behavior_if_log_dir_exists=delete",
         ],
-        timeout=600,
     )

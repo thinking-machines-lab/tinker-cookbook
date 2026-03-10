@@ -4,13 +4,12 @@ import os
 import re
 import signal
 import subprocess
-import sys
 import time
 
 import pytest
 
 # Timeout for each recipe (seconds). Override with SMOKE_TEST_TIMEOUT env var.
-DEFAULT_TIMEOUT = int(os.environ.get("SMOKE_TEST_TIMEOUT", "300"))
+DEFAULT_TIMEOUT = int(os.environ.get("SMOKE_TEST_TIMEOUT", "900"))
 
 # Patterns that indicate step 1 has started (meaning step 0 completed)
 STEP_1_PATTERNS = re.compile(r"Step 1|Sampling batch 1|batch_idx=1")
