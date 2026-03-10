@@ -41,6 +41,7 @@ from tinker_cookbook.rl.train import gather_with_progress
 from tinker_cookbook.rl.types import EnvGroupBuilder, RLDatasetBuilder, TrajectoryGroup
 from tinker_cookbook.sdpo.data import (
     build_sdpo_datum,
+    extract_feedback,
     extract_response_logprobs,
     extract_response_tokens,
 )
@@ -81,6 +82,10 @@ class Config:
     reprompt_suffix: str = "Correctly solve the original question."
     dont_reprompt_on_self_success: bool = True
     remove_thinking_from_demonstration: bool = True
+    # Include environment feedback (e.g. compiler errors) in the teacher prompt.
+    # Useful for code tasks. The paper (Table 6) shows feedback and solutions
+    # are complementary: solution alone 42.6%, feedback alone 39.9%, both 48.3%.
+    include_environment_feedback: bool = False
 
     # Infrastructure
     renderer_name: str | None = None
@@ -116,14 +121,14 @@ async def sdpo_training_iteration(
     For each batch of trajectory groups:
 
     1. **Identify successes**: Find groups where at least one rollout solved
-       the problem. Groups with no successes are skipped (no teacher signal).
-    2. **Build teacher prompts**: For each group, pick a successful rollout
-       and construct a prompt: [question] + [solution] + "Correctly solve
-       the original question." This gives the reference model the answer
-       in-context before it scores the response.
+       the problem. Groups with no teacher signal (no successes and no
+       environment feedback) are skipped.
+    2. **Build teacher prompts**: Condition the reference model on a successful
+       solution and/or environment feedback (e.g. compiler errors). This gives
+       the teacher an informational advantage over the student.
     3. **Compute teacher logprobs**: The frozen reference model scores each
        trajectory's response tokens under the teacher prompt. This tells us
-       "how likely is each token if you already know the answer?"
+       "how likely is each token given the extra information?"
     4. **Build datums**: Set per-token advantages = teacher_lp - student_lp.
        Positive advantage means the teacher is more confident → reinforce.
        Near-zero means the student already matches → no gradient.
@@ -149,10 +154,14 @@ async def sdpo_training_iteration(
         successful_indices = [
             i for i, r in enumerate(rewards) if r >= config.success_reward_threshold
         ]
-        if not successful_indices:
+
+        # Skip groups with no teacher signal: need either a successful
+        # solution or environment feedback (when enabled).
+        has_solutions = len(successful_indices) > 0
+        if not has_solutions and not config.include_environment_feedback:
             continue
 
-        n_groups_with_success += 1
+        n_groups_with_success += 1 if has_solutions else 0
 
         assert isinstance(builder, ProblemGroupBuilder)
         env = cast(ProblemEnv, builder.env_thunk())
@@ -163,21 +172,37 @@ async def sdpo_training_iteration(
             if not response_tokens:
                 continue
 
-            # Select solution (respecting dont_reprompt_on_self_success).
-            # Prefer a different rollout's success as teacher; fall back to
-            # self if this trajectory is the only success in the group.
-            if config.dont_reprompt_on_self_success:
-                other_successes = [i for i in successful_indices if i != traj_idx]
-                solution_idx = other_successes[0] if other_successes else successful_indices[0]
-            else:
-                solution_idx = successful_indices[0]
+            # --- Gather teacher conditioning: solution and/or feedback ---
 
-            solution_tokens = extract_response_tokens(group.trajectories_G[solution_idx])
-            solution_text = tokenizer.decode(solution_tokens)
-            if config.remove_thinking_from_demonstration:
-                solution_text = strip_thinking_blocks(solution_text)
+            # Solution: pick a successful rollout from the group.
+            solution_text: str | None = None
+            if has_solutions:
+                if config.dont_reprompt_on_self_success:
+                    other_successes = [i for i in successful_indices if i != traj_idx]
+                    solution_idx = other_successes[0] if other_successes else successful_indices[0]
+                else:
+                    solution_idx = successful_indices[0]
+                solution_tokens = extract_response_tokens(group.trajectories_G[solution_idx])
+                solution_text = tokenizer.decode(solution_tokens)
+                if config.remove_thinking_from_demonstration:
+                    solution_text = strip_thinking_blocks(solution_text)
 
-            teacher_ob = build_teacher_prompt(env, solution_text, config.reprompt_suffix)
+            # Feedback: extract from this trajectory's own execution logs
+            # (e.g. compiler errors, failing test cases).
+            feedback_text: str | None = None
+            if config.include_environment_feedback:
+                feedback_text = extract_feedback(traj)
+
+            # Need at least one conditioning signal for the teacher.
+            if solution_text is None and feedback_text is None:
+                continue
+
+            teacher_ob = build_teacher_prompt(
+                env,
+                config.reprompt_suffix,
+                solution_text=solution_text,
+                feedback_text=feedback_text,
+            )
 
             student_ob = traj.transitions[0].ob
             pending.append((student_ob, response_tokens, sampled_logprobs))
@@ -189,7 +214,9 @@ async def sdpo_training_iteration(
     n_groups = len(trajectory_groups)
 
     if not pending:
-        logger.warning("No successful solutions in batch — skipping SDPO update")
+        logger.warning(
+            "No teacher signal in batch (no successes or feedback) — skipping SDPO update"
+        )
         return {
             "sdpo/loss": 0.0,
             "sdpo/groups_with_success": 0,
