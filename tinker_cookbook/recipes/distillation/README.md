@@ -104,7 +104,6 @@ See `tinker_cookbook/recipes/harbor_rl/README.md` for full details on the Harbor
 ```bash
 python -m tinker_cookbook.recipes.distillation.on_policy_distillation_harbor_multi_turn \
     model_name=moonshotai/Kimi-K2-Thinking \
-    load_checkpoint_path=tinker://dadeaa6a-4df5-52cb-b511-1bb28f769ad4:train:0/weights/final \
     teacher_model=moonshotai/Kimi-K2-Thinking \
     max_turns=10 \
     group_size=4 \
