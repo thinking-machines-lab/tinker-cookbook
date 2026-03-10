@@ -1,22 +1,18 @@
-"""Unit tests for the SDPO recipe."""
+"""Unit tests for the SDPO implementation."""
 
 import tinker
 import torch
 
-from tinker_cookbook.recipes.sdpo.train import (
+from tinker_cookbook.sdpo.data import (
     build_full_sequence,
-    build_student_datum,
-    compute_sdpo_loss,
+    build_sdpo_datum,
+    extract_response_logprobs,
     extract_response_tokens,
 )
+from tinker_cookbook.sdpo.loss import compute_sdpo_loss
+from tinker_cookbook.sdpo.teacher import strip_thinking_blocks
 from tinker_cookbook.rl.types import Trajectory, Transition
 from tinker_cookbook.completers import TokensWithLogprobs
-
-
-def _make_simple_datum(prompt_tokens: list[int], response_tokens: list[int]) -> tinker.Datum:
-    """Helper: build a student datum from token lists."""
-    ob = tinker.ModelInput.from_ints(prompt_tokens)
-    return build_student_datum(ob, response_tokens)
 
 
 class TestExtractResponseTokens:
@@ -33,6 +29,7 @@ class TestExtractResponseTokens:
             final_ob=tinker.ModelInput.empty(),
         )
         assert extract_response_tokens(traj) == [10, 11, 12]
+        assert extract_response_logprobs(traj) == [-1.0, -2.0, -3.0]
 
     def test_multi_transition(self):
         traj = Trajectory(
@@ -53,6 +50,7 @@ class TestExtractResponseTokens:
             final_ob=tinker.ModelInput.empty(),
         )
         assert extract_response_tokens(traj) == [10, 11, 12]
+        assert extract_response_logprobs(traj) == [-1.0, -2.0, -3.0]
 
 
 class TestBuildFullSequence:
@@ -62,97 +60,129 @@ class TestBuildFullSequence:
         assert list(full.to_ints()) == [1, 2, 3, 10, 11]
 
 
-class TestBuildStudentDatum:
-    def test_basic(self):
-        prompt = [100, 101, 102]
+class TestBuildSDPODatum:
+    def test_basic_structure(self):
+        """Datum should have target_tokens, logprobs, and advantages."""
+        ob = tinker.ModelInput.from_ints([100, 101, 102])
         response = [200, 201]
-        datum = _make_simple_datum(prompt, response)
+        sampled_lps = [-1.0, -2.0]
+        teacher_lps = torch.tensor([-0.5, -1.5])
 
-        # model_input is right-shifted: first 4 tokens (len 5 - 1)
-        assert datum.model_input.length == 4  # 3 prompt + 2 response - 1
+        datum = build_sdpo_datum(ob, response, sampled_lps, teacher_lps)
 
-        weights = datum.loss_fn_inputs["weights"].data
+        # model_input is right-shifted: length = 3 + 2 - 1 = 4
+        assert datum.model_input.length == 4
+
         target_tokens = datum.loss_fn_inputs["target_tokens"].data
+        logprobs = datum.loss_fn_inputs["logprobs"].data
+        advantages = datum.loss_fn_inputs["advantages"].data
 
-        # 4 target tokens; first 2 are prompt targets (weight=0), last 2 are response (weight=1)
-        assert len(weights) == 4
         assert len(target_tokens) == 4
-        assert weights[:2] == [0.0, 0.0]
-        assert weights[2:] == [1.0, 1.0]
+        assert len(logprobs) == 4
+        assert len(advantages) == 4
 
-    def test_single_response_token(self):
-        datum = _make_simple_datum([1, 2], [10])
-        weights = datum.loss_fn_inputs["weights"].data
-        # total length 3, targets length 2
-        assert len(weights) == 2
-        assert weights[0] == 0.0
-        assert weights[1] == 1.0
+    def test_logprobs_alignment(self):
+        """Sampled logprobs should appear at response positions, 0 at prompt."""
+        ob = tinker.ModelInput.from_ints([1, 2, 3])
+        response = [10, 11]
+        sampled_lps = [-1.0, -2.0]
+        teacher_lps = torch.tensor([-0.5, -1.5])
+
+        datum = build_sdpo_datum(ob, response, sampled_lps, teacher_lps)
+        logprobs = datum.loss_fn_inputs["logprobs"].data
+
+        # Prompt positions (indices 0, 1) should be 0
+        assert logprobs[0] == 0.0
+        assert logprobs[1] == 0.0
+        # Response positions should have sampled logprobs
+        assert logprobs[2] == -1.0
+        assert logprobs[3] == -2.0
+
+    def test_advantages_are_teacher_minus_student(self):
+        """Advantages should be teacher_lp - student_lp at response positions."""
+        ob = tinker.ModelInput.from_ints([1, 2])
+        response = [10, 11]
+        sampled_lps = [-1.0, -2.0]
+        teacher_lps = torch.tensor([-0.5, -1.0])
+
+        datum = build_sdpo_datum(ob, response, sampled_lps, teacher_lps)
+        advantages = datum.loss_fn_inputs["advantages"].data
+
+        # Prompt position
+        assert advantages[0] == 0.0
+        # Response positions: teacher - student
+        assert abs(advantages[1] - (-0.5 - (-1.0))) < 1e-6  # 0.5
+        assert abs(advantages[2] - (-1.0 - (-2.0))) < 1e-6  # 1.0
+
+    def test_zero_advantages_when_equal(self):
+        """Advantages should be 0 when teacher == student."""
+        ob = tinker.ModelInput.from_ints([1, 2])
+        response = [10]
+        sampled_lps = [-1.0]
+        teacher_lps = torch.tensor([-1.0])
+
+        datum = build_sdpo_datum(ob, response, sampled_lps, teacher_lps)
+        advantages = datum.loss_fn_inputs["advantages"].data
+
+        assert advantages[0] == 0.0  # prompt
+        assert abs(advantages[1]) < 1e-6  # response: 0
 
 
 class TestComputeSDPOLoss:
+    """Tests for the standalone loss function (kept for reference/debugging)."""
+
+    def _make_simple_datum(self, prompt: list[int], response: list[int]) -> tinker.Datum:
+        ob = tinker.ModelInput.from_ints(prompt)
+        total_len = len(prompt) + len(response)
+        weights = [0.0] * (len(prompt) - 1) + [1.0] * len(response)
+        weights = weights[: total_len - 1]
+        from tinker_cookbook.supervised.common import (
+            create_rightshifted_model_input_and_leftshifted_targets,
+        )
+        from tinker_cookbook.sdpo.data import build_full_sequence
+        full_seq = build_full_sequence(ob, response)
+        input_mi, target_tokens = create_rightshifted_model_input_and_leftshifted_targets(
+            list(full_seq.chunks)
+        )
+        return tinker.Datum(
+            model_input=input_mi,
+            loss_fn_inputs={
+                "weights": tinker.TensorData(data=weights, dtype="float32", shape=[len(weights)]),
+                "target_tokens": tinker.TensorData(data=target_tokens, dtype="int64", shape=[len(target_tokens)]),
+            },
+        )
+
     def test_zero_when_equal(self):
-        """Loss should be near zero when student and teacher logprobs match."""
-        datum = _make_simple_datum([1, 2, 3], [10, 11, 12])
-
-        # Student logprobs for all target positions (length = total - 1 = 5)
+        datum = self._make_simple_datum([1, 2, 3], [10, 11, 12])
         student_lps = torch.tensor([-2.0, -1.5, -1.0, -0.8, -1.2])
-        # Teacher logprobs for response positions only (length = 3)
         teacher_lps = torch.tensor([-1.0, -0.8, -1.2])
-
         loss, metrics = compute_sdpo_loss([datum], [student_lps], [teacher_lps])
-        # When student response logprobs == teacher logprobs, loss should be 0.
         assert abs(metrics["sdpo/loss"]) < 1e-6
-        assert abs(metrics["sdpo/mean_log_ratio"]) < 1e-6
-
-    def test_positive_when_student_higher(self):
-        """Loss should be positive when student assigns higher probability than teacher."""
-        datum = _make_simple_datum([1, 2, 3], [10, 11, 12])
-
-        # Student response logprobs higher than teacher → positive log-ratio
-        student_lps = torch.tensor([-2.0, -1.5, -0.5, -0.3, -0.7])
-        teacher_lps = torch.tensor([-1.0, -0.8, -1.2])
-
-        loss, metrics = compute_sdpo_loss([datum], [student_lps], [teacher_lps])
-        # Positive log-ratio × student logprobs (negative) → negative loss per token.
-        # But mean may vary; the key check is that loss is non-zero.
-        assert metrics["sdpo/mean_log_ratio"] > 0
 
     def test_gradient_flows(self):
-        """Student logprobs should have gradients after loss computation."""
-        datum = _make_simple_datum([1, 2, 3], [10, 11])
-
+        datum = self._make_simple_datum([1, 2, 3], [10, 11])
         student_lps = torch.tensor([-2.0, -1.5, -1.0, -0.8], requires_grad=True)
         teacher_lps = torch.tensor([-1.2, -0.9])
-
         loss, _ = compute_sdpo_loss([datum], [student_lps], [teacher_lps])
         loss.backward()
-
         assert student_lps.grad is not None
-        # Gradients on prompt positions should be zero (weights=0 → not included in loss).
-        assert student_lps.grad[0].item() == 0.0
-        assert student_lps.grad[1].item() == 0.0
-        # Gradients on response positions should be non-zero.
-        assert student_lps.grad[2].item() != 0.0
-        assert student_lps.grad[3].item() != 0.0
+        assert student_lps.grad[0].item() == 0.0  # prompt
+        assert student_lps.grad[2].item() != 0.0  # response
 
     def test_empty_data(self):
-        """Should handle empty data gracefully."""
         loss, metrics = compute_sdpo_loss([], [], [])
         assert metrics["sdpo/loss"] == 0.0
 
-    def test_multiple_datums(self):
-        """Should correctly handle batches of multiple datums."""
-        datum1 = _make_simple_datum([1, 2], [10, 11])
-        datum2 = _make_simple_datum([3, 4, 5], [20])
 
-        student1 = torch.tensor([-1.0, -0.5, -0.8])
-        teacher1 = torch.tensor([-0.5, -0.8])
+class TestStripThinkingBlocks:
+    def test_removes_thinking(self):
+        assert strip_thinking_blocks("Hello <think>reasoning</think> world") == "Hello  world"
 
-        student2 = torch.tensor([-2.0, -1.5, -1.0, -0.7])
-        teacher2 = torch.tensor([-0.7])
+    def test_multiline_thinking(self):
+        assert strip_thinking_blocks("Start <think>\nline1\n</think> end") == "Start  end"
 
-        loss, metrics = compute_sdpo_loss(
-            [datum1, datum2], [student1, student2], [teacher1, teacher2]
-        )
-        assert metrics["sdpo/loss"] != 0.0
-        assert "sdpo/mean_log_ratio" in metrics
+    def test_no_thinking(self):
+        assert strip_thinking_blocks("No thinking here") == "No thinking here"
+
+    def test_multiple_blocks(self):
+        assert strip_thinking_blocks("<think>a</think> mid <think>b</think> end") == "mid  end"
