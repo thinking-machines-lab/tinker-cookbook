@@ -23,6 +23,8 @@ def pytest_collection_modifyitems(config, items):
         return
     if os.environ.get("CI"):
         pytest.fail("TINKER_API_KEY is not set but CI=true — smoke tests require an API key")
-    skip = pytest.mark.skip(reason="TINKER_API_KEY not set (set it or run pytest tinker_cookbook/ for unit tests)")
+    skip = pytest.mark.skip(
+        reason="TINKER_API_KEY not set (set it or run pytest tinker_cookbook/ for unit tests)"
+    )
     for item in items:
         item.add_marker(skip)
