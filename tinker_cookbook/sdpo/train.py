@@ -21,7 +21,6 @@ Reference: https://arxiv.org/abs/2601.20802
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import time
@@ -30,13 +29,13 @@ from typing import Sequence, cast
 import chz
 import tinker
 import torch
-from tqdm import tqdm
 
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator, SamplingClientEvaluatorBuilder
 from tinker_cookbook.rl.problem_env import ProblemEnv, ProblemGroupBuilder
 from tinker_cookbook.rl.rollouts import do_group_rollout
+from tinker_cookbook.rl.train import gather_with_progress
 from tinker_cookbook.rl.types import EnvGroupBuilder, RLDatasetBuilder, TrajectoryGroup
 from tinker_cookbook.sdpo.data import (
     build_sdpo_datum,
@@ -98,26 +97,6 @@ class Config:
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-async def _gather_with_progress(coros: list, desc: str = "Sampling") -> list:
-    """Run coroutines concurrently with a tqdm progress bar."""
-    pbar = tqdm(total=len(coros), desc=desc)
-
-    async def track(coro):
-        result = await coro
-        pbar.update(1)
-        return result
-
-    try:
-        return await asyncio.gather(*[track(c) for c in coros])
-    finally:
-        pbar.close()
-
-
-# ---------------------------------------------------------------------------
 # SDPO training iteration
 # ---------------------------------------------------------------------------
 
@@ -171,11 +150,11 @@ async def sdpo_training_iteration(
                 continue
 
             # Select solution (respecting dont_reprompt_on_self_success).
+            # Prefer a different rollout's success as teacher; fall back to
+            # self if this trajectory is the only success in the group.
             if config.dont_reprompt_on_self_success:
                 other_successes = [i for i in successful_indices if i != traj_idx]
-                if not other_successes:
-                    continue
-                solution_idx = other_successes[0]
+                solution_idx = other_successes[0] if other_successes else successful_indices[0]
             else:
                 solution_idx = successful_indices[0]
 
@@ -204,7 +183,7 @@ async def sdpo_training_iteration(
         }
 
     # Compute all teacher logprobs in parallel.
-    teacher_logprobs_list: list[torch.Tensor] = await _gather_with_progress(
+    teacher_logprobs_list: list[torch.Tensor] = await gather_with_progress(
         teacher_logprob_coros, desc="Teacher logprobs"
     )
 
@@ -364,7 +343,7 @@ async def main(config: Config):
         )
 
         with timed("rollout", metrics):
-            trajectory_groups: list[TrajectoryGroup] = await _gather_with_progress(
+            trajectory_groups: list[TrajectoryGroup] = await gather_with_progress(
                 [do_group_rollout(builder, policy) for builder in env_group_builders],
                 desc=f"Rollouts batch {i_batch}",
             )

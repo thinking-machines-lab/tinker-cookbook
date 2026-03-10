@@ -3,16 +3,19 @@
 import tinker
 import torch
 
+from tinker_cookbook.completers import TokensWithLogprobs
+from tinker_cookbook.recipes.sdpo.sciknoweval_env import (
+    _extract_answer,
+    _format_choices,
+)
+from tinker_cookbook.rl.types import Trajectory, Transition
 from tinker_cookbook.sdpo.data import (
     build_full_sequence,
     build_sdpo_datum,
     extract_response_logprobs,
     extract_response_tokens,
 )
-from tinker_cookbook.sdpo.loss import compute_sdpo_loss
 from tinker_cookbook.sdpo.teacher import strip_thinking_blocks
-from tinker_cookbook.rl.types import Trajectory, Transition
-from tinker_cookbook.completers import TokensWithLogprobs
 
 
 class TestExtractResponseTokens:
@@ -128,55 +131,6 @@ class TestBuildSDPODatum:
         assert abs(advantages[1]) < 1e-6  # response: 0
 
 
-class TestComputeSDPOLoss:
-    """Tests for the standalone loss function (kept for reference/debugging)."""
-
-    def _make_simple_datum(self, prompt: list[int], response: list[int]) -> tinker.Datum:
-        ob = tinker.ModelInput.from_ints(prompt)
-        total_len = len(prompt) + len(response)
-        weights = [0.0] * (len(prompt) - 1) + [1.0] * len(response)
-        weights = weights[: total_len - 1]
-        from tinker_cookbook.supervised.common import (
-            create_rightshifted_model_input_and_leftshifted_targets,
-        )
-        from tinker_cookbook.sdpo.data import build_full_sequence
-
-        full_seq = build_full_sequence(ob, response)
-        input_mi, target_tokens = create_rightshifted_model_input_and_leftshifted_targets(
-            list(full_seq.chunks)
-        )
-        return tinker.Datum(
-            model_input=input_mi,
-            loss_fn_inputs={
-                "weights": tinker.TensorData(data=weights, dtype="float32", shape=[len(weights)]),
-                "target_tokens": tinker.TensorData(
-                    data=target_tokens, dtype="int64", shape=[len(target_tokens)]
-                ),
-            },
-        )
-
-    def test_zero_when_equal(self):
-        datum = self._make_simple_datum([1, 2, 3], [10, 11, 12])
-        student_lps = torch.tensor([-2.0, -1.5, -1.0, -0.8, -1.2])
-        teacher_lps = torch.tensor([-1.0, -0.8, -1.2])
-        loss, metrics = compute_sdpo_loss([datum], [student_lps], [teacher_lps])
-        assert abs(metrics["sdpo/loss"]) < 1e-6
-
-    def test_gradient_flows(self):
-        datum = self._make_simple_datum([1, 2, 3], [10, 11])
-        student_lps = torch.tensor([-2.0, -1.5, -1.0, -0.8], requires_grad=True)
-        teacher_lps = torch.tensor([-1.2, -0.9])
-        loss, _ = compute_sdpo_loss([datum], [student_lps], [teacher_lps])
-        loss.backward()
-        assert student_lps.grad is not None
-        assert student_lps.grad[0].item() == 0.0  # prompt
-        assert student_lps.grad[2].item() != 0.0  # response
-
-    def test_empty_data(self):
-        loss, metrics = compute_sdpo_loss([], [], [])
-        assert metrics["sdpo/loss"] == 0.0
-
-
 class TestStripThinkingBlocks:
     def test_removes_thinking(self):
         assert strip_thinking_blocks("Hello <think>reasoning</think> world") == "Hello  world"
@@ -189,3 +143,32 @@ class TestStripThinkingBlocks:
 
     def test_multiple_blocks(self):
         assert strip_thinking_blocks("<think>a</think> mid <think>b</think> end") == "mid  end"
+
+
+class TestSciKnowEvalGrading:
+    def test_extract_answer_basic(self):
+        assert _extract_answer("<answer>A</answer>") == "A"
+        assert _extract_answer("<answer>B</answer>") == "B"
+        assert _extract_answer("<answer> C </answer>") == "C"
+        assert _extract_answer("<answer>D</answer>") == "D"
+
+    def test_extract_answer_in_context(self):
+        text = "<reasoning>blah blah</reasoning>\n<answer>B</answer>"
+        assert _extract_answer(text) == "B"
+
+    def test_extract_answer_lowercase(self):
+        assert _extract_answer("<answer>a</answer>") == "A"
+
+    def test_extract_answer_invalid(self):
+        assert _extract_answer("no answer here") is None
+        assert _extract_answer("<answer>E</answer>") is None
+        assert _extract_answer("<answer>AB</answer>") is None
+
+    def test_format_choices(self):
+        choices = {"label": ["A", "B", "C"], "text": ["cat", "dog", "fish"]}
+        result = _format_choices(choices)
+        assert result == "A: cat\nB: dog\nC: fish"
+
+    def test_format_choices_empty(self):
+        assert _format_choices({}) == ""
+        assert _format_choices({"label": [], "text": []}) == ""

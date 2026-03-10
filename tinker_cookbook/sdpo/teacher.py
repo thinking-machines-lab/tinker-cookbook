@@ -48,6 +48,9 @@ async def compute_teacher_logprobs(
     all_logprobs = await reference_client.compute_logprobs_async(teacher_full)
     # Extract only the logprobs for response token positions.
     # compute_logprobs[i] = log P(token_i | tokens_0..i-1)
+    # The first element may be None (no conditioning context); response
+    # positions start at teacher_prompt_len which is always >= 1, so we
+    # won't encounter None, but we guard defensively.
     teacher_prompt_len = teacher_ob.length
-    response_logprobs = all_logprobs[teacher_prompt_len:]
+    response_logprobs = [lp if lp is not None else 0.0 for lp in all_logprobs[teacher_prompt_len:]]
     return torch.tensor(response_logprobs, dtype=torch.float32)

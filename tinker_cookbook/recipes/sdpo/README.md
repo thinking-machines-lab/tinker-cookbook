@@ -95,7 +95,6 @@ Reusable SDPO logic lives in `tinker_cookbook/sdpo/`:
 |--------|----------|
 | `sdpo/data.py` | Datum construction with SDPO advantages |
 | `sdpo/teacher.py` | Teacher prompt construction and logprob computation |
-| `sdpo/loss.py` | Standalone loss function (for reference/debugging) |
 | `sdpo/train.py` | `Config` + `main()` — core training loop |
 
 The recipe CLI (`recipes/sdpo/train.py`) is a thin wrapper that builds the config and calls `sdpo.train.main()`.
