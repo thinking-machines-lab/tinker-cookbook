@@ -35,6 +35,7 @@ import torch
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator, SamplingClientEvaluatorBuilder
+from tinker_cookbook.rl.metric_util import compute_trajectory_metrics
 from tinker_cookbook.rl.problem_env import ProblemEnv, ProblemGroupBuilder
 from tinker_cookbook.rl.rollouts import do_group_rollout
 from tinker_cookbook.rl.train import gather_with_progress
@@ -369,7 +370,7 @@ async def main(config: Config):
             with timed("eval", metrics):
                 for evaluator in evaluators:
                     eval_metrics = await evaluator(sampling_client)
-                    metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+                    metrics.update(eval_metrics)
 
         # ---- Checkpoint ----
         if config.save_every > 0 and i_batch > start_batch and i_batch % config.save_every == 0:
@@ -396,6 +397,12 @@ async def main(config: Config):
                 [do_group_rollout(builder, policy) for builder in env_group_builders],
                 desc=f"Rollouts batch {i_batch}",
             )
+
+        # ---- Training rollout metrics (reward, accuracy, etc.) ----
+        # No prefix — matches GRPO's convention so metrics are directly
+        # comparable in W&B (e.g. env/all/correct, env/all/reward/total).
+        taglist_P = [b.logging_tags() for b in env_group_builders]
+        metrics.update(compute_trajectory_metrics(trajectory_groups, taglist_P))
 
         # ---- SDPO update ----
         with timed("sdpo_step", metrics):
