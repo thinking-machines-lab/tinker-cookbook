@@ -144,8 +144,8 @@ def get_renderer(
         return renderer
 
     # Check custom registry first
-    if (renderer := _CUSTOM_RENDERER_REGISTRY.get(name)) is not None:
-        return _stamp_pickle_metadata(renderer(tokenizer, image_processor))
+    if (factory := _CUSTOM_RENDERER_REGISTRY.get(name)) is not None:
+        return _stamp_pickle_metadata(factory(tokenizer, image_processor))
 
     # Import renderer classes lazily to avoid circular imports and keep exports minimal
     from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3DisableThinkingRenderer

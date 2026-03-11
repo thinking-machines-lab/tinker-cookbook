@@ -10,7 +10,7 @@ from functools import partial
 
 import pytest
 
-from tinker_cookbook.renderers import get_renderer, register_renderer, unregister_renderer
+from tinker_cookbook.renderers import Message, get_renderer, register_renderer, unregister_renderer
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 
@@ -174,7 +174,7 @@ class TestProblemGroupBuilderPickle:
 
         tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
         renderer = get_renderer("llama3", tokenizer)
-        convo_prefix = [{"role": "system", "content": "You are helpful."}]
+        convo_prefix: list[Message] = [{"role": "system", "content": "You are helpful."}]
 
         builder = ProblemGroupBuilder(
             env_thunk=partial(MathEnv, "What is 2+2?", "4", renderer, convo_prefix=convo_prefix),
