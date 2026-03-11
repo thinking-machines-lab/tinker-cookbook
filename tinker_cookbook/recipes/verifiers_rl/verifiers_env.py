@@ -154,6 +154,18 @@ class VerifiersEnvGroupBuilder(EnvGroupBuilder):
         self.answer = answer
         self.info = info or {}
 
+    def __getstate__(self) -> dict:
+        """Exclude non-pickleable vf.Environment from pickle state."""
+        state = self.__dict__.copy()
+        state["vf_env"] = None
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        """Restore vf.Environment from the context variable on unpickle."""
+        self.__dict__.update(state)
+        if self.vf_env is None:
+            self.vf_env = get_vf_env()
+
     def get_rollout_inputs(self, group_size: int) -> list[vf.RolloutInput]:
         return [
             vf.RolloutInput(
