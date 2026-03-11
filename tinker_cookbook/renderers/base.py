@@ -356,6 +356,14 @@ class RenderContext:
     prev_message: Message | None = None
     """The previous message in the conversation, if any."""
 
+    last_user_index: int = -1
+    """Index of the last user message in the conversation. -1 if no user messages.
+
+    This is computed by the base build_generation_prompt/build_supervised_example
+    and used by renderers like Qwen3.5 that need to treat assistant messages
+    differently based on whether they come before or after the last user message.
+    """
+
 
 class ToolSpec(TypedDict):
     """
@@ -874,23 +882,34 @@ class Renderer(ABC):
         chunks: list[tinker.types.ModelInputChunk] = []
         if self._bos_tokens:
             chunks.append(tinker.types.EncodedTextChunk(tokens=self._bos_tokens))
+
+        last_user_idx = max(
+            (idx for idx, message in enumerate(messages) if message["role"] == "user"),
+            default=-1,
+        )
+
         for idx, message in enumerate(messages):
             ctx = RenderContext(
                 idx=idx,
                 is_last=(idx == len(messages) - 1),
                 prev_message=messages[idx - 1] if idx > 0 else None,
+                last_user_index=last_user_idx,
             )
             rendered_message = self.render_message(message, ctx)
             header_chunk = rendered_message.header
             output_chunks = rendered_message.output
             if header_chunk:
                 chunks.append(header_chunk)
-            chunks.extend([x for x in output_chunks if x])
+            # Filter out empty EncodedTextChunks, which cause 400 errors in model requests
+            chunks.extend(
+                [x for x in output_chunks if not isinstance(x, tinker.EncodedTextChunk) or x.tokens]
+            )
 
         suffix_ctx = RenderContext(
             idx=len(messages),
             is_last=True,
             prev_message=messages[-1] if messages else None,
+            last_user_index=last_user_idx,
         )
         suffix_tokens = self._get_generation_suffix(role, suffix_ctx)
         if suffix_tokens:
@@ -1007,6 +1026,7 @@ class Renderer(ABC):
                 idx=idx,
                 is_last=is_last_message,
                 prev_message=messages[idx - 1] if idx > 0 else None,
+                last_user_index=last_user_idx,
             )
             rendered_message = self.render_message(message, ctx)
             header_part = rendered_message.header

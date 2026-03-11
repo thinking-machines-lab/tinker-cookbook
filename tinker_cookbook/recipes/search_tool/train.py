@@ -126,6 +126,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
     # Build training config
     config = train.Config(
         model_name=cli_config.model_name,
+        renderer_name=renderer_name,
         log_path=log_path,
         dataset_builder=builder,
         learning_rate=cli_config.learning_rate,

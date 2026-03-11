@@ -6,7 +6,7 @@ from typing import Literal, TypedDict
 import chz
 import tinker
 
-from tinker_cookbook import model_info, tokenizer_utils
+from tinker_cookbook import checkpoint_utils, model_info, tokenizer_utils
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.recipes.search_tool.search_env import (
     SEARCH_TASK_INSTRUCTIONS,
@@ -113,7 +113,12 @@ async def evaluate_one_dataset(data: list[SearchR1Datum], config: CLIConfig):
     policy = TinkerTokenCompleter(sampling_client, max_tokens=config.max_tokens)
 
     tokenizer = tokenizer_utils.get_tokenizer(config.base_model)
-    renderer_name = model_info.get_recommended_renderer_name(config.base_model)
+    renderer_name = await checkpoint_utils.get_renderer_name_from_checkpoint_async(
+        service_client, config.tinker_checkpoint_url
+    )
+    if renderer_name is None:
+        renderer_name = model_info.get_recommended_renderer_name(config.base_model)
+    print(f"Using renderer: {renderer_name}")
     renderer = get_renderer(renderer_name, tokenizer)
 
     chroma_tool = await ChromaTool.build(

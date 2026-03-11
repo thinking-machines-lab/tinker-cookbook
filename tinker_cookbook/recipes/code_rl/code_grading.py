@@ -99,7 +99,7 @@ async def _check_with_modal(
 ) -> tuple[bool, dict[str, Any]]:
     """Execute tests using Modal sandbox."""
     pool = _get_modal_pool()
-    exit_code, stdout, stderr = await pool.run_in_workdir(
+    result = await pool.run_in_workdir(
         files={
             "test_cases.txt": json.dumps(test_cases),
             "code.py": generation,
@@ -109,7 +109,11 @@ async def _check_with_modal(
         command=["python", "run.py"],
         timeout=total_timeout,
     )
-    return exit_code == 0, {"exit_code": exit_code, "stdout": stdout, "stderr": stderr}
+    return result.exit_code == 0, {
+        "exit_code": result.exit_code,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }
 
 
 async def sandbox_check_correctness(

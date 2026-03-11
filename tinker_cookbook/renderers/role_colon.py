@@ -75,10 +75,13 @@ class RoleColonRenderer(Renderer):
             before, _after = splitted
             return Message(role="assistant", content=before.strip()), not terminated_with_eos
         else:
-            raise ValueError(
-                f"When parsing response, expected to split into 1 or 2 pieces using stop tokens, but got {len(splitted)}. "
-                "You probably are using the wrong stop tokens when sampling"
+            logger.warning(
+                "RoleColonRenderer.parse_response saw multiple stop delimiters "
+                "(count=%d). Returning parse_success=False. Full response:\n%s",
+                len(splitted) - 1,
+                str_response,
             )
+            return Message(role="assistant", content=splitted[0].strip()), False
 
     @property
     def _bos_tokens(self) -> list[int]:

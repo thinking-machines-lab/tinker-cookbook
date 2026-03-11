@@ -35,8 +35,13 @@ class KimiK25Renderer(KimiK2Renderer):
 
     image_processor: ImageProcessor | None
 
-    def __init__(self, tokenizer: Tokenizer, image_processor: ImageProcessor | None = None):
-        super().__init__(tokenizer)
+    def __init__(
+        self,
+        tokenizer: Tokenizer,
+        image_processor: ImageProcessor | None = None,
+        strip_thinking_from_history: bool = True,
+    ):
+        super().__init__(tokenizer, strip_thinking_from_history=strip_thinking_from_history)
         self.image_processor = image_processor
 
     def _encode_multipart_content(self, content: list[ContentPart]) -> list[tinker.ModelInputChunk]:
