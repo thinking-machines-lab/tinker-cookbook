@@ -96,6 +96,14 @@ class EnvGroupBuilder(ABC):
 
     - To define a multi-agent environment
     - As a part of the *algorithm* (e.g. GRPO), when dealing with single-agent tasks.
+
+    **Picklability:** Implementations must be pickleable (via standard ``pickle``) to support
+    distributed rollout execution where builders are serialized and sent to remote workers.
+    Avoid storing live network connections, file handles, or other unpickleable objects as
+    fields. Use ``get_renderer()`` to create Renderers (which are automatically pickle-safe).
+    Store configuration strings (model names, connection params) and construct heavy objects
+    in ``make_envs()`` when possible. See ``HarborEnvGroupBuilder`` for a reference
+    implementation of the lazy-construction pattern.
     """
 
     @abstractmethod
