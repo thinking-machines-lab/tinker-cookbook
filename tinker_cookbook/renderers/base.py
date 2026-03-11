@@ -8,6 +8,7 @@ Use viz_sft_dataset to visualize the output of different renderers. E.g.,
 import io
 import json
 import logging
+import pickle
 import re
 import urllib.request
 from abc import ABC, abstractmethod
@@ -669,6 +670,26 @@ class TrainOnWhat(StrEnum):
     CUSTOMIZED = "customized"
 
 
+def _unpickle_renderer(
+    renderer_name: str, model_name: str, has_image_processor: bool
+) -> "Renderer":
+    """Reconstruct a Renderer from its name and model name.
+
+    Called by pickle to deserialize Renderer instances. Uses cached tokenizer/image_processor
+    so reconstruction cost is negligible after first call.
+    """
+    from tinker_cookbook.renderers import get_renderer
+    from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+    tokenizer = get_tokenizer(model_name)
+    image_processor = None
+    if has_image_processor:
+        from tinker_cookbook.image_processing_utils import get_image_processor
+
+        image_processor = get_image_processor(model_name)
+    return get_renderer(renderer_name, tokenizer, image_processor, model_name=model_name)
+
+
 class Renderer(ABC):
     """
     Abstract base class for rendering message lists into training and sampling prompts.
@@ -681,12 +702,46 @@ class Renderer(ABC):
     The default build_generation_prompt and build_supervised_example implementations
     assume simple concatenation of rendered messages. Override these if your renderer
     modifies the conversation structure (e.g., stripping thinking blocks from history).
+
+    Pickle support: Renderers created via ``get_renderer()`` are automatically pickleable.
+    On deserialization, the tokenizer and image processor are reconstructed from cached
+    loaders, so the cost is negligible. Renderers created directly (not via ``get_renderer()``)
+    must set ``_renderer_name`` and ``_model_name`` manually to be pickleable.
+
+    Implementations of ``EnvGroupBuilder`` must be pickleable to support distributed rollout
+    execution. Since many builders store a Renderer, this pickle support is critical.
     """
 
     tokenizer: Tokenizer
 
+    # Pickle metadata — set by get_renderer() via _stamp_pickle_metadata().
+    # Class-level defaults ensure these exist even when subclasses bypass super().__init__().
+    _renderer_name: str | None = None
+    _model_name: str | None = None
+    _has_image_processor: bool = False
+
     def __init__(self, tokenizer: Tokenizer):
         self.tokenizer = tokenizer
+
+    def __reduce__(self) -> tuple:
+        """Enable pickling by storing only (renderer_name, model_name, has_image_processor).
+
+        On unpickling, the Renderer is reconstructed via get_renderer() with a
+        cached tokenizer, so the cost is negligible.
+        """
+        renderer_name = getattr(self, "_renderer_name", None)
+        model_name = getattr(self, "_model_name", None)
+        has_image_processor = getattr(self, "_has_image_processor", False)
+        if renderer_name is None or model_name is None:
+            raise pickle.PicklingError(
+                f"Cannot pickle {type(self).__name__}: _renderer_name or _model_name not set. "
+                "Renderers must be created via get_renderer() to be pickleable, "
+                "or set _renderer_name and _model_name manually."
+            )
+        return (
+            _unpickle_renderer,
+            (renderer_name, model_name, has_image_processor),
+        )
 
     @property
     def has_extension_property(self) -> bool:

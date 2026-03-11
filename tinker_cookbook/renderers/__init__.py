@@ -93,7 +93,10 @@ def unregister_renderer(name: str) -> bool:
 
 
 def get_renderer(
-    name: str, tokenizer: Tokenizer, image_processor: ImageProcessor | None = None
+    name: str,
+    tokenizer: Tokenizer,
+    image_processor: ImageProcessor | None = None,
+    model_name: str | None = None,
 ) -> Renderer:
     """Factory function to create renderers by name.
 
@@ -121,6 +124,9 @@ def get_renderer(
             - Custom renderers registered via register_renderer()
         tokenizer: The tokenizer to use.
         image_processor: Required for VL renderers.
+        model_name: Model name for pickle metadata. If None, falls back to
+            ``tokenizer.name_or_path``. Provide this explicitly when the tokenizer
+            was loaded with a remapped name (e.g., Llama 3 models).
 
     Returns:
         A Renderer instance.
@@ -129,9 +135,17 @@ def get_renderer(
         ValueError: If the renderer name is unknown.
         AssertionError: If a VL renderer is requested without an image_processor.
     """
+
+    def _stamp_pickle_metadata(renderer: Renderer) -> Renderer:
+        """Stamp renderer with metadata needed for pickle support."""
+        renderer._renderer_name = name
+        renderer._model_name = model_name if model_name is not None else tokenizer.name_or_path
+        renderer._has_image_processor = image_processor is not None
+        return renderer
+
     # Check custom registry first
     if (renderer := _CUSTOM_RENDERER_REGISTRY.get(name)) is not None:
-        return renderer(tokenizer, image_processor)
+        return _stamp_pickle_metadata(renderer(tokenizer, image_processor))
 
     # Import renderer classes lazily to avoid circular imports and keep exports minimal
     from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3DisableThinkingRenderer
@@ -148,52 +162,55 @@ def get_renderer(
     from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
     from tinker_cookbook.renderers.role_colon import RoleColonRenderer
 
+    renderer: Renderer
     if name == "role_colon":
-        return RoleColonRenderer(tokenizer)
+        renderer = RoleColonRenderer(tokenizer)
     elif name == "llama3":
-        return Llama3Renderer(tokenizer)
+        renderer = Llama3Renderer(tokenizer)
     elif name == "qwen3":
-        return Qwen3Renderer(tokenizer)
+        renderer = Qwen3Renderer(tokenizer)
     elif name == "qwen3_vl":
         assert image_processor is not None, "qwen3_vl renderer requires an image_processor"
-        return Qwen3VLRenderer(tokenizer, image_processor)
+        renderer = Qwen3VLRenderer(tokenizer, image_processor)
     elif name == "qwen3_vl_instruct":
         assert image_processor is not None, "qwen3_vl_instruct renderer requires an image_processor"
-        return Qwen3VLInstructRenderer(tokenizer, image_processor)
+        renderer = Qwen3VLInstructRenderer(tokenizer, image_processor)
     elif name == "qwen3_disable_thinking":
-        return Qwen3DisableThinkingRenderer(tokenizer)
+        renderer = Qwen3DisableThinkingRenderer(tokenizer)
     elif name == "qwen3_instruct":
-        return Qwen3InstructRenderer(tokenizer)
+        renderer = Qwen3InstructRenderer(tokenizer)
     elif name == "qwen3_5":
-        return Qwen3_5Renderer(tokenizer, image_processor=image_processor)
+        renderer = Qwen3_5Renderer(tokenizer, image_processor=image_processor)
     elif name == "qwen3_5_disable_thinking":
-        return Qwen3_5DisableThinkingRenderer(tokenizer, image_processor=image_processor)
+        renderer = Qwen3_5DisableThinkingRenderer(tokenizer, image_processor=image_processor)
     elif name == "deepseekv3":
         # Default to non-thinking mode (matches HF template default behavior)
-        return DeepSeekV3DisableThinkingRenderer(tokenizer)
+        renderer = DeepSeekV3DisableThinkingRenderer(tokenizer)
     elif name == "deepseekv3_disable_thinking":
         # Alias for backward compatibility
-        return DeepSeekV3DisableThinkingRenderer(tokenizer)
+        renderer = DeepSeekV3DisableThinkingRenderer(tokenizer)
     elif name == "deepseekv3_thinking":
-        return DeepSeekV3ThinkingRenderer(tokenizer)
+        renderer = DeepSeekV3ThinkingRenderer(tokenizer)
     elif name == "kimi_k2":
-        return KimiK2Renderer(tokenizer)
+        renderer = KimiK2Renderer(tokenizer)
     elif name == "kimi_k25":
-        return KimiK25Renderer(tokenizer, image_processor=image_processor)
+        renderer = KimiK25Renderer(tokenizer, image_processor=image_processor)
     elif name == "kimi_k25_disable_thinking":
-        return KimiK25DisableThinkingRenderer(tokenizer, image_processor=image_processor)
+        renderer = KimiK25DisableThinkingRenderer(tokenizer, image_processor=image_processor)
     elif name == "gpt_oss_no_sysprompt":
-        return GptOssRenderer(tokenizer, use_system_prompt=False)
+        renderer = GptOssRenderer(tokenizer, use_system_prompt=False)
     elif name == "gpt_oss_low_reasoning":
-        return GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="low")
+        renderer = GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="low")
     elif name == "gpt_oss_medium_reasoning":
-        return GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="medium")
+        renderer = GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="medium")
     elif name == "gpt_oss_high_reasoning":
-        return GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="high")
+        renderer = GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="high")
     else:
         raise ValueError(
             f"Unknown renderer: {name}. If this is a custom renderer, please register it via register_renderer()."
         )
+
+    return _stamp_pickle_metadata(renderer)
 
 
 __all__ = [
