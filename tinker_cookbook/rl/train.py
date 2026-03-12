@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import time
+from concurrent.futures import Executor
 from contextlib import contextmanager
 from typing import Any, Callable, Coroutine, Iterable, Iterator, List, Sequence, TypeVar
 
@@ -21,7 +22,6 @@ from tinker.types import LossFnType
 from tqdm import tqdm
 
 from tinker_cookbook import checkpoint_utils
-from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.display import colorize_example
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator, SamplingClientEvaluatorBuilder
 from tinker_cookbook.rl.data_processing import (
@@ -42,7 +42,11 @@ from tinker_cookbook.rl.rollout_logging import (
     rollout_summaries_jsonl_path,
     write_rollout_summaries_jsonl_from_groups,
 )
-from tinker_cookbook.rl.rollouts import do_group_rollout
+from tinker_cookbook.rl.rollouts import (
+    do_group_rollout,  # noqa: F401 — re-exported for verifiers monkey-patching
+    do_group_rollout_and_filter_constant_reward,
+    set_rollout_executor,
+)
 from tinker_cookbook.rl.types import (
     EnvGroupBuilder,
     RLDataset,
@@ -51,7 +55,7 @@ from tinker_cookbook.rl.types import (
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import logtree, ml_log
-from tinker_cookbook.utils.misc_utils import all_same, safezip, split_list, timed
+from tinker_cookbook.utils.misc_utils import safezip, split_list, timed
 from tinker_cookbook.utils.trace import scope, trace_init, update_scope_context
 
 logger = logging.getLogger(__name__)
@@ -884,27 +888,6 @@ async def do_async_training(
 
 
 @scope
-async def do_group_rollout_and_filter_constant_reward(
-    sampling_client: tinker.SamplingClient,
-    env_group_builder: EnvGroupBuilder,
-    max_tokens: int,
-    temperature: float,
-    do_remove_constant_reward_groups: bool,
-    enable_logging: bool = True,
-) -> TrajectoryGroup | None:
-    policy = TinkerTokenCompleter(sampling_client, max_tokens=max_tokens, temperature=temperature)
-
-    with logtree.optional_enable_logging(enable_logging):
-        trajectory_group = await do_group_rollout(env_group_builder, policy)
-
-    # Remove if all trajectories have the same reward
-    if do_remove_constant_reward_groups and all_same(trajectory_group.get_total_rewards()):
-        return None
-    else:
-        return trajectory_group
-
-
-@scope
 async def save_checkpoint_and_get_sampling_client(
     training_client: tinker.TrainingClient,
     i_batch: int,
@@ -1289,8 +1272,20 @@ async def do_sync_training(
 @scope
 async def main(
     cfg: Config,
+    rollout_executor: Executor | None = None,
 ):
-    """Main training loop for MDP RL."""
+    """Main training loop for MDP RL.
+
+    Args:
+        cfg: Training configuration.
+        rollout_executor: Optional ``concurrent.futures.Executor`` for offloading
+            group rollouts to separate processes or remote workers. Pass
+            ``ProcessPoolExecutor(max_workers=N)`` for multi-process execution,
+            or any custom ``Executor`` (Ray, cluster dispatchers, etc.).
+            Default ``None`` runs rollouts as asyncio coroutines in-process.
+    """
+    if rollout_executor is not None:
+        set_rollout_executor(rollout_executor)
     ml_logger = ml_log.setup_logging(
         log_dir=cfg.log_path,
         wandb_project=cfg.wandb_project,
@@ -1406,5 +1401,8 @@ async def main(
         logger.info("Training was already complete; nothing to do")
 
     # Cleanup
+    if rollout_executor is not None:
+        rollout_executor.shutdown(wait=True)
+        set_rollout_executor(None)
     ml_logger.close()
     logger.info("Training completed successfully")
