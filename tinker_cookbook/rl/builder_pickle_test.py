@@ -1,9 +1,16 @@
-"""Tests for picklability of RL EnvGroupBuilders."""
+"""Tests for picklability of RL EnvGroupBuilders and rollout executor infrastructure."""
 
 import pickle
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
 from tinker_cookbook.renderers import Message, get_renderer
+from tinker_cookbook.rl.problem_env import ProblemGroupBuilder
+from tinker_cookbook.rl.rollouts import (
+    _RolloutTask,
+    get_rollout_executor,
+    set_rollout_executor,
+)
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 
@@ -14,7 +21,6 @@ class TestProblemGroupBuilderPickle:
         Uses the real MathEnv class, matching how recipes actually construct builders.
         """
         from tinker_cookbook.recipes.math_rl.math_env import MathEnv
-        from tinker_cookbook.rl.problem_env import ProblemGroupBuilder
 
         tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
         renderer = get_renderer("llama3", tokenizer)
@@ -35,7 +41,6 @@ class TestProblemGroupBuilderPickle:
     def test_pickle_with_convo_prefix(self) -> None:
         """ProblemGroupBuilder with convo_prefix in the partial survives pickle."""
         from tinker_cookbook.recipes.math_rl.math_env import MathEnv
-        from tinker_cookbook.rl.problem_env import ProblemGroupBuilder
 
         tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
         renderer = get_renderer("llama3", tokenizer)
@@ -50,17 +55,10 @@ class TestProblemGroupBuilderPickle:
         assert restored.env_thunk.keywords["convo_prefix"] == convo_prefix
 
 
-# ---------------------------------------------------------------------------
-# Rollout executor tests
-# ---------------------------------------------------------------------------
-
-
 class TestRolloutTask:
     def test_pickle_roundtrip(self) -> None:
         """_RolloutTask survives pickle roundtrip with a real Renderer-bound builder."""
         from tinker_cookbook.recipes.math_rl.math_env import MathEnv
-        from tinker_cookbook.rl.problem_env import ProblemGroupBuilder
-        from tinker_cookbook.rl.rollouts import _RolloutTask
 
         tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
         renderer = get_renderer("llama3", tokenizer)
@@ -92,16 +90,10 @@ class TestRolloutTask:
 class TestRolloutExecutorContextVar:
     def test_default_is_none(self) -> None:
         """Default rollout executor is None (in-process async)."""
-        from tinker_cookbook.rl.rollouts import get_rollout_executor
-
         assert get_rollout_executor() is None
 
     def test_set_and_get(self) -> None:
         """set_rollout_executor / get_rollout_executor roundtrip."""
-        from concurrent.futures import ThreadPoolExecutor
-
-        from tinker_cookbook.rl.rollouts import get_rollout_executor, set_rollout_executor
-
         executor = ThreadPoolExecutor(max_workers=1)
         try:
             set_rollout_executor(executor)
