@@ -471,7 +471,7 @@ async def main(
             loop_state={"batch": num_batches},
             ttl_seconds=None,
         )
-        # Backward-compat alias so existing sampler_weights/final paths still resolve
+        # Also save with the "final" tag
         _ = await checkpoint_utils.save_checkpoint_async(
             training_client=training_client,
             name="final",

@@ -247,7 +247,7 @@ def main(config: Config):
         loop_state={"batch": n_train_batches},
         ttl_seconds=None,
     )
-    # Backward-compat alias so existing sampler_weights/final paths still resolve
+    # Also save with the "final" tag
     checkpoint_utils.save_checkpoint(
         training_client=training_client,
         name="final",
