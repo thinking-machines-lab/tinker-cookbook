@@ -241,6 +241,15 @@ def main(config: Config):
         # Save final checkpoint
     checkpoint_utils.save_checkpoint(
         training_client=training_client,
+        name=f"{n_train_batches:06d}",
+        log_path=config.log_path,
+        kind="both",
+        loop_state={"batch": n_train_batches},
+        ttl_seconds=None,
+    )
+    # Backward-compat alias so existing sampler_weights/final paths still resolve
+    checkpoint_utils.save_checkpoint(
+        training_client=training_client,
         name="final",
         log_path=config.log_path,
         kind="both",

@@ -388,13 +388,23 @@ def main(config: Config):
 
     # Save final checkpoint if training actually happened
     if start_epoch < config.num_epochs:
+        total_steps = config.num_epochs * n_batches
+        checkpoint_utils.save_checkpoint(
+            training_client=training_client,
+            name=f"{total_steps:06d}",
+            log_path=config.log_path,
+            kind="both",
+            loop_state={"epoch": config.num_epochs, "batch": n_batches},
+            ttl_seconds=None,
+        )
+        # Backward-compat alias so existing sampler_weights/final paths still resolve
         checkpoint_utils.save_checkpoint(
             training_client=training_client,
             name="final",
             log_path=config.log_path,
             kind="both",
             loop_state={"epoch": config.num_epochs, "batch": n_batches},
-            ttl_seconds=config.ttl_seconds,
+            ttl_seconds=None,
         )
     else:
         logger.info("Training was already complete; nothing to do")

@@ -1391,6 +1391,15 @@ async def main(
     if start_batch < num_batches:
         _ = await checkpoint_utils.save_checkpoint_async(
             training_client=training_client,
+            name=f"{num_batches:06d}",
+            log_path=cfg.log_path,
+            kind="both",
+            loop_state={"batch": num_batches},
+            ttl_seconds=None,
+        )
+        # Backward-compat alias so existing sampler_weights/final paths still resolve
+        _ = await checkpoint_utils.save_checkpoint_async(
+            training_client=training_client,
             name="final",
             log_path=cfg.log_path,
             kind="both",
