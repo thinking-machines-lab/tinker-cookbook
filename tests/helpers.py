@@ -2,6 +2,7 @@
 
 import os
 import re
+import select
 import signal
 import subprocess
 import time
@@ -44,8 +45,8 @@ def run_recipe(module: str, args: list[str] | None = None, timeout: int = DEFAUL
 
     try:
         assert proc.stdout is not None
+        fd = proc.stdout.fileno()
         while True:
-            # Check timeout
             elapsed = time.monotonic() - start_time
             if elapsed >= timeout:
                 break
@@ -59,7 +60,11 @@ def run_recipe(module: str, args: list[str] | None = None, timeout: int = DEFAUL
                     print(decoded, flush=True)
                 break
 
-            # Read available output (non-blocking via readline with implicit buffer)
+            # Wait up to 5s for output, then re-check timeout
+            ready, _, _ = select.select([fd], [], [], 5.0)
+            if not ready:
+                continue
+
             line = proc.stdout.readline()
             if line:
                 decoded = line.decode("utf-8", errors="replace").rstrip("\n")
@@ -83,9 +88,12 @@ def run_recipe(module: str, args: list[str] | None = None, timeout: int = DEFAUL
         print(f"\n>>> PASSED: step 1 reached after {elapsed:.0f}s", flush=True)
         return  # Success
 
-    # Process exited on its own — check if step 0 ran
-    if proc.returncode is not None and STEP_0_PATTERNS.search(content):
-        print(f"\n>>> PASSED: recipe completed (step 0 seen, exit={proc.returncode})", flush=True)
+    # Process exited on its own — check if step 0 ran and it exited cleanly
+    if proc.returncode == 0 and STEP_0_PATTERNS.search(content):
+        print(
+            "\n>>> PASSED: recipe completed cleanly (step 0 seen, exit=0)",
+            flush=True,
+        )
         return  # Success — recipe completed quickly
 
     # Failure
