@@ -82,9 +82,12 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["tinker_cookbook"]
+exclude = ["*_test.py"]
 
 [tool.pytest.ini_options]
-python_files = ["test_*.py", "*_test.py"]
+testpaths = ["tinker_cookbook", "tests"]
+python_files = ["*_test.py", "test_*.py"]
+norecursedirs = ["tinker_cookbook/scripts"]
 
 [tool.ruff]
 line-length = 100

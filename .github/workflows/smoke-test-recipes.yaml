@@ -1,0 +1,60 @@
+name: smoke-test-recipes
+
+on:
+  workflow_dispatch:  # manual trigger
+  schedule:
+    - cron: "0 6 * * *"  # daily at 6am UTC
+
+# Only one smoke test run at a time to avoid API contention
+concurrency:
+  group: smoke-test-recipes
+  cancel-in-progress: true
+
+jobs:
+  # Discover all smoke test files so the matrix is auto-generated.
+  # Adding a new test file in tests/ automatically adds a CI job.
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      tests: ${{ steps.find.outputs.tests }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: find smoke tests
+        id: find
+        run: |
+          tests=$(find tests -maxdepth 1 -name 'test_*.py' -printf '%f\n' \
+            | sed 's/\.py$//' \
+            | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "tests=$tests" >> "$GITHUB_OUTPUT"
+
+  smoke-test:
+    needs: discover
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        test: ${{ fromJson(needs.discover.outputs.tests) }}
+
+    name: ${{ matrix.test }}
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install-uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: venv
+        run: uv venv && uv sync --all-extras
+
+      - name: run smoke test
+        env:
+          TINKER_API_KEY: ${{ secrets.TINKER_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: uv run pytest tests/${{ matrix.test }}.py -v -x -s
