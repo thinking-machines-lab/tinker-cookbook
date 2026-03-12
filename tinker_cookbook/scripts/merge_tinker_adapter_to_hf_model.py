@@ -147,7 +147,9 @@ def load_meta_model(model_dir: Path) -> torch.nn.Module:
 
     config = AutoConfig.from_pretrained(str(model_dir), trust_remote_code=True)
     auto_cls = (
-        AutoModelForImageTextToText if hasattr(config, "vision_config") else AutoModelForCausalLM
+        AutoModelForImageTextToText
+        if (hasattr(config, "vision_config") and "kimi_k2" not in type(config).__name__.lower())
+        else AutoModelForCausalLM
     )
     with torch.device("meta"):
         model = auto_cls.from_config(config, trust_remote_code=True)
@@ -194,9 +196,9 @@ def build_merge_ops(
         "base_model.model.": "",
         "model.unembed_tokens": "lm_head",
     }
-    if any(k.startswith("model.language_model.") for k in model_state_keys):
+    if any(k.startswith("language_model.") for k in model_state_keys):
         # Tinker adapter doesn't include the language_model prefix for vision models.
-        name_remaps["model."] = "model.language_model."
+        name_remaps["base_model.model."] = "language_model."
 
     merge_ops: dict[str, list[MergeOp]] = {}
 
