@@ -2,7 +2,6 @@
 
 import os
 import select
-import signal
 import subprocess
 import time
 
@@ -50,11 +49,7 @@ def run_recipe(
         while True:
             elapsed = time.monotonic() - start_time
             if elapsed >= timeout:
-                # Kill on timeout
-                try:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                except (OSError, ProcessLookupError):
-                    proc.terminate()
+                proc.terminate()
                 proc.wait(timeout=10)
                 last_lines = "\n".join(output_lines[-30:])
                 pytest.fail(
