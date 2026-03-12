@@ -97,13 +97,21 @@ class Node:
         return "".join(lines)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert node to a JSON-serializable dictionary."""
+        """Convert node to a JSON-serializable dictionary.
+
+        When ``data`` is present, raw HTML string children are omitted from the
+        JSON — consumers should use ``data`` instead.
+        """
+        if self.data is not None:
+            children = [child.to_dict() for child in self.children if isinstance(child, Node)]
+        else:
+            children = [
+                child if isinstance(child, str) else child.to_dict() for child in self.children
+            ]
         d: dict[str, Any] = {
             "tag": self.tag,
             "attrs": dict(self.attrs),
-            "children": [
-                child if isinstance(child, str) else child.to_dict() for child in self.children
-            ],
+            "children": children,
         }
         if self.data is not None:
             d["data"] = self.data

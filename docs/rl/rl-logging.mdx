@@ -2,7 +2,7 @@ import { CookbookLink } from '../../components/CookbookLink'
 
 # RL Training Outputs
 
-Each RL training run writes human-readable and machine-readable files to `log_path`. This page describes every file, its format, and how to extract data from it programmatically. **Point your analysis agent at a `log_path` directory** — the combination of `metrics.jsonl`, `*_rollout_summaries.jsonl`, and `*_logtree.json` gives a complete picture of what happened during training.
+Each RL training run writes files to `log_path`. This page describes each file and how to extract data from it.
 
 ## Files written to `log_path`
 
@@ -23,16 +23,8 @@ Each RL training run writes human-readable and machine-readable files to `log_pa
 
 ## `metrics.jsonl`
 
-Each line is a JSON object keyed by metric name. Typical keys:
+Each line is a JSON object keyed by metric name. Common keys (varies by env and config):
 
-```python
-import pandas as pd
-
-df = pd.read_json("path/to/metrics.jsonl", lines=True)
-df.plot(x="progress/batch", y="env/all/reward/total")
-```
-
-Common metric keys (varies by env and config):
 - `progress/batch`, `progress/done_frac` — iteration index and completion fraction
 - `env/all/reward/total` — mean total reward across all trajectories
 - `env/all/<metric>` — env-emitted metrics (e.g., `format_parse`, `correct`)
@@ -42,9 +34,16 @@ Common metric keys (varies by env and config):
 - `optim/lr` — learning rate
 - `time/...` — wall-clock timings for different stages
 
+```python
+import pandas as pd
+
+df = pd.read_json("path/to/metrics.jsonl", lines=True)
+df.plot(x="progress/batch", y="env/all/reward/total")
+```
+
 ## `*_rollout_summaries.jsonl`
 
-One line per trajectory. Best for aggregate analysis (reward distributions, per-step metrics) without needing to parse tree structures.
+One line per trajectory. Best for aggregate analysis (reward distributions, per-step metrics).
 
 ```python
 import json
@@ -58,84 +57,13 @@ with open("train_iteration_000010_rollout_summaries.jsonl") as f:
 # - steps: list of {step_idx, ob_len, ac_len, reward, episode_done, metrics, logs}
 ```
 
-These records are intentionally disaggregated — no pre-computed aggregates — so they slot directly into analysis pipelines.
+## `*_logtree.json`
 
-## `*_logtree.json` — the rollout transcript tree
+The logtree JSON contains full rollout transcripts: prompts, model responses, grading details, and reward breakdowns. Use this when you need the actual text content of rollouts.
 
-This is the machine-readable export of the HTML report. It contains the full rollout transcripts: prompts, model responses, grading details, and reward breakdowns. Use this when you need the actual text content of rollouts.
+Top level: `title`, `started_at`, `path`, `root`. `root` is a tree of nodes, each with `tag`, `attrs`, and `children` (either text strings or nested nodes).
 
-### Structure
-
-Top level: `title`, `started_at`, `path`, `root`.
-
-`root` is a DOM-like tree of nodes:
-
-```json
-{
-  "tag": "div",
-  "attrs": {"class": "lt-section-body"},
-  "children": [
-    "plain text string",
-    {"tag": "p", "attrs": {"class": "lt-p"}, "children": ["More text"]},
-    {"tag": "div", "attrs": {}, "children": [...], "data": {...}}
-  ]
-}
-```
-
-Each node has `tag`, `attrs`, and `children`. Children are either text strings or nested nodes.
-
-### The `data` field
-
-Nodes produced by `logtree.log_formatter()` carry an optional **`data`** field with structured content. This is the primary way to extract typed data (like conversation messages) without parsing HTML.
-
-For example, a `ConversationFormatter` node:
-
-```json
-{
-  "tag": "div",
-  "attrs": {},
-  "children": ["<div class=\"lt-conversation\">...</div>"],
-  "data": {
-    "type": "conversation",
-    "messages": [
-      {"role": "user", "content": "What is the capital of France?"},
-      {"role": "assistant", "content": [
-        {"type": "thinking", "thinking": "The capital of France is Paris."},
-        {"type": "text", "text": "Paris."}
-      ]}
-    ]
-  }
-}
-```
-
-The `children` still contain the raw HTML (for backwards compatibility), but **prefer `data`** for programmatic access — it gives you structured messages, content parts, and tool calls without HTML parsing.
-
-### Navigating the tree
-
-The tree mirrors the nesting of `logtree.scope_header()` calls during training. A typical eval logtree has this shape:
-
-```
-root (body.lt-root)
-├── h1: "Running evaluation test 0"
-├── p: explanation text
-├── section: "Group Rollout"                # one per problem
-│   ├── h2: "Group Rollout"
-│   └── div.lt-section-body
-│       ├── section: "Prompt"               # env logging (rollout 0)
-│       ├── section: "Policy Response"      # data.type == "conversation"
-│       ├── section: "Grading Results"
-│       ├── section: "Reward Summary"
-│       ├── section: "Prompt"               # env logging (rollout 1)
-│       ├── ...                             # (sections from concurrent rollouts
-│       │                                   #  may interleave)
-│       └── section: "Trajectory Details"   # always present
-│           └── per-trajectory episode stats and turn-level metrics
-...
-```
-
-The framework does not create per-rollout sections — the env is responsible for its own logtree logging. Envs that don't use logtree produce no rollout sections at all. Envs that do log (like the rubric-graded env) typically create their own sections for prompt, response, grading, etc.
-
-### Extracting model responses from JSON
+Some nodes carry a **`data`** field with structured content. Use `data` to extract typed data like conversation messages:
 
 ```python
 import json
@@ -159,9 +87,7 @@ for conv in find_conversations(trace["root"]):
         print(f"{msg['role']}: {msg['content'][:100] if isinstance(msg['content'], str) else '...'}")
 ```
 
-### Why some sections are empty
-
-`num_groups_to_log` (default: 4) controls how many trajectory groups get detailed env-level logging. Groups beyond this limit run with logging disabled — their `do_single_rollout` sections will have empty bodies. The `Trajectory Details` section at the bottom of each `do_group_rollout` always logs turn-level stats regardless.
+Note: `num_groups_to_log` (default: 4) controls how many trajectory groups get detailed env-level logging. Groups beyond this limit have no rollout content in the logtree — only the `Trajectory Details` section (turn-level stats) is always present.
 
 ## `config.json`
 

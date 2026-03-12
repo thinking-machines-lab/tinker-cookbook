@@ -588,6 +588,23 @@ def test_formatter_structured_data_in_json():
         assert data["messages"][1]["content"][1]["type"] == "text"
         assert data["messages"][1]["content"][1]["text"] == "The answer is 4."
 
+        # Nodes with data should NOT have raw HTML string children in JSON
+        def find_nodes_with_data(node):
+            results = []
+            if isinstance(node, dict):
+                if "data" in node:
+                    results.append(node)
+                for child in node.get("children", []):
+                    if isinstance(child, dict):
+                        results.extend(find_nodes_with_data(child))
+            return results
+
+        for node in find_nodes_with_data(content["root"]):
+            for child in node.get("children", []):
+                assert not isinstance(child, str), (
+                    f"Node with data should not have string children in JSON, got: {child[:80]}"
+                )
+
 
 def test_dataframe_table_produces_structured_nodes():
     """Test that DataFrame tables produce structured Nodes, not raw HTML strings."""
