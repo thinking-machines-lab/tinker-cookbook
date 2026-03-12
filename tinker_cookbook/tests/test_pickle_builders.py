@@ -198,3 +198,79 @@ class TestMessageCompleterPickle:
         restored_renderer = pickle.loads(pickle.dumps(renderer))
         assert type(restored_renderer) is type(renderer)
         assert restored_renderer.get_stop_sequences() == renderer.get_stop_sequences()
+
+
+# ---------------------------------------------------------------------------
+# ChromaTool pickle tests
+# ---------------------------------------------------------------------------
+
+
+try:
+    import chromadb as _chromadb  # noqa: F401
+
+    _has_chromadb = True
+except ImportError:
+    _has_chromadb = False
+
+
+@pytest.mark.skipif(not _has_chromadb, reason="chromadb not installed")
+class TestChromatoolPickle:
+    def test_pickle_excludes_clients(self) -> None:
+        """ChromaTool excludes async clients from pickle state and preserves connection params."""
+        from unittest.mock import MagicMock
+
+        from tinker_cookbook.recipes.search_tool.tools import ChromaTool, RetrievalConfig
+
+        tool = ChromaTool(
+            chroma_client=MagicMock(),
+            gemini_client=MagicMock(),
+            collection_name="wiki_chunks",
+            retrieval_config=RetrievalConfig(),
+            max_retries=5,
+            initial_retry_delay=2,
+            chroma_host="localhost",
+            chroma_port=8000,
+        )
+        state = tool.__getstate__()
+        assert state["_chroma_client"] is None
+        assert state["_gemini_client"] is None
+        assert state["_chroma_host"] == "localhost"
+        assert state["_chroma_port"] == 8000
+        assert state["_collection_name"] == "wiki_chunks"
+        assert state["_max_retries"] == 5
+
+
+# ---------------------------------------------------------------------------
+# VerifiersEnvGroupBuilder pickle tests
+# ---------------------------------------------------------------------------
+
+
+try:
+    import verifiers as _verifiers  # noqa: F401
+
+    _has_verifiers = True
+except ImportError:
+    _has_verifiers = False
+
+
+@pytest.mark.skipif(not _has_verifiers, reason="verifiers not installed")
+class TestVerifiersEnvGroupBuilderPickle:
+    def test_pickle_excludes_vf_env(self) -> None:
+        """VerifiersEnvGroupBuilder excludes vf_env from pickle state."""
+        from unittest.mock import MagicMock
+
+        from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersEnvGroupBuilder
+
+        builder = VerifiersEnvGroupBuilder(
+            vf_env=MagicMock(),
+            prompt=[{"role": "user", "content": "What is 2+2?"}],
+            example_id=42,
+            task="arithmetic",
+            answer="4",
+        )
+        state = builder.__getstate__()
+        assert state["vf_env"] is None
+        assert state["prompt"] == [{"role": "user", "content": "What is 2+2?"}]
+        assert state["example_id"] == 42
+        assert state["task"] == "arithmetic"
+        assert state["answer"] == "4"
