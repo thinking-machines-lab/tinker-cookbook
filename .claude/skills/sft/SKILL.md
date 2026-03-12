@@ -106,6 +106,23 @@ python -m tinker_cookbook.recipes.<recipe_name>
 
 Override parameters from CLI: `python -m tinker_cookbook.recipes.<recipe_name> learning_rate=1e-4 batch_size=256`
 
+## Step 6: Add tests
+
+If you created a new recipe, add a smoke test so CI catches regressions:
+
+```python
+# tests/test_recipe_<name>.py
+from tests.helpers import run_recipe
+
+def test_<recipe_name>():
+    run_recipe(
+        "tinker_cookbook.recipes.<recipe_name>.train",
+        ["behavior_if_log_dir_exists=delete", "batch_size=16"],
+    )
+```
+
+This is auto-discovered by CI and runs daily. For unit-testable components (dataset processing, custom logic), add `*_test.py` files next to the source code. See `tests/helpers.py` for `run_recipe()` details.
+
 ## Common pitfalls
 - Always use `model_info.get_recommended_renderer_name()` — never hardcode renderer
 - Use `cli_utils.check_log_dir()` to avoid clobbering previous runs

@@ -139,6 +139,23 @@ python -m tinker_cookbook.recipes.search_tool.train
 python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.train
 ```
 
+## Step 6: Add tests
+
+If you created a new multi-turn recipe, add a smoke test:
+
+```python
+# tests/test_recipe_<name>.py
+from tests.helpers import run_recipe
+
+def test_<recipe_name>():
+    run_recipe(
+        "tinker_cookbook.recipes.<recipe_name>.train",
+        ["behavior_if_log_dir_exists=delete", "groups_per_batch=4", "group_size=2"],
+    )
+```
+
+See `tests/test_recipe_text_arena.py` and `tests/test_recipe_twenty_questions.py` for existing multi-turn examples. For environment-specific logic (sandbox setup, tool parsing), add unit tests as `*_test.py` next to the source code.
+
 ## Common pitfalls
 - Multi-turn envs are expensive — start with small `groups_per_batch` (4-8)
 - Use `max_steps_off_policy` for async rollouts when env execution is slow

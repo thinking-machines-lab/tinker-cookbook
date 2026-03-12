@@ -113,6 +113,24 @@ python -m tinker_cookbook.recipes.<recipe_name>
 
 Override: `python -m tinker_cookbook.recipes.<recipe_name> env=gsm8k group_size=16 learning_rate=4e-5`
 
+## Step 6: Add tests
+
+If you created a new recipe, add a smoke test so CI catches regressions:
+
+```python
+# tests/test_recipe_<name>.py
+from tests.helpers import run_recipe
+
+def test_<recipe_name>():
+    run_recipe(
+        "tinker_cookbook.recipes.<recipe_name>.train",
+        ["behavior_if_log_dir_exists=delete", "groups_per_batch=4", "group_size=2"],
+    )
+```
+
+For environment logic (reward grading, env setup), add unit tests as `*_test.py` next to the source:
+- Example: `tinker_cookbook/recipes/math_rl/math_env_test.py`
+
 ## Common pitfalls
 - `Env` objects are single-use — always create fresh envs via builder
 - Advantages are centered within each group — `group_size` matters for variance reduction

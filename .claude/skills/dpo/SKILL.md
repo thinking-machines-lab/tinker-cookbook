@@ -107,6 +107,23 @@ python -m tinker_cookbook.recipes.preference.dpo.train \
     load_checkpoint_path=/tmp/tinker-examples/sft/checkpoint_100
 ```
 
+## Step 6: Add tests
+
+If you created a new DPO recipe, add a smoke test:
+
+```python
+# tests/test_recipe_<name>.py
+from tests.helpers import run_recipe
+
+def test_<recipe_name>():
+    run_recipe(
+        "tinker_cookbook.recipes.<recipe_name>.train",
+        ["behavior_if_log_dir_exists=delete"],
+    )
+```
+
+See `tests/test_recipe_dpo.py` for the existing example.
+
 ## Common pitfalls
 - **Start with `dpo_beta=0.1`** — this is well-tested. Tune from there.
 - DPO LR should be **lower than SFT** (1e-5 vs 2e-4)

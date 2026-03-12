@@ -126,6 +126,23 @@ python -m tinker_cookbook.recipes.distillation.on_policy_multi_teacher \
     model_name=Qwen/Qwen3-8B-Base learning_rate=1e-4
 ```
 
+## Step 6: Add tests
+
+If you created a new distillation recipe, add a smoke test:
+
+```python
+# tests/test_recipe_<name>.py
+from tests.helpers import run_recipe
+
+def test_<recipe_name>():
+    run_recipe(
+        "tinker_cookbook.recipes.<recipe_name>.train",
+        ["behavior_if_log_dir_exists=delete", "groups_per_batch=16"],
+    )
+```
+
+See `tests/test_recipe_on_policy_distillation.py` and `tests/test_recipe_on_policy_multi_teacher.py` for existing examples.
+
 ## Common pitfalls
 - Teacher model must be compatible with student's tokenizer/renderer
 - On-policy is generally better than off-policy but more compute-intensive
