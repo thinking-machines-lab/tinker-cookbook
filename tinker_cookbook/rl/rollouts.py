@@ -77,8 +77,9 @@ def _log_single_trajectory_details(traj: Trajectory, final_reward: float) -> Non
         )
 
 
-@logtree.scope_header_decorator
 async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
+    """Run a single rollout (env episode). Env logging (if any) goes into
+    whatever logtree scope the caller has set up."""
     transitions = []
     ob, stop_condition = await env.initial_observation()
     while True:
@@ -100,12 +101,13 @@ async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
     return Trajectory(transitions=transitions, final_ob=ob)
 
 
-@logtree.scope_header_decorator
+@logtree.scope_header_decorator("Group Rollout")
 async def do_group_rollout(
     env_group_builder: EnvGroupBuilder, policy: TokenCompleter
 ) -> TrajectoryGroup:
     envs_G: Sequence[Env] = await env_group_builder.make_envs()
     trajectories_G = await asyncio.gather(*[do_single_rollout(policy, env) for env in envs_G])
+
     rewards_and_metrics_G = await env_group_builder.compute_group_rewards(trajectories_G, envs_G)
     rewards_G, metrics_G = zip(*rewards_and_metrics_G, strict=True)
 
