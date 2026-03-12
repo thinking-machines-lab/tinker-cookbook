@@ -84,8 +84,8 @@ class ChromaTool:
         chroma_host: str | None = None,
         chroma_port: int | None = None,
     ):
-        self._chroma_client: AsyncClientAPI | None = chroma_client
-        self._gemini_client: genai.Client | None = gemini_client
+        self._chroma_client = chroma_client
+        self._gemini_client = gemini_client
         self._collection_name = collection_name
         self._retrieval_config = retrieval_config
         self._max_retries = max_retries
