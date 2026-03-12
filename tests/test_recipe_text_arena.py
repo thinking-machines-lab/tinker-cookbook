@@ -7,6 +7,6 @@ def test_text_arena():
         [
             "batch_size=16",
             "num_train_datapoints=128",
-            "eval_every=999",
+            "eval_every=0",
         ],
     )
