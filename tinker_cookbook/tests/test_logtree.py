@@ -539,6 +539,89 @@ def test_scope_disable_nested():
         assert "Still should NOT appear" not in content
 
 
+def test_formatter_structured_data_in_json():
+    """Test that log_formatter attaches structured data to the JSON export."""
+    from tinker_cookbook.utils.logtree_formatters import ConversationFormatter
+
+    messages: list[Message] = [
+        {"role": "user", "content": "What is 2+2?"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "Let me compute..."},
+                {"type": "text", "text": "The answer is 4."},
+            ],
+        },
+    ]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        json_path = Path(tmpdir) / "trace.json"
+
+        with logtree.init_trace("Structured Data Test", path=None) as trace:
+            logtree.log_formatter(ConversationFormatter(messages=messages))
+
+        logtree.write_trace_json(trace, json_path)
+        content = json.loads(json_path.read_text())
+
+        # Find the node with structured data
+        def find_data_nodes(node):
+            results = []
+            if isinstance(node, dict):
+                if "data" in node:
+                    results.append(node["data"])
+                for child in node.get("children", []):
+                    if isinstance(child, dict):
+                        results.extend(find_data_nodes(child))
+            return results
+
+        data_nodes = find_data_nodes(content["root"])
+        assert len(data_nodes) == 1, f"Expected 1 data node, got {len(data_nodes)}"
+
+        data = data_nodes[0]
+        assert data["type"] == "conversation"
+        assert len(data["messages"]) == 2
+        assert data["messages"][0]["role"] == "user"
+        assert data["messages"][0]["content"] == "What is 2+2?"
+        assert data["messages"][1]["role"] == "assistant"
+        assert data["messages"][1]["content"][0]["type"] == "thinking"
+        assert data["messages"][1]["content"][0]["thinking"] == "Let me compute..."
+        assert data["messages"][1]["content"][1]["type"] == "text"
+        assert data["messages"][1]["content"][1]["text"] == "The answer is 4."
+
+
+def test_dataframe_table_produces_structured_nodes():
+    """Test that DataFrame tables produce structured Nodes, not raw HTML strings."""
+    import pandas as pd
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        json_path = Path(tmpdir) / "trace.json"
+
+        df = pd.DataFrame({"name": ["Alice", "Bob"], "score": [95, 87]})
+
+        with logtree.init_trace("DataFrame Test", path=None) as trace:
+            logtree.table(df, caption="Results")
+
+        logtree.write_trace_json(trace, json_path)
+        content = json.loads(json_path.read_text())
+
+        # Walk the tree: every child should be either a dict (Node) or a plain
+        # text string that does NOT contain HTML tags.  Raw HTML from df.to_html()
+        # would include "<table" or "<tr".
+        serialized = json.dumps(content)
+        assert "Alice" in serialized
+        assert "Bob" in serialized
+
+        def check_no_raw_html_tables(node):
+            if isinstance(node, str):
+                assert "<table" not in node, f"Found raw HTML table string: {node[:100]}"
+                assert "<tr" not in node, f"Found raw HTML tr string: {node[:100]}"
+            elif isinstance(node, dict):
+                for child in node.get("children", []):
+                    check_no_raw_html_tables(child)
+
+        check_no_raw_html_tables(content["root"])
+
+
 if __name__ == "__main__":
     # Run tests
     test_basic_trace()
@@ -562,5 +645,7 @@ if __name__ == "__main__":
     test_formatter_css_deduplication()
     test_scope_details()
     test_scope_disable_nested()
+    test_formatter_structured_data_in_json()
+    test_dataframe_table_produces_structured_nodes()
 
     print("All tests passed!")

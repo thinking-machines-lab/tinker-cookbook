@@ -8,9 +8,40 @@ from logtree and can be logged using `logtree.log_formatter()`.
 
 import html
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Any, Sequence
 
 from tinker_cookbook.renderers.base import Content, Message
+
+
+def _content_to_data(content: Content) -> str | list[dict[str, Any]]:
+    """Convert message content to a JSON-serializable structure."""
+    if isinstance(content, str):
+        return content
+    result: list[dict[str, Any]] = []
+    for part in content:
+        ptype = part["type"]
+        if ptype == "text":
+            result.append({"type": "text", "text": part["text"]})
+        elif ptype == "thinking":
+            result.append({"type": "thinking", "thinking": part["thinking"]})
+        elif ptype == "image":
+            result.append({"type": "image"})
+        elif ptype == "tool_call":
+            tc = part["tool_call"]
+            result.append({
+                "type": "tool_call",
+                "function_name": tc.function.name,
+                "function_arguments": tc.function.arguments,
+            })
+        elif ptype == "unparsed_tool_call":
+            result.append({
+                "type": "unparsed_tool_call",
+                "raw_text": part["raw_text"],
+                "error": part["error"],
+            })
+        else:
+            result.append({"type": ptype})
+    return result
 
 
 def _render_content_html(content: Content) -> str:
@@ -81,6 +112,16 @@ class ConversationFormatter:
             parts.append("  </div>")
         parts.append("</div>")
         return "\n".join(parts)
+
+    def to_data(self) -> dict[str, Any]:
+        """Return structured data for JSON export (avoids needing to parse raw HTML)."""
+        return {
+            "type": "conversation",
+            "messages": [
+                {"role": msg["role"], "content": _content_to_data(msg["content"])}
+                for msg in self.messages
+            ],
+        }
 
     def get_css(self) -> str:
         """Get CSS for conversation styling."""

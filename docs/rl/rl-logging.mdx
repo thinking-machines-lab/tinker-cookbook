@@ -1,0 +1,170 @@
+import { CookbookLink } from '../../components/CookbookLink'
+
+# RL Training Outputs
+
+Each RL training run writes human-readable and machine-readable files to `log_path`. This page describes every file, its format, and how to extract data from it programmatically. **Point your analysis agent at a `log_path` directory** — the combination of `metrics.jsonl`, `*_rollout_summaries.jsonl`, and `*_logtree.json` gives a complete picture of what happened during training.
+
+## Files written to `log_path`
+
+| File | Format | Contents |
+|------|--------|----------|
+| `metrics.jsonl` | JSONL | One JSON object per training iteration with all scalar metrics |
+| `config.json` | JSON | Serialized training config (hyperparams, model, dataset, etc.) |
+| `checkpoints.jsonl` | JSONL | Checkpoint metadata (paths, loop state for resume) |
+| `train_iteration_NNNNNN.html` | HTML | Human-readable logtree report for training rollouts |
+| `train_iteration_NNNNNN_logtree.json` | JSON | Machine-readable export of the same logtree trace |
+| `train_iteration_NNNNNN_rollout_summaries.jsonl` | JSONL | One JSON object per trajectory with rewards, metrics, and step-level data |
+| `eval_<name>_iteration_NNNNNN.html` | HTML | Logtree report for eval rollouts |
+| `eval_<name>_iteration_NNNNNN_logtree.json` | JSON | Machine-readable export of eval logtree trace |
+| `eval_<name>_iteration_NNNNNN_rollout_summaries.jsonl` | JSONL | Per-trajectory eval data (for `RLTestSetEvaluator`) |
+| `code.diff` | text | Git diff at the time training started |
+
+`<name>` is the evaluator name (sanitized for filenames); iteration numbers are zero-padded to 6 digits.
+
+## `metrics.jsonl`
+
+Each line is a JSON object keyed by metric name. Typical keys:
+
+```python
+import pandas as pd
+
+df = pd.read_json("path/to/metrics.jsonl", lines=True)
+df.plot(x="progress/batch", y="env/all/reward/total")
+```
+
+Common metric keys (varies by env and config):
+- `progress/batch`, `progress/done_frac` — iteration index and completion fraction
+- `env/all/reward/total` — mean total reward across all trajectories
+- `env/all/<metric>` — env-emitted metrics (e.g., `format_parse`, `correct`)
+- `ac_tokens_per_turn` — mean generated tokens per turn
+- `entropy` — per-token entropy
+- `kl_sample_train_v1`, `kl_sample_train_v2` — KL divergence estimators
+- `optim/lr` — learning rate
+- `time/...` — wall-clock timings for different stages
+
+## `*_rollout_summaries.jsonl`
+
+One line per trajectory. Best for aggregate analysis (reward distributions, per-step metrics) without needing to parse tree structures.
+
+```python
+import json
+
+with open("train_iteration_000010_rollout_summaries.jsonl") as f:
+    trajectories = [json.loads(line) for line in f]
+
+# Each trajectory has:
+# - metadata: schema_version, split, iteration, group_idx, traj_idx, tags, sampling_client_step
+# - episode totals: total_reward, final_reward, trajectory_metrics, final_ob_len
+# - steps: list of {step_idx, ob_len, ac_len, reward, episode_done, metrics, logs}
+```
+
+These records are intentionally disaggregated — no pre-computed aggregates — so they slot directly into analysis pipelines.
+
+## `*_logtree.json` — the rollout transcript tree
+
+This is the machine-readable export of the HTML report. It contains the full rollout transcripts: prompts, model responses, grading details, and reward breakdowns. Use this when you need the actual text content of rollouts.
+
+### Structure
+
+Top level: `title`, `started_at`, `path`, `root`.
+
+`root` is a DOM-like tree of nodes:
+
+```json
+{
+  "tag": "div",
+  "attrs": {"class": "lt-section-body"},
+  "children": [
+    "plain text string",
+    {"tag": "p", "attrs": {"class": "lt-p"}, "children": ["More text"]},
+    {"tag": "div", "attrs": {}, "children": [...], "data": {...}}
+  ]
+}
+```
+
+Each node has `tag`, `attrs`, and `children`. Children are either text strings or nested nodes.
+
+### The `data` field
+
+Nodes produced by `logtree.log_formatter()` carry an optional **`data`** field with structured content. This is the primary way to extract typed data (like conversation messages) without parsing HTML.
+
+For example, a `ConversationFormatter` node:
+
+```json
+{
+  "tag": "div",
+  "attrs": {},
+  "children": ["<div class=\"lt-conversation\">...</div>"],
+  "data": {
+    "type": "conversation",
+    "messages": [
+      {"role": "user", "content": "What is the capital of France?"},
+      {"role": "assistant", "content": [
+        {"type": "thinking", "thinking": "The capital of France is Paris."},
+        {"type": "text", "text": "Paris."}
+      ]}
+    ]
+  }
+}
+```
+
+The `children` still contain the raw HTML (for backwards compatibility), but **prefer `data`** for programmatic access — it gives you structured messages, content parts, and tool calls without HTML parsing.
+
+### Navigating the tree
+
+The tree mirrors the nesting of `logtree.scope_header()` calls during training. A typical eval logtree has this shape:
+
+```
+root (body.lt-root)
+├── h1: "Running evaluation test 0"
+├── p: explanation text
+├── section: do_group_rollout          # one per problem
+│   ├── h2: "do_group_rollout"
+│   └── div.lt-section-body
+│       ├── section: do_single_rollout  # one per trajectory in group
+│       │   ├── h3: "do_single_rollout"
+│       │   └── div.lt-section-body
+│       │       ├── section: "Prompt"         # data.type == "conversation"
+│       │       ├── section: "Policy Response" # data.type == "conversation"
+│       │       ├── section: "Grading Results"
+│       │       └── section: "Reward Summary"
+│       └── section: "Trajectory Details"
+│           └── per-trajectory episode stats and turn-level metrics
+...
+```
+
+### Extracting model responses from JSON
+
+```python
+import json
+
+def find_conversations(node):
+    """Recursively find all nodes with conversation data."""
+    results = []
+    if isinstance(node, dict):
+        if node.get("data", {}).get("type") == "conversation":
+            results.append(node["data"])
+        for child in node.get("children", []):
+            if isinstance(child, dict):
+                results.extend(find_conversations(child))
+    return results
+
+with open("eval_test_iteration_000020_logtree.json") as f:
+    trace = json.load(f)
+
+for conv in find_conversations(trace["root"]):
+    for msg in conv["messages"]:
+        print(f"{msg['role']}: {msg['content'][:100] if isinstance(msg['content'], str) else '...'}")
+```
+
+### Why some sections are empty
+
+`num_groups_to_log` (default: 4) controls how many trajectory groups get detailed env-level logging. Groups beyond this limit run with logging disabled — their `do_single_rollout` sections will have empty bodies. The `Trajectory Details` section at the bottom of each `do_group_rollout` always logs turn-level stats regardless.
+
+## `config.json`
+
+Serialized `chz` config capturing all training hyperparameters. Useful for reproducing a run or comparing configs across experiments.
+
+## `checkpoints.jsonl`
+
+Each line records a saved checkpoint with its path and the loop state at save time. Used by the resume logic to pick up where training left off.

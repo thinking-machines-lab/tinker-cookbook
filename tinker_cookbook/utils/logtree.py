@@ -58,6 +58,10 @@ class Node:
     tag: str
     attrs: dict[str, str] = field(default_factory=dict)
     children: list["Node | str"] = field(default_factory=list)
+    # Optional structured data attached by formatters.
+    # Included in JSON export so consumers can extract typed content
+    # (e.g., conversation messages) without parsing raw HTML.
+    data: dict[str, Any] | None = field(default=None, repr=False)
 
     def to_html(self, indent: int = 0) -> str:
         """Convert node to HTML string."""
@@ -86,13 +90,16 @@ class Node:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert node to a JSON-serializable dictionary."""
-        return {
+        d: dict[str, Any] = {
             "tag": self.tag,
             "attrs": dict(self.attrs),
             "children": [
                 child if isinstance(child, str) else child.to_dict() for child in self.children
             ],
         }
+        if self.data is not None:
+            d["data"] = self.data
+        return d
 
 
 @dataclass
@@ -736,9 +743,13 @@ def log_formatter(formatter: Formatter) -> None:
     css = formatter.get_css()
     trace._register_formatter_css(css)
 
-    # Log the HTML
+    # Log the HTML, with optional structured data for JSON export
     html = formatter.to_html()
-    log_html(html)
+    container = Node("div", {})
+    container.children.append(html)
+    if hasattr(formatter, "to_data"):
+        container.data = formatter.to_data()
+    _append(container)
 
 
 def details(text: str, *, summary: str = "Details", pre: bool = True) -> None:
@@ -824,15 +835,13 @@ def table(obj: Any, *, caption: str | None = None) -> None:
             _append(Node("div", {"class": "lt-table-caption"}, [html_module.escape(caption)]))
         return
 
-    # Try DataFrame
+    # Try DataFrame — convert to records so the JSON tree gets structured
+    # Nodes (thead/tbody/tr/td) instead of a raw HTML string.
     try:
         import pandas as pd
 
         if isinstance(obj, pd.DataFrame):
-            html_str = obj.to_html(classes="lt-table", border=0, escape=True, index=False)
-            if caption:
-                _append(Node("div", {"class": "lt-table-caption"}, [html_module.escape(caption)]))
-            _append(Node("div", {}, [html_str]))
+            _table_from_list_of_dicts(obj.to_dict("records"), caption=caption)
             return
     except ImportError:
         pass
