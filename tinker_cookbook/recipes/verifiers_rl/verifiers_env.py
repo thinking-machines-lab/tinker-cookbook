@@ -164,22 +164,27 @@ class VerifiersEnvGroupBuilder(EnvGroupBuilder):
         """Restore vf.Environment from the context variable on unpickle.
 
         Note: In cross-process scenarios (ProcessPoolExecutor, Ray), the context
-        variable won't be set and vf_env will remain None. The verifiers integration
-        currently requires single-process execution because custom_do_group_rollout
-        (in train.py) is a closure that captures shared state and is monkey-patched
-        onto the training loop. Full cross-process support would require the worker
-        to independently call vf.load_environment() and set_vf_env().
+        variable won't be set and this will raise RuntimeError. The verifiers
+        integration currently requires single-process execution because
+        custom_do_group_rollout (in train.py) is a closure that captures shared
+        state and is monkey-patched onto the training loop. Full cross-process
+        support would require the worker to independently call
+        vf.load_environment() and set_vf_env().
         """
-        self.__dict__.update(state)
-        if self.vf_env is None:
-            self.vf_env = get_vf_env()
-        if self.vf_env is None:
+        vf_env = state.pop("vf_env", None) or get_vf_env()
+        if vf_env is None:
             raise RuntimeError(
                 "VerifiersEnvGroupBuilder unpickled without a vf.Environment. "
                 "In cross-process scenarios (ProcessPoolExecutor, Ray), the worker "
                 "process must call set_vf_env(vf.load_environment(...)) before "
                 "unpickling builders. See verifiers_rl/train.py for reference."
             )
+        self.vf_env = vf_env
+        self.prompt = state["prompt"]
+        self.example_id = state["example_id"]
+        self.task = state["task"]
+        self.answer = state["answer"]
+        self.info = state["info"]
 
     def get_rollout_inputs(self, group_size: int) -> list[vf.RolloutInput]:
         return [
