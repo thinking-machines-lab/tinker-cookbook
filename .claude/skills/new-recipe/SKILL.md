@@ -81,8 +81,68 @@ python -m tinker_cookbook.recipes.<recipe_name>.train [chz overrides]
 
 Write the recipe files following the patterns above. Place them in `tinker_cookbook/recipes/$ARGUMENTS/`.
 
-## Step 5: Verify
+## Step 5: Add tests
+
+The repo has two layers of testing. **Both should be added for every new recipe.**
+
+### Smoke test (required)
+Create `tests/test_recipe_<name>.py` — a minimal test that runs the recipe and verifies it reaches training step 1. CI auto-discovers these files and runs them daily.
+
+```python
+from tests.helpers import run_recipe
+
+def test_<recipe_name>():
+    run_recipe(
+        "tinker_cookbook.recipes.<recipe_name>.train",
+        [
+            "behavior_if_log_dir_exists=delete",
+            # Override params to make it fast:
+            # "groups_per_batch=4", "group_size=2", "batch_size=16", etc.
+        ],
+    )
+```
+
+Key conventions:
+- `run_recipe()` launches the module as a subprocess and watches stdout for step-1 log patterns
+- Always pass `behavior_if_log_dir_exists=delete` to avoid conflicts in repeated CI runs
+- Override batch sizes / group sizes to small values so the test completes quickly (< 15 min)
+- The test passes when training step 1 is detected (regex: `Step 1|Sampling batch 1|batch_idx=1`)
+- See `tests/helpers.py` for details on `run_recipe()` and `tests/conftest.py` for fixtures
+
+### Unit tests (for testable components)
+Place unit tests next to the code they test using the `*_test.py` naming convention:
+
+```
+tinker_cookbook/recipes/<recipe_name>/<component>_test.py
+```
+
+For example:
+- `tinker_cookbook/recipes/math_rl/math_env_test.py` — tests environment logic
+- `tinker_cookbook/renderers/parsing_test.py` — tests parsing helpers
+
+Unit tests should:
+- Run without `TINKER_API_KEY` (no network calls)
+- Be fast (< 1s per test)
+- Use standard pytest features (fixtures, parametrize, marks)
+- Test picklability if the component needs to be serialized for distributed rollout
+
+### Running tests locally
+
+```bash
+# Unit tests only (no API key needed)
+pytest tinker_cookbook/
+
+# Smoke tests (requires TINKER_API_KEY)
+pytest tests/test_recipe_<name>.py -v -x -s
+```
+
+### CI integration
+- **Unit tests** (`pytest tinker_cookbook/`) run on every PR via `.github/workflows/pytest.yaml`
+- **Smoke tests** (`pytest tests/`) run daily and on manual trigger via `.github/workflows/smoke-test-recipes.yaml`
+- Adding `tests/test_recipe_<name>.py` is all that's needed — CI auto-discovers it
+
+## Step 6: Verify
 
 - Ensure the recipe is importable: `python -c "from tinker_cookbook.recipes.<name> import train"`
 - Check that CLI help works: `python -m tinker_cookbook.recipes.<name>.train --help`
-- For unit-testable components, add tests in `tinker_cookbook/tests/`
+- Run the smoke test locally: `pytest tests/test_recipe_<name>.py -v -x -s`

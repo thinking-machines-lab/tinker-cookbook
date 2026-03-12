@@ -133,6 +133,23 @@ python -m tinker_cookbook.recipes.preference.rlhf.rlhf_pipeline run_sft=False
 python -m tinker_cookbook.recipes.preference.rlhf.rlhf_pipeline run_sft=False run_rm=False
 ```
 
+## Step 6: Add tests
+
+If you created a new RLHF recipe, add a smoke test:
+
+```python
+# tests/test_recipe_<name>.py
+from tests.helpers import run_recipe
+
+def test_<recipe_name>():
+    run_recipe(
+        "tinker_cookbook.recipes.<recipe_name>.train",
+        ["behavior_if_log_dir_exists=delete"],
+    )
+```
+
+See `tests/test_recipe_rlhf_pipeline.py` for the existing example.
+
 ## Common pitfalls
 - RL learning rate must be **much lower** than SFT (1e-5 vs 2e-4)
 - Checkpoints flow between stages: SFT → RL policy init, RM → RL reward scoring
