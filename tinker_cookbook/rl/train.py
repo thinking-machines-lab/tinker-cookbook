@@ -411,8 +411,8 @@ class Config:
     # -------------------------------------------------------------------------
     # Checkpoint retention and logging detail (advanced)
     # -------------------------------------------------------------------------
-    # TTL for checkpoints in seconds, i.e. how long checkpoints should live
-    # before expiry (None = no expiry).
+    # Periodic checkpoints use this TTL; the final checkpoint is kept indefinitely.
+    # None disables expiry entirely.
     ttl_seconds: int | None = 604800  # 7 days
     num_groups_to_log: int = 4  # Number of groups to log per iteration (0 = disable logging)
     rollout_json_export: bool = True
@@ -1400,7 +1400,7 @@ async def main(
             log_path=cfg.log_path,
             kind="both",
             loop_state={"batch": num_batches},
-            ttl_seconds=cfg.ttl_seconds,
+            ttl_seconds=None,
         )
     else:
         logger.info("Training was already complete; nothing to do")

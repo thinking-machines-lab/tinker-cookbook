@@ -157,7 +157,7 @@ def main(config: Config):
         log_path=config.log_path,
         kind="both",
         loop_state={"batch": n_train_batches},
-        ttl_seconds=config.ttl_seconds,
+        ttl_seconds=None,
     )
 
     ml_logger.close()

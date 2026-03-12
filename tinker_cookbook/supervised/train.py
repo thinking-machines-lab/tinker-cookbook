@@ -65,6 +65,7 @@ class Config:
     save_every: int = 20
     eval_every: int = 10
     infrequent_eval_every: int = 100
+    # Periodic checkpoints use this TTL; the final checkpoint is kept indefinitely.
     ttl_seconds: int | None = 604800  # 7 days
 
     # Adam optimizer parameters
@@ -374,7 +375,7 @@ async def main(config: Config):
             log_path=config.log_path,
             kind="both",
             loop_state={"epoch": config.num_epochs, "batch": n_batches},
-            ttl_seconds=config.ttl_seconds,
+            ttl_seconds=None,
         )
     else:
         logger.info("Training was already complete; nothing to do")
