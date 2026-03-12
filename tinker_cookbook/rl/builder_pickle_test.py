@@ -48,3 +48,65 @@ class TestProblemGroupBuilderPickle:
 
         restored = pickle.loads(pickle.dumps(builder))
         assert restored.env_thunk.keywords["convo_prefix"] == convo_prefix
+
+
+# ---------------------------------------------------------------------------
+# Rollout executor tests
+# ---------------------------------------------------------------------------
+
+
+class TestRolloutTask:
+    def test_pickle_roundtrip(self) -> None:
+        """_RolloutTask survives pickle roundtrip with a real Renderer-bound builder."""
+        from tinker_cookbook.recipes.math_rl.math_env import MathEnv
+        from tinker_cookbook.rl.problem_env import ProblemGroupBuilder
+        from tinker_cookbook.rl.train import _RolloutTask
+
+        tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
+        renderer = get_renderer("llama3", tokenizer)
+
+        builder = ProblemGroupBuilder(
+            env_thunk=partial(MathEnv, "What is 2+2?", "4", renderer),
+            num_envs=2,
+        )
+
+        # SamplingClient can't be constructed without a server, so test with None
+        # to verify the dataclass + builder pickle. Full integration requires a server.
+        task = _RolloutTask(
+            sampling_client=None,  # type: ignore[arg-type]
+            env_group_builder=builder,
+            max_tokens=256,
+            temperature=1.0,
+            remove_constant_reward_groups=False,
+            enable_logging=False,
+        )
+
+        restored = pickle.loads(pickle.dumps(task))
+        assert restored.max_tokens == 256
+        assert restored.temperature == 1.0
+        assert restored.remove_constant_reward_groups is False
+        assert restored.env_group_builder.num_envs == 2
+        assert restored.env_group_builder.env_thunk.args[2]._renderer_name == "llama3"
+
+
+class TestRolloutExecutorContextVar:
+    def test_default_is_none(self) -> None:
+        """Default rollout executor is None (in-process async)."""
+        from tinker_cookbook.rl.train import get_rollout_executor
+
+        assert get_rollout_executor() is None
+
+    def test_set_and_get(self) -> None:
+        """set_rollout_executor / get_rollout_executor roundtrip."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        from tinker_cookbook.rl.train import get_rollout_executor, set_rollout_executor
+
+        executor = ThreadPoolExecutor(max_workers=1)
+        try:
+            set_rollout_executor(executor)
+            assert get_rollout_executor() is executor
+        finally:
+            set_rollout_executor(None)
+            executor.shutdown(wait=False)
+        assert get_rollout_executor() is None
