@@ -43,6 +43,7 @@ from tinker_cookbook.rl.rollout_logging import (
     write_rollout_summaries_jsonl_from_groups,
 )
 from tinker_cookbook.rl.rollouts import (
+    do_group_rollout,  # noqa: F401 — re-exported for verifiers monkey-patching
     do_group_rollout_and_filter_constant_reward,
     set_rollout_executor,
 )
