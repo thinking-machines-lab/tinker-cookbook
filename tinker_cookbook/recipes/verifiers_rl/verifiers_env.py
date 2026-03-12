@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextvars import ContextVar
 from typing import Sequence
 
@@ -16,6 +17,8 @@ from tinker_cookbook.rl.types import (
     TrajectoryGroup,
     Transition,
 )
+
+logger = logging.getLogger(__name__)
 
 _vf_env_ctx: ContextVar[vf.Environment | None] = ContextVar("vf_env", default=None)
 
@@ -173,6 +176,14 @@ class VerifiersEnvGroupBuilder(EnvGroupBuilder):
         self.__dict__.update(state)
         if self.vf_env is None:
             self.vf_env = get_vf_env()
+        if self.vf_env is None:
+            logger.warning(
+                "VerifiersEnvGroupBuilder unpickled without a vf.Environment. "
+                "This is expected in cross-process scenarios (ProcessPoolExecutor, Ray) "
+                "where the context variable is not set. The worker process must call "
+                "set_vf_env() before using this builder. "
+                "See verifiers_rl/train.py for the current single-process integration."
+            )
 
     def get_rollout_inputs(self, group_size: int) -> list[vf.RolloutInput]:
         return [
