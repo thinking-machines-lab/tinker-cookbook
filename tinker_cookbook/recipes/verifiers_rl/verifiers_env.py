@@ -138,6 +138,16 @@ class VerifiersRLDatasetBuilder(RLDatasetBuilder):
 
 
 class VerifiersEnvGroupBuilder(EnvGroupBuilder):
+    """EnvGroupBuilder for the verifiers library integration.
+
+    Pickle support: ``vf.Environment`` is not pickleable. On deserialization,
+    it is recovered from the ``_vf_env_ctx`` context variable (set via
+    ``set_vf_env()``). Raises ``RuntimeError`` if the context variable is not
+    set — this is expected in cross-process scenarios since the verifiers
+    integration currently requires single-process execution (the
+    ``custom_do_group_rollout`` in train.py is a closure over shared state).
+    """
+
     def __init__(
         self,
         vf_env: vf.Environment,
@@ -161,16 +171,7 @@ class VerifiersEnvGroupBuilder(EnvGroupBuilder):
         return state
 
     def __setstate__(self, state: dict) -> None:
-        """Restore vf.Environment from the context variable on unpickle.
-
-        Note: In cross-process scenarios (ProcessPoolExecutor, Ray), the context
-        variable won't be set and this will raise RuntimeError. The verifiers
-        integration currently requires single-process execution because
-        custom_do_group_rollout (in train.py) is a closure that captures shared
-        state and is monkey-patched onto the training loop. Full cross-process
-        support would require the worker to independently call
-        vf.load_environment() and set_vf_env().
-        """
+        """Restore vf.Environment from the context variable on unpickle."""
         vf_env = state.pop("vf_env", None) or get_vf_env()
         if vf_env is None:
             raise RuntimeError(

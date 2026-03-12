@@ -66,10 +66,10 @@ class RetrievalConfig:
 class ChromaTool:
     """Search tool using ChromaDB + Gemini embeddings.
 
-    Pickle support: Non-pickleable async clients (``_chroma_client``, ``_gemini_client``)
-    are excluded from pickle state and lazily reconnected on first use after deserialization.
-    Connection params (``_chroma_host``, ``_chroma_port``) must be set via ``build()`` for
-    this to work.
+    Pickle support: async clients are not pickleable (network connections).
+    ``__getstate__`` excludes them; ``_ensure_clients()`` lazily reconnects
+    before first use after deserialization. Requires ``build()`` so that
+    connection params (host, port) are available for reconnection.
     """
 
     def __init__(
@@ -80,12 +80,13 @@ class ChromaTool:
         retrieval_config: RetrievalConfig,
         max_retries: int,
         initial_retry_delay: int,
-        # Connection params for pickle support — set by build()
+        # Connection params stored for reconnection after pickle roundtrip.
+        # Set automatically by build(); None if constructed directly.
         chroma_host: str | None = None,
         chroma_port: int | None = None,
     ):
-        self._chroma_client = chroma_client
-        self._gemini_client = gemini_client
+        self._chroma_client: AsyncClientAPI | None = chroma_client
+        self._gemini_client: genai.Client | None = gemini_client
         self._collection_name = collection_name
         self._retrieval_config = retrieval_config
         self._max_retries = max_retries
@@ -100,13 +101,13 @@ class ChromaTool:
         state["_gemini_client"] = None
         return state
 
-    async def _ensure_clients(self) -> None:
-        """Lazily reconnect async clients after deserialization."""
+    async def _ensure_clients(self) -> tuple[AsyncClientAPI, genai.Client]:
+        """Return live clients, reconnecting if needed after deserialization."""
         if self._chroma_client is None:
             if self._chroma_host is None or self._chroma_port is None:
                 raise RuntimeError(
                     "Cannot reconnect ChromaTool: connection params not set. "
-                    "ChromaTool must be created via ChromaTool.build() to support pickle."
+                    "Use ChromaTool.build() to enable pickle support."
                 )
             self._chroma_client = await chromadb.AsyncHttpClient(
                 host=self._chroma_host,
@@ -115,6 +116,7 @@ class ChromaTool:
             )
         if self._gemini_client is None:
             self._gemini_client = get_gemini_client()
+        return self._chroma_client, self._gemini_client
 
     @staticmethod
     async def build(
@@ -159,19 +161,23 @@ class ChromaTool:
             chroma_port=chroma_port,
         )
 
-    async def _get_embeddings_with_retry(self, query_list: list[str]) -> list[list[float]]:
+    async def _get_embeddings_with_retry(
+        self, gemini_client: genai.Client, query_list: list[str]
+    ) -> list[list[float]]:
         embedding_config = self._retrieval_config.embedding_config
         return await get_gemini_embedding(
-            self._gemini_client,
+            gemini_client,
             query_list,
             embedding_config.model_name,
             embedding_config.embedding_dim,
             embedding_config.task_type,
         )
 
-    async def _query_chroma_with_retry(self, query_embeddings: list[list[float]]) -> QueryResult:
+    async def _query_chroma_with_retry(
+        self, chroma_client: AsyncClientAPI, query_embeddings: list[list[float]]
+    ) -> QueryResult:
         for attempt in range(self._max_retries):
-            collection = await self._chroma_client.get_collection(self._collection_name)
+            collection = await chroma_client.get_collection(self._collection_name)
             try:
                 results = await collection.query(
                     query_embeddings=query_embeddings,  # pyright: ignore[reportArgumentType]
@@ -200,10 +206,10 @@ class ChromaTool:
         ],
     ) -> ToolResult:
         """Search Wikipedia for relevant information based on the given query."""
-        await self._ensure_clients()
+        chroma_client, gemini_client = await self._ensure_clients()
         async with _CONNECTION_SEMAPHORE:
-            embeddings = await self._get_embeddings_with_retry(query_list)
-            results = await self._query_chroma_with_retry(embeddings)
+            embeddings = await self._get_embeddings_with_retry(gemini_client, query_list)
+            results = await self._query_chroma_with_retry(chroma_client, embeddings)
 
         # Format same as original ChromaToolClient.invoke()
         message_content = ""
