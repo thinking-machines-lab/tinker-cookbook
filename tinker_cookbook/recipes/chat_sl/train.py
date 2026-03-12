@@ -53,6 +53,8 @@ class CLIConfig:
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
+    max_steps: int | None = None
+
 
 def get_dataset_builder(
     dataset: str,
@@ -161,6 +163,7 @@ def cli_main(cli_config: CLIConfig):
         save_every=cli_config.save_every,
         eval_every=cli_config.eval_every,
         infrequent_eval_every=cli_config.infrequent_eval_every,
+        max_steps=cli_config.max_steps,
     )
     asyncio.run(train.main(config))
 

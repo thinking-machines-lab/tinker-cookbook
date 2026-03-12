@@ -79,6 +79,9 @@ class Config:
 
     enable_trace: bool = False
 
+    # Maximum number of training steps. If None, train for num_epochs * n_batches.
+    max_steps: int | None = None
+
 
 @dataclass
 class SubmittedBatch:
@@ -228,6 +231,8 @@ async def main(config: Config):
     dataset, maybe_test_dataset = config.dataset_builder()
     n_batches = len(dataset)
     total_steps = n_batches * config.num_epochs
+    if config.max_steps is not None:
+        total_steps = min(total_steps, config.max_steps)
     progress_denominator = total_steps if total_steps > 0 else 1
     tokenizer = get_tokenizer(config.model_name)
 
@@ -354,21 +359,31 @@ async def main(config: Config):
 
     pending_batch: SubmittedBatch | None = None
 
+    reached_max_steps = False
     for epoch_idx in range(start_epoch, config.num_epochs):
         logger.info(f"Starting epoch {epoch_idx}")
         dataset.set_epoch(seed=epoch_idx)
 
         start_batch_idx = start_batch if epoch_idx == start_epoch else 0
         for batch_idx in range(start_batch_idx, n_batches):
+            step = epoch_idx * n_batches + batch_idx
+            if config.max_steps is not None and step >= config.max_steps:
+                reached_max_steps = True
+                break
             submitted_batch = await submit_batch(epoch_idx, batch_idx)
             if pending_batch is not None:
                 await finish_batch(pending_batch)
             pending_batch = submitted_batch
+        if reached_max_steps:
+            break
 
     if pending_batch is not None:
         await finish_batch(pending_batch)
 
-    if start_epoch < config.num_epochs:
+    did_train = start_epoch < config.num_epochs and (
+        config.max_steps is None or start_epoch * n_batches + start_batch < config.max_steps
+    )
+    if did_train:
         await checkpoint_utils.save_checkpoint_async(
             training_client=training_client,
             name="final",

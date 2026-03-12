@@ -10,7 +10,6 @@ def test_vlm_classifier():
             "batch_size=16",
             "num_epochs=1",
             "n_eval=16",
-            "eval_every=0",
             "behavior_if_log_dir_exists=delete",
         ],
     )

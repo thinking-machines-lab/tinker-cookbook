@@ -8,6 +8,5 @@ def test_twenty_questions():
             "batch_size=8",
             "group_size=2",
             "num_epochs=1",
-            "eval_every=0",
         ],
     )

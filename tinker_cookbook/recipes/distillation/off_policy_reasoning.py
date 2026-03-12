@@ -121,6 +121,8 @@ class CLIConfig:
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
+    max_steps: int | None = None
+
 
 def cli_main(cli_config: CLIConfig):
     """Convert CLI config to full config and run training."""
@@ -187,6 +189,7 @@ def cli_main(cli_config: CLIConfig):
         lora_rank=cli_config.lora_rank,
         save_every=cli_config.save_every,
         eval_every=cli_config.eval_every,
+        max_steps=cli_config.max_steps,
     )
 
     # Run training

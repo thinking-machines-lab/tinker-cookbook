@@ -26,6 +26,8 @@ class CLIConfig:
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
+    max_steps: int | None = None
+
 
 def build_config(cli_config: CLIConfig) -> train.Config:
     model_name = cli_config.model_name
@@ -62,6 +64,7 @@ def build_config(cli_config: CLIConfig) -> train.Config:
         eval_every=cli_config.eval_every,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
+        max_steps=cli_config.max_steps,
     )
 
 
