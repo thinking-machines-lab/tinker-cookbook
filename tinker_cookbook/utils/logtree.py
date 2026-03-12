@@ -30,7 +30,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Iterator, Mapping, Protocol, Sequence, TypeVar, overload
+from typing import Any, Callable, Iterator, Mapping, Protocol, Sequence, TypeVar, cast, overload
 
 # Context variables for task-local state
 _current_trace: ContextVar["Trace | None"] = ContextVar("lt_current_trace", default=None)
@@ -763,7 +763,7 @@ def log_formatter(formatter: Formatter) -> None:
     html = formatter.to_html()
     container = Node("div", {})
     container.children.append(html)
-    to_data = getattr(formatter, "to_data", None)
+    to_data = cast("Callable[[], dict[str, Any] | None] | None", getattr(formatter, "to_data", None))
     data = to_data() if callable(to_data) else None
     if data is not None:
         container.data = data

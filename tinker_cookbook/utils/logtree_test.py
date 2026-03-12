@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from typing import Any, cast
 
 from tinker_cookbook.renderers.base import Message, ToolCall, UnparsedToolCall
 from tinker_cookbook.utils import logtree
@@ -651,7 +652,7 @@ def test_log_formatter_without_to_data_still_works():
         json_path = Path(tmpdir) / "trace.json"
 
         with logtree.init_trace("Legacy Formatter Test", path=None) as trace:
-            logtree.log_formatter(LegacyFormatter())
+            logtree.log_formatter(cast(Any, LegacyFormatter()))
 
         logtree.write_trace_json(trace, json_path)
         content = json.loads(json_path.read_text())
