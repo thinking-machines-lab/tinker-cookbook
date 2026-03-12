@@ -1090,6 +1090,40 @@ def render_with_jinja(
     return html
 
 
+def prune_empty_sections() -> None:
+    """
+    Remove child ``<section>`` nodes whose ``lt-section-body`` div has no children
+    from the current container.  Call this after concurrent work (e.g.
+    ``asyncio.gather``) to clean up sections that were created for scoping but
+    whose bodies were never populated (because the inner code chose not to log).
+    """
+    if not _is_logging_enabled():
+        return
+    stack = _container_stack.get()
+    if not stack:
+        return
+    container = stack[-1]
+    container.children = [
+        child for child in container.children if not _is_empty_section(child)
+    ]
+
+
+def _is_empty_section(node: "Node | str") -> bool:
+    """Return True if *node* is a ``<section>`` whose ``lt-section-body`` div is empty."""
+    if isinstance(node, str):
+        return False
+    if node.tag != "section":
+        return False
+    for child in node.children:
+        if (
+            isinstance(child, Node)
+            and child.attrs.get("class") == "lt-section-body"
+            and len(child.children) == 0
+        ):
+            return True
+    return False
+
+
 def flush_trace() -> bool:
     """
     Flush the current trace to the saved path even if the trace has not been exited.

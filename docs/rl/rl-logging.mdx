@@ -118,20 +118,24 @@ The tree mirrors the nesting of `logtree.scope_header()` calls during training. 
 root (body.lt-root)
 ├── h1: "Running evaluation test 0"
 ├── p: explanation text
-├── section: do_group_rollout          # one per problem
-│   ├── h2: "do_group_rollout"
+├── section: "Group Rollout"             # one per problem
+│   ├── h2: "Group Rollout"
 │   └── div.lt-section-body
-│       ├── section: do_single_rollout  # one per trajectory in group
-│       │   ├── h3: "do_single_rollout"
+│       ├── section: "Rollout 0"         # one per trajectory in group
+│       │   ├── h3: "Rollout 0"
 │       │   └── div.lt-section-body
 │       │       ├── section: "Prompt"         # data.type == "conversation"
 │       │       ├── section: "Policy Response" # data.type == "conversation"
 │       │       ├── section: "Grading Results"
 │       │       └── section: "Reward Summary"
+│       ├── section: "Rollout 1"
+│       │   └── ...
 │       └── section: "Trajectory Details"
 │           └── per-trajectory episode stats and turn-level metrics
 ...
 ```
+
+Rollout sections that end up empty (because the env doesn't use logtree logging) are automatically pruned — you'll only see rollout sections that contain content.
 
 ### Extracting model responses from JSON
 

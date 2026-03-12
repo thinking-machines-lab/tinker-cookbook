@@ -589,6 +589,59 @@ def test_formatter_structured_data_in_json():
         assert data["messages"][1]["content"][1]["text"] == "The answer is 4."
 
 
+def test_prune_empty_sections():
+    """Test that prune_empty_sections removes sections with empty bodies."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_path = Path(tmpdir) / "prune.html"
+        json_path = Path(tmpdir) / "prune.json"
+
+        with logtree.init_trace("Prune Test", path=output_path) as trace:
+            with logtree.scope_header("Parent"):
+                # Section with content — should survive pruning
+                with logtree.scope_header("Has Content"):
+                    logtree.log_text("Real content here")
+
+                # Section without content — should be pruned
+                with logtree.scope_header("Empty Section"):
+                    pass  # nothing logged
+
+                # Another section with content
+                with logtree.scope_header("Also Has Content"):
+                    logtree.log_text("More content")
+
+                logtree.prune_empty_sections()
+
+        logtree.write_trace_json(trace, json_path)
+        content = output_path.read_text()
+
+        assert "Has Content" in content
+        assert "Real content here" in content
+        assert "Also Has Content" in content
+        assert "More content" in content
+        # The empty section should have been removed
+        assert "Empty Section" not in content
+
+        # Also verify JSON
+        json_content = json.loads(json_path.read_text())
+        serialized = json.dumps(json_content)
+        assert "Empty Section" not in serialized
+
+
+def test_prune_preserves_nonempty_sections():
+    """Test that prune_empty_sections does not remove sections that have content."""
+    with logtree.init_trace("Prune Preserve Test", path=None) as trace:
+        with logtree.scope_header("Outer"):
+            for i in range(3):
+                with logtree.scope_header(f"Section {i}"):
+                    logtree.log_text(f"Content {i}")
+            logtree.prune_empty_sections()
+
+    serialized = json.dumps(trace.to_dict())
+    for i in range(3):
+        assert f"Section {i}" in serialized
+        assert f"Content {i}" in serialized
+
+
 def test_dataframe_table_produces_structured_nodes():
     """Test that DataFrame tables produce structured Nodes, not raw HTML strings."""
     import pandas as pd
@@ -645,6 +698,8 @@ if __name__ == "__main__":
     test_formatter_css_deduplication()
     test_scope_details()
     test_scope_disable_nested()
+    test_prune_empty_sections()
+    test_prune_preserves_nonempty_sections()
     test_formatter_structured_data_in_json()
     test_dataframe_table_produces_structured_nodes()
 
