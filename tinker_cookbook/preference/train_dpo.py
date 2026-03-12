@@ -397,7 +397,7 @@ def main(config: Config):
             loop_state={"epoch": config.num_epochs, "batch": n_batches},
             ttl_seconds=None,
         )
-        # Also save with the "final" tag
+        # Also save under the name "final"
         checkpoint_utils.save_checkpoint(
             training_client=training_client,
             name="final",

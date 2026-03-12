@@ -471,7 +471,7 @@ async def main(
             loop_state={"batch": num_batches},
             ttl_seconds=None,
         )
-        # Also save with the "final" tag
+        # Also save under the name "final"
         _ = await checkpoint_utils.save_checkpoint_async(
             training_client=training_client,
             name="final",
