@@ -589,57 +589,6 @@ def test_formatter_structured_data_in_json():
         assert data["messages"][1]["content"][1]["text"] == "The answer is 4."
 
 
-def test_scope_header_deferred_materializes_when_content():
-    """Test that scope_header_deferred creates a section when content is logged."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        json_path = Path(tmpdir) / "deferred.json"
-
-        with logtree.init_trace("Deferred Test", path=None) as trace:
-            with logtree.scope_header("Parent"):
-                with logtree.scope_header_deferred("Has Content"):
-                    logtree.log_text("Real content here")
-
-                with logtree.scope_header_deferred("Empty Section"):
-                    pass  # nothing logged
-
-                with logtree.scope_header_deferred("Also Has Content"):
-                    logtree.log_text("More content")
-
-        logtree.write_trace_json(trace, json_path)
-        json_content = json.loads(json_path.read_text())
-        serialized = json.dumps(json_content)
-
-        assert "Has Content" in serialized
-        assert "Real content here" in serialized
-        assert "Also Has Content" in serialized
-        assert "More content" in serialized
-        # The empty section should never have been created
-        assert "Empty Section" not in serialized
-
-
-def test_scope_header_deferred_noop_when_empty():
-    """Test that scope_header_deferred creates nothing when nothing is logged."""
-    with logtree.init_trace("Deferred Empty Test", path=None) as trace:
-        with logtree.scope_header_deferred("Should Not Exist"):
-            pass
-
-    serialized = json.dumps(trace.to_dict())
-    assert "Should Not Exist" not in serialized
-    # Root should only have the title and subtitle, no sections
-    assert len([c for c in trace.root.children if isinstance(c, logtree.Node) and c.tag == "section"]) == 0
-
-
-def test_scope_header_deferred_nested_depth():
-    """Test that header depth is correct for deferred scopes."""
-    with logtree.init_trace("Depth Test", path=None) as trace:
-        with logtree.scope_header("Outer"):  # h2
-            with logtree.scope_header_deferred("Inner"):  # should be h3
-                logtree.log_text("content")
-
-    html = trace.body_html()
-    assert '<h3 class="lt-h3">Inner</h3>' in html
-
-
 def test_dataframe_table_produces_structured_nodes():
     """Test that DataFrame tables produce structured Nodes, not raw HTML strings."""
     import pandas as pd
@@ -696,9 +645,6 @@ if __name__ == "__main__":
     test_formatter_css_deduplication()
     test_scope_details()
     test_scope_disable_nested()
-    test_scope_header_deferred_materializes_when_content()
-    test_scope_header_deferred_noop_when_empty()
-    test_scope_header_deferred_nested_depth()
     test_formatter_structured_data_in_json()
     test_dataframe_table_produces_structured_nodes()
 

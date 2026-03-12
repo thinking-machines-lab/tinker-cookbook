@@ -118,24 +118,22 @@ The tree mirrors the nesting of `logtree.scope_header()` calls during training. 
 root (body.lt-root)
 ├── h1: "Running evaluation test 0"
 ├── p: explanation text
-├── section: "Group Rollout"             # one per problem
+├── section: "Group Rollout"                # one per problem
 │   ├── h2: "Group Rollout"
 │   └── div.lt-section-body
-│       ├── section: "Rollout 0"         # one per trajectory in group
-│       │   ├── h3: "Rollout 0"
-│       │   └── div.lt-section-body
-│       │       ├── section: "Prompt"         # data.type == "conversation"
-│       │       ├── section: "Policy Response" # data.type == "conversation"
-│       │       ├── section: "Grading Results"
-│       │       └── section: "Reward Summary"
-│       ├── section: "Rollout 1"
-│       │   └── ...
-│       └── section: "Trajectory Details"
+│       ├── section: "Prompt"               # env logging (rollout 0)
+│       ├── section: "Policy Response"      # data.type == "conversation"
+│       ├── section: "Grading Results"
+│       ├── section: "Reward Summary"
+│       ├── section: "Prompt"               # env logging (rollout 1)
+│       ├── ...                             # (sections from concurrent rollouts
+│       │                                   #  may interleave)
+│       └── section: "Trajectory Details"   # always present
 │           └── per-trajectory episode stats and turn-level metrics
 ...
 ```
 
-Per-rollout sections use `logtree.scope_header_deferred()`, which only materializes the section if the env actually logs something inside it. Envs that don't use logtree produce no rollout sections at all.
+The framework does not create per-rollout sections — the env is responsible for its own logtree logging. Envs that don't use logtree produce no rollout sections at all. Envs that do log (like the rubric-graded env) typically create their own sections for prompt, response, grading, etc.
 
 ### Extracting model responses from JSON
 

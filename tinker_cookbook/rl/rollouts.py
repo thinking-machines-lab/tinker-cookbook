@@ -99,14 +99,7 @@ async def do_group_rollout(
     env_group_builder: EnvGroupBuilder, policy: TokenCompleter
 ) -> TrajectoryGroup:
     envs_G: Sequence[Env] = await env_group_builder.make_envs()
-
-    async def _scoped_rollout(idx: int, env: Env) -> Trajectory:
-        with logtree.scope_header_deferred(f"Rollout {idx}"):
-            return await do_single_rollout(policy, env)
-
-    trajectories_G = await asyncio.gather(
-        *[_scoped_rollout(i, env) for i, env in enumerate(envs_G)]
-    )
+    trajectories_G = await asyncio.gather(*[do_single_rollout(policy, env) for env in envs_G])
 
     rewards_and_metrics_G = await env_group_builder.compute_group_rewards(trajectories_G, envs_G)
     rewards_G, metrics_G = zip(*rewards_and_metrics_G, strict=True)

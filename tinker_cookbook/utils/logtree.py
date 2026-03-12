@@ -520,52 +520,6 @@ def scope_header(title: str, **attrs: Any) -> Iterator[None]:
             _header_depth.reset(tok_h)
 
 
-@contextmanager
-def scope_header_deferred(title: str, **attrs: Any) -> Iterator[None]:
-    """
-    Like :func:`scope_header`, but the section is only inserted into the
-    tree when at least one child is logged inside the body.  If nothing is
-    logged, no nodes are created at all.
-
-    This is useful when you need a per-item scope for grouping (e.g. to
-    prevent interleaving from concurrent ``asyncio`` tasks) but some items
-    may not produce any log output.
-
-    Example:
-        # Only items that actually log will get a section header:
-        for i, item in enumerate(items):
-            with logtree.scope_header_deferred(f"Item {i}"):
-                maybe_log_something(item)
-    """
-    if not _is_logging_enabled():
-        yield
-        return
-
-    # Compute header level now so nested scopes see the right depth.
-    h = _next_header_level()
-    tok_h = _header_depth.set(_header_depth.get() + (h,))
-
-    # Create a detached body — not yet part of the tree.
-    body = Node("div", {"class": "lt-section-body"})
-
-    # Push body as the active container so any logging goes into it.
-    tok_s = _container_stack.set(_container_stack.get() + (body,))
-    try:
-        yield
-    finally:
-        _container_stack.reset(tok_s)
-        _header_depth.reset(tok_h)
-
-        # Only materialize the section if something was logged.
-        if body.children:
-            section = Node("section", {"class": "lt-section", **_normalize_attrs(**attrs)})
-            section.children.append(
-                Node(f"h{h}", {"class": f"lt-h{h}"}, [html_module.escape(title)])
-            )
-            section.children.append(body)
-            _append(section)
-
-
 F = TypeVar("F", bound=Callable[..., Any])
 
 
