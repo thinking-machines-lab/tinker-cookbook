@@ -121,7 +121,6 @@ async def do_group_rollout(
 
 # ---------------------------------------------------------------------------
 # Rollout executor — allows offloading group rollouts to processes/Ray/etc.
-# See docs/design/rollout-executor.md for design rationale.
 # ---------------------------------------------------------------------------
 
 _rollout_executor: ContextVar[Executor | None] = ContextVar("rollout_executor", default=None)
