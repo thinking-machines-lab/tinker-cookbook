@@ -11,7 +11,11 @@ from tinker_cookbook.rl.rollout_logging import (
     RolloutSummaryExportConfig,
     write_rollout_summaries_jsonl,
 )
-from tinker_cookbook.rl.rollouts import do_group_rollout
+from tinker_cookbook.rl.rollouts import (
+    do_group_rollout,
+    do_group_rollout_and_filter_constant_reward,
+    get_rollout_executor,
+)
 from tinker_cookbook.rl.types import EnvGroupBuilder, RLDataset, TrajectoryGroup
 from tinker_cookbook.utils.misc_utils import all_same, dict_mean
 from tinker_cookbook.utils import logtree
@@ -160,8 +164,6 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         *,
         rollout_summary_export: RolloutSummaryExportConfig | None = None,
     ) -> dict[str, float]:
-        from tinker_cookbook.rl.train import get_rollout_executor
-
         if get_rollout_executor() is not None:
             # Use the executor-aware dispatch path so rollouts are offloaded
             return await self._eval_with_executor(
@@ -181,8 +183,6 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         rollout_summary_export: RolloutSummaryExportConfig | None = None,
     ) -> dict[str, float]:
         """Run evaluation with rollouts dispatched via the rollout executor."""
-        from tinker_cookbook.rl.train import do_group_rollout_and_filter_constant_reward
-
         results = await asyncio.gather(
             *[
                 do_group_rollout_and_filter_constant_reward(

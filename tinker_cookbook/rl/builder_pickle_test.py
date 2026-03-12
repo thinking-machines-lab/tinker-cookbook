@@ -60,7 +60,7 @@ class TestRolloutTask:
         """_RolloutTask survives pickle roundtrip with a real Renderer-bound builder."""
         from tinker_cookbook.recipes.math_rl.math_env import MathEnv
         from tinker_cookbook.rl.problem_env import ProblemGroupBuilder
-        from tinker_cookbook.rl.train import _RolloutTask
+        from tinker_cookbook.rl.rollouts import _RolloutTask
 
         tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
         renderer = get_renderer("llama3", tokenizer)
@@ -92,7 +92,7 @@ class TestRolloutTask:
 class TestRolloutExecutorContextVar:
     def test_default_is_none(self) -> None:
         """Default rollout executor is None (in-process async)."""
-        from tinker_cookbook.rl.train import get_rollout_executor
+        from tinker_cookbook.rl.rollouts import get_rollout_executor
 
         assert get_rollout_executor() is None
 
@@ -100,7 +100,7 @@ class TestRolloutExecutorContextVar:
         """set_rollout_executor / get_rollout_executor roundtrip."""
         from concurrent.futures import ThreadPoolExecutor
 
-        from tinker_cookbook.rl.train import get_rollout_executor, set_rollout_executor
+        from tinker_cookbook.rl.rollouts import get_rollout_executor, set_rollout_executor
 
         executor = ThreadPoolExecutor(max_workers=1)
         try:
