@@ -135,7 +135,7 @@ root (body.lt-root)
 ...
 ```
 
-Rollout sections that end up empty (because the env doesn't use logtree logging) are automatically pruned — you'll only see rollout sections that contain content.
+Per-rollout sections use `logtree.scope_header_deferred()`, which only materializes the section if the env actually logs something inside it. Envs that don't use logtree produce no rollout sections at all.
 
 ### Extracting model responses from JSON
 
