@@ -6,7 +6,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from tinker_cookbook.renderers.base import Message
+from tinker_cookbook.renderers.base import Message, ToolCall, UnparsedToolCall
 from tinker_cookbook.utils import logtree
 
 
@@ -552,6 +552,24 @@ def test_formatter_structured_data_in_json():
                 {"type": "text", "text": "The answer is 4."},
             ],
         },
+        {
+            "role": "assistant",
+            "content": "Calling a tool",
+            "tool_calls": [
+                ToolCall(
+                    id="call_123",
+                    function=ToolCall.FunctionBody(
+                        name="calculator", arguments='{"expression":"2+2"}'
+                    ),
+                )
+            ],
+            "unparsed_tool_calls": [
+                UnparsedToolCall(raw_text="<tool_call>{bad json}</tool_call>", error="Invalid JSON")
+            ],
+            "tool_call_id": "call_123",
+            "name": "calculator",
+            "trainable": False,
+        },
     ]
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -579,7 +597,7 @@ def test_formatter_structured_data_in_json():
 
         data = data_nodes[0]
         assert data["type"] == "conversation"
-        assert len(data["messages"]) == 2
+        assert len(data["messages"]) == 3
         assert data["messages"][0]["role"] == "user"
         assert data["messages"][0]["content"] == "What is 2+2?"
         assert data["messages"][1]["role"] == "assistant"
@@ -587,6 +605,19 @@ def test_formatter_structured_data_in_json():
         assert data["messages"][1]["content"][0]["thinking"] == "Let me compute..."
         assert data["messages"][1]["content"][1]["type"] == "text"
         assert data["messages"][1]["content"][1]["text"] == "The answer is 4."
+        assert data["messages"][2]["tool_calls"] == [
+            {
+                "type": "function",
+                "id": "call_123",
+                "function": {"name": "calculator", "arguments": '{"expression":"2+2"}'},
+            }
+        ]
+        assert data["messages"][2]["unparsed_tool_calls"] == [
+            {"raw_text": "<tool_call>{bad json}</tool_call>", "error": "Invalid JSON"}
+        ]
+        assert data["messages"][2]["tool_call_id"] == "call_123"
+        assert data["messages"][2]["name"] == "calculator"
+        assert data["messages"][2]["trainable"] is False
 
         # Nodes with data should NOT have raw HTML string children in JSON
         def find_nodes_with_data(node):
@@ -604,6 +635,28 @@ def test_formatter_structured_data_in_json():
                 assert not isinstance(child, str), (
                     f"Node with data should not have string children in JSON, got: {child[:80]}"
                 )
+
+
+def test_log_formatter_without_to_data_still_works():
+    """Custom formatters that predate to_data should still log successfully."""
+
+    class LegacyFormatter:
+        def to_html(self) -> str:
+            return "<div>legacy</div>"
+
+        def get_css(self) -> str:
+            return ""
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        json_path = Path(tmpdir) / "trace.json"
+
+        with logtree.init_trace("Legacy Formatter Test", path=None) as trace:
+            logtree.log_formatter(LegacyFormatter())
+
+        logtree.write_trace_json(trace, json_path)
+        content = json.loads(json_path.read_text())
+        serialized = json.dumps(content)
+        assert "legacy" in serialized
 
 
 def test_dataframe_table_produces_structured_nodes():

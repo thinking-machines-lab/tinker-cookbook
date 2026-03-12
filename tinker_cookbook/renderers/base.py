@@ -417,6 +417,49 @@ def ensure_list(content: Content) -> list[ContentPart]:
     return content
 
 
+def content_to_jsonable(content: Content) -> str | list[dict[str, Any]]:
+    """Convert message content to a JSON-serializable structure."""
+    if isinstance(content, str):
+        return content
+
+    result: list[dict[str, Any]] = []
+    for part in content:
+        if part["type"] == "text":
+            result.append({"type": "text", "text": part["text"]})
+        elif part["type"] == "thinking":
+            result.append({"type": "thinking", "thinking": part["thinking"]})
+        elif part["type"] == "image":
+            image: str | Image.Image = part["image"]
+            image_part: dict[str, Any] = {"type": "image"}
+            if isinstance(image, str):
+                image_part["image"] = image
+            result.append(image_part)
+        else:
+            raise ValueError(f"Unknown content part type: {part['type']}")
+    return result
+
+
+def message_to_jsonable(message: Message) -> dict[str, Any]:
+    """Convert a Message TypedDict to a JSON-serializable dict without losing metadata."""
+    result: dict[str, Any] = {
+        "role": message["role"],
+        "content": content_to_jsonable(message["content"]),
+    }
+    if "tool_calls" in message:
+        result["tool_calls"] = [tc.model_dump(mode="json") for tc in message["tool_calls"]]
+    if "unparsed_tool_calls" in message:
+        result["unparsed_tool_calls"] = [
+            tc.model_dump(mode="json") for tc in message["unparsed_tool_calls"]
+        ]
+    if "trainable" in message:
+        result["trainable"] = message["trainable"]
+    if "tool_call_id" in message:
+        result["tool_call_id"] = message["tool_call_id"]
+    if "name" in message:
+        result["name"] = message["name"]
+    return result
+
+
 def remove_thinking(parts: list[ContentPart]) -> list[ContentPart]:
     """Filter out ThinkingPart elements from a content part list."""
     return [p for p in parts if p["type"] != "thinking"]

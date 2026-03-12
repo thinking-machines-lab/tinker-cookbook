@@ -763,7 +763,8 @@ def log_formatter(formatter: Formatter) -> None:
     html = formatter.to_html()
     container = Node("div", {})
     container.children.append(html)
-    data = formatter.to_data()
+    to_data = getattr(formatter, "to_data", None)
+    data = to_data() if callable(to_data) else None
     if data is not None:
         container.data = data
     _append(container)
