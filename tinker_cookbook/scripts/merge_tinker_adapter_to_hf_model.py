@@ -148,7 +148,7 @@ def load_meta_model(model_dir: Path) -> torch.nn.Module:
     config = AutoConfig.from_pretrained(str(model_dir), trust_remote_code=True)
     auto_cls = (
         AutoModelForImageTextToText
-        if (hasattr(config, "vision_config") and "kimi_k2" not in type(config).__name__.lower())
+        if (hasattr(config, "vision_config") and "kimik25" not in type(config).__name__.lower())
         else AutoModelForCausalLM
     )
     with torch.device("meta"):
@@ -328,10 +328,18 @@ def setup_dequantization(model_dir: Path) -> tuple | None:
         return None
     with open(config_path) as f:
         loaded_config = json.load(f)
-    if "quantization_config" not in loaded_config:
+
+    quant_config = None
+
+    if "text_config" in loaded_config and "quantization_config" in loaded_config["text_config"]:
+        quant_config = loaded_config["text_config"]["quantization_config"]
+
+    if "quantization_config" in loaded_config:
+        quant_config = loaded_config["quantization_config"]
+
+    if quant_config is None:
         return None
 
-    quant_config = loaded_config["quantization_config"]
     from compressed_tensors.compressors import ModelCompressor
     from compressed_tensors.quantization.quant_scheme import QuantizationScheme
 
@@ -399,9 +407,9 @@ def main():
         "--output-path", type=str, required=True, help="Path to save the merged model"
     )
     parser.add_argument(
-        "--dequantize",
+        "--no-dequantize",
         action="store_true",
-        help="Dequantize quantized weights to full precision",
+        help="Do not dequantize quantized weights",
     )
     args = parser.parse_args()
 
@@ -431,6 +439,11 @@ def main():
     log("Loading adapter weights")
     adapter_weights, adapter_config = load_adapter_weights(args.tinker_adapter_path)
 
+    # Step 6: Set up dequantization if requested
+    dequant_info = setup_dequantization(model_dir) if not args.no_dequantize else None
+    if dequant_info:
+        log("Dequantization enabled")
+
     log("Building merge ops")
     merge_ops = build_merge_ops(
         adapter_weights,
@@ -442,17 +455,14 @@ def main():
     total_ops = sum(len(ops) for ops in merge_ops.values())
     log(f"Merge ops: {total_ops} operations across {len(merge_ops)} target keys")
 
-    # Step 6: Set up dequantization if requested
-    dequant_info = setup_dequantization(model_dir) if args.dequantize else None
-    if dequant_info:
-        log("Dequantization enabled")
-
     # Step 7: Process each input shard → dequantize → merge LoRA → write output shards
     output_path = Path(args.output_path)
     output_path.mkdir(parents=True, exist_ok=False)
     writer = ShardWriter(output_path)
 
+    n_merges_applied_total = 0
     for i, shard_file in enumerate(shard_files):
+        n_merges_applied = 0
         log(f"Processing shard {i + 1}/{len(shard_files)}: {shard_file}")
 
         tensors = load_file(str(model_dir / shard_file))
@@ -464,11 +474,16 @@ def main():
             ops = merge_ops.pop(key, [])
             for op in ops:
                 apply_merge_op(tensors, op)
+                n_merges_applied += 1
+                n_merges_applied_total += 1
 
         for key, tensor in tensors.items():
             writer.add_tensor(key, tensor)
         del tensors
         writer.flush()
+
+        log(f"Applied {n_merges_applied} merges to {shard_file}")
+        log(f"  {n_merges_applied_total} of {total_ops} merges applied")
 
     output_weight_map, total_size = writer.finalize()
     assert len(merge_ops) == 0, f"Merge ops not applied: {merge_ops}"
@@ -493,7 +508,12 @@ def main():
         config = AutoConfig.from_pretrained(str(output_path), trust_remote_code=True)
         if hasattr(config, "quantization_config"):
             del config.quantization_config
+
+        if hasattr(config, "text_config") and hasattr(config.text_config, "quantization_config"):
+            del config.text_config.quantization_config
+
         config.save_pretrained(output_path)
+
     log(f"Merged model saved to {args.output_path}")
 
 
