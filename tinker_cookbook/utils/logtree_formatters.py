@@ -40,7 +40,7 @@ def _content_to_data(content: Content) -> str | list[dict[str, Any]]:
                 "error": part["error"],
             })
         else:
-            result.append({"type": ptype})
+            raise ValueError(f"Unknown content part type: {ptype!r}")
     return result
 
 

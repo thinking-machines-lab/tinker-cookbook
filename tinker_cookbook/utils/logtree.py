@@ -40,7 +40,11 @@ _logging_disabled: ContextVar[bool] = ContextVar("lt_logging_disabled", default=
 
 
 class Formatter(Protocol):
-    """Protocol for objects that can format themselves as HTML with CSS."""
+    """Protocol for objects that can format themselves as HTML with CSS.
+
+    Optionally implement ``to_data`` to attach structured data to the JSON
+    export (avoids consumers having to parse raw HTML).
+    """
 
     def to_html(self) -> str:
         """Generate HTML representation of this object."""
@@ -49,6 +53,10 @@ class Formatter(Protocol):
     def get_css(self) -> str:
         """Get CSS needed to style this object's HTML."""
         ...
+
+    def to_data(self) -> dict[str, Any] | None:
+        """Return structured data for JSON export, or None."""
+        return None
 
 
 @dataclass
@@ -747,8 +755,9 @@ def log_formatter(formatter: Formatter) -> None:
     html = formatter.to_html()
     container = Node("div", {})
     container.children.append(html)
-    if hasattr(formatter, "to_data"):
-        container.data = formatter.to_data()
+    data = formatter.to_data()
+    if data is not None:
+        container.data = data
     _append(container)
 
 
