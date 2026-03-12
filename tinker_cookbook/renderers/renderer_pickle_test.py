@@ -9,7 +9,7 @@ import pickle
 
 import pytest
 
-from tinker_cookbook.renderers import Message, get_renderer, register_renderer, unregister_renderer
+from tinker_cookbook.renderers import get_renderer, register_renderer, unregister_renderer
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 
