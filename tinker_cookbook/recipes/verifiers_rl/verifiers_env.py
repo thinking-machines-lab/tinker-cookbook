@@ -161,7 +161,15 @@ class VerifiersEnvGroupBuilder(EnvGroupBuilder):
         return state
 
     def __setstate__(self, state: dict) -> None:
-        """Restore vf.Environment from the context variable on unpickle."""
+        """Restore vf.Environment from the context variable on unpickle.
+
+        Note: In cross-process scenarios (ProcessPoolExecutor, Ray), the context
+        variable won't be set and vf_env will remain None. The verifiers integration
+        currently requires single-process execution because custom_do_group_rollout
+        (in train.py) is a closure that captures shared state and is monkey-patched
+        onto the training loop. Full cross-process support would require the worker
+        to independently call vf.load_environment() and set_vf_env().
+        """
         self.__dict__.update(state)
         if self.vf_env is None:
             self.vf_env = get_vf_env()
