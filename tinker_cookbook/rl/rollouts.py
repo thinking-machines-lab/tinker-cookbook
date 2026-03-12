@@ -1,8 +1,13 @@
 import asyncio
 import numbers
+from concurrent.futures import Executor
+from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any, Sequence
 
-from tinker_cookbook.completers import TokenCompleter
+import tinker
+
+from tinker_cookbook.completers import TinkerTokenCompleter, TokenCompleter
 from tinker_cookbook.rl.types import (
     Env,
     EnvGroupBuilder,
@@ -11,6 +16,8 @@ from tinker_cookbook.rl.types import (
     Transition,
 )
 from tinker_cookbook.utils import logtree
+from tinker_cookbook.utils.misc_utils import all_same
+from tinker_cookbook.utils.trace import scope
 
 
 def _log_transition_logs(logs: dict[str, Any]) -> None:
@@ -112,3 +119,119 @@ async def do_group_rollout(
                 _log_single_trajectory_details(traj, final_reward)
 
     return TrajectoryGroup(trajectories_G, list(rewards_G), list(metrics_G))
+
+
+# ---------------------------------------------------------------------------
+# Rollout executor — allows offloading group rollouts to processes/Ray/etc.
+# ---------------------------------------------------------------------------
+
+_rollout_executor: ContextVar[Executor | None] = ContextVar("rollout_executor", default=None)
+
+
+def set_rollout_executor(executor: Executor | None) -> None:
+    """Set the executor used for group rollouts.
+
+    When set, ``do_group_rollout_and_filter_constant_reward`` dispatches each
+    rollout via ``loop.run_in_executor(executor, ...)`` instead of running it
+    as an asyncio coroutine in the current process.
+
+    Pass any ``concurrent.futures.Executor`` — ``ProcessPoolExecutor`` works
+    out of the box, or wrap Ray / custom cluster dispatchers as ``Executor``.
+
+    Pass ``None`` to revert to the default in-process async behavior.
+    """
+    _rollout_executor.set(executor)
+
+
+def get_rollout_executor() -> Executor | None:
+    """Get the current rollout executor (None = in-process async)."""
+    return _rollout_executor.get()
+
+
+@dataclass(frozen=True)
+class _RolloutTask:
+    """Pickleable bundle of inputs for cross-process rollout dispatch."""
+
+    sampling_client: tinker.SamplingClient
+    env_group_builder: EnvGroupBuilder
+    max_tokens: int
+    temperature: float
+    remove_constant_reward_groups: bool
+    enable_logging: bool
+
+
+def _run_rollout_sync(task: _RolloutTask) -> TrajectoryGroup | None:
+    """Entry point for executor workers. Runs the async rollout in a fresh event loop.
+
+    Called by ``loop.run_in_executor()`` — must be a module-level sync function
+    so it can be pickled for ``ProcessPoolExecutor``.
+    """
+    return asyncio.run(
+        _do_group_rollout_and_filter_constant_reward_impl(
+            task.sampling_client,
+            task.env_group_builder,
+            task.max_tokens,
+            task.temperature,
+            task.remove_constant_reward_groups,
+            task.enable_logging,
+        )
+    )
+
+
+@scope
+async def do_group_rollout_and_filter_constant_reward(
+    sampling_client: tinker.SamplingClient,
+    env_group_builder: EnvGroupBuilder,
+    max_tokens: int,
+    temperature: float,
+    do_remove_constant_reward_groups: bool,
+    enable_logging: bool = True,
+) -> TrajectoryGroup | None:
+    """Run a group rollout, optionally dispatching to an external executor.
+
+    When a rollout executor is set (via ``set_rollout_executor``), inputs are
+    bundled into a pickleable ``_RolloutTask`` and dispatched via
+    ``loop.run_in_executor()``. Otherwise, runs as an asyncio coroutine
+    in the current process (zero overhead).
+    """
+    executor = get_rollout_executor()
+    if executor is not None:
+        task = _RolloutTask(
+            sampling_client=sampling_client,
+            env_group_builder=env_group_builder,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            remove_constant_reward_groups=do_remove_constant_reward_groups,
+            enable_logging=enable_logging,
+        )
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(executor, _run_rollout_sync, task)
+
+    return await _do_group_rollout_and_filter_constant_reward_impl(
+        sampling_client,
+        env_group_builder,
+        max_tokens,
+        temperature,
+        do_remove_constant_reward_groups,
+        enable_logging,
+    )
+
+
+async def _do_group_rollout_and_filter_constant_reward_impl(
+    sampling_client: tinker.SamplingClient,
+    env_group_builder: EnvGroupBuilder,
+    max_tokens: int,
+    temperature: float,
+    do_remove_constant_reward_groups: bool,
+    enable_logging: bool = True,
+) -> TrajectoryGroup | None:
+    policy = TinkerTokenCompleter(sampling_client, max_tokens=max_tokens, temperature=temperature)
+
+    with logtree.optional_enable_logging(enable_logging):
+        trajectory_group = await do_group_rollout(env_group_builder, policy)
+
+    # Remove if all trajectories have the same reward
+    if do_remove_constant_reward_groups and all_same(trajectory_group.get_total_rewards()):
+        return None
+    else:
+        return trajectory_group

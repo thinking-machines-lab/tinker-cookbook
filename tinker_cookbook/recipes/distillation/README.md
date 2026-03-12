@@ -73,6 +73,54 @@ python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
     wandb_project=cookbook_distillation
 ```
 
+## Distillation for multi-turn tool use
+
+The recipes above are single-turn — the student generates one response per prompt and receives a KL signal against the teacher. This works for reasoning and chat, but tool-use tasks require multi-turn interaction: the agent calls tools, observes results, and iterates. This recipe extends on-policy distillation to multi-turn tool-use episodes using Harbor sandbox environments.
+
+### Architecture
+
+Multi-turn distillation reuses three layers of infrastructure:
+
+1. **`tool_use` library** (`tinker_cookbook/tool_use/`) — Generic agent-tool interaction. `@tool` decorator defines tools, `build_agent_tool_env()` creates token-level RL environments from tools + renderer + reward function. `AgentToolMessageEnv` manages the message-level episode loop (append assistant message → execute tool calls → check termination).
+
+2. **`harbor_rl` recipe** (`tinker_cookbook/recipes/harbor_rl/`) — Applies `tool_use` to Harbor sandbox tasks. `HarborBashTool` wraps a sandbox as a `@tool`-decorated bash command. `HarborEnvGroupBuilder` creates sandboxed environments with task-specific grading via `HarborReward`.
+
+3. **Multi-turn distillation** (`tinker_cookbook/recipes/distillation/harbor_multiturn.py`) — `HarborDistillationDatasetBuilder` subclasses `HarborDatasetBuilder`, passing `reward_fn=zero_reward` (always returns 0.0) to override the default `HarborReward`. The only training signal is KL divergence against the teacher.
+
+Environment-provided tokens (system prompt, user message, tool responses, assistant headers) are masked out during training — only the student's generated tokens contribute to the loss.
+
+### Data setup
+
+This recipe uses Harbor sandbox tasks. To get started:
+
+- **Download:** `uvx harbor datasets download terminal-bench@2.0` (lands in `~/.cache/harbor/tasks/`)
+- **Load:** `load_terminal_bench_tasks()` from `tinker_cookbook.recipes.harbor_rl.launch_terminal_bench`
+- **Custom tasks:** any `HarborTask` with `environment/Dockerfile` and `tests/test.sh`
+
+See `tinker_cookbook/recipes/harbor_rl/README.md` for full details on the HarborTask format and sandbox protocol.
+
+### On-policy distillation (Harbor)
+
+```bash
+python -m tinker_cookbook.recipes.distillation.on_policy_distillation_harbor_multi_turn \
+    model_name=moonshotai/Kimi-K2-Thinking \
+    teacher_model=moonshotai/Kimi-K2-Thinking \
+    max_turns=10 \
+    group_size=4 \
+    groups_per_batch=8 \
+    learning_rate=1e-4 \
+    lora_rank=8 \
+    max_tokens=2048 \
+    max_trajectory_tokens=24576 \
+    temperature=1.0 \
+    kl_penalty_coef=1.0 \
+    sandbox_timeout=600 \
+    command_timeout=120 \
+    save_every=5 \
+    eval_every=5 \
+    wandb_name=cookbook-multiturn-onpodi
+```
+
 ## Additional details
 
 ### Reward calculation

@@ -67,7 +67,6 @@ inspect = [
     "inspect-evals>=0.3.106",
     "instruction-following-eval",
 ]
-if_rl = ["if-verifiable==0.1.2"]
 all = [
     "tinker_cookbook[vector-search]",
     "tinker_cookbook[wandb]",
@@ -75,7 +74,6 @@ all = [
     "tinker_cookbook[trackio]",
     "tinker_cookbook[verifiers]",
     "tinker_cookbook[inspect]",
-    "tinker_cookbook[if_rl]",
 ]
 
 [build-system]
@@ -84,9 +82,12 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["tinker_cookbook"]
+exclude = ["*_test.py"]
 
 [tool.pytest.ini_options]
-python_files = ["test_*.py", "*_test.py"]
+testpaths = ["tinker_cookbook", "tests"]
+python_files = ["*_test.py", "test_*.py"]
+norecursedirs = ["tinker_cookbook/scripts"]
 
 [tool.ruff]
 line-length = 100

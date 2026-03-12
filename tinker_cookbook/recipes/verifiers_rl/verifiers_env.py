@@ -138,6 +138,16 @@ class VerifiersRLDatasetBuilder(RLDatasetBuilder):
 
 
 class VerifiersEnvGroupBuilder(EnvGroupBuilder):
+    """EnvGroupBuilder for the verifiers library integration.
+
+    Pickle support: ``vf.Environment`` is not pickleable. On deserialization,
+    it is recovered from the ``_vf_env_ctx`` context variable (set via
+    ``set_vf_env()``). Raises ``RuntimeError`` if the context variable is not
+    set — this is expected in cross-process scenarios since the verifiers
+    integration currently requires single-process execution (the
+    ``custom_do_group_rollout`` in train.py is a closure over shared state).
+    """
+
     def __init__(
         self,
         vf_env: vf.Environment,
@@ -153,6 +163,29 @@ class VerifiersEnvGroupBuilder(EnvGroupBuilder):
         self.task = task
         self.answer = answer
         self.info = info or {}
+
+    def __getstate__(self) -> dict:
+        """Exclude non-pickleable vf.Environment from pickle state."""
+        state = self.__dict__.copy()
+        state["vf_env"] = None
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        """Restore vf.Environment from the context variable on unpickle."""
+        vf_env = state.pop("vf_env", None) or get_vf_env()
+        if vf_env is None:
+            raise RuntimeError(
+                "VerifiersEnvGroupBuilder unpickled without a vf.Environment. "
+                "In cross-process scenarios (ProcessPoolExecutor, Ray), the worker "
+                "process must call set_vf_env(vf.load_environment(...)) before "
+                "unpickling builders. See verifiers_rl/train.py for reference."
+            )
+        self.vf_env = vf_env
+        self.prompt = state["prompt"]
+        self.example_id = state["example_id"]
+        self.task = state["task"]
+        self.answer = state["answer"]
+        self.info = state["info"]
 
     def get_rollout_inputs(self, group_size: int) -> list[vf.RolloutInput]:
         return [

@@ -166,4 +166,5 @@ def cli_main(cli_config: CLIConfig):
 
 
 if __name__ == "__main__":
-    chz.nested_entrypoint(cli_main)
+    cli_config = chz.entrypoint(CLIConfig)
+    cli_main(cli_config)

@@ -117,4 +117,7 @@ class TinkerMessageCompleter(MessageCompleter):
         # Decode the response
         parsed_message, _success = self.renderer.parse_response(response.sequences[0].tokens)
 
-        return {"role": "assistant", "content": parsed_message["content"]}
+        result: renderers.Message = {"role": "assistant", "content": parsed_message["content"]}
+        if "tool_calls" in parsed_message:
+            result["tool_calls"] = parsed_message["tool_calls"]
+        return result
