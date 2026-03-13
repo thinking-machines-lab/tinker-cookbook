@@ -22,7 +22,7 @@ class LoopState(TypedDict, total=False):
     ``batch`` is always present. Multi-epoch trainers (SL, DPO) also include
     ``epoch``. Final checkpoints set ``final=True``.
 
-    To add new fields, update this TypedDict and ``CheckpointEntry`` together.
+    To add new fields, update this TypedDict and ``CheckpointRecord`` together.
     """
 
     batch: Required[int]
@@ -30,7 +30,7 @@ class LoopState(TypedDict, total=False):
     final: bool
 
 
-class CheckpointEntry(TypedDict, total=False):
+class CheckpointRecord(TypedDict, total=False):
     """A single row in ``checkpoints.jsonl``.
 
     Built from ``{"name": name, **loop_state, **paths}`` inside
@@ -221,7 +221,7 @@ async def check_renderer_name_for_checkpoint_async(
 
 
 @scope
-def load_checkpoints_file(log_dir: str) -> list[CheckpointEntry]:
+def load_checkpoints_file(log_dir: str) -> list[CheckpointRecord]:
     checkpoint_path = os.path.join(log_dir, CHECKPOINTS_BASE_NAME)
     if not os.path.exists(checkpoint_path):
         logger.info(f"No checkpoints found at {checkpoint_path}")
@@ -229,11 +229,11 @@ def load_checkpoints_file(log_dir: str) -> list[CheckpointEntry]:
 
     logger.info(f"Reading checkpoints from {checkpoint_path}")
     update_scope_context({"checkpoint_path": checkpoint_path})
-    return cast(list[CheckpointEntry], read_jsonl(checkpoint_path))
+    return cast(list[CheckpointRecord], read_jsonl(checkpoint_path))
 
 
 @scope
-def get_last_checkpoint(log_dir: str, required_key: str = "state_path") -> CheckpointEntry | None:
+def get_last_checkpoint(log_dir: str, required_key: str = "state_path") -> CheckpointRecord | None:
     """
     Get the last checkpoint from the checkpoints.jsonl file in the specified log directory.
 
@@ -288,7 +288,7 @@ async def save_checkpoint_async(
     paths = {k + "_path": v.path for k, v in results.items()}
     update_scope_context(paths)
     logger.info(f"Saved checkpoints: {paths}")
-    entry: CheckpointEntry = {"name": name, **loop_state, **paths}  # type: ignore[typeddict-item]
+    entry: CheckpointRecord = {"name": name, **loop_state, **paths}  # type: ignore[typeddict-item]
     with open(os.path.join(log_path, "checkpoints.jsonl"), "a") as f:
         f.write(json.dumps(entry) + "\n")
 
