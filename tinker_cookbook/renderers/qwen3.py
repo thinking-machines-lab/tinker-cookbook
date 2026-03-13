@@ -10,6 +10,7 @@ Includes:
 """
 
 import json
+from collections.abc import Iterator
 from typing import cast
 
 import tinker
@@ -19,6 +20,8 @@ from tinker_cookbook.renderers.base import (
     ImagePart,
     ImageProcessorProtocol,
     Message,
+    MessageDelta,
+    ReasoningStreamingParser,
     RenderContext,
     RenderedMessage,
     Renderer,
@@ -226,6 +229,51 @@ class Qwen3Renderer(Renderer):
             assistant_message["content"] = content
 
         return assistant_message, True
+
+    def _parse_response_for_streaming(self, response: list[int]) -> tuple[Message, bool]:
+        """Parse response for streaming, always applying full content parsing.
+
+        Unlike parse_response which short-circuits on missing stop token,
+        this always parses think blocks and tool calls from the content.
+        This ensures the final Message emitted by streaming is complete
+        even for truncated responses.
+        """
+        assistant_message, parse_success = parse_response_for_stop_token(
+            response, self.tokenizer, self._end_message_token
+        )
+
+        assert isinstance(assistant_message["content"], str)
+        content = assistant_message["content"]
+
+        result = parse_content_blocks(content)
+
+        if result is not None:
+            parts, tool_results = result
+            assistant_message["content"] = parts
+
+            tool_calls = [t for t in tool_results if isinstance(t, ToolCall)]
+            unparsed = [t for t in tool_results if isinstance(t, UnparsedToolCall)]
+            if tool_calls:
+                assistant_message["tool_calls"] = tool_calls
+            if unparsed:
+                assistant_message["unparsed_tool_calls"] = unparsed
+        else:
+            assistant_message["content"] = content
+
+        return assistant_message, parse_success
+
+    def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
+        """Parse response tokens with streaming, yielding incremental deltas."""
+        parser = ReasoningStreamingParser(
+            tokenizer=self.tokenizer,
+            end_message_token=self._end_message_token,
+            parse_final_response=self._parse_response_for_streaming,
+        )
+
+        for token in response:
+            yield from parser.feed(token)
+
+        yield from parser.finish()
 
     def to_openai_message(self, message: Message) -> dict:
         """Convert a Message to OpenAI API format with reasoning_content for thinking.
