@@ -1,0 +1,60 @@
+name: Sync docs to tinker-docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+
+jobs:
+  sync:
+    # Skip if this push was itself a sync from tinker-docs (prevents infinite loop)
+    if: "!contains(github.event.head_commit.message, '[sync]')"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout tinker-cookbook
+        uses: actions/checkout@v4
+        with:
+          path: tinker-cookbook
+
+      - name: Checkout tinker-docs
+        uses: actions/checkout@v4
+        with:
+          repository: iterationlab/tinker-docs
+          token: ${{ secrets.TINKER_DOCS_SYNC_TOKEN }}
+          path: tinker-docs
+
+      - name: Sync docs
+        run: |
+          cd $GITHUB_WORKSPACE/tinker-docs
+          make copy-from-cookbook TINKER_COOKBOOK_DIR=$GITHUB_WORKSPACE/tinker-cookbook
+
+      - name: Create PR in tinker-docs
+        env:
+          GH_TOKEN: ${{ secrets.TINKER_DOCS_SYNC_TOKEN }}
+        run: |
+          cd $GITHUB_WORKSPACE/tinker-docs
+
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "No changes to sync."
+            exit 0
+          fi
+
+          BRANCH="sync/from-cookbook-${GITHUB_SHA::8}"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git checkout -b "$BRANCH"
+          git add pages/
+          git commit -m "[sync] Sync docs from tinker-cookbook ${GITHUB_SHA::8}"
+          git push origin "$BRANCH"
+
+          PR_URL=$(gh pr create \
+            --repo iterationlab/tinker-docs \
+            --title "[sync] Sync docs from tinker-cookbook" \
+            --body "Auto-synced from [tinker-cookbook@${GITHUB_SHA::8}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+
+Please review visually using the preview deployment before merging." \
+            --base main)
+
+          echo "PR created: $PR_URL"
