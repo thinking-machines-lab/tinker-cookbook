@@ -1,22 +1,21 @@
 import asyncio
-import logging
-from typing import TypedDict, Any, cast
-from PIL import Image
-
-import datasets
-import chz
 import io
+import logging
+from typing import Any, TypedDict, cast
 
+import chz
+import datasets
 import numpy as np
 import tinker
+from PIL import Image
 from tinker import types
-from tinker_cookbook import checkpoint_utils, model_info, renderers
-from tinker_cookbook.eval.evaluators import SamplingClientEvaluator, EvaluatorBuilder
-from tinker_cookbook.tokenizer_utils import get_tokenizer
-from tinker_cookbook.image_processing_utils import get_image_processor, resize_image
-from tinker_cookbook.renderers import Message, ImagePart, TextPart, get_text_content
-from tinker_cookbook.utils.misc_utils import timed
 
+from tinker_cookbook import checkpoint_utils, model_info, renderers
+from tinker_cookbook.eval.evaluators import EvaluatorBuilder, SamplingClientEvaluator
+from tinker_cookbook.image_processing_utils import get_image_processor, resize_image
+from tinker_cookbook.renderers import ImagePart, Message, TextPart, get_text_content
+from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.utils.misc_utils import timed
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -228,7 +227,7 @@ class ClassifierEvaluator(SamplingClientEvaluator):
         # aggregate the performance metrics
         aggregated_metrics = {
             key: np.mean([example[key] for example in metrics_per_example]).item()
-            for key in metrics_per_example[0].keys()
+            for key in metrics_per_example[0]
         }
 
         return aggregated_metrics

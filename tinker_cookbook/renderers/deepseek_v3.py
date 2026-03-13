@@ -149,9 +149,9 @@ class _DeepSeekV3BaseRenderer(Renderer):
 
         # Handle tool calls in assistant messages
         # HF format: <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>name<｜tool▁sep｜>args<｜tool▁call▁end｜><｜tool▁calls▁end｜>
-        if "tool_calls" in message and message["tool_calls"]:
+        if message.get("tool_calls"):
             output_str += "<｜tool▁calls▁begin｜>"
-            for tool_call in message["tool_calls"]:
+            for tool_call in message["tool_calls"]:  # type: ignore[reportTypedDictNotRequiredAccess]
                 func_name = tool_call.function.name
                 args = tool_call.function.arguments
                 output_str += (
@@ -298,7 +298,7 @@ class _DeepSeekV3BaseRenderer(Renderer):
                 result["reasoning_content"] = "".join(thinking_parts)
 
         # Handle tool_calls
-        if "tool_calls" in message and message["tool_calls"]:
+        if message.get("tool_calls"):
             result["tool_calls"] = [
                 {
                     "type": "function",
@@ -308,7 +308,7 @@ class _DeepSeekV3BaseRenderer(Renderer):
                         "arguments": tc.function.arguments,
                     },
                 }
-                for tc in message["tool_calls"]
+                for tc in message["tool_calls"]  # type: ignore[reportTypedDictNotRequiredAccess]
             ]
 
         # Handle tool response fields

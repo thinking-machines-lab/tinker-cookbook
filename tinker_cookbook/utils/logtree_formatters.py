@@ -7,8 +7,9 @@ from logtree and can be logged using `logtree.log_formatter()`.
 """
 
 import html
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any
 
 from tinker_cookbook.renderers.base import Content, Message, message_to_jsonable
 

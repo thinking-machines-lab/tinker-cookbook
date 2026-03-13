@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import os
 import random
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal, Sequence, TypedDict, cast
+from typing import Literal, TypedDict, cast
 
 import chz
 import pandas as pd

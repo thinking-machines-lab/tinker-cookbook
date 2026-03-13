@@ -18,7 +18,6 @@ from tinker_cookbook.rl.types import Trajectory, Transition
 from tinker_cookbook.tool_use import build_agent_tool_env, simple_tool_result, tool
 from tinker_cookbook.tool_use.types import ToolResult
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

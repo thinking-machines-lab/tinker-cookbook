@@ -103,7 +103,7 @@ def checkpoint_resume():
         checkpoint_file = os.path.join(log_path, "checkpoints.jsonl")
         assert os.path.exists(checkpoint_file), "Checkpoint file should exist"
 
-        with open(checkpoint_file, "r") as f:
+        with open(checkpoint_file) as f:
             checkpoints = [json.loads(line) for line in f]
         assert len(checkpoints) > 0, "Should have at least one checkpoint"
         assert checkpoints[0]["name"] == "000005", "First checkpoint should be at step 5"

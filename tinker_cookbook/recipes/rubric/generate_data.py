@@ -1,6 +1,7 @@
-from tinker_cookbook.recipes.rubric.data import RubricBasedDatapoint, Rubric
-import random
 import os
+import random
+
+from tinker_cookbook.recipes.rubric.data import Rubric, RubricBasedDatapoint
 
 
 def generate_one(rng: random.Random) -> RubricBasedDatapoint:

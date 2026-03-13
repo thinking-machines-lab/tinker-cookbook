@@ -1,9 +1,10 @@
 import asyncio
 import numbers
+from collections.abc import Sequence
 from concurrent.futures import Executor
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any
 
 import tinker
 

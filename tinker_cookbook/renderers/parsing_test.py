@@ -224,9 +224,7 @@ def test_utf8_decoder_non_monotonic_decodability():
             # (token 4 starts a new incomplete sequence)
             if tokens == [1, 2, 3]:
                 return "✓"  # Only this combination decodes
-            elif tokens == [1, 2, 3, 4]:
-                raise ValueError("Incomplete UTF-8: token 4 is partial")
-            elif 4 in tokens:
+            elif tokens == [1, 2, 3, 4] or 4 in tokens:
                 raise ValueError("Incomplete UTF-8: token 4 is partial")
             else:
                 raise ValueError(f"Incomplete UTF-8: {tokens}")

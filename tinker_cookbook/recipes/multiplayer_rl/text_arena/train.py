@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime
 
 import chz
+
 from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.recipes.multiplayer_rl.text_arena.env import TwoPlayerTextArenaDatasetBuilder
 from tinker_cookbook.rl import train

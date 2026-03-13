@@ -1,10 +1,12 @@
 import math
 import re
+from collections.abc import Sequence
 from functools import partial
-from typing import Literal, Sequence, cast
+from typing import Literal, cast
 
 import chz
 from datasets import Dataset, concatenate_datasets, get_dataset_config_names, load_dataset
+
 from tinker_cookbook import renderers
 from tinker_cookbook.recipes.math_rl.math_grading import (
     extract_boxed,

@@ -23,7 +23,6 @@ from tinker_cookbook.renderers import (
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-
 # Sample tool specifications
 SAMPLE_TOOLS: list[ToolSpec] = [
     {
@@ -97,9 +96,9 @@ def print_result(
     print(f"{status} {model_name}")
     print(f"{'=' * 60}")
 
-    if "tool_calls" in message and message["tool_calls"]:
-        print(f"Tool calls found: {len(message['tool_calls'])}")
-        for i, tc in enumerate(message["tool_calls"]):
+    if message.get("tool_calls"):
+        print(f"Tool calls found: {len(message['tool_calls'])}")  # type: ignore[reportTypedDictNotRequiredAccess]
+        for i, tc in enumerate(message["tool_calls"]):  # type: ignore[reportTypedDictNotRequiredAccess]
             print(f"  [{i}] {tc.function.name}({tc.function.arguments})")
     else:
         print("No tool calls found")

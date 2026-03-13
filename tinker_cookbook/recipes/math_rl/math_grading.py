@@ -7,8 +7,10 @@ Includes math_normalize functionality that was dependency of grader.
 import contextlib
 import logging
 import re
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
-from typing import Any, Callable, Dict, Tuple, TypeVar
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
+from typing import Any, TypeVar
 
 import sympy
 from pylatexenc import latex2text
@@ -376,7 +378,7 @@ def _normalize(expr: str) -> str:
 def count_unknown_letters_in_expr(expr: str):
     expr = expr.replace("sqrt", "")
     expr = expr.replace("frac", "")
-    letters_in_expr = set([x for x in expr if x.isalpha()])
+    letters_in_expr = {x for x in expr if x.isalpha()}
     return len(letters_in_expr)
 
 
@@ -417,7 +419,7 @@ def split_tuple(expr: str):
         len(expr) > 2
         and expr[0] in TUPLE_CHARS
         and expr[-1] in TUPLE_CHARS
-        and all([ch not in expr[1:-1] for ch in TUPLE_CHARS])
+        and all(ch not in expr[1:-1] for ch in TUPLE_CHARS)
     ):
         elems = [elem.strip() for elem in expr[1:-1].split(",")]
     else:
@@ -465,8 +467,7 @@ def grade_answer(given_answer: str, ground_truth: str) -> bool:
             ground_truth_normalized[0] != given_normalized[0]
             or ground_truth_normalized[-1] != given_normalized[-1]
         )
-        or len(ground_truth_elems) != len(given_elems)
-    ):
+    ) or len(ground_truth_elems) != len(given_elems):
         is_correct = False
     else:
         for ground_truth_elem, given_elem in zip(ground_truth_elems, given_elems, strict=True):
@@ -517,8 +518,8 @@ class TimeoutException(Exception):
 
 def run_with_timeout_signal(
     func: Callable[..., T],
-    args: Tuple[Any, ...] = (),
-    kwargs: Dict[str, Any] = {},
+    args: tuple[Any, ...] = (),
+    kwargs: dict[str, Any] | None = None,
     timeout_seconds: int = 5,
 ) -> T | None:
     """
@@ -534,6 +535,8 @@ def run_with_timeout_signal(
         The result of the function call, or None if it times out.
     """
     with ThreadPoolExecutor(max_workers=1) as executor:
+        if kwargs is None:
+            kwargs = {}
         future = executor.submit(func, *args, **kwargs)
         try:
             result = future.result(timeout=timeout_seconds)

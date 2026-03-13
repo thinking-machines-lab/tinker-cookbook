@@ -5,7 +5,6 @@ Utilities for guessing good hyperparameters for fine-tuning.
 import json
 import math
 import struct
-from typing import Dict, Tuple
 
 import huggingface_hub
 import numpy as np
@@ -18,7 +17,7 @@ def _list_param_shapes_from_safetensors_remote(
     repo_id: str,
     revision: str = "main",
     token: str | None = None,
-) -> Dict[str, Tuple[int, ...]]:
+) -> dict[str, tuple[int, ...]]:
     """
     Returns {param_name: shape_tuple} by reading ONLY the safetensors header(s)
     over HTTP (ranged requests). No full file download.
@@ -33,7 +32,7 @@ def _list_param_shapes_from_safetensors_remote(
     if not st_files:
         raise FileNotFoundError("No .safetensors files found in this repo.")
 
-    shapes: Dict[str, Tuple[int, ...]] = {}
+    shapes: dict[str, tuple[int, ...]] = {}
 
     for fname in st_files:
         # Open remote file via fsspec; this performs HTTP range reads under the hood
@@ -45,13 +44,13 @@ def _list_param_shapes_from_safetensors_remote(
             header_len_bytes = f.read(8)
             assert isinstance(header_len_bytes, bytes)
             if len(header_len_bytes) < 8:
-                raise IOError(f"File too small or not safetensors: {fname}")
+                raise OSError(f"File too small or not safetensors: {fname}")
             (header_len,) = struct.unpack("<Q", header_len_bytes)
 
             header_bytes = f.read(header_len)
             assert isinstance(header_bytes, bytes)
             if len(header_bytes) < header_len:
-                raise IOError(f"Incomplete header read for {fname}")
+                raise OSError(f"Incomplete header read for {fname}")
 
             header = json.loads(header_bytes.decode("utf-8"))
             # header maps tensor_name -> { "dtype": "...", "shape": [...], "data_offsets": [start, end] }
@@ -118,7 +117,7 @@ def get_lora_param_count(
         if (
             len(shape) == 2
             and name.endswith(".weight")
-            and not any([v in name.split(".") for v in ignore])
+            and not any(v in name.split(".") for v in ignore)
         ):
             parts = name.split(".")
             if "experts" not in parts or not shared_expert_outer_loras:
@@ -169,7 +168,7 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
 
 def get_full_finetune_param_count(model_name: str) -> float:
     count = 0
-    for name, shape in _list_param_shapes_from_safetensors_remote(model_name).items():
+    for _name, shape in _list_param_shapes_from_safetensors_remote(model_name).items():
         count += np.prod(shape)
     return float(count)
 
