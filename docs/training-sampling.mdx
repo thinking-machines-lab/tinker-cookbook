@@ -37,7 +37,7 @@ training_client = service_client.create_lora_training_client(
     base_model=base_model
 )
 ```
-As the name suggests, this model was already fine-tuned for chat/instruction-following. You should check the details of the model you're using in their system cards.
+As the name suggests, this model was already finetuned for chat/instruction-following. You should check the details of the model you're using in their system cards.
 
 ## Preparing the training data
 
@@ -59,34 +59,13 @@ Let's create some training examples and convert them to a format expected by Tin
 ```python
 # Create some training examples
 examples = [
-    {
-        "input": "banana split",
-        "output": "anana-bay plit-say"
-    },
-    {
-        "input": "quantum physics",
-        "output": "uantum-qay ysics-phay"
-    },
-    {
-        "input": "donut shop",
-        "output": "onut-day op-shay"
-    },
-    {
-        "input": "pickle jar",
-        "output": "ickle-pay ar-jay"
-    },
-    {
-        "input": "space exploration",
-        "output": "ace-spay exploration-way"
-    },
-    {
-        "input": "rubber duck",
-        "output": "ubber-ray uck-day"
-    },
-    {
-        "input": "coding wizard",
-        "output": "oding-cay izard-way"
-    },
+    {"input": "banana split", "output": "anana-bay plit-say"},
+    {"input": "quantum physics", "output": "uantum-qay ysics-phay"},
+    {"input": "donut shop", "output": "onut-day op-shay"},
+    {"input": "pickle jar", "output": "ickle-pay ar-jay"},
+    {"input": "space exploration", "output": "ace-spay exploration-way"},
+    {"input": "rubber duck", "output": "ubber-ray uck-day"},
+    {"input": "coding wizard", "output": "oding-cay izard-way"},
 ]
 
 # Convert examples into the format expected by the training client
@@ -137,23 +116,14 @@ The visualization of the first example is:
 ```
 Input                Target               Weight
 --------------------------------------------------
-'English'            ':'                  0.0
-':'                  ' banana'            0.0
-' banana'            ' split'             0.0
-' split'             '\n'                 0.0
-'\n'                 'P'                  0.0
-'P'                  'ig'                 0.0
-'ig'                 ' Latin'             0.0
-' Latin'             ':'                  0.0
-':'                  ' an'                1.0
-' an'                'ana'                1.0
-'ana'                '-b'                 1.0
-'-b'                 'ay'                 1.0
-'ay'                 ' pl'                1.0
-' pl'                'it'                 1.0
-'it'                 '-s'                 1.0
-'-s'                 'ay'                 1.0
-'ay'                 '\n\n'               1.0
+'English'            ':'                  0
+':'                  ' banana'            0
+...
+' Latin'             ':'                  0
+':'                  ' an'                1
+' an'                'ana'                1
+...
+'ay'                 '\n\n'               1
 ```
 
 ## Vision inputs
@@ -161,7 +131,7 @@ Input                Target               Weight
 The above example is text-only, but adding vision inputs is also straightforward. The `ModelInput` type takes a list of chunks, which can be either `EncodedTextChunk` or `ImageChunk`. For instance:
 
 ```python
-image_data = requests.get("https://raw.githubusercontent.com/thinking-machines-lab/tinker-cookbook/main/assets/tinker-cover.png").content
+image_data = requests.get("https://thinkingmachines.ai/blog/on-policy-distillation/images/chess.png").content
 model_input = tinker.ModelInput(chunks=[
   types.EncodedTextChunk(tokens=tokenizer.encode("<|im_start|>user\n<|vision_start|>")),
   types.ImageChunk(data=image_data, format="png"),
@@ -169,7 +139,7 @@ model_input = tinker.ModelInput(chunks=[
 ])
 ```
 
-Note that Qwen3-VL was trained with special tokens like `<|vision_start|>` and `<|vision_end|>`. The cookbook's `Qwen3VLRenderer` handles these automatically—see [Rendering: Vision Inputs](/rendering#vision-inputs) for details and a complete example. Image assets are limited to 2MB.
+Note that Qwen3-VL was trained with special tokens like `<|vision_start|>` and `<|vision_end|>`. The cookbook's `Qwen3VLRenderer` handles these automatically—see [Rendering: Vision Inputs](/rendering#vision-inputs) for details and a complete example.
 
 ## Performing a training update
 
@@ -213,18 +183,14 @@ for i, seq in enumerate(result.sequences):
     print(f"{i}: {repr(tokenizer.decode(seq.tokens))}")
 ```
 
-Since sampling is nondeterministic (sadly, even with temperature=0.0, [due to batching](https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/)), the output will be different each time. You should see something like this:
+Since sampling is nondeterministic (sadly, even with temperature=0.0, [due to batching](https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/)), the output will be different each time. You should see something like:
 
 ```
 Responses:
 0: ' offe-bay eak-bay\n\n'
 1: ' offey-coy eak-bray\n\n'
 2: ' offecay eakbray\n\n'
-3: ' offeec-cay eak-brcay\n\n\n'
-4: ' offecay akebay\n\n'
-5: ' offee-Cay ake-bay\n\n\n'
-6: ' offey-pay eak-bray\n\n'
-7: ' offee – cay eak – bray\n\n'
+...
 ```
 
 ### Computing logprobs for a sequence
@@ -240,7 +206,7 @@ sample_response = sampling_client.sample(
     include_prompt_logprobs=True,
 ).result()
 
-# example: [None, -9.54505, -1.64629, -8.81116, -3.50217, -8.25927, ...]
+# example: [None, -9.5, -1.6, -8.8, -3.5, -8.3, ...]
 print(sample_response.prompt_logprobs)
 ```
 
@@ -265,13 +231,7 @@ sample_response = sampling_client.sample(
     topk_prompt_logprobs=5,
 ).result()
 
-# example:
-# [None,
-#  [(14924, -1.17005), (755, -2.23255), (2, -2.73255), (791, -3.67005), (16309, -4.29505)],
-#  [(25, -1.64629), (3137, -2.39629), (11630, -2.89629), (21460, -3.83379), (14881, -4.02129)],
-#  [(41, -3.49866), (42, -3.49866), (49, -4.24866), (38, -4.37366), (54, -4.49866)],
-#  [(311, -1.00217), (656, -2.25217), (2057, -2.75217), (649, -3.25217), (10470, -3.37717)],
-#  ...]
+# example: [None, [(14924, -1.2), (755, -2.2), ...], [(25, -1.6), (3137, -2.4), ...], ...]
 sample_response.topk_prompt_logprobs
 ```
 
@@ -279,7 +239,7 @@ For each position in the response, this returns a list of `(token_id, logprob)` 
 
 ## Putting it together: Sampling from an image
 
-Here's a complete example that creates a training client, saves weights for sampling, and asks a question about an image. You can copy-paste it into an iPython notebook:
+Here's a complete example that creates a training client, saves weights for sampling, and asks a question about an image:
 
 ```python
 import requests
@@ -294,7 +254,7 @@ training_client = await service_client.create_lora_training_client_async(base_mo
 sampling_client = await training_client.save_weights_and_get_sampling_client_async(name="sampler")
 
 # Grab an image and ask a question
-image_data = requests.get("https://raw.githubusercontent.com/thinking-machines-lab/tinker-cookbook/main/assets/tinker-cover.png").content
+image_data = requests.get("https://thinkingmachines.ai/blog/on-policy-distillation/images/chess.png").content
 model_input = tinker.ModelInput(chunks=[
     tinker.types.EncodedTextChunk(tokens=tokenizer.encode("<|im_start|>user\n<|vision_start|>")),
     tinker.types.ImageChunk(data=image_data, format="png"),
