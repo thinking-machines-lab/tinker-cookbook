@@ -3,6 +3,8 @@
 import json
 import logging
 import os
+import shlex
+import sys
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
@@ -478,6 +480,13 @@ def setup_logging(
     return ml_logger
 
 
+def _get_command_line_invocation() -> str:
+    """Return the current command line in a shell-safe form."""
+    if not sys.argv:
+        return "<empty sys.argv>"
+    return shlex.join(sys.argv)
+
+
 def configure_logging_module(path: str, level: int = logging.INFO) -> logging.Logger:
     """Configure logging to console (color) and file (plain), forcing override of prior config."""
     # ANSI escape codes for colors
@@ -506,14 +515,17 @@ def configure_logging_module(path: str, level: int = logging.INFO) -> logging.Lo
     )
 
     # File handler without colors
-    file_handler = logging.FileHandler(path, encoding="utf-8")
+    file_handler = logging.FileHandler(path, mode="a", encoding="utf-8")
     file_handler.setFormatter(logging.Formatter("%(name)s:%(lineno)d [%(levelname)s] %(message)s"))
 
     # Force override like basicConfig(..., force=True)
     root = logging.getLogger()
     root.setLevel(level)
-    root.handlers.clear()
+    for handler in root.handlers[:]:
+        root.removeHandler(handler)
+        handler.close()
     root.addHandler(console_handler)
     root.addHandler(file_handler)
+    logger.info("Command line invocation: %s", _get_command_line_invocation())
 
     return root
