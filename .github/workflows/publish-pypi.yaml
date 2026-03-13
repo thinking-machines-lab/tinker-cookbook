@@ -1,8 +1,8 @@
 name: publish-pypi
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v*"]
   workflow_dispatch:
 
 jobs:
@@ -12,6 +12,8 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # hatch-vcs needs full history for version
 
       - name: install-uv
         uses: astral-sh/setup-uv@v6
