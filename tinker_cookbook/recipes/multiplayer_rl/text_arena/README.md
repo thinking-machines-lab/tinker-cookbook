@@ -3,6 +3,16 @@
 Many research studies involve training several different language model agents jointly. We cover one simple example, where the language model learns to play tic-tac-toe with itself.
 We show how to coordinate the steps of two *Environment* objects such that both the winning and the losing trajectory will be used to fine-tune the weights.
 
+## Installation
+
+This recipe requires the TextArena library:
+
+```bash
+uv pip install -e ".[multiplayer-rl]"
+```
+
+## Running
+
 ```bash
 python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.train
 ```

@@ -73,6 +73,15 @@ async def default_sandbox_factory(image: modal.Image, timeout: int) -> SandboxIn
 
 `cli_main()` accepts an optional `sandbox_factory` parameter. When `None`, it falls back to `default_sandbox_factory` (Modal). The factory flows through: `cli_main` -> `HarborDatasetBuilder` -> `HarborEnvGroupBuilder.make_envs()`.
 
+## Installation
+
+This recipe uses Modal for sandboxed code execution:
+
+```bash
+uv pip install -e ".[modal]"
+modal token new
+```
+
 ## Running
 
 First, download the Terminal-Bench tasks:
