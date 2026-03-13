@@ -3,6 +3,9 @@
 try:
     from tinker_cookbook._version import __version__
 except ImportError:
-    from importlib.metadata import version
+    try:
+        from importlib.metadata import version
 
-    __version__ = version("tinker_cookbook")
+        __version__ = version("tinker_cookbook")
+    except Exception:
+        __version__ = "0.0.0.dev0+unknown"
