@@ -1,8 +1,64 @@
-# Development
+# Contributing to Tinker Cookbook
 
-This project is built in the spirit of open science and collaborative development. We believe that the best tools emerge through community involvement and shared learning.
+We welcome contributions! This project is built in the spirit of open science and collaborative development.
 
-We welcome PR contributions after our private beta is over. If you have any feedback, please email us at tinker@thinkingmachines.ai.
+## Development setup
+
+```bash
+git clone https://github.com/thinking-machines-lab/tinker-cookbook.git
+cd tinker-cookbook
+uv sync --extra dev
+pre-commit install
+```
+
+This installs dev dependencies and registers pre-commit hooks that run `ruff` formatting and linting on every commit.
+
+## Running tests
+
+```bash
+# Unit tests (no API key needed, colocated *_test.py files)
+uv run pytest tinker_cookbook/
+
+# Integration tests (requires TINKER_API_KEY)
+uv run pytest tests/
+```
+
+## Code style
+
+We use [ruff](https://docs.astral.sh/ruff/) for linting and formatting (line length: 100). Pre-commit hooks run automatically on each commit.
+
+```bash
+uv run ruff check tinker_cookbook/
+uv run ruff format tinker_cookbook/
+```
+
+## Type checking
+
+We use [pyright](https://github.com/microsoft/pyright) for static type analysis. Please use typing wherever possible; avoid `Any` and `type: ignore`; prefer casting. However, avoid convoluted generics or overly verbose code just to satisfy the type checker. Prefer single types over union types.
+
+```bash
+uv run pyright tinker_cookbook
+```
+
+## Pull request process
+
+1. Create a feature branch from `main`
+2. Make your changes with tests if applicable
+3. Ensure all checks pass: `pre-commit run --all-files`
+4. Open a PR with a clear description of the change
+
+CI runs pre-commit, pyright, and pytest on every PR.
+
+## Project structure
+
+- `tinker_cookbook/` — Library code (supervised learning, RL, renderers, utilities)
+- `tinker_cookbook/recipes/` — Example training scripts
+- `tests/` — Integration tests (require API key)
+- `docs/` — Documentation (MDX format, synced to docs site)
+
+---
+
+# Design conventions
 
 ## Organization of training scripts
 
@@ -22,10 +78,6 @@ To achieve this, we'll use the following structure around training scripts:
 ## Async
 
 Async is very useful for RL, where it allows us to make many queries in parallel (e.g., sampling calls). For all of the interfaces used in RL (such as the `Env` class), all the methods that take nontrivial amounts of time should be async. For some of the other code, such as [recipes/sl_loop.py](tinker_cookbook/recipes/sl_loop.py), we've chosen not to use async methods, just to make it more beginner-friendly, as many python programmers are not familiar with async.
-
-## Typing
-
-Please use typing wherever possible; avoid `Any` and `type: ignore`; prefer casting. However, avoid using convoluted generics or writing code that's much more verbose just to satisfy the type checker. Prefer using single types over union types.
 
 ## Classes
 
@@ -75,3 +127,7 @@ Examples:
 - `rewards_G`: Rewards for each attempt within a group
 - `tokens_P_G_T`: Tokens with problem, group, and time dimensions
 - `data_D`: A list of training data items
+
+## Questions?
+
+Email us at tinker@thinkingmachines.ai.
