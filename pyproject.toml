@@ -17,19 +17,11 @@ dependencies = [
     "termcolor",
     "tinker>=0.9.0",
     "torch",
-    "torchvision",
     "transformers>=4.57.6,<5.0.0",
     "blobfile",
     "anyio",
-    "pylatexenc",
-    "sympy",
-    "textarena>=0.7.4",
-    "math-verify",
-    "scipy",
-    "pytest>=9.0.2",
     "tiktoken>=0.12.0", # Required for Kimi tokenizer
     "tqdm",
-    "modal",
 ]
 
 [project.urls]
@@ -67,6 +59,15 @@ inspect = [
     "inspect-evals>=0.3.106",
     "instruction-following-eval",
 ]
+recipes = [
+    "textarena>=0.7.4",
+    "modal",
+    "math-verify",
+    "sympy",
+    "pylatexenc",
+    "scipy",
+    "torchvision",
+]
 all = [
     "tinker_cookbook[vector-search]",
     "tinker_cookbook[wandb]",
@@ -74,6 +75,7 @@ all = [
     "tinker_cookbook[trackio]",
     "tinker_cookbook[verifiers]",
     "tinker_cookbook[inspect]",
+    "tinker_cookbook[recipes]",
 ]
 
 [build-system]
