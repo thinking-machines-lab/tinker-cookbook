@@ -31,7 +31,6 @@ import tinker
 from tinker_cookbook.checkpoint_utils import get_last_checkpoint, load_checkpoints_file
 from tinker_cookbook.recipes.vlm_classifier.eval import get_evaluator_builder
 
-
 # Set up logger
 logger = logging.getLogger(__name__)
 

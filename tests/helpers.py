@@ -1,5 +1,6 @@
 """Shared helpers for recipe smoke tests."""
 
+import contextlib
 import os
 import select
 import subprocess

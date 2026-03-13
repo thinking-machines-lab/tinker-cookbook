@@ -6,9 +6,9 @@ import threading
 from tinker_cookbook.utils.trace import (
     get_scope_context,
     scope,
-    update_scope_context,
     trace_init,
     trace_shutdown,
+    update_scope_context,
 )
 
 
@@ -88,7 +88,7 @@ def test_trace():
         asyncio.run(example_program())
         trace_shutdown()
 
-        with open(temp_file.name, "r") as f:
+        with open(temp_file.name) as f:
             events = [json.loads(line) for line in f]
 
         # There should be 2 process metadata events

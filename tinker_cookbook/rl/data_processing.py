@@ -6,11 +6,11 @@ and assembling training batches.
 """
 
 import logging
-from typing import List
 
 import tinker
 import torch
 from tinker import TensorData
+
 from tinker_cookbook.rl.types import Trajectory, TrajectoryGroup
 from tinker_cookbook.supervised.common import (
     create_rightshifted_model_input_and_leftshifted_targets,
@@ -20,7 +20,7 @@ from tinker_cookbook.utils.misc_utils import all_same, safezip
 logger = logging.getLogger(__name__)
 
 
-def compute_advantages(trajectory_groups_P: List[TrajectoryGroup]) -> List[torch.Tensor]:
+def compute_advantages(trajectory_groups_P: list[TrajectoryGroup]) -> list[torch.Tensor]:
     """Compute advantages for each trajectory, centered within groups."""
     advantages_P: list[torch.Tensor] = []
 
@@ -172,9 +172,9 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.D
 
 
 def assemble_training_data(
-    trajectory_groups_P: List[TrajectoryGroup],
-    advantages_P: List[torch.Tensor],
-) -> tuple[List[tinker.Datum], List[dict[str, int]]]:
+    trajectory_groups_P: list[TrajectoryGroup],
+    advantages_P: list[torch.Tensor],
+) -> tuple[list[tinker.Datum], list[dict[str, int]]]:
     """Convert trajectories to training data format."""
     data_D: list[tinker.Datum] = []
     metadata_D: list[dict[str, int]] = []
@@ -194,8 +194,8 @@ def assemble_training_data(
 
 
 def remove_constant_reward_groups(
-    trajectory_groups_P: List[TrajectoryGroup],
-) -> List[TrajectoryGroup]:
+    trajectory_groups_P: list[TrajectoryGroup],
+) -> list[TrajectoryGroup]:
     new_groups: list[TrajectoryGroup] = []
     for group in trajectory_groups_P:
         if not all_same(group.get_total_rewards()):

@@ -5,8 +5,8 @@ import json
 import time
 
 import chz
-import tinker
 import numpy as np
+import tinker
 import verifiers as vf
 from verifiers.utils.message_utils import messages_to_printable
 

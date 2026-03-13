@@ -9,14 +9,15 @@ Tests verify that the KimiK25Renderer produces correct output:
 """
 
 from typing import cast
-from PIL import Image
+
 import pytest
 import tinker
+from PIL import Image
+
+from tinker_cookbook.image_processing_utils import get_image_processor
 from tinker_cookbook.renderers import Message, ToolCall, ToolSpec, get_renderer
 from tinker_cookbook.renderers.kimi_k2_5_tool_declaration_ts import encode_tools_to_typescript_style
 from tinker_cookbook.tokenizer_utils import get_tokenizer
-from tinker_cookbook.image_processing_utils import get_image_processor
-
 
 KIMI_K25_MODEL = "moonshotai/Kimi-K2.5"
 

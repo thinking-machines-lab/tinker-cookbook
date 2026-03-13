@@ -3,7 +3,8 @@
 import json
 import re
 import warnings
-from typing import Iterator
+from collections.abc import Iterator
+from dataclasses import dataclass, field
 
 import tinker
 import torch
@@ -200,9 +201,9 @@ class KimiK2Renderer(Renderer):
             output_str += text_content
 
             # Handle tool calls
-            if "tool_calls" in message and message["tool_calls"]:
+            if message.get("tool_calls"):
                 output_str += "<|tool_calls_section_begin|>"
-                for idx, tool_call in enumerate(message["tool_calls"]):
+                for idx, tool_call in enumerate(message["tool_calls"]):  # type: ignore[reportTypedDictNotRequiredAccess]
                     tool_id = tool_call.id
                     if not tool_id:
                         tool_id = f"functions.{tool_call.function.name}:{idx}"
@@ -504,7 +505,7 @@ class KimiK2Renderer(Renderer):
                 result["reasoning_content"] = "".join(thinking_parts)
 
         # Handle tool_calls
-        if "tool_calls" in message and message["tool_calls"]:
+        if message.get("tool_calls"):
             result["tool_calls"] = [
                 {
                     "type": "function",
@@ -514,7 +515,7 @@ class KimiK2Renderer(Renderer):
                         "arguments": tc.function.arguments,
                     },
                 }
-                for tc in message["tool_calls"]
+                for tc in message["tool_calls"]  # type: ignore[reportTypedDictNotRequiredAccess]
             ]
 
         # Handle tool response fields

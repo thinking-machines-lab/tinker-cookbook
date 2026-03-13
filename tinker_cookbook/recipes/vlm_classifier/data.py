@@ -3,30 +3,31 @@ Datasets for supervised learning (SFT) that use chat-formatted data, which we
 convert to tokens using a Renderer.
 """
 
+import io
 import logging
+import math
+import random
+from collections import defaultdict
 from typing import Any, cast
 
-import random
-import torch
-import math
-import io
 import chz
 import datasets
 import tinker
+import torch
 from PIL import Image
-from collections import defaultdict
-from tinker_cookbook.supervised.common import datum_from_model_input_weights
-from tinker_cookbook.supervised.types import SupervisedDatasetBuilder, SupervisedDataset
-from tinker_cookbook.tokenizer_utils import get_tokenizer
+
 from tinker_cookbook.image_processing_utils import get_image_processor, resize_image
 from tinker_cookbook.renderers import (
-    Message,
     ContentPart,
     ImagePart,
+    Message,
     TextPart,
     TrainOnWhat,
     get_renderer,
 )
+from tinker_cookbook.supervised.common import datum_from_model_input_weights
+from tinker_cookbook.supervised.types import SupervisedDataset, SupervisedDatasetBuilder
+from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 logger = logging.getLogger(__name__)
 

@@ -39,7 +39,7 @@ def load_adapter_weights(adapter_path: str):
     weights = load_file(
         os.path.expanduser(adapter_path + "/adapter_model.safetensors"), device=device
     )
-    with open(os.path.expanduser(adapter_path + "/adapter_config.json"), "r") as f:
+    with open(os.path.expanduser(adapter_path + "/adapter_config.json")) as f:
         config = json.load(f)
     return weights, config
 

@@ -7,8 +7,10 @@ Includes math_normalize functionality that was dependency of grader.
 import contextlib
 import logging
 import re
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
-from typing import Any, Callable, Dict, Tuple, TypeVar
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
+from typing import Any, TypeVar
 
 import sympy
 from pylatexenc import latex2text
@@ -465,8 +467,7 @@ def grade_answer(given_answer: str, ground_truth: str) -> bool:
             ground_truth_normalized[0] != given_normalized[0]
             or ground_truth_normalized[-1] != given_normalized[-1]
         )
-        or len(ground_truth_elems) != len(given_elems)
-    ):
+    ) or len(ground_truth_elems) != len(given_elems):
         is_correct = False
     else:
         for ground_truth_elem, given_elem in zip(ground_truth_elems, given_elems, strict=True):
@@ -517,8 +518,8 @@ class TimeoutException(Exception):
 
 def run_with_timeout_signal(
     func: Callable[..., T],
-    args: Tuple[Any, ...] = (),
-    kwargs: Dict[str, Any] = {},
+    args: tuple[Any, ...] = (),
+    kwargs: dict[str, Any] = {},
     timeout_seconds: int = 5,
 ) -> T | None:
     """

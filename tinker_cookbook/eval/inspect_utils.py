@@ -7,7 +7,7 @@ run_inspect_evals.py and inspect_evaluator.py to avoid code duplication.
 
 import logging
 import time
-from typing import Sequence
+from collections.abc import Sequence
 
 import tinker
 from inspect_ai.model import ChatCompletionChoice as InspectAIModelOutputChoice
@@ -22,6 +22,7 @@ from inspect_ai.model._registry import modelapi_register
 from inspect_ai.tool import ToolChoice as InspectAIToolChoice
 from inspect_ai.tool import ToolInfo as InspectAIToolInfo
 from termcolor import colored
+
 from tinker_cookbook import renderers
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 

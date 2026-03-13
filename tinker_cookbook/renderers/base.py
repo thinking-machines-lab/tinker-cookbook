@@ -1200,7 +1200,7 @@ class Renderer(ABC):
             result["content"] = "".join(parts)
 
         # Handle tool_calls (convert ToolCall objects to OpenAI format)
-        if "tool_calls" in message and message["tool_calls"]:
+        if message.get("tool_calls"):
             result["tool_calls"] = [
                 {
                     "type": "function",
@@ -1210,7 +1210,7 @@ class Renderer(ABC):
                         "arguments": tc.function.arguments,
                     },
                 }
-                for tc in message["tool_calls"]
+                for tc in message["tool_calls"]  # type: ignore[reportTypedDictNotRequiredAccess]
             ]
 
         # Handle tool response fields
@@ -1517,7 +1517,7 @@ class ImageProcessorProtocol(Protocol):
     patch_size: int
 
     def get_number_of_image_patches(
-        self, height: int, width: int, images_kwargs: Optional[dict] = None
+        self, height: int, width: int, images_kwargs: dict | None = None
     ) -> int:
         raise NotImplementedError()
 

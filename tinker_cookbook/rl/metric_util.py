@@ -1,11 +1,11 @@
 import asyncio
 import itertools
 from collections import defaultdict
-from typing import Dict, List
 
 import numpy as np
 import tinker
-from tinker_cookbook.completers import TinkerTokenCompleter
+
+from tinker_cookbook.completers import TinkerTokenCompleter, TokenCompleter
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
 from tinker_cookbook.rl.rollout_logging import (
     RolloutSummaryExportConfig,
@@ -17,12 +17,11 @@ from tinker_cookbook.rl.rollouts import (
     get_rollout_executor,
 )
 from tinker_cookbook.rl.types import EnvGroupBuilder, RLDataset, TrajectoryGroup
-from tinker_cookbook.utils.misc_utils import all_same, dict_mean
 from tinker_cookbook.utils import logtree
-from tinker_cookbook.completers import TokenCompleter
+from tinker_cookbook.utils.misc_utils import all_same, dict_mean
 
 
-def _compute_by_group_metrics(trajectory_groups_P: List[TrajectoryGroup], good_thresh: float = 0.5):
+def _compute_by_group_metrics(trajectory_groups_P: list[TrajectoryGroup], good_thresh: float = 0.5):
     n_groups = len(trajectory_groups_P)
     n_mixed = n_good = n_bad = 0
     for tg in trajectory_groups_P:
@@ -42,8 +41,8 @@ def _compute_by_group_metrics(trajectory_groups_P: List[TrajectoryGroup], good_t
 
 
 def compute_trajectory_metrics(
-    trajectory_groups_P: List[TrajectoryGroup], taglist_P: List[list[str]]
-) -> Dict[str, float]:
+    trajectory_groups_P: list[TrajectoryGroup], taglist_P: list[list[str]]
+) -> dict[str, float]:
     tag2trajgroups = defaultdict(list)
     for taglist, trajectory_group in zip(taglist_P, trajectory_groups_P):
         for tag in taglist:
@@ -65,7 +64,7 @@ def compute_trajectory_metrics(
     return out
 
 
-def _compute_trajectory_metrics(trajectory_groups_P: List[TrajectoryGroup]) -> Dict[str, float]:
+def _compute_trajectory_metrics(trajectory_groups_P: list[TrajectoryGroup]) -> dict[str, float]:
     """Compute metrics for the trajectory groups."""
     flat_trajs_PG = [traj for tg in trajectory_groups_P for traj in tg.trajectories_G]
     ac_tokens_by_turn = [

@@ -1,10 +1,11 @@
 import logging
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Callable, Sequence
 
 import chz
 import tinker
+
 from tinker_cookbook import renderers
 from tinker_cookbook.completers import StopCondition
 from tinker_cookbook.preference.preference_datasets import (

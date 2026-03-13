@@ -16,6 +16,7 @@ from inspect_ai.model import GenerateConfig as InspectAIGenerateConfig
 from inspect_ai.model import Model as InspectAIModel
 from inspect_ai.scorer import model_graded_qa
 from inspect_ai.solver import generate
+
 from tinker_cookbook.eval.inspect_utils import InspectAPIFromTinkerSampling
 
 QA_DATASET = MemoryDataset(
