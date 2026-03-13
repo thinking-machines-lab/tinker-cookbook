@@ -1,0 +1,45 @@
+name: nightly
+
+on:
+  schedule:
+    - cron: "0 0 * * *"  # midnight UTC
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: install-uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: run unit tests
+        run: uv run pytest tinker_cookbook/ -x -q
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: install-uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: build
+        run: uv build
+
+      - name: publish to TestPyPI
+        run: uv publish --publish-url https://test.pypi.org/legacy/ --token="$TEST_PYPI_TOKEN"
+        env:
+          TEST_PYPI_TOKEN: ${{ secrets.TEST_PYPI_TOKEN }}
