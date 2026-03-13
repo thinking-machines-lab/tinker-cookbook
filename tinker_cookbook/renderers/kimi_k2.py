@@ -4,7 +4,6 @@ import json
 import re
 import warnings
 from collections.abc import Iterator
-from dataclasses import dataclass, field
 
 import tinker
 import torch

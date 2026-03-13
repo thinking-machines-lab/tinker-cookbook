@@ -12,15 +12,13 @@ import pickle
 import re
 import urllib.request
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import (
     Any,
-    Callable,
-    Iterator,
     Literal,
     NotRequired,
-    Optional,
     Protocol,
     TypedDict,
     Union,

@@ -7,7 +7,6 @@ from tinker_cookbook.renderers import (
 from tinker_cookbook.renderers.gpt_oss import GptOssRenderer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-
 # =============================================================================
 # GptOss parse_response Tests
 # =============================================================================
