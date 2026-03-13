@@ -1,77 +1,109 @@
-# Development
+# Contributing to Tinker
 
 This project is built in the spirit of open science and collaborative development. We believe that the best tools emerge through community involvement and shared learning.
 
-We welcome PR contributions after our private beta is over. If you have any feedback, please email us at tinker@thinkingmachines.ai.
+## Contribution process
 
-## Organization of training scripts
+### 1. Find or propose work
 
-We're designing the codebase with the following goals:
+- Check [open issues](https://github.com/thinking-machines-lab/tinker-cookbook/issues) for bugs, feature requests, or improvements.
+- For small fixes (typos, doc clarifications, bug fixes with obvious solutions), go straight to a PR.
+- For larger changes (new recipes, API changes, architectural decisions), open an issue first to discuss the approach. This saves everyone time.
 
-1. Low barrier to entry: it should be dead simple to run something and see numbers go up.
-2. Extensible: it should be possible to pass in custom datasets and evals and control all the hyperparameters.
-3. Science-friendly: it should be easy to run sweeps, and analyze the results.
+### 2. Set up your environment
 
-To achieve this, we'll use the following structure around training scripts:
+```bash
+git clone git@github.com:thinking-machines-lab/tinker-cookbook.git
+cd tinker-cookbook
+pip install -e .
+```
 
-- There's a main training function, such as [rl/train.py](tinker_cookbook/rl/train.py) or [supervised/train.py](tinker_cookbook/supervised/train.py), which contains the main loop.
-    - This function contains a detailed config object (`Config`), which isn't constructable from the command line.
-    - The config contains members that specify things like datasets and evals. However, these should be chz configs (with a `.build` method that constructs the actual object) or callables (we recommend using functools.partial). This way, the config is serializable, which is useful for sweeps.
-- There are launch scripts that assemble training configs (e.g., [recipes/math_rl/train.py](tinker_cookbook/recipes/math_rl/train.py)), which construct a smaller config object (`CLIConfig`) from the command line.
+You'll need a Tinker API key for anything that hits the service. Sign up at [thinkingmachines.ai/tinker](https://thinkingmachines.ai/tinker/) and export it as `TINKER_API_KEY`.
 
-## Async
+### 3. Make your changes
 
-Async is very useful for RL, where it allows us to make many queries in parallel (e.g., sampling calls). For all of the interfaces used in RL (such as the `Env` class), all the methods that take nontrivial amounts of time should be async. For some of the other code, such as [recipes/sl_loop.py](tinker_cookbook/recipes/sl_loop.py), we've chosen not to use async methods, just to make it more beginner-friendly, as many python programmers are not familiar with async.
+Create a branch from `main`:
 
-## Typing
+```bash
+git checkout -b your-branch-name
+```
 
-Please use typing wherever possible; avoid `Any` and `type: ignore`; prefer casting. However, avoid using convoluted generics or writing code that's much more verbose just to satisfy the type checker. Prefer using single types over union types.
+Follow the conventions below when writing code.
 
-## Classes
+### 4. Test
 
-There are a lot of different classes, which might make the code feel less approachable. However, they follow *the builder pattern*, and the code should be less confusing when you know the pattern.
+```bash
+# Unit tests (no API key needed)
+pytest tinker_cookbook/tests/test_renderers.py
+pytest tinker_cookbook/tests/test_utils.py
 
-We can illustrate the pattern with the two main examples:
+# Smoke tests (requires API key + network)
+pytest tinker_cookbook/tests/smoke_tests.py
+```
 
-- A `SupervisedDatasetBuilder` is a configuration object which builds a `SupervisedDataset`.
-- An `RLDatasetBuilder` is a configuration object which builds an `RLDataset`, which generates batches of `EnvGroupBuilder` objects, which each generate a group of `Env` objects.
+If your change touches training or sampling behavior, run the relevant smoke tests. If you're adding a new recipe, include a smoke-level test that exercises the happy path.
 
-Here, the `SupervisedDatasetBuilder`, `RLDatasetBuilder`, and `EnvGroupBuilder` are all configuration objects, which have a `__call__` method that builds another object. You can see these objects in [supervised/types.py](tinker_cookbook/supervised/types.py) and [rl/types.py](tinker_cookbook/rl/types.py).
+### 5. Submit a PR
 
-In general, we use a lot of configuration objects, with a `__call__` method that returns a heavyweight object (like a dataset). We use `chz` for the configuration objects -- it's similar to a dataclass but with some extra features that are nice for configs. We use either dataclasses or regular python classes for the heavyweight objects.
+- Keep PRs focused. One logical change per PR.
+- Write a clear description: what changed and why.
+- Link to the relevant issue if there is one.
 
-## Envs
+A maintainer will review your PR. We aim to respond within a few business days. Once approved and merged, your changes will sync into the internal monorepo in the next daily sync.
 
-An `Env` is an RL environment. For those with an RL background, it roughly corresponds to an MDP or a POMDP, however we use in more general cases (such as multi-agent settings) that don't strictly correspond to the MDP/POMDP formalism. It's roughly analogous the concept of an Env in OpenAI Gym, but unlike OpenAI Gym, we don't have a `reset` method; rather, the env should be discarded after a rollout. Any shared resources should be maintained by whatever object is creating the envs.
+## Code conventions
 
-The `Env`s are created by `EnvGroupBuilder`s. The group of envs returned by `EnvGroupBuilder` have something in common; either they correspond to the same task (in which case we can use this information for variance reduction, as in GRPO, which centers per group); or, we can use the group to define a multi-agent environment.
+### Organization of training scripts
 
-- One common multi-agent environment is where we use a pairwise preference model to compare pairs of completions.
-- We can also use the group to define a two-player game. Some two player games such as tic-tac-toe are currently supported through the [text_arena](tinker_cookbook/recipes/multiplayer_rl/text_arena/env.py) environments.
+The codebase is designed around three goals:
 
+1. **Low barrier to entry**: dead simple to run something and see numbers go up.
+2. **Extensible**: pass in custom datasets, evals, and control all the hyperparameters.
+3. **Science-friendly**: easy to run sweeps and analyze results.
 
-## Notation
+The structure:
 
-We'll use subscripts to indicate the shapes of objects. For example, `tokens_P_G_T` indicates a three-dimensional array of tokens, with `P` problems, `G` groups, and `T` tokens per groups, so `tokens_P_G_T[p][g][t]` should refer to a single token. In many cases, the arrays will be ragged. E.g., the `T` axis will have different lengths for different `(p,g)`. Sometimes, a given dimension will be flattened from two dimensions. If we write `tokens_PG_T`, that means that we have a two dimensional array, where the 0th dimension is flattened from the `P` and `G` dimensions.
+- A main training function (e.g., [rl/train.py](tinker_cookbook/rl/train.py), [supervised/train.py](tinker_cookbook/supervised/train.py)) contains the main loop with a detailed `Config` object.
+- Launch scripts (e.g., [recipes/math_rl/train.py](tinker_cookbook/recipes/math_rl/train.py)) assemble training configs and expose a smaller `CLIConfig` for the command line.
 
-### Common Dimension Names
+Config members that specify datasets and evals should be `chz` configs (with `.build()`) or callables (we recommend `functools.partial`), keeping configs serializable for sweeps.
 
-Here are the standard dimension subscripts used throughout the codebase:
+### Typing
 
-- `_D`: Data/Datum dimension (for training data items)
-- `_G`: Group dimension (for multiple attempts/rollouts of the same problem)
-- `_P`: Problem dimension (for different problems/prompts)
-- `_T`: Token/Time dimension (for sequences)
+Use typing wherever possible. Avoid `Any` and `type: ignore`; prefer casting. Don't write convoluted generics or overly verbose code just to satisfy the type checker. Prefer single types over union types.
 
-The relationship between dimensions in RL:
-- A batch contains multiple problems (`_P`)
-- Each problem spawns multiple attempts/environments (`_G`), forming a group
-- Each attempt produces one trajectory
-- Advantages are normalized within each group (across the `_G` dimension)
+### Async
 
-Examples:
-- `env_group_builders_P`: A list of environment builders, one per problem
-- `trajectories_G`: Multiple trajectories from attempts at the same problem
-- `rewards_G`: Rewards for each attempt within a group
-- `tokens_P_G_T`: Tokens with problem, group, and time dimensions
-- `data_D`: A list of training data items
+Async is useful for RL, where it allows many parallel queries (e.g., sampling calls). All methods that take nontrivial time in RL interfaces (like `Env`) should be async. Some non-RL code (e.g., [recipes/sl_loop.py](tinker_cookbook/recipes/sl_loop.py)) intentionally avoids async to stay beginner-friendly.
+
+### Classes and the builder pattern
+
+There are a lot of classes, but they follow the builder pattern:
+
+- `SupervisedDatasetBuilder` builds a `SupervisedDataset`.
+- `RLDatasetBuilder` builds an `RLDataset`, which generates `EnvGroupBuilder` objects, which each generate `Env` objects.
+
+Config objects use `chz` (like dataclasses with extra features for configs). Runtime objects use dataclasses or regular classes.
+
+### Notation
+
+Subscript suffixes indicate tensor shapes: `_P` (problems), `_G` (groups), `_T` (tokens), `_D` (datums). Example: `tokens_P_G_T[p][g][t]` is a single token. Arrays may be ragged; `tokens_PG_T` means the `P` and `G` dimensions are flattened.
+
+### Envs
+
+An `Env` is an RL environment, roughly analogous to OpenAI Gym but single-use (no `reset`). Discard after a rollout. Shared resources should be maintained by whatever object creates the envs. Created via `EnvGroupBuilder`.
+
+## What we're looking for
+
+Good contributions to Tinker tend to be:
+
+- **New recipes** that demonstrate real post-training workflows (math reasoning, tool use, preference learning, etc.)
+- **Improved documentation** — clearer explanations, better examples, fixed errors
+- **Bug fixes** with minimal, focused diffs
+- **Evaluation integrations** — new evaluators or benchmark support
+
+## Contact
+
+Questions or feedback: tinker@thinkingmachines.ai
+
+For rendered documentation: [tinker-docs.thinkingmachines.ai](https://tinker-docs.thinkingmachines.ai)
