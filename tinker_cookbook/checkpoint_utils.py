@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import os
-from typing import Any, Literal
+from typing import Any, Literal, Required, TypedDict, cast
 
 import tinker
 
@@ -14,6 +14,36 @@ CHECKPOINTS_BASE_NAME = "checkpoints.jsonl"
 
 logger = logging.getLogger(__name__)
 RENDERER_NAME_METADATA_KEY = "renderer_name"
+
+
+class LoopState(TypedDict, total=False):
+    """Training loop state saved alongside each checkpoint.
+
+    ``batch`` is always present. Multi-epoch trainers (SL, DPO) also include
+    ``epoch``. Final checkpoints set ``final=True``.
+
+    To add new fields, update this TypedDict and ``CheckpointEntry`` together.
+    """
+
+    batch: Required[int]
+    epoch: int
+    final: bool
+
+
+class CheckpointEntry(TypedDict, total=False):
+    """A single row in ``checkpoints.jsonl``.
+
+    Built from ``{"name": name, **loop_state, **paths}`` inside
+    ``save_checkpoint_async``. The ``state_path`` and ``sampler_path`` fields
+    are present depending on whether ``kind`` included ``"state"`` / ``"sampler"``.
+    """
+
+    name: Required[str]
+    batch: Required[int]
+    epoch: int
+    final: bool
+    state_path: str
+    sampler_path: str
 
 
 def add_renderer_name_to_user_metadata(
@@ -191,7 +221,7 @@ async def check_renderer_name_for_checkpoint_async(
 
 
 @scope
-def load_checkpoints_file(log_dir: str) -> list[dict[str, Any]]:
+def load_checkpoints_file(log_dir: str) -> list[CheckpointEntry]:
     checkpoint_path = os.path.join(log_dir, CHECKPOINTS_BASE_NAME)
     if not os.path.exists(checkpoint_path):
         logger.info(f"No checkpoints found at {checkpoint_path}")
@@ -199,11 +229,11 @@ def load_checkpoints_file(log_dir: str) -> list[dict[str, Any]]:
 
     logger.info(f"Reading checkpoints from {checkpoint_path}")
     update_scope_context({"checkpoint_path": checkpoint_path})
-    return read_jsonl(checkpoint_path)
+    return cast(list[CheckpointEntry], read_jsonl(checkpoint_path))
 
 
 @scope
-def get_last_checkpoint(log_dir: str, required_key: str = "state_path") -> dict[str, Any] | None:
+def get_last_checkpoint(log_dir: str, required_key: str = "state_path") -> CheckpointEntry | None:
     """
     Get the last checkpoint from the checkpoints.jsonl file in the specified log directory.
 
@@ -234,7 +264,7 @@ async def save_checkpoint_async(
     training_client: tinker.TrainingClient,
     name: str,
     log_path: str,
-    loop_state: dict[str, Any],
+    loop_state: LoopState,
     kind: Literal["state", "sampler", "both"] = "state",
     ttl_seconds: int | None = None,
 ) -> dict[str, str]:
@@ -255,12 +285,18 @@ async def save_checkpoint_async(
         )
 
     results = {k: await v.result_async() for k, v in futures.items()}
-    paths = {k + "_path": v.path for k, v in results.items()}
+    paths = {}
+    entry: CheckpointEntry = {"name": name, **loop_state}
+    if "state" in results:
+        entry["state_path"] = results["state"].path
+        paths["state_path"] = results["state"].path
+    if "sampler" in results:
+        entry["sampler_path"] = results["sampler"].path
+        paths["sampler_path"] = results["sampler"].path
     update_scope_context(paths)
     logger.info(f"Saved checkpoints: {paths}")
-    full_dict = {"name": name, **loop_state, **paths}
     with open(os.path.join(log_path, "checkpoints.jsonl"), "a") as f:
-        f.write(json.dumps(full_dict) + "\n")
+        f.write(json.dumps(entry) + "\n")
 
     return paths
 
@@ -270,7 +306,7 @@ def save_checkpoint(
     training_client: tinker.TrainingClient,
     name: str,
     log_path: str,
-    loop_state: dict[str, Any],
+    loop_state: LoopState,
     kind: Literal["state", "sampler", "both"] = "state",
     ttl_seconds: int | None = None,
 ) -> dict[str, str]:
