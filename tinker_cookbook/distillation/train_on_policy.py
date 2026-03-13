@@ -391,20 +391,30 @@ async def main(
         user_metadata["wandb_link"] = wandb_link
     checkpoint_utils.add_renderer_name_to_user_metadata(user_metadata, cfg.renderer_name)
 
-    training_client = await service_client.create_lora_training_client_async(
-        cfg.model_name, rank=cfg.lora_rank, user_metadata=user_metadata
-    )
-
-    load_state_path: str | None = (
-        resume_info["state_path"] if resume_info else cfg.load_checkpoint_path
-    )
-    if load_state_path:
+    if resume_info:
+        # Resuming interrupted training - load optimizer state for proper continuation
         await checkpoint_utils.check_renderer_name_for_checkpoint_async(
-            service_client, load_state_path, cfg.renderer_name
+            service_client, resume_info["state_path"], cfg.renderer_name
         )
-        future = await training_client.load_state_with_optimizer_async(load_state_path)
-        _ = await future.result_async()
-        logger.info(f"Loaded state from {load_state_path}")
+        training_client = (
+            await service_client.create_training_client_from_state_with_optimizer_async(
+                resume_info["state_path"], user_metadata=user_metadata
+            )
+        )
+        logger.info(f"Resumed training from {resume_info['state_path']}")
+    elif cfg.load_checkpoint_path:
+        # Starting fresh from a checkpoint - load weights only (fresh optimizer)
+        await checkpoint_utils.check_renderer_name_for_checkpoint_async(
+            service_client, cfg.load_checkpoint_path, cfg.renderer_name
+        )
+        training_client = await service_client.create_training_client_from_state_async(
+            cfg.load_checkpoint_path, user_metadata=user_metadata
+        )
+        logger.info(f"Loaded weights from {cfg.load_checkpoint_path}")
+    else:
+        training_client = await service_client.create_lora_training_client_async(
+            cfg.model_name, rank=cfg.lora_rank, user_metadata=user_metadata
+        )
 
     # Get tokenizer from training client
     tokenizer = training_client.get_tokenizer()
