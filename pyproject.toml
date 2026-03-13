@@ -8,20 +8,25 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
+    "aiohttp",
+    "anyio",
+    "blobfile",
     "chz",
     "cloudpickle",
     "datasets",
+    "huggingface_hub",
     "numpy",
+    "pandas",
     "pillow",
+    "pydantic",
     "rich",
+    "scipy",
     "termcolor",
+    "tiktoken>=0.12.0", # Required for Kimi tokenizer
     "tinker>=0.9.0",
     "torch",
-    "transformers>=4.57.6,<5.0.0",
-    "blobfile",
-    "anyio",
-    "tiktoken>=0.12.0", # Required for Kimi tokenizer
     "tqdm",
+    "transformers>=4.57.6,<5.0.0",
 ]
 
 [project.urls]
@@ -59,14 +64,16 @@ inspect = [
     "inspect-evals>=0.3.106",
     "instruction-following-eval",
 ]
-recipes = [
-    "textarena>=0.7.4",
-    "modal",
+math-rl = [
     "math-verify",
     "sympy",
     "pylatexenc",
-    "scipy",
-    "torchvision",
+]
+multiplayer-rl = [
+    "textarena>=0.7.4",
+]
+modal = [
+    "modal",
 ]
 all = [
     "tinker_cookbook[vector-search]",
@@ -75,7 +82,9 @@ all = [
     "tinker_cookbook[trackio]",
     "tinker_cookbook[verifiers]",
     "tinker_cookbook[inspect]",
-    "tinker_cookbook[recipes]",
+    "tinker_cookbook[math-rl]",
+    "tinker_cookbook[multiplayer-rl]",
+    "tinker_cookbook[modal]",
 ]
 
 [build-system]
