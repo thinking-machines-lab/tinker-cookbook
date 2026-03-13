@@ -62,12 +62,12 @@ def merge_adapter_weights(
 
     model_state_dict = base_model.state_dict()
     is_gpt_oss = "GptOss" in str(type(base_model))
-    is_fused_experts = any([k.endswith(".experts.gate_up_proj") for k in model_state_dict])
+    is_fused_experts = any(k.endswith(".experts.gate_up_proj") for k in model_state_dict)
     name_remaps = {
         "base_model.model.": "",
         "model.unembed_tokens": "lm_head",
     }
-    if any([k.startswith("model.language_model.") for k in model_state_dict]):
+    if any(k.startswith("model.language_model.") for k in model_state_dict):
         # Tinker adapter doesn't include the language_model prefix for vision models
         name_remaps["model."] = "model.language_model."
 

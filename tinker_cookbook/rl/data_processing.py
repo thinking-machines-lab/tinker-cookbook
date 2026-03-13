@@ -188,7 +188,7 @@ def assemble_training_data(
             # Build the full sequence from the trajectory
             new_data = trajectory_to_data(traj, float(traj_advantage))
             data_D.extend(new_data)
-            metadata_D.extend([dict(group_idx=i_group, traj_idx=i_traj) for _ in new_data])
+            metadata_D.extend([{"group_idx": i_group, "traj_idx": i_traj} for _ in new_data])
 
     return data_D, metadata_D
 

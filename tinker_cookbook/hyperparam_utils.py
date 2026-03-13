@@ -117,7 +117,7 @@ def get_lora_param_count(
         if (
             len(shape) == 2
             and name.endswith(".weight")
-            and not any([v in name.split(".") for v in ignore])
+            and not any(v in name.split(".") for v in ignore)
         ):
             parts = name.split(".")
             if "experts" not in parts or not shared_expert_outer_loras:

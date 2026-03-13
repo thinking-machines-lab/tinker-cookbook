@@ -72,10 +72,12 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
         sampling_client: tinker.SamplingClient | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
-        api_key_vars: list[str] = [],
+        api_key_vars: list[str] | None = None,
         config: InspectAIGenerateConfig = InspectAIGenerateConfig(),
         verbose: bool = False,
     ):
+        if api_key_vars is None:
+            api_key_vars = []
         super().__init__(
             model_name=model_name,
             base_url=base_url,

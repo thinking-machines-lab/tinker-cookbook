@@ -378,7 +378,7 @@ def _normalize(expr: str) -> str:
 def count_unknown_letters_in_expr(expr: str):
     expr = expr.replace("sqrt", "")
     expr = expr.replace("frac", "")
-    letters_in_expr = set([x for x in expr if x.isalpha()])
+    letters_in_expr = {x for x in expr if x.isalpha()}
     return len(letters_in_expr)
 
 
@@ -419,7 +419,7 @@ def split_tuple(expr: str):
         len(expr) > 2
         and expr[0] in TUPLE_CHARS
         and expr[-1] in TUPLE_CHARS
-        and all([ch not in expr[1:-1] for ch in TUPLE_CHARS])
+        and all(ch not in expr[1:-1] for ch in TUPLE_CHARS)
     ):
         elems = [elem.strip() for elem in expr[1:-1].split(",")]
     else:
@@ -519,7 +519,7 @@ class TimeoutException(Exception):
 def run_with_timeout_signal(
     func: Callable[..., T],
     args: tuple[Any, ...] = (),
-    kwargs: dict[str, Any] = {},
+    kwargs: dict[str, Any] | None = None,
     timeout_seconds: int = 5,
 ) -> T | None:
     """
@@ -535,6 +535,8 @@ def run_with_timeout_signal(
         The result of the function call, or None if it times out.
     """
     with ThreadPoolExecutor(max_workers=1) as executor:
+        if kwargs is None:
+            kwargs = {}
         future = executor.submit(func, *args, **kwargs)
         try:
             result = future.result(timeout=timeout_seconds)
