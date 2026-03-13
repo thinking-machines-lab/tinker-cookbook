@@ -82,7 +82,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["tinker_cookbook"]
-exclude = ["*_test.py"]
+exclude = ["*_test.py", "tinker_cookbook/xmux/", "tinker_cookbook/chat_app/"]
 
 [tool.pytest.ini_options]
 testpaths = ["tinker_cookbook", "tests"]
@@ -100,6 +100,8 @@ exclude = [
 include = ["tinker_cookbook"]
 exclude = [
     ".venv",
+    "tinker_cookbook/xmux/",
+    "tinker_cookbook/chat_app/",
     # Vendored from HuggingFace, kept identical to upstream
     "kimi-k2.5-hf-tokenizer/tool_declaration_ts.py",
 ]
