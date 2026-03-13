@@ -55,6 +55,8 @@ class CLIConfig:
     # Async rollout configuration
     max_steps_off_policy: int | None = None
 
+    max_steps: int | None = None
+
 
 async def cli_main(
     cli_config: CLIConfig,
@@ -111,6 +113,7 @@ async def cli_main(
         )
         if cli_config.max_steps_off_policy is not None
         else None,
+        max_steps=cli_config.max_steps,
     )
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)

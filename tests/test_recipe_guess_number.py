@@ -10,6 +10,5 @@ def test_guess_number():
         [
             "batch_size=8",
             "group_size=2",
-            "eval_every=0",
         ],
     )

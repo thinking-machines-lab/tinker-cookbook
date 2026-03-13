@@ -421,6 +421,9 @@ class Config:
     num_groups_to_log: int = 4  # Number of groups to log per iteration (0 = disable logging)
     rollout_json_export: bool = True
 
+    # Maximum number of training iterations. If None, train on the full dataset.
+    max_steps: int | None = None
+
 
 @scope
 async def run_single_evaluation(
@@ -1354,7 +1357,8 @@ async def main(
         evaluators.append(RLTestSetEvaluator(maybe_test_dataset, max_tokens=cfg.max_tokens))
 
     num_batches = len(dataset)
-    logger.info(f"Will train on {num_batches} batches")
+    end_batch = min(cfg.max_steps, num_batches) if cfg.max_steps is not None else num_batches
+    logger.info(f"Will train on {end_batch} batches")
 
     # Create KL reference client once if KL penalty is enabled
     if cfg.kl_penalty_coef > 0:
@@ -1376,8 +1380,8 @@ async def main(
         training_func = do_sync_training
     await training_func(
         start_batch=start_batch,
-        end_batch=num_batches,
-        num_batches=num_batches,
+        end_batch=end_batch,
+        num_batches=end_batch,
         cfg=cfg,
         training_client=training_client,
         kl_reference_client=kl_reference_client,
@@ -1388,13 +1392,13 @@ async def main(
     )
 
     # Save final checkpoint
-    if start_batch < num_batches:
+    if start_batch < end_batch:
         _ = await checkpoint_utils.save_checkpoint_async(
             training_client=training_client,
             name="final",
             log_path=cfg.log_path,
             kind="both",
-            loop_state={"batch": num_batches},
+            loop_state={"batch": end_batch},
             ttl_seconds=None,
         )
     else:

@@ -66,6 +66,8 @@ class CLIConfig:
     loss_fn: LossFnType = "importance_sampling"
     loss_fn_config: dict[str, Any] | None = None
 
+    max_steps: int | None = None
+
 
 def get_dataset_builder(
     env: str,
@@ -153,6 +155,7 @@ async def cli_main(cli_config: CLIConfig):
         else None,
         loss_fn=cli_config.loss_fn,
         loss_fn_config=cli_config.loss_fn_config,
+        max_steps=cli_config.max_steps,
     )
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)

@@ -164,6 +164,8 @@ class Config:
     load_checkpoint_path: str | None = None
 
     # Maximum number of training steps. If None, train on the full dataset.
+    max_steps: int | None = None
+    # Deprecated alias for max_steps. Use max_steps instead.
     max_step: int | None = None
 
 
@@ -443,7 +445,20 @@ async def main(
     # Wrap datasets in CompositeDataset
     composite_dataset = CompositeDataset(datasets, groups_per_batch_list)
     num_batches = len(composite_dataset)
-    num_batches = min(cfg.max_step, num_batches) if cfg.max_step is not None else num_batches
+    # Resolve max_steps from either max_steps or deprecated max_step
+    effective_max_steps = cfg.max_steps
+    if cfg.max_step is not None:
+        if cfg.max_steps is not None:
+            raise ValueError("Cannot specify both max_steps and max_step. Use max_steps.")
+        import warnings
+
+        warnings.warn(
+            "max_step is deprecated, use max_steps instead", DeprecationWarning, stacklevel=2
+        )
+        effective_max_steps = cfg.max_step
+    num_batches = (
+        min(effective_max_steps, num_batches) if effective_max_steps is not None else num_batches
+    )
     logger.info(f"Will train on {num_batches} batches (dataset has {num_batches})")
 
     # Training loop

@@ -70,6 +70,9 @@ class Config:
     # DPO-specific parameters
     reference_model_name: str | None = None
 
+    # Maximum number of training steps. If None, train for num_epochs * n_batches.
+    max_steps: int | None = None
+
 
 def create_dpo_clients(
     config: Config,
@@ -356,6 +359,8 @@ def main(config: Config):
     dataset, maybe_test_dataset = config.dataset_builder()
     n_batches = len(dataset)
     total_steps = n_batches * config.num_epochs
+    if config.max_steps is not None:
+        total_steps = min(total_steps, config.max_steps)
 
     evaluators = [evaluator() for evaluator in config.evaluator_builders]
     infrequent_evaluators = [evaluator() for evaluator in config.infrequent_evaluator_builders]
@@ -364,12 +369,17 @@ def main(config: Config):
     )
 
     # Training loop
+    reached_max_steps = False
     for epoch_idx in range(start_epoch, config.num_epochs):
         # Shuffle the dataset
         logger.info(msg=f"Starting epoch {epoch_idx}")
         dataset.set_epoch(seed=epoch_idx)
 
         for batch_idx in range(start_batch if epoch_idx == start_epoch else 0, n_batches):
+            step = epoch_idx * n_batches + batch_idx
+            if config.max_steps is not None and step >= config.max_steps:
+                reached_max_steps = True
+                break
             do_update(
                 epoch_idx=epoch_idx,
                 batch_idx=batch_idx,
@@ -385,9 +395,14 @@ def main(config: Config):
                 log_path=config.log_path,
                 tokenizer=tokenizer,
             )
+        if reached_max_steps:
+            break
 
     # Save final checkpoint if training actually happened
-    if start_epoch < config.num_epochs:
+    did_train = start_epoch < config.num_epochs and (
+        config.max_steps is None or start_epoch * n_batches + start_batch < config.max_steps
+    )
+    if did_train:
         checkpoint_utils.save_checkpoint(
             training_client=training_client,
             name="final",

@@ -53,6 +53,8 @@ class CLIConfig:
     # Code execution sandbox configuration
     sandbox_backend: SandboxBackend = SandboxBackend.SANDBOXFUSION
 
+    max_steps: int | None = None
+
 
 async def cli_main(cli_config: CLIConfig) -> None:
     renderer_name = await checkpoint_utils.resolve_renderer_name_from_checkpoint_or_default_async(
@@ -110,6 +112,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
         )
         if cli_config.max_steps_off_policy is not None
         else None,
+        max_steps=cli_config.max_steps,
     )
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)

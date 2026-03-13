@@ -1,9 +1,7 @@
 """Shared helpers for recipe smoke tests."""
 
 import os
-import re
 import select
-import signal
 import subprocess
 import time
 
@@ -12,35 +10,37 @@ import pytest
 # Timeout for each recipe (seconds). Override with SMOKE_TEST_TIMEOUT env var.
 DEFAULT_TIMEOUT = int(os.environ.get("SMOKE_TEST_TIMEOUT", "900"))
 
-# Patterns that indicate step 1 has started (meaning step 0 completed)
-STEP_1_PATTERNS = re.compile(r"Step 1|Sampling batch 1|batch_idx=1")
-
-# Patterns that indicate step 0 ran (for recipes that complete quickly)
-STEP_0_PATTERNS = re.compile(r"Step 0|Sampling batch 0|batch_idx=0|step.*=.*0")
+# Default number of training steps for smoke tests.
+DEFAULT_MAX_STEPS = 2
 
 
-def run_recipe(module: str, args: list[str] | None = None, timeout: int = DEFAULT_TIMEOUT):
-    """Run a recipe module until step 1 is detected, then kill it.
+def run_recipe(
+    module: str,
+    args: list[str] | None = None,
+    timeout: int = DEFAULT_TIMEOUT,
+    max_steps: int = DEFAULT_MAX_STEPS,
+):
+    """Run a recipe module for a limited number of steps and verify clean exit.
 
+    Passes max_steps to the recipe so it exits naturally after N training steps.
     Output is streamed to stdout in real time for debuggability in CI.
 
     Args:
         module: Python module path (e.g., "tinker_cookbook.recipes.chat_sl.train")
         args: CLI arguments to pass to the module
-        timeout: Maximum seconds to wait for step 1
+        timeout: Maximum seconds to wait for the recipe to complete
+        max_steps: Number of training steps to run (passed as CLI arg)
     """
-    cmd = ["uv", "run", "python", "-m", module] + (args or [])
+    cmd = ["uv", "run", "python", "-m", module] + (args or []) + [f"max_steps={max_steps}"]
     print(f"\n>>> {' '.join(cmd)}", flush=True)
 
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        process_group=0,
     )
 
     output_lines: list[str] = []
-    step1_seen = False
     start_time = time.monotonic()
 
     try:
@@ -49,7 +49,13 @@ def run_recipe(module: str, args: list[str] | None = None, timeout: int = DEFAUL
         while True:
             elapsed = time.monotonic() - start_time
             if elapsed >= timeout:
-                break
+                proc.terminate()
+                proc.wait(timeout=10)
+                last_lines = "\n".join(output_lines[-30:])
+                pytest.fail(
+                    f"Recipe {module} did not complete within {timeout}s "
+                    f"(exit code: {proc.returncode})\n\nLast 30 lines:\n{last_lines}"
+                )
 
             # Check if process exited
             if proc.poll() is not None:
@@ -70,35 +76,20 @@ def run_recipe(module: str, args: list[str] | None = None, timeout: int = DEFAUL
                 decoded = line.decode("utf-8", errors="replace").rstrip("\n")
                 output_lines.append(decoded)
                 print(decoded, flush=True)
-                if STEP_1_PATTERNS.search(decoded):
-                    step1_seen = True
-                    break
-    finally:
-        # Kill the process group
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        except (OSError, ProcessLookupError):
-            pass
+    except Exception:
+        # Ensure cleanup on unexpected errors
+        proc.kill()
         proc.wait(timeout=10)
+        raise
 
-    content = "\n".join(output_lines)
     elapsed = time.monotonic() - start_time
 
-    if step1_seen:
-        print(f"\n>>> PASSED: step 1 reached after {elapsed:.0f}s", flush=True)
-        return  # Success
+    if proc.returncode == 0:
+        print(f"\n>>> PASSED: recipe completed cleanly in {elapsed:.0f}s", flush=True)
+        return
 
-    # Process exited on its own — check if step 0 ran and it exited cleanly
-    if proc.returncode == 0 and STEP_0_PATTERNS.search(content):
-        print(
-            "\n>>> PASSED: recipe completed cleanly (step 0 seen, exit=0)",
-            flush=True,
-        )
-        return  # Success — recipe completed quickly
-
-    # Failure
+    # Non-zero exit code
     last_lines = "\n".join(output_lines[-30:])
     pytest.fail(
-        f"Recipe {module} did not reach step 1 within {timeout}s "
-        f"(exit code: {proc.returncode})\n\nLast 30 lines:\n{last_lines}"
+        f"Recipe {module} failed with exit code {proc.returncode}\n\nLast 30 lines:\n{last_lines}"
     )

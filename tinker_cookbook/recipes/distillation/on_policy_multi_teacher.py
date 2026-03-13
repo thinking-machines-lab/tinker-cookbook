@@ -87,6 +87,8 @@ class CLIConfig:
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
+    max_steps: int | None = None
+
 
 async def cli_main(cli_config: CLIConfig):
     """Convert CLI config to full config and run training."""
@@ -179,6 +181,7 @@ async def cli_main(cli_config: CLIConfig):
         compute_post_kl=cli_config.compute_post_kl,
         eval_every=cli_config.eval_every,
         save_every=cli_config.save_every,
+        max_steps=cli_config.max_steps,
     )
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
