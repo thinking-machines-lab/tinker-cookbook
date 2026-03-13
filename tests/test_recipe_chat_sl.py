@@ -1,6 +1,9 @@
+import pytest
+
 from tests.helpers import run_recipe
 
 
+@pytest.mark.integration
 def test_chat_sl():
     run_recipe(
         "tinker_cookbook.recipes.chat_sl.train",

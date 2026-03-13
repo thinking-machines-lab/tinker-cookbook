@@ -2,6 +2,7 @@ import asyncio
 from typing import cast
 
 import datasets
+import pytest
 import tinker
 from tinker_cookbook import renderers
 from tinker_cookbook.recipes.math_rl import arithmetic_env
@@ -14,6 +15,7 @@ from tinker_cookbook.supervised.data import (
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 
+@pytest.mark.integration
 def test_supervised():
     batch_size = 64
     model_name = "meta-llama/Llama-3.1-8B-Instruct"
@@ -44,6 +46,7 @@ def test_supervised():
     asyncio.run(supervised_train.main(cfg))
 
 
+@pytest.mark.integration
 async def test_rl():
     model_name = "meta-llama/Llama-3.1-8B-Instruct"
     lora_rank = 32
@@ -71,6 +74,7 @@ async def test_rl():
     await rl_train.main(cfg)
 
 
+@pytest.mark.integration
 def test_rl_async():
     model_name = "Qwen/Qwen2.5-VL-7B-Instruct"
     lora_rank = 32
@@ -102,6 +106,7 @@ def test_rl_async():
     asyncio.run(rl_train.main(cfg))
 
 
+@pytest.mark.integration
 def test_rl_sync_stream_minibatch():
     model_name = "Qwen/Qwen2.5-VL-7B-Instruct"
     lora_rank = 32

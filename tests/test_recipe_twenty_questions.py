@@ -1,6 +1,9 @@
+import pytest
+
 from tests.helpers import run_recipe
 
 
+@pytest.mark.integration
 def test_twenty_questions():
     run_recipe(
         "tinker_cookbook.recipes.multiplayer_rl.twenty_questions.train",
