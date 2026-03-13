@@ -16,7 +16,7 @@ Usage::
     async def do_rollout(...):
         ...
 
-    @profiled("train")
+    @profiled("train_step")
     async def train_step(...):
         ...
 
@@ -24,8 +24,10 @@ Usage::
         metrics = {"progress/batch": i_batch}
 
         with prof.measure() as profile:
-            await do_rollout(...)
-            await train_step(...)
+            with prof.phase("sampling"):
+                await do_rollout(...)
+            with prof.phase("train"):
+                await train_step(...)
 
         metrics.update(profile)
         ml_logger.log_metrics(metrics, step=i_batch)
@@ -35,6 +37,13 @@ The profiling dict (``profile`` above) contains only profiler-produced keys:
     - ``cpu/{key}`` — CPU time (seconds, excludes I/O wait and sleep)
     - ``time/total`` — wall-clock duration of the entire ``prof.measure()`` block
     - ``cpu/total`` — CPU time of the entire ``prof.measure()`` block
+
+Phases group nested ``@profiled`` calls under a prefix:
+    - ``time/{phase}/{key}`` for single-call functions
+    - ``time/{phase}/{key}:mean`` for aggregated multi-call functions
+
+The ``/`` separator denotes hierarchy (phases), while ``:`` denotes aggregation
+stats (mean, max, count, total).
 
 The difference between ``time/`` and ``cpu/`` reveals how much time is spent
 waiting on I/O (e.g., Tinker API calls) vs doing local compute.
@@ -141,11 +150,17 @@ class _Measurement:
 
 @dataclasses.dataclass
 class _ScopeState:
-    """Internal state for a single prof.measure() scope."""
+    """Internal state for a profiling scope (measure window or phase).
+
+    The ``prefix`` field supports nested phases via :meth:`Profiler.phase`.
+    All measurements within a phase have the prefix prepended to their keys,
+    producing hierarchical metric names like ``time/sampling/rollout:mean``.
+    """
 
     measurements: dict[str, list[_Measurement]]
     agg_config: dict[str, list[AggSpec]]
     lock: threading.Lock
+    prefix: str = ""
 
 
 _scope_state: ContextVar[_ScopeState | None] = ContextVar("profiler_scope_state", default=None)
@@ -165,8 +180,11 @@ def _flatten_measurements(
 
     For each key:
     - Single call: time/{key}, cpu/{key}
-    - Multiple calls: time/{key}/total, time/{key}/count, cpu/{key}/total, cpu/{key}/count,
+    - Multiple calls: time/{key}:total, time/{key}:count, cpu/{key}:total, cpu/{key}:count,
       plus user-requested aggs applied to both time/ and cpu/
+
+    The ``:`` separator is used for aggregation stats to distinguish them from
+    ``/``-separated hierarchy (phases).
     """
     for key, ms in measurements.items():
         wall_durs = [m.wall for m in ms]
@@ -176,19 +194,19 @@ def _flatten_measurements(
             profile[f"time/{key}"] = wall_durs[0]
             profile[f"cpu/{key}"] = cpu_durs[0]
         else:
-            profile[f"time/{key}/total"] = sum(wall_durs)
-            profile[f"time/{key}/count"] = len(wall_durs)
-            profile[f"cpu/{key}/total"] = sum(cpu_durs)
-            profile[f"cpu/{key}/count"] = len(cpu_durs)
+            profile[f"time/{key}:total"] = sum(wall_durs)
+            profile[f"time/{key}:count"] = len(wall_durs)
+            profile[f"cpu/{key}:total"] = sum(cpu_durs)
+            profile[f"cpu/{key}:count"] = len(cpu_durs)
 
             for agg_spec in agg_config.get(key, []):
                 if isinstance(agg_spec, str):
-                    profile[f"time/{key}/{agg_spec}"] = _BUILTIN_AGGS[agg_spec](wall_durs)
-                    profile[f"cpu/{key}/{agg_spec}"] = _BUILTIN_AGGS[agg_spec](cpu_durs)
+                    profile[f"time/{key}:{agg_spec}"] = _BUILTIN_AGGS[agg_spec](wall_durs)
+                    profile[f"cpu/{key}:{agg_spec}"] = _BUILTIN_AGGS[agg_spec](cpu_durs)
                 else:
                     name, fn = agg_spec
-                    profile[f"time/{key}/{name}"] = fn(wall_durs)
-                    profile[f"cpu/{key}/{name}"] = fn(cpu_durs)
+                    profile[f"time/{key}:{name}"] = fn(wall_durs)
+                    profile[f"cpu/{key}:{name}"] = fn(cpu_durs)
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +221,9 @@ class Profiler:
     windows. Decorated functions (via :func:`profiled`) record their wall-clock
     and CPU durations into the active window.
 
+    Use :meth:`phase` to group related operations under a named prefix,
+    creating hierarchical metric names.
+
     Example::
 
         prof = Profiler()
@@ -210,11 +231,17 @@ class Profiler:
         @profiled("rollout", agg=["mean", "max"])
         async def do_rollout(...): ...
 
+        @profiled("train_step")
+        async def train_step(...): ...
+
         for i_batch in range(n_batches):
             metrics = {"progress/batch": i_batch}
 
             with prof.measure() as profile:
-                await do_rollout(...)
+                with prof.phase("sampling"):
+                    await do_rollout(...)      # -> time/sampling/rollout:mean
+                with prof.phase("train"):
+                    await train_step(...)      # -> time/train/train_step
 
             metrics.update(profile)
             ml_logger.log_metrics(metrics, step=i_batch)
@@ -255,6 +282,67 @@ class Profiler:
             finally:
                 _scope_state.reset(token)
 
+    @contextmanager
+    def phase(self, name: str) -> Iterator[None]:
+        """Group nested ``@profiled`` calls under a named prefix.
+
+        Records the phase's own wall-clock and CPU duration, and prefixes all
+        ``@profiled`` keys within the phase with ``{name}/``.
+
+        Example::
+
+            with prof.measure() as profile:
+                with prof.phase("sampling"):
+                    await do_rollout(...)       # -> time/sampling/rollout:mean
+                with prof.phase("train"):
+                    await train_step(...)       # -> time/train/train_step
+
+        Produces::
+
+            time/total                    = 1654s
+            time/sampling                 = 500s   # phase wall-clock
+            time/sampling/rollout:mean    = 307s   # nested @profiled
+            time/sampling/rollout:max     = 481s
+            time/train                    = 722s   # phase wall-clock
+            time/train/train_step         = 722s   # nested @profiled
+
+        Phases can be nested further::
+
+            with prof.phase("train"):
+                with prof.phase("substep"):
+                    ...                         # -> time/train/substep/...
+
+        No-op when called outside a :meth:`measure` window.
+        """
+        parent = _scope_state.get()
+        if parent is None:
+            # Not inside a measure() block — no-op.
+            yield
+            return
+
+        child_prefix = f"{parent.prefix}{name}/"
+        child_state = _ScopeState(
+            measurements=parent.measurements,  # shared accumulator
+            agg_config=parent.agg_config,  # shared
+            lock=parent.lock,  # shared
+            prefix=child_prefix,
+        )
+        token = _scope_state.set(child_state)
+        t_wall = time.monotonic()
+        t_cpu = time.process_time()
+        try:
+            yield
+        finally:
+            wall_dur = time.monotonic() - t_wall
+            cpu_dur = time.process_time() - t_cpu
+            # Record the phase's own duration under the parent's prefix.
+            phase_key = f"{parent.prefix}{name}"
+            with parent.lock:
+                parent.measurements.setdefault(phase_key, []).append(
+                    _Measurement(wall=wall_dur, cpu=cpu_dur)
+                )
+            _scope_state.reset(token)
+
 
 # ---------------------------------------------------------------------------
 # Public API: profiled
@@ -292,6 +380,10 @@ def profiled(
     When no :meth:`Profiler.measure` window is active, durations are still
     logged to Python logging (at DEBUG level) but not recorded.
 
+    The key is automatically prefixed with the active phase's prefix (if any),
+    so ``@profiled("rollout")`` inside ``prof.phase("sampling")`` produces
+    ``time/sampling/rollout``.
+
     Examples::
 
         @profiled("save_checkpoint")
@@ -323,12 +415,11 @@ def profiled(
             state = _scope_state.get()
             if state is None:
                 return
+            full_key = f"{state.prefix}{profile_key}"
             with state.lock:
-                state.measurements.setdefault(profile_key, []).append(
-                    _Measurement(wall=wall, cpu=cpu)
-                )
+                state.measurements.setdefault(full_key, []).append(_Measurement(wall=wall, cpu=cpu))
                 if effective_agg:
-                    state.agg_config[profile_key] = effective_agg
+                    state.agg_config[full_key] = effective_agg
 
         if inspect.iscoroutinefunction(func):
 

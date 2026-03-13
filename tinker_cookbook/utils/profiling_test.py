@@ -186,7 +186,7 @@ class TestAggregation:
 
         assert "time/once" in profile
         assert "cpu/once" in profile
-        assert "time/once/total" not in profile
+        assert "time/once:total" not in profile
 
     def test_multiple_calls_emit_total_and_count(self):
         prof = Profiler()
@@ -199,10 +199,10 @@ class TestAggregation:
             for _ in range(3):
                 work()
 
-        assert profile["time/repeated/count"] == 3
-        assert profile["time/repeated/total"] >= 0.03
-        assert profile["cpu/repeated/count"] == 3
-        assert "cpu/repeated/total" in profile
+        assert profile["time/repeated:count"] == 3
+        assert profile["time/repeated:total"] >= 0.03
+        assert profile["cpu/repeated:count"] == 3
+        assert "cpu/repeated:total" in profile
         assert "time/repeated" not in profile  # no suffix-less key
 
     def test_builtin_agg_applied_to_both_time_and_cpu(self):
@@ -218,13 +218,13 @@ class TestAggregation:
             work()
 
         # time/ aggs
-        assert "time/agg_test/mean" in profile
-        assert "time/agg_test/max" in profile
-        assert "time/agg_test/min" in profile
+        assert "time/agg_test:mean" in profile
+        assert "time/agg_test:max" in profile
+        assert "time/agg_test:min" in profile
         # cpu/ aggs
-        assert "cpu/agg_test/mean" in profile
-        assert "cpu/agg_test/max" in profile
-        assert "cpu/agg_test/min" in profile
+        assert "cpu/agg_test:mean" in profile
+        assert "cpu/agg_test:max" in profile
+        assert "cpu/agg_test:min" in profile
 
     def test_custom_agg_lambda(self):
         prof = Profiler()
@@ -238,9 +238,9 @@ class TestAggregation:
             work()
             work()
 
-        assert "time/custom/last" in profile
-        assert "cpu/custom/last" in profile
-        assert profile["time/custom/count"] == 3
+        assert "time/custom:last" in profile
+        assert "cpu/custom:last" in profile
+        assert profile["time/custom:count"] == 3
 
     def test_invalid_builtin_agg_raises_at_decoration_time(self):
         with pytest.raises(ValueError, match="Unknown built-in aggregation"):
@@ -274,8 +274,8 @@ class TestAggregation:
             work()
 
         assert "time/once_with_agg" in profile
-        assert "time/once_with_agg/mean" not in profile
-        assert "time/once_with_agg/total" not in profile
+        assert "time/once_with_agg:mean" not in profile
+        assert "time/once_with_agg:total" not in profile
 
     def test_async_repeated_calls_aggregation(self):
         prof = Profiler()
@@ -291,10 +291,10 @@ class TestAggregation:
             return profile
 
         profile = asyncio.run(run())
-        assert profile["time/async_repeated/count"] == 4
-        assert profile["time/async_repeated/total"] >= 0.04
-        assert "time/async_repeated/mean" in profile
-        assert "cpu/async_repeated/mean" in profile
+        assert profile["time/async_repeated:count"] == 4
+        assert profile["time/async_repeated:total"] >= 0.04
+        assert "time/async_repeated:mean" in profile
+        assert "cpu/async_repeated:mean" in profile
 
 
 # ---------------------------------------------------------------------------
@@ -541,7 +541,7 @@ class TestAsyncConcurrency:
             return profile
 
         profile = asyncio.run(run())
-        assert profile["time/coro_work/count"] == 2
+        assert profile["time/coro_work:count"] == 2
 
     def test_create_task_children_share_window(self):
         prof = Profiler()
@@ -559,7 +559,7 @@ class TestAsyncConcurrency:
             return profile
 
         profile = asyncio.run(run())
-        assert profile["time/task_work/count"] == 2
+        assert profile["time/task_work:count"] == 2
 
     def test_many_concurrent_tasks(self):
         prof = Profiler()
@@ -575,7 +575,7 @@ class TestAsyncConcurrency:
             return profile
 
         profile = asyncio.run(run())
-        assert profile["time/parallel/count"] == 50
+        assert profile["time/parallel:count"] == 50
 
     def test_concurrent_tasks_with_independent_windows(self):
         """Models RL do_async_training: training_loop and eval_loop
@@ -732,7 +732,7 @@ class TestToThread:
 
         profile = asyncio.run(run())
         assert "time/bg_work" in profile
-        assert profile["time/async_work/count"] == 3
+        assert profile["time/async_work:count"] == 3
 
     def test_to_thread_same_key_from_multiple_threads(self):
         prof = Profiler()
@@ -747,7 +747,7 @@ class TestToThread:
             return profile
 
         profile = asyncio.run(run())
-        assert profile["time/shared_key/count"] == 10
+        assert profile["time/shared_key:count"] == 10
 
     def test_to_thread_different_keys_from_multiple_threads(self):
         prof = Profiler()
@@ -794,7 +794,7 @@ class TestToThread:
             return profile
 
         profile = asyncio.run(run())
-        assert profile["time/dual_key/count"] == 5
+        assert profile["time/dual_key:count"] == 5
 
     def test_to_thread_stress(self):
         prof = Profiler()
@@ -815,8 +815,8 @@ class TestToThread:
             return profile
 
         profile = asyncio.run(run())
-        assert profile["time/blocking/count"] == 20
-        assert profile["time/async_io/count"] == 20
+        assert profile["time/blocking:count"] == 20
+        assert profile["time/async_io:count"] == 20
 
     def test_nested_profiled_no_deadlock(self):
         prof = Profiler()
@@ -855,6 +855,146 @@ class TestToThread:
         profile = asyncio.run(run())
         assert "time/inner_bg" in profile
         assert "time/outer_bg" in profile
+
+
+# ---------------------------------------------------------------------------
+# 9. Phase nesting
+# ---------------------------------------------------------------------------
+
+
+class TestPhase:
+    def test_phase_records_own_duration(self):
+        prof = Profiler()
+
+        with prof.measure() as profile:
+            with prof.phase("sampling"):
+                time.sleep(0.01)
+
+        assert profile["time/sampling"] >= 0.01
+        assert "cpu/sampling" in profile
+
+    def test_phase_prefixes_profiled_keys(self):
+        prof = Profiler()
+
+        @profiled("work")
+        def work():
+            pass
+
+        with prof.measure() as profile:
+            with prof.phase("train"):
+                work()
+
+        assert "time/train/work" in profile
+        assert "cpu/train/work" in profile
+        assert "time/work" not in profile  # not at top level
+
+    def test_phase_with_aggregation(self):
+        prof = Profiler()
+
+        @profiled("rollout", agg=["mean", "max"])
+        def do_rollout():
+            time.sleep(0.001)
+
+        with prof.measure() as profile:
+            with prof.phase("sampling"):
+                for _ in range(5):
+                    do_rollout()
+
+        assert profile["time/sampling/rollout:count"] == 5
+        assert "time/sampling/rollout:mean" in profile
+        assert "time/sampling/rollout:max" in profile
+        assert profile["time/sampling"] >= 0.005  # phase own duration
+
+    def test_multiple_phases(self):
+        prof = Profiler()
+
+        @profiled("step_a")
+        def step_a():
+            time.sleep(0.01)
+
+        @profiled("step_b")
+        def step_b():
+            time.sleep(0.01)
+
+        with prof.measure() as profile:
+            with prof.phase("eval"):
+                step_a()
+            with prof.phase("train"):
+                step_b()
+
+        assert "time/eval" in profile
+        assert "time/eval/step_a" in profile
+        assert "time/train" in profile
+        assert "time/train/step_b" in profile
+        # No cross-contamination
+        assert "time/eval/step_b" not in profile
+        assert "time/train/step_a" not in profile
+
+    def test_nested_phases(self):
+        prof = Profiler()
+
+        @profiled("inner_work")
+        def inner_work():
+            pass
+
+        with prof.measure() as profile:
+            with prof.phase("outer"):
+                with prof.phase("inner"):
+                    inner_work()
+
+        assert "time/outer" in profile
+        assert "time/outer/inner" in profile
+        assert "time/outer/inner/inner_work" in profile
+
+    def test_phase_noop_outside_measure(self):
+        """phase() outside measure() should be a no-op, not error."""
+        prof = Profiler()
+
+        with prof.phase("orphan"):
+            pass  # should not raise
+
+    def test_phase_with_async(self):
+        prof = Profiler()
+
+        @profiled("async_rollout", agg=["mean"])
+        async def async_rollout():
+            await asyncio.sleep(0.01)
+
+        async def run():
+            with prof.measure() as profile:
+                with prof.phase("sampling"):
+                    await asyncio.gather(
+                        async_rollout(),
+                        async_rollout(),
+                        async_rollout(),
+                    )
+            return profile
+
+        profile = asyncio.run(run())
+        assert "time/sampling" in profile
+        assert profile["time/sampling/async_rollout:count"] == 3
+        assert "time/sampling/async_rollout:mean" in profile
+
+    def test_profiled_outside_phase_stays_at_top_level(self):
+        """Functions called outside any phase should be at the top level."""
+        prof = Profiler()
+
+        @profiled("top_level")
+        def top_level():
+            pass
+
+        @profiled("nested")
+        def nested():
+            pass
+
+        with prof.measure() as profile:
+            top_level()
+            with prof.phase("inner"):
+                nested()
+
+        assert "time/top_level" in profile
+        assert "time/inner/nested" in profile
+        assert "time/nested" not in profile
 
 
 # ---------------------------------------------------------------------------
