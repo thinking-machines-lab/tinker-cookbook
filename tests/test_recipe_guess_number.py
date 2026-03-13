@@ -1,6 +1,9 @@
+import pytest
+
 from tests.helpers import run_recipe
 
 
+@pytest.mark.integration
 def test_guess_number():
     run_recipe(
         "tinker_cookbook.recipes.multiplayer_rl.guess_number.train",

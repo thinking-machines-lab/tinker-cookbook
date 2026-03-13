@@ -88,6 +88,10 @@ exclude = ["*_test.py"]
 testpaths = ["tinker_cookbook", "tests"]
 python_files = ["*_test.py", "test_*.py"]
 norecursedirs = ["tinker_cookbook/scripts"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests requiring TINKER_API_KEY and network access",
+]
 
 [tool.ruff]
 line-length = 100
