@@ -70,6 +70,10 @@ If you find errors or want to improve the documentation, feel free to submit a P
 
 For the rendered documentation, visit [tinker-docs.thinkingmachines.ai](https://tinker-docs.thinkingmachines.ai).
 
+### LLM-friendly documentation
+
+This repo includes `llms.txt` and `llms-full.txt` following the [llms.txt standard](https://llmstxt.org/). These files provide a concatenated version of the documentation that can be easily consumed by LLMs for context when asking questions about the Tinker API.
+
 ### Import our utilities
 
 Tinker cookbook includes several utilities. Here's a quick overview:
