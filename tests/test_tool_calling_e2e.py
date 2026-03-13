@@ -8,7 +8,7 @@ that tool calls are correctly rendered, generated, and parsed.
 NOT a unit test - requires API access and queries real models.
 
 Usage:
-    uv run python tinker_cookbook/scripts/test_tool_calling_e2e.py [--model MODEL_NAME]
+    uv run python tests/test_tool_calling_e2e.py [--model MODEL_NAME]
 """
 
 import argparse
