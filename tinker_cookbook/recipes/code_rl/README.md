@@ -32,7 +32,7 @@ If you prefer not to use Docker, you can set up the sandbox manually by followin
 
 1. Install Modal and authenticate:
 ```bash
-pip install modal
+uv pip install -e ".[modal]"
 modal token new
 ```
 

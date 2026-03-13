@@ -2,7 +2,15 @@
 
 [Verifiers](https://github.com/primeintellect-ai/verifiers) is a library for creating RL environments for LLMs, including many community implementations featured on Prime Intellect's [Environments Hub](https://app.primeintellect.ai/dashboard/environments). This recipe allows all text-based environments from the Environments Hub to be used with Tinker for RL training.
 
-To use this recipe, you need to have your chosen environment module (a self-contained Python package) installed in your project. You can install environments from the Environments Hub using the `prime` CLI:
+## Installation
+
+This recipe requires the Verifiers library:
+
+```bash
+uv pip install -e ".[verifiers]"
+```
+
+You also need to have your chosen environment module (a self-contained Python package) installed in your project. You can install environments from the Environments Hub using the `prime` CLI:
 
 ```bash
 uv tool install prime # or pipx install prime
