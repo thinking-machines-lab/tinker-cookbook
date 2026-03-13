@@ -94,25 +94,29 @@ def create_dpo_clients(
     """
     # Create shared service client for both training and reference clients
     service_client = tinker.ServiceClient(base_url=config.base_url)
-    training_client = service_client.create_lora_training_client(
-        base_model=config.model_name, rank=config.lora_rank, user_metadata=user_metadata
-    )
 
-    # Load state - differentiate between resuming DPO training vs starting fresh from SFT
     if resume_info:
-        # Resuming interrupted DPO training - load optimizer state for proper continuation
+        # Resuming interrupted DPO training - load weights + optimizer state
         checkpoint_utils.check_renderer_name_for_checkpoint(
             service_client, resume_info["state_path"], config.renderer_name
         )
-        training_client.load_state_with_optimizer(resume_info["state_path"]).result()
+        training_client = service_client.create_training_client_from_state_with_optimizer(
+            resume_info["state_path"], user_metadata=user_metadata
+        )
         logger.info(f"Resumed DPO training from {resume_info['state_path']}")
     elif config.load_checkpoint_path:
-        # Starting fresh DPO from SFT checkpoint - load weights only (fresh optimizer)
+        # Starting fresh DPO from checkpoint - load weights only (fresh optimizer)
         checkpoint_utils.check_renderer_name_for_checkpoint(
             service_client, config.load_checkpoint_path, config.renderer_name
         )
-        training_client.load_state(config.load_checkpoint_path).result()
+        training_client = service_client.create_training_client_from_state(
+            config.load_checkpoint_path, user_metadata=user_metadata
+        )
         logger.info(f"Loaded weights from {config.load_checkpoint_path}")
+    else:
+        training_client = service_client.create_lora_training_client(
+            base_model=config.model_name, rank=config.lora_rank, user_metadata=user_metadata
+        )
     # Create a sampling client for the reference model from the training client
     reference_client = training_client.save_weights_and_get_sampling_client("reference")
     return training_client, reference_client
