@@ -285,16 +285,10 @@ async def save_checkpoint_async(
         )
 
     results = {k: await v.result_async() for k, v in futures.items()}
-    paths = {}
-    entry: CheckpointEntry = {"name": name, **loop_state}
-    if "state" in results:
-        entry["state_path"] = results["state"].path
-        paths["state_path"] = results["state"].path
-    if "sampler" in results:
-        entry["sampler_path"] = results["sampler"].path
-        paths["sampler_path"] = results["sampler"].path
+    paths = {k + "_path": v.path for k, v in results.items()}
     update_scope_context(paths)
     logger.info(f"Saved checkpoints: {paths}")
+    entry: CheckpointEntry = {"name": name, **loop_state, **paths}  # type: ignore[typeddict-item]
     with open(os.path.join(log_path, "checkpoints.jsonl"), "a") as f:
         f.write(json.dumps(entry) + "\n")
 
