@@ -28,11 +28,7 @@ from typing import Any
 import chz
 import tinker
 
-from tinker_cookbook.checkpoint_utils import (
-    CheckpointEntry,
-    get_last_checkpoint,
-    load_checkpoints_file,
-)
+from tinker_cookbook.checkpoint_utils import get_last_checkpoint, load_checkpoints_file
 from tinker_cookbook.recipes.vlm_classifier.eval import get_evaluator_builder
 
 
@@ -44,7 +40,7 @@ def get_checkpoint_at_step(
     log_dir: str,
     step: int,
     required_key: str = "sampler_path",
-) -> CheckpointEntry | None:
+) -> dict[str, Any] | None:
     """
     Get the checkpoint at a specific step from the checkpoints.jsonl file.
 

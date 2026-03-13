@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import os
-from typing import Any, Literal, Required, TypedDict, cast
+from typing import Literal, Required, TypedDict, cast
 
 import tinker
 

@@ -76,7 +76,7 @@ class Config:
 
 def create_dpo_clients(
     config: Config,
-    resume_info: checkpoint_utils.CheckpointEntry | None = None,
+    resume_info: dict[str, Any] | None = None,
     user_metadata: dict[str, str] | None = None,
 ) -> tuple[tinker.TrainingClient, tinker.SamplingClient]:
     """Create and configure the training client and reference sampling client for DPO.
