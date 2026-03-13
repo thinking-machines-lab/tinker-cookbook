@@ -288,7 +288,7 @@ async def save_checkpoint_async(
     paths = {k + "_path": v.path for k, v in results.items()}
     update_scope_context(paths)
     logger.info(f"Saved checkpoints: {paths}")
-    entry: CheckpointRecord = {"name": name, **loop_state, **paths}  # type: ignore[typeddict-item]
+    entry = {"name": name, **loop_state, **paths}
     with open(os.path.join(log_path, "checkpoints.jsonl"), "a") as f:
         f.write(json.dumps(entry) + "\n")
 
