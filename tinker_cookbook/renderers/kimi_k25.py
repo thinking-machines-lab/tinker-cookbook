@@ -87,16 +87,9 @@ class KimiK25Renderer(KimiK2Renderer):
 
     def _normalize_response_tokens(self, response: list[int]) -> list[int]:
         """Restore the synthetic <think> prefill before parsing sampled tokens."""
-        think_prefix_tokens = self.tokenizer.encode("<think>", add_special_tokens=False)
-        think_suffix_tokens = self.tokenizer.encode("</think>", add_special_tokens=False)
-
-        starts_with_think = response[: len(think_prefix_tokens)] == think_prefix_tokens
-        contains_think_close = any(
-            response[idx : idx + len(think_suffix_tokens)] == think_suffix_tokens
-            for idx in range(len(response) - len(think_suffix_tokens) + 1)
-        )
-
-        if not starts_with_think and contains_think_close:
+        text = self.tokenizer.decode(response)
+        if "</think>" in text and not text.startswith("<think>"):
+            think_prefix_tokens = self.tokenizer.encode("<think>", add_special_tokens=False)
             return [*think_prefix_tokens, *response]
         return response
 
