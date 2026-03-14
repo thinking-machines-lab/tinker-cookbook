@@ -1,0 +1,73 @@
+name: nightly
+
+on:
+  workflow_run:
+    workflows: ["smoke-test-recipes"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # needed to create/delete releases
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    # Only run if: manually triggered, or smoke tests passed on schedule
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'schedule')
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: install-uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: build
+        run: uv build
+
+      - name: smoke test
+        run: uv run python -c "import tinker_cookbook; print(f'Version: {tinker_cookbook.__version__}')"
+
+      - name: get version
+        id: version
+        run: |
+          VERSION=$(uv run python -c "import tinker_cookbook; print(tinker_cookbook.__version__)")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tinker-cookbook-nightly
+          path: dist/
+          retention-days: 7
+
+      - name: delete existing nightly release
+        run: gh release delete nightly --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: create nightly release
+        run: |
+          gh release create nightly dist/* \
+            --prerelease \
+            --title "Nightly Build (${{ steps.version.outputs.version }})" \
+            --notes "$(cat <<EOF
+          Automated nightly build from \`main\` at $(date -u '+%Y-%m-%d %H:%M UTC').
+
+          **Version:** \`${{ steps.version.outputs.version }}\`
+          **Commit:** [\`${GITHUB_SHA::8}\`](https://github.com/${{ github.repository }}/commit/${GITHUB_SHA})
+
+          ### Install
+          \`\`\`bash
+          pip install 'tinker_cookbook @ https://github.com/${{ github.repository }}/releases/download/nightly/tinker_cookbook-${{ steps.version.outputs.version }}-py3-none-any.whl'
+          \`\`\`
+          EOF
+          )"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
