@@ -305,7 +305,7 @@ async def save_checkpoint_async(
         name: Name for the checkpoint (used in the tinker:// path).
         log_path: Directory containing ``checkpoints.jsonl``.
         loop_state: Training loop state (must include ``batch``; may include
-            ``epoch`` and any additional user metadata).
+            ``epoch``, ``final``, and any additional user metadata).
         kind: Which checkpoint types to save.
         ttl_seconds: Server-side retention. ``None`` keeps the checkpoint indefinitely.
 
