@@ -1,0 +1,218 @@
+# LiteLLM Custom Provider
+
+[LiteLLM](https://docs.litellm.ai/) provides a unified interface to call 100+ LLM APIs. Many agentic frameworks and harnesses use LiteLLM under the hood, so implementing a custom LiteLLM handler for Tinker provides a convenient way to integrate these frameworks with the Tinker API.
+
+## Overview
+
+The custom handler:
+1. Converts LiteLLM messages to tinker-cookbook format
+2. Uses a renderer to tokenize messages
+3. Calls the Tinker sampling API
+4. Parses the response and returns it in LiteLLM format
+
+**Key feature:** The implementation passes raw input and output tokens back via `provider_specific_fields`, making them available for downstream training workflows.
+
+## Example Implementation
+
+```python
+from __future__ import annotations
+
+import time
+import uuid
+from functools import lru_cache
+from typing import Any, Callable, Optional, Union
+
+import httpx
+import tinker
+from tinker.types import SamplingParams
+import litellm
+from litellm.llms.custom_llm import CustomLLM
+from litellm.types.utils import Choices, Message, ModelResponse, Usage
+from tinker_cookbook.renderers import Message as TinkerMessage
+from tinker_cookbook.renderers import get_renderer
+from tinker_cookbook.renderers.base import ToolCall
+from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.model_info import get_recommended_renderer_name
+
+
+@lru_cache(maxsize=4)
+def _get_tokenizer(base_model: str):
+    return get_tokenizer(base_model)
+
+
+@lru_cache(maxsize=4)
+def _get_renderer(base_model: str):
+    renderer_name = get_recommended_renderer_name(base_model)
+    return get_renderer(renderer_name, _get_tokenizer(base_model))
+
+
+@lru_cache(maxsize=1)
+def _get_service_client() -> tinker.ServiceClient:
+    return tinker.ServiceClient()
+
+
+@lru_cache(maxsize=4)
+def _get_sampling_client(base_model: str) -> tinker.SamplingClient:
+    return _get_service_client().create_sampling_client(base_model=base_model)
+
+
+def _to_tinker_messages(messages: list[dict[str, Any]]) -> list[TinkerMessage]:
+    """Convert litellm message dicts to tinker-cookbook Messages."""
+    out: list[TinkerMessage] = []
+    for msg in messages:
+        tinker_msg = TinkerMessage(role=msg["role"], content=msg.get("content") or "")
+        if "name" in msg:
+            tinker_msg["name"] = msg["name"]
+        if "tool_call_id" in msg:
+            tinker_msg["tool_call_id"] = msg["tool_call_id"]
+        if "tool_calls" in msg:
+            tinker_msg["tool_calls"] = [
+                ToolCall.model_validate(tc) for tc in msg["tool_calls"]
+            ]
+        out.append(tinker_msg)
+    return out
+
+
+class TinkerCookbookLLM(CustomLLM):
+    """Renders messages to tokens, calls Tinker sampling API, parses response back."""
+
+    async def acompletion(
+        self,
+        model: str,
+        messages: list,
+        api_base: str,
+        custom_prompt_dict: dict,
+        model_response: ModelResponse,
+        print_verbose: Callable,
+        encoding,
+        api_key,
+        logging_obj,
+        optional_params: dict,
+        acompletion=None,
+        litellm_params=None,
+        logger_fn=None,
+        headers={},
+        timeout: Optional[Union[float, httpx.Timeout]] = None,
+        client=None,
+    ) -> ModelResponse:
+        # base_model is a known litellm kwarg routed to litellm_params
+        base_model: str = litellm_params["base_model"]
+
+        renderer = _get_renderer(base_model)
+        sampling_client = _get_sampling_client(base_model)
+
+        # Inject tool declarations into the prompt
+        tools = optional_params.get("tools")
+        if tools:
+            tool_specs = [t["function"] for t in tools if "function" in t]
+            match tinker_msgs:
+                case [{"role": "system", "content": system_prompt}, *rest]:
+                    pass
+                case rest:
+                    system_prompt = ""
+            tinker_msgs = renderer.create_conversation_prefix_with_tools(tool_specs, system_prompt) + rest
+
+        model_input = renderer.build_generation_prompt(tinker_msgs)
+        input_tokens: list[int] = model_input.to_ints()
+
+        # Build sampling params from optional_params
+	sampling_params = SamplingParams(
+	    **{k: v for k, v in optional_params.items() if k in SamplingParams.model_fields}
+	)
+
+        # Call Tinker sampling API
+        result = await sampling_client.sample_async(
+            prompt=model_input,
+            num_samples=1,
+            sampling_params=sampling_params,
+        )
+
+        output_tokens: list[int] = result.sequences[0].tokens
+
+        # Parse response through renderer
+        parsed_msg, parse_success = renderer.parse_response(output_tokens)
+        content = parsed_msg["content"]
+        # Renderer may return content as a list of blocks; extract text only
+        if isinstance(content, list):
+            content = "".join(b["text"] for b in content if b["type"] == "text")
+        tool_calls = parsed_msg.get("tool_calls")
+        if tool_calls:
+            tool_calls = [tc.model_dump() for tc in tool_calls]
+
+        finish_reason = (
+            "tool_calls" if tool_calls
+            else "stop" if parse_success
+            else "length"
+        )
+
+        model_response.id = f"chatcmpl-tinker-{uuid.uuid4().hex[:12]}"
+        model_response.created = int(time.time())
+        model_response.model = model
+        model_response.choices = [
+            Choices(
+                finish_reason=finish_reason,
+                index=0,
+                message=Message(
+                    content=content or None,
+                    role="assistant",
+                    tool_calls=tool_calls,
+                    # Pass raw tokens for downstream training
+                    provider_specific_fields={
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                    },
+                ),
+            )
+        ]
+        model_response.usage = Usage(
+            prompt_tokens=len(input_tokens),
+            completion_tokens=len(output_tokens),
+            total_tokens=len(input_tokens) + len(output_tokens),
+        )
+        return model_response
+
+
+tinker_llm_instance = TinkerCookbookLLM()
+
+
+def register_tinker_provider() -> None:
+    """Register the tinker provider with litellm. Call once at startup."""
+    litellm.custom_provider_map.append(
+        {"provider": "tinker", "custom_handler": tinker_llm_instance}
+    )
+```
+
+## Usage
+
+Register the provider at startup, then use the `tinker/` prefix:
+
+```python
+from your_module import register_tinker_provider
+
+register_tinker_provider()
+
+response = await litellm.acompletion(
+    model="tinker/moonshotai/Kimi-K2.5",
+    messages=[{"role": "user", "content": "Hello!"}],
+    base_model="moonshotai/Kimi-K2.5",
+)
+
+# Access raw tokens for training
+tokens = response.choices[0].message.provider_specific_fields
+input_tokens = tokens["input_tokens"]
+output_tokens = tokens["output_tokens"]
+```
+
+## Accessing Raw Tokens for Training
+
+The `provider_specific_fields` dictionary on the response message contains:
+- `input_tokens`: The tokenized prompt as a list of token IDs
+- `output_tokens`: The model's output as a list of token IDs
+
+These raw tokens can be used directly with Tinker's training APIs for supervised learning or RL workflows.
+
+## Related Docs
+
+- [OpenAI API Compatible Inference](/compatible-apis/openai) - Tinker's built-in OpenAI-compatible endpoint
+- [Rendering](/rendering) - How renderers convert messages to tokens
+- [Training and Sampling](/training-sampling) - Direct Tinker sampling API
