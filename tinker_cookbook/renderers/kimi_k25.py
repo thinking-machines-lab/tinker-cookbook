@@ -96,7 +96,11 @@ class KimiK25Renderer(KimiK2Renderer):
 
     def _normalize_response_tokens(self, response: list[int]) -> list[int]:
         """Restore the synthetic <think> prefill before parsing sampled tokens."""
-        if response and response[0] != self._think_open_token and self._think_close_token in response:
+        if (
+            response
+            and response[0] != self._think_open_token
+            and self._think_close_token in response
+        ):
             return [self._think_open_token, *response]
         return response
 

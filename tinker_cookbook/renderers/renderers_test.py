@@ -29,6 +29,7 @@ import uuid
 from typing import Callable, cast
 
 import pytest
+import tinker
 
 from tinker_cookbook.image_processing_utils import get_image_processor
 from tinker_cookbook.model_info import get_model_attributes, get_recommended_renderer_name
