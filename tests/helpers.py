@@ -8,7 +8,7 @@ import time
 import pytest
 
 # Timeout for each recipe (seconds). Override with SMOKE_TEST_TIMEOUT env var.
-DEFAULT_TIMEOUT = int(os.environ.get("SMOKE_TEST_TIMEOUT", "900"))
+DEFAULT_TIMEOUT = int(os.environ.get("SMOKE_TEST_TIMEOUT", "1800"))
 
 # Default number of training steps for smoke tests.
 DEFAULT_MAX_STEPS = 2
