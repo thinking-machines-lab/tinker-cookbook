@@ -1,6 +1,5 @@
 """Renderer for Moonshot AI's Kimi K2.5 models."""
 
-from collections.abc import Iterator
 from typing import cast
 
 import tinker
@@ -9,8 +8,6 @@ from tinker_cookbook.image_processing_utils import ImageProcessor
 from tinker_cookbook.renderers.base import (
     ContentPart,
     ImageProcessorProtocol,
-    Message,
-    MessageDelta,
     Role,
     ToolSpec,
     image_to_chunk,
@@ -104,12 +101,6 @@ class KimiK25Renderer(KimiK2Renderer):
         ):
             return [self._think_open_token, *response]
         return response
-
-    def parse_response(self, response: list[int]) -> tuple[Message, bool]:
-        return super().parse_response(self._normalize_response_tokens(response))
-
-    def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
-        yield from super().parse_response_streaming(self._normalize_response_tokens(response))
 
     def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""

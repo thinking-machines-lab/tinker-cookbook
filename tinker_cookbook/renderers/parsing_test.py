@@ -23,6 +23,7 @@ from tinker_cookbook.renderers.base import (
 )
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3DisableThinkingRenderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
+from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
 from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
@@ -356,6 +357,7 @@ def test_utf8_decoder_mixed_ascii_and_emoji():
         ("Qwen/Qwen3.5-35B-A3B", Qwen3_5Renderer, {}),
         ("Qwen/Qwen3.5-35B-A3B", Qwen3_5DisableThinkingRenderer, {}),
         ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer, {}),
+        ("moonshotai/Kimi-K2.5", KimiK25Renderer, {}),
     ],
 )
 def test_thinking_generation_parse_correspondence(model_name, renderer_cls, renderer_kwargs):

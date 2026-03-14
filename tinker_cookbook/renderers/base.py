@@ -1126,14 +1126,57 @@ class Renderer(ABC):
         """
         ...
 
+    supports_streaming: bool = False
+    """Whether this renderer supports streaming response parsing.
+
+    Renderers that set this to True get a default parse_response_streaming
+    implementation using ReasoningStreamingParser. They must also define
+    ``_end_message_token`` and ``_parse_response_for_streaming``.
+    """
+
+    def _normalize_response_tokens(self, response: list[int]) -> list[int]:
+        """Normalize sampled response tokens before parsing.
+
+        Subclasses that prefill tokens in build_generation_prompt (e.g. <think>)
+        should override this to restore the prefilled tokens so that parse_response
+        and parse_response_streaming see a complete token sequence.
+
+        The default implementation is the identity function.
+        """
+        return response
+
+    @property
+    def _end_message_token(self) -> int:
+        """The token ID that marks the end of a message.
+
+        Must be overridden by subclasses that set supports_streaming = True.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must define _end_message_token to support streaming"
+        )
+
+    def _parse_response_for_streaming(self, response: list[int]) -> tuple[Message, bool]:
+        """Parse response for streaming, always applying full content parsing.
+
+        Unlike parse_response which may short-circuit on missing stop token,
+        this always parses content blocks from the response. This ensures
+        the final Message emitted by streaming is complete even for truncated
+        responses.
+
+        The default delegates to parse_response. Subclasses should override
+        if their parse_response short-circuits on missing stop token.
+        """
+        return self.parse_response(response)
+
     def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
         """Parse response tokens with streaming, yielding incremental deltas.
 
         This enables real-time display of model output by yielding partial
         content as tokens arrive, rather than waiting for the complete response.
 
-        Not all renderers support streaming. The default raises NotImplementedError.
-        Override this in subclasses that support streaming.
+        Renderers that set ``supports_streaming = True`` get a default
+        implementation using ReasoningStreamingParser. Others raise
+        NotImplementedError.
 
         Args:
             response: Token IDs from the model.
@@ -1144,9 +1187,19 @@ class Renderer(ABC):
             StreamingThinkingDelta: Incremental thinking/reasoning content.
             Message: The complete parsed message at the end.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not support streaming response parsing"
+        if not self.supports_streaming:
+            raise NotImplementedError(
+                f"{type(self).__name__} does not support streaming response parsing"
+            )
+        response = self._normalize_response_tokens(response)
+        parser = ReasoningStreamingParser(
+            tokenizer=self.tokenizer,
+            end_message_token=self._end_message_token,
+            parse_final_response=self._parse_response_for_streaming,
         )
+        for token in response:
+            yield from parser.feed(token)
+        yield from parser.finish()
 
     def to_openai_message(self, message: Message) -> dict:
         """
