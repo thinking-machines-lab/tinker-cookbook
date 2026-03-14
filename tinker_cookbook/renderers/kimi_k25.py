@@ -37,10 +37,18 @@ class KimiK25Renderer(KimiK2Renderer):
     """
 
     image_processor: ImageProcessor | None
+    _think_open_token: int
+    _think_close_token: int
 
     def __init__(self, tokenizer: Tokenizer, image_processor: ImageProcessor | None = None):
         super().__init__(tokenizer)
         self.image_processor = image_processor
+        think_open_tokens = self.tokenizer.encode("<think>", add_special_tokens=False)
+        think_close_tokens = self.tokenizer.encode("</think>", add_special_tokens=False)
+        assert len(think_open_tokens) == 1
+        assert len(think_close_tokens) == 1
+        self._think_open_token = think_open_tokens[0]
+        self._think_close_token = think_close_tokens[0]
 
     def _encode_multipart_content(self, content: list[ContentPart]) -> list[tinker.ModelInputChunk]:
         chunks = []
@@ -87,10 +95,8 @@ class KimiK25Renderer(KimiK2Renderer):
 
     def _normalize_response_tokens(self, response: list[int]) -> list[int]:
         """Restore the synthetic <think> prefill before parsing sampled tokens."""
-        text = self.tokenizer.decode(response)
-        if "</think>" in text and not text.startswith("<think>"):
-            think_prefix_tokens = self.tokenizer.encode("<think>", add_special_tokens=False)
-            return [*think_prefix_tokens, *response]
+        if response and response[0] != self._think_open_token and self._think_close_token in response:
+            return [self._think_open_token, *response]
         return response
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
