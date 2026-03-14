@@ -13,7 +13,7 @@ import tinker
 from inspect_ai.model import ChatCompletionChoice as InspectAIModelOutputChoice
 from inspect_ai.model import ChatMessage as InspectAIChatMessage
 from inspect_ai.model import ChatMessageAssistant as InspectAIChatMessageAssistant
-from inspect_ai.model import ChatMessageSystem
+from inspect_ai.model import ChatMessageSystem, Content
 from inspect_ai.model import ContentReasoning as InspectAIContentReasoning
 from inspect_ai.model import ContentText as InspectAIContentText
 from inspect_ai.model import GenerateConfig as InspectAIGenerateConfig
@@ -78,10 +78,10 @@ def convert_inspect_messages(messages: list[InspectAIChatMessage]) -> list[rende
 
 def _message_to_inspect_content(
     message: renderers.Message,
-) -> list[InspectAIContentReasoning | InspectAIContentText]:
+) -> list[Content]:
     """Convert a renderer Message's content parts to inspect_ai content types."""
     parts = ensure_list(message["content"])
-    result: list[InspectAIContentReasoning | InspectAIContentText] = []
+    result: list[Content] = []
     for part in parts:
         if part["type"] == "thinking":
             result.append(InspectAIContentReasoning(reasoning=part["thinking"]))

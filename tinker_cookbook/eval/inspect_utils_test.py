@@ -1,5 +1,6 @@
 """Tests for inspect_utils conversion functions."""
 
+from inspect_ai.model import ChatMessage as InspectAIChatMessage
 from inspect_ai.model import ChatMessageAssistant as InspectAIChatMessageAssistant
 from inspect_ai.model import ChatMessageUser as InspectAIChatMessageUser
 from inspect_ai.model import ContentReasoning as InspectAIContentReasoning
@@ -65,7 +66,7 @@ def test_message_to_inspect_content_empty_thinking():
 
 
 def test_convert_inspect_messages_string_content():
-    messages = [
+    messages: list[InspectAIChatMessage] = [
         InspectAIChatMessageUser(content="hello"),
         InspectAIChatMessageAssistant(content="hi there"),
     ]
@@ -78,7 +79,7 @@ def test_convert_inspect_messages_string_content():
 
 
 def test_convert_inspect_messages_structured_assistant():
-    messages = [
+    messages: list[InspectAIChatMessage] = [
         InspectAIChatMessageAssistant(
             content=[
                 InspectAIContentReasoning(reasoning="thinking..."),
@@ -98,7 +99,7 @@ def test_convert_inspect_messages_structured_assistant():
 
 
 def test_convert_inspect_messages_structured_non_assistant_flattens():
-    messages = [
+    messages: list[InspectAIChatMessage] = [
         InspectAIChatMessageUser(
             content=[
                 InspectAIContentText(text="hello"),
