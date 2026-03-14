@@ -1,143 +1,104 @@
-"""Smoke test for inspect evaluation integration.
+"""Smoke tests for inspect evaluation integration.
 
-Tests both include_reasoning=False (default) and include_reasoning=True
-using a thinking model (Qwen3) to verify reasoning content is correctly
-preserved or stripped.
+Tests the include_reasoning parameter across thinking and non-thinking models
+by calling api.generate() directly to verify the adapter returns the correct
+content types to inspect_ai.
+
+Test matrix:
+  - Thinking model (Qwen3) + include_reasoning=True  → [ContentReasoning, ContentText]
+  - Thinking model (Qwen3) + include_reasoning=False → plain string, no <think> tags
+  - Non-thinking model (Llama 3.1) + include_reasoning=True  → [ContentText] only
+  - Non-thinking model (Llama 3.1) + include_reasoning=False → plain string
 """
 
 import asyncio
 
 import pytest
 import tinker
-from inspect_ai import Task, task
-from inspect_ai.dataset import MemoryDataset, Sample
+from inspect_ai.model import ChatMessage as InspectAIChatMessage
+from inspect_ai.model import ChatMessageUser as InspectAIChatMessageUser
 from inspect_ai.model import ContentReasoning as InspectAIContentReasoning
 from inspect_ai.model import ContentText as InspectAIContentText
 from inspect_ai.model import GenerateConfig as InspectAIGenerateConfig
-from inspect_ai.model import Model as InspectAIModel
-from inspect_ai.scorer import Score, Target, accuracy, scorer
-from inspect_ai.solver import TaskState, generate
 
 from tinker_cookbook.eval.inspect_utils import InspectAPIFromTinkerSampling
 
-# Use a thinking model so we can verify reasoning is produced
-MODEL_NAME = "Qwen/Qwen3-8B"
-RENDERER_NAME = "qwen3"
+THINKING_MODEL = "Qwen/Qwen3-8B"
+THINKING_RENDERER = "qwen3"
 
-DATASET = MemoryDataset(
-    name="smoke_test",
-    samples=[
-        Sample(input="What is 1 + 1? Reply with just the number.", target="2"),
-    ],
-)
+NON_THINKING_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
+NON_THINKING_RENDERER = "llama3"
 
-
-@scorer(metrics=[accuracy()])
-def check_has_reasoning():
-    """Scorer that checks whether the model response contains reasoning content."""
-
-    async def score(state: TaskState, target: Target) -> Score:
-        content = state.output.choices[0].message.content
-        if isinstance(content, list):
-            has_reasoning = any(isinstance(c, InspectAIContentReasoning) for c in content)
-            has_text = any(isinstance(c, InspectAIContentText) for c in content)
-        else:
-            has_reasoning = False
-            has_text = isinstance(content, str) and len(content) > 0
-
-        return Score(
-            value=1 if has_text else 0,
-            metadata={"has_reasoning": has_reasoning, "has_text": has_text},
-        )
-
-    return score
+PROMPT: list[InspectAIChatMessage] = [
+    InspectAIChatMessageUser(content="What is 1 + 1? Reply with just the number.")
+]
+GENERATE_CONFIG = InspectAIGenerateConfig(temperature=0.6, max_tokens=1024)
 
 
-@task
-def smoke_task() -> Task:
-    return Task(
-        name="smoke_test",
-        dataset=DATASET,
-        solver=generate(),
-        scorer=check_has_reasoning(),
-    )
-
-
-def _create_api(include_reasoning: bool) -> InspectAPIFromTinkerSampling:
+def _create_api(
+    model_name: str, renderer_name: str, include_reasoning: bool
+) -> InspectAPIFromTinkerSampling:
     service_client = tinker.ServiceClient()
-    sampling_client = service_client.create_sampling_client(base_model=MODEL_NAME)
+    sampling_client = service_client.create_sampling_client(base_model=model_name)
     return InspectAPIFromTinkerSampling(
-        renderer_name=RENDERER_NAME,
-        model_name=MODEL_NAME,
+        renderer_name=renderer_name,
+        model_name=model_name,
         sampling_client=sampling_client,
         include_reasoning=include_reasoning,
     )
 
 
-@pytest.mark.integration
-def test_inspect_eval_without_reasoning():
-    """Default behavior: reasoning is stripped, content is a plain string."""
-    api = _create_api(include_reasoning=False)
-    model = InspectAIModel(
-        api=api,
-        config=InspectAIGenerateConfig(temperature=0.6, max_tokens=1024),
-    )
-
-    from inspect_ai import eval_async
-
-    results = asyncio.run(
-        eval_async(
-            tasks=[smoke_task()],
-            model=[model],
-            log_dir="/tmp/tinker-smoke-test/inspect-eval",
-        )
-    )
-    assert len(results) == 1
-    result = results[0]
-    assert result.results is not None
-    assert result.results.scores is not None
-
-    # Content should be a plain string (no reasoning)
-    assert result.samples is not None
-    sample = result.samples[0]
-    content = sample.output.choices[0].message.content
-    assert isinstance(content, str), f"Expected string content, got {type(content)}"
+async def _generate(api: InspectAPIFromTinkerSampling):
+    return await api.generate(input=PROMPT, tools=[], tool_choice="auto", config=GENERATE_CONFIG)
 
 
 @pytest.mark.integration
-def test_inspect_eval_with_reasoning():
-    """With include_reasoning=True, content should include ContentReasoning."""
-    api = _create_api(include_reasoning=True)
-    model = InspectAIModel(
-        api=api,
-        config=InspectAIGenerateConfig(temperature=0.6, max_tokens=1024),
-    )
+def test_thinking_model_include_reasoning():
+    """Thinking model + include_reasoning=True: response has ContentReasoning + ContentText."""
+    api = _create_api(THINKING_MODEL, THINKING_RENDERER, include_reasoning=True)
+    result = asyncio.run(_generate(api))
 
-    from inspect_ai import eval_async
-
-    results = asyncio.run(
-        eval_async(
-            tasks=[smoke_task()],
-            model=[model],
-            log_dir="/tmp/tinker-smoke-test/inspect-eval",
-        )
-    )
-    assert len(results) == 1
-    result = results[0]
-    assert result.results is not None
-    assert result.results.scores is not None
-
-    # Content should be a list with ContentReasoning and ContentText
-    assert result.samples is not None
-    sample = result.samples[0]
-    content = sample.output.choices[0].message.content
+    content = result.choices[0].message.content
     assert isinstance(content, list), f"Expected list content, got {type(content)}"
 
-    has_reasoning = any(isinstance(c, InspectAIContentReasoning) for c in content)
-    has_text = any(isinstance(c, InspectAIContentText) for c in content)
-    assert has_reasoning, "Expected ContentReasoning in response from thinking model"
-    assert has_text, "Expected ContentText in response"
+    reasoning_parts = [c for c in content if isinstance(c, InspectAIContentReasoning)]
+    text_parts = [c for c in content if isinstance(c, InspectAIContentText)]
+    assert len(reasoning_parts) > 0, "Expected ContentReasoning from thinking model"
+    assert len(text_parts) > 0, "Expected ContentText from thinking model"
+    assert len(reasoning_parts[0].reasoning) > 0, "Reasoning content should not be empty"
 
-    # The scorer metadata should confirm reasoning was detected
-    score = result.results.scores[0]
-    assert score.metrics["accuracy"].value == 1.0
+
+@pytest.mark.integration
+def test_thinking_model_exclude_reasoning():
+    """Thinking model + include_reasoning=False: response is plain string without <think> tags."""
+    api = _create_api(THINKING_MODEL, THINKING_RENDERER, include_reasoning=False)
+    result = asyncio.run(_generate(api))
+
+    content = result.choices[0].message.content
+    assert isinstance(content, str), f"Expected string content, got {type(content)}"
+    assert "<think>" not in content, "Reasoning should be stripped from string content"
+
+
+@pytest.mark.integration
+def test_non_thinking_model_include_reasoning():
+    """Non-thinking model + include_reasoning=True: response has ContentText only, no crash."""
+    api = _create_api(NON_THINKING_MODEL, NON_THINKING_RENDERER, include_reasoning=True)
+    result = asyncio.run(_generate(api))
+
+    content = result.choices[0].message.content
+    assert isinstance(content, list), f"Expected list content, got {type(content)}"
+
+    reasoning_parts = [c for c in content if isinstance(c, InspectAIContentReasoning)]
+    text_parts = [c for c in content if isinstance(c, InspectAIContentText)]
+    assert len(reasoning_parts) == 0, "Non-thinking model should not produce ContentReasoning"
+    assert len(text_parts) > 0, "Expected ContentText from non-thinking model"
+
+
+@pytest.mark.integration
+def test_non_thinking_model_exclude_reasoning():
+    """Non-thinking model + include_reasoning=False: response is plain string (baseline)."""
+    api = _create_api(NON_THINKING_MODEL, NON_THINKING_RENDERER, include_reasoning=False)
+    result = asyncio.run(_generate(api))
+
+    content = result.choices[0].message.content
+    assert isinstance(content, str), f"Expected string content, got {type(content)}"
