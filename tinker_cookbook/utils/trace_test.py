@@ -509,8 +509,16 @@ def test_build_gantt_chart_success():
     import datetime
 
     span_records = [
-        {"task": "a", "start": datetime.datetime(2000, 1, 1), "end": datetime.datetime(2000, 1, 1, 0, 0, 1)},
-        {"task": "b", "start": datetime.datetime(2000, 1, 1, 0, 0, 0, 500000), "end": datetime.datetime(2000, 1, 1, 0, 0, 2)},
+        {
+            "task": "a",
+            "start": datetime.datetime(2000, 1, 1),
+            "end": datetime.datetime(2000, 1, 1, 0, 0, 1),
+        },
+        {
+            "task": "b",
+            "start": datetime.datetime(2000, 1, 1, 0, 0, 0, 500000),
+            "end": datetime.datetime(2000, 1, 1, 0, 0, 2),
+        },
     ]
     fig = _build_gantt_chart(span_records, step=0)
     # If plotly is installed, we get a figure; if not, None
@@ -534,7 +542,11 @@ def test_build_gantt_chart_no_plotly():
     import datetime
 
     span_records = [
-        {"task": "a", "start": datetime.datetime(2000, 1, 1), "end": datetime.datetime(2000, 1, 1, 0, 0, 1)},
+        {
+            "task": "a",
+            "start": datetime.datetime(2000, 1, 1),
+            "end": datetime.datetime(2000, 1, 1, 0, 0, 1),
+        },
     ]
     with patch.dict("sys.modules", {"plotly": None, "plotly.express": None}):
         fig = _build_gantt_chart(span_records, step=0)
