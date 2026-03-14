@@ -246,7 +246,6 @@ def main(config: Config):
         kind="both",
         loop_state={"batch": n_train_batches},
         ttl_seconds=None,
-        is_final=True,
     )
     ml_logger.close()
     logger.info("Training completed")

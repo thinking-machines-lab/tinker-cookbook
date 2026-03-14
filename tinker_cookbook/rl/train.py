@@ -1400,7 +1400,6 @@ async def main(
             kind="both",
             loop_state={"batch": end_batch},
             ttl_seconds=None,
-            is_final=True,
         )
     else:
         logger.info("Training was already complete; nothing to do")
