@@ -38,8 +38,6 @@ from tinker_cookbook.renderers import (
     Message,
     Qwen3Renderer,
     RenderContext,
-    StreamingTextDelta,
-    StreamingThinkingDelta,
     TextPart,
     ThinkingPart,
     ToolCall,
@@ -1383,48 +1381,6 @@ def test_kimi_k2_thinking_preserved_when_no_non_tool_call_assistant():
     decoded = tokenizer.decode(model_input.to_ints())
 
     assert "think A" in decoded, f"Suffix thinking should be preserved: {decoded}"
-
-
-def test_kimi_k25_parse_response_restores_prefilled_think_tag():
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2.5")
-    renderer = get_renderer("kimi_k25", tokenizer)
-
-    response_tokens = tokenizer.encode(
-        "reasoning...</think>2<|im_end|>",
-        add_special_tokens=False,
-    )
-
-    parsed_message, parse_success = renderer.parse_response(response_tokens)
-
-    assert parse_success is True
-    assert parsed_message["content"] == [
-        ThinkingPart(type="thinking", thinking="reasoning..."),
-        TextPart(type="text", text="2"),
-    ]
-
-
-def test_kimi_k25_parse_response_streaming_restores_prefilled_think_tag():
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2.5")
-    renderer = get_renderer("kimi_k25", tokenizer)
-
-    response_tokens = tokenizer.encode(
-        "reasoning...</think>2<|im_end|>",
-        add_special_tokens=False,
-    )
-
-    deltas = list(renderer.parse_response_streaming(response_tokens))
-    thinking_text = "".join(
-        delta.thinking for delta in deltas if isinstance(delta, StreamingThinkingDelta)
-    )
-    output_text = "".join(delta.text for delta in deltas if isinstance(delta, StreamingTextDelta))
-    final_message = cast(Message, deltas[-1])
-
-    assert thinking_text == "reasoning..."
-    assert output_text == "2"
-    assert final_message["content"] == [
-        ThinkingPart(type="thinking", thinking="reasoning..."),
-        TextPart(type="text", text="2"),
-    ]
 
 
 # =============================================================================

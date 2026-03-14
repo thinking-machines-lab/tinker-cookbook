@@ -12,7 +12,16 @@ from typing import cast
 from PIL import Image
 import pytest
 import tinker
-from tinker_cookbook.renderers import Message, ToolCall, ToolSpec, get_renderer
+from tinker_cookbook.renderers import (
+    Message,
+    StreamingTextDelta,
+    StreamingThinkingDelta,
+    TextPart,
+    ThinkingPart,
+    ToolCall,
+    ToolSpec,
+    get_renderer,
+)
 from tinker_cookbook.renderers.kimi_k2_5_tool_declaration_ts import encode_tools_to_typescript_style
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.image_processing_utils import get_image_processor
@@ -715,6 +724,44 @@ def test_kimi_k25_eot_parsing(kimi_tokenizer, kimi_renderer):
     assert message["role"] == "assistant"
     assert message["content"] == "The answer is 42."
     assert format_correct is False
+
+
+def test_kimi_k25_parse_response_restores_prefilled_think_tag(kimi_tokenizer, kimi_renderer):
+    response_tokens = kimi_tokenizer.encode(
+        "reasoning...</think>2<|im_end|>",
+        add_special_tokens=False,
+    )
+
+    parsed_message, parse_success = kimi_renderer.parse_response(response_tokens)
+
+    assert parse_success is True
+    assert parsed_message["content"] == [
+        ThinkingPart(type="thinking", thinking="reasoning..."),
+        TextPart(type="text", text="2"),
+    ]
+
+
+def test_kimi_k25_parse_response_streaming_restores_prefilled_think_tag(
+    kimi_tokenizer, kimi_renderer
+):
+    response_tokens = kimi_tokenizer.encode(
+        "reasoning...</think>2<|im_end|>",
+        add_special_tokens=False,
+    )
+
+    deltas = list(kimi_renderer.parse_response_streaming(response_tokens))
+    thinking_text = "".join(
+        delta.thinking for delta in deltas if isinstance(delta, StreamingThinkingDelta)
+    )
+    output_text = "".join(delta.text for delta in deltas if isinstance(delta, StreamingTextDelta))
+    final_message = cast(Message, deltas[-1])
+
+    assert thinking_text == "reasoning..."
+    assert output_text == "2"
+    assert final_message["content"] == [
+        ThinkingPart(type="thinking", thinking="reasoning..."),
+        TextPart(type="text", text="2"),
+    ]
 
 
 # =============================================================================
