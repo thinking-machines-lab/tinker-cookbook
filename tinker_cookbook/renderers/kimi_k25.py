@@ -1,12 +1,15 @@
 """Renderer for Moonshot AI's Kimi K2.5 models."""
 
-import tinker
+from collections.abc import Iterator
 from typing import cast
+
+import tinker
 from tinker_cookbook.renderers.base import (
     Message,
     ContentPart,
     ImageProcessorProtocol,
     image_to_chunk,
+    MessageDelta,
     Role,
     ToolSpec,
 )
@@ -81,6 +84,27 @@ class KimiK25Renderer(KimiK2Renderer):
         if prefill is None:
             prefill = "<think>"
         return super().build_generation_prompt(messages, role=role, prefill=prefill)
+
+    def _normalize_response_tokens(self, response: list[int]) -> list[int]:
+        """Restore the synthetic <think> prefill before parsing sampled tokens."""
+        think_prefix_tokens = self.tokenizer.encode("<think>", add_special_tokens=False)
+        think_suffix_tokens = self.tokenizer.encode("</think>", add_special_tokens=False)
+
+        starts_with_think = response[: len(think_prefix_tokens)] == think_prefix_tokens
+        contains_think_close = any(
+            response[idx : idx + len(think_suffix_tokens)] == think_suffix_tokens
+            for idx in range(len(response) - len(think_suffix_tokens) + 1)
+        )
+
+        if not starts_with_think and contains_think_close:
+            return [*think_prefix_tokens, *response]
+        return response
+
+    def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+        return super().parse_response(self._normalize_response_tokens(response))
+
+    def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
+        yield from super().parse_response_streaming(self._normalize_response_tokens(response))
 
     def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
