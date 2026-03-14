@@ -1,33 +1,22 @@
 name: nightly
 
 on:
-  schedule:
-    - cron: "0 0 * * *"  # midnight UTC
+  workflow_run:
+    workflows: ["smoke-test-recipes"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
   contents: write  # needed to create/delete releases
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: install-uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-
-      - name: run unit tests
-        run: uv run pytest tinker_cookbook/ -x -q
-
   build-and-release:
-    needs: test
     runs-on: ubuntu-latest
+    # Only run if: manually triggered, or smoke tests passed on schedule
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'schedule')
     steps:
       - name: checkout
         uses: actions/checkout@v4
