@@ -413,8 +413,9 @@ def main(config: Config):
             name="final",
             log_path=config.log_path,
             kind="both",
-            loop_state={"epoch": config.num_epochs, "batch": n_batches},
-            ttl_seconds=config.ttl_seconds,
+            loop_state={"epoch": config.num_epochs, "batch": 0},
+            ttl_seconds=None,
+            is_final=True,
         )
     else:
         logger.info("Training was already complete; nothing to do")

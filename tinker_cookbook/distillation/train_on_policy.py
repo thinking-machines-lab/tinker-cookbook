@@ -494,6 +494,8 @@ async def main(
             log_path=cfg.log_path,
             kind="both",
             loop_state={"batch": num_batches},
+            ttl_seconds=None,
+            is_final=True,
         )
     else:
         logger.info("Training was already complete; nothing to do")

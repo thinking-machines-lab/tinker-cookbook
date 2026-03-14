@@ -297,6 +297,7 @@ async def save_checkpoint_async(
     loop_state: dict[str, Any],
     kind: Literal["state", "sampler", "both"] = "state",
     ttl_seconds: int | None = None,
+    is_final: bool = False,
 ) -> dict[str, str]:
     """Save model checkpoint and append a record to ``checkpoints.jsonl``.
 
@@ -305,9 +306,10 @@ async def save_checkpoint_async(
         name: Name for the checkpoint (used in the tinker:// path).
         log_path: Directory containing ``checkpoints.jsonl``.
         loop_state: Training loop state (must include ``batch``; may include
-            ``epoch``, ``final``, and any additional user metadata).
+            ``epoch`` and any additional user metadata).
         kind: Which checkpoint types to save.
         ttl_seconds: Server-side retention. ``None`` keeps the checkpoint indefinitely.
+        is_final: Whether this is the final checkpoint of a training run.
 
     Returns:
         Dict mapping ``"state_path"`` and/or ``"sampler_path"`` to tinker:// paths.
@@ -325,7 +327,10 @@ async def save_checkpoint_async(
     update_scope_context(paths)
     logger.info(f"Saved checkpoints: {paths}")
 
-    record = CheckpointRecord.from_dict({"name": name, **loop_state, **paths})
+    record_dict = {"name": name, **loop_state, **paths}
+    if is_final:
+        record_dict["final"] = True
+    record = CheckpointRecord.from_dict(record_dict)
     with open(os.path.join(log_path, "checkpoints.jsonl"), "a") as f:
         f.write(json.dumps(record.to_dict()) + "\n")
 
@@ -340,6 +345,7 @@ def save_checkpoint(
     loop_state: dict[str, Any],
     kind: Literal["state", "sampler", "both"] = "state",
     ttl_seconds: int | None = None,
+    is_final: bool = False,
 ) -> dict[str, str]:
     """Save model checkpoint.
     Args:
@@ -357,5 +363,6 @@ def save_checkpoint(
             kind=kind,
             loop_state=loop_state,
             ttl_seconds=ttl_seconds,
+            is_final=is_final,
         )
     )
