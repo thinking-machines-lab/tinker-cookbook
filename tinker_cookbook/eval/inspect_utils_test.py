@@ -1,6 +1,5 @@
 """Tests for inspect_utils conversion functions."""
 
-import pytest
 from inspect_ai.model import ChatMessageAssistant as InspectAIChatMessageAssistant
 from inspect_ai.model import ChatMessageUser as InspectAIChatMessageUser
 from inspect_ai.model import ContentReasoning as InspectAIContentReasoning

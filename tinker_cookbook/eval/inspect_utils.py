@@ -13,7 +13,7 @@ import tinker
 from inspect_ai.model import ChatCompletionChoice as InspectAIModelOutputChoice
 from inspect_ai.model import ChatMessage as InspectAIChatMessage
 from inspect_ai.model import ChatMessageAssistant as InspectAIChatMessageAssistant
-from inspect_ai.model import ChatMessageSystem, Content
+from inspect_ai.model import ChatMessageSystem
 from inspect_ai.model import ContentReasoning as InspectAIContentReasoning
 from inspect_ai.model import ContentText as InspectAIContentText
 from inspect_ai.model import GenerateConfig as InspectAIGenerateConfig
