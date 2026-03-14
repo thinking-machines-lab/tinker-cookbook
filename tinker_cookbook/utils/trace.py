@@ -1,18 +1,25 @@
 import argparse
 import asyncio
 import atexit
+import contextlib
+import datetime
 import functools
 import inspect
 import json
+import logging
 import queue
 import threading
 import time
+from collections import defaultdict
 from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import StrEnum
 from io import TextIOWrapper
-from typing import Any
+from pathlib import Path
+from typing import Any, Generator
+
+logger = logging.getLogger(__name__)
 
 
 class EventType(StrEnum):
@@ -58,6 +65,109 @@ class ScopeContext:
 
 # Context variable to track the current coroutine's trace context
 trace_context: ContextVar[ScopeContext | None] = ContextVar("trace_context", default=None)
+
+
+@dataclass
+class SpanRecord:
+    """A recorded span within an iteration window.
+
+    We store two sets of timestamps:
+    - ``start_time`` / ``end_time``: from ``time.perf_counter()``, used for duration
+      calculations (aggregation metrics). High resolution but process-local — values
+      cannot be compared across processes.
+    - ``wall_start`` / ``wall_end``: from ``time.time()``, used for positioning spans
+      on Gantt charts. Synchronized across processes on the same machine, so spans
+      from multiprocess workers (ProcessPoolExecutor, Ray) can be placed on a shared
+      timeline without clock alignment.
+    """
+
+    name: str
+    start_time: float  # seconds (perf_counter, process-local)
+    end_time: float  # seconds (perf_counter, process-local)
+    wall_start: float  # seconds since epoch (time.time, cross-process comparable)
+    wall_end: float  # seconds since epoch (time.time, cross-process comparable)
+
+
+class IterationWindow:
+    """Collects span records during a single training iteration for aggregation."""
+
+    def __init__(self) -> None:
+        self.spans: list[SpanRecord] = []
+        self._lock = threading.Lock()
+
+    def record_span(self, name: str, start_time: float, end_time: float) -> None:
+        with self._lock:
+            self.spans.append(
+                SpanRecord(
+                    name=name,
+                    start_time=start_time,
+                    end_time=end_time,
+                    wall_start=time.time() - (time.perf_counter() - start_time),
+                    wall_end=time.time() - (time.perf_counter() - end_time),
+                )
+            )
+
+    def aggregate(self) -> dict[str, float]:
+        """Aggregate collected spans into a flat timing dict."""
+        with self._lock:
+            spans = list(self.spans)
+
+        if not spans:
+            return {}
+
+        # Group durations by name
+        durations_by_name: dict[str, list[float]] = defaultdict(list)
+        for span in spans:
+            durations_by_name[span.name].append(span.end_time - span.start_time)
+
+        metrics: dict[str, float] = {}
+        for name, durations in durations_by_name.items():
+            if len(durations) == 1:
+                # Single call: just report the duration
+                metrics[f"time/{name}"] = durations[0]
+            else:
+                # Multiple calls: report aggregates
+                metrics[f"time/{name}:total"] = sum(durations)
+                metrics[f"time/{name}:count"] = len(durations)
+                metrics[f"time/{name}:mean"] = sum(durations) / len(durations)
+                metrics[f"time/{name}:max"] = max(durations)
+
+        return metrics
+
+    def merge_spans(self, spans: list[SpanRecord]) -> None:
+        """Merge externally-collected spans (e.g. from worker processes) into this window."""
+        with self._lock:
+            self.spans.extend(spans)
+
+    def get_span_records(self) -> list[dict[str, Any]]:
+        """Get span records for Gantt chart rendering.
+
+        Uses wall-clock timestamps (time.time) so that spans from different
+        processes can be placed on a shared timeline.
+        """
+        with self._lock:
+            spans = list(self.spans)
+
+        if not spans:
+            return []
+
+        # Use wall-clock times for positioning — comparable across processes
+        t0 = min(s.wall_start for s in spans)
+        return [
+            {
+                "task": s.name,
+                "start": datetime.datetime(2000, 1, 1)
+                + datetime.timedelta(seconds=s.wall_start - t0),
+                "end": datetime.datetime(2000, 1, 1) + datetime.timedelta(seconds=s.wall_end - t0),
+            }
+            for s in spans
+        ]
+
+
+# Context variable to track the current iteration window
+_iteration_window: ContextVar[IterationWindow | None] = ContextVar(
+    "_iteration_window", default=None
+)
 
 
 class TraceCollector:
@@ -144,6 +254,10 @@ class TraceCollector:
 # Global trace collector instance
 _trace_collector: TraceCollector | None = None
 
+# Global logger for auto-logging timing metrics
+_wandb_logger: Any = None  # ml_log.Logger instance
+_span_chart_every: int = 0  # Log Gantt chart every N steps (0 = disabled)
+
 
 def _atexit_trace_shutdown():
     global _trace_collector
@@ -155,22 +269,76 @@ def _atexit_trace_shutdown():
 atexit.register(_atexit_trace_shutdown)
 
 
+def _instrument_sdk_clients() -> None:
+    """Patch Tinker SDK client classes with @scope for automatic tracing."""
+    try:
+        import tinker
+    except ImportError:
+        logger.debug("tinker SDK not installed, skipping client instrumentation")
+        return
+
+    # TrainingClient methods
+    _methods_to_patch = {
+        tinker.TrainingClient: [
+            "forward_async",
+            "forward_backward_async",
+            "forward_backward_custom_async",
+            "optim_step_async",
+            "save_state_async",
+            "load_state_async",
+            "save_weights_for_sampler_async",
+            "save_weights_and_get_sampling_client_async",
+            "create_sampling_client_async",
+        ],
+        tinker.SamplingClient: [
+            "sample_async",
+            "compute_logprobs_async",
+        ],
+    }
+
+    for cls, method_names in _methods_to_patch.items():
+        for method_name in method_names:
+            if hasattr(cls, method_name):
+                original = getattr(cls, method_name)
+                # Avoid double-wrapping
+                if not getattr(original, "_scope_instrumented", False):
+                    wrapped = scope(original)
+                    wrapped._scope_instrumented = True  # type: ignore[attr-defined]
+                    setattr(cls, method_name, wrapped)
+
+
 def trace_init(
     flush_interval_sec: float = 1.0,
     output_file: str = "trace_events.jsonl",
+    wandb_logger: Any = None,
+    span_chart_every: int = 0,
 ) -> None:
-    """Initialize the trace collector. Must be called before any trace events are created."""
-    global _trace_collector
+    """Initialize the trace collector.
+
+    Args:
+        flush_interval_sec: How often to flush trace events to disk.
+        output_file: Path for Perfetto trace output (JSONL format).
+        wandb_logger: Optional ml_log.Logger instance. When provided, trace_iteration()
+            will auto-log timing metrics and SDK client classes will be auto-instrumented.
+        span_chart_every: Log a Plotly Gantt chart every N steps (0 = disabled).
+            Requires plotly to be installed.
+    """
+    global _trace_collector, _wandb_logger, _span_chart_every
     _trace_collector = TraceCollector(flush_interval_sec, output_file)
+    _wandb_logger = wandb_logger
+    _span_chart_every = span_chart_every
+    _instrument_sdk_clients()
 
 
 def trace_shutdown() -> None:
     """Shutdown the trace collector and flush any remaining events."""
-    global _trace_collector
+    global _trace_collector, _wandb_logger, _span_chart_every
     if _trace_collector is None:
         return
     _trace_collector.shutdown()
     _trace_collector = None
+    _wandb_logger = None
+    _span_chart_every = 0
 
 
 @dataclass
@@ -330,6 +498,14 @@ def scope(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any):
             if _trace_collector is None:
+                # Still record into iteration window even without Perfetto tracing
+                window = _iteration_window.get(None)
+                if window is not None:
+                    t_start = time.perf_counter()
+                    try:
+                        return await func(*args, **kwargs)
+                    finally:
+                        window.record_span(func.__name__, t_start, time.perf_counter())
                 return await func(*args, **kwargs)
 
             events_result = _create_trace_events(func)
@@ -337,6 +513,7 @@ def scope(func: Callable[..., Any]) -> Callable[..., Any]:
             _trace_collector.add_event(events_result.metadata_coroutine_event)
             _trace_collector.add_event(events_result.metadata_thread_event)
 
+            t_start = time.perf_counter()
             token = None
             try:
                 # Set context for nested calls
@@ -350,6 +527,11 @@ def scope(func: Callable[..., Any]) -> Callable[..., Any]:
                 end_event = _create_end_event(func, events_result.function_call_context)
                 _trace_collector.add_event(end_event)
 
+                # Record into iteration window if active
+                window = _iteration_window.get(None)
+                if window is not None:
+                    window.record_span(func.__name__, t_start, time.perf_counter())
+
                 # Reset context
                 if token is not None:
                     trace_context.reset(token)
@@ -361,6 +543,14 @@ def scope(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any):
             if _trace_collector is None:
+                # Still record into iteration window even without Perfetto tracing
+                window = _iteration_window.get(None)
+                if window is not None:
+                    t_start = time.perf_counter()
+                    try:
+                        return func(*args, **kwargs)
+                    finally:
+                        window.record_span(func.__name__, t_start, time.perf_counter())
                 return func(*args, **kwargs)
 
             events_result = _create_trace_events(func)
@@ -368,6 +558,7 @@ def scope(func: Callable[..., Any]) -> Callable[..., Any]:
             _trace_collector.add_event(events_result.metadata_coroutine_event)
             _trace_collector.add_event(events_result.metadata_thread_event)
 
+            t_start = time.perf_counter()
             token = None
             try:
                 # Set context for nested calls
@@ -380,6 +571,11 @@ def scope(func: Callable[..., Any]) -> Callable[..., Any]:
             finally:
                 end_event = _create_end_event(func, events_result.function_call_context)
                 _trace_collector.add_event(end_event)
+
+                # Record into iteration window if active
+                window = _iteration_window.get(None)
+                if window is not None:
+                    window.record_span(func.__name__, t_start, time.perf_counter())
 
                 # Reset context
                 if token is not None:
@@ -420,6 +616,94 @@ def update_scope_context(values: dict[str, Any]) -> None:
     result = trace_context.get(ScopeContext())
     assert result is not None, "Trace context is not set"
     result.attributes.update(values)
+
+
+def _build_gantt_chart(span_records: list[dict[str, Any]], step: int) -> Any:
+    """Build a Plotly Gantt chart from span records. Returns a plotly Figure or None."""
+    try:
+        import plotly.express as px
+    except ImportError:
+        logger.debug("plotly not installed, skipping Gantt chart")
+        return None
+
+    if not span_records:
+        return None
+
+    fig = px.timeline(
+        span_records,
+        x_start="start",
+        x_end="end",
+        y="task",
+        color="task",
+        title=f"Iteration {step} — Span Timeline",
+    )
+    fig.update_layout(
+        xaxis_title="Time (relative)",
+        yaxis_title="",
+        showlegend=False,
+    )
+    return fig
+
+
+@contextlib.contextmanager
+def trace_iteration(step: int) -> Generator[None, None, None]:
+    """Context manager that marks a training iteration boundary.
+
+    Collects all @scope spans within the window and, on exit:
+    - Aggregates them into a flat timing dict and auto-logs to wandb_logger
+    - Optionally logs a Plotly Gantt chart showing span overlap
+
+    Span names are flat (``func.__name__``), not hierarchical. If ``train_step``
+    calls ``forward_backward_async``, both appear as separate top-level keys::
+
+        time/train_step = 5.0              # inclusive (contains forward_backward)
+        time/forward_backward_async = 3.0  # just the inner call
+
+    For functions called multiple times (e.g. 160 concurrent ``sample_async``
+    calls), aggregated keys are produced::
+
+        time/sample_async:total = 480.0
+        time/sample_async:count = 160
+        time/sample_async:mean  = 3.0
+        time/sample_async:max   = 4.9
+
+    Example::
+
+        for i_batch in range(n_batches):
+            with trace_iteration(step=i_batch):
+                await run_evals(...)
+                await gather_rollouts(...)
+                await train_step(...)
+            # time/* metrics auto-logged to wandb_logger
+    """
+    window = IterationWindow()
+    token = _iteration_window.set(window)
+    t_start = time.perf_counter()
+    try:
+        yield
+    finally:
+        total_time = time.perf_counter() - t_start
+        _iteration_window.reset(token)
+
+        # Aggregate timing metrics
+        timing_metrics = window.aggregate()
+        timing_metrics["time/total"] = total_time
+
+        # Auto-log if wandb_logger is configured
+        if _wandb_logger is not None:
+            _wandb_logger.log_metrics(timing_metrics, step=step)
+
+            # Log Gantt chart at configured intervals
+            if _span_chart_every > 0 and step % _span_chart_every == 0:
+                span_records = window.get_span_records()
+                fig = _build_gantt_chart(span_records, step)
+                if fig is not None:
+                    try:
+                        import wandb as _wandb
+
+                        _wandb.log({"trace/spans": _wandb.Plotly(fig)}, step=step)
+                    except ImportError:
+                        logger.debug("wandb not installed, skipping Gantt chart logging")
 
 
 def convert_jsonl_to_json_main():
