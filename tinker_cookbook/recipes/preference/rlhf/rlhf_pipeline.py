@@ -180,8 +180,8 @@ async def train_rl(
     if rm_checkpoint_dict is None:
         raise ValueError(f"No RM checkpoint found in {rm_log_path}")
 
-    sft_checkpoint = sft_checkpoint_dict["state_path"]
-    rm_weights_path = rm_checkpoint_dict["sampler_path"]
+    sft_checkpoint = sft_checkpoint_dict.state_path
+    rm_weights_path = rm_checkpoint_dict.sampler_path
 
     # Use HHH comparison builder for prompts
     comparison_builder = HHHComparisonBuilder()

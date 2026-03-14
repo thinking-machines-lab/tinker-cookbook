@@ -1,8 +1,10 @@
 import asyncio
+import dataclasses
 import json
 import logging
 import os
-from typing import Literal, Required, TypedDict, cast
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
 import tinker
 
@@ -16,34 +18,62 @@ logger = logging.getLogger(__name__)
 RENDERER_NAME_METADATA_KEY = "renderer_name"
 
 
-class LoopState(TypedDict, total=False):
-    """Training loop state saved alongside each checkpoint.
+@dataclass
+class CheckpointRecord:
+    """A single checkpoint record stored in ``checkpoints.jsonl``.
 
-    ``batch`` is always present. Multi-epoch trainers (SL, DPO) also include
-    ``epoch``. Final checkpoints set ``final=True``.
-
-    To add new fields, update this TypedDict and ``CheckpointRecord`` together.
+    Known fields are exposed as typed attributes. Any additional user-supplied
+    metadata from ``loop_state`` is preserved in :attr:`extra` so that custom
+    keys round-trip through save/load without loss.
     """
 
-    batch: Required[int]
-    epoch: int
-    final: bool
+    name: str
+    batch: int
+    epoch: int | None = None
+    final: bool | None = None
+    state_path: str | None = None
+    sampler_path: str | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a dict for JSON storage. Omits ``None`` optional fields."""
+        d: dict[str, Any] = {"name": self.name, "batch": self.batch}
+        if self.epoch is not None:
+            d["epoch"] = self.epoch
+        if self.final is not None:
+            d["final"] = self.final
+        if self.state_path is not None:
+            d["state_path"] = self.state_path
+        if self.sampler_path is not None:
+            d["sampler_path"] = self.sampler_path
+        d.update(self.extra)
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "CheckpointRecord":
+        """Deserialize from a JSON-parsed dict."""
+        return cls(
+            name=d["name"],
+            batch=d["batch"],
+            epoch=d.get("epoch"),
+            final=d.get("final"),
+            state_path=d.get("state_path"),
+            sampler_path=d.get("sampler_path"),
+            extra={k: v for k, v in d.items() if k not in _CHECKPOINT_RECORD_KNOWN_KEYS},
+        )
+
+    def has(self, key: str) -> bool:
+        """Check whether a field is present (not None), including extra keys."""
+        if key in _CHECKPOINT_RECORD_KNOWN_KEYS:
+            return getattr(self, key) is not None
+        return key in self.extra
 
 
-class CheckpointRecord(TypedDict, total=False):
-    """A single row in ``checkpoints.jsonl``.
-
-    Built from ``{"name": name, **loop_state, **paths}`` inside
-    ``save_checkpoint_async``. The ``state_path`` and ``sampler_path`` fields
-    are present depending on whether ``kind`` included ``"state"`` / ``"sampler"``.
-    """
-
-    name: Required[str]
-    batch: Required[int]
-    epoch: int
-    final: bool
-    state_path: str
-    sampler_path: str
+# Derived from the dataclass fields so it stays in sync automatically.
+# Excludes "extra" since that's the catch-all, not a serialized key.
+_CHECKPOINT_RECORD_KNOWN_KEYS = frozenset(
+    f.name for f in dataclasses.fields(CheckpointRecord) if f.name != "extra"
+)
 
 
 def add_renderer_name_to_user_metadata(
@@ -229,7 +259,7 @@ def load_checkpoints_file(log_dir: str) -> list[CheckpointRecord]:
 
     logger.info(f"Reading checkpoints from {checkpoint_path}")
     update_scope_context({"checkpoint_path": checkpoint_path})
-    return cast(list[CheckpointRecord], read_jsonl(checkpoint_path))
+    return [CheckpointRecord.from_dict(d) for d in read_jsonl(checkpoint_path)]
 
 
 @scope
@@ -247,7 +277,7 @@ def get_last_checkpoint(log_dir: str, required_key: str = "state_path") -> Check
         The last checkpoint, or None if no checkpoint is found.
     """
     checkpoints = load_checkpoints_file(log_dir)
-    checkpoints_with_key = [c for c in checkpoints if required_key in c]
+    checkpoints_with_key = [c for c in checkpoints if c.has(required_key)]
     if checkpoints_with_key:
         logger.info(
             f"Found {len(checkpoints_with_key)} valid checkpoints with key '{required_key}' in {log_dir}"
@@ -264,17 +294,23 @@ async def save_checkpoint_async(
     training_client: tinker.TrainingClient,
     name: str,
     log_path: str,
-    loop_state: LoopState,
+    loop_state: dict[str, Any],
     kind: Literal["state", "sampler", "both"] = "state",
     ttl_seconds: int | None = None,
 ) -> dict[str, str]:
-    """Save model checkpoint.
+    """Save model checkpoint and append a record to ``checkpoints.jsonl``.
+
     Args:
-        training_client: Training client to save from
-        name: Name for the checkpoint
-        log_path: Path to the log directory, where we can find checkpoints.jsonl file
+        training_client: Training client to save from.
+        name: Name for the checkpoint (used in the tinker:// path).
+        log_path: Directory containing ``checkpoints.jsonl``.
+        loop_state: Training loop state (must include ``batch``; may include
+            ``epoch``, ``final``, and any additional user metadata).
+        kind: Which checkpoint types to save.
+        ttl_seconds: Server-side retention. ``None`` keeps the checkpoint indefinitely.
+
     Returns:
-        Path to the saved checkpoint
+        Dict mapping ``"state_path"`` and/or ``"sampler_path"`` to tinker:// paths.
     """
     futures = {}
     if kind in ["state", "both"]:
@@ -288,9 +324,10 @@ async def save_checkpoint_async(
     paths = {k + "_path": v.path for k, v in results.items()}
     update_scope_context(paths)
     logger.info(f"Saved checkpoints: {paths}")
-    entry = {"name": name, **loop_state, **paths}
+
+    record = CheckpointRecord.from_dict({"name": name, **loop_state, **paths})
     with open(os.path.join(log_path, "checkpoints.jsonl"), "a") as f:
-        f.write(json.dumps(entry) + "\n")
+        f.write(json.dumps(record.to_dict()) + "\n")
 
     return paths
 
@@ -300,7 +337,7 @@ def save_checkpoint(
     training_client: tinker.TrainingClient,
     name: str,
     log_path: str,
-    loop_state: LoopState,
+    loop_state: dict[str, Any],
     kind: Literal["state", "sampler", "both"] = "state",
     ttl_seconds: int | None = None,
 ) -> dict[str, str]:

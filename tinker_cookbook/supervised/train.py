@@ -168,8 +168,8 @@ async def main(config: Config):
     """
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     if resume_info:
-        start_epoch = resume_info["epoch"]
-        start_batch = resume_info["batch"]
+        start_epoch = resume_info.epoch or 0
+        start_batch = resume_info.batch
     else:
         start_epoch = 0
         start_batch = 0
@@ -204,14 +204,14 @@ async def main(config: Config):
     if resume_info:
         # Resuming interrupted training - load optimizer state for proper continuation
         await checkpoint_utils.check_renderer_name_for_checkpoint_async(
-            service_client, resume_info["state_path"], config.renderer_name
+            service_client, resume_info.state_path, config.renderer_name
         )
         training_client = (
             await service_client.create_training_client_from_state_with_optimizer_async(
-                resume_info["state_path"], user_metadata=user_metadata
+                resume_info.state_path, user_metadata=user_metadata
             )
         )
-        logger.info(f"Resumed training from {resume_info['state_path']}")
+        logger.info(f"Resumed training from {resume_info.state_path}")
     elif config.load_checkpoint_path:
         # Starting fresh from a checkpoint - load weights only (fresh optimizer)
         await checkpoint_utils.check_renderer_name_for_checkpoint_async(

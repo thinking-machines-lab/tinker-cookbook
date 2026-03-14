@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 import time
-from typing import Any, cast
+from typing import cast
 
 import chz
 import tinker
@@ -76,7 +76,7 @@ class Config:
 
 def create_dpo_clients(
     config: Config,
-    resume_info: dict[str, Any] | None = None,
+    resume_info: checkpoint_utils.CheckpointRecord | None = None,
     user_metadata: dict[str, str] | None = None,
 ) -> tuple[tinker.TrainingClient, tinker.SamplingClient]:
     """Create and configure the training client and reference sampling client for DPO.
@@ -97,13 +97,14 @@ def create_dpo_clients(
 
     if resume_info:
         # Resuming interrupted DPO training - load weights + optimizer state
+        assert resume_info.state_path is not None
         checkpoint_utils.check_renderer_name_for_checkpoint(
-            service_client, resume_info["state_path"], config.renderer_name
+            service_client, resume_info.state_path, config.renderer_name
         )
         training_client = service_client.create_training_client_from_state_with_optimizer(
-            resume_info["state_path"], user_metadata=user_metadata
+            resume_info.state_path, user_metadata=user_metadata
         )
-        logger.info(f"Resumed DPO training from {resume_info['state_path']}")
+        logger.info(f"Resumed DPO training from {resume_info.state_path}")
     elif config.load_checkpoint_path:
         # Starting fresh DPO from checkpoint - load weights only (fresh optimizer)
         checkpoint_utils.check_renderer_name_for_checkpoint(
@@ -338,8 +339,8 @@ def main(config: Config):
     """Main training function that runs the complete DPO training process."""
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     if resume_info:
-        start_epoch = resume_info["epoch"]
-        start_batch = resume_info["batch"]
+        start_epoch = resume_info.epoch or 0
+        start_batch = resume_info.batch
     else:
         start_epoch = 0
         start_batch = 0

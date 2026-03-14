@@ -8,7 +8,7 @@ import tempfile
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from tinker_cookbook import renderers
+from tinker_cookbook import checkpoint_utils, renderers
 from tinker_cookbook.recipes.chat_sl import chat_datasets
 from tinker_cookbook.supervised import train
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
@@ -100,13 +100,9 @@ def checkpoint_resume():
                 asyncio.run(train.main(config))
 
         # Verify checkpoint was saved at step 5
-        checkpoint_file = os.path.join(log_path, "checkpoints.jsonl")
-        assert os.path.exists(checkpoint_file), "Checkpoint file should exist"
-
-        with open(checkpoint_file, "r") as f:
-            checkpoints = [json.loads(line) for line in f]
+        checkpoints = checkpoint_utils.load_checkpoints_file(log_path)
         assert len(checkpoints) > 0, "Should have at least one checkpoint"
-        assert checkpoints[0]["name"] == "000005", "First checkpoint should be at step 5"
+        assert checkpoints[0].name == "000005", "First checkpoint should be at step 5"
 
         # Read first run metrics
         first_run_metrics = read_jsonl(os.path.join(log_path, "metrics.jsonl"))
