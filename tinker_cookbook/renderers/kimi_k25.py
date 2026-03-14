@@ -43,12 +43,8 @@ class KimiK25Renderer(KimiK2Renderer):
     def __init__(self, tokenizer: Tokenizer, image_processor: ImageProcessor | None = None):
         super().__init__(tokenizer)
         self.image_processor = image_processor
-        think_open_tokens = self.tokenizer.encode("<think>", add_special_tokens=False)
-        think_close_tokens = self.tokenizer.encode("</think>", add_special_tokens=False)
-        assert len(think_open_tokens) == 1
-        assert len(think_close_tokens) == 1
-        self._think_open_token = think_open_tokens[0]
-        self._think_close_token = think_close_tokens[0]
+        (self._think_open_token,) = self.tokenizer.encode("<think>", add_special_tokens=False)
+        (self._think_close_token,) = self.tokenizer.encode("</think>", add_special_tokens=False)
 
     def _encode_multipart_content(self, content: list[ContentPart]) -> list[tinker.ModelInputChunk]:
         chunks = []
