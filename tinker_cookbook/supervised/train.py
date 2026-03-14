@@ -389,7 +389,7 @@ async def main(config: Config):
             name="final",
             log_path=config.log_path,
             kind="both",
-            loop_state={"epoch": config.num_epochs, "batch": n_batches},
+            loop_state={"epoch": config.num_epochs, "batch": 0},
             ttl_seconds=None,
         )
     else:
