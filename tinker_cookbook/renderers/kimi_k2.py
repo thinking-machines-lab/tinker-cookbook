@@ -511,13 +511,17 @@ class KimiK2Renderer(Renderer):
             response, self.tokenizer, self._end_message_token
         )
 
-    def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
-        """Parse response tokens with streaming, yielding incremental deltas."""
-        parser = ReasoningStreamingParser(
+    def create_streaming_parser(self) -> ReasoningStreamingParser:
+        """Create a streaming parser for incremental Kimi K2 token parsing."""
+        return ReasoningStreamingParser(
             tokenizer=self.tokenizer,
             end_message_token=self._end_message_token,
             parse_final_response=self._parse_response_for_streaming,
         )
+
+    def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
+        """Parse response tokens with streaming, yielding incremental deltas."""
+        parser = self.create_streaming_parser()
 
         for token in response:
             yield from parser.feed(token)
