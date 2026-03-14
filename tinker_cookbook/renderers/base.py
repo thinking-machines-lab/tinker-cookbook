@@ -8,12 +8,23 @@ Use viz_sft_dataset to visualize the output of different renderers. E.g.,
 import io
 import json
 import logging
+import pickle
 import re
 import urllib.request
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Literal, NotRequired, Optional, Protocol, TypedDict, Union
+from typing import (
+    Any,
+    Callable,
+    Iterator,
+    Literal,
+    NotRequired,
+    Optional,
+    Protocol,
+    TypedDict,
+    Union,
+)
 
 import pydantic
 import tinker
@@ -287,6 +298,276 @@ class Utf8TokenDecoder:
         return len(self._pending_tokens) > 0
 
 
+# =============================================================================
+# Streaming Parsers
+# =============================================================================
+
+
+def _longest_matching_suffix_prefix(text: str, tag: str) -> int:
+    """Find longest suffix of text that matches a prefix of tag.
+
+    This is used during streaming to determine how many characters at the end
+    of accumulated text might be the beginning of a tag, and thus shouldn't
+    be emitted yet.
+
+    Args:
+        text: The accumulated text to check.
+        tag: The tag we're looking for (e.g., "<think>").
+
+    Returns:
+        Length of the longest suffix of text that matches a prefix of tag.
+
+    Examples:
+        >>> _longest_matching_suffix_prefix("hello", "<think>")
+        0  # no suffix matches any prefix
+        >>> _longest_matching_suffix_prefix("hello<", "<think>")
+        1  # "<" matches prefix "<"
+        >>> _longest_matching_suffix_prefix("hello<th", "<think>")
+        3  # "<th" matches prefix "<th"
+        >>> _longest_matching_suffix_prefix("hello<thx", "<think>")
+        0  # "<thx" doesn't match any prefix of "<think>"
+    """
+    max_check = min(len(text), len(tag) - 1)  # -1 because full tag would be found, not buffered
+    for length in range(max_check, 0, -1):
+        if text.endswith(tag[:length]):
+            return length
+    return 0
+
+
+@dataclass
+class StreamingParser:
+    """Base streaming parser for incremental token-to-delta conversion.
+
+    Handles the generic plumbing shared by all streaming parsers:
+    - Token-by-token feeding with end-token detection
+    - UTF-8 decoding across token boundaries
+    - Header emission on first content
+    - Final message construction via callback
+
+    Subclasses override ``_emit_deltas`` to implement model-specific parsing
+    (e.g., detecting ``<think>`` tags for reasoning models).
+
+    Usage::
+
+        parser = StreamingParser(tokenizer, end_token, parse_final_response)
+        for token in response_tokens:
+            for delta in parser.feed(token):
+                # Handle delta
+        for delta in parser.finish():
+            # Handle final deltas including complete Message
+    """
+
+    tokenizer: "Tokenizer"
+    end_message_token: int
+    parse_final_response: Callable[[list[int]], tuple["Message", bool]]
+
+    _utf8_decoder: Utf8TokenDecoder = field(init=False)
+    _accumulated_text: str = field(init=False, default="")
+    _header_emitted: bool = field(init=False, default=False)
+    _content_index: int = field(init=False, default=0)
+    _last_emitted_pos: int = field(init=False, default=0)
+    _finished: bool = field(init=False, default=False)
+    _all_tokens: list[int] = field(init=False, default_factory=list)
+
+    def __post_init__(self) -> None:
+        self._utf8_decoder = Utf8TokenDecoder(self.tokenizer)
+        self._accumulated_text = ""
+        self._header_emitted = False
+        self._content_index = 0
+        self._last_emitted_pos = 0
+        self._finished = False
+        self._all_tokens = []
+
+    def feed(self, token: int) -> Iterator["MessageDelta"]:
+        """Feed a single token and yield any resulting deltas."""
+        if self._finished:
+            return
+
+        self._all_tokens.append(token)
+
+        if token == self.end_message_token:
+            self._finished = True
+            return
+
+        decoded = self._utf8_decoder.decode([token])
+        if decoded is None:
+            return
+
+        self._accumulated_text += decoded
+
+        if not self._header_emitted:
+            self._header_emitted = True
+            yield StreamingMessageHeader(role="assistant")
+
+        yield from self._emit_deltas()
+
+    def _emit_deltas(self) -> Iterator["MessageDelta"]:
+        """Emit deltas for any new content since last emission.
+
+        The base implementation emits all new text as StreamingTextDelta.
+        Subclasses override this to handle model-specific markup.
+        """
+        text = self._accumulated_text
+        pos = self._last_emitted_pos
+        if pos < len(text):
+            new_text = text[pos:]
+            if new_text:
+                yield StreamingTextDelta(text=new_text, content_index=self._content_index)
+            self._last_emitted_pos = len(text)
+
+    def _emit_remaining(self) -> Iterator["MessageDelta"]:
+        """Emit any remaining buffered content at end of stream.
+
+        The base implementation emits remaining text as StreamingTextDelta.
+        Subclasses override this for type-aware emission (e.g., thinking vs text).
+        """
+        text = self._accumulated_text
+        pos = self._last_emitted_pos
+        if pos < len(text):
+            remaining = text[pos:]
+            if remaining:
+                yield StreamingTextDelta(text=remaining, content_index=self._content_index)
+
+    def finish(self) -> Iterator["MessageDelta"]:
+        """Finish parsing and yield any remaining content plus final Message.
+
+        Call this after all tokens have been fed.
+        """
+        remaining = self._utf8_decoder.flush()
+        if remaining:
+            self._accumulated_text += remaining
+
+        if not self._header_emitted:
+            self._header_emitted = True
+            yield StreamingMessageHeader(role="assistant")
+
+        yield from self._emit_remaining()
+
+        message, _success = self.parse_final_response(self._all_tokens)
+        yield message
+
+    def reset(self) -> None:
+        """Reset parser state for reuse."""
+        self._utf8_decoder.reset()
+        self._accumulated_text = ""
+        self._header_emitted = False
+        self._content_index = 0
+        self._last_emitted_pos = 0
+        self._finished = False
+        self._all_tokens = []
+
+
+# Tags used by reasoning models (Qwen3, Kimi K2, DeepSeek, etc.)
+_THINK_OPEN_TAG = "<think>"
+_THINK_CLOSE_TAG = "</think>"
+
+
+@dataclass
+class ReasoningStreamingParser(StreamingParser):
+    """Streaming parser for models that use ``<think>...</think>`` reasoning blocks.
+
+    Extends StreamingParser with a state machine that detects ``<think>`` and
+    ``</think>`` tag boundaries, emitting StreamingThinkingDelta for reasoning
+    content and StreamingTextDelta for regular content. Handles partial tags
+    that may be split across token boundaries.
+
+    Used by renderers for Qwen3, Kimi K2, and other models that follow the
+    ``<think>...</think>`` convention for chain-of-thought reasoning.
+    """
+
+    _in_thinking: bool = field(init=False, default=False)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self._in_thinking = False
+
+    def _emit_deltas(self) -> Iterator["MessageDelta"]:
+        """Emit deltas with <think>/</think> tag awareness."""
+        text = self._accumulated_text
+        pos = self._last_emitted_pos
+
+        while pos < len(text):
+            if not self._in_thinking:
+                # Look for <think> tag
+                think_start = text.find(_THINK_OPEN_TAG, pos)
+                if think_start == -1:
+                    # No <think> tag found - emit text up to a safe point.
+                    # Keep any trailing chars that could be the start of "<think>".
+                    suffix_from_pos = text[pos:]
+                    keep = _longest_matching_suffix_prefix(suffix_from_pos, _THINK_OPEN_TAG)
+                    safe_end = len(text) - keep
+                    if safe_end > pos:
+                        new_text = text[pos:safe_end]
+                        if new_text:
+                            yield StreamingTextDelta(
+                                text=new_text, content_index=self._content_index
+                            )
+                        self._last_emitted_pos = safe_end
+                    break
+                elif think_start > pos:
+                    # Emit text before <think>
+                    new_text = text[pos:think_start]
+                    if new_text:
+                        yield StreamingTextDelta(text=new_text, content_index=self._content_index)
+                    pos = think_start
+
+                if text[pos:].startswith(_THINK_OPEN_TAG):
+                    # Enter thinking mode
+                    self._in_thinking = True
+                    self._content_index += 1
+                    pos += len(_THINK_OPEN_TAG)
+                    self._last_emitted_pos = pos
+            else:
+                # In thinking mode - look for </think>
+                think_end = text.find(_THINK_CLOSE_TAG, pos)
+                if think_end == -1:
+                    # No </think> found - emit thinking up to safe point.
+                    # Keep any trailing chars that could be the start of "</think>".
+                    suffix_from_pos = text[pos:]
+                    keep = _longest_matching_suffix_prefix(suffix_from_pos, _THINK_CLOSE_TAG)
+                    safe_end = len(text) - keep
+                    if safe_end > pos:
+                        new_thinking = text[pos:safe_end]
+                        if new_thinking:
+                            yield StreamingThinkingDelta(
+                                thinking=new_thinking, content_index=self._content_index
+                            )
+                        self._last_emitted_pos = safe_end
+                    break
+                else:
+                    # Emit thinking before </think>
+                    new_thinking = text[pos:think_end]
+                    if new_thinking:
+                        yield StreamingThinkingDelta(
+                            thinking=new_thinking, content_index=self._content_index
+                        )
+                    # Exit thinking mode
+                    self._in_thinking = False
+                    self._content_index += 1
+                    pos = think_end + len(_THINK_CLOSE_TAG)
+                    self._last_emitted_pos = pos
+
+    def _emit_remaining(self) -> Iterator["MessageDelta"]:
+        """Emit remaining content, respecting thinking state."""
+        text = self._accumulated_text
+        pos = self._last_emitted_pos
+        if pos < len(text):
+            remaining = text[pos:]
+            if self._in_thinking:
+                if remaining:
+                    yield StreamingThinkingDelta(
+                        thinking=remaining, content_index=self._content_index
+                    )
+            else:
+                if remaining:
+                    yield StreamingTextDelta(text=remaining, content_index=self._content_index)
+
+    def reset(self) -> None:
+        """Reset parser state for reuse."""
+        super().reset()
+        self._in_thinking = False
+
+
 # NOTE: we use a broad type definition for the role to be flexible
 # Common roles are "user", "assistant", "system", "tool"
 Role = str
@@ -356,6 +637,14 @@ class RenderContext:
     prev_message: Message | None = None
     """The previous message in the conversation, if any."""
 
+    last_user_index: int = -1
+    """Index of the last user message in the conversation. -1 if no user messages.
+
+    This is computed by the base build_generation_prompt/build_supervised_example
+    and used by renderers like Qwen3.5 that need to treat assistant messages
+    differently based on whether they come before or after the last user message.
+    """
+
 
 class ToolSpec(TypedDict):
     """
@@ -406,6 +695,49 @@ def ensure_list(content: Content) -> list[ContentPart]:
     if isinstance(content, str):
         return [TextPart(type="text", text=content)]
     return content
+
+
+def content_to_jsonable(content: Content) -> str | list[dict[str, Any]]:
+    """Convert message content to a JSON-serializable structure."""
+    if isinstance(content, str):
+        return content
+
+    result: list[dict[str, Any]] = []
+    for part in content:
+        if part["type"] == "text":
+            result.append({"type": "text", "text": part["text"]})
+        elif part["type"] == "thinking":
+            result.append({"type": "thinking", "thinking": part["thinking"]})
+        elif part["type"] == "image":
+            image: str | Image.Image = part["image"]
+            image_part: dict[str, Any] = {"type": "image"}
+            if isinstance(image, str):
+                image_part["image"] = image
+            result.append(image_part)
+        else:
+            raise ValueError(f"Unknown content part type: {part['type']}")
+    return result
+
+
+def message_to_jsonable(message: Message) -> dict[str, Any]:
+    """Convert a Message TypedDict to a JSON-serializable dict without losing metadata."""
+    result: dict[str, Any] = {
+        "role": message["role"],
+        "content": content_to_jsonable(message["content"]),
+    }
+    if "tool_calls" in message:
+        result["tool_calls"] = [tc.model_dump(mode="json") for tc in message["tool_calls"]]
+    if "unparsed_tool_calls" in message:
+        result["unparsed_tool_calls"] = [
+            tc.model_dump(mode="json") for tc in message["unparsed_tool_calls"]
+        ]
+    if "trainable" in message:
+        result["trainable"] = message["trainable"]
+    if "tool_call_id" in message:
+        result["tool_call_id"] = message["tool_call_id"]
+    if "name" in message:
+        result["name"] = message["name"]
+    return result
 
 
 def remove_thinking(parts: list[ContentPart]) -> list[ContentPart]:
@@ -661,6 +993,26 @@ class TrainOnWhat(StrEnum):
     CUSTOMIZED = "customized"
 
 
+def _unpickle_renderer(
+    renderer_name: str, model_name: str, has_image_processor: bool
+) -> "Renderer":
+    """Reconstruct a Renderer from its name and model name.
+
+    Called by pickle to deserialize Renderer instances. Uses cached tokenizer/image_processor
+    so reconstruction cost is negligible after first call.
+    """
+    from tinker_cookbook.renderers import get_renderer
+    from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+    tokenizer = get_tokenizer(model_name)
+    image_processor = None
+    if has_image_processor:
+        from tinker_cookbook.image_processing_utils import get_image_processor
+
+        image_processor = get_image_processor(model_name)
+    return get_renderer(renderer_name, tokenizer, image_processor, model_name=model_name)
+
+
 class Renderer(ABC):
     """
     Abstract base class for rendering message lists into training and sampling prompts.
@@ -673,12 +1025,46 @@ class Renderer(ABC):
     The default build_generation_prompt and build_supervised_example implementations
     assume simple concatenation of rendered messages. Override these if your renderer
     modifies the conversation structure (e.g., stripping thinking blocks from history).
+
+    Pickle support: Renderers created via ``get_renderer()`` are automatically pickleable.
+    On deserialization, the tokenizer and image processor are reconstructed from cached
+    loaders, so the cost is negligible. Renderers created directly (not via ``get_renderer()``)
+    must set ``_renderer_name`` and ``_model_name`` manually to be pickleable.
+
+    Implementations of ``EnvGroupBuilder`` must be pickleable to support distributed rollout
+    execution. Since many builders store a Renderer, this pickle support is critical.
     """
 
     tokenizer: Tokenizer
 
+    # Pickle metadata — set by get_renderer() via _stamp_pickle_metadata().
+    # Class-level defaults ensure these exist even when subclasses bypass super().__init__().
+    _renderer_name: str | None = None
+    _model_name: str | None = None
+    _has_image_processor: bool = False
+
     def __init__(self, tokenizer: Tokenizer):
         self.tokenizer = tokenizer
+
+    def __reduce__(self) -> tuple:
+        """Enable pickling by storing only (renderer_name, model_name, has_image_processor).
+
+        On unpickling, the Renderer is reconstructed via get_renderer() with a
+        cached tokenizer, so the cost is negligible.
+        """
+        renderer_name = getattr(self, "_renderer_name", None)
+        model_name = getattr(self, "_model_name", None)
+        has_image_processor = getattr(self, "_has_image_processor", False)
+        if renderer_name is None or model_name is None:
+            raise pickle.PicklingError(
+                f"Cannot pickle {type(self).__name__}: _renderer_name or _model_name not set. "
+                "Renderers must be created via get_renderer() to be pickleable, "
+                "or set _renderer_name and _model_name manually."
+            )
+        return (
+            _unpickle_renderer,
+            (renderer_name, model_name, has_image_processor),
+        )
 
     @property
     def has_extension_property(self) -> bool:
@@ -741,6 +1127,28 @@ class Renderer(ABC):
             be parsed (e.g., missing stop token), but a best-effort message is still returned.
         """
         ...
+
+    def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
+        """Parse response tokens with streaming, yielding incremental deltas.
+
+        This enables real-time display of model output by yielding partial
+        content as tokens arrive, rather than waiting for the complete response.
+
+        Not all renderers support streaming. The default raises NotImplementedError.
+        Override this in subclasses that support streaming.
+
+        Args:
+            response: Token IDs from the model.
+
+        Yields:
+            StreamingMessageHeader: Once at the start of the message.
+            StreamingTextDelta: Incremental text content.
+            StreamingThinkingDelta: Incremental thinking/reasoning content.
+            Message: The complete parsed message at the end.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support streaming response parsing"
+        )
 
     def to_openai_message(self, message: Message) -> dict:
         """
@@ -874,11 +1282,18 @@ class Renderer(ABC):
         chunks: list[tinker.types.ModelInputChunk] = []
         if self._bos_tokens:
             chunks.append(tinker.types.EncodedTextChunk(tokens=self._bos_tokens))
+
+        last_user_idx = max(
+            (idx for idx, message in enumerate(messages) if message["role"] == "user"),
+            default=-1,
+        )
+
         for idx, message in enumerate(messages):
             ctx = RenderContext(
                 idx=idx,
                 is_last=(idx == len(messages) - 1),
                 prev_message=messages[idx - 1] if idx > 0 else None,
+                last_user_index=last_user_idx,
             )
             rendered_message = self.render_message(message, ctx)
             header_chunk = rendered_message.header
@@ -894,6 +1309,7 @@ class Renderer(ABC):
             idx=len(messages),
             is_last=True,
             prev_message=messages[-1] if messages else None,
+            last_user_index=last_user_idx,
         )
         suffix_tokens = self._get_generation_suffix(role, suffix_ctx)
         if suffix_tokens:
@@ -1010,6 +1426,7 @@ class Renderer(ABC):
                 idx=idx,
                 is_last=is_last_message,
                 prev_message=messages[idx - 1] if idx > 0 else None,
+                last_user_index=last_user_idx,
             )
             rendered_message = self.render_message(message, ctx)
             header_part = rendered_message.header

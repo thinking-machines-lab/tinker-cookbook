@@ -87,6 +87,8 @@ class CLIConfig:
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
+    max_steps: int | None = None
+
 
 async def cli_main(cli_config: CLIConfig):
     """Convert CLI config to full config and run training."""
@@ -108,7 +110,7 @@ async def cli_main(cli_config: CLIConfig):
             f"dm{cli_config.deepmath_groups_per_batch}-t3{cli_config.tulu3_groups_per_batch}-"
             f"{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
         )
-        log_path = os.path.expanduser(f"~/tinker-examples/distillation/{run_name}")
+        log_path = f"/tmp/tinker-examples/distillation/{run_name}"
 
     # Create wandb name if not specified
     if cli_config.wandb_name is not None:
@@ -179,6 +181,7 @@ async def cli_main(cli_config: CLIConfig):
         compute_post_kl=cli_config.compute_post_kl,
         eval_every=cli_config.eval_every,
         save_every=cli_config.save_every,
+        max_steps=cli_config.max_steps,
     )
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)

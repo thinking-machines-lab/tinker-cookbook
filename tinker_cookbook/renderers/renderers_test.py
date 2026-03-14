@@ -24,11 +24,11 @@ Testing guidelines:
 
 import copy
 import json
+import random
+import uuid
 from typing import Callable, cast
 
 import pytest
-import tinker
-from transformers.models.auto.tokenization_auto import AutoTokenizer
 
 from tinker_cookbook.image_processing_utils import get_image_processor
 from tinker_cookbook.model_info import get_model_attributes, get_recommended_renderer_name
@@ -49,9 +49,10 @@ from tinker_cookbook.renderers import (
     register_renderer,
     unregister_renderer,
 )
-from tinker_cookbook.renderers.base import ensure_list, ensure_text
+from tinker_cookbook.renderers.base import ContentPart, ensure_list, ensure_text
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
-from tinker_cookbook.tests.conversation_generator import generate_conversation
+from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
+from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
 from tinker_cookbook.tokenizer_utils import (
     get_registered_tokenizer_names,
     get_tokenizer,
@@ -59,6 +60,81 @@ from tinker_cookbook.tokenizer_utils import (
     register_tokenizer,
     unregister_tokenizer,
 )
+
+
+# =============================================================================
+# Conversation Generator (seeded random conversations for parametrized tests)
+# =============================================================================
+
+
+def _rand_str(rng: random.Random, length: int = 8) -> str:
+    return uuid.UUID(int=rng.getrandbits(128)).hex[:length]
+
+
+def _rand_tool_call(rng: random.Random) -> ToolCall:
+    return ToolCall(
+        function=ToolCall.FunctionBody(
+            name=f"tool_{_rand_str(rng, 6)}",
+            arguments=json.dumps({"arg": _rand_str(rng)}),
+        ),
+        id=f"call_{_rand_str(rng)}",
+    )
+
+
+def generate_conversation(
+    seed: int,
+    *,
+    include_system: bool = True,
+    include_tool_calls: bool = True,
+    include_thinking: bool = True,
+    min_turns: int = 2,
+    max_turns: int = 10,
+    end_with_assistant: bool = True,
+) -> list[Message]:
+    rng = random.Random(seed)
+    messages: list[Message] = []
+
+    if include_system and rng.random() < 0.5:
+        messages.append(Message(role="system", content=f"system_{_rand_str(rng)}"))
+
+    num_turns = rng.randint(min_turns, max_turns)
+
+    for turn in range(num_turns):
+        is_last_turn = turn == num_turns - 1
+        messages.append(Message(role="user", content=f"user_{_rand_str(rng)}"))
+
+        if is_last_turn and not end_with_assistant:
+            break
+
+        has_thinking = include_thinking and rng.random() < 0.5
+        has_tool_call = include_tool_calls and rng.random() < 0.3
+
+        if has_thinking:
+            content: str | list[ContentPart] = [
+                ThinkingPart(type="thinking", thinking=f"think_{_rand_str(rng)}"),
+                TextPart(type="text", text=f"asst_{_rand_str(rng)}"),
+            ]
+        else:
+            content = f"asst_{_rand_str(rng)}"
+
+        if has_tool_call:
+            tool_call = _rand_tool_call(rng)
+            messages.append(Message(role="assistant", content=content, tool_calls=[tool_call]))
+            assert tool_call.id is not None
+            messages.append(
+                Message(
+                    role="tool",
+                    content=json.dumps({"result": _rand_str(rng)}),
+                    tool_call_id=tool_call.id,
+                    name=tool_call.function.name,
+                )
+            )
+            messages.append(Message(role="assistant", content=f"followup_{_rand_str(rng)}"))
+        else:
+            messages.append(Message(role="assistant", content=content))
+
+    return messages
+
 
 # =============================================================================
 # Test Conversation Definitions
@@ -376,6 +452,7 @@ TOOL_CAPABLE_MODELS = {
     "Qwen/Qwen3-30B-A3B",
     "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "Qwen/Qwen3-VL-30B-A3B-Instruct",
+    "Qwen/Qwen3.5-35B-A3B",
     "meta-llama/Llama-3.2-1B-Instruct",
     "deepseek-ai/DeepSeek-V3.1",
     "moonshotai/Kimi-K2-Thinking",
@@ -402,6 +479,8 @@ _HF_TEST_MODELS = [
     ("openai/gpt-oss-20b", None, {}),
     ("moonshotai/Kimi-K2-Thinking", None, {}),
     ("Qwen/Qwen3-VL-30B-A3B-Instruct", None, {}),
+    ("Qwen/Qwen3.5-35B-A3B", None, {}),
+    ("Qwen/Qwen3.5-35B-A3B", "qwen3_5_disable_thinking", {"enable_thinking": False}),
 ]
 
 # Models whose tool call format matches HF's apply_chat_template exactly.
@@ -412,6 +491,7 @@ _HF_TOOL_COMPATIBLE_MODELS = {
     "Qwen/Qwen3-30B-A3B",
     "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "Qwen/Qwen3-VL-30B-A3B-Instruct",
+    "Qwen/Qwen3.5-35B-A3B",
     "deepseek-ai/DeepSeek-V3.1",
     "moonshotai/Kimi-K2-Thinking",
 }
@@ -523,6 +603,8 @@ _SUPERVISED_TEST_MODELS = [
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking", {"thinking": True}),  # thinking mode
     ("moonshotai/Kimi-K2-Thinking", None, {}),
     ("Qwen/Qwen3-VL-30B-A3B-Instruct", None, {}),
+    ("Qwen/Qwen3.5-35B-A3B", None, {}),
+    ("Qwen/Qwen3.5-35B-A3B", "qwen3_5_disable_thinking", {"enable_thinking": False}),
 ]
 
 # Conversations for supervised tests (end with assistant message)
@@ -656,6 +738,7 @@ def test_tokenization_boundary_with_whitespace(model_name: str):
     "model_name",
     [
         "Qwen/Qwen3-30B-A3B",
+        "Qwen/Qwen3.5-35B-A3B",
         # Llama3 does not support tool calling - see llama3.py docstring
         "deepseek-ai/DeepSeek-V3.1",
         "moonshotai/Kimi-K2-Thinking",
@@ -713,7 +796,10 @@ def test_tool_call_supervised_rendering(model_name: str):
     "model_name,renderer_class",
     [
         ("Qwen/Qwen3-8B", Qwen3Renderer),
+        ("Qwen/Qwen3.5-35B-A3B", Qwen3_5Renderer),
         ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3ThinkingRenderer),
+        ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer),
+        ("moonshotai/Kimi-K2.5", KimiK25Renderer),
     ],
 )
 def test_strip_thinking_from_history_default(model_name: str, renderer_class):
@@ -740,7 +826,10 @@ def test_strip_thinking_from_history_default(model_name: str, renderer_class):
     "model_name,renderer_class",
     [
         ("Qwen/Qwen3-8B", Qwen3Renderer),
+        ("Qwen/Qwen3.5-35B-A3B", Qwen3_5Renderer),
         ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3ThinkingRenderer),
+        ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer),
+        ("moonshotai/Kimi-K2.5", KimiK25Renderer),
     ],
 )
 def test_strip_thinking_from_history_false(model_name: str, renderer_class):
@@ -760,98 +849,6 @@ def test_strip_thinking_from_history_false(model_name: str, renderer_class):
         f"First thinking should be preserved with strip_thinking_from_history=False: {decoded}"
     )
     assert "Second turn reasoning" in decoded, f"Second thinking should be preserved: {decoded}"
-
-
-# =============================================================================
-# Qwen3 Disable Thinking Tests
-# =============================================================================
-
-
-def test_qwen3_disable_thinking_supervised():
-    """
-    Test that Qwen3DisableThinkingRenderer adds the correct empty thinking block
-    to assistant messages for SFT, matching HF tokenizer with thinking=False.
-    """
-    model_name = "Qwen/Qwen3-8B"
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    renderer = get_renderer("qwen3_disable_thinking", tokenizer)
-
-    messages = get_basic_2turn_conversation()
-
-    model_input, _ = renderer.build_supervised_example(messages)
-    tinker_tokens = model_input.to_ints()
-    tinker_decoded = tokenizer.decode(tinker_tokens)
-
-    # Get expected format from official Qwen3 tokenizer with thinking=False
-    hf_decoded = tokenizer.apply_chat_template(
-        cast(list[dict[str, str]], messages), tokenize=False, thinking=False
-    )
-
-    # Verify the complete empty thinking block is present
-    assert "<think>\n\n</think>\n\n" in tinker_decoded, (
-        f"Renderer must add '<think>\\n\\n</think>\\n\\n' but got: {tinker_decoded}"
-    )
-
-    # Verify matches HF
-    assert tinker_decoded == hf_decoded.rstrip("\n"), (
-        f"Tinker and HuggingFace outputs differ:\n"
-        f"TINKER:\n{tinker_decoded!r}\n\n"
-        f"HUGGINGFACE:\n{hf_decoded!r}"
-    )
-
-
-def test_qwen3_disable_thinking_generation():
-    """Test Qwen3DisableThinkingRenderer generation matches HF with enable_thinking=False."""
-    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
-    cookbook_renderer = get_renderer("qwen3_disable_thinking", tokenizer)
-
-    convo = get_basic_3turn_conversation()
-
-    cookbook_tokens = cookbook_renderer.build_generation_prompt(convo).to_ints()
-    hf_tokens = tokenizer.apply_chat_template(
-        cast(list[dict[str, str]], convo),
-        add_generation_prompt=True,
-        tokenize=True,
-        enable_thinking=False,
-    )
-
-    # Cast hf_tokens to list[int] for type checker - apply_chat_template with tokenize=True returns list[int]
-    hf_tokens_list = cast(list[int], hf_tokens)
-
-    assert cookbook_tokens == hf_tokens_list, (
-        f"Cookbook tokens: {cookbook_tokens}\n"
-        f"Cookbook string: {tokenizer.decode(cookbook_tokens)}\n"
-        f"HF tokens: {hf_tokens_list}\n"
-        f"HF string: {tokenizer.decode(hf_tokens_list)}"
-    )
-
-
-def test_qwen3_disable_thinking_4turn():
-    """
-    Test Qwen3DisableThinkingRenderer with 4-turn conversation.
-    Only the last assistant message should have the empty thinking block
-    (historical thinking is stripped, matching HF behavior).
-    """
-    model_name = "Qwen/Qwen3-8B"
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    renderer = get_renderer("qwen3_disable_thinking", tokenizer)
-
-    messages = get_basic_4turn_conversation()
-
-    model_input, _ = renderer.build_supervised_example(messages)
-    tinker_tokens = model_input.to_ints()
-    tinker_decoded = tokenizer.decode(tinker_tokens)
-
-    # Get expected format from HF
-    hf_decoded = tokenizer.apply_chat_template(
-        cast(list[dict[str, str]], messages), tokenize=False, thinking=False
-    )
-
-    assert tinker_decoded == hf_decoded.rstrip("\n"), (
-        f"Tinker and HuggingFace outputs differ:\n"
-        f"TINKER:\n{tinker_decoded!r}\n\n"
-        f"HUGGINGFACE:\n{hf_decoded!r}"
-    )
 
 
 # =============================================================================
@@ -913,6 +910,8 @@ _CONSISTENCY_RENDERERS = [
     ("Qwen/Qwen3-8B", "qwen3"),
     ("Qwen/Qwen3-8B", "qwen3_disable_thinking"),
     ("Qwen/Qwen3-8B", "qwen3_instruct"),
+    ("Qwen/Qwen3.5-35B-A3B", "qwen3_5"),
+    ("Qwen/Qwen3.5-35B-A3B", "qwen3_5_disable_thinking"),
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking"),
     ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning"),
@@ -938,12 +937,17 @@ _RENDERERS_WITHOUT_THINKING_SUPPORT = {"llama3", "role_colon"}
 _RENDERERS_WITHOUT_TOOL_SUPPORT = {"role_colon"}
 
 # Renderers that strip thinking in non-thinking mode (conversation must not have ThinkingPart)
-_RENDERERS_WITH_THINKING_STRIPPING = {"qwen3_disable_thinking", "deepseekv3", "kimi_k2"}
+_RENDERERS_WITH_THINKING_STRIPPING = {
+    "qwen3_disable_thinking",
+    "qwen3_5_disable_thinking",
+    "deepseekv3",
+    "kimi_k2",
+}
 
 # Renderers where supervised and generation have different headers (HF thinking=True behavior).
 # These add </think> to supervised assistant headers but <think> to generation prompt,
 # so observation != generation_prompt by design.
-_RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS = {"deepseekv3_thinking"}
+_RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS = {"deepseekv3_thinking", "qwen3_5"}
 
 
 @pytest.mark.parametrize("conversation_fn", _CONSISTENCY_CONVERSATIONS)
@@ -1075,6 +1079,8 @@ def test_supervised_generation_parse_consistency(
     [
         ("Qwen/Qwen3-30B-A3B", "qwen3"),
         ("Qwen/Qwen3-8B", "qwen3_disable_thinking"),
+        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5"),
+        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5_disable_thinking"),
         ("meta-llama/Llama-3.2-1B-Instruct", "llama3"),
         # deepseekv3 defaults to non-thinking, deepseekv3_thinking is thinking mode
         ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
@@ -1094,6 +1100,8 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         "llama3": "<|eot_id|>",
         "qwen3": "<|im_end|>",
         "qwen3_disable_thinking": "<|im_end|>",
+        "qwen3_5": "<|im_end|>",
+        "qwen3_5_disable_thinking": "<|im_end|>",
         "deepseekv3": "<｜end▁of▁sentence｜>",  # Full-width pipes
         "deepseekv3_thinking": "<｜end▁of▁sentence｜>",  # Full-width pipes
         "deepseekv3_disable_thinking": "<｜end▁of▁sentence｜>",  # Full-width pipes (alias)
@@ -1612,6 +1620,8 @@ def test_kimi_k2_build_supervised_examples_all_assistant_matches_with_tool_calls
     [
         ("meta-llama/Llama-3.2-1B-Instruct", "llama3"),
         ("Qwen/Qwen3-8B", "qwen3"),
+        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5"),
+        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5_disable_thinking"),
         ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
     ],
 )
@@ -1737,6 +1747,20 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
     (
         "Qwen/Qwen3-8B",
         Qwen3Renderer,
+        {"strip_thinking_from_history": False},
+        get_multiturn_thinking_conversation,
+    ),
+    # Qwen3.5 with strip_thinking_from_history=False (preserves thinking)
+    (
+        "Qwen/Qwen3.5-35B-A3B",
+        Qwen3_5Renderer,
+        {"strip_thinking_from_history": False},
+        get_multiturn_thinking_conversation,
+    ),
+    # Qwen3.5 disable thinking with strip_thinking_from_history=False (preserves thinking)
+    (
+        "Qwen/Qwen3.5-35B-A3B",
+        Qwen3_5DisableThinkingRenderer,
         {"strip_thinking_from_history": False},
         get_multiturn_thinking_conversation,
     ),

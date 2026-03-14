@@ -46,6 +46,8 @@ class CLIConfig:
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
+    max_steps: int | None = None
+
 
 def get_dataset_builder(
     dataset: str,
@@ -121,10 +123,12 @@ def cli_main(cli_config: CLIConfig):
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
         reference_model_name=cli_config.reference_model_name,
+        max_steps=cli_config.max_steps,
     )
 
     train_dpo.main(config)
 
 
 if __name__ == "__main__":
-    chz.nested_entrypoint(cli_main)
+    cli_config = chz.entrypoint(CLIConfig)
+    cli_main(cli_config)

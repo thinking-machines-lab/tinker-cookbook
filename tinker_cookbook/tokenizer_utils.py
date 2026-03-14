@@ -93,7 +93,7 @@ def _get_hf_tokenizer(model_name: str) -> Tokenizer:
     kwargs: dict[str, Any] = {}
     if model_name == "moonshotai/Kimi-K2-Thinking":
         kwargs["trust_remote_code"] = True
-        kwargs["revision"] = "612681931a8c906ddb349f8ad0f582cb552189cd"
+        kwargs["revision"] = "a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55"
     elif model_name == "moonshotai/Kimi-K2.5":
         kwargs["trust_remote_code"] = True
         kwargs["revision"] = "2426b45b6af0da48d0dcce71bbce6225e5c73adc"

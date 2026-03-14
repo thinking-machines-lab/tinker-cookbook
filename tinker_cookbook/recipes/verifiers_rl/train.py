@@ -55,6 +55,8 @@ class CLIConfig:
     wandb_name: str | None = None
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
+    max_steps: int | None = None
+
 
 async def cli_main(cli_config: CLIConfig, env: Any | None):
     model_name_short = cli_config.model_name.replace("/", "-")
@@ -139,6 +141,7 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
         eval_every=cli_config.eval_every,
         save_every=cli_config.save_every,
         stream_minibatch_config=None,
+        max_steps=cli_config.max_steps,
     )
 
     await train.main(cfg)

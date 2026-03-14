@@ -1,7 +1,13 @@
 import asyncio
+import numbers
+from concurrent.futures import Executor
+from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any, Sequence
 
-from tinker_cookbook.completers import TokenCompleter
+import tinker
+
+from tinker_cookbook.completers import TinkerTokenCompleter, TokenCompleter
 from tinker_cookbook.rl.types import (
     Env,
     EnvGroupBuilder,
@@ -10,21 +16,70 @@ from tinker_cookbook.rl.types import (
     Transition,
 )
 from tinker_cookbook.utils import logtree
-
-# Max characters for log values in table cells before truncation
-LOG_VALUE_MAX_LEN = 100
-
-
-def _truncate_log_value(value: Any, max_len: int = LOG_VALUE_MAX_LEN) -> tuple[str, bool]:
-    """Truncate a log value if it's too long. Returns (display_value, was_truncated)."""
-    str_value = str(value)
-    if len(str_value) > max_len:
-        return str_value[:max_len] + "...", True
-    return str_value, False
+from tinker_cookbook.utils.misc_utils import all_same
+from tinker_cookbook.utils.trace import scope
 
 
-@logtree.scope_header_decorator
+def _log_transition_logs(logs: dict[str, Any]) -> None:
+    """Render transition logs in a readable structure without truncating table cells."""
+    if not logs:
+        return
+    with logtree.scope_header("Diagnostics"):
+        for key, value in logs.items():
+            text = str(value)
+            if "\n" in text or len(text) > 120:
+                logtree.details(text, summary=key, pre=True)
+            else:
+                logtree.log_text(f"{key}: {text}")
+
+
+def _log_transition_metrics(metrics: dict[str, Any] | None) -> None:
+    """Render transition metrics in a compact, always-visible table."""
+    if not metrics:
+        return
+    formatted_metrics = {}
+    for key, value in metrics.items():
+        if isinstance(value, numbers.Real):
+            formatted_metrics[key] = f"{float(value):.3f}"
+        else:
+            formatted_metrics[key] = str(value)
+    with logtree.scope_header("Step Metrics"):
+        logtree.table_from_dict(
+            formatted_metrics,
+            caption="Metrics emitted by env.step",
+        )
+
+
+def _log_single_trajectory_details(traj: Trajectory, final_reward: float) -> None:
+    with logtree.scope_header("Episode Details"):
+        for turn_idx, transition in enumerate(traj.transitions, start=1):
+            with logtree.scope_header(f"Turn {turn_idx}"):
+                logtree.table_from_dict(
+                    {
+                        "ob_len": transition.ob.length,
+                        "ac_len": len(transition.ac.tokens),
+                        "step_reward": f"{transition.reward:.3f}",
+                    },
+                    caption="Step stats",
+                )
+                _log_transition_metrics(transition.metrics)
+                _log_transition_logs(transition.logs)
+
+        logtree.table_from_dict(
+            {
+                "num_turns": len(traj.transitions),
+                "final_ob_len": traj.final_ob.length,
+                "sum_step_rewards": f"{sum(t.reward for t in traj.transitions):.3f}",
+                "final_group_reward": f"{final_reward:.3f}",
+                "total_return": f"{sum(t.reward for t in traj.transitions) + final_reward:.3f}",
+            },
+            caption="Episode totals",
+        )
+
+
 async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
+    """Run a single rollout (env episode). Env logging (if any) goes into
+    whatever logtree scope the caller has set up."""
     transitions = []
     ob, stop_condition = await env.initial_observation()
     while True:
@@ -46,70 +101,137 @@ async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
     return Trajectory(transitions=transitions, final_ob=ob)
 
 
-@logtree.scope_header_decorator
+@logtree.scope_header_decorator("Group Rollout")
 async def do_group_rollout(
     env_group_builder: EnvGroupBuilder, policy: TokenCompleter
 ) -> TrajectoryGroup:
     envs_G: Sequence[Env] = await env_group_builder.make_envs()
     trajectories_G = await asyncio.gather(*[do_single_rollout(policy, env) for env in envs_G])
+
     rewards_and_metrics_G = await env_group_builder.compute_group_rewards(trajectories_G, envs_G)
     rewards_G, metrics_G = zip(*rewards_and_metrics_G, strict=True)
 
-    # Log trajectory tables with final rewards
-    with logtree.scope_header("Trajectory Summary"):
-        for i, (traj, final_reward) in enumerate(zip(trajectories_G, rewards_G, strict=True)):
-            # Pre-scan to collect all log keys across all transitions (preserving order, deduped)
-            all_log_keys = list(dict.fromkeys(key for t in traj.transitions for key in t.logs))
-
-            rows = []
-            truncated_values: list[tuple[int, str, str]] = []  # (step, key, full_value)
-            step_reward_sum = 0.0
-            for t_idx, t in enumerate(traj.transitions):
-                step_reward_sum += t.reward
-                row: dict[str, Any] = {
-                    "step": t_idx,
-                    "ob_len": t.ob.length,
-                    "ac_len": len(t.ac.tokens),
-                    "reward": f"{t.reward:.3f}",
-                }
-                # Add log fields (user is responsible for avoiding collision with core columns)
-                for key in all_log_keys:
-                    if key in t.logs:
-                        display_val, was_truncated = _truncate_log_value(t.logs[key])
-                        row[key] = display_val
-                        if was_truncated:
-                            truncated_values.append((t_idx, key, str(t.logs[key])))
-                    else:
-                        row[key] = "-"
-                rows.append(row)
-            # Add final row with final observation and computed reward
-            rows.append(
-                {
-                    "step": "final",
-                    "ob_len": traj.final_ob.length,
-                    "ac_len": "-",
-                    "reward": f"{final_reward:.3f}",
-                    **{key: "-" for key in all_log_keys},
-                }
-            )
-            # Add total reward row
-            rows.append(
-                {
-                    "step": "total",
-                    "ob_len": "-",
-                    "ac_len": "-",
-                    "reward": f"{step_reward_sum + final_reward:.3f}",
-                    **{key: "-" for key in all_log_keys},
-                }
-            )
-            logtree.table(rows, caption=f"Trajectory {i}")
-
-            # Show full content for any truncated values in collapsible blocks
-            for step_idx, key, full_value in truncated_values:
-                logtree.details(
-                    full_value,
-                    summary=f"Step {step_idx} - {key} (full, {len(full_value)} chars)",
-                    pre=True,
-                )
+    with logtree.scope_header("Trajectory Details"):
+        for traj_idx, (traj, final_reward) in enumerate(
+            zip(trajectories_G, rewards_G, strict=True)
+        ):
+            with logtree.scope_header(f"Trajectory {traj_idx} Episode"):
+                _log_single_trajectory_details(traj, final_reward)
 
     return TrajectoryGroup(trajectories_G, list(rewards_G), list(metrics_G))
+
+
+# ---------------------------------------------------------------------------
+# Rollout executor — allows offloading group rollouts to processes/Ray/etc.
+# ---------------------------------------------------------------------------
+
+_rollout_executor: ContextVar[Executor | None] = ContextVar("rollout_executor", default=None)
+
+
+def set_rollout_executor(executor: Executor | None) -> None:
+    """Set the executor used for group rollouts.
+
+    When set, ``do_group_rollout_and_filter_constant_reward`` dispatches each
+    rollout via ``loop.run_in_executor(executor, ...)`` instead of running it
+    as an asyncio coroutine in the current process.
+
+    Pass any ``concurrent.futures.Executor`` — ``ProcessPoolExecutor`` works
+    out of the box, or wrap Ray / custom cluster dispatchers as ``Executor``.
+
+    Pass ``None`` to revert to the default in-process async behavior.
+    """
+    _rollout_executor.set(executor)
+
+
+def get_rollout_executor() -> Executor | None:
+    """Get the current rollout executor (None = in-process async)."""
+    return _rollout_executor.get()
+
+
+@dataclass(frozen=True)
+class _RolloutTask:
+    """Pickleable bundle of inputs for cross-process rollout dispatch."""
+
+    sampling_client: tinker.SamplingClient
+    env_group_builder: EnvGroupBuilder
+    max_tokens: int
+    temperature: float
+    remove_constant_reward_groups: bool
+    enable_logging: bool
+
+
+def _run_rollout_sync(task: _RolloutTask) -> TrajectoryGroup | None:
+    """Entry point for executor workers. Runs the async rollout in a fresh event loop.
+
+    Called by ``loop.run_in_executor()`` — must be a module-level sync function
+    so it can be pickled for ``ProcessPoolExecutor``.
+    """
+    return asyncio.run(
+        _do_group_rollout_and_filter_constant_reward_impl(
+            task.sampling_client,
+            task.env_group_builder,
+            task.max_tokens,
+            task.temperature,
+            task.remove_constant_reward_groups,
+            task.enable_logging,
+        )
+    )
+
+
+@scope
+async def do_group_rollout_and_filter_constant_reward(
+    sampling_client: tinker.SamplingClient,
+    env_group_builder: EnvGroupBuilder,
+    max_tokens: int,
+    temperature: float,
+    do_remove_constant_reward_groups: bool,
+    enable_logging: bool = True,
+) -> TrajectoryGroup | None:
+    """Run a group rollout, optionally dispatching to an external executor.
+
+    When a rollout executor is set (via ``set_rollout_executor``), inputs are
+    bundled into a pickleable ``_RolloutTask`` and dispatched via
+    ``loop.run_in_executor()``. Otherwise, runs as an asyncio coroutine
+    in the current process (zero overhead).
+    """
+    executor = get_rollout_executor()
+    if executor is not None:
+        task = _RolloutTask(
+            sampling_client=sampling_client,
+            env_group_builder=env_group_builder,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            remove_constant_reward_groups=do_remove_constant_reward_groups,
+            enable_logging=enable_logging,
+        )
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(executor, _run_rollout_sync, task)
+
+    return await _do_group_rollout_and_filter_constant_reward_impl(
+        sampling_client,
+        env_group_builder,
+        max_tokens,
+        temperature,
+        do_remove_constant_reward_groups,
+        enable_logging,
+    )
+
+
+async def _do_group_rollout_and_filter_constant_reward_impl(
+    sampling_client: tinker.SamplingClient,
+    env_group_builder: EnvGroupBuilder,
+    max_tokens: int,
+    temperature: float,
+    do_remove_constant_reward_groups: bool,
+    enable_logging: bool = True,
+) -> TrajectoryGroup | None:
+    policy = TinkerTokenCompleter(sampling_client, max_tokens=max_tokens, temperature=temperature)
+
+    with logtree.optional_enable_logging(enable_logging):
+        trajectory_group = await do_group_rollout(env_group_builder, policy)
+
+    # Remove if all trajectories have the same reward
+    if do_remove_constant_reward_groups and all_same(trajectory_group.get_total_rewards()):
+        return None
+    else:
+        return trajectory_group

@@ -40,8 +40,13 @@ class KimiK25Renderer(KimiK2Renderer):
     _think_open_token: int
     _think_close_token: int
 
-    def __init__(self, tokenizer: Tokenizer, image_processor: ImageProcessor | None = None):
-        super().__init__(tokenizer)
+    def __init__(
+        self,
+        tokenizer: Tokenizer,
+        image_processor: ImageProcessor | None = None,
+        strip_thinking_from_history: bool = True,
+    ):
+        super().__init__(tokenizer, strip_thinking_from_history=strip_thinking_from_history)
         self.image_processor = image_processor
         (self._think_open_token,) = self.tokenizer.encode("<think>", add_special_tokens=False)
         (self._think_close_token,) = self.tokenizer.encode("</think>", add_special_tokens=False)

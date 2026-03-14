@@ -7,7 +7,15 @@ import numpy as np
 import tinker
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
-from tinker_cookbook.rl.rollouts import do_group_rollout
+from tinker_cookbook.rl.rollout_logging import (
+    RolloutSummaryExportConfig,
+    write_rollout_summaries_jsonl,
+)
+from tinker_cookbook.rl.rollouts import (
+    do_group_rollout,
+    do_group_rollout_and_filter_constant_reward,
+    get_rollout_executor,
+)
 from tinker_cookbook.rl.types import EnvGroupBuilder, RLDataset, TrajectoryGroup
 from tinker_cookbook.utils.misc_utils import all_same, dict_mean
 from tinker_cookbook.utils import logtree
@@ -116,7 +124,12 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         self.name = name
         self.num_groups_to_log = num_groups_to_log
 
-    async def eval_token_completer(self, policy: TokenCompleter) -> dict[str, float]:
+    async def eval_token_completer(
+        self,
+        policy: TokenCompleter,
+        *,
+        rollout_summary_export: RolloutSummaryExportConfig | None = None,
+    ) -> dict[str, float]:
         async def run_group_rollout(builder, i):
             enable_logging = i < self.num_groups_to_log
             with logtree.optional_enable_logging(enable=enable_logging):
@@ -126,11 +139,82 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
             *[run_group_rollout(builder, i) for i, builder in enumerate(self.env_group_builders_P)]
         )
         taglist_P = [builder.logging_tags() for builder in self.env_group_builders_P]
+        if rollout_summary_export is not None:
+            sampling_client_steps_P = (
+                [rollout_summary_export.sampling_client_step] * len(trajectory_groups_P)
+                if rollout_summary_export.sampling_client_step is not None
+                else None
+            )
+            write_rollout_summaries_jsonl(
+                rollout_summary_export.path,
+                split=rollout_summary_export.split,
+                iteration=rollout_summary_export.iteration,
+                trajectory_groups_P=trajectory_groups_P,
+                taglist_P=taglist_P,
+                sampling_client_steps_P=sampling_client_steps_P,
+            )
         metrics = compute_trajectory_metrics(trajectory_groups_P, taglist_P)
 
         metrics = {f"{self.name}/{k}": v for k, v in metrics.items()}
         return metrics
 
-    async def __call__(self, sampling_client: tinker.SamplingClient) -> dict[str, float]:
+    async def __call__(
+        self,
+        sampling_client: tinker.SamplingClient,
+        *,
+        rollout_summary_export: RolloutSummaryExportConfig | None = None,
+    ) -> dict[str, float]:
+        if get_rollout_executor() is not None:
+            # Use the executor-aware dispatch path so rollouts are offloaded
+            return await self._eval_with_executor(
+                sampling_client, rollout_summary_export=rollout_summary_export
+            )
+
         policy = TinkerTokenCompleter(sampling_client, max_tokens=self.max_tokens)
-        return await self.eval_token_completer(policy)
+        return await self.eval_token_completer(
+            policy,
+            rollout_summary_export=rollout_summary_export,
+        )
+
+    async def _eval_with_executor(
+        self,
+        sampling_client: tinker.SamplingClient,
+        *,
+        rollout_summary_export: RolloutSummaryExportConfig | None = None,
+    ) -> dict[str, float]:
+        """Run evaluation with rollouts dispatched via the rollout executor."""
+        results = await asyncio.gather(
+            *[
+                do_group_rollout_and_filter_constant_reward(
+                    sampling_client,
+                    builder,
+                    max_tokens=self.max_tokens,
+                    temperature=1.0,
+                    do_remove_constant_reward_groups=False,
+                    enable_logging=i < self.num_groups_to_log,
+                )
+                for i, builder in enumerate(self.env_group_builders_P)
+            ]
+        )
+        # remove_constant_reward_groups=False so None results shouldn't occur,
+        # but filter for type safety
+        trajectory_groups_P = [r for r in results if r is not None]
+
+        taglist_P = [builder.logging_tags() for builder in self.env_group_builders_P]
+        if rollout_summary_export is not None:
+            sampling_client_steps_P = (
+                [rollout_summary_export.sampling_client_step] * len(trajectory_groups_P)
+                if rollout_summary_export.sampling_client_step is not None
+                else None
+            )
+            write_rollout_summaries_jsonl(
+                rollout_summary_export.path,
+                split=rollout_summary_export.split,
+                iteration=rollout_summary_export.iteration,
+                trajectory_groups_P=trajectory_groups_P,
+                taglist_P=taglist_P,
+                sampling_client_steps_P=sampling_client_steps_P,
+            )
+        metrics = compute_trajectory_metrics(trajectory_groups_P, taglist_P)
+        metrics = {f"{self.name}/{k}": v for k, v in metrics.items()}
+        return metrics

@@ -12,6 +12,8 @@ Here are a few different types of RL training that we support in the Tinker Cook
 We'll first show how to do small RL runs in the RLVR setting, then we'll show you how to define your own RL environments and train on them, then we'll provide examples for larger-scale or more complicated training setups.
 
 
+Every training iteration writes human-readable HTML reports and machine-readable JSON files (metrics, rollout transcripts, per-trajectory summaries) to `log_path`. These are designed for both manual inspection and programmatic analysis — point an agent at your `log_path` to extract reward curves, model responses, and grading details. See [RL Training Outputs](/rl/rl-logging) for the full file reference and parsing examples.
+
 We anticipate that people will want to use Tinker for RL in a few different ways:
 
 - Creating a specialist model that's SoTA at a specific skill, which existing models haven't been trained on. In this case, you'll want to start with a post-trained model that's already strong, and then do RL on an environment you've defined. See [RL Environments](/rl/rl-envs).

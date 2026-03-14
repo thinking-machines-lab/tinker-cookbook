@@ -8,9 +8,9 @@ from logtree and can be logged using `logtree.log_formatter()`.
 
 import html
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Any, Sequence
 
-from tinker_cookbook.renderers.base import Content, Message
+from tinker_cookbook.renderers.base import Content, Message, message_to_jsonable
 
 
 def _render_content_html(content: Content) -> str:
@@ -82,6 +82,13 @@ class ConversationFormatter:
         parts.append("</div>")
         return "\n".join(parts)
 
+    def to_data(self) -> dict[str, Any]:
+        """Return structured data for JSON export (avoids needing to parse raw HTML)."""
+        return {
+            "type": "conversation",
+            "messages": [message_to_jsonable(msg) for msg in self.messages],
+        }
+
     def get_css(self) -> str:
         """Get CSS for conversation styling."""
         return CONVERSATION_CSS
@@ -93,23 +100,23 @@ CONVERSATION_CSS = """
 .lt-conversation {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
-    margin: 0.5rem 0;
+    gap: 0.35rem;
+    margin: 0.25rem 0;
 }
 
 .lt-message {
-    padding: 0.75rem;
+    padding: 0.5rem 0.6rem;
     border-radius: 6px;
     border-left: 3px solid var(--lt-accent, #2563eb);
     background: var(--lt-bg, #f9fafb);
-    line-height: 1.5;
+    line-height: 1.4;
 }
 
 .lt-message-role {
     font-weight: 600;
     color: var(--lt-accent, #2563eb);
     display: inline-block;
-    min-width: 80px;
+    min-width: 64px;
 }
 
 .lt-message-content {

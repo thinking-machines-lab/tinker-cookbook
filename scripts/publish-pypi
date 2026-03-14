@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-
-set -eux
-rm -rf dist
-mkdir -p dist
-uv build
-uv publish --token=$PYPI_TOKEN

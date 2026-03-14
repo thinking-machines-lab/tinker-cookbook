@@ -22,6 +22,7 @@ Example usage:
 import functools
 import html as html_module
 import inspect
+import json
 import os
 import traceback
 from contextlib import contextmanager
@@ -29,7 +30,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Iterator, Mapping, Protocol, Sequence, TypeVar, overload
+from typing import Any, Callable, Iterator, Mapping, Protocol, Sequence, TypeVar, cast, overload
 
 # Context variables for task-local state
 _current_trace: ContextVar["Trace | None"] = ContextVar("lt_current_trace", default=None)
@@ -39,7 +40,11 @@ _logging_disabled: ContextVar[bool] = ContextVar("lt_logging_disabled", default=
 
 
 class Formatter(Protocol):
-    """Protocol for objects that can format themselves as HTML with CSS."""
+    """Protocol for objects that can format themselves as HTML with CSS.
+
+    Optionally implement ``to_data`` to attach structured data to the JSON
+    export (avoids consumers having to parse raw HTML).
+    """
 
     def to_html(self) -> str:
         """Generate HTML representation of this object."""
@@ -49,6 +54,10 @@ class Formatter(Protocol):
         """Get CSS needed to style this object's HTML."""
         ...
 
+    def to_data(self) -> dict[str, Any] | None:
+        """Return structured data for JSON export, or None."""
+        return None
+
 
 @dataclass
 class Node:
@@ -57,6 +66,10 @@ class Node:
     tag: str
     attrs: dict[str, str] = field(default_factory=dict)
     children: list["Node | str"] = field(default_factory=list)
+    # Optional structured data attached by formatters.
+    # Included in JSON export so consumers can extract typed content
+    # (e.g., conversation messages) without parsing raw HTML.
+    data: dict[str, Any] | None = field(default=None, repr=False)
 
     def to_html(self, indent: int = 0) -> str:
         """Convert node to HTML string."""
@@ -68,6 +81,12 @@ class Node:
         if not self.children:
             return f"{ind}<{self.tag}{attrs_str}></{self.tag}>\n"
 
+        # Keep simple text-only nodes on one line to avoid extra rendered
+        # whitespace when CSS uses `white-space: pre-wrap` (e.g., lt-p).
+        if all(isinstance(child, str) for child in self.children):
+            text = "".join(child for child in self.children if isinstance(child, str))
+            return f"{ind}<{self.tag}{attrs_str}>{text}</{self.tag}>\n"
+
         lines = [f"{ind}<{self.tag}{attrs_str}>\n"]
         for child in self.children:
             if isinstance(child, str):
@@ -76,6 +95,27 @@ class Node:
                 lines.append(child.to_html(indent + 1))
         lines.append(f"{ind}</{self.tag}>\n")
         return "".join(lines)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert node to a JSON-serializable dictionary.
+
+        When ``data`` is present, raw HTML string children are omitted from the
+        JSON — consumers should use ``data`` instead.
+        """
+        if self.data is not None:
+            children = [child.to_dict() for child in self.children if isinstance(child, Node)]
+        else:
+            children = [
+                child if isinstance(child, str) else child.to_dict() for child in self.children
+            ]
+        d: dict[str, Any] = {
+            "tag": self.tag,
+            "attrs": dict(self.attrs),
+            "children": children,
+        }
+        if self.data is not None:
+            d["data"] = self.data
+        return d
 
 
 @dataclass
@@ -158,22 +198,31 @@ class Trace:
 
         return "\n".join(parts)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert the trace to a JSON-serializable dictionary."""
+        return {
+            "title": self.title,
+            "started_at": self.started_at.isoformat(),
+            "path": str(self.path) if self.path is not None else None,
+            "root": self.root.to_dict(),
+        }
+
 
 # Default CSS styling
 _DEFAULT_CSS = """
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    line-height: 1.6;
+    line-height: 1.45;
     max-width: 1200px;
     margin: 0 auto;
-    padding: 20px;
+    padding: 14px;
     background: var(--lt-bg, #f5f5f5);
     color: var(--lt-text, #333);
 }
 
 .lt-root {
     background: var(--lt-card, white);
-    padding: 2rem;
+    padding: 1.2rem 1.4rem;
     border-radius: 8px;
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
@@ -188,34 +237,41 @@ body {
 .lt-subtitle {
     color: var(--lt-sub, #666);
     font-size: 0.875rem;
-    margin-bottom: 2rem;
+    margin-bottom: 1.2rem;
 }
 
 .lt-section {
-    margin: 1.5rem 0;
-    padding-left: 1rem;
+    margin: 0.95rem 0;
+    padding-left: 0.75rem;
     border-left: 2px solid var(--lt-border, #e5e7eb);
 }
 
 .lt-section-body {
-    margin-top: 0.5rem;
+    margin-top: 0.12rem;
 }
 
 .lt-section h2, .lt-section h3, .lt-section h4, .lt-section h5, .lt-section h6 {
-    margin: 0.5rem 0;
+    margin: 0.2rem 0;
+    line-height: 1.3;
     color: var(--lt-accent, #2563eb);
 }
 
+.lt-h2 { font-size: 1.15rem; }
+.lt-h3 { font-size: 1.05rem; }
+.lt-h4 { font-size: 0.98rem; }
+.lt-h5 { font-size: 0.95rem; }
+.lt-h6 { font-size: 0.92rem; }
+
 .lt-p {
-    margin: 0.5rem 0;
+    margin: 0.2rem 0;
     white-space: pre-wrap;
 }
 
 .lt-details {
-    margin: 0.5rem 0;
+    margin: 0.35rem 0;
     border: 1px solid var(--lt-border, #e5e7eb);
     border-radius: 4px;
-    padding: 0.5rem;
+    padding: 0.35rem 0.45rem;
 }
 
 .lt-details summary {
@@ -225,8 +281,8 @@ body {
 }
 
 .lt-details-body {
-    margin-top: 0.5rem;
-    padding: 0.5rem;
+    margin-top: 0.25rem;
+    padding: 0.35rem 0.45rem;
     background: var(--lt-bg, #f5f5f5);
     border-radius: 4px;
     overflow-x: auto;
@@ -240,18 +296,24 @@ body {
 }
 
 .lt-table {
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0;
     width: 100%;
-    margin: 1rem 0;
+    margin: 0.6rem 0;
     font-size: 0.875rem;
+    border: 1px solid var(--lt-border, #d5dbe3);
+    border-radius: 6px;
+    background: #fff;
+    overflow: hidden;
 }
 
 .lt-table th {
-    background: var(--lt-accent, #2563eb);
-    color: white;
+    background: var(--lt-table-head-bg, #eef2f7);
+    color: var(--lt-text, #1f2937);
     padding: 0.5rem;
     text-align: left;
     font-weight: 600;
+    border-bottom: 1px solid var(--lt-border, #d5dbe3);
 }
 
 .lt-table td {
@@ -260,7 +322,7 @@ body {
 }
 
 .lt-table tr:nth-child(even) {
-    background: var(--lt-bg, #f5f5f5);
+    background: #f8fafc;
 }
 
 .lt-table-caption {
@@ -273,8 +335,8 @@ body {
     background: #fee;
     border: 2px solid #c00;
     border-radius: 4px;
-    padding: 1rem;
-    margin: 1rem 0;
+    padding: 0.75rem;
+    margin: 0.5rem 0;
 }
 
 .lt-exc summary {
@@ -697,9 +759,17 @@ def log_formatter(formatter: Formatter) -> None:
     css = formatter.get_css()
     trace._register_formatter_css(css)
 
-    # Log the HTML
+    # Log the HTML, with optional structured data for JSON export
     html = formatter.to_html()
-    log_html(html)
+    container = Node("div", {})
+    container.children.append(html)
+    to_data = cast(
+        "Callable[[], dict[str, Any] | None] | None", getattr(formatter, "to_data", None)
+    )
+    data = to_data() if callable(to_data) else None
+    if data is not None:
+        container.data = data
+    _append(container)
 
 
 def details(text: str, *, summary: str = "Details", pre: bool = True) -> None:
@@ -785,15 +855,13 @@ def table(obj: Any, *, caption: str | None = None) -> None:
             _append(Node("div", {"class": "lt-table-caption"}, [html_module.escape(caption)]))
         return
 
-    # Try DataFrame
+    # Try DataFrame — convert to records so the JSON tree gets structured
+    # Nodes (thead/tbody/tr/td) instead of a raw HTML string.
     try:
         import pandas as pd
 
         if isinstance(obj, pd.DataFrame):
-            html_str = obj.to_html(classes="lt-table", border=0, escape=True, index=False)
-            if caption:
-                _append(Node("div", {"class": "lt-table-caption"}, [html_module.escape(caption)]))
-            _append(Node("div", {}, [html_str]))
+            _table_from_list_of_dicts(obj.to_dict("records"), caption=caption)
             return
     except ImportError:
         pass
@@ -974,6 +1042,20 @@ def write_html_with_default_style(
         else:
             f.write(body_html)
         f.write("</html>\n")
+
+
+def write_trace_json(trace: Trace, path: str | os.PathLike) -> None:
+    """
+    Write the trace structure to JSON.
+
+    Args:
+        trace: Trace object to serialize.
+        path: Output JSON file path.
+    """
+    path_obj = Path(path)
+    path_obj.parent.mkdir(parents=True, exist_ok=True)
+    with open(path_obj, "w") as f:
+        json.dump(trace.to_dict(), f, indent=2)
 
 
 def jinja_context(trace: Trace, **extra: Any) -> dict[str, Any]:

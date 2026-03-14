@@ -83,7 +83,10 @@ Agents often struggle with the nested type hierarchy. Key resources:
 - Renderers: `tinker_cookbook/renderers/`
 - Completers: `tinker_cookbook/completers.py`
 - RL types: `tinker_cookbook/rl/types.py`
+- Logging: `tinker_cookbook/utils/logtree.py`, `tinker_cookbook/rl/rollouts.py`
 - Recipes: `tinker_cookbook/recipes/`
+
+**Training outputs:** RL and SL training write human-readable HTML reports and machine-readable JSON files (metrics, rollout transcripts, per-trajectory summaries) to `log_path`. Point agents at a `log_path` directory to analyze training runs — `metrics.jsonl` for scalar metrics, `*_rollout_summaries.jsonl` for per-trajectory data, and `*_logtree.json` for full rollout transcripts including model responses. See `docs/rl/rl-logging.mdx` for the complete file reference and parsing examples.
 
 ---
 
@@ -122,12 +125,11 @@ Agents often struggle with the nested type hierarchy. Key resources:
 ## Testing
 
 ```bash
-# Unit tests (no API needed)
-pytest tinker_cookbook/tests/test_renderers.py
-pytest tinker_cookbook/tests/test_utils.py
+# Unit tests (no API needed, colocated *_test.py files)
+pytest tinker_cookbook/
 
-# Smoke tests (requires API key + network)
-pytest tinker_cookbook/tests/smoke_tests.py
+# Smoke tests (requires TINKER_API_KEY + network)
+pytest tests/
 ```
 
 For debugging, shrink workloads via `n_batches`, `batch_size`, `group_size` in dataset builders.

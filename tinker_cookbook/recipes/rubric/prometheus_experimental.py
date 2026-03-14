@@ -54,6 +54,8 @@ class CLIConfig:
     max_steps_off_policy: int | None = None
     loss_fn: LossFnType = "importance_sampling"
 
+    max_steps: int | None = None
+
 
 def get_dataset_builder(
     batch_size: int,
@@ -131,6 +133,7 @@ async def cli_main(cli_config: CLIConfig):
         if cli_config.max_steps_off_policy is not None
         else None,
         loss_fn=cli_config.loss_fn,
+        max_steps=cli_config.max_steps,
     )
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)

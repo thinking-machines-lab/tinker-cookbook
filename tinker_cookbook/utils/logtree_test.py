@@ -1,11 +1,13 @@
 """Tests for the logtree module."""
 
 import asyncio
+import json
 import os
 import tempfile
 from pathlib import Path
+from typing import Any, cast
 
-from tinker_cookbook.renderers.base import Message
+from tinker_cookbook.renderers.base import Message, ToolCall, UnparsedToolCall
 from tinker_cookbook.utils import logtree
 
 
@@ -28,6 +30,18 @@ def test_basic_trace():
         assert "Hello world" in content
         assert "Section 1" in content
         assert "Content in section 1" in content
+
+
+def test_log_text_renders_inline_text_node():
+    """Text-only paragraphs should render inline, without leading newline whitespace."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_path = Path(tmpdir) / "inline_text.html"
+
+        with logtree.init_trace("Inline Text Test", path=output_path):
+            logtree.log_text("parse_success: 0")
+
+        content = output_path.read_text()
+        assert '<p class="lt-p">parse_success: 0</p>' in content
 
 
 def test_nested_scopes():
@@ -329,6 +343,27 @@ def test_export_helpers():
         assert "<!doctype html>" in content.lower()
 
 
+def test_write_trace_json():
+    """Test writing trace structure to JSON."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_path = Path(tmpdir) / "trace.json"
+
+        with logtree.init_trace("Trace JSON Test", path=None) as trace:
+            logtree.log_text("Hello JSON")
+            with logtree.scope_header("Section"):
+                logtree.log_text("Nested text")
+
+        logtree.write_trace_json(trace, output_path)
+        content = json.loads(output_path.read_text())
+
+        assert content["title"] == "Trace JSON Test"
+        assert content["root"]["tag"] == "body"
+        assert "children" in content["root"]
+        serialized = json.dumps(content)
+        assert "Hello JSON" in serialized
+        assert "Section" in serialized
+
+
 def test_graceful_degradation():
     """Test that logtree functions work gracefully when no trace is active."""
 
@@ -505,6 +540,159 @@ def test_scope_disable_nested():
         assert "Still should NOT appear" not in content
 
 
+def test_formatter_structured_data_in_json():
+    """Test that log_formatter attaches structured data to the JSON export."""
+    from tinker_cookbook.utils.logtree_formatters import ConversationFormatter
+
+    messages: list[Message] = [
+        {"role": "user", "content": "What is 2+2?"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "Let me compute..."},
+                {"type": "text", "text": "The answer is 4."},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": "Calling a tool",
+            "tool_calls": [
+                ToolCall(
+                    id="call_123",
+                    function=ToolCall.FunctionBody(
+                        name="calculator", arguments='{"expression":"2+2"}'
+                    ),
+                )
+            ],
+            "unparsed_tool_calls": [
+                UnparsedToolCall(raw_text="<tool_call>{bad json}</tool_call>", error="Invalid JSON")
+            ],
+            "tool_call_id": "call_123",
+            "name": "calculator",
+            "trainable": False,
+        },
+    ]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        json_path = Path(tmpdir) / "trace.json"
+
+        with logtree.init_trace("Structured Data Test", path=None) as trace:
+            logtree.log_formatter(ConversationFormatter(messages=messages))
+
+        logtree.write_trace_json(trace, json_path)
+        content = json.loads(json_path.read_text())
+
+        # Find the node with structured data
+        def find_data_nodes(node):
+            results = []
+            if isinstance(node, dict):
+                if "data" in node:
+                    results.append(node["data"])
+                for child in node.get("children", []):
+                    if isinstance(child, dict):
+                        results.extend(find_data_nodes(child))
+            return results
+
+        data_nodes = find_data_nodes(content["root"])
+        assert len(data_nodes) == 1, f"Expected 1 data node, got {len(data_nodes)}"
+
+        data = data_nodes[0]
+        assert data["type"] == "conversation"
+        assert len(data["messages"]) == 3
+        assert data["messages"][0]["role"] == "user"
+        assert data["messages"][0]["content"] == "What is 2+2?"
+        assert data["messages"][1]["role"] == "assistant"
+        assert data["messages"][1]["content"][0]["type"] == "thinking"
+        assert data["messages"][1]["content"][0]["thinking"] == "Let me compute..."
+        assert data["messages"][1]["content"][1]["type"] == "text"
+        assert data["messages"][1]["content"][1]["text"] == "The answer is 4."
+        assert data["messages"][2]["tool_calls"] == [
+            {
+                "type": "function",
+                "id": "call_123",
+                "function": {"name": "calculator", "arguments": '{"expression":"2+2"}'},
+            }
+        ]
+        assert data["messages"][2]["unparsed_tool_calls"] == [
+            {"raw_text": "<tool_call>{bad json}</tool_call>", "error": "Invalid JSON"}
+        ]
+        assert data["messages"][2]["tool_call_id"] == "call_123"
+        assert data["messages"][2]["name"] == "calculator"
+        assert data["messages"][2]["trainable"] is False
+
+        # Nodes with data should NOT have raw HTML string children in JSON
+        def find_nodes_with_data(node):
+            results = []
+            if isinstance(node, dict):
+                if "data" in node:
+                    results.append(node)
+                for child in node.get("children", []):
+                    if isinstance(child, dict):
+                        results.extend(find_nodes_with_data(child))
+            return results
+
+        for node in find_nodes_with_data(content["root"]):
+            for child in node.get("children", []):
+                assert not isinstance(child, str), (
+                    f"Node with data should not have string children in JSON, got: {child[:80]}"
+                )
+
+
+def test_log_formatter_without_to_data_still_works():
+    """Custom formatters that predate to_data should still log successfully."""
+
+    class LegacyFormatter:
+        def to_html(self) -> str:
+            return "<div>legacy</div>"
+
+        def get_css(self) -> str:
+            return ""
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        json_path = Path(tmpdir) / "trace.json"
+
+        with logtree.init_trace("Legacy Formatter Test", path=None) as trace:
+            logtree.log_formatter(cast(Any, LegacyFormatter()))
+
+        logtree.write_trace_json(trace, json_path)
+        content = json.loads(json_path.read_text())
+        serialized = json.dumps(content)
+        assert "legacy" in serialized
+
+
+def test_dataframe_table_produces_structured_nodes():
+    """Test that DataFrame tables produce structured Nodes, not raw HTML strings."""
+    import pandas as pd
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        json_path = Path(tmpdir) / "trace.json"
+
+        df = pd.DataFrame({"name": ["Alice", "Bob"], "score": [95, 87]})
+
+        with logtree.init_trace("DataFrame Test", path=None) as trace:
+            logtree.table(df, caption="Results")
+
+        logtree.write_trace_json(trace, json_path)
+        content = json.loads(json_path.read_text())
+
+        # Walk the tree: every child should be either a dict (Node) or a plain
+        # text string that does NOT contain HTML tags.  Raw HTML from df.to_html()
+        # would include "<table" or "<tr".
+        serialized = json.dumps(content)
+        assert "Alice" in serialized
+        assert "Bob" in serialized
+
+        def check_no_raw_html_tables(node):
+            if isinstance(node, str):
+                assert "<table" not in node, f"Found raw HTML table string: {node[:100]}"
+                assert "<tr" not in node, f"Found raw HTML tr string: {node[:100]}"
+            elif isinstance(node, dict):
+                for child in node.get("children", []):
+                    check_no_raw_html_tables(child)
+
+        check_no_raw_html_tables(content["root"])
+
+
 if __name__ == "__main__":
     # Run tests
     test_basic_trace()
@@ -528,5 +716,7 @@ if __name__ == "__main__":
     test_formatter_css_deduplication()
     test_scope_details()
     test_scope_disable_nested()
+    test_formatter_structured_data_in_json()
+    test_dataframe_table_produces_structured_nodes()
 
     print("All tests passed!")

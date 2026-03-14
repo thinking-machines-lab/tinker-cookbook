@@ -65,6 +65,7 @@ class Config:
     save_every: int = 20
     eval_every: int = 10
     infrequent_eval_every: int = 100
+    # Periodic checkpoints use this TTL; the final checkpoint is kept indefinitely.
     ttl_seconds: int | None = 604800  # 7 days
 
     # Adam optimizer parameters
@@ -77,6 +78,9 @@ class Config:
     wandb_name: str | None = None
 
     enable_trace: bool = False
+
+    # Maximum number of training steps. If None, train for num_epochs * n_batches.
+    max_steps: int | None = None
 
 
 @dataclass
@@ -164,8 +168,8 @@ async def main(config: Config):
     """
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     if resume_info:
-        start_epoch = resume_info["epoch"]
-        start_batch = resume_info["batch"]
+        start_epoch = resume_info.epoch or 0
+        start_batch = resume_info.batch
     else:
         start_epoch = 0
         start_batch = 0
@@ -200,14 +204,14 @@ async def main(config: Config):
     if resume_info:
         # Resuming interrupted training - load optimizer state for proper continuation
         await checkpoint_utils.check_renderer_name_for_checkpoint_async(
-            service_client, resume_info["state_path"], config.renderer_name
+            service_client, resume_info.state_path, config.renderer_name
         )
         training_client = (
             await service_client.create_training_client_from_state_with_optimizer_async(
-                resume_info["state_path"], user_metadata=user_metadata
+                resume_info.state_path, user_metadata=user_metadata
             )
         )
-        logger.info(f"Resumed training from {resume_info['state_path']}")
+        logger.info(f"Resumed training from {resume_info.state_path}")
     elif config.load_checkpoint_path:
         # Starting fresh from a checkpoint - load weights only (fresh optimizer)
         await checkpoint_utils.check_renderer_name_for_checkpoint_async(
@@ -227,6 +231,8 @@ async def main(config: Config):
     dataset, maybe_test_dataset = config.dataset_builder()
     n_batches = len(dataset)
     total_steps = n_batches * config.num_epochs
+    if config.max_steps is not None:
+        total_steps = min(total_steps, config.max_steps)
     progress_denominator = total_steps if total_steps > 0 else 1
     tokenizer = get_tokenizer(config.model_name)
 
@@ -353,28 +359,38 @@ async def main(config: Config):
 
     pending_batch: SubmittedBatch | None = None
 
+    reached_max_steps = False
     for epoch_idx in range(start_epoch, config.num_epochs):
         logger.info(f"Starting epoch {epoch_idx}")
         dataset.set_epoch(seed=epoch_idx)
 
         start_batch_idx = start_batch if epoch_idx == start_epoch else 0
         for batch_idx in range(start_batch_idx, n_batches):
+            step = epoch_idx * n_batches + batch_idx
+            if config.max_steps is not None and step >= config.max_steps:
+                reached_max_steps = True
+                break
             submitted_batch = await submit_batch(epoch_idx, batch_idx)
             if pending_batch is not None:
                 await finish_batch(pending_batch)
             pending_batch = submitted_batch
+        if reached_max_steps:
+            break
 
     if pending_batch is not None:
         await finish_batch(pending_batch)
 
-    if start_epoch < config.num_epochs:
+    did_train = start_epoch < config.num_epochs and (
+        config.max_steps is None or start_epoch * n_batches + start_batch < config.max_steps
+    )
+    if did_train:
         await checkpoint_utils.save_checkpoint_async(
             training_client=training_client,
             name="final",
             log_path=config.log_path,
             kind="both",
             loop_state={"epoch": config.num_epochs, "batch": n_batches},
-            ttl_seconds=config.ttl_seconds,
+            ttl_seconds=None,
         )
     else:
         logger.info("Training was already complete; nothing to do")

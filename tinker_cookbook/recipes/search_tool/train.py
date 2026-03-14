@@ -54,6 +54,8 @@ class CLIConfig:
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
+    max_steps: int | None = None
+
 
 async def cli_main(cli_config: CLIConfig) -> None:
     # Build retrieval config
@@ -136,6 +138,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
         wandb_name=wandb_name,
         lora_rank=cli_config.lora_rank,
         stream_minibatch_config=stream_minibatch_config,
+        max_steps=cli_config.max_steps,
     )
 
     # Run training

@@ -98,9 +98,9 @@ def main(config: Config):
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     if resume_info:
         training_client = service_client.create_training_client_from_state_with_optimizer(
-            resume_info["state_path"]
+            resume_info.state_path
         )
-        start_batch = resume_info["batch"]
+        start_batch = resume_info.batch
         logger.info(f"Resuming from batch {start_batch}")
     else:
         training_client = service_client.create_lora_training_client(
@@ -245,7 +245,7 @@ def main(config: Config):
         log_path=config.log_path,
         kind="both",
         loop_state={"batch": n_train_batches},
-        ttl_seconds=config.ttl_seconds,
+        ttl_seconds=None,
     )
     ml_logger.close()
     logger.info("Training completed")
