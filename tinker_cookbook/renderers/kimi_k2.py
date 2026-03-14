@@ -3,6 +3,7 @@
 import json
 import re
 import warnings
+from dataclasses import dataclass
 from typing import Iterator
 
 import tinker
@@ -28,6 +29,65 @@ from tinker_cookbook.renderers.base import (
     parse_think_blocks,
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
+
+
+def _kimi_k2_parse_final_response(
+    tokens: list[int], tokenizer: "Tokenizer", end_message_token: int
+) -> tuple[Message, bool]:
+    """Kimi K2-specific final response parser for streaming.
+
+    Parses think blocks and tool calls from the accumulated response,
+    regardless of whether a stop token was found. This reproduces the
+    behavior of the old KimiK2StreamingParser.finish() method.
+    """
+    message, parse_success = parse_response_for_stop_token(tokens, tokenizer, end_message_token)
+
+    content = message.get("content", "")
+    if isinstance(content, str):
+        text_content, tool_section = _split_tool_calls_section(content)
+        if tool_section is not None:
+            tool_calls, unparsed_tool_calls = _parse_tool_calls_section(tool_section)
+            if tool_calls:
+                message["tool_calls"] = tool_calls
+            if unparsed_tool_calls:
+                message["unparsed_tool_calls"] = unparsed_tool_calls
+
+        content_parts = parse_think_blocks(text_content)
+        message["content"] = content_parts if content_parts is not None else text_content
+
+    return message, parse_success
+
+
+@dataclass(init=False)
+class KimiK2StreamingParser(ReasoningStreamingParser):
+    """Backward-compatible streaming parser for Kimi K2 model output.
+
+    .. deprecated::
+        Use ``KimiK2Renderer.parse_response_streaming()`` or construct a
+        ``ReasoningStreamingParser`` directly with an explicit
+        ``parse_final_response`` callback instead.
+
+    This preserves the old 2-arg constructor ``(tokenizer, end_message_token)``
+    so that existing external code continues to work. Internally it delegates
+    to ``ReasoningStreamingParser`` with Kimi K2-specific tool-call and
+    think-block parsing wired in as the ``parse_final_response`` callback.
+    """
+
+    def __init__(self, tokenizer: "Tokenizer", end_message_token: int) -> None:
+        warnings.warn(
+            "KimiK2StreamingParser is deprecated. Use KimiK2Renderer.parse_response_streaming() "
+            "or construct a ReasoningStreamingParser directly.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(
+            tokenizer=tokenizer,
+            end_message_token=end_message_token,
+            parse_final_response=lambda tokens: _kimi_k2_parse_final_response(
+                tokens, tokenizer, end_message_token
+            ),
+        )
+
 
 _TOOL_CALLS_SECTION_RE = re.compile(
     r"<\|tool_calls_section_begin\|>(.*?)<\|tool_calls_section_end\|>"
@@ -447,24 +507,9 @@ class KimiK2Renderer(Renderer):
         This matches the original KimiK2StreamingParser.finish() behavior
         where content parsing was applied regardless of stop token presence.
         """
-        message, parse_success = parse_response_for_stop_token(
+        return _kimi_k2_parse_final_response(
             response, self.tokenizer, self._end_message_token
         )
-
-        content = message.get("content", "")
-        if isinstance(content, str):
-            text_content, tool_section = _split_tool_calls_section(content)
-            if tool_section is not None:
-                tool_calls, unparsed_tool_calls = _parse_tool_calls_section(tool_section)
-                if tool_calls:
-                    message["tool_calls"] = tool_calls
-                if unparsed_tool_calls:
-                    message["unparsed_tool_calls"] = unparsed_tool_calls
-
-            content_parts = parse_think_blocks(text_content)
-            message["content"] = content_parts if content_parts is not None else text_content
-
-        return message, parse_success
 
     def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
         """Parse response tokens with streaming, yielding incremental deltas."""
