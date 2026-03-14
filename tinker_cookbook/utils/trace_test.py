@@ -137,18 +137,14 @@ def test_trace():
             events = [json.loads(line) for line in f]
 
     # There should be 2 process metadata events
-    num_metadata_pid_events = sum(
-        1 for event in events if event["ph"] == "M" and event["tid"] == 0
-    )
+    num_metadata_pid_events = sum(1 for event in events if event["ph"] == "M" and event["tid"] == 0)
     assert num_metadata_pid_events == 2
     num_unique_pids = len(set(event["pid"] for event in events if event["ph"] != "M"))
     assert num_unique_pids == 2
 
     # main thread has 3: main, coroutine-1, coroutine-2
     # secondary thread has 4: thread_target, work, coroutine-1, coroutine-2
-    num_metadata_tid_events = sum(
-        1 for event in events if event["ph"] == "M" and event["tid"] != 0
-    )
+    num_metadata_tid_events = sum(1 for event in events if event["ph"] == "M" and event["tid"] != 0)
     assert num_metadata_tid_events == 7
     num_unique_tids = len(set(event["tid"] for event in events if event["ph"] != "M"))
     assert num_unique_tids == 7
@@ -509,8 +505,16 @@ def test_build_gantt_chart_success():
     import datetime
 
     span_records = [
-        {"task": "a", "start": datetime.datetime(2000, 1, 1), "end": datetime.datetime(2000, 1, 1, 0, 0, 1)},
-        {"task": "b", "start": datetime.datetime(2000, 1, 1, 0, 0, 0, 500000), "end": datetime.datetime(2000, 1, 1, 0, 0, 2)},
+        {
+            "task": "a",
+            "start": datetime.datetime(2000, 1, 1),
+            "end": datetime.datetime(2000, 1, 1, 0, 0, 1),
+        },
+        {
+            "task": "b",
+            "start": datetime.datetime(2000, 1, 1, 0, 0, 0, 500000),
+            "end": datetime.datetime(2000, 1, 1, 0, 0, 2),
+        },
     ]
     fig = _build_gantt_chart(span_records, step=0)
     # If plotly is installed, we get a figure; if not, None
@@ -534,7 +538,11 @@ def test_build_gantt_chart_no_plotly():
     import datetime
 
     span_records = [
-        {"task": "a", "start": datetime.datetime(2000, 1, 1), "end": datetime.datetime(2000, 1, 1, 0, 0, 1)},
+        {
+            "task": "a",
+            "start": datetime.datetime(2000, 1, 1),
+            "end": datetime.datetime(2000, 1, 1, 0, 0, 1),
+        },
     ]
     with patch.dict("sys.modules", {"plotly": None, "plotly.express": None}):
         fig = _build_gantt_chart(span_records, step=0)
