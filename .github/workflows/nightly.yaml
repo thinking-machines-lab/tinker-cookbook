@@ -22,7 +22,7 @@ jobs:
       - name: run unit tests
         run: uv run pytest tinker_cookbook/ -x -q
 
-  publish:
+  build:
     needs: test
     runs-on: ubuntu-latest
     steps:
@@ -39,10 +39,12 @@ jobs:
       - name: build
         run: uv build
 
-      - name: publish to TestPyPI
-        run: uv publish --publish-url https://test.pypi.org/legacy/ --token="$TEST_PYPI_TOKEN"
-        env:
-          TEST_PYPI_TOKEN: ${{ secrets.TEST_PYPI_TOKEN }}
-        # TestPyPI rejects duplicate versions if no new commits landed since
-        # the last nightly. This is expected — don't fail the workflow for it.
-        continue-on-error: true
+      - name: smoke test
+        run: uv run python -c "import tinker_cookbook; print(f'Version: {tinker_cookbook.__version__}')"
+
+      - name: upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tinker-cookbook-nightly
+          path: dist/
+          retention-days: 7
