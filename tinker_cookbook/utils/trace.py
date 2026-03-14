@@ -283,9 +283,11 @@ def _instrument_sdk_clients() -> None:
             "forward_async",
             "forward_backward_async",
             "forward_backward_custom_async",
+            "get_info_async",
             "optim_step_async",
             "save_state_async",
             "load_state_async",
+            "load_state_with_optimizer_async",
             "save_weights_for_sampler_async",
             "save_weights_and_get_sampling_client_async",
             "create_sampling_client_async",
@@ -293,6 +295,7 @@ def _instrument_sdk_clients() -> None:
         tinker.SamplingClient: [
             "sample_async",
             "compute_logprobs_async",
+            "get_base_model_async",
         ],
     }
 
