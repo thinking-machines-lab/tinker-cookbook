@@ -242,8 +242,11 @@ class _DeepSeekV3BaseRenderer(Renderer):
     def _parse_response_content(
         self, response: list[int], *, allow_missing_stop: bool = False
     ) -> tuple[Message, bool]:
-        """Shared parsing logic for both batch and streaming paths."""
-        response = self._normalize_response_tokens(response)
+        """Shared parsing logic for both batch and streaming paths.
+
+        Callers are responsible for normalization — this method does NOT call
+        ``_normalize_response_tokens``.
+        """
         assistant_message, parse_success = parse_response_for_stop_token(
             response, self.tokenizer, self._end_message_token
         )
@@ -280,6 +283,7 @@ class _DeepSeekV3BaseRenderer(Renderer):
         return assistant_message, parse_success
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+        response = self._normalize_response_tokens(response)
         return self._parse_response_content(response, allow_missing_stop=False)
 
     def _parse_response_for_streaming(self, response: list[int]) -> tuple[Message, bool]:
@@ -287,6 +291,10 @@ class _DeepSeekV3BaseRenderer(Renderer):
 
         Unlike parse_response which short-circuits on missing stop token,
         this always parses think blocks and tool calls from the content.
+
+        Note: _normalize_response_tokens is NOT called here because
+        parse_response_streaming already normalizes before feeding tokens
+        to the parser.
         """
         return self._parse_response_content(response, allow_missing_stop=True)
 

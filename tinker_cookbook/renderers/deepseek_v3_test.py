@@ -7,8 +7,6 @@ from tinker_cookbook.renderers import (
     Message,
     RenderContext,
     StreamingMessageHeader,
-    StreamingTextDelta,
-    StreamingThinkingDelta,
     TextPart,
     ThinkingPart,
     ToolCall,
@@ -248,9 +246,7 @@ class TestDeepSeekStreamingBatchEquivalence:
         )
 
     def test_empty_response(self, thinking_renderer):
-        _assert_deepseek_streaming_matches_batch(
-            thinking_renderer, "<｜end▁of▁sentence｜>"
-        )
+        _assert_deepseek_streaming_matches_batch(thinking_renderer, "<｜end▁of▁sentence｜>")
 
     def test_non_thinking_renderer(self, non_thinking_renderer):
         _assert_deepseek_streaming_matches_batch(
@@ -260,9 +256,7 @@ class TestDeepSeekStreamingBatchEquivalence:
     def test_no_end_token(self, thinking_renderer):
         """Truncated response — streaming should still parse think blocks."""
         tokenizer = thinking_renderer.tokenizer
-        response_tokens = tokenizer.encode(
-            "reasoning</think>partial", add_special_tokens=False
-        )
+        response_tokens = tokenizer.encode("reasoning</think>partial", add_special_tokens=False)
 
         deltas = list(thinking_renderer.parse_response_streaming(response_tokens))
         final = deltas[-1]
