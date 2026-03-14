@@ -20,6 +20,7 @@ from inspect_ai.model import ChatMessageUser as InspectAIChatMessageUser
 from inspect_ai.model import ContentReasoning as InspectAIContentReasoning
 from inspect_ai.model import ContentText as InspectAIContentText
 from inspect_ai.model import GenerateConfig as InspectAIGenerateConfig
+from inspect_ai.model import ModelOutput as InspectAIModelOutput
 
 from tinker_cookbook.eval.inspect_utils import InspectAPIFromTinkerSampling
 
@@ -48,8 +49,27 @@ def _create_api(
     )
 
 
-async def _generate(api: InspectAPIFromTinkerSampling):
+async def _generate(api: InspectAPIFromTinkerSampling) -> InspectAIModelOutput:
     return await api.generate(input=PROMPT, tools=[], tool_choice="auto", config=GENERATE_CONFIG)
+
+
+def _log_response(result: InspectAIModelOutput) -> None:
+    """Print response content for CI debuggability."""
+    content = result.choices[0].message.content
+    print(f"\n  Content type: {type(content).__name__}")
+    if isinstance(content, str):
+        print(f"  Text: {repr(content[:300])}")
+    else:
+        for i, part in enumerate(content):
+            if isinstance(part, InspectAIContentReasoning):
+                print(f"  Part {i} [ContentReasoning]: {repr(part.reasoning[:200])}")
+            elif isinstance(part, InspectAIContentText):
+                print(f"  Part {i} [ContentText]: {repr(part.text[:200])}")
+            else:
+                print(f"  Part {i} [{type(part).__name__}]: {repr(part)[:200]}")
+    usage = result.usage
+    if usage:
+        print(f"  Tokens: {usage.input_tokens} in, {usage.output_tokens} out")
 
 
 @pytest.mark.integration
@@ -57,6 +77,7 @@ def test_thinking_model_include_reasoning():
     """Thinking model + include_reasoning=True: response has ContentReasoning + ContentText."""
     api = _create_api(THINKING_MODEL, THINKING_RENDERER, include_reasoning=True)
     result = asyncio.run(_generate(api))
+    _log_response(result)
 
     content = result.choices[0].message.content
     assert isinstance(content, list), f"Expected list content, got {type(content)}"
@@ -73,6 +94,7 @@ def test_thinking_model_exclude_reasoning():
     """Thinking model + include_reasoning=False: response is plain string without <think> tags."""
     api = _create_api(THINKING_MODEL, THINKING_RENDERER, include_reasoning=False)
     result = asyncio.run(_generate(api))
+    _log_response(result)
 
     content = result.choices[0].message.content
     assert isinstance(content, str), f"Expected string content, got {type(content)}"
@@ -84,6 +106,7 @@ def test_non_thinking_model_include_reasoning():
     """Non-thinking model + include_reasoning=True: response has ContentText only, no crash."""
     api = _create_api(NON_THINKING_MODEL, NON_THINKING_RENDERER, include_reasoning=True)
     result = asyncio.run(_generate(api))
+    _log_response(result)
 
     content = result.choices[0].message.content
     assert isinstance(content, list), f"Expected list content, got {type(content)}"
@@ -99,6 +122,7 @@ def test_non_thinking_model_exclude_reasoning():
     """Non-thinking model + include_reasoning=False: response is plain string (baseline)."""
     api = _create_api(NON_THINKING_MODEL, NON_THINKING_RENDERER, include_reasoning=False)
     result = asyncio.run(_generate(api))
+    _log_response(result)
 
     content = result.choices[0].message.content
     assert isinstance(content, str), f"Expected string content, got {type(content)}"
