@@ -622,7 +622,7 @@ def update_scope_context(values: dict[str, Any]) -> None:
 def _build_gantt_chart(span_records: list[dict[str, Any]], step: int) -> Any:
     """Build a Plotly Gantt chart from span records. Returns a plotly Figure or None."""
     try:
-        import plotly.express as px
+        import plotly.express as px  # type: ignore[reportMissingImports]
     except ImportError:
         logger.debug("plotly not installed, skipping Gantt chart")
         return None
@@ -700,7 +700,7 @@ def trace_iteration(step: int) -> Generator[None, None, None]:
                 fig = _build_gantt_chart(span_records, step)
                 if fig is not None:
                     try:
-                        import wandb as _wandb
+                        import wandb as _wandb  # type: ignore[reportMissingImports]
 
                         _wandb.log({"trace/spans": _wandb.Plotly(fig)}, step=step)
                     except ImportError:
