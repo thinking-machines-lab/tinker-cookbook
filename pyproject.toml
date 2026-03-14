@@ -87,6 +87,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.version]
 source = "vcs"
+tag-pattern = "v(?P<version>.*)"
 
 [tool.hatch.build.hooks.vcs]
 version-file = "tinker_cookbook/_version.py"
