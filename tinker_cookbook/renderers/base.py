@@ -1128,6 +1128,34 @@ class Renderer(ABC):
         """
         ...
 
+    def create_streaming_parser(self) -> StreamingParser:
+        """Create a streaming parser for incremental token-by-token parsing.
+
+        Returns a ``StreamingParser`` pre-wired with this renderer's tokenizer,
+        end token, and response-parsing logic. Callers feed tokens one at a time
+        via ``parser.feed(token)`` and finalize with ``parser.finish()``.
+
+        This is the preferred way to do streaming in situations where tokens
+        arrive asynchronously (e.g., from a server-sent event stream) and
+        cannot be collected into a list upfront.
+
+        Not all renderers support streaming. The default raises NotImplementedError.
+        Override this in subclasses that support streaming.
+
+        Returns:
+            A StreamingParser instance.
+
+        Example::
+
+            parser = renderer.create_streaming_parser()
+            for token in token_stream:
+                for delta in parser.feed(token):
+                    handle(delta)
+            for delta in parser.finish():
+                handle(delta)
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support streaming")
+
     def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
         """Parse response tokens with streaming, yielding incremental deltas.
 

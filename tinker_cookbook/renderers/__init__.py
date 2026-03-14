@@ -18,6 +18,7 @@ from tinker_cookbook.renderers.base import (
     Message,
     # Streaming types
     MessageDelta,
+    StreamingParser,
     # Renderer base
     RenderContext,
     Renderer,
@@ -225,6 +226,7 @@ __all__ = [
     "ToolSpec",
     # Streaming types
     "MessageDelta",
+    "StreamingParser",
     "StreamingMessageHeader",
     "StreamingTextDelta",
     "StreamingThinkingDelta",

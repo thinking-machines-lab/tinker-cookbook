@@ -3,6 +3,7 @@
 import json
 import re
 import warnings
+from dataclasses import dataclass
 from typing import Iterator
 
 import tinker
@@ -442,10 +443,9 @@ class KimiK2Renderer(Renderer):
     def _parse_response_for_streaming(self, response: list[int]) -> tuple[Message, bool]:
         """Parse response for streaming, always applying full content parsing.
 
-        Unlike parse_response which short-circuits on missing stop token,
-        this always parses think blocks and tool calls from the content.
-        This matches the original KimiK2StreamingParser.finish() behavior
-        where content parsing was applied regardless of stop token presence.
+        Unlike ``parse_response`` which short-circuits on a missing stop token,
+        this always parses think blocks and tool calls from the content so that
+        streaming callers get a fully-parsed final ``Message``.
         """
         message, parse_success = parse_response_for_stop_token(
             response, self.tokenizer, self._end_message_token
@@ -466,13 +466,17 @@ class KimiK2Renderer(Renderer):
 
         return message, parse_success
 
-    def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
-        """Parse response tokens with streaming, yielding incremental deltas."""
-        parser = ReasoningStreamingParser(
+    def create_streaming_parser(self) -> ReasoningStreamingParser:
+        """Create a streaming parser for incremental Kimi K2 token parsing."""
+        return ReasoningStreamingParser(
             tokenizer=self.tokenizer,
             end_message_token=self._end_message_token,
             parse_final_response=self._parse_response_for_streaming,
         )
+
+    def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
+        """Parse response tokens with streaming, yielding incremental deltas."""
+        parser = self.create_streaming_parser()
 
         for token in response:
             yield from parser.feed(token)
@@ -553,3 +557,60 @@ class KimiK2Renderer(Renderer):
         messages.append(Message(role="system", content=actual_system_prompt))
 
         return messages
+
+
+# ---------------------------------------------------------------------------
+# Deprecated backward-compat shim
+# ---------------------------------------------------------------------------
+
+
+def _kimi_k2_standalone_parse_final_response(
+    tokens: list[int], tokenizer: Tokenizer, end_message_token: int
+) -> tuple[Message, bool]:
+    """Standalone version of KimiK2Renderer._parse_response_for_streaming.
+
+    Used only by the deprecated KimiK2StreamingParser to avoid requiring
+    a KimiK2Renderer instance.
+    """
+    message, parse_success = parse_response_for_stop_token(tokens, tokenizer, end_message_token)
+
+    content = message.get("content", "")
+    if isinstance(content, str):
+        text_content, tool_section = _split_tool_calls_section(content)
+        if tool_section is not None:
+            tool_calls, unparsed_tool_calls = _parse_tool_calls_section(tool_section)
+            if tool_calls:
+                message["tool_calls"] = tool_calls
+            if unparsed_tool_calls:
+                message["unparsed_tool_calls"] = unparsed_tool_calls
+
+        content_parts = parse_think_blocks(text_content)
+        message["content"] = content_parts if content_parts is not None else text_content
+
+    return message, parse_success
+
+
+@dataclass(init=False)
+class KimiK2StreamingParser(ReasoningStreamingParser):
+    """Backward-compatible streaming parser for Kimi K2 model output.
+
+    .. deprecated::
+        Use ``renderer.create_streaming_parser()`` instead.
+
+    Preserves the old 2-arg constructor ``(tokenizer, end_message_token)``
+    so that existing downstream code continues to work.
+    """
+
+    def __init__(self, tokenizer: Tokenizer, end_message_token: int) -> None:
+        warnings.warn(
+            "KimiK2StreamingParser is deprecated. Use renderer.create_streaming_parser() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(
+            tokenizer=tokenizer,
+            end_message_token=end_message_token,
+            parse_final_response=lambda tokens: _kimi_k2_standalone_parse_final_response(
+                tokens, tokenizer, end_message_token
+            ),
+        )
