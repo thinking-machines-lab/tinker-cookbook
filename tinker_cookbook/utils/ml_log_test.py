@@ -1,15 +1,14 @@
 import logging
-import runpy
 import shlex
 import sys
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+repo_root = Path(__file__).resolve().parents[2]
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
 
-configure_logging_module = runpy.run_path(
-    str(Path(__file__).resolve().parents[1] / "utils" / "ml_log.py")
-)["configure_logging_module"]
+from tinker_cookbook.utils.ml_log import configure_logging_module
 
 
 def _flush_root_handlers() -> None:

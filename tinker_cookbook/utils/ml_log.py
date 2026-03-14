@@ -526,6 +526,6 @@ def configure_logging_module(path: str, level: int = logging.INFO) -> logging.Lo
         handler.close()
     root.addHandler(console_handler)
     root.addHandler(file_handler)
-    logger.info("Command line invocation: %s", _get_command_line_invocation())
+    root.info("Command line invocation: %s", _get_command_line_invocation())
 
     return root
