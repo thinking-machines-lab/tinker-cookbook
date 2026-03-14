@@ -1,4 +1,8 @@
-"""Tests specific to Qwen3 renderers (parse_response, streaming, disable-thinking behavior)."""
+"""Tests specific to Qwen3 renderers (parse_response, streaming, disable-thinking behavior).
+
+Also covers Qwen3.5 response normalization (prefilled <think> tag restoration) for
+both batch and streaming paths.
+"""
 
 from typing import TypeGuard, cast
 
@@ -16,6 +20,7 @@ from tinker_cookbook.renderers import (
 )
 from tinker_cookbook.renderers.base import ensure_list
 from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
+from tinker_cookbook.renderers.qwen3_5 import Qwen3_5Renderer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 
@@ -601,3 +606,102 @@ class TestQwen3StreamingBatchEquivalence:
         for i in range(1, len(indexed)):
             if indexed[i][0] != indexed[i - 1][0]:
                 assert indexed[i][1] > indexed[i - 1][1]
+
+
+# =============================================================================
+# Qwen3.5 Prefill Normalization Tests
+#
+# Qwen3.5's generation suffix includes <think>\n, so sampled tokens don't
+# include the opening <think>\n. Both parse_response and parse_response_streaming
+# must restore it via _normalize_response_tokens.
+# =============================================================================
+
+
+@pytest.fixture
+def qwen3_5_tokenizer():
+    return get_tokenizer("Qwen/Qwen3.5-35B-A3B")
+
+
+@pytest.fixture
+def qwen3_5_renderer(qwen3_5_tokenizer):
+    return Qwen3_5Renderer(qwen3_5_tokenizer)
+
+
+def test_qwen3_5_parse_response_restores_prefilled_think_tag(qwen3_5_tokenizer, qwen3_5_renderer):
+    """parse_response should restore <think>\\n when it was prefilled by generation prompt."""
+    # Simulate sampled tokens after <think>\n prefill: "reasoning\n</think>\n\nanswer<|im_end|>"
+    response_tokens = qwen3_5_tokenizer.encode(
+        "reasoning\n</think>\n\nanswer<|im_end|>",
+        add_special_tokens=False,
+    )
+
+    parsed_message, parse_success = qwen3_5_renderer.parse_response(response_tokens)
+
+    assert parse_success is True
+    assert isinstance(parsed_message["content"], list)
+    assert parsed_message["content"] == [
+        ThinkingPart(type="thinking", thinking="reasoning"),
+        TextPart(type="text", text="answer"),
+    ]
+
+
+def test_qwen3_5_parse_response_streaming_restores_prefilled_think_tag(
+    qwen3_5_tokenizer, qwen3_5_renderer
+):
+    """parse_response_streaming should restore <think>\\n when it was prefilled."""
+    response_tokens = qwen3_5_tokenizer.encode(
+        "reasoning\n</think>\n\nanswer<|im_end|>",
+        add_special_tokens=False,
+    )
+
+    deltas = list(qwen3_5_renderer.parse_response_streaming(response_tokens))
+    thinking_text = "".join(
+        delta.thinking for delta in deltas if isinstance(delta, StreamingThinkingDelta)
+    )
+    output_text = "".join(delta.text for delta in deltas if isinstance(delta, StreamingTextDelta))
+    final_message = cast(Message, deltas[-1])
+
+    assert "reasoning" in thinking_text
+    assert "answer" in output_text
+    assert _is_message(final_message)
+    assert isinstance(final_message["content"], list)
+    assert final_message["content"] == [
+        ThinkingPart(type="thinking", thinking="reasoning"),
+        TextPart(type="text", text="answer"),
+    ]
+
+
+def test_qwen3_5_streaming_matches_batch_with_prefilled_think(qwen3_5_tokenizer, qwen3_5_renderer):
+    """Streaming and batch should produce identical results for prefilled think tokens."""
+    response_tokens = qwen3_5_tokenizer.encode(
+        "step 1\nstep 2\n</think>\n\nThe result is 42.<|im_end|>",
+        add_special_tokens=False,
+    )
+
+    batch_message, batch_success = qwen3_5_renderer.parse_response(response_tokens)
+    assert batch_success
+
+    deltas = list(qwen3_5_renderer.parse_response_streaming(response_tokens))
+    streaming_message = deltas[-1]
+
+    assert _is_message(streaming_message)
+    assert streaming_message["role"] == batch_message["role"]
+    assert ensure_list(streaming_message["content"]) == ensure_list(batch_message["content"])
+
+
+def test_qwen3_5_normalize_noop_when_think_present(qwen3_5_tokenizer, qwen3_5_renderer):
+    """When response already starts with <think>\\n, normalization is a no-op."""
+    response_tokens = qwen3_5_tokenizer.encode(
+        "<think>\nreasoning\n</think>\n\nanswer<|im_end|>",
+        add_special_tokens=False,
+    )
+
+    # Both paths should work identically
+    batch_message, batch_success = qwen3_5_renderer.parse_response(response_tokens)
+    assert batch_success
+
+    deltas = list(qwen3_5_renderer.parse_response_streaming(response_tokens))
+    streaming_message = deltas[-1]
+
+    assert _is_message(streaming_message)
+    assert ensure_list(streaming_message["content"]) == ensure_list(batch_message["content"])
