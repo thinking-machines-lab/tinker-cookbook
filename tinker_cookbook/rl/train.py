@@ -56,7 +56,7 @@ from tinker_cookbook.rl.types import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import logtree, ml_log
 from tinker_cookbook.utils.misc_utils import safezip, split_list, timed
-from tinker_cookbook.utils.trace import scope, trace_init, update_scope_context
+from tinker_cookbook.utils.trace import scope, trace_init, trace_iteration, update_scope_context
 
 logger = logging.getLogger(__name__)
 
@@ -1198,77 +1198,76 @@ async def do_sync_training(
             "optim/lr": cfg.learning_rate,
             "progress/done_frac": (i_batch + 1) / num_batches,
         }
-        t_start = time.time()
 
-        # Run evaluations
-        if cfg.eval_every > 0 and i_batch % cfg.eval_every == 0:
-            with timed("run_evals", metrics):
+        with trace_iteration(step=i_batch):
+            # Run evaluations
+            if cfg.eval_every > 0 and i_batch % cfg.eval_every == 0:
                 eval_metrics = await run_evaluations_parallel(
                     evaluators, sampling_client, cfg, i_batch
                 )
                 metrics.update(eval_metrics)
 
-        # Get batch and sample trajectories
-        env_group_builders_P = dataset.get_batch(i_batch)
+            # Get batch and sample trajectories
+            env_group_builders_P = dataset.get_batch(i_batch)
 
-        # Initialize logtree trace for this iteration if logging is enabled
-        with _get_logtree_scope(
-            log_path=cfg.log_path,
-            num_groups_to_log=cfg.num_groups_to_log,
-            f_name=f"train_iteration_{i_batch:06d}",
-            scope_name=f"RL Iteration {i_batch}",
-        ):
-            # Note: do_remove_constant_reward_groups=False here because we remove
-            # constant reward groups after all rollouts are collected (below)
-            trajectory_groups_P = await gather_with_progress(
-                (
-                    do_group_rollout_and_filter_constant_reward(
-                        sampling_client,
-                        builder,
-                        max_tokens=cfg.max_tokens,
-                        temperature=cfg.temperature,
-                        do_remove_constant_reward_groups=False,
-                        enable_logging=i < cfg.num_groups_to_log,
+            # Initialize logtree trace for this iteration if logging is enabled
+            with _get_logtree_scope(
+                log_path=cfg.log_path,
+                num_groups_to_log=cfg.num_groups_to_log,
+                f_name=f"train_iteration_{i_batch:06d}",
+                scope_name=f"RL Iteration {i_batch}",
+            ):
+                # Note: do_remove_constant_reward_groups=False here because we remove
+                # constant reward groups after all rollouts are collected (below)
+                trajectory_groups_P = await gather_with_progress(
+                    (
+                        do_group_rollout_and_filter_constant_reward(
+                            sampling_client,
+                            builder,
+                            max_tokens=cfg.max_tokens,
+                            temperature=cfg.temperature,
+                            do_remove_constant_reward_groups=False,
+                            enable_logging=i < cfg.num_groups_to_log,
+                        )
+                        for i, builder in enumerate(env_group_builders_P)
+                    ),
+                    desc=f"Sampling batch {i_batch}",
+                )
+
+            _maybe_export_rollout_summary_jsonl(
+                cfg=cfg,
+                file_prefix=f"train_iteration_{i_batch:06d}",
+                split="train",
+                iteration=i_batch,
+                groups_P=[
+                    RolloutSummaryGroup(
+                        trajectory_group=trajectory_group,
+                        tags=env_group_builder.logging_tags(),
+                        sampling_client_step=i_batch,
                     )
-                    for i, builder in enumerate(env_group_builders_P)
-                ),
-                desc=f"Sampling batch {i_batch}",
+                    for env_group_builder, trajectory_group in safezip(
+                        env_group_builders_P, trajectory_groups_P
+                    )
+                ],
             )
 
-        _maybe_export_rollout_summary_jsonl(
-            cfg=cfg,
-            file_prefix=f"train_iteration_{i_batch:06d}",
-            split="train",
-            iteration=i_batch,
-            groups_P=[
-                RolloutSummaryGroup(
-                    trajectory_group=trajectory_group,
-                    tags=env_group_builder.logging_tags(),
-                    sampling_client_step=i_batch,
-                )
-                for env_group_builder, trajectory_group in safezip(
-                    env_group_builders_P, trajectory_groups_P
-                )
-            ],
-        )
+            if cfg.remove_constant_reward_groups:
+                trajectory_groups_P = remove_constant_reward_groups(trajectory_groups_P)
 
-        if cfg.remove_constant_reward_groups:
-            trajectory_groups_P = remove_constant_reward_groups(trajectory_groups_P)
+            # Train step
+            sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(
+                cfg,
+                i_batch,
+                training_client,
+                kl_reference_client,
+                tokenizer,
+                env_group_builders_P,
+                trajectory_groups_P,
+            )
 
-        # Train step
-        sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(
-            cfg,
-            i_batch,
-            training_client,
-            kl_reference_client,
-            tokenizer,
-            env_group_builders_P,
-            trajectory_groups_P,
-        )
+            metrics.update(train_step_metrics)
 
-        # Log metrics
-        metrics.update(train_step_metrics)
-        metrics["time/total"] = time.time() - t_start
+        # Log non-timing metrics (time/* auto-logged by trace_iteration)
         ml_logger.log_metrics(metrics, step=i_batch)
 
 
@@ -1305,7 +1304,7 @@ async def main(
         logger.info(
             f"Run `python tinker_cookbook/utils/trace.py {trace_events_path} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"
         )
-        trace_init(output_file=trace_events_path)
+        trace_init(output_file=trace_events_path, wandb_logger=ml_logger, span_chart_every=20)
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("pylatexenc").setLevel(logging.WARNING)
