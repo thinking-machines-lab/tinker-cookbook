@@ -1154,9 +1154,7 @@ class Renderer(ABC):
             for delta in parser.finish():
                 handle(delta)
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not support streaming"
-        )
+        raise NotImplementedError(f"{type(self).__name__} does not support streaming")
 
     def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
         """Parse response tokens with streaming, yielding incremental deltas.

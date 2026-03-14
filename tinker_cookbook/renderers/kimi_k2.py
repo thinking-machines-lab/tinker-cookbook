@@ -603,8 +603,7 @@ class KimiK2StreamingParser(ReasoningStreamingParser):
 
     def __init__(self, tokenizer: Tokenizer, end_message_token: int) -> None:
         warnings.warn(
-            "KimiK2StreamingParser is deprecated. "
-            "Use renderer.create_streaming_parser() instead.",
+            "KimiK2StreamingParser is deprecated. Use renderer.create_streaming_parser() instead.",
             DeprecationWarning,
             stacklevel=2,
         )
