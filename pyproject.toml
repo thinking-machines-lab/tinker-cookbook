@@ -51,6 +51,7 @@ vector-search = [
 ]
 wandb = [
     "wandb",
+    "plotly",
 ]
 neptune-scale = [
     "neptune-scale>=0.27.0",
