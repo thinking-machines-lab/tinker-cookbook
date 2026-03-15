@@ -20,11 +20,11 @@ pip install 'tinker_cookbook[litellm]'
 ## Quick start
 
 ```python
-from tinker_cookbook.third_party.litellm import register_tinker_provider
+from tinker_cookbook.third_party.litellm import register_litellm_provider
 import litellm
 
 # Register once at startup
-register_tinker_provider()
+register_litellm_provider()
 
 # Use litellm as normal — the "tinker/" prefix routes to this provider
 response = await litellm.acompletion(
@@ -77,7 +77,7 @@ After saving new weights during training, you can point the provider at a specif
 ```python
 import tinker
 
-provider = register_tinker_provider()
+provider = register_litellm_provider()
 
 # Later, after saving weights...
 service = tinker.ServiceClient()

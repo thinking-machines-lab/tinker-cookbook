@@ -6,7 +6,7 @@ Requires TINKER_API_KEY to be set (skipped otherwise, see conftest.py).
 import litellm
 import pytest
 
-from tinker_cookbook.third_party.litellm import register_tinker_provider
+from tinker_cookbook.third_party.litellm import register_litellm_provider
 
 # Use a small model for fast smoke testing
 BASE_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
@@ -14,7 +14,7 @@ BASE_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
 
 @pytest.fixture(scope="module")
 def tinker_provider():
-    provider = register_tinker_provider()
+    provider = register_litellm_provider()
     yield provider
     # Clean up the registration
     litellm.custom_provider_map[:] = [

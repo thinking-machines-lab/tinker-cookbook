@@ -389,10 +389,10 @@ class TestTinkerLiteLLMProvider:
     def test_register_adds_to_provider_map(self) -> None:
         import litellm
 
-        from tinker_cookbook.third_party.litellm import register_tinker_provider
+        from tinker_cookbook.third_party.litellm import register_litellm_provider
 
         original_len = len(litellm.custom_provider_map)
-        provider = register_tinker_provider()
+        provider = register_litellm_provider()
         assert len(litellm.custom_provider_map) == original_len + 1
         entry = litellm.custom_provider_map[-1]
         assert entry["provider"] == "tinker"

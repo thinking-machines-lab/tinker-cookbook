@@ -6,10 +6,10 @@ giving optimal sampling performance while exposing raw token IDs for training.
 
 Usage::
 
-    from tinker_cookbook.third_party.litellm import register_tinker_provider
+    from tinker_cookbook.third_party.litellm import register_litellm_provider
     import litellm
 
-    register_tinker_provider()
+    register_litellm_provider()
 
     response = await litellm.acompletion(
         model="tinker/my-model",
@@ -484,7 +484,7 @@ class TinkerLiteLLMProvider(CustomLLM):
         return _build_model_response(result, model_response)
 
 
-def register_tinker_provider() -> TinkerLiteLLMProvider:
+def register_litellm_provider() -> TinkerLiteLLMProvider:
     """Register the Tinker provider with LiteLLM. Call once at startup.
 
     Returns the provider instance, which can be used to inject custom
