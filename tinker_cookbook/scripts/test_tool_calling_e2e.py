@@ -16,6 +16,10 @@ import asyncio
 
 import tinker
 
+# This is a manual E2E runner (not a pytest module), even though its filename
+# starts with "test_" for discoverability by humans.
+__test__ = False
+
 from tinker_cookbook.renderers import (
     Message,
     ToolSpec,
@@ -108,7 +112,7 @@ def print_result(
     print(f"\nRaw response (first 500 chars):\n{raw_response[:500]}")
 
 
-async def test_model(
+async def run_model_test(
     service_client: tinker.ServiceClient,
     model_name: str,
     renderer_name: str,
@@ -197,7 +201,7 @@ async def main():
     results = []
     for config in configs:
         try:
-            success, message, raw_response = await test_model(
+            success, message, raw_response = await run_model_test(
                 service_client=service_client,
                 model_name=config["model_name"],
                 renderer_name=config["renderer_name"],
