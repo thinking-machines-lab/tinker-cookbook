@@ -9,13 +9,17 @@ If you have an agent or application built on LiteLLM (or frameworks that use it,
 1. **Run your existing code against Tinker** without rewriting it to use the Tinker SDK directly
 2. **Get raw token IDs** from every request, which you can feed into Tinker's training APIs for supervised learning or RL
 
-Tinker also offers an [OpenAI-compatible endpoint](https://tinker-docs.thinkingmachines.ai/compatible-apis/openai), which works with LiteLLM out of the box. However, the native `SamplingClient` used by this integration provides better performance.
+Tinker also offers an [OpenAI-compatible endpoint](/compatible-apis/openai), which works with LiteLLM out of the box. However, the native `SamplingClient` used by this integration provides better performance.
 
-## Installation
+## Setup
+
+This integration requires `litellm` as an additional dependency. From the tinker-cookbook repo root:
 
 ```bash
-pip install 'tinker_cookbook[litellm]'
+uv pip install -e ".[litellm]"
 ```
+
+You also need a `TINKER_API_KEY` — see [Getting an API key](https://tinker-docs.thinkingmachines.ai/install#getting-an-api-key).
 
 ## Quick start
 
@@ -30,7 +34,7 @@ register_litellm_provider()
 response = await litellm.acompletion(
     model="tinker/my-model",
     messages=[{"role": "user", "content": "Hello!"}],
-    base_model="Qwen/Qwen3-8B",  # determines renderer and sampling client
+    base_model="Qwen/Qwen3-4B-Instruct-2507",  # determines renderer and sampling client
     temperature=0.7,
     max_tokens=256,
 )
@@ -46,7 +50,7 @@ The key feature of this integration is token-level access for training workflows
 response = await litellm.acompletion(
     model="tinker/my-model",
     messages=messages,
-    base_model="Qwen/Qwen3-8B",
+    base_model="Qwen/Qwen3-4B-Instruct-2507",
 )
 
 # Raw token IDs are in provider_specific_fields
@@ -61,8 +65,8 @@ completion_token_ids = fields["completion_token_ids"]  # list[int]
 
 | LiteLLM parameter | Description |
 |---|---|
-| `model` | Any string with `tinker/` prefix (e.g., `"tinker/my-agent"`) |
-| `base_model` | **Required.** Tinker model name (e.g., `"Qwen/Qwen3-8B"`). Determines the renderer and sampling client. |
+| `model` | A label with `tinker/` prefix (e.g., `"tinker/my-agent"`). The prefix routes to this provider; the rest is used as the model name in the response. |
+| `base_model` | **Required.** Tinker model name (e.g., `"Qwen/Qwen3-4B-Instruct-2507"`). Determines the renderer and sampling client. See [model lineup](https://tinker-docs.thinkingmachines.ai/model-lineup) for available models. |
 | `temperature` | Sampling temperature |
 | `max_tokens` / `max_completion_tokens` | Maximum tokens to generate |
 | `top_p` | Nucleus sampling parameter |
@@ -81,8 +85,8 @@ provider = register_litellm_provider()
 
 # Later, after saving weights...
 service = tinker.ServiceClient()
-new_sampler = service.create_sampling_client(base_model="Qwen/Qwen3-8B")
-provider.set_client("Qwen/Qwen3-8B", new_sampler)
+new_sampler = service.create_sampling_client(base_model="Qwen/Qwen3-4B-Instruct-2507")
+provider.set_client("Qwen/Qwen3-4B-Instruct-2507", new_sampler)
 
 # Subsequent litellm calls will use the new sampler
 ```
@@ -95,7 +99,7 @@ Tool declarations are supported for models whose renderers implement `create_con
 response = await litellm.acompletion(
     model="tinker/my-agent",
     messages=[{"role": "user", "content": "What's the weather in SF?"}],
-    base_model="Qwen/Qwen3-8B",
+    base_model="Qwen/Qwen3-4B-Instruct-2507",
     tools=[{
         "type": "function",
         "function": {

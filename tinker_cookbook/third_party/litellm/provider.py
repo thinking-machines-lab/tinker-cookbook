@@ -14,7 +14,7 @@ Usage::
     response = await litellm.acompletion(
         model="tinker/my-model",
         messages=[{"role": "user", "content": "Hello!"}],
-        base_model="Qwen/Qwen3-8B",
+        base_model="Qwen/Qwen3-4B-Instruct-2507",
     )
 
     # Access raw tokens for training
