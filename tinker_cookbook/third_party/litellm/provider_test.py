@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tinker_cookbook.third_party.litellm import (
+from tinker_cookbook.third_party.litellm.provider import (
     _SamplingResult,
     _convert_openai_messages,
     _convert_openai_tools,
@@ -402,18 +402,18 @@ class TestTinkerLiteLLMProvider:
         litellm.custom_provider_map.pop()
 
     def test_set_client_creates_bundle(self) -> None:
-        from tinker_cookbook.third_party.litellm import TinkerLiteLLMProvider
+        from tinker_cookbook.third_party.litellm.provider import TinkerLiteLLMProvider
 
         provider = TinkerLiteLLMProvider()
         mock_client = MagicMock()
 
         with (
-            patch("tinker_cookbook.third_party.litellm.get_tokenizer") as mock_get_tok,
+            patch("tinker_cookbook.third_party.litellm.provider.get_tokenizer") as mock_get_tok,
             patch(
-                "tinker_cookbook.third_party.litellm.get_recommended_renderer_name",
+                "tinker_cookbook.third_party.litellm.provider.get_recommended_renderer_name",
                 return_value="qwen3",
             ),
-            patch("tinker_cookbook.third_party.litellm.renderers.get_renderer"),
+            patch("tinker_cookbook.third_party.litellm.provider.renderers.get_renderer"),
         ):
             mock_get_tok.return_value = MagicMock()
             provider.set_client("Qwen/Qwen3-8B", mock_client)
@@ -422,7 +422,10 @@ class TestTinkerLiteLLMProvider:
         assert provider._clients["Qwen/Qwen3-8B"].sampling_client is mock_client
 
     def test_set_client_updates_existing_bundle(self) -> None:
-        from tinker_cookbook.third_party.litellm import TinkerLiteLLMProvider, _ClientBundle
+        from tinker_cookbook.third_party.litellm.provider import (
+            TinkerLiteLLMProvider,
+            _ClientBundle,
+        )
 
         provider = TinkerLiteLLMProvider()
         old_client = MagicMock()
@@ -440,7 +443,7 @@ class TestTinkerLiteLLMProvider:
 
     @pytest.mark.asyncio
     async def test_acompletion_requires_base_model(self) -> None:
-        from tinker_cookbook.third_party.litellm import TinkerLiteLLMProvider
+        from tinker_cookbook.third_party.litellm.provider import TinkerLiteLLMProvider
 
         provider = TinkerLiteLLMProvider()
         model_response = MagicMock()
@@ -462,7 +465,10 @@ class TestTinkerLiteLLMProvider:
 
     @pytest.mark.asyncio
     async def test_acompletion_basic(self) -> None:
-        from tinker_cookbook.third_party.litellm import TinkerLiteLLMProvider, _ClientBundle
+        from tinker_cookbook.third_party.litellm.provider import (
+            TinkerLiteLLMProvider,
+            _ClientBundle,
+        )
 
         provider = TinkerLiteLLMProvider()
 
