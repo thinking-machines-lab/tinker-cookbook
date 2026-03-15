@@ -7,9 +7,6 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-# Timeout for downloading checkpoint archives (5 minutes).
-_DOWNLOAD_TIMEOUT_SECONDS = 300
-
 
 def download(*, tinker_path: str, output_dir: str) -> str:
     """Download a checkpoint from Tinker storage to local disk.

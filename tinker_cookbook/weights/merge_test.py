@@ -4,6 +4,8 @@ Uses synthetic tensors to cover all code paths without needing real models
 or network access.
 """
 
+from typing import Any
+
 import pytest
 import torch
 
@@ -15,8 +17,12 @@ from tinker_cookbook.weights._merge import apply_merged_weight, merge_adapter_we
 # ---------------------------------------------------------------------------
 
 
-def _make_base_model(state_dict: dict[str, torch.Tensor], class_name: str = "SomeModel"):
-    """Create a minimal mock model with a real state_dict and controllable class name."""
+def _make_base_model(state_dict: dict[str, torch.Tensor], class_name: str = "SomeModel") -> Any:
+    """Create a minimal mock model with a real state_dict and controllable class name.
+
+    Uses a dynamically-created class so ``str(type(model))`` contains the
+    desired class name (important for GPT-OSS detection).
+    """
     cls = type(class_name, (), {"state_dict": lambda self: state_dict})
     return cls()
 

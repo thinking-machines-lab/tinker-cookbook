@@ -10,18 +10,18 @@ and independently testable.
 
 Example::
 
-    from tinker_cookbook.weights import download, build_hf_model, publish_to_hf_hub
+    from tinker_cookbook import weights
 
-    adapter_dir = download(
+    adapter_dir = weights.download(
         tinker_path="tinker://run-id/sampler_weights/final",
         output_dir="./adapter",
     )
-    build_hf_model(
+    weights.build_hf_model(
         base_model="Qwen/Qwen3.5-35B-A3B",
         adapter_path=adapter_dir,
         output_path="./model",
     )
-    publish_to_hf_hub(model_path="./model", repo_id="user/my-finetuned-model")
+    weights.publish_to_hf_hub(model_path="./model", repo_id="user/my-finetuned-model")
 """
 
 from tinker_cookbook.weights._download import download
