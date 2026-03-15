@@ -6,8 +6,8 @@ that LoRA deltas landed in the correct weight slots.
 """
 
 import json
-import os
 import tempfile
+from pathlib import Path
 
 import torch
 from safetensors.torch import save_file
@@ -38,7 +38,7 @@ def _make_tiny_gpt_oss_config() -> AutoConfig:
     return config
 
 
-def _save_model_to_disk(config: AutoConfig, path: str) -> None:
+def _save_model_to_disk(config: AutoConfig, path: Path) -> None:
     model = AutoModelForCausalLM.from_config(config, trust_remote_code=True, dtype=torch.float32)
     model.save_pretrained(path)
     tok = AutoTokenizer.from_pretrained("openai/gpt-oss-20b", trust_remote_code=True)
@@ -46,7 +46,7 @@ def _save_model_to_disk(config: AutoConfig, path: str) -> None:
 
 
 def _save_adapter_to_disk(
-    path: str,
+    path: Path,
     num_experts: int,
     in_dim: int,
     out_dim: int,
@@ -65,10 +65,9 @@ def _save_adapter_to_disk(
         weights[f"{prefix}.w3.lora_A.weight"] = torch.ones(num_experts, rank, in_dim) * up_fill
         weights[f"{prefix}.w3.lora_B.weight"] = torch.ones(num_experts, out_dim, rank)
 
-    os.makedirs(path)
-    save_file(weights, os.path.join(path, "adapter_model.safetensors"))
-    with open(os.path.join(path, "adapter_config.json"), "w") as f:
-        json.dump({"lora_alpha": 1, "r": rank}, f)
+    path.mkdir(parents=True)
+    save_file(weights, str(path / "adapter_model.safetensors"))
+    (path / "adapter_config.json").write_text(json.dumps({"lora_alpha": 1, "r": rank}))
 
 
 # ---------------------------------------------------------------------------
@@ -87,9 +86,10 @@ class TestBuildHfModelGptOss:
         config = _make_tiny_gpt_oss_config()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            model_path = os.path.join(tmpdir, "model")
-            adapter_path = os.path.join(tmpdir, "adapter")
-            output_path = os.path.join(tmpdir, "merged")
+            root = Path(tmpdir)
+            model_path = root / "model"
+            adapter_path = root / "adapter"
+            output_path = root / "merged"
 
             _save_model_to_disk(config, model_path)
 
@@ -113,9 +113,9 @@ class TestBuildHfModelGptOss:
             )
 
             build_hf_model(
-                base_model=model_path,
-                adapter_path=adapter_path,
-                output_path=output_path,
+                base_model=str(model_path),
+                adapter_path=str(adapter_path),
+                output_path=str(output_path),
             )
 
             reloaded = AutoModelForCausalLM.from_pretrained(
@@ -137,9 +137,10 @@ class TestBuildHfModelGptOss:
         config = _make_tiny_gpt_oss_config()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            model_path = os.path.join(tmpdir, "model")
-            adapter_path = os.path.join(tmpdir, "adapter")
-            output_path = os.path.join(tmpdir, "merged")
+            root = Path(tmpdir)
+            model_path = root / "model"
+            adapter_path = root / "adapter"
+            output_path = root / "merged"
 
             _save_model_to_disk(config, model_path)
 
@@ -165,9 +166,9 @@ class TestBuildHfModelGptOss:
             )
 
             build_hf_model(
-                base_model=model_path,
-                adapter_path=adapter_path,
-                output_path=output_path,
+                base_model=str(model_path),
+                adapter_path=str(adapter_path),
+                output_path=str(output_path),
             )
 
             reloaded = AutoModelForCausalLM.from_pretrained(
@@ -185,9 +186,10 @@ class TestBuildHfModelGptOss:
         config = _make_tiny_gpt_oss_config()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            model_path = os.path.join(tmpdir, "model")
-            adapter_path = os.path.join(tmpdir, "adapter")
-            output_path = os.path.join(tmpdir, "merged")
+            root = Path(tmpdir)
+            model_path = root / "model"
+            adapter_path = root / "adapter"
+            output_path = root / "merged"
 
             _save_model_to_disk(config, model_path)
 
@@ -213,9 +215,9 @@ class TestBuildHfModelGptOss:
             )
 
             build_hf_model(
-                base_model=model_path,
-                adapter_path=adapter_path,
-                output_path=output_path,
+                base_model=str(model_path),
+                adapter_path=str(adapter_path),
+                output_path=str(output_path),
             )
 
             reloaded = AutoModelForCausalLM.from_pretrained(

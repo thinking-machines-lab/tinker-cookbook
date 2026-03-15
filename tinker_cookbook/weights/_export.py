@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-import os
+from pathlib import Path
 
 import torch
 from safetensors.torch import load_file
@@ -41,30 +41,31 @@ def build_hf_model(
         output_path: Directory where the merged model will be saved. Must not
             already exist.
     """
-    os.makedirs(output_path, exist_ok=False)
+    out = Path(output_path)
+    out.mkdir(parents=True, exist_ok=False)
 
     logger.info("Loading base model: %s", base_model)
     hf_model = _load_model(base_model)
 
     logger.info("Loading adapter weights from: %s", adapter_path)
-    adapter_weights, adapter_config = _load_adapter_weights(adapter_path)
+    adapter_weights, adapter_config = _load_adapter_weights(Path(adapter_path))
 
     logger.info("Merging adapter weights")
     merge_adapter_weights(hf_model, adapter_weights, adapter_config)
 
-    logger.info("Saving merged model to: %s", output_path)
-    hf_model.save_pretrained(output_path)
+    logger.info("Saving merged model to: %s", out)
+    hf_model.save_pretrained(out)
 
     tokenizer = AutoTokenizer.from_pretrained(base_model)
-    tokenizer.save_pretrained(output_path)
+    tokenizer.save_pretrained(out)
 
     try:
         processor = AutoProcessor.from_pretrained(base_model)
-        processor.save_pretrained(output_path)
+        processor.save_pretrained(out)
     except Exception:
         pass
 
-    logger.info("Done — merged model saved to %s", output_path)
+    logger.info("Done — merged model saved to %s", out)
 
 
 def _load_model(model_path: str) -> torch.nn.Module:
@@ -76,13 +77,19 @@ def _load_model(model_path: str) -> torch.nn.Module:
     return auto_cls.from_pretrained(model_path, **kwargs)
 
 
-def _load_adapter_weights(adapter_path: str) -> tuple[dict[str, torch.Tensor], dict]:
+def _load_adapter_weights(adapter_dir: Path) -> tuple[dict[str, torch.Tensor], dict]:
+    adapter_dir = adapter_dir.expanduser().resolve()
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    weights = load_file(
-        os.path.expanduser(os.path.join(adapter_path, "adapter_model.safetensors")),
-        device=device,
-    )
-    config_path = os.path.expanduser(os.path.join(adapter_path, "adapter_config.json"))
+
+    safetensors_path = adapter_dir / "adapter_model.safetensors"
+    if not safetensors_path.exists():
+        raise FileNotFoundError(f"Adapter weights not found: {safetensors_path}")
+
+    config_path = adapter_dir / "adapter_config.json"
+    if not config_path.exists():
+        raise FileNotFoundError(f"Adapter config not found: {config_path}")
+
+    weights = load_file(str(safetensors_path), device=device)
     with open(config_path) as f:
         config = json.load(f)
     return weights, config

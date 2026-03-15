@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import tarfile
 import tempfile
 import urllib.request
@@ -30,22 +29,20 @@ def download(*, tinker_path: str, output_dir: str) -> str:
     rc = sc.create_rest_client()
     response = rc.get_checkpoint_archive_url_from_tinker_path(tinker_path).result()
 
-    os.makedirs(output_dir, exist_ok=True)
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
 
-    with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as tmp:
-        tmp_path = tmp.name
-
+    tmp_path = Path(tempfile.mktemp(suffix=".tar"))
     try:
-        urllib.request.urlretrieve(response.url, tmp_path)
-        _safe_extract_tar(tmp_path, Path(output_dir))
+        urllib.request.urlretrieve(response.url, str(tmp_path))
+        _safe_extract_tar(tmp_path, out)
     finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+        tmp_path.unlink(missing_ok=True)
 
     return output_dir
 
 
-def _safe_extract_tar(archive_path: str, extract_dir: Path) -> None:
+def _safe_extract_tar(archive_path: Path, extract_dir: Path) -> None:
     """Extract a tar archive with security validation.
 
     Rejects archives containing symlinks, hardlinks, or paths that escape
@@ -61,7 +58,7 @@ def _safe_extract_tar(archive_path: str, extract_dir: Path) -> None:
                     "Archive may be corrupted or malicious."
                 )
             member_path = (extract_dir / member.name).resolve()
-            if not str(member_path).startswith(str(base)):
+            if not member_path.is_relative_to(base):
                 raise ValueError(
                     "Unsafe path found in tar archive (path traversal). "
                     "Archive may be corrupted or malicious."
