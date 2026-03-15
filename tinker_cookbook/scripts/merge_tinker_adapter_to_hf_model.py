@@ -10,11 +10,22 @@ For programmatic use, prefer importing from tinker_cookbook.weights directly.
 """
 
 import argparse
+import warnings
 
 from tinker_cookbook.weights import build_hf_model
 
 
 def main():
+    warnings.warn(
+        "This script is deprecated. "
+        "Use tinker_cookbook.weights.build_hf_model() instead:\n\n"
+        "    from tinker_cookbook import weights\n"
+        "    weights.build_hf_model(\n"
+        "        base_model='...', adapter_path='...', output_path='...'\n"
+        "    )\n",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     parser = argparse.ArgumentParser(
         description="Merge Tinker LoRA adapter weights into a HuggingFace model."
     )
