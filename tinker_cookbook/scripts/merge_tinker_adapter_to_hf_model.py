@@ -119,11 +119,16 @@ def merge_adapter_weights(
                     apply_merged_weight(model_state_dict[target_key_exp], merged_lora[exp_idx])
             else:
                 # Single/fused weight and shared w13, shape is <num_experts, in_dim, out_dim>
-                if target_key.endswith((".gate_proj.weight", ".up_proj.weight")):
-                    target_key = target_key.replace(".gate_proj.weight", ".gate_up_proj").replace(
-                        ".up_proj.weight", ".gate_up_proj"
-                    )
-                    idx = 0 if target_key.endswith(".gate_up_proj") else 1
+                if target_key.endswith(".gate_proj.weight"):
+                    idx = 0
+                    target_key = target_key.replace(".gate_proj.weight", ".gate_up_proj")
+                elif target_key.endswith(".up_proj.weight"):
+                    idx = 1
+                    target_key = target_key.replace(".up_proj.weight", ".gate_up_proj")
+                else:
+                    idx = None
+
+                if idx is not None:
                     if is_gpt_oss:
                         # gpt-oss has interleaved w13
                         target = model_state_dict[target_key][:, :, idx::2]
