@@ -13,10 +13,6 @@ import argparse
 
 from tinker_cookbook.weights import build_hf_model
 
-# Re-export for backward compatibility with code that imports from here directly.
-from tinker_cookbook.weights._export import _load_adapter_weights as load_adapter_weights  # noqa: F401
-from tinker_cookbook.weights._merge import merge_adapter_weights  # noqa: F401
-
 
 def main():
     parser = argparse.ArgumentParser(

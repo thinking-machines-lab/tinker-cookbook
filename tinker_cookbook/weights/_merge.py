@@ -12,7 +12,10 @@ import torch
 
 def apply_merged_weight(target: torch.Tensor, merged_lora: torch.Tensor) -> None:
     """Add a merged LoRA delta to a model weight tensor in-place."""
-    assert target.shape == merged_lora.shape, (target.shape, merged_lora.shape)
+    if target.shape != merged_lora.shape:
+        raise ValueError(
+            f"Shape mismatch: target {target.shape} vs merged LoRA {merged_lora.shape}"
+        )
     new_data = target.float() + merged_lora.float().to(target.device)
     target.copy_(new_data.to(target.dtype))
 
@@ -34,7 +37,16 @@ def merge_adapter_weights(
         base_model: The HuggingFace model to merge into.
         adapter_weights: Dict of LoRA weight tensors from the adapter.
         config: Adapter config dict with ``lora_alpha`` and ``r`` keys.
+
+    Raises:
+        KeyError: If required config keys are missing or adapter weight
+            names don't map to any model weight.
+        ValueError: If tensor shapes are incompatible.
     """
+    for key in ("lora_alpha", "r"):
+        if key not in config:
+            raise KeyError(f"Adapter config missing required key: {key!r}")
+
     scaling = config["lora_alpha"] / config["r"]
     adapter_weight_names = [n.replace(".lora_A", "") for n in adapter_weights if ".lora_A" in n]
 
@@ -58,23 +70,38 @@ def merge_adapter_weights(
         if ".experts" not in n:
             if is_gpt_oss:
                 target_key = target_key.replace(".attn", ".self_attn")
-            assert target_key in model_state_dict, (n, target_key)
+            if target_key not in model_state_dict:
+                raise KeyError(
+                    f"Adapter weight {n!r} mapped to {target_key!r} "
+                    f"which does not exist in the model state dict"
+                )
             # (lora_rank, in_dim), (out_dim lora_rank) -> (out_dim, in_dim)
             merged_lora = torch.nn.functional.linear(lora_A.T, lora_B).T
-            assert merged_lora.shape == model_state_dict[target_key].shape, (
-                n,
-                merged_lora.shape,
-                model_state_dict[target_key].shape,
-            )
+            if merged_lora.shape != model_state_dict[target_key].shape:
+                raise ValueError(
+                    f"Shape mismatch for {target_key!r}: "
+                    f"merged LoRA {merged_lora.shape} vs model {model_state_dict[target_key].shape}"
+                )
             apply_merged_weight(model_state_dict[target_key], merged_lora)
         else:
             # Experts weights are fused together, and some are potentially shared across experts
-            assert len(lora_A.shape) == 3 and len(lora_B.shape) == 3, (lora_A.shape, lora_B.shape)
+            if len(lora_A.shape) != 3 or len(lora_B.shape) != 3:
+                raise ValueError(
+                    f"Expert LoRA weights must be 3D, got lora_A: {lora_A.shape}, lora_B: {lora_B.shape}"
+                )
             if lora_A.shape[0] == 1:
-                assert lora_B.shape[0] > 1
+                if lora_B.shape[0] <= 1:
+                    raise ValueError(
+                        f"Cannot broadcast expert LoRA: both A and B have 1 expert "
+                        f"(lora_A: {lora_A.shape}, lora_B: {lora_B.shape})"
+                    )
                 lora_A = lora_A.expand(lora_B.shape[0], -1, -1)
             elif lora_B.shape[0] == 1:
-                assert lora_A.shape[0] > 1
+                if lora_A.shape[0] <= 1:
+                    raise ValueError(
+                        f"Cannot broadcast expert LoRA: both A and B have 1 expert "
+                        f"(lora_A: {lora_A.shape}, lora_B: {lora_B.shape})"
+                    )
                 lora_B = lora_B.expand(lora_A.shape[0], -1, -1)
             # (num_experts, lora_rank, in_dim),(num_experts, out_dim, lora_rank) -> (num_experts, in_dim, out_dim)
             merged_lora = torch.bmm(lora_A.transpose(-1, -2), lora_B.transpose(-1, -2))
@@ -88,12 +115,17 @@ def merge_adapter_weights(
                 merged_lora = merged_lora.transpose(-1, -2)  # -> (num_experts, out_dim, in_dim)
                 for exp_idx in range(merged_lora.shape[0]):
                     target_key_exp = target_key.replace(".experts", f".experts.{exp_idx}")
-                    assert target_key_exp in model_state_dict, (n, target_key_exp)
-                    assert merged_lora[exp_idx].shape == model_state_dict[target_key_exp].shape, (
-                        target_key_exp,
-                        merged_lora[exp_idx].shape,
-                        model_state_dict[target_key_exp].shape,
-                    )
+                    if target_key_exp not in model_state_dict:
+                        raise KeyError(
+                            f"Adapter weight {n!r} mapped to {target_key_exp!r} "
+                            f"which does not exist in the model state dict"
+                        )
+                    if merged_lora[exp_idx].shape != model_state_dict[target_key_exp].shape:
+                        raise ValueError(
+                            f"Shape mismatch for {target_key_exp!r}: "
+                            f"merged LoRA {merged_lora[exp_idx].shape} "
+                            f"vs model {model_state_dict[target_key_exp].shape}"
+                        )
                     apply_merged_weight(model_state_dict[target_key_exp], merged_lora[exp_idx])
             else:
                 # Single/fused weight and shared w13, shape is <num_experts, in_dim, out_dim>

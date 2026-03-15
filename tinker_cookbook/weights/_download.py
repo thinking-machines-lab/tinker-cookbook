@@ -7,6 +7,9 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
+# Timeout for downloading checkpoint archives (5 minutes).
+_DOWNLOAD_TIMEOUT_SECONDS = 300
+
 
 def download(*, tinker_path: str, output_dir: str) -> str:
     """Download a checkpoint from Tinker storage to local disk.
@@ -22,6 +25,10 @@ def download(*, tinker_path: str, output_dir: str) -> str:
 
     Returns:
         Path to the extracted checkpoint directory.
+
+    Raises:
+        ValueError: If the archive contains unsafe entries.
+        urllib.error.URLError: If the download fails.
     """
     import tinker
 
@@ -32,7 +39,8 @@ def download(*, tinker_path: str, output_dir: str) -> str:
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    tmp_path = Path(tempfile.mktemp(suffix=".tar"))
+    with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
     try:
         urllib.request.urlretrieve(response.url, str(tmp_path))
         _safe_extract_tar(tmp_path, out)
