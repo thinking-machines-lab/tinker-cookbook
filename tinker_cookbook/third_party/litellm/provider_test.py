@@ -424,6 +424,7 @@ class TestTinkerLiteLLMProvider:
 
         provider = TinkerLiteLLMProvider()
         mock_client = MagicMock()
+        mock_client.get_base_model.return_value = "Qwen/Qwen3-8B"
 
         with (
             patch("tinker_cookbook.third_party.litellm.provider.get_tokenizer") as mock_get_tok,
@@ -434,7 +435,7 @@ class TestTinkerLiteLLMProvider:
             patch("tinker_cookbook.third_party.litellm.provider.renderers.get_renderer"),
         ):
             mock_get_tok.return_value = MagicMock()
-            provider.set_client("Qwen/Qwen3-8B", mock_client)
+            provider.set_client(mock_client)
 
         assert "Qwen/Qwen3-8B" in provider._clients
         assert provider._clients["Qwen/Qwen3-8B"].sampling_client is mock_client
@@ -448,6 +449,7 @@ class TestTinkerLiteLLMProvider:
         provider = TinkerLiteLLMProvider()
         old_client = MagicMock()
         new_client = MagicMock()
+        new_client.get_base_model.return_value = "Qwen/Qwen3-8B"
 
         provider._clients["Qwen/Qwen3-8B"] = _ClientBundle(
             sampling_client=old_client,
@@ -456,7 +458,7 @@ class TestTinkerLiteLLMProvider:
             base_model="Qwen/Qwen3-8B",
         )
 
-        provider.set_client("Qwen/Qwen3-8B", new_client)
+        provider.set_client(new_client)
         assert provider._clients["Qwen/Qwen3-8B"].sampling_client is new_client
 
     @pytest.mark.asyncio

@@ -374,14 +374,15 @@ class TinkerLiteLLMProvider(CustomLLM):
 
     def set_client(
         self,
-        base_model: str,
         sampling_client: tinker.SamplingClient,
     ) -> None:
-        """Inject a custom SamplingClient for a base model.
+        """Inject a custom SamplingClient (e.g., for a fine-tuned checkpoint).
 
-        Use this after saving new weights to point at a specific checkpoint,
-        or to share a SamplingClient with other parts of your training loop.
+        The base model is read from the client via ``get_base_model()``,
+        and used to resolve the correct renderer and tokenizer. If a bundle
+        for that base model already exists, only the sampling client is replaced.
         """
+        base_model = sampling_client.get_base_model()
         if base_model in self._clients:
             self._clients[base_model].sampling_client = sampling_client
         else:
@@ -492,7 +493,7 @@ def register_litellm_provider() -> TinkerLiteLLMProvider:
 
     Safe to call multiple times — returns the same provider instance after
     the first call. Use the returned instance to inject custom SamplingClients
-    via ``provider.set_client(base_model, client)``.
+    via ``provider.set_client(sampling_client)``.
     """
     import litellm
 

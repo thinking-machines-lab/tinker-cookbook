@@ -78,10 +78,12 @@ sampler = service.create_sampling_client(
     model_path="tinker://<experiment-id>/sampler_weights/000080"
 )
 
-# base_model is still needed to resolve the correct renderer/tokenizer
-provider.set_client("Qwen/Qwen3-4B-Instruct-2507", sampler)
+# The provider reads the base model from the sampling client automatically
+# to resolve the correct renderer and tokenizer.
+provider.set_client(sampler)
 
-# Now litellm calls will sample from your fine-tuned checkpoint
+# Now litellm calls will sample from your fine-tuned checkpoint.
+# base_model must still match so the provider finds the right client bundle.
 response = await litellm.acompletion(
     model="tinker/my-finetuned",
     messages=[{"role": "user", "content": "Hello!"}],
