@@ -345,10 +345,13 @@ class _ClientBundle:
 class TinkerLiteLLMProvider(CustomLLM):
     """LiteLLM custom provider that routes calls through Tinker's native SamplingClient."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        service_client: tinker.ServiceClient | None = None,
+    ) -> None:
         super().__init__()
         self._clients: dict[str, _ClientBundle] = {}
-        self._service_client: tinker.ServiceClient | None = None
+        self._service_client = service_client
 
     def _get_service_client(self) -> tinker.ServiceClient:
         if self._service_client is None:
@@ -488,12 +491,21 @@ class TinkerLiteLLMProvider(CustomLLM):
 _registered_provider: TinkerLiteLLMProvider | None = None
 
 
-def register_litellm_provider() -> TinkerLiteLLMProvider:
+def register_litellm_provider(
+    *,
+    service_client: tinker.ServiceClient | None = None,
+) -> TinkerLiteLLMProvider:
     """Register the Tinker provider with LiteLLM.
 
     Safe to call multiple times — returns the same provider instance after
     the first call. Use the returned instance to inject custom SamplingClients
     via ``provider.set_client(sampling_client)``.
+
+    Args:
+        service_client: Optional pre-configured ``tinker.ServiceClient``.
+            Useful for custom deployments with a non-default ``base_url``.
+            If None, a default ``ServiceClient`` is created on first use.
+            Ignored on subsequent calls (singleton already exists).
     """
     import litellm
 
@@ -501,7 +513,7 @@ def register_litellm_provider() -> TinkerLiteLLMProvider:
     if _registered_provider is not None:
         return _registered_provider
 
-    provider = TinkerLiteLLMProvider()
+    provider = TinkerLiteLLMProvider(service_client=service_client)
     litellm.custom_provider_map.append({"provider": "tinker", "custom_handler": provider})
     _registered_provider = provider
     return provider
