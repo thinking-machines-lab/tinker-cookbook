@@ -45,7 +45,7 @@ try:
 except ImportError:
     raise ImportError(
         "litellm is required for the Tinker LiteLLM integration. "
-        "Install it with: pip install 'tinker_cookbook[litellm]'"
+        "Install it with: uv pip install -e '.[litellm]'"
     )
 
 
@@ -419,7 +419,7 @@ class TinkerLiteLLMProvider(CustomLLM):
         if not base_model:
             raise ValueError(
                 "base_model is required for the Tinker provider. "
-                "Pass it as: litellm.acompletion(..., base_model='Qwen/Qwen3-8B')"
+                "Pass it as: litellm.acompletion(..., base_model='Qwen/Qwen3-4B-Instruct-2507')"
             )
 
         bundle = self._get_or_create_client(base_model)
@@ -462,7 +462,7 @@ class TinkerLiteLLMProvider(CustomLLM):
         if not base_model:
             raise ValueError(
                 "base_model is required for the Tinker provider. "
-                "Pass it as: litellm.completion(..., base_model='Qwen/Qwen3-8B')"
+                "Pass it as: litellm.completion(..., base_model='Qwen/Qwen3-4B-Instruct-2507')"
             )
 
         bundle = self._get_or_create_client(base_model)
