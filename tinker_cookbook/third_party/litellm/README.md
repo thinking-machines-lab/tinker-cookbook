@@ -62,6 +62,35 @@ for m in service.get_server_capabilities().supported_models:
     print(m.model_name)
 ```
 
+### Sampling from a fine-tuned checkpoint
+
+When you pass `base_model`, the provider creates a `SamplingClient` for that pretrained model. To sample from a **fine-tuned** checkpoint instead, use `set_client()` to inject a `SamplingClient` created with a `model_path`:
+
+```python
+import tinker
+
+provider = register_litellm_provider()
+
+# Create a sampling client pointing at your fine-tuned checkpoint.
+# The model_path comes from training_client.save_weights_for_sampler().
+service = tinker.ServiceClient()
+sampler = service.create_sampling_client(
+    model_path="tinker://<experiment-id>/sampler_weights/000080"
+)
+
+# base_model is still needed to resolve the correct renderer/tokenizer
+provider.set_client("Qwen/Qwen3-4B-Instruct-2507", sampler)
+
+# Now litellm calls will sample from your fine-tuned checkpoint
+response = await litellm.acompletion(
+    model="tinker/my-finetuned",
+    messages=[{"role": "user", "content": "Hello!"}],
+    base_model="Qwen/Qwen3-4B-Instruct-2507",
+)
+```
+
+See [Saving and loading weights](https://tinker-docs.thinkingmachines.ai/save-load) for how to obtain checkpoint paths.
+
 ## Accessing raw tokens for training
 
 The key feature of this integration is token-level access for training workflows:
@@ -93,23 +122,6 @@ completion_token_ids = fields["completion_token_ids"]  # list[int]
 | `top_k` | Top-k sampling parameter |
 | `stop` | Stop sequences (defaults to model's stop sequences) |
 | `tools` | OpenAI-format tool definitions |
-
-## Injecting a custom SamplingClient
-
-After saving new weights during training, you can point the provider at a specific checkpoint:
-
-```python
-import tinker
-
-provider = register_litellm_provider()
-
-# Later, after saving weights...
-service = tinker.ServiceClient()
-new_sampler = service.create_sampling_client(base_model="Qwen/Qwen3-4B-Instruct-2507")
-provider.set_client("Qwen/Qwen3-4B-Instruct-2507", new_sampler)
-
-# Subsequent litellm calls will use the new sampler
-```
 
 ## Tool calling
 
