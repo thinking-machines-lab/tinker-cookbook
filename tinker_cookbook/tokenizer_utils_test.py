@@ -12,7 +12,9 @@ def _clear_cache() -> None:
 
 
 @patch("transformers.models.auto.tokenization_auto.AutoTokenizer")
-def test_kimi_k2_thinking_trusts_remote_code_without_env(mock_auto: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_kimi_k2_thinking_trusts_remote_code_without_env(
+    mock_auto: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Hardcoded Kimi models should pass trust_remote_code=True without the env var."""
     monkeypatch.delenv("HF_TRUST_REMOTE_CODE", raising=False)
     _get_hf_tokenizer("moonshotai/Kimi-K2-Thinking")
@@ -25,7 +27,9 @@ def test_kimi_k2_thinking_trusts_remote_code_without_env(mock_auto: MagicMock, m
 
 
 @patch("transformers.models.auto.tokenization_auto.AutoTokenizer")
-def test_kimi_k25_trusts_remote_code_without_env(mock_auto: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_kimi_k25_trusts_remote_code_without_env(
+    mock_auto: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Hardcoded Kimi K2.5 should pass trust_remote_code=True without the env var."""
     monkeypatch.delenv("HF_TRUST_REMOTE_CODE", raising=False)
     _get_hf_tokenizer("moonshotai/Kimi-K2.5")
@@ -38,7 +42,9 @@ def test_kimi_k25_trusts_remote_code_without_env(mock_auto: MagicMock, monkeypat
 
 
 @patch("transformers.models.auto.tokenization_auto.AutoTokenizer")
-def test_no_trust_remote_code_by_default(mock_auto: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_no_trust_remote_code_by_default(
+    mock_auto: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Without env var, generic models should NOT get trust_remote_code."""
     monkeypatch.delenv("HF_TRUST_REMOTE_CODE", raising=False)
     _get_hf_tokenizer("some-org/some-model")
@@ -50,7 +56,9 @@ def test_no_trust_remote_code_by_default(mock_auto: MagicMock, monkeypatch: pyte
 
 @pytest.mark.parametrize("env_value", ["1", "true", "TRUE", "yes", "Yes"])
 @patch("transformers.models.auto.tokenization_auto.AutoTokenizer")
-def test_env_var_enables_trust_remote_code(mock_auto: MagicMock, monkeypatch: pytest.MonkeyPatch, env_value: str) -> None:
+def test_env_var_enables_trust_remote_code(
+    mock_auto: MagicMock, monkeypatch: pytest.MonkeyPatch, env_value: str
+) -> None:
     """HF_TRUST_REMOTE_CODE env var should enable trust_remote_code for any model."""
     monkeypatch.setenv("HF_TRUST_REMOTE_CODE", env_value)
     _get_hf_tokenizer("some-org/some-model")
@@ -63,7 +71,9 @@ def test_env_var_enables_trust_remote_code(mock_auto: MagicMock, monkeypatch: py
 
 @pytest.mark.parametrize("env_value", ["0", "false", "no", ""])
 @patch("transformers.models.auto.tokenization_auto.AutoTokenizer")
-def test_env_var_falsy_values_do_not_enable(mock_auto: MagicMock, monkeypatch: pytest.MonkeyPatch, env_value: str) -> None:
+def test_env_var_falsy_values_do_not_enable(
+    mock_auto: MagicMock, monkeypatch: pytest.MonkeyPatch, env_value: str
+) -> None:
     """Falsy values for HF_TRUST_REMOTE_CODE should not enable trust_remote_code."""
     monkeypatch.setenv("HF_TRUST_REMOTE_CODE", env_value)
     _get_hf_tokenizer("some-org/some-model")
