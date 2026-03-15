@@ -471,17 +471,30 @@ class TinkerLiteLLMProvider(CustomLLM):
         bundle = self._get_or_create_client(base_model)
         sampling_params = _extract_sampling_params(optional_params)
 
+        coro = _sample_chat_completion(
+            sampling_client=bundle.sampling_client,
+            renderer=bundle.renderer,
+            messages=messages,
+            tools=optional_params.get("tools"),
+            model_name=model,
+            **sampling_params,
+        )
+
         try:
-            result = asyncio.get_event_loop().run_until_complete(
-                _sample_chat_completion(
-                    sampling_client=bundle.sampling_client,
-                    renderer=bundle.renderer,
-                    messages=messages,
-                    tools=optional_params.get("tools"),
-                    model_name=model,
-                    **sampling_params,
-                )
-            )
+            # If there's already a running event loop (e.g., Jupyter), use it.
+            # Otherwise, create a new one.
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop is not None and loop.is_running():
+                import concurrent.futures
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    result = pool.submit(asyncio.run, coro).result()
+            else:
+                result = asyncio.run(coro)
         except tinker.TinkerError as exc:
             raise _map_tinker_error(exc) from exc
 
