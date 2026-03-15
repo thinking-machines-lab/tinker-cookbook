@@ -11,7 +11,7 @@ from pathlib import Path
 
 import torch
 from safetensors.torch import save_file
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, PretrainedConfig
 
 from tinker_cookbook.weights import build_hf_model
 
@@ -24,7 +24,7 @@ GATE_FILL = 0.01
 UP_FILL = 0.05
 
 
-def _make_tiny_gpt_oss_config() -> AutoConfig:
+def _make_tiny_gpt_oss_config() -> PretrainedConfig:
     """Create a minimal GPT-OSS config (~26M params, <1s to instantiate)."""
     config = AutoConfig.from_pretrained("openai/gpt-oss-20b", trust_remote_code=True)
     config.num_hidden_layers = 1
@@ -34,11 +34,12 @@ def _make_tiny_gpt_oss_config() -> AutoConfig:
     config.num_attention_heads = 2
     config.num_key_value_heads = 2
     config.layer_types = ["full_attention"]
-    del config.quantization_config
+    if hasattr(config, "quantization_config"):
+        delattr(config, "quantization_config")
     return config
 
 
-def _save_model_to_disk(config: AutoConfig, path: Path) -> None:
+def _save_model_to_disk(config: PretrainedConfig, path: Path) -> None:
     model = AutoModelForCausalLM.from_config(config, trust_remote_code=True, dtype=torch.float32)
     model.save_pretrained(path)
     tok = AutoTokenizer.from_pretrained("openai/gpt-oss-20b", trust_remote_code=True)

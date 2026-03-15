@@ -15,6 +15,7 @@ from transformers import (
     AutoModelForImageTextToText,
     AutoProcessor,
     AutoTokenizer,
+    PreTrainedModel,
 )
 
 from tinker_cookbook.weights._merge import merge_adapter_weights
@@ -83,17 +84,10 @@ def build_hf_model(
         raise
 
 
-def _load_model(model_path: str) -> torch.nn.Module:
+def _load_model(model_path: str) -> PreTrainedModel:
     config = AutoConfig.from_pretrained(model_path)
     auto_cls = AutoModelForImageTextToText if "vision_config" in config else AutoModelForCausalLM
-    kwargs: dict = {"dtype": torch.bfloat16}
-    try:
-        import accelerate  # noqa: F401
-
-        kwargs["device_map"] = "auto"
-    except ImportError:
-        pass
-    return auto_cls.from_pretrained(model_path, **kwargs)
+    return auto_cls.from_pretrained(model_path, dtype=torch.bfloat16)
 
 
 def _load_adapter_weights(adapter_dir: Path) -> tuple[dict[str, torch.Tensor], dict]:
