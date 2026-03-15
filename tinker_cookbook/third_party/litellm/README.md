@@ -93,6 +93,17 @@ response = await litellm.acompletion(
 
 See [Saving and loading weights](https://tinker-docs.thinkingmachines.ai/save-load) for how to obtain checkpoint paths.
 
+### Custom Tinker deployments
+
+For private or non-default Tinker deployments, pass a pre-configured `ServiceClient`:
+
+```python
+import tinker
+
+service = tinker.ServiceClient(base_url="https://my-tinker.example.com")
+provider = register_litellm_provider(service_client=service)
+```
+
 ## Accessing raw tokens for training
 
 The key feature of this integration is token-level access for training workflows:
@@ -152,3 +163,19 @@ response = await litellm.acompletion(
 ## Sync and async
 
 Both `litellm.completion()` and `litellm.acompletion()` are supported.
+
+## API reference
+
+### `register_litellm_provider(*, service_client=None)`
+
+Register the Tinker provider with LiteLLM. Returns a provider instance.
+
+- **Idempotent** — safe to call multiple times; returns the same instance after the first call.
+- `service_client` (`tinker.ServiceClient | None`) — optional pre-configured client for custom deployments. If `None`, a default `ServiceClient` is created on first use. Ignored on subsequent calls.
+
+### `provider.set_client(sampling_client)`
+
+Inject a custom `SamplingClient` into the provider (e.g., for a fine-tuned checkpoint).
+
+- `sampling_client` (`tinker.SamplingClient`) — the client to use. The base model is read automatically via `sampling_client.get_base_model()` to resolve the correct renderer and tokenizer.
+- If a client bundle for that base model already exists, only the sampling client is replaced (renderer and tokenizer are reused).
