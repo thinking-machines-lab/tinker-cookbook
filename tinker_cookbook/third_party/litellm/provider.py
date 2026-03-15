@@ -484,14 +484,23 @@ class TinkerLiteLLMProvider(CustomLLM):
         return _build_model_response(result, model_response)
 
 
-def register_litellm_provider() -> TinkerLiteLLMProvider:
-    """Register the Tinker provider with LiteLLM. Call once at startup.
+_registered_provider: TinkerLiteLLMProvider | None = None
 
-    Returns the provider instance, which can be used to inject custom
-    SamplingClients via ``provider.set_client(base_model, client)``.
+
+def register_litellm_provider() -> TinkerLiteLLMProvider:
+    """Register the Tinker provider with LiteLLM.
+
+    Safe to call multiple times — returns the same provider instance after
+    the first call. Use the returned instance to inject custom SamplingClients
+    via ``provider.set_client(base_model, client)``.
     """
     import litellm
 
+    global _registered_provider
+    if _registered_provider is not None:
+        return _registered_provider
+
     provider = TinkerLiteLLMProvider()
     litellm.custom_provider_map.append({"provider": "tinker", "custom_handler": provider})
+    _registered_provider = provider
     return provider

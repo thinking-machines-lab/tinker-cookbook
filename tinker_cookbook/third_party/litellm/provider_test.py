@@ -389,17 +389,35 @@ class TestTinkerLiteLLMProvider:
     def test_register_adds_to_provider_map(self) -> None:
         import litellm
 
+        import tinker_cookbook.third_party.litellm.provider as provider_mod
         from tinker_cookbook.third_party.litellm import register_litellm_provider
 
-        original_len = len(litellm.custom_provider_map)
-        provider = register_litellm_provider()
-        assert len(litellm.custom_provider_map) == original_len + 1
-        entry = litellm.custom_provider_map[-1]
-        assert entry["provider"] == "tinker"
-        assert entry["custom_handler"] is provider
+        # Reset the singleton so we can test fresh registration
+        old_registered = provider_mod._registered_provider
+        provider_mod._registered_provider = None
 
-        # Clean up
-        litellm.custom_provider_map.pop()
+        provider = None
+        try:
+            original_len = len(litellm.custom_provider_map)
+            provider = register_litellm_provider()
+            assert len(litellm.custom_provider_map) == original_len + 1
+            entry = litellm.custom_provider_map[-1]
+            assert entry["provider"] == "tinker"
+            assert entry["custom_handler"] is provider
+
+            # Calling again returns the same instance without adding a duplicate
+            provider2 = register_litellm_provider()
+            assert provider2 is provider
+            assert len(litellm.custom_provider_map) == original_len + 1
+        finally:
+            # Clean up
+            if provider is not None:
+                litellm.custom_provider_map[:] = [
+                    e
+                    for e in litellm.custom_provider_map
+                    if e.get("custom_handler") is not provider
+                ]
+            provider_mod._registered_provider = old_registered
 
     def test_set_client_creates_bundle(self) -> None:
         from tinker_cookbook.third_party.litellm.provider import TinkerLiteLLMProvider
