@@ -5,8 +5,8 @@ https://thinkingmachines.ai/blog/on-policy-distillation
 
 import asyncio
 import logging
-import os
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Sequence, cast
 
 import chz
@@ -155,7 +155,7 @@ class Config:
     wandb_project: str | None = None
     wandb_name: str | None = None
 
-    log_path: str = chz.field(munger=lambda _, s: os.path.expanduser(s))
+    log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
     base_url: str | None = None
     enable_trace: bool = False
 
@@ -371,7 +371,7 @@ async def main(
         current_task = asyncio.current_task()
         if current_task is not None:
             current_task.set_name("main")
-        trace_events_path = os.path.join(cfg.log_path, "trace_events.jsonl")
+        trace_events_path = str(Path(cfg.log_path) / "trace_events.jsonl")
         logger.info(f"Tracing is enabled. Trace events will be saved to {trace_events_path}")
         logger.info(
             f"Run `python tinker_cookbook/utils/trace.py {trace_events_path} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"
