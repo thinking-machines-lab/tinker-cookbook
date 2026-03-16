@@ -1,4 +1,21 @@
-"""DeepSeek-specific mixed-precision export helpers."""
+"""DeepSeek-specific mixed-precision export helpers.
+
+This exporter has two separate, equally important problems to solve:
+
+1. Quantization selection: only routed expert MLP weights are quantized to FP8,
+   while dense, shared-expert, embedding, attention, and norm weights stay in
+   higher precision.
+2. Cross-shard dependencies: a weight tensor and the scale tensor needed to
+   interpret it are not guaranteed to live in the same safetensors shard.
+
+Export code therefore has to get both the quantization scope and the on-disk
+tensor placement right. It cannot assume "load one shard and all related
+tensors are nearby". Instead it must consult ``model.safetensors.index.json``
+and preserve the reference shard layout when re-emitting tensors.
+
+This module treats the reference index as the source of truth for on-disk tensor
+placement and uses it as the shard template during save.
+"""
 
 from __future__ import annotations
 
@@ -47,7 +64,12 @@ def save_deepseek_model(
     base_model: str,
     output_path: Path,
 ) -> None:
-    """Save a DeepSeek checkpoint with BF16 dense weights and FP8 routed experts."""
+    """Save a DeepSeek checkpoint with experts-only FP8 quantization.
+
+    Routed expert MLP weights are written as FP8 plus explicit scale tensors.
+    Dense and shared-expert weights remain in higher precision so the exported
+    checkpoint matches the intended "experts-only" quantization scope.
+    """
     logger.info("DeepSeek export: building mixed-precision state dict")
     state_dict = _build_mixed_precision_state_dict(hf_model)
 
@@ -78,6 +100,12 @@ def save_deepseek_model(
 
 
 def _build_mixed_precision_state_dict(hf_model: PreTrainedModel) -> dict[str, torch.Tensor]:
+    """Build the final mixed-precision checkpoint state dict.
+
+    Only ``model.layers.*.mlp.experts.*.{gate,up,down}_proj.weight`` tensors are
+    requantized to FP8. Other floating-point tensors remain BF16, except tensors
+    such as ``e_score_correction_bias`` that must stay FP32.
+    """
     state_dict = hf_model.state_dict()
     mixed_state_dict: dict[str, torch.Tensor] = {}
     routed_expert_keys = [key for key in state_dict if _is_routed_expert_weight(key)]
@@ -140,6 +168,11 @@ def _build_mixed_precision_state_dict(hf_model: PreTrainedModel) -> dict[str, to
 
 
 def _is_routed_expert_weight(key: str) -> bool:
+    """Return True only for routed expert projection weights.
+
+    This intentionally excludes shared experts and every non-expert tensor so
+    the export stays in the "quantize only routed experts" regime.
+    """
     return (
         ".mlp.experts." in key
         and ".shared_experts." not in key
@@ -206,6 +239,21 @@ def _save_state_dict(
     output_path: Path,
     metadata_dir: Path | None,
 ) -> None:
+    """Write tensors using the reference DeepSeek shard layout when available.
+
+    DeepSeek checkpoints cannot be reconstructed safely by assuming
+    shard-local tensor neighborhoods. A weight tensor and the scale tensor
+    needed to interpret it may live in different shards, so we consult
+    ``model.safetensors.index.json`` instead of inferring placement from
+    whichever file happened to be loaded.
+
+    For the routed-experts-only ``compressed-tensors`` export we do not have
+    reference ``.weight_scale`` entries in the upstream index, so we place each
+    emitted scale tensor in the shard of its corresponding weight. The important
+    compatibility guarantee is that we still use the reference ``weight_map`` as
+    the save template for the existing tensors and never repack shards
+    arbitrarily.
+    """
     if metadata_dir is None:
         logger.info("DeepSeek export: writing unsharded model.safetensors")
         save_file(_contiguous_state_dict(state_dict), str(output_path / "model.safetensors"))
@@ -217,6 +265,10 @@ def _save_state_dict(
         save_file(_contiguous_state_dict(state_dict), str(output_path / "model.safetensors"))
         return
 
+    # The reference index is the authoritative source for shard placement.
+    # DeepSeek weights and their related scale tensors are not guaranteed to be
+    # colocated, so the exporter must reason from the global index rather than
+    # shard-local state.
     weight_map = json.loads(index_path.read_text())["weight_map"]
     if not weight_map:
         logger.info("DeepSeek export: empty metadata index, writing unsharded model.safetensors")
@@ -230,6 +282,10 @@ def _save_state_dict(
     for key in sorted(state_dict):
         shard_name = weight_map.get(key)
         if shard_name is None and key.endswith(".weight_scale"):
+            # ``compressed-tensors`` uses ``.weight_scale`` names that do not
+            # exist in the upstream DeepSeek FP8 index. We therefore anchor the
+            # emitted scale tensor to the reference shard of its corresponding
+            # weight instead of inventing a new shard layout.
             shard_name = weight_map.get(key.removesuffix(".weight_scale") + ".weight")
         if shard_name is None:
             shard_name = default_shard
@@ -348,6 +404,13 @@ def _copy_custom_files(
 
 
 def _resolve_metadata_dir(base_model: str) -> Path | None:
+    """Resolve a directory that provides the reference DeepSeek shard/index metadata.
+
+    We fetch metadata even for local merge inputs because the real DeepSeek
+    shard topology often lives in the upstream snapshot. Preserving that
+    topology avoids introducing layout drift when exporting mixed-precision
+    checkpoints.
+    """
     base_model_path = Path(base_model).expanduser()
     if base_model_path.is_dir():
         local_dir = base_model_path.resolve()
