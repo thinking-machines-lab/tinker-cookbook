@@ -439,8 +439,18 @@ def _expand_expert_lora_tensors(
     lora_B: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     if lora_A.shape[0] == 1:
+        if lora_B.shape[0] <= 1:
+            raise ValueError(
+                "Cannot broadcast expert LoRA: both A and B have 1 expert "
+                f"(lora_A: {lora_A.shape}, lora_B: {lora_B.shape})"
+            )
         lora_A = lora_A.expand(lora_B.shape[0], -1, -1)
     elif lora_B.shape[0] == 1:
+        if lora_A.shape[0] <= 1:
+            raise ValueError(
+                "Cannot broadcast expert LoRA: both A and B have 1 expert "
+                f"(lora_A: {lora_A.shape}, lora_B: {lora_B.shape})"
+            )
         lora_B = lora_B.expand(lora_A.shape[0], -1, -1)
     return lora_A, lora_B
 

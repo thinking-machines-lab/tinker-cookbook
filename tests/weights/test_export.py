@@ -623,6 +623,14 @@ def test_deepseek_blockwise_quantization_matches_naive_reference(monkeypatch):
     assert torch.equal(quantized.view(torch.uint8), expected_quantized.view(torch.uint8))
 
 
+def test_deepseek_expert_lora_broadcast_rejects_single_single():
+    lora_A = torch.ones((1, 2, 3), dtype=torch.float32)
+    lora_B = torch.ones((1, 4, 2), dtype=torch.float32)
+
+    with pytest.raises(ValueError, match="both A and B have 1 expert"):
+        deepseek_export._expand_expert_lora_tensors(lora_A, lora_B)
+
+
 class TestDeepSeekV31SeparateExperts:
     """DeepSeek V3.1: dense weights stay BF16 while routed experts should be FP8."""
 
