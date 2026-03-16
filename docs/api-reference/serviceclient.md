@@ -267,4 +267,3 @@ rest_client.publish_checkpoint_from_tinker_path(
     "tinker://run-id/weights/checkpoint-001"
 ).result()
 ```
-

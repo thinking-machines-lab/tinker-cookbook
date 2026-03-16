@@ -944,4 +944,3 @@ A file/directory name for the weights
 #### `ttl_seconds`
 
 TTL in seconds for this checkpoint (None = never expires)
-

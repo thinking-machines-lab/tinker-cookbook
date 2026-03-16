@@ -165,4 +165,3 @@ Serializes into a ``_SamplingClientPickleState`` dataclass. The
 bool flag is stored. The unpickled copy creates its own handle via
 the per-process sidecar singleton. Do not add ``__getstate__``
 without preserving this behavior.
-
