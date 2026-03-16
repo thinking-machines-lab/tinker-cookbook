@@ -56,7 +56,7 @@ Evaluates the policy on a held-out test set of environments:
 The cookbook integrates with [Inspect AI](https://inspect.ai) for standard benchmarks:
 
 ```python
-from tinker_cookbook.evals.inspect_eval import InspectAPIFromTinkerSampling
+from tinker_cookbook.eval.inspect_utils import InspectAPIFromTinkerSampling
 
 # Create an Inspect evaluator that uses Tinker sampling
 evaluator = InspectAPIFromTinkerSampling(

@@ -110,17 +110,21 @@ Open `train_iteration_NNNNNN.html` in a browser for a human-readable view of rol
 ### Scalar metrics
 
 ```python
-from tinker_cookbook.utils.ml_log import log_metrics
+from tinker_cookbook.utils import ml_log
 
-log_metrics({"train/loss": 0.5, "eval/accuracy": 0.85}, step=100)
+# Set up logging (done once in training scripts)
+ml_logger = ml_log.setup_logging(log_path="/tmp/my_run", wandb_project=None, wandb_name=None)
+
+# Log scalar metrics
+ml_logger.log_metrics({"train/loss": 0.5, "eval/accuracy": 0.85}, step=100)
 ```
 
 ### Logtree (structured transcripts)
 
 ```python
-from tinker_cookbook.utils.logtree import scope
+from tinker_cookbook.utils import logtree
 
-with scope("my_section"):
+with logtree.scope_header("my_section"):
     # Nested logging of rollouts, grading, etc.
     ...
 ```

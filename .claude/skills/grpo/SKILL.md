@@ -21,7 +21,7 @@ Read these files for patterns:
 - `tinker_cookbook/recipes/rl_basic.py` — Minimal RL example (GSM8K)
 - `tinker_cookbook/recipes/math_rl/train.py` — Full math RL with multiple environments and loss functions
 - `tinker_cookbook/recipes/code_rl/train.py` — Code generation RL with sandbox execution
-- `tinker_cookbook/recipes/if_rl/train.py` — Instruction-following RL
+- `tinker_cookbook/recipes/rubric/train.py` — Rubric-graded RL with LLM scoring
 - `tinker_cookbook/rl/train.py` — Core RL training loop
 - `tinker_cookbook/rl/types.py` — Env, EnvGroupBuilder, RLDatasetBuilder
 - `docs/rl/rl-basic.mdx` — Getting started
@@ -38,7 +38,7 @@ RL requires an environment that produces rewards. Key patterns:
 - `ArithmeticDatasetBuilder` — Simple arithmetic
 - `DeepMathDatasetBuilder`, `PolarisDatasetBuilder` — Advanced math
 - `DeepCoderDatasetBuilder` — Code generation with sandbox
-- `IFBenchDatasetBuilder` — Instruction following
+- `RubricDatasetBuilder` — Rubric-graded tasks
 
 **Custom environments:**
 Implement the `Env` protocol from `tinker_cookbook/rl/types.py`. Key points:
