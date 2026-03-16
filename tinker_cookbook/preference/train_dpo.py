@@ -4,8 +4,8 @@ Direct Preference Optimization (DPO) training
 
 import asyncio
 import logging
-import os
 import time
+from pathlib import Path
 from typing import cast
 
 import chz
@@ -30,7 +30,7 @@ class Config:
     """Configuration for Direct Preference Optimization (DPO) training."""
 
     # Required parameters
-    log_path: str = chz.field(munger=lambda _, s: os.path.expanduser(s))
+    log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
     model_name: str
     dataset_builder: ChatDatasetBuilder
     load_checkpoint_path: str | None = None
