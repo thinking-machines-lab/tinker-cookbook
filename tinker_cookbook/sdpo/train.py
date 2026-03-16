@@ -26,7 +26,8 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Sequence, cast
+from collections.abc import Sequence
+from typing import cast
 
 import chz
 import tinker
