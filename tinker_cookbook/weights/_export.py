@@ -91,8 +91,10 @@ def build_hf_model(
 
     try:
         logger.info("Loading base model: %s (dtype=%s)", base_model, dtype)
+        config = AutoConfig.from_pretrained(base_model, trust_remote_code=resolved_trust)
+        is_vision = "vision_config" in config
         hf_model = _load_model(
-            base_model, torch_dtype=torch_dtype, trust_remote_code=resolved_trust
+            config, base_model, torch_dtype=torch_dtype, trust_remote_code=resolved_trust
         )
 
         logger.info("Merging adapter weights")
@@ -104,14 +106,19 @@ def build_hf_model(
         tokenizer = AutoTokenizer.from_pretrained(base_model, trust_remote_code=resolved_trust)
         tokenizer.save_pretrained(out)
 
-        try:
-            processor = AutoProcessor.from_pretrained(base_model, trust_remote_code=resolved_trust)
-            processor.save_pretrained(out)
-        except (ValueError, KeyError, OSError):
-            # No processor for this model — expected for text-only models
-            # and some VL models that have a processor but can't load it
-            # from a from_config-generated checkpoint
-            pass
+        if is_vision:
+            try:
+                processor = AutoProcessor.from_pretrained(
+                    base_model, trust_remote_code=resolved_trust
+                )
+                processor.save_pretrained(out)
+            except (OSError, ValueError) as e:
+                logger.warning(
+                    "Could not load processor for vision model %s: %s. "
+                    "You may need to copy the processor files manually.",
+                    base_model,
+                    e,
+                )
 
         logger.info("Done — merged model saved to %s", out)
     except Exception:
@@ -125,12 +132,12 @@ def build_hf_model(
 
 
 def _load_model(
+    config: AutoConfig,
     model_path: str,
     *,
     torch_dtype: torch.dtype,
     trust_remote_code: bool,
 ) -> PreTrainedModel:
-    config = AutoConfig.from_pretrained(model_path, trust_remote_code=trust_remote_code)
     auto_cls = AutoModelForImageTextToText if "vision_config" in config else AutoModelForCausalLM
     return auto_cls.from_pretrained(
         model_path, dtype=torch_dtype, trust_remote_code=trust_remote_code
