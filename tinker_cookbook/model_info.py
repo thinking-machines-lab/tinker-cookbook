@@ -19,6 +19,7 @@ _DEEPSEEKV3 = ("deepseekv3", "deepseekv3_thinking")
 _GPT_OSS = ("gpt_oss_no_sysprompt", "gpt_oss_medium_reasoning")
 _KIMI_K2 = ("kimi_k2",)
 _KIMI_K25 = ("kimi_k25", "kimi_k25_disable_thinking")
+_NEMOTRON3 = ("nemotron3", "nemotron3_disable_thinking")
 
 
 @dataclass
@@ -106,6 +107,19 @@ def get_moonshot_info() -> dict[str, ModelAttributes]:
     }
 
 
+@cache
+def get_nvidia_info() -> dict[str, ModelAttributes]:
+    org = "nvidia"
+    return {
+        "NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": ModelAttributes(
+            org, "3", "30B-A3B", True, _NEMOTRON3
+        ),
+        "NVIDIA-Nemotron-3-Super-120B-A12B-FP8": ModelAttributes(
+            org, "3", "120B-A12B", True, _NEMOTRON3
+        ),
+    }
+
+
 def get_model_attributes(model_name: str) -> ModelAttributes:
     model_name = model_name.split(":")[0]
     org, model_version_full = model_name.split("/")
@@ -120,6 +134,8 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
         return get_gpt_oss_info()[model_version_full]
     elif org == "moonshotai":
         return get_moonshot_info()[model_version_full]
+    elif org == "nvidia":
+        return get_nvidia_info()[model_version_full]
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
