@@ -1,12 +1,15 @@
 """Renderer for Moonshot AI's Kimi K2.5 models."""
 
-import tinker
+from collections.abc import Iterator
 from typing import cast
+
+import tinker
 from tinker_cookbook.renderers.base import (
     Message,
     ContentPart,
     ImageProcessorProtocol,
     image_to_chunk,
+    MessageDelta,
     Role,
     ToolSpec,
 )
@@ -34,6 +37,8 @@ class KimiK25Renderer(KimiK2Renderer):
     """
 
     image_processor: ImageProcessor | None
+    _think_open_token: int
+    _think_close_token: int
 
     def __init__(
         self,
@@ -43,6 +48,8 @@ class KimiK25Renderer(KimiK2Renderer):
     ):
         super().__init__(tokenizer, strip_thinking_from_history=strip_thinking_from_history)
         self.image_processor = image_processor
+        (self._think_open_token,) = self.tokenizer.encode("<think>", add_special_tokens=False)
+        (self._think_close_token,) = self.tokenizer.encode("</think>", add_special_tokens=False)
 
     def _encode_multipart_content(self, content: list[ContentPart]) -> list[tinker.ModelInputChunk]:
         chunks = []
@@ -86,6 +93,22 @@ class KimiK25Renderer(KimiK2Renderer):
         if prefill is None:
             prefill = "<think>"
         return super().build_generation_prompt(messages, role=role, prefill=prefill)
+
+    def _normalize_response_tokens(self, response: list[int]) -> list[int]:
+        """Restore the synthetic <think> prefill before parsing sampled tokens."""
+        if (
+            response
+            and response[0] != self._think_open_token
+            and self._think_close_token in response
+        ):
+            return [self._think_open_token, *response]
+        return response
+
+    def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+        return super().parse_response(self._normalize_response_tokens(response))
+
+    def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
+        yield from super().parse_response_streaming(self._normalize_response_tokens(response))
 
     def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""

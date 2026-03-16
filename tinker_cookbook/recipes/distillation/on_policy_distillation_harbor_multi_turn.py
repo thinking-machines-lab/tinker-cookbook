@@ -95,8 +95,7 @@ class CLIConfig:
     # Service configuration
     base_url: str | None = None
 
-    # Maximum training steps (None = full dataset)
-    max_step: int | None = None
+    max_steps: int | None = None
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
@@ -175,7 +174,7 @@ async def cli_main(cli_config: CLIConfig):
         load_checkpoint_path=cli_config.load_checkpoint_path,
         eval_every=cli_config.eval_every,
         save_every=cli_config.save_every,
-        max_step=cli_config.max_step,
+        max_steps=cli_config.max_steps,
     )
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)

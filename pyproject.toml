@@ -67,6 +67,9 @@ inspect = [
     "inspect-evals>=0.3.106",
     "instruction-following-eval",
 ]
+litellm = [
+    "litellm",
+]
 all = [
     "tinker_cookbook[vector-search]",
     "tinker_cookbook[wandb]",
@@ -74,6 +77,7 @@ all = [
     "tinker_cookbook[trackio]",
     "tinker_cookbook[verifiers]",
     "tinker_cookbook[inspect]",
+    "tinker_cookbook[litellm]",
 ]
 
 [build-system]
@@ -88,6 +92,10 @@ exclude = ["*_test.py"]
 testpaths = ["tinker_cookbook", "tests"]
 python_files = ["*_test.py", "test_*.py"]
 norecursedirs = ["tinker_cookbook/scripts"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests requiring TINKER_API_KEY and network access",
+]
 
 [tool.ruff]
 line-length = 100

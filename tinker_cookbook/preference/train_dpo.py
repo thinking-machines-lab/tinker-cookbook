@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 import time
-from typing import Any, cast
+from typing import cast
 
 import chz
 import tinker
@@ -70,10 +70,13 @@ class Config:
     # DPO-specific parameters
     reference_model_name: str | None = None
 
+    # Maximum number of training steps. If None, train for num_epochs * n_batches.
+    max_steps: int | None = None
+
 
 def create_dpo_clients(
     config: Config,
-    resume_info: dict[str, Any] | None = None,
+    resume_info: checkpoint_utils.CheckpointRecord | None = None,
     user_metadata: dict[str, str] | None = None,
 ) -> tuple[tinker.TrainingClient, tinker.SamplingClient]:
     """Create and configure the training client and reference sampling client for DPO.
@@ -91,25 +94,30 @@ def create_dpo_clients(
     """
     # Create shared service client for both training and reference clients
     service_client = tinker.ServiceClient(base_url=config.base_url)
-    training_client = service_client.create_lora_training_client(
-        base_model=config.model_name, rank=config.lora_rank, user_metadata=user_metadata
-    )
 
-    # Load state - differentiate between resuming DPO training vs starting fresh from SFT
     if resume_info:
-        # Resuming interrupted DPO training - load optimizer state for proper continuation
+        # Resuming interrupted DPO training - load weights + optimizer state
+        assert resume_info.state_path is not None
         checkpoint_utils.check_renderer_name_for_checkpoint(
-            service_client, resume_info["state_path"], config.renderer_name
+            service_client, resume_info.state_path, config.renderer_name
         )
-        training_client.load_state_with_optimizer(resume_info["state_path"]).result()
-        logger.info(f"Resumed DPO training from {resume_info['state_path']}")
+        training_client = service_client.create_training_client_from_state_with_optimizer(
+            resume_info.state_path, user_metadata=user_metadata
+        )
+        logger.info(f"Resumed DPO training from {resume_info.state_path}")
     elif config.load_checkpoint_path:
-        # Starting fresh DPO from SFT checkpoint - load weights only (fresh optimizer)
+        # Starting fresh DPO from checkpoint - load weights only (fresh optimizer)
         checkpoint_utils.check_renderer_name_for_checkpoint(
             service_client, config.load_checkpoint_path, config.renderer_name
         )
-        training_client.load_state(config.load_checkpoint_path).result()
+        training_client = service_client.create_training_client_from_state(
+            config.load_checkpoint_path, user_metadata=user_metadata
+        )
         logger.info(f"Loaded weights from {config.load_checkpoint_path}")
+    else:
+        training_client = service_client.create_lora_training_client(
+            base_model=config.model_name, rank=config.lora_rank, user_metadata=user_metadata
+        )
     # Create a sampling client for the reference model from the training client
     reference_client = training_client.save_weights_and_get_sampling_client("reference")
     return training_client, reference_client
@@ -331,8 +339,8 @@ def main(config: Config):
     """Main training function that runs the complete DPO training process."""
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     if resume_info:
-        start_epoch = resume_info["epoch"]
-        start_batch = resume_info["batch"]
+        start_epoch = resume_info.epoch or 0
+        start_batch = resume_info.batch
     else:
         start_epoch = 0
         start_batch = 0
@@ -356,6 +364,8 @@ def main(config: Config):
     dataset, maybe_test_dataset = config.dataset_builder()
     n_batches = len(dataset)
     total_steps = n_batches * config.num_epochs
+    if config.max_steps is not None:
+        total_steps = min(total_steps, config.max_steps)
 
     evaluators = [evaluator() for evaluator in config.evaluator_builders]
     infrequent_evaluators = [evaluator() for evaluator in config.infrequent_evaluator_builders]
@@ -364,12 +374,17 @@ def main(config: Config):
     )
 
     # Training loop
+    reached_max_steps = False
     for epoch_idx in range(start_epoch, config.num_epochs):
         # Shuffle the dataset
         logger.info(msg=f"Starting epoch {epoch_idx}")
         dataset.set_epoch(seed=epoch_idx)
 
         for batch_idx in range(start_batch if epoch_idx == start_epoch else 0, n_batches):
+            step = epoch_idx * n_batches + batch_idx
+            if config.max_steps is not None and step >= config.max_steps:
+                reached_max_steps = True
+                break
             do_update(
                 epoch_idx=epoch_idx,
                 batch_idx=batch_idx,
@@ -385,16 +400,21 @@ def main(config: Config):
                 log_path=config.log_path,
                 tokenizer=tokenizer,
             )
+        if reached_max_steps:
+            break
 
     # Save final checkpoint if training actually happened
-    if start_epoch < config.num_epochs:
+    did_train = start_epoch < config.num_epochs and (
+        config.max_steps is None or start_epoch * n_batches + start_batch < config.max_steps
+    )
+    if did_train:
         checkpoint_utils.save_checkpoint(
             training_client=training_client,
             name="final",
             log_path=config.log_path,
             kind="both",
-            loop_state={"epoch": config.num_epochs, "batch": n_batches},
-            ttl_seconds=config.ttl_seconds,
+            loop_state={"epoch": config.num_epochs, "batch": 0},
+            ttl_seconds=None,
         )
     else:
         logger.info("Training was already complete; nothing to do")

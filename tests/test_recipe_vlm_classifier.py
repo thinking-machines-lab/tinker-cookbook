@@ -1,6 +1,9 @@
+import pytest
+
 from tests.helpers import run_recipe
 
 
+@pytest.mark.integration
 def test_vlm_classifier():
     run_recipe(
         "tinker_cookbook.recipes.vlm_classifier.train",
@@ -10,7 +13,6 @@ def test_vlm_classifier():
             "batch_size=16",
             "num_epochs=1",
             "n_eval=16",
-            "eval_every=0",
             "behavior_if_log_dir_exists=delete",
         ],
     )

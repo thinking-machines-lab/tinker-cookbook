@@ -79,6 +79,8 @@ class ExperimentConfig:
 
     n_eval: int = 128
 
+    max_steps: int | None = None
+
 
 def run_experiment(experiment_config: ExperimentConfig):
     """
@@ -148,6 +150,7 @@ def run_experiment(experiment_config: ExperimentConfig):
         save_every=experiment_config.save_every,
         eval_every=experiment_config.eval_every,
         infrequent_eval_every=experiment_config.infrequent_eval_every,
+        max_steps=experiment_config.max_steps,
     )
 
     asyncio.run(train.main(config))

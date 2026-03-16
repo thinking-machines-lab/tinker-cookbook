@@ -421,6 +421,9 @@ class Config:
     num_groups_to_log: int = 4  # Number of groups to log per iteration (0 = disable logging)
     rollout_json_export: bool = True
 
+    # Maximum number of training iterations. If None, train on the full dataset.
+    max_steps: int | None = None
+
 
 @scope
 async def run_single_evaluation(
@@ -1309,7 +1312,7 @@ async def main(
 
     resume_info = checkpoint_utils.get_last_checkpoint(cfg.log_path)
     if resume_info:
-        start_batch = resume_info["batch"]
+        start_batch = resume_info.batch
     else:
         start_batch = 0
 
@@ -1322,14 +1325,14 @@ async def main(
     if resume_info:
         # Resuming interrupted training - load optimizer state for proper continuation
         await checkpoint_utils.check_renderer_name_for_checkpoint_async(
-            service_client, resume_info["state_path"], cfg.renderer_name
+            service_client, resume_info.state_path, cfg.renderer_name
         )
         training_client = (
             await service_client.create_training_client_from_state_with_optimizer_async(
-                resume_info["state_path"], user_metadata=user_metadata
+                resume_info.state_path, user_metadata=user_metadata
             )
         )
-        logger.info(f"Resumed training from {resume_info['state_path']}")
+        logger.info(f"Resumed training from {resume_info.state_path}")
     elif cfg.load_checkpoint_path:
         # Starting fresh from a checkpoint - load weights only (fresh optimizer)
         await checkpoint_utils.check_renderer_name_for_checkpoint_async(
@@ -1354,7 +1357,8 @@ async def main(
         evaluators.append(RLTestSetEvaluator(maybe_test_dataset, max_tokens=cfg.max_tokens))
 
     num_batches = len(dataset)
-    logger.info(f"Will train on {num_batches} batches")
+    end_batch = min(cfg.max_steps, num_batches) if cfg.max_steps is not None else num_batches
+    logger.info(f"Will train on {end_batch} batches")
 
     # Create KL reference client once if KL penalty is enabled
     if cfg.kl_penalty_coef > 0:
@@ -1376,8 +1380,8 @@ async def main(
         training_func = do_sync_training
     await training_func(
         start_batch=start_batch,
-        end_batch=num_batches,
-        num_batches=num_batches,
+        end_batch=end_batch,
+        num_batches=end_batch,
         cfg=cfg,
         training_client=training_client,
         kl_reference_client=kl_reference_client,
@@ -1388,13 +1392,13 @@ async def main(
     )
 
     # Save final checkpoint
-    if start_batch < num_batches:
+    if start_batch < end_batch:
         _ = await checkpoint_utils.save_checkpoint_async(
             training_client=training_client,
             name="final",
             log_path=cfg.log_path,
             kind="both",
-            loop_state={"batch": num_batches},
+            loop_state={"batch": end_batch},
             ttl_seconds=None,
         )
     else:

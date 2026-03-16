@@ -28,7 +28,11 @@ from typing import Any
 import chz
 import tinker
 
-from tinker_cookbook.checkpoint_utils import get_last_checkpoint, load_checkpoints_file
+from tinker_cookbook.checkpoint_utils import (
+    CheckpointRecord,
+    get_last_checkpoint,
+    load_checkpoints_file,
+)
 from tinker_cookbook.recipes.vlm_classifier.eval import get_evaluator_builder
 
 
@@ -40,7 +44,7 @@ def get_checkpoint_at_step(
     log_dir: str,
     step: int,
     required_key: str = "sampler_path",
-) -> dict[str, Any] | None:
+) -> CheckpointRecord | None:
     """
     Get the checkpoint at a specific step from the checkpoints.jsonl file.
 
@@ -54,7 +58,7 @@ def get_checkpoint_at_step(
     """
     checkpoints = load_checkpoints_file(log_dir)
     for checkpoint in checkpoints:
-        if checkpoint.get("batch") == step and required_key in checkpoint:
+        if checkpoint.batch == step and checkpoint.has(required_key):
             logger.info(f"Found checkpoint at step {step}: {checkpoint}")
             return checkpoint
     logger.warning(f"No checkpoint found at step {step} with key '{required_key}' in {log_dir}")
@@ -185,11 +189,11 @@ async def evaluate_experiment(
         max_image_size=eval_config.max_image_size,
     )
 
-    sampling_client = service_client.create_sampling_client(model_path=checkpoint["sampler_path"])
+    sampling_client = service_client.create_sampling_client(model_path=checkpoint.sampler_path)
     metrics = await evaluator_builder()(sampling_client)  # type: ignore[arg-type]
     return {
         "experiment_name": experiment_name,
-        "checkpoint_step": checkpoint.get("step"),
+        "checkpoint_step": checkpoint.batch,
         **metrics,
         **hyperparams,
     }

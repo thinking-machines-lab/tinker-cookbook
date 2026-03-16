@@ -30,6 +30,8 @@ class CLIConfig:
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
+    max_steps: int | None = None
+
 
 def cli_main(cli_config: CLIConfig):
     model_name = cli_config.model_name
@@ -63,6 +65,7 @@ def cli_main(cli_config: CLIConfig):
         compute_post_kl=True,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
+        max_steps=cli_config.max_steps,
     )
 
     # Avoid clobbering log dir from your previous run:
