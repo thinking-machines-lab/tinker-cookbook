@@ -234,6 +234,13 @@ def _tensor_nbytes(tensor: torch.Tensor) -> int:
     return tensor.numel() * tensor.element_size()
 
 
+def _load_saved_shard_membership(output_path: Path) -> dict[str, set[str]]:
+    membership: dict[str, set[str]] = {}
+    for shard_path in sorted(output_path.glob("*.safetensors")):
+        membership[shard_path.name] = set(load_file(str(shard_path)).keys())
+    return membership
+
+
 def _reshard_saved_model(
     model_path: Path,
     *,
@@ -587,7 +594,7 @@ class TestDeepSeekV31SeparateExperts:
                 gate_keys = [f"model.layers.0.mlp.experts.{i}.gate_proj.weight" for i in range(num_experts)]
                 up_keys = [f"model.layers.0.mlp.experts.{i}.up_proj.weight" for i in range(num_experts)]
 
-                reference_weight_map = _reshard_saved_model(
+                _reshard_saved_model(
                     model_path,
                     shard_assignments={
                         dense_key: "model-00001-of-00002.safetensors",
@@ -613,6 +620,7 @@ class TestDeepSeekV31SeparateExperts:
                 )
                 saved_sd = _load_saved_state_dict(output_path)
                 saved_index = _load_saved_index(output_path)
+                shard_membership = _load_saved_shard_membership(output_path)
                 saved_config = json.loads((output_path / "config.json").read_text())
 
                 assert (output_path / "configuration_deepseek.py").exists(), (
@@ -629,9 +637,6 @@ class TestDeepSeekV31SeparateExperts:
                 assert dense_delta > 0, "Dense non-expert q_a_proj weight was not updated"
                 assert saved_sd[dense_key].dtype == torch.bfloat16, (
                     "Dense non-expert q_a_proj should remain higher precision (BF16)"
-                )
-                assert saved_index["weight_map"][dense_key] == reference_weight_map[dense_key], (
-                    "Dense non-expert tensors should keep the reference shard placement"
                 )
 
                 for i in range(num_experts):
@@ -657,31 +662,10 @@ class TestDeepSeekV31SeparateExperts:
                     assert saved_sd[up_scale_key].dtype == torch.float32, (
                         f"Routed expert scale tensor should be stored as float32: {up_scale_key}"
                     )
-                    assert saved_index["weight_map"][gate_key] == reference_weight_map[gate_key], (
-                        "Routed expert weights should preserve the reference shard layout"
-                    )
-                    assert saved_index["weight_map"][up_key] == reference_weight_map[up_key], (
-                        "Routed expert weights should preserve the reference shard layout"
-                    )
-                    assert saved_index["weight_map"][gate_scale_key] == reference_weight_map[
-                        gate_key
-                    ], (
-                        "Emitted gate scale tensors should be colocated with their routed "
-                        "expert weights"
-                    )
-                    assert saved_index["weight_map"][up_scale_key] == reference_weight_map[
-                        up_key
-                    ], (
-                        "Emitted up scale tensors should be colocated with their routed "
-                        "expert weights"
-                    )
 
                 assert saved_sd[shared_expert_key].dtype == torch.bfloat16, (
                     "Shared expert weights should remain higher precision (BF16)"
                 )
-                assert saved_index["weight_map"][shared_expert_key] == reference_weight_map[
-                    shared_expert_key
-                ], "Shared expert tensors should keep the reference shard placement"
                 assert any(
                     "weight_scale" in key and ".mlp.experts." in key for key in saved_sd
                 ), "Expected routed-expert FP8 scale tensors in saved checkpoint"
@@ -689,6 +673,22 @@ class TestDeepSeekV31SeparateExperts:
                     "Experts-only export should emit compressed-tensors .weight_scale tensors, "
                     "not DeepSeek-native .weight_scale_inv tensors"
                 )
+
+                saved_weight_map = saved_index["weight_map"]
+                assert set(saved_weight_map) == set(saved_sd), (
+                    "model.safetensors.index.json should cover every emitted tensor exactly once"
+                )
+                assert saved_index["metadata"]["total_size"] == sum(
+                    _tensor_nbytes(tensor) for tensor in saved_sd.values()
+                ), "Index total_size should match the actual emitted tensors"
+                assert set(saved_weight_map.values()) == set(shard_membership), (
+                    "Every shard referenced by the index should exist, and every emitted shard "
+                    "should be referenced by the index"
+                )
+                for tensor_name, shard_name in saved_weight_map.items():
+                    assert tensor_name in shard_membership[shard_name], (
+                        f"Index incorrectly maps {tensor_name} to {shard_name}"
+                    )
 
                 compression_config = saved_config.get("compression_config")
                 assert "quantization_config" not in saved_config, (

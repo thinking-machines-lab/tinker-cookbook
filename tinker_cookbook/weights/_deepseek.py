@@ -1,20 +1,17 @@
 """DeepSeek-specific mixed-precision export helpers.
 
-This exporter has two separate, equally important problems to solve:
+This exporter has two jobs:
 
 1. Quantization selection: only routed expert MLP weights are quantized to FP8,
    while dense, shared-expert, embedding, attention, and norm weights stay in
    higher precision.
-2. Cross-shard dependencies: a weight tensor and the scale tensor needed to
-   interpret it are not guaranteed to live in the same safetensors shard.
+2. Checkpoint packaging: the final checkpoint may be repacked into a new shard
+   layout, but the emitted ``model.safetensors.index.json`` must remain the
+   authoritative description of what was written to disk.
 
-Export code therefore has to get both the quantization scope and the on-disk
-tensor placement right. It cannot assume "load one shard and all related
-tensors are nearby". Instead it must consult ``model.safetensors.index.json``
-and preserve the reference shard layout when re-emitting tensors.
-
-This module treats the reference index as the source of truth for on-disk tensor
-placement and uses it as the shard template during save.
+The upstream DeepSeek snapshot is still useful as metadata input because it can
+provide custom Python files and a reasonable target shard count. The saved
+artifact itself, however, is defined by the newly written shards and index.
 """
 
 from __future__ import annotations
@@ -24,10 +21,10 @@ import json
 import logging
 import math
 import shutil
-from collections import defaultdict
 from pathlib import Path
 
 import torch
+from huggingface_hub import split_torch_state_dict_into_shards
 from huggingface_hub import snapshot_download
 from safetensors.torch import save_file
 from transformers import PreTrainedModel
@@ -90,7 +87,9 @@ def save_deepseek_model(
     if metadata_dir is not None:
         logger.info("DeepSeek export: using metadata from %s", metadata_dir)
     else:
-        logger.info("DeepSeek export: no metadata snapshot found, writing unsharded checkpoint")
+        logger.info(
+            "DeepSeek export: no metadata snapshot found, using default shard sizing"
+        )
 
     logger.info("DeepSeek export: saving config files")
     hf_model.config.save_pretrained(output_path)
@@ -255,96 +254,28 @@ def _save_state_dict(
     output_path: Path,
     metadata_dir: Path | None,
 ) -> dict[str, str]:
-    """Write tensors using the reference DeepSeek shard layout when available.
+    """Write tensors into a repacked shard layout with a fresh index.
 
-    DeepSeek checkpoints cannot be reconstructed safely by assuming
-    shard-local tensor neighborhoods. A weight tensor and the scale tensor
-    needed to interpret it may live in different shards, so we consult
-    ``model.safetensors.index.json`` instead of inferring placement from
-    whichever file happened to be loaded.
-
-    For the routed-experts-only ``compressed-tensors`` export we do not have
-    reference ``.weight_scale`` entries in the upstream index, so we place each
-    emitted scale tensor in the shard of its corresponding weight. The important
-    compatibility guarantee is that we still use the reference ``weight_map`` as
-    the save template for the existing tensors and never repack shards
-    arbitrarily.
+    The saved shard boundaries do not need to match the upstream checkpoint.
+    Compatibility comes from writing an index whose ``weight_map`` and metadata
+    exactly describe the shard files produced here.
     """
-    if metadata_dir is None:
-        logger.info("DeepSeek export: writing unsharded model.safetensors")
-        shard_name = "model.safetensors"
-        save_file(_contiguous_state_dict(state_dict), str(output_path / shard_name))
-        return {key: shard_name for key in state_dict}
-
-    index_path = metadata_dir / "model.safetensors.index.json"
-    if not index_path.exists():
-        logger.info("DeepSeek export: metadata index missing, writing unsharded model.safetensors")
-        shard_name = "model.safetensors"
-        save_file(_contiguous_state_dict(state_dict), str(output_path / shard_name))
-        return {key: shard_name for key in state_dict}
-
-    # The reference index is the authoritative source for shard placement.
-    # DeepSeek weights and their related scale tensors are not guaranteed to be
-    # colocated, so the exporter must reason from the global index rather than
-    # shard-local state.
-    weight_map = json.loads(index_path.read_text())["weight_map"]
-    if not weight_map:
-        logger.info("DeepSeek export: empty metadata index, writing unsharded model.safetensors")
-        shard_name = "model.safetensors"
-        save_file(_contiguous_state_dict(state_dict), str(output_path / shard_name))
-        return {key: shard_name for key in state_dict}
-
-    default_shard = next(iter(weight_map.values()))
     state_dict = _contiguous_state_dict(state_dict)
-    shard_tensors: dict[str, dict[str, torch.Tensor]] = {}
-    output_weight_map: dict[str, str] = {}
-    remaining_state_dict = dict(state_dict)
-    shard_order: list[str] = []
-
-    for shard_name, reference_keys in _build_reference_shard_layout(weight_map):
-        shard_order.append(shard_name)
-        output_shard: dict[str, torch.Tensor] = {}
-        for reference_key in reference_keys:
-            if reference_key in remaining_state_dict:
-                output_shard[reference_key] = remaining_state_dict.pop(reference_key)
-                output_weight_map[reference_key] = shard_name
-                continue
-
-            replacement_scale_key = _replacement_scale_key(reference_key)
-            if replacement_scale_key is not None and replacement_scale_key in remaining_state_dict:
-                output_shard[replacement_scale_key] = remaining_state_dict.pop(replacement_scale_key)
-                output_weight_map[replacement_scale_key] = shard_name
-
-        if output_shard:
-            shard_tensors[shard_name] = output_shard
-
-    if remaining_state_dict:
-        logger.warning(
-            "DeepSeek export: assigning %d tensor(s) not present in the reference layout using best-effort shard placement",
-            len(remaining_state_dict),
-        )
-        fallback_shards: dict[str, dict[str, torch.Tensor]] = defaultdict(dict)
-        for key, tensor in sorted(remaining_state_dict.items()):
-            shard_name = weight_map.get(key)
-            if shard_name is None and key.endswith(".weight_scale"):
-                shard_name = weight_map.get(key.removesuffix(".weight_scale") + ".weight")
-            if shard_name is None:
-                shard_name = default_shard
-            fallback_shards[shard_name][key] = tensor
-            output_weight_map[key] = shard_name
-
-        for shard_name, shard_dict in fallback_shards.items():
-            if shard_name not in shard_order:
-                shard_order.append(shard_name)
-            shard_tensors.setdefault(shard_name, {}).update(shard_dict)
-
-    shard_items = [(shard_name, shard_tensors[shard_name]) for shard_name in shard_order if shard_name in shard_tensors]
+    max_shard_size = _resolve_max_shard_size(metadata_dir, state_dict)
+    split = split_torch_state_dict_into_shards(
+        state_dict,
+        filename_pattern="model{suffix}.safetensors",
+        max_shard_size=max_shard_size,
+    )
+    shard_items = [
+        (shard_name, {key: state_dict[key] for key in tensor_names})
+        for shard_name, tensor_names in split.filename_to_tensors.items()
+    ]
     shard_progress_interval = _progress_interval(len(shard_items))
     logger.info(
-        "DeepSeek export: writing %d tensors across %d shards using %s",
+        "DeepSeek export: writing %d tensors across %d repacked shard(s)",
         len(state_dict),
         len(shard_items),
-        index_path,
     )
     for shard_idx, (shard_name, shard_state_dict) in enumerate(shard_items, start=1):
         save_file(shard_state_dict, str(output_path / shard_name))
@@ -361,29 +292,15 @@ def _save_state_dict(
                 len(shard_state_dict),
             )
 
-    total_size = sum(_tensor_nbytes(tensor) for tensor in state_dict.values())
     output_index = {
-        "metadata": {"total_size": total_size},
-        "weight_map": output_weight_map,
+        "metadata": split.metadata,
+        "weight_map": split.tensor_to_filename,
     }
     (output_path / "model.safetensors.index.json").write_text(
         json.dumps(output_index, indent=2, sort_keys=True) + "\n"
     )
     logger.info("DeepSeek export: wrote model.safetensors.index.json")
-    return output_weight_map
-
-
-def _build_reference_shard_layout(weight_map: dict[str, str]) -> list[tuple[str, list[str]]]:
-    shard_layout: dict[str, list[str]] = {}
-    for tensor_name, shard_name in weight_map.items():
-        shard_layout.setdefault(shard_name, []).append(tensor_name)
-    return list(shard_layout.items())
-
-
-def _replacement_scale_key(reference_key: str) -> str | None:
-    if not reference_key.endswith(".weight_scale_inv"):
-        return None
-    return reference_key.removesuffix(".weight_scale_inv") + ".weight_scale"
+    return dict(split.tensor_to_filename)
 
 
 def _contiguous_state_dict(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -392,6 +309,27 @@ def _contiguous_state_dict(state_dict: dict[str, torch.Tensor]) -> dict[str, tor
 
 def _tensor_nbytes(tensor: torch.Tensor) -> int:
     return tensor.numel() * tensor.element_size()
+
+
+def _resolve_max_shard_size(
+    metadata_dir: Path | None,
+    state_dict: dict[str, torch.Tensor],
+) -> int | str:
+    """Pick a shard budget close to the upstream shard count when available."""
+    if metadata_dir is None:
+        return "5GB"
+
+    index_path = metadata_dir / "model.safetensors.index.json"
+    if not index_path.exists():
+        return "5GB"
+
+    weight_map = json.loads(index_path.read_text()).get("weight_map", {})
+    shard_count = len(set(weight_map.values()))
+    if shard_count <= 1:
+        return "5GB"
+
+    total_size = sum(_tensor_nbytes(tensor) for tensor in state_dict.values())
+    return max(1, math.ceil(total_size / shard_count))
 
 
 def _patch_config(output_path: Path, output_weight_map: dict[str, str]) -> None:
@@ -524,12 +462,13 @@ def _copy_file_robustly(source: Path, destination: Path) -> None:
 
 
 def _resolve_metadata_dir(base_model: str) -> Path | None:
-    """Resolve a directory that provides the reference DeepSeek shard/index metadata.
+    """Resolve a directory that provides optional DeepSeek export metadata.
 
-    We fetch metadata even for local merge inputs because the real DeepSeek
-    shard topology often lives in the upstream snapshot. Preserving that
-    topology avoids introducing layout drift when exporting mixed-precision
-    checkpoints.
+    The metadata snapshot is used for two things:
+    - copying DeepSeek custom Python files into the output artifact
+    - estimating a reasonable shard budget from the upstream index
+
+    The final checkpoint is still repacked and gets a freshly generated index.
     """
     base_model_path = Path(base_model).expanduser()
     if base_model_path.is_dir():
@@ -555,7 +494,7 @@ def _resolve_metadata_dir(base_model: str) -> Path | None:
             return metadata_dir
 
     logger.warning(
-        "DeepSeek export: unable to locate metadata snapshot for %s; proceeding without shard template",
+        "DeepSeek export: unable to locate metadata snapshot for %s; proceeding with default shard sizing",
         base_model,
     )
     return base_model_path.resolve() if base_model_path.is_dir() else None
@@ -571,6 +510,7 @@ def _candidate_repo_ids(base_model: str) -> list[str]:
 
 
 def _has_required_metadata(path: Path) -> bool:
+    """Return True when a path has enough files to help package the export."""
     if not path.exists():
         return False
 
