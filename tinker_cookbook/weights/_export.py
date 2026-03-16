@@ -16,6 +16,7 @@ from transformers import (
     AutoModelForImageTextToText,
     AutoProcessor,
     AutoTokenizer,
+    PretrainedConfig,
     PreTrainedModel,
 )
 
@@ -131,7 +132,7 @@ def build_hf_model(
         raise
 
 
-def _is_multimodal(config: AutoConfig) -> bool:
+def _is_multimodal(config: PretrainedConfig) -> bool:
     """Check if a model config indicates a multimodal (e.g. vision-language) model.
 
     Checks for known multimodal config patterns. This is more robust than
@@ -145,7 +146,7 @@ def _is_multimodal(config: AutoConfig) -> bool:
 
 
 def _load_model(
-    config: AutoConfig,
+    config: PretrainedConfig,
     model_path: str,
     *,
     torch_dtype: torch.dtype,
