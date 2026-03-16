@@ -131,9 +131,11 @@ python -m tinker_cookbook.recipes.distillation.on_policy_multi_teacher \
 If you created a new distillation recipe, add a smoke test:
 
 ```python
-# tests/test_recipe_<name>.py
+# tests/recipes/test_recipe_<name>.py
+import pytest
 from tests.helpers import run_recipe
 
+@pytest.mark.integration
 def test_<recipe_name>():
     run_recipe(
         "tinker_cookbook.recipes.<recipe_name>.train",
@@ -141,7 +143,19 @@ def test_<recipe_name>():
     )
 ```
 
-See `tests/test_recipe_on_policy_distillation.py` and `tests/test_recipe_on_policy_multi_teacher.py` for existing examples.
+`run_recipe()` automatically passes `max_steps=2` so the recipe runs 2 training steps and exits. See `tests/recipes/test_recipe_on_policy_distillation.py` and `tests/recipes/test_recipe_on_policy_multi_teacher.py` for existing examples.
+
+## Step 7: Export weights (optional)
+
+After distillation, export the student model using the `tinker_cookbook.weights` API:
+
+```python
+from tinker_cookbook import weights
+
+adapter_dir = weights.download(tinker_path="tinker://run-id/sampler_weights/final", output_dir="./adapter")
+weights.build_hf_model(base_model="Qwen/Qwen3-8B-Base", adapter_path=adapter_dir, output_path="./model")
+weights.publish_to_hf_hub(model_path="./model", repo_id="user/my-distilled-model")
+```
 
 ## Common pitfalls
 - Teacher model must be compatible with student's tokenizer/renderer

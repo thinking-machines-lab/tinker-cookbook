@@ -144,9 +144,11 @@ python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.train
 If you created a new multi-turn recipe, add a smoke test:
 
 ```python
-# tests/test_recipe_<name>.py
+# tests/recipes/test_recipe_<name>.py
+import pytest
 from tests.helpers import run_recipe
 
+@pytest.mark.integration
 def test_<recipe_name>():
     run_recipe(
         "tinker_cookbook.recipes.<recipe_name>.train",
@@ -154,7 +156,7 @@ def test_<recipe_name>():
     )
 ```
 
-See `tests/test_recipe_text_arena.py` and `tests/test_recipe_twenty_questions.py` for existing multi-turn examples. For environment-specific logic (sandbox setup, tool parsing), add unit tests as `*_test.py` next to the source code.
+`run_recipe()` automatically passes `max_steps=2` so the recipe runs 2 training steps and exits. See `tests/recipes/test_recipe_text_arena.py` and `tests/recipes/test_recipe_twenty_questions.py` for existing multi-turn examples. For environment-specific logic (sandbox setup, tool parsing), add unit tests as `*_test.py` next to the source code.
 
 ## Common pitfalls
 - Multi-turn envs are expensive — start with small `groups_per_batch` (4-8)

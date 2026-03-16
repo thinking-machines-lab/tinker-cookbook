@@ -112,9 +112,11 @@ python -m tinker_cookbook.recipes.preference.dpo.train \
 If you created a new DPO recipe, add a smoke test:
 
 ```python
-# tests/test_recipe_<name>.py
+# tests/recipes/test_recipe_<name>.py
+import pytest
 from tests.helpers import run_recipe
 
+@pytest.mark.integration
 def test_<recipe_name>():
     run_recipe(
         "tinker_cookbook.recipes.<recipe_name>.train",
@@ -122,7 +124,19 @@ def test_<recipe_name>():
     )
 ```
 
-See `tests/test_recipe_dpo.py` for the existing example.
+`run_recipe()` automatically passes `max_steps=2` so the recipe runs 2 training steps and exits. See `tests/recipes/test_recipe_dpo.py` for the existing example.
+
+## Step 7: Export weights (optional)
+
+After DPO training, export weights using the `tinker_cookbook.weights` API:
+
+```python
+from tinker_cookbook import weights
+
+adapter_dir = weights.download(tinker_path="tinker://run-id/sampler_weights/final", output_dir="./adapter")
+weights.build_hf_model(base_model="meta-llama/Llama-3.2-1B", adapter_path=adapter_dir, output_path="./model")
+weights.publish_to_hf_hub(model_path="./model", repo_id="user/my-dpo-model")
+```
 
 ## Common pitfalls
 - **Start with `dpo_beta=0.1`** — this is well-tested. Tune from there.

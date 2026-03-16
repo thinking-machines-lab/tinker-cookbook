@@ -138,9 +138,11 @@ python -m tinker_cookbook.recipes.preference.rlhf.rlhf_pipeline run_sft=False ru
 If you created a new RLHF recipe, add a smoke test:
 
 ```python
-# tests/test_recipe_<name>.py
+# tests/recipes/test_recipe_<name>.py
+import pytest
 from tests.helpers import run_recipe
 
+@pytest.mark.integration
 def test_<recipe_name>():
     run_recipe(
         "tinker_cookbook.recipes.<recipe_name>.train",
@@ -148,7 +150,7 @@ def test_<recipe_name>():
     )
 ```
 
-See `tests/test_recipe_rlhf_pipeline.py` for the existing example.
+`run_recipe()` automatically passes `max_steps=2` so the recipe runs 2 training steps and exits. See `tests/recipes/test_recipe_rlhf_pipeline.py` for the existing example.
 
 ## Common pitfalls
 - RL learning rate must be **much lower** than SFT (1e-5 vs 2e-4)
