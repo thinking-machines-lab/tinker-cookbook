@@ -8,7 +8,6 @@ import os
 import shutil
 from pathlib import Path
 
-from huggingface_hub import snapshot_download
 import torch
 from safetensors.torch import load_file
 from transformers import (
@@ -91,7 +90,8 @@ def build_hf_model(
     torch_dtype = _DTYPE_MAP[dtype]
     resolved_trust = _resolve_trust_remote_code(trust_remote_code)
     out = Path(output_path)
-    preserve_partial_output = _is_deepseek_model_path(base_model)
+    config_dict = _load_config_dict(base_model)
+    preserve_partial_output = _is_deepseek_config(config_dict)
     out.mkdir(parents=True, exist_ok=preserve_partial_output)
     is_multimodal = False
 
@@ -109,7 +109,7 @@ def build_hf_model(
             adapter_weights, adapter_config = _load_adapter_weights(Path(adapter_path))
 
             logger.info("Loading base model: %s (dtype=%s)", base_model, dtype)
-            config = AutoConfig.from_pretrained(base_model, trust_remote_code=resolved_trust)
+            config = _build_config(config_dict, base_model, trust_remote_code=resolved_trust)
             is_multimodal = _is_multimodal(config)
             hf_model = _load_model(
                 config, base_model, torch_dtype=torch_dtype, trust_remote_code=resolved_trust
@@ -182,13 +182,34 @@ def _load_model(
     )
 
 
-def _is_deepseek_model_path(model_path: str) -> bool:
+def _load_config_dict(model_path: str) -> dict:
     candidate = Path(model_path).expanduser()
     if candidate.is_dir():
-        config_path = candidate / "config.json"
-    else:
-        config_path = Path(snapshot_download(model_path, allow_patterns=["config.json"])) / "config.json"
-    return _is_deepseek_config(json.loads(config_path.read_text()))
+        return json.loads((candidate / "config.json").read_text())
+    config_dict, _ = PretrainedConfig.get_config_dict(model_path)
+    return config_dict
+
+
+def _build_config(
+    config_dict: dict,
+    model_path: str,
+    *,
+    trust_remote_code: bool,
+) -> PretrainedConfig:
+    model_type = config_dict.get("model_type")
+    if model_type:
+        try:
+            return AutoConfig.for_model(
+                model_type,
+                **{key: value for key, value in config_dict.items() if key != "model_type"},
+            )
+        except Exception:
+            logger.info(
+                "Falling back to AutoConfig.from_pretrained for model_type=%s from %s",
+                model_type,
+                model_path,
+            )
+    return AutoConfig.from_pretrained(model_path, trust_remote_code=trust_remote_code)
 
 
 def _load_adapter_weights(adapter_dir: Path) -> tuple[dict[str, torch.Tensor], dict]:
