@@ -19,6 +19,7 @@ placement and uses it as the shard template during save.
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import math
@@ -497,11 +498,29 @@ def _copy_custom_files(
         for source_dir in source_dirs:
             source = source_dir / file_name
             if source.exists():
-                shutil.copy2(source, destination)
+                _copy_file_robustly(source, destination)
                 logger.info("DeepSeek export: copied %s from %s", file_name, source_dir)
                 break
         else:
             raise FileNotFoundError(f"Could not locate required DeepSeek file: {file_name}")
+
+
+def _copy_file_robustly(source: Path, destination: Path) -> None:
+    """Copy file contents even when metadata-preserving copies fail on /gcs."""
+    try:
+        shutil.copy2(source, destination)
+        return
+    except PermissionError:
+        pass
+    except OSError as exc:
+        if exc.errno != errno.EPERM:
+            raise
+
+    shutil.copyfile(source, destination)
+    logger.warning(
+        "DeepSeek export: metadata-preserving copy failed for %s; copied file contents only",
+        destination,
+    )
 
 
 def _resolve_metadata_dir(base_model: str) -> Path | None:
