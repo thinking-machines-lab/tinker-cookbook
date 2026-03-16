@@ -18,26 +18,43 @@ logger = logging.getLogger(__name__)
 RENDERER_NAME_METADATA_KEY = "renderer_name"
 
 
+_MISSING = object()  # sentinel for distinguishing "not set" from None
+
+
 @dataclass
 class CheckpointRecord:
     """A single checkpoint record stored in ``checkpoints.jsonl``.
 
-    Known fields are exposed as typed attributes. Any additional user-supplied
-    metadata from ``loop_state`` is preserved in :attr:`extra` so that custom
-    keys round-trip through save/load without loss.
+    Known fields are exposed as typed attributes.  ``batch`` is optional so
+    that checkpoint files written by older code (or external tools that use
+    different progress counters) can still be loaded.
+
+    Any additional user-supplied metadata from ``loop_state`` is preserved in
+    :attr:`extra` so that custom keys round-trip through save/load without
+    loss.
     """
 
     name: str
-    batch: int
+    batch: int | None = None
     epoch: int | None = None
     final: bool | None = None
     state_path: str | None = None
     sampler_path: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        # Defensive: if extra accidentally contains a known key (e.g. via
+        # direct construction), drop it so to_dict() never double-writes.
+        overlap = set(self.extra) & _CHECKPOINT_RECORD_KNOWN_KEYS
+        if overlap:
+            logger.warning("CheckpointRecord: dropping known keys from extra: %s", overlap)
+            self.extra = {k: v for k, v in self.extra.items() if k not in overlap}
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a dict for JSON storage. Omits ``None`` optional fields."""
-        d: dict[str, Any] = {"name": self.name, "batch": self.batch}
+        d: dict[str, Any] = {"name": self.name}
+        if self.batch is not None:
+            d["batch"] = self.batch
         if self.epoch is not None:
             d["epoch"] = self.epoch
         if self.final is not None:
@@ -51,10 +68,14 @@ class CheckpointRecord:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "CheckpointRecord":
-        """Deserialize from a JSON-parsed dict."""
+        """Deserialize from a JSON-parsed dict.
+
+        Unknown keys are preserved in :attr:`extra` so that downstream
+        metadata (e.g. ``step``) round-trips without loss.
+        """
         return cls(
             name=d["name"],
-            batch=d["batch"],
+            batch=d.get("batch"),
             epoch=d.get("epoch"),
             final=d.get("final"),
             state_path=d.get("state_path"),
@@ -67,6 +88,22 @@ class CheckpointRecord:
         if key in _CHECKPOINT_RECORD_KNOWN_KEYS:
             return getattr(self, key) is not None
         return key in self.extra
+
+    def get(self, key: str, default: Any = _MISSING) -> Any:
+        """Get a field value by name, falling back to extra, then *default*.
+
+        This provides uniform access regardless of whether a key is a known
+        attribute or user-supplied metadata stored in :attr:`extra`.
+
+        For known fields, returns the attribute value (which may be ``None``
+        if the field is optional and unset).  Returns *default* only when the
+        key is not a known field **and** is absent from :attr:`extra`.
+        """
+        if key in _CHECKPOINT_RECORD_KNOWN_KEYS:
+            return getattr(self, key)
+        if default is _MISSING:
+            return self.extra.get(key)
+        return self.extra.get(key, default)
 
 
 # Derived from the dataclass fields so it stays in sync automatically.
@@ -304,8 +341,8 @@ async def save_checkpoint_async(
         training_client: Training client to save from.
         name: Name for the checkpoint (used in the tinker:// path).
         log_path: Directory containing ``checkpoints.jsonl``.
-        loop_state: Training loop state (must include ``batch``; may include
-            ``epoch``, ``final``, and any additional user metadata).
+        loop_state: Training loop state. May include ``batch``, ``step``,
+            ``epoch``, ``final``, and any additional user metadata.
         kind: Which checkpoint types to save.
         ttl_seconds: Server-side retention. ``None`` keeps the checkpoint indefinitely.
 
