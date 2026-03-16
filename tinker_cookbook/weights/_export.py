@@ -92,7 +92,7 @@ def build_hf_model(
     try:
         logger.info("Loading base model: %s (dtype=%s)", base_model, dtype)
         config = AutoConfig.from_pretrained(base_model, trust_remote_code=resolved_trust)
-        is_vision = "vision_config" in config
+        is_multimodal = _is_multimodal(config)
         hf_model = _load_model(
             config, base_model, torch_dtype=torch_dtype, trust_remote_code=resolved_trust
         )
@@ -106,7 +106,7 @@ def build_hf_model(
         tokenizer = AutoTokenizer.from_pretrained(base_model, trust_remote_code=resolved_trust)
         tokenizer.save_pretrained(out)
 
-        if is_vision:
+        if is_multimodal:
             try:
                 processor = AutoProcessor.from_pretrained(
                     base_model, trust_remote_code=resolved_trust
@@ -131,6 +131,19 @@ def build_hf_model(
         raise
 
 
+def _is_multimodal(config: AutoConfig) -> bool:
+    """Check if a model config indicates a multimodal (e.g. vision-language) model.
+
+    Checks for known multimodal config patterns. This is more robust than
+    checking a single key, and should be extended as Tinker adds support
+    for new multimodal model types.
+    """
+    multimodal_config_keys = ("vision_config", "audio_config", "speech_config")
+    return any(
+        hasattr(config, key) and getattr(config, key) is not None for key in multimodal_config_keys
+    )
+
+
 def _load_model(
     config: AutoConfig,
     model_path: str,
@@ -138,7 +151,7 @@ def _load_model(
     torch_dtype: torch.dtype,
     trust_remote_code: bool,
 ) -> PreTrainedModel:
-    auto_cls = AutoModelForImageTextToText if "vision_config" in config else AutoModelForCausalLM
+    auto_cls = AutoModelForImageTextToText if _is_multimodal(config) else AutoModelForCausalLM
     return auto_cls.from_pretrained(
         model_path, dtype=torch_dtype, trust_remote_code=trust_remote_code
     )
