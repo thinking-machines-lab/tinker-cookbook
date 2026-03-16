@@ -39,7 +39,7 @@ fwd_bwd_result = await training_client.forward_backward_async(
 
 Currently, the Tinker API supports `cross_entropy` (for supervised learning), `importance_sampling`, `ppo`, `cispo` and `dro` for RL. We denote the training model as $p_{\theta}$, the sampling distribution as $q$, and advantages as $A$. Also, for notation simplicity we omit the query and denote the full model completion sequence of tokens as $x$.
 
-All losses are applied at the token level and tensors below have shape `(N,)` where `N` is `model_input.length`. They can be provided as `numpy.ndarray` or `torch.Tensor`, and the return values will use the same tensor type.
+All losses are applied at the token level. Unless noted otherwise, tensors below have shape `(N,)` where `N` is `model_input.length`. For `cross_entropy` and `importance_sampling`, the input tensors can also have shape `(N, K)` to request `K` target tokens per sequence position. They can be provided as `numpy.ndarray` or `torch.Tensor`, and the return values will use the same tensor type.
 
 ### Supervised learning: `cross_entropy`
 
@@ -60,13 +60,52 @@ elementwise_loss = -target_logprobs * weights
 loss = elementwise_loss.sum()  # scalar
 ```
 
+**Signature:** `await training_client.forward_backward_async(data, loss_fn="cross_entropy")`
+
 - **Input tensors:**
-  - `target_tokens: array[(N,), int]` - Target token IDs
-  - `weights: array[(N,), float]` - Token-level loss weights (typically from the renderer)
+  - `target_tokens: array[(N,), int] | array[(N, K), int]` - Target token IDs
+  - `weights: array[(N,), float] | array[(N, K), float]` - Token-level loss weights (typically from the renderer)
 - **Output tensors:**
-  - `logprobs: array[(N,), float]` - Log probabilities of predicted tokens
+  - `logprobs: array[(N,), float] | array[(N, K), float]` - Log probabilities of the requested target tokens
 - **Output diagnostics:**
   - `loss:sum` (scalar) - Sum of weighted cross-entropy losses
+
+**Multi-target example:** the built-in `cross_entropy` path can score multiple target tokens at the same position in one forward-backward call.
+
+```python
+import numpy as np
+import tinker
+
+input_tokens = tokenizer.encode("Q: Largest planet?\nA:", add_special_tokens=True)
+answer_token_idx = len(input_tokens) - 1
+
+# Three candidate answer tokens for the same sequence position.
+candidate_tokens = np.array(
+    [
+        tokenizer.encode(" Jupiter", add_special_tokens=False)[0],
+        tokenizer.encode(" Saturn", add_special_tokens=False)[0],
+        tokenizer.encode(" Mars", add_special_tokens=False)[0],
+    ],
+    dtype=np.int64,
+)
+
+target_tokens = np.zeros((len(input_tokens), 3), dtype=np.int64)
+weights = np.zeros((len(input_tokens), 3), dtype=np.float32)
+target_tokens[answer_token_idx] = candidate_tokens
+weights[answer_token_idx] = np.array([0.7, 0.2, 0.1], dtype=np.float32)
+
+datum = tinker.Datum(
+    model_input=tinker.ModelInput.from_ints(input_tokens),
+    loss_fn_inputs={
+        "target_tokens": tinker.TensorData.from_numpy(target_tokens),
+        "weights": tinker.TensorData.from_numpy(weights),
+    },
+)
+
+result = await training_client.forward_backward_async([datum], loss_fn="cross_entropy")
+answer_logprobs = result.loss_fn_outputs[0]["logprobs"][answer_token_idx]
+print(answer_logprobs.shape)  # (3,)
+```
 
 ### Policy gradient: `importance_sampling`
 
@@ -96,14 +135,55 @@ prob_ratio = torch.exp(target_logprobs - sampling_logprobs)
 loss = -(prob_ratio * advantages).sum()
 ```
 
+**Signature:** `await training_client.forward_backward_async(data, loss_fn="importance_sampling")`
+
 - **Input tensors:**
-  - `target_tokens: array[(N,), int]` - Target token IDs (from the sampler $q$)
-  - `logprobs: array[(N,), float]` - `sampling_logprobs` for the tokens
-  - `advantages: array[(N,), float]` - Advantage values for RL (positive to reinforce, negative to discourage)
+  - `target_tokens: array[(N,), int] | array[(N, K), int]` - Target token IDs (from the sampler $q$)
+  - `logprobs: array[(N,), float] | array[(N, K), float]` - `sampling_logprobs` for the tokens
+  - `advantages: array[(N,), float] | array[(N, K), float]` - Advantage values for RL (positive to reinforce, negative to discourage)
 - **Output tensors:**
-  - `logprobs: array[(N,), float]` - `target_logprobs` for the tokens
+  - `logprobs: array[(N,), float] | array[(N, K), float]` - `target_logprobs` for the tokens
 - **Output diagnostics:**
   - `loss:sum` (scalar) - Sum of importance-weighted policy gradient losses $\mathcal L_{\text{IS}}$
+
+**Multi-target example:** if you have `K` proposal tokens aligned to the same position, you can train against all of them in one call by passing `(N, K)` tensors for `target_tokens`, `logprobs`, and `advantages`.
+
+```python
+import numpy as np
+import tinker
+
+input_tokens = tokenizer.encode("Q: Largest planet?\nA:", add_special_tokens=True)
+answer_token_idx = len(input_tokens) - 1
+
+proposal_tokens = np.array(
+    [
+        tokenizer.encode(" Jupiter", add_special_tokens=False)[0],
+        tokenizer.encode(" Saturn", add_special_tokens=False)[0],
+    ],
+    dtype=np.int64,
+)
+
+target_tokens = np.zeros((len(input_tokens), 2), dtype=np.int64)
+sampling_logprobs = np.zeros((len(input_tokens), 2), dtype=np.float32)
+advantages = np.zeros((len(input_tokens), 2), dtype=np.float32)
+
+target_tokens[answer_token_idx] = proposal_tokens
+sampling_logprobs[answer_token_idx] = np.array([-0.15, -2.10], dtype=np.float32)
+advantages[answer_token_idx] = np.array([1.0, -0.4], dtype=np.float32)
+
+datum = tinker.Datum(
+    model_input=tinker.ModelInput.from_ints(input_tokens),
+    loss_fn_inputs={
+        "target_tokens": tinker.TensorData.from_numpy(target_tokens),
+        "logprobs": tinker.TensorData.from_numpy(sampling_logprobs),
+        "advantages": tinker.TensorData.from_numpy(advantages),
+    },
+)
+
+result = await training_client.forward_backward_async([datum], loss_fn="importance_sampling")
+answer_target_logprobs = result.loss_fn_outputs[0]["logprobs"][answer_token_idx]
+print(answer_target_logprobs.shape)  # (2,)
+```
 
 ### Proximal Policy Optimization: `ppo`
 
