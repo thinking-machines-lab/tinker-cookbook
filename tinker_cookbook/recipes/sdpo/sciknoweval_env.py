@@ -9,8 +9,9 @@ Domains: Biology, Chemistry, Material, Physics
 
 import math
 import re
+from collections.abc import Sequence
 from functools import partial
-from typing import Any, Literal, Sequence, cast
+from typing import Any, Literal, cast
 
 import chz
 from datasets import Dataset, load_dataset
