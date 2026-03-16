@@ -9,9 +9,9 @@ refer to `tinker_cookbook/recipes/sl_loop.py`.
 
 import asyncio
 import logging
-import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import chz
 import tinker
@@ -42,7 +42,7 @@ class Config:
     """Configuration for supervised fine-tuning."""
 
     # Required parameters
-    log_path: str = chz.field(munger=lambda _, s: os.path.expanduser(s))
+    log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
     model_name: str
     load_checkpoint_path: str | None = None
     renderer_name: str | None = None
@@ -187,12 +187,12 @@ async def main(config: Config):
         current_task = asyncio.current_task()
         if current_task is not None:
             current_task.set_name("main")
-        trace_events_path = os.path.join(config.log_path, "trace_events.jsonl")
+        trace_events_path = str(Path(config.log_path) / "trace_events.jsonl")
         logger.info(f"Tracing is enabled. Trace events will be saved to {trace_events_path}")
         logger.info(
             f"Run `python tinker_cookbook/utils/trace.py {trace_events_path} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"
         )
-        trace_init(output_file=os.path.join(config.log_path, "trace_events.jsonl"))
+        trace_init(output_file=trace_events_path)
 
     service_client = tinker.ServiceClient(base_url=config.base_url)
 

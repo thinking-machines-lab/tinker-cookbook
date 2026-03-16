@@ -7,9 +7,9 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
-import os
 import re
 import time
+from pathlib import Path
 from concurrent.futures import Executor
 from contextlib import contextmanager
 from typing import Any, Callable, Coroutine, Iterable, Iterator, List, Sequence, TypeVar
@@ -160,8 +160,8 @@ def _get_logtree_scope(
         yield
         return
 
-    logtree_path = os.path.join(log_path, f"{f_name}.html")
-    logtree_json_path = os.path.join(log_path, f"{f_name}_logtree.json")
+    logtree_path = str(Path(log_path) / f"{f_name}.html")
+    logtree_json_path = str(Path(log_path) / f"{f_name}_logtree.json")
     trace = None
     try:
         with logtree.init_trace(scope_name, path=logtree_path) as trace:
@@ -349,7 +349,7 @@ class Config:
     # Maximum number of generated tokens per rollout trajectory.
     max_tokens: int
     # Directory for checkpoints, logs, and traces.
-    log_path: str = chz.field(munger=lambda _, s: os.path.expanduser(s))
+    log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
     # Evaluation cadence in training iterations (0 = disabled).
     eval_every: int = 20
     # Checkpoint cadence in training iterations (0 = disabled).
@@ -1300,7 +1300,7 @@ async def main(
         current_task = asyncio.current_task()
         if current_task is not None:
             current_task.set_name("main")
-        trace_events_path = os.path.join(cfg.log_path, "trace_events.jsonl")
+        trace_events_path = str(Path(cfg.log_path) / "trace_events.jsonl")
         logger.info(f"Tracing is enabled. Trace events will be saved to {trace_events_path}")
         logger.info(
             f"Run `python tinker_cookbook/utils/trace.py {trace_events_path} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"

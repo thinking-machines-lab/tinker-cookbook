@@ -2,8 +2,8 @@ import asyncio
 import dataclasses
 import json
 import logging
-import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 import tinker
@@ -252,14 +252,14 @@ async def check_renderer_name_for_checkpoint_async(
 
 @scope
 def load_checkpoints_file(log_dir: str) -> list[CheckpointRecord]:
-    checkpoint_path = os.path.join(log_dir, CHECKPOINTS_BASE_NAME)
-    if not os.path.exists(checkpoint_path):
+    checkpoint_path = Path(log_dir) / CHECKPOINTS_BASE_NAME
+    if not checkpoint_path.exists():
         logger.info(f"No checkpoints found at {checkpoint_path}")
         return []
 
     logger.info(f"Reading checkpoints from {checkpoint_path}")
-    update_scope_context({"checkpoint_path": checkpoint_path})
-    return [CheckpointRecord.from_dict(d) for d in read_jsonl(checkpoint_path)]
+    update_scope_context({"checkpoint_path": str(checkpoint_path)})
+    return [CheckpointRecord.from_dict(d) for d in read_jsonl(str(checkpoint_path))]
 
 
 @scope
@@ -326,7 +326,7 @@ async def save_checkpoint_async(
     logger.info(f"Saved checkpoints: {paths}")
 
     record = CheckpointRecord.from_dict({"name": name, **loop_state, **paths})
-    with open(os.path.join(log_path, "checkpoints.jsonl"), "a") as f:
+    with open(Path(log_path) / "checkpoints.jsonl", "a") as f:
         f.write(json.dumps(record.to_dict()) + "\n")
 
     return paths
