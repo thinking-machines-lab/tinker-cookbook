@@ -24,7 +24,6 @@ from tinker_cookbook.renderers.qwen3_5 import Qwen3_5Renderer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 
-
 def _is_message(obj) -> TypeGuard[Message]:
     """Check if object is a Message dict (TypedDict doesn't support isinstance)."""
     return isinstance(obj, dict) and "role" in obj and "content" in obj

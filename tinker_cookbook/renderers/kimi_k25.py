@@ -8,6 +8,7 @@ from tinker_cookbook.image_processing_utils import ImageProcessor
 from tinker_cookbook.renderers.base import (
     ContentPart,
     ImageProcessorProtocol,
+    Message,
     Role,
     ToolSpec,
     image_to_chunk,
