@@ -20,6 +20,7 @@ Key methods:
 - get_checkpoint_archive_url() - get signed URL to download checkpoint archive
 - publish_checkpoint_from_tinker_path() - publish a checkpoint to make it public
 - unpublish_checkpoint_from_tinker_path() - unpublish a checkpoint to make it private
+- set_checkpoint_ttl_from_tinker_path() - set or remove TTL on a checkpoint
 
 Args:
 - `holder`: Internal client managing HTTP connections and async operations
@@ -39,7 +40,9 @@ for checkpoint in checkpoints.checkpoints:
 
 ```python
 def get_training_run(
-        training_run_id: types.ModelID) -> ConcurrentFuture[types.TrainingRun]
+    training_run_id: types.ModelID,
+    access_scope: Literal["owned", "accessible"] = "owned"
+) -> ConcurrentFuture[types.TrainingRun]
 ```
 
 Get training run info.
@@ -61,7 +64,9 @@ print(f"Training Run ID: {response.training_run_id}, Base: {response.base_model}
 
 ```python
 async def get_training_run_async(
-        training_run_id: types.ModelID) -> types.TrainingRun
+    training_run_id: types.ModelID,
+    access_scope: Literal["owned",
+                          "accessible"] = "owned") -> types.TrainingRun
 ```
 
 Async version of get_training_run.
@@ -70,7 +75,9 @@ Async version of get_training_run.
 
 ```python
 def get_training_run_by_tinker_path(
-        tinker_path: str) -> ConcurrentFuture[types.TrainingRun]
+    tinker_path: str,
+    access_scope: Literal["owned", "accessible"] = "owned"
+) -> ConcurrentFuture[types.TrainingRun]
 ```
 
 Get training run info.
@@ -92,7 +99,9 @@ print(f"Training Run ID: {response.training_run_id}, Base: {response.base_model}
 
 ```python
 async def get_training_run_by_tinker_path_async(
-        tinker_path: str) -> types.TrainingRun
+    tinker_path: str,
+    access_scope: Literal["owned",
+                          "accessible"] = "owned") -> types.TrainingRun
 ```
 
 Async version of get_training_run_by_tinker_path.
@@ -123,8 +132,10 @@ print(f"Base Model: {response.base_model}, LoRA Rank: {response.lora_rank}")
 
 ```python
 def list_training_runs(
-        limit: int = 20,
-        offset: int = 0) -> ConcurrentFuture[types.TrainingRunsResponse]
+    limit: int = 20,
+    offset: int = 0,
+    access_scope: Literal["owned", "accessible"] = "owned"
+) -> ConcurrentFuture[types.TrainingRunsResponse]
 ```
 
 List training runs with pagination support.
@@ -149,9 +160,11 @@ next_page = rest_client.list_training_runs(limit=50, offset=50)
 #### `list_training_runs_async`
 
 ```python
-async def list_training_runs_async(limit: int = 20,
-                                   offset: int = 0
-                                   ) -> types.TrainingRunsResponse
+async def list_training_runs_async(
+    limit: int = 20,
+    offset: int = 0,
+    access_scope: Literal["owned", "accessible"] = "owned"
+) -> types.TrainingRunsResponse
 ```
 
 Async version of list_training_runs.
@@ -214,7 +227,7 @@ Example:
 future = rest_client.get_checkpoint_archive_url("run-id", "checkpoint-123")
 response = future.result()
 print(f"Download URL: {response.url}")
-print(f"Expires at: {response.expires}")
+print(f"Expires at: {response.expires_at}")
 # Use the URL to download the archive with your preferred HTTP client
 ```
 
@@ -367,6 +380,46 @@ async def unpublish_checkpoint_from_tinker_path_async(
 
 Async version of unpublish_checkpoint_from_tinker_path.
 
+#### `set_checkpoint_ttl_from_tinker_path`
+
+```python
+def set_checkpoint_ttl_from_tinker_path(
+        tinker_path: str, ttl_seconds: int | None) -> ConcurrentFuture[None]
+```
+
+Set or remove the TTL on a checkpoint referenced by a tinker path.
+
+If ttl_seconds is provided, the checkpoint will expire after that many seconds from now.
+If ttl_seconds is None, any existing expiration will be removed.
+
+Args:
+- `tinker_path`: The tinker path to the checkpoint (e.g., "tinker://run-id/weights/0001")
+- `ttl_seconds`: Number of seconds until expiration, or None to remove TTL
+
+Returns:
+- A `Future` that completes when the TTL is set
+
+Raises:
+    HTTPException: 400 if checkpoint identifier is invalid or ttl_seconds <= 0
+    HTTPException: 404 if checkpoint not found or user doesn't own the training run
+    HTTPException: 500 if there's an error setting the TTL
+
+Example:
+```python
+future = rest_client.set_checkpoint_ttl_from_tinker_path("tinker://run-id/weights/0001", 86400)
+future.result()  # Wait for completion
+print("Checkpoint TTL set successfully")
+```
+
+#### `set_checkpoint_ttl_from_tinker_path_async`
+
+```python
+async def set_checkpoint_ttl_from_tinker_path_async(
+        tinker_path: str, ttl_seconds: int | None) -> None
+```
+
+Async version of set_checkpoint_ttl_from_tinker_path.
+
 #### `list_user_checkpoints`
 
 ```python
@@ -414,7 +467,10 @@ Async version of list_user_checkpoints.
 #### `get_session`
 
 ```python
-def get_session(session_id: str) -> ConcurrentFuture[types.GetSessionResponse]
+def get_session(
+    session_id: str,
+    access_scope: Literal["owned", "accessible"] = "owned"
+) -> ConcurrentFuture[types.GetSessionResponse]
 ```
 
 Get session information including all training runs and samplers.
@@ -436,7 +492,10 @@ print(f"Samplers: {len(response.sampler_ids)}")
 #### `get_session_async`
 
 ```python
-async def get_session_async(session_id: str) -> types.GetSessionResponse
+async def get_session_async(
+    session_id: str,
+    access_scope: Literal["owned", "accessible"] = "owned"
+) -> types.GetSessionResponse
 ```
 
 Async version of get_session.
@@ -445,8 +504,10 @@ Async version of get_session.
 
 ```python
 def list_sessions(
-        limit: int = 20,
-        offset: int = 0) -> ConcurrentFuture[types.ListSessionsResponse]
+    limit: int = 20,
+    offset: int = 0,
+    access_scope: Literal["owned", "accessible"] = "owned"
+) -> ConcurrentFuture[types.ListSessionsResponse]
 ```
 
 List sessions with pagination support.
@@ -470,8 +531,11 @@ next_page = rest_client.list_sessions(limit=50, offset=50)
 #### `list_sessions_async`
 
 ```python
-async def list_sessions_async(limit: int = 20,
-                              offset: int = 0) -> types.ListSessionsResponse
+async def list_sessions_async(
+    limit: int = 20,
+    offset: int = 0,
+    access_scope: Literal["owned", "accessible"] = "owned"
+) -> types.ListSessionsResponse
 ```
 
 Async version of list_sessions.
@@ -510,3 +574,4 @@ async def get_sampler_async(sampler_id: str) -> types.GetSamplerResponse
 ```
 
 Async version of get_sampler.
+

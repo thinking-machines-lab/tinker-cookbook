@@ -3,7 +3,7 @@ TrainingClient for Tinker API.
 ## `TrainingClient` Objects
 
 ```python
-class TrainingClient(TelemetryProvider, QueueStateObserver)
+class TrainingClient(TelemetryProvider)
 ```
 
 Client for training ML models with forward/backward passes and optimization.
@@ -127,8 +127,11 @@ Async version of forward_backward.
 
 ```python
 def forward_backward_custom(
-        data: List[types.Datum],
-        loss_fn: CustomLossFnV1) -> APIFuture[types.ForwardBackwardOutput]
+    data: List[types.Datum],
+    loss_fn: CustomLossFnV1,
+    *,
+    loss_type_input: Literal["logprobs"] = "logprobs"
+) -> APIFuture[types.ForwardBackwardOutput]
 ```
 
 Compute forward/backward with a custom loss function.
@@ -139,6 +142,7 @@ The custom function receives logprobs and computes loss and gradients.
 Args:
 - `data`: List of training data samples
 - `loss_fn`: Custom loss function that takes (data, logprobs) and returns (loss, metrics)
+- `loss_type_input`: Input space for `loss_fn`. Currently the only supported value is `"logprobs"`.
 
 Returns:
 - `APIFuture` containing the forward/backward outputs with custom loss
@@ -161,8 +165,11 @@ print(f"Metrics: {result.metrics}")
 
 ```python
 async def forward_backward_custom_async(
-        data: List[types.Datum],
-        loss_fn: CustomLossFnV1) -> APIFuture[types.ForwardBackwardOutput]
+    data: List[types.Datum],
+    loss_fn: CustomLossFnV1,
+    *,
+    loss_type_input: Literal["logprobs"] = "logprobs"
+) -> APIFuture[types.ForwardBackwardOutput]
 ```
 
 Async version of forward_backward_custom.
@@ -175,6 +182,11 @@ def optim_step(
 ```
 
 Update model parameters using Adam optimizer.
+
+The Adam optimizer used by tinker is identical
+to [torch.optim.AdamW](https://docs.pytorch.org/docs/stable/generated/torch.optim.AdamW.html).
+Note that unlike PyTorch, Tinker's default weight decay value is 0.0 (no weight decay).
+
 
 Args:
 - `adam_params`: Adam optimizer parameters (learning_rate, betas, eps, weight_decay)
@@ -212,13 +224,17 @@ Async version of optim_step.
 #### `save_state`
 
 ```python
-def save_state(name: str) -> APIFuture[types.SaveWeightsResponse]
+def save_state(
+        name: str,
+        ttl_seconds: int | None = None
+) -> APIFuture[types.SaveWeightsResponse]
 ```
 
 Save model weights to persistent storage.
 
 Args:
 - `name`: Name for the saved checkpoint
+- `ttl_seconds`: Optional TTL in seconds for the checkpoint (None = never expires)
 
 Returns:
 - `APIFuture` containing the save response with checkpoint path
@@ -234,7 +250,10 @@ print(f"Saved to: {result.path}")
 #### `save_state_async`
 
 ```python
-async def save_state_async(name: str) -> APIFuture[types.SaveWeightsResponse]
+async def save_state_async(
+        name: str,
+        ttl_seconds: int | None = None
+) -> APIFuture[types.SaveWeightsResponse]
 ```
 
 Async version of save_state.
@@ -310,13 +329,16 @@ Async version of load_state_with_optimizer.
 
 ```python
 def save_weights_for_sampler(
-        name: str) -> APIFuture[types.SaveWeightsForSamplerResponse]
+    name: str,
+    ttl_seconds: int | None = None
+) -> APIFuture[types.SaveWeightsForSamplerResponse]
 ```
 
 Save model weights for use with a SamplingClient.
 
 Args:
 - `name`: Name for the saved sampler weights
+- `ttl_seconds`: Optional TTL in seconds for the checkpoint (None = never expires)
 
 Returns:
 - `APIFuture` containing the save response with sampler path
@@ -338,7 +360,9 @@ sampling_client = service_client.create_sampling_client(
 
 ```python
 async def save_weights_for_sampler_async(
-        name: str) -> APIFuture[types.SaveWeightsForSamplerResponse]
+    name: str,
+    ttl_seconds: int | None = None
+) -> APIFuture[types.SaveWeightsForSamplerResponse]
 ```
 
 Async version of save_weights_for_sampler.
@@ -460,3 +484,4 @@ async def save_weights_and_get_sampling_client_async(
 ```
 
 Async version of save_weights_and_get_sampling_client.
+
