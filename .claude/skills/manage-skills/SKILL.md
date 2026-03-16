@@ -11,7 +11,12 @@ This meta-skill governs how skills are created and maintained in the tinker-cook
 
 ## Skill taxonomy
 
-All skills in `.claude/skills/` are organized into 4 layers:
+All skills in `.claude/skills/` are organized into 5 layers:
+
+### Layer 0: Fundamentals (`setup`, `models`, `hyperparams`, `logging`)
+**Scope:** Getting started, model selection, hyperparameter guidance, training output analysis. Cross-cutting concerns needed before touching any code.
+**Auto-invocation:** Yes — triggers when users ask about setup, models, hyperparameters, or debugging.
+**Key principle:** These inform all other layers. Reference `docs/`, `README.md`, `tinker_cookbook/hyperparam_utils.py`.
 
 ### Layer 1: Tinker SDK (`tinker-sdk`, `tinker-types`)
 **Scope:** Raw Tinker Python SDK APIs — TrainingClient, SamplingClient, forward_backward, optim_step, sampling, types.
@@ -77,6 +82,7 @@ disable-model-invocation: true    # Only for manual-trigger skills (Layer 4 acti
 
 **Naming:**
 - Lowercase, hyphenated: `tinker-sdk`, `new-recipe`, `manage-skills`
+- Layer 0: named after the fundamental concept
 - Layer 1: named after the SDK concept
 - Layer 2: named after the primitive
 - Layer 3: named after the algorithm/method
@@ -108,6 +114,11 @@ When auditing, check each skill for:
 
 ```
 .claude/skills/
+├── Layer 0: Fundamentals
+│   ├── setup/               # Installation, API key, first run
+│   ├── models/              # Model lineup, selection, families
+│   ├── hyperparams/         # LR formulas, batch size, LoRA rank
+│   └── logging/             # Training outputs, metrics, debugging
 ├── Layer 1: SDK
 │   ├── tinker-sdk/          # TrainingClient, SamplingClient APIs
 │   └── tinker-types/        # Datum, ModelInput, TensorData, SamplingParams
