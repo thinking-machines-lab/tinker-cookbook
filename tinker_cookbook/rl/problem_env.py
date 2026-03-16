@@ -1,9 +1,10 @@
 import logging
 from abc import abstractmethod
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Callable, Sequence
 
 import tinker
+
 from tinker_cookbook import renderers
 from tinker_cookbook.completers import StopCondition
 from tinker_cookbook.rl.types import (

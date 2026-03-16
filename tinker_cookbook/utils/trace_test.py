@@ -6,9 +6,9 @@ import threading
 from tinker_cookbook.utils.trace import (
     get_scope_context,
     scope,
-    update_scope_context,
     trace_init,
     trace_shutdown,
+    update_scope_context,
 )
 
 
@@ -88,7 +88,7 @@ def test_trace():
         asyncio.run(example_program())
         trace_shutdown()
 
-        with open(temp_file.name, "r") as f:
+        with open(temp_file.name) as f:
             events = [json.loads(line) for line in f]
 
         # There should be 2 process metadata events
@@ -96,7 +96,7 @@ def test_trace():
             1 for event in events if event["ph"] == "M" and event["tid"] == 0
         )
         assert num_metadata_pid_events == 2
-        num_unique_pids = len(set(event["pid"] for event in events if event["ph"] != "M"))
+        num_unique_pids = len({event["pid"] for event in events if event["ph"] != "M"})
         assert num_unique_pids == 2
 
         # main thread has 3: main, coroutine-1, coroutine-2
@@ -105,7 +105,7 @@ def test_trace():
             1 for event in events if event["ph"] == "M" and event["tid"] != 0
         )
         assert num_metadata_tid_events == 7
-        num_unique_tids = len(set(event["tid"] for event in events if event["ph"] != "M"))
+        num_unique_tids = len({event["tid"] for event in events if event["ph"] != "M"})
         assert num_unique_tids == 7
 
         # Validate that attributes are set correctly

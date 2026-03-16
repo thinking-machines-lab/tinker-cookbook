@@ -1,8 +1,10 @@
 import asyncio
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import tinker
 from tinker import types
+
 from tinker_cookbook import renderers
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
 from tinker_cookbook.tokenizer_utils import get_tokenizer

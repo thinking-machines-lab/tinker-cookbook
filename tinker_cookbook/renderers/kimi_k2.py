@@ -3,7 +3,7 @@
 import json
 import re
 import warnings
-from typing import Iterator
+from collections.abc import Iterator
 
 import tinker
 import torch
@@ -200,7 +200,7 @@ class KimiK2Renderer(Renderer):
             output_str += text_content
 
             # Handle tool calls
-            if "tool_calls" in message and message["tool_calls"]:
+            if "tool_calls" in message and message["tool_calls"]:  # noqa: RUF019
                 output_str += "<|tool_calls_section_begin|>"
                 for idx, tool_call in enumerate(message["tool_calls"]):
                     tool_id = tool_call.id
@@ -504,7 +504,7 @@ class KimiK2Renderer(Renderer):
                 result["reasoning_content"] = "".join(thinking_parts)
 
         # Handle tool_calls
-        if "tool_calls" in message and message["tool_calls"]:
+        if "tool_calls" in message and message["tool_calls"]:  # noqa: RUF019
             result["tool_calls"] = [
                 {
                     "type": "function",

@@ -5,12 +5,13 @@ Simple CLI chat interface using tinker sampling client.
 
 import asyncio
 import logging
-import sys
 import os
+import sys
 
 import chz
 import tinker
 from tinker import types
+
 from tinker_cookbook import renderers
 from tinker_cookbook.model_info import get_recommended_renderer_name
 from tinker_cookbook.tokenizer_utils import get_tokenizer

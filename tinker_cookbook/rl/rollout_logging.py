@@ -1,9 +1,10 @@
 """Utilities for exporting per-rollout records to JSONL."""
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from tinker_cookbook.rl.types import TrajectoryGroup
 from tinker_cookbook.utils.misc_utils import safezip

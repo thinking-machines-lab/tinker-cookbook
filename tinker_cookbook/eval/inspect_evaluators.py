@@ -1,12 +1,12 @@
 import logging
 from pathlib import Path
-from typing import Optional
 
 import chz
 import tinker
 from inspect_ai import Tasks, eval_async
 from inspect_ai.model import GenerateConfig as InspectAIGenerateConfig
 from inspect_ai.model import Model as InspectAIModel
+
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
 from tinker_cookbook.eval.inspect_utils import InspectAPIFromTinkerSampling
 
@@ -47,14 +47,14 @@ class InspectEvaluatorBuilder:
 
     # Evaluation parameters
     # Maximum number of samples to evaluate. If None, evaluates all samples.
-    limit: Optional[int] = None
+    limit: int | None = None
     debug_errors: bool = True
-    log_dir: Optional[str] = None
+    log_dir: str | None = None
     # Maximum concurrent sampling requests to Tinker.
     max_connections: int = 512
     log_level: str = "INFO"
     # Metadata to associate with this evaluation run (visible in inspect logs)
-    metadata: Optional[dict[str, str]] = None
+    metadata: dict[str, str] | None = None
 
     def __call__(self) -> SamplingClientEvaluator:
         return InspectEvaluator(self)

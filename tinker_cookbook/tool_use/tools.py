@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+from collections.abc import Callable
 from typing import (
     Annotated,
     Any,
-    Callable,
     get_args,
     get_origin,
     get_type_hints,

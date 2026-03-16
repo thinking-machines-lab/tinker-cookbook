@@ -4,6 +4,7 @@ import random
 import chz
 import datasets
 import tinker
+
 from tinker_cookbook.preference.types import (
     Comparison,
     ComparisonRenderer,

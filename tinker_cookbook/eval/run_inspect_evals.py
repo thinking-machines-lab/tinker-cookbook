@@ -3,6 +3,7 @@ import logging
 
 import chz
 import tinker
+
 from tinker_cookbook import checkpoint_utils, model_info
 from tinker_cookbook.eval.inspect_evaluators import InspectEvaluator, InspectEvaluatorBuilder
 

@@ -13,16 +13,18 @@ python -m tinker_cookbook.rl.play_w_env
 """
 
 import asyncio
+
 import tinker
 from termcolor import colored
+
 from tinker_cookbook.completers import (
     StopCondition,
     TokenCompleter,
     TokensWithLogprobs,
 )
-from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.rl.rollouts import do_single_rollout
 from tinker_cookbook.rl.types import Env, Trajectory
+from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
 async def get_async_input(prompt: str, multiline: bool = False) -> str:

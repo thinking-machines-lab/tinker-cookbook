@@ -74,7 +74,7 @@ def load_existing_metadata(session_name: str) -> SessionMetadata | None:
     """Load existing session metadata"""
     metadata_path = os.path.expanduser(f"~/experiments/.xmux/{session_name}.json")
     if os.path.exists(metadata_path):
-        with open(metadata_path, "r") as f:
+        with open(metadata_path) as f:
             return SessionMetadata.model_validate_json(f.read())
     return None
 
@@ -108,7 +108,7 @@ class ControlWindow:
         """Load session metadata"""
         metadata_path = os.path.expanduser(f"~/experiments/.xmux/{self.session_name}.json")
         if os.path.exists(metadata_path):
-            with open(metadata_path, "r") as f:
+            with open(metadata_path) as f:
                 return SessionMetadata.model_validate_json(f.read())
         return SessionMetadata(session_name=self.session_name)
 
