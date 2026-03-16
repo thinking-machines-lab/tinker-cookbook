@@ -1,6 +1,6 @@
 import asyncio
 import logging
-import os
+from pathlib import Path
 
 import chz
 from tinker_cookbook import checkpoint_utils, model_info
@@ -240,10 +240,10 @@ async def train_rl(
 
 
 def cli_main(cli_config: CLIConfig):
-    log_path_root = f"/tmp/tinker-examples/rlhf-{cli_config.short_name}"
-    sft_log_path = os.path.join(log_path_root, "sft")
-    rm_log_path = os.path.join(log_path_root, "rm")
-    rl_log_path = os.path.join(log_path_root, "rl")
+    log_path_root = Path(f"/tmp/tinker-examples/rlhf-{cli_config.short_name}")
+    sft_log_path = str(log_path_root / "sft")
+    rm_log_path = str(log_path_root / "rm")
+    rl_log_path = str(log_path_root / "rl")
     if cli_config.run_sft:
         sft_stage(
             sft_log_path,

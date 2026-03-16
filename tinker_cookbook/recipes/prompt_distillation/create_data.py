@@ -1,7 +1,7 @@
 import asyncio
 import json
-import os
 import re
+from pathlib import Path
 from typing import Any
 
 import chz
@@ -155,14 +155,15 @@ async def create_data_async(cfg: Config, sampling_client: Any, tokenizer: Any, r
 
 def main(cfg: Config):
     # check if the output file exists
-    if os.path.exists(cfg.output_file):
+    output_path = Path(cfg.output_file)
+    if output_path.exists():
         print(f"Output file {cfg.output_file} already exists")
         return
-    elif not os.path.exists(os.path.dirname(cfg.output_file)):
+    elif not output_path.parent.exists():
         # check if the output directory exists
-        print(f"Output directory {os.path.dirname(cfg.output_file)} does not exist")
-        print(f"Creating directory {os.path.dirname(cfg.output_file)}")
-        os.makedirs(os.path.dirname(cfg.output_file), exist_ok=True)
+        print(f"Output directory {output_path.parent} does not exist")
+        print(f"Creating directory {output_path.parent}")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Setup clients synchronously
     sampling_client, tokenizer, renderer = setup_clients()
