@@ -10,12 +10,20 @@ For programmatic use, prefer importing from tinker_cookbook.weights directly.
 """
 
 import argparse
+import logging
 import warnings
 
 from tinker_cookbook.weights import build_hf_model
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    for noisy_logger in ("transformers", "huggingface_hub", "urllib3"):
+        logging.getLogger(noisy_logger).setLevel(logging.WARNING)
+
     warnings.warn(
         "This script is deprecated. "
         "Use tinker_cookbook.weights.build_hf_model() instead:\n\n"

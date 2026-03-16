@@ -48,26 +48,51 @@ def save_deepseek_model(
     output_path: Path,
 ) -> None:
     """Save a DeepSeek checkpoint with BF16 dense weights and FP8 routed experts."""
+    logger.info("DeepSeek export: building mixed-precision state dict")
     state_dict = _build_mixed_precision_state_dict(hf_model)
-    metadata_dir = _resolve_metadata_dir(base_model)
 
+    logger.info("DeepSeek export: resolving metadata source")
+    metadata_dir = _resolve_metadata_dir(base_model)
+    if metadata_dir is not None:
+        logger.info("DeepSeek export: using metadata from %s", metadata_dir)
+    else:
+        logger.info("DeepSeek export: no metadata snapshot found, writing unsharded checkpoint")
+
+    logger.info("DeepSeek export: saving config files")
     hf_model.config.save_pretrained(output_path)
     generation_config = getattr(hf_model, "generation_config", None)
     if generation_config is not None:
         generation_config.save_pretrained(output_path)
 
+    logger.info("DeepSeek export: writing checkpoint tensors")
     _save_state_dict(state_dict=state_dict, output_path=output_path, metadata_dir=metadata_dir)
+    logger.info("DeepSeek export: patching config.json for compressed-tensors")
     _patch_config(output_path)
+    logger.info("DeepSeek export: copying custom DeepSeek files")
     _copy_custom_files(
         output_path=output_path,
         base_model=base_model,
         metadata_dir=metadata_dir,
     )
+    logger.info("DeepSeek export: finished")
 
 
 def _build_mixed_precision_state_dict(hf_model: PreTrainedModel) -> dict[str, torch.Tensor]:
     state_dict = hf_model.state_dict()
     mixed_state_dict: dict[str, torch.Tensor] = {}
+    routed_expert_keys = [key for key in state_dict if _is_routed_expert_weight(key)]
+    total_routed_expert_weights = len(routed_expert_keys)
+    routed_progress_interval = _progress_interval(total_routed_expert_weights)
+    routed_expert_count = 0
+    bf16_count = 0
+    float32_count = 0
+    non_floating_count = 0
+
+    logger.info(
+        "DeepSeek export: preparing %d tensors with %d routed expert weights for FP8 quantization",
+        len(state_dict),
+        total_routed_expert_weights,
+    )
 
     for key, tensor in state_dict.items():
         cpu_tensor = tensor.detach().cpu().contiguous()
@@ -76,18 +101,41 @@ def _build_mixed_precision_state_dict(hf_model: PreTrainedModel) -> dict[str, to
             quantized, scale = _quantize_weight_blockwise(cpu_tensor)
             mixed_state_dict[key] = quantized
             mixed_state_dict[_weight_scale_key(key)] = scale
+            routed_expert_count += 1
+            if (
+                routed_expert_count == 1
+                or routed_expert_count == total_routed_expert_weights
+                or routed_expert_count % routed_progress_interval == 0
+            ):
+                logger.info(
+                    "DeepSeek export: quantized routed expert weight %d/%d (%s)",
+                    routed_expert_count,
+                    total_routed_expert_weights,
+                    key,
+                )
             continue
 
         if _should_keep_float32(key):
             mixed_state_dict[key] = cpu_tensor.to(torch.float32)
+            float32_count += 1
             continue
 
         if cpu_tensor.is_floating_point():
             mixed_state_dict[key] = cpu_tensor.to(torch.bfloat16)
+            bf16_count += 1
             continue
 
         mixed_state_dict[key] = cpu_tensor
+        non_floating_count += 1
 
+    logger.info(
+        "DeepSeek export: prepared state dict with %d BF16 tensors, %d FP8 expert weights, %d FP8 scales, %d FP32 tensors, and %d non-floating tensors",
+        bf16_count,
+        routed_expert_count,
+        routed_expert_count,
+        float32_count,
+        non_floating_count,
+    )
     return mixed_state_dict
 
 
@@ -146,6 +194,12 @@ def _get_fp8_max() -> float:
         return 448.0
 
 
+def _progress_interval(total_items: int) -> int:
+    if total_items <= 0:
+        return 1
+    return max(1, total_items // 20)
+
+
 def _save_state_dict(
     *,
     state_dict: dict[str, torch.Tensor],
@@ -153,16 +207,19 @@ def _save_state_dict(
     metadata_dir: Path | None,
 ) -> None:
     if metadata_dir is None:
+        logger.info("DeepSeek export: writing unsharded model.safetensors")
         save_file(_contiguous_state_dict(state_dict), str(output_path / "model.safetensors"))
         return
 
     index_path = metadata_dir / "model.safetensors.index.json"
     if not index_path.exists():
+        logger.info("DeepSeek export: metadata index missing, writing unsharded model.safetensors")
         save_file(_contiguous_state_dict(state_dict), str(output_path / "model.safetensors"))
         return
 
     weight_map = json.loads(index_path.read_text())["weight_map"]
     if not weight_map:
+        logger.info("DeepSeek export: empty metadata index, writing unsharded model.safetensors")
         save_file(_contiguous_state_dict(state_dict), str(output_path / "model.safetensors"))
         return
 
@@ -179,8 +236,28 @@ def _save_state_dict(
         shard_tensors[shard_name][key] = state_dict[key].contiguous()
         output_weight_map[key] = shard_name
 
-    for shard_name, shard_state_dict in shard_tensors.items():
+    shard_items = sorted(shard_tensors.items())
+    shard_progress_interval = _progress_interval(len(shard_items))
+    logger.info(
+        "DeepSeek export: writing %d tensors across %d shards using %s",
+        len(state_dict),
+        len(shard_items),
+        index_path,
+    )
+    for shard_idx, (shard_name, shard_state_dict) in enumerate(shard_items, start=1):
         save_file(shard_state_dict, str(output_path / shard_name))
+        if (
+            shard_idx == 1
+            or shard_idx == len(shard_items)
+            or shard_idx % shard_progress_interval == 0
+        ):
+            logger.info(
+                "DeepSeek export: wrote shard %d/%d (%s, %d tensors)",
+                shard_idx,
+                len(shard_items),
+                shard_name,
+                len(shard_state_dict),
+            )
 
     total_size = sum(_tensor_nbytes(tensor) for tensor in state_dict.values())
     output_index = {
@@ -190,6 +267,7 @@ def _save_state_dict(
     (output_path / "model.safetensors.index.json").write_text(
         json.dumps(output_index, indent=2, sort_keys=True) + "\n"
     )
+    logger.info("DeepSeek export: wrote model.safetensors.index.json")
 
 
 def _contiguous_state_dict(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -237,6 +315,7 @@ def _patch_config(output_path: Path) -> None:
         ],
     }
     config_path.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
+    logger.info("DeepSeek export: updated %s with compressed-tensors config", config_path)
 
 
 def _copy_custom_files(
@@ -255,12 +334,14 @@ def _copy_custom_files(
     for file_name in _DEEPSEEK_CUSTOM_FILES:
         destination = output_path / file_name
         if destination.exists():
+            logger.info("DeepSeek export: custom file already present: %s", destination)
             continue
 
         for source_dir in source_dirs:
             source = source_dir / file_name
             if source.exists():
                 shutil.copy2(source, destination)
+                logger.info("DeepSeek export: copied %s from %s", file_name, source_dir)
                 break
         else:
             raise FileNotFoundError(f"Could not locate required DeepSeek file: {file_name}")
@@ -271,10 +352,12 @@ def _resolve_metadata_dir(base_model: str) -> Path | None:
     if base_model_path.is_dir():
         local_dir = base_model_path.resolve()
         if _has_required_metadata(local_dir):
+            logger.info("DeepSeek export: using local metadata from %s", local_dir)
             return local_dir
 
     for repo_id in _candidate_repo_ids(base_model):
         try:
+            logger.info("DeepSeek export: downloading metadata snapshot for %s", repo_id)
             snapshot_path = snapshot_download(
                 repo_id=repo_id,
                 allow_patterns=_METADATA_ALLOW_PATTERNS,
@@ -285,8 +368,13 @@ def _resolve_metadata_dir(base_model: str) -> Path | None:
 
         metadata_dir = Path(snapshot_path)
         if _has_required_metadata(metadata_dir):
+            logger.info("DeepSeek export: downloaded metadata snapshot to %s", metadata_dir)
             return metadata_dir
 
+    logger.warning(
+        "DeepSeek export: unable to locate metadata snapshot for %s; proceeding without shard template",
+        base_model,
+    )
     return base_model_path.resolve() if base_model_path.is_dir() else None
 
 
