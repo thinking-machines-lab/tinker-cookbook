@@ -102,7 +102,10 @@ class TestDownload:
                 shutil.copy2(str(archive_path), dest)
 
             with (
-                patch("tinker.ServiceClient", return_value=mock_service_client),
+                patch(
+                    "tinker_cookbook.weights._download.tinker.ServiceClient",
+                    return_value=mock_service_client,
+                ),
                 patch(
                     "tinker_cookbook.weights._download.urllib.request.urlretrieve",
                     fake_urlretrieve,

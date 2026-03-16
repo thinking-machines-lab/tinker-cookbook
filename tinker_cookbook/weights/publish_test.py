@@ -20,7 +20,7 @@ class TestPublishToHfHub:
         with tempfile.TemporaryDirectory() as tmpdir:
             mock_api = MagicMock()
 
-            with patch("huggingface_hub.HfApi", return_value=mock_api):
+            with patch("tinker_cookbook.weights._publish.HfApi", return_value=mock_api):
                 url = publish_to_hf_hub(
                     model_path=tmpdir,
                     repo_id="user/my-model",
@@ -44,7 +44,7 @@ class TestPublishToHfHub:
         with tempfile.TemporaryDirectory() as tmpdir:
             mock_api = MagicMock()
 
-            with patch("huggingface_hub.HfApi", return_value=mock_api):
+            with patch("tinker_cookbook.weights._publish.HfApi", return_value=mock_api):
                 publish_to_hf_hub(
                     model_path=tmpdir,
                     repo_id="org/public-model",

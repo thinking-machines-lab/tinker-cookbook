@@ -7,6 +7,8 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
+import tinker
+
 
 def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) -> str:
     """Download a checkpoint from Tinker storage to local disk.
@@ -47,9 +49,7 @@ def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) 
             base_url="https://tinker.my-company.com",
         )
     """
-    import tinker
-
-    kwargs = {}
+    kwargs: dict = {}
     if base_url is not None:
         kwargs["base_url"] = base_url
     sc = tinker.ServiceClient(**kwargs)

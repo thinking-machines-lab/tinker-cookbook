@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from huggingface_hub import HfApi
+
 
 def publish_to_hf_hub(
     *,
@@ -29,8 +31,6 @@ def publish_to_hf_hub(
     Returns:
         URL of the published repository.
     """
-    from huggingface_hub import HfApi
-
     path = Path(model_path)
     if not path.is_dir():
         raise FileNotFoundError(f"model_path does not exist or is not a directory: {model_path}")
