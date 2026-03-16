@@ -8,6 +8,7 @@ Model families tested:
 - GPT-OSS: fused interleaved gate_up_proj
 - Qwen3-VL MoE: fused concatenated gate_up_proj + vision model prefix
 - Qwen3 MoE: separate per-expert weights
+- DeepSeek V3.1: separate per-expert weights
 - Qwen3 dense: standard linear layers (no experts)
 """
 
@@ -16,7 +17,7 @@ import tempfile
 from pathlib import Path
 
 import torch
-from safetensors.torch import save_file
+from safetensors.torch import load_file, save_file
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
@@ -92,12 +93,53 @@ def _save_dense_adapter(
     (path / "adapter_config.json").write_text(json.dumps({"lora_alpha": 1, "r": rank}))
 
 
+def _save_mixed_deepseek_adapter(
+    path: Path,
+    *,
+    num_experts: int,
+    expert_in_dim: int,
+    expert_out_dim: int,
+    dense_in_dim: int,
+    dense_out_dim: int,
+    dense_fill: float = FILL_A,
+    gate_fill: float = FILL_A,
+    up_fill: float = FILL_B,
+) -> None:
+    """Save a DeepSeek adapter with both dense and routed-expert LoRA weights."""
+    rank = 1
+    weights: dict[str, torch.Tensor] = {
+        "base_model.model.model.layers.0.self_attn.q_a_proj.lora_A.weight": (
+            torch.ones(rank, dense_in_dim, dtype=torch.bfloat16) * dense_fill
+        ),
+        "base_model.model.model.layers.0.self_attn.q_a_proj.lora_B.weight": torch.ones(
+            dense_out_dim, rank, dtype=torch.bfloat16
+        ),
+        "base_model.model.model.layers.0.mlp.experts.w1.lora_A.weight": (
+            torch.ones(num_experts, rank, expert_in_dim, dtype=torch.bfloat16) * gate_fill
+        ),
+        "base_model.model.model.layers.0.mlp.experts.w1.lora_B.weight": torch.ones(
+            num_experts, expert_out_dim, rank, dtype=torch.bfloat16
+        ),
+        "base_model.model.model.layers.0.mlp.experts.w3.lora_A.weight": (
+            torch.ones(num_experts, rank, expert_in_dim, dtype=torch.bfloat16) * up_fill
+        ),
+        "base_model.model.model.layers.0.mlp.experts.w3.lora_B.weight": torch.ones(
+            num_experts, expert_out_dim, rank, dtype=torch.bfloat16
+        ),
+    }
+
+    path.mkdir(parents=True)
+    save_file(weights, str(path / "adapter_model.safetensors"))
+    (path / "adapter_config.json").write_text(json.dumps({"lora_alpha": 1, "r": rank}))
+
+
 def _run_build_and_reload(
     model_path: Path,
     adapter_path: Path,
     output_path: Path,
     *,
     is_vision: bool = False,
+    trust_remote_code: bool = True,
 ) -> dict[str, torch.Tensor]:
     """Run build_hf_model and return the reloaded state dict."""
     build_hf_model(
@@ -106,8 +148,19 @@ def _run_build_and_reload(
         output_path=str(output_path),
     )
     auto_cls = AutoModelForImageTextToText if is_vision else AutoModelForCausalLM
-    reloaded = auto_cls.from_pretrained(output_path, trust_remote_code=True, dtype=torch.float32)
+    load_kwargs: dict[str, object] = {"dtype": torch.float32}
+    if trust_remote_code:
+        load_kwargs["trust_remote_code"] = True
+    reloaded = auto_cls.from_pretrained(output_path, **load_kwargs)
     return reloaded.state_dict()
+
+
+def _load_saved_state_dict(output_path: Path) -> dict[str, torch.Tensor]:
+    """Load tensors exactly as written to disk, preserving saved dtypes."""
+    state_dict: dict[str, torch.Tensor] = {}
+    for safetensors_path in sorted(output_path.glob("*.safetensors")):
+        state_dict.update(load_file(str(safetensors_path)))
+    return state_dict
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +432,104 @@ class TestQwen3MoeSeparateExperts:
 
 
 # ---------------------------------------------------------------------------
-# 4. Qwen3 dense — standard linear layers (no experts)
+# 4. DeepSeek V3.1 — separate per-expert weights
+# ---------------------------------------------------------------------------
+
+
+def _make_tiny_deepseek_v31_config() -> PretrainedConfig:
+    config = AutoConfig.from_pretrained("deepseek-ai/DeepSeek-V3.1", trust_remote_code=True)
+    config.num_hidden_layers = 1
+    config.hidden_size = 64
+    config.intermediate_size = 64
+    config.moe_intermediate_size = 16
+    config.num_attention_heads = 2
+    config.num_key_value_heads = 2
+    config.n_routed_experts = 2
+    config.n_shared_experts = 1
+    config.num_experts_per_tok = 1
+    config.first_k_dense_replace = 0
+    config.vocab_size = 256
+    if hasattr(config, "quantization_config"):
+        delattr(config, "quantization_config")
+    return config
+
+
+class TestDeepSeekV31SeparateExperts:
+    """DeepSeek V3.1: dense weights stay BF16 while routed experts should be FP8."""
+
+    def test_dense_weights_change_but_only_routed_experts_are_quantized_to_fp8(self):
+        config = _make_tiny_deepseek_v31_config()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_path = root / "model"
+            adapter_path = root / "adapter"
+            output_path = root / "merged"
+
+            _save_model_to_disk(config, model_path, tokenizer_name="deepseek-ai/DeepSeek-V3.1")
+            orig = AutoModelForCausalLM.from_pretrained(model_path, dtype=torch.float32)
+            num_experts = 2
+
+            gate_shape = orig.state_dict()["model.layers.0.mlp.experts.0.gate_proj.weight"].shape
+            expert_out_dim, expert_in_dim = gate_shape
+            dense_shape = orig.state_dict()["model.layers.0.self_attn.q_a_proj.weight"].shape
+            dense_out_dim, dense_in_dim = dense_shape
+
+            _save_mixed_deepseek_adapter(
+                adapter_path,
+                num_experts=num_experts,
+                expert_in_dim=expert_in_dim,
+                expert_out_dim=expert_out_dim,
+                dense_in_dim=dense_in_dim,
+                dense_out_dim=dense_out_dim,
+            )
+
+            merged_sd = _run_build_and_reload(
+                model_path, adapter_path, output_path, trust_remote_code=False
+            )
+            saved_sd = _load_saved_state_dict(output_path)
+
+            assert (output_path / "configuration_deepseek.py").exists(), (
+                "Merged DeepSeek artifact should include configuration_deepseek.py"
+            )
+            assert (output_path / "modeling_deepseek.py").exists(), (
+                "Merged DeepSeek artifact should include modeling_deepseek.py"
+            )
+
+            dense_key = "model.layers.0.self_attn.q_a_proj.weight"
+            dense_delta = (merged_sd[dense_key] - orig.state_dict()[dense_key]).abs().sum()
+            assert dense_delta > 0, "Dense non-expert q_a_proj weight was not updated"
+            assert saved_sd[dense_key].dtype == torch.bfloat16, (
+                "Dense non-expert q_a_proj should remain higher precision (BF16)"
+            )
+
+            for i in range(num_experts):
+                gate_key = f"model.layers.0.mlp.experts.{i}.gate_proj.weight"
+                up_key = f"model.layers.0.mlp.experts.{i}.up_proj.weight"
+
+                gate_delta = (merged_sd[gate_key] - orig.state_dict()[gate_key]).abs().sum()
+                up_delta = (merged_sd[up_key] - orig.state_dict()[up_key]).abs().sum()
+
+                assert gate_delta > 0, f"Expert {i} gate_proj not updated"
+                assert up_delta > 0, f"Expert {i} up_proj not updated"
+                assert saved_sd[gate_key].dtype in {
+                    torch.float8_e4m3fn,
+                    torch.float8_e4m3fnuz,
+                    torch.float8_e5m2,
+                    torch.float8_e5m2fnuz,
+                }, f"Routed expert weight should be quantized to FP8: {gate_key}"
+
+            shared_expert_key = "model.layers.0.mlp.shared_experts.gate_proj.weight"
+            assert saved_sd[shared_expert_key].dtype == torch.bfloat16, (
+                "Shared expert weights should remain higher precision (BF16)"
+            )
+            assert any(
+                "weight_scale" in key and ".mlp.experts." in key for key in saved_sd
+            ), "Expected routed-expert FP8 scale tensors in saved checkpoint"
+
+
+# ---------------------------------------------------------------------------
+# 5. Qwen3 dense — standard linear layers (no experts)
 # ---------------------------------------------------------------------------
 
 
