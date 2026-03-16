@@ -57,7 +57,13 @@ from tinker_cookbook.rl.types import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import logtree, ml_log
 from tinker_cookbook.utils.misc_utils import safezip, split_list, timed
-from tinker_cookbook.utils.trace import scope, trace_init, trace_iteration, update_scope_context
+from tinker_cookbook.utils.trace import (
+    save_gantt_chart_html,
+    scope,
+    trace_init,
+    trace_iteration,
+    update_scope_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -402,6 +408,8 @@ class Config:
     remove_constant_reward_groups: bool = False
     # Emit async trace events for debugging/profiling.
     enable_trace: bool = False
+    # Save a Gantt chart HTML every N iterations (0 = disabled). Requires plotly.
+    span_chart_every: int = 0
 
     # -------------------------------------------------------------------------
     # Execution mode knobs (advanced)
@@ -1200,7 +1208,7 @@ async def do_sync_training(
             "progress/done_frac": (i_batch + 1) / num_batches,
         }
 
-        with trace_iteration(step=i_batch):
+        with trace_iteration(step=i_batch) as window:
             # Run evaluations
             if cfg.eval_every > 0 and i_batch % cfg.eval_every == 0:
                 eval_metrics = await run_evaluations_parallel(
@@ -1268,7 +1276,12 @@ async def do_sync_training(
 
             metrics.update(train_step_metrics)
 
-        # Log non-timing metrics (time/* auto-logged by trace_iteration)
+        metrics.update(window.get_timing_metrics())
+        window.write_spans_jsonl(Path(cfg.log_path) / "timing_spans.jsonl", step=i_batch)
+        if cfg.span_chart_every > 0 and i_batch % cfg.span_chart_every == 0:
+            save_gantt_chart_html(
+                window, i_batch, Path(cfg.log_path) / f"timing_gantt_{i_batch:06d}.html"
+            )
         ml_logger.log_metrics(metrics, step=i_batch)
 
 
@@ -1305,7 +1318,7 @@ async def main(
         logger.info(
             f"Run `python tinker_cookbook/utils/trace.py {trace_events_path} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"
         )
-        trace_init(output_file=trace_events_path, wandb_logger=ml_logger, span_chart_every=20)
+        trace_init(output_file=trace_events_path)
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("pylatexenc").setLevel(logging.WARNING)

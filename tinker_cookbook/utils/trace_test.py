@@ -5,6 +5,7 @@ import json
 import tempfile
 import threading
 import time
+from pathlib import Path
 from unittest.mock import patch
 
 import tinker
@@ -14,40 +15,28 @@ from tinker_cookbook.utils.trace import (
     SpanRecord,
     _build_gantt_chart,
     get_scope_context,
+    save_gantt_chart_html,
     scope,
+    scope_span,
+    scope_span_sync,
     trace_init,
     trace_iteration,
     trace_shutdown,
     update_scope_context,
 )
 
-
 # --- Helpers ---
 
 
 @contextlib.contextmanager
-def trace_session(wandb_logger=None, span_chart_every=0):
+def trace_session():
     """Start a trace session backed by a temporary JSONL file."""
     with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=True) as f:
-        trace_init(
-            output_file=f.name,
-            wandb_logger=wandb_logger,
-            span_chart_every=span_chart_every,
-        )
+        trace_init(output_file=f.name)
         try:
             yield f.name
         finally:
             trace_shutdown()
-
-
-class FakeLogger:
-    """Minimal logger that captures log_metrics calls for testing."""
-
-    def __init__(self) -> None:
-        self.logged: list[tuple[dict, int | None]] = []
-
-    def log_metrics(self, metrics: dict, step: int | None = None) -> None:
-        self.logged.append((dict(metrics), step))
 
 
 # --- Decorated helpers for test_trace (multi-thread integration) ---
@@ -263,6 +252,66 @@ def test_merge_spans():
     assert len(records) == 2
 
 
+def test_get_timing_metrics():
+    """get_timing_metrics includes time/total when set by trace_iteration."""
+    window = IterationWindow()
+    window.record_span("op", 0.0, 1.0)
+    window._total_time = 2.5
+    metrics = window.get_timing_metrics()
+    assert metrics["time/op"] == 1.0
+    assert metrics["time/total"] == 2.5
+
+
+def test_get_timing_metrics_without_total():
+    """get_timing_metrics works without time/total (no trace_iteration)."""
+    window = IterationWindow()
+    window.record_span("op", 0.0, 1.0)
+    metrics = window.get_timing_metrics()
+    assert metrics["time/op"] == 1.0
+    assert "time/total" not in metrics
+
+
+# --- write_spans_jsonl ---
+
+
+def test_write_spans_jsonl():
+    """write_spans_jsonl appends one JSON line per call."""
+    window = IterationWindow()
+    window.record_span("a", 100.0, 101.5)
+    window.record_span("b", 100.2, 102.0)
+
+    with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=True, mode="w") as f:
+        path = f.name
+
+    window.write_spans_jsonl(path, step=0)
+    window.write_spans_jsonl(path, step=1)
+
+    with open(path) as f:
+        lines = [json.loads(line) for line in f]
+
+    assert len(lines) == 2
+    assert lines[0]["step"] == 0
+    assert lines[1]["step"] == 1
+    assert len(lines[0]["spans"]) == 2
+    assert lines[0]["spans"][0]["name"] == "a"
+    assert lines[0]["spans"][1]["name"] == "b"
+    assert abs(lines[0]["spans"][0]["duration"] - 1.5) < 1e-9
+    # wall_start of first span should be ~0 (relative)
+    assert lines[0]["spans"][0]["wall_start"] < 0.1
+
+    Path(path).unlink(missing_ok=True)
+
+
+def test_write_spans_jsonl_empty_window():
+    """write_spans_jsonl is a no-op for empty windows."""
+    window = IterationWindow()
+    with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=True, mode="w") as f:
+        path = f.name
+
+    window.write_spans_jsonl(path, step=0)
+    assert not Path(path).exists()
+
+
 # --- trace_iteration ---
 
 
@@ -277,19 +326,15 @@ def test_trace_iteration_collects_scoped_spans():
     async def slow_op():
         await asyncio.sleep(0.05)
 
-    fake_logger = FakeLogger()
-
     async def run():
-        with trace_session(wandb_logger=fake_logger):
-            with trace_iteration(step=0):
+        with trace_session():
+            with trace_iteration(step=0) as window:
                 await fast_op()
                 await slow_op()
+            return window
 
-    asyncio.run(run())
-
-    assert len(fake_logger.logged) == 1
-    metrics, step = fake_logger.logged[0]
-    assert step == 0
+    window = asyncio.run(run())
+    metrics = window.get_timing_metrics()
     assert "time/total" in metrics
     assert "time/fast_op" in metrics
     assert "time/slow_op" in metrics
@@ -303,21 +348,18 @@ def test_trace_iteration_aggregates_repeated_calls():
     async def repeated_op():
         await asyncio.sleep(0.01)
 
-    fake_logger = FakeLogger()
-
     async def run():
-        with trace_session(wandb_logger=fake_logger):
-            with trace_iteration(step=5):
+        with trace_session():
+            with trace_iteration(step=5) as window:
                 await asyncio.gather(
                     repeated_op(),
                     repeated_op(),
                     repeated_op(),
                 )
+            return window
 
-    asyncio.run(run())
-
-    metrics, step = fake_logger.logged[0]
-    assert step == 5
+    window = asyncio.run(run())
+    metrics = window.get_timing_metrics()
     assert metrics["time/repeated_op:count"] == 3
     assert "time/repeated_op:mean" in metrics
     assert "time/repeated_op:max" in metrics
@@ -333,26 +375,32 @@ def test_trace_iteration_without_trace_init():
 
     async def run():
         # No trace_init — _trace_collector is None
-        with trace_iteration(step=0):
+        with trace_iteration(step=0) as window:
             await some_work()
+        return window
 
-    asyncio.run(run())
-    # No crash, no logger configured so nothing logged — just verifying no error
+    window = asyncio.run(run())
+    metrics = window.get_timing_metrics()
+    assert "time/some_work" in metrics
+    assert "time/total" in metrics
 
 
-def test_trace_iteration_no_op_without_logger():
-    """trace_iteration with Perfetto but no wandb_logger still works (spans go to Perfetto only)."""
+def test_trace_iteration_with_perfetto_only():
+    """trace_iteration with Perfetto but caller doesn't use timing metrics."""
 
     @scope
     async def op():
         await asyncio.sleep(0.01)
 
     async def run():
-        with trace_session():  # No wandb_logger
-            with trace_iteration(step=0):
+        with trace_session():
+            with trace_iteration(step=0) as window:
                 await op()
+            return window
 
-    asyncio.run(run())
+    window = asyncio.run(run())
+    # Caller can choose to ignore the window — no crash
+    assert "time/op" in window.get_timing_metrics()
 
 
 def test_trace_iteration_sync_functions():
@@ -362,22 +410,20 @@ def test_trace_iteration_sync_functions():
     def sync_work():
         time.sleep(0.01)
 
-    fake_logger = FakeLogger()
-
     async def run():
-        with trace_session(wandb_logger=fake_logger):
-            with trace_iteration(step=0):
+        with trace_session():
+            with trace_iteration(step=0) as window:
                 sync_work()
                 sync_work()
+            return window
 
-    asyncio.run(run())
-
-    metrics, _ = fake_logger.logged[0]
+    window = asyncio.run(run())
+    metrics = window.get_timing_metrics()
     assert metrics["time/sync_work:count"] == 2
 
 
 def test_trace_iteration_on_exception():
-    """trace_iteration still logs partial timing when an exception occurs."""
+    """trace_iteration still captures partial timing when an exception occurs."""
 
     @scope
     async def succeeds():
@@ -388,22 +434,18 @@ def test_trace_iteration_on_exception():
         await asyncio.sleep(0.01)
         raise ValueError("boom")
 
-    fake_logger = FakeLogger()
-
     async def run():
-        with trace_session(wandb_logger=fake_logger):
+        with trace_session():
             try:
-                with trace_iteration(step=0):
+                with trace_iteration(step=0) as window:
                     await succeeds()
                     await fails()
             except ValueError:
                 pass
+            return window
 
-    asyncio.run(run())
-
-    # Should still have logged timing for the spans that completed
-    assert len(fake_logger.logged) == 1
-    metrics, _ = fake_logger.logged[0]
+    window = asyncio.run(run())
+    metrics = window.get_timing_metrics()
     assert "time/total" in metrics
     assert "time/succeeds" in metrics
     assert "time/fails" in metrics
@@ -420,85 +462,134 @@ def test_trace_iteration_nested():
     async def inner_op():
         await asyncio.sleep(0.01)
 
-    fake_logger = FakeLogger()
-
     async def run():
-        with trace_session(wandb_logger=fake_logger):
-            with trace_iteration(step=0):
+        with trace_session():
+            with trace_iteration(step=0) as outer_window:
                 await outer_op()
-                with trace_iteration(step=100):
+                with trace_iteration(step=100) as inner_window:
                     await inner_op()
+            return outer_window, inner_window
 
-    asyncio.run(run())
-
-    # Two log calls: one for inner (step=100), one for outer (step=0)
-    assert len(fake_logger.logged) == 2
-    steps = {s for _, s in fake_logger.logged}
-    assert steps == {0, 100}
+    outer_window, inner_window = asyncio.run(run())
 
     # Inner should only have inner_op
-    inner_metrics = next(m for m, s in fake_logger.logged if s == 100)
+    inner_metrics = inner_window.get_timing_metrics()
     assert "time/inner_op" in inner_metrics
     assert "time/outer_op" not in inner_metrics
 
     # Outer should have outer_op (inner_op was captured by inner window, not outer)
-    outer_metrics = next(m for m, s in fake_logger.logged if s == 0)
+    outer_metrics = outer_window.get_timing_metrics()
     assert "time/outer_op" in outer_metrics
 
 
-def test_trace_iteration_span_chart_every():
-    """span_chart_every controls when Gantt charts are built."""
+# --- scope_span ---
 
-    @scope
-    async def op():
-        await asyncio.sleep(0.01)
 
-    fake_logger = FakeLogger()
+def test_scope_span_async():
+    """scope_span records to iteration window."""
 
     async def run():
-        with trace_session(wandb_logger=fake_logger, span_chart_every=3):
-            # step 0 should trigger chart (0 % 3 == 0)
-            with trace_iteration(step=0):
-                await op()
-            # step 1 should NOT trigger chart
-            with trace_iteration(step=1):
-                await op()
-            # step 3 should trigger chart (3 % 3 == 0)
-            with trace_iteration(step=3):
-                await op()
+        with trace_iteration(step=0) as window:
+            async with scope_span("my_span"):
+                await asyncio.sleep(0.01)
+        return window
 
-    # Patch _build_gantt_chart to track calls without requiring plotly
-    call_steps: list[int] = []
-
-    def tracking_build(span_records, step):
-        call_steps.append(step)
-        return None  # Return None to skip wandb.log
-
-    with patch("tinker_cookbook.utils.trace._build_gantt_chart", side_effect=tracking_build):
-        asyncio.run(run())
-
-    assert len(fake_logger.logged) == 3
-    # _build_gantt_chart should have been called for step 0 and step 3
-    assert call_steps == [0, 3]
+    window = asyncio.run(run())
+    metrics = window.get_timing_metrics()
+    assert "time/my_span" in metrics
+    assert metrics["time/my_span"] >= 0.01
 
 
-def test_trace_shutdown_resets_globals():
-    """trace_shutdown resets _wandb_logger and _span_chart_every."""
-    fake_logger = FakeLogger()
+def test_scope_span_with_perfetto():
+    """scope_span records to both Perfetto and iteration window."""
 
-    with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=True) as f:
-        trace_init(output_file=f.name, wandb_logger=fake_logger, span_chart_every=10)
-        trace_shutdown()
+    with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as tmp:
+        trace_file = tmp.name
 
-    # After shutdown, trace_iteration should not log anything
-    # (because _wandb_logger was reset to None)
+    try:
+
+        async def run():
+            trace_init(output_file=trace_file)
+            try:
+                with trace_iteration(step=0) as window:
+                    async with scope_span("traced_span"):
+                        await asyncio.sleep(0.01)
+                return window
+            finally:
+                trace_shutdown()
+
+        window = asyncio.run(run())
+
+        # Check iteration window
+        metrics = window.get_timing_metrics()
+        assert "time/traced_span" in metrics
+
+        # Check Perfetto trace file has the span
+        with open(trace_file) as f:
+            events = [json.loads(line) for line in f]
+        span_events = [e for e in events if e.get("name") == "traced_span"]
+        assert len(span_events) >= 2  # BEGIN + END
+    finally:
+        Path(trace_file).unlink(missing_ok=True)
+
+
+def test_scope_span_noop():
+    """scope_span is a no-op when no collector and no iteration window."""
+
     async def run():
-        with trace_iteration(step=0):
-            pass
+        async with scope_span("should_not_crash"):
+            return 42
 
-    asyncio.run(run())
-    # FakeLogger should have zero log calls (nothing logged after shutdown)
-    assert len(fake_logger.logged) == 0
+    result = asyncio.run(run())
+    assert result == 42
+
+
+def test_scope_span_sync():
+    """scope_span_sync records to iteration window."""
+
+    with trace_iteration(step=0) as window:
+        with scope_span_sync("sync_span"):
+            time.sleep(0.01)
+
+    metrics = window.get_timing_metrics()
+    assert "time/sync_span" in metrics
+
+
+def test_scope_span_multiple():
+    """Multiple scope_span calls with the same name produce aggregates."""
+
+    async def run():
+        with trace_iteration(step=0) as window:
+            for _ in range(3):
+                async with scope_span("repeated"):
+                    await asyncio.sleep(0.01)
+        return window
+
+    window = asyncio.run(run())
+    metrics = window.get_timing_metrics()
+    assert metrics["time/repeated:count"] == 3
+    assert "time/repeated:total" in metrics
+
+
+def test_scope_span_on_exception():
+    """scope_span still records the span when the block raises."""
+
+    async def run():
+        with trace_iteration(step=0) as window:
+            async with scope_span("before_error"):
+                await asyncio.sleep(0.01)
+            try:
+                async with scope_span("erroring"):
+                    await asyncio.sleep(0.01)
+                    raise ValueError("boom")
+            except ValueError:
+                pass
+        return window
+
+    window = asyncio.run(run())
+    metrics = window.get_timing_metrics()
+    assert "time/before_error" in metrics
+    assert "time/erroring" in metrics
 
 
 # --- Gantt chart ---
@@ -553,6 +644,30 @@ def test_build_gantt_chart_no_plotly():
     assert fig is None
 
 
+def test_save_gantt_chart_html():
+    """save_gantt_chart_html writes an HTML file when plotly is available."""
+    window = IterationWindow()
+    window.record_span("a", 100.0, 101.0)
+    window.record_span("b", 100.5, 102.0)
+
+    with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
+        path = Path(f.name)
+
+    save_gantt_chart_html(window, step=0, path=path)
+
+    try:
+        import plotly  # noqa: F401
+
+        assert path.exists()
+        content = path.read_text()
+        assert "plotly" in content.lower() or "Plotly" in content
+    except ImportError:
+        # plotly not installed — file should not be created
+        pass
+    finally:
+        path.unlink(missing_ok=True)
+
+
 # --- SDK client instrumentation ---
 
 
@@ -588,12 +703,12 @@ def test_sdk_client_instrumentation_covers_all_async_methods():
 def test_scope_double_wrapping_prevention():
     """_instrument_sdk_clients is idempotent — calling trace_init twice doesn't double-wrap."""
     with trace_session():
-        first_ref = getattr(tinker.TrainingClient, "forward_backward_async")
+        first_ref = tinker.TrainingClient.forward_backward_async
         assert getattr(first_ref, "_scope_instrumented", False)
 
     # Second trace_init — should not re-wrap
     with trace_session():
-        second_ref = getattr(tinker.TrainingClient, "forward_backward_async")
+        second_ref = tinker.TrainingClient.forward_backward_async
         assert getattr(second_ref, "_scope_instrumented", False)
         # Same wrapper object — not double-wrapped
         assert first_ref is second_ref

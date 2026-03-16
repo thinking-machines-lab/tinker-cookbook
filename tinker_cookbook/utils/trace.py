@@ -11,13 +11,13 @@ import queue
 import threading
 import time
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import StrEnum
 from io import TextIOWrapper
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +94,7 @@ class IterationWindow:
     def __init__(self) -> None:
         self.spans: list[SpanRecord] = []
         self._lock = threading.Lock()
+        self._total_time: float | None = None
 
     def record_span(self, name: str, start_time: float, end_time: float) -> None:
         with self._lock:
@@ -134,6 +135,17 @@ class IterationWindow:
 
         return metrics
 
+    def get_timing_metrics(self) -> dict[str, float]:
+        """Get aggregated timing metrics including time/total.
+
+        Call this after the ``trace_iteration`` context manager has exited,
+        which sets ``_total_time``.
+        """
+        metrics = self.aggregate()
+        if self._total_time is not None:
+            metrics["time/total"] = self._total_time
+        return metrics
+
     def merge_spans(self, spans: list[SpanRecord]) -> None:
         """Merge externally-collected spans (e.g. from worker processes) into this window."""
         with self._lock:
@@ -162,6 +174,31 @@ class IterationWindow:
             }
             for s in spans
         ]
+
+    def write_spans_jsonl(self, path: Path | str, step: int) -> None:
+        """Append span records for this iteration as one JSON line to the given file.
+
+        Format: ``{"step": N, "spans": [{"name": ..., "duration": ..., "wall_start": ..., "wall_end": ...}, ...]}``
+        """
+        with self._lock:
+            spans = list(self.spans)
+
+        if not spans:
+            return
+
+        t0 = min(s.wall_start for s in spans)
+        span_dicts = [
+            {
+                "name": s.name,
+                "duration": s.end_time - s.start_time,
+                "wall_start": s.wall_start - t0,
+                "wall_end": s.wall_end - t0,
+            }
+            for s in spans
+        ]
+        line = json.dumps({"step": step, "spans": span_dicts})
+        with open(path, "a") as f:
+            f.write(line + "\n")
 
 
 # Context variable to track the current iteration window
@@ -254,10 +291,6 @@ class TraceCollector:
 # Global trace collector instance
 _trace_collector: TraceCollector | None = None
 
-# Global logger for auto-logging timing metrics
-_wandb_logger: Any = None  # ml_log.Logger instance
-_span_chart_every: int = 0  # Log Gantt chart every N steps (0 = disabled)
-
 
 def _atexit_trace_shutdown():
     global _trace_collector
@@ -271,13 +304,8 @@ atexit.register(_atexit_trace_shutdown)
 
 def _instrument_sdk_clients() -> None:
     """Patch Tinker SDK client classes with @scope for automatic tracing."""
-    try:
-        import tinker
-    except ImportError:
-        logger.debug("tinker SDK not installed, skipping client instrumentation")
-        return
+    import tinker
 
-    # TrainingClient methods
     _methods_to_patch = {
         tinker.TrainingClient: [
             "forward_async",
@@ -313,35 +341,25 @@ def _instrument_sdk_clients() -> None:
 def trace_init(
     flush_interval_sec: float = 1.0,
     output_file: str = "trace_events.jsonl",
-    wandb_logger: Any = None,
-    span_chart_every: int = 0,
 ) -> None:
     """Initialize the trace collector.
 
     Args:
         flush_interval_sec: How often to flush trace events to disk.
         output_file: Path for Perfetto trace output (JSONL format).
-        wandb_logger: Optional ml_log.Logger instance. When provided, trace_iteration()
-            will auto-log timing metrics and SDK client classes will be auto-instrumented.
-        span_chart_every: Log a Plotly Gantt chart every N steps (0 = disabled).
-            Requires plotly to be installed.
     """
-    global _trace_collector, _wandb_logger, _span_chart_every
+    global _trace_collector
     _trace_collector = TraceCollector(flush_interval_sec, output_file)
-    _wandb_logger = wandb_logger
-    _span_chart_every = span_chart_every
     _instrument_sdk_clients()
 
 
 def trace_shutdown() -> None:
     """Shutdown the trace collector and flush any remaining events."""
-    global _trace_collector, _wandb_logger, _span_chart_every
+    global _trace_collector
     if _trace_collector is None:
         return
     _trace_collector.shutdown()
     _trace_collector = None
-    _wandb_logger = None
-    _span_chart_every = 0
 
 
 @dataclass
@@ -363,13 +381,11 @@ class CreateTraceEventsResult:
     function_call_context: FunctionCallContext
 
 
-def _create_trace_events(func: Callable[..., Any]) -> CreateTraceEventsResult:
-    """Create trace events and context information for a function call."""
-    assert _trace_collector is not None, (
-        "Trace collector must be initialized before creating trace events"
-    )
+def _get_trace_thread_info() -> tuple[int, str, str]:
+    """Get thread/coroutine info for trace events.
 
-    # Get current task and thread info
+    Returns (thread_id, thread_name, coroutine_name).
+    """
     thread_id = threading.current_thread().ident or 0
     thread_name = threading.current_thread().name
     try:
@@ -380,13 +396,21 @@ def _create_trace_events(func: Callable[..., Any]) -> CreateTraceEventsResult:
             coroutine_name = task.get_name()
     except RuntimeError:
         coroutine_name = f"sync:{thread_name}"
-    thread_id = threading.current_thread().ident or 0
-    thread_name = threading.current_thread().name
+    return thread_id, thread_name, coroutine_name
+
+
+def _create_trace_events(name: str) -> CreateTraceEventsResult:
+    """Create trace events and context information for a named span."""
+    assert _trace_collector is not None, (
+        "Trace collector must be initialized before creating trace events"
+    )
+
+    thread_id, thread_name, coroutine_name = _get_trace_thread_info()
     category = "async"
 
     # Begin event for this function call
     begin_event = TraceEvent(
-        name=func.__name__,
+        name=name,
         ph=EventType.BEGIN,
         pid=thread_id,  # Process ID (we use thread ID as process)
         tid=hash(coroutine_name) % 1000000,  # Track ID within the thread
@@ -434,16 +458,16 @@ def _create_trace_events(func: Callable[..., Any]) -> CreateTraceEventsResult:
 
 
 def _create_end_event(
-    func: Callable[..., Any],
+    name: str,
     function_call_context: FunctionCallContext,
 ) -> TraceEvent:
-    """Create an end trace event for a function call."""
+    """Create an end trace event for a named span."""
     assert _trace_collector is not None, (
         "Trace collector must be initialized before creating trace events"
     )
 
     return TraceEvent(
-        name=func.__name__,
+        name=name,
         ph=EventType.END,
         pid=function_call_context.thread_id,
         tid=hash(function_call_context.coroutine_name) % 1000000,
@@ -455,6 +479,100 @@ def _create_end_event(
         },
         cat=function_call_context.category,
     )
+
+
+def _make_scope_wrapper(func: Callable[..., Any], name: str) -> Callable[..., Any]:
+    """Create a scope wrapper for a function with the given span name."""
+
+    if inspect.iscoroutinefunction(func):
+
+        @functools.wraps(func)
+        async def async_wrapper(*args: Any, **kwargs: Any):
+            if _trace_collector is None:
+                # Still record into iteration window even without Perfetto tracing
+                window = _iteration_window.get(None)
+                if window is not None:
+                    t_start = time.perf_counter()
+                    try:
+                        return await func(*args, **kwargs)
+                    finally:
+                        window.record_span(name, t_start, time.perf_counter())
+                return await func(*args, **kwargs)
+
+            events_result = _create_trace_events(name)
+            _trace_collector.add_event(events_result.begin_event)
+            _trace_collector.add_event(events_result.metadata_coroutine_event)
+            _trace_collector.add_event(events_result.metadata_thread_event)
+
+            t_start = time.perf_counter()
+            token = None
+            try:
+                # Set context for nested calls
+                token = trace_context.set(events_result.function_call_context.scope_context)
+
+                # Execute the actual function
+                result = await func(*args, **kwargs)
+                return result
+
+            finally:
+                end_event = _create_end_event(name, events_result.function_call_context)
+                _trace_collector.add_event(end_event)
+
+                # Record into iteration window if active
+                window = _iteration_window.get(None)
+                if window is not None:
+                    window.record_span(name, t_start, time.perf_counter())
+
+                # Reset context
+                if token is not None:
+                    trace_context.reset(token)
+
+        return async_wrapper
+
+    else:
+
+        @functools.wraps(func)
+        def sync_wrapper(*args: Any, **kwargs: Any):
+            if _trace_collector is None:
+                # Still record into iteration window even without Perfetto tracing
+                window = _iteration_window.get(None)
+                if window is not None:
+                    t_start = time.perf_counter()
+                    try:
+                        return func(*args, **kwargs)
+                    finally:
+                        window.record_span(name, t_start, time.perf_counter())
+                return func(*args, **kwargs)
+
+            events_result = _create_trace_events(name)
+            _trace_collector.add_event(events_result.begin_event)
+            _trace_collector.add_event(events_result.metadata_coroutine_event)
+            _trace_collector.add_event(events_result.metadata_thread_event)
+
+            t_start = time.perf_counter()
+            token = None
+            try:
+                # Set context for nested calls
+                token = trace_context.set(events_result.function_call_context.scope_context)
+
+                # Execute the actual function
+                result = func(*args, **kwargs)
+                return result
+
+            finally:
+                end_event = _create_end_event(name, events_result.function_call_context)
+                _trace_collector.add_event(end_event)
+
+                # Record into iteration window if active
+                window = _iteration_window.get(None)
+                if window is not None:
+                    window.record_span(name, t_start, time.perf_counter())
+
+                # Reset context
+                if token is not None:
+                    trace_context.reset(token)
+
+        return sync_wrapper
 
 
 def scope(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -495,96 +613,83 @@ def scope(func: Callable[..., Any]) -> Callable[..., Any]:
         trace_init()
         asyncio.run(main())
     """
+    return _make_scope_wrapper(func, func.__name__)
 
-    if inspect.iscoroutinefunction(func):
 
-        @functools.wraps(func)
-        async def async_wrapper(*args: Any, **kwargs: Any):
-            if _trace_collector is None:
-                # Still record into iteration window even without Perfetto tracing
-                window = _iteration_window.get(None)
-                if window is not None:
-                    t_start = time.perf_counter()
-                    try:
-                        return await func(*args, **kwargs)
-                    finally:
-                        window.record_span(func.__name__, t_start, time.perf_counter())
-                return await func(*args, **kwargs)
+@contextlib.asynccontextmanager
+async def scope_span(name: str):
+    """Async context manager for inline named spans.
 
-            events_result = _create_trace_events(func)
-            _trace_collector.add_event(events_result.begin_event)
-            _trace_collector.add_event(events_result.metadata_coroutine_event)
-            _trace_collector.add_event(events_result.metadata_thread_event)
+    Records to both the Perfetto trace (if active) and the current IterationWindow.
+    Use this when you want to time a block of code with a semantic name rather than
+    decorating a function with ``@scope``.
 
-            t_start = time.perf_counter()
-            token = None
-            try:
-                # Set context for nested calls
-                token = trace_context.set(events_result.function_call_context.scope_context)
+    Example::
 
-                # Execute the actual function
-                result = await func(*args, **kwargs)
-                return result
+        async with scope_span("policy_sample"):
+            result = await policy(observation, stop_condition)
+    """
+    window = _iteration_window.get(None)
 
-            finally:
-                end_event = _create_end_event(func, events_result.function_call_context)
-                _trace_collector.add_event(end_event)
+    if _trace_collector is not None:
+        events_result = _create_trace_events(name)
+        _trace_collector.add_event(events_result.begin_event)
+        _trace_collector.add_event(events_result.metadata_coroutine_event)
+        _trace_collector.add_event(events_result.metadata_thread_event)
 
-                # Record into iteration window if active
-                window = _iteration_window.get(None)
-                if window is not None:
-                    window.record_span(func.__name__, t_start, time.perf_counter())
-
-                # Reset context
-                if token is not None:
-                    trace_context.reset(token)
-
-        return async_wrapper
-
+        t_start = time.perf_counter()
+        try:
+            yield
+        finally:
+            end_event = _create_end_event(name, events_result.function_call_context)
+            _trace_collector.add_event(end_event)
+            if window is not None:
+                window.record_span(name, t_start, time.perf_counter())
+    elif window is not None:
+        t_start = time.perf_counter()
+        try:
+            yield
+        finally:
+            window.record_span(name, t_start, time.perf_counter())
     else:
+        yield
 
-        @functools.wraps(func)
-        def sync_wrapper(*args: Any, **kwargs: Any):
-            if _trace_collector is None:
-                # Still record into iteration window even without Perfetto tracing
-                window = _iteration_window.get(None)
-                if window is not None:
-                    t_start = time.perf_counter()
-                    try:
-                        return func(*args, **kwargs)
-                    finally:
-                        window.record_span(func.__name__, t_start, time.perf_counter())
-                return func(*args, **kwargs)
 
-            events_result = _create_trace_events(func)
-            _trace_collector.add_event(events_result.begin_event)
-            _trace_collector.add_event(events_result.metadata_coroutine_event)
-            _trace_collector.add_event(events_result.metadata_thread_event)
+@contextlib.contextmanager
+def scope_span_sync(name: str):
+    """Sync context manager for inline named spans.
 
-            t_start = time.perf_counter()
-            token = None
-            try:
-                # Set context for nested calls
-                token = trace_context.set(events_result.function_call_context.scope_context)
+    Same as ``scope_span`` but for synchronous code.
 
-                # Execute the actual function
-                result = func(*args, **kwargs)
-                return result
+    Example::
 
-            finally:
-                end_event = _create_end_event(func, events_result.function_call_context)
-                _trace_collector.add_event(end_event)
+        with scope_span_sync("data_processing"):
+            result = process_data(batch)
+    """
+    window = _iteration_window.get(None)
 
-                # Record into iteration window if active
-                window = _iteration_window.get(None)
-                if window is not None:
-                    window.record_span(func.__name__, t_start, time.perf_counter())
+    if _trace_collector is not None:
+        events_result = _create_trace_events(name)
+        _trace_collector.add_event(events_result.begin_event)
+        _trace_collector.add_event(events_result.metadata_coroutine_event)
+        _trace_collector.add_event(events_result.metadata_thread_event)
 
-                # Reset context
-                if token is not None:
-                    trace_context.reset(token)
-
-        return sync_wrapper
+        t_start = time.perf_counter()
+        try:
+            yield
+        finally:
+            end_event = _create_end_event(name, events_result.function_call_context)
+            _trace_collector.add_event(end_event)
+            if window is not None:
+                window.record_span(name, t_start, time.perf_counter())
+    elif window is not None:
+        t_start = time.perf_counter()
+        try:
+            yield
+        finally:
+            window.record_span(name, t_start, time.perf_counter())
+    else:
+        yield
 
 
 def get_scope_context() -> ScopeContext:
@@ -648,15 +753,26 @@ def _build_gantt_chart(span_records: list[dict[str, Any]], step: int) -> Any:
     return fig
 
 
+def save_gantt_chart_html(window: IterationWindow, step: int, path: Path | str) -> None:
+    """Build a Plotly Gantt chart from the window's spans and save as standalone HTML.
+
+    No-op if plotly is not installed or the window has no spans.
+    """
+    span_records = window.get_span_records()
+    fig = _build_gantt_chart(span_records, step)
+    if fig is not None:
+        fig.write_html(str(path))
+
+
 @contextlib.contextmanager
-def trace_iteration(step: int) -> Generator[None, None, None]:
+def trace_iteration(step: int) -> Generator[IterationWindow, None, None]:
     """Context manager that marks a training iteration boundary.
 
-    Collects all @scope spans within the window and, on exit:
-    - Aggregates them into a flat timing dict and auto-logs to wandb_logger
-    - Optionally logs a Plotly Gantt chart showing span overlap
+    Yields an ``IterationWindow`` that collects all ``@scope`` and ``scope_span``
+    spans within the block. After the block exits, call ``window.get_timing_metrics()``
+    to retrieve the aggregated timing dict (including ``time/total``).
 
-    Span names are flat (``func.__name__``), not hierarchical. If ``train_step``
+    Span names are flat (the function or span name), not hierarchical. If ``train_step``
     calls ``forward_backward_async``, both appear as separate top-level keys::
 
         time/train_step = 5.0              # inclusive (contains forward_backward)
@@ -673,40 +789,22 @@ def trace_iteration(step: int) -> Generator[None, None, None]:
     Example::
 
         for i_batch in range(n_batches):
-            with trace_iteration(step=i_batch):
+            with trace_iteration(step=i_batch) as window:
                 await run_evals(...)
                 await gather_rollouts(...)
                 await train_step(...)
-            # time/* metrics auto-logged to wandb_logger
+            metrics.update(window.get_timing_metrics())
+            window.write_spans_jsonl(log_path / "timing_spans.jsonl", step=i_batch)
+            ml_logger.log_metrics(metrics, step=i_batch)
     """
     window = IterationWindow()
     token = _iteration_window.set(window)
     t_start = time.perf_counter()
     try:
-        yield
+        yield window
     finally:
-        total_time = time.perf_counter() - t_start
+        window._total_time = time.perf_counter() - t_start
         _iteration_window.reset(token)
-
-        # Aggregate timing metrics
-        timing_metrics = window.aggregate()
-        timing_metrics["time/total"] = total_time
-
-        # Auto-log if wandb_logger is configured
-        if _wandb_logger is not None:
-            _wandb_logger.log_metrics(timing_metrics, step=step)
-
-            # Log Gantt chart at configured intervals
-            if _span_chart_every > 0 and step % _span_chart_every == 0:
-                span_records = window.get_span_records()
-                fig = _build_gantt_chart(span_records, step)
-                if fig is not None:
-                    try:
-                        import wandb as _wandb  # type: ignore[reportMissingImports]
-
-                        _wandb.log({"trace/spans": _wandb.Plotly(fig)}, step=step)
-                    except ImportError:
-                        logger.debug("wandb not installed, skipping Gantt chart logging")
 
 
 def convert_jsonl_to_json_main():
