@@ -631,6 +631,56 @@ def test_deepseek_expert_lora_broadcast_rejects_single_single():
         deepseek_export._expand_expert_lora_tensors(lora_A, lora_B)
 
 
+def test_deepseek_compression_config_serializer_omits_unknown_fields():
+    config_dict = {
+        "config_groups": {
+            "group_0": {
+                "targets": ["Linear"],
+                "weights": {
+                    "num_bits": 8,
+                    "type": "float",
+                    "strategy": "block",
+                    "block_structure": [128, 128],
+                    "symmetric": True,
+                    "dynamic": False,
+                    "scale_dtype": "float32",
+                    "zp_dtype": "int8",
+                    "future_field": "surprise",
+                },
+                "input_activations": {
+                    "num_bits": 8,
+                    "type": "float",
+                    "strategy": "tensor",
+                    "symmetric": True,
+                    "dynamic": True,
+                    "scale_dtype": "float32",
+                },
+                "output_activations": None,
+                "unexpected_group_field": "ignored",
+            }
+        },
+        "format": "float-quantized",
+        "global_compression_ratio": None,
+        "ignore": ["lm_head"],
+        "kv_cache_scheme": None,
+        "quantization_status": "compressed",
+        "unexpected_top_level": "ignored",
+    }
+
+    serialized = deepseek_export._serialize_vllm_compatible_quant_config(config_dict)
+    group = serialized["config_groups"]["group_0"]
+
+    assert serialized["quant_method"] == "compressed-tensors"
+    assert "unexpected_top_level" not in serialized
+    assert "unexpected_group_field" not in group
+    assert "scale_dtype" not in group["weights"]
+    assert "zp_dtype" not in group["weights"]
+    assert "future_field" not in group["weights"]
+    assert "scale_dtype" not in group["input_activations"]
+    assert group["weights"]["block_structure"] == [128, 128]
+    assert group["input_activations"]["dynamic"] is True
+
+
 class TestDeepSeekV31SeparateExperts:
     """DeepSeek V3.1: dense weights stay BF16 while routed experts should be FP8."""
 

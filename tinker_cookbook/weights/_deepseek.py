@@ -64,6 +64,33 @@ _CHECKPOINT_ALLOW_PATTERNS = [
     "*.py",
     "*.safetensors",
 ]
+_VLLM_COMPAT_QUANT_ARGS_FIELDS = {
+    "actorder",
+    "block_structure",
+    "dynamic",
+    "group_size",
+    "num_bits",
+    "observer",
+    "observer_kwargs",
+    "strategy",
+    "symmetric",
+    "type",
+}
+_VLLM_COMPAT_QUANT_SCHEME_FIELDS = {
+    "format",
+    "input_activations",
+    "output_activations",
+    "targets",
+    "weights",
+}
+_VLLM_COMPAT_QUANT_CONFIG_FIELDS = {
+    "config_groups",
+    "format",
+    "global_compression_ratio",
+    "ignore",
+    "kv_cache_scheme",
+    "quantization_status",
+}
 
 
 def is_deepseek_config(config: object) -> bool:
@@ -779,24 +806,44 @@ def _build_compressed_tensors_config(output_weight_map: dict[str, str]) -> dict:
         quantization_status="compressed",
         ignore=ignore,
     )
-    config_dict = config.model_dump()
-    _strip_unsupported_quant_args_fields(config_dict)
-    config_dict["quant_method"] = "compressed-tensors"
-    return config_dict
+    return _serialize_vllm_compatible_quant_config(config.model_dump())
 
 
-def _strip_unsupported_quant_args_fields(config_dict: dict) -> None:
-    """Drop fields newer vLLM builds may reject as extras."""
-    extra_fields = {"scale_dtype", "zp_dtype"}
-    for group in config_dict.get("config_groups", {}).values():
-        if not isinstance(group, dict):
+def _serialize_vllm_compatible_quant_config(config_dict: dict) -> dict:
+    """Serialize only the compressed-tensors fields the current vLLM path needs.
+
+    Using an allowlist here is more stable than stripping a few known extras:
+    new compressed-tensors fields are omitted automatically instead of breaking
+    older vLLM builds until we update a blacklist.
+    """
+    serialized: dict = {}
+    for key, value in config_dict.items():
+        if key == "config_groups" and isinstance(value, dict):
+            serialized[key] = {
+                group_name: _serialize_vllm_compatible_quant_scheme(group)
+                for group_name, group in value.items()
+                if isinstance(group, dict)
+            }
             continue
-        for section in ("weights", "input_activations", "output_activations"):
-            args = group.get(section)
-            if not isinstance(args, dict):
-                continue
-            for key in extra_fields:
-                args.pop(key, None)
+        if key in _VLLM_COMPAT_QUANT_CONFIG_FIELDS:
+            serialized[key] = value
+    serialized["quant_method"] = "compressed-tensors"
+    return serialized
+
+
+def _serialize_vllm_compatible_quant_scheme(group: dict) -> dict:
+    serialized: dict = {}
+    for key, value in group.items():
+        if key in {"weights", "input_activations", "output_activations"} and isinstance(value, dict):
+            serialized[key] = {
+                field: field_value
+                for field, field_value in value.items()
+                if field in _VLLM_COMPAT_QUANT_ARGS_FIELDS
+            }
+            continue
+        if key in _VLLM_COMPAT_QUANT_SCHEME_FIELDS:
+            serialized[key] = value
+    return serialized
 
 
 def _copy_custom_files(
