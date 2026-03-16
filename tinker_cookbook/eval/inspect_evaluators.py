@@ -1,5 +1,5 @@
 import logging
-import os
+from pathlib import Path
 from typing import Optional
 
 import chz
@@ -114,7 +114,7 @@ class InspectEvaluator(SamplingClientEvaluator):
             # the inspect evaluation can still fail if e.g. the parser returns an error for
             # a given sample.
             fail_on_error=False,
-            log_dir=self.config.log_dir or os.path.expanduser("~/inspect-logs"),
+            log_dir=self.config.log_dir or str(Path("~/inspect-logs").expanduser()),
             max_connections=self.config.max_connections,
             log_level=self.config.log_level,
             log_realtime=False,

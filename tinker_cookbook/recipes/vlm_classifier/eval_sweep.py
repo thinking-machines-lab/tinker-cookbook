@@ -21,8 +21,8 @@ python -m tinker_cookbook.recipes.vlm_classifier.eval_sweep \
 import asyncio
 import json
 import logging
-import os
 import re
+from pathlib import Path
 from typing import Any
 
 import chz
@@ -147,8 +147,8 @@ async def evaluate_experiment(
     Evaluate a single few-shot image classifier experiment.
     """
 
-    experiment_path = os.path.join(eval_config.experiment_dir, experiment_name)
-    assert os.path.isdir(experiment_path), f"Experiment directory does not exist: {experiment_path}"
+    experiment_path = Path(eval_config.experiment_dir) / experiment_name
+    assert experiment_path.is_dir(), f"Experiment directory does not exist: {experiment_path}"
 
     # Load checkpoint: use early stopping step if provided, otherwise use last checkpoint
     early_stop_step = (
@@ -157,9 +157,10 @@ async def evaluate_experiment(
         else None
     )
 
+    experiment_path_str = str(experiment_path)
     if early_stop_step is not None:
         checkpoint = get_checkpoint_at_step(
-            experiment_path, early_stop_step, required_key="sampler_path"
+            experiment_path_str, early_stop_step, required_key="sampler_path"
         )
         assert checkpoint is not None, (
             f"No checkpoint at step {early_stop_step} with sampler_path found in {experiment_path}"
@@ -168,7 +169,7 @@ async def evaluate_experiment(
             f"Using early stopping checkpoint at step {early_stop_step} for {experiment_name}"
         )
     else:
-        checkpoint = get_last_checkpoint(experiment_path, required_key="sampler_path")
+        checkpoint = get_last_checkpoint(experiment_path_str, required_key="sampler_path")
         assert checkpoint is not None, f"No checkpoint with sampler_path found in {experiment_path}"
 
     # Parse hyperparameters (including dataset) from directory name
@@ -239,17 +240,12 @@ def run_eval_sweep(eval_config: EvalConfig):
 
     logging.basicConfig(level=logging.INFO)
 
-    if not os.path.isdir(eval_config.experiment_dir):
+    experiment_dir = Path(eval_config.experiment_dir)
+    if not experiment_dir.is_dir():
         raise ValueError(f"Experiment directory does not exist: {eval_config.experiment_dir}")
 
     # Find all experiment subdirectories
-    experiment_names = sorted(
-        [
-            d
-            for d in os.listdir(eval_config.experiment_dir)
-            if os.path.isdir(os.path.join(eval_config.experiment_dir, d))
-        ]
-    )
+    experiment_names = sorted(d.name for d in experiment_dir.iterdir() if d.is_dir())
 
     logger.info(
         f"Found {len(experiment_names)} experiment directories in {eval_config.experiment_dir}"
@@ -262,7 +258,7 @@ def run_eval_sweep(eval_config: EvalConfig):
     )
 
     # Save results to output file
-    os.makedirs(os.path.dirname(os.path.abspath(eval_config.output_file)), exist_ok=True)
+    Path(eval_config.output_file).resolve().parent.mkdir(parents=True, exist_ok=True)
     with open(eval_config.output_file, "w") as f:
         json.dump(classifier_results_json, f, indent=2)
 

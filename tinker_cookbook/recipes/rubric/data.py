@@ -1,6 +1,6 @@
 import json
-import os
 import re
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Sequence, TypeAlias
 
@@ -150,7 +150,7 @@ class RubricDatapointListBuilderFromJsonl(RubricDatapointListBuilder):
     jsonl_path: str
 
     def __call__(self) -> Sequence[RubricBasedDatapoint]:
-        if not os.path.exists(self.jsonl_path):
+        if not Path(self.jsonl_path).exists():
             raise FileNotFoundError(
                 f"Data file not found: {self.jsonl_path}\n"
                 f"Please generate the example data first by running:\n"
