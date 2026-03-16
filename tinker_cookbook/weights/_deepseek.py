@@ -32,7 +32,6 @@ from huggingface_hub import snapshot_download
 from safetensors import safe_open
 from safetensors.torch import load_file
 from safetensors.torch import save_file
-from transformers import AutoConfig
 from transformers import PreTrainedModel
 
 from tinker_cookbook.weights._merge import apply_merged_weight
@@ -70,8 +69,12 @@ _CHECKPOINT_ALLOW_PATTERNS = [
 
 def is_deepseek_config(config: object) -> bool:
     """Return True when a config should use the DeepSeek export path."""
-    model_type = str(getattr(config, "model_type", "")).lower()
-    class_name = config.__class__.__name__.lower()
+    if isinstance(config, dict):
+        model_type = str(config.get("model_type", "")).lower()
+        class_name = ""
+    else:
+        model_type = str(getattr(config, "model_type", "")).lower()
+        class_name = config.__class__.__name__.lower()
     return model_type.startswith("deepseek") or class_name.startswith("deepseek")
 
 
@@ -95,7 +98,7 @@ def save_deepseek_model(
     """
     checkpoint_path = _resolve_hf_checkpoint_path(base_model)
     logger.info("DeepSeek export: resolved checkpoint path to %s", checkpoint_path)
-    config = AutoConfig.from_pretrained(checkpoint_path, trust_remote_code=True)
+    config = _load_checkpoint_config(checkpoint_path)
     shard_paths = _get_checkpoint_shard_paths(checkpoint_path)
     logger.info("DeepSeek export: found %d reference shard(s)", len(shard_paths))
 
@@ -241,6 +244,13 @@ def _get_checkpoint_shard_paths(checkpoint_path: Path) -> list[Path]:
     return shard_paths
 
 
+def _load_checkpoint_config(checkpoint_path: Path) -> dict:
+    config_path = checkpoint_path / "config.json"
+    if not config_path.exists():
+        raise FileNotFoundError(f"Checkpoint is missing config.json: {checkpoint_path}")
+    return json.loads(config_path.read_text())
+
+
 @lru_cache(maxsize=None)
 def _load_checkpoint_weight_map(checkpoint_path: str) -> dict[str, str]:
     index_path = Path(checkpoint_path) / "model.safetensors.index.json"
@@ -268,7 +278,10 @@ def _make_checkpoint_tensor_loader(checkpoint_path: Path):
 
 
 def _has_native_fp8_quantization(config: object) -> bool:
-    quant_config = getattr(config, "quantization_config", None)
+    if isinstance(config, dict):
+        quant_config = config.get("quantization_config")
+    else:
+        quant_config = getattr(config, "quantization_config", None)
     if quant_config is None:
         return False
     if isinstance(quant_config, dict):
@@ -279,7 +292,10 @@ def _has_native_fp8_quantization(config: object) -> bool:
 
 
 def _get_quant_config_dict(config: object) -> dict:
-    quant_config = getattr(config, "quantization_config")
+    if isinstance(config, dict):
+        quant_config = config["quantization_config"]
+    else:
+        quant_config = getattr(config, "quantization_config")
     if isinstance(quant_config, dict):
         return quant_config
     return quant_config.to_dict()
@@ -815,8 +831,7 @@ def _copy_file_robustly(source: Path, destination: Path) -> None:
 
 
 def _save_base_config_files(*, checkpoint_path: Path, output_path: Path) -> None:
-    config = AutoConfig.from_pretrained(checkpoint_path, trust_remote_code=True)
-    (output_path / "config.json").write_text(config.to_json_string(use_diff=False))
+    _copy_file_robustly(checkpoint_path / "config.json", output_path / "config.json")
     generation_config_path = checkpoint_path / "generation_config.json"
     if generation_config_path.exists():
         _copy_file_robustly(generation_config_path, output_path / "generation_config.json")

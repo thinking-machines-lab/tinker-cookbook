@@ -8,6 +8,7 @@ import os
 import shutil
 from pathlib import Path
 
+from huggingface_hub import snapshot_download
 import torch
 from safetensors.torch import load_file
 from transformers import (
@@ -182,8 +183,12 @@ def _load_model(
 
 
 def _is_deepseek_model_path(model_path: str) -> bool:
-    config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
-    return _is_deepseek_config(config)
+    candidate = Path(model_path).expanduser()
+    if candidate.is_dir():
+        config_path = candidate / "config.json"
+    else:
+        config_path = Path(snapshot_download(model_path, allow_patterns=["config.json"])) / "config.json"
+    return _is_deepseek_config(json.loads(config_path.read_text()))
 
 
 def _load_adapter_weights(adapter_dir: Path) -> tuple[dict[str, torch.Tensor], dict]:
