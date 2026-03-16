@@ -616,8 +616,10 @@ def test_deepseek_blockwise_quantization_matches_naive_reference(monkeypatch):
                 scale = max_abs / max_fp8
             expected_scales[row_idx, col_idx] = scale
             expected_quantized[row_start:row_end, col_start:col_end] = (
-                block / scale
-            ).clamp(min=-max_fp8, max=max_fp8).to(deepseek_export._DEEPSEEK_FP8_DTYPE)
+                (block / scale)
+                .clamp(min=-max_fp8, max=max_fp8)
+                .to(deepseek_export._DEEPSEEK_FP8_DTYPE)
+            )
 
     torch.testing.assert_close(scales, expected_scales, atol=0, rtol=0)
     assert torch.equal(quantized.view(torch.uint8), expected_quantized.view(torch.uint8))
@@ -703,14 +705,20 @@ class TestDeepSeekV31SeparateExperts:
                 orig = AutoModelForCausalLM.from_pretrained(model_path, dtype=torch.float32)
                 num_experts = 2
 
-                gate_shape = orig.state_dict()["model.layers.0.mlp.experts.0.gate_proj.weight"].shape
+                gate_shape = orig.state_dict()[
+                    "model.layers.0.mlp.experts.0.gate_proj.weight"
+                ].shape
                 expert_out_dim, expert_in_dim = gate_shape
                 dense_shape = orig.state_dict()["model.layers.0.self_attn.q_a_proj.weight"].shape
                 dense_out_dim, dense_in_dim = dense_shape
                 dense_key = "model.layers.0.self_attn.q_a_proj.weight"
                 shared_expert_key = "model.layers.0.mlp.shared_experts.gate_proj.weight"
-                gate_keys = [f"model.layers.0.mlp.experts.{i}.gate_proj.weight" for i in range(num_experts)]
-                up_keys = [f"model.layers.0.mlp.experts.{i}.up_proj.weight" for i in range(num_experts)]
+                gate_keys = [
+                    f"model.layers.0.mlp.experts.{i}.gate_proj.weight" for i in range(num_experts)
+                ]
+                up_keys = [
+                    f"model.layers.0.mlp.experts.{i}.up_proj.weight" for i in range(num_experts)
+                ]
 
                 reference_weight_map = _reshard_saved_model(
                     model_path,
@@ -789,15 +797,15 @@ class TestDeepSeekV31SeparateExperts:
                     assert saved_index["weight_map"][up_key] == reference_weight_map[up_key], (
                         "Routed expert tensors should preserve the reference shard placement"
                     )
-                    assert saved_index["weight_map"][gate_scale_key] == reference_weight_map[
-                        gate_key
-                    ], (
+                    assert (
+                        saved_index["weight_map"][gate_scale_key] == reference_weight_map[gate_key]
+                    ), (
                         "Without native reference scale slots, routed expert scales should be "
                         "written alongside their weights"
                     )
-                    assert saved_index["weight_map"][up_scale_key] == reference_weight_map[
-                        up_key
-                    ], (
+                    assert (
+                        saved_index["weight_map"][up_scale_key] == reference_weight_map[up_key]
+                    ), (
                         "Without native reference scale slots, routed expert scales should be "
                         "written alongside their weights"
                     )
@@ -805,12 +813,13 @@ class TestDeepSeekV31SeparateExperts:
                 assert saved_sd[shared_expert_key].dtype == torch.bfloat16, (
                     "Shared expert weights should remain higher precision (BF16)"
                 )
-                assert saved_index["weight_map"][shared_expert_key] == reference_weight_map[
-                    shared_expert_key
-                ], "Shared expert tensors should preserve the reference shard placement"
-                assert any(
-                    "weight_scale" in key and ".mlp.experts." in key for key in saved_sd
-                ), "Expected routed-expert FP8 scale tensors in saved checkpoint"
+                assert (
+                    saved_index["weight_map"][shared_expert_key]
+                    == reference_weight_map[shared_expert_key]
+                ), "Shared expert tensors should preserve the reference shard placement"
+                assert any("weight_scale" in key and ".mlp.experts." in key for key in saved_sd), (
+                    "Expected routed-expert FP8 scale tensors in saved checkpoint"
+                )
                 assert not any(key.endswith(".weight_scale_inv") for key in saved_sd), (
                     "Experts-only export should emit compressed-tensors .weight_scale tensors, "
                     "not DeepSeek-native .weight_scale_inv tensors"
@@ -844,8 +853,7 @@ class TestDeepSeekV31SeparateExperts:
                 assert compression_config["quantization_status"] == "compressed"
                 assert compression_config["config_groups"]["group_0"]["targets"] == ["Linear"]
                 assert (
-                    compression_config["config_groups"]["group_0"]["weights"]["strategy"]
-                    == "block"
+                    compression_config["config_groups"]["group_0"]["weights"]["strategy"] == "block"
                 )
                 assert compression_config["config_groups"]["group_0"]["weights"][
                     "block_structure"
@@ -884,7 +892,9 @@ class TestDeepSeekV31SeparateExperts:
                 )
                 orig = AutoModelForCausalLM.from_pretrained(model_path, dtype=torch.float32)
                 num_experts = 2
-                gate_shape = orig.state_dict()["model.layers.0.mlp.experts.0.gate_proj.weight"].shape
+                gate_shape = orig.state_dict()[
+                    "model.layers.0.mlp.experts.0.gate_proj.weight"
+                ].shape
                 expert_out_dim, expert_in_dim = gate_shape
                 dense_shape = orig.state_dict()["model.layers.0.self_attn.q_a_proj.weight"].shape
                 dense_out_dim, dense_in_dim = dense_shape
@@ -931,7 +941,9 @@ class TestDeepSeekV31SeparateExperts:
 
                 partial_state = _load_merge_state(output_path)
                 assert partial_state["status"] == "in_progress"
-                completed_shards_on_disk = sorted(path.name for path in output_path.glob("*.safetensors"))
+                completed_shards_on_disk = sorted(
+                    path.name for path in output_path.glob("*.safetensors")
+                )
                 assert len(completed_shards_on_disk) == 1
                 completed_shard = completed_shards_on_disk[0]
                 assert (output_path / completed_shard).exists(), (

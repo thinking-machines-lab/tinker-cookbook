@@ -24,7 +24,7 @@ import math
 import os
 import shutil
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cache, lru_cache
 from pathlib import Path
 
 import torch
@@ -279,7 +279,7 @@ def _load_checkpoint_config(checkpoint_path: Path) -> dict:
     return json.loads(config_path.read_text())
 
 
-@lru_cache(maxsize=None)
+@cache
 def _load_checkpoint_weight_map(checkpoint_path: str) -> dict[str, str]:
     index_path = Path(checkpoint_path) / "model.safetensors.index.json"
     if not index_path.exists():
@@ -323,7 +323,7 @@ def _get_quant_config_dict(config: object) -> dict:
     if isinstance(config, dict):
         quant_config = config["quantization_config"]
     else:
-        quant_config = getattr(config, "quantization_config")
+        quant_config = config.quantization_config
     if isinstance(quant_config, dict):
         return quant_config
     return quant_config.to_dict()
@@ -362,8 +362,10 @@ def _quantize_weight_blockwise(weight: torch.Tensor) -> tuple[torch.Tensor, torc
     scales = torch.where(max_abs == 0, torch.ones_like(max_abs), max_abs / max_fp8)
 
     quantized = (
-        block_view / scales[:, None, :, None]
-    ).clamp(min=-max_fp8, max=max_fp8).to(_DEEPSEEK_FP8_DTYPE)
+        (block_view / scales[:, None, :, None])
+        .clamp(min=-max_fp8, max=max_fp8)
+        .to(_DEEPSEEK_FP8_DTYPE)
+    )
 
     return (
         quantized.view(padded_rows, padded_cols)[:rows, :cols].contiguous(),
@@ -395,7 +397,7 @@ def _normalize_output_tensor(name: str, tensor: torch.Tensor) -> torch.Tensor:
 def _load_raw_shard(shard_path: Path) -> dict[str, torch.Tensor]:
     shard_dict: dict[str, torch.Tensor] = {}
     with safe_open(shard_path, framework="pt", device="cpu") as handle:
-        for name in handle.keys():
+        for name in tuple(handle.keys()):
             if _should_skip_checkpoint_key(name):
                 continue
             shard_dict[name] = handle.get_tensor(name)
@@ -439,7 +441,7 @@ def _collect_model_keys(shard_paths: list[Path]) -> set[str]:
     model_keys: set[str] = set()
     for shard_path in shard_paths:
         with safe_open(shard_path, framework="pt", device="cpu") as handle:
-            for name in handle.keys():
+            for name in tuple(handle.keys()):
                 if _should_skip_checkpoint_key(name) or name.endswith(".weight_scale_inv"):
                     continue
                 model_keys.add(name)
@@ -492,7 +494,9 @@ def _build_merge_ops(
 ) -> dict[str, list[MergeOp]]:
     scaling = adapter_config["lora_alpha"] / adapter_config["r"]
     name_remaps = _build_name_remaps(current_keys)
-    adapter_weight_names = [name.replace(".lora_A", "") for name in adapter_weights if ".lora_A" in name]
+    adapter_weight_names = [
+        name.replace(".lora_A", "") for name in adapter_weights if ".lora_A" in name
+    ]
     merge_ops: dict[str, list[MergeOp]] = {}
     missing_target_keys: set[str] = set()
     progress_interval = _progress_interval(len(adapter_weight_names))
@@ -659,7 +663,7 @@ def _get_shard_index_data_from_tensors(
     shard_name: str,
     shard_dict: dict[str, torch.Tensor],
 ) -> tuple[dict[str, str], int]:
-    weight_map = {name: shard_name for name in shard_dict}
+    weight_map = dict.fromkeys(shard_dict, shard_name)
     total_size = sum(_tensor_nbytes(tensor) for tensor in shard_dict.values())
     return weight_map, total_size
 
@@ -668,7 +672,7 @@ def _get_shard_index_data_from_file(shard_path: Path) -> tuple[dict[str, str], i
     weight_map: dict[str, str] = {}
     total_size = 0
     with safe_open(shard_path, framework="pt", device="cpu") as handle:
-        for name in handle.keys():
+        for name in tuple(handle.keys()):
             tensor = handle.get_tensor(name)
             weight_map[name] = shard_path.name
             total_size += _tensor_nbytes(tensor)
@@ -695,7 +699,9 @@ def _load_resume_state(
                     f"Existing merge_state.json at {output_path} does not match this run for {key}"
                 )
     else:
-        existing_files = [path.name for path in output_path.iterdir() if path.name != "merge_state.json"]
+        existing_files = [
+            path.name for path in output_path.iterdir() if path.name != "merge_state.json"
+        ]
         if existing_files:
             raise ValueError(
                 f"Output path {output_path} already exists and is not resumable. Remove it and retry."
@@ -836,7 +842,9 @@ def _serialize_vllm_compatible_quant_config(config_dict: dict) -> dict:
 def _serialize_vllm_compatible_quant_scheme(group: dict) -> dict:
     serialized: dict = {}
     for key, value in group.items():
-        if key in {"weights", "input_activations", "output_activations"} and isinstance(value, dict):
+        if key in {"weights", "input_activations", "output_activations"} and isinstance(
+            value, dict
+        ):
             serialized[key] = {
                 field: field_value
                 for field, field_value in value.items()
