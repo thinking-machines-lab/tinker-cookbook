@@ -9,7 +9,6 @@ from inspect_ai.model import ContentText as InspectAIContentText
 from tinker_cookbook import renderers
 from tinker_cookbook.eval.inspect_utils import _message_to_inspect_content, convert_inspect_messages
 
-
 # --- Output: _message_to_inspect_content ---
 
 
