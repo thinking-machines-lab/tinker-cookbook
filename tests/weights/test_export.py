@@ -20,6 +20,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from huggingface_hub import snapshot_download
+import pytest
 import torch
 from safetensors.torch import load_file, save_file
 from transformers import (
@@ -30,6 +31,7 @@ from transformers import (
     PretrainedConfig,
 )
 
+import tinker_cookbook.weights._deepseek as deepseek_export
 from tinker_cookbook.weights import build_hf_model
 
 # ---------------------------------------------------------------------------
@@ -99,7 +101,17 @@ def _save_model_to_disk(
 ) -> None:
     auto_cls = AutoModelForImageTextToText if is_vision else AutoModelForCausalLM
     model = auto_cls.from_config(config, trust_remote_code=True, dtype=torch.float32)
-    model.save_pretrained(path)
+    try:
+        model.save_pretrained(path)
+    except FileNotFoundError:
+        # Remote-code classes can retain a source path inside a temporary module
+        # cache that no longer exists by the time a later test saves the model.
+        path.mkdir(parents=True, exist_ok=True)
+        save_file(model.state_dict(), str(path / "model.safetensors"))
+        (path / "config.json").write_text(config.to_json_string(use_diff=False))
+        generation_config = getattr(model, "generation_config", None)
+        if generation_config is not None:
+            generation_config.save_pretrained(path)
     tok = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
     tok.save_pretrained(path)
 
@@ -228,6 +240,10 @@ def _load_saved_state_dict(output_path: Path) -> dict[str, torch.Tensor]:
 
 def _load_saved_index(output_path: Path) -> dict:
     return json.loads((output_path / "model.safetensors.index.json").read_text())
+
+
+def _load_merge_state(output_path: Path) -> dict:
+    return json.loads((output_path / "merge_state.json").read_text())
 
 
 def _tensor_nbytes(tensor: torch.Tensor) -> int:
@@ -594,7 +610,7 @@ class TestDeepSeekV31SeparateExperts:
                 gate_keys = [f"model.layers.0.mlp.experts.{i}.gate_proj.weight" for i in range(num_experts)]
                 up_keys = [f"model.layers.0.mlp.experts.{i}.up_proj.weight" for i in range(num_experts)]
 
-                _reshard_saved_model(
+                reference_weight_map = _reshard_saved_model(
                     model_path,
                     shard_assignments={
                         dense_key: "model-00001-of-00002.safetensors",
@@ -638,6 +654,9 @@ class TestDeepSeekV31SeparateExperts:
                 assert saved_sd[dense_key].dtype == torch.bfloat16, (
                     "Dense non-expert q_a_proj should remain higher precision (BF16)"
                 )
+                assert saved_index["weight_map"][dense_key] == reference_weight_map[dense_key], (
+                    "Dense non-expert tensors should preserve the reference shard placement"
+                )
 
                 for i in range(num_experts):
                     gate_key = f"model.layers.0.mlp.experts.{i}.gate_proj.weight"
@@ -662,10 +681,31 @@ class TestDeepSeekV31SeparateExperts:
                     assert saved_sd[up_scale_key].dtype == torch.float32, (
                         f"Routed expert scale tensor should be stored as float32: {up_scale_key}"
                     )
+                    assert saved_index["weight_map"][gate_key] == reference_weight_map[gate_key], (
+                        "Routed expert tensors should preserve the reference shard placement"
+                    )
+                    assert saved_index["weight_map"][up_key] == reference_weight_map[up_key], (
+                        "Routed expert tensors should preserve the reference shard placement"
+                    )
+                    assert saved_index["weight_map"][gate_scale_key] == reference_weight_map[
+                        gate_key
+                    ], (
+                        "Without native reference scale slots, routed expert scales should be "
+                        "written alongside their weights"
+                    )
+                    assert saved_index["weight_map"][up_scale_key] == reference_weight_map[
+                        up_key
+                    ], (
+                        "Without native reference scale slots, routed expert scales should be "
+                        "written alongside their weights"
+                    )
 
                 assert saved_sd[shared_expert_key].dtype == torch.bfloat16, (
                     "Shared expert weights should remain higher precision (BF16)"
                 )
+                assert saved_index["weight_map"][shared_expert_key] == reference_weight_map[
+                    shared_expert_key
+                ], "Shared expert tensors should preserve the reference shard placement"
                 assert any(
                     "weight_scale" in key and ".mlp.experts." in key for key in saved_sd
                 ), "Expected routed-expert FP8 scale tensors in saved checkpoint"
@@ -723,6 +763,107 @@ class TestDeepSeekV31SeparateExperts:
                 assert "model.layers.0.mlp.experts.0.gate_proj" not in ignore, (
                     "Routed expert weights should not be ignored by the compression config"
                 )
+
+    def test_resume_skips_completed_shards(self, monkeypatch):
+        with _local_hf_cache_env():
+            config = _make_tiny_deepseek_v31_config()
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                model_path = root / "model"
+                adapter_path = root / "adapter"
+                output_path = root / "merged"
+
+                _save_model_to_disk(config, model_path, tokenizer_name="deepseek-ai/DeepSeek-V3.1")
+                _copy_hf_files(
+                    "deepseek-ai/DeepSeek-V3.1",
+                    model_path,
+                    ("configuration_deepseek.py", "modeling_deepseek.py"),
+                )
+                orig = AutoModelForCausalLM.from_pretrained(model_path, dtype=torch.float32)
+                num_experts = 2
+                gate_shape = orig.state_dict()["model.layers.0.mlp.experts.0.gate_proj.weight"].shape
+                expert_out_dim, expert_in_dim = gate_shape
+                dense_shape = orig.state_dict()["model.layers.0.self_attn.q_a_proj.weight"].shape
+                dense_out_dim, dense_in_dim = dense_shape
+
+                _reshard_saved_model(
+                    model_path,
+                    shard_assignments={
+                        "model.layers.0.self_attn.q_a_proj.weight": "model-00001-of-00002.safetensors",
+                        "model.layers.0.mlp.experts.0.gate_proj.weight": "model-00001-of-00002.safetensors",
+                        "model.layers.0.mlp.experts.0.up_proj.weight": "model-00002-of-00002.safetensors",
+                        "model.layers.0.mlp.experts.1.gate_proj.weight": "model-00002-of-00002.safetensors",
+                        "model.layers.0.mlp.experts.1.up_proj.weight": "model-00001-of-00002.safetensors",
+                    },
+                )
+                _save_mixed_deepseek_adapter(
+                    adapter_path,
+                    num_experts=num_experts,
+                    expert_in_dim=expert_in_dim,
+                    expert_out_dim=expert_out_dim,
+                    dense_in_dim=dense_in_dim,
+                    dense_out_dim=dense_out_dim,
+                )
+
+                original_save_shard_atomic = deepseek_export._save_shard_atomic
+                write_count = {"value": 0}
+
+                def fail_after_first_shard(path, shard_dict):
+                    original_save_shard_atomic(path, shard_dict)
+                    write_count["value"] += 1
+                    if write_count["value"] == 1:
+                        raise RuntimeError("forced interruption after first shard")
+
+                monkeypatch.setattr(
+                    deepseek_export,
+                    "_save_shard_atomic",
+                    fail_after_first_shard,
+                )
+                with pytest.raises(RuntimeError, match="forced interruption"):
+                    build_hf_model(
+                        base_model=str(model_path),
+                        adapter_path=str(adapter_path),
+                        output_path=str(output_path),
+                    )
+
+                partial_state = _load_merge_state(output_path)
+                assert partial_state["status"] == "in_progress"
+                completed_shards_on_disk = sorted(path.name for path in output_path.glob("*.safetensors"))
+                assert len(completed_shards_on_disk) == 1
+                completed_shard = completed_shards_on_disk[0]
+                assert (output_path / completed_shard).exists(), (
+                    "Interrupted DeepSeek exports should preserve completed shards for resume"
+                )
+
+                monkeypatch.setattr(
+                    deepseek_export,
+                    "_save_shard_atomic",
+                    original_save_shard_atomic,
+                )
+                original_load_raw_shard = deepseek_export._load_raw_shard
+
+                def fail_if_completed_shard_is_reloaded(shard_path):
+                    shard_name = Path(shard_path).name
+                    if shard_name == completed_shard:
+                        raise AssertionError("resume should skip already completed shards")
+                    return original_load_raw_shard(shard_path)
+
+                monkeypatch.setattr(
+                    deepseek_export,
+                    "_load_raw_shard",
+                    fail_if_completed_shard_is_reloaded,
+                )
+                build_hf_model(
+                    base_model=str(model_path),
+                    adapter_path=str(adapter_path),
+                    output_path=str(output_path),
+                )
+
+                final_state = _load_merge_state(output_path)
+                assert final_state["status"] == "completed"
+                assert len(final_state["completed_shards"]) == 2
+                assert (output_path / "model.safetensors.index.json").exists()
 
 
 # ---------------------------------------------------------------------------

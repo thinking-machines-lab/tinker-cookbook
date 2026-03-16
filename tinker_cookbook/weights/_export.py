@@ -21,7 +21,7 @@ from transformers import (
 )
 
 from tinker_cookbook.weights._deepseek import (
-    is_deepseek_model as _is_deepseek_model,
+    is_deepseek_config as _is_deepseek_config,
 )
 from tinker_cookbook.weights._deepseek import (
     save_deepseek_model as _save_deepseek_model,
@@ -89,31 +89,35 @@ def build_hf_model(
         raise ValueError(f"Unsupported dtype {dtype!r}. Choose from: {list(_DTYPE_MAP.keys())}")
     torch_dtype = _DTYPE_MAP[dtype]
     resolved_trust = _resolve_trust_remote_code(trust_remote_code)
-
-    # Validate adapter exists before loading the (potentially huge) base model
-    adapter_weights, adapter_config = _load_adapter_weights(Path(adapter_path))
-
     out = Path(output_path)
-    out.mkdir(parents=True, exist_ok=False)
-    preserve_partial_output = False
+    preserve_partial_output = _is_deepseek_model_path(base_model)
+    out.mkdir(parents=True, exist_ok=preserve_partial_output)
+    is_multimodal = False
 
     try:
-        logger.info("Loading base model: %s (dtype=%s)", base_model, dtype)
-        config = AutoConfig.from_pretrained(base_model, trust_remote_code=resolved_trust)
-        is_multimodal = _is_multimodal(config)
-        hf_model = _load_model(
-            config, base_model, torch_dtype=torch_dtype, trust_remote_code=resolved_trust
-        )
-        preserve_partial_output = _is_deepseek_model(hf_model)
-
-        logger.info("Merging adapter weights")
-        merge_adapter_weights(hf_model, adapter_weights, adapter_config)
-
-        logger.info("Saving merged model to: %s", out)
-        if _is_deepseek_model(hf_model):
+        if preserve_partial_output:
             logger.info("Detected DeepSeek model; using DeepSeek-specific save path")
-            _save_deepseek_model(hf_model=hf_model, base_model=base_model, output_path=out)
+            logger.info("Saving merged model to: %s", out)
+            _save_deepseek_model(
+                base_model=base_model,
+                adapter_path=adapter_path,
+                output_path=out,
+            )
         else:
+            # Validate adapter exists before loading the (potentially huge) base model
+            adapter_weights, adapter_config = _load_adapter_weights(Path(adapter_path))
+
+            logger.info("Loading base model: %s (dtype=%s)", base_model, dtype)
+            config = AutoConfig.from_pretrained(base_model, trust_remote_code=resolved_trust)
+            is_multimodal = _is_multimodal(config)
+            hf_model = _load_model(
+                config, base_model, torch_dtype=torch_dtype, trust_remote_code=resolved_trust
+            )
+
+            logger.info("Merging adapter weights")
+            merge_adapter_weights(hf_model, adapter_weights, adapter_config)
+
+            logger.info("Saving merged model to: %s", out)
             hf_model.save_pretrained(out)
 
         logger.info("Saving tokenizer")
@@ -175,6 +179,11 @@ def _load_model(
     return auto_cls.from_pretrained(
         model_path, dtype=torch_dtype, trust_remote_code=trust_remote_code
     )
+
+
+def _is_deepseek_model_path(model_path: str) -> bool:
+    config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+    return _is_deepseek_config(config)
 
 
 def _load_adapter_weights(adapter_dir: Path) -> tuple[dict[str, torch.Tensor], dict]:
