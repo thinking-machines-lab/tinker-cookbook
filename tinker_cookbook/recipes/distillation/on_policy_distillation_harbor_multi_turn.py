@@ -1,5 +1,7 @@
 """
 Multi-turn on-policy distillation with Harbor sandbox environments.
+You need to download the tasks from the harbor cache first.
+  uvx harbor datasets download terminal-bench@2.0
 
 The student interacts with a harbor sandbox over multiple turns (tool calls),
 and the training signal comes from KL divergence against a teacher model.
@@ -42,7 +44,7 @@ from tinker_cookbook.recipes.distillation.harbor_multiturn import (
     zero_reward,
 )
 from tinker_cookbook.recipes.harbor_rl.harbor_env import default_sandbox_factory
-from tinker_cookbook.recipes.harbor_rl.launch_terminal_bench import load_terminal_bench_tasks
+from tinker_cookbook.recipes.harbor_rl.harbor_env import load_harbor_tasks, HarborTask
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,7 @@ class CLIConfig:
     teacher_checkpoint: str | None = None
 
     # Harbor environment
+    task_name: str = "terminal-bench-2.0"
     max_turns: int = 10
     sandbox_timeout: int = 600
     command_timeout: int = 120
@@ -100,7 +103,7 @@ class CLIConfig:
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
 
-async def cli_main(cli_config: CLIConfig):
+async def cli_main(cli_config: CLIConfig, tasks: list[HarborTask]):
     """Load harbor tasks, build distillation config, and run training."""
 
     renderer_name = await checkpoint_utils.resolve_renderer_name_from_checkpoint_or_default_async(
@@ -123,9 +126,6 @@ async def cli_main(cli_config: CLIConfig):
         log_path = os.path.expanduser(f"~/tinker-examples/distillation/{run_name}")
 
     wandb_name = cli_config.wandb_name or os.path.basename(log_path)
-
-    # Load harbor tasks
-    tasks = load_terminal_bench_tasks()
     logger.info("Loaded %d harbor tasks", len(tasks))
 
     # Build dataset
@@ -184,4 +184,5 @@ async def cli_main(cli_config: CLIConfig):
 
 if __name__ == "__main__":
     cli_config = chz.entrypoint(CLIConfig)
-    asyncio.run(cli_main(cli_config))
+    tasks = load_harbor_tasks(cli_config.task_name)
+    asyncio.run(cli_main(cli_config, tasks))

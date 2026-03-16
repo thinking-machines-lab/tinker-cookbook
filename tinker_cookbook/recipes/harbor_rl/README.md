@@ -5,10 +5,10 @@ RL training on Harbor formatted tasks (e.g., Terminal Bench 2.0) with sandboxed 
 ## HarborTask
 Harbor offers a standardized format for SWE/Terminal-Bench style task.
 Adhering to this allows seperation between task creation layer and evaluation/training harness layer.
-We can download the harbor datasets through `uvx harbor datasets download terminal-bench@2.0 -o ~/.cache/harbor/tasks/terminal-bench-2.0`.
-The task will land in `~/.cache/harbor/tasks/terminal-bench-2.0/` with the structure
+We can download the harbor datasets through `uvx harbor datasets download terminal-bench@2.0`.
+By default, the task will land in `~/.cache/harbor/tasks/` with the structure
 ```
-~/.cache/harbor/tasks/terminal-bench-2.0/
+~/.cache/harbor/tasks/
   └── <shortuuid(task_id)>/       # deterministic hash for deduplication
       └── <task_name>/            # human-readable task directory
           ├── environment/
@@ -30,12 +30,12 @@ class HarborTask:
     config: dict[str, Any] = field(default_factory=dict)
 ```
 
-You can load your downloaded tasks (e.g., 89 Terminal-Bench tasks) via `load_harbor_tasks()` in `harbor_env.py`:
+You can load your downloaded tasks (e.g., 89 Terminal-Bench tasks) via `load_harbor_tasks()` in `launch_terminal_bench.py`:
 
 ```python
-from tinker_cookbook.recipes.harbor_rl.harbor_env import load_harbor_tasks
+from tinker_cookbook.recipes.harbor_rl.launch_terminal_bench import load_harbor_tasks
 
-tasks = load_harbor_tasks("terminal-bench-2.0")
+tasks = load_harbor_tasks()  # reads from ~/.cache/harbor/tasks/ by default
 print(f"Loaded {len(tasks)} tasks")
 print(tasks[0].task_name, tasks[0].task_dir)
 ```
@@ -73,16 +73,35 @@ async def default_sandbox_factory(image: modal.Image, timeout: int) -> SandboxIn
 
 `cli_main()` accepts an optional `sandbox_factory` parameter. When `None`, it falls back to `default_sandbox_factory` (Modal). The factory flows through: `cli_main` -> `HarborDatasetBuilder` -> `HarborEnvGroupBuilder.make_envs()`.
 
-## Training
+## Running
 
 First, download the Terminal-Bench tasks:
 
 ```bash
-uvx harbor datasets download terminal-bench@2.0 -o ~/.cache/harbor/tasks/terminal-bench-2.0
+uvx harbor datasets download terminal-bench@2.0
 ```
 
 Then launch training:
 
 ```bash
-python -m tinker_cookbook.recipes.harbor_rl.scripts.train_terminal_bench
+uv run python tinker_cookbook/recipes/harbor_rl/scripts/train_terminal_bench.py
 ```
+
+## Evaluation
+
+Evaluate a Tinker endpoint on Harbor datasets without training.
+****
+Download datasets:
+```bash
+uvx harbor datasets download terminal-bench@2.0 -o ~/.cache/harbor/tasks/terminal-bench-2.0
+uvx harbor datasets download swebench-verified@1.0 -o ~/.cache/harbor/tasks/swebench-verified-1.0
+```
+
+Run evaluation:
+```bash
+uv run python tinker_cookbook/recipes/harbor_rl/scripts/eval_terminal_bench.py
+```
+
+Key parameters in `EvalConfig`: `max_turns` (10), `max_tokens` (2048), `temperature` (0.0).
+
+`run_eval()` also accepts `sandbox_factory` for custom sandbox backends and `output_path` to control where results are written (default: `tinker_cookbook/recipes/harbor_rl/scripts/results/<timestamp>/`).
