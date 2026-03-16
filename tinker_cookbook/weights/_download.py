@@ -8,7 +8,7 @@ import urllib.request
 from pathlib import Path
 
 
-def download(*, tinker_path: str, output_dir: str) -> str:
+def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) -> str:
     """Download a checkpoint from Tinker storage to local disk.
 
     Fetches a signed URL via the Tinker SDK, downloads the archive, and
@@ -19,6 +19,9 @@ def download(*, tinker_path: str, output_dir: str) -> str:
         tinker_path: Tinker checkpoint path, e.g.
             ``"tinker://<run_id>/sampler_weights/final"``.
         output_dir: Local directory where the checkpoint will be extracted.
+        base_url: Custom Tinker service URL. If ``None`` (default), uses
+            the default Tinker service endpoint (or ``TINKER_BASE_URL``
+            environment variable if set).
 
     Returns:
         Path to the extracted checkpoint directory.
@@ -26,10 +29,30 @@ def download(*, tinker_path: str, output_dir: str) -> str:
     Raises:
         ValueError: If the archive contains unsafe entries.
         urllib.error.URLError: If the download fails.
+
+    Example::
+
+        from tinker_cookbook import weights
+
+        # Download from default Tinker service
+        adapter_dir = weights.download(
+            tinker_path="tinker://run-id/sampler_weights/final",
+            output_dir="./adapter",
+        )
+
+        # Download from a custom Tinker deployment
+        adapter_dir = weights.download(
+            tinker_path="tinker://run-id/sampler_weights/final",
+            output_dir="./adapter",
+            base_url="https://tinker.my-company.com",
+        )
     """
     import tinker
 
-    sc = tinker.ServiceClient()
+    kwargs = {}
+    if base_url is not None:
+        kwargs["base_url"] = base_url
+    sc = tinker.ServiceClient(**kwargs)
     rc = sc.create_rest_client()
     response = rc.get_checkpoint_archive_url_from_tinker_path(tinker_path).result()
 

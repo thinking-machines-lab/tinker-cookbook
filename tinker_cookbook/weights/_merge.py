@@ -3,6 +3,14 @@
 Handles merging Tinker LoRA adapter weights into HuggingFace model weights,
 including model-specific quirks (GPT-OSS interleaved experts, vision model
 prefixes, fused vs separate expert weights).
+
+Architecture note:
+    Model-specific handling (name remapping, expert layout detection) is
+    currently hardcoded in ``merge_adapter_weights``. When adding support for
+    a new model family, take care not to break existing models. A future
+    refactor should consider a registry pattern (similar to
+    ``tinker_cookbook.renderers``) where each model family registers its own
+    merge handler, isolating model-specific logic and preventing regressions.
 """
 
 from __future__ import annotations

@@ -10,6 +10,7 @@ def publish_to_hf_hub(
     model_path: str,
     repo_id: str,
     private: bool = True,
+    token: str | None = None,
 ) -> str:
     """Push a model or adapter directory to HuggingFace Hub.
 
@@ -21,6 +22,9 @@ def publish_to_hf_hub(
         repo_id: HuggingFace Hub repository ID (e.g. ``"user/my-model"``).
         private: Whether the repository should be private. Defaults to
             ``True`` for safety.
+        token: HuggingFace API token. If ``None`` (default), uses the
+            ``HF_TOKEN`` environment variable or cached login from
+            ``hf auth login``.
 
     Returns:
         URL of the published repository.
@@ -31,7 +35,7 @@ def publish_to_hf_hub(
     if not path.is_dir():
         raise FileNotFoundError(f"model_path does not exist or is not a directory: {model_path}")
 
-    api = HfApi()
+    api = HfApi(token=token)
     api.create_repo(repo_id=repo_id, repo_type="model", private=private, exist_ok=True)
     api.upload_folder(folder_path=str(path), repo_id=repo_id, repo_type="model")
 

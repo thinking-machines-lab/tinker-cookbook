@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 from pathlib import Path
 
@@ -22,12 +23,32 @@ from tinker_cookbook.weights._merge import merge_adapter_weights
 
 logger = logging.getLogger(__name__)
 
+# Map user-facing dtype strings to torch dtypes.
+_DTYPE_MAP: dict[str, torch.dtype] = {
+    "bfloat16": torch.bfloat16,
+    "float16": torch.float16,
+    "float32": torch.float32,
+}
+
+
+def _resolve_trust_remote_code(trust_remote_code: bool | None) -> bool:
+    """Resolve trust_remote_code from parameter or environment variable.
+
+    Priority: explicit parameter > HF_TRUST_REMOTE_CODE env var > False.
+    """
+    if trust_remote_code is not None:
+        return trust_remote_code
+    env_val = os.environ.get("HF_TRUST_REMOTE_CODE", "").lower()
+    return env_val in ("1", "true", "yes")
+
 
 def build_hf_model(
     *,
     base_model: str,
     adapter_path: str,
     output_path: str,
+    dtype: str = "bfloat16",
+    trust_remote_code: bool | None = None,
 ) -> None:
     """Build a complete HuggingFace model from Tinker LoRA adapter weights.
 
@@ -42,13 +63,26 @@ def build_hf_model(
             ``adapter_model.safetensors`` and ``adapter_config.json``.
         output_path: Directory where the merged model will be saved. Must not
             already exist.
+        dtype: Data type for loading the base model. One of ``"bfloat16"``
+            (default), ``"float16"``, or ``"float32"``. Use ``"float32"``
+            for maximum precision during merge.
+        trust_remote_code: Whether to trust remote code when loading HF
+            models. Required for some newer model architectures (e.g.
+            Qwen3.5). If ``None`` (default), falls back to the
+            ``HF_TRUST_REMOTE_CODE`` environment variable, then ``False``.
 
     Raises:
         FileNotFoundError: If adapter files are missing.
         FileExistsError: If output_path already exists.
         KeyError: If adapter config is malformed.
-        ValueError: If tensor shapes are incompatible during merge.
+        ValueError: If tensor shapes are incompatible during merge, or
+            if ``dtype`` is not a recognized value.
     """
+    if dtype not in _DTYPE_MAP:
+        raise ValueError(f"Unsupported dtype {dtype!r}. Choose from: {list(_DTYPE_MAP.keys())}")
+    torch_dtype = _DTYPE_MAP[dtype]
+    resolved_trust = _resolve_trust_remote_code(trust_remote_code)
+
     # Validate adapter exists before loading the (potentially huge) base model
     adapter_weights, adapter_config = _load_adapter_weights(Path(adapter_path))
 
@@ -56,8 +90,10 @@ def build_hf_model(
     out.mkdir(parents=True, exist_ok=False)
 
     try:
-        logger.info("Loading base model: %s", base_model)
-        hf_model = _load_model(base_model)
+        logger.info("Loading base model: %s (dtype=%s)", base_model, dtype)
+        hf_model = _load_model(
+            base_model, torch_dtype=torch_dtype, trust_remote_code=resolved_trust
+        )
 
         logger.info("Merging adapter weights")
         merge_adapter_weights(hf_model, adapter_weights, adapter_config)
@@ -65,11 +101,11 @@ def build_hf_model(
         logger.info("Saving merged model to: %s", out)
         hf_model.save_pretrained(out)
 
-        tokenizer = AutoTokenizer.from_pretrained(base_model)
+        tokenizer = AutoTokenizer.from_pretrained(base_model, trust_remote_code=resolved_trust)
         tokenizer.save_pretrained(out)
 
         try:
-            processor = AutoProcessor.from_pretrained(base_model)
+            processor = AutoProcessor.from_pretrained(base_model, trust_remote_code=resolved_trust)
             processor.save_pretrained(out)
         except Exception:
             logger.debug(
@@ -84,10 +120,17 @@ def build_hf_model(
         raise
 
 
-def _load_model(model_path: str) -> PreTrainedModel:
-    config = AutoConfig.from_pretrained(model_path)
+def _load_model(
+    model_path: str,
+    *,
+    torch_dtype: torch.dtype,
+    trust_remote_code: bool,
+) -> PreTrainedModel:
+    config = AutoConfig.from_pretrained(model_path, trust_remote_code=trust_remote_code)
     auto_cls = AutoModelForImageTextToText if "vision_config" in config else AutoModelForCausalLM
-    return auto_cls.from_pretrained(model_path, dtype=torch.bfloat16)
+    return auto_cls.from_pretrained(
+        model_path, dtype=torch_dtype, trust_remote_code=trust_remote_code
+    )
 
 
 def _load_adapter_weights(adapter_dir: Path) -> tuple[dict[str, torch.Tensor], dict]:
