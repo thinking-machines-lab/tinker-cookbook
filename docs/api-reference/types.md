@@ -26,7 +26,7 @@ Weight decay for the optimizer. Uses decoupled weight decay.
 
 #### `grad_clip_norm`
 
-Gradient clip norm for the optimizer. 0.0 means no clipping.
+Maximum global gradient norm. If the global gradient norm is greater than this value, it will be clipped to this value. 0.0 means no clipping.
 
 ## `SupportedModel` Objects
 
@@ -158,6 +158,10 @@ The size of the checkpoint in bytes
 #### `public`
 
 Whether the checkpoint is publicly accessible
+
+#### `expires_at`
+
+When this checkpoint expires (None = never expires)
 
 ## `ParsedCheckpointTinkerPath` Objects
 
@@ -725,6 +729,10 @@ class SaveWeightsRequest(StrictBase)
 
 A file/directory name for the weights
 
+#### `ttl_seconds`
+
+TTL in seconds for this checkpoint (None = never expires)
+
 ## `LoraConfig` Objects
 
 ```python
@@ -833,6 +841,10 @@ class SaveWeightsForSamplerRequest(StrictBase)
 #### `path`
 
 A file/directory name for the weights
+
+#### `ttl_seconds`
+
+TTL in seconds for this checkpoint (None = never expires)
 
 ## `SamplingParams` Objects
 
