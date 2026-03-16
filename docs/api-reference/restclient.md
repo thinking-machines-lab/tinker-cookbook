@@ -214,7 +214,7 @@ Example:
 future = rest_client.get_checkpoint_archive_url("run-id", "checkpoint-123")
 response = future.result()
 print(f"Download URL: {response.url}")
-print(f"Expires at: {response.expires_at}")
+print(f"Expires at: {response.expires}")
 # Use the URL to download the archive with your preferred HTTP client
 ```
 

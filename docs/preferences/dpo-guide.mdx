@@ -31,7 +31,7 @@ This optimizes the classical constrained RLHF objective, where the reference mod
 The implementation is in <CookbookLink path="tinker_cookbook/preference/train_dpo.py">train_dpo.py</CookbookLink> with a CLI interface in <CookbookLink path="tinker_cookbook/recipes/preference/dpo/train.py">train.py</CookbookLink>. You can run it from the command line:
 
 ```bash
-python -m tinker_cookbook.recipes.preference.train \
+python -m tinker_cookbook.recipes.preference.dpo.train \
     log_path=/tmp/dpo-hhh-experiment \
     model_name=meta-llama/Llama-3.2-1B \
     dataset=hhh \
