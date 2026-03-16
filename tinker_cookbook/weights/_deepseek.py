@@ -35,6 +35,8 @@ from transformers import PreTrainedModel
 
 from tinker_cookbook.weights._merge import apply_merged_weight
 
+__all__ = ["is_deepseek_config", "is_deepseek_model", "save_deepseek_model"]
+
 logger = logging.getLogger(__name__)
 
 _DEEPSEEK_CUSTOM_FILES = (
