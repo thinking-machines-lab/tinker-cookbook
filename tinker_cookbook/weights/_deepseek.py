@@ -30,8 +30,7 @@ from pathlib import Path
 import torch
 from huggingface_hub import snapshot_download
 from safetensors import safe_open
-from safetensors.torch import load_file
-from safetensors.torch import save_file
+from safetensors.torch import load_file, save_file
 from transformers import PreTrainedModel
 
 from tinker_cookbook.weights._merge import apply_merged_weight
@@ -323,28 +322,24 @@ def _quantize_weight_blockwise(weight: torch.Tensor) -> tuple[torch.Tensor, torc
     block_rows, block_cols = _DEEPSEEK_BLOCK_SIZE
     scale_rows = math.ceil(rows / block_rows)
     scale_cols = math.ceil(cols / block_cols)
-    scales = torch.empty((scale_rows, scale_cols), dtype=torch.float32)
-    quantized = torch.empty_like(weight, dtype=_DEEPSEEK_FP8_DTYPE)
     max_fp8 = _get_fp8_max()
+    padded_rows = scale_rows * block_rows
+    padded_cols = scale_cols * block_cols
 
-    for row_idx in range(scale_rows):
-        row_start = row_idx * block_rows
-        row_end = min(row_start + block_rows, rows)
-        for col_idx in range(scale_cols):
-            col_start = col_idx * block_cols
-            col_end = min(col_start + block_cols, cols)
-            block = weight[row_start:row_end, col_start:col_end].to(torch.float32)
-            max_abs = block.abs().max()
-            if max_abs == 0:
-                scale = torch.tensor(1.0, dtype=torch.float32)
-            else:
-                scale = max_abs / max_fp8
-            scales[row_idx, col_idx] = scale
-            quantized[row_start:row_end, col_start:col_end] = (
-                block / scale
-            ).clamp(min=-max_fp8, max=max_fp8).to(_DEEPSEEK_FP8_DTYPE)
+    padded = torch.zeros((padded_rows, padded_cols), dtype=torch.float32, device=weight.device)
+    padded[:rows, :cols] = weight.to(torch.float32)
+    block_view = padded.view(scale_rows, block_rows, scale_cols, block_cols)
+    max_abs = block_view.abs().amax(dim=(1, 3))
+    scales = torch.where(max_abs == 0, torch.ones_like(max_abs), max_abs / max_fp8)
 
-    return quantized.contiguous(), scales.contiguous()
+    quantized = (
+        block_view / scales[:, None, :, None]
+    ).clamp(min=-max_fp8, max=max_fp8).to(_DEEPSEEK_FP8_DTYPE)
+
+    return (
+        quantized.view(padded_rows, padded_cols)[:rows, :cols].contiguous(),
+        scales.to(torch.float32).contiguous(),
+    )
 
 
 def _get_fp8_max() -> float:
