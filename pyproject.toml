@@ -79,6 +79,10 @@ all = [
     "tinker_cookbook[inspect]",
     "tinker_cookbook[litellm]",
 ]
+merge = [
+    "compressed-tensors",
+    "psutil>=7.2.2",
+]
 
 [build-system]
 requires = ["hatchling"]

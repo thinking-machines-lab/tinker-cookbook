@@ -45,6 +45,17 @@ _DEEPSEEK_ROUTED_EXPERT_PROJ_NAMES = (
 )
 _DEEPSEEK_BLOCK_SIZE = (128, 128)
 _DEEPSEEK_FP8_DTYPE = torch.float8_e4m3fn
+_LINEAR_PROJ_SUFFIXES = (
+    ".q_proj.weight",
+    ".q_a_proj.weight",
+    ".q_b_proj.weight",
+    ".kv_a_proj_with_mqa.weight",
+    ".kv_b_proj.weight",
+    ".o_proj.weight",
+    ".gate_proj.weight",
+    ".up_proj.weight",
+    ".down_proj.weight",
+)
 _METADATA_ALLOW_PATTERNS = [
     "*.json",
     "*.py",
@@ -87,9 +98,13 @@ def save_deepseek_model(
         generation_config.save_pretrained(output_path)
 
     logger.info("DeepSeek export: writing checkpoint tensors")
-    _save_state_dict(state_dict=state_dict, output_path=output_path, metadata_dir=metadata_dir)
+    output_weight_map = _save_state_dict(
+        state_dict=state_dict,
+        output_path=output_path,
+        metadata_dir=metadata_dir,
+    )
     logger.info("DeepSeek export: patching config.json for compressed-tensors")
-    _patch_config(output_path)
+    _patch_config(output_path=output_path, output_weight_map=output_weight_map)
     logger.info("DeepSeek export: copying custom DeepSeek files")
     _copy_custom_files(
         output_path=output_path,
@@ -238,7 +253,7 @@ def _save_state_dict(
     state_dict: dict[str, torch.Tensor],
     output_path: Path,
     metadata_dir: Path | None,
-) -> None:
+) -> dict[str, str]:
     """Write tensors using the reference DeepSeek shard layout when available.
 
     DeepSeek checkpoints cannot be reconstructed safely by assuming
@@ -256,14 +271,16 @@ def _save_state_dict(
     """
     if metadata_dir is None:
         logger.info("DeepSeek export: writing unsharded model.safetensors")
-        save_file(_contiguous_state_dict(state_dict), str(output_path / "model.safetensors"))
-        return
+        shard_name = "model.safetensors"
+        save_file(_contiguous_state_dict(state_dict), str(output_path / shard_name))
+        return {key: shard_name for key in state_dict}
 
     index_path = metadata_dir / "model.safetensors.index.json"
     if not index_path.exists():
         logger.info("DeepSeek export: metadata index missing, writing unsharded model.safetensors")
-        save_file(_contiguous_state_dict(state_dict), str(output_path / "model.safetensors"))
-        return
+        shard_name = "model.safetensors"
+        save_file(_contiguous_state_dict(state_dict), str(output_path / shard_name))
+        return {key: shard_name for key in state_dict}
 
     # The reference index is the authoritative source for shard placement.
     # DeepSeek weights and their related scale tensors are not guaranteed to be
@@ -272,27 +289,55 @@ def _save_state_dict(
     weight_map = json.loads(index_path.read_text())["weight_map"]
     if not weight_map:
         logger.info("DeepSeek export: empty metadata index, writing unsharded model.safetensors")
-        save_file(_contiguous_state_dict(state_dict), str(output_path / "model.safetensors"))
-        return
+        shard_name = "model.safetensors"
+        save_file(_contiguous_state_dict(state_dict), str(output_path / shard_name))
+        return {key: shard_name for key in state_dict}
 
     default_shard = next(iter(weight_map.values()))
-    shard_tensors: dict[str, dict[str, torch.Tensor]] = defaultdict(dict)
+    state_dict = _contiguous_state_dict(state_dict)
+    shard_tensors: dict[str, dict[str, torch.Tensor]] = {}
     output_weight_map: dict[str, str] = {}
+    remaining_state_dict = dict(state_dict)
+    shard_order: list[str] = []
 
-    for key in sorted(state_dict):
-        shard_name = weight_map.get(key)
-        if shard_name is None and key.endswith(".weight_scale"):
-            # ``compressed-tensors`` uses ``.weight_scale`` names that do not
-            # exist in the upstream DeepSeek FP8 index. We therefore anchor the
-            # emitted scale tensor to the reference shard of its corresponding
-            # weight instead of inventing a new shard layout.
-            shard_name = weight_map.get(key.removesuffix(".weight_scale") + ".weight")
-        if shard_name is None:
-            shard_name = default_shard
-        shard_tensors[shard_name][key] = state_dict[key].contiguous()
-        output_weight_map[key] = shard_name
+    for shard_name, reference_keys in _build_reference_shard_layout(weight_map):
+        shard_order.append(shard_name)
+        output_shard: dict[str, torch.Tensor] = {}
+        for reference_key in reference_keys:
+            if reference_key in remaining_state_dict:
+                output_shard[reference_key] = remaining_state_dict.pop(reference_key)
+                output_weight_map[reference_key] = shard_name
+                continue
 
-    shard_items = sorted(shard_tensors.items())
+            replacement_scale_key = _replacement_scale_key(reference_key)
+            if replacement_scale_key is not None and replacement_scale_key in remaining_state_dict:
+                output_shard[replacement_scale_key] = remaining_state_dict.pop(replacement_scale_key)
+                output_weight_map[replacement_scale_key] = shard_name
+
+        if output_shard:
+            shard_tensors[shard_name] = output_shard
+
+    if remaining_state_dict:
+        logger.warning(
+            "DeepSeek export: assigning %d tensor(s) not present in the reference layout using best-effort shard placement",
+            len(remaining_state_dict),
+        )
+        fallback_shards: dict[str, dict[str, torch.Tensor]] = defaultdict(dict)
+        for key, tensor in sorted(remaining_state_dict.items()):
+            shard_name = weight_map.get(key)
+            if shard_name is None and key.endswith(".weight_scale"):
+                shard_name = weight_map.get(key.removesuffix(".weight_scale") + ".weight")
+            if shard_name is None:
+                shard_name = default_shard
+            fallback_shards[shard_name][key] = tensor
+            output_weight_map[key] = shard_name
+
+        for shard_name, shard_dict in fallback_shards.items():
+            if shard_name not in shard_order:
+                shard_order.append(shard_name)
+            shard_tensors.setdefault(shard_name, {}).update(shard_dict)
+
+    shard_items = [(shard_name, shard_tensors[shard_name]) for shard_name in shard_order if shard_name in shard_tensors]
     shard_progress_interval = _progress_interval(len(shard_items))
     logger.info(
         "DeepSeek export: writing %d tensors across %d shards using %s",
@@ -324,6 +369,20 @@ def _save_state_dict(
         json.dumps(output_index, indent=2, sort_keys=True) + "\n"
     )
     logger.info("DeepSeek export: wrote model.safetensors.index.json")
+    return output_weight_map
+
+
+def _build_reference_shard_layout(weight_map: dict[str, str]) -> list[tuple[str, list[str]]]:
+    shard_layout: dict[str, list[str]] = {}
+    for tensor_name, shard_name in weight_map.items():
+        shard_layout.setdefault(shard_name, []).append(tensor_name)
+    return list(shard_layout.items())
+
+
+def _replacement_scale_key(reference_key: str) -> str | None:
+    if not reference_key.endswith(".weight_scale_inv"):
+        return None
+    return reference_key.removesuffix(".weight_scale_inv") + ".weight_scale"
 
 
 def _contiguous_state_dict(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -334,44 +393,86 @@ def _tensor_nbytes(tensor: torch.Tensor) -> int:
     return tensor.numel() * tensor.element_size()
 
 
-def _patch_config(output_path: Path) -> None:
+def _patch_config(output_path: Path, output_weight_map: dict[str, str]) -> None:
     config_path = output_path / "config.json"
     config = json.loads(config_path.read_text())
     config.pop("quantization_config", None)
-    config["compression_config"] = {
-        "format": "float_quantized",
-        "quant_method": "compressed-tensors",
-        "config_groups": {
-            "routed_experts_fp8": {
-                "targets": ["Linear"],
-                "weights": {
-                    "num_bits": 8,
-                    "type": "float",
-                    "strategy": "block",
-                    "dynamic": False,
-                    "symmetric": True,
-                    "block_structure": list(_DEEPSEEK_BLOCK_SIZE),
-                },
-                "input_activations": {
-                    "num_bits": 8,
-                    "type": "float",
-                    "strategy": "tensor",
-                    "dynamic": True,
-                    "symmetric": True,
-                },
-            }
-        },
-        "ignore": [
-            "re:.*embed_tokens.*",
-            "re:.*lm_head.*",
-            "re:.*norm.*",
-            "re:.*self_attn.*",
-            "re:.*\\.mlp\\.gate($|\\.)",
-            "re:.*\\.shared_experts\\..*",
-        ],
-    }
+    config.pop("compression_config", None)
+    config["compression_config"] = _build_compressed_tensors_config(output_weight_map)
     config_path.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
     logger.info("DeepSeek export: updated %s with compressed-tensors config", config_path)
+
+
+def _build_compressed_tensors_config(output_weight_map: dict[str, str]) -> dict:
+    try:
+        from compressed_tensors import QuantizationConfig
+        from compressed_tensors.quantization import QuantizationArgs, QuantizationScheme
+    except ImportError as exc:
+        raise ImportError(
+            "DeepSeek experts-only FP8 export requires the optional merge dependencies. "
+            "Install them with: pip install 'tinker_cookbook[merge]'"
+        ) from exc
+
+    quantized_prefixes = {
+        key.removesuffix(".weight_scale")
+        for key in output_weight_map
+        if key.endswith(".weight_scale")
+    }
+
+    ignore: list[str] = []
+    for key in sorted(output_weight_map):
+        if not any(key.endswith(suffix) for suffix in _LINEAR_PROJ_SUFFIXES):
+            continue
+        prefix = key.removesuffix(".weight")
+        if prefix not in quantized_prefixes:
+            ignore.append(prefix)
+
+    if "lm_head.weight" in output_weight_map and "lm_head" not in quantized_prefixes:
+        ignore.append("lm_head")
+
+    config = QuantizationConfig(
+        config_groups={
+            "group_0": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(
+                    num_bits=8,
+                    type="float",
+                    strategy="block",
+                    block_structure=list(_DEEPSEEK_BLOCK_SIZE),
+                    symmetric=True,
+                    dynamic=False,
+                ),
+                input_activations=QuantizationArgs(
+                    num_bits=8,
+                    type="float",
+                    strategy="tensor",
+                    symmetric=True,
+                    dynamic=True,
+                ),
+            )
+        },
+        format="float-quantized",
+        quantization_status="compressed",
+        ignore=ignore,
+    )
+    config_dict = config.model_dump()
+    _strip_unsupported_quant_args_fields(config_dict)
+    config_dict["quant_method"] = "compressed-tensors"
+    return config_dict
+
+
+def _strip_unsupported_quant_args_fields(config_dict: dict) -> None:
+    """Drop fields newer vLLM builds may reject as extras."""
+    extra_fields = {"scale_dtype", "zp_dtype"}
+    for group in config_dict.get("config_groups", {}).values():
+        if not isinstance(group, dict):
+            continue
+        for section in ("weights", "input_activations", "output_activations"):
+            args = group.get(section)
+            if not isinstance(args, dict):
+                continue
+            for key in extra_fields:
+                args.pop(key, None)
 
 
 def _copy_custom_files(
