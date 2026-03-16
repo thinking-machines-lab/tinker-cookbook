@@ -147,6 +147,11 @@ def merge_adapter_weights(
                     idx = None
 
                 if idx is not None:
+                    if target_key not in model_state_dict:
+                        raise KeyError(
+                            f"Adapter weight {n!r} mapped to fused key {target_key!r} "
+                            f"which does not exist in the model state dict"
+                        )
                     if is_gpt_oss:
                         # gpt-oss has interleaved w13
                         target = model_state_dict[target_key][:, :, idx::2]
@@ -155,5 +160,10 @@ def merge_adapter_weights(
                         target = model_state_dict[target_key][:, :, idx * sz : (idx + 1) * sz]
                 else:
                     target_key = target_key.replace(".down_proj.weight", ".down_proj")
+                    if target_key not in model_state_dict:
+                        raise KeyError(
+                            f"Adapter weight {n!r} mapped to {target_key!r} "
+                            f"which does not exist in the model state dict"
+                        )
                     target = model_state_dict[target_key]
                 apply_merged_weight(target, merged_lora)

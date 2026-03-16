@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tarfile
 import tempfile
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -52,9 +53,22 @@ def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) 
     kwargs: dict = {}
     if base_url is not None:
         kwargs["base_url"] = base_url
-    sc = tinker.ServiceClient(**kwargs)
-    rc = sc.create_rest_client()
-    response = rc.get_checkpoint_archive_url_from_tinker_path(tinker_path).result()
+    try:
+        sc = tinker.ServiceClient(**kwargs)
+        rc = sc.create_rest_client()
+    except Exception as e:
+        raise RuntimeError(
+            "Failed to connect to Tinker service. "
+            "Ensure TINKER_API_KEY is set and the service is reachable."
+        ) from e
+
+    try:
+        response = rc.get_checkpoint_archive_url_from_tinker_path(tinker_path).result()
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to get download URL for {tinker_path!r}. "
+            f"Check that the checkpoint path is valid and the checkpoint has not expired."
+        ) from e
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -62,7 +76,13 @@ def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) 
     with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as tmp:
         tmp_path = Path(tmp.name)
     try:
-        urllib.request.urlretrieve(response.url, str(tmp_path))
+        try:
+            urllib.request.urlretrieve(response.url, str(tmp_path))
+        except urllib.error.URLError as e:
+            raise RuntimeError(
+                "Failed to download checkpoint archive from signed URL. "
+                "The URL may have expired — try downloading again."
+            ) from e
         _safe_extract_tar(tmp_path, out)
     finally:
         tmp_path.unlink(missing_ok=True)

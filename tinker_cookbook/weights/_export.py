@@ -107,16 +107,20 @@ def build_hf_model(
         try:
             processor = AutoProcessor.from_pretrained(base_model, trust_remote_code=resolved_trust)
             processor.save_pretrained(out)
-        except Exception:
-            logger.debug(
-                "No processor found for %s (this is expected for text-only models)", base_model
-            )
+        except (ValueError, KeyError, OSError):
+            # No processor for this model — expected for text-only models
+            # and some VL models that have a processor but can't load it
+            # from a from_config-generated checkpoint
+            pass
 
         logger.info("Done — merged model saved to %s", out)
     except Exception:
         # Clean up partial output so the user can retry without manual deletion
-        if out.exists():
-            shutil.rmtree(out)
+        try:
+            if out.exists():
+                shutil.rmtree(out)
+        except OSError:
+            logger.warning("Failed to clean up partial output at %s", out)
         raise
 
 
