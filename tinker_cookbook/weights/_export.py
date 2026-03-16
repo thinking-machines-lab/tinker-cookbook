@@ -20,6 +20,12 @@ from transformers import (
     PreTrainedModel,
 )
 
+from tinker_cookbook.weights._deepseek import (
+    is_deepseek_model as _is_deepseek_model,
+)
+from tinker_cookbook.weights._deepseek import (
+    save_deepseek_model as _save_deepseek_model,
+)
 from tinker_cookbook.weights._merge import merge_adapter_weights
 
 logger = logging.getLogger(__name__)
@@ -102,7 +108,10 @@ def build_hf_model(
         merge_adapter_weights(hf_model, adapter_weights, adapter_config)
 
         logger.info("Saving merged model to: %s", out)
-        hf_model.save_pretrained(out)
+        if _is_deepseek_model(hf_model):
+            _save_deepseek_model(hf_model=hf_model, base_model=base_model, output_path=out)
+        else:
+            hf_model.save_pretrained(out)
 
         tokenizer = AutoTokenizer.from_pretrained(base_model, trust_remote_code=resolved_trust)
         tokenizer.save_pretrained(out)

@@ -141,7 +141,7 @@ def _run_build_and_reload(
     is_vision: bool = False,
     trust_remote_code: bool = True,
 ) -> dict[str, torch.Tensor]:
-    """Run build_hf_model and return the reloaded state dict."""
+    """Run build_hf_model and return the reloaded state dict in arithmetic-safe dtypes."""
     build_hf_model(
         base_model=str(model_path),
         adapter_path=str(adapter_path),
@@ -152,7 +152,10 @@ def _run_build_and_reload(
     if trust_remote_code:
         load_kwargs["trust_remote_code"] = True
     reloaded = auto_cls.from_pretrained(output_path, **load_kwargs)
-    return reloaded.state_dict()
+    return {
+        key: value.float() if value.is_floating_point() else value
+        for key, value in reloaded.state_dict().items()
+    }
 
 
 def _load_saved_state_dict(output_path: Path) -> dict[str, torch.Tensor]:
