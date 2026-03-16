@@ -9,10 +9,11 @@ import io
 import logging
 import re
 import time
-from pathlib import Path
+from collections.abc import Callable, Coroutine, Iterable, Iterator, Sequence
 from concurrent.futures import Executor
 from contextlib import contextmanager
-from typing import Any, Callable, Coroutine, Iterable, Iterator, List, Sequence, TypeVar
+from pathlib import Path
+from typing import Any, TypeVar
 
 import chz
 import numpy as np
@@ -250,14 +251,14 @@ def _training_logprobs_from_fwd_bwd(
 
 @scope
 async def train_step(
-    data_D: List[tinker.Datum],
+    data_D: list[tinker.Datum],
     training_client: tinker.TrainingClient,
     learning_rate: float,
     num_substeps: int,
     loss_fn: LossFnType,
     loss_fn_config: dict[str, Any] | None = None,
     metrics: dict[str, Any] | None = None,
-) -> List[torch.Tensor]:
+) -> list[torch.Tensor]:
     """Train the model on collected trajectories.
 
     Pipelines forward_backward and optim_step so they land on the same clock cycle.

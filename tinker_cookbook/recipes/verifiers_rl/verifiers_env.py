@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from contextvars import ContextVar
-from typing import Sequence
 
 import chz
 import tinker

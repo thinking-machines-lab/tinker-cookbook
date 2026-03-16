@@ -11,7 +11,7 @@ Returns OpenAI types (ChatCompletion / Completion) constructed from sampled toke
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Literal, overload
+from typing import Any, Literal, overload
 
 import tinker
 from openai import AsyncOpenAI
@@ -84,7 +84,7 @@ class TinkerChatCompletions(OpenAIAsyncChatCompletions):
         max_tokens = sampling_args.get("max_tokens") or sampling_args.get("max_completion_tokens")
 
         model_input = self._parent.renderer.build_generation_prompt(messages)
-        prompt_token_ids: List[int] = model_input.to_ints()
+        prompt_token_ids: list[int] = model_input.to_ints()
 
         sample = await self._parent.sampling_client.sample_async(
             prompt=model_input,
@@ -98,8 +98,8 @@ class TinkerChatCompletions(OpenAIAsyncChatCompletions):
             ),
         )
         seq = sample.sequences[0]
-        completion_token_ids: List[int] = seq.tokens
-        logprobs: List[float] = seq.logprobs or [0.0] * len(completion_token_ids)
+        completion_token_ids: list[int] = seq.tokens
+        logprobs: list[float] = seq.logprobs or [0.0] * len(completion_token_ids)
 
         assistant_message, parse_success = self._parent.renderer.parse_response(
             completion_token_ids
@@ -110,7 +110,7 @@ class TinkerChatCompletions(OpenAIAsyncChatCompletions):
         openai_content = renderers.format_content_as_string(assistant_message["content"])
 
         # Build OpenAI-compatible message
-        openai_message: Dict[str, Any] = {
+        openai_message: dict[str, Any] = {
             "role": "assistant",
             "content": openai_content,
         }
@@ -125,7 +125,7 @@ class TinkerChatCompletions(OpenAIAsyncChatCompletions):
                 for i, tc in enumerate(assistant_message["tool_calls"])
             ]
 
-        response_dict: Dict[str, Any] = {
+        response_dict: dict[str, Any] = {
             "id": "tinker-chatcmpl",
             "object": "chat.completion",
             "created": int(time.time()),
@@ -151,8 +151,8 @@ class TinkerChatCompletions(OpenAIAsyncChatCompletions):
         }
         response = ChatCompletion.model_validate(response_dict)
 
-        setattr(response, "prompt_token_ids", prompt_token_ids)
-        setattr(response.choices[0], "token_ids", completion_token_ids)
+        object.__setattr__(response, "prompt_token_ids", prompt_token_ids)
+        object.__setattr__(response.choices[0], "token_ids", completion_token_ids)
 
         return response
 
@@ -182,7 +182,7 @@ class TinkerCompletions(OpenAIAsyncCompletions):
         prompt = kwargs.get("prompt", "")
         sampling_args = {k: v for k, v in kwargs.items() if k not in ("model", "prompt")}
 
-        prompt_token_ids: List[int] = self._parent.tokenizer.encode(prompt, add_special_tokens=True)
+        prompt_token_ids: list[int] = self._parent.tokenizer.encode(prompt, add_special_tokens=True)
         model_input = tinker.ModelInput.from_ints(prompt_token_ids)
 
         sample = await self._parent.sampling_client.sample_async(
@@ -196,12 +196,12 @@ class TinkerCompletions(OpenAIAsyncCompletions):
             ),
         )
         seq = sample.sequences[0]
-        completion_token_ids: List[int] = seq.tokens
-        logprobs: List[float] = seq.logprobs or [0.0] * len(completion_token_ids)
+        completion_token_ids: list[int] = seq.tokens
+        logprobs: list[float] = seq.logprobs or [0.0] * len(completion_token_ids)
 
         text = self._parent.tokenizer.decode(completion_token_ids)
         tokens_str = [f"token_id:{tid}" for tid in completion_token_ids]
-        response_dict: Dict[str, Any] = {
+        response_dict: dict[str, Any] = {
             "id": "tinker-cmpl",
             "object": "text_completion",
             "created": int(time.time()),
@@ -225,8 +225,8 @@ class TinkerCompletions(OpenAIAsyncCompletions):
         }
         response = Completion.model_validate(response_dict)
 
-        setattr(response.choices[0], "prompt_token_ids", prompt_token_ids)
-        setattr(response.choices[0], "token_ids", completion_token_ids)
+        object.__setattr__(response.choices[0], "prompt_token_ids", prompt_token_ids)
+        object.__setattr__(response.choices[0], "token_ids", completion_token_ids)
 
         if stream:
             return TinkerAsyncCompletionStream(response)

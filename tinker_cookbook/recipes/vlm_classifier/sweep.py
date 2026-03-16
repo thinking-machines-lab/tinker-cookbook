@@ -11,18 +11,19 @@ python -m tinker_cookbook.recipes.vlm_classifier.sweep experiment_dir=./sweep mo
 """
 
 import asyncio
-from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from itertools import product
+from pathlib import Path
 
 import chz
-from tinker_cookbook.renderers import TrainOnWhat
-from tinker_cookbook.utils.lr_scheduling import LRSchedule
+
 from tinker_cookbook import cli_utils
 from tinker_cookbook.recipes.vlm_classifier.data import get_dataset_builder
 from tinker_cookbook.recipes.vlm_classifier.eval import get_evaluator_builder
+from tinker_cookbook.renderers import TrainOnWhat
 from tinker_cookbook.supervised import train
+from tinker_cookbook.utils.lr_scheduling import LRSchedule
 
 
 @chz.chz

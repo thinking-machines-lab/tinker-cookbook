@@ -5,8 +5,9 @@ Small utilities requiring only basic python libraries.
 import importlib
 import logging
 import time
+from collections.abc import Sequence
 from contextlib import contextmanager
-from typing import Any, Sequence, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 import numpy as np
 

@@ -103,8 +103,7 @@ class JobCommand(BaseModel):
 
 def _get_tmux_env_flags(env: dict[str, str]) -> list[str]:
     """Get the flags to pass to tmux to set the environment"""
-    key_value_pairs = [["-e", f"{key}={value}"] for key, value in env.items()]
-    return sum(key_value_pairs, [])
+    return [flag for key, value in env.items() for flag in ("-e", f"{key}={value}")]
 
 
 def _create_job_command(config_path: str, debug: bool = False, dry_run: bool = False) -> JobCommand:

@@ -149,7 +149,7 @@ class _DeepSeekV3BaseRenderer(Renderer):
 
         # Handle tool calls in assistant messages
         # HF format: <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>name<｜tool▁sep｜>args<｜tool▁call▁end｜><｜tool▁calls▁end｜>
-        if "tool_calls" in message and message["tool_calls"]:
+        if "tool_calls" in message and message["tool_calls"]:  # noqa: RUF019
             output_str += "<｜tool▁calls▁begin｜>"
             for tool_call in message["tool_calls"]:
                 func_name = tool_call.function.name
@@ -298,7 +298,7 @@ class _DeepSeekV3BaseRenderer(Renderer):
                 result["reasoning_content"] = "".join(thinking_parts)
 
         # Handle tool_calls
-        if "tool_calls" in message and message["tool_calls"]:
+        if "tool_calls" in message and message["tool_calls"]:  # noqa: RUF019
             result["tool_calls"] = [
                 {
                     "type": "function",

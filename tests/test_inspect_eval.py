@@ -58,13 +58,13 @@ def _log_response(result: InspectAIModelOutput) -> None:
     content = result.choices[0].message.content
     print(f"\n  Content type: {type(content).__name__}")
     if isinstance(content, str):
-        print(f"  Text: {repr(content[:300])}")
+        print(f"  Text: {content[:300]!r}")
     else:
         for i, part in enumerate(content):
             if isinstance(part, InspectAIContentReasoning):
-                print(f"  Part {i} [ContentReasoning]: {repr(part.reasoning[:200])}")
+                print(f"  Part {i} [ContentReasoning]: {part.reasoning[:200]!r}")
             elif isinstance(part, InspectAIContentText):
-                print(f"  Part {i} [ContentText]: {repr(part.text[:200])}")
+                print(f"  Part {i} [ContentText]: {part.text[:200]!r}")
             else:
                 print(f"  Part {i} [{type(part).__name__}]: {repr(part)[:200]}")
     usage = result.usage

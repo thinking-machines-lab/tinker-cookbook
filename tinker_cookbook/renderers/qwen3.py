@@ -257,7 +257,7 @@ class Qwen3Renderer(Renderer):
                 result["reasoning_content"] = "".join(thinking_parts)
 
         # Handle tool_calls
-        if "tool_calls" in message and message["tool_calls"]:
+        if "tool_calls" in message and message["tool_calls"]:  # noqa: RUF019
             result["tool_calls"] = [
                 {
                     "type": "function",
@@ -450,12 +450,11 @@ class Qwen3VLRenderer(Qwen3Renderer):
                     base_parts.append(cast(TextPart, p))
                 elif p["type"] == "image":
                     base_parts.append(cast(ImagePart, p))
-                elif p["type"] == "thinking":
-                    if not strip_thinking:
-                        # Render thinking as <think>...</think> text
-                        base_parts.append(
-                            TextPart(type="text", text=self._format_thinking_text(p["thinking"]))
-                        )
+                elif p["type"] == "thinking" and not strip_thinking:
+                    # Render thinking as <think>...</think> text
+                    base_parts.append(
+                        TextPart(type="text", text=self._format_thinking_text(p["thinking"]))
+                    )
                     # else: strip thinking by not appending
 
         # Wrap images with vision tokens

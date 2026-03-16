@@ -11,17 +11,18 @@ python -m tinker_cookbook.recipes.vlm_classifier.train experiment_dir=./vlm_clas
 """
 
 import asyncio
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
 
 import chz
-from tinker_cookbook.renderers import TrainOnWhat
-from tinker_cookbook.utils.lr_scheduling import LRSchedule
+
 from tinker_cookbook import cli_utils
-from tinker_cookbook.recipes.vlm_classifier.eval import get_evaluator_builder
 from tinker_cookbook.recipes.vlm_classifier.data import get_dataset_builder
+from tinker_cookbook.recipes.vlm_classifier.eval import get_evaluator_builder
+from tinker_cookbook.renderers import TrainOnWhat
 from tinker_cookbook.supervised import train
+from tinker_cookbook.utils.lr_scheduling import LRSchedule
 
 
 @chz.chz

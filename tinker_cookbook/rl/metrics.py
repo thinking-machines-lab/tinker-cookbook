@@ -6,18 +6,19 @@ and computing training metrics.
 """
 
 import asyncio
-from typing import Any, Dict, List, cast
+from typing import Any, cast
 
 import numpy as np
 import tinker
 import torch
+
 from tinker_cookbook.utils.misc_utils import safezip
 from tinker_cookbook.utils.trace import scope
 
 
 def compute_kl_sample_train(
-    data_D: List[tinker.Datum], training_logprobs_D: List[torch.Tensor]
-) -> Dict[str, float]:
+    data_D: list[tinker.Datum], training_logprobs_D: list[torch.Tensor]
+) -> dict[str, float]:
     """Compute KL divergence metrics between sampling and training logprobs."""
     all_diffs: list[torch.Tensor] = []
     all_sampling_logprobs: list[torch.Tensor] = []
@@ -51,8 +52,8 @@ def compute_kl_sample_train(
 
 @scope
 async def compute_post_kl(
-    data_D: List[tinker.Datum], post_sampling_client: tinker.SamplingClient
-) -> Dict[str, float]:
+    data_D: list[tinker.Datum], post_sampling_client: tinker.SamplingClient
+) -> dict[str, float]:
     """Compute post-update KL divergence metrics."""
     # Compute logprobs at all data items
     # This is a bit ugly, but we first reconstruct the original sequence from before we did the
@@ -85,11 +86,11 @@ async def compute_post_kl(
 
 @scope
 async def incorporate_kl_penalty(
-    data_D: List[tinker.Datum],
+    data_D: list[tinker.Datum],
     base_sampling_client: tinker.SamplingClient,
     kl_penalty_coef: float,
     kl_discount_factor: float,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """
     Compute KL against base model. Adjust advantages in-place by logp_base - logp_current - avg_kl,
     where avg_kl is the average of logp_base - logp_current (which is -KL[current, base])
@@ -148,7 +149,7 @@ def discounted_future_sum_vectorized(x: np.ndarray, gamma: float) -> np.ndarray:
 
 
 def compute_sampling_client_metrics(
-    wrapped_trajectory_groups: List[Any],  # WrappedTrajectoryGroup
+    wrapped_trajectory_groups: list[Any],  # WrappedTrajectoryGroup
 ) -> dict[str, Any]:
     """Compute metrics about sampling clients used to generate trajectory groups."""
     sampling_client_steps = [

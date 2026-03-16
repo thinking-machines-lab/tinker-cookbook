@@ -120,12 +120,12 @@ async def get_gemini_embedding(
             if attempt < max_retries - 1:
                 wait_time = retry_delay * (1.5**attempt)  # Exponential backoff
                 logger.error(
-                    f"Attempt {attempt + 1}/{max_retries} failed for embedding ({len(texts)} texts): {repr(e)}. Retrying in {wait_time:.1f}s..."
+                    f"Attempt {attempt + 1}/{max_retries} failed for embedding ({len(texts)} texts): {e!r}. Retrying in {wait_time:.1f}s..."
                 )
                 await asyncio.sleep(wait_time)
             else:
                 logger.error(
-                    f"All {max_retries} attempts failed for embedding ({len(texts)} texts): {repr(e)}"
+                    f"All {max_retries} attempts failed for embedding ({len(texts)} texts): {e!r}"
                 )
                 raise
 

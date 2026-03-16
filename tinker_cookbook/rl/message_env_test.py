@@ -13,9 +13,8 @@ from unittest.mock import MagicMock, patch
 
 import tinker
 
-from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
 from tinker_cookbook.renderers.base import Message
-
+from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
 
 # ---------------------------------------------------------------------------
 # Helpers

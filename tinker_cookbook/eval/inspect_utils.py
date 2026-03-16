@@ -7,7 +7,7 @@ run_inspect_evals.py and inspect_evaluator.py to avoid code duplication.
 
 import logging
 import time
-from typing import Sequence
+from collections.abc import Sequence
 
 import tinker
 from inspect_ai.model import ChatCompletionChoice as InspectAIModelOutputChoice
@@ -24,6 +24,7 @@ from inspect_ai.model._registry import modelapi_register
 from inspect_ai.tool import ToolChoice as InspectAIToolChoice
 from inspect_ai.tool import ToolInfo as InspectAIToolInfo
 from termcolor import colored
+
 from tinker_cookbook import renderers
 from tinker_cookbook.renderers.base import ensure_list
 from tinker_cookbook.tokenizer_utils import get_tokenizer
@@ -108,11 +109,13 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
         sampling_client: tinker.SamplingClient | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
-        api_key_vars: list[str] = [],
+        api_key_vars: list[str] | None = None,
         config: InspectAIGenerateConfig = InspectAIGenerateConfig(),
         verbose: bool = False,
         include_reasoning: bool = False,
     ):
+        if api_key_vars is None:
+            api_key_vars = []
         super().__init__(
             model_name=model_name,
             base_url=base_url,

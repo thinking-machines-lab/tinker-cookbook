@@ -6,8 +6,8 @@ from pathlib import Path
 
 from tinker_cookbook.checkpoint_utils import (
     CheckpointRecord,
-    load_checkpoints_file,
     get_last_checkpoint,
+    load_checkpoints_file,
 )
 
 

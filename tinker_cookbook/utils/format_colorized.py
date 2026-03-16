@@ -1,4 +1,5 @@
 from termcolor import colored
+
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
