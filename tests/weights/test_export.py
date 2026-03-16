@@ -13,9 +13,13 @@ Model families tested:
 """
 
 import json
+import os
+import shutil
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
+from huggingface_hub import snapshot_download
 import torch
 from safetensors.torch import load_file, save_file
 from transformers import (
@@ -36,6 +40,56 @@ FILL_A = 0.01  # LoRA fill for gate / first projection
 FILL_B = 0.05  # LoRA fill for up / second projection
 
 
+@contextmanager
+def _local_hf_cache_env():
+    """Keep test-time HF dynamic module/cache writes off shared shell defaults."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cache_root = Path(tmpdir) / "hf-cache"
+        xdg_root = Path(tmpdir) / "xdg-cache"
+        env = {
+            "HF_HOME": str(cache_root),
+            "HF_HUB_CACHE": str(cache_root / "hub"),
+            "HF_XET_CACHE": str(cache_root / "xet"),
+            "HF_MODULES_CACHE": str(cache_root / "modules"),
+            "XDG_CACHE_HOME": str(xdg_root),
+        }
+        for value in env.values():
+            Path(value).mkdir(parents=True, exist_ok=True)
+        old_env = {key: os.environ.get(key) for key in env}
+        import huggingface_hub.constants as hf_constants
+        import transformers.dynamic_module_utils as dynamic_module_utils
+        import transformers.utils.hub as transformers_hub
+
+        old_globals = {
+            "HF_HOME": hf_constants.HF_HOME,
+            "HF_HUB_CACHE": hf_constants.HF_HUB_CACHE,
+            "HF_XET_CACHE": getattr(hf_constants, "HF_XET_CACHE", None),
+            "dynamic_HF_MODULES_CACHE": dynamic_module_utils.HF_MODULES_CACHE,
+            "hub_HF_MODULES_CACHE": transformers_hub.HF_MODULES_CACHE,
+        }
+        os.environ.update(env)
+        hf_constants.HF_HOME = env["HF_HOME"]
+        hf_constants.HF_HUB_CACHE = env["HF_HUB_CACHE"]
+        if hasattr(hf_constants, "HF_XET_CACHE"):
+            hf_constants.HF_XET_CACHE = env["HF_XET_CACHE"]
+        dynamic_module_utils.HF_MODULES_CACHE = env["HF_MODULES_CACHE"]
+        transformers_hub.HF_MODULES_CACHE = env["HF_MODULES_CACHE"]
+        try:
+            yield
+        finally:
+            hf_constants.HF_HOME = old_globals["HF_HOME"]
+            hf_constants.HF_HUB_CACHE = old_globals["HF_HUB_CACHE"]
+            if hasattr(hf_constants, "HF_XET_CACHE"):
+                hf_constants.HF_XET_CACHE = old_globals["HF_XET_CACHE"]
+            dynamic_module_utils.HF_MODULES_CACHE = old_globals["dynamic_HF_MODULES_CACHE"]
+            transformers_hub.HF_MODULES_CACHE = old_globals["hub_HF_MODULES_CACHE"]
+            for key, previous in old_env.items():
+                if previous is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = previous
+
+
 def _save_model_to_disk(
     config: PretrainedConfig,
     path: Path,
@@ -48,6 +102,12 @@ def _save_model_to_disk(
     model.save_pretrained(path)
     tok = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
     tok.save_pretrained(path)
+
+
+def _copy_hf_files(repo_id: str, output_path: Path, file_names: tuple[str, ...]) -> None:
+    snapshot_path = Path(snapshot_download(repo_id=repo_id, allow_patterns=list(file_names)))
+    for file_name in file_names:
+        shutil.copy2(snapshot_path / file_name, output_path / file_name)
 
 
 def _save_expert_adapter(
@@ -164,6 +224,45 @@ def _load_saved_state_dict(output_path: Path) -> dict[str, torch.Tensor]:
     for safetensors_path in sorted(output_path.glob("*.safetensors")):
         state_dict.update(load_file(str(safetensors_path)))
     return state_dict
+
+
+def _load_saved_index(output_path: Path) -> dict:
+    return json.loads((output_path / "model.safetensors.index.json").read_text())
+
+
+def _tensor_nbytes(tensor: torch.Tensor) -> int:
+    return tensor.numel() * tensor.element_size()
+
+
+def _reshard_saved_model(
+    model_path: Path,
+    *,
+    shard_assignments: dict[str, str],
+    default_shard: str = "model-00002-of-00002.safetensors",
+) -> dict[str, str]:
+    """Rewrite a local checkpoint into a small sharded layout with an HF index."""
+    source_path = model_path / "model.safetensors"
+    state_dict = load_file(str(source_path))
+    shard_state_dicts: dict[str, dict[str, torch.Tensor]] = {}
+    weight_map: dict[str, str] = {}
+
+    for key, tensor in state_dict.items():
+        shard_name = shard_assignments.get(key, default_shard)
+        shard_state_dicts.setdefault(shard_name, {})[key] = tensor
+        weight_map[key] = shard_name
+
+    source_path.unlink()
+    for shard_name, shard_state_dict in sorted(shard_state_dicts.items()):
+        save_file(shard_state_dict, str(model_path / shard_name))
+
+    index_payload = {
+        "metadata": {"total_size": sum(_tensor_nbytes(tensor) for tensor in state_dict.values())},
+        "weight_map": weight_map,
+    }
+    (model_path / "model.safetensors.index.json").write_text(
+        json.dumps(index_payload, indent=2, sort_keys=True) + "\n"
+    )
+    return weight_map
 
 
 # ---------------------------------------------------------------------------
@@ -461,74 +560,169 @@ class TestDeepSeekV31SeparateExperts:
     """DeepSeek V3.1: dense weights stay BF16 while routed experts should be FP8."""
 
     def test_dense_weights_change_but_only_routed_experts_are_quantized_to_fp8(self):
-        config = _make_tiny_deepseek_v31_config()
+        with _local_hf_cache_env():
+            config = _make_tiny_deepseek_v31_config()
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            model_path = root / "model"
-            adapter_path = root / "adapter"
-            output_path = root / "merged"
+            with tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                model_path = root / "model"
+                adapter_path = root / "adapter"
+                output_path = root / "merged"
 
-            _save_model_to_disk(config, model_path, tokenizer_name="deepseek-ai/DeepSeek-V3.1")
-            orig = AutoModelForCausalLM.from_pretrained(model_path, dtype=torch.float32)
-            num_experts = 2
+                _save_model_to_disk(config, model_path, tokenizer_name="deepseek-ai/DeepSeek-V3.1")
+                _copy_hf_files(
+                    "deepseek-ai/DeepSeek-V3.1",
+                    model_path,
+                    ("configuration_deepseek.py", "modeling_deepseek.py"),
+                )
+                orig = AutoModelForCausalLM.from_pretrained(model_path, dtype=torch.float32)
+                num_experts = 2
 
-            gate_shape = orig.state_dict()["model.layers.0.mlp.experts.0.gate_proj.weight"].shape
-            expert_out_dim, expert_in_dim = gate_shape
-            dense_shape = orig.state_dict()["model.layers.0.self_attn.q_a_proj.weight"].shape
-            dense_out_dim, dense_in_dim = dense_shape
+                gate_shape = orig.state_dict()["model.layers.0.mlp.experts.0.gate_proj.weight"].shape
+                expert_out_dim, expert_in_dim = gate_shape
+                dense_shape = orig.state_dict()["model.layers.0.self_attn.q_a_proj.weight"].shape
+                dense_out_dim, dense_in_dim = dense_shape
+                dense_key = "model.layers.0.self_attn.q_a_proj.weight"
+                shared_expert_key = "model.layers.0.mlp.shared_experts.gate_proj.weight"
+                gate_keys = [f"model.layers.0.mlp.experts.{i}.gate_proj.weight" for i in range(num_experts)]
+                up_keys = [f"model.layers.0.mlp.experts.{i}.up_proj.weight" for i in range(num_experts)]
 
-            _save_mixed_deepseek_adapter(
-                adapter_path,
-                num_experts=num_experts,
-                expert_in_dim=expert_in_dim,
-                expert_out_dim=expert_out_dim,
-                dense_in_dim=dense_in_dim,
-                dense_out_dim=dense_out_dim,
-            )
+                reference_weight_map = _reshard_saved_model(
+                    model_path,
+                    shard_assignments={
+                        dense_key: "model-00001-of-00002.safetensors",
+                        shared_expert_key: "model-00002-of-00002.safetensors",
+                        gate_keys[0]: "model-00001-of-00002.safetensors",
+                        up_keys[0]: "model-00002-of-00002.safetensors",
+                        gate_keys[1]: "model-00002-of-00002.safetensors",
+                        up_keys[1]: "model-00001-of-00002.safetensors",
+                    },
+                )
 
-            merged_sd = _run_build_and_reload(
-                model_path, adapter_path, output_path, trust_remote_code=False
-            )
-            saved_sd = _load_saved_state_dict(output_path)
+                _save_mixed_deepseek_adapter(
+                    adapter_path,
+                    num_experts=num_experts,
+                    expert_in_dim=expert_in_dim,
+                    expert_out_dim=expert_out_dim,
+                    dense_in_dim=dense_in_dim,
+                    dense_out_dim=dense_out_dim,
+                )
 
-            assert (output_path / "configuration_deepseek.py").exists(), (
-                "Merged DeepSeek artifact should include configuration_deepseek.py"
-            )
-            assert (output_path / "modeling_deepseek.py").exists(), (
-                "Merged DeepSeek artifact should include modeling_deepseek.py"
-            )
+                merged_sd = _run_build_and_reload(
+                    model_path, adapter_path, output_path, trust_remote_code=False
+                )
+                saved_sd = _load_saved_state_dict(output_path)
+                saved_index = _load_saved_index(output_path)
+                saved_config = json.loads((output_path / "config.json").read_text())
 
-            dense_key = "model.layers.0.self_attn.q_a_proj.weight"
-            dense_delta = (merged_sd[dense_key] - orig.state_dict()[dense_key]).abs().sum()
-            assert dense_delta > 0, "Dense non-expert q_a_proj weight was not updated"
-            assert saved_sd[dense_key].dtype == torch.bfloat16, (
-                "Dense non-expert q_a_proj should remain higher precision (BF16)"
-            )
+                assert (output_path / "configuration_deepseek.py").exists(), (
+                    "Merged DeepSeek artifact should include configuration_deepseek.py"
+                )
+                assert (output_path / "modeling_deepseek.py").exists(), (
+                    "Merged DeepSeek artifact should include modeling_deepseek.py"
+                )
+                assert (output_path / "model.safetensors.index.json").exists(), (
+                    "Merged DeepSeek artifact should preserve sharded safetensors metadata"
+                )
 
-            for i in range(num_experts):
-                gate_key = f"model.layers.0.mlp.experts.{i}.gate_proj.weight"
-                up_key = f"model.layers.0.mlp.experts.{i}.up_proj.weight"
+                dense_delta = (merged_sd[dense_key] - orig.state_dict()[dense_key]).abs().sum()
+                assert dense_delta > 0, "Dense non-expert q_a_proj weight was not updated"
+                assert saved_sd[dense_key].dtype == torch.bfloat16, (
+                    "Dense non-expert q_a_proj should remain higher precision (BF16)"
+                )
+                assert saved_index["weight_map"][dense_key] == reference_weight_map[dense_key], (
+                    "Dense non-expert tensors should keep the reference shard placement"
+                )
 
-                gate_delta = (merged_sd[gate_key] - orig.state_dict()[gate_key]).abs().sum()
-                up_delta = (merged_sd[up_key] - orig.state_dict()[up_key]).abs().sum()
+                for i in range(num_experts):
+                    gate_key = f"model.layers.0.mlp.experts.{i}.gate_proj.weight"
+                    up_key = f"model.layers.0.mlp.experts.{i}.up_proj.weight"
+                    gate_scale_key = gate_key.removesuffix(".weight") + ".weight_scale"
+                    up_scale_key = up_key.removesuffix(".weight") + ".weight_scale"
 
-                assert gate_delta > 0, f"Expert {i} gate_proj not updated"
-                assert up_delta > 0, f"Expert {i} up_proj not updated"
-                assert saved_sd[gate_key].dtype in {
-                    torch.float8_e4m3fn,
-                    torch.float8_e4m3fnuz,
-                    torch.float8_e5m2,
-                    torch.float8_e5m2fnuz,
-                }, f"Routed expert weight should be quantized to FP8: {gate_key}"
+                    gate_delta = (merged_sd[gate_key] - orig.state_dict()[gate_key]).abs().sum()
+                    up_delta = (merged_sd[up_key] - orig.state_dict()[up_key]).abs().sum()
 
-            shared_expert_key = "model.layers.0.mlp.shared_experts.gate_proj.weight"
-            assert saved_sd[shared_expert_key].dtype == torch.bfloat16, (
-                "Shared expert weights should remain higher precision (BF16)"
-            )
-            assert any(
-                "weight_scale" in key and ".mlp.experts." in key for key in saved_sd
-            ), "Expected routed-expert FP8 scale tensors in saved checkpoint"
+                    assert gate_delta > 0, f"Expert {i} gate_proj not updated"
+                    assert up_delta > 0, f"Expert {i} up_proj not updated"
+                    assert saved_sd[gate_key].dtype in {
+                        torch.float8_e4m3fn,
+                        torch.float8_e4m3fnuz,
+                        torch.float8_e5m2,
+                        torch.float8_e5m2fnuz,
+                    }, f"Routed expert weight should be quantized to FP8: {gate_key}"
+                    assert saved_sd[gate_scale_key].dtype == torch.float32, (
+                        f"Routed expert scale tensor should be stored as float32: {gate_scale_key}"
+                    )
+                    assert saved_sd[up_scale_key].dtype == torch.float32, (
+                        f"Routed expert scale tensor should be stored as float32: {up_scale_key}"
+                    )
+                    assert saved_index["weight_map"][gate_key] == reference_weight_map[gate_key], (
+                        "Routed expert weights should preserve the reference shard layout"
+                    )
+                    assert saved_index["weight_map"][up_key] == reference_weight_map[up_key], (
+                        "Routed expert weights should preserve the reference shard layout"
+                    )
+                    assert saved_index["weight_map"][gate_scale_key] == reference_weight_map[
+                        gate_key
+                    ], (
+                        "Emitted gate scale tensors should be colocated with their routed "
+                        "expert weights"
+                    )
+                    assert saved_index["weight_map"][up_scale_key] == reference_weight_map[
+                        up_key
+                    ], (
+                        "Emitted up scale tensors should be colocated with their routed "
+                        "expert weights"
+                    )
+
+                assert saved_sd[shared_expert_key].dtype == torch.bfloat16, (
+                    "Shared expert weights should remain higher precision (BF16)"
+                )
+                assert saved_index["weight_map"][shared_expert_key] == reference_weight_map[
+                    shared_expert_key
+                ], "Shared expert tensors should keep the reference shard placement"
+                assert any(
+                    "weight_scale" in key and ".mlp.experts." in key for key in saved_sd
+                ), "Expected routed-expert FP8 scale tensors in saved checkpoint"
+                assert not any(key.endswith(".weight_scale_inv") for key in saved_sd), (
+                    "Experts-only export should emit compressed-tensors .weight_scale tensors, "
+                    "not DeepSeek-native .weight_scale_inv tensors"
+                )
+
+                compression_config = saved_config.get("compression_config")
+                assert "quantization_config" not in saved_config, (
+                    "DeepSeek export should replace quantization_config with compression_config"
+                )
+                assert compression_config is not None, (
+                    "DeepSeek export should write a compressed-tensors compression_config"
+                )
+                assert compression_config["quant_method"] == "compressed-tensors"
+                assert compression_config["format"] == "float-quantized"
+                assert compression_config["quantization_status"] == "compressed"
+                assert compression_config["config_groups"]["group_0"]["targets"] == ["Linear"]
+                assert (
+                    compression_config["config_groups"]["group_0"]["weights"]["strategy"]
+                    == "block"
+                )
+                assert compression_config["config_groups"]["group_0"]["weights"][
+                    "block_structure"
+                ] == [128, 128]
+                assert compression_config["config_groups"]["group_0"]["input_activations"][
+                    "dynamic"
+                ], "compressed-tensors config should keep dynamic input activations enabled"
+
+                ignore = set(compression_config["ignore"])
+                assert "model.layers.0.self_attn.q_a_proj" in ignore, (
+                    "Dense non-expert q_a_proj should be explicitly ignored by the compression "
+                    "config"
+                )
+                assert "model.layers.0.mlp.shared_experts.gate_proj" in ignore, (
+                    "Shared expert weights should be explicitly ignored by the compression config"
+                )
+                assert "model.layers.0.mlp.experts.0.gate_proj" not in ignore, (
+                    "Routed expert weights should not be ignored by the compression config"
+                )
 
 
 # ---------------------------------------------------------------------------
