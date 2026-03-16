@@ -31,6 +31,9 @@ class InspectEvaluatorBuilder:
     seed: int | None = None
     # If True, logs prompts and responses to the console (useful for debugging).
     verbose: bool = False
+    # When True, model reasoning/thinking is preserved in inspect output as ContentReasoning.
+    # When False (default), reasoning is stripped and only text content is returned.
+    include_reasoning: bool = False
 
     # Generation parameters
     temperature: float = 1.0
@@ -88,6 +91,7 @@ class InspectEvaluator(SamplingClientEvaluator):
             model_name=self.config.model_name,
             sampling_client=sampling_client,
             verbose=self.config.verbose,
+            include_reasoning=self.config.include_reasoning,
         )
         # Create the inspect model
         model = InspectAIModel(
