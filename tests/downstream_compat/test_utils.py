@@ -42,11 +42,18 @@ class TestLoggerHierarchy:
     def test_multiplex_logger_is_subclass(self):
         assert issubclass(MultiplexLogger, Logger)
 
-    def test_setup_logging_callable(self):
-        assert callable(setup_logging)
+    def test_setup_logging_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
 
-    def test_configure_logging_module_callable(self):
-        assert callable(configure_logging_module)
+        assert_params(
+            setup_logging,
+            ["log_dir", "wandb_project", "wandb_name", "config", "do_configure_logging_module"],
+        )
+
+    def test_configure_logging_module_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(configure_logging_module, ["path", "level"])
 
     def test_dump_config_callable(self):
         assert callable(dump_config)

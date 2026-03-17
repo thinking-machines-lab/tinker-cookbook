@@ -235,6 +235,62 @@ class TestRendererInterface:
 
 
 # ---------------------------------------------------------------------------
+# Signature checks
+# ---------------------------------------------------------------------------
+
+
+class TestSignatures:
+    """Verify that key function signatures haven't changed."""
+
+    def test_get_renderer_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(
+            renderers.get_renderer, ["name", "tokenizer", "image_processor", "model_name"]
+        )
+
+    def test_register_renderer_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(register_renderer, ["name", "factory"])
+
+    def test_unregister_renderer_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(unregister_renderer, ["name"])
+
+    def test_build_generation_prompt_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(Renderer.build_generation_prompt, ["messages", "role", "prefill"])
+
+    def test_build_supervised_example_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(Renderer.build_supervised_example, ["messages", "train_on_what"])
+
+    def test_parse_response_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(Renderer.parse_response, ["response"])
+
+    def test_ensure_text_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(ensure_text, ["content"])
+
+    def test_format_content_as_string_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(format_content_as_string, ["content", "separator"])
+
+    def test_get_text_content_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(get_text_content, ["message"])
+
+
+# ---------------------------------------------------------------------------
 # Specific renderer classes used directly by downstream
 # ---------------------------------------------------------------------------
 

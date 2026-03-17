@@ -44,10 +44,9 @@ class TestTokenCompleter:
         assert inspect.iscoroutinefunction(TokenCompleter.__call__)
 
     def test_call_signature(self):
-        sig = inspect.signature(TokenCompleter.__call__)
-        params = list(sig.parameters.keys())
-        assert "model_input" in params
-        assert "stop" in params
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(TokenCompleter.__call__, ["model_input", "stop"])
 
 
 class TestMessageCompleter:
@@ -56,6 +55,11 @@ class TestMessageCompleter:
 
     def test_call_is_async(self):
         assert inspect.iscoroutinefunction(MessageCompleter.__call__)
+
+    def test_call_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(MessageCompleter.__call__, ["messages"])
 
 
 class TestTinkerTokenCompleter:

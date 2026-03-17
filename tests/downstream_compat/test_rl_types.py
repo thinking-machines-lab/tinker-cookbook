@@ -108,13 +108,19 @@ class TestEnv:
         assert hasattr(Env, "initial_observation")
         assert inspect.iscoroutinefunction(Env.initial_observation)
 
+    def test_initial_observation_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(Env.initial_observation, [])
+
     def test_has_step(self):
         assert hasattr(Env, "step")
         assert inspect.iscoroutinefunction(Env.step)
 
-    def test_step_takes_action(self):
-        sig = inspect.signature(Env.step)
-        assert "action" in sig.parameters
+    def test_step_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(Env.step, ["action"])
 
 
 # ---------------------------------------------------------------------------
@@ -152,16 +158,25 @@ class TestEnvGroupBuilder:
     def test_is_abstract(self):
         assert inspect.isabstract(EnvGroupBuilder)
 
-    def test_has_make_envs(self):
+    def test_make_envs_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
         assert hasattr(EnvGroupBuilder, "make_envs")
         assert inspect.iscoroutinefunction(EnvGroupBuilder.make_envs)
+        assert_params(EnvGroupBuilder.make_envs, [])
 
-    def test_has_compute_group_rewards(self):
+    def test_compute_group_rewards_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
         assert hasattr(EnvGroupBuilder, "compute_group_rewards")
         assert inspect.iscoroutinefunction(EnvGroupBuilder.compute_group_rewards)
+        assert_params(EnvGroupBuilder.compute_group_rewards, ["trajectory_group", "env_group"])
 
-    def test_has_logging_tags(self):
+    def test_logging_tags_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
         assert hasattr(EnvGroupBuilder, "logging_tags")
+        assert_params(EnvGroupBuilder.logging_tags, [])
 
 
 # ---------------------------------------------------------------------------
@@ -173,8 +188,11 @@ class TestRLDataset:
     def test_is_abstract(self):
         assert inspect.isabstract(RLDataset)
 
-    def test_has_get_batch(self):
+    def test_get_batch_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
         assert hasattr(RLDataset, "get_batch")
+        assert_params(RLDataset.get_batch, ["index"])
 
     def test_has_len(self):
         assert hasattr(RLDataset, "__len__")

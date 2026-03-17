@@ -27,6 +27,11 @@ class TestRLTrainConfig:
     def test_main_is_async(self):
         assert inspect.iscoroutinefunction(main)
 
+    def test_main_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params_subset
+
+        assert_params_subset(main, ["cfg"])
+
 
 # ---------------------------------------------------------------------------
 # rl.data_processing
@@ -34,19 +39,20 @@ class TestRLTrainConfig:
 
 
 class TestRLDataProcessing:
-    def test_compute_advantages_callable(self):
-        assert callable(compute_advantages)
-
-    def test_trajectory_to_data_callable(self):
-        assert callable(trajectory_to_data)
-
-    def test_assemble_training_data_callable(self):
-        assert callable(assemble_training_data)
-
     def test_compute_advantages_signature(self):
-        sig = inspect.signature(compute_advantages)
-        params = list(sig.parameters.keys())
-        assert len(params) >= 1  # takes trajectory_groups
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(compute_advantages, ["trajectory_groups_P"])
+
+    def test_trajectory_to_data_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(trajectory_to_data, ["traj", "traj_advantage"])
+
+    def test_assemble_training_data_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(assemble_training_data, ["trajectory_groups_P", "advantages_P"])
 
 
 # ---------------------------------------------------------------------------

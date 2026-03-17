@@ -3,8 +3,6 @@
 Validates that the tokenizer registry API remains stable.
 """
 
-import inspect
-
 from tinker_cookbook.tokenizer_utils import (
     Tokenizer,
     get_registered_tokenizer_names,
@@ -17,18 +15,24 @@ from tinker_cookbook.tokenizer_utils import (
 
 class TestTokenizerRegistryAPI:
     def test_get_tokenizer_signature(self):
-        sig = inspect.signature(get_tokenizer)
-        params = list(sig.parameters.keys())
-        assert "model_name" in params or len(params) >= 1
+        from tests.downstream_compat.sig_helpers import assert_params
 
-    def test_register_tokenizer_callable(self):
-        assert callable(register_tokenizer)
+        assert_params(get_tokenizer, ["model_name"])
 
-    def test_unregister_tokenizer_callable(self):
-        assert callable(unregister_tokenizer)
+    def test_register_tokenizer_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
 
-    def test_is_tokenizer_registered_callable(self):
-        assert callable(is_tokenizer_registered)
+        assert_params(register_tokenizer, ["name", "factory"])
+
+    def test_unregister_tokenizer_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(unregister_tokenizer, ["name"])
+
+    def test_is_tokenizer_registered_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(is_tokenizer_registered, ["name"])
 
     def test_get_registered_tokenizer_names_callable(self):
         assert callable(get_registered_tokenizer_names)

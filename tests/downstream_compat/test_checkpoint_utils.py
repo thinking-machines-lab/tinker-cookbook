@@ -54,21 +54,32 @@ class TestCheckpointRecord:
 
 
 class TestCheckpointFunctions:
-    def test_load_checkpoints_file_exists(self):
-        assert callable(load_checkpoints_file)
+    def test_load_checkpoints_file_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
 
-    def test_get_last_checkpoint_exists(self):
-        assert callable(get_last_checkpoint)
+        assert_params(load_checkpoints_file, ["log_dir"])
 
-    def test_save_checkpoint_exists(self):
-        assert callable(save_checkpoint)
-        # save_checkpoint can be sync or async; just verify it exists
+    def test_get_last_checkpoint_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
 
-    def test_save_checkpoint_is_async(self):
-        # Downstream expects save_checkpoint to be usable as a coroutine
-        # Check if there's also an async version
+        assert_params(get_last_checkpoint, ["log_dir", "required_key"])
+
+    def test_save_checkpoint_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params_subset
+
+        assert_params_subset(save_checkpoint, ["training_client", "name", "log_path", "loop_state"])
+
+    def test_save_checkpoint_async_exists(self):
         from tinker_cookbook import checkpoint_utils
 
-        assert hasattr(checkpoint_utils, "save_checkpoint_async") or hasattr(
-            checkpoint_utils, "save_checkpoint"
-        )
+        assert hasattr(checkpoint_utils, "save_checkpoint_async")
+
+    def test_checkpoint_record_has_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(CheckpointRecord.has, ["key"])
+
+    def test_checkpoint_record_get_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params_subset
+
+        assert_params_subset(CheckpointRecord.get, ["key"])

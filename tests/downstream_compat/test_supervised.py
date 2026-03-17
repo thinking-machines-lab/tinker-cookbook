@@ -3,8 +3,6 @@
 Validates that supervised training types and data utilities remain stable.
 """
 
-import inspect
-
 from tinker_cookbook.supervised.data import (
     FromConversationFileBuilder,
     StreamingSupervisedDatasetFromHFDataset,
@@ -37,15 +35,12 @@ class TestSupervisedTypes:
 
 
 class TestSupervisedData:
-    def test_conversation_to_datum_callable(self):
-        assert callable(conversation_to_datum)
-
     def test_conversation_to_datum_signature(self):
-        sig = inspect.signature(conversation_to_datum)
-        params = list(sig.parameters.keys())
-        assert "conversation" in params or "messages" in params
-        assert "renderer" in params
-        assert "max_length" in params
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(
+            conversation_to_datum, ["conversation", "renderer", "max_length", "train_on_what"]
+        )
 
     def test_from_conversation_file_builder_exists(self):
         assert FromConversationFileBuilder is not None

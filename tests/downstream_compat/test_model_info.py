@@ -40,7 +40,6 @@ class TestModelAttributes:
 
 class TestModelInfoFunctions:
     def test_get_model_attributes_returns_model_attributes(self):
-        # Use a well-known model name
         attrs = get_model_attributes("Qwen/Qwen3-8B")
         assert isinstance(attrs, ModelAttributes)
         assert attrs.organization == "Qwen"
@@ -60,3 +59,20 @@ class TestModelInfoFunctions:
         name = get_recommended_renderer_name("Qwen/Qwen3-8B")
         names = get_recommended_renderer_names("Qwen/Qwen3-8B")
         assert name == names[0]
+
+
+class TestModelInfoSignatures:
+    def test_get_model_attributes_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(get_model_attributes, ["model_name"])
+
+    def test_get_recommended_renderer_name_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(get_recommended_renderer_name, ["model_name"])
+
+    def test_get_recommended_renderer_names_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(get_recommended_renderer_names, ["model_name"])
