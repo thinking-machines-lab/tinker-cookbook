@@ -57,8 +57,16 @@ def is_deepseek_config(config_dict: dict) -> bool:
 # DeepSeek V3/V3.1 native FP8 block size
 _FP8_BLOCK_SIZE = 128
 
-# Max representable value in float8_e4m3fn
-_FP8_MAX = torch.finfo(torch.float8_e4m3fn).max
+
+def _get_fp8_max() -> float:
+    """Get max representable value in float8_e4m3fn, with fallback for older PyTorch."""
+    try:
+        return float(torch.finfo(torch.float8_e4m3fn).max)
+    except TypeError:
+        return 448.0
+
+
+_FP8_MAX = _get_fp8_max()
 
 
 def quantize_blockwise(
@@ -559,8 +567,13 @@ def build_quantized(
     model_shapes = get_model_state_shapes(model_dir)
     model_state_keys = set(model_shapes.keys())
 
-    # Pre-filter keys that DeepSeek checkpoints include but shouldn't be merged
-    filtered_keys = {k for k in model_state_keys if not _should_skip_checkpoint_key(k)}
+    # Pre-filter keys that DeepSeek checkpoints include but shouldn't be merged.
+    # Also exclude .weight_scale_inv — these are native FP8 scales, not merge targets.
+    filtered_keys = {
+        k
+        for k in model_state_keys
+        if not _should_skip_checkpoint_key(k) and not k.endswith(".weight_scale_inv")
+    }
 
     # 3. Detect merge profile and plan ops
     profile = detect_merge_profile(config_dict, model_state_keys)
@@ -648,7 +661,10 @@ def build_quantized(
                     assert native_block_size is not None
                     tensor = dequantize_blockwise(tensor, scale_inv, block_size=native_block_size)
                 else:
-                    logger.warning("FP8 weight %s has no scale tensor, keeping as-is", key)
+                    raise RuntimeError(
+                        f"Native FP8 weight {key!r} has no .weight_scale_inv tensor "
+                        f"in any shard. Cannot dequantize for merge."
+                    )
 
             # Step 2: Apply LoRA merge ops (on dequantized BF16 tensors)
             ops_for_key = merge_ops.pop(key, [])
@@ -691,9 +707,17 @@ def build_quantized(
             total_shards=len(shard_files),
         )
 
+    # Verify all merge ops were consumed
+    if merge_ops:
+        unconsumed = list(merge_ops.keys())
+        raise RuntimeError(
+            f"Merge ops not applied — {len(unconsumed)} target keys not found in any shard: "
+            f"{unconsumed[:5]}{'...' if len(unconsumed) > 5 else ''}"
+        )
+
     logger.info("Applied %d/%d merge operations", ops_applied, total_ops)
 
-    # 5. Write index
+    # 6. Write index
     shard_names = set(weight_map.values())
     index = {
         "metadata": {"total_size": _compute_total_size(out, shard_names)},
