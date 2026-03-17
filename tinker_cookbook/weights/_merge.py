@@ -288,6 +288,15 @@ def plan_merge_ops(
     scaling = adapter_config["lora_alpha"] / adapter_config["r"]
     adapter_weight_names = [n.replace(".lora_A", "") for n in adapter_weights if ".lora_A" in n]
 
+    if not adapter_weight_names:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "No LoRA weights found in adapter (no keys containing '.lora_A'). "
+            "The output model will be identical to the base model. "
+            "Check that the adapter path points to a valid Tinker LoRA adapter."
+        )
+
     is_fused = profile.expert_layout in ("fused_interleaved", "fused_concatenated")
     is_interleaved = profile.expert_layout == "fused_interleaved"
 

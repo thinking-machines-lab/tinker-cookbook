@@ -178,7 +178,15 @@ def resolve_trust_remote_code(trust_remote_code: bool | None) -> bool:
 
 
 def load_config_dict(model_dir_or_name: str | Path) -> dict:
-    """Load config.json as a raw dict from a local directory or HF model name."""
+    """Load config.json as a raw dict from a local directory or HF model name.
+
+    For local directories, reads config.json directly. For HF model names
+    (not a local directory), falls back to ``AutoConfig.from_pretrained``.
+
+    Raises:
+        FileNotFoundError: If ``model_dir_or_name`` is a local directory
+            that doesn't contain ``config.json``.
+    """
     model_dir = (
         Path(model_dir_or_name) if not isinstance(model_dir_or_name, Path) else model_dir_or_name
     )
@@ -186,7 +194,13 @@ def load_config_dict(model_dir_or_name: str | Path) -> dict:
     if config_path.exists():
         with open(config_path) as f:
             return json.load(f)
-    # Fall back to HF config loading for remote models
+    # If it's a local directory without config.json, fail explicitly
+    if model_dir.is_dir():
+        raise FileNotFoundError(
+            f"No config.json found in {model_dir}. "
+            f"Ensure this is a valid HuggingFace model directory."
+        )
+    # Fall back to HF config loading for remote model names
     config = AutoConfig.from_pretrained(str(model_dir_or_name))
     return config.to_dict()
 
