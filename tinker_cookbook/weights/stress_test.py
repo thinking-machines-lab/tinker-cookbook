@@ -146,7 +146,7 @@ class TestCrossPathConsistency:
 
         # Path 1: merge_adapter_weights (backward-compat wrapper)
         sd1 = {k: v.clone() for k, v in state_dict.items()}
-        model1 = type("Model", (), {"state_dict": lambda self: sd1})()
+        model1 = type("Model", (torch.nn.Module,), {"state_dict": lambda self: sd1})()
         merge_adapter_weights(model1, adapter, config)
 
         # Path 2: plan + apply (new API)
