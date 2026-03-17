@@ -112,7 +112,11 @@ async def evaluate_task(
         turns_used = len(trajectory.transitions)
         elapsed = time.monotonic() - start
 
-        trajectory_str = format_trajectory(trajectory, tokenizer, only_last_transition=True) if tokenizer else None
+        trajectory_str = (
+            format_trajectory(trajectory, tokenizer, only_last_transition=True)
+            if tokenizer
+            else None
+        )
 
         result = TaskResult(
             task_name=task.task_name,
@@ -220,8 +224,14 @@ async def run_eval(
         await asyncio.gather(
             *[
                 evaluate_task(
-                    task, policy, renderer, sandbox_factory, config,
-                    results_dir, lock, tokenizer,
+                    task,
+                    policy,
+                    renderer,
+                    sandbox_factory,
+                    config,
+                    results_dir,
+                    lock,
+                    tokenizer,
                 )
                 for task in tasks
             ]

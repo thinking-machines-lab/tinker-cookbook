@@ -24,7 +24,9 @@ def colorize_example(datum: tinker.Datum, tokenizer: Tokenizer, key: str = "weig
     return format_colorized(int_tokens, weights, tokenizer)
 
 
-def format_trajectory(trajectory: Trajectory, tokenizer: Tokenizer, only_last_transition: bool = False) -> str:
+def format_trajectory(
+    trajectory: Trajectory, tokenizer: Tokenizer, only_last_transition: bool = False
+) -> str:
     buf = io.StringIO()
 
     def colorize(s: str):

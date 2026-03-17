@@ -47,6 +47,7 @@ class HarborTask:
     task_dir: Path  # Convention: environment/Dockerfile, tests/test.sh
     config: dict[str, Any] = field(default_factory=dict)
 
+
 def load_harbor_tasks(dataset: str) -> list[HarborTask]:
     """Load Harbor tasks from ~/.cache/harbor/tasks/<dataset>/."""
     tasks_dir = HARBOR_CACHE_DIR / dataset
@@ -63,6 +64,7 @@ def load_harbor_tasks(dataset: str) -> list[HarborTask]:
         )
     tasks.sort(key=lambda t: t.task_name)
     return tasks
+
 
 def _initial_messages(
     task: HarborTask,
