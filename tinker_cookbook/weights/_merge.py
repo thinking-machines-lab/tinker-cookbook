@@ -409,6 +409,60 @@ def _plan_expert_ops(
         )
 
 
+def validate_merge_op_shapes(
+    ops: dict[str, list[MergeOp]],
+    model_shapes: dict[str, tuple[int, ...]],
+) -> None:
+    """Validate all merge op output shapes against model weight shapes upfront.
+
+    Call this after :func:`plan_merge_ops` and before processing any shards.
+    Catches shape mismatches early, before expensive shard I/O begins.
+
+    Args:
+        ops: Mapping from target key to merge ops (from :func:`plan_merge_ops`).
+        model_shapes: Mapping from weight key to shape (from
+            :func:`~tinker_cookbook.weights._artifacts.get_model_state_shapes`).
+
+    Raises:
+        ValueError: If any merge op's delta shape doesn't match its target.
+    """
+    for target_key, op_list in ops.items():
+        target_shape = model_shapes[target_key]
+        for op in op_list:
+            if op.is_expert_3d:
+                # bmm(A.T, B.T) → (num_experts, in_dim, out_dim)
+                n_exp, rank, in_dim = op.lora_A.shape
+                _, out_dim, _ = op.lora_B.shape
+                delta_shape = (n_exp, in_dim, out_dim)
+
+                if op.fused_proj_idx is not None:
+                    # Delta targets a slice of the fused tensor
+                    if op.fused_proj_interleaved:
+                        # Interleaved: target[:, :, idx::2] has shape (n, d, fused//2)
+                        expected = (target_shape[0], target_shape[1], target_shape[2] // 2)
+                    else:
+                        # Concatenated: target[:, :, start:start+half] has shape (n, d, fused//2)
+                        expected = (target_shape[0], target_shape[1], target_shape[2] // 2)
+                else:
+                    expected = target_shape
+
+                if delta_shape != expected:
+                    raise ValueError(
+                        f"Shape mismatch for {target_key!r}: "
+                        f"merge op produces {delta_shape} but target "
+                        f"{'slice ' if op.fused_proj_idx is not None else ''}"
+                        f"expects {expected}"
+                    )
+            else:
+                # 2D: delta = lora_B @ lora_A → (out_dim, in_dim)
+                delta_shape = (op.lora_B.shape[0], op.lora_A.shape[1])
+                if delta_shape != target_shape:
+                    raise ValueError(
+                        f"Shape mismatch for {target_key!r}: "
+                        f"merge op produces {delta_shape} but target expects {target_shape}"
+                    )
+
+
 def apply_merge_op(tensors: dict[str, torch.Tensor], op: MergeOp) -> None:
     """Apply a single merge operation to a dict of tensors.
 

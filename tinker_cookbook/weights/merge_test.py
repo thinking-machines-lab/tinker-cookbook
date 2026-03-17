@@ -19,6 +19,7 @@ from tinker_cookbook.weights._merge import (
     merge_adapter_weights,
     merge_lora_matrices,
     plan_merge_ops,
+    validate_merge_op_shapes,
 )
 
 # ---------------------------------------------------------------------------
@@ -642,3 +643,83 @@ class TestApplyMergeOp:
         )
         with pytest.raises(ValueError, match="Shape mismatch"):
             apply_merge_op(tensors, op)
+
+
+# ---------------------------------------------------------------------------
+# validate_merge_op_shapes
+# ---------------------------------------------------------------------------
+
+
+class TestValidateMergeOpShapes:
+    def test_valid_2d_op_passes(self):
+        ops = {
+            "q_proj.weight": [
+                MergeOp(
+                    target_key="q_proj.weight", lora_A=torch.ones(1, 4), lora_B=torch.ones(8, 1)
+                )
+            ]
+        }
+        shapes = {"q_proj.weight": (8, 4)}
+        validate_merge_op_shapes(ops, shapes)  # should not raise
+
+    def test_invalid_2d_shape_raises(self):
+        ops = {
+            "q_proj.weight": [
+                MergeOp(
+                    target_key="q_proj.weight", lora_A=torch.ones(1, 8), lora_B=torch.ones(4, 1)
+                )
+            ]
+        }
+        shapes = {"q_proj.weight": (8, 4)}  # target is (8,4) but delta is (4,8)
+        with pytest.raises(ValueError, match=r"Shape mismatch.*q_proj"):
+            validate_merge_op_shapes(ops, shapes)
+
+    def test_valid_3d_fused_concatenated_passes(self):
+        ops = {
+            "gate_up_proj": [
+                MergeOp(
+                    target_key="gate_up_proj",
+                    lora_A=torch.ones(2, 1, 4),
+                    lora_B=torch.ones(2, 4, 1),
+                    is_expert_3d=True,
+                    fused_proj_idx=0,
+                    fused_proj_interleaved=False,
+                )
+            ]
+        }
+        # Target is (2, 4, 8) — fused gate+up, each half is (2, 4, 4)
+        # Delta via bmm is (2, 4, 4) which matches the half
+        shapes = {"gate_up_proj": (2, 4, 8)}
+        validate_merge_op_shapes(ops, shapes)  # should not raise
+
+    def test_invalid_3d_fused_shape_raises(self):
+        ops = {
+            "gate_up_proj": [
+                MergeOp(
+                    target_key="gate_up_proj",
+                    lora_A=torch.ones(2, 1, 4),
+                    lora_B=torch.ones(2, 6, 1),  # wrong out_dim
+                    is_expert_3d=True,
+                    fused_proj_idx=0,
+                    fused_proj_interleaved=False,
+                )
+            ]
+        }
+        shapes = {"gate_up_proj": (2, 4, 8)}  # half is (2, 4, 4), delta is (2, 4, 6)
+        with pytest.raises(ValueError, match=r"Shape mismatch.*gate_up_proj"):
+            validate_merge_op_shapes(ops, shapes)
+
+    def test_valid_3d_non_fused_passes(self):
+        ops = {
+            "down_proj": [
+                MergeOp(
+                    target_key="down_proj",
+                    lora_A=torch.ones(2, 1, 4),
+                    lora_B=torch.ones(2, 8, 1),
+                    is_expert_3d=True,
+                    fused_proj_idx=None,
+                )
+            ]
+        }
+        shapes = {"down_proj": (2, 4, 8)}
+        validate_merge_op_shapes(ops, shapes)  # should not raise

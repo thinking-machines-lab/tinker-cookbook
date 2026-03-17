@@ -31,6 +31,21 @@ _MAX_SHARD_SIZE = 10 * (1024**3)  # 10 GB
 # ---------------------------------------------------------------------------
 
 
+def _raise_no_safetensors(model_dir: Path) -> None:
+    """Raise FileNotFoundError with a helpful message for missing safetensors."""
+    bin_files = sorted(model_dir.glob("*.bin"))
+    if bin_files:
+        raise FileNotFoundError(
+            f"No .safetensors files found in {model_dir}. "
+            f"Found {len(bin_files)} .bin file(s) — this model may use the older PyTorch format. "
+            f"Try merge_strategy='full' which loads via from_pretrained and handles both formats."
+        )
+    raise FileNotFoundError(
+        f"No .safetensors files found in {model_dir}. "
+        f"Ensure the model has been fully downloaded, or try merge_strategy='full'."
+    )
+
+
 def get_model_state_keys(model_dir: Path) -> set[str]:
     """Get all weight key names from safetensors files without loading tensor data.
 
@@ -46,15 +61,35 @@ def get_model_state_keys(model_dir: Path) -> set[str]:
     Raises:
         FileNotFoundError: If no ``.safetensors`` files are found.
     """
+    return set(get_model_state_shapes(model_dir).keys())
+
+
+def get_model_state_shapes(model_dir: Path) -> dict[str, tuple[int, ...]]:
+    """Get shape for each weight key from safetensors headers without loading tensor data.
+
+    Uses ``safetensors.safe_open`` to read headers only. This is fast and uses
+    negligible memory regardless of model size. Useful for upfront shape
+    validation before loading any weight shards.
+
+    Args:
+        model_dir: Directory containing ``.safetensors`` files.
+
+    Returns:
+        Dict mapping tensor key names to their shapes.
+
+    Raises:
+        FileNotFoundError: If no ``.safetensors`` files are found.
+    """
     shard_files = sorted(model_dir.glob("*.safetensors"))
     if not shard_files:
-        raise FileNotFoundError(f"No .safetensors files found in {model_dir}")
+        _raise_no_safetensors(model_dir)
 
-    keys: set[str] = set()
+    shapes: dict[str, tuple[int, ...]] = {}
     for sf_path in shard_files:
         with safe_open(str(sf_path), framework="pt") as f:
-            keys.update(f.keys())
-    return keys
+            for key in f.keys():  # noqa: SIM118 — safe_open doesn't support `in`
+                shapes[key] = tuple(f.get_slice(key).get_shape())
+    return shapes
 
 
 def get_shard_files(model_dir: Path) -> list[str]:
@@ -80,7 +115,7 @@ def get_shard_files(model_dir: Path) -> list[str]:
 
     shard_files = sorted(model_dir.glob("*.safetensors"))
     if not shard_files:
-        raise FileNotFoundError(f"No .safetensors files found in {model_dir}")
+        _raise_no_safetensors(model_dir)
     return [f.name for f in shard_files]
 
 
