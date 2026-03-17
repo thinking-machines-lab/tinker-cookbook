@@ -12,15 +12,13 @@ import pickle
 import re
 import urllib.request
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import (
     Any,
-    Callable,
-    Iterator,
     Literal,
     NotRequired,
-    Optional,
     Protocol,
     TypedDict,
     Union,
@@ -1200,7 +1198,7 @@ class Renderer(ABC):
             result["content"] = "".join(parts)
 
         # Handle tool_calls (convert ToolCall objects to OpenAI format)
-        if "tool_calls" in message and message["tool_calls"]:
+        if "tool_calls" in message and message["tool_calls"]:  # noqa: RUF019
             result["tool_calls"] = [
                 {
                     "type": "function",
@@ -1517,7 +1515,7 @@ class ImageProcessorProtocol(Protocol):
     patch_size: int
 
     def get_number_of_image_patches(
-        self, height: int, width: int, images_kwargs: Optional[dict] = None
+        self, height: int, width: int, images_kwargs: dict | None = None
     ) -> int:
         raise NotImplementedError()
 

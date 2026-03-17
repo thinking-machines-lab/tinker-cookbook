@@ -6,7 +6,7 @@ import pytest
 from transformers import AutoTokenizer
 
 from tinker_cookbook.renderers import get_renderer
-from tinker_cookbook.renderers.base import ToolSpec, Message, ensure_text
+from tinker_cookbook.renderers.base import Message, ToolSpec, ensure_text
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 

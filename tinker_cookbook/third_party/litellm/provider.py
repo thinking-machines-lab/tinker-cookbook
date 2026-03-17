@@ -28,8 +28,9 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Union
+from typing import Any, Union
 
 import httpx
 import tinker
@@ -46,7 +47,7 @@ except ImportError:
     raise ImportError(
         "litellm is required for the Tinker LiteLLM integration. "
         "Install it with: uv pip install -e '.[litellm]'"
-    )
+    ) from None
 
 
 # ---------------------------------------------------------------------------
@@ -414,8 +415,8 @@ class TinkerLiteLLMProvider(CustomLLM):
         acompletion=None,
         litellm_params=None,
         logger_fn=None,
-        headers={},
-        timeout: Optional[Union[float, httpx.Timeout]] = None,
+        headers={},  # noqa: B006
+        timeout: Union[float, httpx.Timeout] | None = None,
         client=None,
     ) -> ModelResponse:
         base_model: str = (litellm_params or {}).get("base_model", "")
@@ -457,8 +458,8 @@ class TinkerLiteLLMProvider(CustomLLM):
         acompletion=None,
         litellm_params=None,
         logger_fn=None,
-        headers={},
-        timeout: Optional[Union[float, httpx.Timeout]] = None,
+        headers={},  # noqa: B006
+        timeout: Union[float, httpx.Timeout] | None = None,
         client=None,
     ) -> ModelResponse:
         base_model: str = (litellm_params or {}).get("base_model", "")

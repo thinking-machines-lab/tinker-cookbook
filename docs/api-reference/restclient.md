@@ -574,3 +574,4 @@ async def get_sampler_async(sampler_id: str) -> types.GetSamplerResponse
 ```
 
 Async version of get_sampler.
+

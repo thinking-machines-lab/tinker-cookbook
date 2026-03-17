@@ -160,3 +160,4 @@ class RequestFailedError(TinkerError)
 ```
 
 Raised when an asynchronous request completes in a failed state.
+

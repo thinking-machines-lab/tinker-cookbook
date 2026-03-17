@@ -1,6 +1,7 @@
-from tinker_cookbook.recipes.rubric.data import RubricBasedDatapoint, Rubric
 import random
-import os
+from pathlib import Path
+
+from tinker_cookbook.recipes.rubric.data import Rubric, RubricBasedDatapoint
 
 
 def generate_one(rng: random.Random) -> RubricBasedDatapoint:
@@ -23,15 +24,16 @@ def generate_dataset(
     total_datapoints = num_train + num_test
     datapoints = [generate_one(rng) for _ in range(total_datapoints)]
 
+    write_path = Path(write_dir)
     train_datapoints = datapoints[:num_train]
-    train_jsonl_path = os.path.join(write_dir, "example_rubric_train.jsonl")
+    train_jsonl_path = str(write_path / "example_rubric_train.jsonl")
     with open(train_jsonl_path, "w") as f:
         for datapoint in train_datapoints:
             f.write(datapoint.to_json() + "\n")
     print(f"Generated {len(train_datapoints)} train datapoints in {train_jsonl_path}")
 
     test_datapoints = datapoints[num_train:]
-    test_jsonl_path = os.path.join(write_dir, "example_rubric_test.jsonl")
+    test_jsonl_path = str(write_path / "example_rubric_test.jsonl")
     with open(test_jsonl_path, "w") as f:
         for datapoint in test_datapoints:
             f.write(datapoint.to_json() + "\n")

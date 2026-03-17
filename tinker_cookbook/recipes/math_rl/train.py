@@ -4,6 +4,8 @@ from datetime import datetime
 from typing import Any
 
 import chz
+from tinker.types import LossFnType
+
 from tinker_cookbook import checkpoint_utils, cli_utils
 from tinker_cookbook.recipes.math_rl import (
     arithmetic_env,
@@ -11,7 +13,6 @@ from tinker_cookbook.recipes.math_rl import (
 )
 from tinker_cookbook.rl.train import AsyncConfig, Config, main
 from tinker_cookbook.rl.types import RLDatasetBuilder
-from tinker.types import LossFnType
 
 logger = logging.getLogger(__name__)
 

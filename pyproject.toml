@@ -104,6 +104,38 @@ exclude = [
     "kimi-k2.5-hf-tokenizer/tool_declaration_ts.py",
 ]
 
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes (unused imports, undefined names)
+    "I",    # isort (import sorting)
+    "UP",   # pyupgrade (modernize Python syntax)
+    "B",    # flake8-bugbear (common bugs and design problems)
+    "SIM",  # flake8-simplify (simplifiable code)
+    "RUF",  # Ruff-specific rules
+    "C4",   # flake8-comprehensions (unnecessary comprehensions)
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B028",   # no explicit stacklevel in warnings
+    "SIM108", # ternary operator (can reduce readability)
+    "UP007",  # use X | Y for union types (not always clearer)
+    "RUF001", # ambiguous unicode character in string (intentional in tokenizer code)
+    "RUF002", # ambiguous unicode character in docstring
+    "RUF003", # ambiguous unicode character in comment
+    "RUF005", # collection-literal-concatenation (stylistic, not a bug)
+    "RUF006", # asyncio-dangling-task (false positives with our patterns)
+    "RUF012", # mutable-class-default (conflicts with chz dataclass patterns)
+    "RUF046", # unnecessary-cast-to-int (explicit casts aid readability)
+    "B008",   # function-call-in-default-argument (to be fixed in a follow-up)
+    "B905",   # zip-without-explicit-strict (to be tightened in a follow-up)
+    "B023",   # function-uses-loop-variable (to be fixed in a follow-up)
+    "B027",   # empty-method-without-abstract-decorator (intentional in base classes)
+    "RUF059", # unused-unpacked-variable (to be fixed in a follow-up)
+    "SIM117", # multiple-with-statements (can reduce readability with context managers)
+    "RUF022", # unsorted-dunder-all (we group __all__ by category, not alphabetically)
+]
+
 [tool.pyright]
 include = ["tinker_cookbook"]
 exclude = [

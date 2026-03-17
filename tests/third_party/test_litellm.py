@@ -3,12 +3,12 @@
 Requires TINKER_API_KEY to be set (skipped otherwise, see conftest.py).
 """
 
-import tinker
 import litellm
 import pytest
+import tinker
 
-from tinker_cookbook.third_party.litellm import register_litellm_provider
 import tinker_cookbook.third_party.litellm.provider as provider_mod
+from tinker_cookbook.third_party.litellm import register_litellm_provider
 
 # Use a small model for fast smoke testing
 BASE_MODEL = "Qwen/Qwen3-4B-Instruct-2507"

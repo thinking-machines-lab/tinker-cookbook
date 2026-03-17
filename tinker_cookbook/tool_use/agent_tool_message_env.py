@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable
 
 from tinker_cookbook.renderers import Renderer
 from tinker_cookbook.renderers.base import Message, ToolCall

@@ -1,8 +1,9 @@
 import json
-import os
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Sequence, TypeAlias
+from pathlib import Path
+from typing import Any, TypeAlias
 
 import chz
 
@@ -150,14 +151,14 @@ class RubricDatapointListBuilderFromJsonl(RubricDatapointListBuilder):
     jsonl_path: str
 
     def __call__(self) -> Sequence[RubricBasedDatapoint]:
-        if not os.path.exists(self.jsonl_path):
+        if not Path(self.jsonl_path).exists():
             raise FileNotFoundError(
                 f"Data file not found: {self.jsonl_path}\n"
                 f"Please generate the example data first by running:\n"
                 f"  python -m tinker_cookbook.recipes.rubric.generate_data"
             )
         datapoints = []
-        with open(self.jsonl_path, "r") as f:
+        with open(self.jsonl_path) as f:
             for line in f:
                 datapoints.append(RubricBasedDatapoint.from_json(line))
         return datapoints

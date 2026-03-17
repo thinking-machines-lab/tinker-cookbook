@@ -11,7 +11,6 @@ import torch
 
 from tinker_cookbook.weights._merge import apply_merged_weight, merge_adapter_weights
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

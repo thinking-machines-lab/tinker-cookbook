@@ -129,7 +129,7 @@ class ChromaTool:
         # Optional shared resources - None means build your own
         chroma_client: AsyncClientAPI | None = None,
         gemini_client: genai.Client | None = None,
-    ) -> "ChromaTool":
+    ) -> ChromaTool:
         """Async factory for building ChromaTool.
 
         Args:
