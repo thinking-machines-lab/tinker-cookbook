@@ -243,11 +243,14 @@ def _get_native_block_size(config_dict: dict) -> tuple[int, int]:
 def _make_cross_shard_tensor_loader(
     model_dir: Path,
 ) -> Callable[[str], torch.Tensor]:
-    """Create a loader that can fetch tensors from any shard by key name.
+    """Create a loader that can fetch a single tensor from any shard by key name.
 
     Used when a weight tensor and its scale are in different shards. Reads
     the safetensors index to find which shard contains a given key, then
-    loads that shard on demand (with caching).
+    uses ``safe_open`` to load only that one tensor — no full shard loading.
+
+    This keeps peak memory at O(single tensor) rather than O(full shard),
+    which matters for DeepSeek V3 where shards are ~4-5 GB each.
     """
     # Build key → shard mapping from index
     index_path = model_dir / "model.safetensors.index.json"
@@ -263,15 +266,12 @@ def _make_cross_shard_tensor_loader(
                 for key in f.keys():  # noqa: SIM118
                     index_weight_map[key] = sf_path.name
 
-    shard_cache: dict[str, dict[str, torch.Tensor]] = {}
-
     def load_tensor(name: str) -> torch.Tensor:
         if name not in index_weight_map:
             raise KeyError(f"Tensor {name!r} not found in any shard at {model_dir}")
         shard_name = index_weight_map[name]
-        if shard_name not in shard_cache:
-            shard_cache[shard_name] = load_file(str(model_dir / shard_name))
-        return shard_cache[shard_name][name]
+        with safe_open(str(model_dir / shard_name), framework="pt") as f:
+            return f.get_tensor(name)
 
     return load_tensor
 
