@@ -12,6 +12,7 @@ from transformers import AutoTokenizer
 
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import Message, ToolSpec, ensure_text
+from tinker_cookbook.renderers.conftest import extract_token_ids
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 # Qwen3 models use JSON tool calls with OpenAI-style tool wrapper in tool declarations.
@@ -147,12 +148,14 @@ def test_qwen3_tool_declaration_matches_hf_tokens(model_name: str, renderer_name
         **_hf_template_kwargs(renderer_name),
     )
 
-    assert cookbook_tokens == hf_tokens, (
+    hf_tokens_list = extract_token_ids(hf_tokens)
+
+    assert cookbook_tokens == hf_tokens_list, (
         f"Token mismatch between cookbook and HF!\n"
         f"Cookbook tokens ({len(cookbook_tokens)}): {cookbook_tokens}\n"
         f"Cookbook string:\n{tokenizer.decode(cookbook_tokens)}\n\n"
-        f"HF tokens ({len(hf_tokens)}): {hf_tokens}\n"
-        f"HF string:\n{hf_tokenizer.decode(hf_tokens)}"
+        f"HF tokens ({len(hf_tokens_list)}): {hf_tokens_list}\n"
+        f"HF string:\n{hf_tokenizer.decode(hf_tokens_list)}"
     )
 
 
@@ -237,10 +240,12 @@ def test_qwen3_multiple_tools(model_name: str, renderer_name: str):
         **_hf_template_kwargs(renderer_name),
     )
 
-    assert cookbook_tokens == hf_tokens, (
+    hf_tokens_list = extract_token_ids(hf_tokens)
+
+    assert cookbook_tokens == hf_tokens_list, (
         f"Token mismatch with multiple tools!\n"
         f"Cookbook: {tokenizer.decode(cookbook_tokens)}\n\n"
-        f"HF: {hf_tokenizer.decode(hf_tokens)}"
+        f"HF: {hf_tokenizer.decode(hf_tokens_list)}"
     )
 
 
@@ -295,10 +300,12 @@ def test_qwen3_custom_system_prompt_with_tools(model_name: str, renderer_name: s
         **_hf_template_kwargs(renderer_name),
     )
 
-    assert cookbook_tokens == hf_tokens, (
+    hf_tokens_list = extract_token_ids(hf_tokens)
+
+    assert cookbook_tokens == hf_tokens_list, (
         f"Token mismatch with custom system prompt!\n"
         f"Cookbook: {tokenizer.decode(cookbook_tokens)}\n\n"
-        f"HF: {hf_tokenizer.decode(hf_tokens)}"
+        f"HF: {hf_tokenizer.decode(hf_tokens_list)}"
     )
 
 
@@ -341,8 +348,10 @@ def test_qwen3_preserves_insertion_order(model_name: str, renderer_name: str):
     )
 
     # Should match exactly (HF doesn't sort, preserves insertion order)
-    assert cookbook_tokens == hf_tokens, (
+    hf_tokens_list = extract_token_ids(hf_tokens)
+
+    assert cookbook_tokens == hf_tokens_list, (
         f"Token mismatch - key ordering issue!\n"
         f"Cookbook: {tokenizer.decode(cookbook_tokens)}\n\n"
-        f"HF: {hf_tokenizer.decode(hf_tokens)}"
+        f"HF: {hf_tokenizer.decode(hf_tokens_list)}"
     )

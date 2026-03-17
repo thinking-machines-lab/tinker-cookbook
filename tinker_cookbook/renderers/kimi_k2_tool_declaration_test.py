@@ -7,6 +7,7 @@ from transformers import AutoTokenizer
 
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import Message, ToolSpec, ensure_text
+from tinker_cookbook.renderers.conftest import extract_token_ids
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 
@@ -168,8 +169,10 @@ def test_tool_declaration_matches_hf_tokens():
     hf_tokenizer = AutoTokenizer.from_pretrained(
         "moonshotai/Kimi-K2-Thinking", trust_remote_code=True
     )
-    hf_tokens = hf_tokenizer.apply_chat_template(
-        messages, tools=tools_openai, tokenize=True, add_generation_prompt=True
+    hf_tokens = extract_token_ids(
+        hf_tokenizer.apply_chat_template(
+            messages, tools=tools_openai, tokenize=True, add_generation_prompt=True
+        )
     )
 
     # Compare tokens
