@@ -220,9 +220,14 @@ class ShardWriter:
         """Write buffered tensors to a temporary shard file."""
         if not self._pending:
             return
-        self._shard_count += 1
-        temp_name = f"shard-{self._shard_count:05d}.tmp.safetensors"
+        # Use next shard number for temp file name, but only commit the
+        # count increment after save_file succeeds — avoids inconsistent
+        # state if the write fails (e.g. disk full).
+        next_idx = self._shard_count + 1
+        temp_name = f"shard-{next_idx:05d}.tmp.safetensors"
         save_file(self._pending, str(self._output_path / temp_name))
+        # Write succeeded — commit state updates
+        self._shard_count = next_idx
         self._shard_keys.append(list(self._pending.keys()))
         logger.debug("Flushed %d tensors to %s", len(self._pending), temp_name)
         self._pending = {}
