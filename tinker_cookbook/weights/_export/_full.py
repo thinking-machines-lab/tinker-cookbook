@@ -76,5 +76,5 @@ def _load_model(
 ) -> PreTrainedModel:
     auto_cls = AutoModelForImageTextToText if is_multimodal(config) else AutoModelForCausalLM
     return auto_cls.from_pretrained(
-        model_path, dtype=torch_dtype, trust_remote_code=trust_remote_code
+        model_path, torch_dtype=torch_dtype, trust_remote_code=trust_remote_code
     )

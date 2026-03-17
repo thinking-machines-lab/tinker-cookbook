@@ -224,6 +224,12 @@ def expand_expert_lora_tensors(
         lora_A = lora_A.expand(lora_B.shape[0], -1, -1)
     elif lora_B.shape[0] == 1:
         lora_B = lora_B.expand(lora_A.shape[0], -1, -1)
+    elif lora_A.shape[0] != lora_B.shape[0]:
+        raise ValueError(
+            f"Expert count mismatch: lora_A has {lora_A.shape[0]} experts, "
+            f"lora_B has {lora_B.shape[0]} experts "
+            f"(lora_A: {lora_A.shape}, lora_B: {lora_B.shape})"
+        )
     return lora_A, lora_B
 
 
@@ -474,10 +480,16 @@ def merge_adapter_weights(
     model_state_dict = base_model.state_dict()
     model_state_keys = set(model_state_dict.keys())
 
-    # Build a synthetic config dict for detect_merge_profile. The full-model
-    # path detects GPT-OSS from the class name (matching the original behavior).
-    is_gpt_oss = "GptOss" in str(type(base_model))
-    model_config: dict = {"architectures": ["GptOssForCausalLM"] if is_gpt_oss else []}
+    # Build a config dict for detect_merge_profile. Prefer the model's HF
+    # config (which has the real architectures list) over fragile class name
+    # string matching.
+    config_obj = getattr(base_model, "config", None)
+    if config_obj is not None and hasattr(config_obj, "to_dict"):
+        model_config = config_obj.to_dict()
+    else:
+        # Fallback for non-HF models (e.g. test mocks)
+        is_gpt_oss = "GptOss" in str(type(base_model))
+        model_config = {"architectures": ["GptOssForCausalLM"] if is_gpt_oss else []}
     profile = detect_merge_profile(model_config, model_state_keys)
 
     ops = plan_merge_ops(adapter_weights, config, model_state_keys, profile)

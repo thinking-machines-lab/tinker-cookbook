@@ -408,6 +408,10 @@ class TestExpandExpertLoraTensors:
         assert out_A is lora_A
         assert out_B is lora_B
 
+    def test_mismatched_expert_counts_raises(self):
+        with pytest.raises(ValueError, match="Expert count mismatch"):
+            expand_expert_lora_tensors(torch.ones(3, 2, 4), torch.ones(5, 8, 2))
+
 
 # ---------------------------------------------------------------------------
 # detect_merge_profile
@@ -541,6 +545,16 @@ class TestPlanMergeOps:
         }
         ops = plan_merge_ops(adapter, {"lora_alpha": 1, "r": 1}, keys, profile)
         assert "model.language_model.layers.0.self_attn.q_proj.weight" in ops
+
+    def test_unembed_tokens_remapped_to_lm_head(self):
+        keys = {"lm_head.weight"}
+        profile = MergeProfile()
+        adapter = {
+            "base_model.model.model.unembed_tokens.lora_A.weight": torch.ones(1, 4),
+            "base_model.model.model.unembed_tokens.lora_B.weight": torch.ones(8, 1),
+        }
+        ops = plan_merge_ops(adapter, {"lora_alpha": 1, "r": 1}, keys, profile)
+        assert "lm_head.weight" in ops
 
     def test_missing_key_raises(self):
         keys = {"some.other.weight"}
