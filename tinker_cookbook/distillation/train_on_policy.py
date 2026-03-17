@@ -5,7 +5,6 @@ https://thinkingmachines.ai/blog/on-policy-distillation
 
 import asyncio
 import logging
-import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
@@ -40,8 +39,15 @@ from tinker_cookbook.rl.types import (
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import ml_log
-from tinker_cookbook.utils.misc_utils import safezip, timed
-from tinker_cookbook.utils.trace import scope, trace_init, update_scope_context
+from tinker_cookbook.utils.misc_utils import safezip
+from tinker_cookbook.utils.trace import (
+    save_gantt_chart_html,
+    scope,
+    scope_span,
+    trace_init,
+    trace_iteration,
+    update_scope_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +164,7 @@ class Config:
     log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
     base_url: str | None = None
     enable_trace: bool = False
+    span_chart_every: int = 0
 
     eval_every: int = 20
     save_every: int = 20
@@ -187,7 +194,7 @@ async def prepare_minibatch(
     metrics.update(compute_trajectory_metrics(trajectory_groups_P, taglist_P))
 
     # Assemble training data
-    with timed("assemble_training_data", metrics):
+    async with scope_span("assemble_training_data"):
         advantages_P = compute_advantages(trajectory_groups_P)
         data_D, metadata_D = assemble_training_data(trajectory_groups_P, advantages_P)
 
@@ -201,7 +208,7 @@ async def prepare_minibatch(
 
     # Incorporate KL penalty if configured
     if kl_penalty_coef > 0:
-        with timed("compute_kl_penalty", metrics):
+        async with scope_span("compute_kl_penalty"):
             # Map each datum to its teacher sampling client and dataset index using metadata
             #   - metadata_D contains group_idx which indexes into trajectory_groups_P
             #   - dataset_indices_P[group_idx] gives us the dataset index
@@ -250,7 +257,7 @@ async def do_train_step_and_get_sampling_client(
     )
     metrics.update(prepare_minibatch_metrics)
 
-    with timed("train", metrics):
+    async with scope_span("train"):
         training_logprobs_D = await train_step(
             data_D=data_D,
             training_client=training_client,
@@ -297,61 +304,67 @@ async def do_sync_training(
         training_client, start_batch, cfg.log_path, cfg.save_every
     )
 
+    log_path = Path(cfg.log_path)
+
     for i_batch in range(start_batch, end_batch):
         metrics = {
             "progress/batch": i_batch,
             "optim/lr": cfg.learning_rate,
             "progress/done_frac": (i_batch + 1) / num_batches,
         }
-        t_start = time.time()
 
-        # Run evaluations
-        if cfg.eval_every > 0 and i_batch % cfg.eval_every == 0:
-            with timed("run_evals", metrics):
-                for evaluator in evaluators:
-                    eval_metrics = await evaluator(sampling_client)
-                    metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+        with trace_iteration(step=i_batch) as window:
+            # Run evaluations
+            if cfg.eval_every > 0 and i_batch % cfg.eval_every == 0:
+                async with scope_span("run_evals"):
+                    for evaluator in evaluators:
+                        eval_metrics = await evaluator(sampling_client)
+                        metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
 
-        # Get batch and sample trajectories
-        env_group_builders_P, dataset_indices_P = dataset.get_batch(i_batch)
-        with timed("sample", metrics):
-            trajectory_groups_P = await asyncio.gather(
-                *[
-                    asyncio.create_task(
-                        do_group_rollout_and_filter_constant_reward(
-                            sampling_client,
-                            builder,
-                            temperature=cfg.temperature,
-                            max_tokens=cfg.max_tokens,
-                            do_remove_constant_reward_groups=False,
-                        ),
-                        name=f"sample_task_{i}",
-                    )
-                    for i, builder in enumerate(env_group_builders_P)
-                ],
+            # Get batch and sample trajectories
+            env_group_builders_P, dataset_indices_P = dataset.get_batch(i_batch)
+            async with scope_span("sample"):
+                trajectory_groups_P = await asyncio.gather(
+                    *[
+                        asyncio.create_task(
+                            do_group_rollout_and_filter_constant_reward(
+                                sampling_client,
+                                builder,
+                                temperature=cfg.temperature,
+                                max_tokens=cfg.max_tokens,
+                                do_remove_constant_reward_groups=False,
+                            ),
+                            name=f"sample_task_{i}",
+                        )
+                        for i, builder in enumerate(env_group_builders_P)
+                    ],
+                )
+            trajectory_groups_P = [
+                trajectory_group
+                for trajectory_group in trajectory_groups_P
+                if trajectory_group is not None
+            ]
+
+            # Train step
+            sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(
+                cfg,
+                i_batch,
+                training_client,
+                service_client,
+                tokenizer,
+                env_group_builders_P,
+                trajectory_groups_P,
+                dataset_indices_P,
+                teacher_clients,
             )
-        trajectory_groups_P = [
-            trajectory_group
-            for trajectory_group in trajectory_groups_P
-            if trajectory_group is not None
-        ]
 
-        # Train step
-        sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(
-            cfg,
-            i_batch,
-            training_client,
-            service_client,
-            tokenizer,
-            env_group_builders_P,
-            trajectory_groups_P,
-            dataset_indices_P,
-            teacher_clients,
-        )
+            metrics.update(train_step_metrics)
 
-        # Log metrics
-        metrics.update(train_step_metrics)
-        metrics["time/total"] = time.time() - t_start
+        # Log timing metrics from trace_iteration window
+        metrics.update(window.get_timing_metrics())
+        window.write_spans_jsonl(log_path / "timing_spans.jsonl", step=i_batch)
+        if cfg.span_chart_every > 0 and i_batch % cfg.span_chart_every == 0:
+            save_gantt_chart_html(window, i_batch, log_path / f"timing_gantt_{i_batch:06d}.html")
         ml_logger.log_metrics(metrics, step=i_batch)
 
 
