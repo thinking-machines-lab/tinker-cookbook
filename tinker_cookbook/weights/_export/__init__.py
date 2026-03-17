@@ -145,6 +145,17 @@ def build_hf_model(
     # Load model config for model-family detection (lightweight, no weight download).
     config_dict = load_config_dict(base_model)
 
+    # --- Warn if native FP8 model without quantized export ---
+    if quantize is None and _has_native_fp8(config_dict):
+        logger.warning(
+            "This model appears to have native FP8 weights "
+            "(quantization_config.quant_method='fp8'). "
+            "The standard merge path will apply LoRA deltas directly to FP8 tensors, "
+            "which may produce incorrect results due to FP8 precision loss. "
+            "Consider using quantize='experts-fp8' and serving_format='vllm' "
+            "for correct FP8-aware merging."
+        )
+
     # --- Quantized export path ---
     if quantize is not None:
         from tinker_cookbook.weights._artifacts import resolve_model_dir
@@ -198,6 +209,14 @@ def build_hf_model(
             model_dir=model_dir,
             config_dict=config_dict,
         )
+
+
+def _has_native_fp8(config_dict: dict) -> bool:
+    """Check if a model config indicates native FP8 quantization."""
+    quant_config = config_dict.get("quantization_config")
+    if not isinstance(quant_config, dict):
+        return False
+    return quant_config.get("quant_method", "") == "fp8"
 
 
 def _resolve_strategy(merge_strategy: str) -> str:
