@@ -12,9 +12,11 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 
 import torch
+from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 
 from tinker_cookbook.weights._artifacts import (
@@ -204,6 +206,74 @@ def _should_skip_checkpoint_key(key: str) -> bool:
             except ValueError:
                 pass
     return False
+
+
+# ---------------------------------------------------------------------------
+# Native FP8 checkpoint handling
+# ---------------------------------------------------------------------------
+
+
+def _has_native_fp8_quantization(config_dict: dict) -> bool:
+    """Check if the model checkpoint uses native FP8 quantization.
+
+    DeepSeek V3.1 checkpoints can ship with native FP8 weights and
+    ``quantization_config.quant_method == "fp8"``. These need to be
+    dequantized before re-quantizing with our own scales.
+    """
+    quant_config = config_dict.get("quantization_config")
+    if quant_config is None:
+        return False
+    if isinstance(quant_config, dict):
+        return quant_config.get("quant_method", "") == "fp8"
+    return False
+
+
+def _get_native_block_size(config_dict: dict) -> tuple[int, int]:
+    """Get the FP8 block size from the model's native quantization config.
+
+    Falls back to the standard DeepSeek block size (128, 128) if not specified.
+    """
+    quant_config = config_dict.get("quantization_config", {})
+    if isinstance(quant_config, dict):
+        block_size = quant_config.get("weight_block_size", [_FP8_BLOCK_SIZE, _FP8_BLOCK_SIZE])
+        return (int(block_size[0]), int(block_size[1]))
+    return (_FP8_BLOCK_SIZE, _FP8_BLOCK_SIZE)
+
+
+def _make_cross_shard_tensor_loader(
+    model_dir: Path,
+) -> Callable[[str], torch.Tensor]:
+    """Create a loader that can fetch tensors from any shard by key name.
+
+    Used when a weight tensor and its scale are in different shards. Reads
+    the safetensors index to find which shard contains a given key, then
+    loads that shard on demand (with caching).
+    """
+    # Build key → shard mapping from index
+    index_path = model_dir / "model.safetensors.index.json"
+    if index_path.exists():
+        with open(index_path) as f:
+            index_weight_map: dict[str, str] = json.load(f)["weight_map"]
+    else:
+        # Single shard — build map from the one file
+        shard_files = sorted(model_dir.glob("*.safetensors"))
+        index_weight_map = {}
+        for sf_path in shard_files:
+            with safe_open(str(sf_path), framework="pt") as f:
+                for key in f.keys():  # noqa: SIM118
+                    index_weight_map[key] = sf_path.name
+
+    shard_cache: dict[str, dict[str, torch.Tensor]] = {}
+
+    def load_tensor(name: str) -> torch.Tensor:
+        if name not in index_weight_map:
+            raise KeyError(f"Tensor {name!r} not found in any shard at {model_dir}")
+        shard_name = index_weight_map[name]
+        if shard_name not in shard_cache:
+            shard_cache[shard_name] = load_file(str(model_dir / shard_name))
+        return shard_cache[shard_name][name]
+
+    return load_tensor
 
 
 # ---------------------------------------------------------------------------
@@ -508,7 +578,17 @@ def build_quantized(
     filtered_shapes = {k: v for k, v in model_shapes.items() if k in filtered_keys}
     validate_merge_op_shapes(merge_ops, filtered_shapes)
 
-    # 4. Process shards
+    # 4. Set up native FP8 handling (cross-shard scale lookup)
+    is_native_fp8 = _has_native_fp8_quantization(config_dict)
+    native_block_size = _get_native_block_size(config_dict) if is_native_fp8 else None
+    cross_shard_loader = _make_cross_shard_tensor_loader(model_dir) if is_native_fp8 else None
+    if is_native_fp8:
+        logger.info(
+            "Native FP8 checkpoint detected (block_size=%s), will dequantize before re-quantize",
+            native_block_size,
+        )
+
+    # 5. Process shards
     shard_files = get_shard_files(model_dir)
     completed_shards = set(resume_state.get("completed_shards", []))
     all_completed: list[str] = list(completed_shards)
@@ -561,14 +641,17 @@ def build_quantized(
                 tensor = temp[key]
 
             # Handle native FP8 weight_scale_inv (dequantize before re-quantize)
-            scale_key = key.replace(".weight", ".weight_scale_inv")
-            if (
-                key.endswith(".weight")
-                and tensor.dtype == torch.float8_e4m3fn
-                and scale_key in tensors
-            ):
-                tensor = dequantize_blockwise(tensor, tensors[scale_key])
-                # Don't include the original scale_inv in output
+            if key.endswith(".weight") and tensor.dtype == torch.float8_e4m3fn and is_native_fp8:
+                scale_key = key.replace(".weight", ".weight_scale_inv")
+                # Scale may be in this shard or a different one
+                scale_inv = tensors.get(scale_key)
+                if scale_inv is None and cross_shard_loader is not None:
+                    scale_inv = cross_shard_loader(scale_key)
+                if scale_inv is not None:
+                    assert native_block_size is not None
+                    tensor = dequantize_blockwise(tensor, scale_inv, block_size=native_block_size)
+                else:
+                    logger.warning("FP8 weight %s has no scale tensor, keeping as-is", key)
 
             # Quantize routed experts to FP8
             if _is_routed_expert_weight(key) and key.endswith(".weight"):

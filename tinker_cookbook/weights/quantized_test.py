@@ -419,3 +419,101 @@ class TestOutputShardAssembly:
         cc = config["compression_config"]
         assert cc["quant_method"] == "compressed-tensors"
         assert "quantization_config" not in config
+
+
+# ---------------------------------------------------------------------------
+# Cross-shard native FP8 scale handling
+# ---------------------------------------------------------------------------
+
+
+class TestCrossShardFP8Scale:
+    """Test that native FP8 weights are dequantized correctly even when
+    the weight and its scale_inv are in different shards."""
+
+    def test_cross_shard_scale_dequantizes_correctly(self, tmp_path: Path):
+        from tinker_cookbook.weights._export._quantized import build_quantized, quantize_blockwise
+
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+        model_dir.mkdir(parents=True)
+
+        # Create a native FP8 expert weight and its scale, in DIFFERENT shards
+        original_weight = torch.randn(8, 4, dtype=torch.bfloat16)
+        fp8_weight, scale_inv = quantize_blockwise(original_weight, block_size=(4, 4))
+
+        # Shard 1: has the FP8 weight but NOT its scale
+        shard1 = {
+            "model.layers.0.mlp.experts.0.gate_proj.weight": fp8_weight,
+            "model.layers.0.mlp.experts.1.gate_proj.weight": fp8_weight.clone(),
+        }
+        # Shard 2: has the scale_inv but NOT the weight, plus another expert
+        shard2 = {
+            "model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv": scale_inv,
+            "model.layers.0.mlp.experts.1.gate_proj.weight_scale_inv": scale_inv.clone(),
+            "model.layers.0.self_attn.q_proj.weight": torch.randn(8, 4, dtype=torch.bfloat16),
+        }
+
+        save_file(shard1, str(model_dir / "model-00001-of-00002.safetensors"))
+        save_file(shard2, str(model_dir / "model-00002-of-00002.safetensors"))
+
+        weight_map = {}
+        for k in shard1:
+            weight_map[k] = "model-00001-of-00002.safetensors"
+        for k in shard2:
+            weight_map[k] = "model-00002-of-00002.safetensors"
+
+        total_size = sum(t.nelement() * t.element_size() for t in {**shard1, **shard2}.values())
+        index = {"metadata": {"total_size": total_size}, "weight_map": weight_map}
+        (model_dir / "model.safetensors.index.json").write_text(json.dumps(index))
+
+        # Config with native FP8 quantization
+        config = {
+            "model_type": "deepseek_v3",
+            "architectures": ["DeepseekV3ForCausalLM"],
+            "quantization_config": {
+                "quant_method": "fp8",
+                "weight_block_size": [4, 4],
+            },
+        }
+        (model_dir / "config.json").write_text(json.dumps(config))
+        (model_dir / "tokenizer_config.json").write_text(
+            json.dumps({"tokenizer_class": "PreTrainedTokenizerFast"})
+        )
+        (model_dir / "tokenizer.json").write_text(
+            json.dumps(
+                {
+                    "version": "1.0",
+                    "model": {"type": "BPE", "vocab": {"a": 0, "b": 1}, "merges": []},
+                    "added_tokens": [],
+                }
+            )
+        )
+
+        # Empty adapter (no merge, just quantize)
+        adapter_dir.mkdir(parents=True)
+        save_file({"dummy": torch.zeros(1)}, str(adapter_dir / "adapter_model.safetensors"))
+        (adapter_dir / "adapter_config.json").write_text(json.dumps({"lora_alpha": 1, "r": 1}))
+
+        build_quantized(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+            trust_remote_code=False,
+            model_dir=model_dir,
+            config_dict=config,
+            serving_format="vllm",
+        )
+
+        # Verify: expert weights should be FP8 (re-quantized after dequant)
+        out = {}
+        for p in sorted(output_dir.glob("*.safetensors")):
+            out.update(load_file(str(p)))
+
+        expert_key = "model.layers.0.mlp.experts.0.gate_proj.weight"
+        assert expert_key in out
+        assert out[expert_key].dtype == torch.float8_e4m3fn
+        # Scale should use compressed-tensors naming
+        assert "model.layers.0.mlp.experts.0.gate_proj.weight_scale" in out
+        # No native scale_inv in output
+        assert "model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv" not in out
