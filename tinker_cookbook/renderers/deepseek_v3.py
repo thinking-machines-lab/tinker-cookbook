@@ -41,6 +41,8 @@ class _DeepSeekV3BaseRenderer(Renderer):
     Use strip_thinking_from_history=False for multi-turn RL to get the extension property.
     """
 
+    supports_streaming = True
+
     def __init__(
         self,
         tokenizer: Tokenizer,
@@ -237,11 +239,18 @@ class _DeepSeekV3BaseRenderer(Renderer):
 
         return tool_calls, unparsed_tool_calls
 
-    def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+    def _parse_response_content(
+        self, response: list[int], *, allow_missing_stop: bool = False
+    ) -> tuple[Message, bool]:
+        """Shared parsing logic for both batch and streaming paths.
+
+        Callers are responsible for normalization — this method does NOT call
+        ``_normalize_response_tokens``.
+        """
         assistant_message, parse_success = parse_response_for_stop_token(
             response, self.tokenizer, self._end_message_token
         )
-        if not parse_success:
+        if not parse_success and not allow_missing_stop:
             return assistant_message, False
 
         assert isinstance(assistant_message["content"], str)
@@ -271,7 +280,23 @@ class _DeepSeekV3BaseRenderer(Renderer):
         else:
             assistant_message["content"] = content
 
-        return assistant_message, True
+        return assistant_message, parse_success
+
+    def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+        response = self._normalize_response_tokens(response)
+        return self._parse_response_content(response, allow_missing_stop=False)
+
+    def _parse_response_for_streaming(self, response: list[int]) -> tuple[Message, bool]:
+        """Parse response for streaming, always applying full content parsing.
+
+        Unlike parse_response which short-circuits on missing stop token,
+        this always parses think blocks and tool calls from the content.
+
+        Note: _normalize_response_tokens is NOT called here because
+        parse_response_streaming already normalizes before feeding tokens
+        to the parser.
+        """
+        return self._parse_response_content(response, allow_missing_stop=True)
 
     def to_openai_message(self, message: Message) -> dict:
         """Convert a Message to OpenAI API format with reasoning_content for thinking.
@@ -427,8 +452,8 @@ class DeepSeekV3ThinkingRenderer(_DeepSeekV3BaseRenderer):
         think_prefill = "<think>" + (prefill or "")
         return super().build_generation_prompt(messages, role, think_prefill)
 
-    def parse_response(self, response: list[int]) -> tuple[Message, bool]:
-        """Parse response, prepending <think> since we prefill with it.
+    def _normalize_response_tokens(self, response: list[int]) -> list[int]:
+        """Restore the prefilled <think> token before parsing sampled tokens.
 
         When sampling with build_generation_prompt, the <think> tag is part of the
         prefill and not included in the sampled tokens. The response will be
@@ -437,12 +462,10 @@ class DeepSeekV3ThinkingRenderer(_DeepSeekV3BaseRenderer):
         think_prefix_token: int = self.tokenizer.convert_tokens_to_ids("<think>")  # type: ignore[assignment]
         think_suffix_token: int = self.tokenizer.convert_tokens_to_ids("</think>")  # type: ignore[assignment]
 
-        # Only prepend <think> if the response doesn't already start with it and contains </think>
         starts_with_think = len(response) > 0 and response[0] == think_prefix_token
         if not starts_with_think and think_suffix_token in response:
-            response = [think_prefix_token] + response
-
-        return super().parse_response(response)
+            return [think_prefix_token] + response
+        return response
 
 
 class DeepSeekV3DisableThinkingRenderer(_DeepSeekV3BaseRenderer):

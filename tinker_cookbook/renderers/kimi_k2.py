@@ -3,7 +3,6 @@
 import json
 import re
 import warnings
-from collections.abc import Iterator
 
 import tinker
 import torch
@@ -11,8 +10,6 @@ import torch
 from tinker_cookbook.renderers.base import (
     ContentPart,
     Message,
-    MessageDelta,
-    ReasoningStreamingParser,
     RenderContext,
     RenderedMessage,
     Renderer,
@@ -99,6 +96,8 @@ class KimiK2Renderer(Renderer):
     prepended if no system message is provided. This ensures train-eval consistency when
     using HF's apply_chat_template for inference.
     """
+
+    supports_streaming = True
 
     DEFAULT_SYSTEM_PROMPT = "You are Kimi, an AI assistant created by Moonshot AI."
 
@@ -416,6 +415,7 @@ class KimiK2Renderer(Renderer):
         return [self._end_message_token]
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+        response = self._normalize_response_tokens(response)
         assistant_message, parse_success = parse_response_for_stop_token(
             response, self.tokenizer, self._end_message_token
         )
@@ -465,19 +465,6 @@ class KimiK2Renderer(Renderer):
             message["content"] = content_parts if content_parts is not None else text_content
 
         return message, parse_success
-
-    def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
-        """Parse response tokens with streaming, yielding incremental deltas."""
-        parser = ReasoningStreamingParser(
-            tokenizer=self.tokenizer,
-            end_message_token=self._end_message_token,
-            parse_final_response=self._parse_response_for_streaming,
-        )
-
-        for token in response:
-            yield from parser.feed(token)
-
-        yield from parser.finish()
 
     def to_openai_message(self, message: Message) -> dict:
         """Convert a Message to OpenAI API format with reasoning_content for thinking.
