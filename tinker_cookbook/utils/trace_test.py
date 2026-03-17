@@ -436,12 +436,12 @@ def test_trace_iteration_on_exception():
 
     async def run():
         with trace_session():
-            try:
-                with trace_iteration(step=0) as window:
+            with trace_iteration(step=0) as window:
+                try:
                     await succeeds()
                     await fails()
-            except ValueError:
-                pass
+                except ValueError:
+                    pass
             return window
 
     window = asyncio.run(run())
