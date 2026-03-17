@@ -242,7 +242,7 @@ class Utf8TokenDecoder:
 
         # Try to decode all pending tokens (common case)
         try:
-            text = self.tokenizer.decode(self._pending_tokens)
+            text = str(self.tokenizer.decode(self._pending_tokens))
             if self._is_valid_decode(text):
                 self._pending_tokens = []
                 return text
@@ -260,7 +260,7 @@ class Utf8TokenDecoder:
             if not prefix:
                 break
             try:
-                text = self.tokenizer.decode(prefix)
+                text = str(self.tokenizer.decode(prefix))
                 if self._is_valid_decode(text):
                     self._pending_tokens = self._pending_tokens[-remove:]
                     return text
@@ -279,7 +279,7 @@ class Utf8TokenDecoder:
         if not self._pending_tokens:
             return ""
         try:
-            text = self.tokenizer.decode(self._pending_tokens)
+            text = str(self.tokenizer.decode(self._pending_tokens))
         except Exception:
             # Last resort: decode with errors='replace' behavior
             # Most tokenizers handle this, but fall back to empty string
@@ -1547,11 +1547,11 @@ def parse_response_for_stop_token(
     """
     emt_count = response.count(stop_token)
     if emt_count == 0:
-        str_response = tokenizer.decode(response)
+        str_response = str(tokenizer.decode(response))
         logger.debug(f"Response is not a valid assistant response: {str_response}")
         return Message(role="assistant", content=str_response), False
     elif emt_count == 1:
-        str_response = tokenizer.decode(response[: response.index(stop_token)])
+        str_response = str(tokenizer.decode(response[: response.index(stop_token)]))
         return Message(role="assistant", content=str_response), True
     else:
         raise ValueError(
