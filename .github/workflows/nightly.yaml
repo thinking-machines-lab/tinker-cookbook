@@ -58,16 +58,16 @@ jobs:
             --prerelease \
             --title "Nightly Build (${{ steps.version.outputs.version }})" \
             --notes "$(cat <<EOF
-          Automated nightly build from \`main\` at $(date -u '+%Y-%m-%d %H:%M UTC').
+Automated nightly build from \`main\` at $(date -u '+%Y-%m-%d %H:%M UTC').
 
-          **Version:** \`${{ steps.version.outputs.version }}\`
-          **Commit:** [\`${GITHUB_SHA::8}\`](https://github.com/${{ github.repository }}/commit/${GITHUB_SHA})
+**Version:** \`${{ steps.version.outputs.version }}\`
+**Commit:** [\`${GITHUB_SHA::8}\`](https://github.com/${{ github.repository }}/commit/${GITHUB_SHA})
 
-          ### Install
-          \`\`\`bash
-          pip install 'tinker_cookbook @ https://github.com/${{ github.repository }}/releases/download/nightly/tinker_cookbook-${{ steps.version.outputs.version }}-py3-none-any.whl'
-          \`\`\`
-          EOF
+### Install
+\`\`\`bash
+pip install 'tinker_cookbook @ https://github.com/${{ github.repository }}/releases/download/nightly/tinker_cookbook-${{ steps.version.outputs.version }}-py3-none-any.whl'
+\`\`\`
+EOF
           )"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
