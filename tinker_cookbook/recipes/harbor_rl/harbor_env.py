@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import tomllib
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,6 +24,7 @@ from tinker_cookbook.tool_use.agent_tool_message_env import RewardFn
 
 logger = logging.getLogger(__name__)
 
+HARBOR_CACHE_DIR = Path.home() / ".cache" / "harbor" / "tasks"
 HARBOR_SYSTEM_PROMPT = (
     "You are a skilled software engineer working in a sandboxed environment. "
     "You have access to a bash tool to execute commands. "
@@ -44,6 +46,24 @@ class HarborTask:
     instruction: str
     task_dir: Path  # Convention: environment/Dockerfile, tests/test.sh
     config: dict[str, Any] = field(default_factory=dict)
+
+
+def load_harbor_tasks(dataset: str) -> list[HarborTask]:
+    """Load Harbor tasks from ~/.cache/harbor/tasks/<dataset>/."""
+    tasks_dir = HARBOR_CACHE_DIR / dataset
+    tasks: list[HarborTask] = []
+    for uuid_dir in sorted(tasks_dir.iterdir()):
+        (task_dir,) = [d for d in uuid_dir.iterdir() if d.is_dir()]
+        tasks.append(
+            HarborTask(
+                task_name=task_dir.name,
+                instruction=(task_dir / "instruction.md").read_text(),
+                task_dir=task_dir,
+                config=tomllib.loads((task_dir / "task.toml").read_text()),
+            )
+        )
+    tasks.sort(key=lambda t: t.task_name)
+    return tasks
 
 
 def _initial_messages(

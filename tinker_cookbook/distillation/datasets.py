@@ -70,17 +70,12 @@ class CompositeDataset:
         all_env_group_builders = []
         all_dataset_indices = []
 
-        for dataset_idx, (dataset, groups_per_batch) in enumerate(
+        for dataset_idx, (dataset, _groups_per_batch) in enumerate(
             zip(self.datasets, self.groups_per_batch_list)
         ):
             env_group_builders = dataset.get_batch(i_batch)
-            # Each dataset should return exactly groups_per_batch items
-            assert len(env_group_builders) == groups_per_batch, (
-                f"Dataset {dataset_idx} returned {len(env_group_builders)} items, "
-                f"expected {groups_per_batch}"
-            )
             all_env_group_builders.extend(env_group_builders)
-            all_dataset_indices.extend([dataset_idx] * groups_per_batch)
+            all_dataset_indices.extend([dataset_idx] * len(env_group_builders))
 
         return all_env_group_builders, all_dataset_indices
 

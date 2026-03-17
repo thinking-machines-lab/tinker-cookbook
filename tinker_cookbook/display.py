@@ -3,7 +3,7 @@ import io
 import tinker
 from termcolor import colored
 
-from tinker_cookbook.rl.types import Trajectory
+from tinker_cookbook.rl.types import Trajectory, Transition
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils.format_colorized import format_colorized
 
@@ -24,7 +24,9 @@ def colorize_example(datum: tinker.Datum, tokenizer: Tokenizer, key: str = "weig
     return format_colorized(int_tokens, weights, tokenizer)
 
 
-def format_trajectory(trajectory: Trajectory, tokenizer: Tokenizer) -> str:
+def format_trajectory(
+    trajectory: Trajectory, tokenizer: Tokenizer, only_last_transition: bool = False
+) -> str:
     buf = io.StringIO()
 
     def colorize(s: str):
@@ -34,7 +36,10 @@ def format_trajectory(trajectory: Trajectory, tokenizer: Tokenizer) -> str:
         print(s, file=buf)
 
     bprint("=" * 60)
-    for i, transition in enumerate(trajectory.transitions):
+    transitions: list[tuple[int, Transition]] = list(enumerate(trajectory.transitions))
+    if only_last_transition:
+        transitions = transitions[-1:]
+    for i, transition in transitions:
         bprint(f"------ Transition {i} ------")
         bprint(f"{colorize('Observation:')}: {tokenizer.decode(transition.ob.to_ints())}")
         bprint(f"{colorize('Action:')}: {tokenizer.decode(transition.ac.tokens)}")
