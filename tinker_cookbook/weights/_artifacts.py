@@ -20,8 +20,8 @@ from safetensors.torch import load_file, save_file
 
 logger = logging.getLogger(__name__)
 
-# Lightweight files to copy from model dir (everything except weight shards).
-_NON_WEIGHT_PATTERNS = ("*.json", "*.py", "*.model", "*.txt", "*.tiktoken", "*.bpe", "*.spm")
+# Custom model code files to copy (for trust_remote_code models).
+_MODEL_CODE_PATTERNS = ("*.py",)
 
 _MAX_SHARD_SIZE = 10 * (1024**3)  # 10 GB
 
@@ -153,21 +153,24 @@ def load_adapter_weights(adapter_dir: Path) -> tuple[dict[str, torch.Tensor], di
 # ---------------------------------------------------------------------------
 
 
-def copy_non_weight_files(model_dir: Path, output_path: Path) -> None:
-    """Copy config, tokenizer, and other non-weight files to the output directory.
+def copy_model_code_files(model_dir: Path, output_path: Path) -> None:
+    """Copy custom model code files (``*.py``) to the output directory.
 
-    Copies files matching common non-weight patterns (JSON configs, tokenizer
-    files, model code). Skips safetensors weight files since those are written
-    separately by :class:`ShardWriter`.
+    Some model architectures require ``trust_remote_code=True`` and ship
+    custom Python files (e.g. ``configuration_*.py``, ``modeling_*.py``).
+    This copies those files so the merged model can be loaded standalone.
+
+    Only copies ``*.py`` files. Config and tokenizer files are handled
+    separately via HF APIs (``AutoConfig.save_pretrained``, etc.) to
+    avoid accidentally copying stale index files or other artifacts that
+    could break downstream loaders like vLLM/SGLang.
 
     Args:
         model_dir: Source model directory.
         output_path: Destination directory (must exist).
     """
-    for pattern in _NON_WEIGHT_PATTERNS:
+    for pattern in _MODEL_CODE_PATTERNS:
         for item in sorted(model_dir.glob(pattern)):
-            if item.suffix == ".safetensors":
-                continue
             dest = output_path / item.name
             if not dest.exists():
                 shutil.copy2(item, dest)
