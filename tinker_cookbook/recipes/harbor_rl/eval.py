@@ -32,7 +32,7 @@ from tinker_cookbook.recipes.harbor_rl.harbor_env import (
 )
 from tinker_cookbook.recipes.harbor_rl.harbor_tools import HarborBashTool, HarborReward
 from tinker_cookbook.renderers import get_renderer
-from tinker_cookbook.renderers.base import Message, Renderer
+from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.rollouts import do_single_rollout
 from tinker_cookbook.tool_use import build_agent_tool_env
 from tinker_cookbook.utils.ml_log import dump_config
@@ -66,7 +66,6 @@ class TaskResult:
     turns_used: int
     time_seconds: float
     error: str | None = None
-    messages: list[Message] | None = None
     trajectory_str: str | None = None
 
 
