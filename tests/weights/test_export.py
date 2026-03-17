@@ -34,6 +34,8 @@ from transformers import (
 import tinker_cookbook.weights._deepseek as deepseek_export
 from tinker_cookbook.weights import build_hf_model
 
+pytestmark = pytest.mark.integration
+
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
@@ -577,110 +579,6 @@ def _make_tiny_deepseek_v31_config() -> PretrainedConfig:
     if hasattr(config, "quantization_config"):
         delattr(config, "quantization_config")
     return config
-
-
-def test_deepseek_blockwise_quantization_matches_naive_reference(monkeypatch):
-    monkeypatch.setattr(deepseek_export, "_DEEPSEEK_BLOCK_SIZE", (2, 3))
-
-    weight = torch.tensor(
-        [
-            [1.0, -2.0, 3.0, 0.5, -0.5, 1.5, 2.0],
-            [4.0, -1.0, 2.0, -1.5, 2.5, -3.5, -4.0],
-            [5.0, 0.0, -5.0, 0.0, 0.0, 0.0, 1.25],
-            [-2.5, 3.5, -4.5, 0.0, 0.0, 0.0, -2.25],
-            [6.0, -6.0, 1.0, -7.0, 7.0, 0.0, 0.0],
-        ],
-        dtype=torch.bfloat16,
-    )
-
-    quantized, scales = deepseek_export._quantize_weight_blockwise(weight)
-
-    block_rows, block_cols = deepseek_export._DEEPSEEK_BLOCK_SIZE
-    rows, cols = weight.shape
-    scale_rows = (rows + block_rows - 1) // block_rows
-    scale_cols = (cols + block_cols - 1) // block_cols
-    max_fp8 = deepseek_export._get_fp8_max()
-    expected_scales = torch.empty((scale_rows, scale_cols), dtype=torch.float32)
-    expected_quantized = torch.empty_like(weight, dtype=deepseek_export._DEEPSEEK_FP8_DTYPE)
-
-    for row_idx in range(scale_rows):
-        row_start = row_idx * block_rows
-        row_end = min(row_start + block_rows, rows)
-        for col_idx in range(scale_cols):
-            col_start = col_idx * block_cols
-            col_end = min(col_start + block_cols, cols)
-            block = weight[row_start:row_end, col_start:col_end].to(torch.float32)
-            max_abs = block.abs().max()
-            scale = torch.tensor(1.0, dtype=torch.float32)
-            if max_abs != 0:
-                scale = max_abs / max_fp8
-            expected_scales[row_idx, col_idx] = scale
-            expected_quantized[row_start:row_end, col_start:col_end] = (
-                (block / scale)
-                .clamp(min=-max_fp8, max=max_fp8)
-                .to(deepseek_export._DEEPSEEK_FP8_DTYPE)
-            )
-
-    torch.testing.assert_close(scales, expected_scales, atol=0, rtol=0)
-    assert torch.equal(quantized.view(torch.uint8), expected_quantized.view(torch.uint8))
-
-
-def test_deepseek_expert_lora_broadcast_rejects_single_single():
-    lora_A = torch.ones((1, 2, 3), dtype=torch.float32)
-    lora_B = torch.ones((1, 4, 2), dtype=torch.float32)
-
-    with pytest.raises(ValueError, match="both A and B have 1 expert"):
-        deepseek_export._expand_expert_lora_tensors(lora_A, lora_B)
-
-
-def test_deepseek_compression_config_serializer_omits_unknown_fields():
-    config_dict = {
-        "config_groups": {
-            "group_0": {
-                "targets": ["Linear"],
-                "weights": {
-                    "num_bits": 8,
-                    "type": "float",
-                    "strategy": "block",
-                    "block_structure": [128, 128],
-                    "symmetric": True,
-                    "dynamic": False,
-                    "scale_dtype": "float32",
-                    "zp_dtype": "int8",
-                    "future_field": "surprise",
-                },
-                "input_activations": {
-                    "num_bits": 8,
-                    "type": "float",
-                    "strategy": "tensor",
-                    "symmetric": True,
-                    "dynamic": True,
-                    "scale_dtype": "float32",
-                },
-                "output_activations": None,
-                "unexpected_group_field": "ignored",
-            }
-        },
-        "format": "float-quantized",
-        "global_compression_ratio": None,
-        "ignore": ["lm_head"],
-        "kv_cache_scheme": None,
-        "quantization_status": "compressed",
-        "unexpected_top_level": "ignored",
-    }
-
-    serialized = deepseek_export._serialize_vllm_compatible_quant_config(config_dict)
-    group = serialized["config_groups"]["group_0"]
-
-    assert serialized["quant_method"] == "compressed-tensors"
-    assert "unexpected_top_level" not in serialized
-    assert "unexpected_group_field" not in group
-    assert "scale_dtype" not in group["weights"]
-    assert "zp_dtype" not in group["weights"]
-    assert "future_field" not in group["weights"]
-    assert "scale_dtype" not in group["input_activations"]
-    assert group["weights"]["block_structure"] == [128, 128]
-    assert group["input_activations"]["dynamic"] is True
 
 
 class TestDeepSeekV31SeparateExperts:

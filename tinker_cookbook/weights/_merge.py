@@ -28,6 +28,33 @@ def apply_merged_weight(target: torch.Tensor, merged_lora: torch.Tensor) -> None
     target.copy_(new_data.to(target.dtype))
 
 
+def merge_lora_matrices(lora_A: torch.Tensor, lora_B: torch.Tensor) -> torch.Tensor:
+    """Merge rank-decomposed LoRA matrices into a full 2D weight delta."""
+    return lora_B @ lora_A
+
+
+def expand_expert_lora_tensors(
+    lora_A: torch.Tensor,
+    lora_B: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Broadcast shared expert LoRA tensors to a per-expert layout."""
+    if lora_A.shape[0] == 1:
+        if lora_B.shape[0] <= 1:
+            raise ValueError(
+                f"Cannot broadcast expert LoRA: both A and B have 1 expert "
+                f"(lora_A: {lora_A.shape}, lora_B: {lora_B.shape})"
+            )
+        lora_A = lora_A.expand(lora_B.shape[0], -1, -1)
+    elif lora_B.shape[0] == 1:
+        if lora_A.shape[0] <= 1:
+            raise ValueError(
+                f"Cannot broadcast expert LoRA: both A and B have 1 expert "
+                f"(lora_A: {lora_A.shape}, lora_B: {lora_B.shape})"
+            )
+        lora_B = lora_B.expand(lora_A.shape[0], -1, -1)
+    return lora_A, lora_B
+
+
 def merge_adapter_weights(
     base_model: torch.nn.Module, adapter_weights: dict[str, torch.Tensor], config: dict
 ) -> None:
@@ -84,7 +111,7 @@ def merge_adapter_weights(
                     f"which does not exist in the model state dict"
                 )
             # (lora_rank, in_dim), (out_dim lora_rank) -> (out_dim, in_dim)
-            merged_lora = torch.nn.functional.linear(lora_A.T, lora_B).T
+            merged_lora = merge_lora_matrices(lora_A, lora_B)
             if merged_lora.shape != model_state_dict[target_key].shape:
                 raise ValueError(
                     f"Shape mismatch for {target_key!r}: "
@@ -97,20 +124,7 @@ def merge_adapter_weights(
                 raise ValueError(
                     f"Expert LoRA weights must be 3D, got lora_A: {lora_A.shape}, lora_B: {lora_B.shape}"
                 )
-            if lora_A.shape[0] == 1:
-                if lora_B.shape[0] <= 1:
-                    raise ValueError(
-                        f"Cannot broadcast expert LoRA: both A and B have 1 expert "
-                        f"(lora_A: {lora_A.shape}, lora_B: {lora_B.shape})"
-                    )
-                lora_A = lora_A.expand(lora_B.shape[0], -1, -1)
-            elif lora_B.shape[0] == 1:
-                if lora_A.shape[0] <= 1:
-                    raise ValueError(
-                        f"Cannot broadcast expert LoRA: both A and B have 1 expert "
-                        f"(lora_A: {lora_A.shape}, lora_B: {lora_B.shape})"
-                    )
-                lora_B = lora_B.expand(lora_A.shape[0], -1, -1)
+            lora_A, lora_B = expand_expert_lora_tensors(lora_A, lora_B)
             # (num_experts, lora_rank, in_dim),(num_experts, out_dim, lora_rank) -> (num_experts, in_dim, out_dim)
             merged_lora = torch.bmm(lora_A.transpose(-1, -2), lora_B.transpose(-1, -2))
 

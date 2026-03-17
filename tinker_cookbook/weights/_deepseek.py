@@ -34,7 +34,11 @@ from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 from transformers import PreTrainedModel
 
-from tinker_cookbook.weights._merge import apply_merged_weight
+from tinker_cookbook.weights._merge import (
+    apply_merged_weight,
+    expand_expert_lora_tensors,
+    merge_lora_matrices,
+)
 
 __all__ = ["is_deepseek_config", "is_deepseek_model", "save_deepseek_model"]
 
@@ -472,27 +476,6 @@ def _build_name_remaps(model_keys: set[str]) -> dict[str, str]:
     return name_remaps
 
 
-def _expand_expert_lora_tensors(
-    lora_A: torch.Tensor,
-    lora_B: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    if lora_A.shape[0] == 1:
-        if lora_B.shape[0] <= 1:
-            raise ValueError(
-                "Cannot broadcast expert LoRA: both A and B have 1 expert "
-                f"(lora_A: {lora_A.shape}, lora_B: {lora_B.shape})"
-            )
-        lora_A = lora_A.expand(lora_B.shape[0], -1, -1)
-    elif lora_B.shape[0] == 1:
-        if lora_A.shape[0] <= 1:
-            raise ValueError(
-                "Cannot broadcast expert LoRA: both A and B have 1 expert "
-                f"(lora_A: {lora_A.shape}, lora_B: {lora_B.shape})"
-            )
-        lora_B = lora_B.expand(lora_A.shape[0], -1, -1)
-    return lora_A, lora_B
-
-
 def _build_merge_ops(
     *,
     adapter_weights: dict[str, torch.Tensor],
@@ -531,7 +514,7 @@ def _build_merge_ops(
             )
             continue
 
-        lora_A, lora_B = _expand_expert_lora_tensors(lora_A, lora_B)
+        lora_A, lora_B = expand_expert_lora_tensors(lora_A, lora_B)
         target_key = target_key.replace(".w1.weight", ".gate_proj.weight")
         target_key = target_key.replace(".w3.weight", ".up_proj.weight")
         target_key = target_key.replace(".w2.weight", ".down_proj.weight")
@@ -562,7 +545,7 @@ def _apply_merge_ops_to_state_dict(
             if target_key not in merge_ops:
                 continue
             for op in merge_ops[target_key]:
-                merged_lora = op.lora_B @ op.lora_A
+                merged_lora = merge_lora_matrices(op.lora_A, op.lora_B)
                 apply_merged_weight(target_tensor, merged_lora)
 
 
