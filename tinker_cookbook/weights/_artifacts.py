@@ -1,8 +1,9 @@
-"""Shard-by-shard I/O utilities for weight export.
+"""Model artifact I/O utilities for weight export.
 
 Provides utilities for reading safetensors metadata, writing sharded output,
-and resolving model directories — used by the standard sharded export path
-and potentially by model-specific export modules.
+loading adapters, resolving model directories, and copying non-weight files.
+Used by both standard export strategies (``_export/_full.py``,
+``_export/_shard.py``) and model-specific export modules.
 """
 
 from __future__ import annotations

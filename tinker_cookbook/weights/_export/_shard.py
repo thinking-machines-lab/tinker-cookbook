@@ -108,8 +108,10 @@ def build_sharded(
         # 8. Finalize output shards
         weight_map = writer.finalize()
 
-        # 9. Write index file
-        if len(weight_map) > 0:
+        # 9. Write index file (only for multi-shard output; HF convention
+        #    is no index for single-shard models)
+        shard_names = set(weight_map.values())
+        if len(shard_names) > 1:
             index = {
                 "metadata": {"total_size": writer.total_size},
                 "weight_map": dict(sorted(weight_map.items())),
