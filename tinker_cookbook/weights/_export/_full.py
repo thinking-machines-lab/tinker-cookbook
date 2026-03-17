@@ -52,10 +52,14 @@ def build_full(
         trust_remote_code: Whether to trust remote code for HF loading.
         config_dict: Parsed config.json dict (loaded by dispatcher).
     """
+    # Fail fast if output already exists (before any expensive work)
+    out = Path(output_path)
+    if out.exists():
+        raise FileExistsError(f"Output path already exists: {out}")
+
     # Validate adapter exists before loading the (potentially huge) base model
     adapter_weights, adapter_config = load_adapter_weights(Path(adapter_path))
 
-    out = Path(output_path)
     out.mkdir(parents=True, exist_ok=False)
 
     try:

@@ -55,6 +55,11 @@ def build_sharded(
         model_dir: Resolved local directory containing model files.
         config_dict: Parsed config.json dict (loaded by dispatcher).
     """
+    # 0. Fail fast if output already exists (before any expensive work)
+    out = Path(output_path)
+    if out.exists():
+        raise FileExistsError(f"Output path already exists: {out}")
+
     # 1. Load adapter (small — only LoRA matrices)
     adapter_weights, adapter_config = load_adapter_weights(Path(adapter_path))
 
@@ -79,7 +84,6 @@ def build_sharded(
     validate_merge_op_shapes(merge_ops, model_shapes)
 
     # 6. Process shards
-    out = Path(output_path)
     out.mkdir(parents=True, exist_ok=False)
 
     try:
