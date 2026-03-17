@@ -7,12 +7,13 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
-import os
 import re
 import time
+from collections.abc import Callable, Coroutine, Iterable, Iterator, Sequence
 from concurrent.futures import Executor
 from contextlib import contextmanager
-from typing import Any, Callable, Coroutine, Iterable, Iterator, List, Sequence, TypeVar
+from pathlib import Path
+from typing import Any, TypeVar
 
 import chz
 import numpy as np
@@ -160,8 +161,8 @@ def _get_logtree_scope(
         yield
         return
 
-    logtree_path = os.path.join(log_path, f"{f_name}.html")
-    logtree_json_path = os.path.join(log_path, f"{f_name}_logtree.json")
+    logtree_path = str(Path(log_path) / f"{f_name}.html")
+    logtree_json_path = str(Path(log_path) / f"{f_name}_logtree.json")
     trace = None
     try:
         with logtree.init_trace(scope_name, path=logtree_path) as trace:
@@ -250,14 +251,14 @@ def _training_logprobs_from_fwd_bwd(
 
 @scope
 async def train_step(
-    data_D: List[tinker.Datum],
+    data_D: list[tinker.Datum],
     training_client: tinker.TrainingClient,
     learning_rate: float,
     num_substeps: int,
     loss_fn: LossFnType,
     loss_fn_config: dict[str, Any] | None = None,
     metrics: dict[str, Any] | None = None,
-) -> List[torch.Tensor]:
+) -> list[torch.Tensor]:
     """Train the model on collected trajectories.
 
     Pipelines forward_backward and optim_step so they land on the same clock cycle.
@@ -349,7 +350,7 @@ class Config:
     # Maximum number of generated tokens per rollout trajectory.
     max_tokens: int
     # Directory for checkpoints, logs, and traces.
-    log_path: str = chz.field(munger=lambda _, s: os.path.expanduser(s))
+    log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
     # Evaluation cadence in training iterations (0 = disabled).
     eval_every: int = 20
     # Checkpoint cadence in training iterations (0 = disabled).
@@ -1300,7 +1301,7 @@ async def main(
         current_task = asyncio.current_task()
         if current_task is not None:
             current_task.set_name("main")
-        trace_events_path = os.path.join(cfg.log_path, "trace_events.jsonl")
+        trace_events_path = str(Path(cfg.log_path) / "trace_events.jsonl")
         logger.info(f"Tracing is enabled. Trace events will be saved to {trace_events_path}")
         logger.info(
             f"Run `python tinker_cookbook/utils/trace.py {trace_events_path} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"

@@ -7,14 +7,15 @@ import json
 import queue
 import threading
 import time
+from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from io import TextIOWrapper
-from typing import Any, Callable
+from typing import Any
 
 
-class EventType(str, Enum):
+class EventType(StrEnum):
     """Chrome Trace/Perfetto Event type"""
 
     BEGIN = "B"
@@ -430,7 +431,7 @@ def convert_jsonl_to_json_main():
     parser.add_argument("output_json_file", type=str)
     args = parser.parse_args()
 
-    with open(args.trace_events_jsonl_file, "r") as f:
+    with open(args.trace_events_jsonl_file) as f:
         events = [json.loads(line) for line in f]
     with open(args.output_json_file, "w") as f:
         json.dump(events, f)

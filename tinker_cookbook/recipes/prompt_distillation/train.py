@@ -3,10 +3,11 @@ CLI for prompt distillation training.
 """
 
 import asyncio
-import os
 from datetime import datetime
+from pathlib import Path
 
 import chz
+
 from tinker_cookbook import checkpoint_utils, cli_utils
 from tinker_cookbook.renderers import TrainOnWhat
 from tinker_cookbook.supervised import train
@@ -70,7 +71,7 @@ def cli_main(cli_config: CLIConfig):
         wandb_name = run_name
 
     # make sure the data file exists
-    if not os.path.exists(cli_config.file_path):
+    if not Path(cli_config.file_path).exists():
         raise FileNotFoundError(f"Data file not found: {cli_config.file_path}")
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)

@@ -26,7 +26,8 @@ import copy
 import json
 import random
 import uuid
-from typing import Callable, cast
+from collections.abc import Callable
+from typing import cast
 
 import pytest
 
@@ -57,7 +58,6 @@ from tinker_cookbook.tokenizer_utils import (
     register_tokenizer,
     unregister_tokenizer,
 )
-
 
 # =============================================================================
 # Conversation Generator (seeded random conversations for parametrized tests)
@@ -505,10 +505,7 @@ _GENERATION_CONVERSATIONS = [
 
 def _conversation_has_tools(messages: list[Message]) -> bool:
     """Check if a conversation contains tool calls or tool responses."""
-    for m in messages:
-        if "tool_calls" in m or m["role"] == "tool":
-            return True
-    return False
+    return any("tool_calls" in m or m["role"] == "tool" for m in messages)
 
 
 def _add_llama3_date_prefix(messages: list[Message]) -> list[Message]:
@@ -980,10 +977,7 @@ def test_supervised_generation_parse_consistency(
         return False
 
     def has_tools(msgs):
-        for m in msgs:
-            if "tool_calls" in m or m["role"] == "tool":
-                return True
-        return False
+        return any("tool_calls" in m or m["role"] == "tool" for m in msgs)
 
     has_thinking_content = has_thinking(messages)
     has_tool_content = has_tools(messages)
@@ -1035,7 +1029,7 @@ def test_supervised_generation_parse_consistency(
         gen_decoded = tokenizer.decode(gen_tokens)
 
         # Show the discrepancy
-        assert False, (
+        raise AssertionError(
             f"Observation tokens do not match generation prompt for {renderer_name}.\n"
             f"Divergence at token {diverge_idx}:\n"
             f"  ob[{diverge_idx}:]:  {ob[diverge_idx : diverge_idx + 10]} = {tokenizer.decode(ob[diverge_idx : diverge_idx + 10])!r}\n"
@@ -1133,7 +1127,7 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         test_response_double_eot, add_special_tokens=False
     )
 
-    with pytest.raises(ValueError, match="expected .* 1"):
+    with pytest.raises(ValueError, match=r"expected .* 1"):
         _ = renderer.parse_response(response_tokens_double_eot)
 
 

@@ -110,3 +110,14 @@ async def compute_logprobs_async(
 ```
 
 Async version of compute_logprobs.
+
+#### `get_tokenizer`
+
+```python
+def get_tokenizer() -> PreTrainedTokenizer
+```
+
+Get the tokenizer for the current model.
+
+Returns:
+- `PreTrainedTokenizer` compatible with the model

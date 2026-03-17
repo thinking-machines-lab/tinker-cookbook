@@ -1,12 +1,14 @@
-import chz
 import asyncio
 from datetime import datetime
-from tinker_cookbook import checkpoint_utils, cli_utils
-from tinker_cookbook.rl.train import AsyncConfig, Config, main
-from tinker_cookbook.rl.types import RLDatasetBuilder
+
+import chz
 from tinker.types import LossFnType
+
+from tinker_cookbook import checkpoint_utils, cli_utils
 from tinker_cookbook.recipes.rubric.data import PrometheusDatapointListBuilder
 from tinker_cookbook.recipes.rubric.env import RubricGradedDatasetBuilder
+from tinker_cookbook.rl.train import AsyncConfig, Config, main
+from tinker_cookbook.rl.types import RLDatasetBuilder
 
 
 @chz.chz

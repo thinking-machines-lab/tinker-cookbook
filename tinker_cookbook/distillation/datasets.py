@@ -7,12 +7,14 @@ a teacher model. The environment provides no correctness or format rewards.
 """
 
 import math
+from collections.abc import Sequence
 from functools import partial
-from typing import List, Literal, Sequence
+from typing import Literal
 
 import chz
 import tinker
 from datasets import load_dataset
+
 from tinker_cookbook import renderers
 from tinker_cookbook.rl.problem_env import ProblemEnv, ProblemGroupBuilder, logger
 from tinker_cookbook.rl.types import (
@@ -45,7 +47,7 @@ class DistillationDatasetConfig:
 class CompositeDataset:
     """Wraps multiple datasets and samples from each according to their groups_per_batch."""
 
-    def __init__(self, datasets: List[RLDataset], groups_per_batch_list: List[int]):
+    def __init__(self, datasets: list[RLDataset], groups_per_batch_list: list[int]):
         self.datasets = datasets
         self.groups_per_batch_list = groups_per_batch_list
         # Use the shortest dataset length
@@ -57,7 +59,7 @@ class CompositeDataset:
     def __len__(self) -> int:
         return self.length
 
-    def get_batch(self, i_batch: int) -> tuple[List[EnvGroupBuilder], List[int]]:
+    def get_batch(self, i_batch: int) -> tuple[list[EnvGroupBuilder], list[int]]:
         """
         Get a batch by sampling from each dataset according to groups_per_batch.
 

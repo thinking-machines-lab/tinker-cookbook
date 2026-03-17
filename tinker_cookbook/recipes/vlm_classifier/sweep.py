@@ -10,19 +10,20 @@ python -m tinker_cookbook.recipes.vlm_classifier.sweep experiment_dir=./sweep mo
 
 """
 
-import os
 import asyncio
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from itertools import product
+from pathlib import Path
 
 import chz
-from tinker_cookbook.renderers import TrainOnWhat
-from tinker_cookbook.utils.lr_scheduling import LRSchedule
+
 from tinker_cookbook import cli_utils
 from tinker_cookbook.recipes.vlm_classifier.data import get_dataset_builder
 from tinker_cookbook.recipes.vlm_classifier.eval import get_evaluator_builder
+from tinker_cookbook.renderers import TrainOnWhat
 from tinker_cookbook.supervised import train
+from tinker_cookbook.utils.lr_scheduling import LRSchedule
 
 
 @chz.chz
@@ -95,7 +96,7 @@ def run_experiment(experiment_config: ExperimentConfig):
     )
     experiment_name = f"{experiment_config.dataset}-{model_name}-{experiment_config.lora_rank}rank-{experiment_config.learning_rate}lr-{experiment_config.batch_size}batch{shot_suffix}-{date_and_time}"
 
-    experiment_path = os.path.join(experiment_config.experiment_dir, experiment_name)
+    experiment_path = str(Path(experiment_config.experiment_dir) / experiment_name)
     cli_utils.check_log_dir(experiment_path, behavior_if_exists="delete")
 
     dataset_builder = get_dataset_builder(

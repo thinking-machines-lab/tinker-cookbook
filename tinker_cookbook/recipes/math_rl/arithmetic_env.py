@@ -1,8 +1,9 @@
+from collections.abc import Sequence
 from functools import partial
-from typing import Sequence
 
 import chz
 import numpy as np
+
 from tinker_cookbook import renderers
 from tinker_cookbook.rl.problem_env import ProblemEnv, ProblemGroupBuilder
 from tinker_cookbook.rl.types import EnvGroupBuilder, RLDataset, RLDatasetBuilder

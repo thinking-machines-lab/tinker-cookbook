@@ -26,7 +26,6 @@ from tinker_cookbook.renderers.base import (
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
-
 # =============================================================================
 # TypeScript formatting utilities (stateless, used for Harmony tool definitions)
 # =============================================================================
@@ -483,7 +482,7 @@ class GptOssRenderer(Renderer):
                 result["reasoning_content"] = "".join(thinking_parts)
 
         # Handle tool_calls
-        if "tool_calls" in message and message["tool_calls"]:
+        if "tool_calls" in message and message["tool_calls"]:  # noqa: RUF019
             result["tool_calls"] = [
                 {
                     "type": "function",
@@ -541,9 +540,7 @@ class GptOssRenderer(Renderer):
             channel = msg["channel"]
             if channel == "analysis":
                 parts.append(ThinkingPart(type="thinking", thinking=msg_content))
-            elif channel == "final":
-                parts.append(TextPart(type="text", text=msg_content))
-            elif channel == "commentary":
+            elif channel == "final" or channel == "commentary":
                 parts.append(TextPart(type="text", text=msg_content))
 
         return parts, tool_calls, unparsed

@@ -20,8 +20,9 @@ import datasets
 import tinker
 import torch
 from tinker import types
-from tqdm import tqdm
 from tinker.types.tensor_data import TensorData
+from tqdm import tqdm
+
 from tinker_cookbook import checkpoint_utils, model_info, renderers
 from tinker_cookbook.recipes.math_rl.math_env import extract_gsm8k_final_answer
 from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed, grade_answer

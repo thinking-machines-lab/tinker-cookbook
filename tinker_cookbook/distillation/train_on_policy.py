@@ -5,14 +5,14 @@ https://thinkingmachines.ai/blog/on-policy-distillation
 
 import asyncio
 import logging
-import os
 import time
-from typing import Any, Dict, List, Sequence, cast
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any, cast
 
 import chz
 import tinker
 import torch
-
 from tinker.types import LossFnType
 
 from tinker_cookbook import checkpoint_utils
@@ -41,19 +41,19 @@ from tinker_cookbook.rl.types import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.misc_utils import safezip, timed
-from tinker_cookbook.utils.trace import scope, update_scope_context, trace_init
+from tinker_cookbook.utils.trace import scope, trace_init, update_scope_context
 
 logger = logging.getLogger(__name__)
 
 
 @scope
 async def incorporate_kl_penalty(
-    data_D: List[tinker.Datum],
-    teacher_clients_D: List[tinker.SamplingClient],
-    dataset_indices_D: List[int],
+    data_D: list[tinker.Datum],
+    teacher_clients_D: list[tinker.SamplingClient],
+    dataset_indices_D: list[int],
     kl_penalty_coef: float,
     kl_discount_factor: float,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """
     Compute reverse KL between the student (log p) and the teacher model (log q), computed as
     log p - log q. We then adjust the advantages in-place as the negative reverse KL.
@@ -92,7 +92,7 @@ async def incorporate_kl_penalty(
     ]
     # Track per-dataset KL for logging
     # dataset_idx -> (sum of KL, sum of mask)
-    per_dataset_kl: Dict[int, tuple[float, float]] = {}
+    per_dataset_kl: dict[int, tuple[float, float]] = {}
 
     for i, datum in enumerate(data_D):
         # The advantage is the negative reverse KL. We can optionally apply a discount factor.
@@ -131,7 +131,7 @@ async def incorporate_kl_penalty(
 @chz.chz
 class Config:
     learning_rate: float
-    dataset_configs: List[DistillationDatasetConfig]
+    dataset_configs: list[DistillationDatasetConfig]
     model_name: str
     renderer_name: str | None = None
     max_tokens: int
@@ -155,7 +155,7 @@ class Config:
     wandb_project: str | None = None
     wandb_name: str | None = None
 
-    log_path: str = chz.field(munger=lambda _, s: os.path.expanduser(s))
+    log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
     base_url: str | None = None
     enable_trace: bool = False
 
@@ -174,8 +174,8 @@ async def prepare_minibatch(
     env_group_builders_P: Sequence[EnvGroupBuilder],
     trajectory_groups_P: list[TrajectoryGroup],
     tokenizer: Tokenizer,
-    dataset_indices_P: List[int],
-    teacher_clients: List[tinker.SamplingClient],
+    dataset_indices_P: list[int],
+    teacher_clients: list[tinker.SamplingClient],
     kl_penalty_coef: float,
     kl_discount_factor: float,
 ) -> tuple[list[tinker.Datum], dict[str, Any]]:
@@ -233,8 +233,8 @@ async def do_train_step_and_get_sampling_client(
     tokenizer: Tokenizer,
     env_group_builders_P: Sequence[EnvGroupBuilder],
     trajectory_groups_P: list[TrajectoryGroup],
-    dataset_indices_P: List[int],
-    teacher_clients: List[tinker.SamplingClient],
+    dataset_indices_P: list[int],
+    teacher_clients: list[tinker.SamplingClient],
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     update_scope_context({"step": i_batch})
 
@@ -286,7 +286,7 @@ async def do_sync_training(
     service_client: tinker.ServiceClient,
     evaluators: list[SamplingClientEvaluator],
     dataset: CompositeDataset,
-    teacher_clients: List[tinker.SamplingClient],
+    teacher_clients: list[tinker.SamplingClient],
     ml_logger: ml_log.Logger,
     tokenizer: Tokenizer,
 ):
@@ -371,7 +371,7 @@ async def main(
         current_task = asyncio.current_task()
         if current_task is not None:
             current_task.set_name("main")
-        trace_events_path = os.path.join(cfg.log_path, "trace_events.jsonl")
+        trace_events_path = str(Path(cfg.log_path) / "trace_events.jsonl")
         logger.info(f"Tracing is enabled. Trace events will be saved to {trace_events_path}")
         logger.info(
             f"Run `python tinker_cookbook/utils/trace.py {trace_events_path} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"

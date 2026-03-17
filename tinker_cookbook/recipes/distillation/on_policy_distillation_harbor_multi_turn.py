@@ -29,8 +29,8 @@ Example usage:
 
 import asyncio
 import logging
-import os
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import chz
@@ -123,7 +123,7 @@ async def cli_main(cli_config: CLIConfig, tasks: list[HarborTask]):
             f"{cli_config.learning_rate}lr-{cli_config.groups_per_batch}batch-"
             f"{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
         )
-        log_path = os.path.expanduser(f"~/tinker-examples/distillation/{run_name}")
+        log_path = str(Path(f"~/tinker-examples/distillation/{run_name}").expanduser())
 
     wandb_name = cli_config.wandb_name or os.path.basename(log_path)
     logger.info("Loaded %d harbor tasks", len(tasks))

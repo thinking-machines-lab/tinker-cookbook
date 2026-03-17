@@ -1,0 +1,33 @@
+name: smoke-test-evals
+
+on:
+  workflow_dispatch:  # manual trigger
+  schedule:
+    - cron: "0 7 * * *"  # daily at 7am UTC (1h after recipes)
+
+# Only one eval smoke test run at a time to avoid API contention
+concurrency:
+  group: smoke-test-evals
+  cancel-in-progress: true
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install-uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: venv
+        run: uv venv && uv sync --all-extras
+
+      - name: run eval smoke tests
+        env:
+          TINKER_API_KEY: ${{ secrets.TINKER_API_KEY }}
+        run: uv run pytest tests/test_inspect_eval.py -v -x -s

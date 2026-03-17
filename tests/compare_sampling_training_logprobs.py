@@ -9,6 +9,7 @@ import pandas as pd
 import tinker
 import torch
 from tinker import AdamParams, ModelInput
+
 from tinker_cookbook.supervised.common import datum_from_model_input_weights
 
 
@@ -85,7 +86,7 @@ async def get_row(
 
     try:
         return await asyncio.wait_for(_inner(), timeout=timeout_sec)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print(f"ERROR: Timeout after {timeout_sec} seconds for model {model_name}")
         return {"model_name": model_name, "error": "TimeoutError"}
 

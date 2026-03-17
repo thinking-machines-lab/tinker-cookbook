@@ -9,7 +9,7 @@ Two complementary checks ensure correctness across temperatures and sequence pos
 from __future__ import annotations
 
 import asyncio
-from typing import Sequence
+from collections.abc import Sequence
 
 import chz
 import numpy as np

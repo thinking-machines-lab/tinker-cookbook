@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Literal, Sequence, cast
+from collections.abc import Sequence
+from typing import Any, Literal, cast
 
 import chz
 from datasets import Dataset, concatenate_datasets, load_dataset

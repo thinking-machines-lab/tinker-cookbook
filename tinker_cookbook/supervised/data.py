@@ -3,12 +3,14 @@ Supervised learning dataset implementations from HuggingFace datasets.
 """
 
 import json
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import blobfile
 import chz
 import datasets
 import tinker
+
 from tinker_cookbook.renderers import Message, Renderer, TrainOnWhat
 from tinker_cookbook.supervised.common import datum_from_model_input_weights
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDataset

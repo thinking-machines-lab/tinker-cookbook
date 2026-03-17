@@ -13,7 +13,6 @@ from tinker_cookbook.renderers import (
 from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-
 # =============================================================================
 # Qwen3 parse_response Tests
 # =============================================================================

@@ -1,6 +1,6 @@
 import logging
-import os
 import shutil
+from pathlib import Path
 from typing import Literal
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ def check_log_dir(log_dir: str, behavior_if_exists: LogdirBehavior):
     Returns:
         None
     """
-    if os.path.exists(log_dir):
+    if Path(log_dir).exists():
         if behavior_if_exists == "delete":
             logger.info(
                 f"Log directory {log_dir} already exists. Will delete it and start logging there."

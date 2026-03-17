@@ -7,6 +7,7 @@ Creates a temporary private repo, uploads a tiny dummy model, verifies
 the upload, and cleans up the repo regardless of test outcome.
 """
 
+import contextlib
 import json
 import tempfile
 import uuid
@@ -66,7 +67,5 @@ class TestPublishToHfHubIntegration:
                 assert "README.md" in files
         finally:
             # Always clean up, even if test fails
-            try:
+            with contextlib.suppress(Exception):
                 api.delete_repo(repo_id=repo_id, repo_type="model")
-            except Exception:
-                pass

@@ -1,32 +1,33 @@
+import asyncio
+import json
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+import chz
+import tinker
+from termcolor import colored
+from tinker.types import ModelInput
+
+from tinker_cookbook import model_info
+from tinker_cookbook.completers import MessageCompleter, StopCondition, TinkerMessageCompleter
+from tinker_cookbook.recipes.rubric.data import (
+    Conversation,
+    Rubric,
+    RubricBasedDatapoint,
+    RubricDatapointListBuilder,
+)
+from tinker_cookbook.renderers import Renderer, get_renderer
 from tinker_cookbook.rl.types import (
     Action,
     Env,
-    StepResult,
     EnvGroupBuilder,
     RLDataset,
     RLDatasetBuilder,
+    StepResult,
 )
-from tinker_cookbook.renderers import Renderer
-from tinker_cookbook.completers import MessageCompleter, StopCondition, TinkerMessageCompleter
-from tinker.types import ModelInput
-from dataclasses import dataclass
-from typing import Sequence
-import json
-import chz
-import tinker
 from tinker_cookbook.tokenizer_utils import get_tokenizer
-from tinker_cookbook.renderers import get_renderer
-import asyncio
-from tinker_cookbook import model_info
 from tinker_cookbook.utils import logtree
 from tinker_cookbook.utils.logtree_formatters import ConversationFormatter
-from tinker_cookbook.recipes.rubric.data import (
-    RubricBasedDatapoint,
-    Rubric,
-    Conversation,
-    RubricDatapointListBuilder,
-)
-from termcolor import colored
 
 
 class RubricGradedEnv(Env):

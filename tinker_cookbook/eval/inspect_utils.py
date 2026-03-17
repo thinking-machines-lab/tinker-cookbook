@@ -7,13 +7,15 @@ run_inspect_evals.py and inspect_evaluator.py to avoid code duplication.
 
 import logging
 import time
-from typing import Sequence
+from collections.abc import Sequence
 
 import tinker
 from inspect_ai.model import ChatCompletionChoice as InspectAIModelOutputChoice
 from inspect_ai.model import ChatMessage as InspectAIChatMessage
 from inspect_ai.model import ChatMessageAssistant as InspectAIChatMessageAssistant
 from inspect_ai.model import ChatMessageSystem, Content
+from inspect_ai.model import ContentReasoning as InspectAIContentReasoning
+from inspect_ai.model import ContentText as InspectAIContentText
 from inspect_ai.model import GenerateConfig as InspectAIGenerateConfig
 from inspect_ai.model import ModelAPI as InspectAIModelAPI
 from inspect_ai.model import ModelOutput as InspectAIModelOutput
@@ -22,7 +24,9 @@ from inspect_ai.model._registry import modelapi_register
 from inspect_ai.tool import ToolChoice as InspectAIToolChoice
 from inspect_ai.tool import ToolInfo as InspectAIToolInfo
 from termcolor import colored
+
 from tinker_cookbook import renderers
+from tinker_cookbook.renderers.base import ensure_list
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 logger = logging.getLogger(__name__)
@@ -44,15 +48,49 @@ def get_model_usage(
 
 
 def convert_inspect_messages(messages: list[InspectAIChatMessage]) -> list[renderers.Message]:
-    def assert_string(content: str | list[Content]) -> str:
+    result: list[renderers.Message] = []
+    for m in messages:
+        content = m.content
         if isinstance(content, str):
-            return content
+            result.append(renderers.Message(role=m.role, content=content.strip()))
         else:
-            raise ValueError(f"Invalid content: {content}")
+            # Structured content list from inspect_ai
+            parts: list[renderers.ContentPart] = []
+            for item in content:
+                if isinstance(item, InspectAIContentText):
+                    parts.append(renderers.TextPart(type="text", text=item.text))
+                elif isinstance(item, InspectAIContentReasoning):
+                    parts.append(renderers.ThinkingPart(type="thinking", thinking=item.reasoning))
+                else:
+                    logger.warning(
+                        f"Skipping unsupported inspect content type: {type(item).__name__}"
+                    )
+            # For non-assistant roles, flatten to string (reasoning in user/system is meaningless)
+            if m.role != "assistant" or not parts:
+                text = " ".join(
+                    p["text"] if p["type"] == "text" else p["thinking"]  # type: ignore[typeddict-item]
+                    for p in parts
+                ).strip()
+                result.append(renderers.Message(role=m.role, content=text))
+            else:
+                result.append(renderers.Message(role=m.role, content=parts))
+    return result
 
-    return [
-        renderers.Message(role=m.role, content=assert_string(m.content).strip()) for m in messages
-    ]
+
+def _message_to_inspect_content(
+    message: renderers.Message,
+) -> list[Content]:
+    """Convert a renderer Message's content parts to inspect_ai content types."""
+    parts = ensure_list(message["content"])
+    result: list[Content] = []
+    for part in parts:
+        if part["type"] == "thinking":
+            result.append(InspectAIContentReasoning(reasoning=part["thinking"]))
+        elif part["type"] == "text":
+            result.append(InspectAIContentText(text=part["text"]))
+        else:
+            logger.warning(f"Skipping unsupported content part type in response: {part['type']}")
+    return result
 
 
 class InspectAPIFromTinkerSampling(InspectAIModelAPI):
@@ -71,10 +109,13 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
         sampling_client: tinker.SamplingClient | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
-        api_key_vars: list[str] = [],
+        api_key_vars: list[str] | None = None,
         config: InspectAIGenerateConfig = InspectAIGenerateConfig(),
         verbose: bool = False,
+        include_reasoning: bool = False,
     ):
+        if api_key_vars is None:
+            api_key_vars = []
         super().__init__(
             model_name=model_name,
             base_url=base_url,
@@ -96,6 +137,7 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
         tokenizer = get_tokenizer(model_name)
         self.renderer = renderers.get_renderer(name=renderer_name, tokenizer=tokenizer)
         self.verbose = verbose
+        self.include_reasoning = include_reasoning
 
     async def generate(
         self,
@@ -140,14 +182,26 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
         parsed_responses = [
             self.renderer.parse_response(r.tokens)[0] for r in sampled_token_sequences
         ]
-        responses_text: list[str] = [renderers.get_text_content(r) for r in parsed_responses]
-        all_choices = [
-            InspectAIModelOutputChoice(
-                message=InspectAIChatMessageAssistant(content=r, model=self.model_name),
-                stop_reason="stop",
-            )
-            for r in responses_text
-        ]
+        if self.include_reasoning:
+            all_choices = [
+                InspectAIModelOutputChoice(
+                    message=InspectAIChatMessageAssistant(
+                        content=_message_to_inspect_content(r), model=self.model_name
+                    ),
+                    stop_reason="stop",
+                )
+                for r in parsed_responses
+            ]
+        else:
+            all_choices = [
+                InspectAIModelOutputChoice(
+                    message=InspectAIChatMessageAssistant(
+                        content=renderers.get_text_content(r), model=self.model_name
+                    ),
+                    stop_reason="stop",
+                )
+                for r in parsed_responses
+            ]
         usage = get_model_usage(prompt.to_ints(), sampled_token_sequences)
 
         return InspectAIModelOutput(

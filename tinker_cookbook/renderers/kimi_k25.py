@@ -4,16 +4,17 @@ from collections.abc import Iterator
 from typing import cast
 
 import tinker
+
+from tinker_cookbook.image_processing_utils import ImageProcessor
 from tinker_cookbook.renderers.base import (
-    Message,
     ContentPart,
     ImageProcessorProtocol,
-    image_to_chunk,
+    Message,
     MessageDelta,
     Role,
     ToolSpec,
+    image_to_chunk,
 )
-from tinker_cookbook.image_processing_utils import ImageProcessor
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k2_5_tool_declaration_ts import encode_tools_to_typescript_style
 from tinker_cookbook.tokenizer_utils import Tokenizer
