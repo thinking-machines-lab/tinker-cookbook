@@ -630,17 +630,14 @@ def build_quantized(
             if _should_skip_checkpoint_key(key):
                 continue
 
-            # Apply merge ops
-            ops_for_key = merge_ops.pop(key, [])
-            if ops_for_key:
-                # Put tensor in a temp dict for apply_merge_op
-                temp = {key: tensor}
-                for op in ops_for_key:
-                    apply_merge_op(temp, op)
-                    ops_applied += 1
-                tensor = temp[key]
+            # Skip native scale_inv tensors (we generate new .weight_scale)
+            if key.endswith(".weight_scale_inv"):
+                continue
 
-            # Handle native FP8 weight_scale_inv (dequantize before re-quantize)
+            # Step 1: Dequantize native FP8 weights BEFORE merge
+            # Native FP8 checkpoints store weights in FP8 + scale_inv.
+            # We must dequantize to BF16 first so the LoRA merge math works
+            # correctly in float precision.
             if key.endswith(".weight") and tensor.dtype == torch.float8_e4m3fn and is_native_fp8:
                 scale_key = key.replace(".weight", ".weight_scale_inv")
                 # Scale may be in this shard or a different one
@@ -653,28 +650,22 @@ def build_quantized(
                 else:
                     logger.warning("FP8 weight %s has no scale tensor, keeping as-is", key)
 
-            # Quantize routed experts to FP8
+            # Step 2: Apply LoRA merge ops (on dequantized BF16 tensors)
+            ops_for_key = merge_ops.pop(key, [])
+            if ops_for_key:
+                temp = {key: tensor}
+                for op in ops_for_key:
+                    apply_merge_op(temp, op)
+                    ops_applied += 1
+                tensor = temp[key]
+
+            # Step 3: Quantize routed experts to FP8, preserve everything else
             if _is_routed_expert_weight(key) and key.endswith(".weight"):
-                # Ensure we're working with a float tensor for quantization
-                if tensor.dtype in (torch.bfloat16, torch.float16, torch.float32):
-                    fp8_tensor, scale = quantize_blockwise(tensor)
-                    output_tensors[key] = fp8_tensor
-                    output_tensors[_weight_scale_key(key)] = scale
-                else:
-                    # Already FP8 from dequant+requant path above shouldn't hit this,
-                    # but handle gracefully
-                    output_tensors[key] = tensor
-            elif key.endswith(".weight_scale_inv"):
-                # Skip original scale tensors (we generate new ones during quantization)
-                continue
+                fp8_tensor, scale = quantize_blockwise(tensor)
+                output_tensors[key] = fp8_tensor
+                output_tensors[_weight_scale_key(key)] = scale
             else:
-                # Dense/shared expert/non-weight tensors: preserve as-is
-                # Ensure BF16 for weight tensors
-                if tensor.dtype == torch.float8_e4m3fn:
-                    # Shouldn't happen for non-expert weights, but be safe
-                    output_tensors[key] = tensor
-                else:
-                    output_tensors[key] = tensor
+                output_tensors[key] = tensor
 
             weight_map[key] = out_shard_name
             # Also track scale tensors in weight map
@@ -739,12 +730,20 @@ def build_quantized(
 
 
 def _compute_total_size(output_path: Path, shard_names: set[str]) -> int:
-    """Compute total size of all tensors across output shards."""
+    """Compute total byte size of all tensors across output shards.
+
+    Uses safetensors headers to sum ``numel * element_size`` for each tensor,
+    matching the HuggingFace convention for ``model.safetensors.index.json``.
+    """
     total = 0
     for name in shard_names:
-        path = output_path / name
-        if path.exists():
-            total += path.stat().st_size
+        shard_path = output_path / name
+        if not shard_path.exists():
+            continue
+        with safe_open(str(shard_path), framework="pt") as f:
+            for key in f.keys():  # noqa: SIM118
+                tensor = f.get_tensor(key)
+                total += tensor.nelement() * tensor.element_size()
     return total
 
 

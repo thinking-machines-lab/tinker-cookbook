@@ -517,3 +517,98 @@ class TestCrossShardFP8Scale:
         assert "model.layers.0.mlp.experts.0.gate_proj.weight_scale" in out
         # No native scale_inv in output
         assert "model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv" not in out
+
+    def test_merge_applied_before_requantize_on_native_fp8(self, tmp_path: Path):
+        """Regression: LoRA merge must happen AFTER dequant, BEFORE requant.
+
+        If merge is applied to the raw FP8 tensor (before dequant), the delta
+        gets corrupted because FP8 can't represent the fine-grained LoRA values.
+        """
+        from tinker_cookbook.weights._export._quantized import (
+            build_quantized,
+            dequantize_blockwise,
+            quantize_blockwise,
+        )
+
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+        model_dir.mkdir(parents=True)
+
+        # Create a native FP8 expert weight
+        original_bf16 = torch.randn(8, 4, dtype=torch.bfloat16)
+        fp8_weight, scale_inv = quantize_blockwise(original_bf16, block_size=(4, 4))
+
+        num_experts = 2
+        shard1: dict[str, torch.Tensor] = {}
+        for i in range(num_experts):
+            shard1[f"model.layers.0.mlp.experts.{i}.gate_proj.weight"] = fp8_weight.clone()
+            shard1[f"model.layers.0.mlp.experts.{i}.gate_proj.weight_scale_inv"] = scale_inv.clone()
+
+        save_file(shard1, str(model_dir / "model.safetensors"))
+        config = {
+            "model_type": "deepseek_v3",
+            "architectures": ["DeepseekV3ForCausalLM"],
+            "quantization_config": {"quant_method": "fp8", "weight_block_size": [4, 4]},
+        }
+        (model_dir / "config.json").write_text(json.dumps(config))
+        (model_dir / "tokenizer_config.json").write_text(
+            json.dumps({"tokenizer_class": "PreTrainedTokenizerFast"})
+        )
+        (model_dir / "tokenizer.json").write_text(
+            json.dumps(
+                {
+                    "version": "1.0",
+                    "model": {"type": "BPE", "vocab": {"a": 0, "b": 1}, "merges": []},
+                    "added_tokens": [],
+                }
+            )
+        )
+
+        # LoRA adapter targeting gate_proj (w1) with a known delta
+        lora_fill = 0.1
+        adapter_weights = {
+            "base_model.model.model.layers.0.mlp.experts.w1.lora_A.weight": (
+                torch.ones(num_experts, 1, 4) * lora_fill
+            ),
+            "base_model.model.model.layers.0.mlp.experts.w1.lora_B.weight": torch.ones(
+                num_experts, 8, 1
+            ),
+        }
+        adapter_dir.mkdir(parents=True)
+        save_file(adapter_weights, str(adapter_dir / "adapter_model.safetensors"))
+        (adapter_dir / "adapter_config.json").write_text(json.dumps({"lora_alpha": 1, "r": 1}))
+
+        build_quantized(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+            trust_remote_code=False,
+            model_dir=model_dir,
+            config_dict=config,
+            serving_format="vllm",
+        )
+
+        # Load output and dequantize to check the merge was applied
+        out = {}
+        for p in sorted(output_dir.glob("*.safetensors")):
+            out.update(load_file(str(p)))
+
+        expert_key = "model.layers.0.mlp.experts.0.gate_proj.weight"
+        scale_key = "model.layers.0.mlp.experts.0.gate_proj.weight_scale"
+        merged_dequantized = dequantize_blockwise(
+            out[expert_key], out[scale_key], block_size=(128, 128)
+        )
+
+        # The original dequantized value
+        original_dequantized = dequantize_blockwise(fp8_weight, scale_inv, block_size=(4, 4))
+
+        # The merged result should differ from original by approximately the LoRA delta
+        delta = (merged_dequantized.float() - original_dequantized.float()).abs()
+        assert delta.sum() > 0, "LoRA merge had no effect — merge may have been applied to FP8"
+        # The delta should be approximately lora_fill (0.1) everywhere
+        # Allow tolerance for FP8 round-trip quantization error
+        assert delta.mean().item() == pytest.approx(lora_fill, abs=0.05), (
+            f"Expected delta ~{lora_fill}, got {delta.mean().item():.4f}. "
+            "Merge may have been applied before dequantization."
+        )
