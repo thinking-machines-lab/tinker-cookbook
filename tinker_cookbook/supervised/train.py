@@ -28,17 +28,8 @@ from tinker_cookbook.supervised.common import compute_mean_nll
 from tinker_cookbook.supervised.nll_evaluator import NLLEvaluator
 from tinker_cookbook.supervised.types import SupervisedDatasetBuilder
 from tinker_cookbook.tokenizer_utils import get_tokenizer
-from tinker_cookbook.utils import ml_log
+from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.lr_scheduling import LRSchedule, compute_schedule_lr_multiplier
-from tinker_cookbook.utils.trace import (
-    IterationWindow,
-    save_gantt_chart_html,
-    scope,
-    scope_span,
-    trace_init,
-    trace_iteration,
-    update_scope_context,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +94,7 @@ class SubmittedBatch:
     infrequent_eval_metrics: dict[str, float] | None = None
 
 
-@scope
+@trace.scope
 async def run_evals(
     evaluators: list[Evaluator],
     training_client: tinker.TrainingClient,
@@ -119,24 +110,24 @@ async def run_evals(
     checkpoint. Returned metrics are prefixed with ``test/`` so they can be logged next
     to the same-step training metrics.
     """
-    update_scope_context({"step": step})
+    trace.update_scope_context({"step": step})
 
     metrics = {}
     sampling_client = None
 
-    @scope
+    @trace.scope
     async def run_evaluator(evaluator: Evaluator) -> dict[str, float]:
-        update_scope_context(
+        trace.update_scope_context(
             {
                 "step": step,
                 "evaluator_name": type(evaluator).__name__,
             }
         )
         if isinstance(evaluator, TrainingClientEvaluator):
-            update_scope_context({"evaluator_type": "TrainingClientEvaluator"})
+            trace.update_scope_context({"evaluator_type": "TrainingClientEvaluator"})
             return await evaluator(training_client)
         elif isinstance(evaluator, SamplingClientEvaluator):
-            update_scope_context({"evaluator_type": "SamplingClientEvaluator"})
+            trace.update_scope_context({"evaluator_type": "SamplingClientEvaluator"})
             # Create sampling client lazily, only when needed
             nonlocal sampling_client
             if sampling_client is None:
@@ -156,7 +147,7 @@ async def run_evals(
     return metrics
 
 
-@scope
+@trace.scope
 async def main(config: Config):
     """Run the standard supervised learning loop used by the supervised recipes.
 
@@ -198,7 +189,7 @@ async def main(config: Config):
         logger.info(
             f"Run `python tinker_cookbook/utils/trace.py {trace_events_path} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"
         )
-        trace_init(output_file=trace_events_path)
+        trace.trace_init(output_file=trace_events_path)
 
     service_client = tinker.ServiceClient(base_url=config.base_url)
 
@@ -251,10 +242,10 @@ async def main(config: Config):
         f"Training for {n_batches} batches x {config.num_epochs} epochs = {n_batches * config.num_epochs} steps"
     )
 
-    @scope
+    @trace.scope
     async def submit_batch(epoch_idx: int, batch_idx: int) -> SubmittedBatch:
         step = epoch_idx * n_batches + batch_idx
-        update_scope_context({"step": step})
+        trace.update_scope_context({"step": step})
 
         metrics: dict[str, int | float | str] = {"epoch": epoch_idx}
         metrics["progress"] = step / progress_denominator
@@ -273,7 +264,7 @@ async def main(config: Config):
             eps=config.adam_eps,
         )
 
-        async with scope_span("get_batch"):
+        async with trace.scope_span("get_batch"):
             data = dataset.get_batch(batch_idx)
         if data:
             logger.info(colorize_example(data[0], tokenizer))
@@ -281,7 +272,7 @@ async def main(config: Config):
         # Trigger evaluations BEFORE submitting training operations so they snapshot pre-step weights
         eval_metrics = None
         if evaluators and config.eval_every > 0 and step % config.eval_every == 0:
-            async with scope_span("evals"):
+            async with trace.scope_span("evals"):
                 eval_metrics = await run_evals(evaluators, training_client, step)
 
         infrequent_eval_metrics = None
@@ -290,7 +281,7 @@ async def main(config: Config):
             and config.infrequent_eval_every > 0
             and step % config.infrequent_eval_every == 0
         ):
-            async with scope_span("infrequent_evals"):
+            async with trace.scope_span("infrequent_evals"):
                 infrequent_eval_metrics = await run_evals(
                     infrequent_evaluators, training_client, step
                 )
@@ -310,15 +301,15 @@ async def main(config: Config):
             infrequent_eval_metrics=infrequent_eval_metrics,
         )
 
-    @scope
+    @trace.scope
     async def finish_batch(submitted: SubmittedBatch):
-        update_scope_context({"step": submitted.step})
+        trace.update_scope_context({"step": submitted.step})
 
         metrics = submitted.metrics
         metrics["progress"] = min((submitted.step + 1) / progress_denominator, 1.0)
 
         if config.save_every > 0 and submitted.step % config.save_every == 0 and submitted.step > 0:
-            async with scope_span("save_checkpoint"):
+            async with trace.scope_span("save_checkpoint"):
                 # Enqueue a checkpoint save after the forward/backward and optimizer
                 # requests for this step; the snapshot will reflect post-step weights.
                 await checkpoint_utils.save_checkpoint_async(
@@ -330,7 +321,7 @@ async def main(config: Config):
                     ttl_seconds=config.ttl_seconds,
                 )
 
-        async with scope_span("step"):
+        async with trace.scope_span("step"):
             fwd_bwd_result = await submitted.fwd_bwd_future.result_async()
             optim_step_result = await submitted.optim_step_future.result_async()
 
@@ -359,13 +350,13 @@ async def main(config: Config):
     pending_batch: SubmittedBatch | None = None
     log_path = Path(config.log_path)
 
-    async def finish_and_log(submitted: SubmittedBatch, window: IterationWindow) -> None:
+    async def finish_and_log(submitted: SubmittedBatch, window: trace.IterationWindow) -> None:
         """Finish a batch, merge timing metrics, and log."""
         await finish_batch(submitted)
         submitted.metrics.update(window.get_timing_metrics())
         window.write_spans_jsonl(log_path / "timing_spans.jsonl", step=submitted.step)
         if config.span_chart_every > 0 and submitted.step % config.span_chart_every == 0:
-            save_gantt_chart_html(
+            trace.save_gantt_chart_html(
                 window, submitted.step, log_path / f"timing_gantt_{submitted.step:06d}.html"
             )
         ml_logger.log_metrics(metrics=submitted.metrics, step=submitted.step)
@@ -381,7 +372,7 @@ async def main(config: Config):
             if config.max_steps is not None and step >= config.max_steps:
                 reached_max_steps = True
                 break
-            with trace_iteration(step=step) as window:
+            with trace.trace_iteration(step=step) as window:
                 submitted_batch = await submit_batch(epoch_idx, batch_idx)
                 if pending_batch is not None:
                     await finish_and_log(pending_batch, window)
@@ -390,7 +381,7 @@ async def main(config: Config):
             break
 
     if pending_batch is not None:
-        with trace_iteration(step=pending_batch.step) as window:
+        with trace.trace_iteration(step=pending_batch.step) as window:
             await finish_and_log(pending_batch, window)
 
     did_train = start_epoch < config.num_epochs and (

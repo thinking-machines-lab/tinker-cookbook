@@ -17,15 +17,9 @@ from tinker_cookbook.eval.evaluators import Evaluator, EvaluatorBuilder
 from tinker_cookbook.supervised.train import run_evals
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDataset
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
-from tinker_cookbook.utils import ml_log
+from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.format_colorized import format_colorized
 from tinker_cookbook.utils.lr_scheduling import LRSchedule, compute_schedule_lr_multiplier
-from tinker_cookbook.utils.trace import (
-    save_gantt_chart_html,
-    scope_span_sync,
-    trace_init,
-    trace_iteration,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -199,10 +193,10 @@ def do_update(
     step = epoch_idx * n_batches + batch_idx
     metrics: dict[str, int | float | str] = {"epoch": epoch_idx}
 
-    with trace_iteration(step=step) as window:
+    with trace.trace_iteration(step=step) as window:
         # Save checkpoint if needed
         if config.save_every > 0 and step % config.save_every == 0 and step > 0:
-            with scope_span_sync("save_checkpoint"):
+            with trace.scope_span_sync("save_checkpoint"):
                 save_result = checkpoint_utils.save_checkpoint(
                     training_client=training_client,
                     name=f"{step:06d}",
@@ -226,17 +220,17 @@ def do_update(
 
         # Evaluation
         if config.eval_every > 0 and step % config.eval_every == 0:
-            with scope_span_sync("evals"):
+            with trace.scope_span_sync("evals"):
                 eval_metrics = asyncio.run(run_evals(evaluators, training_client, step))
             metrics.update(eval_metrics)
 
         if config.infrequent_eval_every > 0 and step % config.infrequent_eval_every == 0:
-            with scope_span_sync("infrequent_evals"):
+            with trace.scope_span_sync("infrequent_evals"):
                 eval_metrics = asyncio.run(run_evals(infrequent_evaluators, training_client, step))
             metrics.update(eval_metrics)
 
         # Prepare batch
-        with scope_span_sync("get_batch"):
+        with trace.scope_span_sync("get_batch"):
             data = dataset.get_batch(batch_idx)
 
     # Split data into chosen and rejected pairs
@@ -249,7 +243,7 @@ def do_update(
             print_example(chosen_data[i], tokenizer, "Chosen")
             print_example(rejected_data[i], tokenizer, "Rejected")
 
-        with scope_span_sync("get_ref_logprobs"):
+        with trace.scope_span_sync("get_ref_logprobs"):
             # Get reference log probabilities
             # Need to reconstruct full sequences for the sampling client
             full_sequences = []
@@ -324,7 +318,7 @@ def do_update(
                 dpo_beta=config.dpo_beta,
             )
 
-        with scope_span_sync("step"):
+        with trace.scope_span_sync("step"):
             # Do forward-backward with custom DPO loss
             backward_result = training_client.forward_backward_custom(data, dpo_loss_fn).result()
             dpo_metrics = backward_result.metrics
@@ -345,7 +339,7 @@ def do_update(
     metrics.update(window.get_timing_metrics())
     window.write_spans_jsonl(Path(log_path) / "timing_spans.jsonl", step=step)
     if config.span_chart_every > 0 and step % config.span_chart_every == 0:
-        save_gantt_chart_html(window, step, Path(log_path) / f"timing_gantt_{step:06d}.html")
+        trace.save_gantt_chart_html(window, step, Path(log_path) / f"timing_gantt_{step:06d}.html")
     ml_logger.log_metrics(metrics=metrics, step=step)
 
 
@@ -372,7 +366,7 @@ def main(config: Config):
         logger.info(
             f"Run `python tinker_cookbook/utils/trace.py {trace_events_path} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"
         )
-        trace_init(output_file=trace_events_path)
+        trace.trace_init(output_file=trace_events_path)
 
     user_metadata: dict[str, str] = {}
     if wandb_link := ml_logger.get_logger_url():

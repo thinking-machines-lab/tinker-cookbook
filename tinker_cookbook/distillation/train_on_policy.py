@@ -38,21 +38,13 @@ from tinker_cookbook.rl.types import (
     TrajectoryGroup,
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
-from tinker_cookbook.utils import ml_log
+from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.misc_utils import safezip
-from tinker_cookbook.utils.trace import (
-    save_gantt_chart_html,
-    scope,
-    scope_span,
-    trace_init,
-    trace_iteration,
-    update_scope_context,
-)
 
 logger = logging.getLogger(__name__)
 
 
-@scope
+@trace.scope
 async def incorporate_kl_penalty(
     data_D: list[tinker.Datum],
     teacher_clients_D: list[tinker.SamplingClient],
@@ -176,7 +168,7 @@ class Config:
     max_step: int | None = None
 
 
-@scope
+@trace.scope
 async def prepare_minibatch(
     env_group_builders_P: Sequence[EnvGroupBuilder],
     trajectory_groups_P: list[TrajectoryGroup],
@@ -194,7 +186,7 @@ async def prepare_minibatch(
     metrics.update(compute_trajectory_metrics(trajectory_groups_P, taglist_P))
 
     # Assemble training data
-    async with scope_span("assemble_training_data"):
+    async with trace.scope_span("assemble_training_data"):
         advantages_P = compute_advantages(trajectory_groups_P)
         data_D, metadata_D = assemble_training_data(trajectory_groups_P, advantages_P)
 
@@ -208,7 +200,7 @@ async def prepare_minibatch(
 
     # Incorporate KL penalty if configured
     if kl_penalty_coef > 0:
-        async with scope_span("compute_kl_penalty"):
+        async with trace.scope_span("compute_kl_penalty"):
             # Map each datum to its teacher sampling client and dataset index using metadata
             #   - metadata_D contains group_idx which indexes into trajectory_groups_P
             #   - dataset_indices_P[group_idx] gives us the dataset index
@@ -231,7 +223,7 @@ async def prepare_minibatch(
     return data_D, metrics
 
 
-@scope
+@trace.scope
 async def do_train_step_and_get_sampling_client(
     cfg: Config,
     i_batch: int,
@@ -243,7 +235,7 @@ async def do_train_step_and_get_sampling_client(
     dataset_indices_P: list[int],
     teacher_clients: list[tinker.SamplingClient],
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
-    update_scope_context({"step": i_batch})
+    trace.update_scope_context({"step": i_batch})
 
     metrics = {}
     data_D, prepare_minibatch_metrics = await prepare_minibatch(
@@ -257,7 +249,7 @@ async def do_train_step_and_get_sampling_client(
     )
     metrics.update(prepare_minibatch_metrics)
 
-    async with scope_span("train"):
+    async with trace.scope_span("train"):
         training_logprobs_D = await train_step(
             data_D=data_D,
             training_client=training_client,
@@ -283,7 +275,7 @@ async def do_train_step_and_get_sampling_client(
     return sampling_client, metrics
 
 
-@scope
+@trace.scope
 async def do_sync_training(
     start_batch: int,
     end_batch: int,
@@ -313,17 +305,17 @@ async def do_sync_training(
             "progress/done_frac": (i_batch + 1) / num_batches,
         }
 
-        with trace_iteration(step=i_batch) as window:
+        with trace.trace_iteration(step=i_batch) as window:
             # Run evaluations
             if cfg.eval_every > 0 and i_batch % cfg.eval_every == 0:
-                async with scope_span("run_evals"):
+                async with trace.scope_span("run_evals"):
                     for evaluator in evaluators:
                         eval_metrics = await evaluator(sampling_client)
                         metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
 
             # Get batch and sample trajectories
             env_group_builders_P, dataset_indices_P = dataset.get_batch(i_batch)
-            async with scope_span("sample"):
+            async with trace.scope_span("sample"):
                 trajectory_groups_P = await asyncio.gather(
                     *[
                         asyncio.create_task(
@@ -364,11 +356,13 @@ async def do_sync_training(
         metrics.update(window.get_timing_metrics())
         window.write_spans_jsonl(log_path / "timing_spans.jsonl", step=i_batch)
         if cfg.span_chart_every > 0 and i_batch % cfg.span_chart_every == 0:
-            save_gantt_chart_html(window, i_batch, log_path / f"timing_gantt_{i_batch:06d}.html")
+            trace.save_gantt_chart_html(
+                window, i_batch, log_path / f"timing_gantt_{i_batch:06d}.html"
+            )
         ml_logger.log_metrics(metrics, step=i_batch)
 
 
-@scope
+@trace.scope
 async def main(
     cfg: Config,
 ):
@@ -389,7 +383,7 @@ async def main(
         logger.info(
             f"Run `python tinker_cookbook/utils/trace.py {trace_events_path} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"
         )
-        trace_init(output_file=trace_events_path)
+        trace.trace_init(output_file=trace_events_path)
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("pylatexenc").setLevel(logging.WARNING)

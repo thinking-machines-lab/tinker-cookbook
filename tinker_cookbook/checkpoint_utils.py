@@ -9,8 +9,8 @@ from typing import Any, Literal
 import tinker
 
 from tinker_cookbook import model_info
+from tinker_cookbook.utils import trace
 from tinker_cookbook.utils.file_utils import read_jsonl
-from tinker_cookbook.utils.trace import scope, update_scope_context
 
 CHECKPOINTS_BASE_NAME = "checkpoints.jsonl"
 
@@ -287,7 +287,7 @@ async def check_renderer_name_for_checkpoint_async(
     return None
 
 
-@scope
+@trace.scope
 def load_checkpoints_file(log_dir: str) -> list[CheckpointRecord]:
     checkpoint_path = Path(log_dir) / CHECKPOINTS_BASE_NAME
     if not checkpoint_path.exists():
@@ -295,11 +295,11 @@ def load_checkpoints_file(log_dir: str) -> list[CheckpointRecord]:
         return []
 
     logger.info(f"Reading checkpoints from {checkpoint_path}")
-    update_scope_context({"checkpoint_path": str(checkpoint_path)})
+    trace.update_scope_context({"checkpoint_path": str(checkpoint_path)})
     return [CheckpointRecord.from_dict(d) for d in read_jsonl(str(checkpoint_path))]
 
 
-@scope
+@trace.scope
 def get_last_checkpoint(log_dir: str, required_key: str = "state_path") -> CheckpointRecord | None:
     """
     Get the last checkpoint from the checkpoints.jsonl file in the specified log directory.
@@ -326,7 +326,7 @@ def get_last_checkpoint(log_dir: str, required_key: str = "state_path") -> Check
         return None
 
 
-@scope
+@trace.scope
 async def save_checkpoint_async(
     training_client: tinker.TrainingClient,
     name: str,
@@ -359,7 +359,7 @@ async def save_checkpoint_async(
 
     results = {k: await v.result_async() for k, v in futures.items()}
     paths = {k + "_path": v.path for k, v in results.items()}
-    update_scope_context(paths)
+    trace.update_scope_context(paths)
     logger.info(f"Saved checkpoints: {paths}")
 
     record = CheckpointRecord.from_dict({"name": name, **loop_state, **paths})
@@ -369,7 +369,7 @@ async def save_checkpoint_async(
     return paths
 
 
-@scope
+@trace.scope
 def save_checkpoint(
     training_client: tinker.TrainingClient,
     name: str,
