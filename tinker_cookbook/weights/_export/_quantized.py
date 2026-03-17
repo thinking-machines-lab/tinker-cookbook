@@ -727,7 +727,7 @@ def build_quantized(
     with open(index_path, "w") as f:
         json.dump(index, f, indent=2)
 
-    # 6. Copy config and patch with quantization metadata
+    # 7. Copy config and patch with quantization metadata
     src_config = model_dir / "config.json"
     if src_config.exists():
         shutil.copy2(src_config, out / "config.json")
@@ -753,10 +753,26 @@ def build_quantized(
     logger.info("Done — quantized model saved to %s", out)
 
 
+_DTYPE_SIZES: dict[str, int] = {
+    "F64": 8,
+    "F32": 4,
+    "F16": 2,
+    "BF16": 2,
+    "I64": 8,
+    "I32": 4,
+    "I16": 2,
+    "I8": 1,
+    "U8": 1,
+    "F8_E4M3": 1,
+    "F8_E5M2": 1,
+    "BOOL": 1,
+}
+
+
 def _compute_total_size(output_path: Path, shard_names: set[str]) -> int:
     """Compute total byte size of all tensors across output shards.
 
-    Uses safetensors headers to sum ``numel * element_size`` for each tensor,
+    Reads safetensors headers only (shape + dtype) without loading tensor data,
     matching the HuggingFace convention for ``model.safetensors.index.json``.
     """
     total = 0
@@ -766,8 +782,12 @@ def _compute_total_size(output_path: Path, shard_names: set[str]) -> int:
             continue
         with safe_open(str(shard_path), framework="pt") as f:
             for key in f.keys():  # noqa: SIM118
-                tensor = f.get_tensor(key)
-                total += tensor.nelement() * tensor.element_size()
+                shape = f.get_slice(key).get_shape()
+                dtype_str = f.get_slice(key).get_dtype()
+                numel = 1
+                for dim in shape:
+                    numel *= dim
+                total += numel * _DTYPE_SIZES.get(dtype_str, 4)
     return total
 
 
