@@ -64,9 +64,7 @@ def build_hf_model(
             already exist.
         dtype: Data type for loading the base model. One of ``"bfloat16"``
             (default), ``"float16"``, or ``"float32"``. Use ``"float32"``
-            for maximum precision during merge. Only used by
-            ``merge_strategy="full"``; the shard strategy preserves the
-            on-disk dtype of each tensor.
+            for maximum precision during merge.
         trust_remote_code: Whether to trust remote code when loading HF
             models. Required for some newer model architectures (e.g.
             Qwen3.5). If ``None`` (default), falls back to the
@@ -101,22 +99,6 @@ def build_hf_model(
         )
 
     resolved_trust = resolve_trust_remote_code(trust_remote_code)
-
-    # Load model config for model-family detection (lightweight, no weight download).
-    config_dict = load_config_dict(base_model)
-
-    # Model-family specific export strategies override standard strategies.
-    # To add a new model-specific export:
-    #   1. Create _export/_<model>.py with a build_<model>() function
-    #   2. Add detection in _detect_export_override()
-    #   3. Add a dispatch branch below
-    # Example (PR #470 — DeepSeek):
-    #   export_override = _detect_export_override(config_dict)
-    #   if export_override == "deepseek":
-    #       from ._deepseek import build_deepseek
-    #       build_deepseek(...)
-    #       return
-
     strategy = _resolve_strategy(merge_strategy)
 
     if strategy == "full":
@@ -129,28 +111,15 @@ def build_hf_model(
             dtype=dtype,
             torch_dtype=_DTYPE_MAP[dtype],
             trust_remote_code=resolved_trust,
-            config_dict=config_dict,
         )
     else:
-        if dtype != "bfloat16":
-            logger.warning(
-                "dtype=%r only applies to merge_strategy='full'. "
-                "The shard strategy preserves each tensor's on-disk dtype. "
-                "Pass merge_strategy='full' to control output precision.",
-                dtype,
-            )
-
-        from tinker_cookbook.weights._artifacts import resolve_model_dir
         from tinker_cookbook.weights._export._shard import build_sharded
 
-        model_dir = resolve_model_dir(base_model)
         build_sharded(
             base_model=base_model,
             adapter_path=adapter_path,
             output_path=output_path,
             trust_remote_code=resolved_trust,
-            model_dir=model_dir,
-            config_dict=config_dict,
         )
 
 
@@ -178,15 +147,7 @@ def resolve_trust_remote_code(trust_remote_code: bool | None) -> bool:
 
 
 def load_config_dict(model_dir_or_name: str | Path) -> dict:
-    """Load config.json as a raw dict from a local directory or HF model name.
-
-    For local directories, reads config.json directly. For HF model names
-    (not a local directory), falls back to ``AutoConfig.from_pretrained``.
-
-    Raises:
-        FileNotFoundError: If ``model_dir_or_name`` is a local directory
-            that doesn't contain ``config.json``.
-    """
+    """Load config.json as a raw dict from a local directory or HF model name."""
     model_dir = (
         Path(model_dir_or_name) if not isinstance(model_dir_or_name, Path) else model_dir_or_name
     )
@@ -194,13 +155,7 @@ def load_config_dict(model_dir_or_name: str | Path) -> dict:
     if config_path.exists():
         with open(config_path) as f:
             return json.load(f)
-    # If it's a local directory without config.json, fail explicitly
-    if model_dir.is_dir():
-        raise FileNotFoundError(
-            f"No config.json found in {model_dir}. "
-            f"Ensure this is a valid HuggingFace model directory."
-        )
-    # Fall back to HF config loading for remote model names
+    # Fall back to HF config loading for remote models
     config = AutoConfig.from_pretrained(str(model_dir_or_name))
     return config.to_dict()
 

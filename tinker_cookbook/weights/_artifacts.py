@@ -1,9 +1,8 @@
-"""Model artifact I/O utilities for weight export.
+"""Shard-by-shard I/O utilities for weight export.
 
 Provides utilities for reading safetensors metadata, writing sharded output,
-loading adapters, resolving model directories, and copying non-weight files.
-Used by both standard export strategies (``_export/_full.py``,
-``_export/_shard.py``) and model-specific export modules.
+and resolving model directories — used by the standard sharded export path
+and potentially by model-specific export modules.
 """
 
 from __future__ import annotations
@@ -20,8 +19,8 @@ from safetensors.torch import load_file, save_file
 
 logger = logging.getLogger(__name__)
 
-# Custom model code files to copy (for trust_remote_code models).
-_MODEL_CODE_PATTERNS = ("*.py",)
+# Lightweight files to copy from model dir (everything except weight shards).
+_NON_WEIGHT_PATTERNS = ("*.json", "*.py", "*.model", "*.txt", "*.tiktoken", "*.bpe", "*.spm")
 
 _MAX_SHARD_SIZE = 10 * (1024**3)  # 10 GB
 
@@ -29,21 +28,6 @@ _MAX_SHARD_SIZE = 10 * (1024**3)  # 10 GB
 # ---------------------------------------------------------------------------
 # Reading model metadata without loading weights
 # ---------------------------------------------------------------------------
-
-
-def _raise_no_safetensors(model_dir: Path) -> None:
-    """Raise FileNotFoundError with a helpful message for missing safetensors."""
-    bin_files = sorted(model_dir.glob("*.bin"))
-    if bin_files:
-        raise FileNotFoundError(
-            f"No .safetensors files found in {model_dir}. "
-            f"Found {len(bin_files)} .bin file(s) — this model may use the older PyTorch format. "
-            f"Try merge_strategy='full' which loads via from_pretrained and handles both formats."
-        )
-    raise FileNotFoundError(
-        f"No .safetensors files found in {model_dir}. "
-        f"Ensure the model has been fully downloaded, or try merge_strategy='full'."
-    )
 
 
 def get_model_state_keys(model_dir: Path) -> set[str]:
@@ -61,35 +45,15 @@ def get_model_state_keys(model_dir: Path) -> set[str]:
     Raises:
         FileNotFoundError: If no ``.safetensors`` files are found.
     """
-    return set(get_model_state_shapes(model_dir).keys())
-
-
-def get_model_state_shapes(model_dir: Path) -> dict[str, tuple[int, ...]]:
-    """Get shape for each weight key from safetensors headers without loading tensor data.
-
-    Uses ``safetensors.safe_open`` to read headers only. This is fast and uses
-    negligible memory regardless of model size. Useful for upfront shape
-    validation before loading any weight shards.
-
-    Args:
-        model_dir: Directory containing ``.safetensors`` files.
-
-    Returns:
-        Dict mapping tensor key names to their shapes.
-
-    Raises:
-        FileNotFoundError: If no ``.safetensors`` files are found.
-    """
     shard_files = sorted(model_dir.glob("*.safetensors"))
     if not shard_files:
-        _raise_no_safetensors(model_dir)
+        raise FileNotFoundError(f"No .safetensors files found in {model_dir}")
 
-    shapes: dict[str, tuple[int, ...]] = {}
+    keys: set[str] = set()
     for sf_path in shard_files:
         with safe_open(str(sf_path), framework="pt") as f:
-            for key in f.keys():  # noqa: SIM118 — safe_open doesn't support `in`
-                shapes[key] = tuple(f.get_slice(key).get_shape())
-    return shapes
+            keys.update(f.keys())
+    return keys
 
 
 def get_shard_files(model_dir: Path) -> list[str]:
@@ -115,7 +79,7 @@ def get_shard_files(model_dir: Path) -> list[str]:
 
     shard_files = sorted(model_dir.glob("*.safetensors"))
     if not shard_files:
-        _raise_no_safetensors(model_dir)
+        raise FileNotFoundError(f"No .safetensors files found in {model_dir}")
     return [f.name for f in shard_files]
 
 
@@ -188,24 +152,21 @@ def load_adapter_weights(adapter_dir: Path) -> tuple[dict[str, torch.Tensor], di
 # ---------------------------------------------------------------------------
 
 
-def copy_model_code_files(model_dir: Path, output_path: Path) -> None:
-    """Copy custom model code files (``*.py``) to the output directory.
+def copy_non_weight_files(model_dir: Path, output_path: Path) -> None:
+    """Copy config, tokenizer, and other non-weight files to the output directory.
 
-    Some model architectures require ``trust_remote_code=True`` and ship
-    custom Python files (e.g. ``configuration_*.py``, ``modeling_*.py``).
-    This copies those files so the merged model can be loaded standalone.
-
-    Only copies ``*.py`` files. Config and tokenizer files are handled
-    separately via HF APIs (``AutoConfig.save_pretrained``, etc.) to
-    avoid accidentally copying stale index files or other artifacts that
-    could break downstream loaders like vLLM/SGLang.
+    Copies files matching common non-weight patterns (JSON configs, tokenizer
+    files, model code). Skips safetensors weight files since those are written
+    separately by :class:`ShardWriter`.
 
     Args:
         model_dir: Source model directory.
         output_path: Destination directory (must exist).
     """
-    for pattern in _MODEL_CODE_PATTERNS:
+    for pattern in _NON_WEIGHT_PATTERNS:
         for item in sorted(model_dir.glob(pattern)):
+            if item.suffix == ".safetensors":
+                continue
             dest = output_path / item.name
             if not dest.exists():
                 shutil.copy2(item, dest)
@@ -255,14 +216,9 @@ class ShardWriter:
         """Write buffered tensors to a temporary shard file."""
         if not self._pending:
             return
-        # Use next shard number for temp file name, but only commit the
-        # count increment after save_file succeeds — avoids inconsistent
-        # state if the write fails (e.g. disk full).
-        next_idx = self._shard_count + 1
-        temp_name = f"shard-{next_idx:05d}.tmp.safetensors"
+        self._shard_count += 1
+        temp_name = f"shard-{self._shard_count:05d}.tmp.safetensors"
         save_file(self._pending, str(self._output_path / temp_name))
-        # Write succeeded — commit state updates
-        self._shard_count = next_idx
         self._shard_keys.append(list(self._pending.keys()))
         logger.debug("Flushed %d tensors to %s", len(self._pending), temp_name)
         self._pending = {}

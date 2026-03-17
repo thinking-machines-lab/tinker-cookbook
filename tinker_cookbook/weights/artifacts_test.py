@@ -13,9 +13,8 @@ from safetensors.torch import save_file
 
 from tinker_cookbook.weights._artifacts import (
     ShardWriter,
-    copy_model_code_files,
+    copy_non_weight_files,
     get_model_state_keys,
-    get_model_state_shapes,
     get_shard_files,
     load_adapter_weights,
 )
@@ -43,36 +42,6 @@ class TestGetModelStateKeys:
     def test_raises_if_no_safetensors(self, tmp_path: Path):
         with pytest.raises(FileNotFoundError, match=r"No \.safetensors files"):
             get_model_state_keys(tmp_path)
-
-
-# ---------------------------------------------------------------------------
-# get_model_state_shapes
-# ---------------------------------------------------------------------------
-
-
-class TestGetModelStateShapes:
-    def test_reads_shapes(self, tmp_path: Path):
-        tensors = {"weight": torch.zeros(8, 4), "bias": torch.zeros(8)}
-        save_file(tensors, str(tmp_path / "model.safetensors"))
-
-        shapes = get_model_state_shapes(tmp_path)
-        assert shapes == {"weight": (8, 4), "bias": (8,)}
-
-    def test_reads_shapes_across_shards(self, tmp_path: Path):
-        save_file({"a": torch.zeros(2, 3)}, str(tmp_path / "shard-1.safetensors"))
-        save_file({"b": torch.zeros(4)}, str(tmp_path / "shard-2.safetensors"))
-
-        shapes = get_model_state_shapes(tmp_path)
-        assert shapes == {"a": (2, 3), "b": (4,)}
-
-    def test_helpful_error_for_bin_files(self, tmp_path: Path):
-        (tmp_path / "pytorch_model.bin").write_bytes(b"fake")
-        with pytest.raises(FileNotFoundError, match=r"\.bin file.*merge_strategy='full'"):
-            get_model_state_shapes(tmp_path)
-
-    def test_helpful_error_for_empty_dir(self, tmp_path: Path):
-        with pytest.raises(FileNotFoundError, match=r"merge_strategy='full'"):
-            get_model_state_shapes(tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -182,30 +151,26 @@ class TestLoadAdapterWeights:
 
 
 # ---------------------------------------------------------------------------
-# copy_model_code_files
+# copy_non_weight_files
 # ---------------------------------------------------------------------------
 
 
-class TestCopyModelCodeFiles:
-    def test_copies_only_py_files(self, tmp_path: Path):
+class TestCopyNonWeightFiles:
+    def test_copies_json_and_txt(self, tmp_path: Path):
         src = tmp_path / "src"
         dst = tmp_path / "dst"
         src.mkdir()
         dst.mkdir()
 
-        (src / "modeling_custom.py").write_text("# model code")
-        (src / "configuration_custom.py").write_text("# config code")
-        # Non-py files should NOT be copied
         (src / "config.json").write_text('{"model_type": "test"}')
         (src / "tokenizer.model").write_text("tokenizer data")
+        # Safetensors files should NOT be copied
         save_file({"x": torch.zeros(1)}, str(src / "model.safetensors"))
 
-        copy_model_code_files(src, dst)
+        copy_non_weight_files(src, dst)
 
-        assert (dst / "modeling_custom.py").exists()
-        assert (dst / "configuration_custom.py").exists()
-        assert not (dst / "config.json").exists()
-        assert not (dst / "tokenizer.model").exists()
+        assert (dst / "config.json").exists()
+        assert (dst / "tokenizer.model").exists()
         assert not (dst / "model.safetensors").exists()
 
     def test_does_not_overwrite_existing(self, tmp_path: Path):
@@ -214,9 +179,9 @@ class TestCopyModelCodeFiles:
         src.mkdir()
         dst.mkdir()
 
-        (src / "modeling.py").write_text("source")
-        (dst / "modeling.py").write_text("existing")
+        (src / "config.json").write_text("source")
+        (dst / "config.json").write_text("existing")
 
-        copy_model_code_files(src, dst)
+        copy_non_weight_files(src, dst)
 
-        assert (dst / "modeling.py").read_text() == "existing"
+        assert (dst / "config.json").read_text() == "existing"

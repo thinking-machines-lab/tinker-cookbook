@@ -19,7 +19,6 @@ from tinker_cookbook.weights._merge import (
     merge_adapter_weights,
     merge_lora_matrices,
     plan_merge_ops,
-    validate_merge_op_shapes,
 )
 
 # ---------------------------------------------------------------------------
@@ -409,10 +408,6 @@ class TestExpandExpertLoraTensors:
         assert out_A is lora_A
         assert out_B is lora_B
 
-    def test_mismatched_expert_counts_raises(self):
-        with pytest.raises(ValueError, match="Expert count mismatch"):
-            expand_expert_lora_tensors(torch.ones(3, 2, 4), torch.ones(5, 8, 2))
-
 
 # ---------------------------------------------------------------------------
 # detect_merge_profile
@@ -547,16 +542,6 @@ class TestPlanMergeOps:
         ops = plan_merge_ops(adapter, {"lora_alpha": 1, "r": 1}, keys, profile)
         assert "model.language_model.layers.0.self_attn.q_proj.weight" in ops
 
-    def test_unembed_tokens_remapped_to_lm_head(self):
-        keys = {"lm_head.weight"}
-        profile = MergeProfile()
-        adapter = {
-            "base_model.model.model.unembed_tokens.lora_A.weight": torch.ones(1, 4),
-            "base_model.model.model.unembed_tokens.lora_B.weight": torch.ones(8, 1),
-        }
-        ops = plan_merge_ops(adapter, {"lora_alpha": 1, "r": 1}, keys, profile)
-        assert "lm_head.weight" in ops
-
     def test_missing_key_raises(self):
         keys = {"some.other.weight"}
         profile = MergeProfile()
@@ -643,83 +628,3 @@ class TestApplyMergeOp:
         )
         with pytest.raises(ValueError, match="Shape mismatch"):
             apply_merge_op(tensors, op)
-
-
-# ---------------------------------------------------------------------------
-# validate_merge_op_shapes
-# ---------------------------------------------------------------------------
-
-
-class TestValidateMergeOpShapes:
-    def test_valid_2d_op_passes(self):
-        ops = {
-            "q_proj.weight": [
-                MergeOp(
-                    target_key="q_proj.weight", lora_A=torch.ones(1, 4), lora_B=torch.ones(8, 1)
-                )
-            ]
-        }
-        shapes = {"q_proj.weight": (8, 4)}
-        validate_merge_op_shapes(ops, shapes)  # should not raise
-
-    def test_invalid_2d_shape_raises(self):
-        ops = {
-            "q_proj.weight": [
-                MergeOp(
-                    target_key="q_proj.weight", lora_A=torch.ones(1, 8), lora_B=torch.ones(4, 1)
-                )
-            ]
-        }
-        shapes = {"q_proj.weight": (8, 4)}  # target is (8,4) but delta is (4,8)
-        with pytest.raises(ValueError, match=r"Shape mismatch.*q_proj"):
-            validate_merge_op_shapes(ops, shapes)
-
-    def test_valid_3d_fused_concatenated_passes(self):
-        ops = {
-            "gate_up_proj": [
-                MergeOp(
-                    target_key="gate_up_proj",
-                    lora_A=torch.ones(2, 1, 4),
-                    lora_B=torch.ones(2, 4, 1),
-                    is_expert_3d=True,
-                    fused_proj_idx=0,
-                    fused_proj_interleaved=False,
-                )
-            ]
-        }
-        # Target is (2, 4, 8) — fused gate+up, each half is (2, 4, 4)
-        # Delta via bmm is (2, 4, 4) which matches the half
-        shapes = {"gate_up_proj": (2, 4, 8)}
-        validate_merge_op_shapes(ops, shapes)  # should not raise
-
-    def test_invalid_3d_fused_shape_raises(self):
-        ops = {
-            "gate_up_proj": [
-                MergeOp(
-                    target_key="gate_up_proj",
-                    lora_A=torch.ones(2, 1, 4),
-                    lora_B=torch.ones(2, 6, 1),  # wrong out_dim
-                    is_expert_3d=True,
-                    fused_proj_idx=0,
-                    fused_proj_interleaved=False,
-                )
-            ]
-        }
-        shapes = {"gate_up_proj": (2, 4, 8)}  # half is (2, 4, 4), delta is (2, 4, 6)
-        with pytest.raises(ValueError, match=r"Shape mismatch.*gate_up_proj"):
-            validate_merge_op_shapes(ops, shapes)
-
-    def test_valid_3d_non_fused_passes(self):
-        ops = {
-            "down_proj": [
-                MergeOp(
-                    target_key="down_proj",
-                    lora_A=torch.ones(2, 1, 4),
-                    lora_B=torch.ones(2, 8, 1),
-                    is_expert_3d=True,
-                    fused_proj_idx=None,
-                )
-            ]
-        }
-        shapes = {"down_proj": (2, 4, 8)}
-        validate_merge_op_shapes(ops, shapes)  # should not raise

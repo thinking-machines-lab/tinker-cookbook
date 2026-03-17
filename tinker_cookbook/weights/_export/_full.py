@@ -23,7 +23,6 @@ from tinker_cookbook.weights._artifacts import load_adapter_weights
 from tinker_cookbook.weights._export import (
     cleanup_on_failure,
     is_multimodal,
-    is_multimodal_from_dict,
     save_tokenizer_and_processor,
 )
 from tinker_cookbook.weights._merge import merge_adapter_weights
@@ -39,27 +38,12 @@ def build_full(
     dtype: str,
     torch_dtype: torch.dtype,
     trust_remote_code: bool,
-    config_dict: dict,
 ) -> None:
-    """Merge by loading the entire base model into memory.
-
-    Args:
-        base_model: HuggingFace model name or local path.
-        adapter_path: Path to adapter directory.
-        output_path: Where to write the merged model.
-        dtype: String dtype name (for logging).
-        torch_dtype: Torch dtype for model loading.
-        trust_remote_code: Whether to trust remote code for HF loading.
-        config_dict: Parsed config.json dict (loaded by dispatcher).
-    """
-    # Fail fast if output already exists (before any expensive work)
-    out = Path(output_path)
-    if out.exists():
-        raise FileExistsError(f"Output path already exists: {out}")
-
+    """Merge by loading the entire base model into memory."""
     # Validate adapter exists before loading the (potentially huge) base model
     adapter_weights, adapter_config = load_adapter_weights(Path(adapter_path))
 
+    out = Path(output_path)
     out.mkdir(parents=True, exist_ok=False)
 
     try:
@@ -75,9 +59,7 @@ def build_full(
         logger.info("Saving merged model to: %s", out)
         hf_model.save_pretrained(out)
 
-        save_tokenizer_and_processor(
-            base_model, out, is_multimodal_from_dict(config_dict), trust_remote_code
-        )
+        save_tokenizer_and_processor(base_model, out, is_multimodal(config), trust_remote_code)
 
         logger.info("Done — merged model saved to %s", out)
     except Exception:
