@@ -1,7 +1,7 @@
 """Auto-apply the downstream_compat marker to every test in this directory.
 
 These tests verify that tinker-cookbook's public API surface remains compatible
-with downstream consumers (e.g., the internal monorepo). They are fast, require
+with downstream consumers (e.g., the internal downstream projects). They are fast, require
 no API keys or GPU, and run on every PR.
 
 Run just these tests:

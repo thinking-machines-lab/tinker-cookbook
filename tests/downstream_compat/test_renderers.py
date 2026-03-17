@@ -128,7 +128,7 @@ class TestUtilityFunctions:
         assert callable(parse_content_blocks)
 
     def test_ensure_list_importable(self):
-        # Used by monorepo's rust_ext
+        # Used by downstream rust extensions
         assert callable(ensure_list)
 
 
@@ -160,7 +160,7 @@ class TestRendererRegistry:
 # get_renderer: built-in renderer names
 # ---------------------------------------------------------------------------
 
-# These are the renderer names the monorepo depends on.
+# These are the renderer names downstream projects depend on.
 EXPECTED_RENDERER_NAMES = [
     "role_colon",
     "llama3",
@@ -184,7 +184,7 @@ EXPECTED_RENDERER_NAMES = [
 
 @pytest.mark.parametrize("renderer_name", EXPECTED_RENDERER_NAMES)
 def test_builtin_renderer_name_resolves(renderer_name):
-    """get_renderer must not raise ValueError for any name the monorepo uses."""
+    """get_renderer must not raise ValueError for any name downstream projects use."""
     # We don't actually instantiate (needs a real tokenizer), just verify the
     # name is handled in the factory's dispatch logic.
     src = inspect.getsource(renderers.get_renderer)
