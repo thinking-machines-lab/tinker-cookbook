@@ -53,6 +53,11 @@ class MergeProfile:
     Each ``(old, new)`` pair is applied via ``str.replace`` on the target key.
     Example: ``((".attn", ".self_attn"),)`` for GPT-OSS.
 
+    Note: these remaps are applied to non-expert keys only. Expert keys go
+    through a separate remapping path (``w1→gate_proj``, etc.) that doesn't
+    use ``extra_key_remaps``. If a future model needs remaps on expert keys,
+    this should be extended.
+
     Uses tuple-of-tuples rather than dict so ``MergeProfile`` stays hashable.
     """
 

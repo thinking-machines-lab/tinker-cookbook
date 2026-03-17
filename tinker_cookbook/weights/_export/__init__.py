@@ -64,7 +64,9 @@ def build_hf_model(
             already exist.
         dtype: Data type for loading the base model. One of ``"bfloat16"``
             (default), ``"float16"``, or ``"float32"``. Use ``"float32"``
-            for maximum precision during merge.
+            for maximum precision during merge. Only used by
+            ``merge_strategy="full"``; the shard strategy preserves the
+            on-disk dtype of each tensor.
         trust_remote_code: Whether to trust remote code when loading HF
             models. Required for some newer model architectures (e.g.
             Qwen3.5). If ``None`` (default), falls back to the

@@ -267,6 +267,86 @@ class TestBuildShardedSeparateExperts:
 
 
 # ---------------------------------------------------------------------------
+# Shard-by-shard with fused experts (concatenated layout)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildShardedFusedExperts:
+    """Shard-by-shard merge with fused gate_up_proj (concatenated layout)."""
+
+    NUM_EXPERTS = 2
+    IN_DIM = 4
+    OUT_DIM = 4
+    FUSED_DIM = OUT_DIM * 2
+
+    def test_merges_gate_and_up_into_correct_halves(self, tmp_path: Path):
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+
+        config = {"architectures": ["TestMoEModel"], "model_type": "test"}
+        state_dict = {
+            "model.layers.0.mlp.experts.gate_up_proj": torch.zeros(
+                self.NUM_EXPERTS, self.IN_DIM, self.FUSED_DIM, dtype=torch.float32
+            ),
+        }
+        _create_synthetic_model(model_dir, config, state_dict)
+
+        # Adapter for gate (w1) and up (w3) projections
+        prefix = "base_model.model.model.layers.0.mlp.experts"
+        gate_fill, up_fill = 0.02, 0.07
+        adapter_weights = {
+            f"{prefix}.w1.lora_A.weight": torch.ones(self.NUM_EXPERTS, 1, self.IN_DIM) * gate_fill,
+            f"{prefix}.w1.lora_B.weight": torch.ones(self.NUM_EXPERTS, self.OUT_DIM, 1),
+            f"{prefix}.w3.lora_A.weight": torch.ones(self.NUM_EXPERTS, 1, self.IN_DIM) * up_fill,
+            f"{prefix}.w3.lora_B.weight": torch.ones(self.NUM_EXPERTS, self.OUT_DIM, 1),
+        }
+        _create_adapter(adapter_dir, adapter_weights, {"lora_alpha": 1, "r": 1})
+
+        build_hf_model(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+            merge_strategy="shard",
+        )
+
+        out_tensors = _load_output_tensors(output_dir)
+        fused = out_tensors["model.layers.0.mlp.experts.gate_up_proj"]
+        sz = self.FUSED_DIM // 2
+        gate_half = fused[:, :, :sz]
+        up_half = fused[:, :, sz:]
+
+        assert torch.allclose(gate_half, torch.full_like(gate_half, gate_fill), atol=1e-6)
+        assert torch.allclose(up_half, torch.full_like(up_half, up_fill), atol=1e-6)
+
+    def test_single_shard_output_has_no_index(self, tmp_path: Path):
+        """Single-shard models should produce model.safetensors without an index."""
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+
+        config = {"architectures": ["TestModel"], "model_type": "test"}
+        state_dict = {"model.layers.0.proj.weight": torch.zeros(4, 4, dtype=torch.float32)}
+        _create_synthetic_model(model_dir, config, state_dict)
+
+        adapter_weights = {
+            "base_model.model.model.layers.0.proj.lora_A.weight": torch.ones(1, 4),
+            "base_model.model.model.layers.0.proj.lora_B.weight": torch.ones(4, 1),
+        }
+        _create_adapter(adapter_dir, adapter_weights, {"lora_alpha": 1, "r": 1})
+
+        build_hf_model(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+            merge_strategy="shard",
+        )
+
+        assert (output_dir / "model.safetensors").exists()
+        assert not (output_dir / "model.safetensors.index.json").exists()
+
+
+# ---------------------------------------------------------------------------
 # Cleanup on failure
 # ---------------------------------------------------------------------------
 
