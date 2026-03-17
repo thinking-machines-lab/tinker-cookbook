@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import cast
 
 import chz
@@ -49,6 +49,7 @@ from tinker_cookbook.sdpo.data import (
 )
 from tinker_cookbook.sdpo.teacher import (
     build_teacher_prompt,
+    build_teacher_prompt_from_messages,
     compute_teacher_logprobs,
     strip_thinking_blocks,
 )
@@ -57,6 +58,54 @@ from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.misc_utils import timed
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Teacher prompt builder dispatch
+# ---------------------------------------------------------------------------
+
+
+def _resolve_teacher_prompt_builder(
+    builder: EnvGroupBuilder,
+) -> Callable[..., tinker.ModelInput]:
+    """Return a callable that builds teacher prompts for the given builder type.
+
+    For ProblemGroupBuilder (math, MCQ): uses ProblemEnv's question and renderer.
+    For DeepcoderEnvGroupBuilder (code): uses the task's problem and tool schemas.
+    """
+    if isinstance(builder, ProblemGroupBuilder):
+        env = cast(ProblemEnv, builder.env_thunk())
+        return lambda reprompt_suffix, **kwargs: build_teacher_prompt(
+            env, reprompt_suffix, **kwargs
+        )
+
+    # Import here to avoid circular dependency and keep code_rl optional.
+    from tinker_cookbook.recipes.code_rl.code_env import DeepcoderEnvGroupBuilder
+
+    if isinstance(builder, DeepcoderEnvGroupBuilder):
+        from tinker_cookbook import model_info, tokenizer_utils
+        from tinker_cookbook.recipes.code_rl.deepcoder_tool import DeepcoderTool
+        from tinker_cookbook.renderers import get_renderer
+
+        tok = tokenizer_utils.get_tokenizer(builder.model_name)
+        rname = builder.renderer_name or model_info.get_recommended_renderer_name(
+            builder.model_name
+        )
+        renderer = get_renderer(rname, tok)
+        tool = DeepcoderTool(builder.task)
+        tool_schemas = [tool.check_solution.to_spec()]
+        convo_prefix = renderer.create_conversation_prefix_with_tools(tools=tool_schemas)
+        question = builder.task.problem
+
+        return lambda reprompt_suffix, **kwargs: build_teacher_prompt_from_messages(
+            convo_prefix=convo_prefix,
+            question=question,
+            renderer=renderer,
+            reprompt_suffix=reprompt_suffix,
+            **kwargs,
+        )
+
+    raise TypeError(f"Unsupported builder type: {type(builder).__name__}")
 
 
 # ---------------------------------------------------------------------------
@@ -165,8 +214,8 @@ async def sdpo_training_iteration(
 
         n_groups_with_success += 1 if has_solutions else 0
 
-        assert isinstance(builder, ProblemGroupBuilder)
-        env = cast(ProblemEnv, builder.env_thunk())
+        # Resolve how to build the teacher prompt based on builder type.
+        teacher_prompt_builder = _resolve_teacher_prompt_builder(builder)
 
         for traj_idx, traj in enumerate(group.trajectories_G):
             response_tokens = extract_response_tokens(traj)
@@ -199,8 +248,7 @@ async def sdpo_training_iteration(
             if solution_text is None and feedback_text is None:
                 continue
 
-            teacher_ob = build_teacher_prompt(
-                env,
+            teacher_ob = teacher_prompt_builder(
                 config.reprompt_suffix,
                 solution_text=solution_text,
                 feedback_text=feedback_text,

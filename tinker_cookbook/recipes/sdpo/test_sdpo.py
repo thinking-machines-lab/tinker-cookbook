@@ -172,3 +172,44 @@ class TestSciKnowEvalGrading:
     def test_format_choices_empty(self):
         assert _format_choices({}) == ""
         assert _format_choices({"label": [], "text": []}) == ""
+
+
+class TestExtractFeedback:
+    """Test that extract_feedback reads from transition.logs['feedback']."""
+
+    def test_extracts_feedback_string(self):
+        from tinker_cookbook.sdpo.data import extract_feedback
+
+        traj = Trajectory(
+            transitions=[
+                Transition(
+                    ob=tinker.ModelInput.from_ints([1, 2]),
+                    ac=TokensWithLogprobs(tokens=[10], maybe_logprobs=[-1.0]),
+                    reward=0.0,
+                    episode_done=True,
+                    logs={
+                        "feedback": '{"passed": false, "details": {"error": "IndentationError"}}'
+                    },
+                )
+            ],
+            final_ob=tinker.ModelInput.empty(),
+        )
+        result = extract_feedback(traj)
+        assert result is not None
+        assert "IndentationError" in result
+
+    def test_returns_none_without_feedback(self):
+        from tinker_cookbook.sdpo.data import extract_feedback
+
+        traj = Trajectory(
+            transitions=[
+                Transition(
+                    ob=tinker.ModelInput.from_ints([1, 2]),
+                    ac=TokensWithLogprobs(tokens=[10], maybe_logprobs=[-1.0]),
+                    reward=1.0,
+                    episode_done=True,
+                )
+            ],
+            final_ob=tinker.ModelInput.empty(),
+        )
+        assert extract_feedback(traj) is None
