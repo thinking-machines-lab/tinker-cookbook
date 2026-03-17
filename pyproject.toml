@@ -71,7 +71,7 @@ litellm = [
     "litellm",
 ]
 all = [
-    "tinker_cookbook[merge]",
+    "tinker_cookbook[deepseek]",
     "tinker_cookbook[vector-search]",
     "tinker_cookbook[wandb]",
     "tinker_cookbook[neptune-scale]",
@@ -80,9 +80,12 @@ all = [
     "tinker_cookbook[inspect]",
     "tinker_cookbook[litellm]",
 ]
-merge = [
+deepseek = [
+    # `compressed-tensors` publishes an optional `accelerate` extra and its
+    # upstream offloading utilities rely on that package, so we keep it in the
+    # DeepSeek export extra even though `tinker_cookbook` does not import it directly.
     "accelerate",
-    "compressed-tensors==0.14.0.1",
+    "compressed-tensors>=0.14,<0.15",
     "psutil>=7.2.2",
 ]
 

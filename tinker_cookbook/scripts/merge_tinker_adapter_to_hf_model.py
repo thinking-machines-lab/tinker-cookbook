@@ -8,8 +8,8 @@ python merge_tinker_adapter_to_hf_model.py --hf-model <name_or_path_to_hf_model>
 NOTE: This script is a thin CLI wrapper around tinker_cookbook.weights.build_hf_model().
 For programmatic use, prefer importing from tinker_cookbook.weights directly.
 
-DeepSeek experts-only FP8 export support uses the optional merge dependencies:
-    pip install 'tinker_cookbook[merge]'
+DeepSeek experts-only FP8 export support uses the optional DeepSeek dependencies:
+    pip install 'tinker_cookbook[deepseek]'
 """
 
 import argparse

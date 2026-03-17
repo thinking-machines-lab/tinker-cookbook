@@ -49,6 +49,21 @@ def _resolve_trust_remote_code(trust_remote_code: bool | None) -> bool:
     return env_val in ("1", "true", "yes")
 
 
+def _validate_deepseek_export_options(*, dtype: str, trust_remote_code: bool | None) -> None:
+    """Reject or warn on DeepSeek options that do not affect shard export."""
+    if dtype != "bfloat16":
+        raise ValueError(
+            "DeepSeek export always writes BF16 dense weights and FP8 routed expert weights. "
+            f"Got dtype={dtype!r}; use dtype='bfloat16'."
+        )
+    if trust_remote_code is not None:
+        logger.warning(
+            "DeepSeek export reads checkpoint shards directly; trust_remote_code=%s "
+            "only affects tokenizer/processor loading, not the shard export path.",
+            trust_remote_code,
+        )
+
+
 def build_hf_model(
     *,
     base_model: str,
@@ -68,22 +83,30 @@ def build_hf_model(
             or local path to a saved HuggingFace model.
         adapter_path: Local path to the Tinker adapter directory. Must contain
             ``adapter_model.safetensors`` and ``adapter_config.json``.
-        output_path: Directory where the merged model will be saved. Must not
-            already exist.
+        output_path: Directory where the merged model will be saved. For
+            standard exports this path must not already exist. For DeepSeek
+            exports, an existing directory is allowed only when resuming a
+            matching interrupted export tracked by ``merge_state.json``.
         dtype: Data type for loading the base model. One of ``"bfloat16"``
             (default), ``"float16"``, or ``"float32"``. Use ``"float32"``
-            for maximum precision during merge.
+            for maximum precision during merge. DeepSeek exports always use
+            BF16 dense weights plus FP8 routed experts and therefore require
+            ``dtype="bfloat16"``.
         trust_remote_code: Whether to trust remote code when loading HF
             models. Required for some newer model architectures (e.g.
             Qwen3.5). If ``None`` (default), falls back to the
             ``HF_TRUST_REMOTE_CODE`` environment variable, then ``False``.
+            DeepSeek exports still honor this when saving tokenizer or
+            processor assets, but the shard export path reads checkpoint files
+            directly instead of loading the base model through Transformers.
 
     Raises:
         FileNotFoundError: If adapter files are missing.
-        FileExistsError: If output_path already exists.
+        FileExistsError: If output_path already exists for a standard export.
         KeyError: If adapter config is malformed.
         ValueError: If tensor shapes are incompatible during merge, or
-            if ``dtype`` is not a recognized value.
+            if ``dtype`` is not a recognized value or is incompatible with the
+            DeepSeek export path.
     """
     if dtype not in _DTYPE_MAP:
         raise ValueError(f"Unsupported dtype {dtype!r}. Choose from: {list(_DTYPE_MAP.keys())}")
@@ -92,7 +115,11 @@ def build_hf_model(
     out = Path(output_path)
     config_dict = _load_config_dict(base_model)
     preserve_partial_output = _is_deepseek_config(config_dict)
-    out.mkdir(parents=True, exist_ok=preserve_partial_output)
+    if preserve_partial_output:
+        _validate_deepseek_export_options(dtype=dtype, trust_remote_code=trust_remote_code)
+        out.mkdir(parents=True, exist_ok=True)
+    else:
+        out.mkdir(parents=True, exist_ok=False)
     is_multimodal = False
 
     try:

@@ -40,6 +40,8 @@ __all__ = ["is_deepseek_config", "is_deepseek_model", "save_deepseek_model"]
 
 logger = logging.getLogger(__name__)
 
+_DEEPSEEK_MODEL_TYPES = frozenset({"deepseek_v3"})
+_DEEPSEEK_CONFIG_CLASS_NAMES = frozenset({"deepseekv3config"})
 _DEEPSEEK_CUSTOM_FILES = (
     "configuration_deepseek.py",
     "modeling_deepseek.py",
@@ -108,7 +110,7 @@ def is_deepseek_config(config: object) -> bool:
     else:
         model_type = str(getattr(config, "model_type", "")).lower()
         class_name = config.__class__.__name__.lower()
-    return model_type.startswith("deepseek") or class_name.startswith("deepseek")
+    return model_type in _DEEPSEEK_MODEL_TYPES or class_name in _DEEPSEEK_CONFIG_CLASS_NAMES
 
 
 def is_deepseek_model(hf_model: PreTrainedModel) -> bool:
@@ -720,13 +722,18 @@ def _load_resume_state(
         }
         _write_json_atomic(state_path, state)
 
+    tracked_completed = set(state.get("completed_shards", []))
+    existing_output_shards = {path.name for path in output_path.glob("*.safetensors")}
+    unexpected_output_shards = sorted(existing_output_shards - tracked_completed)
+    if unexpected_output_shards:
+        raise ValueError(
+            f"Output path {output_path} contains shard files not tracked in merge_state.json: "
+            f"{unexpected_output_shards[:5]}"
+        )
+
     completed = {
-        shard_name
-        for shard_name in state.get("completed_shards", [])
-        if (output_path / shard_name).exists()
+        shard_name for shard_name in tracked_completed if (output_path / shard_name).exists()
     }
-    for shard_path in output_path.glob("*.safetensors"):
-        completed.add(shard_path.name)
     if completed:
         total_size = 0
         weight_map: dict[str, str] = {}
@@ -780,7 +787,7 @@ def _build_compressed_tensors_config(output_weight_map: dict[str, str]) -> dict:
     except ImportError as exc:
         raise ImportError(
             "DeepSeek experts-only FP8 export requires the optional merge dependencies. "
-            "Install them with: pip install 'tinker_cookbook[merge]'"
+            "Install them with: pip install 'tinker_cookbook[deepseek]'"
         ) from exc
 
     quantized_prefixes = {
