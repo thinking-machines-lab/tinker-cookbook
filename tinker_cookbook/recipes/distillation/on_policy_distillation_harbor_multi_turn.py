@@ -125,7 +125,7 @@ async def cli_main(cli_config: CLIConfig, tasks: list[HarborTask]):
         )
         log_path = str(Path(f"~/tinker-examples/distillation/{run_name}").expanduser())
 
-    wandb_name = cli_config.wandb_name or os.path.basename(log_path)
+    wandb_name = cli_config.wandb_name or Path(log_path).name
     logger.info("Loaded %d harbor tasks", len(tasks))
 
     # Build dataset
