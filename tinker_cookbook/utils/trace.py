@@ -89,7 +89,33 @@ class SpanRecord:
 
 
 class IterationWindow:
-    """Collects span records during a single training iteration for aggregation."""
+    """Collects span records during a single training iteration for aggregation.
+
+    Use with :func:`trace_iteration` to automatically capture all ``@scope`` and
+    ``scope_span`` timings within a training iteration. After the block exits,
+    call :meth:`get_timing_metrics` for a flat dict of timing metrics ready to log.
+
+    Example — GRPO training loop::
+
+        for i_batch in range(n_batches):
+            with trace_iteration(step=i_batch) as window:
+                # All @scope-decorated calls inside this block are recorded
+                await run_evals(sampling_client, ...)
+                trajectory_groups = await gather_rollouts(sampling_client, ...)
+                await train_step(training_client, trajectory_groups, ...)
+
+            # Aggregated metrics: time/total, time/run_evals, time/sample_async:total, ...
+            metrics.update(window.get_timing_metrics())
+
+            # Persist per-span data for post-hoc analysis
+            window.write_spans_jsonl(log_path / "timing_spans.jsonl", step=i_batch)
+
+            # Optional: save a Gantt chart every K steps
+            if i_batch % 10 == 0:
+                save_gantt_chart_html(window, i_batch, log_path / f"gantt_{i_batch}.html")
+
+            ml_logger.log_metrics(metrics, step=i_batch)
+    """
 
     def __init__(self) -> None:
         self.spans: list[SpanRecord] = []
