@@ -90,7 +90,7 @@ uv run python tinker_cookbook/recipes/harbor_rl/scripts/train_terminal_bench.py
 ## Evaluation
 
 Evaluate a Tinker endpoint on Harbor datasets without training.
-****
+
 Download datasets:
 ```bash
 uvx harbor datasets download terminal-bench@2.0 -o ~/.cache/harbor/tasks/terminal-bench-2.0
