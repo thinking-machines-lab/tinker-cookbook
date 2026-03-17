@@ -26,6 +26,7 @@ import shutil
 from dataclasses import dataclass
 from functools import cache, lru_cache
 from pathlib import Path
+from typing import Any, Protocol, cast
 
 import torch
 from huggingface_hub import snapshot_download
@@ -93,6 +94,10 @@ _VLLM_COMPAT_QUANT_CONFIG_FIELDS = {
     "kv_cache_scheme",
     "quantization_status",
 }
+
+
+class _HasQuantizationConfig(Protocol):
+    quantization_config: Any
 
 
 def is_deepseek_config(config: object) -> bool:
@@ -323,7 +328,7 @@ def _get_quant_config_dict(config: object) -> dict:
     if isinstance(config, dict):
         quant_config = config["quantization_config"]
     else:
-        quant_config = config.quantization_config
+        quant_config = cast(_HasQuantizationConfig, config).quantization_config
     if isinstance(quant_config, dict):
         return quant_config
     return quant_config.to_dict()
@@ -765,7 +770,13 @@ def _patch_config(output_path: Path, output_weight_map: dict[str, str]) -> None:
 def _build_compressed_tensors_config(output_weight_map: dict[str, str]) -> dict:
     try:
         from compressed_tensors import QuantizationConfig
-        from compressed_tensors.quantization import QuantizationArgs, QuantizationScheme
+        from compressed_tensors.quantization import (
+            QuantizationArgs,
+            QuantizationScheme,
+            QuantizationStatus,
+            QuantizationStrategy,
+            QuantizationType,
+        )
     except ImportError as exc:
         raise ImportError(
             "DeepSeek experts-only FP8 export requires the optional merge dependencies. "
@@ -795,23 +806,23 @@ def _build_compressed_tensors_config(output_weight_map: dict[str, str]) -> dict:
                 targets=["Linear"],
                 weights=QuantizationArgs(
                     num_bits=8,
-                    type="float",
-                    strategy="block",
+                    type=QuantizationType.FLOAT,
+                    strategy=QuantizationStrategy.BLOCK,
                     block_structure=list(_DEEPSEEK_BLOCK_SIZE),
                     symmetric=True,
                     dynamic=False,
                 ),
                 input_activations=QuantizationArgs(
                     num_bits=8,
-                    type="float",
-                    strategy="tensor",
+                    type=QuantizationType.FLOAT,
+                    strategy=QuantizationStrategy.TENSOR,
                     symmetric=True,
                     dynamic=True,
                 ),
             )
         },
         format="float-quantized",
-        quantization_status="compressed",
+        quantization_status=QuantizationStatus.COMPRESSED,
         ignore=ignore,
     )
     return _serialize_vllm_compatible_quant_config(config.model_dump())
