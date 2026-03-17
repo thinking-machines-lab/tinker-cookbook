@@ -1,0 +1,28 @@
+name: downstream-compat
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  downstream-compat:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install-uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: venv
+        run: uv venv && uv sync --all-extras
+
+      - name: downstream compat tests
+        run: uv run pytest tests/downstream_compat/ -v
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
