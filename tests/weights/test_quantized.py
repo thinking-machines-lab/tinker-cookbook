@@ -279,7 +279,7 @@ class TestRoutedExperts:
         from tinker_cookbook.weights._export._quantized import dequantize_blockwise
 
         key = "model.layers.0.mlp.experts.0.gate_proj.weight"
-        scale_key = key.replace(".weight", ".weight_scale_inv")
+        scale_key = key.replace(".weight", ".weight_scale")
         merged = dequantize_blockwise(out[key], out[scale_key], dtype=torch.bfloat16)
         delta = (merged.float() - orig_sd[key].float()).abs().sum()
         assert delta > 0, "Expert gate_proj should have changed after merge"
@@ -313,7 +313,7 @@ class TestRoutedExperts:
         )
 
         out = _load_output(output_dir)
-        scale_key = "model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv"
+        scale_key = "model.layers.0.mlp.experts.0.gate_proj.weight_scale"
         assert scale_key in out
         assert out[scale_key].dtype == torch.float32
 
@@ -330,7 +330,7 @@ class TestRoutedExperts:
         )
 
         out = _load_output(output_dir)
-        scale = out["model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv"]
+        scale = out["model.layers.0.mlp.experts.0.gate_proj.weight_scale"]
         # gate_proj shape is (_INTER, _HIDDEN) = (128, 64)
         # block_size = 128, so scale should be ceil(128/128) x ceil(64/128) = (1, 1)
         expected = (math.ceil(_INTER / 128), math.ceil(_HIDDEN / 128))
@@ -372,7 +372,7 @@ class TestSharedExperts:
         )
 
         out = _load_output(output_dir)
-        assert "model.layers.0.mlp.shared_experts.gate_proj.weight_scale_inv" not in out
+        assert "model.layers.0.mlp.shared_experts.gate_proj.weight_scale" not in out
 
 
 # ---------------------------------------------------------------------------

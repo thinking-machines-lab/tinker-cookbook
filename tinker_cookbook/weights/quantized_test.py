@@ -139,7 +139,7 @@ class TestBuildVllmQuantizationConfig:
     def test_correct_schema(self):
         weight_map = {
             "model.layers.0.mlp.experts.0.gate_proj.weight": "shard-1.safetensors",
-            "model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv": "shard-1.safetensors",
+            "model.layers.0.mlp.experts.0.gate_proj.weight_scale": "shard-1.safetensors",
             "model.layers.0.self_attn.q_proj.weight": "shard-1.safetensors",
             "model.embed_tokens.weight": "shard-1.safetensors",
         }
@@ -149,11 +149,19 @@ class TestBuildVllmQuantizationConfig:
         assert config["quantization_status"] == "compressed"
         assert "config_groups" in config
         assert "ignore" in config
+        # Verify block quantization config
+        weights = config["config_groups"]["group_0"]["weights"]
+        assert weights["strategy"] == "block"
+        assert weights["block_structure"] == [128, 128]
+        # Verify input activations
+        ia = config["config_groups"]["group_0"]["input_activations"]
+        assert ia["dynamic"] is True
 
     def test_ignore_list_correct(self):
         """Dense projections should be in ignore, routed experts should NOT."""
         weight_map = {
             "model.layers.0.mlp.experts.0.gate_proj.weight": "s.safetensors",
+            "model.layers.0.mlp.experts.0.gate_proj.weight_scale": "s.safetensors",
             "model.layers.0.self_attn.q_proj.weight": "s.safetensors",
             "model.layers.0.mlp.shared_experts.gate_proj.weight": "s.safetensors",
         }
@@ -174,6 +182,7 @@ class TestSerializeForVllm:
             "unknown_field": "should be stripped",
             "another_unknown": 42,
             "ignore": [],
+            "config_groups": {},
         }
         result = _serialize_for_vllm(config)
         assert "unknown_field" not in result
@@ -187,11 +196,18 @@ class TestSerializeForVllm:
             "format": "float-quantized",
             "quantization_status": "compressed",
             "global_compression_ratio": None,
-            "config_groups": {"g": {}},
+            "config_groups": {
+                "group_0": {
+                    "targets": ["Linear"],
+                    "weights": {"num_bits": 8, "strategy": "block"},
+                }
+            },
             "ignore": ["a.b"],
         }
         result = _serialize_for_vllm(config)
-        assert result == config
+        assert result["quant_method"] == "compressed-tensors"
+        assert result["ignore"] == ["a.b"]
+        assert result["config_groups"]["group_0"]["targets"] == ["Linear"]
 
 
 # ---------------------------------------------------------------------------
@@ -331,8 +347,8 @@ class TestOutputShardAssembly:
         assert expert_w.dtype == torch.float8_e4m3fn
 
         # Should have a scale tensor
-        assert "model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv" in out_tensors
-        scale = out_tensors["model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv"]
+        assert "model.layers.0.mlp.experts.0.gate_proj.weight_scale" in out_tensors
+        scale = out_tensors["model.layers.0.mlp.experts.0.gate_proj.weight_scale"]
         assert scale.dtype == torch.float32
 
     def test_dense_stays_bf16(self, tmp_path: Path):
@@ -358,7 +374,7 @@ class TestOutputShardAssembly:
         assert q_proj.dtype == torch.bfloat16
 
         # No scale tensor for dense weights
-        assert "model.layers.0.self_attn.q_proj.weight_scale_inv" not in out_tensors
+        assert "model.layers.0.self_attn.q_proj.weight_scale" not in out_tensors
 
     def test_shared_expert_stays_bf16(self, tmp_path: Path):
         from tinker_cookbook.weights._export._quantized import build_quantized
@@ -380,7 +396,7 @@ class TestOutputShardAssembly:
 
         shared = out_tensors["model.layers.0.mlp.shared_experts.gate_proj.weight"]
         assert shared.dtype == torch.bfloat16
-        assert "model.layers.0.mlp.shared_experts.gate_proj.weight_scale_inv" not in out_tensors
+        assert "model.layers.0.mlp.shared_experts.gate_proj.weight_scale" not in out_tensors
 
     def test_config_has_compression_config(self, tmp_path: Path):
         from tinker_cookbook.weights._export._quantized import build_quantized

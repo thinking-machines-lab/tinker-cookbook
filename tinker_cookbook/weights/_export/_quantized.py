@@ -211,6 +211,30 @@ def _should_skip_checkpoint_key(key: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _weight_scale_key(weight_key: str) -> str:
+    """Map a weight key to its compressed-tensors scale key.
+
+    Uses ``.weight_scale`` (compressed-tensors convention), NOT
+    ``.weight_scale_inv`` (DeepSeek native convention).
+    """
+    return weight_key.removesuffix(".weight") + ".weight_scale"
+
+
+# Linear projection suffixes used to build the compressed-tensors ignore list.
+# Only modules matching these suffixes are considered for the ignore list.
+_LINEAR_PROJ_SUFFIXES = (
+    ".q_proj.weight",
+    ".q_a_proj.weight",
+    ".q_b_proj.weight",
+    ".kv_a_proj_with_mqa.weight",
+    ".kv_b_proj.weight",
+    ".o_proj.weight",
+    ".gate_proj.weight",
+    ".up_proj.weight",
+    ".down_proj.weight",
+)
+
+
 def _build_vllm_quantization_config(output_weight_map: dict[str, str]) -> dict:
     """Build compressed-tensors quantization config for vLLM.
 
@@ -224,14 +248,25 @@ def _build_vllm_quantization_config(output_weight_map: dict[str, str]) -> dict:
     Returns:
         Dict suitable for config.json's ``compression_config`` field.
     """
-    # Build ignore list: all non-routed-expert weight modules
-    ignore = sorted(
-        {
-            key.removesuffix(".weight")
-            for key in output_weight_map
-            if key.endswith(".weight") and not _is_routed_expert_weight(key)
-        }
-    )
+    # Determine which modules have been quantized (have .weight_scale)
+    quantized_prefixes = {
+        key.removesuffix(".weight_scale")
+        for key in output_weight_map
+        if key.endswith(".weight_scale")
+    }
+
+    # Build ignore list: linear projection modules that were NOT quantized
+    ignore: list[str] = []
+    for key in sorted(output_weight_map):
+        if not any(key.endswith(suffix) for suffix in _LINEAR_PROJ_SUFFIXES):
+            continue
+        prefix = key.removesuffix(".weight")
+        if prefix not in quantized_prefixes:
+            ignore.append(prefix)
+
+    # Also ignore lm_head if present and not quantized
+    if "lm_head.weight" in output_weight_map and "lm_head" not in quantized_prefixes:
+        ignore.append("lm_head")
 
     return {
         "quant_method": "compressed-tensors",
@@ -240,34 +275,94 @@ def _build_vllm_quantization_config(output_weight_map: dict[str, str]) -> dict:
         "global_compression_ratio": None,
         "config_groups": {
             "group_0": {
+                "targets": ["Linear"],
                 "weights": {
                     "num_bits": 8,
                     "type": "float",
                     "symmetric": True,
-                    "strategy": "tensor",
+                    "strategy": "block",
+                    "block_structure": [_FP8_BLOCK_SIZE, _FP8_BLOCK_SIZE],
+                    "dynamic": False,
                 },
-                "targets": ["Linear"],
+                "input_activations": {
+                    "num_bits": 8,
+                    "type": "float",
+                    "symmetric": True,
+                    "strategy": "tensor",
+                    "dynamic": True,
+                },
             },
         },
         "ignore": ignore,
     }
 
 
-def _serialize_for_vllm(config: dict) -> dict:
-    """Strip unknown fields from quantization config for vLLM compatibility.
+_VLLM_COMPAT_QUANT_CONFIG_FIELDS = {
+    "config_groups",
+    "format",
+    "global_compression_ratio",
+    "ignore",
+    "kv_cache_scheme",
+    "quantization_status",
+}
+_VLLM_COMPAT_QUANT_SCHEME_FIELDS = {
+    "format",
+    "input_activations",
+    "output_activations",
+    "targets",
+    "weights",
+}
+_VLLM_COMPAT_QUANT_ARGS_FIELDS = {
+    "actorder",
+    "block_structure",
+    "dynamic",
+    "group_size",
+    "num_bits",
+    "observer",
+    "observer_kwargs",
+    "strategy",
+    "symmetric",
+    "type",
+}
 
-    vLLM's compressed-tensors loader expects a specific set of fields.
-    This strips anything that might cause warnings or errors.
+
+def _serialize_for_vllm(config: dict) -> dict:
+    """Serialize only the compressed-tensors fields the current vLLM path needs.
+
+    Uses an allowlist so new compressed-tensors fields are omitted automatically
+    instead of breaking older vLLM builds.
     """
-    known_keys = {
-        "quant_method",
-        "format",
-        "quantization_status",
-        "global_compression_ratio",
-        "config_groups",
-        "ignore",
-    }
-    return {k: v for k, v in config.items() if k in known_keys}
+    serialized: dict = {}
+    for key, value in config.items():
+        if key == "config_groups" and isinstance(value, dict):
+            serialized[key] = {
+                group_name: _serialize_vllm_scheme(group)
+                for group_name, group in value.items()
+                if isinstance(group, dict)
+            }
+            continue
+        if key in _VLLM_COMPAT_QUANT_CONFIG_FIELDS:
+            serialized[key] = value
+    serialized["quant_method"] = "compressed-tensors"
+    return serialized
+
+
+def _serialize_vllm_scheme(group: dict) -> dict:
+    """Serialize a single quantization scheme for vLLM compatibility."""
+    serialized: dict = {}
+    for key, value in group.items():
+        if key in {"weights", "input_activations", "output_activations"} and isinstance(
+            value, dict
+        ):
+            serialized[key] = {
+                field: field_value
+                for field, field_value in value.items()
+                if field in _VLLM_COMPAT_QUANT_ARGS_FIELDS
+            }
+            continue
+        if key in _VLLM_COMPAT_QUANT_SCHEME_FIELDS:
+            serialized[key] = value
+    return serialized
 
 
 # ---------------------------------------------------------------------------
@@ -481,7 +576,7 @@ def build_quantized(
                 if tensor.dtype in (torch.bfloat16, torch.float16, torch.float32):
                     fp8_tensor, scale = quantize_blockwise(tensor)
                     output_tensors[key] = fp8_tensor
-                    output_tensors[key.replace(".weight", ".weight_scale_inv")] = scale
+                    output_tensors[_weight_scale_key(key)] = scale
                 else:
                     # Already FP8 from dequant+requant path above shouldn't hit this,
                     # but handle gracefully
@@ -500,8 +595,12 @@ def build_quantized(
 
             weight_map[key] = out_shard_name
             # Also track scale tensors in weight map
-            scale_out_key = key.replace(".weight", ".weight_scale_inv")
-            if scale_out_key in output_tensors and scale_out_key not in weight_map:
+            scale_out_key = _weight_scale_key(key) if key.endswith(".weight") else None
+            if (
+                scale_out_key
+                and scale_out_key in output_tensors
+                and scale_out_key not in weight_map
+            ):
                 weight_map[scale_out_key] = out_shard_name
 
         del tensors
