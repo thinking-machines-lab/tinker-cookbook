@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from pathlib import Path
 
 from safetensors.torch import load_file
 
 from tinker_cookbook.weights._artifacts import (
     ShardWriter,
-    copy_non_weight_files,
+    copy_model_code_files,
     get_model_state_keys,
     get_shard_files,
     load_adapter_weights,
@@ -120,8 +121,16 @@ def build_sharded(
             with open(index_path, "w") as f:
                 json.dump(index, f, indent=2)
 
-        # 10. Copy non-weight files and save tokenizer
-        copy_non_weight_files(model_dir, out)
+        # 10. Save config, tokenizer, and model code files.
+        #     Copy config.json directly (safe — it's a single known file).
+        #     Copy *.py files for trust_remote_code model support.
+        #     We intentionally don't glob-copy all non-weight files to avoid
+        #     accidentally including stale index files or other artifacts that
+        #     could break downstream loaders like vLLM/SGLang.
+        src_config = model_dir / "config.json"
+        if src_config.exists():
+            shutil.copy2(src_config, out / "config.json")
+        copy_model_code_files(model_dir, out)
         save_tokenizer_and_processor(
             base_model, out, is_multimodal_from_dict(config_dict), trust_remote_code
         )

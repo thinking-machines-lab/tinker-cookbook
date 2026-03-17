@@ -13,7 +13,7 @@ from safetensors.torch import save_file
 
 from tinker_cookbook.weights._artifacts import (
     ShardWriter,
-    copy_non_weight_files,
+    copy_model_code_files,
     get_model_state_keys,
     get_shard_files,
     load_adapter_weights,
@@ -151,26 +151,30 @@ class TestLoadAdapterWeights:
 
 
 # ---------------------------------------------------------------------------
-# copy_non_weight_files
+# copy_model_code_files
 # ---------------------------------------------------------------------------
 
 
-class TestCopyNonWeightFiles:
-    def test_copies_json_and_txt(self, tmp_path: Path):
+class TestCopyModelCodeFiles:
+    def test_copies_only_py_files(self, tmp_path: Path):
         src = tmp_path / "src"
         dst = tmp_path / "dst"
         src.mkdir()
         dst.mkdir()
 
+        (src / "modeling_custom.py").write_text("# model code")
+        (src / "configuration_custom.py").write_text("# config code")
+        # Non-py files should NOT be copied
         (src / "config.json").write_text('{"model_type": "test"}')
         (src / "tokenizer.model").write_text("tokenizer data")
-        # Safetensors files should NOT be copied
         save_file({"x": torch.zeros(1)}, str(src / "model.safetensors"))
 
-        copy_non_weight_files(src, dst)
+        copy_model_code_files(src, dst)
 
-        assert (dst / "config.json").exists()
-        assert (dst / "tokenizer.model").exists()
+        assert (dst / "modeling_custom.py").exists()
+        assert (dst / "configuration_custom.py").exists()
+        assert not (dst / "config.json").exists()
+        assert not (dst / "tokenizer.model").exists()
         assert not (dst / "model.safetensors").exists()
 
     def test_does_not_overwrite_existing(self, tmp_path: Path):
@@ -179,9 +183,9 @@ class TestCopyNonWeightFiles:
         src.mkdir()
         dst.mkdir()
 
-        (src / "config.json").write_text("source")
-        (dst / "config.json").write_text("existing")
+        (src / "modeling.py").write_text("source")
+        (dst / "modeling.py").write_text("existing")
 
-        copy_non_weight_files(src, dst)
+        copy_model_code_files(src, dst)
 
-        assert (dst / "config.json").read_text() == "existing"
+        assert (dst / "modeling.py").read_text() == "existing"
