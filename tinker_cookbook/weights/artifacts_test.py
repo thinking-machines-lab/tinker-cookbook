@@ -15,6 +15,7 @@ from tinker_cookbook.weights._artifacts import (
     ShardWriter,
     copy_model_code_files,
     get_model_state_keys,
+    get_model_state_shapes,
     get_shard_files,
     load_adapter_weights,
 )
@@ -42,6 +43,36 @@ class TestGetModelStateKeys:
     def test_raises_if_no_safetensors(self, tmp_path: Path):
         with pytest.raises(FileNotFoundError, match=r"No \.safetensors files"):
             get_model_state_keys(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# get_model_state_shapes
+# ---------------------------------------------------------------------------
+
+
+class TestGetModelStateShapes:
+    def test_reads_shapes(self, tmp_path: Path):
+        tensors = {"weight": torch.zeros(8, 4), "bias": torch.zeros(8)}
+        save_file(tensors, str(tmp_path / "model.safetensors"))
+
+        shapes = get_model_state_shapes(tmp_path)
+        assert shapes == {"weight": (8, 4), "bias": (8,)}
+
+    def test_reads_shapes_across_shards(self, tmp_path: Path):
+        save_file({"a": torch.zeros(2, 3)}, str(tmp_path / "shard-1.safetensors"))
+        save_file({"b": torch.zeros(4)}, str(tmp_path / "shard-2.safetensors"))
+
+        shapes = get_model_state_shapes(tmp_path)
+        assert shapes == {"a": (2, 3), "b": (4,)}
+
+    def test_helpful_error_for_bin_files(self, tmp_path: Path):
+        (tmp_path / "pytorch_model.bin").write_bytes(b"fake")
+        with pytest.raises(FileNotFoundError, match=r"\.bin file.*merge_strategy='full'"):
+            get_model_state_shapes(tmp_path)
+
+    def test_helpful_error_for_empty_dir(self, tmp_path: Path):
+        with pytest.raises(FileNotFoundError, match=r"merge_strategy='full'"):
+            get_model_state_shapes(tmp_path)
 
 
 # ---------------------------------------------------------------------------
