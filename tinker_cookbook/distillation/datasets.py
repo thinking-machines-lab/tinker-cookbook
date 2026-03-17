@@ -70,7 +70,7 @@ class CompositeDataset:
         all_env_group_builders = []
         all_dataset_indices = []
 
-        for dataset_idx, (dataset, groups_per_batch) in enumerate(
+        for dataset_idx, (dataset, _groups_per_batch) in enumerate(
             zip(self.datasets, self.groups_per_batch_list)
         ):
             env_group_builders = dataset.get_batch(i_batch)
