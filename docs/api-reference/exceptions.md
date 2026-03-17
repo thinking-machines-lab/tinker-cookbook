@@ -121,6 +121,38 @@ class InternalServerError(APIStatusError)
 
 HTTP 500+: An error occurred on the server.
 
+## `SidecarError` Objects
+
+```python
+class SidecarError(TinkerError)
+```
+
+Base exception for subprocess sidecar errors.
+
+## `SidecarStartupError` Objects
+
+```python
+class SidecarStartupError(SidecarError)
+```
+
+Raised when the sidecar subprocess fails to start or times out.
+
+## `SidecarDiedError` Objects
+
+```python
+class SidecarDiedError(SidecarError)
+```
+
+Raised when the sidecar subprocess exits unexpectedly while requests are pending.
+
+## `SidecarIPCError` Objects
+
+```python
+class SidecarIPCError(SidecarError)
+```
+
+Raised when communication with the sidecar subprocess fails.
+
 ## `RequestFailedError` Objects
 
 ```python

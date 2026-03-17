@@ -132,15 +132,12 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
             )
         )
 
-    def parse_response(self, response: list[int]) -> tuple[Message, bool]:
-        """Parse response, prepending <think>\\n since the generation prompt prefills it.
+    def _normalize_response_tokens(self, response: list[int]) -> list[int]:
+        """Restore the prefilled <think>\\n before parsing sampled tokens.
 
-        When sampling with build_generation_prompt, <think>\\n is part of the generation
-        suffix and not included in the sampled tokens. The response will be
-        "reasoning\\n</think>\\n\\nanswer" so we prepend <think>\\n if necessary.
-
-        Also strips leading/trailing whitespace from thinking content to match the
-        HF template behavior (which applies |trim to reasoning_content).
+        Qwen3.5's generation suffix includes <think>\\n, so sampled tokens start
+        after that prefix. If the response contains </think> but doesn't start
+        with <think>\\n, we prepend it so the parser sees a complete think block.
         """
         think_prefix_tokens = self.tokenizer.encode("<think>\n", add_special_tokens=False)
         think_suffix_token = self.tokenizer.encode("</think>", add_special_tokens=False)
@@ -151,13 +148,16 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
             and response[: len(think_prefix_tokens)] == think_prefix_tokens
         )
         if not starts_with_think and think_suffix_token[0] in response:
-            response = think_prefix_tokens + response
+            return think_prefix_tokens + response
+        return response
 
-        message, success = super().parse_response(response)
-        if not success:
-            return message, success
+    def _postprocess_parsed_message(self, message: Message) -> None:
+        """Apply Qwen3.5-specific post-processing to a parsed message in-place.
 
-        # Strip whitespace from thinking content (matches HF template |trim behavior)
+        1. Strips whitespace from thinking content (matches HF template |trim).
+        2. Removes the two separator newlines between </think> and text.
+        3. Converts Qwen3.5 XML tool calls from the parent's unparsed_tool_calls.
+        """
         content = message.get("content")
         if isinstance(content, list):
             first_text_after_thinking: TextPart | None = None
@@ -196,7 +196,20 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
         else:
             message.pop("unparsed_tool_calls", None)
 
+    def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+        """Parse response with Qwen3.5-specific post-processing."""
+        message, success = super().parse_response(response)
+        if not success:
+            return message, success
+
+        self._postprocess_parsed_message(message)
         return message, success
+
+    def _parse_response_for_streaming(self, response: list[int]) -> tuple[Message, bool]:
+        """Parse response for streaming with Qwen3.5-specific post-processing."""
+        message, parse_success = super()._parse_response_for_streaming(response)
+        self._postprocess_parsed_message(message)
+        return message, parse_success
 
     def _format_tool_call_xml(self, tool_call: ToolCall) -> str:
         """Format a single tool call in Qwen3.5's XML parameter format."""
