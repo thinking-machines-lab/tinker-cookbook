@@ -13,6 +13,8 @@ The ServiceClient is the main entry point for the Tinker API. It provides method
 - Generate RestClient instances for REST API operations like listing weights
 
 Args:
+    user_metadata: Optional metadata attached to the created session.
+    project_id: Optional project ID to attach to the created session.
     **kwargs: advanced options passed to the underlying HTTP client,
              including API keys, headers, and connection settings.
 
