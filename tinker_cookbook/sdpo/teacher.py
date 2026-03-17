@@ -76,6 +76,43 @@ def build_teacher_prompt(
     return env.renderer.build_generation_prompt(teacher_convo)
 
 
+def build_teacher_prompt_from_messages(
+    convo_prefix: list[renderers.Message],
+    question: str,
+    renderer: renderers.Renderer,
+    reprompt_suffix: str,
+    solution_text: str | None = None,
+    feedback_text: str | None = None,
+    solution_template: str = "Correct solution:\n\n{successful_previous_attempt}\n",
+    feedback_template: str = (
+        "The following is feedback from your unsuccessful earlier attempt:\n\n{feedback_raw}\n"
+    ),
+) -> tinker.ModelInput:
+    """Build a teacher prompt from raw conversation components.
+
+    This is a more generic version of ``build_teacher_prompt`` that doesn't
+    require a ``ProblemEnv``. It works with any environment type (including
+    tool-use environments like code_rl) as long as you supply the conversation
+    prefix, question, and renderer.
+    """
+    content_parts: list[str] = []
+    if solution_text is not None:
+        content_parts.append(solution_template.format(successful_previous_attempt=solution_text))
+    if feedback_text is not None:
+        content_parts.append(feedback_template.format(feedback_raw=feedback_text))
+
+    conditioning_content = "\n".join(content_parts) if content_parts else ""
+
+    teacher_convo: list[renderers.Message] = list(convo_prefix) + [
+        {"role": "user", "content": question},
+    ]
+    if conditioning_content:
+        teacher_convo.append({"role": "assistant", "content": conditioning_content})
+    teacher_convo.append({"role": "user", "content": reprompt_suffix})
+
+    return renderer.build_generation_prompt(teacher_convo)
+
+
 async def compute_teacher_logprobs(
     reference_client: tinker.SamplingClient,
     teacher_ob: tinker.ModelInput,

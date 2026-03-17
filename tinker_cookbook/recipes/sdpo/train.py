@@ -10,12 +10,14 @@ from datetime import datetime
 import chz
 
 from tinker_cookbook import checkpoint_utils, cli_utils
+from tinker_cookbook.recipes.code_rl.code_env import DeepcoderDatasetBuilder
 from tinker_cookbook.recipes.math_rl.math_env import get_math_dataset_builder
 from tinker_cookbook.recipes.sdpo.sciknoweval_env import (
     SciKnowEvalDatasetBuilder,
     SciKnowEvalDomain,
 )
 from tinker_cookbook.rl.types import RLDatasetBuilder
+from tinker_cookbook.sandbox import SandboxBackend
 from tinker_cookbook.sdpo.train import Config, main
 
 
@@ -29,10 +31,15 @@ class CLIConfig:
     renderer_name: str | None = None
     load_checkpoint_path: str | None = None
 
-    # Environment: math datasets or SciKnowEval (paper's benchmark)
-    env: str = "math"  # math, gsm8k, polaris, deepmath, sciknoweval
+    # Environment: math datasets, SciKnowEval (paper's benchmark), or code_rl
+    env: str = "math"  # math, gsm8k, polaris, deepmath, sciknoweval, code_rl
     sciknoweval_domain: SciKnowEvalDomain = "chemistry"
     seed: int = 0
+
+    # Code RL specific
+    sandbox_backend: SandboxBackend | None = None
+    code_timeout: int = 6
+    max_turns: int = 1
 
     # Training
     group_size: int = 8
@@ -72,6 +79,17 @@ def _get_dataset_builder(cli_config: CLIConfig, renderer_name: str) -> RLDataset
             renderer_name=renderer_name,
             group_size=cli_config.group_size,
             domain=cli_config.sciknoweval_domain,
+            seed=cli_config.seed,
+        )
+    elif cli_config.env == "code_rl":
+        return DeepcoderDatasetBuilder(
+            batch_size=cli_config.groups_per_batch,
+            model_name_for_tokenizer=cli_config.model_name,
+            renderer_name=renderer_name,
+            group_size=cli_config.group_size,
+            max_turns=cli_config.max_turns,
+            timeout=cli_config.code_timeout,
+            sandbox_backend=cli_config.sandbox_backend,
             seed=cli_config.seed,
         )
     else:
