@@ -26,3 +26,8 @@ jobs:
         run: uv run pytest tinker_cookbook/
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+      - name: pytest (downstream compat)
+        run: uv run pytest tests/downstream_compat/ -v
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
