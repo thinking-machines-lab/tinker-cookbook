@@ -101,9 +101,39 @@ if config.load_checkpoint_path:
 
 Set `behavior_if_log_dir_exists=resume` to continue from the last checkpoint in an existing log directory.
 
+## Managing checkpoints (REST API / CLI)
+
+Beyond saving and loading during training, you can manage checkpoints via the REST API or CLI. See `/tinker-sdk` for RestClient details and `/tinker-cli` for CLI commands.
+
+```python
+from tinker import ServiceClient
+rest = ServiceClient().create_rest_client()
+
+# List all your checkpoints
+checkpoints = rest.list_user_checkpoints(limit=100)
+
+# Publish a checkpoint (make it publicly accessible)
+rest.publish_checkpoint_from_tinker_path("tinker://...")
+
+# Set TTL (auto-delete after N seconds)
+rest.set_checkpoint_ttl_from_tinker_path("tinker://...", ttl_seconds=86400)
+
+# Delete a checkpoint
+rest.delete_checkpoint_from_tinker_path("tinker://...")
+```
+
+Or via CLI:
+```bash
+tinker checkpoint list
+tinker checkpoint publish <TINKER_PATH>
+tinker checkpoint set-ttl <TINKER_PATH> --ttl 86400
+tinker checkpoint delete <TINKER_PATH>
+```
+
 ## Common pitfalls
 - Use `save_state` for resumable checkpoints, `save_weights_for_sampler` for sampling/export
 - `get_last_checkpoint()` returns `None` if no matching checkpoint exists — always check
 - Checkpoint paths start with `tinker://` — they reference remote storage, not local files
 - Set `ttl_seconds` on intermediate checkpoints to avoid accumulating old weights
 - For RLHF pipelines, the SFT stage saves `state_path` (for RL init) and the RM stage saves `sampler_path` (for reward scoring)
+- `delete` is permanent — there is no undo
