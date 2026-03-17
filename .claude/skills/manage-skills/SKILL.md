@@ -18,9 +18,9 @@ All skills in `.claude/skills/` are organized into 5 layers:
 **Auto-invocation:** Yes — triggers when users ask about setup, models, hyperparameters, or debugging.
 **Key principle:** These inform all other layers. Reference `docs/`, `README.md`, `tinker_cookbook/hyperparam_utils.py`.
 
-### Layer 1: Tinker SDK (`tinker-sdk`, `tinker-types`)
-**Scope:** Raw Tinker Python SDK APIs — TrainingClient, SamplingClient, forward_backward, optim_step, sampling, types.
-**Auto-invocation:** Yes — triggers when users ask about Tinker API basics.
+### Layer 1: Tinker SDK (`tinker-sdk`, `tinker-types`, `tinker-cli`)
+**Scope:** Raw Tinker Python SDK APIs — ServiceClient, TrainingClient, SamplingClient, RestClient, types, errors, and CLI commands.
+**Auto-invocation:** Yes — triggers when users ask about Tinker API basics or CLI usage.
 **Key principle:** Reference `docs/api-reference/` for authoritative API docs.
 
 ### Layer 2: Cookbook Primitives (`renderers`, `environments`, `weights`, `completers`, `checkpoints`, `evals`, `datasets`)
@@ -120,8 +120,9 @@ When auditing, check each skill for:
 │   ├── hyperparams/         # LR formulas, batch size, LoRA rank
 │   └── logging/             # Training outputs, metrics, debugging
 ├── Layer 1: SDK
-│   ├── tinker-sdk/          # TrainingClient, SamplingClient APIs
-│   └── tinker-types/        # Datum, ModelInput, TensorData, SamplingParams
+│   ├── tinker-sdk/          # ServiceClient, TrainingClient, SamplingClient, RestClient APIs
+│   ├── tinker-types/        # Datum, ModelInput, TensorData, response types, error types
+│   └── tinker-cli/          # tinker CLI: run/checkpoint management, download, publish
 ├── Layer 2: Primitives
 │   ├── renderers/           # Renderer setup, TrainOnWhat, vision
 │   ├── environments/        # Env, EnvGroupBuilder, custom RL envs
