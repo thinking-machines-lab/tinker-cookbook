@@ -233,15 +233,15 @@ def do_update(
         with trace.scope_span_sync("get_batch"):
             data = dataset.get_batch(batch_idx)
 
-    # Split data into chosen and rejected pairs
-    chosen_data = [datum for i, datum in enumerate(data) if i % 2 == 0]
-    rejected_data = [datum for i, datum in enumerate(data) if i % 2 == 1]
+        # Split data into chosen and rejected pairs
+        chosen_data = [datum for i, datum in enumerate(data) if i % 2 == 0]
+        rejected_data = [datum for i, datum in enumerate(data) if i % 2 == 1]
 
-    # Print example for first batch
-    if step == 0:
-        for i in range(min(10, len(chosen_data))):
-            print_example(chosen_data[i], tokenizer, "Chosen")
-            print_example(rejected_data[i], tokenizer, "Rejected")
+        # Print example for first batch
+        if step == 0:
+            for i in range(min(10, len(chosen_data))):
+                print_example(chosen_data[i], tokenizer, "Chosen")
+                print_example(rejected_data[i], tokenizer, "Rejected")
 
         with trace.scope_span_sync("get_ref_logprobs"):
             # Get reference log probabilities
