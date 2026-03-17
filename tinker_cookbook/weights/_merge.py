@@ -140,9 +140,28 @@ def _detect_default_profile(model_config: dict, model_state_keys: set[str]) -> M
     )
 
 
+def _detect_deepseek_profile(model_config: dict, model_state_keys: set[str]) -> MergeProfile | None:
+    """Detect DeepSeek V3/V3.1 models.
+
+    DeepSeek uses separate per-expert weights (not fused) and standard key
+    naming. Detection is based on ``model_type`` rather than architecture
+    strings for reliability across versions.
+    """
+    if model_config.get("model_type") not in ("deepseek_v3",):
+        return None
+
+    has_lm_prefix = any(k.startswith("model.language_model.") for k in model_state_keys)
+
+    return MergeProfile(
+        expert_layout="separate",
+        has_language_model_prefix=has_lm_prefix,
+    )
+
+
 # Detectors are tried in order. First match wins.
 _PROFILE_DETECTORS: list = [
     _detect_gpt_oss_profile,
+    _detect_deepseek_profile,
 ]
 
 
