@@ -359,6 +359,7 @@ def main(config: Config):
         wandb_project=config.wandb_project,
         wandb_name=config.wandb_name,
         config=config,
+        do_configure_logging_module=True,
     )
     if config.enable_trace:
         trace_events_path = str(Path(config.log_path) / "trace_events.jsonl")
