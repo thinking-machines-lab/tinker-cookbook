@@ -179,7 +179,6 @@ async def run_eval(
         config: Evaluation configuration.
         tasks: List of HarborTask to evaluate.
         sandbox_factory: Factory for creating sandboxes (defaults to Modal).
-        output_path: Base directory for results (default: scripts/results).
 
     Returns:
         List of per-task results.
