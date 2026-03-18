@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable, Coroutine, Iterable, Iterator, Sequence
 from concurrent.futures import Executor
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -581,11 +582,7 @@ async def do_sync_training_with_stream_minibatch(
                 )
 
             # Run multiple optimizer substeps per training iteration
-            (
-                sampling_client,
-                full_batch_metrics,
-                full_batch_wrapped_trajectory_groups,
-            ) = await do_train_step_streaming_and_get_sampling_client(
+            streaming_result = await do_train_step_streaming_and_get_sampling_client(
                 cfg,
                 i_batch,
                 trajectory_groups_queue,
@@ -593,6 +590,13 @@ async def do_sync_training_with_stream_minibatch(
                 kl_reference_client,
                 tokenizer,
             )
+            # _Shutdown cannot appear in the sync path's local queue
+            assert streaming_result is not None, "Unexpected shutdown in sync streaming path"
+            (
+                sampling_client,
+                full_batch_metrics,
+                full_batch_wrapped_trajectory_groups,
+            ) = streaming_result
 
         _maybe_export_rollout_summary_jsonl(
             cfg=cfg,
@@ -632,6 +636,30 @@ class WrappedTrajectoryGroup:
     metrics: dict[str, Any] = chz.field(default_factory=dict)
 
 
+@dataclass
+class _Shutdown:
+    """Sentinel value to signal graceful shutdown through async queues.
+
+    Used in the cascading shutdown protocol for async RL training:
+    dataloader -> workers -> training loop -> evaluation loop.
+    """
+
+    pass
+
+
+class _AsyncCounter:
+    """Async-safe counter for tracking the number of alive worker tasks."""
+
+    def __init__(self, start: int):
+        self._value = start
+        self._lock = asyncio.Lock()
+
+    async def decrement_and_get(self) -> int:
+        async with self._lock:
+            self._value -= 1
+            return self._value
+
+
 @trace.scope
 async def do_async_training(
     start_batch: int,
@@ -648,13 +676,12 @@ async def do_async_training(
     """Implements async off-policy training, capped at K steps off policy."""
     assert cfg.async_config is not None
 
-    shutdown_event = asyncio.Event()
-    # We will have groups_per_batch worker generating rollouts, so cap the
+    # We will have groups_per_batch workers generating rollouts, so cap the
     # queue size to be groups_per_batch.
-    env_group_builders_queue = asyncio.Queue[EnvGroupBuilder | None](
+    env_group_builders_queue = asyncio.Queue[EnvGroupBuilder | _Shutdown](
         maxsize=cfg.async_config.groups_per_batch
     )
-    trajectory_groups_queue = asyncio.Queue[WrappedTrajectoryGroup | None]()
+    trajectory_groups_queue = asyncio.Queue[WrappedTrajectoryGroup | _Shutdown | None]()
 
     # Initial sampling client to use
     path_dict = await checkpoint_utils.save_checkpoint_async(
@@ -666,6 +693,18 @@ async def do_async_training(
         ttl_seconds=cfg.ttl_seconds,
     )
 
+    # Shutdown coordination — cascading sequence:
+    # 1. Dataloader exhausts data → sets dataloader_done_event (prevents requeuing stale
+    #    samples) and enqueues one _Shutdown sentinel per worker into env_group_builders_queue.
+    # 2. Each trajectory worker receives its _Shutdown sentinel → exits and decrements
+    #    worker_alive_counter. The last worker enqueues a _Shutdown into trajectory_groups_queue.
+    # 3. Training loop receives _Shutdown from trajectory_groups_queue → finishes current
+    #    batch, sets evaluation_loop_should_shutdown_event, and exits.
+    # 4. Eval loop sees evaluation_loop_should_shutdown_event → exits.
+    dataloader_done_event = asyncio.Event()
+    evaluation_loop_should_shutdown_event = asyncio.Event()
+    worker_alive_counter = _AsyncCounter(cfg.async_config.groups_per_batch)
+
     # This will be updated by the training loop
     sampling_client = training_client.create_sampling_client(path_dict["sampler_path"])
     sampling_client_step = start_batch
@@ -673,30 +712,31 @@ async def do_async_training(
     sampling_client_updated_event.set()
 
     @trace.scope
-    def shutdown_loops():
-        """Trigger all loops to shutdown"""
-        shutdown_event.set()
-        assert cfg.async_config is not None
-        for _ in range(cfg.async_config.groups_per_batch):
-            env_group_builders_queue.put_nowait(None)
-        sampling_client_updated_event.set()
-
-    @trace.scope
     async def dataloader_loop():
         """Gets the next set of env builders to run"""
         i_batch = start_batch
-        while not shutdown_event.is_set() and i_batch < end_batch:
+        while i_batch < end_batch:
             env_group_builders_P = dataset.get_batch(i_batch)
             for env_group_builder in env_group_builders_P:
                 await env_group_builders_queue.put(env_group_builder)
             i_batch += 1
 
+        # Signal that no more data will be produced, so stale samples should not be requeued
+        dataloader_done_event.set()
+        # Enqueue shutdown sentinels — one per worker — to cascade the shutdown
+        logger.info("[dataloader_loop] No more data, shutting down trajectory group workers")
+        assert cfg.async_config is not None
+        for _ in range(cfg.async_config.groups_per_batch):
+            await env_group_builders_queue.put(_Shutdown())
+        logger.info("[dataloader_loop] Terminated")
+
     @trace.scope
     async def trajectory_group_worker_loop():
         """Generates trajectories for a single env builder"""
-        while not shutdown_event.is_set():
+        while True:
             env_group_builder = await env_group_builders_queue.get()
-            if env_group_builder is None:
+            if isinstance(env_group_builder, _Shutdown):
+                logger.info("[trajectory_group_worker_loop] Received shutdown signal")
                 break
 
             metrics = {}
@@ -724,6 +764,15 @@ async def do_async_training(
                     )
                 )
 
+        # When this is the last worker to exit, signal the training loop to shut down
+        num_alive = await worker_alive_counter.decrement_and_get()
+        if num_alive == 0:
+            logger.info(
+                "[trajectory_group_worker_loop] Last worker exited, shutting down training loop"
+            )
+            trajectory_groups_queue.put_nowait(_Shutdown())
+        logger.info("[trajectory_group_worker_loop] Terminated")
+
     @trace.scope
     async def training_loop():
         """
@@ -735,9 +784,6 @@ async def do_async_training(
         i_batch = start_batch
         wrapped_trajectory_groups = []
         while i_batch < end_batch:
-            wrapped_trajectory_group = await trajectory_groups_queue.get()
-            if wrapped_trajectory_group is None:
-                continue
 
             @trace.scope
             def filter_stale_trajectory_group(
@@ -748,17 +794,27 @@ async def do_async_training(
                     return False
 
                 # If the samples are too stale, requeue the data so that it will be used eventually.
-                # Requeue on a separate coroutine to avoid blocking the training loop
+                # Skip requeuing during shutdown to avoid deadlocking on a full bounded queue.
                 assert cfg.async_config is not None
                 if (
                     i_batch - wrapped_trajectory_group.sampling_client_step
                     > cfg.async_config.max_steps_off_policy
                 ):
-                    logger.info(f"[training_loop] Step {i_batch}: Samples are too stale, skipping")
-                    asyncio.create_task(
-                        env_group_builders_queue.put(wrapped_trajectory_group.env_group_builder),
-                        name="requeue_stale_sample_task",
-                    )
+                    if dataloader_done_event.is_set():
+                        logger.info(
+                            f"[training_loop] Step {i_batch}: Samples are too stale, "
+                            "discarding (dataloader done)"
+                        )
+                    else:
+                        logger.info(
+                            f"[training_loop] Step {i_batch}: Samples are too stale, requeuing"
+                        )
+                        asyncio.create_task(
+                            env_group_builders_queue.put(
+                                wrapped_trajectory_group.env_group_builder
+                            ),
+                            name="requeue_stale_sample_task",
+                        )
                     return False
                 return True
 
@@ -772,12 +828,17 @@ async def do_async_training(
             nonlocal sampling_client
             nonlocal sampling_client_step
             if cfg.stream_minibatch_config is not None:
+                # Streaming minibatch: delegate queue consumption to the streaming function.
+                # We need to check for shutdown before entering the streaming function,
+                # since it will block on queue.get() internally.
+                wrapped_trajectory_group = await trajectory_groups_queue.get()
+                if isinstance(wrapped_trajectory_group, _Shutdown):
+                    logger.info("[training_loop] Received shutdown signal")
+                    break
+                if wrapped_trajectory_group is None:
+                    continue
                 await trajectory_groups_queue.put(wrapped_trajectory_group)
-                (
-                    sampling_client,
-                    train_step_metrics,
-                    full_batch_wrapped_trajectory_groups,
-                ) = await do_train_step_streaming_and_get_sampling_client(
+                streaming_result = await do_train_step_streaming_and_get_sampling_client(
                     cfg,
                     i_batch,
                     trajectory_groups_queue,
@@ -786,6 +847,14 @@ async def do_async_training(
                     tokenizer,
                     filter_stale_trajectory_group,
                 )
+                if streaming_result is None:
+                    logger.info("[training_loop] Received shutdown signal from streaming")
+                    break
+                (
+                    sampling_client,
+                    train_step_metrics,
+                    full_batch_wrapped_trajectory_groups,
+                ) = streaming_result
                 _maybe_export_rollout_summary_jsonl(
                     cfg=cfg,
                     file_prefix=f"train_iteration_{i_batch:06d}",
@@ -801,6 +870,13 @@ async def do_async_training(
                     ],
                 )
             else:
+                wrapped_trajectory_group = await trajectory_groups_queue.get()
+                if isinstance(wrapped_trajectory_group, _Shutdown):
+                    logger.info("[training_loop] Received shutdown signal")
+                    break
+                if wrapped_trajectory_group is None:
+                    continue
+
                 if not filter_stale_trajectory_group(wrapped_trajectory_group):
                     continue
 
@@ -853,7 +929,10 @@ async def do_async_training(
             i_batch += 1
             wrapped_trajectory_groups = []
 
-        shutdown_loops()
+        # Signal evaluation loop to shut down
+        evaluation_loop_should_shutdown_event.set()
+        sampling_client_updated_event.set()
+        logger.info("[training_loop] Terminated")
 
     @trace.scope
     async def evaluation_loop():
@@ -861,7 +940,7 @@ async def do_async_training(
         if len(evaluators) == 0 or cfg.eval_every == 0:
             return
 
-        while not shutdown_event.is_set():
+        while not evaluation_loop_should_shutdown_event.is_set():
             await sampling_client_updated_event.wait()
             sampling_client_updated_event.clear()
 
@@ -878,6 +957,7 @@ async def do_async_training(
                         metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
                 metrics["time/evaluation_loop/total"] = time.time() - t_start
                 ml_logger.log_metrics(metrics, step=sampling_client_eval_step)
+        logger.info("[evaluation_loop] Terminated")
 
     await asyncio.gather(
         asyncio.create_task(dataloader_loop(), name="dataloader_loop"),
@@ -1000,15 +1080,18 @@ async def compute_full_batch_metrics_and_get_sampling_client(
 async def do_train_step_streaming_and_get_sampling_client(
     cfg: Config,
     i_batch: int,
-    trajectory_groups_queue: asyncio.Queue[WrappedTrajectoryGroup | None],
+    trajectory_groups_queue: asyncio.Queue[WrappedTrajectoryGroup | _Shutdown | None],
     training_client: tinker.TrainingClient,
     kl_reference_client: tinker.SamplingClient | None,
     tokenizer: Tokenizer,
     trajectory_group_filter: Callable[[WrappedTrajectoryGroup | None], bool] = lambda _: True,
-) -> tuple[tinker.SamplingClient, dict[str, Any], list[WrappedTrajectoryGroup]]:
+) -> tuple[tinker.SamplingClient, dict[str, Any], list[WrappedTrajectoryGroup]] | None:
     """
     As soon as we have enough trajectories for a minibatch, we will train on them.
     This allows us to overlap sampling and training.
+
+    Returns None if a shutdown sentinel is received, indicating the caller should
+    stop training.
     """
     assert cfg.stream_minibatch_config is not None
     assert cfg.stream_minibatch_config.groups_per_batch % cfg.num_substeps == 0, (
@@ -1038,6 +1121,9 @@ async def do_train_step_streaming_and_get_sampling_client(
         i_minibatch = 0
         while i_minibatch < cfg.stream_minibatch_config.num_minibatches:
             wrapped_trajectory_group = await trajectory_groups_queue.get()
+            if isinstance(wrapped_trajectory_group, _Shutdown):
+                logger.info("[do_train_step_streaming] Received shutdown signal")
+                return None
             if not trajectory_group_filter(wrapped_trajectory_group):
                 continue
             wrapped_trajectory_groups.append(wrapped_trajectory_group)
