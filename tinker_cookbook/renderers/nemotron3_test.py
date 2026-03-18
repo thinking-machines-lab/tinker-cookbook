@@ -24,9 +24,7 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 NEMOTRON3_NANO_MODEL = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
 NEMOTRON3_SUPER_MODEL = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16"
-NEMOTRON3_TOKENIZER_PATH = (
-    "/gcs/tml-us-south1-ckpt-01/checkpoints/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
-)
+NEMOTRON3_TOKENIZER_PATH = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
 
 
 # =============================================================================
