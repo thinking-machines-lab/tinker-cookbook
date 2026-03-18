@@ -8,11 +8,33 @@ from unittest.mock import patch
 import pytest
 
 from tinker_cookbook.utils.deprecation import (
-    _check_past_removal,
+    _parse_version,
     deprecated,
-    deprecated_module_attr,
+    make_deprecated_module_getattr,
     warn_deprecated,
 )
+
+# ---------------------------------------------------------------------------
+# _parse_version
+# ---------------------------------------------------------------------------
+
+
+class TestParseVersion:
+    def test_simple(self):
+        assert _parse_version("1.2.3") == (1, 2, 3)
+
+    def test_dev_suffix(self):
+        assert _parse_version("0.15.0.dev3+g1234") == (0, 15, 0)
+
+    def test_prerelease(self):
+        assert _parse_version("1.0.0rc1") == (1, 0, 0)
+
+    def test_single_number(self):
+        assert _parse_version("42") == (42,)
+
+    def test_empty_fallback(self):
+        assert _parse_version("") == (0,)
+
 
 # ---------------------------------------------------------------------------
 # warn_deprecated
@@ -55,9 +77,7 @@ class TestWarnDeprecated:
 
     def test_past_removal_version_raises(self):
         with patch("tinker_cookbook.utils.deprecation._current_version") as mock_ver:
-            from packaging.version import Version
-
-            mock_ver.return_value = Version("1.0.0")
+            mock_ver.return_value = (1, 0, 0)
             with pytest.raises(RuntimeError, match="should have been removed"):
                 warn_deprecated("old_func", removal_version="0.5.0")
 
@@ -90,7 +110,7 @@ class TestDeprecatedDecorator:
         assert "old_func" in str(w[0].message)
 
     def test_decorate_function_with_message(self):
-        @deprecated("Use new_func instead.", removal_version="99.0.0")
+        @deprecated(message="Use new_func instead.", removal_version="99.0.0")
         def old_func() -> str:
             return "result"
 
@@ -115,7 +135,7 @@ class TestDeprecatedDecorator:
         assert len(w) == 1
 
     def test_preserves_function_metadata(self):
-        @deprecated("msg", removal_version="99.0.0")
+        @deprecated(message="msg", removal_version="99.0.0")
         def old_func() -> str:
             """Original docstring."""
             return "result"
@@ -124,7 +144,7 @@ class TestDeprecatedDecorator:
         assert old_func.__doc__ == "Original docstring."
 
     def test_decorate_class(self):
-        @deprecated("Use NewClass instead.", removal_version="99.0.0")
+        @deprecated(message="Use NewClass instead.", removal_version="99.0.0")
         class OldClass:
             def __init__(self, x: int):
                 self.x = x
@@ -138,8 +158,19 @@ class TestDeprecatedDecorator:
         assert "OldClass" in str(w[0].message)
         assert "Use NewClass instead." in str(w[0].message)
 
+    def test_class_preserves_isinstance(self):
+        @deprecated(message="Use NewClass instead.")
+        class OldClass:
+            pass
+
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            obj = OldClass()
+
+        assert isinstance(obj, OldClass)
+
     def test_function_with_args_and_kwargs(self):
-        @deprecated("msg")
+        @deprecated(message="msg")
         def add(a: int, b: int, *, extra: int = 0) -> int:
             return a + b + extra
 
@@ -151,82 +182,48 @@ class TestDeprecatedDecorator:
         assert len(w) == 1
 
     def test_past_removal_raises_on_call(self):
-        @deprecated("Use new.", removal_version="0.1.0")
+        @deprecated(message="Use new.", removal_version="0.1.0")
         def old_func() -> str:
             return "result"
 
         with patch("tinker_cookbook.utils.deprecation._current_version") as mock_ver:
-            from packaging.version import Version
-
-            mock_ver.return_value = Version("1.0.0")
+            mock_ver.return_value = (1, 0, 0)
             with pytest.raises(RuntimeError, match="should have been removed"):
                 old_func()
 
 
 # ---------------------------------------------------------------------------
-# _check_past_removal
+# make_deprecated_module_getattr
 # ---------------------------------------------------------------------------
 
 
-class TestCheckPastRemoval:
-    def test_none_removal_returns_false(self):
-        assert _check_past_removal(None) is False
-
-    def test_future_version_returns_false(self):
-        assert _check_past_removal("999.0.0") is False
-
-    def test_past_version(self):
-        with patch("tinker_cookbook.utils.deprecation._current_version") as mock_ver:
-            from packaging.version import Version
-
-            mock_ver.return_value = Version("2.0.0")
-            assert _check_past_removal("1.0.0") is True
-
-    def test_equal_version(self):
-        with patch("tinker_cookbook.utils.deprecation._current_version") as mock_ver:
-            from packaging.version import Version
-
-            mock_ver.return_value = Version("1.0.0")
-            assert _check_past_removal("1.0.0") is True
-
-
-# ---------------------------------------------------------------------------
-# deprecated_module_attr
-# ---------------------------------------------------------------------------
-
-
-class TestDeprecatedModuleAttr:
+class TestMakeDeprecatedModuleGetattr:
     def test_unknown_attr_raises_attribute_error(self):
+        getattr_fn = make_deprecated_module_getattr("mymod", {})
         with pytest.raises(AttributeError, match="has no attribute"):
-            deprecated_module_attr(
-                "nonexistent",
-                module_name="mymod",
-                attrs={},
-            )
+            getattr_fn("nonexistent")
 
     def test_redirects_with_warning(self):
-        # Use a known importable object as the redirect target
+        getattr_fn = make_deprecated_module_getattr(
+            "mymod",
+            {"OldPath": ("os.path.join", "99.0.0")},
+        )
+
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            result = deprecated_module_attr(
-                "OldVersion",
-                module_name="mymod",
-                attrs={
-                    "OldVersion": ("packaging.version.Version", "99.0.0"),
-                },
-            )
+            result = getattr_fn("OldPath")
 
-        from packaging.version import Version
+        import os.path
 
-        assert result is Version
+        assert result is os.path.join
         assert len(w) == 1
-        assert "mymod.OldVersion" in str(w[0].message)
-        assert "packaging.version.Version" in str(w[0].message)
+        assert "mymod.OldPath" in str(w[0].message)
+        assert "os.path.join" in str(w[0].message)
 
     def test_bad_path_raises(self):
+        getattr_fn = make_deprecated_module_getattr(
+            "mymod",
+            {"Bad": ("NoDots", "99.0.0")},
+        )
         with pytest.raises(ValueError, match="dotted path"):
-            deprecated_module_attr(
-                "Bad",
-                module_name="mymod",
-                attrs={"Bad": ("NoDots", "99.0.0")},
-            )
+            getattr_fn("Bad")
