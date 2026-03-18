@@ -41,6 +41,7 @@ Documentation = "https://tinker-docs.thinkingmachines.ai/"
 dev = [
     "pytest",
     "pytest-asyncio",
+    "pytest-cov",
     "ruff",
     "pyright",
 ]
@@ -152,6 +153,15 @@ exclude = [
     # Vendored from HuggingFace, kept identical to upstream
     "kimi-k2.5-hf-tokenizer/tool_declaration_ts.py",
 ]
+
+[tool.coverage.run]
+source = ["tinker_cookbook"]
+omit = ["*_test.py", "tinker_cookbook/scripts/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+# No fail_under — coverage is informational only
 
 [tool.uv.sources]
 instruction-following-eval = { git = "https://github.com/josejg/instruction_following_eval", rev = "0c495b2f95155e8b10acb919ae283bfb4d5be6e2" }

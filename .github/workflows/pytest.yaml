@@ -32,6 +32,28 @@ jobs:
         run: uv pip install transformers==${{ matrix.transformers-version }}
 
       - name: pytest (unit)
-        run: uv run pytest tinker_cookbook/
+        run: >
+          uv run pytest tinker_cookbook/
+          --cov=tinker_cookbook
+          --cov-report=term-missing
+          --cov-report=html:coverage-html
+          --cov-report=xml:coverage.xml
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+      - name: coverage summary
+        if: always()
+        run: |
+          echo "## Coverage Report (transformers ${{ matrix.transformers-version }})" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          uv run coverage report --format=text || true
+          uv run coverage report --format=text >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "Coverage report unavailable" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html-transformers-${{ matrix.transformers-version }}
+          path: coverage-html/
+          retention-days: 14
