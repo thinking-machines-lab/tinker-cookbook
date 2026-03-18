@@ -56,3 +56,11 @@ optim_result = await optim_future
 ```
 
 This pattern ensures both operations are queued and can be processed in the same [clock cycle](./under-the-hood#clock-cycles). In contrast, if you waited for `forward_backward` to complete before submitting `optim_step`, you might miss the next [clock cycle](./under-the-hood#clock-cycles).
+
+## Error handling
+
+The Tinker SDK automatically retries failed API requests (up to 10 times by default) with exponential backoff. Transient errors like timeouts, rate limits, and server errors are handled transparently — you do not need to add retry logic around your API calls.
+
+If all retries are exhausted, the SDK raises an exception (e.g., `tinker.APITimeoutError`, `tinker.InternalServerError`, `tinker.RateLimitError`). Client errors such as `tinker.BadRequestError` or `tinker.AuthenticationError` are raised immediately without retrying.
+
+See [Developer Tips](/dev-tips#error-handling-and-retries) for full details on retry configuration and logging.
