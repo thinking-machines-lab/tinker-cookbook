@@ -467,11 +467,9 @@ async def main(
     if cfg.max_step is not None:
         if cfg.max_steps is not None:
             raise ValueError("Cannot specify both max_steps and max_step. Use max_steps.")
-        import warnings
+        from tinker_cookbook.utils.deprecation import warn_deprecated
 
-        warnings.warn(
-            "max_step is deprecated, use max_steps instead", DeprecationWarning, stacklevel=2
-        )
+        warn_deprecated("max_step", message="Use 'max_steps' instead.")
         effective_max_steps = cfg.max_step
     num_batches = (
         min(effective_max_steps, num_batches) if effective_max_steps is not None else num_batches
