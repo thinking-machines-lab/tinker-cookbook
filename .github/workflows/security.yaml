@@ -1,0 +1,80 @@
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Run weekly on Mondays at 08:00 UTC
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+jobs:
+  dependency-audit:
+    name: dependency audit (pip-audit)
+    runs-on: ubuntu-latest
+    # Informational only — do not block PRs on vulnerability findings
+    continue-on-error: true
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install-uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: venv
+        run: uv venv && uv sync --all-extras
+
+      - name: pip-audit
+        run: uv run pip-audit --desc --output json --output pip-audit-report.json || true
+
+      - name: pip-audit (human-readable)
+        run: uv run pip-audit --desc
+
+      - name: upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report
+          path: pip-audit-report.json
+
+  static-analysis:
+    name: static analysis (bandit)
+    runs-on: ubuntu-latest
+    # Informational only — do not block PRs on bandit findings
+    continue-on-error: true
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install-uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: venv
+        run: uv venv && uv sync --all-extras
+
+      - name: bandit
+        run: |
+          uv run bandit -r tinker_cookbook/ \
+            -c pyproject.toml \
+            --severity-level medium \
+            -f json -o bandit-report.json || true
+
+      - name: bandit (human-readable)
+        run: |
+          uv run bandit -r tinker_cookbook/ \
+            -c pyproject.toml \
+            --severity-level medium
+
+      - name: upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json

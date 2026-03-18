@@ -43,6 +43,8 @@ dev = [
     "pytest-asyncio",
     "ruff",
     "pyright",
+    "pip-audit",
+    "bandit",
 ]
 vector-search = [
     "chromadb",
@@ -151,6 +153,15 @@ exclude = [
     ".venv",
     # Vendored from HuggingFace, kept identical to upstream
     "kimi-k2.5-hf-tokenizer/tool_declaration_ts.py",
+]
+
+[tool.bandit]
+# Skip tests that produce too many false positives in ML/research code
+skips = [
+    "B101",  # assert statements (used extensively in tests and data validation)
+    "B311",  # random (not used for cryptography, only for ML sampling/shuffling)
+    "B404",  # import subprocess (needed for process management)
+    "B603",  # subprocess without shell=True (flagged even when safe)
 ]
 
 [tool.uv.sources]
