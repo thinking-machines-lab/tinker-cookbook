@@ -1,11 +1,10 @@
-"""Pytest configuration for smoke tests.
+"""Pytest configuration for integration tests.
 
-Recipes NOT yet covered by smoke tests:
+Recipes NOT yet covered by integration tests:
   - code_rl: requires external sandbox service (SandboxFusion)
   - search_tool: requires running Chroma vector DB + embedding API
   - verifiers_rl: requires verifiers framework environment
   - if_rl: requires if_verifiable library + IFBench data
-  - math_rl: could use ArithmeticDatasetBuilder (partially tested via smoke_tests.py)
   - rubric: needs generated JSONL data (has generate_data.py script)
   - rl_basic, sl_basic, rl_loop, sl_loop: standalone tutorial scripts (not full recipes)
   - prompt_distillation: needs a local JSONL data file

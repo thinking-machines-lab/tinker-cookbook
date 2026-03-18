@@ -3,6 +3,15 @@
   <img src="assets/tinker-cover.png" width="60%" />
 </div>
 
+<div align="center">
+
+[![pytest](https://github.com/thinking-machines-lab/tinker-cookbook/actions/workflows/pytest.yaml/badge.svg)](https://github.com/thinking-machines-lab/tinker-cookbook/actions/workflows/pytest.yaml)
+[![pyright](https://github.com/thinking-machines-lab/tinker-cookbook/actions/workflows/pyright.yaml/badge.svg)](https://github.com/thinking-machines-lab/tinker-cookbook/actions/workflows/pyright.yaml)
+[![smoke-test-recipes](https://github.com/thinking-machines-lab/tinker-cookbook/actions/workflows/smoke-test-recipes.yaml/badge.svg)](https://github.com/thinking-machines-lab/tinker-cookbook/actions/workflows/smoke-test-recipes.yaml)
+[![PyPI](https://img.shields.io/pypi/v/tinker-cookbook)](https://pypi.org/project/tinker-cookbook/)
+
+</div>
+
 We provide two libraries for the broader community to customize their language models: `tinker` and `tinker-cookbook`.
 
 - `tinker` is a training SDK for researchers and developers to fine-tune language models. You send API requests to us and we handle the complexities of distributed training.
@@ -12,8 +21,14 @@ We provide two libraries for the broader community to customize their language m
 
 1. Sign up for Tinker [here](https://auth.thinkingmachines.ai/sign-up).
 2. Once you have access, create an API key from the [console](https://tinker-console.thinkingmachines.ai) and export it as environment variable `TINKER_API_KEY`.
-3. Install tinker python client via `pip install tinker`
-4. We recommend installing `tinker-cookbook` in a virtual env either with `conda` or `uv`. For running most examples, you can install via `pip install -e .`.
+3. Install `tinker-cookbook` (includes the `tinker` SDK as a dependency):
+   ```bash
+   # Latest stable release from PyPI
+   uv pip install tinker-cookbook
+
+   # Or install the nightly build
+   uv pip install 'tinker-cookbook @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
+   ```
 
 ## Tinker
 
