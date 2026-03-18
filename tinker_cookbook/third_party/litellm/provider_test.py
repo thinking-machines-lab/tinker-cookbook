@@ -8,17 +8,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tinker_cookbook.renderers.base import ToolCall
 from tinker_cookbook.third_party.litellm.provider import (
-    _SamplingResult,
     _convert_openai_messages,
     _convert_openai_tools,
     _extract_sampling_params,
     _prepare_messages_with_tools,
     _sample_chat_completion,
     _sampling_result_to_chat_completion_dict,
+    _SamplingResult,
 )
-from tinker_cookbook.renderers.base import ToolCall
-
 
 # ---------------------------------------------------------------------------
 # Helpers

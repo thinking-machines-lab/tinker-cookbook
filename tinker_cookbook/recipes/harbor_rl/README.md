@@ -84,11 +84,37 @@ uvx harbor datasets download terminal-bench@2.0
 Then launch training:
 
 ```bash
-python -m tinker_cookbook.recipes.harbor_rl.launch_terminal_bench \
-    model_name="moonshotai/Kimi-K2-Thinking" \
-    group_size=4 \
-    groups_per_batch=8 \
-    learning_rate=1e-5 \
-    lora_rank=32 \
-    max_tokens=8192
+uv run python tinker_cookbook/recipes/harbor_rl/scripts/train_terminal_bench.py
 ```
+
+## Evaluation
+
+Evaluate a Tinker endpoint on Harbor datasets without training.
+
+Download datasets:
+```bash
+uvx harbor datasets download terminal-bench@2.0 -o ~/.cache/harbor/tasks/terminal-bench-2.0
+uvx harbor datasets download swebench-verified@1.0 -o ~/.cache/harbor/tasks/swebench-verified-1.0
+```
+
+Run evaluation:
+```bash
+uv run python tinker_cookbook/recipes/harbor_rl/scripts/eval_terminal_bench.py
+```
+
+Key parameters in `EvalConfig`: `max_turns`, `max_tokens`, `temperature`.
+`run_eval()` also accepts `sandbox_factory` for custom sandbox backends and `output_path` to control where results are written (default: `tinker_cookbook/recipes/harbor_rl/scripts/results/<timestamp>/`).
+
+We evaluated SWE-Bench-Verified-1.0 and Terminal-Bench-2.0 at 32K context length and naive agent harness with no advanced features like context compatification that summarizes the tool calling history.
+
+### Results: Kimi-K2-Thinking (32K context, no compaction)
+
+| Benchmark | Total | PASS | FAIL | ERROR | Pass Rate |
+|-----------|-------|------|------|-------|-----------|
+| SWE-Bench Verified 1.0 | 500 | 46 (9.2%) | 52 (10.4%) | 402 (80.4%) | 9.2% |
+| Terminal-Bench 2.0 | 89 | 18 (20.2%) | 36 (40.4%) | 35 (39.3%) | 20.2% |
+
+**Config**: `max_turns=200, max_tokens=8192, temperature=0.1, sandbox_timeout=3600s`
+
+All ERRORs are context window overflow (`prompt_tokens + max_tokens > 32768`).
+These occur when the conversation history exceeds ~24.5K tokens, leaving insufficient room for the 8192 `max_tokens` generation budget.

@@ -4,14 +4,14 @@ These tests verify that Qwen-family renderers produce identical tool declaration
 to HuggingFace's chat templates when using the tools parameter.
 """
 
-from collections.abc import Mapping, Sequence
 import json
+from collections.abc import Mapping, Sequence
 
 import pytest
 from transformers import AutoTokenizer
 
 from tinker_cookbook.renderers import get_renderer
-from tinker_cookbook.renderers.base import ToolSpec, Message, ensure_text
+from tinker_cookbook.renderers.base import Message, ToolSpec, ensure_text
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 # Qwen3 models use JSON tool calls with OpenAI-style tool wrapper in tool declarations.

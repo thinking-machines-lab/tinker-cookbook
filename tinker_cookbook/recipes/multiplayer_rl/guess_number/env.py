@@ -1,14 +1,15 @@
 import random
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 import chz
 from tinker import ModelInput
+
 from tinker_cookbook.completers import (
     StopCondition,
 )
-from tinker_cookbook.renderers import Message, Renderer, get_renderer, ensure_text
+from tinker_cookbook.renderers import Message, Renderer, ensure_text, get_renderer
 from tinker_cookbook.rl.types import (
     Action,
     Env,

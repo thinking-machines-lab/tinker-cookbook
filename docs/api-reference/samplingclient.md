@@ -30,6 +30,20 @@ future = sampling_client.sample(prompt=prompt, sampling_params=params, num_sampl
 result = future.result()
 ```
 
+Multi-processing support:
+This class is picklable, so it can be passed to a separate process/worker to sample. It is also
+safe to pass the same instance of SamplingClient to multiple processes/workers.
+
+If you are using Tinker SDK with more than one process you should always create SamplingClient from
+the main process and then pass it to the other processes/workers.
+ServiceClient and TrainingClient should always be managed from the main process.
+
+Subprocess isolation:
+Set ``TINKER_SUBPROCESS_SAMPLING=1`` to run sample() and compute_logprobs() in a dedicated
+subprocess, preventing GIL contention from CPU-heavy user code (grading, environment
+interactions) from stalling networking IO and heartbeats. This is transparent — the same
+API works with or without it.
+
 #### `sample`
 
 ```python
@@ -110,3 +124,44 @@ async def compute_logprobs_async(
 ```
 
 Async version of compute_logprobs.
+
+#### `get_tokenizer`
+
+```python
+def get_tokenizer() -> PreTrainedTokenizer
+```
+
+Get the tokenizer for the current model.
+
+Returns:
+- `PreTrainedTokenizer` compatible with the model
+
+#### `get_base_model`
+
+```python
+def get_base_model() -> str
+```
+
+Get the base model name for the current sampling session.
+
+#### `get_base_model_async`
+
+```python
+async def get_base_model_async() -> str
+```
+
+Async version of get_base_model.
+
+#### `__reduce__`
+
+```python
+def __reduce__() -> tuple[Any, tuple[_SamplingClientPickleState]]
+```
+
+Enable pickling of SamplingClient for subprocess use.
+
+Serializes into a ``_SamplingClientPickleState`` dataclass. The
+``_sampling_client_sidecar_handle`` handle is deliberately omitted — only a
+bool flag is stored. The unpickled copy creates its own handle via
+the per-process sidecar singleton. Do not add ``__getstate__``
+without preserving this behavior.

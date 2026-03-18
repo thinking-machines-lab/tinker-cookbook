@@ -1,3 +1,5 @@
+import { FilterableModelTable } from '../components/FilterableModelTable'
+
 # Available Models in Tinker
 
 The table below shows the models that are currently available in Tinker. We plan to update this list as new models are released.
@@ -12,34 +14,38 @@ The table below shows the models that are currently available in Tinker. We plan
 
 ## Full Listing
 
-| Model Name                                                                                      | Training Type      | Architecture | Size    |
-| ----------------------------------------------------------------------------------------------- | -------------      | ------------ | ------- |
-| [Qwen/Qwen3.5-397B-A17B](https://huggingface.co/Qwen/Qwen3.5-397B-A17B)                         | Hybrid + Vision    | MoE          | Large   |
-| [Qwen/Qwen3.5-35B-A3B](https://huggingface.co/Qwen/Qwen3.5-35B-A3B)                             | Hybrid + Vision    | MoE          | Medium  |
-| [Qwen/Qwen3.5-27B](https://huggingface.co/Qwen/Qwen3.5-27B)                                     | Hybrid + Vision    | Dense        | Medium  |
-| [Qwen/Qwen3.5-4B](https://huggingface.co/Qwen/Qwen3.5-4B)                                       | Hybrid + Vision    | Dense        | Small   |
-| [Qwen/Qwen3-VL-235B-A22B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-235B-A22B-Instruct)     | Vision             | MoE          | Large   |
-| [Qwen/Qwen3-VL-30B-A3B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct)         | Vision             | MoE          | Medium  |
-| [Qwen/Qwen3-235B-A22B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-235B-A22B-Instruct-2507) | Instruction        | MoE          | Large   |
-| [Qwen/Qwen3-30B-A3B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507)     | Instruction        | MoE          | Medium  |
-| [Qwen/Qwen3-30B-A3B](https://huggingface.co/Qwen/Qwen3-30B-A3B)                                 | Hybrid             | MoE          | Medium  |
-| [Qwen/Qwen3-30B-A3B-Base](https://huggingface.co/Qwen/Qwen3-30B-A3B-Base)                       | Base               | MoE          | Medium  |
-| [Qwen/Qwen3-32B](https://huggingface.co/Qwen/Qwen3-32B)                                         | Hybrid             | Dense        | Medium  |
-| [Qwen/Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B)                                           | Hybrid             | Dense        | Small   |
-| [Qwen/Qwen3-8B-Base](https://huggingface.co/Qwen/Qwen3-8B-Base)                                 | Base               | Dense        | Small   |
-| [Qwen/Qwen3-4B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507)               | Instruction        | Dense        | Compact |
-| [openai/gpt-oss-120b](https://huggingface.co/openai/gpt-oss-120b)                               | Reasoning          | MoE          | Medium  |
-| [openai/gpt-oss-20b](https://huggingface.co/openai/gpt-oss-20b)                                 | Reasoning          | MoE          | Small   |
-| [deepseek-ai/DeepSeek-V3.1](https://huggingface.co/deepseek-ai/DeepSeek-V3.1)                   | Hybrid             | MoE          | Large   |
-| [deepseek-ai/DeepSeek-V3.1-Base](https://huggingface.co/deepseek-ai/DeepSeek-V3.1-Base)         | Base               | MoE          | Large   |
-| [meta-llama/Llama-3.1-70B](https://huggingface.co/meta-llama/Llama-3.1-70B)                     | Base               | Dense        | Large   |
-| [meta-llama/Llama-3.3-70B-Instruct](https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct)   | Instruction        | Dense        | Large   |
-| [meta-llama/Llama-3.1-8B](https://huggingface.co/meta-llama/Llama-3.1-8B)                       | Base               | Dense        | Small   |
-| [meta-llama/Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct)     | Instruction        | Dense        | Small   |
-| [meta-llama/Llama-3.2-3B](https://huggingface.co/meta-llama/Llama-3.2-3B)                       | Base               | Dense        | Compact |
-| [meta-llama/Llama-3.2-1B](https://huggingface.co/meta-llama/Llama-3.2-1B)                       | Base               | Dense        | Compact |
-| [moonshotai/Kimi-K2-Thinking](https://huggingface.co/moonshotai/Kimi-K2-Thinking)               | Reasoning          | MoE          | Large   |
-| [moonshotai/Kimi-K2.5](https://huggingface.co/moonshotai/Kimi-K2.5)                             | Reasoning + Vision | MoE          | Large   |
+{/* To add or remove a model, edit the list below. The docs site renders it as an interactive filterable table. */}
+
+export const models = [
+  { name: "Qwen/Qwen3.5-397B-A17B", type: "Hybrid + Vision", arch: "MoE", size: "Large" },
+  { name: "Qwen/Qwen3.5-35B-A3B", type: "Hybrid + Vision", arch: "MoE", size: "Medium" },
+  { name: "Qwen/Qwen3.5-27B", type: "Hybrid + Vision", arch: "Dense", size: "Medium" },
+  { name: "Qwen/Qwen3.5-4B", type: "Hybrid + Vision", arch: "Dense", size: "Compact" },
+  { name: "Qwen/Qwen3-VL-235B-A22B-Instruct", type: "Vision", arch: "MoE", size: "Large" },
+  { name: "Qwen/Qwen3-VL-30B-A3B-Instruct", type: "Vision", arch: "MoE", size: "Medium" },
+  { name: "Qwen/Qwen3-235B-A22B-Instruct-2507", type: "Instruction", arch: "MoE", size: "Large" },
+  { name: "Qwen/Qwen3-30B-A3B-Instruct-2507", type: "Instruction", arch: "MoE", size: "Medium" },
+  { name: "Qwen/Qwen3-30B-A3B", type: "Hybrid", arch: "MoE", size: "Medium" },
+  { name: "Qwen/Qwen3-30B-A3B-Base", type: "Base", arch: "MoE", size: "Medium" },
+  { name: "Qwen/Qwen3-32B", type: "Hybrid", arch: "Dense", size: "Medium" },
+  { name: "Qwen/Qwen3-8B", type: "Hybrid", arch: "Dense", size: "Small" },
+  { name: "Qwen/Qwen3-8B-Base", type: "Base", arch: "Dense", size: "Small" },
+  { name: "Qwen/Qwen3-4B-Instruct-2507", type: "Instruction", arch: "Dense", size: "Compact" },
+  { name: "openai/gpt-oss-120b", type: "Reasoning", arch: "MoE", size: "Medium" },
+  { name: "openai/gpt-oss-20b", type: "Reasoning", arch: "MoE", size: "Small" },
+  { name: "deepseek-ai/DeepSeek-V3.1", type: "Hybrid", arch: "MoE", size: "Large" },
+  { name: "deepseek-ai/DeepSeek-V3.1-Base", type: "Base", arch: "MoE", size: "Large" },
+  { name: "meta-llama/Llama-3.1-70B", type: "Base", arch: "Dense", size: "Large" },
+  { name: "meta-llama/Llama-3.3-70B-Instruct", type: "Instruction", arch: "Dense", size: "Large" },
+  { name: "meta-llama/Llama-3.1-8B", type: "Base", arch: "Dense", size: "Small" },
+  { name: "meta-llama/Llama-3.1-8B-Instruct", type: "Instruction", arch: "Dense", size: "Small" },
+  { name: "meta-llama/Llama-3.2-3B", type: "Base", arch: "Dense", size: "Compact" },
+  { name: "meta-llama/Llama-3.2-1B", type: "Base", arch: "Dense", size: "Compact" },
+  { name: "moonshotai/Kimi-K2-Thinking", type: "Reasoning", arch: "MoE", size: "Large" },
+  { name: "moonshotai/Kimi-K2.5", type: "Reasoning + Vision", arch: "MoE", size: "Large" },
+]
+
+<FilterableModelTable models={models} />
 
 ## Legend
 

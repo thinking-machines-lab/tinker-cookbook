@@ -25,12 +25,13 @@ import inspect
 import json
 import os
 import traceback
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Iterator, Mapping, Protocol, Sequence, TypeVar, cast, overload
+from typing import Any, Protocol, TypeVar, cast, overload
 
 # Context variables for task-local state
 _current_trace: ContextVar["Trace | None"] = ContextVar("lt_current_trace", default=None)

@@ -10,11 +10,12 @@ from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import chz
 from rich.console import Console
 from rich.table import Table
+
 from tinker_cookbook.utils.code_state import code_state
 
 logger = logging.getLogger(__name__)
@@ -84,7 +85,7 @@ class Logger(ABC):
         pass
 
     @abstractmethod
-    def log_metrics(self, metrics: Dict[str, Any], step: int | None = None) -> None:
+    def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
         """Log metrics dictionary with optional step number."""
         pass
 
@@ -137,7 +138,7 @@ class JsonLogger(Logger):
                 f.write(diff_file)
             self._logged_hparams = True
 
-    def log_metrics(self, metrics: Dict[str, Any], step: int | None = None) -> None:
+    def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
         """Append metrics to JSONL file."""
         log_entry = {"step": step} if step is not None else {}
         log_entry.update(metrics)
@@ -162,7 +163,7 @@ class PrettyPrintLogger(Logger):
             for key, value in config_dict.items():
                 self.console.print(f"  {key}: {_maybe_truncate_repr(value)}")
 
-    def log_metrics(self, metrics: Dict[str, Any], step: int | None = None) -> None:
+    def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
         """Display metrics in console."""
         if not metrics:
             return
@@ -233,7 +234,7 @@ class WandbLogger(Logger):
         if self.run and wandb is not None:
             wandb.config.update(dump_config(config))
 
-    def log_metrics(self, metrics: Dict[str, Any], step: int | None = None) -> None:
+    def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
         """Log metrics to wandb."""
         if self.run and wandb is not None:
             wandb.log(metrics, step=step)
@@ -286,7 +287,7 @@ class NeptuneLogger(Logger):
 
     def log_metrics(
         self,
-        metrics: Dict[str, Any],
+        metrics: dict[str, Any],
         step: float | int | None = None,
     ) -> None:
         """Log metrics to neptune."""
@@ -329,7 +330,7 @@ class TrackioLogger(Logger):
         if self.run and trackio is not None:
             pass
 
-    def log_metrics(self, metrics: Dict[str, Any], step: int | None = None) -> None:
+    def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
         """Log metrics to trackio."""
         if self.run and trackio is not None:
             trackio.log(metrics, step=step)
@@ -344,7 +345,7 @@ class TrackioLogger(Logger):
 class MultiplexLogger(Logger):
     """Logger that forwards operations to multiple child loggers."""
 
-    def __init__(self, loggers: List[Logger]):
+    def __init__(self, loggers: list[Logger]):
         self.loggers = loggers
 
     def log_hparams(self, config: Any) -> None:
@@ -352,7 +353,7 @@ class MultiplexLogger(Logger):
         for logger in self.loggers:
             logger.log_hparams(config)
 
-    def log_metrics(self, metrics: Dict[str, Any], step: int | None = None) -> None:
+    def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
         """Forward log_metrics to all child loggers."""
         for logger in self.loggers:
             logger.log_metrics(metrics, step)

@@ -19,12 +19,13 @@ Example usage:
 
 import asyncio
 import logging
-import os
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import chz
 from tinker.types import LossFnType
+
 from tinker_cookbook import checkpoint_utils, cli_utils
 from tinker_cookbook.distillation import train_on_policy
 from tinker_cookbook.distillation.datasets import (
@@ -116,7 +117,7 @@ async def cli_main(cli_config: CLIConfig):
     if cli_config.wandb_name is not None:
         wandb_name = cli_config.wandb_name
     else:
-        wandb_name = os.path.basename(log_path)
+        wandb_name = Path(log_path).name
 
     # Create DeepMath dataset builder
     deepmath_builder = PromptOnlyDatasetBuilder(

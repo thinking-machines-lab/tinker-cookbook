@@ -15,13 +15,14 @@ Example usage:
 
 import asyncio
 import logging
-import os
 from datetime import datetime
+from pathlib import Path
 from typing import cast
 
 import chz
 import datasets
 import tinker
+
 from tinker_cookbook import checkpoint_utils, cli_utils
 from tinker_cookbook.renderers import Message, TrainOnWhat
 from tinker_cookbook.supervised import train
@@ -138,7 +139,7 @@ def cli_main(cli_config: CLIConfig):
     # Create log path if not specified
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
-        run_name = os.path.basename(log_path)
+        run_name = Path(log_path).name
     else:
         model_name = cli_config.model_name.replace("/", "-")
         run_name = (

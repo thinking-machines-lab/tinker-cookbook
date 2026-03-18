@@ -1,9 +1,10 @@
 import asyncio
+from collections.abc import Callable, Sequence
 from dataclasses import replace
-from typing import Callable, Sequence
 
 import numpy as np
 import tinker
+
 from tinker_cookbook.completers import TinkerMessageCompleter
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
 from tinker_cookbook.preference.types import (

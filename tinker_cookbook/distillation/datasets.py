@@ -7,12 +7,14 @@ a teacher model. The environment provides no correctness or format rewards.
 """
 
 import math
+from collections.abc import Sequence
 from functools import partial
-from typing import List, Literal, Sequence
+from typing import Literal
 
 import chz
 import tinker
 from datasets import load_dataset
+
 from tinker_cookbook import renderers
 from tinker_cookbook.rl.problem_env import ProblemEnv, ProblemGroupBuilder, logger
 from tinker_cookbook.rl.types import (
@@ -45,7 +47,7 @@ class DistillationDatasetConfig:
 class CompositeDataset:
     """Wraps multiple datasets and samples from each according to their groups_per_batch."""
 
-    def __init__(self, datasets: List[RLDataset], groups_per_batch_list: List[int]):
+    def __init__(self, datasets: list[RLDataset], groups_per_batch_list: list[int]):
         self.datasets = datasets
         self.groups_per_batch_list = groups_per_batch_list
         # Use the shortest dataset length
@@ -57,7 +59,7 @@ class CompositeDataset:
     def __len__(self) -> int:
         return self.length
 
-    def get_batch(self, i_batch: int) -> tuple[List[EnvGroupBuilder], List[int]]:
+    def get_batch(self, i_batch: int) -> tuple[list[EnvGroupBuilder], list[int]]:
         """
         Get a batch by sampling from each dataset according to groups_per_batch.
 
@@ -68,17 +70,12 @@ class CompositeDataset:
         all_env_group_builders = []
         all_dataset_indices = []
 
-        for dataset_idx, (dataset, groups_per_batch) in enumerate(
+        for dataset_idx, (dataset, _groups_per_batch) in enumerate(
             zip(self.datasets, self.groups_per_batch_list)
         ):
             env_group_builders = dataset.get_batch(i_batch)
-            # Each dataset should return exactly groups_per_batch items
-            assert len(env_group_builders) == groups_per_batch, (
-                f"Dataset {dataset_idx} returned {len(env_group_builders)} items, "
-                f"expected {groups_per_batch}"
-            )
             all_env_group_builders.extend(env_group_builders)
-            all_dataset_indices.extend([dataset_idx] * groups_per_batch)
+            all_dataset_indices.extend([dataset_idx] * len(env_group_builders))
 
         return all_env_group_builders, all_dataset_indices
 

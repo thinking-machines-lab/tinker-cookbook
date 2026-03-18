@@ -1,17 +1,33 @@
 name: publish-pypi
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]  # only semver tags like v1.2.3
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git tag to publish (e.g. v0.2.0). Must already exist."
+        required: true
 
 jobs:
   publish:
     runs-on: ubuntu-latest
 
     steps:
+      - name: determine ref
+        id: ref
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "ref=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${{ github.ref }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.ref.outputs.ref }}
+          fetch-depth: 0  # hatch-vcs needs full history for version
 
       - name: install-uv
         uses: astral-sh/setup-uv@v6
@@ -20,6 +36,24 @@ jobs:
 
       - name: build
         run: uv build
+
+      - name: verify version matches tag
+        run: |
+          BUILT_VERSION=$(ls dist/*.tar.gz | sed 's/.*tinker_cookbook-//;s/\.tar\.gz//')
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_VERSION="${{ inputs.tag }}"
+            TAG_VERSION="${TAG_VERSION#v}"
+          fi
+          echo "Built version: $BUILT_VERSION"
+          echo "Tag version: $TAG_VERSION"
+          if [ "$BUILT_VERSION" != "$TAG_VERSION" ]; then
+            echo "ERROR: Built version ($BUILT_VERSION) does not match tag ($TAG_VERSION)"
+            exit 1
+          fi
+
+      - name: run smoke test
+        run: uv run python -c "import tinker_cookbook; print(f'Version: {tinker_cookbook.__version__}')"
 
       - name: publish
         run: uv publish --token="$PYPI_TOKEN"

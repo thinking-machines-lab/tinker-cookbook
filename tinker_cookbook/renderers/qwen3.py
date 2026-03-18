@@ -83,6 +83,8 @@ class Qwen3Renderer(Renderer):
     Use strip_thinking_from_history=False for multi-turn RL to get the extension property.
     """
 
+    supports_streaming = True
+
     def __init__(self, tokenizer: Tokenizer, strip_thinking_from_history: bool = True):
         """
         Args:
@@ -195,6 +197,7 @@ class Qwen3Renderer(Renderer):
         return [self._end_message_token]
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+        response = self._normalize_response_tokens(response)
         assistant_message, parse_success = parse_response_for_stop_token(
             response, self.tokenizer, self._end_message_token
         )
@@ -227,6 +230,42 @@ class Qwen3Renderer(Renderer):
 
         return assistant_message, True
 
+    def _parse_response_for_streaming(self, response: list[int]) -> tuple[Message, bool]:
+        """Parse response for streaming, always applying full content parsing.
+
+        Unlike parse_response which short-circuits on missing stop token,
+        this always parses think blocks and tool calls from the content.
+        This ensures the final Message emitted by streaming is complete
+        even for truncated responses.
+
+        Note: _normalize_response_tokens is NOT called here because
+        parse_response_streaming already normalizes before feeding tokens
+        to the parser.
+        """
+        assistant_message, parse_success = parse_response_for_stop_token(
+            response, self.tokenizer, self._end_message_token
+        )
+
+        assert isinstance(assistant_message["content"], str)
+        content = assistant_message["content"]
+
+        result = parse_content_blocks(content)
+
+        if result is not None:
+            parts, tool_results = result
+            assistant_message["content"] = parts
+
+            tool_calls = [t for t in tool_results if isinstance(t, ToolCall)]
+            unparsed = [t for t in tool_results if isinstance(t, UnparsedToolCall)]
+            if tool_calls:
+                assistant_message["tool_calls"] = tool_calls
+            if unparsed:
+                assistant_message["unparsed_tool_calls"] = unparsed
+        else:
+            assistant_message["content"] = content
+
+        return assistant_message, parse_success
+
     def to_openai_message(self, message: Message) -> dict:
         """Convert a Message to OpenAI API format with reasoning_content for thinking.
 
@@ -257,7 +296,7 @@ class Qwen3Renderer(Renderer):
                 result["reasoning_content"] = "".join(thinking_parts)
 
         # Handle tool_calls
-        if "tool_calls" in message and message["tool_calls"]:
+        if "tool_calls" in message and message["tool_calls"]:  # noqa: RUF019
             result["tool_calls"] = [
                 {
                     "type": "function",
@@ -450,12 +489,11 @@ class Qwen3VLRenderer(Qwen3Renderer):
                     base_parts.append(cast(TextPart, p))
                 elif p["type"] == "image":
                     base_parts.append(cast(ImagePart, p))
-                elif p["type"] == "thinking":
-                    if not strip_thinking:
-                        # Render thinking as <think>...</think> text
-                        base_parts.append(
-                            TextPart(type="text", text=self._format_thinking_text(p["thinking"]))
-                        )
+                elif p["type"] == "thinking" and not strip_thinking:
+                    # Render thinking as <think>...</think> text
+                    base_parts.append(
+                        TextPart(type="text", text=self._format_thinking_text(p["thinking"]))
+                    )
                     # else: strip thinking by not appending
 
         # Wrap images with vision tokens

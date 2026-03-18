@@ -32,7 +32,7 @@ def main() -> None:
                 raise ValueError("Pickle file does not contain a JobConfig object")
             config = loaded
     elif config_path.endswith(".json"):
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             config = JobConfig.model_validate_json(f.read())
     else:
         raise ValueError(f"Unknown file extension: {config_path}")
