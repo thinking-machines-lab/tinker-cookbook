@@ -77,7 +77,7 @@ async def test_rl():
 
 @pytest.mark.integration
 def test_rl_async():
-    model_name = "Qwen/Qwen2.5-VL-7B-Instruct"
+    model_name = "Qwen/Qwen3.5-4B"
     lora_rank = 32
     renderer_name = "role_colon"
     tokenizer = get_tokenizer(model_name)
@@ -109,7 +109,7 @@ def test_rl_async():
 
 @pytest.mark.integration
 def test_rl_sync_stream_minibatch():
-    model_name = "Qwen/Qwen2.5-VL-7B-Instruct"
+    model_name = "Qwen/Qwen3.5-4B"
     lora_rank = 32
     renderer_name = "role_colon"
     tokenizer = get_tokenizer(model_name)
