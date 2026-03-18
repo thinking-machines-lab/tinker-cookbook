@@ -8,12 +8,12 @@ This module is a thin dispatcher. It does NOT replace ``chz`` for recipe
 configuration -- recipes already have rich ``chz``-based CLIs. Instead it
 provides:
 
-- ``tinker-cookbook run <recipe> [chz args...]``  -- discover and launch recipes
+- ``tinker-cookbook recipe <name> [chz args...]``  -- discover and launch recipes
 - ``tinker-cookbook weights download|merge|publish`` -- weight lifecycle
 - ``tinker-cookbook chat [chz args...]``  -- interactive chat
 - ``tinker-cookbook viz [chz args...]``   -- dataset visualization
 
-For ``run``, ``chat``, and ``viz``, extra arguments are forwarded to the
+For ``recipe``, ``chat``, and ``viz``, extra arguments are forwarded to the
 underlying ``chz`` entrypoint, so users get the same CLI experience they
 would with ``python -m``.
 """
@@ -80,27 +80,27 @@ def _list_recipes() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Subcommand: run
+# Subcommand: recipe
 # ---------------------------------------------------------------------------
 
 
-def _cmd_run(args: list[str]) -> None:
+def _cmd_recipe(args: list[str]) -> None:
     """Run a recipe by name, forwarding remaining args to its chz CLI."""
     if not args or args[0] in ("-h", "--help"):
         recipes_list = _list_recipes()
         print(
-            f"Usage: tinker-cookbook run <recipe> [args...]\n"
+            f"Usage: tinker-cookbook recipe <name> [args...]\n"
             f"\n"
-            f"Run a training recipe. Extra arguments are forwarded to the\n"
+            f"Launch a training recipe. Extra arguments are forwarded to the\n"
             f"recipe's chz-based CLI.\n"
             f"\n"
             f"Available recipes:\n"
             f"{recipes_list}\n"
             f"\n"
             f"Examples:\n"
-            f"  tinker-cookbook run sl_basic\n"
-            f"  tinker-cookbook run math_rl --model_name Qwen/Qwen3-8B\n"
-            f"  tinker-cookbook run chat_sl --help"
+            f"  tinker-cookbook recipe sl_basic\n"
+            f"  tinker-cookbook recipe math_rl --model_name Qwen/Qwen3-8B\n"
+            f"  tinker-cookbook recipe chat_sl --help"
         )
         return
 
@@ -244,7 +244,7 @@ def _cmd_viz(args: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 _COMMANDS: dict[str, tuple[str, object]] = {
-    "run": ("Run a training recipe", _cmd_run),
+    "recipe": ("Launch a training recipe", _cmd_recipe),
     "weights": ("Download, merge, or publish model weights", _cmd_weights),
     "chat": ("Interactive chat with a Tinker model", _cmd_chat),
     "viz": ("Visualize a supervised dataset", _cmd_viz),
