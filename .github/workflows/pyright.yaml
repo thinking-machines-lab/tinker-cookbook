@@ -21,8 +21,5 @@ jobs:
       - name: venv
         run: uv venv && uv sync --all-extras
 
-      - name: pin transformers
-        run: uv pip install transformers==5.2.0
-
       - name: pyright
         run: uv run pyright tinker_cookbook
