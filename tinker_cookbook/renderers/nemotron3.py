@@ -28,8 +28,6 @@ the following ways:
    prepends an empty system message in build_generation_prompt and
    build_supervised_example to match this behavior.
 
-Reference: chat_template.jinja in
-  /gcs/tml-us-south1-ckpt-01/checkpoints/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16/
 """
 
 import dataclasses
