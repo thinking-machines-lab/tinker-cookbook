@@ -43,7 +43,7 @@ from tinker_cookbook.rl.problem_env import ProblemEnv, ProblemGroupBuilder
 from tinker_cookbook.rl.rollout_logging import (
     RolloutSummaryExportConfig,
     rollout_summaries_jsonl_path,
-    write_rollout_summaries_jsonl_from_groups,
+    write_rollout_summaries_jsonl,
 )
 from tinker_cookbook.rl.rollouts import do_group_rollout
 from tinker_cookbook.rl.train import gather_with_progress
@@ -543,7 +543,7 @@ async def main(config: Config):
 
         # Export train rollout summaries
         if config.rollout_json_export:
-            write_rollout_summaries_jsonl_from_groups(
+            write_rollout_summaries_jsonl(
                 rollout_summaries_jsonl_path(config.log_path, train_file_prefix),
                 split="train",
                 iteration=i_batch,
