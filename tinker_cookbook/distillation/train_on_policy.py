@@ -39,6 +39,7 @@ from tinker_cookbook.rl.types import (
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import ml_log, trace
+from tinker_cookbook.utils.deprecation import warn_deprecated
 from tinker_cookbook.utils.misc_utils import safezip
 
 logger = logging.getLogger(__name__)
@@ -467,11 +468,7 @@ async def main(
     if cfg.max_step is not None:
         if cfg.max_steps is not None:
             raise ValueError("Cannot specify both max_steps and max_step. Use max_steps.")
-        import warnings
-
-        warnings.warn(
-            "max_step is deprecated, use max_steps instead", DeprecationWarning, stacklevel=2
-        )
+        warn_deprecated("max_step", removal_version="0.3.0", message="Use 'max_steps' instead.")
         effective_max_steps = cfg.max_step
     num_batches = (
         min(effective_max_steps, num_batches) if effective_max_steps is not None else num_batches
