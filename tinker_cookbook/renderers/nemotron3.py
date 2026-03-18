@@ -2,7 +2,7 @@
 Nemotron-3 family renderer.
 
 Nemotron-3 models (NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 and
-NVIDIA-Nemotron-3-Super-120B-A12B-FP8) use a chat format similar to Qwen3.5
+NVIDIA-Nemotron-3-Super-120B-A12B-BF16) use a chat format similar to Qwen3.5
 (im_start/im_end tokens, thinking blocks, XML-style tool calls) but differ in
 the following ways:
 
