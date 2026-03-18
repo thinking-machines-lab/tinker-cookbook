@@ -5,6 +5,7 @@ Utilities for guessing good hyperparameters for fine-tuning.
 import json
 import math
 import struct
+import warnings
 
 import huggingface_hub
 import numpy as np
@@ -150,20 +151,74 @@ def get_lora_param_count(
     )
 
 
-def get_lr(model_name: str, is_lora: bool = True) -> float:
-    base_lr = 5e-05
-    lora_multiplier = 10.0
+# Reference LoRA learning rates, empirically determined via LR sweeps.
+# For full fine-tuning, divide by 10.
+# Placeholder values are marked — update from sweep results.
+_REFERENCE_LRS: dict[str, float] = {
+    # Llama (from existing sweeps)
+    "meta-llama/Llama-3.2-1B": 5e-4,
+    "meta-llama/Llama-3.2-1B-Instruct": 5e-4,
+    "meta-llama/Llama-3.2-3B": 4e-4,
+    "meta-llama/Llama-3.2-3B-Instruct": 4e-4,
+    "meta-llama/Llama-3.1-8B": 2.8e-4,
+    "meta-llama/Llama-3.1-8B-Instruct": 2.8e-4,
+    "meta-llama/Llama-3.1-70B": 2e-4,
+    "meta-llama/Llama-3.3-70B-Instruct": 2e-4,
+    # Qwen
+    "Qwen/Qwen3-0.6B": 5e-4,
+    "Qwen/Qwen3-1.7B": 5e-4,
+    "Qwen/Qwen3-4B": 5e-4,
+    "Qwen/Qwen3-4B-Base": 5e-4,
+    "Qwen/Qwen3-4B-Instruct-2507": 5e-4,
+    "Qwen/Qwen3-8B": 5e-4,
+    "Qwen/Qwen3-8B-Base": 5e-4,
+    "Qwen/Qwen3-14B": 3e-4,
+    "Qwen/Qwen3-14B-Base": 3e-4,
+    "Qwen/Qwen3-30B-A3B": 3e-4,
+    "Qwen/Qwen3-30B-A3B-Base": 3e-4,
+    "Qwen/Qwen3-30B-A3B-Instruct-2507": 3e-4,
+    "Qwen/Qwen3-32B": 3e-4,
+    "Qwen/Qwen3-235B-A22B-Instruct-2507": 2e-4,
+    "Qwen/Qwen3-VL-30B-A3B-Instruct": 3e-4,
+    "Qwen/Qwen3-VL-235B-A22B-Instruct": 2e-4,
+    "Qwen/Qwen3.5-4B": 3e-4,  # placeholder
+    "Qwen/Qwen3.5-27B": 3e-4,  # placeholder
+    "Qwen/Qwen3.5-35B-A3B": 3e-4,  # placeholder
+    "Qwen/Qwen3.5-397B-A17B": 2e-4,  # placeholder
+    # DeepSeek
+    "deepseek-ai/DeepSeek-V3.1": 2e-4,  # placeholder
+    "deepseek-ai/DeepSeek-V3.1-Base": 2e-4,  # placeholder
+    # GPT-OSS
+    "openai/gpt-oss-20b": 3e-4,  # placeholder
+    "openai/gpt-oss-120b": 2e-4,  # placeholder
+    # Moonshot
+    "moonshotai/Kimi-K2-Thinking": 2e-4,  # placeholder
+    "moonshotai/Kimi-K2.5": 2e-4,  # placeholder
+    # Nemotron
+    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": 3e-4,  # placeholder
+    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": 2e-4,  # placeholder
+}
 
-    lr = base_lr * lora_multiplier if is_lora else base_lr
-    if "llama" in model_name.lower():
-        exponent_model = 0.781
-    elif "qwen" in model_name.lower():
-        exponent_model = 0.0775
-    else:
-        raise ValueError(f"Unknown model: {model_name}")
-    # TODO: sweep to determine LR multipliers for other models
-    lr = lr * (2000 / _get_hidden_size(model_name)) ** exponent_model
-    return lr
+_LORA_TO_FULL_FINETUNE_RATIO = 10.0
+
+
+def get_lr(model_name: str, is_lora: bool = True) -> float:
+    """Return recommended learning rate for the given model.
+
+    Uses a lookup table of empirically-determined rates. For models not yet
+    in the table, returns a conservative default with a warning.
+    """
+    base_name = model_name.split(":")[0]
+    if base_name in _REFERENCE_LRS:
+        lr = _REFERENCE_LRS[base_name]
+        return lr if is_lora else lr / _LORA_TO_FULL_FINETUNE_RATIO
+
+    warnings.warn(
+        f"No reference LR for '{model_name}'. Using default 5e-4 (LoRA) / 5e-5 (full). "
+        f"Run an LR sweep to find the optimal value.",
+        stacklevel=2,
+    )
+    return 5e-4 if is_lora else 5e-5
 
 
 def get_full_finetune_param_count(model_name: str) -> float:
