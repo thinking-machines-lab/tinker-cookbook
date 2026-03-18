@@ -159,6 +159,20 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
         exponent_model = 0.781
     elif "qwen" in model_name.lower():
         exponent_model = 0.0775
+    elif model_name in (
+        "deepseek-ai/DeepSeek-V3.1",
+        "deepseek-ai/DeepSeek-V3.1-Base",
+        "openai/gpt-oss-20b",
+        "openai/gpt-oss-120b",
+        "moonshotai/Kimi-K2-Thinking",
+        "moonshotai/Kimi-K2.5",
+        "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+        "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",
+    ):
+        raise NotImplementedError(
+            f"Learning rate formula for {model_name} is not yet calibrated. "
+            "Please specify a learning rate manually."
+        )
     else:
         raise ValueError(f"Unknown model: {model_name}")
     # TODO: sweep to determine LR multipliers for other models
