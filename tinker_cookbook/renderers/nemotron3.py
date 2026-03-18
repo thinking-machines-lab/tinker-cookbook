@@ -67,7 +67,7 @@ def _format_nemotron3_tool_declaration(tool: ToolSpec) -> str:
         "<function>",
         f"<name>{tool['name']}</name>",
     ]
-    if "description" in tool:
+    if tool.get("description", "").strip():
         lines.append(f"<description>{tool['description'].strip()}</description>")
     lines.append("<parameters>")
     params = tool.get("parameters") or {}

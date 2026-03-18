@@ -250,7 +250,7 @@ def test_tool_declaration_not_json_per_line():
 
 def test_tool_declaration_minimal_tool():
     """Tool with no description and no parameters."""
-    tool = ToolSpec(name="ping", parameters={})
+    tool = ToolSpec(name="ping", description="", parameters={})
     declaration = _format_nemotron3_tool_declaration(tool)
     assert "<name>ping</name>" in declaration
     assert "<description>" not in declaration
