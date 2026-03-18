@@ -172,6 +172,20 @@ info = rest.get_weights_info_by_tinker_path(tinker_path="tinker://...")
 
 All RestClient methods have `_async` variants.
 
+## Retry behavior
+
+The Tinker SDK retries **all** HTTP API calls automatically (10 attempts, exponential backoff with jitter). Retried request types: timeouts (408), lock conflicts (409), rate limits (429), server errors (500+), and connection failures. The SDK respects `Retry-After` headers and attaches idempotency keys to non-GET requests.
+
+Client errors (400, 401, 403, 404, 422) are **not** retried — these raise immediately (e.g., `tinker.BadRequestError`, `tinker.AuthenticationError`).
+
+Override via `max_retries` on client creation:
+```python
+svc = tinker.ServiceClient(max_retries=3)   # reduce retries
+svc = tinker.ServiceClient(max_retries=0)   # disable retries
+```
+
+**Do not** add retry wrappers around Tinker API calls in training loops — the SDK handles this. Enable retry logging with `logging.getLogger("tinker").setLevel(logging.DEBUG)`.
+
 ## Common pitfalls
 - **Use ServiceClient** to create clients — `TrainingClient` and `SamplingClient` cannot be constructed directly
 - Always await futures before submitting new forward_backward calls
