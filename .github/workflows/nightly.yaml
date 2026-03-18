@@ -10,6 +10,33 @@ permissions:
   contents: write  # needed to create/delete releases
 
 jobs:
+  test-older-transformers:
+    runs-on: ubuntu-latest
+    name: test-older-transformers (transformers 4.57.6)
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install-uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: venv
+        run: uv venv && uv sync --all-extras
+
+      - name: pin transformers
+        run: uv pip install transformers==4.57.6
+
+      - name: pytest (unit)
+        run: uv run pytest tinker_cookbook/
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+      - name: pyright
+        run: uv run pyright tinker_cookbook
+
   build-and-release:
     runs-on: ubuntu-latest
     # Only run if: manually triggered, or smoke tests passed on schedule
