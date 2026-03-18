@@ -53,7 +53,8 @@ jobs:
           fi
 
       - name: run smoke test
-        run: uv run python -c "import tinker_cookbook; print(f'Version: {tinker_cookbook.__version__}')"
+        run: |
+          uv run python -c "import tinker_cookbook; print(f'Version: {tinker_cookbook.__version__}')"
 
       - name: publish
         run: uv publish --token="$PYPI_TOKEN"
