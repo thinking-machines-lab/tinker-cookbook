@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
 from pathlib import Path
 
 from safetensors.torch import load_file
 
 from tinker_cookbook.weights._artifacts import (
     ShardWriter,
+    copy_artifact_file,
     copy_model_code_files,
     get_model_state_shapes,
     get_shard_files,
@@ -143,7 +143,7 @@ def build_sharded(
         #     could break downstream loaders like vLLM/SGLang.
         src_config = model_dir / "config.json"
         if src_config.exists():
-            shutil.copy2(src_config, out / "config.json")
+            copy_artifact_file(src_config, out / "config.json")
         copy_model_code_files(model_dir, out)
         save_tokenizer_and_processor(
             base_model, out, is_multimodal_from_dict(config_dict), trust_remote_code

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
 from collections.abc import Callable
 from pathlib import Path
 
@@ -20,6 +19,7 @@ from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 
 from tinker_cookbook.weights._artifacts import (
+    copy_artifact_file,
     copy_model_code_files,
     get_model_state_shapes,
     get_shard_files,
@@ -730,7 +730,7 @@ def build_quantized(
     # 7. Copy config and patch with quantization metadata
     src_config = model_dir / "config.json"
     if src_config.exists():
-        shutil.copy2(src_config, out / "config.json")
+        copy_artifact_file(src_config, out / "config.json")
 
     if serving_format == "vllm":
         quant_config = _build_vllm_quantization_config(weight_map)
