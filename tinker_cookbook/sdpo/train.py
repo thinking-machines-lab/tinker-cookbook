@@ -26,7 +26,9 @@ from __future__ import annotations
 import logging
 import os
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
+from pathlib import Path
 from typing import cast
 
 import chz
@@ -38,6 +40,11 @@ from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator, SamplingClientEvaluatorBuilder
 from tinker_cookbook.rl.metric_util import compute_trajectory_metrics
 from tinker_cookbook.rl.problem_env import ProblemEnv, ProblemGroupBuilder
+from tinker_cookbook.rl.rollout_logging import (
+    RolloutSummaryExportConfig,
+    rollout_summaries_jsonl_path,
+    write_rollout_summaries_jsonl_from_groups,
+)
 from tinker_cookbook.rl.rollouts import do_group_rollout
 from tinker_cookbook.rl.train import gather_with_progress
 from tinker_cookbook.rl.types import EnvGroupBuilder, RLDatasetBuilder, TrajectoryGroup
@@ -54,7 +61,7 @@ from tinker_cookbook.sdpo.teacher import (
     strip_thinking_blocks,
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
-from tinker_cookbook.utils import ml_log
+from tinker_cookbook.utils import logtree, ml_log
 from tinker_cookbook.utils.misc_utils import timed
 
 logger = logging.getLogger(__name__)
@@ -109,6 +116,30 @@ def _resolve_teacher_prompt_builder(
 
 
 # ---------------------------------------------------------------------------
+# Logtree / rollout export helpers
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _get_logtree_scope(
+    log_path: str | None, num_groups_to_log: int, f_name: str, scope_name: str
+) -> Iterator[None]:
+    if log_path is None or num_groups_to_log <= 0:
+        yield
+        return
+
+    logtree_path = str(Path(log_path) / f"{f_name}.html")
+    logtree_json_path = str(Path(log_path) / f"{f_name}_logtree.json")
+    trace = None
+    try:
+        with logtree.init_trace(scope_name, path=logtree_path) as trace:
+            yield
+    finally:
+        if trace is not None:
+            logtree.write_trace_json(trace, logtree_json_path)
+
+
+# ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
@@ -152,6 +183,8 @@ class Config:
     # Logging
     wandb_project: str | None = None
     wandb_name: str | None = None
+    num_groups_to_log: int = 4
+    rollout_json_export: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +451,30 @@ async def main(config: Config):
         if evaluators and config.eval_every > 0 and i_batch % config.eval_every == 0:
             with timed("eval", metrics):
                 for evaluator in evaluators:
-                    eval_metrics = await evaluator(sampling_client)
+                    ev_name = getattr(evaluator, "name", "test")
+                    eval_file_prefix = f"eval_{ev_name}_iteration_{i_batch:06d}"
+                    with _get_logtree_scope(
+                        log_path=config.log_path,
+                        num_groups_to_log=config.num_groups_to_log,
+                        f_name=eval_file_prefix,
+                        scope_name=f"Running evaluation {ev_name} {i_batch}",
+                    ):
+                        rollout_summary_export = (
+                            RolloutSummaryExportConfig(
+                                path=rollout_summaries_jsonl_path(
+                                    config.log_path, eval_file_prefix
+                                ),
+                                split=f"eval/{ev_name}",
+                                iteration=i_batch,
+                                sampling_client_step=i_batch,
+                            )
+                            if config.rollout_json_export
+                            else None
+                        )
+                        eval_metrics = await evaluator(
+                            sampling_client,
+                            rollout_summary_export=rollout_summary_export,
+                        )
                     metrics.update(eval_metrics)
 
         # ---- Checkpoint ----
@@ -441,17 +497,34 @@ async def main(config: Config):
             temperature=config.temperature,
         )
 
-        with timed("rollout", metrics):
-            trajectory_groups: list[TrajectoryGroup] = await gather_with_progress(
-                [do_group_rollout(builder, policy) for builder in env_group_builders],
-                desc=f"Rollouts batch {i_batch}",
-            )
+        train_file_prefix = f"train_iteration_{i_batch:06d}"
+        with _get_logtree_scope(
+            config.log_path,
+            config.num_groups_to_log,
+            train_file_prefix,
+            f"SDPO Iteration {i_batch}",
+        ):
+            with timed("rollout", metrics):
+                trajectory_groups: list[TrajectoryGroup] = await gather_with_progress(
+                    [do_group_rollout(builder, policy) for builder in env_group_builders],
+                    desc=f"Rollouts batch {i_batch}",
+                )
 
         # ---- Training rollout metrics (reward, accuracy, etc.) ----
         # No prefix — matches GRPO's convention so metrics are directly
         # comparable in W&B (e.g. env/all/correct, env/all/reward/total).
         taglist_P = [b.logging_tags() for b in env_group_builders]
         metrics.update(compute_trajectory_metrics(trajectory_groups, taglist_P))
+
+        # Export train rollout summaries
+        if config.rollout_json_export:
+            write_rollout_summaries_jsonl_from_groups(
+                rollout_summaries_jsonl_path(config.log_path, train_file_prefix),
+                split="train",
+                iteration=i_batch,
+                trajectory_groups_P=trajectory_groups,
+                taglist_P=taglist_P,
+            )
 
         # ---- SDPO update ----
         with timed("sdpo_step", metrics):
