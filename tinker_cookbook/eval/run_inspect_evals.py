@@ -6,6 +6,7 @@ import tinker
 
 from tinker_cookbook import checkpoint_utils, model_info
 from tinker_cookbook.eval.inspect_evaluators import InspectEvaluator, InspectEvaluatorBuilder
+from tinker_cookbook.exceptions import ConfigurationError
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +30,13 @@ async def main(config: Config):
         rest_client = service_client.create_rest_client()
         training_run = await rest_client.get_training_run_by_tinker_path_async(model_path)
         if model_name is not None and model_name != training_run.base_model:
-            raise ValueError(
+            raise ConfigurationError(
                 f"Model name {model_name} does not match training run base model {training_run.base_model}"
             )
         model_name = model_name or training_run.base_model
 
     if model_name is None:
-        raise ValueError("model_path or model_name must be provided")
+        raise ConfigurationError("model_path or model_name must be provided")
 
     # Resolve renderer with precedence: explicit config > checkpoint metadata > model default.
     if renderer_name is None and model_path is not None:

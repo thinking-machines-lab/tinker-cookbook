@@ -32,7 +32,7 @@ def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) 
         Path to the extracted checkpoint directory.
 
     Raises:
-        ValueError: If the archive contains unsafe entries.
+        WeightsDownloadError: If the archive contains unsafe entries.
         urllib.error.URLError: If the download fails.
 
     Example::
@@ -103,13 +103,13 @@ def _safe_extract_tar(archive_path: Path, extract_dir: Path) -> None:
         members = tar.getmembers()
         for member in members:
             if member.issym() or member.islnk():
-                raise ValueError(
+                raise WeightsDownloadError(
                     "Unsafe symlink or hardlink found in tar archive. "
                     "Archive may be corrupted or malicious."
                 )
             member_path = (extract_dir / member.name).resolve()
             if not member_path.is_relative_to(base):
-                raise ValueError(
+                raise WeightsDownloadError(
                     "Unsafe path found in tar archive (path traversal). "
                     "Archive may be corrupted or malicious."
                 )

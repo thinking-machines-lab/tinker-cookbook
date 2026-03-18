@@ -4,6 +4,7 @@ from typing import cast
 
 import tinker
 
+from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.image_processing_utils import ImageProcessor
 from tinker_cookbook.renderers.base import (
     ContentPart,
@@ -73,7 +74,7 @@ class KimiK25Renderer(KimiK2Renderer):
                     tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(self._image_suffix))
                 )
             else:
-                raise ValueError(f"Unsupported content type: {part['type']}")
+                raise RendererError(f"Unsupported content type: {part['type']}")
         return chunks
 
     @property

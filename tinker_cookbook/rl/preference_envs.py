@@ -8,6 +8,7 @@ import tinker
 
 from tinker_cookbook import renderers
 from tinker_cookbook.completers import StopCondition
+from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.preference.preference_datasets import (
     ComparisonDatasetBuilder,
 )
@@ -96,7 +97,7 @@ def get_pairs(n: int, pattern: TournamentPattern) -> list[tuple[int, int]]:
     elif pattern == TournamentPattern.ALL_PAIRS_ONE_WAY:
         return [(i, j) for i in range(n) for j in range(i + 1, n)]
     else:
-        raise ValueError(f"Invalid tournament pattern: {pattern}")
+        raise ConfigurationError(f"Invalid tournament pattern: {pattern}")
 
 
 @dataclass(frozen=True)

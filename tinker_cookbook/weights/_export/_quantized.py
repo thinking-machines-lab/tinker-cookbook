@@ -18,6 +18,7 @@ import torch
 from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 
+from tinker_cookbook.exceptions import WeightsMergeError
 from tinker_cookbook.weights._artifacts import (
     copy_artifact_file,
     copy_model_code_files,
@@ -467,7 +468,7 @@ def _load_resume_state(output_path: Path) -> dict:
     completed = state.get("completed_shards", [])
     for shard_name in completed:
         if not (output_path / shard_name).exists():
-            raise RuntimeError(
+            raise WeightsMergeError(
                 f"Resume state references {shard_name!r} but file not found in {output_path}. "
                 f"Delete {output_path} and restart."
             )
@@ -661,7 +662,7 @@ def build_quantized(
                     assert native_block_size is not None
                     tensor = dequantize_blockwise(tensor, scale_inv, block_size=native_block_size)
                 else:
-                    raise RuntimeError(
+                    raise WeightsMergeError(
                         f"Native FP8 weight {key!r} has no .weight_scale_inv tensor "
                         f"in any shard. Cannot dequantize for merge."
                     )
@@ -710,7 +711,7 @@ def build_quantized(
     # Verify all merge ops were consumed
     if merge_ops:
         unconsumed = list(merge_ops.keys())
-        raise RuntimeError(
+        raise WeightsMergeError(
             f"Merge ops not applied — {len(unconsumed)} target keys not found in any shard: "
             f"{unconsumed[:5]}{'...' if len(unconsumed) > 5 else ''}"
         )

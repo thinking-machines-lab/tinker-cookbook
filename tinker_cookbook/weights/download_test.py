@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tinker_cookbook.exceptions import WeightsDownloadError
 from tinker_cookbook.weights._download import _safe_extract_tar, download
 
 
@@ -28,7 +29,7 @@ class TestSafeExtractTar:
             with tarfile.open(archive_path, "w") as tar:
                 tar.add(link, arcname="link")
 
-            with pytest.raises(ValueError, match="symlink"):
+            with pytest.raises(WeightsDownloadError, match="symlink"):
                 _safe_extract_tar(archive_path, extract_dir)
 
     def test_rejects_path_traversal(self):
@@ -44,7 +45,7 @@ class TestSafeExtractTar:
             with tarfile.open(archive_path, "w") as tar:
                 tar.add(normal_file, arcname="../../../etc/passwd")
 
-            with pytest.raises(ValueError, match="path traversal"):
+            with pytest.raises(WeightsDownloadError, match="path traversal"):
                 _safe_extract_tar(archive_path, extract_dir)
 
     def test_extracts_safe_archive(self):
