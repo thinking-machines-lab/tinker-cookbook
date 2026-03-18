@@ -155,6 +155,37 @@ def get_tool_spec() -> ToolSpec:
     )
 
 
+def get_rich_tool_spec() -> ToolSpec:
+    """Tool spec with extra JSON Schema fields beyond name/type/description/enum."""
+    return ToolSpec(
+        name="search",
+        description="Search for items",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query",
+                    "default": "*",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum number of results",
+                    "minimum": 1,
+                    "maximum": 100,
+                },
+                "tags": {
+                    "type": "array",
+                    "description": "Filter tags",
+                    "items": {"type": "string"},
+                },
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    )
+
+
 def get_tool_call_conversation_for_generation() -> tuple[list[Message], list[ToolSpec]]:
     tools = [get_tool_spec()]
     tool_call = ToolCall(
@@ -313,6 +344,34 @@ def test_tool_declaration_minimal_tool():
     assert "<description>" not in declaration
     assert "<parameter>" not in declaration
     assert "<required>" not in declaration
+
+
+def test_tool_declaration_extra_schema_keys_match_hf(nemotron_tokenizer, nemotron_renderer):
+    """Tool with extra JSON Schema fields (default, minimum, items, etc.) matches HF.
+
+    The HF Jinja template has a render_extra_keys macro that outputs additional
+    parameter fields beyond name/type/description/enum. This test verifies our
+    renderer handles those extra keys the same way.
+    """
+    tools = [get_rich_tool_spec()]
+    openai_tools = [{"type": "function", "function": tool} for tool in tools]
+    system_prompt = "You are a helpful assistant."
+
+    prefix = nemotron_renderer.create_conversation_prefix_with_tools(
+        tools, system_prompt=system_prompt
+    )
+    messages = prefix + [Message(role="user", content="Search for cats")]
+    cookbook = nemotron_renderer.build_generation_prompt(messages).to_ints()
+
+    hf_messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": "Search for cats"},
+    ]
+    hf = _hf_generation_tokens(nemotron_tokenizer, hf_messages, tools=openai_tools)
+
+    assert cookbook == hf, (
+        f"Cookbook: {nemotron_tokenizer.decode(cookbook)}\nHF: {nemotron_tokenizer.decode(hf)}"
+    )
 
 
 def test_create_conversation_prefix_system_before_tools(nemotron_renderer):

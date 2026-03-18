@@ -32,6 +32,7 @@ the following ways:
 
 import dataclasses
 import json
+from collections.abc import Mapping
 
 from tinker_cookbook.renderers.base import (
     ImagePart,
@@ -45,23 +46,28 @@ from tinker_cookbook.renderers.base import (
 from tinker_cookbook.renderers.qwen3_5 import Qwen3_5Renderer
 
 
+def _render_extra_keys(obj: Mapping[str, object], handled_keys: set[str]) -> list[str]:
+    """Render extra dict keys as XML, mirroring the HF template's render_extra_keys macro.
+
+    Dicts and lists are JSON-encoded; scalars are string-coerced.
+    """
+    lines: list[str] = []
+    for key, value in obj.items():
+        if key in handled_keys:
+            continue
+        if isinstance(value, (dict, list)):
+            lines.append(f"<{key}>{json.dumps(value)}</{key}>")
+        else:
+            lines.append(f"<{key}>{value!s}</{key}>")
+    return lines
+
+
 def _format_nemotron3_tool_declaration(tool: ToolSpec) -> str:
     """Format a single tool declaration in Nemotron-3's XML format.
 
-    Mirrors the Jinja template logic from chat_template.jinja:
-      <function>
-      <name>...</name>
-      <description>...</description>
-      <parameters>
-      <parameter>
-      <name>...</name>
-      <type>...</type>
-      <description>...</description>
-      <enum>[...]</enum>
-      </parameter>
-      <required>[...]</required>
-      </parameters>
-      </function>
+    Mirrors the Jinja template logic from chat_template.jinja, including the
+    render_extra_keys macro that outputs additional parameter fields beyond
+    the core name/type/description/enum set (e.g. default, minimum, items).
     """
     lines = [
         "<function>",
@@ -81,10 +87,14 @@ def _format_nemotron3_tool_declaration(tool: ToolSpec) -> str:
                 lines.append(f"<description>{param_fields['description'].strip()}</description>")
             if "enum" in param_fields:
                 lines.append(f"<enum>{json.dumps(param_fields['enum'])}</enum>")
+            lines.extend(_render_extra_keys(param_fields, {"name", "type", "description", "enum"}))
             lines.append("</parameter>")
+    if isinstance(params, dict):
+        lines.extend(_render_extra_keys(params, {"type", "properties", "required"}))
     if isinstance(params, dict) and "required" in params:
         lines.append(f"<required>{json.dumps(params['required'])}</required>")
     lines.append("</parameters>")
+    lines.extend(_render_extra_keys(tool, {"type", "name", "description", "parameters"}))
     lines.append("</function>")
     return "\n".join(lines)
 
