@@ -17,7 +17,31 @@ Typical usage::
 
     if model_name not in KNOWN_MODELS:
         raise ConfigurationError(f"Unknown model: {model_name}")
+
+Adding a new exception
+~~~~~~~~~~~~~~~~~~~~~~
+
+1. Subclass :class:`TinkerCookbookError` (or a category subclass like
+   :class:`DataError`).
+2. Also inherit from the stdlib exception it replaces (e.g. ``ValueError``,
+   ``RuntimeError``) so that existing ``except`` clauses keep working.
+3. Add it to :data:`__all__` below **and** to ``tinker_cookbook/__init__.py``.
 """
+
+__all__ = [
+    "TinkerCookbookError",
+    "ConfigurationError",
+    "DataError",
+    "DataFormatError",
+    "DataValidationError",
+    "RendererError",
+    "TrainingError",
+    "CheckpointError",
+    "WeightsError",
+    "WeightsDownloadError",
+    "WeightsMergeError",
+    "SandboxError",
+]
 
 
 class TinkerCookbookError(Exception):
@@ -156,20 +180,6 @@ class WeightsMergeError(WeightsError, ValueError):
 class SandboxError(TinkerCookbookError, RuntimeError):
     """An error related to code-execution sandboxes.
 
-    Base class for sandbox errors.  Note that
-    :class:`~tinker_cookbook.sandbox.sandbox_interface.SandboxTerminatedError`
-    predates this hierarchy and is kept separate for backward compatibility.
-    """
-
-
-# ---------------------------------------------------------------------------
-# Eval errors
-# ---------------------------------------------------------------------------
-
-
-class EvalError(TinkerCookbookError, RuntimeError):
-    """An error during model evaluation.
-
-    Raised when an evaluator fails due to misconfiguration or runtime
-    issues (e.g. missing ``model_name`` or ``renderer_name``).
+    Base class for sandbox errors — e.g. sandbox termination, timeouts,
+    or unexpected sandbox failures.
     """
