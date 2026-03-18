@@ -84,7 +84,7 @@ def test_rl_async():
     renderers.get_renderer(renderer_name, tokenizer)
 
     dataset_builder = arithmetic_env.ArithmeticDatasetBuilder(
-        batch_size=64,
+        batch_size=8,
         model_name_for_tokenizer=model_name,
         renderer_name="role_colon",
         n_batches=3,
@@ -101,7 +101,7 @@ def test_rl_async():
         max_tokens=5,
         async_config=rl_train.AsyncConfig(
             max_steps_off_policy=2,
-            groups_per_batch=64,
+            groups_per_batch=8,
         ),
     )
     asyncio.run(rl_train.main(cfg))
