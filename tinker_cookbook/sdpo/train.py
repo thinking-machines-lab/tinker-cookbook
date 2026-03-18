@@ -168,6 +168,11 @@ class Config:
     # Useful for code tasks. The paper (Table 6) shows feedback and solutions
     # are complementary: solution alone 42.6%, feedback alone 39.9%, both 48.3%.
     include_environment_feedback: bool = False
+    # Maximum context length for the model. The teacher prompt is longer than
+    # the student prompt (it includes a solution and/or feedback), so the
+    # response tokens are truncated to fit within this limit when computing
+    # teacher logprobs. Positions beyond the truncation get advantage=0.
+    max_context_length: int = 32768
 
     # Infrastructure
     renderer_name: str | None = None
@@ -290,7 +295,12 @@ async def sdpo_training_iteration(
             student_ob = traj.transitions[0].ob
             pending.append((student_ob, response_tokens, sampled_logprobs))
             teacher_logprob_coros.append(
-                compute_teacher_logprobs(reference_client, teacher_ob, response_tokens)
+                compute_teacher_logprobs(
+                    reference_client,
+                    teacher_ob,
+                    response_tokens,
+                    max_context_length=config.max_context_length,
+                )
             )
             n_sdpo_trajectories += 1
 

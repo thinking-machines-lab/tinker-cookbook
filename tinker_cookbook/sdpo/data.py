@@ -95,9 +95,14 @@ def build_sdpo_datum(
 
     # Advantages: teacher_lp - student_lp for response tokens, 0 for prompt.
     # This encodes the SDPO signal: push student toward teacher.
+    # teacher_logprobs may be shorter than response_len if the teacher prompt
+    # + response exceeded the model's context window and was truncated.
+    # Positions beyond the teacher's coverage get advantage=0 (no gradient).
     teacher_lps = teacher_logprobs[:response_len].tolist()
     student_lps = list(sampled_logprobs[:response_len])
     response_advantages = [t - s for t, s in zip(teacher_lps, student_lps)]
+    # Pad to response_len so all positions are covered.
+    response_advantages += [0.0] * (response_len - len(response_advantages))
     all_advantages = [0.0] * (prompt_len - 1) + response_advantages
     all_advantages = all_advantages[: len(target_tokens)]
 
