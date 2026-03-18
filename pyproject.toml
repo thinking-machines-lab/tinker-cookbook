@@ -32,6 +32,10 @@ dependencies = [
     "modal",
 ]
 
+[project.scripts]
+tinker-cookbook = "tinker_cookbook.cli:main"
+tcb = "tinker_cookbook.cli:main"
+
 [project.urls]
 Homepage = "https://thinkingmachines.ai/tinker"
 Repository = "https://github.com/thinking-machines-lab/tinker"
