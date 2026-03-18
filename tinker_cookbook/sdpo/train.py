@@ -232,6 +232,8 @@ async def sdpo_training_iteration(
     n_groups_with_success = 0
     n_total_trajectories = 0
     n_sdpo_trajectories = 0
+    n_teacher_truncated = 0
+    total_tokens_truncated = 0
     total_success_rate = 0.0
 
     for group, builder in zip(trajectory_groups, env_group_builders, strict=True):
@@ -302,6 +304,11 @@ async def sdpo_training_iteration(
                     max_context_length=config.max_context_length,
                 )
             )
+            # Track context window truncation.
+            total_teacher_len = teacher_ob.length + len(response_tokens)
+            if total_teacher_len > config.max_context_length:
+                n_teacher_truncated += 1
+                total_tokens_truncated += total_teacher_len - config.max_context_length
             n_sdpo_trajectories += 1
 
     n_groups = len(trajectory_groups)
@@ -357,6 +364,13 @@ async def sdpo_training_iteration(
         "sdpo/trajectories_total": n_total_trajectories,
         "sdpo/mean_group_success_rate": total_success_rate / n_groups if n_groups else 0.0,
         "sdpo/mean_advantage": mean_advantage,
+        "sdpo/teacher_truncated_count": n_teacher_truncated,
+        "sdpo/teacher_truncated_frac": n_teacher_truncated / n_sdpo_trajectories
+        if n_sdpo_trajectories
+        else 0.0,
+        "sdpo/teacher_truncated_tokens_avg": total_tokens_truncated / n_teacher_truncated
+        if n_teacher_truncated
+        else 0.0,
     }
     if fwd_bwd_result.metrics:
         metrics.update(fwd_bwd_result.metrics)
