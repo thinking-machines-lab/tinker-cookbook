@@ -3,17 +3,26 @@ name: security
 on:
   push:
     branches: [main]
-  pull_request:
   schedule:
     # Run weekly on Mondays at 08:00 UTC
     - cron: "0 8 * * 1"
   workflow_dispatch:
 
+# Security scan results are routed to the GitHub Security tab (visible to
+# org members / repo admins only) or uploaded as artifacts.  Detailed
+# vulnerability information is never printed to workflow logs, which are
+# publicly visible on open-source repos.
+
+permissions:
+  # Required by github/codeql-action/upload-sarif
+  security-events: write
+  contents: read
+
 jobs:
   dependency-audit:
     name: dependency audit (pip-audit)
     runs-on: ubuntu-latest
-    # Informational only — do not block PRs on vulnerability findings
+    # Informational only — do not block merges on vulnerability findings
     continue-on-error: true
 
     steps:
@@ -29,10 +38,22 @@ jobs:
         run: uv venv && uv sync --all-extras
 
       - name: pip-audit
-        run: uv run pip-audit --desc --output json --output pip-audit-report.json || true
+        run: |
+          # Run pip-audit and capture JSON output — avoid printing details to logs.
+          uv run pip-audit --desc --format json --output pip-audit-report.json 2>pip-audit-stderr.txt || true
 
-      - name: pip-audit (human-readable)
-        run: uv run pip-audit --desc
+          # Print a summary count only.
+          VULN_COUNT=$(python3 -c "
+          import json, sys
+          try:
+              data = json.load(open('pip-audit-report.json'))
+              # pip-audit JSON: top-level 'dependencies' list, each with 'vulns'
+              count = sum(len(d.get('vulns', [])) for d in data.get('dependencies', []))
+              print(count)
+          except Exception:
+              print('unknown')
+          ")
+          echo "::notice::pip-audit found ${VULN_COUNT} vulnerability(ies). See artifact for details."
 
       - name: upload report
         if: always()
@@ -44,7 +65,7 @@ jobs:
   static-analysis:
     name: static analysis (bandit)
     runs-on: ubuntu-latest
-    # Informational only — do not block PRs on bandit findings
+    # Informational only — do not block merges on bandit findings
     continue-on-error: true
 
     steps:
@@ -61,20 +82,28 @@ jobs:
 
       - name: bandit
         run: |
+          # Produce SARIF output for GitHub Security tab; suppress detailed logs.
           uv run bandit -r tinker_cookbook/ \
             -c pyproject.toml \
             --severity-level medium \
-            -f json -o bandit-report.json || true
+            -f sarif -o bandit-report.sarif 2>bandit-stderr.txt || true
 
-      - name: bandit (human-readable)
-        run: |
-          uv run bandit -r tinker_cookbook/ \
-            -c pyproject.toml \
-            --severity-level medium
+          # Print a summary count only.
+          ISSUE_COUNT=$(python3 -c "
+          import json, sys
+          try:
+              data = json.load(open('bandit-report.sarif'))
+              runs = data.get('runs', [])
+              count = sum(len(r.get('results', [])) for r in runs)
+              print(count)
+          except Exception:
+              print('unknown')
+          ")
+          echo "::notice::bandit found ${ISSUE_COUNT} issue(s). Results uploaded to Security tab."
 
-      - name: upload report
+      - name: upload sarif
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: github/codeql-action/upload-sarif@v3
         with:
-          name: bandit-report
-          path: bandit-report.json
+          sarif_file: bandit-report.sarif
+          category: bandit
