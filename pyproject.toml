@@ -41,7 +41,6 @@ Documentation = "https://tinker-docs.thinkingmachines.ai/"
 dev = [
     "pytest",
     "pytest-asyncio",
-    "pytest-cov",
     "ruff",
     "pyright",
 ]

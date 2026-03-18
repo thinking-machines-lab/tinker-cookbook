@@ -53,8 +53,8 @@ jobs:
       - name: venv
         run: uv venv && uv sync --all-extras
 
-      - name: pin transformers
-        run: uv pip install transformers==5.2.0
+      - name: pin transformers and install coverage
+        run: uv pip install transformers==5.2.0 pytest-cov
 
       - name: pytest with coverage
         run: >
