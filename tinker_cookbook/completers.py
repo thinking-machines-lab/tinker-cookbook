@@ -55,18 +55,28 @@ class TinkerTokenCompleter(TokenCompleter):
     sampling_client: tinker.SamplingClient
     max_tokens: int
     temperature: float = 1.0
+    max_context_length: int | None = None
 
     async def __call__(
         self, model_input: tinker.ModelInput, stop: StopCondition
     ) -> TokensWithLogprobs:
         """Sample an action from the policy given an observation."""
+        # Clamp max_tokens so prompt + generation fits within the context window.
+        effective_max_tokens = self.max_tokens
+        if self.max_context_length is not None:
+            available = self.max_context_length - model_input.length
+            if available <= 0:
+                # Prompt alone fills the context — return empty response.
+                return TokensWithLogprobs(tokens=[], maybe_logprobs=[])
+            effective_max_tokens = min(self.max_tokens, available)
+
         # Sample from the model
         sample_result = await self.sampling_client.sample_async(
             prompt=model_input,
             num_samples=1,
             sampling_params=tinker.SamplingParams(
                 stop=stop,
-                max_tokens=self.max_tokens,
+                max_tokens=effective_max_tokens,
                 temperature=self.temperature,
             ),
         )
@@ -89,11 +99,13 @@ class TinkerMessageCompleter(MessageCompleter):
         max_tokens: int,
         stop_condition: StopCondition | None = None,
         temperature: float = 1.0,
+        max_context_length: int | None = None,
     ):
         self.sampling_client = sampling_client
         self.renderer = renderer
         self.max_tokens = max_tokens
         self.temperature = temperature
+        self.max_context_length = max_context_length
         if stop_condition is None:
             self.stop_condition = self.renderer.get_stop_sequences()
         else:
@@ -103,13 +115,19 @@ class TinkerMessageCompleter(MessageCompleter):
         # Render the conversation for the model
         model_input = self.renderer.build_generation_prompt(messages)
 
+        # Clamp max_tokens so prompt + generation fits within the context window.
+        effective_max_tokens = self.max_tokens
+        if self.max_context_length is not None:
+            available = self.max_context_length - model_input.length
+            effective_max_tokens = min(self.max_tokens, max(1, available))
+
         # Sample from the model
         response = await self.sampling_client.sample_async(
             model_input,
             num_samples=1,
             sampling_params=tinker.SamplingParams(
                 temperature=self.temperature,
-                max_tokens=self.max_tokens,
+                max_tokens=effective_max_tokens,
                 stop=self.stop_condition,
             ),
         )
