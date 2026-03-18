@@ -137,9 +137,10 @@ async def compute_teacher_logprobs(
     teacher_prompt_len = teacher_ob.length
     available_for_response = max_context_length - teacher_prompt_len
     if available_for_response <= 0:
-        # Teacher prompt alone exceeds context — return zeros so this
-        # trajectory contributes no gradient.
-        return torch.zeros(len(response_tokens), dtype=torch.float32)
+        # Teacher prompt alone exceeds context — return empty tensor.
+        # build_sdpo_datum will pad advantages with 0.0, so this trajectory
+        # contributes no gradient.
+        return torch.tensor([], dtype=torch.float32)
     truncated_response = response_tokens[:available_for_response]
 
     teacher_full = build_full_sequence(teacher_ob, truncated_response)
