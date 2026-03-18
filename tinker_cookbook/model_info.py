@@ -5,6 +5,8 @@ This module associates model names with metadata, which helps  training code cho
 from dataclasses import dataclass
 from functools import cache
 
+from tinker_cookbook.exceptions import ConfigurationError
+
 # Common renderer tuples, defined once to reduce repetition.
 # Tuples (not lists) because these are shared across ModelAttributes instances
 # — a mutable list would risk silent cross-model corruption if mutated.
@@ -137,7 +139,7 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
     elif org == "nvidia":
         return get_nvidia_info()[model_version_full]
     else:
-        raise ValueError(f"Unknown model: {model_name}")
+        raise ConfigurationError(f"Unknown model: {model_name}")
 
 
 def get_recommended_renderer_names(model_name: str) -> list[str]:

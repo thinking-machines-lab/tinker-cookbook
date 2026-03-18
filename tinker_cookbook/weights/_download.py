@@ -10,6 +10,8 @@ from pathlib import Path
 
 import tinker
 
+from tinker_cookbook.exceptions import WeightsDownloadError
+
 
 def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) -> str:
     """Download a checkpoint from Tinker storage to local disk.
@@ -57,7 +59,7 @@ def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) 
         sc = tinker.ServiceClient(**kwargs)
         rc = sc.create_rest_client()
     except Exception as e:
-        raise RuntimeError(
+        raise WeightsDownloadError(
             "Failed to connect to Tinker service. "
             "Ensure TINKER_API_KEY is set and the service is reachable."
         ) from e
@@ -65,7 +67,7 @@ def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) 
     try:
         response = rc.get_checkpoint_archive_url_from_tinker_path(tinker_path).result()
     except Exception as e:
-        raise RuntimeError(
+        raise WeightsDownloadError(
             f"Failed to get download URL for {tinker_path!r}. "
             f"Check that the checkpoint path is valid and the checkpoint has not expired."
         ) from e
@@ -79,7 +81,7 @@ def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) 
         try:
             urllib.request.urlretrieve(response.url, str(tmp_path))
         except urllib.error.URLError as e:
-            raise RuntimeError(
+            raise WeightsDownloadError(
                 "Failed to download checkpoint archive from signed URL. "
                 "The URL may have expired — try downloading again."
             ) from e

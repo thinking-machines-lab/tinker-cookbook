@@ -10,6 +10,7 @@ import huggingface_hub
 import numpy as np
 from transformers import AutoConfig
 
+from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.utils.misc_utils import not_none
 
 
@@ -160,7 +161,7 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
     elif "qwen" in model_name.lower():
         exponent_model = 0.0775
     else:
-        raise ValueError(f"Unknown model: {model_name}")
+        raise ConfigurationError(f"Unknown model: {model_name}")
     # TODO: sweep to determine LR multipliers for other models
     lr = lr * (2000 / _get_hidden_size(model_name)) ** exponent_model
     return lr

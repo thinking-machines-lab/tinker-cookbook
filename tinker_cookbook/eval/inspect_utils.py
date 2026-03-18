@@ -26,6 +26,7 @@ from inspect_ai.tool import ToolInfo as InspectAIToolInfo
 from termcolor import colored
 
 from tinker_cookbook import renderers
+from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.renderers.base import ensure_list
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
@@ -131,7 +132,7 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
             service_client = tinker.ServiceClient(api_key=api_key)
             self.sampling_client = service_client.create_sampling_client(model_path=model_path)
         else:
-            raise ValueError("Either model_path or sampling_client must be provided")
+            raise ConfigurationError("Either model_path or sampling_client must be provided")
 
         # Initialize renderer and tokenizer
         tokenizer = get_tokenizer(model_name)

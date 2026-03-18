@@ -3,6 +3,8 @@ import logging
 import tinker
 import torch
 
+from tinker_cookbook.exceptions import DataValidationError
+
 logger = logging.getLogger(__name__)
 
 
@@ -38,13 +40,13 @@ def create_rightshifted_model_input_and_leftshifted_targets(
 
     last_chunk = chunks[-1]
     if not isinstance(last_chunk, tinker.types.EncodedTextChunk):
-        raise ValueError(
+        raise DataValidationError(
             "The last chunk must be a text chunk. This is because images are 0-loss anyways, so we should remove them beforehand."
         )
 
     total_length = sum(c.length for c in chunks)
     if total_length < 2:
-        raise ValueError("need at least 2 tokens for input/target split")
+        raise DataValidationError("need at least 2 tokens for input/target split")
 
     # Build input chunks: all but last, then append truncated last chunk
     input_chunks: list[tinker.ModelInputChunk] = list(chunks[:-1])

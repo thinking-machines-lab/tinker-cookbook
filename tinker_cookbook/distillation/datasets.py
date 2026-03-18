@@ -16,6 +16,7 @@ import tinker
 from datasets import load_dataset
 
 from tinker_cookbook import renderers
+from tinker_cookbook.exceptions import ConfigurationError, DataError
 from tinker_cookbook.rl.problem_env import ProblemEnv, ProblemGroupBuilder, logger
 from tinker_cookbook.rl.types import (
     Action,
@@ -241,10 +242,10 @@ class PromptOnlyDatasetBuilder(RLDatasetBuilder):
             train_prompts = load_tulu3_prompts()
             test_prompts = None  # Tulu3 only has train split
         else:
-            raise ValueError(f"Unknown dataset: {self.dataset_name}")
+            raise ConfigurationError(f"Unknown dataset: {self.dataset_name}")
 
         if train_prompts is None:
-            raise ValueError(f"Could not load train split for {self.dataset_name}")
+            raise DataError(f"Could not load train split for {self.dataset_name}")
 
         train_dataset = PromptOnlyDataset(
             prompts=train_prompts,

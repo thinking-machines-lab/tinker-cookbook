@@ -24,6 +24,7 @@ from tinker_cookbook.eval.evaluators import (
     SamplingClientEvaluator,
     TrainingClientEvaluator,
 )
+from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.supervised.common import compute_mean_nll
 from tinker_cookbook.supervised.nll_evaluator import NLLEvaluator
 from tinker_cookbook.supervised.types import SupervisedDatasetBuilder
@@ -137,7 +138,7 @@ async def run_evals(
                 )
             return await evaluator(sampling_client)
         else:
-            raise ValueError(f"Unknown evaluator type: {type(evaluator)}")
+            raise ConfigurationError(f"Unknown evaluator type: {type(evaluator)}")
 
     for evaluator in evaluators:
         eval_metrics = await run_evaluator(evaluator)

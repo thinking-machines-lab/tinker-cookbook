@@ -26,6 +26,7 @@ from tqdm import tqdm
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.display import colorize_example
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator, SamplingClientEvaluatorBuilder
+from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.rl.data_processing import (
     assemble_training_data,
     compute_advantages,
@@ -1455,7 +1456,9 @@ async def main(
     # Create KL reference client once if KL penalty is enabled
     if cfg.kl_penalty_coef > 0:
         if cfg.kl_reference_config is None:
-            raise ValueError("kl_reference_config must be specified when kl_penalty_coef > 0")
+            raise ConfigurationError(
+                "kl_reference_config must be specified when kl_penalty_coef > 0"
+            )
         kl_reference_client = service_client.create_sampling_client(
             base_model=cfg.kl_reference_config.base_model,
             model_path=cfg.kl_reference_config.load_checkpoint_path,
