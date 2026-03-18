@@ -216,39 +216,28 @@ class Nemotron3Renderer(Qwen3_5Renderer):
         calls = "".join(self._format_tool_call_xml(tc) + "\n" for tc in message["tool_calls"])
         return [TextPart(type="text", text=prefix + calls)]
 
-    def parse_response(self, response: list[int]) -> tuple[Message, bool]:
-        """Parse response, stripping one separator newline after </think>.
+    def _postprocess_parsed_message(self, message: Message) -> None:
+        """Strip one separator newline after </think> (not two like Qwen3.5).
 
-        Nemotron-3's HF template inserts exactly one newline between </think>
-        and the text content (Qwen3.5 uses two). This override calls the
-        Qwen3_5Renderer parser (which handles <think>\\n prefill prepending and
-        XML tool call conversion) and then corrects the separator.
+        Nemotron-3 uses a single ``\\n`` between ``</think>`` and text content,
+        while Qwen3.5 uses ``\\n\\n``. We strip the single newline here, then
+        delegate to the parent for thinking whitespace trimming and XML tool
+        call conversion. This ensures both ``parse_response`` and
+        ``_parse_response_for_streaming`` get the correct behavior.
         """
-        message, success = super().parse_response(response)
-        if not success:
-            return message, success
-
         content = message.get("content")
         if isinstance(content, list):
             seen_thinking = False
-            first_text_after_thinking: TextPart | None = None
             for p in content:
                 if p["type"] == "thinking":
                     seen_thinking = True
                 elif seen_thinking and p["type"] == "text":
-                    first_text_after_thinking = p
+                    # Strip exactly one separator newline (Nemotron-3's format).
+                    # Do this before super() so its \n\n check becomes a no-op.
+                    if p["text"].startswith("\n"):
+                        p["text"] = p["text"][1:]
                     break
-
-            # Qwen3_5Renderer already stripped \n\n; put back one \n that was
-            # over-stripped (Nemotron-3 has one separator newline, not two).
-            # Only re-add if the Qwen3.5 parent stripped exactly two newlines.
-            if first_text_after_thinking is not None and not first_text_after_thinking[
-                "text"
-            ].startswith("\n"):
-                # Parent stripped \n\n; we need \n separator, so add one back.
-                first_text_after_thinking["text"] = "\n" + first_text_after_thinking["text"]
-
-        return message, success
+        super()._postprocess_parsed_message(message)
 
     def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""

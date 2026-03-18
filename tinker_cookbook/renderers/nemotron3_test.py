@@ -550,6 +550,35 @@ def test_parse_response_with_thinking(nemotron_tokenizer, nemotron_renderer):
     assert "42" in text_parts[0]["text"]
 
 
+def test_parse_response_for_streaming_with_thinking(nemotron_tokenizer, nemotron_renderer):
+    """_parse_response_for_streaming preserves the single \\n separator after </think>.
+
+    The inherited _parse_response_for_streaming calls _postprocess_parsed_message
+    which strips separator newlines. For Nemotron-3, the separator is one \\n (not
+    two like Qwen3.5), so the text after thinking should NOT start with \\n (the
+    single separator should be stripped) and must not lose content by over-stripping.
+    """
+    # Include <think>\n prefix — in real streaming, _normalize_response_tokens
+    # prepends this before _parse_response_for_streaming is called.
+    response_text = "<think>\nI should reason carefully.\n</think>\nThe answer is 42.<|im_end|>"
+    tokens = nemotron_tokenizer.encode(response_text, add_special_tokens=False)
+    message, success = nemotron_renderer._parse_response_for_streaming(tokens)
+
+    assert success
+    content = message.get("content")
+    assert isinstance(content, list)
+    thinking_parts = [p for p in content if p["type"] == "thinking"]
+    text_parts = [p for p in content if p["type"] == "text"]
+    assert len(thinking_parts) == 1
+    assert "reason" in thinking_parts[0]["thinking"]
+    assert len(text_parts) == 1
+    # The text should start with "The answer" — the \n separator should be stripped,
+    # not left as-is (0 newlines stripped) or double-stripped.
+    assert text_parts[0]["text"].startswith("The answer"), (
+        f"Expected text to start with 'The answer' but got: {text_parts[0]['text']!r}"
+    )
+
+
 def test_parse_response_tool_call(nemotron_tokenizer, nemotron_renderer):
     """parse_response parses XML-format tool calls."""
     tool_call_text = (
