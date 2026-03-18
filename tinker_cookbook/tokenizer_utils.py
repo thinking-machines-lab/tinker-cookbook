@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 
 if TYPE_CHECKING:
     # this import takes a few seconds, so avoid it on the module import when possible
-    from transformers.tokenization_utils import PreTrainedTokenizer
+    from transformers import PreTrainedTokenizer
 
     Tokenizer: TypeAlias = PreTrainedTokenizer
 else:

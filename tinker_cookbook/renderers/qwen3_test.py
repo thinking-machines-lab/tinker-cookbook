@@ -19,6 +19,7 @@ from tinker_cookbook.renderers import (
     get_renderer,
 )
 from tinker_cookbook.renderers.base import ensure_list
+from tinker_cookbook.renderers.conftest import extract_token_ids
 from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
 from tinker_cookbook.renderers.qwen3_5 import Qwen3_5Renderer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
@@ -224,7 +225,7 @@ def test_qwen3_disable_thinking_generation():
         enable_thinking=False,
     )
 
-    hf_tokens_list = cast(list[int], hf_tokens)
+    hf_tokens_list = extract_token_ids(hf_tokens)
 
     assert cookbook_tokens == hf_tokens_list, (
         f"Cookbook tokens: {cookbook_tokens}\n"

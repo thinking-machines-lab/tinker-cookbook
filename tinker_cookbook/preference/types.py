@@ -128,7 +128,9 @@ class PreferenceModelFromChatRenderer(PreferenceModel):
             sampling_params=types.SamplingParams(temperature=0.0, max_tokens=1),
         )
         # TODO use probabilities
-        str_output = self.comparison_renderer.tokenizer.decode(response.sequences[0].tokens).strip()
+        str_output = str(
+            self.comparison_renderer.tokenizer.decode(response.sequences[0].tokens)
+        ).strip()
         if str_output == "A":
             return -1.0
         elif str_output == "B":

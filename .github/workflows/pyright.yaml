@@ -9,6 +9,12 @@ jobs:
   type-check:
     runs-on: ubuntu-latest
 
+    strategy:
+      matrix:
+        transformers-version: ["4.57.6", "5.2.0"]
+
+    name: type-check (transformers ${{ matrix.transformers-version }})
+
     steps:
       - name: checkout
         uses: actions/checkout@v4
@@ -20,6 +26,9 @@ jobs:
 
       - name: venv
         run: uv venv && uv sync --all-extras
+
+      - name: pin transformers
+        run: uv pip install transformers==${{ matrix.transformers-version }}
 
       - name: pyright
         run: uv run pyright tinker_cookbook
