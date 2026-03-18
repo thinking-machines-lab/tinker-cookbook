@@ -28,6 +28,7 @@ Help the user choose the right model for their task.
 | `Qwen/Qwen3-32B` | Hybrid | Dense | Medium |
 | `Qwen/Qwen3-8B` | Hybrid | Dense | Small |
 | `Qwen/Qwen3-8B-Base` | Base | Dense | Small |
+| `Qwen/Qwen3-4B-Instruct-2507` | Instruction | Dense | Compact |
 | `Qwen/Qwen3-VL-235B-A22B-Instruct` | Vision | MoE | Large |
 | `Qwen/Qwen3-VL-30B-A3B-Instruct` | Vision | MoE | Medium |
 
@@ -40,6 +41,12 @@ Help the user choose the right model for their task.
 | `meta-llama/Llama-3.1-8B-Instruct` | Instruction | Dense | Small |
 | `meta-llama/Llama-3.2-3B` | Base | Dense | Compact |
 | `meta-llama/Llama-3.2-1B` | Base | Dense | Compact |
+
+### Nemotron family
+| Model | Type | Arch | Size |
+|-------|------|------|------|
+| `nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16` | Hybrid | MoE | Large |
+| `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16` | Hybrid | MoE | Medium |
 
 ### Other families
 | Model | Type | Arch | Size |

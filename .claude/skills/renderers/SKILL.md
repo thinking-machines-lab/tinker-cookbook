@@ -28,7 +28,7 @@ tokenizer = get_tokenizer(model_name)
 renderer = get_renderer(renderer_name, tokenizer)
 ```
 
-**Available renderers:** `llama3`, `qwen3`, `deepseekv3`, `kimi_k2`, `kimi_k25`, `role_colon`, and more. See `tinker_cookbook/renderers/__init__.py` for the full registry.
+**Available renderers:** `llama3`, `qwen3`, `deepseekv3`, `kimi_k2`, `kimi_k25`, `nemotron3`, `nemotron3_disable_thinking`, `role_colon`, and more. See `tinker_cookbook/renderers/__init__.py` for the full registry.
 
 ## Key renderer methods
 
