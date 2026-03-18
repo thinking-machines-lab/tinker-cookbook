@@ -39,7 +39,7 @@ class CLIConfig:
     # Code RL specific
     sandbox_backend: SandboxBackend | None = None
     code_timeout: int = 6
-    max_turns: int = 1
+    max_turns: int = 2
 
     # Training
     group_size: int = 8
