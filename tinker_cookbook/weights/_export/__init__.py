@@ -37,6 +37,8 @@ _DTYPE_MAP: dict[str, torch.dtype] = {
 }
 
 _VALID_STRATEGIES = {"auto", "shard", "full"}
+_VALID_QUANTIZE = {"experts-fp8"}
+_VALID_SERVING_FORMATS = {"vllm"}
 
 
 def build_hf_model(
@@ -48,6 +50,8 @@ def build_hf_model(
     trust_remote_code: bool | None = None,
     merge_strategy: str = "auto",
     dequantize: bool = False,
+    quantize: str | None = None,
+    serving_format: str | None = None,
 ) -> None:
     """Build a complete HuggingFace model from Tinker LoRA adapter weights.
 
@@ -77,20 +81,56 @@ def build_hf_model(
             resolved). ``"full"`` forces full-model loading (original
             behavior, higher memory but simpler).
         dequantize: If ``True``, dequantize quantized base model weights
-            before merging. Not yet implemented.
+            before merging. Not yet implemented for the standard merge path,
+            but used internally by the quantized export path for models with
+            native FP8 weights (e.g. DeepSeek V3.1).
+        quantize: Output quantization method. Currently supported:
+            ``"experts-fp8"`` — quantize routed expert weights to FP8 with
+            blockwise scaling. Requires ``serving_format`` to be set.
+            ``None`` (default) — no quantization.
+        serving_format: Serving framework format for quantization metadata.
+            Currently supported: ``"vllm"`` — write compressed-tensors
+            config for vLLM. Required when ``quantize`` is set.
+            ``None`` (default) — no serving-specific metadata.
 
     Raises:
         FileNotFoundError: If adapter files are missing.
         FileExistsError: If output_path already exists.
         KeyError: If adapter config is malformed.
         ValueError: If tensor shapes are incompatible during merge, or
-            if ``dtype`` or ``merge_strategy`` is not a recognized value.
-        NotImplementedError: If ``dequantize=True`` (not yet supported).
+            if ``dtype``, ``merge_strategy``, ``quantize``, or
+            ``serving_format`` is not a recognized value, or if
+            ``quantize`` and ``serving_format`` are not both set/unset.
+        NotImplementedError: If ``dequantize=True`` on the standard merge path.
     """
-    if dequantize:
+    # --- Validate quantize / serving_format ---
+    if quantize is not None and quantize not in _VALID_QUANTIZE:
+        raise ValueError(
+            f"Unsupported quantize={quantize!r}. Choose from: {sorted(_VALID_QUANTIZE)}"
+        )
+    if serving_format is not None and serving_format not in _VALID_SERVING_FORMATS:
+        raise ValueError(
+            f"Unsupported serving_format={serving_format!r}. "
+            f"Choose from: {sorted(_VALID_SERVING_FORMATS)}"
+        )
+    if quantize is not None and serving_format is None:
+        raise ValueError(
+            f"quantize={quantize!r} requires serving_format to be set "
+            f"(e.g. serving_format='vllm') to write scale metadata."
+        )
+    if serving_format is not None and quantize is None:
+        raise ValueError(
+            f"serving_format={serving_format!r} requires quantize to be set "
+            f"(e.g. quantize='experts-fp8'). Serving format without quantization is meaningless."
+        )
+    if quantize == "experts-fp8" and dtype != "bfloat16":
+        raise ValueError(f"quantize='experts-fp8' requires dtype='bfloat16', got dtype={dtype!r}.")
+
+    # --- Validate standard params ---
+    if dequantize and quantize is None:
         raise NotImplementedError(
-            "dequantize is not yet supported. "
-            "Use the standard merge path and handle dequantization separately."
+            "dequantize is not yet supported for the standard merge path. "
+            "Use quantize='experts-fp8' for models with native FP8 weights."
         )
     if dtype not in _DTYPE_MAP:
         raise ValueError(f"Unsupported dtype {dtype!r}. Choose from: {list(_DTYPE_MAP.keys())}")
@@ -105,18 +145,35 @@ def build_hf_model(
     # Load model config for model-family detection (lightweight, no weight download).
     config_dict = load_config_dict(base_model)
 
-    # Model-family specific export strategies override standard strategies.
-    # To add a new model-specific export:
-    #   1. Create _export/_<model>.py with a build_<model>() function
-    #   2. Add detection in _detect_export_override()
-    #   3. Add a dispatch branch below
-    # Example (PR #470 — DeepSeek):
-    #   export_override = _detect_export_override(config_dict)
-    #   if export_override == "deepseek":
-    #       from ._deepseek import build_deepseek
-    #       build_deepseek(...)
-    #       return
+    # --- Warn if native FP8 model without quantized export ---
+    if quantize is None and _has_native_fp8(config_dict):
+        logger.warning(
+            "This model appears to have native FP8 weights "
+            "(quantization_config.quant_method='fp8'). "
+            "The standard merge path will apply LoRA deltas directly to FP8 tensors, "
+            "which may produce incorrect results due to FP8 precision loss. "
+            "Consider using quantize='experts-fp8' and serving_format='vllm' "
+            "for correct FP8-aware merging."
+        )
 
+    # --- Quantized export path ---
+    if quantize is not None:
+        from tinker_cookbook.weights._artifacts import resolve_model_dir
+        from tinker_cookbook.weights._export._quantized import build_quantized
+
+        model_dir = resolve_model_dir(base_model)
+        build_quantized(
+            base_model=base_model,
+            adapter_path=adapter_path,
+            output_path=output_path,
+            trust_remote_code=resolved_trust,
+            model_dir=model_dir,
+            config_dict=config_dict,
+            serving_format=serving_format,  # type: ignore[arg-type]  # validated non-None above
+        )
+        return
+
+    # --- Standard merge path ---
     strategy = _resolve_strategy(merge_strategy)
 
     if strategy == "full":
@@ -152,6 +209,14 @@ def build_hf_model(
             model_dir=model_dir,
             config_dict=config_dict,
         )
+
+
+def _has_native_fp8(config_dict: dict) -> bool:
+    """Check if a model config indicates native FP8 quantization."""
+    quant_config = config_dict.get("quantization_config")
+    if not isinstance(quant_config, dict):
+        return False
+    return quant_config.get("quant_method", "") == "fp8"
 
 
 def _resolve_strategy(merge_strategy: str) -> str:

@@ -26,6 +26,16 @@ _MODEL_CODE_PATTERNS = ("*.py",)
 _MAX_SHARD_SIZE = 10 * (1024**3)  # 10 GB
 
 
+def copy_artifact_file(src: Path, dst: Path) -> None:
+    """Copy file contents without preserving source metadata.
+
+    Some output destinations (for example GCS/FUSE mounts) reject the timestamp
+    updates that `shutil.copy2()` performs via `copystat()`. Export artifacts do
+    not require source mtimes, so a content-only copy is sufficient here.
+    """
+    shutil.copyfile(src, dst)
+
+
 # ---------------------------------------------------------------------------
 # Reading model metadata without loading weights
 # ---------------------------------------------------------------------------
@@ -208,7 +218,7 @@ def copy_model_code_files(model_dir: Path, output_path: Path) -> None:
         for item in sorted(model_dir.glob(pattern)):
             dest = output_path / item.name
             if not dest.exists():
-                shutil.copy2(item, dest)
+                copy_artifact_file(item, dest)
                 logger.debug("Copied %s", item.name)
 
 
