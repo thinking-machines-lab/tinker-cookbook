@@ -117,6 +117,7 @@ async def compute_teacher_logprobs(
     reference_client: tinker.SamplingClient,
     teacher_ob: tinker.ModelInput,
     response_tokens: list[int],
+    max_context_length: int = 32768,
 ) -> torch.Tensor:
     """Score response tokens using the reference model conditioned on the teacher prompt.
 
@@ -124,15 +125,29 @@ async def compute_teacher_logprobs(
     then extracts only the logprobs for response token positions. These represent
     "how likely is each response token if you already know the solution?"
 
-    Returns a tensor of length ``len(response_tokens)``.
+    If the teacher prompt + response exceeds ``max_context_length``, the response
+    is truncated from the end so that the sequence fits. This can happen because
+    the teacher prompt is longer than the student prompt (it includes the solution
+    and/or environment feedback). The returned tensor will be shorter than
+    ``len(response_tokens)`` in this case; the caller (``build_sdpo_datum``)
+    already handles mismatched lengths via slicing.
+
+    Returns a tensor of length ``min(len(response_tokens), available_space)``.
     """
-    teacher_full = build_full_sequence(teacher_ob, response_tokens)
+    teacher_prompt_len = teacher_ob.length
+    available_for_response = max_context_length - teacher_prompt_len
+    if available_for_response <= 0:
+        # Teacher prompt alone exceeds context — return zeros so this
+        # trajectory contributes no gradient.
+        return torch.zeros(len(response_tokens), dtype=torch.float32)
+    truncated_response = response_tokens[:available_for_response]
+
+    teacher_full = build_full_sequence(teacher_ob, truncated_response)
     all_logprobs = await reference_client.compute_logprobs_async(teacher_full)
     # Extract only the logprobs for response token positions.
     # compute_logprobs[i] = log P(token_i | tokens_0..i-1)
     # The first element may be None (no conditioning context); response
     # positions start at teacher_prompt_len which is always >= 1, so we
     # won't encounter None, but we guard defensively.
-    teacher_prompt_len = teacher_ob.length
     response_logprobs = [lp if lp is not None else 0.0 for lp in all_logprobs[teacher_prompt_len:]]
     return torch.tensor(response_logprobs, dtype=torch.float32)
