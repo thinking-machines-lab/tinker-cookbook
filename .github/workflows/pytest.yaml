@@ -32,6 +32,31 @@ jobs:
         run: uv pip install transformers==${{ matrix.transformers-version }}
 
       - name: pytest (unit)
+        run: uv run pytest tinker_cookbook/
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+  coverage:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    name: coverage
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install-uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: venv
+        run: uv venv && uv sync --all-extras
+
+      - name: pin transformers
+        run: uv pip install transformers==5.2.0
+
+      - name: pytest with coverage
         run: >
           uv run pytest tinker_cookbook/
           --cov=tinker_cookbook
@@ -44,9 +69,8 @@ jobs:
       - name: coverage summary
         if: always()
         run: |
-          echo "## Coverage Report (transformers ${{ matrix.transformers-version }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Coverage Report" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          uv run coverage report --format=text || true
           uv run coverage report --format=text >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "Coverage report unavailable" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
@@ -54,6 +78,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-html-transformers-${{ matrix.transformers-version }}
+          name: coverage-html
           path: coverage-html/
           retention-days: 7
