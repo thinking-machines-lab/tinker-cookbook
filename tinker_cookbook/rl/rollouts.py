@@ -16,9 +16,8 @@ from tinker_cookbook.rl.types import (
     TrajectoryGroup,
     Transition,
 )
-from tinker_cookbook.utils import logtree
+from tinker_cookbook.utils import logtree, trace
 from tinker_cookbook.utils.misc_utils import all_same
-from tinker_cookbook.utils.trace import scope, scope_span
 
 
 def _log_transition_logs(logs: dict[str, Any]) -> None:
@@ -82,12 +81,12 @@ async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
     """Run a single rollout (env episode). Env logging (if any) goes into
     whatever logtree scope the caller has set up."""
     transitions = []
-    async with scope_span("env_initial_observation"):
+    async with trace.scope_span("env_initial_observation"):
         ob, stop_condition = await env.initial_observation()
     while True:
-        async with scope_span("policy_sample"):
+        async with trace.scope_span("policy_sample"):
             ac_with_logprobs = await policy(ob, stop_condition)
-        async with scope_span("env_step"):
+        async with trace.scope_span("env_step"):
             step_result = await env.step(ac_with_logprobs.tokens)
         transition = Transition(
             ob=ob,
@@ -112,7 +111,7 @@ async def do_group_rollout(
     envs_G: Sequence[Env] = await env_group_builder.make_envs()
     trajectories_G = await asyncio.gather(*[do_single_rollout(policy, env) for env in envs_G])
 
-    async with scope_span("compute_group_rewards"):
+    async with trace.scope_span("compute_group_rewards"):
         rewards_and_metrics_G = await env_group_builder.compute_group_rewards(
             trajectories_G, envs_G
         )
@@ -185,7 +184,7 @@ def _run_rollout_sync(task: _RolloutTask) -> TrajectoryGroup | None:
     )
 
 
-@scope
+@trace.scope
 async def do_group_rollout_and_filter_constant_reward(
     sampling_client: tinker.SamplingClient,
     env_group_builder: EnvGroupBuilder,

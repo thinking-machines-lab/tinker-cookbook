@@ -12,8 +12,8 @@ import numpy as np
 import tinker
 import torch
 
+from tinker_cookbook.utils import trace
 from tinker_cookbook.utils.misc_utils import safezip
-from tinker_cookbook.utils.trace import scope
 
 
 def compute_kl_sample_train(
@@ -50,7 +50,7 @@ def compute_kl_sample_train(
     }
 
 
-@scope
+@trace.scope
 async def compute_post_kl(
     data_D: list[tinker.Datum], post_sampling_client: tinker.SamplingClient
 ) -> dict[str, float]:
@@ -84,7 +84,7 @@ async def compute_post_kl(
     return {"kl_pre_post_v1": kl_post_v1, "kl_pre_post_v2": kl_post_v2}
 
 
-@scope
+@trace.scope
 async def incorporate_kl_penalty(
     data_D: list[tinker.Datum],
     base_sampling_client: tinker.SamplingClient,
