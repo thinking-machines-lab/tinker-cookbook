@@ -693,10 +693,14 @@ async def do_async_training(
         ttl_seconds=cfg.ttl_seconds,
     )
 
-    # Shutdown coordination:
-    # - dataloader_done_event: set when dataloader exhausts data, prevents requeuing stale samples
-    # - evaluation_loop_should_shutdown_event: set by training loop to signal eval loop to exit
-    # - worker_alive_counter: tracks alive workers; last worker signals training loop
+    # Shutdown coordination — cascading sequence:
+    # 1. Dataloader exhausts data → sets dataloader_done_event (prevents requeuing stale
+    #    samples) and enqueues one _Shutdown sentinel per worker into env_group_builders_queue.
+    # 2. Each trajectory worker receives its _Shutdown sentinel → exits and decrements
+    #    worker_alive_counter. The last worker enqueues a _Shutdown into trajectory_groups_queue.
+    # 3. Training loop receives _Shutdown from trajectory_groups_queue → finishes current
+    #    batch, sets evaluation_loop_should_shutdown_event, and exits.
+    # 4. Eval loop sees evaluation_loop_should_shutdown_event → exits.
     dataloader_done_event = asyncio.Event()
     evaluation_loop_should_shutdown_event = asyncio.Event()
     worker_alive_counter = _AsyncCounter(cfg.async_config.groups_per_batch)

@@ -64,7 +64,7 @@ class CLIConfig:
 
     # Stream minibatch: train on minibatches as soon as they are ready
     # instead of waiting for the full batch.
-    stream_minibatch: bool = False
+    stream_minibatch_config: StreamMinibatchConfig | None = None
 
     # Loss function and configuration.
     # See https://tinker-docs.thinkingmachines.ai/losses
@@ -160,9 +160,9 @@ async def cli_main(cli_config: CLIConfig):
         else None,
         stream_minibatch_config=StreamMinibatchConfig(
             groups_per_batch=cli_config.groups_per_batch,
-            num_minibatches=2,
+            num_minibatches=cli_config.stream_minibatch_config.num_minibatches,
         )
-        if cli_config.stream_minibatch
+        if cli_config.stream_minibatch_config is not None
         else None,
         loss_fn=cli_config.loss_fn,
         loss_fn_config=cli_config.loss_fn_config,
