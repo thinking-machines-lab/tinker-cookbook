@@ -22,7 +22,6 @@ from tinker_cookbook.renderers.nemotron3 import (
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-
 NEMOTRON3_NANO_MODEL = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
 NEMOTRON3_SUPER_MODEL = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8"
 NEMOTRON3_TOKENIZER_PATH = (

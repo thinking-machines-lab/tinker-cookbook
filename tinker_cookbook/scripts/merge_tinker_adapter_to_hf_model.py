@@ -38,12 +38,28 @@ def main():
     parser.add_argument(
         "--output-path", type=str, required=True, help="Path to save the merged model"
     )
+    parser.add_argument(
+        "--quantize",
+        type=str,
+        default=None,
+        choices=["experts-fp8"],
+        help="Output quantization method (e.g. 'experts-fp8' for FP8 routed experts)",
+    )
+    parser.add_argument(
+        "--serving-format",
+        type=str,
+        default=None,
+        choices=["vllm"],
+        help="Serving framework format for quantization metadata (e.g. 'vllm')",
+    )
     args = parser.parse_args()
 
     build_hf_model(
         base_model=args.hf_model,
         adapter_path=args.tinker_adapter_path,
         output_path=args.output_path,
+        quantize=args.quantize,
+        serving_format=args.serving_format,
     )
 
 

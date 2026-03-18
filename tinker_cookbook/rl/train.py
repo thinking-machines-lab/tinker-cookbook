@@ -55,15 +55,8 @@ from tinker_cookbook.rl.types import (
     TrajectoryGroup,
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
-from tinker_cookbook.utils import logtree, ml_log
+from tinker_cookbook.utils import logtree, ml_log, trace
 from tinker_cookbook.utils.misc_utils import safezip, split_list, timed
-from tinker_cookbook.utils.trace import (
-    save_gantt_chart_html,
-    scope,
-    trace_init,
-    trace_iteration,
-    update_scope_context,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +172,7 @@ def _get_logtree_scope(
             logtree.write_trace_json(trace, logtree_json_path)
 
 
-@scope
+@trace.scope
 def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]:
     assert num_inds <= len(scores)
     sorted_inds = np.argsort(scores)
@@ -187,7 +180,7 @@ def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]
     return [int(sorted_inds[i]) for i in uniform_inds]
 
 
-@scope
+@trace.scope
 def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
     """
     Print a subset of the trajectory group to the console.
@@ -208,7 +201,7 @@ def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
 
     buf = io.StringIO()
 
-    @scope
+    @trace.scope
     def bprint(s: str):
         print(s, file=buf)
 
@@ -255,7 +248,7 @@ def _training_logprobs_from_fwd_bwd(
     return [output["logprobs"].to_torch() for output in fwd_bwd_result.loss_fn_outputs]
 
 
-@scope
+@trace.scope
 async def train_step(
     data_D: list[tinker.Datum],
     training_client: tinker.TrainingClient,
@@ -434,7 +427,7 @@ class Config:
     max_steps: int | None = None
 
 
-@scope
+@trace.scope
 async def run_single_evaluation(
     evaluator: SamplingClientEvaluator,
     cfg: Config,
@@ -470,7 +463,7 @@ async def run_single_evaluation(
         return eval_metrics
 
 
-@scope
+@trace.scope
 async def run_evaluations_parallel(
     evaluators: list[SamplingClientEvaluator],
     sampling_client: tinker.SamplingClient,
@@ -501,7 +494,7 @@ async def run_evaluations_parallel(
     return metrics
 
 
-@scope
+@trace.scope
 async def do_sync_training_with_stream_minibatch(
     start_batch: int,
     end_batch: int,
@@ -552,7 +545,7 @@ async def do_sync_training_with_stream_minibatch(
             trajectory_groups_queue = asyncio.Queue[WrappedTrajectoryGroup | None]()
             env_group_builders_P = dataset.get_batch(i_batch)
 
-            @scope
+            @trace.scope
             async def trajectory_group_worker_task(
                 builder: EnvGroupBuilder, enable_logging: bool
             ) -> None:
@@ -639,7 +632,7 @@ class WrappedTrajectoryGroup:
     metrics: dict[str, Any] = chz.field(default_factory=dict)
 
 
-@scope
+@trace.scope
 async def do_async_training(
     start_batch: int,
     end_batch: int,
@@ -679,7 +672,7 @@ async def do_async_training(
     sampling_client_updated_event = asyncio.Event()
     sampling_client_updated_event.set()
 
-    @scope
+    @trace.scope
     def shutdown_loops():
         """Trigger all loops to shutdown"""
         shutdown_event.set()
@@ -688,7 +681,7 @@ async def do_async_training(
             env_group_builders_queue.put_nowait(None)
         sampling_client_updated_event.set()
 
-    @scope
+    @trace.scope
     async def dataloader_loop():
         """Gets the next set of env builders to run"""
         i_batch = start_batch
@@ -698,7 +691,7 @@ async def do_async_training(
                 await env_group_builders_queue.put(env_group_builder)
             i_batch += 1
 
-    @scope
+    @trace.scope
     async def trajectory_group_worker_loop():
         """Generates trajectories for a single env builder"""
         while not shutdown_event.is_set():
@@ -731,7 +724,7 @@ async def do_async_training(
                     )
                 )
 
-    @scope
+    @trace.scope
     async def training_loop():
         """
         Waits for a sufficient number of valid trajectories to be accumulated and trains on them.
@@ -746,7 +739,7 @@ async def do_async_training(
             if wrapped_trajectory_group is None:
                 continue
 
-            @scope
+            @trace.scope
             def filter_stale_trajectory_group(
                 wrapped_trajectory_group: WrappedTrajectoryGroup | None,
             ) -> bool:
@@ -862,7 +855,7 @@ async def do_async_training(
 
         shutdown_loops()
 
-    @scope
+    @trace.scope
     async def evaluation_loop():
         """Runs evals periodically"""
         if len(evaluators) == 0 or cfg.eval_every == 0:
@@ -899,7 +892,7 @@ async def do_async_training(
     )
 
 
-@scope
+@trace.scope
 async def save_checkpoint_and_get_sampling_client(
     training_client: tinker.TrainingClient,
     i_batch: int,
@@ -924,7 +917,7 @@ async def save_checkpoint_and_get_sampling_client(
             return await training_client.save_weights_and_get_sampling_client_async(), metrics
 
 
-@scope
+@trace.scope
 async def prepare_minibatch(
     env_group_builders_P: Sequence[EnvGroupBuilder],
     trajectory_groups_P: list[TrajectoryGroup],
@@ -963,7 +956,7 @@ async def prepare_minibatch(
     return data_D, metrics
 
 
-@scope
+@trace.scope
 async def compute_full_batch_metrics_and_get_sampling_client(
     training_client: tinker.TrainingClient,
     i_batch: int,
@@ -1003,7 +996,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     return sampling_client, metrics
 
 
-@scope
+@trace.scope
 async def do_train_step_streaming_and_get_sampling_client(
     cfg: Config,
     i_batch: int,
@@ -1029,7 +1022,7 @@ async def do_train_step_streaming_and_get_sampling_client(
     # Number of groups per minibatch in each optimizer substep
     groups_per_minibatch = groups_per_substep // cfg.stream_minibatch_config.num_minibatches
 
-    update_scope_context({"step": i_batch})
+    trace.update_scope_context({"step": i_batch})
 
     metrics = {}
 
@@ -1132,7 +1125,7 @@ async def do_train_step_streaming_and_get_sampling_client(
     return sampling_client, metrics, all_wrapped_trajectory_groups
 
 
-@scope
+@trace.scope
 async def do_train_step_and_get_sampling_client(
     cfg: Config,
     i_batch: int,
@@ -1142,7 +1135,7 @@ async def do_train_step_and_get_sampling_client(
     env_group_builders_P: Sequence[EnvGroupBuilder],
     trajectory_groups_P: list[TrajectoryGroup],
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
-    update_scope_context({"step": i_batch})
+    trace.update_scope_context({"step": i_batch})
 
     metrics = {}
     data_D, prepare_minibatch_metrics = await prepare_minibatch(
@@ -1182,7 +1175,7 @@ async def do_train_step_and_get_sampling_client(
     return sampling_client, metrics
 
 
-@scope
+@trace.scope
 async def do_sync_training(
     start_batch: int,
     end_batch: int,
@@ -1208,7 +1201,7 @@ async def do_sync_training(
             "progress/done_frac": (i_batch + 1) / num_batches,
         }
 
-        with trace_iteration(step=i_batch) as window:
+        with trace.trace_iteration(step=i_batch) as window:
             # Run evaluations
             if cfg.eval_every > 0 and i_batch % cfg.eval_every == 0:
                 eval_metrics = await run_evaluations_parallel(
@@ -1279,13 +1272,13 @@ async def do_sync_training(
         metrics.update(window.get_timing_metrics())
         window.write_spans_jsonl(Path(cfg.log_path) / "timing_spans.jsonl", step=i_batch)
         if cfg.span_chart_every > 0 and i_batch % cfg.span_chart_every == 0:
-            save_gantt_chart_html(
+            trace.save_gantt_chart_html(
                 window, i_batch, Path(cfg.log_path) / f"timing_gantt_{i_batch:06d}.html"
             )
         ml_logger.log_metrics(metrics, step=i_batch)
 
 
-@scope
+@trace.scope
 async def main(
     cfg: Config,
     rollout_executor: Executor | None = None,
@@ -1318,7 +1311,7 @@ async def main(
         logger.info(
             f"Run `python tinker_cookbook/utils/trace.py {trace_events_path} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"
         )
-        trace_init(output_file=trace_events_path)
+        trace.trace_init(output_file=trace_events_path)
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("pylatexenc").setLevel(logging.WARNING)

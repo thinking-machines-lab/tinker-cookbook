@@ -4,7 +4,6 @@ Direct Preference Optimization (DPO) training
 
 import asyncio
 import logging
-import time
 from pathlib import Path
 from typing import cast
 
@@ -18,10 +17,9 @@ from tinker_cookbook.eval.evaluators import Evaluator, EvaluatorBuilder
 from tinker_cookbook.supervised.train import run_evals
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDataset
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
-from tinker_cookbook.utils import ml_log
+from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.format_colorized import format_colorized
 from tinker_cookbook.utils.lr_scheduling import LRSchedule, compute_schedule_lr_multiplier
-from tinker_cookbook.utils.misc_utils import timed
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +65,10 @@ class Config:
     # Logging parameters
     wandb_project: str | None = None
     wandb_name: str | None = None
+
+    # Profiling
+    enable_trace: bool = False
+    span_chart_every: int = 0
 
     # DPO-specific parameters
     reference_model_name: str | None = None
@@ -188,151 +190,156 @@ def do_update(
     tokenizer: Tokenizer,
 ):
     """Perform a single DPO training update step."""
-    start_time = time.time()
     step = epoch_idx * n_batches + batch_idx
     metrics: dict[str, int | float | str] = {"epoch": epoch_idx}
 
-    # Save checkpoint if needed
-    if config.save_every > 0 and step % config.save_every == 0 and step > 0:
-        with timed("save_checkpoint", metrics):
-            save_result = checkpoint_utils.save_checkpoint(
-                training_client=training_client,
-                name=f"{step:06d}",
-                log_path=log_path,
-                kind="both",
-                loop_state={"epoch": epoch_idx, "batch": batch_idx},
-                ttl_seconds=config.ttl_seconds,
-            )
-        if "state_path" in save_result:
-            metrics["state_path"] = save_result["state_path"]
+    with trace.trace_iteration(step=step) as window:
+        # Save checkpoint if needed
+        if config.save_every > 0 and step % config.save_every == 0 and step > 0:
+            with trace.scope_span_sync("save_checkpoint"):
+                save_result = checkpoint_utils.save_checkpoint(
+                    training_client=training_client,
+                    name=f"{step:06d}",
+                    log_path=log_path,
+                    kind="both",
+                    loop_state={"epoch": epoch_idx, "batch": batch_idx},
+                    ttl_seconds=config.ttl_seconds,
+                )
+            if "state_path" in save_result:
+                metrics["state_path"] = save_result["state_path"]
 
-    learning_rate = config.learning_rate * compute_schedule_lr_multiplier(
-        lr_schedule=config.lr_schedule, step=step, total_steps=total_steps
-    )
-    adam_params = tinker.AdamParams(
-        learning_rate=learning_rate,
-        beta1=config.adam_beta1,
-        beta2=config.adam_beta2,
-        eps=config.adam_eps,
-    )
-
-    # Evaluation
-    if config.eval_every > 0 and step % config.eval_every == 0:
-        with timed("evals", metrics):
-            eval_metrics = asyncio.run(run_evals(evaluators, training_client, step))
-        metrics.update(eval_metrics)
-
-    if config.infrequent_eval_every > 0 and step % config.infrequent_eval_every == 0:
-        with timed("infrequent_evals", metrics):
-            eval_metrics = asyncio.run(run_evals(infrequent_evaluators, training_client, step))
-        metrics.update(eval_metrics)
-
-    # Prepare batch
-    with timed("get_batch", metrics):
-        data = dataset.get_batch(batch_idx)
-
-    # Split data into chosen and rejected pairs
-    chosen_data = [datum for i, datum in enumerate(data) if i % 2 == 0]
-    rejected_data = [datum for i, datum in enumerate(data) if i % 2 == 1]
-
-    # Print example for first batch
-    if step == 0:
-        for i in range(min(10, len(chosen_data))):
-            print_example(chosen_data[i], tokenizer, "Chosen")
-            print_example(rejected_data[i], tokenizer, "Rejected")
-
-    with timed("get_ref_logprobs", metrics):
-        # Get reference log probabilities
-        # Need to reconstruct full sequences for the sampling client
-        full_sequences = []
-        for datum in data:
-            # Reconstruct the full sequence by appending the last target token
-            target_tokens = datum.loss_fn_inputs["target_tokens"].data
-            if target_tokens:
-                full_sequence = datum.model_input.append_int(int(target_tokens[-1]))
-                full_sequences.append(full_sequence)
-            else:
-                # If no target tokens, just use the model input as is
-                full_sequences.append(datum.model_input)
-
-        # Compute reference log probabilities in parallel
-        async def compute_all_ref_logprobs():
-            return await asyncio.gather(
-                *[reference_client.compute_logprobs_async(seq) for seq in full_sequences]
-            )
-
-        all_ref_logprobs = asyncio.run(compute_all_ref_logprobs())
-
-        # Extract the relevant logprobs (skip the first token which is the prompt)
-        all_ref_logprob_seqs = [torch.tensor(logprobs[1:]) for logprobs in all_ref_logprobs]
-
-        # Split reference results into chosen and rejected
-        chosen_ref_logprob_seqs = [all_ref_logprob_seqs[i] for i in range(0, len(data), 2)]
-        rejected_ref_logprob_seqs = [all_ref_logprob_seqs[i] for i in range(1, len(data), 2)]
-
-    # Create DPO loss function
-    def dpo_loss_fn(
-        data: list[tinker.Datum], logprobs_list: list[torch.Tensor]
-    ) -> tuple[torch.Tensor, dict[str, float]]:
-        # Split logprobs into chosen and rejected
-        chosen_logprob_seqs = [logprobs_list[i] for i in range(0, len(data), 2)]
-        rejected_logprob_seqs = [logprobs_list[i] for i in range(1, len(data), 2)]
-
-        # Extract log probabilities
-        chosen_logprobs = []
-        chosen_ref_logprobs = []
-        rejected_logprobs = []
-        rejected_ref_logprobs = []
-
-        for i in range(len(chosen_data)):
-            # Compute weighted logprobs for chosen responses
-            chosen_logprob_seq = chosen_logprob_seqs[i]
-            chosen_ref_logprob_seq = chosen_ref_logprob_seqs[i]
-            chosen_weights = torch.tensor(chosen_data[i].loss_fn_inputs["weights"].data)
-            chosen_logprob = torch.dot(chosen_logprob_seq.float(), chosen_weights.float())
-            chosen_ref_logprob = torch.dot(chosen_ref_logprob_seq.float(), chosen_weights.float())
-            chosen_logprobs.append(chosen_logprob)
-            chosen_ref_logprobs.append(chosen_ref_logprob)
-
-            # Compute weighted logprobs for rejected responses
-            rejected_logprob_seq = rejected_logprob_seqs[i]
-            rejected_ref_logprob_seq = rejected_ref_logprob_seqs[i]
-            rejected_weights = torch.tensor(rejected_data[i].loss_fn_inputs["weights"].data)
-            rejected_logprob = torch.dot(rejected_logprob_seq.float(), rejected_weights.float())
-            rejected_ref_logprob = torch.dot(
-                rejected_ref_logprob_seq.float(), rejected_weights.float()
-            )
-            rejected_logprobs.append(rejected_logprob)
-            rejected_ref_logprobs.append(rejected_ref_logprob)
-
-        # Compute DPO loss
-        return compute_dpo_loss(
-            chosen_logprobs=chosen_logprobs,
-            rejected_logprobs=rejected_logprobs,
-            chosen_ref_logprobs=chosen_ref_logprobs,
-            rejected_ref_logprobs=rejected_ref_logprobs,
-            dpo_beta=config.dpo_beta,
+        learning_rate = config.learning_rate * compute_schedule_lr_multiplier(
+            lr_schedule=config.lr_schedule, step=step, total_steps=total_steps
+        )
+        adam_params = tinker.AdamParams(
+            learning_rate=learning_rate,
+            beta1=config.adam_beta1,
+            beta2=config.adam_beta2,
+            eps=config.adam_eps,
         )
 
-    with timed("step", metrics):
-        # Do forward-backward with custom DPO loss
-        backward_result = training_client.forward_backward_custom(data, dpo_loss_fn).result()
-        dpo_metrics = backward_result.metrics
+        # Evaluation
+        if config.eval_every > 0 and step % config.eval_every == 0:
+            with trace.scope_span_sync("evals"):
+                eval_metrics = asyncio.run(run_evals(evaluators, training_client, step))
+            metrics.update(eval_metrics)
 
-        # Optimizer step
-        training_client.optim_step(adam_params).result()
+        if config.infrequent_eval_every > 0 and step % config.infrequent_eval_every == 0:
+            with trace.scope_span_sync("infrequent_evals"):
+                eval_metrics = asyncio.run(run_evals(infrequent_evaluators, training_client, step))
+            metrics.update(eval_metrics)
 
-    # Prepare metrics
-    metrics.update(
-        num_pairs=len(chosen_data),
-        num_tokens=sum(datum.model_input.length for datum in data),
-        learning_rate=learning_rate,
-        progress=step / total_steps,
-        **dpo_metrics,
-    )
+        # Prepare batch
+        with trace.scope_span_sync("get_batch"):
+            data = dataset.get_batch(batch_idx)
 
-    # Log metrics
-    metrics["time/total"] = time.time() - start_time
+        # Split data into chosen and rejected pairs
+        chosen_data = [datum for i, datum in enumerate(data) if i % 2 == 0]
+        rejected_data = [datum for i, datum in enumerate(data) if i % 2 == 1]
+
+        # Print example for first batch
+        if step == 0:
+            for i in range(min(10, len(chosen_data))):
+                print_example(chosen_data[i], tokenizer, "Chosen")
+                print_example(rejected_data[i], tokenizer, "Rejected")
+
+        with trace.scope_span_sync("get_ref_logprobs"):
+            # Get reference log probabilities
+            # Need to reconstruct full sequences for the sampling client
+            full_sequences = []
+            for datum in data:
+                # Reconstruct the full sequence by appending the last target token
+                target_tokens = datum.loss_fn_inputs["target_tokens"].data
+                if target_tokens:
+                    full_sequence = datum.model_input.append_int(int(target_tokens[-1]))
+                    full_sequences.append(full_sequence)
+                else:
+                    # If no target tokens, just use the model input as is
+                    full_sequences.append(datum.model_input)
+
+            # Compute reference log probabilities in parallel
+            async def compute_all_ref_logprobs():
+                return await asyncio.gather(
+                    *[reference_client.compute_logprobs_async(seq) for seq in full_sequences]
+                )
+
+            all_ref_logprobs = asyncio.run(compute_all_ref_logprobs())
+
+            # Extract the relevant logprobs (skip the first token which is the prompt)
+            all_ref_logprob_seqs = [torch.tensor(logprobs[1:]) for logprobs in all_ref_logprobs]
+
+            # Split reference results into chosen and rejected
+            chosen_ref_logprob_seqs = [all_ref_logprob_seqs[i] for i in range(0, len(data), 2)]
+            rejected_ref_logprob_seqs = [all_ref_logprob_seqs[i] for i in range(1, len(data), 2)]
+
+        # Create DPO loss function
+        def dpo_loss_fn(
+            data: list[tinker.Datum], logprobs_list: list[torch.Tensor]
+        ) -> tuple[torch.Tensor, dict[str, float]]:
+            # Split logprobs into chosen and rejected
+            chosen_logprob_seqs = [logprobs_list[i] for i in range(0, len(data), 2)]
+            rejected_logprob_seqs = [logprobs_list[i] for i in range(1, len(data), 2)]
+
+            # Extract log probabilities
+            chosen_logprobs = []
+            chosen_ref_logprobs = []
+            rejected_logprobs = []
+            rejected_ref_logprobs = []
+
+            for i in range(len(chosen_data)):
+                # Compute weighted logprobs for chosen responses
+                chosen_logprob_seq = chosen_logprob_seqs[i]
+                chosen_ref_logprob_seq = chosen_ref_logprob_seqs[i]
+                chosen_weights = torch.tensor(chosen_data[i].loss_fn_inputs["weights"].data)
+                chosen_logprob = torch.dot(chosen_logprob_seq.float(), chosen_weights.float())
+                chosen_ref_logprob = torch.dot(
+                    chosen_ref_logprob_seq.float(), chosen_weights.float()
+                )
+                chosen_logprobs.append(chosen_logprob)
+                chosen_ref_logprobs.append(chosen_ref_logprob)
+
+                # Compute weighted logprobs for rejected responses
+                rejected_logprob_seq = rejected_logprob_seqs[i]
+                rejected_ref_logprob_seq = rejected_ref_logprob_seqs[i]
+                rejected_weights = torch.tensor(rejected_data[i].loss_fn_inputs["weights"].data)
+                rejected_logprob = torch.dot(rejected_logprob_seq.float(), rejected_weights.float())
+                rejected_ref_logprob = torch.dot(
+                    rejected_ref_logprob_seq.float(), rejected_weights.float()
+                )
+                rejected_logprobs.append(rejected_logprob)
+                rejected_ref_logprobs.append(rejected_ref_logprob)
+
+            # Compute DPO loss
+            return compute_dpo_loss(
+                chosen_logprobs=chosen_logprobs,
+                rejected_logprobs=rejected_logprobs,
+                chosen_ref_logprobs=chosen_ref_logprobs,
+                rejected_ref_logprobs=rejected_ref_logprobs,
+                dpo_beta=config.dpo_beta,
+            )
+
+        with trace.scope_span_sync("step"):
+            # Do forward-backward with custom DPO loss
+            backward_result = training_client.forward_backward_custom(data, dpo_loss_fn).result()
+            dpo_metrics = backward_result.metrics
+
+            # Optimizer step
+            training_client.optim_step(adam_params).result()
+
+        # Prepare metrics
+        metrics.update(
+            num_pairs=len(chosen_data),
+            num_tokens=sum(datum.model_input.length for datum in data),
+            learning_rate=learning_rate,
+            progress=step / total_steps,
+            **dpo_metrics,
+        )
+
+    # Log timing metrics from trace_iteration window
+    metrics.update(window.get_timing_metrics())
+    window.write_spans_jsonl(Path(log_path) / "timing_spans.jsonl", step=step)
+    if config.span_chart_every > 0 and step % config.span_chart_every == 0:
+        trace.save_gantt_chart_html(window, step, Path(log_path) / f"timing_gantt_{step:06d}.html")
     ml_logger.log_metrics(metrics=metrics, step=step)
 
 
@@ -354,6 +361,14 @@ def main(config: Config):
         config=config,
         do_configure_logging_module=True,
     )
+    if config.enable_trace:
+        trace_events_path = str(Path(config.log_path) / "trace_events.jsonl")
+        logger.info(f"Tracing is enabled. Trace events will be saved to {trace_events_path}")
+        logger.info(
+            f"Run `python tinker_cookbook/utils/trace.py {trace_events_path} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"
+        )
+        trace.trace_init(output_file=trace_events_path)
+
     user_metadata: dict[str, str] = {}
     if wandb_link := ml_logger.get_logger_url():
         user_metadata["wandb_link"] = wandb_link

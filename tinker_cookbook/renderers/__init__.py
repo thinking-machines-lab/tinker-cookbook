@@ -155,15 +155,15 @@ def get_renderer(
     from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
     from tinker_cookbook.renderers.kimi_k25 import KimiK25DisableThinkingRenderer, KimiK25Renderer
     from tinker_cookbook.renderers.llama3 import Llama3Renderer
+    from tinker_cookbook.renderers.nemotron3 import (
+        Nemotron3DisableThinkingRenderer,
+        Nemotron3Renderer,
+    )
     from tinker_cookbook.renderers.qwen3 import (
         Qwen3DisableThinkingRenderer,
         Qwen3InstructRenderer,
         Qwen3VLInstructRenderer,
         Qwen3VLRenderer,
-    )
-    from tinker_cookbook.renderers.nemotron3 import (
-        Nemotron3DisableThinkingRenderer,
-        Nemotron3Renderer,
     )
     from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
     from tinker_cookbook.renderers.role_colon import RoleColonRenderer

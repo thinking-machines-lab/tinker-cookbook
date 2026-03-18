@@ -38,9 +38,9 @@ import json
 from tinker_cookbook.renderers.base import (
     ImagePart,
     Message,
+    RenderContext,
     RenderedMessage,
     Role,
-    RenderContext,
     TextPart,
     ToolSpec,
 )
@@ -78,7 +78,7 @@ def _format_nemotron3_tool_declaration(tool: ToolSpec) -> str:
             lines.append("<parameter>")
             lines.append(f"<name>{param_name}</name>")
             if "type" in param_fields:
-                lines.append(f"<type>{str(param_fields['type'])}</type>")
+                lines.append(f"<type>{param_fields['type']!s}</type>")
             if "description" in param_fields:
                 lines.append(f"<description>{param_fields['description'].strip()}</description>")
             if "enum" in param_fields:

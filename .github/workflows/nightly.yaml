@@ -32,7 +32,8 @@ jobs:
         run: uv build
 
       - name: smoke test
-        run: uv run python -c "import tinker_cookbook; print(f'Version: {tinker_cookbook.__version__}')"
+        run: |
+          uv run python -c "import tinker_cookbook; print(f'Version: {tinker_cookbook.__version__}')"
 
       - name: get version
         id: version
@@ -54,20 +55,23 @@ jobs:
 
       - name: create nightly release
         run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          REPO="${{ github.repository }}"
+          SHORT_SHA="${GITHUB_SHA::8}"
+          {
+            echo "Automated nightly build from \`main\` at $(date -u '+%Y-%m-%d %H:%M UTC')."
+            echo ""
+            echo "**Version:** \`${VERSION}\`"
+            echo "**Commit:** [\`${SHORT_SHA}\`](https://github.com/${REPO}/commit/${GITHUB_SHA})"
+            echo ""
+            echo "### Install"
+            echo "\`\`\`bash"
+            echo "pip install 'tinker_cookbook @ https://github.com/${REPO}/releases/download/nightly/tinker_cookbook-${VERSION}-py3-none-any.whl'"
+            echo "\`\`\`"
+          } > /tmp/release-notes.md
           gh release create nightly dist/* \
             --prerelease \
-            --title "Nightly Build (${{ steps.version.outputs.version }})" \
-            --notes "$(cat <<EOF
-Automated nightly build from \`main\` at $(date -u '+%Y-%m-%d %H:%M UTC').
-
-**Version:** \`${{ steps.version.outputs.version }}\`
-**Commit:** [\`${GITHUB_SHA::8}\`](https://github.com/${{ github.repository }}/commit/${GITHUB_SHA})
-
-### Install
-\`\`\`bash
-pip install 'tinker_cookbook @ https://github.com/${{ github.repository }}/releases/download/nightly/tinker_cookbook-${{ steps.version.outputs.version }}-py3-none-any.whl'
-\`\`\`
-EOF
-          )"
+            --title "Nightly Build (${VERSION})" \
+            --notes-file /tmp/release-notes.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
