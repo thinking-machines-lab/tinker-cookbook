@@ -519,6 +519,7 @@ async def main(config: Config):
             sampling_client,
             max_tokens=config.max_tokens,
             temperature=config.temperature,
+            max_context_length=config.max_context_length,
         )
 
         train_file_prefix = f"train_iteration_{i_batch:06d}"
