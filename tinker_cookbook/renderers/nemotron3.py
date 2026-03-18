@@ -152,11 +152,15 @@ class Nemotron3Renderer(Qwen3_5Renderer):
             return ""
         # For historical messages with stripped thinking and non-empty text:
         # add \n separator to match HF template's c.split('</think>')[-1] behavior.
+        # Exception: when the message has tool_calls, the HF template's tool_calls
+        # branch applies ``| trim`` (which binds tighter than ``~``) to the content
+        # before concatenation, stripping the leading \n. So no separator in that case.
         if is_historical and has_think:
             has_nonempty_text = isinstance(content, list) and any(
                 p["type"] == "text" and p.get("text", "") for p in content
             )
-            if has_nonempty_text:
+            has_tool_calls = bool(message.get("tool_calls"))
+            if has_nonempty_text and not has_tool_calls:
                 return "<think></think>\n"
         return "<think></think>"
 

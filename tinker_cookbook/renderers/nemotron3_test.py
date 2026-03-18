@@ -53,6 +53,9 @@ def _hf_generation_tokens(tokenizer, hf_messages, tools=None, enable_thinking: b
     if tools is not None:
         kwargs["tools"] = tools
     result = tokenizer.apply_chat_template(hf_messages, **kwargs)
+    # apply_chat_template may return BatchEncoding (dict-like) when tools are provided.
+    if hasattr(result, "input_ids"):
+        return list(result.input_ids)
     return list(result)
 
 
@@ -61,7 +64,9 @@ def _hf_supervised_tokens(tokenizer, hf_messages, tools=None, enable_thinking: b
     kwargs = {"add_generation_prompt": False, "tokenize": False, "enable_thinking": enable_thinking}
     if tools is not None:
         kwargs["tools"] = tools
-    hf_str = tokenizer.apply_chat_template(hf_messages, **kwargs)
+    result = tokenizer.apply_chat_template(hf_messages, **kwargs)
+    # apply_chat_template with tokenize=False may return BatchEncoding when tools are provided.
+    hf_str = result.input_ids if hasattr(result, "input_ids") else result
     assert isinstance(hf_str, str)
     return tokenizer.encode(hf_str.rstrip("\n"), add_special_tokens=False)
 
@@ -175,6 +180,58 @@ def get_tool_call_conversation_for_generation() -> tuple[list[Message], list[Too
             tool_call_id="call_abc123",
             content='{"temperature": 72, "condition": "sunny"}',
         ),
+    ]
+    return messages, tools
+
+
+def get_historical_tool_call_with_nonempty_text_conversation() -> tuple[
+    list[Message], list[ToolSpec]
+]:
+    """Conversation where a historical assistant message has thinking + non-empty text + tool_calls.
+
+    This is an edge case where the HF Jinja template's tool_calls branch applies
+    ``| trim`` to the content *before* concatenation with ``<think></think>``,
+    stripping the leading ``\\n`` that would otherwise be preserved in the
+    non-tool_calls branch. The result is ``<think></think>text`` (no newline)
+    for the historical message.
+
+    The first assistant message becomes historical because a later user message
+    follows the tool response + second assistant exchange.
+    """
+    tools = [get_tool_spec()]
+    tool_call = ToolCall(
+        id="call_abc123",
+        function=ToolCall.FunctionBody(
+            name="get_weather",
+            arguments='{"location": "New York, NY"}',
+        ),
+    )
+    messages: list[Message] = [
+        Message(role="user", content="What's the weather in NYC?"),
+        # This assistant message has thinking + non-empty text + tool_calls
+        # and will be historical (before the last user message).
+        Message(
+            role="assistant",
+            content=[
+                {"type": "thinking", "thinking": "I need to check the weather."},
+                {"type": "text", "text": "Let me check that for you."},
+            ],
+            tool_calls=[tool_call],
+        ),
+        Message(
+            role="tool",
+            name="get_weather",
+            tool_call_id="call_abc123",
+            content='{"temperature": 72, "condition": "sunny"}',
+        ),
+        Message(
+            role="assistant",
+            content=[
+                {"type": "thinking", "thinking": "The weather is 72F and sunny."},
+                {"type": "text", "text": "It's 72°F and sunny in NYC."},
+            ],
+        ),
+        Message(role="user", content="Thanks!"),
     ]
     return messages, tools
 
@@ -498,6 +555,60 @@ def test_tool_call_conversation_generation_matches_hf(nemotron_tokenizer, nemotr
 def test_tool_call_conversation_supervised_matches_hf(nemotron_tokenizer, nemotron_renderer):
     """Complete tool call conversation (supervised) matches HF template."""
     messages, tools = get_tool_call_conversation_for_supervised()
+    openai_tools = [{"type": "function", "function": tool} for tool in tools]
+    system_prompt = "You are a helpful assistant."
+
+    prefix = nemotron_renderer.create_conversation_prefix_with_tools(
+        tools, system_prompt=system_prompt
+    )
+    cookbook = nemotron_renderer.build_supervised_example(prefix + messages)[0].to_ints()
+
+    hf_messages = [
+        {"role": "system", "content": system_prompt},
+        *[nemotron_renderer.to_openai_message(m) for m in messages],
+    ]
+    hf = _hf_supervised_tokens(nemotron_tokenizer, hf_messages, tools=openai_tools)
+
+    assert cookbook == hf, (
+        f"Cookbook: {nemotron_tokenizer.decode(cookbook)}\nHF: {nemotron_tokenizer.decode(hf)}"
+    )
+
+
+def test_historical_tool_call_with_nonempty_text_generation_matches_hf(
+    nemotron_tokenizer, nemotron_renderer
+):
+    """Historical tool_call message with thinking + non-empty text matches HF.
+
+    In the HF Jinja template's tool_calls branch, ``| trim`` binds tighter than
+    ``~``, so the leading ``\\n`` from the content is stripped before concatenation
+    with ``<think></think>``, producing ``<think></think>text`` (no newline).
+    This differs from the non-tool_calls branch which preserves the newline.
+    """
+    messages, tools = get_historical_tool_call_with_nonempty_text_conversation()
+    openai_tools = [{"type": "function", "function": tool} for tool in tools]
+    system_prompt = "You are a helpful assistant."
+
+    prefix = nemotron_renderer.create_conversation_prefix_with_tools(
+        tools, system_prompt=system_prompt
+    )
+    cookbook = nemotron_renderer.build_generation_prompt(prefix + messages).to_ints()
+
+    hf_messages = [
+        {"role": "system", "content": system_prompt},
+        *[nemotron_renderer.to_openai_message(m) for m in messages],
+    ]
+    hf = _hf_generation_tokens(nemotron_tokenizer, hf_messages, tools=openai_tools)
+
+    assert cookbook == hf, (
+        f"Cookbook: {nemotron_tokenizer.decode(cookbook)}\nHF: {nemotron_tokenizer.decode(hf)}"
+    )
+
+
+def test_historical_tool_call_with_nonempty_text_supervised_matches_hf(
+    nemotron_tokenizer, nemotron_renderer
+):
+    """Supervised version of the historical tool_call + non-empty text edge case."""
+    messages, tools = get_historical_tool_call_with_nonempty_text_conversation()
     openai_tools = [{"type": "function", "function": tool} for tool in tools]
     system_prompt = "You are a helpful assistant."
 
