@@ -424,7 +424,7 @@ class GptOssRenderer(Renderer):
         call_count = response.count(self._call_token)
         return_count = response.count(self._return_token)
         if call_count == 0 and return_count == 0:
-            str_response = self.tokenizer.decode(response)
+            str_response = str(self.tokenizer.decode(response))
             return Message(role="assistant", content=str_response), False
         if call_count > 1:
             raise ValueError(
@@ -444,7 +444,7 @@ class GptOssRenderer(Renderer):
                 stop_idx = call_idx
 
         assert stop_idx is not None
-        str_response = self.tokenizer.decode(response[:stop_idx])
+        str_response = str(self.tokenizer.decode(response[:stop_idx]))
         parts, tool_calls, unparsed = self._parse_harmony_output(str_response)
         content: list[ContentPart] | str = parts if parts else str_response
 

@@ -180,7 +180,7 @@ def test_deepseek_post_tool_formatting():
             # Output should not start with </think>
             output_chunk = rendered.output[0]
             assert isinstance(output_chunk, tinker.EncodedTextChunk), "Expected EncodedTextChunk"
-            output_str = tokenizer.decode(list(output_chunk.tokens))
+            output_str = str(tokenizer.decode(list(output_chunk.tokens)))
             assert not output_str.startswith("</think>"), (
                 f"Post-tool assistant should not have </think> prefix: {output_str}"
             )

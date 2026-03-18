@@ -66,7 +66,7 @@ class RoleColonRenderer(Renderer):
             response = response[:-1]
             terminated_with_eos = True
 
-        str_response = self.tokenizer.decode(response)
+        str_response = str(self.tokenizer.decode(response))
         splitted = str_response.split("\n\nUser:")
         if len(splitted) == 1:
             logger.debug(f"Response is not a valid assistant response: {str_response}")

@@ -149,7 +149,7 @@ async def test_model(
 
     # Parse response
     response_tokens = result.sequences[0].tokens
-    raw_response = tokenizer.decode(response_tokens)
+    raw_response = str(tokenizer.decode(response_tokens))
     message, parse_success = renderer.parse_response(response_tokens)
 
     # Check if we got tool calls

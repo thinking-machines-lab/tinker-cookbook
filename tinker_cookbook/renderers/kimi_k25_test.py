@@ -25,6 +25,7 @@ from tinker_cookbook.renderers import (
     ToolSpec,
     get_renderer,
 )
+from tinker_cookbook.renderers.conftest import extract_token_ids
 from tinker_cookbook.renderers.kimi_k2_5_tool_declaration_ts import encode_tools_to_typescript_style
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
@@ -67,16 +68,16 @@ def hf_generation_prompt_length(kimi_tokenizer):
     This is constant regardless of conversation content.
     """
     dummy_msgs = [{"role": "user", "content": "hi"}]
-    tokens_with = kimi_tokenizer.apply_chat_template(
-        dummy_msgs, add_generation_prompt=True, tokenize=True, thinking=True
+    tokens_with = extract_token_ids(
+        kimi_tokenizer.apply_chat_template(
+            dummy_msgs, add_generation_prompt=True, tokenize=True, thinking=True
+        )
     )
-    tokens_without = kimi_tokenizer.apply_chat_template(
-        dummy_msgs, add_generation_prompt=False, tokenize=True, thinking=True
+    tokens_without = extract_token_ids(
+        kimi_tokenizer.apply_chat_template(
+            dummy_msgs, add_generation_prompt=False, tokenize=True, thinking=True
+        )
     )
-    if hasattr(tokens_with, "input_ids"):
-        tokens_with = tokens_with["input_ids"]
-    if hasattr(tokens_without, "input_ids"):
-        tokens_without = tokens_without["input_ids"]
     return len(tokens_with) - len(tokens_without)
 
 
@@ -87,17 +88,15 @@ def get_hf_tokens(
 
     For supervised mode, slices off the generation prompt tokens.
     """
-    hf_output = tokenizer.apply_chat_template(
-        hf_messages,
-        tools=tools,
-        add_generation_prompt=True,
-        tokenize=True,
-        thinking=True,
+    tokens = extract_token_ids(
+        tokenizer.apply_chat_template(
+            hf_messages,
+            tools=tools,
+            add_generation_prompt=True,
+            tokenize=True,
+            thinking=True,
+        )
     )
-    if hasattr(hf_output, "input_ids"):
-        tokens = cast(list[int], hf_output["input_ids"])
-    else:
-        tokens = cast(list[int], hf_output)
 
     if for_generation:
         return tokens
@@ -792,8 +791,7 @@ def test_kimi_k25_image_content(image_dimensions_and_expected_tokens: tuple[int,
     tokenizer = get_tokenizer(KIMI_K25_MODEL)
     image_processor = get_image_processor(KIMI_K25_MODEL)
 
-    hf_output = tokenizer.apply_chat_template(messages, tokenize=True)
-    hf_output = cast(list[int], hf_output)
+    hf_output = extract_token_ids(tokenizer.apply_chat_template(messages, tokenize=True))
 
     renderer = get_renderer("kimi_k25", tokenizer, image_processor)
     renderer_output = renderer.build_generation_prompt(messages)

@@ -101,7 +101,6 @@ def download_search_r1_dataset(split: Literal["train", "test"]) -> list[SearchR1
         filename=parquet_filename,
         repo_type="dataset",
         local_dir=tmp_download_dir,
-        local_dir_use_symlinks=False,
     )
 
     df_raw = pd.read_parquet(local_parquet_filepath)

@@ -27,7 +27,6 @@ import json
 import random
 import uuid
 from collections.abc import Callable
-from typing import cast
 
 import pytest
 
@@ -48,6 +47,7 @@ from tinker_cookbook.renderers import (
     unregister_renderer,
 )
 from tinker_cookbook.renderers.base import ContentPart, ensure_list, ensure_text
+from tinker_cookbook.renderers.conftest import extract_token_ids
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
 from tinker_cookbook.renderers.nemotron3 import Nemotron3Renderer
@@ -583,8 +583,7 @@ def test_generation_against_hf_chat_templates(
         hf_convo, tools=tools_for_hf, add_generation_prompt=True, tokenize=True, **hf_kwargs
     )
 
-    # Cast hf_tokens to list[int] for type checker - apply_chat_template with tokenize=True returns list[int]
-    hf_tokens_list = cast(list[int], hf_tokens)
+    hf_tokens_list = extract_token_ids(hf_tokens)
 
     assert cookbook_tokens == hf_tokens_list, (
         f"[{conv_desc}] Cookbook tokens: {cookbook_tokens}\n"
