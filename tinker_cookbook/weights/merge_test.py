@@ -9,7 +9,18 @@ from typing import Any
 import pytest
 import torch
 
-from tinker_cookbook.weights._merge import apply_merged_weight, merge_adapter_weights
+from tinker_cookbook.weights._merge import (
+    MergeOp,
+    MergeProfile,
+    apply_merge_op,
+    apply_merged_weight,
+    detect_merge_profile,
+    expand_expert_lora_tensors,
+    merge_adapter_weights,
+    merge_lora_matrices,
+    plan_merge_ops,
+    validate_merge_op_shapes,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -337,3 +348,378 @@ class TestExpertErrorCases:
         }
         with pytest.raises(ValueError, match="must be 3D"):
             merge_adapter_weights(model, adapter_weights, {"lora_alpha": 1, "r": 1})
+
+
+# ===========================================================================
+# Tests for new APIs: MergeProfile, detect_merge_profile, plan/apply,
+# merge_lora_matrices, expand_expert_lora_tensors
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# merge_lora_matrices
+# ---------------------------------------------------------------------------
+
+
+class TestMergeLoraMatrices:
+    def test_basic_multiplication(self):
+        lora_A = torch.ones(1, 4)  # (rank=1, in_dim=4)
+        lora_B = torch.ones(8, 1)  # (out_dim=8, rank=1)
+        result = merge_lora_matrices(lora_A, lora_B)
+        assert result.shape == (8, 4)
+        assert torch.allclose(result, torch.ones(8, 4))
+
+    def test_with_scaling(self):
+        lora_A = torch.ones(2, 3) * 0.5
+        lora_B = torch.eye(3, 2)  # (3, 2)
+        result = merge_lora_matrices(lora_A, lora_B)
+        # eye(3,2) @ (ones(2,3) * 0.5) = first 2 rows are 0.5, last row is 0
+        assert result.shape == (3, 3)
+        assert torch.allclose(result[:2], torch.full((2, 3), 0.5))
+        assert torch.allclose(result[2], torch.zeros(3))
+
+
+# ---------------------------------------------------------------------------
+# expand_expert_lora_tensors
+# ---------------------------------------------------------------------------
+
+
+class TestExpandExpertLoraTensors:
+    def test_expand_A_to_match_B(self):
+        lora_A = torch.ones(1, 2, 4)
+        lora_B = torch.ones(3, 8, 2)
+        out_A, out_B = expand_expert_lora_tensors(lora_A, lora_B)
+        assert out_A.shape[0] == 3
+        assert out_B is lora_B
+
+    def test_expand_B_to_match_A(self):
+        lora_A = torch.ones(3, 2, 4)
+        lora_B = torch.ones(1, 8, 2)
+        out_A, out_B = expand_expert_lora_tensors(lora_A, lora_B)
+        assert out_A is lora_A
+        assert out_B.shape[0] == 3
+
+    def test_both_single_raises(self):
+        with pytest.raises(ValueError, match="both A and B have 1 expert"):
+            expand_expert_lora_tensors(torch.ones(1, 2, 4), torch.ones(1, 8, 2))
+
+    def test_already_matched_is_noop(self):
+        lora_A = torch.ones(4, 2, 4)
+        lora_B = torch.ones(4, 8, 2)
+        out_A, out_B = expand_expert_lora_tensors(lora_A, lora_B)
+        assert out_A is lora_A
+        assert out_B is lora_B
+
+    def test_mismatched_expert_counts_raises(self):
+        with pytest.raises(ValueError, match="Expert count mismatch"):
+            expand_expert_lora_tensors(torch.ones(3, 2, 4), torch.ones(5, 8, 2))
+
+
+# ---------------------------------------------------------------------------
+# detect_merge_profile
+# ---------------------------------------------------------------------------
+
+
+class TestDetectMergeProfile:
+    def test_standard_model(self):
+        config: dict = {"architectures": ["QwenForCausalLM"]}
+        keys = {"model.layers.0.self_attn.q_proj.weight"}
+        profile = detect_merge_profile(config, keys)
+        assert profile.expert_layout == "separate"
+        assert profile.extra_key_remaps == ()
+        assert profile.has_language_model_prefix is False
+
+    def test_gpt_oss_detection(self):
+        config: dict = {"architectures": ["GptOssForCausalLM"]}
+        keys = {
+            "model.layers.0.self_attn.q_proj.weight",
+            "model.layers.0.mlp.experts.gate_up_proj",
+        }
+        profile = detect_merge_profile(config, keys)
+        assert profile.expert_layout == "fused_interleaved"
+        assert (".attn", ".self_attn") in profile.extra_key_remaps
+
+    def test_fused_concatenated_non_gpt_oss(self):
+        config: dict = {"architectures": ["Qwen3ForCausalLM"]}
+        keys = {"model.layers.0.mlp.experts.gate_up_proj"}
+        profile = detect_merge_profile(config, keys)
+        assert profile.expert_layout == "fused_concatenated"
+        assert profile.extra_key_remaps == ()
+
+    def test_vision_model_prefix(self):
+        config: dict = {"architectures": ["Qwen3VLForConditionalGeneration"]}
+        keys = {"model.language_model.layers.0.self_attn.q_proj.weight"}
+        profile = detect_merge_profile(config, keys)
+        assert profile.has_language_model_prefix is True
+
+    def test_separate_experts_without_fused(self):
+        config: dict = {"architectures": ["QwenMoEForCausalLM"]}
+        keys = {"model.layers.0.mlp.experts.0.gate_proj.weight"}
+        profile = detect_merge_profile(config, keys)
+        assert profile.expert_layout == "separate"
+
+    def test_empty_architectures(self):
+        profile = detect_merge_profile({}, {"model.layers.0.weight"})
+        assert profile.expert_layout == "separate"
+        assert profile.extra_key_remaps == ()
+
+
+# ---------------------------------------------------------------------------
+# plan_merge_ops
+# ---------------------------------------------------------------------------
+
+
+class TestPlanMergeOps:
+    def test_non_expert_produces_2d_op(self):
+        keys = {"model.layers.0.self_attn.q_proj.weight"}
+        profile = MergeProfile()
+        adapter = {
+            "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": torch.ones(1, 4),
+            "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": torch.ones(8, 1),
+        }
+        ops = plan_merge_ops(adapter, {"lora_alpha": 2, "r": 1}, keys, profile)
+        assert "model.layers.0.self_attn.q_proj.weight" in ops
+        op = ops["model.layers.0.self_attn.q_proj.weight"][0]
+        assert op.lora_A.ndim == 2
+        assert op.is_expert_3d is False
+        # B should be pre-scaled by alpha/r = 2
+        assert torch.allclose(op.lora_B, torch.ones(8, 1) * 2)
+
+    def test_separate_experts_produce_per_expert_2d_ops(self):
+        keys = {
+            "model.layers.0.mlp.experts.0.gate_proj.weight",
+            "model.layers.0.mlp.experts.1.gate_proj.weight",
+        }
+        profile = MergeProfile(expert_layout="separate")
+        adapter = {
+            "base_model.model.model.layers.0.mlp.experts.w1.lora_A.weight": torch.ones(2, 1, 4),
+            "base_model.model.model.layers.0.mlp.experts.w1.lora_B.weight": torch.ones(2, 8, 1),
+        }
+        ops = plan_merge_ops(adapter, {"lora_alpha": 1, "r": 1}, keys, profile)
+        # Should have ops for both experts
+        assert "model.layers.0.mlp.experts.0.gate_proj.weight" in ops
+        assert "model.layers.0.mlp.experts.1.gate_proj.weight" in ops
+        # Each op should have 2D tensors
+        for key in ops:
+            assert ops[key][0].lora_A.ndim == 2
+
+    def test_fused_experts_produce_3d_ops(self):
+        keys = {"model.layers.0.mlp.experts.gate_up_proj"}
+        profile = MergeProfile(expert_layout="fused_concatenated")
+        adapter = {
+            "base_model.model.model.layers.0.mlp.experts.w1.lora_A.weight": torch.ones(2, 1, 4),
+            "base_model.model.model.layers.0.mlp.experts.w1.lora_B.weight": torch.ones(2, 8, 1),
+        }
+        ops = plan_merge_ops(adapter, {"lora_alpha": 1, "r": 1}, keys, profile)
+        assert "model.layers.0.mlp.experts.gate_up_proj" in ops
+        op = ops["model.layers.0.mlp.experts.gate_up_proj"][0]
+        assert op.is_expert_3d is True
+        assert op.fused_proj_idx == 0  # gate = w1
+        assert op.fused_proj_interleaved is False
+
+    def test_fused_interleaved_sets_flag(self):
+        keys = {"model.layers.0.mlp.experts.gate_up_proj"}
+        profile = MergeProfile(expert_layout="fused_interleaved")
+        adapter = {
+            "base_model.model.model.layers.0.mlp.experts.w1.lora_A.weight": torch.ones(2, 1, 4),
+            "base_model.model.model.layers.0.mlp.experts.w1.lora_B.weight": torch.ones(2, 8, 1),
+        }
+        ops = plan_merge_ops(adapter, {"lora_alpha": 1, "r": 1}, keys, profile)
+        op = ops["model.layers.0.mlp.experts.gate_up_proj"][0]
+        assert op.fused_proj_interleaved is True
+
+    def test_extra_key_remaps_applied(self):
+        keys = {"model.layers.0.self_attn.q_proj.weight"}
+        profile = MergeProfile(extra_key_remaps=((".attn", ".self_attn"),))
+        adapter = {
+            "base_model.model.model.layers.0.attn.q_proj.lora_A.weight": torch.ones(1, 4),
+            "base_model.model.model.layers.0.attn.q_proj.lora_B.weight": torch.ones(8, 1),
+        }
+        ops = plan_merge_ops(adapter, {"lora_alpha": 1, "r": 1}, keys, profile)
+        assert "model.layers.0.self_attn.q_proj.weight" in ops
+
+    def test_vision_prefix_remapping(self):
+        keys = {"model.language_model.layers.0.self_attn.q_proj.weight"}
+        profile = MergeProfile(has_language_model_prefix=True)
+        adapter = {
+            "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": torch.ones(1, 4),
+            "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": torch.ones(8, 1),
+        }
+        ops = plan_merge_ops(adapter, {"lora_alpha": 1, "r": 1}, keys, profile)
+        assert "model.language_model.layers.0.self_attn.q_proj.weight" in ops
+
+    def test_unembed_tokens_remapped_to_lm_head(self):
+        keys = {"lm_head.weight"}
+        profile = MergeProfile()
+        adapter = {
+            "base_model.model.model.unembed_tokens.lora_A.weight": torch.ones(1, 4),
+            "base_model.model.model.unembed_tokens.lora_B.weight": torch.ones(8, 1),
+        }
+        ops = plan_merge_ops(adapter, {"lora_alpha": 1, "r": 1}, keys, profile)
+        assert "lm_head.weight" in ops
+
+    def test_missing_key_raises(self):
+        keys = {"some.other.weight"}
+        profile = MergeProfile()
+        adapter = {
+            "base_model.model.model.layers.0.q_proj.lora_A.weight": torch.ones(1, 4),
+            "base_model.model.model.layers.0.q_proj.lora_B.weight": torch.ones(4, 1),
+        }
+        with pytest.raises(KeyError, match="does not exist"):
+            plan_merge_ops(adapter, {"lora_alpha": 1, "r": 1}, keys, profile)
+
+    def test_missing_config_key_raises(self):
+        with pytest.raises(KeyError, match="lora_alpha"):
+            plan_merge_ops({}, {"r": 1}, set(), MergeProfile())
+
+    def test_invalid_expert_layout_raises(self):
+        with pytest.raises(ValueError, match="Invalid expert_layout"):
+            plan_merge_ops({}, {"lora_alpha": 1, "r": 1}, set(), MergeProfile(expert_layout="bad"))
+
+
+# ---------------------------------------------------------------------------
+# apply_merge_op
+# ---------------------------------------------------------------------------
+
+
+class TestApplyMergeOp:
+    def test_2d_standard_merge(self):
+        tensors = {"q_proj.weight": torch.zeros(8, 4)}
+        op = MergeOp(
+            target_key="q_proj.weight",
+            lora_A=torch.ones(1, 4),
+            lora_B=torch.ones(8, 1),
+        )
+        apply_merge_op(tensors, op)
+        assert tensors["q_proj.weight"].abs().sum() > 0
+        # delta = B @ A = ones(8,1) @ ones(1,4) = ones(8,4)
+        assert torch.allclose(tensors["q_proj.weight"], torch.ones(8, 4))
+
+    def test_3d_fused_concatenated_gate(self):
+        n_exp, in_dim, fused_dim = 2, 4, 8
+        tensors = {"gate_up_proj": torch.zeros(n_exp, in_dim, fused_dim)}
+        # Gate op (fused_proj_idx=0): delta goes into first half
+        lora_A = torch.ones(n_exp, 1, in_dim) * 0.1
+        lora_B = torch.ones(n_exp, fused_dim // 2, 1)
+        op = MergeOp(
+            target_key="gate_up_proj",
+            lora_A=lora_A,
+            lora_B=lora_B,
+            is_expert_3d=True,
+            fused_proj_idx=0,
+            fused_proj_interleaved=False,
+        )
+        apply_merge_op(tensors, op)
+        gate_half = tensors["gate_up_proj"][:, :, : fused_dim // 2]
+        up_half = tensors["gate_up_proj"][:, :, fused_dim // 2 :]
+        assert gate_half.abs().sum() > 0
+        assert up_half.abs().sum() == 0
+
+    def test_3d_fused_interleaved_up(self):
+        n_exp, in_dim, fused_dim = 2, 4, 8
+        tensors = {"gate_up_proj": torch.zeros(n_exp, in_dim, fused_dim)}
+        # Up op (fused_proj_idx=1, interleaved): delta goes into odd columns
+        lora_A = torch.ones(n_exp, 1, in_dim) * 0.2
+        lora_B = torch.ones(n_exp, fused_dim // 2, 1)
+        op = MergeOp(
+            target_key="gate_up_proj",
+            lora_A=lora_A,
+            lora_B=lora_B,
+            is_expert_3d=True,
+            fused_proj_idx=1,
+            fused_proj_interleaved=True,
+        )
+        apply_merge_op(tensors, op)
+        gate_slots = tensors["gate_up_proj"][:, :, 0::2]
+        up_slots = tensors["gate_up_proj"][:, :, 1::2]
+        assert gate_slots.abs().sum() == 0
+        assert up_slots.abs().sum() > 0
+
+    def test_shape_mismatch_raises(self):
+        tensors = {"weight": torch.zeros(4, 4)}
+        op = MergeOp(
+            target_key="weight",
+            lora_A=torch.ones(1, 8),  # wrong in_dim
+            lora_B=torch.ones(4, 1),
+        )
+        with pytest.raises(ValueError, match="Shape mismatch"):
+            apply_merge_op(tensors, op)
+
+
+# ---------------------------------------------------------------------------
+# validate_merge_op_shapes
+# ---------------------------------------------------------------------------
+
+
+class TestValidateMergeOpShapes:
+    def test_valid_2d_op_passes(self):
+        ops = {
+            "q_proj.weight": [
+                MergeOp(
+                    target_key="q_proj.weight", lora_A=torch.ones(1, 4), lora_B=torch.ones(8, 1)
+                )
+            ]
+        }
+        shapes = {"q_proj.weight": (8, 4)}
+        validate_merge_op_shapes(ops, shapes)  # should not raise
+
+    def test_invalid_2d_shape_raises(self):
+        ops = {
+            "q_proj.weight": [
+                MergeOp(
+                    target_key="q_proj.weight", lora_A=torch.ones(1, 8), lora_B=torch.ones(4, 1)
+                )
+            ]
+        }
+        shapes = {"q_proj.weight": (8, 4)}  # target is (8,4) but delta is (4,8)
+        with pytest.raises(ValueError, match=r"Shape mismatch.*q_proj"):
+            validate_merge_op_shapes(ops, shapes)
+
+    def test_valid_3d_fused_concatenated_passes(self):
+        ops = {
+            "gate_up_proj": [
+                MergeOp(
+                    target_key="gate_up_proj",
+                    lora_A=torch.ones(2, 1, 4),
+                    lora_B=torch.ones(2, 4, 1),
+                    is_expert_3d=True,
+                    fused_proj_idx=0,
+                    fused_proj_interleaved=False,
+                )
+            ]
+        }
+        # Target is (2, 4, 8) — fused gate+up, each half is (2, 4, 4)
+        # Delta via bmm is (2, 4, 4) which matches the half
+        shapes = {"gate_up_proj": (2, 4, 8)}
+        validate_merge_op_shapes(ops, shapes)  # should not raise
+
+    def test_invalid_3d_fused_shape_raises(self):
+        ops = {
+            "gate_up_proj": [
+                MergeOp(
+                    target_key="gate_up_proj",
+                    lora_A=torch.ones(2, 1, 4),
+                    lora_B=torch.ones(2, 6, 1),  # wrong out_dim
+                    is_expert_3d=True,
+                    fused_proj_idx=0,
+                    fused_proj_interleaved=False,
+                )
+            ]
+        }
+        shapes = {"gate_up_proj": (2, 4, 8)}  # half is (2, 4, 4), delta is (2, 4, 6)
+        with pytest.raises(ValueError, match=r"Shape mismatch.*gate_up_proj"):
+            validate_merge_op_shapes(ops, shapes)
+
+    def test_valid_3d_non_fused_passes(self):
+        ops = {
+            "down_proj": [
+                MergeOp(
+                    target_key="down_proj",
+                    lora_A=torch.ones(2, 1, 4),
+                    lora_B=torch.ones(2, 8, 1),
+                    is_expert_3d=True,
+                    fused_proj_idx=None,
+                )
+            ]
+        }
+        shapes = {"down_proj": (2, 4, 8)}
+        validate_merge_op_shapes(ops, shapes)  # should not raise
