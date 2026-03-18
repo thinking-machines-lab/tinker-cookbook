@@ -172,6 +172,56 @@ info = rest.get_weights_info_by_tinker_path(tinker_path="tinker://...")
 
 All RestClient methods have `_async` variants.
 
+## Retry behavior
+
+The Tinker SDK includes built-in retry logic for **all** HTTP API calls (training, sampling, checkpointing, and service operations). Users do **not** need to add retry wrappers around Tinker API calls.
+
+### What gets retried automatically
+
+Every API request goes through a unified retry mechanism that handles:
+- **Timeouts** (HTTP 408) and connection-level timeouts
+- **Lock conflicts** (HTTP 409)
+- **Rate limits** (HTTP 429)
+- **Server errors** (HTTP 500+)
+- **Connection failures** (network interruptions, DNS errors, etc.)
+
+The SDK respects the server's `Retry-After` header when present, and attaches idempotency keys to non-GET requests so retried writes are safe.
+
+### Retry defaults
+
+| Parameter | Default | Description |
+|---|---|---|
+| Max retries | 10 | Maximum retry attempts per request |
+| Initial delay | 0.5s | Starting backoff interval |
+| Max delay | 10s | Cap on backoff interval |
+| Backoff | Exponential with jitter | `min(0.5 * 2^attempt, 10) * jitter` |
+
+Override via `max_retries` on client creation:
+```python
+svc = tinker.ServiceClient(max_retries=3)   # reduce retries
+svc = tinker.ServiceClient(max_retries=0)   # disable retries
+```
+
+### What does NOT get retried
+
+Client errors (4xx other than 408, 409, 429) are raised immediately:
+- **400** `tinker.BadRequestError` — malformed data, invalid parameters
+- **401** `tinker.AuthenticationError` — missing or invalid API key
+- **403** `tinker.PermissionDeniedError` — insufficient permissions
+- **404** `tinker.NotFoundError` — invalid model path or resource
+- **422** `tinker.UnprocessableEntityError` — semantically invalid request
+
+### Logging retries
+
+```python
+import logging
+logging.getLogger("tinker").setLevel(logging.DEBUG)
+```
+
+### Implications for tinker-cookbook
+
+Since the SDK handles retries internally, `tinker-cookbook` training loops (SL, RL, DPO, distillation) do **not** wrap API calls with additional retry logic. When building custom training loops, you generally do not need retry handling for Tinker API calls — just handle the final exception if all retries are exhausted. For non-Tinker external services (e.g., third-party APIs), implement your own retry logic as appropriate.
+
 ## Common pitfalls
 - **Use ServiceClient** to create clients — `TrainingClient` and `SamplingClient` cannot be constructed directly
 - Always await futures before submitting new forward_backward calls
