@@ -56,4 +56,4 @@ jobs:
         with:
           name: coverage-html-transformers-${{ matrix.transformers-version }}
           path: coverage-html/
-          retention-days: 14
+          retention-days: 7
