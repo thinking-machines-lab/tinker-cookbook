@@ -128,6 +128,9 @@ class LRSweepConfig:
     # Budget (controls max_steps = training_budget_examples // batch_size)
     training_budget_examples: int = 100_000
 
+    # Execution
+    max_parallel: int = 1
+
     # Metric to optimize (depends on recipe)
     metric: str = "train_mean_nll"
 
@@ -163,6 +166,7 @@ def run_lr_sweep(config: LRSweepConfig) -> None:
     results = sweep.run(
         main_fn,
         base,
+        max_parallel=config.max_parallel,
         learning_rate=config.learning_rates,
         lora_rank=config.lora_ranks,
     )
