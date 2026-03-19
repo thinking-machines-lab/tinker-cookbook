@@ -28,6 +28,7 @@ class MessageStepResult:
     episode_done: bool
     next_messages: list[Message]
     metrics: dict[str, float] = field(default_factory=dict)
+    logs: dict[str, str | int | float] = field(default_factory=dict)
     next_stop_condition: StopCondition | None = None
 
 
@@ -117,4 +118,5 @@ class EnvFromMessageEnv(types.Env):
             next_observation=next_observation,
             next_stop_condition=next_stop_condition,
             metrics=msg_step.metrics,
+            logs=msg_step.logs,
         )

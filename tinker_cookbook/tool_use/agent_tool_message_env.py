@@ -32,6 +32,7 @@ class AgentToolMessageEnv(MessageEnv):
     _turn_count: int = 0
     _tool_dict: dict[str, Tool] = field(default_factory=dict, init=False)
     _should_stop: bool = field(default=False, init=False)
+    _last_tool_result_content: str | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         self._tool_dict = {t.name: t for t in self.tools}
@@ -58,6 +59,10 @@ class AgentToolMessageEnv(MessageEnv):
             for msg in tool_result.messages:
                 self.history.append(msg)
                 all_messages.append(msg)
+                # Track the last tool result content for feedback extraction.
+                content = msg.get("content")
+                if isinstance(content, str) and content.strip():
+                    self._last_tool_result_content = content
 
             # Check if any tool signals to stop
             if tool_result.should_stop:
@@ -97,15 +102,21 @@ class AgentToolMessageEnv(MessageEnv):
             metrics["tool_stopped"] = 1.0
 
         reward = 0.0
+        logs: dict[str, str | int | float] = {}
         if done:
             reward, reward_metrics = await self.reward_fn(self.history)
             metrics.update(reward_metrics)
+            # Include the last tool result as feedback for downstream consumers
+            # (e.g., SDPO teacher conditioning on execution errors).
+            if self._last_tool_result_content is not None:
+                logs["feedback"] = self._last_tool_result_content
 
         return MessageStepResult(
             reward=reward,
             episode_done=done,
             next_messages=self.history,
             metrics=metrics,
+            logs=logs,
         )
 
 
