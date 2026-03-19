@@ -12,11 +12,13 @@ permissions:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
-    # Only run if: manually triggered, or smoke tests passed on schedule
+    # Only run on the upstream repo (forks lack secrets and shouldn't publish releases)
+    # and only if: manually triggered, or smoke tests passed on schedule
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'schedule')
+      github.repository == 'thinking-machines-lab/tinker-cookbook' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'schedule'))
     steps:
       - name: checkout
         uses: actions/checkout@v4

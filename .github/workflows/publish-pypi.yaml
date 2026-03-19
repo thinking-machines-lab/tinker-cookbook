@@ -12,6 +12,7 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    if: github.repository == 'thinking-machines-lab/tinker-cookbook'
 
     steps:
       - name: determine ref
