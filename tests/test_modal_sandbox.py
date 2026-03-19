@@ -19,8 +19,7 @@ import pytest_asyncio
 from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
 
 _has_modal_auth = bool(
-    os.environ.get("MODAL_TOKEN_ID")
-    or os.path.exists(os.path.expanduser("~/.modal.toml"))
+    os.environ.get("MODAL_TOKEN_ID") or os.path.exists(os.path.expanduser("~/.modal.toml"))
 )
 
 requires_modal = pytest.mark.skipif(not _has_modal_auth, reason="Modal not configured locally")
@@ -61,9 +60,7 @@ async def test_write_file_latency(sandbox):
         sandbox.write_file("/tmp/test.sh", content, executable=True, timeout=30)
     )
     assert result.exit_code == 0, f"write_file failed: {result.stderr}"
-    assert elapsed < 15, (
-        f"write_file took {elapsed:.1f}s — likely stdin EOF hang (expected <15s)"
-    )
+    assert elapsed < 15, f"write_file took {elapsed:.1f}s — likely stdin EOF hang (expected <15s)"
 
     # Verify content was written correctly
     read_result = await sandbox.run_command("cat /tmp/test.sh")
@@ -88,9 +85,7 @@ async def test_write_file_binary(sandbox):
         sandbox.write_file("/tmp/binary.bin", content, timeout=30)
     )
     assert result.exit_code == 0, f"write_file failed: {result.stderr}"
-    assert elapsed < 15, (
-        f"write_file took {elapsed:.1f}s — likely stdin EOF hang (expected <15s)"
-    )
+    assert elapsed < 15, f"write_file took {elapsed:.1f}s — likely stdin EOF hang (expected <15s)"
 
     # Verify size
     size_result = await sandbox.run_command("wc -c < /tmp/binary.bin")
