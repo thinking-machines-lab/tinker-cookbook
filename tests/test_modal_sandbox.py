@@ -9,7 +9,6 @@ run_command (no stdin) has always been fast; write_file should be comparable
 after the drain fix, not 30-60x slower.
 """
 
-import asyncio
 import os
 import time
 
@@ -30,10 +29,6 @@ requires_modal = pytest.mark.skipif(not _has_modal_auth, reason="Modal not confi
 # be supported. Pin to 3.12 for sandbox creation.
 _MODAL_IMAGE = modal.Image.debian_slim(python_version="3.12")
 
-# If the drain fix regresses, write_file hangs for its full timeout (30s)
-# before the <15s assertion fires. This hard ceiling fails the test faster.
-_TEST_TIMEOUT = 20
-
 
 @pytest_asyncio.fixture(scope="module")
 async def sandbox():
@@ -46,12 +41,13 @@ async def sandbox():
 async def _timed(coro):
     """Await a coroutine and return (result, elapsed_seconds)."""
     start = time.monotonic()
-    result = await asyncio.wait_for(coro, timeout=_TEST_TIMEOUT)
+    result = await coro
     return result, time.monotonic() - start
 
 
 @requires_modal
 @pytest.mark.asyncio
+@pytest.mark.timeout(20)
 async def test_write_file_latency(sandbox):
     """write_file should complete in seconds, not minutes.
 
@@ -83,6 +79,7 @@ async def test_write_file_latency(sandbox):
 
 @requires_modal
 @pytest.mark.asyncio
+@pytest.mark.timeout(20)
 async def test_write_file_binary(sandbox):
     """write_file should handle binary content correctly."""
     content = bytes(range(256))
