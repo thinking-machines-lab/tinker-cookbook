@@ -1,35 +1,30 @@
-"""Benchmark tests for ModalSandbox operations.
+"""Smoke tests for ModalSandbox operations.
 
-These are smoke tests that require Modal authentication and network access.
-They are skipped locally when TINKER_API_KEY is not set (via conftest.py).
+Require Modal authentication and network access; skipped when Modal is not
+configured locally (no MODAL_TOKEN_ID env var and no ~/.modal.toml).
 
 The primary goal is to catch latency regressions in write_file — a previous
-bug where a missing drain() after write_eof() caused 60s hangs on small files.
+bug where a missing drain() after write_eof() caused hangs.
 """
 
+import os
 import time
 
+import modal
 import pytest
 
-try:
-    import modal  # noqa: F401
+from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
 
-    HAS_MODAL = True
-except ImportError:
-    HAS_MODAL = False
+_has_modal_auth = bool(
+    os.environ.get("MODAL_TOKEN_ID")
+    or os.path.exists(os.path.expanduser("~/.modal.toml"))
+)
 
-requires_modal = pytest.mark.skipif(not HAS_MODAL, reason="modal not installed")
+requires_modal = pytest.mark.skipif(not _has_modal_auth, reason="Modal not configured locally")
 
 # Modal's debian_slim() defaults to the local Python version, which may not
 # be supported. Pin to 3.12 for sandbox creation.
-_MODAL_IMAGE = modal.Image.debian_slim(python_version="3.12") if HAS_MODAL else None
-
-
-async def _create_sandbox(**kwargs):
-    """Create a ModalSandbox with a compatible Python image."""
-    from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
-
-    return await ModalSandbox.create(image=_MODAL_IMAGE, **kwargs)
+_MODAL_IMAGE = modal.Image.debian_slim(python_version="3.12")
 
 
 async def _timed(coro):
@@ -48,7 +43,7 @@ async def test_write_file_latency():
     because proc.stdin.write_eof() wasn't flushed. This test catches that
     regression by asserting a generous upper bound of 15s.
     """
-    sandbox = await _create_sandbox(timeout=120)
+    sandbox = await ModalSandbox.create(image=_MODAL_IMAGE, timeout=120)
     try:
         content = "#!/bin/bash\necho hello world\n"
 
@@ -78,7 +73,7 @@ async def test_write_file_latency():
 @pytest.mark.asyncio
 async def test_write_file_binary():
     """write_file should handle binary content correctly."""
-    sandbox = await _create_sandbox(timeout=120)
+    sandbox = await ModalSandbox.create(image=_MODAL_IMAGE, timeout=120)
     try:
         content = bytes(range(256))
 
@@ -109,7 +104,7 @@ async def test_run_command_vs_write_file_latency():
     comparable after the drain fix. This test documents the relative
     performance so regressions are easy to spot.
     """
-    sandbox = await _create_sandbox(timeout=120)
+    sandbox = await ModalSandbox.create(image=_MODAL_IMAGE, timeout=120)
     try:
         # Baseline: run_command (no stdin, known fast)
         _, run_cmd_elapsed = await _timed(
