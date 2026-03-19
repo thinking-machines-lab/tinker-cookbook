@@ -1,4 +1,4 @@
-"""Smoke tests for ModalSandbox write_file latency.
+"""Smoke tests for ModalSandbox.
 
 Require Modal authentication and network access; skipped when Modal is not
 configured locally (no MODAL_TOKEN_ID env var and no ~/.modal.toml).
@@ -9,6 +9,7 @@ run_command (no stdin) has always been fast; write_file should be comparable
 after the drain fix, not 30-60x slower.
 """
 
+import asyncio
 import os
 import time
 
@@ -91,3 +92,50 @@ async def test_write_file_binary(sandbox):
     assert int(size_result.stdout.strip()) == 256
 
     print(f"\nwrite_file (binary) latency: {elapsed:.2f}s")
+
+
+# ---------------------------------------------------------------------------
+# cleanup() resilience tests
+# ---------------------------------------------------------------------------
+
+
+@requires_modal
+@pytest.mark.asyncio
+@pytest.mark.timeout(30)
+async def test_cleanup_after_timeout():
+    """cleanup() should not raise even if the sandbox has already timed out."""
+    sb = await ModalSandbox.create(image=_MODAL_IMAGE, timeout=5)
+
+    # Wait for the sandbox to time out
+    await asyncio.sleep(7)
+
+    # cleanup() should succeed without raising SandboxTimeoutError
+    await sb.cleanup()
+
+
+@requires_modal
+@pytest.mark.asyncio
+@pytest.mark.timeout(30)
+async def test_cleanup_after_terminate():
+    """cleanup() should not raise if called twice (sandbox already terminated)."""
+    sb = await ModalSandbox.create(image=_MODAL_IMAGE, timeout=60)
+
+    # First cleanup terminates normally
+    await sb.cleanup()
+
+    # Second cleanup should not raise even though sandbox is already dead
+    await sb.cleanup()
+
+
+@requires_modal
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_cleanup_after_command_timeout():
+    """cleanup() should work after a command hits the sandbox timeout."""
+    sb = await ModalSandbox.create(image=_MODAL_IMAGE, timeout=10)
+
+    # Run a command that will outlast the sandbox timeout
+    await sb.run_command("sleep 30", timeout=30)
+
+    # cleanup() should not raise
+    await sb.cleanup()
