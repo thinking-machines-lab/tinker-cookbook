@@ -1,35 +1,52 @@
 # LR Sweep
 
-Find the optimal learning rate for any model by sweeping over a grid of LR and LoRA rank configurations. Built on the [`tinker_cookbook.sweep`](../../sweep/) module.
+Find the optimal learning rate for any model across SFT, RL, and DPO training. Built on the [`tinker_cookbook.sweep`](../../sweep/) module.
 
 ## Quick start
 
-Sweep 6 learning rates × 2 LoRA ranks on Qwen3.5-4B with the Tulu3 dataset:
+### SFT sweep
+
+Sweep learning rates on Qwen3.5-4B with the Tulu3 dataset:
 
 ```bash
 python -m tinker_cookbook.recipes.lr_sweep.sweep \
+    recipe=sft \
     base.model_name=Qwen/Qwen3.5-4B \
     base.dataset=tulu3
 ```
 
-This runs 12 sequential training jobs (100k examples each), then prints the best learning rate per rank and writes recommendations to `lr_recommendations.json`.
+### RL sweep (math)
 
-## Configuring the sweep
-
-All training parameters are inherited from the existing [`chat_sl.CLIConfig`](../chat_sl/train.py) via the `base` field — no duplication. Override any training parameter with `base.<param>=<value>`.
-
-### Different model
+Sweep learning rates for RL training on math problems:
 
 ```bash
 python -m tinker_cookbook.recipes.lr_sweep.sweep \
-    base.model_name=openai/gpt-oss-20b \
-    base.dataset=tulu3
+    recipe=math_rl \
+    base.model_name=Qwen/Qwen3-8B \
+    base.env=gsm8k \
+    base.group_size=16 \
+    base.groups_per_batch=64
 ```
+
+### DPO sweep
+
+Sweep learning rates for Direct Preference Optimization:
+
+```bash
+python -m tinker_cookbook.recipes.lr_sweep.sweep \
+    recipe=dpo \
+    base.model_name=Qwen/Qwen3-8B
+```
+
+## Configuring the sweep
+
+All training parameters are inherited from the selected recipe's `CLIConfig` via the `base` field. Override any training parameter with `base.<param>=<value>`.
 
 ### Custom LR range and ranks
 
 ```bash
 python -m tinker_cookbook.recipes.lr_sweep.sweep \
+    recipe=sft \
     base.model_name=Qwen/Qwen3.5-4B \
     'learning_rates=[1e-4, 3e-4, 5e-4, 1e-3]' \
     'lora_ranks=[32, 64, 128]'
@@ -39,6 +56,7 @@ python -m tinker_cookbook.recipes.lr_sweep.sweep \
 
 ```bash
 python -m tinker_cookbook.recipes.lr_sweep.sweep \
+    recipe=sft \
     base.model_name=Qwen/Qwen3.5-4B \
     training_budget_examples=640 \
     'learning_rates=[1e-4, 3e-4, 1e-3]' \
@@ -46,6 +64,16 @@ python -m tinker_cookbook.recipes.lr_sweep.sweep \
 ```
 
 With `batch_size=128` and `budget=640`, each run trains for 5 steps — useful for testing the pipeline.
+
+### Custom metric
+
+By default, the sweep optimizes `train_mean_nll`. For RL sweeps, you may want a different metric:
+
+```bash
+python -m tinker_cookbook.recipes.lr_sweep.sweep \
+    recipe=math_rl \
+    metric=env/all/reward/total
+```
 
 ## Using the sweep module directly
 
