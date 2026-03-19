@@ -81,9 +81,7 @@ async def test_write_file_binary(sandbox):
     """write_file should handle binary content correctly."""
     content = bytes(range(256))
 
-    result, elapsed = await _timed(
-        sandbox.write_file("/tmp/binary.bin", content, timeout=30)
-    )
+    result, elapsed = await _timed(sandbox.write_file("/tmp/binary.bin", content, timeout=30))
     assert result.exit_code == 0, f"write_file failed: {result.stderr}"
     assert elapsed < 15, f"write_file took {elapsed:.1f}s — likely stdin EOF hang (expected <15s)"
 
