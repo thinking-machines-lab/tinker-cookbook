@@ -115,3 +115,31 @@ class TestCollect:
         (sweep_dir / "README.md").write_text("hello")
         df = collect(str(sweep_dir))
         assert len(df) == 2
+
+    def test_config_values_not_overwritten_by_metrics(self, tmp_path: Path):
+        """Config learning_rate should not be overwritten by decayed metrics LR."""
+        run_dir = tmp_path / "run_0"
+        run_dir.mkdir()
+
+        # Config has the initial LR
+        with open(run_dir / "config.json", "w") as f:
+            json.dump({"learning_rate": 1e-3, "model_name": "test"}, f)
+
+        # Metrics last line has the decayed LR (near zero after linear schedule)
+        with open(run_dir / "metrics.jsonl", "w") as f:
+            f.write(
+                json.dumps(
+                    {
+                        "step": 100,
+                        "train_mean_nll": 0.5,
+                        "progress": 1.0,
+                        "learning_rate": 5e-7,
+                    }
+                )
+                + "\n"
+            )
+
+        df = collect(str(tmp_path))
+        assert len(df) == 1
+        # Should use config value (1e-3), not metrics value (5e-7)
+        assert df["learning_rate"].iloc[0] == 1e-3
