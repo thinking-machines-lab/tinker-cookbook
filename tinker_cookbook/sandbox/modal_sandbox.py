@@ -14,6 +14,7 @@ See: https://modal.com/docs/guide/sandbox
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import shlex
@@ -198,7 +199,8 @@ class ModalSandbox:
     async def cleanup(self) -> None:
         """Terminate the Modal sandbox and wait for it to fully shut down."""
         await self._sandbox.terminate.aio()
-        await self._sandbox.wait.aio(raise_on_termination=False)
+        with contextlib.suppress(modal.exception.SandboxTimeoutError):
+            await self._sandbox.wait.aio(raise_on_termination=False)
 
 
 class ModalSandboxPool:
