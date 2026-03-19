@@ -112,9 +112,9 @@ def collect(
                 if isinstance(value, (str, int, float, bool)):
                     row[key] = value
 
-        # Add all scalar metrics
+        # Add all scalar metrics (don't overwrite config values)
         for key, value in metrics.items():
-            if isinstance(value, (int, float)):
+            if isinstance(value, (int, float)) and key not in row:
                 row[key] = value
 
         rows.append(row)
