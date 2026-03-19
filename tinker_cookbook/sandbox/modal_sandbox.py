@@ -196,19 +196,12 @@ class ModalSandbox:
             return SandboxResult(stdout="", stderr=str(e), exit_code=-1)
 
     async def cleanup(self) -> None:
-        """Terminate the Modal sandbox and wait for it to fully shut down.
-
-        Best-effort: swallows errors from already-terminated or timed-out sandboxes
-        so that cleanup never crashes the caller (e.g. during training teardown).
-        """
-        try:
-            await self._sandbox.terminate.aio()
-        except Exception:
-            pass  # Already terminated or timed out
+        """Terminate the Modal sandbox and wait for it to fully shut down."""
+        await self._sandbox.terminate.aio()
         try:
             await self._sandbox.wait.aio(raise_on_termination=False)
-        except Exception:
-            pass  # SandboxTimeoutError or sandbox already dead
+        except modal.exception.SandboxTimeoutError:
+            pass  # Sandbox already timed out — nothing left to wait for
 
 
 class ModalSandboxPool:
