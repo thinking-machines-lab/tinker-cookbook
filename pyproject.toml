@@ -105,6 +105,7 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests requiring TINKER_API_KEY and network access",
     "downstream_compat: marks tests that verify public API contracts for downstream consumers",
+    "timeout: per-test timeout in seconds (requires pytest-timeout)",
 ]
 
 [tool.ruff]
