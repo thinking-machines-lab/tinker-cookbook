@@ -43,7 +43,8 @@ def test_math_rl_stream_minibatch():
             "groups_per_batch=8",
             "group_size=4",
             "max_tokens=5",
-            "stream_minibatch=true",
+            "stream_minibatch_config.groups_per_batch=8",
+            "stream_minibatch_config.num_minibatches=2",
             "behavior_if_log_dir_exists=delete",
         ],
     )
