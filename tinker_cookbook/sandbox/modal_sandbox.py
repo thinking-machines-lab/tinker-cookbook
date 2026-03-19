@@ -182,6 +182,7 @@ class ModalSandbox:
                     proc.stdin.write(chunk.decode("utf-8", errors="replace"))
                 await proc.stdin.drain.aio()
             proc.stdin.write_eof()
+            await proc.stdin.drain.aio()
 
             stdout, stderr, exit_code = await asyncio.gather(
                 _read_stream_capped(proc.stdout, self._max_stream_output_bytes),
