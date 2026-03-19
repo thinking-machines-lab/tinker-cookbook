@@ -26,6 +26,9 @@ Adding a new exception
 2. Also inherit from the stdlib exception it replaces (e.g. ``ValueError``,
    ``RuntimeError``) so that existing ``except`` clauses keep working.
 3. Add it to :data:`__all__` below **and** to ``tinker_cookbook/__init__.py``.
+4. Keep exceptions picklable — do **not** add custom ``__init__`` parameters
+   without implementing ``__reduce__``.  Picklability is required for
+   ``multiprocessing`` and distributed task frameworks.
 """
 
 __all__ = [
@@ -144,21 +147,21 @@ class CheckpointError(TrainingError):
 # ---------------------------------------------------------------------------
 
 
-class WeightsError(TinkerCookbookError, RuntimeError):
+class WeightsError(TinkerCookbookError):
     """An error related to weight download, merge, or export.
 
-    Raised by the ``tinker_cookbook.weights`` module when downloading,
-    merging LoRA adapters, or building HuggingFace models fails.
-    Inherits from :class:`RuntimeError` for backward compatibility
-    with existing ``weights/_download.py`` error handling.
+    Grouping base for weights-related errors.  Does not inherit from a
+    stdlib exception — use the specific subclasses which each carry
+    exactly one stdlib base appropriate to their failure mode.
     """
 
 
-class WeightsDownloadError(WeightsError):
+class WeightsDownloadError(WeightsError, RuntimeError):
     """Failed to download weights from Tinker storage.
 
     Raised when the Tinker service cannot be reached, the checkpoint
-    path is invalid, or the download archive is corrupt.
+    path is invalid, or the download archive is corrupt.  Inherits from
+    :class:`RuntimeError` because these are operational failures.
     """
 
 
@@ -166,9 +169,9 @@ class WeightsMergeError(WeightsError, ValueError):
     """Failed to merge LoRA adapter weights into a base model.
 
     Raised when adapter weights are incompatible with the base model
-    (shape mismatches, missing keys, etc.).  Also inherits from
-    :class:`ValueError` since many merge errors are shape/config
-    validation failures.
+    (shape mismatches, missing keys, etc.).  Inherits from
+    :class:`ValueError` because merge errors are validation failures
+    (wrong shapes, missing config keys).
     """
 
 

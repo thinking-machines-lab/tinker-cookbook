@@ -12,6 +12,7 @@ import pytest
 import torch
 from safetensors.torch import load_file, save_file
 
+from tinker_cookbook.exceptions import WeightsMergeError
 from tinker_cookbook.weights._export._quantized import (
     _build_vllm_quantization_config,
     _is_routed_expert_weight,
@@ -240,7 +241,7 @@ class TestResumeState:
             completed_shards=["missing.safetensors"],
             total_shards=1,
         )
-        with pytest.raises(RuntimeError, match="not found"):
+        with pytest.raises(WeightsMergeError, match="not found"):
             _load_resume_state(tmp_path)
 
     def test_atomic_save(self, tmp_path: Path):

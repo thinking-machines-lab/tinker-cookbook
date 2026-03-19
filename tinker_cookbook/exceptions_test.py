@@ -5,6 +5,8 @@ break backward compatibility (stdlib bases) or the catch-all
 TinkerCookbookError base.
 """
 
+import pickle
+
 import pytest
 
 from tinker_cookbook.exceptions import (
@@ -59,7 +61,6 @@ STDLIB_COMPAT = [
     (RendererError, ValueError),
     (TrainingError, RuntimeError),
     (CheckpointError, RuntimeError),
-    (WeightsError, RuntimeError),
     (WeightsDownloadError, RuntimeError),
     (WeightsMergeError, ValueError),
     (SandboxError, RuntimeError),
@@ -107,6 +108,26 @@ def test_sandbox_terminated_error_is_sandbox_error():
     assert issubclass(SandboxTerminatedError, SandboxError)
     assert issubclass(SandboxTerminatedError, TinkerCookbookError)
     assert issubclass(SandboxTerminatedError, RuntimeError)
+
+
+# ---------------------------------------------------------------------------
+# __all__ is in sync
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Picklability (required for multiprocessing / distributed tasks)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("exc_cls", ALL_EXCEPTIONS, ids=lambda c: c.__name__)
+def test_exceptions_are_picklable(exc_cls: type[Exception]):
+    """All exceptions must survive pickle round-trip for multiprocessing."""
+    original = exc_cls("test message")
+    roundtripped = pickle.loads(pickle.dumps(original))
+    assert type(roundtripped) is type(original)
+    assert str(roundtripped) == str(original)
+    assert roundtripped.args == original.args
 
 
 # ---------------------------------------------------------------------------
