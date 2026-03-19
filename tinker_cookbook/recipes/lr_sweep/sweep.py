@@ -1,20 +1,21 @@
 """
-LR Sweep Recipe — find optimal learning rates across SFT, RL, and DPO recipes.
+LR Sweep Recipe — find optimal learning rates for any recipe.
 
-SFT sweep::
+Works with any recipe that follows the ``CLIConfig`` + ``cli_main`` pattern.
+Use short aliases for common recipes, or pass a full module path for any recipe.
+
+Short aliases::
+
+    python -m tinker_cookbook.recipes.lr_sweep.sweep recipe=sft
+    python -m tinker_cookbook.recipes.lr_sweep.sweep recipe=math_rl
+    python -m tinker_cookbook.recipes.lr_sweep.sweep recipe=code_rl
+    python -m tinker_cookbook.recipes.lr_sweep.sweep recipe=dpo
+
+Full module path (works for any recipe with CLIConfig + cli_main)::
 
     python -m tinker_cookbook.recipes.lr_sweep.sweep \\
-        recipe=sft base.model_name=Qwen/Qwen3.5-4B base.dataset=tulu3
-
-RL sweep (math)::
-
-    python -m tinker_cookbook.recipes.lr_sweep.sweep \\
-        recipe=math_rl base.model_name=Qwen/Qwen3-8B
-
-DPO sweep::
-
-    python -m tinker_cookbook.recipes.lr_sweep.sweep \\
-        recipe=dpo base.model_name=Qwen/Qwen3-8B
+        recipe=tinker_cookbook.recipes.harbor_rl.train \\
+        base.model_name=Qwen/Qwen3-8B
 
 Quick smoke test (5 steps)::
 
@@ -24,6 +25,8 @@ Quick smoke test (5 steps)::
 """
 
 import asyncio
+import importlib
+import inspect
 import json
 import os
 from collections.abc import Callable
@@ -34,44 +37,65 @@ import chz
 from tinker_cookbook import sweep
 
 # ---------------------------------------------------------------------------
-# Recipe registry — maps recipe names to (CLIConfig class, main function)
+# Recipe resolution — short aliases + dynamic module import
 # ---------------------------------------------------------------------------
 
-
-def _get_sft_recipe() -> tuple[type, Callable[..., None]]:
-    from tinker_cookbook.recipes.chat_sl.train import CLIConfig, cli_main
-
-    return CLIConfig, cli_main
-
-
-def _get_math_rl_recipe() -> tuple[type, Callable[..., None]]:
-    from tinker_cookbook.recipes.math_rl.train import CLIConfig, cli_main
-
-    def sync_cli_main(config: Any) -> None:
-        asyncio.run(cli_main(config))
-
-    return CLIConfig, sync_cli_main
-
-
-def _get_dpo_recipe() -> tuple[type, Callable[..., None]]:
-    from tinker_cookbook.recipes.preference.dpo.train import CLIConfig, cli_main
-
-    return CLIConfig, cli_main
-
-
-_RECIPES: dict[str, Callable[[], tuple[type, Callable[..., None]]]] = {
-    "sft": _get_sft_recipe,
-    "math_rl": _get_math_rl_recipe,
-    "dpo": _get_dpo_recipe,
+# Short aliases for common recipes. Maps alias -> module path.
+_ALIASES: dict[str, str] = {
+    "sft": "tinker_cookbook.recipes.chat_sl.train",
+    "math_rl": "tinker_cookbook.recipes.math_rl.train",
+    "code_rl": "tinker_cookbook.recipes.code_rl.train",
+    "harbor_rl": "tinker_cookbook.recipes.harbor_rl.train",
+    "rubric": "tinker_cookbook.recipes.rubric.train",
+    "search_tool": "tinker_cookbook.recipes.search_tool.train",
+    "dpo": "tinker_cookbook.recipes.preference.dpo.train",
+    "shorter": "tinker_cookbook.recipes.preference.shorter.train",
+    "distillation": "tinker_cookbook.recipes.prompt_distillation.train",
 }
 
 
 def get_recipe(name: str) -> tuple[type, Callable[..., None]]:
-    """Look up a recipe by name. Returns (CLIConfig class, main function)."""
-    if name not in _RECIPES:
-        available = ", ".join(sorted(_RECIPES.keys()))
-        raise ValueError(f"Unknown recipe '{name}'. Available: {available}")
-    return _RECIPES[name]()
+    """Resolve a recipe by alias or module path.
+
+    Returns ``(CLIConfig class, main function)``. The main function is
+    guaranteed to be synchronous (async ``cli_main`` is wrapped automatically).
+    """
+    module_path = _ALIASES.get(name, name)
+
+    try:
+        module = importlib.import_module(module_path)
+    except ModuleNotFoundError as e:
+        available = ", ".join(sorted(_ALIASES.keys()))
+        raise ValueError(
+            f"Could not import recipe '{name}' (resolved to '{module_path}'). "
+            f"Available aliases: {available}. "
+            f"Or pass a full module path like 'tinker_cookbook.recipes.my_recipe.train'."
+        ) from e
+
+    # Find CLIConfig (or ExperimentConfig as fallback)
+    config_cls = getattr(module, "CLIConfig", None) or getattr(module, "ExperimentConfig", None)
+    if config_cls is None:
+        raise ValueError(
+            f"Recipe module '{module_path}' does not have a CLIConfig or ExperimentConfig class."
+        )
+
+    # Find cli_main (or run_experiment as fallback)
+    main_fn = getattr(module, "cli_main", None) or getattr(module, "run_experiment", None)
+    if main_fn is None:
+        raise ValueError(
+            f"Recipe module '{module_path}' does not have a cli_main or run_experiment function."
+        )
+
+    # Wrap async functions so sweep.run can call them synchronously
+    if inspect.iscoroutinefunction(main_fn):
+        original_fn = main_fn
+
+        def sync_wrapper(config: Any) -> None:
+            asyncio.run(original_fn(config))
+
+        return config_cls, sync_wrapper
+
+    return config_cls, main_fn
 
 
 # ---------------------------------------------------------------------------
@@ -83,9 +107,10 @@ def get_recipe(name: str) -> tuple[type, Callable[..., None]]:
 class LRSweepConfig:
     """Configuration for an LR sweep experiment.
 
-    The ``recipe`` field selects which training recipe to sweep (sft, math_rl, dpo).
-    The ``base`` field is the selected recipe's CLIConfig — all training parameters
-    are inherited, no duplication.
+    The ``recipe`` field selects which training recipe to sweep — use a short
+    alias (``sft``, ``math_rl``, ``dpo``, etc.) or a full module path.
+    The ``base`` field is the selected recipe's CLIConfig — all training
+    parameters are inherited, no duplication.
     """
 
     recipe: str = "sft"

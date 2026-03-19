@@ -1,12 +1,12 @@
 # LR Sweep
 
-Find the optimal learning rate for any model across SFT, RL, and DPO training. Built on the [`tinker_cookbook.sweep`](../../sweep/) module.
+Find the optimal learning rate for any model across any training recipe. Built on the [`tinker_cookbook.sweep`](../../sweep/) module.
+
+Works with any recipe that follows the `CLIConfig` + `cli_main` convention — use a short alias or a full module path.
 
 ## Quick start
 
 ### SFT sweep
-
-Sweep learning rates on Qwen3.5-4B with the Tulu3 dataset:
 
 ```bash
 python -m tinker_cookbook.recipes.lr_sweep.sweep \
@@ -16,8 +16,6 @@ python -m tinker_cookbook.recipes.lr_sweep.sweep \
 ```
 
 ### RL sweep (math)
-
-Sweep learning rates for RL training on math problems:
 
 ```bash
 python -m tinker_cookbook.recipes.lr_sweep.sweep \
@@ -30,13 +28,23 @@ python -m tinker_cookbook.recipes.lr_sweep.sweep \
 
 ### DPO sweep
 
-Sweep learning rates for Direct Preference Optimization:
-
 ```bash
 python -m tinker_cookbook.recipes.lr_sweep.sweep \
     recipe=dpo \
     base.model_name=Qwen/Qwen3-8B
 ```
+
+### Any recipe via module path
+
+For recipes without a short alias, pass the full module path:
+
+```bash
+python -m tinker_cookbook.recipes.lr_sweep.sweep \
+    recipe=tinker_cookbook.recipes.harbor_rl.train \
+    base.model_name=Qwen/Qwen3-8B
+```
+
+Available aliases: `sft`, `math_rl`, `code_rl`, `harbor_rl`, `rubric`, `search_tool`, `dpo`, `shorter`, `distillation`.
 
 ## Configuring the sweep
 
