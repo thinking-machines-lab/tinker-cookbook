@@ -21,6 +21,7 @@ from tinker_cookbook.distillation.datasets import (
     DistillationDatasetConfig,
 )
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator, SamplingClientEvaluatorBuilder
+from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.rl.data_processing import (
     assemble_training_data,
     compute_advantages,
@@ -467,7 +468,7 @@ async def main(
     effective_max_steps = cfg.max_steps
     if cfg.max_step is not None:
         if cfg.max_steps is not None:
-            raise ValueError("Cannot specify both max_steps and max_step. Use max_steps.")
+            raise ConfigurationError("Cannot specify both max_steps and max_step. Use max_steps.")
         warn_deprecated("max_step", removal_version="0.3.0", message="Use 'max_steps' instead.")
         effective_max_steps = cfg.max_step
     num_batches = (

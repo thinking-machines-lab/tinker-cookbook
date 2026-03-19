@@ -13,6 +13,7 @@ from pathlib import Path
 
 from safetensors.torch import load_file
 
+from tinker_cookbook.exceptions import WeightsMergeError
 from tinker_cookbook.weights._artifacts import (
     ShardWriter,
     copy_artifact_file,
@@ -113,7 +114,7 @@ def build_sharded(
         # 7. Verify all ops were consumed
         if merge_ops:
             unconsumed = list(merge_ops.keys())
-            raise RuntimeError(
+            raise WeightsMergeError(
                 f"Merge ops not applied — {len(unconsumed)} target keys not found in any shard: "
                 f"{unconsumed[:5]}{'...' if len(unconsumed) > 5 else ''}"
             )

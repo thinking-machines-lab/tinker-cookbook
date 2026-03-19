@@ -11,6 +11,7 @@ import chz
 import datasets
 import tinker
 
+from tinker_cookbook.exceptions import DataFormatError, DataValidationError
 from tinker_cookbook.renderers import Message, Renderer, TrainOnWhat
 from tinker_cookbook.supervised.common import datum_from_model_input_weights
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDataset
@@ -92,7 +93,7 @@ class StreamingSupervisedDatasetFromHFDataset(SupervisedDataset):
     def get_batch(self, index: int) -> list[tinker.Datum]:
         # Error on backward seeks
         if index < self.index + 1:
-            raise ValueError(
+            raise DataValidationError(
                 f"StreamingSupervisedDatasetFromHFDataset only supports forward iteration. "
                 f"Cannot seek backward from batch {self.index} to {index}."
             )
@@ -135,7 +136,7 @@ class FromConversationFileBuilder(ChatDatasetBuilder):
             for line in f:
                 data = json.loads(line.strip())
                 if "messages" not in data:
-                    raise ValueError(
+                    raise DataFormatError(
                         f"Each line in the JSONL file must contain a 'messages' field. Got: {data.keys()}"
                     )
                 conversations.append(data)

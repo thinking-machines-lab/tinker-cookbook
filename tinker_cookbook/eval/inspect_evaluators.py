@@ -9,6 +9,7 @@ from inspect_ai.model import Model as InspectAIModel
 
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
 from tinker_cookbook.eval.inspect_utils import InspectAPIFromTinkerSampling
+from tinker_cookbook.exceptions import ConfigurationError
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -82,9 +83,9 @@ class InspectEvaluator(SamplingClientEvaluator):
             Dictionary of metrics from inspect evaluation
         """
         if self.config.model_name is None:
-            raise ValueError("model_name must be set before running evaluation")
+            raise ConfigurationError("model_name must be set before running evaluation")
         if self.config.renderer_name is None:
-            raise ValueError("renderer_name must be set before running evaluation")
+            raise ConfigurationError("renderer_name must be set before running evaluation")
         # Create the inspect API wrapper
         api = InspectAPIFromTinkerSampling(
             renderer_name=self.config.renderer_name,

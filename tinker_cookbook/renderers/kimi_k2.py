@@ -7,6 +7,7 @@ import warnings
 import tinker
 import torch
 
+from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.renderers.base import (
     ContentPart,
     Message,
@@ -393,7 +394,7 @@ class KimiK2Renderer(Renderer):
                 case TrainOnWhat.CUSTOMIZED:
                     output_has_weight = message.get("trainable", False)
                 case _:
-                    raise ValueError(f"Unknown train_on_what: {train_on_what}")
+                    raise RendererError(f"Unknown train_on_what: {train_on_what}")
 
             model_input_chunks_weights += [
                 (output_part, int(output_has_weight)) for output_part in output_parts if output_part

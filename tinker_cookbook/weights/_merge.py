@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from tinker_cookbook.exceptions import WeightsMergeError
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -235,7 +237,7 @@ def expand_expert_lora_tensors(
         ValueError: If both tensors have ``shape[0] == 1``.
     """
     if lora_A.shape[0] == 1 and lora_B.shape[0] == 1:
-        raise ValueError(
+        raise WeightsMergeError(
             f"Cannot broadcast expert LoRA: both A and B have 1 expert "
             f"(lora_A: {lora_A.shape}, lora_B: {lora_B.shape})"
         )
@@ -244,7 +246,7 @@ def expand_expert_lora_tensors(
     elif lora_B.shape[0] == 1:
         lora_B = lora_B.expand(lora_A.shape[0], -1, -1)
     elif lora_A.shape[0] != lora_B.shape[0]:
-        raise ValueError(
+        raise WeightsMergeError(
             f"Expert count mismatch: lora_A has {lora_A.shape[0]} experts, "
             f"lora_B has {lora_B.shape[0]} experts "
             f"(lora_A: {lora_A.shape}, lora_B: {lora_B.shape})"
@@ -255,7 +257,7 @@ def expand_expert_lora_tensors(
 def apply_merged_weight(target: torch.Tensor, merged_lora: torch.Tensor) -> None:
     """Add a merged LoRA delta to a model weight tensor in-place."""
     if target.shape != merged_lora.shape:
-        raise ValueError(
+        raise WeightsMergeError(
             f"Shape mismatch: target {target.shape} vs merged LoRA {merged_lora.shape}"
         )
     new_data = target.float() + merged_lora.float().to(target.device)
@@ -296,10 +298,10 @@ def plan_merge_ops(
     """
     for key in ("lora_alpha", "r"):
         if key not in adapter_config:
-            raise KeyError(f"Adapter config missing required key: {key!r}")
+            raise WeightsMergeError(f"Adapter config missing required key: {key!r}")
 
     if profile.expert_layout not in _VALID_EXPERT_LAYOUTS:
-        raise ValueError(
+        raise WeightsMergeError(
             f"Invalid expert_layout {profile.expert_layout!r}. "
             f"Must be one of: {sorted(_VALID_EXPERT_LAYOUTS)}"
         )
@@ -361,7 +363,7 @@ def _plan_non_expert_op(
         target_key = target_key.replace(old, new)
 
     if target_key not in model_state_keys:
-        raise KeyError(
+        raise WeightsMergeError(
             f"Adapter weight {adapter_name!r} mapped to {target_key!r} "
             f"which does not exist in the model state dict"
         )
@@ -382,7 +384,7 @@ def _plan_expert_ops(
 ) -> None:
     """Plan merge ops for expert weights (separate or fused)."""
     if lora_A.ndim != 3 or lora_B.ndim != 3:
-        raise ValueError(
+        raise WeightsMergeError(
             f"Expert LoRA weights must be 3D, got lora_A: {lora_A.shape}, lora_B: {lora_B.shape}"
         )
     lora_A, lora_B = expand_expert_lora_tensors(lora_A, lora_B)
@@ -397,7 +399,7 @@ def _plan_expert_ops(
         for exp_idx in range(lora_A.shape[0]):
             target_key_exp = target_key.replace(".experts", f".experts.{exp_idx}")
             if target_key_exp not in model_state_keys:
-                raise KeyError(
+                raise WeightsMergeError(
                     f"Adapter weight {adapter_name!r} mapped to {target_key_exp!r} "
                     f"which does not exist in the model state dict"
                 )
@@ -421,7 +423,7 @@ def _plan_expert_ops(
             target_key = target_key.replace(".down_proj.weight", ".down_proj")
 
         if target_key not in model_state_keys:
-            raise KeyError(
+            raise WeightsMergeError(
                 f"Adapter weight {adapter_name!r} mapped to {target_key!r} "
                 f"which does not exist in the model state dict"
             )
@@ -475,7 +477,7 @@ def validate_merge_op_shapes(
                     expected = target_shape
 
                 if delta_shape != expected:
-                    raise ValueError(
+                    raise WeightsMergeError(
                         f"Shape mismatch for {target_key!r}: "
                         f"merge op produces {delta_shape} but target "
                         f"{'slice ' if op.fused_proj_idx is not None else ''}"
@@ -485,7 +487,7 @@ def validate_merge_op_shapes(
                 # 2D: delta = lora_B @ lora_A → (out_dim, in_dim)
                 delta_shape = (op.lora_B.shape[0], op.lora_A.shape[1])
                 if delta_shape != target_shape:
-                    raise ValueError(
+                    raise WeightsMergeError(
                         f"Shape mismatch for {target_key!r}: "
                         f"merge op produces {delta_shape} but target expects {target_shape}"
                     )

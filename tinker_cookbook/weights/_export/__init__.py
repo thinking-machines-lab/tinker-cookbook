@@ -27,6 +27,8 @@ from transformers import (
     PretrainedConfig,
 )
 
+from tinker_cookbook.exceptions import ConfigurationError
+
 logger = logging.getLogger(__name__)
 
 # Map user-facing dtype strings to torch dtypes.
@@ -105,26 +107,28 @@ def build_hf_model(
     """
     # --- Validate quantize / serving_format ---
     if quantize is not None and quantize not in _VALID_QUANTIZE:
-        raise ValueError(
+        raise ConfigurationError(
             f"Unsupported quantize={quantize!r}. Choose from: {sorted(_VALID_QUANTIZE)}"
         )
     if serving_format is not None and serving_format not in _VALID_SERVING_FORMATS:
-        raise ValueError(
+        raise ConfigurationError(
             f"Unsupported serving_format={serving_format!r}. "
             f"Choose from: {sorted(_VALID_SERVING_FORMATS)}"
         )
     if quantize is not None and serving_format is None:
-        raise ValueError(
+        raise ConfigurationError(
             f"quantize={quantize!r} requires serving_format to be set "
             f"(e.g. serving_format='vllm') to write scale metadata."
         )
     if serving_format is not None and quantize is None:
-        raise ValueError(
+        raise ConfigurationError(
             f"serving_format={serving_format!r} requires quantize to be set "
             f"(e.g. quantize='experts-fp8'). Serving format without quantization is meaningless."
         )
     if quantize == "experts-fp8" and dtype != "bfloat16":
-        raise ValueError(f"quantize='experts-fp8' requires dtype='bfloat16', got dtype={dtype!r}.")
+        raise ConfigurationError(
+            f"quantize='experts-fp8' requires dtype='bfloat16', got dtype={dtype!r}."
+        )
 
     # --- Validate standard params ---
     if dequantize and quantize is None:
@@ -133,9 +137,11 @@ def build_hf_model(
             "Use quantize='experts-fp8' for models with native FP8 weights."
         )
     if dtype not in _DTYPE_MAP:
-        raise ValueError(f"Unsupported dtype {dtype!r}. Choose from: {list(_DTYPE_MAP.keys())}")
+        raise ConfigurationError(
+            f"Unsupported dtype {dtype!r}. Choose from: {list(_DTYPE_MAP.keys())}"
+        )
     if merge_strategy not in _VALID_STRATEGIES:
-        raise ValueError(
+        raise ConfigurationError(
             f"Unsupported merge_strategy {merge_strategy!r}. "
             f"Choose from: {sorted(_VALID_STRATEGIES)}"
         )

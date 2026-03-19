@@ -8,6 +8,7 @@ from datetime import datetime
 import tinker
 import torch
 
+from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.renderers.base import (
     ContentPart,
     Message,
@@ -427,12 +428,12 @@ class GptOssRenderer(Renderer):
             str_response = str(self.tokenizer.decode(response))
             return Message(role="assistant", content=str_response), False
         if call_count > 1:
-            raise ValueError(
+            raise RendererError(
                 f"When parsing response, expected at most 1 <|call|> token, but got {call_count}. "
                 "You probably are using the wrong stop tokens when sampling"
             )
         if return_count > 1:
-            raise ValueError(
+            raise RendererError(
                 f"When parsing response, expected at most 1 <|return|> token, but got {return_count}. "
                 "You probably are using the wrong stop tokens when sampling"
             )

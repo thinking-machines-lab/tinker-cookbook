@@ -11,6 +11,7 @@ import re
 
 import tinker
 
+from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.renderers.base import (
     Message,
     RenderContext,
@@ -93,7 +94,7 @@ class _DeepSeekV3BaseRenderer(Renderer):
                 header_tokens = [role_token]
                 output_str = content_str
             else:
-                raise ValueError(
+                raise RendererError(
                     "DeepSeek only supports system message at start. "
                     "Use system_role_as_user=True to convert later system messages to user role."
                 )
@@ -147,7 +148,7 @@ class _DeepSeekV3BaseRenderer(Renderer):
             )
             output_str = ensure_text(content) + "<｜tool▁output▁end｜>"
         else:
-            raise ValueError(f"Unsupported role: {message['role']}")
+            raise RendererError(f"Unsupported role: {message['role']}")
 
         # Handle tool calls in assistant messages
         # HF format: <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>name<｜tool▁sep｜>args<｜tool▁call▁end｜><｜tool▁calls▁end｜>

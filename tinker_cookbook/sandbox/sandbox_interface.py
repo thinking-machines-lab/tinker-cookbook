@@ -4,6 +4,8 @@ from typing import Any, Protocol, runtime_checkable
 
 import chz
 
+from tinker_cookbook.exceptions import SandboxError
+
 
 @chz.chz
 class SandboxResult:
@@ -15,7 +17,7 @@ class SandboxResult:
     metrics: dict[str, Any] = chz.field(default_factory=dict)
 
 
-class SandboxTerminatedError(Exception):
+class SandboxTerminatedError(SandboxError):
     """Raised when a sandbox has been terminated or died unexpectedly."""
 
     pass

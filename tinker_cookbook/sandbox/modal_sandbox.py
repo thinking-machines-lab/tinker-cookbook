@@ -21,6 +21,7 @@ import uuid
 
 import modal
 
+from tinker_cookbook.exceptions import SandboxError
 from tinker_cookbook.sandbox.sandbox_interface import SandboxResult, SandboxTerminatedError
 
 logger = logging.getLogger(__name__)
@@ -285,7 +286,7 @@ class ModalSandboxPool:
             timeout: Execution timeout in seconds
         """
         if self._terminated:
-            raise RuntimeError("ModalSandboxPool has been terminated.")
+            raise SandboxError("ModalSandboxPool has been terminated.")
 
         sandbox = await self._warm_pool.get()
         self._active_count += 1

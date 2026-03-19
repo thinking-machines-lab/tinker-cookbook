@@ -8,6 +8,7 @@ Use viz_sft_dataset to visualize the output of different renderers. E.g.,
 from collections.abc import Callable
 from typing import Any
 
+from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.image_processing_utils import ImageProcessor
 
 # Types and utilities used by external code
@@ -216,7 +217,7 @@ def get_renderer(
     elif name == "gpt_oss_high_reasoning":
         renderer = GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="high")
     else:
-        raise ValueError(
+        raise RendererError(
             f"Unknown renderer: {name}. If this is a custom renderer, please register it via register_renderer()."
         )
 

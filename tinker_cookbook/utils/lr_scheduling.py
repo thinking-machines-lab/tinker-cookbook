@@ -2,6 +2,8 @@ import logging
 import math
 from typing import Literal
 
+from tinker_cookbook.exceptions import ConfigurationError
+
 logger = logging.getLogger(__name__)
 
 
@@ -19,4 +21,4 @@ def compute_schedule_lr_multiplier(lr_schedule: LRSchedule, step: int, total_ste
     elif lr_schedule == "constant":
         return 1
     else:
-        raise ValueError(f"Unknown learning rate schedule: {lr_schedule}")
+        raise ConfigurationError(f"Unknown learning rate schedule: {lr_schedule}")

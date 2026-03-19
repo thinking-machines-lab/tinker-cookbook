@@ -29,6 +29,7 @@ import tinker
 import torch
 from PIL import Image
 
+from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
 logger = logging.getLogger(__name__)
@@ -685,7 +686,7 @@ def ensure_text(content: Content) -> str:
         return content
     if len(content) == 1 and content[0]["type"] == "text":
         return content[0]["text"]
-    raise ValueError(f"Expected text content, got multimodal content with {len(content)} parts")
+    raise RendererError(f"Expected text content, got multimodal content with {len(content)} parts")
 
 
 def ensure_list(content: Content) -> list[ContentPart]:
@@ -713,7 +714,7 @@ def content_to_jsonable(content: Content) -> str | list[dict[str, Any]]:
                 image_part["image"] = image
             result.append(image_part)
         else:
-            raise ValueError(f"Unknown content part type: {part['type']}")
+            raise RendererError(f"Unknown content part type: {part['type']}")
     return result
 
 
@@ -783,7 +784,7 @@ def format_content_as_string(content: Content, separator: str = "\n") -> str:
         elif p["type"] == "text":
             parts.append(p["text"])
         else:
-            raise ValueError(f"Unknown content part type: {p['type']}")
+            raise RendererError(f"Unknown content part type: {p['type']}")
     return separator.join(parts)
 
 
@@ -1504,7 +1505,7 @@ class Renderer(ABC):
                 case TrainOnWhat.CUSTOMIZED:
                     output_has_weight = message.get("trainable", False)
                 case _:
-                    raise ValueError(f"Unknown train_on_what: {train_on_what}")
+                    raise RendererError(f"Unknown train_on_what: {train_on_what}")
 
             model_input_chunks_weights += [
                 (output_part, int(output_has_weight)) for output_part in output_parts if output_part
@@ -1554,7 +1555,7 @@ def parse_response_for_stop_token(
         str_response = str(tokenizer.decode(response[: response.index(stop_token)]))
         return Message(role="assistant", content=str_response), True
     else:
-        raise ValueError(
+        raise RendererError(
             f"When parsing response, expected to split into 1 or 2 pieces using stop tokens, but got {emt_count}. "
             "You probably are using the wrong stop tokens when sampling"
         )
@@ -1594,7 +1595,7 @@ def image_to_chunk(
 
     # Validate the provided data is actually a valid image type
     else:
-        raise ValueError("The provided image must be a PIL.Image.Image, URL, or data URI.")
+        raise RendererError("The provided image must be a PIL.Image.Image, URL, or data URI.")
 
     # Convert to RGB if needed (JPEG doesn't support RGBA/LA/P modes)
     if pil_image.mode in ("RGBA", "LA", "P"):
@@ -1616,7 +1617,7 @@ def image_to_chunk(
         config = image_processor.get_resize_config({"type": "image", "image": pil_image})
         num_image_tokens = config["num_tokens"]
     else:
-        raise ValueError(
+        raise RendererError(
             f"Don't know how to get the number of image tokens for image processor: {image_processor}"
         )
 

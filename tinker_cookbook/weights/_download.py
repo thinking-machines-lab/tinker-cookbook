@@ -10,6 +10,8 @@ from pathlib import Path
 
 import tinker
 
+from tinker_cookbook.exceptions import WeightsDownloadError
+
 
 def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) -> str:
     """Download a checkpoint from Tinker storage to local disk.
@@ -30,7 +32,7 @@ def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) 
         Path to the extracted checkpoint directory.
 
     Raises:
-        ValueError: If the archive contains unsafe entries.
+        WeightsDownloadError: If the archive contains unsafe entries.
         urllib.error.URLError: If the download fails.
 
     Example::
@@ -57,7 +59,7 @@ def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) 
         sc = tinker.ServiceClient(**kwargs)
         rc = sc.create_rest_client()
     except Exception as e:
-        raise RuntimeError(
+        raise WeightsDownloadError(
             "Failed to connect to Tinker service. "
             "Ensure TINKER_API_KEY is set and the service is reachable."
         ) from e
@@ -65,7 +67,7 @@ def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) 
     try:
         response = rc.get_checkpoint_archive_url_from_tinker_path(tinker_path).result()
     except Exception as e:
-        raise RuntimeError(
+        raise WeightsDownloadError(
             f"Failed to get download URL for {tinker_path!r}. "
             f"Check that the checkpoint path is valid and the checkpoint has not expired."
         ) from e
@@ -79,7 +81,7 @@ def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) 
         try:
             urllib.request.urlretrieve(response.url, str(tmp_path))
         except urllib.error.URLError as e:
-            raise RuntimeError(
+            raise WeightsDownloadError(
                 "Failed to download checkpoint archive from signed URL. "
                 "The URL may have expired — try downloading again."
             ) from e
@@ -101,13 +103,13 @@ def _safe_extract_tar(archive_path: Path, extract_dir: Path) -> None:
         members = tar.getmembers()
         for member in members:
             if member.issym() or member.islnk():
-                raise ValueError(
+                raise WeightsDownloadError(
                     "Unsafe symlink or hardlink found in tar archive. "
                     "Archive may be corrupted or malicious."
                 )
             member_path = (extract_dir / member.name).resolve()
             if not member_path.is_relative_to(base):
-                raise ValueError(
+                raise WeightsDownloadError(
                     "Unsafe path found in tar archive (path traversal). "
                     "Archive may be corrupted or malicious."
                 )

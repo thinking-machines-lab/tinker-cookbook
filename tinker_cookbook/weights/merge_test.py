@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 import torch
 
+from tinker_cookbook.exceptions import WeightsMergeError
 from tinker_cookbook.weights._merge import (
     MergeOp,
     MergeProfile,
@@ -62,7 +63,7 @@ class TestApplyMergedWeight:
         assert torch.allclose(target, torch.full((3, 4), 0.5))
 
     def test_raises_on_shape_mismatch(self):
-        with pytest.raises(ValueError, match="Shape mismatch"):
+        with pytest.raises(WeightsMergeError, match="Shape mismatch"):
             apply_merged_weight(torch.zeros(3, 4), torch.zeros(3, 5))
 
 
@@ -74,12 +75,12 @@ class TestApplyMergedWeight:
 class TestConfigValidation:
     def test_missing_lora_alpha(self):
         model = _make_base_model({})
-        with pytest.raises(KeyError, match="lora_alpha"):
+        with pytest.raises(WeightsMergeError, match="lora_alpha"):
             merge_adapter_weights(model, {}, {"r": 1})
 
     def test_missing_r(self):
         model = _make_base_model({})
-        with pytest.raises(KeyError, match="'r'"):
+        with pytest.raises(WeightsMergeError, match="'r'"):
             merge_adapter_weights(model, {}, {"lora_alpha": 1})
 
 
@@ -113,7 +114,7 @@ class TestNonExpertMerge:
             "base_model.model.model.layers.0.q_proj.lora_A.weight": torch.ones(1, 4),
             "base_model.model.model.layers.0.q_proj.lora_B.weight": torch.ones(4, 1),
         }
-        with pytest.raises(KeyError, match="does not exist in the model state dict"):
+        with pytest.raises(WeightsMergeError, match="does not exist in the model state dict"):
             merge_adapter_weights(model, adapter_weights, {"lora_alpha": 1, "r": 1})
 
     def test_gpt_oss_attn_remapping(self):
@@ -346,7 +347,7 @@ class TestExpertErrorCases:
             "base_model.model.model.layers.0.mlp.experts.w1.lora_A.weight": torch.ones(1, 4),  # 2D!
             "base_model.model.model.layers.0.mlp.experts.w1.lora_B.weight": torch.ones(8, 1),  # 2D!
         }
-        with pytest.raises(ValueError, match="must be 3D"):
+        with pytest.raises(WeightsMergeError, match="must be 3D"):
             merge_adapter_weights(model, adapter_weights, {"lora_alpha": 1, "r": 1})
 
 
@@ -399,7 +400,7 @@ class TestExpandExpertLoraTensors:
         assert out_B.shape[0] == 3
 
     def test_both_single_raises(self):
-        with pytest.raises(ValueError, match="both A and B have 1 expert"):
+        with pytest.raises(WeightsMergeError, match="both A and B have 1 expert"):
             expand_expert_lora_tensors(torch.ones(1, 2, 4), torch.ones(1, 8, 2))
 
     def test_already_matched_is_noop(self):
@@ -410,7 +411,7 @@ class TestExpandExpertLoraTensors:
         assert out_B is lora_B
 
     def test_mismatched_expert_counts_raises(self):
-        with pytest.raises(ValueError, match="Expert count mismatch"):
+        with pytest.raises(WeightsMergeError, match="Expert count mismatch"):
             expand_expert_lora_tensors(torch.ones(3, 2, 4), torch.ones(5, 8, 2))
 
 
@@ -564,15 +565,15 @@ class TestPlanMergeOps:
             "base_model.model.model.layers.0.q_proj.lora_A.weight": torch.ones(1, 4),
             "base_model.model.model.layers.0.q_proj.lora_B.weight": torch.ones(4, 1),
         }
-        with pytest.raises(KeyError, match="does not exist"):
+        with pytest.raises(WeightsMergeError, match="does not exist"):
             plan_merge_ops(adapter, {"lora_alpha": 1, "r": 1}, keys, profile)
 
     def test_missing_config_key_raises(self):
-        with pytest.raises(KeyError, match="lora_alpha"):
+        with pytest.raises(WeightsMergeError, match="lora_alpha"):
             plan_merge_ops({}, {"r": 1}, set(), MergeProfile())
 
     def test_invalid_expert_layout_raises(self):
-        with pytest.raises(ValueError, match="Invalid expert_layout"):
+        with pytest.raises(WeightsMergeError, match="Invalid expert_layout"):
             plan_merge_ops({}, {"lora_alpha": 1, "r": 1}, set(), MergeProfile(expert_layout="bad"))
 
 
@@ -641,7 +642,7 @@ class TestApplyMergeOp:
             lora_A=torch.ones(1, 8),  # wrong in_dim
             lora_B=torch.ones(4, 1),
         )
-        with pytest.raises(ValueError, match="Shape mismatch"):
+        with pytest.raises(WeightsMergeError, match="Shape mismatch"):
             apply_merge_op(tensors, op)
 
 
@@ -671,7 +672,7 @@ class TestValidateMergeOpShapes:
             ]
         }
         shapes = {"q_proj.weight": (8, 4)}  # target is (8,4) but delta is (4,8)
-        with pytest.raises(ValueError, match=r"Shape mismatch.*q_proj"):
+        with pytest.raises(WeightsMergeError, match=r"Shape mismatch.*q_proj"):
             validate_merge_op_shapes(ops, shapes)
 
     def test_valid_3d_fused_concatenated_passes(self):
@@ -706,7 +707,7 @@ class TestValidateMergeOpShapes:
             ]
         }
         shapes = {"gate_up_proj": (2, 4, 8)}  # half is (2, 4, 4), delta is (2, 4, 6)
-        with pytest.raises(ValueError, match=r"Shape mismatch.*gate_up_proj"):
+        with pytest.raises(WeightsMergeError, match=r"Shape mismatch.*gate_up_proj"):
             validate_merge_op_shapes(ops, shapes)
 
     def test_valid_3d_non_fused_passes(self):
