@@ -101,13 +101,14 @@ async def test_write_file_binary(sandbox):
 
 @requires_modal
 @pytest.mark.asyncio
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(20)
 async def test_cleanup_after_timeout():
     """cleanup() should not raise even if the sandbox has already timed out."""
-    sb = await ModalSandbox.create(image=_MODAL_IMAGE, timeout=5)
+    # The minimum timeout is 10 seconds.
+    sb = await ModalSandbox.create(image=_MODAL_IMAGE, timeout=10)
 
     # Wait for the sandbox to time out
-    await asyncio.sleep(7)
+    await asyncio.sleep(12)
 
     # cleanup() should succeed without raising SandboxTimeoutError
     await sb.cleanup()
@@ -115,7 +116,7 @@ async def test_cleanup_after_timeout():
 
 @requires_modal
 @pytest.mark.asyncio
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(10)
 async def test_cleanup_after_terminate():
     """cleanup() should not raise if called twice (sandbox already terminated)."""
     sb = await ModalSandbox.create(image=_MODAL_IMAGE, timeout=60)
@@ -129,7 +130,7 @@ async def test_cleanup_after_terminate():
 
 @requires_modal
 @pytest.mark.asyncio
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(20)
 async def test_cleanup_after_command_timeout():
     """cleanup() should work after a command hits the sandbox timeout."""
     sb = await ModalSandbox.create(image=_MODAL_IMAGE, timeout=10)
