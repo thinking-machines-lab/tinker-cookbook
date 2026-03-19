@@ -31,6 +31,7 @@ jobs:
           echo "tests=$tests" >> "$GITHUB_OUTPUT"
 
   smoke-test:
+    if: github.repository == 'thinking-machines-lab/tinker-cookbook'
     needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 35
