@@ -29,6 +29,7 @@ import importlib
 import inspect
 import json
 import os
+import sys
 from collections.abc import Callable
 from typing import Any
 
@@ -99,40 +100,40 @@ def get_recipe(name: str) -> tuple[type, Callable[..., None]]:
 
 
 # ---------------------------------------------------------------------------
-# Sweep config and entry point
+# Sweep config — built dynamically based on the selected recipe
 # ---------------------------------------------------------------------------
 
 
-@chz.chz
-class LRSweepConfig:
-    """Configuration for an LR sweep experiment.
+def _make_sweep_config_cls(recipe_config_cls: type) -> type:
+    """Dynamically create an LRSweepConfig with a concrete ``base`` field type.
 
-    The ``recipe`` field selects which training recipe to sweep — use a short
-    alias (``sft``, ``math_rl``, ``dpo``, etc.) or a full module path.
-    The ``base`` field is the selected recipe's CLIConfig — all training
-    parameters are inherited, no duplication.
+    This is necessary because ``chz`` needs a concrete type for ``base`` at
+    parse time, but we don't know which recipe is selected until we read ``recipe``
+    from the CLI arguments.
     """
 
-    recipe: str = "sft"
+    @chz.chz
+    class LRSweepConfig:
+        """Configuration for an LR sweep experiment."""
 
-    # Base config for the selected recipe. Type is Any because the actual type
-    # depends on which recipe is selected. chz handles this via CLI overrides.
-    base: Any = None
+        base: recipe_config_cls = chz.field(default_factory=recipe_config_cls)  # type: ignore[valid-type]
 
-    # Sweep axes
-    learning_rates: list[float] = chz.field(
-        default_factory=lambda: [1e-5, 3e-5, 1e-4, 3e-4, 5e-4, 1e-3]
-    )
-    lora_ranks: list[int] = chz.field(default_factory=lambda: [32, 128])
+        # Sweep axes
+        learning_rates: list[float] = chz.field(
+            default_factory=lambda: [1e-5, 3e-5, 1e-4, 3e-4, 5e-4, 1e-3]
+        )
+        lora_ranks: list[int] = chz.field(default_factory=lambda: [32, 128])
 
-    # Budget (controls max_steps = training_budget_examples // batch_size)
-    training_budget_examples: int = 100_000
+        # Budget (controls max_steps = training_budget_examples // batch_size)
+        training_budget_examples: int = 100_000
 
-    # Execution
-    max_parallel: int = 1
+        # Execution
+        max_parallel: int = 1
 
-    # Metric to optimize (depends on recipe)
-    metric: str = "train_mean_nll"
+        # Metric to optimize (depends on recipe)
+        metric: str = "train_mean_nll"
+
+    return LRSweepConfig
 
 
 def _get_batch_size(config: Any) -> int:
@@ -144,15 +145,18 @@ def _get_batch_size(config: Any) -> int:
     return 128
 
 
-def run_lr_sweep(config: LRSweepConfig) -> None:
-    """Run an LR sweep and print the best learning rate per rank."""
-    config_cls, main_fn = get_recipe(config.recipe)
+def _extract_recipe_from_argv(argv: list[str]) -> str:
+    """Extract the recipe= argument from argv without consuming it."""
+    for arg in argv:
+        if arg.startswith("recipe="):
+            return arg[len("recipe=") :]
+    return "sft"
 
-    # Build base config: use provided base or create default
-    if config.base is None:
-        base = config_cls()
-    else:
-        base = config.base
+
+def run_lr_sweep(config: Any, recipe_name: str) -> None:
+    """Run an LR sweep and print the best learning rate per rank."""
+    _, main_fn = get_recipe(recipe_name)
+    base = config.base
 
     # Set max_steps from budget
     batch_size = _get_batch_size(base)
@@ -209,7 +213,7 @@ def run_lr_sweep(config: LRSweepConfig) -> None:
     with open(rec_path, "w") as f:
         json.dump(
             {
-                "recipe": config.recipe,
+                "recipe": recipe_name,
                 "model_name": model_name,
                 "metric": metric,
                 "recommendations": recommendations,
@@ -221,4 +225,14 @@ def run_lr_sweep(config: LRSweepConfig) -> None:
 
 
 if __name__ == "__main__":
-    chz.nested_entrypoint(run_lr_sweep)
+    # Two-phase parsing: extract recipe from argv first to determine the
+    # concrete type for the `base` field, then let chz parse everything.
+    recipe_name = _extract_recipe_from_argv(sys.argv[1:])
+    config_cls, _ = get_recipe(recipe_name)
+    sweep_config_cls = _make_sweep_config_cls(config_cls)
+
+    # Filter out recipe= from argv since it's not a field on the dynamic config
+    filtered_argv = [a for a in sys.argv[1:] if not a.startswith("recipe=")]
+
+    sweep_config = chz.Blueprint(sweep_config_cls).make_from_argv(filtered_argv)
+    run_lr_sweep(sweep_config, recipe_name)
