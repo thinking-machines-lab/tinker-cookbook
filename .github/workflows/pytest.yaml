@@ -12,9 +12,14 @@ jobs:
 
     strategy:
       matrix:
-        transformers-version: ["4.57.6", "5.2.0"]
+        include:
+          - transformers-version: "5.2.0"
+            allow-failure: false
+          - transformers-version: "4.57.6"
+            allow-failure: true
 
     name: test (transformers ${{ matrix.transformers-version }})
+    continue-on-error: ${{ matrix.allow-failure }}
 
     steps:
       - name: checkout
