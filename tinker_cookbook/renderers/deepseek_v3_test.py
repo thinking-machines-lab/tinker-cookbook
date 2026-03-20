@@ -12,11 +12,14 @@ from tinker_cookbook.renderers import (
     ToolCall,
 )
 from tinker_cookbook.renderers.base import ensure_list
+from tinker_cookbook.renderers.conftest import skip_deepseek_tokenizer_bug
 from tinker_cookbook.renderers.deepseek_v3 import (
     DeepSeekV3DisableThinkingRenderer,
     DeepSeekV3ThinkingRenderer,
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+pytestmark = skip_deepseek_tokenizer_bug
 
 # =============================================================================
 # DeepSeek parse_response Tests

@@ -12,7 +12,7 @@ jobs:
 
     strategy:
       matrix:
-        transformers-version: ["4.57.6", "5.2.0"]
+        transformers-version: ["4.57.6", "5.3.0"]
 
     name: test (transformers ${{ matrix.transformers-version }})
 

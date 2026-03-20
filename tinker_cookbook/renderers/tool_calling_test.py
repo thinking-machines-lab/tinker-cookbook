@@ -12,6 +12,7 @@ import pytest
 import tinker
 
 from tinker_cookbook.renderers import Message, RenderContext, get_renderer, get_text_content
+from tinker_cookbook.renderers.conftest import skip_deepseek_tokenizer_bug
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 # =============================================================================
@@ -190,6 +191,7 @@ def test_kimi_k2_parse_tool_call():
     assert message["tool_calls"][0].id == "functions.search:0"
 
 
+@skip_deepseek_tokenizer_bug
 def test_deepseek_parse_tool_call():
     """Test parsing tool call from DeepSeek V3 response.
 
@@ -276,6 +278,7 @@ def test_qwen3_mixed_valid_invalid_tool_calls():
     assert "Invalid JSON" in message["unparsed_tool_calls"][0].error
 
 
+@skip_deepseek_tokenizer_bug
 def test_deepseek_parse_invalid_tool_call_json():
     """Test that invalid JSON in DeepSeek tool call is captured as unparsed."""
     model_name = "deepseek-ai/DeepSeek-V3.1"

@@ -21,6 +21,7 @@ from tinker_cookbook.renderers.base import (
     _longest_matching_suffix_prefix,
     ensure_list,
 )
+from tinker_cookbook.renderers.conftest import skip_if_deepseek_tokenizer_bug
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3DisableThinkingRenderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
@@ -370,6 +371,7 @@ def test_thinking_generation_parse_correspondence(model_name, renderer_cls, rend
     4. Parse continuation → should recover the expected message
     5. Roundtrip: prompt + continuation = full supervised example
     """
+    skip_if_deepseek_tokenizer_bug(model_name)
     tokenizer = get_tokenizer(model_name)
     renderer = renderer_cls(tokenizer, **renderer_kwargs)
 
