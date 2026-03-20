@@ -11,6 +11,7 @@ to the token-level Env interface, including:
 import asyncio
 from unittest.mock import MagicMock, patch
 
+import pytest
 import tinker
 
 from tinker_cookbook.renderers.base import Message
@@ -293,6 +294,99 @@ class TestMaxTrajectoryTokens:
 
         assert result.episode_done is False
         assert "context_overflow" not in result.metrics
+
+
+class TestMaxGenerationTokens:
+    def test_generation_budget_causes_overflow(self):
+        """When observation + max_generation_tokens > max_trajectory_tokens, episode ends.
+
+        The observation (80 tokens) fits under the trajectory limit (100) by itself,
+        but adding the generation budget (30) pushes it over: 80 + 30 = 110 > 100.
+        """
+        renderer = _make_renderer(gen_prompt_tokens=list(range(80)), stop_sequences=["<s>"])
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(
+                reward=0.9,
+                episode_done=False,
+                next_messages=[{"role": "user", "content": "x"}],
+                metrics={"turns": 2.0},
+            ),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer,
+            message_env=msg_env,
+            max_trajectory_tokens=100,
+            max_generation_tokens=30,
+        )
+
+        result = asyncio.run(env.step([1]))
+
+        assert result.episode_done is True
+        assert result.reward == 0.0
+        assert result.next_observation.length == 0
+        assert result.metrics["context_overflow"] == 1.0
+        assert result.metrics["turns"] == 2.0
+
+    def test_generation_budget_within_limit_continues(self):
+        """When observation + max_generation_tokens <= max_trajectory_tokens, episode continues."""
+        renderer = _make_renderer(gen_prompt_tokens=list(range(50)), stop_sequences=["<s>"])
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(
+                reward=0.5,
+                episode_done=False,
+                next_messages=[{"role": "user", "content": "x"}],
+            ),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer,
+            message_env=msg_env,
+            max_trajectory_tokens=100,
+            max_generation_tokens=30,  # 50 + 30 = 80 <= 100
+        )
+
+        result = asyncio.run(env.step([1]))
+
+        assert result.episode_done is False
+        assert result.reward == 0.5
+        assert "context_overflow" not in result.metrics
+
+    def test_initial_observation_raises_on_overflow(self):
+        """initial_observation raises ValueError when prompt + generation budget exceeds limit."""
+        renderer = _make_renderer(gen_prompt_tokens=list(range(80)), stop_sequences=["<s>"])
+        msg_env = StubMessageEnv(
+            initial_messages=[{"role": "user", "content": "hi"}],
+            step_result=MessageStepResult(reward=0, episode_done=False, next_messages=[]),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer,
+            message_env=msg_env,
+            max_trajectory_tokens=100,
+            max_generation_tokens=30,  # 80 + 30 = 110 > 100
+        )
+
+        with pytest.raises(ValueError, match="too long for the model's context window"):
+            asyncio.run(env.initial_observation())
+
+    def test_initial_observation_ok_when_within_limit(self):
+        """initial_observation succeeds when prompt + generation budget fits."""
+        renderer = _make_renderer(gen_prompt_tokens=list(range(50)), stop_sequences=["<s>"])
+        msg_env = StubMessageEnv(
+            initial_messages=[{"role": "user", "content": "hi"}],
+            step_result=MessageStepResult(reward=0, episode_done=False, next_messages=[]),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer,
+            message_env=msg_env,
+            max_trajectory_tokens=100,
+            max_generation_tokens=30,  # 50 + 30 = 80 <= 100
+        )
+
+        model_input, stop_cond = asyncio.run(env.initial_observation())
+
+        assert model_input.to_ints() == list(range(50))
+        assert stop_cond == ["<s>"]
 
 
 class TestStepThreading:

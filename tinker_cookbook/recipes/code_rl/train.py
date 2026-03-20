@@ -29,7 +29,7 @@ class CLIConfig:
     group_size: int = 4
     groups_per_batch: int = 100
     learning_rate: float = 1e-5
-    max_tokens: int = 5
+    max_tokens: int = 4096
     kl_penalty_coef: float = 0.0
     num_substeps: int = 1
 
@@ -87,6 +87,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
         group_size=cli_config.group_size,
         seed=cli_config.seed,
         sandbox_backend=cli_config.sandbox_backend,
+        max_generation_tokens=cli_config.max_tokens,
     )
 
     config = Config(
