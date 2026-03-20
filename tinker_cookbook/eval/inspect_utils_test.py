@@ -1,5 +1,9 @@
 """Tests for inspect_utils conversion functions."""
 
+import pytest
+
+pytest.importorskip("inspect_ai")
+
 from inspect_ai.model import ChatMessage as InspectAIChatMessage
 from inspect_ai.model import ChatMessageAssistant as InspectAIChatMessageAssistant
 from inspect_ai.model import ChatMessageUser as InspectAIChatMessageUser
