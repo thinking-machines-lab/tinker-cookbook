@@ -39,3 +39,7 @@ The base classes in [tinker_cookbook/supervised/data.py](../../supervised/data.p
 - `SupervisedDatasetFromHFDataset` loads dataset on Hugging Face hub with a postprocessing function
 - `StreamingSupervisedDatasetFromHFDataset` works similarly, but supports streaming
 - `FromConversationFileBuilder` supports data loading from a JSONL file
+
+## Sweep results
+
+See [results/sft_sweep.md](results/sft_sweep.md) for empirical hyperparameter sweep results (learning rate, LoRA rank) across multiple models on the tulu3 dataset.
