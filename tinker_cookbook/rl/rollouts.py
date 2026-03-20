@@ -155,25 +155,29 @@ async def do_group_rollout(
     """
     if strategy is None:
         strategy = FailFast()
+    try:
+        result = await strategy.execute(env_group_builder, policy)
 
-    result = await strategy.execute(env_group_builder, policy)
+        async with trace.scope_span("compute_group_rewards"):
+            rewards_and_metrics_G = await env_group_builder.compute_group_rewards(
+                result.trajectories, result.envs
+            )
+        rewards_G, metrics_G = zip(*rewards_and_metrics_G, strict=True)
 
-    async with trace.scope_span("compute_group_rewards"):
-        rewards_and_metrics_G = await env_group_builder.compute_group_rewards(
-            result.trajectories, result.envs
+        with logtree.scope_header("Trajectory Details"):
+            for traj_idx, (traj, final_reward) in enumerate(
+                zip(result.trajectories, rewards_G, strict=True)
+            ):
+                with logtree.scope_header(f"Trajectory {traj_idx} Episode"):
+                    _log_single_trajectory_details(traj, final_reward)
+
+        return TrajectoryGroup(
+            result.trajectories, list(rewards_G), list(metrics_G), rollout_errors=result.errors
         )
-    rewards_G, metrics_G = zip(*rewards_and_metrics_G, strict=True)
-
-    with logtree.scope_header("Trajectory Details"):
-        for traj_idx, (traj, final_reward) in enumerate(
-            zip(result.trajectories, rewards_G, strict=True)
-        ):
-            with logtree.scope_header(f"Trajectory {traj_idx} Episode"):
-                _log_single_trajectory_details(traj, final_reward)
-
-    return TrajectoryGroup(
-        result.trajectories, list(rewards_G), list(metrics_G), rollout_errors=result.errors
-    )
+    finally:
+        # cleanup() is not wrapped in try/except; implementations must handle failures
+        # internally and not raise, or exceptions here will mask rollout errors.
+        await env_group_builder.cleanup()
 
 
 # ---------------------------------------------------------------------------
