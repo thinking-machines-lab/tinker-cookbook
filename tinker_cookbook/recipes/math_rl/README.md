@@ -2,6 +2,11 @@
 
 Math problems have been the most active testbed for RL with LLMs. This recipe collects environments and grading functions that allow you to test on several popular math datasets.
 
+## Installation
+
+```bash
+uv pip install 'tinker-cookbook[math-rl] @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
+```
 
 ## RL on arithmetic.
 

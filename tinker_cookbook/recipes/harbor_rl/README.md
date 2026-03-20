@@ -1,5 +1,11 @@
 # Harbor RL
 
+## Installation
+
+```bash
+uv pip install 'tinker-cookbook[modal] @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
+```
+
 RL training on Harbor formatted tasks (e.g., Terminal Bench 2.0) with sandboxed code execution. An agent gets a bash tool inside a sandboxed container, attempts a task, and receives reward based on test results.
 
 ## HarborTask
