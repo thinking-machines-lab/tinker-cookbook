@@ -108,8 +108,8 @@ async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
 async def do_group_rollout(
     env_group_builder: EnvGroupBuilder, policy: TokenCompleter
 ) -> TrajectoryGroup:
-    envs_G: Sequence[Env] = await env_group_builder.make_envs()
     try:
+        envs_G: Sequence[Env] = await env_group_builder.make_envs()
         trajectories_G = await asyncio.gather(*[do_single_rollout(policy, env) for env in envs_G])
 
         async with trace.scope_span("compute_group_rewards"):
@@ -127,6 +127,7 @@ async def do_group_rollout(
 
         return TrajectoryGroup(trajectories_G, list(rewards_G), list(metrics_G))
     finally:
+        # Cleanup implementations are responsible for handling exceptions
         await env_group_builder.cleanup()
 
 

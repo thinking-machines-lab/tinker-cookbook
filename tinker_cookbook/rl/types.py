@@ -132,7 +132,8 @@ class EnvGroupBuilder(ABC):
         like cloud sandboxes, remote browsers, etc.
 
         Default is a no-op. Implementations should be idempotent (safe to
-        call multiple times).
+        call multiple times) and handle exceptions internally, as `do_group_rollout`
+        does not catch exceptions from this method.
         """
         pass
 
