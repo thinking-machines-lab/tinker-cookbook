@@ -47,11 +47,14 @@ from tinker_cookbook.renderers import (
     unregister_renderer,
 )
 from tinker_cookbook.renderers.base import ContentPart, ensure_list, ensure_text
-from tinker_cookbook.renderers.conftest import extract_token_ids, skip_if_deepseek_tokenizer_bug
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
 from tinker_cookbook.renderers.nemotron3 import Nemotron3Renderer
 from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
+from tinker_cookbook.renderers.testing_utils import (
+    extract_token_ids,
+    skip_if_deepseek_tokenizer_bug,
+)
 from tinker_cookbook.tokenizer_utils import (
     get_registered_tokenizer_names,
     get_tokenizer,

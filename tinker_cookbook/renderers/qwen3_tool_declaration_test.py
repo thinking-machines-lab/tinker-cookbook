@@ -12,7 +12,7 @@ from transformers import AutoTokenizer
 
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import Message, ToolSpec, ensure_text
-from tinker_cookbook.renderers.conftest import extract_token_ids
+from tinker_cookbook.renderers.testing_utils import extract_token_ids
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 # Qwen3 models use JSON tool calls with OpenAI-style tool wrapper in tool declarations.
