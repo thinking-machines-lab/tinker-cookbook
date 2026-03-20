@@ -8,28 +8,23 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
+    "aiohttp",
+    "anyio",
+    "blobfile",
     "chz",
     "cloudpickle",
     "datasets",
+    "huggingface_hub",
     "numpy",
     "pillow",
+    "pydantic",
     "rich",
     "termcolor",
+    "tiktoken>=0.12.0", # Required for Kimi tokenizer
     "tinker>=0.9.0",
     "torch",
-    "torchvision",
-    "transformers>=4.57.6,<=5.3.0",
-    "blobfile",
-    "anyio",
-    "pylatexenc",
-    "sympy",
-    "textarena>=0.7.4",
-    "math-verify",
-    "scipy",
-    "pytest>=9.0.2",
-    "tiktoken>=0.12.0", # Required for Kimi tokenizer
     "tqdm",
-    "modal",
+    "transformers>=4.57.6,<=5.3.0",
 ]
 
 [project.urls]
@@ -45,10 +40,21 @@ dev = [
     "ruff",
     "pyright",
 ]
+math-rl = [
+    "math-verify",
+    "pylatexenc",
+    "sympy",
+]
+modal = [
+    "modal",
+]
+multiplayer-rl = [
+    "textarena>=0.7.4",
+]
 vector-search = [
     "chromadb",
     "google-genai",
-    "huggingface_hub"
+    "huggingface_hub",
 ]
 wandb = [
     "wandb",
@@ -73,6 +79,9 @@ litellm = [
     "litellm",
 ]
 all = [
+    "tinker_cookbook[math-rl]",
+    "tinker_cookbook[modal]",
+    "tinker_cookbook[multiplayer-rl]",
     "tinker_cookbook[vector-search]",
     "tinker_cookbook[wandb]",
     "tinker_cookbook[neptune-scale]",

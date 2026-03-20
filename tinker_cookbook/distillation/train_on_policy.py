@@ -98,9 +98,7 @@ async def incorporate_kl_penalty(
         # The advantage is the negative reverse KL. We can optionally apply a discount factor.
         kl_advantages = -kl_penalty_coef * float_masks[i] * reverse_kl[i]
         if kl_discount_factor > 0:
-            kl_advantages = torch.tensor(
-                discounted_future_sum_vectorized(kl_advantages.numpy(), kl_discount_factor)
-            )
+            kl_advantages = discounted_future_sum_vectorized(kl_advantages, kl_discount_factor)
         datum.loss_fn_inputs["advantages"] = tinker.TensorData.from_torch(
             datum.loss_fn_inputs["advantages"].to_torch() + kl_advantages
         )

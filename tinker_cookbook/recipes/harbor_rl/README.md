@@ -1,5 +1,11 @@
 # Harbor RL
 
+## Installation
+
+```bash
+uv pip install -e ".[modal]"
+```
+
 RL training on Harbor formatted tasks (e.g., Terminal Bench 2.0) with sandboxed code execution. An agent gets a bash tool inside a sandboxed container, attempts a task, and receives reward based on test results.
 
 ## HarborTask

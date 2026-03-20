@@ -8,7 +8,6 @@ and computing training metrics.
 import asyncio
 from typing import Any, cast
 
-import numpy as np
 import tinker
 import torch
 
@@ -121,9 +120,7 @@ async def incorporate_kl_penalty(
     for i, datum in enumerate(data_D):
         kl_advantages = kl_penalty_coef * float_masks[i] * (avg_logp_diff - logprob_diffs[i])
         if kl_discount_factor > 0:
-            kl_advantages = torch.tensor(
-                discounted_future_sum_vectorized(kl_advantages.numpy(), kl_discount_factor)
-            )
+            kl_advantages = discounted_future_sum_vectorized(kl_advantages, kl_discount_factor)
         datum.loss_fn_inputs["advantages"] = tinker.TensorData.from_torch(
             datum.loss_fn_inputs["advantages"].to_torch() + kl_advantages
         )
@@ -131,21 +128,25 @@ async def incorporate_kl_penalty(
     return {"kl_policy_base": float(avg_logp_diff)}
 
 
-def discounted_future_sum_vectorized(x: np.ndarray, gamma: float) -> np.ndarray:
+def discounted_future_sum_vectorized(x: torch.Tensor, gamma: float) -> torch.Tensor:
     """
-    Compute discounted sum of future values for each position using a vectorized approach.
+    Compute discounted sum of future values for each position.
+
+    For position i, computes: sum_{k=0}^{T-1-i} gamma^k * x[i+k]
 
     Args:
-        x (np.ndarray): 1D array of rewards.
-        gamma (float): Discount factor.
+        x: 1D tensor of values.
+        gamma: Discount factor.
 
     Returns:
-        np.ndarray: discounted sum of future values.
+        1D tensor of discounted future sums.
     """
-    # Reverse x so lfilter processes from end to start
-    import scipy.signal
-
-    return scipy.signal.lfilter([1], [1, -gamma], x[::-1], axis=0)[::-1].astype(x.dtype)  # type: ignore
+    result = torch.empty_like(x)
+    running = torch.zeros(1, dtype=x.dtype, device=x.device)
+    for t in range(len(x) - 1, -1, -1):
+        running = x[t] + gamma * running
+        result[t] = running
+    return result
 
 
 def compute_sampling_client_metrics(
