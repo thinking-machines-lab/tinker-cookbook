@@ -94,7 +94,7 @@ version-file = "tinker_cookbook/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["tinker_cookbook"]
-exclude = ["*_test.py"]
+exclude = ["*_test.py", "tinker_cookbook/scripts/", "**/results/"]
 
 [tool.pytest.ini_options]
 testpaths = ["tinker_cookbook", "tests"]
