@@ -1,5 +1,11 @@
 # Learning Tic-Tac-Toe via Self-Play
 
+## Installation
+
+```bash
+uv pip install 'tinker-cookbook[multiplayer-rl] @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
+```
+
 Many research studies involve training several different language model agents jointly. We cover one simple example, where the language model learns to play tic-tac-toe with itself.
 We show how to coordinate the steps of two *Environment* objects such that both the winning and the losing trajectory will be used to fine-tune the weights.
 

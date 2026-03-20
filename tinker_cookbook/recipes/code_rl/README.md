@@ -30,9 +30,9 @@ If you prefer not to use Docker, you can set up the sandbox manually by followin
 
 [Modal](https://modal.com/docs/guide/sandbox) provides cloud-based sandboxed execution without local Docker setup. To use Modal:
 
-1. Install Modal and authenticate:
+1. Install the modal extra and authenticate:
 ```bash
-pip install modal
+uv pip install 'tinker-cookbook[modal] @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
 modal token new
 ```
 

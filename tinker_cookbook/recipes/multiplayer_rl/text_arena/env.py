@@ -6,9 +6,17 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 import chz
-import textarena as ta
 import tinker
 from tinker import types
+
+try:
+    import textarena as ta
+except ImportError:
+    raise ImportError(
+        "textarena is required for this recipe. "
+        "Install it with: uv pip install 'tinker-cookbook[multiplayer-rl] @ "
+        "git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'"
+    ) from None
 
 from tinker_cookbook.completers import StopCondition, TinkerMessageCompleter
 from tinker_cookbook.renderers import Message, Renderer, get_renderer, get_text_content

@@ -25,8 +25,8 @@ from tinker_cookbook.renderers import (
     ToolSpec,
     get_renderer,
 )
-from tinker_cookbook.renderers.conftest import extract_token_ids
 from tinker_cookbook.renderers.kimi_k2_5_tool_declaration_ts import encode_tools_to_typescript_style
+from tinker_cookbook.renderers.testing_utils import extract_token_ids
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 KIMI_K25_MODEL = "moonshotai/Kimi-K2.5"
