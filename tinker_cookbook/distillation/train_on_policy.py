@@ -14,7 +14,7 @@ import tinker
 import torch
 from tinker.types import LossFnType
 
-from tinker_cookbook import checkpoint_utils
+from tinker_cookbook import checkpoint_utils, model_info
 from tinker_cookbook.display import colorize_example
 from tinker_cookbook.distillation.datasets import (
     CompositeDataset,
@@ -401,6 +401,7 @@ async def main(
     if wandb_link := ml_logger.get_logger_url():
         user_metadata["wandb_link"] = wandb_link
     checkpoint_utils.add_renderer_name_to_user_metadata(user_metadata, cfg.renderer_name)
+    model_info.warn_if_renderer_not_recommended(cfg.model_name, cfg.renderer_name)
 
     if resume_info:
         # Resuming interrupted training - load optimizer state for proper continuation
