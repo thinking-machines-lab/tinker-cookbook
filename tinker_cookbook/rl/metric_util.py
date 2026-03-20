@@ -1,5 +1,6 @@
 import asyncio
 import itertools
+import logging
 from collections import defaultdict
 
 import numpy as np
@@ -7,11 +8,14 @@ import tinker
 
 from tinker_cookbook.completers import TinkerTokenCompleter, TokenCompleter
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
+from tinker_cookbook.exceptions import AllTrajectoriesFailedError
 from tinker_cookbook.rl.rollout_logging import (
     RolloutSummaryExportConfig,
     write_rollout_summaries_jsonl,
 )
+from tinker_cookbook.rl.rollout_strategy import RolloutStrategy
 from tinker_cookbook.rl.rollouts import (
+    RolloutErrorCounter,
     do_group_rollout,
     do_group_rollout_and_filter_constant_reward,
     get_rollout_executor,
@@ -19,6 +23,8 @@ from tinker_cookbook.rl.rollouts import (
 from tinker_cookbook.rl.types import EnvGroupBuilder, RLDataset, TrajectoryGroup
 from tinker_cookbook.utils import logtree
 from tinker_cookbook.utils.misc_utils import all_same, dict_mean
+
+logger = logging.getLogger(__name__)
 
 
 def _compute_by_group_metrics(trajectory_groups_P: list[TrajectoryGroup], good_thresh: float = 0.5):
@@ -117,11 +123,13 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         max_tokens: int,
         name: str = "test",
         num_groups_to_log: int = 4,
+        strategy: RolloutStrategy | None = None,
     ):
         self.env_group_builders_P = dataset_to_env_group_builders(dataset)
         self.max_tokens = max_tokens
         self.name = name
         self.num_groups_to_log = num_groups_to_log
+        self.strategy = strategy
 
     async def eval_token_completer(
         self,
@@ -129,33 +137,34 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         *,
         rollout_summary_export: RolloutSummaryExportConfig | None = None,
     ) -> dict[str, float]:
-        async def run_group_rollout(builder, i):
-            enable_logging = i < self.num_groups_to_log
-            with logtree.optional_enable_logging(enable=enable_logging):
-                return await do_group_rollout(builder, policy)
+        async def run_group_rollout(
+            builder: EnvGroupBuilder, group_idx: int
+        ) -> TrajectoryGroup | None:
+            enable_logging = group_idx < self.num_groups_to_log
+            try:
+                with logtree.optional_enable_logging(enable=enable_logging):
+                    result = await do_group_rollout(
+                        builder,
+                        policy,
+                        strategy=self.strategy,
+                    )
+            except AllTrajectoriesFailedError as e:
+                logger.warning(f"Eval: {e}")
+                result = None
+            except Exception as e:
+                if self.strategy is None or not self.strategy.catches_group_errors:
+                    raise
+                logger.warning(f"Eval rollout error ({type(e).__name__}): {e}")
+                result = None
+            return result
 
-        trajectory_groups_P = await asyncio.gather(
-            *[run_group_rollout(builder, i) for i, builder in enumerate(self.env_group_builders_P)]
+        results = await asyncio.gather(
+            *[
+                run_group_rollout(builder, group_idx)
+                for group_idx, builder in enumerate(self.env_group_builders_P)
+            ]
         )
-        taglist_P = [builder.logging_tags() for builder in self.env_group_builders_P]
-        if rollout_summary_export is not None:
-            sampling_client_steps_P = (
-                [rollout_summary_export.sampling_client_step] * len(trajectory_groups_P)
-                if rollout_summary_export.sampling_client_step is not None
-                else None
-            )
-            write_rollout_summaries_jsonl(
-                rollout_summary_export.path,
-                split=rollout_summary_export.split,
-                iteration=rollout_summary_export.iteration,
-                trajectory_groups_P=trajectory_groups_P,
-                taglist_P=taglist_P,
-                sampling_client_steps_P=sampling_client_steps_P,
-            )
-        metrics = compute_trajectory_metrics(trajectory_groups_P, taglist_P)
-
-        metrics = {f"{self.name}/{k}": v for k, v in metrics.items()}
-        return metrics
+        return self._collect_eval_metrics(results, rollout_summary_export)
 
     async def __call__(
         self,
@@ -191,15 +200,29 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
                     temperature=1.0,
                     do_remove_constant_reward_groups=False,
                     enable_logging=i < self.num_groups_to_log,
+                    strategy=self.strategy,
                 )
                 for i, builder in enumerate(self.env_group_builders_P)
             ]
         )
-        # remove_constant_reward_groups=False so None results shouldn't occur,
-        # but filter for type safety
-        trajectory_groups_P = [r for r in results if r is not None]
+        return self._collect_eval_metrics(results, rollout_summary_export)
 
-        taglist_P = [builder.logging_tags() for builder in self.env_group_builders_P]
+    def _collect_eval_metrics(
+        self,
+        results: list[TrajectoryGroup | None],
+        rollout_summary_export: RolloutSummaryExportConfig | None,
+    ) -> dict[str, float]:
+        """Shared logic for collecting metrics from eval rollout results."""
+        error_counter = RolloutErrorCounter()
+        for result in results:
+            error_counter.ingest(result)
+
+        trajectory_groups_P = [r for r in results if r is not None]
+        taglist_P = [
+            builder.logging_tags()
+            for builder, r in zip(self.env_group_builders_P, results)
+            if r is not None
+        ]
         if rollout_summary_export is not None:
             sampling_client_steps_P = (
                 [rollout_summary_export.sampling_client_step] * len(trajectory_groups_P)
@@ -215,5 +238,6 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
                 sampling_client_steps_P=sampling_client_steps_P,
             )
         metrics = compute_trajectory_metrics(trajectory_groups_P, taglist_P)
+        metrics.update(error_counter.get_metrics())
         metrics = {f"{self.name}/{k}": v for k, v in metrics.items()}
         return metrics

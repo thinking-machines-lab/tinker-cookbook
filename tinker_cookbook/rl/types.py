@@ -82,6 +82,21 @@ class Trajectory:
     final_ob: Observation
 
 
+@dataclass(frozen=True)
+class RolloutError:
+    """A captured error from a failed trajectory rollout.
+
+    Stored on :class:`TrajectoryGroup` so error information flows through
+    return values (including across process boundaries via pickle) without
+    requiring shared mutable state.
+    """
+
+    error_type: str
+    """The exception class name, e.g. ``'BadRequestError'``."""
+    error_message: str
+    """``str(exception)`` — the human-readable error description."""
+
+
 class EnvGroupBuilder(ABC):
     """
     Builds a group of environments. The group will be used in the following way:
@@ -146,6 +161,10 @@ class TrajectoryGroup:
     trajectories_G: list[Trajectory]
     final_rewards_G: list[float]  # computed by the EnvGroupBuilder, looking at whole group
     metrics_G: list[Metrics]
+
+    # Error tracking — populated by do_group_rollout when using error-tolerant strategies.
+    # Empty list means no trajectory errors occurred.
+    rollout_errors: list[RolloutError] = field(default_factory=list)
 
     def get_total_rewards(self) -> list[float]:
         """

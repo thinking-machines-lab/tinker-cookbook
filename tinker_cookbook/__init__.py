@@ -11,6 +11,7 @@ except ImportError:
         __version__ = "0.0.0.dev0+unknown"
 
 from tinker_cookbook.exceptions import (
+    AllTrajectoriesFailedError,
     CheckpointError,
     ConfigurationError,
     DataError,
@@ -27,6 +28,7 @@ from tinker_cookbook.exceptions import (
 
 __all__ = [
     "__version__",
+    "AllTrajectoriesFailedError",
     "CheckpointError",
     "ConfigurationError",
     "DataError",

@@ -54,6 +54,7 @@ Implement the `Env` protocol from `tinker_cookbook/rl/types.py`. Key points:
 - `learning_rate`: Typically 1e-5 to 4e-5 for RL
 - `kl_penalty_coef`: KL penalty against reference model (0.0 = no penalty)
 - `temperature`: Sampling temperature (default 1.0)
+- `rollout_error_tolerance`: Tolerance for rollout errors (`False` = crash on any error, `True` = retry failed trajectories with default budget, `RetryOnFailure(max_retries=5)` = custom retry budget). Error counts logged as `rollout_errors/*` metrics.
 
 ### Loss Functions
 - `importance_sampling` — Default, on-policy
