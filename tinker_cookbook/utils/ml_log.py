@@ -16,7 +16,6 @@ import chz
 from rich.console import Console
 from rich.table import Table
 
-from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.utils.code_state import code_state
 
 logger = logging.getLogger(__name__)
@@ -219,7 +218,7 @@ class WandbLogger(Logger):
             )
 
         if not os.environ.get("WANDB_API_KEY"):
-            raise ConfigurationError("WANDB_API_KEY environment variable not set")
+            raise ValueError("WANDB_API_KEY environment variable not set")
 
         # Initialize wandb run
         assert wandb is not None  # For type checker
@@ -270,7 +269,7 @@ class NeptuneLogger(Logger):
             )
 
         if not os.environ.get("NEPTUNE_API_TOKEN"):
-            raise ConfigurationError("NEPTUNE_API_TOKEN environment variable not set")
+            raise ValueError("NEPTUNE_API_TOKEN environment variable not set")
 
         # Initialize neptune run
         assert NeptuneRun is not None  # For type checker
@@ -479,6 +478,8 @@ def setup_logging(
         configure_logging_module(str(log_dir_path / "logs.log"))
 
     logger.info(f"Logging to: {log_dir_path}")
+    if url := ml_logger.get_logger_url():
+        print(f"Wandb run: {url}")
     return ml_logger
 
 

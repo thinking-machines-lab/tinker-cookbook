@@ -1,5 +1,5 @@
 """
-Minimal RL training loop using GRPO-style reward centering.
+inimal RL training loop using GRPO-style reward centering.
 
 Variable naming convention (see CONTRIBUTING.md):
     _P: Problem dimension (different questions/prompts in a batch)
@@ -36,8 +36,10 @@ logging.getLogger("httpx").setLevel(logging.WARN)
 @chz.chz
 class Config:
     base_url: str | None = None
-    log_path: str = "/tmp/tinker-examples/rl-loop"
-    model_name: str = "meta-llama/Llama-3.1-8B"
+    log_path: str = "/tmp/tinker-examples/rl-loop-2"
+    model_name: str = "Qwen/Qwen3-8B"
+    # Override renderer_name to disable thinking mode for Qwen3 hybrid models, e.g. "qwen3_disable_thinking"
+    renderer_name: str | None = None
     batch_size: int = 128
     group_size: int = 16
     learning_rate: float = 4e-5
@@ -45,6 +47,9 @@ class Config:
     save_every: int = 20  # 0 = disabled
     max_tokens: int = 256
     ttl_seconds: int | None = 604800  # 7 days
+    wandb_project: str | None = "cluster-testing"
+    wandb_name: str | None = "baseline-run-qwen3-8b-rl-loop-lora-rank-32"
+    n_batches: int | None = None  # If set, cap training to this many batches (for testing).
 
 
 def get_reward(response: str, answer: str) -> float:
@@ -60,15 +65,15 @@ def main(config: Config):
     # Setup logging
     ml_logger = ml_log.setup_logging(
         log_dir=config.log_path,
-        wandb_project=None,
-        wandb_name=None,
+        wandb_project=config.wandb_project,
+        wandb_name=config.wandb_name,
         config=config,
         do_configure_logging_module=True,
     )
 
     # Get tokenizer and renderer
     tokenizer = get_tokenizer(config.model_name)
-    renderer_name = model_info.get_recommended_renderer_name(config.model_name)
+    renderer_name = config.renderer_name or model_info.get_recommended_renderer_name(config.model_name)
     renderer = renderers.get_renderer(renderer_name, tokenizer)
     logger.info(f"Using renderer: {renderer_name}")
 
@@ -92,6 +97,9 @@ def main(config: Config):
     ]
 
     n_train_batches = len(train_dataset) // config.batch_size
+    if config.n_batches is not None:
+        n_train_batches = min(n_train_batches, config.n_batches)
+        logger.info("Capping to %d batches (n_batches=%d)", n_train_batches, config.n_batches)
 
     # Setup training client
     service_client = tinker.ServiceClient(base_url=config.base_url)
@@ -239,7 +247,7 @@ def main(config: Config):
         metrics["reward/total"] = sum(rewards_P) / len(rewards_P)
         ml_logger.log_metrics(metrics, step=batch_idx)
 
-        # Save final checkpoint
+    # Save final checkpoint
     checkpoint_utils.save_checkpoint(
         training_client=training_client,
         name="final",
