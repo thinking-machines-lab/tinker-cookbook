@@ -124,6 +124,18 @@ class EnvGroupBuilder(ABC):
         """
         return [(0.0, {}) for _ in trajectory_group]
 
+    async def cleanup(self) -> None:
+        """Clean up resources created by make_envs().
+
+        Called after rollouts and reward computation complete, regardless
+        of success or failure. Override this to release expensive resources
+        like cloud sandboxes, remote browsers, etc.
+
+        Default is a no-op. Implementations should be idempotent (safe to
+        call multiple times).
+        """
+        pass
+
     def logging_tags(self) -> list[str]:
         """
         This is just used for logging. We often want to aggregate metrics (like rewards

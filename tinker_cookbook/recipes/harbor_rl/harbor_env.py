@@ -150,15 +150,13 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
             )
         return envs
 
-    async def compute_group_rewards(self, trajectory_group, env_group):
-        """Cleanup sandboxes after rollouts + grading complete."""
+    async def cleanup(self) -> None:
         for sandbox in self._sandboxes:
             try:
                 await sandbox.cleanup()
             except Exception as e:
                 logger.warning("Sandbox cleanup failed: %s", e)
         self._sandboxes.clear()
-        return [(0.0, {}) for _ in trajectory_group]
 
     def logging_tags(self) -> list[str]:
         return ["harbor"]

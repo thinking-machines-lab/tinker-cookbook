@@ -109,22 +109,25 @@ async def do_group_rollout(
     env_group_builder: EnvGroupBuilder, policy: TokenCompleter
 ) -> TrajectoryGroup:
     envs_G: Sequence[Env] = await env_group_builder.make_envs()
-    trajectories_G = await asyncio.gather(*[do_single_rollout(policy, env) for env in envs_G])
+    try:
+        trajectories_G = await asyncio.gather(*[do_single_rollout(policy, env) for env in envs_G])
 
-    async with trace.scope_span("compute_group_rewards"):
-        rewards_and_metrics_G = await env_group_builder.compute_group_rewards(
-            trajectories_G, envs_G
-        )
-    rewards_G, metrics_G = zip(*rewards_and_metrics_G, strict=True)
+        async with trace.scope_span("compute_group_rewards"):
+            rewards_and_metrics_G = await env_group_builder.compute_group_rewards(
+                trajectories_G, envs_G
+            )
+        rewards_G, metrics_G = zip(*rewards_and_metrics_G, strict=True)
 
-    with logtree.scope_header("Trajectory Details"):
-        for traj_idx, (traj, final_reward) in enumerate(
-            zip(trajectories_G, rewards_G, strict=True)
-        ):
-            with logtree.scope_header(f"Trajectory {traj_idx} Episode"):
-                _log_single_trajectory_details(traj, final_reward)
+        with logtree.scope_header("Trajectory Details"):
+            for traj_idx, (traj, final_reward) in enumerate(
+                zip(trajectories_G, rewards_G, strict=True)
+            ):
+                with logtree.scope_header(f"Trajectory {traj_idx} Episode"):
+                    _log_single_trajectory_details(traj, final_reward)
 
-    return TrajectoryGroup(trajectories_G, list(rewards_G), list(metrics_G))
+        return TrajectoryGroup(trajectories_G, list(rewards_G), list(metrics_G))
+    finally:
+        await env_group_builder.cleanup()
 
 
 # ---------------------------------------------------------------------------
