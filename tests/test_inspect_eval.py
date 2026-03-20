@@ -14,6 +14,9 @@ Test matrix:
 import asyncio
 
 import pytest
+
+pytest.importorskip("inspect_ai")
+
 import tinker
 from inspect_ai.model import ChatMessage as InspectAIChatMessage
 from inspect_ai.model import ChatMessageUser as InspectAIChatMessageUser
