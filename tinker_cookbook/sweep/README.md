@@ -1,15 +1,15 @@
-# LR Sweep
+# Hyperparameter Sweep
 
-Find the optimal learning rate for any model across any training recipe. Built on the [`tinker_cookbook.sweep`](../../sweep/) module.
+Reusable sweep infrastructure for parameter grid searches, plus a CLI that works with any recipe.
 
-Works with any recipe that follows the `CLIConfig` + `cli_main` convention — use a short alias or a full module path.
+## CLI
 
-## Quick start
+Run sweeps across any recipe that follows the `CLIConfig` + `cli_main` convention — use a short alias or a full module path.
 
 ### SFT sweep
 
 ```bash
-python -m tinker_cookbook.recipes.lr_sweep.sweep \
+python -m tinker_cookbook.sweep \
     recipe=sft \
     base.model_name=Qwen/Qwen3.5-4B \
     base.dataset=tulu3
@@ -18,7 +18,7 @@ python -m tinker_cookbook.recipes.lr_sweep.sweep \
 ### RL sweep (math)
 
 ```bash
-python -m tinker_cookbook.recipes.lr_sweep.sweep \
+python -m tinker_cookbook.sweep \
     recipe=math_rl \
     base.model_name=Qwen/Qwen3-8B \
     base.env=gsm8k \
@@ -29,7 +29,7 @@ python -m tinker_cookbook.recipes.lr_sweep.sweep \
 ### DPO sweep
 
 ```bash
-python -m tinker_cookbook.recipes.lr_sweep.sweep \
+python -m tinker_cookbook.sweep \
     recipe=dpo \
     base.model_name=Qwen/Qwen3-8B
 ```
@@ -39,7 +39,7 @@ python -m tinker_cookbook.recipes.lr_sweep.sweep \
 For recipes without a short alias, pass the full module path:
 
 ```bash
-python -m tinker_cookbook.recipes.lr_sweep.sweep \
+python -m tinker_cookbook.sweep \
     recipe=tinker_cookbook.recipes.harbor_rl.train \
     base.model_name=Qwen/Qwen3-8B
 ```
@@ -53,7 +53,7 @@ All training parameters are inherited from the selected recipe's `CLIConfig` via
 ### Custom LR range and ranks
 
 ```bash
-python -m tinker_cookbook.recipes.lr_sweep.sweep \
+python -m tinker_cookbook.sweep \
     recipe=sft \
     base.model_name=Qwen/Qwen3.5-4B \
     'learning_rates=[1e-4, 3e-4, 5e-4, 1e-3]' \
@@ -63,7 +63,7 @@ python -m tinker_cookbook.recipes.lr_sweep.sweep \
 ### Smaller budget for quick iteration
 
 ```bash
-python -m tinker_cookbook.recipes.lr_sweep.sweep \
+python -m tinker_cookbook.sweep \
     recipe=sft \
     base.model_name=Qwen/Qwen3.5-4B \
     training_budget_examples=640 \
@@ -78,14 +78,14 @@ With `batch_size=128` and `budget=640`, each run trains for 5 steps — useful f
 By default, the sweep optimizes `train_mean_nll`. For RL sweeps, you may want a different metric:
 
 ```bash
-python -m tinker_cookbook.recipes.lr_sweep.sweep \
+python -m tinker_cookbook.sweep \
     recipe=math_rl \
     metric=env/all/reward/total
 ```
 
-## Using the sweep module directly
+## Python API
 
-The LR sweep recipe is built on `tinker_cookbook.sweep`, which can wrap any recipe config with sweep axes. You can use it directly in Python for more control.
+The CLI is built on `tinker_cookbook.sweep`, which can wrap any recipe config with sweep axes. Use the Python API directly for more control.
 
 ### Sequential (default)
 
@@ -105,8 +105,6 @@ print(f"Best LR: {best['learning_rate']:.2e}")
 
 ### Parallel with ProcessPoolExecutor
 
-Run multiple training jobs concurrently on the same machine:
-
 ```python
 results = sweep.run(
     cli_main,
@@ -118,8 +116,6 @@ results = sweep.run(
 ```
 
 ### Parallel with Ray
-
-For distributed execution across a Ray cluster:
 
 ```python
 from ray.util.multiprocessing.pool import Pool
@@ -135,8 +131,6 @@ results = sweep.run(
 
 ### With xmux (tmux-based)
 
-For long-running sweeps on a remote machine with interactive monitoring:
-
 ```python
 from tinker_cookbook import sweep
 from tinker_cookbook.xmux import JobSpec, SwarmConfig, launch_swarm
@@ -150,15 +144,15 @@ grid = sweep.grid(learning_rate=[1e-4, 3e-4, 1e-3], lora_rank=[32, 128])
 job_specs = [
     JobSpec(
         main_fn=cli_main,
-        log_relpath=f"lr_sweep/{sweep.default_run_name(point)}",
+        log_relpath=f"sweep/{sweep.default_run_name(point)}",
         entrypoint_config=chz.replace(base, **point),
     )
     for point in grid
 ]
-launch_swarm(job_specs, SwarmConfig(sweep_name="lr_sweep"))
+launch_swarm(job_specs, SwarmConfig(sweep_name="sweep"))
 
 # After all jobs complete:
-results = sweep.collect("~/experiments/lr_sweep")
+results = sweep.collect("~/experiments/sweep")
 ```
 
 ### With wandb logging
@@ -169,7 +163,7 @@ Set `wandb_project` on the base config — metrics are logged to both `metrics.j
 results = sweep.run(
     cli_main,
     CLIConfig(model_name="Qwen/Qwen3.5-4B", dataset="tulu3",
-              wandb_project="lr-sweep"),
+              wandb_project="my-sweep"),
     learning_rate=[1e-4, 3e-4, 1e-3],
 )
 ```

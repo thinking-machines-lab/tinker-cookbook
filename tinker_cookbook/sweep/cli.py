@@ -1,25 +1,25 @@
 """
-LR Sweep Recipe — find optimal learning rates for any recipe.
+Sweep CLI — run hyperparameter sweeps across any recipe.
 
 Works with any recipe that follows the ``CLIConfig`` + ``cli_main`` pattern.
 Use short aliases for common recipes, or pass a full module path for any recipe.
 
 Short aliases::
 
-    python -m tinker_cookbook.recipes.lr_sweep.sweep recipe=sft
-    python -m tinker_cookbook.recipes.lr_sweep.sweep recipe=math_rl
-    python -m tinker_cookbook.recipes.lr_sweep.sweep recipe=code_rl
-    python -m tinker_cookbook.recipes.lr_sweep.sweep recipe=dpo
+    python -m tinker_cookbook.sweep recipe=sft
+    python -m tinker_cookbook.sweep recipe=math_rl
+    python -m tinker_cookbook.sweep recipe=code_rl
+    python -m tinker_cookbook.sweep recipe=dpo
 
 Full module path (works for any recipe with CLIConfig + cli_main)::
 
-    python -m tinker_cookbook.recipes.lr_sweep.sweep \\
+    python -m tinker_cookbook.sweep \\
         recipe=tinker_cookbook.recipes.harbor_rl.train \\
         base.model_name=Qwen/Qwen3-8B
 
 Quick smoke test (5 steps)::
 
-    python -m tinker_cookbook.recipes.lr_sweep.sweep \\
+    python -m tinker_cookbook.sweep \\
         recipe=sft training_budget_examples=640 \\
         'learning_rates=[1e-4, 3e-4, 1e-3]' 'lora_ranks=[32]'
 """
@@ -105,7 +105,7 @@ def get_recipe(name: str) -> tuple[type, Callable[..., None]]:
 
 
 def _make_sweep_config_cls(recipe_config_cls: type) -> type:
-    """Dynamically create an LRSweepConfig with a concrete ``base`` field type.
+    """Dynamically create a SweepConfig with a concrete ``base`` field type.
 
     This is necessary because ``chz`` needs a concrete type for ``base`` at
     parse time, but we don't know which recipe is selected until we read ``recipe``
@@ -113,8 +113,8 @@ def _make_sweep_config_cls(recipe_config_cls: type) -> type:
     """
 
     @chz.chz
-    class LRSweepConfig:
-        """Configuration for an LR sweep experiment."""
+    class SweepConfig:
+        """Configuration for a hyperparameter sweep experiment."""
 
         base: recipe_config_cls = chz.field(default_factory=recipe_config_cls)  # type: ignore[valid-type]
 
@@ -133,7 +133,7 @@ def _make_sweep_config_cls(recipe_config_cls: type) -> type:
         # Metric to optimize (depends on recipe)
         metric: str = "train_mean_nll"
 
-    return LRSweepConfig
+    return SweepConfig
 
 
 def _get_batch_size(config: Any) -> int:
@@ -153,8 +153,8 @@ def _extract_recipe_from_argv(argv: list[str]) -> str:
     return "sft"
 
 
-def run_lr_sweep(config: Any, recipe_name: str) -> None:
-    """Run an LR sweep and print the best learning rate per rank."""
+def run_sweep(config: Any, recipe_name: str) -> None:
+    """Run a hyperparameter sweep and print the best config per rank."""
     _, main_fn = get_recipe(recipe_name)
     base = config.base
 
@@ -191,8 +191,8 @@ def run_lr_sweep(config: Any, recipe_name: str) -> None:
         )
         return
 
-    # Find and print best LR per rank
-    print(f"\n--- Best learning rate per rank (by {metric}) ---")
+    # Find and print best config per rank
+    print(f"\n--- Best config per rank (by {metric}) ---")
     recommendations: dict[str, dict[str, float | int]] = {}
     for rank_key, group in results.groupby("lora_rank"):
         rank = int(rank_key)  # type: ignore[arg-type]
@@ -208,7 +208,7 @@ def run_lr_sweep(config: Any, recipe_name: str) -> None:
 
     # Write recommendations JSON
     sweep_dir = os.path.dirname(results["log_path"].iloc[0])
-    rec_path = os.path.join(sweep_dir, "lr_recommendations.json")
+    rec_path = os.path.join(sweep_dir, "recommendations.json")
     model_name = getattr(base, "model_name", "unknown")
     with open(rec_path, "w") as f:
         json.dump(
@@ -224,7 +224,8 @@ def run_lr_sweep(config: Any, recipe_name: str) -> None:
     print(f"\nRecommendations written to {rec_path}")
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """CLI entry point for hyperparameter sweeps."""
     # Two-phase parsing: extract recipe from argv first to determine the
     # concrete type for the `base` field, then let chz parse everything.
     recipe_name = _extract_recipe_from_argv(sys.argv[1:])
@@ -235,4 +236,8 @@ if __name__ == "__main__":
     filtered_argv = [a for a in sys.argv[1:] if not a.startswith("recipe=")]
 
     sweep_config = chz.Blueprint(sweep_config_cls).make_from_argv(filtered_argv)
-    run_lr_sweep(sweep_config, recipe_name)
+    run_sweep(sweep_config, recipe_name)
+
+
+if __name__ == "__main__":
+    main()
