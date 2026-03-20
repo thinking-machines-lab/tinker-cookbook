@@ -5,7 +5,7 @@ Math problems have been the most active testbed for RL with LLMs. This recipe co
 ## Installation
 
 ```bash
-uv pip install -e ".[math-rl]"
+uv pip install 'tinker-cookbook[math-rl] @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
 ```
 
 ## RL on arithmetic.

@@ -12,9 +12,16 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any, TypeVar
 
-import sympy
-from pylatexenc import latex2text
-from sympy.parsing import sympy_parser
+try:
+    import sympy
+    from pylatexenc import latex2text
+    from sympy.parsing import sympy_parser
+except ImportError:
+    raise ImportError(
+        "math-rl dependencies (sympy, pylatexenc, math-verify) are required for this recipe. "
+        "Install them with: uv pip install 'tinker-cookbook[math-rl] @ "
+        "git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'"
+    ) from None
 
 logger = logging.getLogger(__name__)
 

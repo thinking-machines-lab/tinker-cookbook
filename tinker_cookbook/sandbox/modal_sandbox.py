@@ -20,7 +20,14 @@ import os
 import shlex
 import uuid
 
-import modal
+try:
+    import modal
+except ImportError:
+    raise ImportError(
+        "modal is required for ModalSandbox. "
+        "Install it with: uv pip install 'tinker-cookbook[modal] @ "
+        "git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'"
+    ) from None
 
 from tinker_cookbook.exceptions import SandboxError
 from tinker_cookbook.sandbox.sandbox_interface import SandboxResult, SandboxTerminatedError

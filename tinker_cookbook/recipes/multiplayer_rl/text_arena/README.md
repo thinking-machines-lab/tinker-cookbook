@@ -3,7 +3,7 @@
 ## Installation
 
 ```bash
-uv pip install -e ".[multiplayer-rl]"
+uv pip install 'tinker-cookbook[multiplayer-rl] @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
 ```
 
 Many research studies involve training several different language model agents jointly. We cover one simple example, where the language model learns to play tic-tac-toe with itself.

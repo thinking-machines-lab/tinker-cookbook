@@ -32,7 +32,7 @@ If you prefer not to use Docker, you can set up the sandbox manually by followin
 
 1. Install the modal extra and authenticate:
 ```bash
-uv pip install -e ".[modal]"
+uv pip install 'tinker-cookbook[modal] @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
 modal token new
 ```
 
