@@ -226,13 +226,18 @@ def main(config: Config):
                 datums_D.append(datum)
 
         # Training step
-        fwd_bwd_future = training_client.forward_backward(datums_D, loss_fn="importance_sampling")
-        optim_step_future = training_client.optim_step(adam_params)
-        _fwd_bwd_result = fwd_bwd_future.result()
-        optim_result = optim_step_future.result()
+        if not datums_D:
+            logger.warning("Batch %d: all advantages zero, skipping training step", batch_idx)
+        else:
+            fwd_bwd_future = training_client.forward_backward(
+                datums_D, loss_fn="importance_sampling"
+            )
+            optim_step_future = training_client.optim_step(adam_params)
+            _fwd_bwd_result = fwd_bwd_future.result()
+            optim_result = optim_step_future.result()
 
-        if optim_result.metrics:
-            metrics.update(optim_result.metrics)
+            if optim_result.metrics:
+                metrics.update(optim_result.metrics)
 
         # Log metrics
         metrics["time/total"] = time.time() - t_start
