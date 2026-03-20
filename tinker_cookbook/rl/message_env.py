@@ -9,7 +9,6 @@ the RL training loop.
 from __future__ import annotations
 
 import asyncio
-import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
@@ -19,8 +18,6 @@ from tinker_cookbook.completers import StopCondition
 from tinker_cookbook.renderers import Renderer
 from tinker_cookbook.renderers.base import Message
 from tinker_cookbook.rl import types
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
