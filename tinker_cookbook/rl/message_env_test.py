@@ -323,7 +323,7 @@ class TestMaxGenerationTokens:
         result = asyncio.run(env.step([1]))
 
         assert result.episode_done is True
-        assert result.reward == 0.0
+        assert result.reward == 0.0  # default context_overflow_reward
         assert result.next_observation.length == 0
         assert result.metrics["context_overflow"] == 1.0
         assert result.metrics["turns"] == 2.0
@@ -387,6 +387,80 @@ class TestMaxGenerationTokens:
 
         assert model_input.to_ints() == list(range(50))
         assert stop_cond == ["<s>"]
+
+
+class TestContextOverflowReward:
+    def test_custom_overflow_reward(self):
+        """context_overflow_reward is used when episode terminates due to overflow."""
+        renderer = _make_renderer(gen_prompt_tokens=list(range(100)), stop_sequences=["<s>"])
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(
+                reward=0.9,
+                episode_done=False,
+                next_messages=[{"role": "user", "content": "x"}],
+            ),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer,
+            message_env=msg_env,
+            max_trajectory_tokens=50,
+            context_overflow_reward=-0.5,
+        )
+
+        result = asyncio.run(env.step([1]))
+
+        assert result.episode_done is True
+        assert result.reward == -0.5
+        assert result.metrics["context_overflow"] == 1.0
+
+    def test_custom_overflow_reward_with_generation_budget(self):
+        """context_overflow_reward works with max_generation_tokens check."""
+        renderer = _make_renderer(gen_prompt_tokens=list(range(80)), stop_sequences=["<s>"])
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(
+                reward=0.9,
+                episode_done=False,
+                next_messages=[{"role": "user", "content": "x"}],
+                metrics={"turns": 3.0},
+            ),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer,
+            message_env=msg_env,
+            max_trajectory_tokens=100,
+            max_generation_tokens=30,  # 80 + 30 = 110 > 100
+            context_overflow_reward=-1.0,
+        )
+
+        result = asyncio.run(env.step([1]))
+
+        assert result.episode_done is True
+        assert result.reward == -1.0
+        assert result.metrics["context_overflow"] == 1.0
+        assert result.metrics["turns"] == 3.0
+
+    def test_default_overflow_reward_is_zero(self):
+        """Default context_overflow_reward is 0.0 (backward compatible)."""
+        renderer = _make_renderer(gen_prompt_tokens=list(range(100)), stop_sequences=["<s>"])
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(
+                reward=0.9,
+                episode_done=False,
+                next_messages=[{"role": "user", "content": "x"}],
+            ),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer,
+            message_env=msg_env,
+            max_trajectory_tokens=50,
+        )
+
+        result = asyncio.run(env.step([1]))
+
+        assert result.reward == 0.0
 
 
 class TestStepThreading:

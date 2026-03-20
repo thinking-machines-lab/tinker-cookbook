@@ -94,6 +94,8 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
         command_timeout: int = 120,
         grader_timeout: int = 60,
         max_trajectory_tokens: int = 32 * 1024,
+        max_generation_tokens: int | None = None,
+        context_overflow_reward: float = 0.0,
         sandbox_factory: SandboxFactory | None = None,
         reward_fn: RewardFn | None = None,
     ):
@@ -106,6 +108,8 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
         self.command_timeout = command_timeout
         self.grader_timeout = grader_timeout
         self.max_trajectory_tokens = max_trajectory_tokens
+        self.max_generation_tokens = max_generation_tokens
+        self.context_overflow_reward = context_overflow_reward
         self.sandbox_factory = sandbox_factory or default_sandbox_factory
         self.reward_fn = reward_fn
         self._sandboxes: list[SandboxInterface] = []
@@ -146,6 +150,8 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
                     reward_fn=reward_fn,
                     max_turns=self.max_turns,
                     max_trajectory_tokens=self.max_trajectory_tokens,
+                    max_generation_tokens=self.max_generation_tokens,
+                    context_overflow_reward=self.context_overflow_reward,
                 )
             )
         return envs
@@ -196,6 +202,8 @@ class HarborDatasetBuilder(RLDatasetBuilder):
     command_timeout: int = 120
     grader_timeout: int = 60
     max_trajectory_tokens: int = 32 * 1024
+    max_generation_tokens: int | None = None
+    context_overflow_reward: float = 0.0
     sandbox_factory: SandboxFactory | None = None
     reward_fn: RewardFn | None = None
 
@@ -211,6 +219,8 @@ class HarborDatasetBuilder(RLDatasetBuilder):
                 command_timeout=self.command_timeout,
                 grader_timeout=self.grader_timeout,
                 max_trajectory_tokens=self.max_trajectory_tokens,
+                max_generation_tokens=self.max_generation_tokens,
+                context_overflow_reward=self.context_overflow_reward,
                 sandbox_factory=self.sandbox_factory,
                 reward_fn=self.reward_fn,
             )

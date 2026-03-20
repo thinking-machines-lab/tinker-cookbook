@@ -61,6 +61,7 @@ class EnvFromMessageEnv(types.Env):
         terminate_on_parse_error: bool = True,
         max_trajectory_tokens: int | None = None,
         max_generation_tokens: int | None = None,
+        context_overflow_reward: float = 0.0,
     ):
         self.renderer = renderer
         self.message_env = message_env
@@ -68,6 +69,7 @@ class EnvFromMessageEnv(types.Env):
         self.terminate_on_parse_error = terminate_on_parse_error
         self.max_trajectory_tokens = max_trajectory_tokens
         self.max_generation_tokens = max_generation_tokens
+        self.context_overflow_reward = context_overflow_reward
         self._base_stop_condition = renderer.get_stop_sequences()
 
     async def _render_in_thread(self, messages: list[Message], **kwargs) -> tinker.ModelInput:
@@ -124,7 +126,7 @@ class EnvFromMessageEnv(types.Env):
         # the prompt for the next sampling call.
         if self._exceeds_context_limit(next_observation.length):
             return types.StepResult(
-                reward=0.0,
+                reward=self.context_overflow_reward,
                 episode_done=True,
                 next_observation=tinker.ModelInput.empty(),
                 next_stop_condition=self._base_stop_condition,
