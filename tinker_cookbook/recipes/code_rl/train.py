@@ -6,6 +6,7 @@ import chz
 
 from tinker_cookbook import checkpoint_utils, cli_utils
 from tinker_cookbook.recipes.code_rl.code_env import DeepcoderDatasetBuilder
+from tinker_cookbook.rl.rollout_strategy import RetryOnFailure
 from tinker_cookbook.rl.train import AsyncConfig, Config, main
 from tinker_cookbook.sandbox import SandboxBackend
 
@@ -54,6 +55,10 @@ class CLIConfig:
     sandbox_backend: SandboxBackend = SandboxBackend.SANDBOXFUSION
 
     max_steps: int | None = None
+
+    # Maximum number of times to retry a failed trajectory rollout (container crash,
+    # sandbox flake, etc.). None (default) = crash on any error. 0+ = retry budget.
+    rollout_max_retries: int | None = None
 
 
 async def cli_main(cli_config: CLIConfig) -> None:
@@ -113,6 +118,9 @@ async def cli_main(cli_config: CLIConfig) -> None:
         if cli_config.max_steps_off_policy is not None
         else None,
         max_steps=cli_config.max_steps,
+        rollout_error_tolerance=RetryOnFailure(max_retries=cli_config.rollout_max_retries)
+        if cli_config.rollout_max_retries is not None
+        else False,
     )
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)

@@ -1,14 +1,17 @@
 import asyncio
+import logging
 import numbers
-from collections.abc import Sequence
+from collections import Counter
 from concurrent.futures import Executor
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import tinker
 
 from tinker_cookbook.completers import TinkerTokenCompleter, TokenCompleter
+from tinker_cookbook.exceptions import AllTrajectoriesFailedError
+from tinker_cookbook.rl.rollout_strategy import FailFast, RolloutStrategy
 from tinker_cookbook.rl.types import (
     Env,
     EnvGroupBuilder,
@@ -18,6 +21,39 @@ from tinker_cookbook.rl.types import (
 )
 from tinker_cookbook.utils import logtree, trace
 from tinker_cookbook.utils.misc_utils import all_same
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RolloutErrorCounter:
+    """Accumulates rollout error counts from :class:`TrajectoryGroup` results.
+
+    Lives in the main event loop only — never crosses thread/process boundaries.
+    Error information reaches the counter via :attr:`TrajectoryGroup.rollout_errors`,
+    which is embedded in the return value (pickleable, safe for any executor).
+    """
+
+    _counts: Counter[str] = field(default_factory=Counter)
+    _groups_skipped: int = 0
+
+    def ingest(self, result: TrajectoryGroup | None) -> None:
+        """Absorb error info from a single rollout result."""
+        if result is None:
+            self._groups_skipped += 1
+            return
+        for err in result.rollout_errors:
+            self._counts[err.error_type] += 1
+
+    def get_metrics(self, prefix: str = "rollout_errors") -> dict[str, float]:
+        """Return cumulative error metrics (monotonically increasing)."""
+        out: dict[str, float] = {}
+        if self._counts or self._groups_skipped > 0:
+            for k, v in self._counts.items():
+                out[f"{prefix}/{k}"] = float(v)
+            out[f"{prefix}/total"] = float(sum(self._counts.values()))
+            out[f"{prefix}/groups_skipped"] = float(self._groups_skipped)
+        return out
 
 
 def _log_transition_logs(logs: dict[str, Any]) -> None:
@@ -106,25 +142,38 @@ async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
 
 @logtree.scope_header_decorator("Group Rollout")
 async def do_group_rollout(
-    env_group_builder: EnvGroupBuilder, policy: TokenCompleter
+    env_group_builder: EnvGroupBuilder,
+    policy: TokenCompleter,
+    strategy: RolloutStrategy | None = None,
 ) -> TrajectoryGroup:
-    envs_G: Sequence[Env] = await env_group_builder.make_envs()
-    trajectories_G = await asyncio.gather(*[do_single_rollout(policy, env) for env in envs_G])
+    """Run rollouts for all environments in a group and compute group rewards.
+
+    Args:
+        strategy: Controls how trajectories are collected (error handling,
+            retries, etc.).  Defaults to :class:`FailFast` which preserves
+            the original fail-on-any-error behaviour.
+    """
+    if strategy is None:
+        strategy = FailFast()
+
+    result = await strategy.execute(env_group_builder, policy)
 
     async with trace.scope_span("compute_group_rewards"):
         rewards_and_metrics_G = await env_group_builder.compute_group_rewards(
-            trajectories_G, envs_G
+            result.trajectories, result.envs
         )
     rewards_G, metrics_G = zip(*rewards_and_metrics_G, strict=True)
 
     with logtree.scope_header("Trajectory Details"):
         for traj_idx, (traj, final_reward) in enumerate(
-            zip(trajectories_G, rewards_G, strict=True)
+            zip(result.trajectories, rewards_G, strict=True)
         ):
             with logtree.scope_header(f"Trajectory {traj_idx} Episode"):
                 _log_single_trajectory_details(traj, final_reward)
 
-    return TrajectoryGroup(trajectories_G, list(rewards_G), list(metrics_G))
+    return TrajectoryGroup(
+        result.trajectories, list(rewards_G), list(metrics_G), rollout_errors=result.errors
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +213,7 @@ class _RolloutTask:
     temperature: float
     remove_constant_reward_groups: bool
     enable_logging: bool
+    strategy: RolloutStrategy = field(default_factory=FailFast)
 
 
 def _run_rollout_sync(task: _RolloutTask) -> TrajectoryGroup | None:
@@ -180,6 +230,7 @@ def _run_rollout_sync(task: _RolloutTask) -> TrajectoryGroup | None:
             task.temperature,
             task.remove_constant_reward_groups,
             task.enable_logging,
+            strategy=task.strategy,
         )
     )
 
@@ -192,6 +243,7 @@ async def do_group_rollout_and_filter_constant_reward(
     temperature: float,
     do_remove_constant_reward_groups: bool,
     enable_logging: bool = True,
+    strategy: RolloutStrategy | None = None,
 ) -> TrajectoryGroup | None:
     """Run a group rollout, optionally dispatching to an external executor.
 
@@ -199,7 +251,14 @@ async def do_group_rollout_and_filter_constant_reward(
     bundled into a pickleable ``_RolloutTask`` and dispatched via
     ``loop.run_in_executor()``. Otherwise, runs as an asyncio coroutine
     in the current process (zero overhead).
+
+    Args:
+        strategy: Controls how trajectories are collected within the group
+            (error handling, retries, etc.).  Defaults to :class:`FailFast`.
     """
+    if strategy is None:
+        strategy = FailFast()
+
     executor = get_rollout_executor()
     if executor is not None:
         task = _RolloutTask(
@@ -209,6 +268,7 @@ async def do_group_rollout_and_filter_constant_reward(
             temperature=temperature,
             remove_constant_reward_groups=do_remove_constant_reward_groups,
             enable_logging=enable_logging,
+            strategy=strategy,
         )
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(executor, _run_rollout_sync, task)
@@ -220,6 +280,7 @@ async def do_group_rollout_and_filter_constant_reward(
         temperature,
         do_remove_constant_reward_groups,
         enable_logging,
+        strategy=strategy,
     )
 
 
@@ -230,14 +291,31 @@ async def _do_group_rollout_and_filter_constant_reward_impl(
     temperature: float,
     do_remove_constant_reward_groups: bool,
     enable_logging: bool = True,
+    strategy: RolloutStrategy | None = None,
 ) -> TrajectoryGroup | None:
+    if strategy is None:
+        strategy = FailFast()
+
     policy = TinkerTokenCompleter(sampling_client, max_tokens=max_tokens, temperature=temperature)
 
-    with logtree.optional_enable_logging(enable_logging):
-        trajectory_group = await do_group_rollout(env_group_builder, policy)
+    try:
+        with logtree.optional_enable_logging(enable_logging):
+            trajectory_group = await do_group_rollout(
+                env_group_builder,
+                policy,
+                strategy=strategy,
+            )
+    except AllTrajectoriesFailedError as e:
+        # All retries exhausted — already logged per-trajectory inside the strategy
+        logger.warning(str(e))
+        return None
+    except Exception as e:
+        if not strategy.catches_group_errors:
+            raise
+        logger.warning(f"Rollout error ({type(e).__name__}), skipping group: {e}")
+        return None
 
     # Remove if all trajectories have the same reward
     if do_remove_constant_reward_groups and all_same(trajectory_group.get_total_rewards()):
         return None
-    else:
-        return trajectory_group
+    return trajectory_group

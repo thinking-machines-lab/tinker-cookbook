@@ -83,6 +83,7 @@ Agents often struggle with the nested type hierarchy. Key resources:
 - Renderers: `tinker_cookbook/renderers/`
 - Completers: `tinker_cookbook/completers.py`
 - RL types: `tinker_cookbook/rl/types.py`
+- Rollout strategies: `tinker_cookbook/rl/rollout_strategy.py` (FailFast, RetryOnFailure)
 - Logging: `tinker_cookbook/utils/logtree.py`, `tinker_cookbook/rl/rollouts.py`
 - Recipes: `tinker_cookbook/recipes/`
 

@@ -40,6 +40,7 @@ __all__ = [
     "RendererError",
     "TrainingError",
     "CheckpointError",
+    "AllTrajectoriesFailedError",
     "WeightsError",
     "WeightsDownloadError",
     "WeightsMergeError",
@@ -139,6 +140,14 @@ class CheckpointError(TrainingError):
 
     Raised when a checkpoint file is missing, corrupted, or when the
     save/load operation fails.
+    """
+
+
+class AllTrajectoriesFailedError(TrainingError):
+    """All trajectories in a rollout group failed.
+
+    Caught internally by the rollout pipeline to skip the affected group
+    rather than crash the training run.
     """
 
 

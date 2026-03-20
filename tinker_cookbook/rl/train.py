@@ -45,7 +45,12 @@ from tinker_cookbook.rl.rollout_logging import (
     rollout_summaries_jsonl_path,
     write_rollout_summaries_jsonl_from_groups,
 )
+from tinker_cookbook.rl.rollout_strategy import (
+    RolloutStrategy,
+    rollout_strategy_from_config,
+)
 from tinker_cookbook.rl.rollouts import (
+    RolloutErrorCounter,
     do_group_rollout,  # noqa: F401 — re-exported for verifiers monkey-patching
     do_group_rollout_and_filter_constant_reward,
     set_rollout_executor,
@@ -401,6 +406,11 @@ class Config:
     compute_post_kl: bool = False
     # Remove groups where all trajectories have identical reward.
     remove_constant_reward_groups: bool = False
+    # Tolerance for errors during rollouts (container crashes, sandbox flakes, etc.).
+    # False (default): crash on any error (FailFast).
+    # True: retry failed trajectories with default budget (RetryOnFailure(max_retries=3)).
+    # RolloutStrategy instance: custom strategy (e.g. RetryOnFailure(max_retries=5)).
+    rollout_error_tolerance: bool | RolloutStrategy = False
     # Emit async trace events for debugging/profiling.
     enable_trace: bool = False
     # Save a Gantt chart HTML every N iterations (0 = disabled). Requires plotly.
@@ -508,6 +518,8 @@ async def do_sync_training_with_stream_minibatch(
     dataset: RLDataset,
     ml_logger: ml_log.Logger,
     tokenizer: Tokenizer,
+    error_counter: RolloutErrorCounter | None = None,
+    strategy: RolloutStrategy | None = None,
 ):
     """
     Implements fully synchronous on-policy training with minibatch streaming.
@@ -560,8 +572,12 @@ async def do_sync_training_with_stream_minibatch(
                     temperature=cfg.temperature,
                     do_remove_constant_reward_groups=cfg.remove_constant_reward_groups,
                     enable_logging=enable_logging,
+                    strategy=strategy,
                 )
                 metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
+                # Ingest error info (safe: same event loop thread)
+                if error_counter is not None:
+                    error_counter.ingest(trajectory_group)
                 if trajectory_group is not None:
                     trajectory_groups_queue.put_nowait(
                         WrappedTrajectoryGroup(
@@ -616,6 +632,8 @@ async def do_sync_training_with_stream_minibatch(
 
         # Log metrics
         metrics.update(full_batch_metrics)
+        if error_counter is not None:
+            metrics.update(error_counter.get_metrics())
         metrics["time/total"] = time.time() - t_start
         ml_logger.log_metrics(metrics, step=i_batch)
 
@@ -673,6 +691,8 @@ async def do_async_training(
     dataset: RLDataset,
     ml_logger: ml_log.Logger,
     tokenizer: Tokenizer,
+    error_counter: RolloutErrorCounter | None = None,
+    strategy: RolloutStrategy | None = None,
 ):
     """Implements async off-policy training, capped at K steps off policy."""
     assert cfg.async_config is not None
@@ -751,7 +771,11 @@ async def do_async_training(
                 max_tokens=cfg.max_tokens,
                 temperature=cfg.temperature,
                 do_remove_constant_reward_groups=cfg.remove_constant_reward_groups,
+                strategy=strategy,
             )
+            # Ingest error info (safe: same event loop thread)
+            if error_counter is not None:
+                error_counter.ingest(trajectory_group)
             if trajectory_group is None:
                 trajectory_groups_queue.put_nowait(None)
             else:
@@ -925,6 +949,8 @@ async def do_async_training(
 
             # Log metrics
             metrics.update(train_step_metrics)
+            if error_counter is not None:
+                metrics.update(error_counter.get_metrics())
             metrics["time/training_loop/total"] = time.time() - t_start
             ml_logger.log_metrics(metrics, step=i_batch)
             i_batch += 1
@@ -1274,6 +1300,8 @@ async def do_sync_training(
     dataset: RLDataset,
     ml_logger: ml_log.Logger,
     tokenizer: Tokenizer,
+    error_counter: RolloutErrorCounter | None = None,
+    strategy: RolloutStrategy | None = None,
 ):
     """Implements fully synchronous on-policy training"""
     # Initial sampling client
@@ -1282,7 +1310,7 @@ async def do_sync_training(
     )
 
     for i_batch in range(start_batch, end_batch):
-        metrics = {
+        metrics: dict[str, Any] = {
             "progress/batch": i_batch,
             "optim/lr": cfg.learning_rate,
             "progress/done_frac": (i_batch + 1) / num_batches,
@@ -1308,7 +1336,7 @@ async def do_sync_training(
             ):
                 # Note: do_remove_constant_reward_groups=False here because we remove
                 # constant reward groups after all rollouts are collected (below)
-                trajectory_groups_P = await gather_with_progress(
+                results_P = await gather_with_progress(
                     (
                         do_group_rollout_and_filter_constant_reward(
                             sampling_client,
@@ -1317,46 +1345,67 @@ async def do_sync_training(
                             temperature=cfg.temperature,
                             do_remove_constant_reward_groups=False,
                             enable_logging=i < cfg.num_groups_to_log,
+                            strategy=strategy,
                         )
                         for i, builder in enumerate(env_group_builders_P)
                     ),
                     desc=f"Sampling batch {i_batch}",
                 )
 
-            _maybe_export_rollout_summary_jsonl(
-                cfg=cfg,
-                file_prefix=f"train_iteration_{i_batch:06d}",
-                split="train",
-                iteration=i_batch,
-                groups_P=[
-                    RolloutSummaryGroup(
-                        trajectory_group=trajectory_group,
-                        tags=env_group_builder.logging_tags(),
-                        sampling_client_step=i_batch,
-                    )
-                    for env_group_builder, trajectory_group in safezip(
-                        env_group_builders_P, trajectory_groups_P
-                    )
-                ],
-            )
+            # Ingest error info from results
+            if error_counter is not None:
+                for result in results_P:
+                    error_counter.ingest(result)
 
-            if cfg.remove_constant_reward_groups:
-                trajectory_groups_P = remove_constant_reward_groups(trajectory_groups_P)
+            # Filter out None results (from errored or fully-failed groups)
+            successful = [
+                (builder, tg)
+                for builder, tg in safezip(env_group_builders_P, results_P)
+                if tg is not None
+            ]
+            batch_skipped = not successful
+            if batch_skipped:
+                logger.warning(f"Batch {i_batch}: all groups failed or filtered, skipping batch")
+            else:
+                env_group_builders_P = [s[0] for s in successful]
+                trajectory_groups_P: list[TrajectoryGroup] = [s[1] for s in successful]
 
-            # Train step
-            sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(
-                cfg,
-                i_batch,
-                training_client,
-                kl_reference_client,
-                tokenizer,
-                env_group_builders_P,
-                trajectory_groups_P,
-            )
+                _maybe_export_rollout_summary_jsonl(
+                    cfg=cfg,
+                    file_prefix=f"train_iteration_{i_batch:06d}",
+                    split="train",
+                    iteration=i_batch,
+                    groups_P=[
+                        RolloutSummaryGroup(
+                            trajectory_group=trajectory_group,
+                            tags=env_group_builder.logging_tags(),
+                            sampling_client_step=i_batch,
+                        )
+                        for env_group_builder, trajectory_group in safezip(
+                            env_group_builders_P, trajectory_groups_P
+                        )
+                    ],
+                )
 
-            metrics.update(train_step_metrics)
+                if cfg.remove_constant_reward_groups:
+                    trajectory_groups_P = remove_constant_reward_groups(trajectory_groups_P)
+
+                # Train step
+                sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(
+                    cfg,
+                    i_batch,
+                    training_client,
+                    kl_reference_client,
+                    tokenizer,
+                    env_group_builders_P,
+                    trajectory_groups_P,
+                )
+
+                metrics.update(train_step_metrics)
 
         metrics.update(window.get_timing_metrics())
+        if error_counter is not None:
+            metrics.update(error_counter.get_metrics())
         window.write_spans_jsonl(Path(cfg.log_path) / "timing_spans.jsonl", step=i_batch)
         if cfg.span_chart_every > 0 and i_batch % cfg.span_chart_every == 0:
             trace.save_gantt_chart_html(
@@ -1445,9 +1494,19 @@ async def main(
 
     # Create dataset from thunk
     dataset, maybe_test_dataset = await cfg.dataset_builder()
+    # Build rollout strategy and error counter from config
+    strategy = rollout_strategy_from_config(cfg.rollout_error_tolerance)
+    error_counter = RolloutErrorCounter() if strategy.catches_group_errors else None
+
     evaluators = [evaluator() for evaluator in cfg.evaluator_builders]
     if maybe_test_dataset is not None:
-        evaluators.append(RLTestSetEvaluator(maybe_test_dataset, max_tokens=cfg.max_tokens))
+        evaluators.append(
+            RLTestSetEvaluator(
+                maybe_test_dataset,
+                max_tokens=cfg.max_tokens,
+                strategy=strategy,
+            )
+        )
 
     num_batches = len(dataset)
     end_batch = min(cfg.max_steps, num_batches) if cfg.max_steps is not None else num_batches
@@ -1484,6 +1543,8 @@ async def main(
         dataset=dataset,
         ml_logger=ml_logger,
         tokenizer=tokenizer,
+        error_counter=error_counter,
+        strategy=strategy,
     )
 
     # Save final checkpoint
