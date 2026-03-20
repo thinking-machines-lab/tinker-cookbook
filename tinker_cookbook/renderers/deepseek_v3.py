@@ -8,8 +8,10 @@ Includes:
 
 import json
 import re
+import warnings
 
 import tinker
+import transformers
 
 from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.renderers.base import (
@@ -53,6 +55,15 @@ class _DeepSeekV3BaseRenderer(Renderer):
         super().__init__(tokenizer)
         self.system_role_as_user = system_role_as_user
         self.strip_thinking_from_history = strip_thinking_from_history
+
+        if transformers.__version__ == "5.3.0":
+            warnings.warn(
+                "transformers 5.3.0 has a known bug with the DeepSeek tokenizer that "
+                "strips spaces during decode, which will produce incorrect outputs. "
+                "Please upgrade to transformers>=5.3.1 or downgrade to transformers<5.3.0. "
+                "See https://github.com/huggingface/transformers/pull/44801",
+                stacklevel=2,
+            )
 
     @property
     def has_extension_property(self) -> bool:

@@ -47,7 +47,7 @@ from tinker_cookbook.renderers import (
     unregister_renderer,
 )
 from tinker_cookbook.renderers.base import ContentPart, ensure_list, ensure_text
-from tinker_cookbook.renderers.conftest import extract_token_ids
+from tinker_cookbook.renderers.conftest import extract_token_ids, skip_if_deepseek_tokenizer_bug
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
 from tinker_cookbook.renderers.nemotron3 import Nemotron3Renderer
@@ -760,6 +760,7 @@ def test_tool_call_supervised_rendering(model_name: str):
     Verifies that our renderers handle tool call conversations correctly
     for supervised learning.
     """
+    skip_if_deepseek_tokenizer_bug(model_name)
     convo = get_tool_call_conversation()
 
     tokenizer = get_tokenizer(model_name)
@@ -817,6 +818,7 @@ def test_strip_thinking_from_history_default(model_name: str, renderer_class):
     Test that renderers with strip_thinking_from_history=True (default) only preserve
     the last assistant message's thinking. Earlier assistant thinking blocks are stripped.
     """
+    skip_if_deepseek_tokenizer_bug(model_name)
     tokenizer = get_tokenizer(model_name)
     renderer = renderer_class(tokenizer)  # Default strip_thinking_from_history=True
 
@@ -848,6 +850,7 @@ def test_strip_thinking_from_history_false(model_name: str, renderer_class):
     Test that strip_thinking_from_history=False preserves thinking in ALL messages.
     This mode is used for multi-turn RL where the extension property is needed.
     """
+    skip_if_deepseek_tokenizer_bug(model_name)
     tokenizer = get_tokenizer(model_name)
     renderer = renderer_class(tokenizer, strip_thinking_from_history=False)
 
@@ -981,6 +984,7 @@ def test_supervised_generation_parse_consistency(
     - The observation tokens match what the model would see at generation time
     - The action tokens can be parsed back to the original message
     """
+    skip_if_deepseek_tokenizer_bug(model_name)
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer(renderer_name, tokenizer)
 
@@ -1104,6 +1108,7 @@ def test_supervised_generation_parse_consistency(
 )
 def test_eot_parsing(model_name: str, renderer_name: str):
     """Test EOT token parsing behavior for different renderers using real tokenizers."""
+    skip_if_deepseek_tokenizer_bug(model_name)
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer(renderer_name, tokenizer)
 
