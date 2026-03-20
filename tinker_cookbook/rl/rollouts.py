@@ -127,7 +127,8 @@ async def do_group_rollout(
 
         return TrajectoryGroup(trajectories_G, list(rewards_G), list(metrics_G))
     finally:
-        # Cleanup implementations are responsible for handling exceptions
+        # cleanup() is not wrapped in try/except; implementations must handle failures
+        # internally and not raise, or exceptions here will mask rollout errors.
         await env_group_builder.cleanup()
 
 
