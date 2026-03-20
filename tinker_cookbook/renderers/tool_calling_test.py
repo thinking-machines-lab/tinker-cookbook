@@ -12,7 +12,7 @@ import pytest
 import tinker
 
 from tinker_cookbook.renderers import Message, RenderContext, get_renderer, get_text_content
-from tinker_cookbook.renderers.conftest import skip_deepseek_tokenizer_bug
+from tinker_cookbook.renderers.testing_utils import skip_deepseek_tokenizer_bug
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 # =============================================================================
