@@ -226,7 +226,7 @@ def main(config: Config):
                 datums_D.append(datum)
 
         # Training step
-        if not datums_D:
+        if len(datums_D) == 0:
             logger.warning("Batch %d: all advantages zero, skipping training step", batch_idx)
         else:
             fwd_bwd_future = training_client.forward_backward(
