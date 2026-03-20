@@ -9,6 +9,7 @@ the RL training loop.
 from __future__ import annotations
 
 import asyncio
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
@@ -18,6 +19,8 @@ from tinker_cookbook.completers import StopCondition
 from tinker_cookbook.renderers import Renderer
 from tinker_cookbook.renderers.base import Message
 from tinker_cookbook.rl import types
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -59,12 +62,14 @@ class EnvFromMessageEnv(types.Env):
         failed_parse_reward: float = -1.0,
         terminate_on_parse_error: bool = True,
         max_trajectory_tokens: int | None = None,
+        max_generation_tokens: int | None = None,
     ):
         self.renderer = renderer
         self.message_env = message_env
         self.failed_parse_reward = failed_parse_reward
         self.terminate_on_parse_error = terminate_on_parse_error
         self.max_trajectory_tokens = max_trajectory_tokens
+        self.max_generation_tokens = max_generation_tokens
         self._base_stop_condition = renderer.get_stop_sequences()
 
     async def _render_in_thread(self, messages: list[Message], **kwargs) -> tinker.ModelInput:
@@ -76,9 +81,27 @@ class EnvFromMessageEnv(types.Env):
         """
         return await asyncio.to_thread(self.renderer.build_generation_prompt, messages, **kwargs)
 
+    def _exceeds_context_limit(self, observation_length: int) -> bool:
+        """Check if the observation + generation budget exceeds the context limit."""
+        if self.max_trajectory_tokens is None:
+            return False
+        generation_reserve = self.max_generation_tokens or 0
+        return observation_length + generation_reserve > self.max_trajectory_tokens
+
     async def initial_observation(self) -> tuple[tinker.ModelInput, StopCondition]:
         messages = await self.message_env.initial_observation()
         model_input = await self._render_in_thread(messages)
+
+        if self._exceeds_context_limit(model_input.length):
+            generation_reserve = self.max_generation_tokens or 0
+            raise ValueError(
+                f"Initial observation ({model_input.length} tokens) + "
+                f"max_generation_tokens ({generation_reserve}) = "
+                f"{model_input.length + generation_reserve} exceeds "
+                f"max_trajectory_tokens ({self.max_trajectory_tokens}). "
+                f"This task's prompt is too long for the model's context window."
+            )
+
         return model_input, self._base_stop_condition
 
     async def step(self, action: types.Action) -> types.StepResult:
@@ -98,11 +121,10 @@ class EnvFromMessageEnv(types.Env):
         next_observation = await self._render_in_thread(msg_step.next_messages)
         next_stop_condition = msg_step.next_stop_condition or self._base_stop_condition
 
-        # Check if trajectory exceeds max token limit
-        if (
-            self.max_trajectory_tokens is not None
-            and next_observation.length > self.max_trajectory_tokens
-        ):
+        # Check if the full trajectory + generation budget fits in the context window.
+        # next_observation is the entire rendered conversation so far, which becomes
+        # the prompt for the next sampling call.
+        if self._exceeds_context_limit(next_observation.length):
             return types.StepResult(
                 reward=0.0,
                 episode_done=True,

@@ -87,6 +87,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
         group_size=cli_config.group_size,
         seed=cli_config.seed,
         sandbox_backend=cli_config.sandbox_backend,
+        max_generation_tokens=cli_config.max_tokens,
     )
 
     config = Config(
