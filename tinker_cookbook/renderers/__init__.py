@@ -42,6 +42,17 @@ from tinker_cookbook.renderers.base import (
 # Renderer classes used directly by tests
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3ThinkingRenderer
 from tinker_cookbook.renderers.gpt_oss import GptOssRenderer
+
+# OpenAI format compatibility utilities
+from tinker_cookbook.renderers.openai_compat import (
+    SamplingResult,
+    extract_sampling_params,
+    openai_messages_to_tinker,
+    openai_tools_to_tinker,
+    prepare_messages_with_tools,
+    sample_chat_completion,
+    sampling_result_to_openai_dict,
+)
 from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
@@ -249,6 +260,14 @@ __all__ = [
     "format_content_as_string",
     "get_text_content",
     "parse_content_blocks",
+    # OpenAI compatibility
+    "SamplingResult",
+    "extract_sampling_params",
+    "openai_messages_to_tinker",
+    "openai_tools_to_tinker",
+    "prepare_messages_with_tools",
+    "sample_chat_completion",
+    "sampling_result_to_openai_dict",
     # Registry
     "register_renderer",
     "unregister_renderer",
