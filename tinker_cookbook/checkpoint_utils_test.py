@@ -1,13 +1,16 @@
 """Tests for checkpoint_utils path handling."""
 
+import asyncio
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 from tinker_cookbook.checkpoint_utils import (
     CheckpointRecord,
     get_last_checkpoint,
     load_checkpoints_file,
+    save_checkpoint_async,
 )
 
 
@@ -158,3 +161,101 @@ def test_checkpoint_record_extra_overlap_with_known_keys():
     # to_dict() should have batch=5, not 99
     d = record.to_dict()
     assert d["batch"] == 5
+
+
+class _FakeResponse:
+    def __init__(self, path: str):
+        self.path = path
+
+
+class _FakeFuture:
+    def __init__(self, response: _FakeResponse | None = None, error: Exception | None = None):
+        self._response = response
+        self._error = error
+
+    async def result_async(self):
+        if self._error is not None:
+            raise self._error
+        assert self._response is not None
+        return self._response
+
+
+class _FakeTrainingClient:
+    def __init__(
+        self,
+        *,
+        state_future: _FakeFuture | None = None,
+        sampler_future: _FakeFuture | None = None,
+    ):
+        self._state_future = state_future or _FakeFuture(_FakeResponse("tinker://state/new"))
+        self._sampler_future = sampler_future or _FakeFuture(_FakeResponse("tinker://sampler/new"))
+
+    async def save_state_async(self, name: str, ttl_seconds: int | None = None):
+        del name, ttl_seconds
+        return self._state_future
+
+    async def save_weights_for_sampler_async(self, name: str, ttl_seconds: int | None = None):
+        del name, ttl_seconds
+        return self._sampler_future
+
+
+def test_save_checkpoint_async_recovers_conflict_from_existing_state_record():
+    class FakeConflictError(Exception):
+        pass
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _write_checkpoints_jsonl(
+            tmpdir,
+            [
+                {
+                    "name": "000010",
+                    "batch": 10,
+                    "state_path": "tinker://state/existing",
+                }
+            ],
+        )
+        training_client = _FakeTrainingClient(
+            state_future=_FakeFuture(error=FakeConflictError("checkpoint already exists"))
+        )
+
+        with patch("tinker_cookbook.checkpoint_utils.tinker.ConflictError", FakeConflictError):
+            paths = asyncio.run(
+                save_checkpoint_async(
+                    training_client=training_client,  # type: ignore[arg-type]
+                    name="000010",
+                    log_path=tmpdir,
+                    loop_state={"batch": 10},
+                    kind="state",
+                )
+            )
+
+        assert paths == {"state_path": "tinker://state/existing"}
+        records = load_checkpoints_file(tmpdir)
+        assert len(records) == 1
+
+
+def test_save_checkpoint_async_conflict_without_local_record_raises():
+    class FakeConflictError(Exception):
+        pass
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        training_client = _FakeTrainingClient(
+            state_future=_FakeFuture(error=FakeConflictError("checkpoint already exists"))
+        )
+
+        with patch("tinker_cookbook.checkpoint_utils.tinker.ConflictError", FakeConflictError):
+            try:
+                asyncio.run(
+                    save_checkpoint_async(
+                        training_client=training_client,  # type: ignore[arg-type]
+                        name="000010",
+                        log_path=tmpdir,
+                        loop_state={"batch": 10},
+                        kind="state",
+                    )
+                )
+                raised = None
+            except Exception as e:  # pragma: no cover - checked below
+                raised = e
+
+        assert isinstance(raised, FakeConflictError)

@@ -326,6 +326,72 @@ def get_last_checkpoint(log_dir: str, required_key: str = "state_path") -> Check
         return None
 
 
+def _find_last_checkpoint_by_name(log_dir: str, name: str) -> CheckpointRecord | None:
+    """Return the most recent checkpoint record with the given name."""
+    checkpoints = load_checkpoints_file(log_dir)
+    for checkpoint in reversed(checkpoints):
+        if checkpoint.name == name:
+            return checkpoint
+    return None
+
+
+def _recover_path_from_conflict(
+    *,
+    log_path: str,
+    checkpoint_name: str,
+    path_key: Literal["state_path", "sampler_path"],
+) -> str | None:
+    """Recover existing checkpoint path from local records after a 409 conflict."""
+    existing = _find_last_checkpoint_by_name(log_path, checkpoint_name)
+    if existing is None:
+        return None
+    recovered_path = existing.get(path_key)
+    if isinstance(recovered_path, str):
+        return recovered_path
+    return None
+
+
+async def _save_one_kind_with_conflict_recovery(
+    *,
+    training_client: tinker.TrainingClient,
+    checkpoint_name: str,
+    ttl_seconds: int | None,
+    log_path: str,
+    kind: Literal["state", "sampler"],
+) -> tuple[str, bool]:
+    """Save one checkpoint kind and recover idempotently from name conflicts."""
+    try:
+        if kind == "state":
+            response = await (
+                await training_client.save_state_async(checkpoint_name, ttl_seconds=ttl_seconds)
+            ).result_async()
+        else:
+            response = await (
+                await training_client.save_weights_for_sampler_async(
+                    checkpoint_name, ttl_seconds=ttl_seconds
+                )
+            ).result_async()
+        return response.path, False
+    except tinker.ConflictError:
+        path_key: Literal["state_path", "sampler_path"] = (
+            "state_path" if kind == "state" else "sampler_path"
+        )
+        recovered_path = _recover_path_from_conflict(
+            log_path=log_path,
+            checkpoint_name=checkpoint_name,
+            path_key=path_key,
+        )
+        if recovered_path is None:
+            raise
+        logger.warning(
+            "Checkpoint save conflict for %s '%s'; reusing existing %s from checkpoints.jsonl",
+            kind,
+            checkpoint_name,
+            path_key,
+        )
+        return recovered_path, True
+
+
 @trace.scope
 async def save_checkpoint_async(
     training_client: tinker.TrainingClient,
@@ -349,22 +415,44 @@ async def save_checkpoint_async(
     Returns:
         Dict mapping ``"state_path"`` and/or ``"sampler_path"`` to tinker:// paths.
     """
-    futures = {}
-    if kind in ["state", "both"]:
-        futures["state"] = await training_client.save_state_async(name, ttl_seconds=ttl_seconds)
-    if kind in ["sampler", "both"]:
-        futures["sampler"] = await training_client.save_weights_for_sampler_async(
-            name, ttl_seconds=ttl_seconds
-        )
+    paths: dict[str, str] = {}
+    recovered_from_conflict = False
 
-    results = {k: await v.result_async() for k, v in futures.items()}
-    paths = {k + "_path": v.path for k, v in results.items()}
+    if kind in ["state", "both"]:
+        state_path, state_recovered = await _save_one_kind_with_conflict_recovery(
+            training_client=training_client,
+            checkpoint_name=name,
+            ttl_seconds=ttl_seconds,
+            log_path=log_path,
+            kind="state",
+        )
+        paths["state_path"] = state_path
+        recovered_from_conflict = recovered_from_conflict or state_recovered
+
+    if kind in ["sampler", "both"]:
+        sampler_path, sampler_recovered = await _save_one_kind_with_conflict_recovery(
+            training_client=training_client,
+            checkpoint_name=name,
+            ttl_seconds=ttl_seconds,
+            log_path=log_path,
+            kind="sampler",
+        )
+        paths["sampler_path"] = sampler_path
+        recovered_from_conflict = recovered_from_conflict or sampler_recovered
+
     trace.update_scope_context(paths)
     logger.info(f"Saved checkpoints: {paths}")
 
     record = CheckpointRecord.from_dict({"name": name, **loop_state, **paths})
-    with open(Path(log_path) / "checkpoints.jsonl", "a") as f:
-        f.write(json.dumps(record.to_dict()) + "\n")
+    existing = _find_last_checkpoint_by_name(log_path, name)
+    if recovered_from_conflict and existing is not None and existing.to_dict() == record.to_dict():
+        logger.info(
+            "Skipping duplicate checkpoints.jsonl append for conflict-recovered checkpoint '%s'",
+            name,
+        )
+    else:
+        with open(Path(log_path) / "checkpoints.jsonl", "a") as f:
+            f.write(json.dumps(record.to_dict()) + "\n")
 
     return paths
 
