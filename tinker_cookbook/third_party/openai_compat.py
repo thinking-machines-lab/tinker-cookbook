@@ -16,13 +16,12 @@ from typing import Any
 import tinker
 
 from tinker_cookbook.renderers.base import (
+    Message,
     Renderer,
     ToolCall,
     ToolSpec,
     format_content_as_string,
 )
-
-from . import Message
 
 
 @dataclass

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from tinker_cookbook.renderers.base import ToolCall
-from tinker_cookbook.renderers.openai_compat import (
+from tinker_cookbook.third_party.openai_compat import (
     SamplingResult,
     extract_sampling_params,
     openai_messages_to_tinker,

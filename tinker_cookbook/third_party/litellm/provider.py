@@ -35,7 +35,7 @@ import tinker
 
 from tinker_cookbook import renderers
 from tinker_cookbook.model_info import get_recommended_renderer_name
-from tinker_cookbook.renderers.openai_compat import (
+from tinker_cookbook.third_party.openai_compat import (
     SamplingResult,
     extract_sampling_params,
     sample_chat_completion,
