@@ -137,7 +137,10 @@ async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
         stop_condition = step_result.next_stop_condition
         if step_result.episode_done:
             break
-    return Trajectory(transitions=transitions, final_ob=ob)
+    trajectory = Trajectory(transitions=transitions, final_ob=ob)
+    if env.trajectory_hook is not None:
+        await env.trajectory_hook(trajectory)
+    return trajectory
 
 
 @logtree.scope_header_decorator("Group Rollout")

@@ -2,10 +2,15 @@
 Basic interfaces and types for reinforcement learning.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
+
+if TYPE_CHECKING:
+    from tinker_cookbook.rl.trajectory_hook import TrajectoryHook
 
 import chz
 import tinker
@@ -61,6 +66,12 @@ class Env(ABC):
     Stateful environment that a single agent interacts with.
     Discard after running for one episode.
     """
+
+    trajectory_hook: TrajectoryHook | None = None
+    """Optional hook invoked with the completed Trajectory after the rollout
+    loop finishes.  Runs for every episode termination path — including
+    adapter-level exits (parse errors, context overflow) that bypass
+    ``MessageEnv.step()``.  Default is ``None`` (no hook)."""
 
     @abstractmethod
     async def initial_observation(self) -> tuple[Observation, StopCondition]:
