@@ -1,6 +1,6 @@
 ---
 name: logging
-description: Guide for training outputs, metrics logging, logtree reports, tracing/profiling, and debugging training runs. Use when the user asks about training logs, metrics, debugging, tracing, profiling, timing, Gantt charts, or understanding training output files.
+description: Guide for training outputs, metrics logging, logtree reports, tracing/profiling, parsing RL logs, and debugging training runs. Use when the user asks about training logs, metrics, reading/parsing RL logs, logtree JSON structure, extracting rollout data, debugging, tracing, profiling, timing, Gantt charts, or understanding training output files.
 ---
 
 # Logging & Debugging
@@ -82,7 +82,99 @@ for traj in trajectories:
 
 ### Logtree JSON (full transcripts)
 
-Contains full text of prompts, model responses, grading details. Walk the tree recursively looking for nodes with `data.type == "conversation"` to extract conversations. See `docs/rl/rl-logging.mdx` for the full schema.
+Contains full text of prompts, model responses, grading details. Top level:
+```json
+{"title": "...", "started_at": "...", "path": "...", "root": {node}}
+```
+
+Each node: `{tag, attrs, children, data?}` where children are either text strings or nested nodes.
+
+#### Groups
+
+The root's children include title/subtitle elements plus **group sections** (one per trajectory group):
+
+```python
+import json
+
+with open("train_iteration_000060_logtree.json") as f:
+    data = json.load(f)
+
+groups = [c for c in data["root"]["children"]
+          if isinstance(c, dict) and c.get("tag") == "section"]
+```
+
+`num_groups_to_log` (default 4) controls how many groups get full rollout content. Groups beyond this limit only have `Trajectory Details` (numeric stats). The specific sections within each group depend on the environment — see your project's skill docs for the layout.
+
+#### Extracting conversations
+
+Conversations are stored in `data` fields on nodes:
+```python
+def find_conversations(node):
+    results = []
+    if isinstance(node, dict):
+        data = node.get("data", {})
+        if isinstance(data, dict) and data.get("type") == "conversation":
+            results.append(data)
+        for child in node.get("children", []):
+            results.extend(find_conversations(child))
+    return results
+
+# Each conversation: {"type": "conversation", "messages": [...]}
+# Each message: {"role": "user"|"assistant"|"system", "content": str | list[part]}
+# Content parts: {"type": "text", "text": "..."} or {"type": "thinking", "thinking": "..."}
+```
+
+#### Extracting section content by title
+
+```python
+def get_section_title(section_node):
+    h = section_node.get("children", [{}])[0]
+    if isinstance(h, dict) and h.get("children"):
+        return h["children"][0]
+    return ""
+
+def get_section_body(section_node):
+    children = section_node.get("children", [])
+    return children[1] if len(children) > 1 else {"children": []}
+```
+
+#### Extracting tables (rubric criteria, grading scores)
+
+```python
+def find_tables(node):
+    results = []
+    if isinstance(node, dict):
+        if node.get("tag") == "table":
+            results.append(node)
+        for c in node.get("children", []):
+            results.extend(find_tables(c))
+    return results
+
+def parse_table_rows(table_node):
+    """Returns list of rows, each row a list of cell text strings."""
+    rows = []
+    for part in table_node.get("children", []):
+        if not isinstance(part, dict): continue
+        if part.get("tag") in ("tbody", "thead"):
+            for row in part.get("children", []):
+                if isinstance(row, dict) and row.get("tag") == "tr":
+                    cells = []
+                    for cell in row.get("children", []):
+                        if isinstance(cell, dict) and cell.get("tag") in ("td", "th"):
+                            cells.append(get_text(cell).strip())
+                    rows.append(cells)
+    return rows
+
+def get_text(node):
+    """Recursively extract text from a node tree."""
+    if isinstance(node, str): return node
+    return "".join(get_text(c) for c in node.get("children", []))
+```
+
+#### Tips
+
+- Eval logtrees (`eval_*_logtree.json`) have the same structure. Eval prompts are fixed across iterations, making them ideal for tracking policy changes over time.
+- Training prompts are randomly sampled per iteration but use the same dataset and seed ordering, so they match across runs at the same iteration.
 
 ### HTML reports
 
