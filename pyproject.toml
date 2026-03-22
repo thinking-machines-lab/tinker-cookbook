@@ -6,6 +6,7 @@ readme = "README.md"
 authors = [
 { name = "Tinker authors", email = "tinker@thinkingmachines.ai" },
 ]
+license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp",
@@ -13,9 +14,9 @@ dependencies = [
     "blobfile",
     "chz",
     "cloudpickle",
-    "datasets",
+    "datasets>=2.14.0",
     "huggingface_hub",
-    "numpy",
+    "numpy>=1.24.0",
     "pillow",
     "pydantic",
     "rich",
@@ -23,14 +24,14 @@ dependencies = [
     "termcolor",
     "tiktoken>=0.12.0", # Required for Kimi tokenizer
     "tinker>=0.9.0",
-    "torch",
+    "torch>=2.0",
     "tqdm",
     "transformers>=4.57.6,<=5.3.0",
 ]
 
 [project.urls]
 Homepage = "https://thinkingmachines.ai/tinker"
-Repository = "https://github.com/thinking-machines-lab/tinker"
+Repository = "https://github.com/thinking-machines-lab/tinker-cookbook"
 Documentation = "https://tinker-docs.thinkingmachines.ai/"
 
 [project.optional-dependencies]
@@ -74,7 +75,6 @@ verifiers = [
 inspect = [
     "inspect-ai",
     "inspect-evals>=0.3.106",
-    "instruction-following-eval",
 ]
 litellm = [
     "litellm",
@@ -164,6 +164,3 @@ exclude = [
     # Vendored from HuggingFace, kept identical to upstream
     "kimi-k2.5-hf-tokenizer/tool_declaration_ts.py",
 ]
-
-[tool.uv.sources]
-instruction-following-eval = { git = "https://github.com/josejg/instruction_following_eval", rev = "0c495b2f95155e8b10acb919ae283bfb4d5be6e2" }
