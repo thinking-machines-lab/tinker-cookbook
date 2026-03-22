@@ -704,15 +704,20 @@ async def do_async_training(
     )
     trajectory_groups_queue = asyncio.Queue[WrappedTrajectoryGroup | _Shutdown | None]()
 
-    # Initial sampling client to use
-    path_dict = await checkpoint_utils.save_checkpoint_async(
-        training_client=training_client,
-        name=f"{start_batch:06d}",
-        log_path=cfg.log_path,
-        loop_state={"batch": start_batch},
-        kind="both",
-        ttl_seconds=cfg.ttl_seconds,
-    )
+    # Initial sampling client — reuse existing checkpoint on resume to avoid
+    # a 409 Conflict from re-saving the same name.
+    existing = checkpoint_utils.get_last_checkpoint(cfg.log_path)
+    if existing and existing.name == f"{start_batch:06d}" and existing.sampler_path:
+        path_dict = existing.to_dict()
+    else:
+        path_dict = await checkpoint_utils.save_checkpoint_async(
+            training_client=training_client,
+            name=f"{start_batch:06d}",
+            log_path=cfg.log_path,
+            loop_state={"batch": start_batch},
+            kind="both",
+            ttl_seconds=cfg.ttl_seconds,
+        )
 
     # Shutdown coordination — cascading sequence:
     # 1. Dataloader exhausts data → sets dataloader_done_event (prevents requeuing stale
