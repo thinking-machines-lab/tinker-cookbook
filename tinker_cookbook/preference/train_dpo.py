@@ -20,6 +20,7 @@ from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.format_colorized import format_colorized
 from tinker_cookbook.utils.lr_scheduling import LRSchedule, compute_schedule_lr_multiplier
+from tinker_cookbook.utils.misc_utils import iteration_dir
 
 logger = logging.getLogger(__name__)
 
@@ -339,7 +340,8 @@ def do_update(
     metrics.update(window.get_timing_metrics())
     window.write_spans_jsonl(Path(log_path) / "timing_spans.jsonl", step=step)
     if config.span_chart_every > 0 and step % config.span_chart_every == 0:
-        trace.save_gantt_chart_html(window, step, Path(log_path) / f"timing_gantt_{step:06d}.html")
+        iter_dir = iteration_dir(log_path, step)
+        trace.save_gantt_chart_html(window, step, iter_dir / "timing_gantt.html")
     ml_logger.log_metrics(metrics=metrics, step=step)
 
 

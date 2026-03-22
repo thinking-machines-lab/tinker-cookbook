@@ -7,6 +7,7 @@ import logging
 import time
 from collections.abc import Sequence
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, TypeVar, cast
 
 import numpy as np
@@ -93,3 +94,17 @@ def concat_lists(list_of_lists: list[list[Any]]) -> list[Any]:
 def not_none(x: T | None) -> T:
     assert x is not None, f"{x=} must not be None"
     return x
+
+
+def iteration_dir(log_path: str | Path | None, step: int) -> Path | None:
+    """Return the per-iteration subdirectory, creating it if it doesn't exist.
+
+    Output files for each training step are grouped under
+    ``log_path/iteration_NNNNNN/`` to keep the top-level directory manageable.
+    Returns ``None`` when *log_path* is ``None`` or empty.
+    """
+    if not log_path:
+        return None
+    d = Path(log_path) / f"iteration_{step:06d}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d

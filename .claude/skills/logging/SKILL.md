@@ -18,19 +18,28 @@ Every training run writes structured outputs to `log_path`. This skill covers wh
 
 Each training run writes to its `log_path` directory:
 
+**Top-level files:**
+
 | File | Format | Contents |
 |------|--------|----------|
 | `metrics.jsonl` | JSONL | Scalar metrics per training iteration |
 | `config.json` | JSON | Full serialized training config (reproducibility) |
 | `checkpoints.jsonl` | JSONL | Checkpoint metadata (paths, loop state for resume) |
 | `code.diff` | text | Git diff at training start |
-| `train_iteration_NNNNNN.html` | HTML | Human-readable logtree report |
-| `train_iteration_NNNNNN_logtree.json` | JSON | Machine-readable rollout transcripts |
-| `train_iteration_NNNNNN_rollout_summaries.jsonl` | JSONL | Per-trajectory rewards and metrics |
-| `eval_<name>_iteration_NNNNNN.*` | mixed | Same formats for eval rollouts |
 | `timing_spans.jsonl` | JSONL | Per-iteration span timing data (from `trace_iteration`) |
 | `trace_events.jsonl` | JSONL | Perfetto/Chrome Trace format events (from `trace_init`) |
-| `gantt_NNNNNN.html` | HTML | Plotly Gantt chart of span timeline (optional) |
+
+**Per-iteration files** (inside `iteration_NNNNNN/` subdirectories):
+
+| File | Format | Contents |
+|------|--------|----------|
+| `train.html` | HTML | Human-readable logtree report |
+| `train_logtree.json` | JSON | Machine-readable rollout transcripts |
+| `train_rollout_summaries.jsonl` | JSONL | Per-trajectory rewards and metrics |
+| `eval_<name>.html` | HTML | Logtree report for eval rollouts |
+| `eval_<name>_logtree.json` | JSON | Machine-readable eval rollout transcripts |
+| `eval_<name>_rollout_summaries.jsonl` | JSONL | Per-trajectory eval data |
+| `timing_gantt.html` | HTML | Plotly Gantt chart of span timeline (optional) |
 
 Iteration numbers are zero-padded to 6 digits.
 
@@ -71,7 +80,7 @@ df.plot(x="progress/batch", y="env/all/reward/total")
 ```python
 import json
 
-with open("train_iteration_000010_rollout_summaries.jsonl") as f:
+with open("iteration_000010/train_rollout_summaries.jsonl") as f:
     trajectories = [json.loads(line) for line in f]
 
 for traj in trajectories:
@@ -96,7 +105,7 @@ The root's children include title/subtitle elements plus **group sections** (one
 ```python
 import json
 
-with open("train_iteration_000060_logtree.json") as f:
+with open("iteration_000060/train_logtree.json") as f:
     data = json.load(f)
 
 groups = [c for c in data["root"]["children"]
@@ -173,12 +182,12 @@ def get_text(node):
 
 #### Tips
 
-- Eval logtrees (`eval_*_logtree.json`) have the same structure. Eval prompts are fixed across iterations, making them ideal for tracking policy changes over time.
+- Eval logtrees (`eval_*_logtree.json` inside `iteration_NNNNNN/`) have the same structure. Eval prompts are fixed across iterations, making them ideal for tracking policy changes over time.
 - Training prompts are randomly sampled per iteration but use the same dataset and seed ordering, so they match across runs at the same iteration.
 
 ### HTML reports
 
-Open `train_iteration_NNNNNN.html` in a browser for a human-readable view of rollouts with collapsible sections. `num_groups_to_log` (default: 4) controls how many trajectory groups get detailed logging.
+Open `iteration_NNNNNN/train.html` in a browser for a human-readable view of rollouts with collapsible sections. `num_groups_to_log` (default: 4) controls how many trajectory groups get detailed logging.
 
 ## Logging in your own code
 
@@ -242,7 +251,9 @@ for i_batch in range(n_batches):
     window.write_spans_jsonl(log_path / "timing_spans.jsonl", step=i_batch)
 
     # Optional: Gantt chart visualization (requires plotly)
-    trace.save_gantt_chart_html(window, i_batch, log_path / f"gantt_{i_batch}.html")
+    iter_dir = iteration_dir(log_path, i_batch)  # from tinker_cookbook.utils.misc_utils
+    if iter_dir is not None:
+        trace.save_gantt_chart_html(window, i_batch, iter_dir / "timing_gantt.html")
 ```
 
 ### Instrumenting your code

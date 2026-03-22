@@ -106,9 +106,9 @@ def write_rollout_summaries_jsonl(
                 f.write(json.dumps(_json_safe(record)) + "\n")
 
 
-def rollout_summaries_jsonl_path(log_path: str, file_prefix: str) -> Path:
-    """Build the rollout-summary JSONL path for a train/eval file prefix."""
-    return Path(log_path) / f"{file_prefix}_rollout_summaries.jsonl"
+def rollout_summaries_jsonl_path(iteration_dir: Path, base_name: str) -> Path:
+    """Build the rollout-summary JSONL path inside an iteration subdirectory."""
+    return iteration_dir / f"{base_name}_rollout_summaries.jsonl"
 
 
 def write_rollout_summaries_jsonl_from_groups(

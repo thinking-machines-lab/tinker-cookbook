@@ -41,7 +41,7 @@ from tinker_cookbook.rl.types import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.deprecation import warn_deprecated
-from tinker_cookbook.utils.misc_utils import safezip
+from tinker_cookbook.utils.misc_utils import iteration_dir, safezip
 
 logger = logging.getLogger(__name__)
 
@@ -356,9 +356,8 @@ async def do_sync_training(
         metrics.update(window.get_timing_metrics())
         window.write_spans_jsonl(log_path / "timing_spans.jsonl", step=i_batch)
         if cfg.span_chart_every > 0 and i_batch % cfg.span_chart_every == 0:
-            trace.save_gantt_chart_html(
-                window, i_batch, log_path / f"timing_gantt_{i_batch:06d}.html"
-            )
+            iter_dir = iteration_dir(log_path, i_batch)
+            trace.save_gantt_chart_html(window, i_batch, iter_dir / "timing_gantt.html")
         ml_logger.log_metrics(metrics, step=i_batch)
 
 
