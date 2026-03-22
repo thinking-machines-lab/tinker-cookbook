@@ -4,6 +4,8 @@ import pickle
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
+import pytest
+
 from tinker_cookbook.renderers import Message, get_renderer
 from tinker_cookbook.rl.problem_env import ProblemGroupBuilder
 from tinker_cookbook.rl.rollouts import (
@@ -20,7 +22,12 @@ class TestProblemGroupBuilderPickle:
 
         Uses the real MathEnv class, matching how recipes actually construct builders.
         """
-        from tinker_cookbook.recipes.math_rl.math_env import MathEnv
+        math_env_mod = pytest.importorskip(
+            "tinker_cookbook.recipes.math_rl.math_env",
+            reason="math-rl dependencies not installed",
+            exc_type=ImportError,
+        )
+        MathEnv = math_env_mod.MathEnv
 
         tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
         renderer = get_renderer("llama3", tokenizer)
@@ -40,7 +47,12 @@ class TestProblemGroupBuilderPickle:
 
     def test_pickle_with_convo_prefix(self) -> None:
         """ProblemGroupBuilder with convo_prefix in the partial survives pickle."""
-        from tinker_cookbook.recipes.math_rl.math_env import MathEnv
+        math_env_mod = pytest.importorskip(
+            "tinker_cookbook.recipes.math_rl.math_env",
+            reason="math-rl dependencies not installed",
+            exc_type=ImportError,
+        )
+        MathEnv = math_env_mod.MathEnv
 
         tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
         renderer = get_renderer("llama3", tokenizer)
@@ -58,7 +70,12 @@ class TestProblemGroupBuilderPickle:
 class TestRolloutTask:
     def test_pickle_roundtrip(self) -> None:
         """_RolloutTask survives pickle roundtrip with a real Renderer-bound builder."""
-        from tinker_cookbook.recipes.math_rl.math_env import MathEnv
+        math_env_mod = pytest.importorskip(
+            "tinker_cookbook.recipes.math_rl.math_env",
+            reason="math-rl dependencies not installed",
+            exc_type=ImportError,
+        )
+        MathEnv = math_env_mod.MathEnv
 
         tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
         renderer = get_renderer("llama3", tokenizer)
