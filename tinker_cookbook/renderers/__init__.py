@@ -38,11 +38,6 @@ from tinker_cookbook.renderers.base import (
     get_text_content,
     parse_content_blocks,
 )
-
-# Renderer classes used directly by tests
-from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3ThinkingRenderer
-from tinker_cookbook.renderers.gpt_oss import GptOssRenderer
-from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
 # Global registry for custom renderer factories
@@ -151,7 +146,10 @@ def get_renderer(
         return _stamp_pickle_metadata(factory(tokenizer, image_processor))
 
     # Import renderer classes lazily to avoid circular imports and keep exports minimal
-    from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3DisableThinkingRenderer
+    from tinker_cookbook.renderers.deepseek_v3 import (
+        DeepSeekV3DisableThinkingRenderer,
+        DeepSeekV3ThinkingRenderer,
+    )
     from tinker_cookbook.renderers.gpt_oss import GptOssRenderer
     from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
     from tinker_cookbook.renderers.kimi_k25 import KimiK25DisableThinkingRenderer, KimiK25Renderer
@@ -163,6 +161,7 @@ def get_renderer(
     from tinker_cookbook.renderers.qwen3 import (
         Qwen3DisableThinkingRenderer,
         Qwen3InstructRenderer,
+        Qwen3Renderer,
         Qwen3VLInstructRenderer,
         Qwen3VLRenderer,
     )
@@ -177,10 +176,12 @@ def get_renderer(
     elif name == "qwen3":
         renderer = Qwen3Renderer(tokenizer)
     elif name == "qwen3_vl":
-        assert image_processor is not None, "qwen3_vl renderer requires an image_processor"
+        if image_processor is None:
+            raise RendererError("qwen3_vl renderer requires an image_processor")
         renderer = Qwen3VLRenderer(tokenizer, image_processor)
     elif name == "qwen3_vl_instruct":
-        assert image_processor is not None, "qwen3_vl_instruct renderer requires an image_processor"
+        if image_processor is None:
+            raise RendererError("qwen3_vl_instruct renderer requires an image_processor")
         renderer = Qwen3VLInstructRenderer(tokenizer, image_processor)
     elif name == "qwen3_disable_thinking":
         renderer = Qwen3DisableThinkingRenderer(tokenizer)
@@ -256,8 +257,4 @@ __all__ = [
     "is_renderer_registered",
     # Factory
     "get_renderer",
-    # Renderer classes (used by tests)
-    "DeepSeekV3ThinkingRenderer",
-    "GptOssRenderer",
-    "Qwen3Renderer",
 ]

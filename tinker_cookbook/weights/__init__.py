@@ -31,7 +31,6 @@ from tinker_cookbook.weights._publish import publish_to_hf_hub
 __all__ = [
     "download",
     "build_hf_model",
-    "build_lora_adapter",
     "publish_to_hf_hub",
 ]
 
