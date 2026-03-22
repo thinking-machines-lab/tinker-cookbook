@@ -360,6 +360,7 @@ async def main(config: Config):
         window.write_spans_jsonl(log_path / "timing_spans.jsonl", step=submitted.step)
         if config.span_chart_every > 0 and submitted.step % config.span_chart_every == 0:
             iter_dir = iteration_dir(log_path, submitted.step)
+            assert iter_dir is not None
             trace.save_gantt_chart_html(window, submitted.step, iter_dir / "timing_gantt.html")
         ml_logger.log_metrics(metrics=submitted.metrics, step=submitted.step)
 

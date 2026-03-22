@@ -357,6 +357,7 @@ async def do_sync_training(
         window.write_spans_jsonl(log_path / "timing_spans.jsonl", step=i_batch)
         if cfg.span_chart_every > 0 and i_batch % cfg.span_chart_every == 0:
             iter_dir = iteration_dir(log_path, i_batch)
+            assert iter_dir is not None
             trace.save_gantt_chart_html(window, i_batch, iter_dir / "timing_gantt.html")
         ml_logger.log_metrics(metrics, step=i_batch)
 

@@ -45,7 +45,6 @@ from tinker_cookbook.rl.rollout_logging import (
     rollout_summaries_jsonl_path,
     write_rollout_summaries_jsonl_from_groups,
 )
-
 from tinker_cookbook.rl.rollout_strategy import (
     RolloutStrategy,
     rollout_strategy_from_config,
@@ -1418,7 +1417,11 @@ async def do_sync_training(
         if error_counter is not None:
             metrics.update(error_counter.get_metrics())
         window.write_spans_jsonl(Path(cfg.log_path) / "timing_spans.jsonl", step=i_batch)
-        if cfg.span_chart_every > 0 and i_batch % cfg.span_chart_every == 0 and iter_dir is not None:
+        if (
+            cfg.span_chart_every > 0
+            and i_batch % cfg.span_chart_every == 0
+            and iter_dir is not None
+        ):
             trace.save_gantt_chart_html(window, i_batch, iter_dir / "timing_gantt.html")
         ml_logger.log_metrics(metrics, step=i_batch)
 

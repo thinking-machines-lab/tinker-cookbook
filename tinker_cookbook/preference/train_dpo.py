@@ -341,6 +341,7 @@ def do_update(
     window.write_spans_jsonl(Path(log_path) / "timing_spans.jsonl", step=step)
     if config.span_chart_every > 0 and step % config.span_chart_every == 0:
         iter_dir = iteration_dir(log_path, step)
+        assert iter_dir is not None
         trace.save_gantt_chart_html(window, step, iter_dir / "timing_gantt.html")
     ml_logger.log_metrics(metrics=metrics, step=step)
 
