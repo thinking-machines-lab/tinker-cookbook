@@ -16,7 +16,7 @@ import chz
 import tinker
 from tinker.lib.public_interfaces import APIFuture
 
-from tinker_cookbook import checkpoint_utils
+from tinker_cookbook import checkpoint_utils, model_info
 from tinker_cookbook.display import colorize_example
 from tinker_cookbook.eval.evaluators import (
     Evaluator,
@@ -198,6 +198,7 @@ async def main(config: Config):
     if wandb_link := ml_logger.get_logger_url():
         user_metadata["wandb_link"] = wandb_link
     checkpoint_utils.add_renderer_name_to_user_metadata(user_metadata, config.renderer_name)
+    model_info.warn_if_renderer_not_recommended(config.model_name, config.renderer_name)
 
     if resume_info:
         # Resuming interrupted training - load optimizer state for proper continuation
