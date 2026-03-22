@@ -30,7 +30,7 @@ class TestRLTrainConfig:
     def test_main_signature(self):
         from tests.downstream_compat.sig_helpers import assert_params_subset
 
-        assert_params_subset(main, ["cfg"])
+        assert_params_subset(main, ["config"])
 
 
 # ---------------------------------------------------------------------------

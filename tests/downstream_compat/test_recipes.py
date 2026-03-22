@@ -6,6 +6,8 @@ the expected API surface.
 
 import inspect
 
+import pytest
+
 # ---------------------------------------------------------------------------
 # recipes.math_rl
 # ---------------------------------------------------------------------------
@@ -13,44 +15,55 @@ import inspect
 
 class TestMathRL:
     def test_math_env_importable(self):
-        from tinker_cookbook.recipes.math_rl import math_env
-
+        math_env = pytest.importorskip(
+            "tinker_cookbook.recipes.math_rl.math_env",
+            reason="math-rl dependencies not installed",
+            exc_type=ImportError,
+        )
         assert math_env is not None
 
     def test_arithmetic_env_importable(self):
-        from tinker_cookbook.recipes.math_rl import arithmetic_env
-
+        arithmetic_env = pytest.importorskip(
+            "tinker_cookbook.recipes.math_rl.arithmetic_env",
+            reason="math-rl dependencies not installed",
+            exc_type=ImportError,
+        )
         assert arithmetic_env is not None
 
     def test_get_math_dataset_builder(self):
-        from tinker_cookbook.recipes.math_rl.math_env import get_math_dataset_builder
-
-        assert callable(get_math_dataset_builder)
+        math_env = pytest.importorskip(
+            "tinker_cookbook.recipes.math_rl.math_env",
+            reason="math-rl dependencies not installed",
+            exc_type=ImportError,
+        )
+        assert callable(math_env.get_math_dataset_builder)
 
     def test_math_env_classes(self):
-        from tinker_cookbook.recipes.math_rl.math_env import (
-            Gsm8kDatasetBuilder,
-            MathDatasetBuilder,
+        math_env = pytest.importorskip(
+            "tinker_cookbook.recipes.math_rl.math_env",
+            reason="math-rl dependencies not installed",
+            exc_type=ImportError,
         )
-
-        assert Gsm8kDatasetBuilder is not None
-        assert MathDatasetBuilder is not None
+        assert math_env.Gsm8kDatasetBuilder is not None
+        assert math_env.MathDatasetBuilder is not None
 
     def test_math_grading_functions(self):
-        from tinker_cookbook.recipes.math_rl.math_grading import (
-            extract_boxed,
-            grade_answer,
-            normalize_answer,
+        math_grading = pytest.importorskip(
+            "tinker_cookbook.recipes.math_rl.math_grading",
+            reason="math-rl dependencies not installed",
+            exc_type=ImportError,
         )
-
-        assert callable(grade_answer)
-        assert callable(normalize_answer)
-        assert callable(extract_boxed)
+        assert callable(math_grading.grade_answer)
+        assert callable(math_grading.normalize_answer)
+        assert callable(math_grading.extract_boxed)
 
     def test_safe_grade(self):
-        from tinker_cookbook.recipes.math_rl.math_env import safe_grade
-
-        assert callable(safe_grade)
+        math_env = pytest.importorskip(
+            "tinker_cookbook.recipes.math_rl.math_env",
+            reason="math-rl dependencies not installed",
+            exc_type=ImportError,
+        )
+        assert callable(math_env.safe_grade)
 
 
 # ---------------------------------------------------------------------------
@@ -107,9 +120,12 @@ class TestPreference:
 
 class TestBasicRecipes:
     def test_rl_basic_build_config(self):
-        from tinker_cookbook.recipes.rl_basic import build_config_blueprint
-
-        assert callable(build_config_blueprint)
+        rl_basic = pytest.importorskip(
+            "tinker_cookbook.recipes.rl_basic",
+            reason="math-rl dependencies not installed",
+            exc_type=ImportError,
+        )
+        assert callable(rl_basic.build_config_blueprint)
 
     def test_sl_basic_build_config(self):
         from tinker_cookbook.recipes.sl_basic import build_config_blueprint
