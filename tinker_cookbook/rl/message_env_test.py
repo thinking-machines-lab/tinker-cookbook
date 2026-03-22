@@ -315,3 +315,86 @@ class TestStepThreading:
             asyncio.run(env.step([1, 2]))
             mock_to_thread.assert_called_once()
             assert mock_to_thread.call_args[0][0] is renderer.build_generation_prompt
+
+
+class TestLogsPassthrough:
+    """MessageStepResult.logs should be forwarded to StepResult.logs."""
+
+    def test_logs_forwarded_on_success(self):
+        """Logs from MessageEnv are passed through on normal step."""
+        renderer = _make_renderer(gen_prompt_tokens=[1, 2, 3])
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(
+                reward=0.5,
+                episode_done=False,
+                next_messages=[{"role": "user", "content": "x"}],
+                logs={"assistant": "hello world", "tool_call_0": "name=search"},
+            ),
+        )
+        env = EnvFromMessageEnv(renderer=renderer, message_env=msg_env)
+
+        result = asyncio.run(env.step([1]))
+
+        assert result.logs == {"assistant": "hello world", "tool_call_0": "name=search"}
+
+    def test_logs_forwarded_on_context_overflow(self):
+        """Logs from MessageEnv are preserved even when context overflows."""
+        renderer = _make_renderer(gen_prompt_tokens=list(range(100)))
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(
+                reward=0.5,
+                episode_done=False,
+                next_messages=[{"role": "user", "content": "x"}],
+                logs={"assistant": "some response", "tool_result_0": "result data"},
+            ),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer,
+            message_env=msg_env,
+            max_trajectory_tokens=50,
+        )
+
+        result = asyncio.run(env.step([1]))
+
+        assert result.episode_done is True
+        assert result.metrics["context_overflow"] == 1.0
+        assert result.logs == {"assistant": "some response", "tool_result_0": "result data"}
+
+    def test_no_logs_on_parse_error(self):
+        """Parse errors bypass MessageEnv, so logs are empty."""
+        renderer = _make_renderer(parse_success=False)
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(
+                reward=1.0,
+                episode_done=False,
+                next_messages=[],
+                logs={"should_not": "appear"},
+            ),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer, message_env=msg_env, terminate_on_parse_error=True
+        )
+
+        result = asyncio.run(env.step([1]))
+
+        assert result.logs == {}
+
+    def test_empty_logs_by_default(self):
+        """When MessageEnv doesn't set logs, StepResult.logs defaults to empty."""
+        renderer = _make_renderer(gen_prompt_tokens=[1, 2])
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(
+                reward=0.5,
+                episode_done=False,
+                next_messages=[{"role": "user", "content": "x"}],
+            ),
+        )
+        env = EnvFromMessageEnv(renderer=renderer, message_env=msg_env)
+
+        result = asyncio.run(env.step([1]))
+
+        assert result.logs == {}
