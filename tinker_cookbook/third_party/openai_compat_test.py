@@ -13,7 +13,7 @@ from tinker_cookbook.third_party.openai_compat import (
 # ---------------------------------------------------------------------------
 
 
-class TestOpenaiMessagesToTinker:
+class TestOpenAIMessagesToTinker:
     def test_basic_messages(self) -> None:
         messages = [
             {"role": "system", "content": "You are helpful."},
@@ -69,7 +69,7 @@ class TestOpenaiMessagesToTinker:
 # ---------------------------------------------------------------------------
 
 
-class TestOpenaiToolsToTinker:
+class TestOpenAIToolsToTinker:
     def test_basic_tool(self) -> None:
         tools = [
             {
