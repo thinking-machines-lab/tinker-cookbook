@@ -706,9 +706,13 @@ async def do_async_training(
 
     # Initial sampling client — reuse existing checkpoint on resume to avoid
     # a 409 Conflict from re-saving the same name.
-    existing = checkpoint_utils.get_last_checkpoint(cfg.log_path)
-    if existing and existing.name == f"{start_batch:06d}" and existing.sampler_path:
-        path_dict = existing.to_dict()
+    existing_checkpoint_record = checkpoint_utils.get_last_checkpoint(cfg.log_path)
+    if (
+        existing_checkpoint_record is not None
+        and existing_checkpoint_record.name == f"{start_batch:06d}"
+        and existing_checkpoint_record.sampler_path is not None
+    ):
+        initial_sampler_path = existing_checkpoint_record.sampler_path
     else:
         path_dict = await checkpoint_utils.save_checkpoint_async(
             training_client=training_client,
@@ -718,6 +722,7 @@ async def do_async_training(
             kind="both",
             ttl_seconds=cfg.ttl_seconds,
         )
+        initial_sampler_path = path_dict["sampler_path"]
 
     # Shutdown coordination — cascading sequence:
     # 1. Dataloader exhausts data → sets dataloader_done_event (prevents requeuing stale
@@ -732,7 +737,7 @@ async def do_async_training(
     worker_alive_counter = _AsyncCounter(cfg.async_config.groups_per_batch)
 
     # This will be updated by the training loop
-    sampling_client = training_client.create_sampling_client(path_dict["sampler_path"])
+    sampling_client = training_client.create_sampling_client(initial_sampler_path)
     sampling_client_step = start_batch
     sampling_client_updated_event = asyncio.Event()
     sampling_client_updated_event.set()
