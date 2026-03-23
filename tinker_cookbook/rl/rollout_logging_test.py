@@ -7,7 +7,7 @@ import tinker
 
 from tinker_cookbook.completers import TokensWithLogprobs
 from tinker_cookbook.rl.rollout_logging import write_rollout_summaries_jsonl
-from tinker_cookbook.rl.types import Logs, Metrics, Trajectory, TrajectoryGroup, Transition
+from tinker_cookbook.rl.types import Metrics, Trajectory, TrajectoryGroup, Transition
 
 
 def test_write_rollout_summaries_jsonl_handles_numpy_scalars(tmp_path: Path):
@@ -17,7 +17,7 @@ def test_write_rollout_summaries_jsonl_handles_numpy_scalars(tmp_path: Path):
         reward=cast(float, np.float32(0.25)),
         episode_done=True,
         metrics=cast(Metrics, {"score": np.float32(1.5)}),
-        logs=cast(Logs, {"rank": np.int64(2)}),
+        logs={"rank": np.int64(2)},
     )
     trajectory = Trajectory(transitions=[transition], final_ob=tinker.ModelInput.from_ints([1] * 8))
     trajectory_group = TrajectoryGroup(

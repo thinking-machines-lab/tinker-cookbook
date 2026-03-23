@@ -38,7 +38,7 @@ class TestTypeAliases:
         assert isinstance(val, dict)
 
     def test_logs_is_dict(self):
-        val: Logs = {"msg": "ok", "step": 1}
+        val: Logs = {"msg": "ok", "step": 1, "nested": {"a": [1, 2]}}
         assert isinstance(val, dict)
 
     def test_observation_alias_exists(self):
