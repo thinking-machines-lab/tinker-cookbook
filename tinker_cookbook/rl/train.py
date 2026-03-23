@@ -63,6 +63,7 @@ from tinker_cookbook.rl.types import (
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import logtree, ml_log, trace
+from tinker_cookbook.utils.deprecation import warn_deprecated
 from tinker_cookbook.utils.misc_utils import safezip, split_list, timed
 
 logger = logging.getLogger(__name__)
@@ -1428,8 +1429,10 @@ async def do_sync_training(
 
 @trace.scope
 async def main(
-    config: Config,
+    config: Config | None = None,
     rollout_executor: Executor | None = None,
+    *,
+    cfg: Config | None = None,
 ):
     """Main training loop for MDP RL.
 
@@ -1441,6 +1444,14 @@ async def main(
             or any custom ``Executor`` (Ray, cluster dispatchers, etc.).
             Default ``None`` runs rollouts as asyncio coroutines in-process.
     """
+    if cfg is not None:
+        warn_deprecated("cfg", removal_version="0.3.0", message="Use 'config' instead.")
+        if config is not None:
+            raise ConfigurationError("Cannot pass both 'config' and 'cfg'. Use 'config'.")
+        config = cfg
+    if config is None:
+        raise ConfigurationError("'config' is required.")
+
     if rollout_executor is not None:
         set_rollout_executor(rollout_executor)
     ml_logger = ml_log.setup_logging(
