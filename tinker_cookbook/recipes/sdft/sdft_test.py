@@ -9,6 +9,13 @@ from tinker_cookbook.distillation.sdft import (
     build_sdft_teacher_prompt,
 )
 from tinker_cookbook.recipes.sdft.datasets import SDFTDataset, _format_sciknoweval_choices
+from tinker_cookbook.recipes.sdft.eval import (
+    evaluate_science_correctness,
+    evaluate_tooluse_correctness,
+    extract_action_inputs,
+    extract_actions,
+    extract_xml_answer,
+)
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
@@ -132,3 +139,48 @@ class TestFormatSciKnowEvalChoices:
     def test_empty(self):
         result = _format_sciknoweval_choices({"label": [], "text": []})
         assert result == ""
+
+
+class TestScienceEval:
+    def test_extract_xml_answer(self):
+        assert extract_xml_answer("Some reasoning <answer>B</answer> extra") == "B"
+        assert extract_xml_answer("<answer>C</answer>") == "C"
+        assert extract_xml_answer("no tags here") == "no tags here"
+
+    def test_evaluate_science_correctness(self):
+        responses = [
+            "Let me think... <answer>A</answer>",
+            "The answer is <answer>B</answer>.",
+            "I think <answer>C</answer>",
+        ]
+        answers = ["A", "B", "A"]
+        scores = evaluate_science_correctness(responses, answers)
+        assert scores == [1, 1, 0]
+
+
+class TestToolUseEval:
+    def test_extract_actions(self):
+        text = "Action: Search\nSome text\nAction: Click"
+        assert extract_actions(text) == ["Search", "Click"]
+
+    def test_extract_action_inputs(self):
+        text = 'Action Input: {"query": "hello"}\nAction Input: {"page": "1"}'
+        result = extract_action_inputs(text)
+        assert result == {"query": "hello", "page": "1"}
+
+    def test_extract_action_inputs_invalid_json(self):
+        text = 'Action Input: {invalid json}\nAction Input: {"key": "val"}'
+        result = extract_action_inputs(text)
+        assert result == {"key": "val"}
+
+    def test_evaluate_tooluse_correctness(self):
+        responses = [
+            'Action: Search\nAction Input: {"query": "weather"}',
+            'Action: Click\nAction Input: {"button": "submit"}',
+        ]
+        golden_answers = [
+            [{"Action": "Search", "Action_Input": '{"query": "weather"}'}],
+            [{"Action": "Click", "Action_Input": '{"button": "wrong"}'}],
+        ]
+        scores = evaluate_tooluse_correctness(responses, golden_answers)
+        assert scores == [1, 0]

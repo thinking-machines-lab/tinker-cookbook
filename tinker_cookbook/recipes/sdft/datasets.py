@@ -264,3 +264,51 @@ class ToolAlpacaSDFTBuilder(RLDatasetBuilder):
         )
 
         return train_dataset, test_dataset
+
+
+# ---------------------------------------------------------------------------
+# Arrow data loader (for paper's exact data)
+# ---------------------------------------------------------------------------
+
+
+def load_sdft_from_arrow(
+    data_path: str,
+    dataset_type: str,
+) -> tuple[list[str], list[str]]:
+    """Load questions and golden answers from the SDFT paper's Arrow data.
+
+    Args:
+        data_path: Path to the Arrow dataset directory (e.g., data/science_data/train_data).
+        dataset_type: "science" or "tooluse".
+
+    Returns:
+        (questions, golden_answers) lists.
+    """
+    ds = load_from_disk(data_path)
+
+    if dataset_type == "science":
+        questions = []
+        golden_answers = []
+        for row in ds:  # type: ignore[union-attr]
+            messages = row["messages"]  # type: ignore[index]
+            # The science dataset has a multi-turn conversation.
+            # The question is in messages[1] (user turn after system).
+            if len(messages) >= 2:
+                questions.append(messages[1]["content"])
+            else:
+                questions.append(messages[0]["content"])
+            golden_answers.append(str(row["output_text"]))  # type: ignore[index]
+        return questions, golden_answers
+
+    elif dataset_type == "tooluse":
+        questions = [row["prompt"] for row in ds]  # type: ignore[union-attr]
+        golden_answers = [
+            "\n".join(row["golden_response"])  # type: ignore[index]
+            if isinstance(row["golden_response"], list)  # type: ignore[index]
+            else str(row["golden_response"])  # type: ignore[index]
+            for row in ds  # type: ignore[union-attr]
+        ]
+        return questions, golden_answers
+
+    else:
+        raise ValueError(f"Unknown dataset_type: {dataset_type}. Use 'science' or 'tooluse'.")

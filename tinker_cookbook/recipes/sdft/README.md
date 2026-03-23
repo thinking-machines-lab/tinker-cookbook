@@ -70,6 +70,55 @@ python -m tinker_cookbook.recipes.sdft.train \
 | `teacher_sync_every` | `None` | Hard-sync teacher weights every N steps (None = static teacher) |
 | `sciknoweval_domain` | `chemistry` | SciKnowEval domain filter |
 
+## Benchmarking Against the Paper
+
+A benchmark script reproduces the paper's evaluation pipeline using the exact eval data from the [SDFT repository](https://github.com/idshenfeld/Self-Distillation). Clone that repo first:
+
+```bash
+git clone https://github.com/idshenfeld/Self-Distillation ~/Repos/Self-Distillation
+```
+
+### Paper's reported results (Qwen2.5-7B-Instruct)
+
+| Dataset | Base | SFT | SDFT |
+|---------|------|-----|------|
+| SciKnowEval Chemistry L3 | 32.1 | 66.2 | **70.2** |
+| ToolAlpaca Tool Use | 42.9 | 63.2 | **70.6** |
+
+### Run the full benchmark (base eval → SFT → SDFT → compare)
+
+```bash
+python -m tinker_cookbook.recipes.sdft.benchmark \
+    dataset=science \
+    sdft_repo_path=~/Repos/Self-Distillation \
+    wandb_project=sdft_benchmark
+```
+
+### Run individual phases
+
+```bash
+# Base model eval only
+python -m tinker_cookbook.recipes.sdft.benchmark \
+    dataset=science \
+    sdft_repo_path=~/Repos/Self-Distillation \
+    phase=base_eval
+
+# SDFT training only
+python -m tinker_cookbook.recipes.sdft.benchmark \
+    dataset=science \
+    sdft_repo_path=~/Repos/Self-Distillation \
+    phase=sdft
+
+# Eval an existing checkpoint
+python -m tinker_cookbook.recipes.sdft.benchmark \
+    dataset=science \
+    sdft_repo_path=~/Repos/Self-Distillation \
+    phase=eval_checkpoint \
+    checkpoint_path=tinker://...
+```
+
+Note: We use Qwen3-8B (not Qwen2.5-7B-Instruct), so exact numbers will differ, but the pattern (SDFT > SFT on new-task accuracy) should hold.
+
 ## Architecture
 
 The implementation consists of:
