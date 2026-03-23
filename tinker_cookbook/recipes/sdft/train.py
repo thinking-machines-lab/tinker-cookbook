@@ -51,7 +51,7 @@ class CLIConfig:
 
     # Dataset
     dataset: str = "sciknoweval"  # sciknoweval | toolalpaca
-    sciknoweval_domain: str = "chemistry"
+    sciknoweval_domain: str = "Chemistry"
     toolalpaca_data_path: str | None = None  # Local Arrow path for ToolAlpaca
 
     # Training

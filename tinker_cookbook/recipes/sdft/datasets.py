@@ -84,7 +84,7 @@ def _format_sciknoweval_choices(choices: dict) -> str:  # type: ignore[type-arg]
 
 
 def load_sciknoweval(
-    domain: str = "chemistry",
+    domain: str = "Chemistry",
     train_fraction: float = 0.9,
     seed: int = 42,
 ) -> tuple[list[str], list[str], list[str], list[str]]:
@@ -141,7 +141,7 @@ class SciKnowEvalSDFTBuilder(RLDatasetBuilder):
     group_size: int = 1
     model_name_for_tokenizer: str = "Qwen/Qwen3-8B"
     renderer_name: str = "qwen3"
-    domain: str = "chemistry"
+    domain: str = "Chemistry"
     train_fraction: float = 0.9
 
     async def __call__(self) -> tuple[SDFTDataset, SDFTDataset | None]:  # type: ignore[override]
