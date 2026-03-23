@@ -133,7 +133,7 @@ def build_agent_tool_env(
     failed_parse_reward: float = -0.1,
     max_trajectory_tokens: int | None = None,
     max_generation_tokens: int | None = None,
-    context_overflow_reward: float = 0.0,
+    context_overflow_reward: float = -0.1,
 ) -> EnvFromMessageEnv:
     """Convenience method to build an EnvFromMessageEnv for tool-using agents.
 

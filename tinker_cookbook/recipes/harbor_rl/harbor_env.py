@@ -95,7 +95,7 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
         grader_timeout: int = 60,
         max_trajectory_tokens: int = 32 * 1024,
         max_generation_tokens: int | None = None,
-        context_overflow_reward: float = 0.0,
+        context_overflow_reward: float = -0.1,
         sandbox_factory: SandboxFactory | None = None,
         reward_fn: RewardFn | None = None,
     ):
@@ -203,7 +203,7 @@ class HarborDatasetBuilder(RLDatasetBuilder):
     grader_timeout: int = 60
     max_trajectory_tokens: int = 32 * 1024
     max_generation_tokens: int | None = None
-    context_overflow_reward: float = 0.0
+    context_overflow_reward: float = -0.1
     sandbox_factory: SandboxFactory | None = None
     reward_fn: RewardFn | None = None
 

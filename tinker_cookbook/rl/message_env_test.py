@@ -248,7 +248,7 @@ class TestMaxTrajectoryTokens:
         result = asyncio.run(env.step([1]))
 
         assert result.episode_done is True
-        assert result.reward == 0.0
+        assert result.reward == -0.1  # default context_overflow_reward
         assert result.next_observation.length == 0  # empty observation
         assert result.metrics["context_overflow"] == 1.0
         # Original metrics should be preserved
@@ -354,7 +354,7 @@ class TestMaxGenerationTokens:
         result = asyncio.run(env.step([1]))
 
         assert result.episode_done is True
-        assert result.reward == 0.0  # default context_overflow_reward
+        assert result.reward == -0.1  # default context_overflow_reward
         assert result.next_observation.length == 0
         assert result.metrics["context_overflow"] == 1.0
         assert result.metrics["turns"] == 2.0
@@ -472,8 +472,8 @@ class TestContextOverflowReward:
         assert result.metrics["context_overflow"] == 1.0
         assert result.metrics["turns"] == 3.0
 
-    def test_default_overflow_reward_is_zero(self):
-        """Default context_overflow_reward is 0.0 (backward compatible)."""
+    def test_default_overflow_reward(self):
+        """Default context_overflow_reward is -0.1 (matches failed_parse_reward)."""
         renderer = _make_renderer(gen_prompt_tokens=list(range(100)), stop_sequences=["<s>"])
         msg_env = StubMessageEnv(
             initial_messages=[],
@@ -491,7 +491,7 @@ class TestContextOverflowReward:
 
         result = asyncio.run(env.step([1]))
 
-        assert result.reward == 0.0
+        assert result.reward == -0.1
 
 
 class TestMaxTokensReached:
@@ -511,7 +511,7 @@ class TestMaxTokensReached:
         result = asyncio.run(env.step([1, 2, 3], stop_reason="length"))
 
         assert result.episode_done is True
-        assert result.reward == 0.0  # default context_overflow_reward
+        assert result.reward == -0.1  # default context_overflow_reward
         assert result.next_observation.length == 0
         assert result.metrics["max_tokens_reached"] == 1.0
         # MessageEnv.step should NOT have been called (we short-circuit)

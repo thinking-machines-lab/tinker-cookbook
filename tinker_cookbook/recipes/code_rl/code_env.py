@@ -181,7 +181,7 @@ class DeepcoderEnvGroupBuilder(EnvGroupBuilder):
     format_coef: float = 0.1
     max_trajectory_tokens: int = 32 * 1024
     max_generation_tokens: int | None = None
-    context_overflow_reward: float = 0.0
+    context_overflow_reward: float = -0.1
 
     async def make_envs(self) -> Sequence[Env]:
         # Renderer is stateless, share across all envs in group
@@ -251,7 +251,7 @@ class DeepcoderDatasetBuilder(RLDatasetBuilder):
     sandbox_backend: SandboxBackend | None = None
     seed: int = 0
     max_generation_tokens: int | None = None
-    context_overflow_reward: float = 0.0
+    context_overflow_reward: float = -0.1
 
     async def __call__(self) -> tuple[RLDataset, RLDataset | None]:
         # Load train tasks

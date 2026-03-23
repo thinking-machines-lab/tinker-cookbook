@@ -62,7 +62,7 @@ class EnvFromMessageEnv(types.Env):
         terminate_on_parse_error: bool = True,
         max_trajectory_tokens: int | None = None,
         max_generation_tokens: int | None = None,
-        context_overflow_reward: float = 0.0,
+        context_overflow_reward: float = -0.1,
     ):
         self.renderer = renderer
         self.message_env = message_env
