@@ -58,7 +58,7 @@ class CLIConfig:
     group_size: int = 1  # Paper uses num_generations=1
     groups_per_batch: int = 32  # Paper: gradient_accumulation=32
     learning_rate: float = 2e-5
-    max_tokens: int = 1024
+    max_tokens: int = 2048
     temperature: float = 1.0
 
     # SDFT-specific

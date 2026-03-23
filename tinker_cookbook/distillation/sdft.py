@@ -269,7 +269,7 @@ class Config:
 
     # Training
     learning_rate: float = 2e-5
-    max_tokens: int = 1024
+    max_tokens: int = 2048
     temperature: float = 1.0
     loss_fn: LossFnType = "importance_sampling"
 
