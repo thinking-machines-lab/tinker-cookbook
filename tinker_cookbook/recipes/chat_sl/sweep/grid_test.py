@@ -2,7 +2,7 @@
 
 import pytest
 
-from tinker_cookbook.sweep.grid import default_run_name, grid
+from tinker_cookbook.recipes.chat_sl.sweep.grid import default_run_name, grid
 
 
 class TestGrid:

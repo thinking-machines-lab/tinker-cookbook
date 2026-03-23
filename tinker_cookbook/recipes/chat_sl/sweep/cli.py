@@ -6,20 +6,20 @@ Use short aliases for common recipes, or pass a full module path for any recipe.
 
 Short aliases::
 
-    python -m tinker_cookbook.sweep recipe=sft
-    python -m tinker_cookbook.sweep recipe=math_rl
-    python -m tinker_cookbook.sweep recipe=code_rl
-    python -m tinker_cookbook.sweep recipe=dpo
+    python -m tinker_cookbook.recipes.chat_sl.sweep recipe=sft
+    python -m tinker_cookbook.recipes.chat_sl.sweep recipe=math_rl
+    python -m tinker_cookbook.recipes.chat_sl.sweep recipe=code_rl
+    python -m tinker_cookbook.recipes.chat_sl.sweep recipe=dpo
 
 Full module path (works for any recipe with CLIConfig + cli_main)::
 
-    python -m tinker_cookbook.sweep \\
+    python -m tinker_cookbook.recipes.chat_sl.sweep \\
         recipe=tinker_cookbook.recipes.harbor_rl.train \\
         base.model_name=Qwen/Qwen3-8B
 
 Quick smoke test (5 steps)::
 
-    python -m tinker_cookbook.sweep \\
+    python -m tinker_cookbook.recipes.chat_sl.sweep \\
         recipe=sft training_budget_examples=640 \\
         'learning_rates=[1e-4, 3e-4, 1e-3]' 'lora_ranks=[32]'
 """
@@ -35,7 +35,7 @@ from typing import Any
 
 import chz
 
-from tinker_cookbook import sweep
+from tinker_cookbook.recipes.chat_sl import sweep
 
 # ---------------------------------------------------------------------------
 # Recipe resolution — short aliases + dynamic module import

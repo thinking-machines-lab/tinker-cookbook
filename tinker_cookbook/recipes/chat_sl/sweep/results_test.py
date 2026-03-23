@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from tinker_cookbook.sweep.results import _extract_config_value, _read_final_metrics, collect
+from tinker_cookbook.recipes.chat_sl.sweep.results import (
+    _extract_config_value,
+    _read_final_metrics,
+    collect,
+)
 
 
 @pytest.fixture

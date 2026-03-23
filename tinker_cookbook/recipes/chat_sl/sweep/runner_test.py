@@ -6,7 +6,11 @@ from pathlib import Path
 import chz
 import pytest
 
-from tinker_cookbook.sweep.runner import _validate_axes, _validate_config_has_log_path, run
+from tinker_cookbook.recipes.chat_sl.sweep.runner import (
+    _validate_axes,
+    _validate_config_has_log_path,
+    run,
+)
 
 
 @chz.chz

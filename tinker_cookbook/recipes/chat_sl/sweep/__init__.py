@@ -2,7 +2,7 @@
 
 Usage::
 
-    from tinker_cookbook import sweep
+    from tinker_cookbook.recipes.chat_sl import sweep
 
     results = sweep.run(
         cli_main,
@@ -12,8 +12,8 @@ Usage::
     )
 """
 
-from tinker_cookbook.sweep.grid import default_run_name, grid
-from tinker_cookbook.sweep.results import collect
-from tinker_cookbook.sweep.runner import run
+from tinker_cookbook.recipes.chat_sl.sweep.grid import default_run_name, grid
+from tinker_cookbook.recipes.chat_sl.sweep.results import collect
+from tinker_cookbook.recipes.chat_sl.sweep.runner import run
 
 __all__ = ["collect", "default_run_name", "grid", "run"]

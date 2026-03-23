@@ -11,9 +11,9 @@ from typing import Any, TypeVar
 import chz
 import pandas as pd
 
-from tinker_cookbook.sweep.grid import default_run_name
-from tinker_cookbook.sweep.grid import grid as make_grid
-from tinker_cookbook.sweep.results import collect
+from tinker_cookbook.recipes.chat_sl.sweep.grid import default_run_name
+from tinker_cookbook.recipes.chat_sl.sweep.grid import grid as make_grid
+from tinker_cookbook.recipes.chat_sl.sweep.results import collect
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ def run(
 
     Example::
 
-        from tinker_cookbook import sweep
+        from tinker_cookbook.recipes.chat_sl import sweep
         from tinker_cookbook.recipes.chat_sl.train import CLIConfig, cli_main
 
         results = sweep.run(

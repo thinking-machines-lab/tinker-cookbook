@@ -9,10 +9,10 @@ Pulls finished runs from a W&B project, groups them by model, and produces:
 Usage::
 
     # Generate results from the default project
-    uv run --with wandb --with matplotlib python tinker_cookbook/scripts/analyze_sweep.py
+    uv run --with wandb --with matplotlib python -m tinker_cookbook.recipes.chat_sl.sweep.analyze
 
     # Custom project and output directory
-    uv run --with wandb --with matplotlib python tinker_cookbook/scripts/analyze_sweep.py \\
+    uv run --with wandb --with matplotlib python -m tinker_cookbook.recipes.chat_sl.sweep.analyze \\
         --wandb-project lr-sweep-2026-03 \\
         --output-dir tinker_cookbook/recipes/chat_sl/results
 """
@@ -286,7 +286,7 @@ def generate_model_section(
     lines.append("<summary>Reproduce</summary>")
     lines.append("")
     lines.append("```bash")
-    lines.append("uv run python -m tinker_cookbook.sweep \\")
+    lines.append("uv run python -m tinker_cookbook.recipes.chat_sl.sweep \\")
     lines.append("    recipe=sft \\")
     lines.append(f"    base.model_name={hf_name} \\")
     lines.append("    base.dataset=tulu3 \\")
@@ -401,7 +401,7 @@ def main() -> None:
     args = parser.parse_args()
 
     # Default output: tinker_cookbook/recipes/chat_sl/results/
-    default_output = Path(__file__).parent.parent / "recipes" / "chat_sl" / "results"
+    default_output = Path(__file__).parent.parent / "results"
     output_dir = Path(args.output_dir) if args.output_dir else default_output
     output_dir.mkdir(parents=True, exist_ok=True)
 

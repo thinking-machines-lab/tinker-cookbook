@@ -25,7 +25,7 @@ Use these as a reference when choosing learning rate and LoRA rank for your mode
 <summary>Reproduce</summary>
 
 ```bash
-uv run python -m tinker_cookbook.sweep \
+uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
     recipe=sft \
     base.model_name=deepseek-ai/DeepSeek-V3.1-Base \
     base.dataset=tulu3 \
@@ -74,7 +74,7 @@ uv run python -m tinker_cookbook.sweep \
 <summary>Reproduce</summary>
 
 ```bash
-uv run python -m tinker_cookbook.sweep \
+uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
     recipe=sft \
     base.model_name=nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 \
     base.dataset=tulu3 \
@@ -131,7 +131,7 @@ uv run python -m tinker_cookbook.sweep \
 <summary>Reproduce</summary>
 
 ```bash
-uv run python -m tinker_cookbook.sweep \
+uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
     recipe=sft \
     base.model_name=nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16 \
     base.dataset=tulu3 \

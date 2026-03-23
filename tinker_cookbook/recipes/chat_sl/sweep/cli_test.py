@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import chz
 import pytest
 
-from tinker_cookbook.sweep.cli import (
+from tinker_cookbook.recipes.chat_sl.sweep.cli import (
     _extract_recipe_from_argv,
     _get_batch_size,
     _make_sweep_config_cls,
