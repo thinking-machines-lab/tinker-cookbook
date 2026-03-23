@@ -10,8 +10,6 @@ import pytest
 
 from tinker_cookbook.renderers.base import ToolCall
 from tinker_cookbook.third_party.litellm.provider import (
-    _convert_openai_messages,
-    _convert_openai_tools,
     _extract_sampling_params,
     _prepare_messages_with_tools,
     _sample_chat_completion,
@@ -58,111 +56,36 @@ def _make_sampling_result(
 
 
 # ---------------------------------------------------------------------------
-# _convert_openai_messages
+# _extract_sampling_params
 # ---------------------------------------------------------------------------
 
 
-class TestConvertOpenAIMessages:
-    def test_basic_messages(self) -> None:
-        messages = [
-            {"role": "system", "content": "You are helpful."},
-            {"role": "user", "content": "Hi"},
-        ]
-        result = _convert_openai_messages(messages)
-        assert len(result) == 2
-        assert result[0]["role"] == "system"
-        assert result[0]["content"] == "You are helpful."
-        assert result[1]["role"] == "user"
-
-    def test_message_with_tool_call_id(self) -> None:
-        messages = [
-            {"role": "tool", "content": "result", "tool_call_id": "call_123"},
-        ]
-        result = _convert_openai_messages(messages)
-        assert result[0].get("tool_call_id") == "call_123"
-
-    def test_message_with_name(self) -> None:
-        messages = [{"role": "user", "content": "hi", "name": "Alice"}]
-        result = _convert_openai_messages(messages)
-        assert result[0].get("name") == "Alice"
-
-    def test_message_with_tool_calls(self) -> None:
-        messages = [
+class TestExtractSamplingParams:
+    def test_all_params(self) -> None:
+        params = _extract_sampling_params(
             {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [
-                    {
-                        "type": "function",
-                        "id": "call_1",
-                        "function": {"name": "search", "arguments": '{"q": "test"}'},
-                    }
-                ],
+                "temperature": 0.5,
+                "max_tokens": 256,
+                "top_p": 0.9,
+                "top_k": 50,
+                "stop": ["STOP"],
+                "irrelevant_param": True,
             }
-        ]
-        result = _convert_openai_messages(messages)
-        tcs = result[0].get("tool_calls")
-        assert tcs is not None
-        assert len(tcs) == 1
-        assert isinstance(tcs[0], ToolCall)
-        assert tcs[0].function.name == "search"
+        )
+        assert params == {
+            "temperature": 0.5,
+            "max_tokens": 256,
+            "top_p": 0.9,
+            "top_k": 50,
+            "stop": ["STOP"],
+        }
 
-    def test_none_content_becomes_empty_string(self) -> None:
-        messages = [{"role": "assistant", "content": None}]
-        result = _convert_openai_messages(messages)
-        assert result[0]["content"] == ""
+    def test_max_completion_tokens(self) -> None:
+        params = _extract_sampling_params({"max_completion_tokens": 128})
+        assert params == {"max_tokens": 128}
 
-
-# ---------------------------------------------------------------------------
-# _convert_openai_tools
-# ---------------------------------------------------------------------------
-
-
-class TestConvertOpenAITools:
-    def test_basic_tool(self) -> None:
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_weather",
-                    "description": "Get weather for a city",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"city": {"type": "string"}},
-                    },
-                },
-            }
-        ]
-        result = _convert_openai_tools(tools)
-        assert len(result) == 1
-        assert result[0]["name"] == "get_weather"
-        assert result[0]["description"] == "Get weather for a city"
-        assert "properties" in result[0]["parameters"]
-
-    def test_skips_non_function_tools(self) -> None:
-        tools = [
-            {"type": "retrieval"},
-            {
-                "type": "function",
-                "function": {"name": "search", "description": "Search", "parameters": {}},
-            },
-        ]
-        result = _convert_openai_tools(tools)
-        assert len(result) == 1
-        assert result[0]["name"] == "search"
-
-    def test_missing_description(self) -> None:
-        tools = [
-            {
-                "type": "function",
-                "function": {"name": "noop", "parameters": {}},
-            }
-        ]
-        result = _convert_openai_tools(tools)
-        assert result[0]["description"] == ""
-
-    def test_empty_tools(self) -> None:
-        assert _convert_openai_tools([]) == []
+    def test_empty(self) -> None:
+        assert _extract_sampling_params({}) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -535,29 +458,3 @@ class TestTinkerLiteLLMProvider:
         assert fields is not None
         assert fields["prompt_token_ids"] == [1, 2, 3]
         assert fields["completion_token_ids"] == [10, 20]
-
-    def test_extract_sampling_params(self) -> None:
-        params = _extract_sampling_params(
-            {
-                "temperature": 0.5,
-                "max_tokens": 256,
-                "top_p": 0.9,
-                "top_k": 50,
-                "stop": ["STOP"],
-                "irrelevant_param": True,
-            }
-        )
-        assert params == {
-            "temperature": 0.5,
-            "max_tokens": 256,
-            "top_p": 0.9,
-            "top_k": 50,
-            "stop": ["STOP"],
-        }
-
-    def test_extract_sampling_params_max_completion_tokens(self) -> None:
-        params = _extract_sampling_params({"max_completion_tokens": 128})
-        assert params == {"max_tokens": 128}
-
-    def test_extract_sampling_params_empty(self) -> None:
-        assert _extract_sampling_params({}) == {}
