@@ -74,15 +74,15 @@ class BenchmarkConfig:
     checkpoint_path: str | None = None
 
     # SDFT training hyperparameters (paper defaults)
-    learning_rate: float = 5e-5
+    learning_rate: float = 2e-5
     groups_per_batch: int = 32
-    max_tokens: int = 1024
+    max_tokens: int = 2048
     max_steps: int | None = None
     eval_every: int = 20
     save_every: int = 20
 
     # SFT training hyperparameters
-    sft_learning_rate: float = 5e-5
+    sft_learning_rate: float = 2e-5
     sft_batch_size: int = 32
     sft_max_steps: int | None = None
 

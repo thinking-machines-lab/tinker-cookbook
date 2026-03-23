@@ -31,7 +31,7 @@ python -m tinker_cookbook.recipes.sdft.train \
     sciknoweval_domain=chemistry \
     groups_per_batch=32 \
     learning_rate=2e-5 \
-    max_tokens=1024 \
+    max_tokens=2048 \
     lora_rank=128
 ```
 
@@ -43,7 +43,7 @@ python -m tinker_cookbook.recipes.sdft.train \
     dataset=toolalpaca \
     groups_per_batch=32 \
     learning_rate=2e-5 \
-    max_tokens=1024 \
+    max_tokens=2048 \
     lora_rank=128
 ```
 
@@ -65,7 +65,7 @@ python -m tinker_cookbook.recipes.sdft.train \
 | `groups_per_batch` | `32` | Problems per training batch |
 | `group_size` | `1` | Completions per problem (paper uses 1) |
 | `learning_rate` | `2e-5` | Adam learning rate |
-| `max_tokens` | `1024` | Max completion length |
+| `max_tokens` | `2048` | Max completion length |
 | `lora_rank` | `128` | LoRA adapter rank |
 | `teacher_sync_every` | `None` | Hard-sync teacher weights every N steps (None = static teacher) |
 | `sciknoweval_domain` | `chemistry` | SciKnowEval domain filter |
