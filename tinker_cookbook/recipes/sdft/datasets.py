@@ -94,12 +94,13 @@ def load_sciknoweval(
     """
     ds = load_dataset("hicai-zju/SciKnowEval", split="test")
     # Filter to domain, L3 level, and MCQ types
+    # Level is nested inside the 'details' dict field
     filtered = [
         row
         for row in ds  # type: ignore[union-attr]
         if row.get("domain") == domain  # type: ignore[union-attr]
-        and row.get("level") == "L3"  # type: ignore[union-attr]
-        and "mcq" in str(row.get("subfield", ""))  # type: ignore[union-attr]
+        and row.get("details", {}).get("level") == "L3"  # type: ignore[union-attr]
+        and "mcq" in str(row.get("type", ""))  # type: ignore[union-attr]
     ]
     if not filtered:
         raise ValueError(
