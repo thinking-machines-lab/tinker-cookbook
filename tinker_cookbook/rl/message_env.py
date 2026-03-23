@@ -28,6 +28,7 @@ class MessageStepResult:
     episode_done: bool
     next_messages: list[Message]
     metrics: dict[str, float] = field(default_factory=dict)
+    logs: types.Logs = field(default_factory=dict)
     next_stop_condition: StopCondition | None = None
 
 
@@ -109,6 +110,7 @@ class EnvFromMessageEnv(types.Env):
                 next_observation=tinker.ModelInput.empty(),
                 next_stop_condition=self._base_stop_condition,
                 metrics={**msg_step.metrics, "context_overflow": 1.0},
+                logs=msg_step.logs,
             )
 
         return types.StepResult(
@@ -117,4 +119,5 @@ class EnvFromMessageEnv(types.Env):
             next_observation=next_observation,
             next_stop_condition=next_stop_condition,
             metrics=msg_step.metrics,
+            logs=msg_step.logs,
         )
