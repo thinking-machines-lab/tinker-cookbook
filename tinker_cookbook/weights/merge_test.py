@@ -724,3 +724,229 @@ class TestValidateMergeOpShapes:
         }
         shapes = {"down_proj": (2, 4, 8)}
         validate_merge_op_shapes(ops, shapes)  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Qwen3.5 in_proj_q/k/v → in_proj_qkv fusion fix
+# ---------------------------------------------------------------------------
+#
+# Qwen3.5 linear_attn layers: Tinker trains separate in_proj_q/k/v LoRA
+# adapters but HF stores a single fused in_proj_qkv weight laid out as
+# Q‖K‖V along the row dimension (Q=K=key_dim, V=value_dim, unequal).
+#
+# The fix intercepts in_proj_q/k/v keys in plan_merge_ops, redirects them
+# to in_proj_qkv with a slice_start offset, and applies_merge_op writes the
+# delta only to the correct row slice.
+
+
+def _make_qkv_adapter(
+    q_out: int, k_out: int, v_out: int, in_dim: int, rank: int = 1
+) -> tuple[dict[str, torch.Tensor], dict]:
+    """Build a minimal adapter dict with in_proj_q/k/v LoRA weights.
+
+    Uses fill values 1/2/3 for Q/K/V so we can verify each slice is updated
+    with the correct delta independently.
+    """
+    prefix = "base_model.model.model.layers.0.linear_attn"
+    adapter_weights = {
+        f"{prefix}.in_proj_q.lora_A.weight": torch.ones(rank, in_dim),
+        f"{prefix}.in_proj_q.lora_B.weight": torch.ones(q_out, rank) * 1.0,
+        f"{prefix}.in_proj_k.lora_A.weight": torch.ones(rank, in_dim),
+        f"{prefix}.in_proj_k.lora_B.weight": torch.ones(k_out, rank) * 2.0,
+        f"{prefix}.in_proj_v.lora_A.weight": torch.ones(rank, in_dim),
+        f"{prefix}.in_proj_v.lora_B.weight": torch.ones(v_out, rank) * 3.0,
+    }
+    adapter_config = {"lora_alpha": 1, "r": rank}
+    return adapter_weights, adapter_config
+
+
+class TestQwen35QkvFusion:
+    """Tests for the in_proj_q/k/v → in_proj_qkv fusion fix."""
+
+    # Qwen3.5-4B dimensions: key_dim=2048, value_dim=4096, hidden=2560
+    Q_OUT = 4  # scaled down for tests
+    K_OUT = 4
+    V_OUT = 8
+    IN_DIM = 6
+    FUSED_ROWS = Q_OUT + K_OUT + V_OUT  # 16
+
+    def _make_state_dict(self) -> dict[str, torch.Tensor]:
+        return {
+            "model.layers.0.linear_attn.in_proj_qkv.weight": torch.zeros(
+                self.FUSED_ROWS, self.IN_DIM
+            )
+        }
+
+    def test_planning_maps_to_fused_key(self):
+        """plan_merge_ops redirects all three split keys to in_proj_qkv."""
+        adapter_weights, adapter_config = _make_qkv_adapter(
+            self.Q_OUT, self.K_OUT, self.V_OUT, self.IN_DIM
+        )
+        model_state_keys = set(self._make_state_dict())
+        profile = MergeProfile()
+
+        ops = plan_merge_ops(adapter_weights, adapter_config, model_state_keys, profile)
+
+        # All three should land on in_proj_qkv, not on separate split keys
+        assert "model.layers.0.linear_attn.in_proj_qkv.weight" in ops
+        assert not any(
+            k.endswith((".in_proj_q.weight", ".in_proj_k.weight", ".in_proj_v.weight"))
+            for k in ops
+        )
+        assert len(ops["model.layers.0.linear_attn.in_proj_qkv.weight"]) == 3
+
+    def test_slice_starts_are_correct(self):
+        """Q starts at 0, K at q_out, V at q_out+k_out."""
+        adapter_weights, adapter_config = _make_qkv_adapter(
+            self.Q_OUT, self.K_OUT, self.V_OUT, self.IN_DIM
+        )
+        model_state_keys = set(self._make_state_dict())
+        profile = MergeProfile()
+
+        ops = plan_merge_ops(adapter_weights, adapter_config, model_state_keys, profile)
+        merge_ops = ops["model.layers.0.linear_attn.in_proj_qkv.weight"]
+
+        starts = sorted(op.slice_start for op in merge_ops)
+        assert starts == [0, self.Q_OUT, self.Q_OUT + self.K_OUT]
+
+    def test_correct_delta_applied_to_each_slice(self):
+        """Q/K/V deltas land on the right rows with the right values.
+
+        lora_B fill values: Q=1, K=2, V=3. lora_A = ones. scaling = 1.
+        Expected delta per slice: fill * ones(out, in_dim).
+        All other rows must remain zero.
+        """
+        adapter_weights, adapter_config = _make_qkv_adapter(
+            self.Q_OUT, self.K_OUT, self.V_OUT, self.IN_DIM
+        )
+        state_dict = self._make_state_dict()
+        model = _make_base_model(state_dict)
+
+        merge_adapter_weights(model, adapter_weights, adapter_config)
+
+        fused = state_dict["model.layers.0.linear_attn.in_proj_qkv.weight"]
+
+        q_slice = fused[: self.Q_OUT]
+        k_slice = fused[self.Q_OUT : self.Q_OUT + self.K_OUT]
+        v_slice = fused[self.Q_OUT + self.K_OUT :]
+
+        # delta = lora_B @ lora_A = fill * ones(out,1) @ ones(1,in) = fill * ones(out,in)
+        assert torch.allclose(q_slice, torch.full_like(q_slice, 1.0))
+        assert torch.allclose(k_slice, torch.full_like(k_slice, 2.0))
+        assert torch.allclose(v_slice, torch.full_like(v_slice, 3.0))
+
+    def test_slices_do_not_overlap(self):
+        """Applying Q/K/V deltas independently does not corrupt adjacent slices."""
+        adapter_weights, adapter_config = _make_qkv_adapter(
+            self.Q_OUT, self.K_OUT, self.V_OUT, self.IN_DIM
+        )
+        # Pre-fill fused weight with a sentinel so untouched rows stand out
+        fused = torch.full((self.FUSED_ROWS, self.IN_DIM), 99.0)
+        state_dict = {"model.layers.0.linear_attn.in_proj_qkv.weight": fused}
+        model = _make_base_model(state_dict)
+
+        merge_adapter_weights(model, adapter_weights, adapter_config)
+
+        # Each slice should be sentinel + delta (no zeros, no cross-contamination)
+        q_slice = fused[: self.Q_OUT]
+        k_slice = fused[self.Q_OUT : self.Q_OUT + self.K_OUT]
+        v_slice = fused[self.Q_OUT + self.K_OUT :]
+
+        assert torch.allclose(q_slice, torch.full_like(q_slice, 99.0 + 1.0))
+        assert torch.allclose(k_slice, torch.full_like(k_slice, 99.0 + 2.0))
+        assert torch.allclose(v_slice, torch.full_like(v_slice, 99.0 + 3.0))
+
+    def test_unequal_qkv_dims(self):
+        """Offset computation works when Q != K != V (as in Qwen3.5-4B)."""
+        q_out, k_out, v_out, in_dim = 3, 5, 7, 4
+        adapter_weights, adapter_config = _make_qkv_adapter(q_out, k_out, v_out, in_dim)
+        fused_rows = q_out + k_out + v_out
+        state_dict = {
+            "model.layers.0.linear_attn.in_proj_qkv.weight": torch.zeros(fused_rows, in_dim)
+        }
+        model = _make_base_model(state_dict)
+
+        merge_adapter_weights(model, adapter_weights, adapter_config)
+
+        fused = state_dict["model.layers.0.linear_attn.in_proj_qkv.weight"]
+        assert torch.allclose(fused[:q_out], torch.full((q_out, in_dim), 1.0))
+        assert torch.allclose(fused[q_out : q_out + k_out], torch.full((k_out, in_dim), 2.0))
+        assert torch.allclose(fused[q_out + k_out :], torch.full((v_out, in_dim), 3.0))
+
+    def test_validate_passes_for_sliced_ops(self):
+        """validate_merge_op_shapes accepts ops whose delta is smaller than the target."""
+        ops = {
+            "model.layers.0.linear_attn.in_proj_qkv.weight": [
+                MergeOp(
+                    target_key="model.layers.0.linear_attn.in_proj_qkv.weight",
+                    lora_A=torch.ones(1, self.IN_DIM),
+                    lora_B=torch.ones(self.Q_OUT, 1),
+                    slice_start=0,
+                ),
+                MergeOp(
+                    target_key="model.layers.0.linear_attn.in_proj_qkv.weight",
+                    lora_A=torch.ones(1, self.IN_DIM),
+                    lora_B=torch.ones(self.K_OUT, 1),
+                    slice_start=self.Q_OUT,
+                ),
+                MergeOp(
+                    target_key="model.layers.0.linear_attn.in_proj_qkv.weight",
+                    lora_A=torch.ones(1, self.IN_DIM),
+                    lora_B=torch.ones(self.V_OUT, 1),
+                    slice_start=self.Q_OUT + self.K_OUT,
+                ),
+            ]
+        }
+        shapes = {"model.layers.0.linear_attn.in_proj_qkv.weight": (self.FUSED_ROWS, self.IN_DIM)}
+        validate_merge_op_shapes(ops, shapes)  # should not raise
+
+    def test_validate_rejects_slice_overflow(self):
+        """validate_merge_op_shapes rejects a slice that runs past the end of the target."""
+        ops = {
+            "in_proj_qkv.weight": [
+                MergeOp(
+                    target_key="in_proj_qkv.weight",
+                    lora_A=torch.ones(1, self.IN_DIM),
+                    lora_B=torch.ones(self.Q_OUT, 1),
+                    slice_start=self.FUSED_ROWS - 1,  # starts 1 from end, overflows
+                )
+            ]
+        }
+        shapes = {"in_proj_qkv.weight": (self.FUSED_ROWS, self.IN_DIM)}
+        with pytest.raises(WeightsMergeError, match=r"Shape mismatch.*in_proj_qkv"):
+            validate_merge_op_shapes(ops, shapes)
+
+    def test_validate_rejects_in_dim_mismatch(self):
+        """validate_merge_op_shapes rejects a sliced op with wrong in_dim."""
+        ops = {
+            "in_proj_qkv.weight": [
+                MergeOp(
+                    target_key="in_proj_qkv.weight",
+                    lora_A=torch.ones(1, self.IN_DIM + 1),  # wrong in_dim
+                    lora_B=torch.ones(self.Q_OUT, 1),
+                    slice_start=0,
+                )
+            ]
+        }
+        shapes = {"in_proj_qkv.weight": (self.FUSED_ROWS, self.IN_DIM)}
+        with pytest.raises(WeightsMergeError, match=r"Shape mismatch.*in_proj_qkv"):
+            validate_merge_op_shapes(ops, shapes)
+
+    def test_vision_model_qkv_fusion(self):
+        """QKV fusion works with the model.language_model. prefix (vision models)."""
+        q_out, k_out, v_out, in_dim = self.Q_OUT, self.K_OUT, self.V_OUT, self.IN_DIM
+        adapter_weights, adapter_config = _make_qkv_adapter(q_out, k_out, v_out, in_dim)
+        fused_rows = q_out + k_out + v_out
+        state_dict = {
+            "model.language_model.layers.0.linear_attn.in_proj_qkv.weight": torch.zeros(
+                fused_rows, in_dim
+            )
+        }
+        model = _make_base_model(state_dict)
+
+        merge_adapter_weights(model, adapter_weights, adapter_config)
+
+        fused = state_dict["model.language_model.layers.0.linear_attn.in_proj_qkv.weight"]
+        assert torch.allclose(fused[:q_out], torch.full((q_out, in_dim), 1.0))
+        assert torch.allclose(fused[q_out : q_out + k_out], torch.full((k_out, in_dim), 2.0))
+        assert torch.allclose(fused[q_out + k_out :], torch.full((v_out, in_dim), 3.0))
