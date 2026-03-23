@@ -181,9 +181,9 @@ async def run_sft(config: BenchmarkConfig) -> str | None:
     await sl_train.main(sl_config)
 
     ckpt = checkpoint_utils.get_last_checkpoint(log_path)
-    if ckpt and ckpt.state_path:
-        logger.info(f"SFT checkpoint: {ckpt.state_path}")
-        return ckpt.state_path
+    if ckpt and ckpt.sampler_path:
+        logger.info(f"SFT checkpoint: {ckpt.sampler_path}")
+        return ckpt.sampler_path
     return None
 
 
@@ -235,9 +235,9 @@ async def run_sdft(config: BenchmarkConfig) -> str | None:
     await sdft.main(sdft_config, train_dataset, test_dataset=None)
 
     ckpt = checkpoint_utils.get_last_checkpoint(log_path)
-    if ckpt and ckpt.state_path:
-        logger.info(f"SDFT checkpoint: {ckpt.state_path}")
-        return ckpt.state_path
+    if ckpt and ckpt.sampler_path:
+        logger.info(f"SDFT checkpoint: {ckpt.sampler_path}")
+        return ckpt.sampler_path
     return None
 
 
