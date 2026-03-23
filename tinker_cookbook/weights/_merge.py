@@ -199,6 +199,9 @@ class MergeOp:
     fused_proj_interleaved: bool = False
     """GPT-OSS stores fused gate/up projections interleaved rather than concatenated."""
 
+    slice_start: int | None = None
+    """Row offset into a fused target weight (e.g. in_proj_qkv) for split q/k/v projections."""
+
 
 # ---------------------------------------------------------------------------
 # Low-level math utilities
@@ -322,12 +325,17 @@ def plan_merge_ops(
     is_interleaved = profile.expert_layout == "fused_interleaved"
 
     # Standard name remapping (order matters: strip prefix before vision remap)
-    name_remaps: list[tuple[str, str]] = [
-        ("base_model.model.", ""),
-        ("model.unembed_tokens", "lm_head"),
-    ]
+    name_remaps: list[tuple[str, str]] = [("base_model.model.", "")]
     if profile.has_language_model_prefix:
-        name_remaps.append(("model.", "model.language_model."))
+        # For vision models: apply the language_model prefix first, then remap
+        # unembed_tokens to the tied embed_tokens weight (lm_head is not stored
+        # separately in the safetensors for these models).
+        name_remaps += [
+            ("model.", "model.language_model."),
+            ("model.language_model.unembed_tokens", "model.language_model.embed_tokens"),
+        ]
+    else:
+        name_remaps.append(("model.unembed_tokens", "lm_head"))
 
     ops: dict[str, list[MergeOp]] = {}
 
@@ -340,6 +348,23 @@ def plan_merge_ops(
         lora_B = adapter_weights[n.replace(".weight", ".lora_B.weight")].float() * scaling
 
         if ".experts" not in n:
+            # Remap Tinker's split in_proj_q/k/v to HF's fused in_proj_qkv.
+            # Offsets are derived from sibling lora_B shapes since dims are unequal
+            # (e.g. Q=K=2048, V=4096 for Qwen3.5-4B).
+            _QKV = {".in_proj_q.weight": "q", ".in_proj_k.weight": "k", ".in_proj_v.weight": "v"}
+            qkv_role = next((r for s, r in _QKV.items() if target_key.endswith(s)), None)
+            if qkv_role is not None:
+                suffix = next(s for s, r in _QKV.items() if r == qkv_role)
+                fused_key = target_key[: -len(suffix)] + ".in_proj_qkv.weight"
+                if fused_key in model_state_keys:
+                    pfx = n[: -len(suffix)]
+                    q = adapter_weights[pfx + ".in_proj_q.lora_B.weight"].shape[0]
+                    k = adapter_weights[pfx + ".in_proj_k.lora_B.weight"].shape[0]
+                    start = {"q": 0, "k": q, "v": q + k}[qkv_role]
+                    ops.setdefault(fused_key, []).append(
+                        MergeOp(target_key=fused_key, lora_A=lora_A, lora_B=lora_B, slice_start=start)
+                    )
+                    continue
             _plan_non_expert_op(target_key, lora_A, lora_B, n, profile, model_state_keys, ops)
         else:
             _plan_expert_ops(
@@ -486,7 +511,15 @@ def validate_merge_op_shapes(
             else:
                 # 2D: delta = lora_B @ lora_A → (out_dim, in_dim)
                 delta_shape = (op.lora_B.shape[0], op.lora_A.shape[1])
-                if delta_shape != target_shape:
+                if op.slice_start is not None:
+                    # Sliced op: check in_dim matches and slice fits within target rows
+                    end = op.slice_start + delta_shape[0]
+                    if delta_shape[1] != target_shape[1] or end > target_shape[0]:
+                        raise WeightsMergeError(
+                            f"Shape mismatch for {target_key!r} slice [{op.slice_start}:{end}]: "
+                            f"merge op produces {delta_shape} but target has shape {target_shape}"
+                        )
+                elif delta_shape != target_shape:
                     raise WeightsMergeError(
                         f"Shape mismatch for {target_key!r}: "
                         f"merge op produces {delta_shape} but target expects {target_shape}"
@@ -527,7 +560,11 @@ def apply_merge_op(tensors: dict[str, torch.Tensor], op: MergeOp) -> None:
     else:
         # 2D: standard linear or per-expert (already sliced during planning)
         delta = merge_lora_matrices(op.lora_A, op.lora_B)
-        apply_merged_weight(tensors[op.target_key], delta)
+        if op.slice_start is not None:
+            target = tensors[op.target_key]
+            apply_merged_weight(target[op.slice_start : op.slice_start + delta.shape[0]], delta)
+        else:
+            apply_merged_weight(tensors[op.target_key], delta)
 
 
 # ---------------------------------------------------------------------------
