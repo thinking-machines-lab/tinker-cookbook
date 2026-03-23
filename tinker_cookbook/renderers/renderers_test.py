@@ -33,9 +33,7 @@ import pytest
 from tinker_cookbook.image_processing_utils import get_image_processor
 from tinker_cookbook.model_info import get_model_attributes, get_recommended_renderer_name
 from tinker_cookbook.renderers import (
-    DeepSeekV3ThinkingRenderer,
     Message,
-    Qwen3Renderer,
     TextPart,
     ThinkingPart,
     ToolCall,
@@ -47,9 +45,11 @@ from tinker_cookbook.renderers import (
     unregister_renderer,
 )
 from tinker_cookbook.renderers.base import ContentPart, ensure_list, ensure_text
+from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3ThinkingRenderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
 from tinker_cookbook.renderers.nemotron3 import Nemotron3Renderer
+from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
 from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
 from tinker_cookbook.renderers.testing_utils import (
     extract_token_ids,
