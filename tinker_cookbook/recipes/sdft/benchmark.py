@@ -64,7 +64,7 @@ class BenchmarkConfig:
 
     # Benchmark dataset
     dataset: str = "sciknoweval"  # sciknoweval | toolalpaca
-    sciknoweval_domain: str = "chemistry"
+    sciknoweval_domain: str = "Chemistry"
 
     # Which phase to run. SFT and SDFT are independent comparisons from the
     # same base model (not a sequential pipeline).
