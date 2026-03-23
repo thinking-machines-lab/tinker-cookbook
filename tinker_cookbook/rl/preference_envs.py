@@ -2,6 +2,7 @@ import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
 import chz
 import tinker
@@ -52,7 +53,7 @@ class PreferenceEnv(Env):
     async def initial_observation(self) -> tuple[Observation, StopCondition]:
         return self.policy_renderer.build_generation_prompt(self.convo_prefix), self.stop_condition
 
-    async def step(self, action: Action) -> StepResult:
+    async def step(self, action: Action, **kwargs: Any) -> StepResult:
         """Compute the reward for a given action.
 
         Args:

@@ -9,7 +9,7 @@ a teacher model. The environment provides no correctness or format rewards.
 import math
 from collections.abc import Sequence
 from functools import partial
-from typing import Literal
+from typing import Any, Literal
 
 import chz
 import tinker
@@ -109,7 +109,7 @@ class PromptOnlyEnv(ProblemEnv):
         """No reference answer needed for distillation."""
         return ""
 
-    async def step(self, action: Action) -> StepResult:
+    async def step(self, action: Action, **kwargs: Any) -> StepResult:
         """Return zero reward always."""
         message, parse_success = self.renderer.parse_response(action)
         return StepResult(

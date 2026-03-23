@@ -2,6 +2,7 @@ import random
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import chz
 from tinker import ModelInput
@@ -68,7 +69,7 @@ class GuessNumberEnv(Env):
         except ValueError:
             return RETURN_ON_FAIL
 
-    async def step(self, action: Action) -> StepResult:
+    async def step(self, action: Action, **kwargs: Any) -> StepResult:
         # step 1: parse the action tokens into a message
         # this step is specific to our library, but usually templated, so you can just copy it.
         (action_message, _parse_success) = self.renderer.parse_response(action)

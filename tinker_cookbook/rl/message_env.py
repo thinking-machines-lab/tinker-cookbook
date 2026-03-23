@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import Any
 
 import tinker
 
@@ -104,8 +105,21 @@ class EnvFromMessageEnv(types.Env):
 
         return model_input, self._base_stop_condition
 
-    async def step(self, action: types.Action) -> types.StepResult:
+    async def step(
+        self, action: types.Action, *, stop_reason: tinker.StopReason = "stop", **kwargs: Any
+    ) -> types.StepResult:
         """Parse tokens to a message, delegate to MessageEnv, and render response."""
+        # If the model hit max_tokens without producing a stop sequence, terminate
+        # the episode early. Previous turns' logprobs are preserved in the trajectory.
+        if stop_reason == "length":
+            return types.StepResult(
+                reward=self.context_overflow_reward,
+                episode_done=True,
+                next_observation=tinker.ModelInput.empty(),
+                next_stop_condition=self._base_stop_condition,
+                metrics={"max_tokens_reached": 1.0},
+            )
+
         assistant_message, parse_success = self.renderer.parse_response(action)
 
         if not parse_success:

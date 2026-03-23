@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import chz
 import tinker
@@ -138,7 +138,7 @@ class TwoPlayerEnv(Env):
         opponent_action_content = get_text_content(opponent_response)
         await self.coordinator.make_move(opponent_player_id, opponent_action_content)
 
-    async def step(self, action: Action) -> StepResult:
+    async def step(self, action: Action, **kwargs: Any) -> StepResult:
         """Take a step in the environment."""
         if self.coordinator.game_done:
             return self.get_done_step()

@@ -463,6 +463,68 @@ class TestContextOverflowReward:
         assert result.reward == 0.0
 
 
+class TestMaxTokensReached:
+    def test_stop_reason_length_terminates_episode(self):
+        """When stop_reason='length', episode terminates with context_overflow_reward."""
+        renderer = _make_renderer(gen_prompt_tokens=[1, 2, 3], stop_sequences=["<s>"])
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(
+                reward=0.9,
+                episode_done=False,
+                next_messages=[{"role": "user", "content": "x"}],
+            ),
+        )
+        env = EnvFromMessageEnv(renderer=renderer, message_env=msg_env)
+
+        result = asyncio.run(env.step([1, 2, 3], stop_reason="length"))
+
+        assert result.episode_done is True
+        assert result.reward == 0.0  # default context_overflow_reward
+        assert result.next_observation.length == 0
+        assert result.metrics["max_tokens_reached"] == 1.0
+        # MessageEnv.step should NOT have been called (we short-circuit)
+        assert len(msg_env.step_calls) == 0
+
+    def test_stop_reason_length_uses_custom_overflow_reward(self):
+        """stop_reason='length' uses the configured context_overflow_reward."""
+        renderer = _make_renderer()
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(reward=0.9, episode_done=False, next_messages=[]),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer,
+            message_env=msg_env,
+            context_overflow_reward=-0.5,
+        )
+
+        result = asyncio.run(env.step([1], stop_reason="length"))
+
+        assert result.reward == -0.5
+        assert result.metrics["max_tokens_reached"] == 1.0
+
+    def test_stop_reason_stop_continues_normally(self):
+        """When stop_reason='stop' (default), normal processing occurs."""
+        renderer = _make_renderer(gen_prompt_tokens=[10, 20], stop_sequences=["<s>"])
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(
+                reward=0.7,
+                episode_done=False,
+                next_messages=[{"role": "user", "content": "x"}],
+            ),
+        )
+        env = EnvFromMessageEnv(renderer=renderer, message_env=msg_env)
+
+        result = asyncio.run(env.step([1, 2]))
+
+        assert result.reward == 0.7
+        assert result.episode_done is False
+        assert "max_tokens_reached" not in result.metrics
+        assert len(msg_env.step_calls) == 1
+
+
 class TestStepThreading:
     def test_step_renders_in_thread(self):
         """On successful parse, the next observation rendering should use to_thread."""
