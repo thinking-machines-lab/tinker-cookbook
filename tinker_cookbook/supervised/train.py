@@ -81,6 +81,9 @@ class Config:
     # Maximum number of training steps. If None, train for num_epochs * n_batches.
     max_steps: int | None = None
 
+    # Console display preset for metrics. Options: "compact", "detailed", "all".
+    console_metrics: str = "compact"
+
 
 @dataclass
 class SubmittedBatch:
@@ -177,6 +180,7 @@ async def main(config: Config):
         wandb_name=config.wandb_name,
         config=config,
         do_configure_logging_module=True,
+        console_metrics=config.console_metrics,
     )
     if config.enable_trace:
         # Get and rename the current (main) task

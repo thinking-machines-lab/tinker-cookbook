@@ -76,6 +76,9 @@ class Config:
     # Maximum number of training steps. If None, train for num_epochs * n_batches.
     max_steps: int | None = None
 
+    # Console display preset for metrics. Options: "compact", "detailed", "all".
+    console_metrics: str = "compact"
+
 
 def create_dpo_clients(
     config: Config,
@@ -359,6 +362,7 @@ def main(config: Config):
         wandb_project=config.wandb_project,
         wandb_name=config.wandb_name,
         config=config,
+        console_metrics=config.console_metrics,
         do_configure_logging_module=True,
     )
     if config.enable_trace:
