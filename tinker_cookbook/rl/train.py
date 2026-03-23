@@ -64,7 +64,7 @@ from tinker_cookbook.rl.types import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import logtree, ml_log, trace
 from tinker_cookbook.utils.deprecation import warn_deprecated
-from tinker_cookbook.utils.misc_utils import safezip, split_list, timed
+from tinker_cookbook.utils.misc_utils import safezip, split_list
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +180,6 @@ def _get_logtree_scope(
             logtree.write_trace_json(trace, logtree_json_path)
 
 
-@trace.scope
 def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]:
     assert num_inds <= len(scores)
     sorted_inds = np.argsort(scores)
@@ -188,7 +187,6 @@ def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]
     return [int(sorted_inds[i]) for i in uniform_inds]
 
 
-@trace.scope
 def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
     """
     Print a subset of the trajectory group to the console.
@@ -209,7 +207,6 @@ def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
 
     buf = io.StringIO()
 
-    @trace.scope
     def bprint(s: str):
         print(s, file=buf)
 
@@ -539,110 +536,120 @@ async def do_sync_training_with_stream_minibatch(
     )
 
     for i_batch in range(start_batch, end_batch):
-        metrics = {
+        metrics: dict[str, Any] = {
             "progress/batch": i_batch,
             "optim/lr": config.learning_rate,
             "progress/done_frac": (i_batch + 1) / num_batches,
         }
-        t_start = time.time()
 
-        # Run evaluations
-        if (config.eval_every > 0 and i_batch % config.eval_every == 0) or i_batch == end_batch - 1:
-            with timed("run_evals", metrics):
-                eval_metrics = await run_evaluations_parallel(
-                    evaluators, sampling_client, config, i_batch
-                )
-                metrics.update(eval_metrics)
-
-        with _get_logtree_scope(
-            config.log_path,
-            config.num_groups_to_log,
-            f"train_iteration_{i_batch:06d}",
-            f"RL Iteration {i_batch}",
-        ):
-            # Samplers will produce trajectory groups asynchronously,
-            # and the trainer will consume them as soon as they are ready
-            trajectory_groups_queue = asyncio.Queue[WrappedTrajectoryGroup | None]()
-            env_group_builders_P = dataset.get_batch(i_batch)
-
-            @trace.scope
-            async def trajectory_group_worker_task(
-                builder: EnvGroupBuilder, enable_logging: bool
-            ) -> None:
-                metrics = {}
-                t_start = time.time()
-                trajectory_group = await do_group_rollout_and_filter_constant_reward(
-                    sampling_client,
-                    builder,
-                    max_tokens=config.max_tokens,
-                    temperature=config.temperature,
-                    do_remove_constant_reward_groups=config.remove_constant_reward_groups,
-                    enable_logging=enable_logging,
-                    strategy=strategy,
-                )
-                metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
-                # Ingest error info (safe: same event loop thread)
-                if error_counter is not None:
-                    error_counter.ingest(trajectory_group)
-                if trajectory_group is not None:
-                    trajectory_groups_queue.put_nowait(
-                        WrappedTrajectoryGroup(
-                            trajectory_group=trajectory_group,
-                            env_group_builder=builder,
-                            sampling_client_step=i_batch,
-                            metrics=metrics,
-                        )
+        with trace.trace_iteration(step=i_batch) as window:
+            # Run evaluations
+            if (config.eval_every > 0 and i_batch % config.eval_every == 0) or i_batch == end_batch - 1:
+                async with trace.scope_span("run_evals"):
+                    eval_metrics = await run_evaluations_parallel(
+                        evaluators, sampling_client, config, i_batch
                     )
-                else:
-                    trajectory_groups_queue.put_nowait(None)
+                    metrics.update(eval_metrics)
 
-            # Sample all trajectories asynchronously. If we have multiple minibatches,
-            # then sampling can overlap with training.
-            for i, builder in enumerate(env_group_builders_P):
-                asyncio.create_task(
-                    trajectory_group_worker_task(
-                        builder, enable_logging=i < config.num_groups_to_log
-                    ),
-                    name=f"trajectory_group_worker_task_{i}",
+            with _get_logtree_scope(
+                config.log_path,
+                config.num_groups_to_log,
+                f"train_iteration_{i_batch:06d}",
+                f"RL Iteration {i_batch}",
+            ):
+                # Samplers will produce trajectory groups asynchronously,
+                # and the trainer will consume them as soon as they are ready
+                trajectory_groups_queue: asyncio.Queue[
+                    WrappedTrajectoryGroup | _Shutdown | None
+                ] = asyncio.Queue()
+                env_group_builders_P = dataset.get_batch(i_batch)
+
+                @trace.scope
+                async def trajectory_group_worker_task(
+                    builder: EnvGroupBuilder, enable_logging: bool
+                ) -> None:
+                    worker_metrics: dict[str, Any] = {}
+                    t_start = time.time()
+                    async with trace.scope_span("trajectory_group_worker"):
+                        trajectory_group = await do_group_rollout_and_filter_constant_reward(
+                            sampling_client,
+                            builder,
+                            max_tokens=config.max_tokens,
+                            temperature=config.temperature,
+                            do_remove_constant_reward_groups=config.remove_constant_reward_groups,
+                            enable_logging=enable_logging,
+                            strategy=strategy,
+                        )
+                    worker_metrics["time/trajectory_group_worker_loop/total"] = (
+                        time.time() - t_start
+                    )
+                    # Ingest error info (safe: same event loop thread)
+                    if error_counter is not None:
+                        error_counter.ingest(trajectory_group)
+                    if trajectory_group is not None:
+                        trajectory_groups_queue.put_nowait(
+                            WrappedTrajectoryGroup(
+                                trajectory_group=trajectory_group,
+                                env_group_builder=builder,
+                                sampling_client_step=i_batch,
+                                metrics=worker_metrics,
+                            )
+                        )
+                    else:
+                        trajectory_groups_queue.put_nowait(None)
+
+                # Sample all trajectories asynchronously. If we have multiple minibatches,
+                # then sampling can overlap with training.
+                for i, builder in enumerate(env_group_builders_P):
+                    asyncio.create_task(
+                        trajectory_group_worker_task(
+                            builder, enable_logging=i < config.num_groups_to_log
+                        ),
+                        name=f"trajectory_group_worker_task_{i}",
+                    )
+
+                # Run multiple optimizer substeps per training iteration
+                streaming_result = await do_train_step_streaming_and_get_sampling_client(
+                    config,
+                    i_batch,
+                    trajectory_groups_queue,
+                    training_client,
+                    kl_reference_client,
+                    tokenizer,
                 )
+                # _Shutdown cannot appear in the sync path's local queue
+                assert streaming_result is not None, "Unexpected shutdown in sync streaming path"
+                (
+                    sampling_client,
+                    full_batch_metrics,
+                    full_batch_wrapped_trajectory_groups,
+                ) = streaming_result
 
-            # Run multiple optimizer substeps per training iteration
-            streaming_result = await do_train_step_streaming_and_get_sampling_client(
-                config,
-                i_batch,
-                trajectory_groups_queue,
-                training_client,
-                kl_reference_client,
-                tokenizer,
+            _maybe_export_rollout_summary_jsonl(
+                config=config,
+                file_prefix=f"train_iteration_{i_batch:06d}",
+                split="train",
+                iteration=i_batch,
+                groups_P=[
+                    RolloutSummaryGroup(
+                        trajectory_group=group.trajectory_group,
+                        tags=group.env_group_builder.logging_tags(),
+                        sampling_client_step=group.sampling_client_step,
+                    )
+                    for group in full_batch_wrapped_trajectory_groups
+                ],
             )
-            # _Shutdown cannot appear in the sync path's local queue
-            assert streaming_result is not None, "Unexpected shutdown in sync streaming path"
-            (
-                sampling_client,
-                full_batch_metrics,
-                full_batch_wrapped_trajectory_groups,
-            ) = streaming_result
-
-        _maybe_export_rollout_summary_jsonl(
-            config=config,
-            file_prefix=f"train_iteration_{i_batch:06d}",
-            split="train",
-            iteration=i_batch,
-            groups_P=[
-                RolloutSummaryGroup(
-                    trajectory_group=group.trajectory_group,
-                    tags=group.env_group_builder.logging_tags(),
-                    sampling_client_step=group.sampling_client_step,
-                )
-                for group in full_batch_wrapped_trajectory_groups
-            ],
-        )
 
         # Log metrics
         metrics.update(full_batch_metrics)
         if error_counter is not None:
             metrics.update(error_counter.get_metrics())
-        metrics["time/total"] = time.time() - t_start
+        metrics.update(window.get_timing_metrics())
+        window.write_spans_jsonl(Path(config.log_path) / "timing_spans.jsonl", step=i_batch)
+        if config.span_chart_every > 0 and i_batch % config.span_chart_every == 0:
+            trace.save_gantt_chart_html(
+                window, i_batch, Path(config.log_path) / f"timing_gantt_{i_batch:06d}.html"
+            )
         ml_logger.log_metrics(metrics, step=i_batch)
 
 
@@ -768,32 +775,33 @@ async def do_async_training(
                 logger.info("[trajectory_group_worker_loop] Received shutdown signal")
                 break
 
-            metrics = {}
-            t_start = time.time()
             # Save a reference to the sampling client step in case it changes
             # while we're running the rollout
             sampling_client_step_copy = sampling_client_step
-            trajectory_group = await do_group_rollout_and_filter_constant_reward(
-                sampling_client,
-                env_group_builder,
-                max_tokens=config.max_tokens,
-                temperature=config.temperature,
-                do_remove_constant_reward_groups=config.remove_constant_reward_groups,
-                strategy=strategy,
-            )
+            worker_metrics: dict[str, Any] = {}
+            t_start = time.time()
+            async with trace.scope_span("trajectory_group_worker"):
+                trajectory_group = await do_group_rollout_and_filter_constant_reward(
+                    sampling_client,
+                    env_group_builder,
+                    max_tokens=config.max_tokens,
+                    temperature=config.temperature,
+                    do_remove_constant_reward_groups=config.remove_constant_reward_groups,
+                    strategy=strategy,
+                )
+            worker_metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
             # Ingest error info (safe: same event loop thread)
             if error_counter is not None:
                 error_counter.ingest(trajectory_group)
             if trajectory_group is None:
                 trajectory_groups_queue.put_nowait(None)
             else:
-                metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
                 trajectory_groups_queue.put_nowait(
                     WrappedTrajectoryGroup(
                         trajectory_group=trajectory_group,
                         env_group_builder=env_group_builder,
                         sampling_client_step=sampling_client_step_copy,
-                        metrics=metrics,
+                        metrics=worker_metrics,
                     )
                 )
 
@@ -818,7 +826,6 @@ async def do_async_training(
         wrapped_trajectory_groups = []
         while i_batch < end_batch:
 
-            @trace.scope
             def filter_stale_trajectory_group(
                 wrapped_trajectory_group: WrappedTrajectoryGroup | None,
             ) -> bool:
@@ -851,12 +858,11 @@ async def do_async_training(
                     return False
                 return True
 
-            metrics = {
+            metrics: dict[str, Any] = {
                 "training_client/step": i_batch,
                 "optim/lr": config.learning_rate,
                 "progress/done_frac": (i_batch + 1) / num_batches,
             }
-            t_start = time.time()
 
             nonlocal sampling_client
             nonlocal sampling_client_step
@@ -871,15 +877,17 @@ async def do_async_training(
                 if wrapped_trajectory_group is None:
                     continue
                 await trajectory_groups_queue.put(wrapped_trajectory_group)
-                streaming_result = await do_train_step_streaming_and_get_sampling_client(
-                    config,
-                    i_batch,
-                    trajectory_groups_queue,
-                    training_client,
-                    kl_reference_client,
-                    tokenizer,
-                    filter_stale_trajectory_group,
-                )
+
+                with trace.trace_iteration(step=i_batch) as window:
+                    streaming_result = await do_train_step_streaming_and_get_sampling_client(
+                        config,
+                        i_batch,
+                        trajectory_groups_queue,
+                        training_client,
+                        kl_reference_client,
+                        tokenizer,
+                        filter_stale_trajectory_group,
+                    )
                 if streaming_result is None:
                     logger.info("[training_loop] Received shutdown signal from streaming")
                     break
@@ -927,17 +935,21 @@ async def do_async_training(
                 # different sampler versions
                 metrics.update(compute_sampling_client_metrics(wrapped_trajectory_groups))
 
-                # TODO: For proper checkpointing, we also need to save dataloader state and
-                # all queued trajectory groups that haven't been trained on yet
-                sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(
-                    config,
-                    i_batch,
-                    training_client,
-                    kl_reference_client,
-                    tokenizer,
-                    [g.env_group_builder for g in wrapped_trajectory_groups],
-                    [g.trajectory_group for g in wrapped_trajectory_groups],
-                )
+                with trace.trace_iteration(step=i_batch) as window:
+                    # TODO: For proper checkpointing, we also need to save dataloader state and
+                    # all queued trajectory groups that haven't been trained on yet
+                    (
+                        sampling_client,
+                        train_step_metrics,
+                    ) = await do_train_step_and_get_sampling_client(
+                        config,
+                        i_batch,
+                        training_client,
+                        kl_reference_client,
+                        tokenizer,
+                        [g.env_group_builder for g in wrapped_trajectory_groups],
+                        [g.trajectory_group for g in wrapped_trajectory_groups],
+                    )
                 _maybe_export_rollout_summary_jsonl(
                     config=config,
                     file_prefix=f"train_iteration_{i_batch:06d}",
@@ -959,7 +971,12 @@ async def do_async_training(
             metrics.update(train_step_metrics)
             if error_counter is not None:
                 metrics.update(error_counter.get_metrics())
-            metrics["time/training_loop/total"] = time.time() - t_start
+            metrics.update(window.get_timing_metrics())
+            window.write_spans_jsonl(Path(config.log_path) / "timing_spans.jsonl", step=i_batch)
+            if config.span_chart_every > 0 and i_batch % config.span_chart_every == 0:
+                trace.save_gantt_chart_html(
+                    window, i_batch, Path(config.log_path) / f"timing_gantt_{i_batch:06d}.html"
+                )
             ml_logger.log_metrics(metrics, step=i_batch)
             i_batch += 1
             wrapped_trajectory_groups = []
@@ -979,18 +996,18 @@ async def do_async_training(
             await sampling_client_updated_event.wait()
             sampling_client_updated_event.clear()
 
-            metrics = {}
-            t_start = time.time()
             # Save a reference to the original values in case it changes
             # while we're running the evals
             sampling_client_eval_step = sampling_client_step
             sampling_client_eval = sampling_client
             if config.eval_every > 0 and sampling_client_eval_step % config.eval_every == 0:
-                with timed("run_evals", metrics):
-                    for evaluator in evaluators:
-                        eval_metrics = await evaluator(sampling_client_eval)
-                        metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
-                metrics["time/evaluation_loop/total"] = time.time() - t_start
+                metrics: dict[str, Any] = {}
+                with trace.trace_iteration(step=sampling_client_eval_step) as window:
+                    async with trace.scope_span("run_evals"):
+                        for evaluator in evaluators:
+                            eval_metrics = await evaluator(sampling_client_eval)
+                            metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+                metrics.update(window.get_timing_metrics())
                 ml_logger.log_metrics(metrics, step=sampling_client_eval_step)
         logger.info("[evaluation_loop] Terminated")
 
@@ -1016,8 +1033,8 @@ async def save_checkpoint_and_get_sampling_client(
     start_batch: int = 0,
     ttl_seconds: int | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
-    metrics = {}
-    with timed("save_checkpoint", metrics):
+    metrics: dict[str, Any] = {}
+    async with trace.scope_span("save_checkpoint"):
         if save_every > 0 and i_batch > start_batch and i_batch % save_every == 0:
             path_dict = await checkpoint_utils.save_checkpoint_async(
                 training_client=training_client,
@@ -1053,13 +1070,13 @@ async def prepare_minibatch(
         print_group(traj_group, tokenizer)
 
     # Assemble training data
-    with timed("assemble_training_data", metrics):
+    async with trace.scope_span("assemble_training_data"):
         advantages_P = compute_advantages(trajectory_groups_P)
         data_D, _metadata_D = assemble_training_data(trajectory_groups_P, advantages_P)
 
     # Incorporate KL penalty if configured
     if kl_penalty_coef > 0 and kl_reference_client is not None:
-        with timed("kl_vs_base", metrics):
+        async with trace.scope_span("kl_vs_base"):
             kl_penalty_metrics = await incorporate_kl_penalty(
                 data_D,
                 kl_reference_client,
@@ -1092,7 +1109,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     metrics = {}
 
     # Compute KL metrics
-    with timed("compute_kl_sample_train", metrics):
+    async with trace.scope_span("compute_kl_sample_train"):
         kl_sample_train_metrics = compute_kl_sample_train(data_D, training_logprobs_D)
         metrics.update(kl_sample_train_metrics)
 
@@ -1104,7 +1121,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
 
     # Compute post-KL metrics if configured
     if do_compute_post_kl:
-        with timed("compute_post_kl", metrics):
+        async with trace.scope_span("compute_post_kl"):
             post_kl_metrics = await compute_post_kl(data_D, sampling_client)
             metrics.update(post_kl_metrics)
 
@@ -1188,7 +1205,9 @@ async def do_train_step_streaming_and_get_sampling_client(
             metrics.update(prepare_minibatch_metrics)
 
             # Enqueue forward-backward (we'll await results after all minibatches are enqueued)
-            with timed(f"train/fwd_bwd_substep_{i_substep}_mb_{i_minibatch}_enqueue", metrics):
+            async with trace.scope_span(
+                f"train/fwd_bwd_substep_{i_substep}_mb_{i_minibatch}_enqueue"
+            ):
                 forward_backward_futures.append(
                     await training_client.forward_backward_async(
                         [_remove_mask(d) for d in data_D],
@@ -1205,16 +1224,16 @@ async def do_train_step_streaming_and_get_sampling_client(
         adam_params = tinker.AdamParams(
             learning_rate=config.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8
         )
-        with timed(f"train/optim_substep_{i_substep}_enqueue", metrics):
+        async with trace.scope_span(f"train/optim_substep_{i_substep}_enqueue"):
             optim_future = await training_client.optim_step_async(adam_params)
 
         # Now consume all forward-backward results
         for i_mb, fwd_bwd_future in enumerate(forward_backward_futures):
-            with timed(f"train/fwd_bwd_substep_{i_substep}_mb_{i_mb}_consume", metrics):
+            async with trace.scope_span(f"train/fwd_bwd_substep_{i_substep}_mb_{i_mb}_consume"):
                 fwd_bwd_result = await fwd_bwd_future.result_async()
                 all_training_logprobs_D.extend(_training_logprobs_from_fwd_bwd(fwd_bwd_result))
 
-        with timed(f"train/optim_substep_{i_substep}_consume", metrics):
+        async with trace.scope_span(f"train/optim_substep_{i_substep}_consume"):
             optim_result = await optim_future.result_async()
 
         if optim_result.metrics:
@@ -1269,16 +1288,15 @@ async def do_train_step_and_get_sampling_client(
     )
     metrics.update(prepare_minibatch_metrics)
 
-    with timed("train", metrics):
-        training_logprobs_D = await train_step(
-            data_D=data_D,
-            training_client=training_client,
-            learning_rate=config.learning_rate,
-            num_substeps=config.num_substeps,
-            loss_fn=config.loss_fn,
-            loss_fn_config=config.loss_fn_config,
-            metrics=metrics,
-        )
+    training_logprobs_D = await train_step(
+        data_D=data_D,
+        training_client=training_client,
+        learning_rate=config.learning_rate,
+        num_substeps=config.num_substeps,
+        loss_fn=config.loss_fn,
+        loss_fn_config=config.loss_fn_config,
+        metrics=metrics,
+    )
 
     sampling_client, full_batch_metrics = await compute_full_batch_metrics_and_get_sampling_client(
         training_client,
@@ -1341,29 +1359,30 @@ async def do_sync_training(
             env_group_builders_P = dataset.get_batch(i_batch)
 
             # Initialize logtree trace for this iteration if logging is enabled
-            with _get_logtree_scope(
-                log_path=config.log_path,
-                num_groups_to_log=config.num_groups_to_log,
-                f_name=f"train_iteration_{i_batch:06d}",
-                scope_name=f"RL Iteration {i_batch}",
-            ):
-                # Note: do_remove_constant_reward_groups=False here because we remove
-                # constant reward groups after all rollouts are collected (below)
-                results_P = await gather_with_progress(
-                    (
-                        do_group_rollout_and_filter_constant_reward(
-                            sampling_client,
-                            builder,
-                            max_tokens=config.max_tokens,
-                            temperature=config.temperature,
-                            do_remove_constant_reward_groups=False,
-                            enable_logging=i < config.num_groups_to_log,
-                            strategy=strategy,
-                        )
-                        for i, builder in enumerate(env_group_builders_P)
-                    ),
-                    desc=f"Sampling batch {i_batch}",
-                )
+            async with trace.scope_span("sampling"):
+                with _get_logtree_scope(
+                    log_path=config.log_path,
+                    num_groups_to_log=config.num_groups_to_log,
+                    f_name=f"train_iteration_{i_batch:06d}",
+                    scope_name=f"RL Iteration {i_batch}",
+                ):
+                    # Note: do_remove_constant_reward_groups=False here because we remove
+                    # constant reward groups after all rollouts are collected (below)
+                    results_P = await gather_with_progress(
+                        (
+                            do_group_rollout_and_filter_constant_reward(
+                                sampling_client,
+                                builder,
+                                max_tokens=config.max_tokens,
+                                temperature=config.temperature,
+                                do_remove_constant_reward_groups=False,
+                                enable_logging=i < config.num_groups_to_log,
+                                strategy=strategy,
+                            )
+                            for i, builder in enumerate(env_group_builders_P)
+                        ),
+                        desc=f"Sampling batch {i_batch}",
+                    )
 
             # Ingest error info from results
             if error_counter is not None:

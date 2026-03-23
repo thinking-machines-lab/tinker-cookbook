@@ -164,19 +164,36 @@ class PrettyPrintLogger(Logger):
             for key, value in config_dict.items():
                 self.console.print(f"  {key}: {_maybe_truncate_repr(value)}")
 
+    # Metric suffixes to hide from console output. These are still logged to
+    # metrics.jsonl and other sinks — only the pretty-print table is filtered.
+    _HIDDEN_SUFFIXES = (":total", ":count")
+
     def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
         """Display metrics in console."""
         if not metrics:
             return
 
+        # Filter out noisy aggregate keys from the console display
+        display_items = [
+            (k, v)
+            for k, v in sorted(metrics.items())
+            if not any(k.endswith(s) for s in self._HIDDEN_SUFFIXES)
+        ]
+        if not display_items:
+            return
+
+        # Adapt column width to the longest metric name
+        max_key_len = max(len(k) for k, _ in display_items)
+        metric_col_width = min(max(max_key_len, 20), 60)
+
         table = Table(show_header=True, header_style="bold magenta")
-        table.add_column("Metric", style="cyan", width=30)
+        table.add_column("Metric", style="cyan", width=metric_col_width)
         table.add_column("Value", style="green")
 
         if step is not None:
             table.title = f"Step {step}"
 
-        for key, value in sorted(metrics.items()):
+        for key, value in display_items:
             if isinstance(value, float):
                 value_str = f"{value:.6f}"
             else:
