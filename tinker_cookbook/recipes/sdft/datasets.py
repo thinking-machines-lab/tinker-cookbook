@@ -12,12 +12,18 @@ from collections.abc import Sequence
 from functools import partial
 
 import chz
+import tinker
 from datasets import load_dataset, load_from_disk
 
 from tinker_cookbook import renderers
 from tinker_cookbook.distillation.datasets import PromptOnlyEnv
 from tinker_cookbook.rl.problem_env import ProblemGroupBuilder
 from tinker_cookbook.rl.types import EnvGroupBuilder, RLDatasetBuilder
+from tinker_cookbook.supervised.data import SupervisedDatasetFromHFDataset, conversation_to_datum
+from tinker_cookbook.supervised.types import (
+    ChatDatasetBuilder,
+    SupervisedDataset,
+)
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 logger = logging.getLogger(__name__)
@@ -264,4 +270,61 @@ class ToolAlpacaSDFTBuilder(RLDatasetBuilder):
             else None
         )
 
+        return train_dataset, test_dataset
+
+
+# ---------------------------------------------------------------------------
+# SFT dataset builders (for benchmark comparison)
+# ---------------------------------------------------------------------------
+
+
+@chz.chz
+class SciKnowEvalSFTBuilder(ChatDatasetBuilder):
+    """Builds SciKnowEval SFT dataset for benchmark comparison."""
+
+    domain: str = "Chemistry"
+    train_fraction: float = 0.9
+
+    def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
+        import datasets as hf_datasets
+
+        train_q, train_a, test_q, test_a = load_sciknoweval(
+            domain=self.domain, train_fraction=self.train_fraction
+        )
+
+        # Build HF datasets from the question/answer pairs
+        train_hf = hf_datasets.Dataset.from_dict(
+            {
+                "messages": [
+                    [
+                        {"role": "user", "content": q},
+                        {"role": "assistant", "content": a},
+                    ]
+                    for q, a in zip(train_q, train_a)
+                ]
+            }
+        )
+        test_hf = hf_datasets.Dataset.from_dict(
+            {
+                "messages": [
+                    [
+                        {"role": "user", "content": q},
+                        {"role": "assistant", "content": a},
+                    ]
+                    for q, a in zip(test_q, test_a)
+                ]
+            }
+        )
+
+        def map_fn(row: dict) -> tinker.Datum:
+            return conversation_to_datum(
+                row["messages"], self.renderer, self.common_config.max_length
+            )
+
+        train_dataset = SupervisedDatasetFromHFDataset(
+            train_hf, batch_size=self.common_config.batch_size, map_fn=map_fn
+        )
+        test_dataset = SupervisedDatasetFromHFDataset(
+            test_hf, batch_size=self.common_config.batch_size, map_fn=map_fn
+        )
         return train_dataset, test_dataset

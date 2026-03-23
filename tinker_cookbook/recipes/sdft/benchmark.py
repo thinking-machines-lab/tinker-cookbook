@@ -37,7 +37,6 @@ Usage:
 import asyncio
 import json
 import logging
-import math
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -138,54 +137,31 @@ async def run_base_eval(config: BenchmarkConfig) -> dict[str, float]:
 
 async def run_sft(config: BenchmarkConfig) -> str | None:
     """Run SFT training from the base model and return checkpoint path."""
+    from tinker_cookbook.recipes.sdft.datasets import SciKnowEvalSFTBuilder
     from tinker_cookbook.supervised import train as sl_train
-    from tinker_cookbook.supervised.data import conversation_to_datum
-    from tinker_cookbook.supervised.types import SupervisedDataset, SupervisedDatasetBuilder
+    from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 
     renderer_name = await _resolve_renderer(config)
-    tokenizer = get_tokenizer(config.model_name)
-    renderer = renderers.get_renderer(renderer_name, tokenizer=tokenizer)
 
     log_path = _make_log_path(config, "sft")
     cli_utils.check_log_dir(log_path, behavior_if_exists=config.behavior_if_log_dir_exists)
 
     logger.info(f"=== Phase: SFT training on {config.dataset} ===")
 
-    # Load data and convert to SL datums
-    train_q, train_a, test_q, test_a = _load_data(config)
-    datums: list[tinker.Datum] = []
-    for question, golden in zip(train_q, train_a):
-        sft_messages: list[renderers.Message] = [
-            {"role": "user", "content": question},  # type: ignore[typeddict-item]
-            {"role": "assistant", "content": golden},  # type: ignore[typeddict-item]
-        ]
-        datum = conversation_to_datum(sft_messages, renderer, max_length=2048)
-        if datum is not None:
-            datums.append(datum)
+    common_config = ChatDatasetBuilderCommonConfig(
+        model_name_for_tokenizer=config.model_name,
+        renderer_name=renderer_name,
+        max_length=2048,
+        batch_size=config.sft_batch_size,
+    )
 
-    logger.info(f"Prepared {len(datums)} SFT training datums")
-
-    # Simple in-memory dataset
-    class _DatumListDataset(SupervisedDataset):
-        def __init__(self, data: list[tinker.Datum], batch_size: int):
-            self._data = data
-            self._batch_size = batch_size
-
-        def get_batch(self, index: int) -> list[tinker.Datum]:
-            start = index * self._batch_size
-            end = min(start + self._batch_size, len(self._data))
-            return self._data[start:end]
-
-        def __len__(self) -> int:
-            return math.ceil(len(self._data) / self._batch_size)
-
-    class _DatumListBuilder(SupervisedDatasetBuilder):
-        def __init__(self, data: list[tinker.Datum], batch_size: int):
-            self._data = data
-            self._batch_size = batch_size
-
-        def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
-            return _DatumListDataset(self._data, self._batch_size), None
+    if config.dataset == "sciknoweval":
+        dataset_builder = SciKnowEvalSFTBuilder(
+            common_config=common_config,
+            domain=config.sciknoweval_domain,
+        )
+    else:
+        raise ValueError(f"SFT benchmark not yet implemented for dataset: {config.dataset}")
 
     sl_config = sl_train.Config(
         model_name=config.model_name,
@@ -199,7 +175,7 @@ async def run_sft(config: BenchmarkConfig) -> str | None:
         eval_every=config.eval_every,
         save_every=config.save_every,
         max_steps=config.sft_max_steps,
-        dataset_builder=_DatumListBuilder(datums, config.sft_batch_size),
+        dataset_builder=dataset_builder,
     )
 
     await sl_train.main(sl_config)
