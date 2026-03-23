@@ -304,6 +304,10 @@ def load_science_from_arrow(
     train_ds = load_from_disk(f"{data_dir}/train_data")
     eval_ds = load_from_disk(f"{data_dir}/eval_data")
 
+    # Convert <reasoning> tags to <think> tags for Qwen3 compatibility
+    def _convert_tags(text: str) -> str:
+        return text.replace("<reasoning>", "<think>").replace("</reasoning>", "</think>")
+
     questions = []
     golden_answers = []
     for row in train_ds:  # type: ignore[union-attr]
@@ -313,10 +317,17 @@ def load_science_from_arrow(
             questions.append(msgs[1]["content"])
         else:
             questions.append(msgs[0]["content"])
-        golden_answers.append(str(row["output_text"]))  # type: ignore[index]
+        golden_answers.append(_convert_tags(str(row["output_text"])))  # type: ignore[index]
 
     # Eval data has 'prompt' (message list) and 'answer' (letter)
-    eval_prompts = [row["prompt"] for row in eval_ds]  # type: ignore[union-attr]
+    # Convert <reasoning> to <think> in eval system prompts too
+    eval_prompts = []
+    for row in eval_ds:  # type: ignore[union-attr]
+        converted_msgs = [
+            {**m, "content": _convert_tags(m["content"])}
+            for m in row["prompt"]  # type: ignore[index]
+        ]
+        eval_prompts.append(converted_msgs)
     eval_answers = [row["answer"] for row in eval_ds]  # type: ignore[union-attr]
 
     logger.info(
@@ -373,10 +384,13 @@ class ScienceArrowSFTBuilder(ChatDatasetBuilder):
 
         import datasets as hf_datasets
 
-        # Training messages: system prompt + user question + assistant reasoning chain
+        # Convert <reasoning> tags to <think> tags for Qwen3 compatibility
+        def _convert_tags(text: str) -> str:
+            return text.replace("<reasoning>", "<think>").replace("</reasoning>", "</think>")
+
         system_prompt = (
             "Given a question and four options, please select the right answer. "
-            "Respond in the following format:\n<reasoning>\n...\n</reasoning>\n"
+            "Respond in the following format:\n<think>\n...\n</think>\n"
             "<answer>\n...\n</answer>\n\n"
             "For the answer, only output the letter corresponding to the correct option "
             "(A, B, C, or D), and nothing else."
@@ -387,7 +401,7 @@ class ScienceArrowSFTBuilder(ChatDatasetBuilder):
                     [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": q},
-                        {"role": "assistant", "content": a},
+                        {"role": "assistant", "content": _convert_tags(a)},
                     ]
                     for q, a in zip(questions, golden_answers)
                 ]
