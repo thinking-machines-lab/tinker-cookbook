@@ -120,7 +120,7 @@ class TestEnv:
     def test_step_signature(self):
         from tests.downstream_compat.sig_helpers import assert_params
 
-        assert_params(Env.step, ["action"])
+        assert_params(Env.step, ["action", "stop_reason", "kwargs"])
 
 
 # ---------------------------------------------------------------------------
