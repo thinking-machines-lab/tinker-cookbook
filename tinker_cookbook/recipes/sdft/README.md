@@ -72,11 +72,7 @@ python -m tinker_cookbook.recipes.sdft.train \
 
 ## Benchmarking Against the Paper
 
-A benchmark script reproduces the paper's evaluation pipeline using the exact eval data from the [SDFT repository](https://github.com/idshenfeld/Self-Distillation). Clone that repo first:
-
-```bash
-git clone https://github.com/idshenfeld/Self-Distillation ~/Repos/Self-Distillation
-```
+A self-contained benchmark script reproduces the paper's evaluation. All data is loaded from HuggingFace — no external repo needed.
 
 ### Paper's reported results (Qwen2.5-7B-Instruct)
 
@@ -98,8 +94,7 @@ Run the full comparison:
 
 ```bash
 python -m tinker_cookbook.recipes.sdft.benchmark \
-    dataset=science \
-    sdft_repo_path=~/Repos/Self-Distillation \
+    dataset=sciknoweval \
     wandb_project=sdft_benchmark
 ```
 
@@ -110,27 +105,19 @@ Each phase is independent and can be run separately:
 ```bash
 # Evaluate the base model (no training)
 python -m tinker_cookbook.recipes.sdft.benchmark \
-    dataset=science \
-    sdft_repo_path=~/Repos/Self-Distillation \
-    phase=base_eval
+    dataset=sciknoweval phase=base_eval
 
 # Train and evaluate SFT (from base model)
 python -m tinker_cookbook.recipes.sdft.benchmark \
-    dataset=science \
-    sdft_repo_path=~/Repos/Self-Distillation \
-    phase=sft
+    dataset=sciknoweval phase=sft
 
 # Train and evaluate SDFT (from base model)
 python -m tinker_cookbook.recipes.sdft.benchmark \
-    dataset=science \
-    sdft_repo_path=~/Repos/Self-Distillation \
-    phase=sdft
+    dataset=sciknoweval phase=sdft
 
 # Evaluate an existing checkpoint
 python -m tinker_cookbook.recipes.sdft.benchmark \
-    dataset=science \
-    sdft_repo_path=~/Repos/Self-Distillation \
-    phase=eval_checkpoint \
+    dataset=sciknoweval phase=eval_checkpoint \
     checkpoint_path=tinker://...
 ```
 

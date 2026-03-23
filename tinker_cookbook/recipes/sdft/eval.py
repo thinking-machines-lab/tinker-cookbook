@@ -13,7 +13,6 @@ import logging
 import re
 from collections import Counter
 from collections.abc import Sequence
-from pathlib import Path
 
 import tinker
 
@@ -201,81 +200,3 @@ class ToolUseEvaluator(SamplingClientEvaluator):
             "tooluse/num_correct": float(sum(scores)),
             "tooluse/num_total": float(len(scores)),
         }
-
-
-# ---------------------------------------------------------------------------
-# Standalone eval runner (for evaluating saved checkpoints)
-# ---------------------------------------------------------------------------
-
-
-async def run_eval(
-    model_name: str,
-    eval_dataset: str,
-    eval_data_path: str,
-    renderer_name: str,
-    base_url: str | None = None,
-    model_path: str | None = None,
-    max_tokens: int = 2048,
-    output_path: str | None = None,
-) -> dict[str, float]:
-    """Run standalone evaluation on a model checkpoint.
-
-    Args:
-        model_name: Base model name (e.g., "Qwen/Qwen3-8B").
-        eval_dataset: "science" or "tooluse".
-        eval_data_path: Path to the paper's eval Arrow data directory.
-        renderer_name: Renderer name for the model.
-        base_url: Optional Tinker service URL.
-        model_path: Optional tinker:// checkpoint path. If None, evaluates the base model.
-        max_tokens: Max generation tokens.
-        output_path: Optional path to save results JSON.
-    """
-    from datasets import load_from_disk
-
-    from tinker_cookbook.tokenizer_utils import get_tokenizer
-
-    service_client = tinker.ServiceClient(base_url=base_url)
-    if model_path:
-        sampling_client = service_client.create_sampling_client(
-            base_model=model_name, model_path=model_path
-        )
-    else:
-        sampling_client = service_client.create_sampling_client(base_model=model_name)
-
-    tokenizer = get_tokenizer(model_name)
-    renderer = renderers.get_renderer(renderer_name, tokenizer=tokenizer)
-
-    ds = load_from_disk(eval_data_path)
-
-    if eval_dataset == "science":
-        prompts = [row["prompt"] for row in ds]  # type: ignore[union-attr]
-        answers = [row["answer"] for row in ds]  # type: ignore[union-attr]
-        evaluator = SciKnowEvalEvaluator(prompts, answers, renderer, max_tokens=max_tokens)
-    elif eval_dataset == "tooluse":
-        prompts = [row["prompt"] for row in ds]  # type: ignore[union-attr]
-        golden_answers = [row["golden_answer"] for row in ds]  # type: ignore[union-attr]
-        evaluator = ToolUseEvaluator(prompts, golden_answers, renderer, max_tokens=max_tokens)
-    else:
-        raise ValueError(f"Unknown eval dataset: {eval_dataset}")
-
-    metrics = await evaluator(sampling_client)
-
-    if output_path:
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w") as f:
-            json.dump(
-                {
-                    "metrics": metrics,
-                    "config": {
-                        "model_name": model_name,
-                        "model_path": model_path,
-                        "eval_dataset": eval_dataset,
-                        "max_tokens": max_tokens,
-                    },
-                },
-                f,
-                indent=2,
-            )
-        logger.info(f"Saved eval results to {output_path}")
-
-    return metrics

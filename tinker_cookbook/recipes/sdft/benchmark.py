@@ -2,7 +2,7 @@
 SDFT Benchmark Script.
 
 Runs independent SFT and SDFT comparisons from the same base model.
-Uses the paper's eval data from the SDFT repo for exact reproducibility.
+All data is loaded from HuggingFace — no external repo needed.
 
 Paper target numbers (Qwen2.5-7B-Instruct):
     SciKnowEval Chemistry L3: Base=32.1, SFT=66.2, SDFT=70.2
@@ -12,41 +12,41 @@ We use Qwen3-8B (different model), so exact numbers will differ,
 but the pattern (SDFT > SFT) should hold.
 
 Usage:
-    # Run all comparisons (base eval, SFT, SDFT — SFT and SDFT are independent)
+    # Run all comparisons (base eval, SFT, SDFT — independent from same base)
     python -m tinker_cookbook.recipes.sdft.benchmark \
-        dataset=science \
-        sdft_repo_path=~/Repos/Self-Distillation
+        dataset=sciknoweval
 
     # Eval base model only
     python -m tinker_cookbook.recipes.sdft.benchmark \
-        dataset=science \
-        sdft_repo_path=~/Repos/Self-Distillation \
-        phase=base_eval
+        dataset=sciknoweval phase=base_eval
+
+    # SFT training only (independent from SDFT)
+    python -m tinker_cookbook.recipes.sdft.benchmark \
+        dataset=sciknoweval phase=sft
 
     # SDFT training only (independent from SFT)
     python -m tinker_cookbook.recipes.sdft.benchmark \
-        dataset=science \
-        sdft_repo_path=~/Repos/Self-Distillation \
-        phase=sdft
+        dataset=sciknoweval phase=sdft
 
     # Eval an existing checkpoint
     python -m tinker_cookbook.recipes.sdft.benchmark \
-        dataset=science \
-        sdft_repo_path=~/Repos/Self-Distillation \
-        phase=eval_checkpoint \
+        dataset=sciknoweval phase=eval_checkpoint \
         checkpoint_path=tinker://...
 """
 
 import asyncio
 import json
 import logging
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
 import chz
+import tinker
 
-from tinker_cookbook import checkpoint_utils, cli_utils
+from tinker_cookbook import checkpoint_utils, cli_utils, renderers
+from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +62,9 @@ class BenchmarkConfig:
     lora_rank: int = 128
     renderer_name: str | None = None
 
-    # Data source: path to the cloned SDFT paper repo
-    sdft_repo_path: str = "~/Repos/Self-Distillation"
-
     # Benchmark dataset
-    dataset: str = "science"  # science | tooluse
+    dataset: str = "sciknoweval"  # sciknoweval | toolalpaca
+    sciknoweval_domain: str = "chemistry"
 
     # Which phase to run. SFT and SDFT are independent comparisons from the
     # same base model (not a sequential pipeline).
@@ -96,30 +94,6 @@ class BenchmarkConfig:
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
 
-def _resolve_data_paths(config: BenchmarkConfig) -> tuple[str, str, str]:
-    """Resolve train and eval data paths from the SDFT repo."""
-    repo = Path(config.sdft_repo_path).expanduser()
-    if config.dataset == "science":
-        train_path = str(repo / "data" / "science_data" / "train_data")
-        eval_path = str(repo / "data" / "science_data" / "eval_data")
-        eval_dataset = "science"
-    elif config.dataset == "tooluse":
-        train_path = str(repo / "data" / "tooluse_data" / "train_data")
-        eval_path = str(repo / "data" / "tooluse_data" / "eval_data")
-        eval_dataset = "tooluse"
-    else:
-        raise ValueError(f"Unknown dataset: {config.dataset}")
-
-    # Verify paths exist
-    for path in [train_path, eval_path]:
-        if not Path(path).exists():
-            raise FileNotFoundError(
-                f"Data path not found: {path}. "
-                f"Clone the SDFT repo to {repo} or set sdft_repo_path correctly."
-            )
-    return train_path, eval_path, eval_dataset
-
-
 def _make_log_path(config: BenchmarkConfig, phase: str) -> str:
     if config.log_root:
         root = config.log_root
@@ -130,84 +104,89 @@ def _make_log_path(config: BenchmarkConfig, phase: str) -> str:
     return f"{root}/{config.dataset}-{model_slug}-{phase}-{timestamp}"
 
 
-async def run_base_eval(config: BenchmarkConfig) -> dict[str, float]:
-    """Phase 1: Evaluate the base model (no training)."""
-    from tinker_cookbook.recipes.sdft.eval import run_eval
+# ---------------------------------------------------------------------------
+# Phase: Base eval
+# ---------------------------------------------------------------------------
 
-    _, eval_path, eval_dataset = _resolve_data_paths(config)
+
+async def run_base_eval(config: BenchmarkConfig) -> dict[str, float]:
+    """Evaluate the base model (no training)."""
     renderer_name = await _resolve_renderer(config)
+    tokenizer = get_tokenizer(config.model_name)
+    renderer = renderers.get_renderer(renderer_name, tokenizer=tokenizer)
 
     log_path = _make_log_path(config, "base-eval")
-    output_path = f"{log_path}/eval_results.json"
 
     logger.info(f"=== Phase: Base model eval on {config.dataset} ===")
     logger.info(f"Model: {config.model_name}")
 
-    metrics = await run_eval(
-        model_name=config.model_name,
-        eval_dataset=eval_dataset,
-        eval_data_path=eval_path,
-        renderer_name=renderer_name,
-        base_url=config.base_url,
-        model_path=None,
-        max_tokens=2048 if config.dataset == "science" else 1024,
-        output_path=output_path,
-    )
+    service_client = tinker.ServiceClient(base_url=config.base_url)
+    sampling_client = service_client.create_sampling_client(base_model=config.model_name)
+
+    evaluator = _build_evaluator(config, renderer)
+    metrics = await evaluator(sampling_client)
 
     _print_metrics("Base model", metrics)
+    _save_results(log_path, metrics, config, model_path=None)
     return metrics
 
 
-async def run_sft(config: BenchmarkConfig) -> str | None:
-    """Phase 2: Run SFT training and return checkpoint path."""
-    from datasets import load_from_disk
+# ---------------------------------------------------------------------------
+# Phase: SFT
+# ---------------------------------------------------------------------------
 
+
+async def run_sft(config: BenchmarkConfig) -> str | None:
+    """Run SFT training from the base model and return checkpoint path."""
     from tinker_cookbook.supervised import train as sl_train
     from tinker_cookbook.supervised.data import conversation_to_datum
+    from tinker_cookbook.supervised.types import SupervisedDataset, SupervisedDatasetBuilder
 
-    train_path, eval_path, eval_dataset = _resolve_data_paths(config)
     renderer_name = await _resolve_renderer(config)
+    tokenizer = get_tokenizer(config.model_name)
+    renderer = renderers.get_renderer(renderer_name, tokenizer=tokenizer)
 
     log_path = _make_log_path(config, "sft")
     cli_utils.check_log_dir(log_path, behavior_if_exists=config.behavior_if_log_dir_exists)
 
     logger.info(f"=== Phase: SFT training on {config.dataset} ===")
 
-    # Load training data
-    ds = load_from_disk(train_path)
-
-    from tinker_cookbook import renderers as rmod
-    from tinker_cookbook.tokenizer_utils import get_tokenizer
-
-    tokenizer = get_tokenizer(config.model_name)
-    renderer = rmod.get_renderer(renderer_name, tokenizer=tokenizer)
-
-    # Convert to SL datums
-    datums = []
-    if config.dataset == "science":
-        for row in ds:  # type: ignore[union-attr]
-            messages = row["messages"]  # type: ignore[index]
-            golden = row["output_text"]  # type: ignore[index]
-            # SFT: train on the golden answer directly
-            sft_messages = list(messages) + [{"role": "assistant", "content": golden}]
-            datum = conversation_to_datum(sft_messages, renderer, max_length=2048)  # type: ignore[arg-type]
-            if datum is not None:
-                datums.append(datum)
-    elif config.dataset == "tooluse":
-        for row in ds:  # type: ignore[union-attr]
-            prompt = row["prompt"]  # type: ignore[index]
-            golden = "\n".join(row["golden_response"])  # type: ignore[index]
-            sft_messages: list[dict[str, str]] = [
-                {"role": "user", "content": prompt},
-                {"role": "assistant", "content": golden},
-            ]
-            datum = conversation_to_datum(sft_messages, renderer, max_length=2048)  # type: ignore[arg-type]
-            if datum is not None:
-                datums.append(datum)
+    # Load data and convert to SL datums
+    train_q, train_a, test_q, test_a = _load_data(config)
+    datums: list[tinker.Datum] = []
+    for question, golden in zip(train_q, train_a):
+        sft_messages: list[renderers.Message] = [
+            {"role": "user", "content": question},  # type: ignore[typeddict-item]
+            {"role": "assistant", "content": golden},  # type: ignore[typeddict-item]
+        ]
+        datum = conversation_to_datum(sft_messages, renderer, max_length=2048)
+        if datum is not None:
+            datums.append(datum)
 
     logger.info(f"Prepared {len(datums)} SFT training datums")
 
-    # SFT training uses the supervised train loop
+    # Simple in-memory dataset
+    class _DatumListDataset(SupervisedDataset):
+        def __init__(self, data: list[tinker.Datum], batch_size: int):
+            self._data = data
+            self._batch_size = batch_size
+
+        def get_batch(self, index: int) -> list[tinker.Datum]:
+            start = index * self._batch_size
+            end = min(start + self._batch_size, len(self._data))
+            return self._data[start:end]
+
+        def __len__(self) -> int:
+            return math.ceil(len(self._data) / self._batch_size)
+
+    class _DatumListBuilder(SupervisedDatasetBuilder):
+        def __init__(self, data: list[tinker.Datum], batch_size: int):
+            self._data = data
+            self._batch_size = batch_size
+
+        def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
+            return _DatumListDataset(self._data, self._batch_size), None
+
     sl_config = sl_train.Config(
         model_name=config.model_name,
         renderer_name=renderer_name,
@@ -219,42 +198,39 @@ async def run_sft(config: BenchmarkConfig) -> str | None:
         base_url=config.base_url,
         eval_every=config.eval_every,
         save_every=config.save_every,
+        max_steps=config.sft_max_steps,
+        dataset_builder=_DatumListBuilder(datums, config.sft_batch_size),
     )
 
-    from tinker_cookbook.supervised.data import SupervisedDatasetFromList
+    await sl_train.main(sl_config)
 
-    train_dataset = SupervisedDatasetFromList(datums, batch_size=config.sft_batch_size)
-    await sl_train.main(sl_config, train_dataset, test_dataset=None)
-
-    # Find final checkpoint
     ckpt = checkpoint_utils.get_last_checkpoint(log_path)
-    if ckpt:
+    if ckpt and ckpt.state_path:
         logger.info(f"SFT checkpoint: {ckpt.state_path}")
         return ckpt.state_path
     return None
 
 
-async def run_sdft(config: BenchmarkConfig) -> str | None:
-    """Phase 3: Run SDFT training and return checkpoint path."""
-    from tinker_cookbook.distillation import sdft
-    from tinker_cookbook.recipes.sdft.datasets import SDFTDataset, load_sdft_from_arrow
+# ---------------------------------------------------------------------------
+# Phase: SDFT
+# ---------------------------------------------------------------------------
 
-    train_path, eval_path, eval_dataset = _resolve_data_paths(config)
+
+async def run_sdft(config: BenchmarkConfig) -> str | None:
+    """Run SDFT training from the base model and return checkpoint path."""
+    from tinker_cookbook.distillation import sdft
+    from tinker_cookbook.recipes.sdft.datasets import SDFTDataset
+
     renderer_name = await _resolve_renderer(config)
+    tokenizer = get_tokenizer(config.model_name)
+    renderer = renderers.get_renderer(renderer_name, tokenizer=tokenizer)
 
     log_path = _make_log_path(config, "sdft")
     cli_utils.check_log_dir(log_path, behavior_if_exists=config.behavior_if_log_dir_exists)
 
     logger.info(f"=== Phase: SDFT training on {config.dataset} ===")
 
-    from tinker_cookbook import renderers as rmod
-    from tinker_cookbook.tokenizer_utils import get_tokenizer
-
-    tokenizer = get_tokenizer(config.model_name)
-    renderer = rmod.get_renderer(renderer_name, tokenizer=tokenizer)
-
-    # Load from Arrow data (paper's exact data)
-    train_q, train_a = load_sdft_from_arrow(train_path, config.dataset)
+    train_q, train_a, _, _ = _load_data(config)
 
     train_dataset = SDFTDataset(
         questions=train_q,
@@ -283,41 +259,80 @@ async def run_sdft(config: BenchmarkConfig) -> str | None:
     await sdft.main(sdft_config, train_dataset, test_dataset=None)
 
     ckpt = checkpoint_utils.get_last_checkpoint(log_path)
-    if ckpt:
+    if ckpt and ckpt.state_path:
         logger.info(f"SDFT checkpoint: {ckpt.state_path}")
         return ckpt.state_path
     return None
 
 
+# ---------------------------------------------------------------------------
+# Phase: Eval checkpoint
+# ---------------------------------------------------------------------------
+
+
 async def run_eval_checkpoint(config: BenchmarkConfig) -> dict[str, float]:
     """Evaluate a specific checkpoint."""
-    from tinker_cookbook.recipes.sdft.eval import run_eval
-
-    _, eval_path, eval_dataset = _resolve_data_paths(config)
     renderer_name = await _resolve_renderer(config)
+    tokenizer = get_tokenizer(config.model_name)
+    renderer = renderers.get_renderer(renderer_name, tokenizer=tokenizer)
 
     if not config.checkpoint_path:
         raise ValueError("checkpoint_path must be set for eval_checkpoint phase")
 
     log_path = _make_log_path(config, "eval-checkpoint")
-    output_path = f"{log_path}/eval_results.json"
 
     logger.info(f"=== Phase: Eval checkpoint on {config.dataset} ===")
     logger.info(f"Checkpoint: {config.checkpoint_path}")
 
-    metrics = await run_eval(
-        model_name=config.model_name,
-        eval_dataset=eval_dataset,
-        eval_data_path=eval_path,
-        renderer_name=renderer_name,
-        base_url=config.base_url,
-        model_path=config.checkpoint_path,
-        max_tokens=2048 if config.dataset == "science" else 1024,
-        output_path=output_path,
+    service_client = tinker.ServiceClient(base_url=config.base_url)
+    sampling_client = service_client.create_sampling_client(
+        base_model=config.model_name, model_path=config.checkpoint_path
     )
 
+    evaluator = _build_evaluator(config, renderer)
+    metrics = await evaluator(sampling_client)
+
     _print_metrics("Checkpoint", metrics)
+    _save_results(log_path, metrics, config, model_path=config.checkpoint_path)
     return metrics
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _load_data(
+    config: BenchmarkConfig,
+) -> tuple[list[str], list[str], list[str], list[str]]:
+    """Load train and test data from HuggingFace."""
+    from tinker_cookbook.recipes.sdft.datasets import load_sciknoweval, load_toolalpaca
+
+    if config.dataset == "sciknoweval":
+        return load_sciknoweval(domain=config.sciknoweval_domain)
+    elif config.dataset == "toolalpaca":
+        return load_toolalpaca()
+    else:
+        raise ValueError(f"Unknown dataset: {config.dataset}. Options: sciknoweval, toolalpaca")
+
+
+def _build_evaluator(
+    config: BenchmarkConfig,
+    renderer: renderers.Renderer,
+):  # type: ignore[return]
+    """Build the appropriate evaluator for the dataset."""
+    from tinker_cookbook.recipes.sdft.eval import SciKnowEvalEvaluator, ToolUseEvaluator
+
+    _, _, test_q, test_a = _load_data(config)
+
+    if config.dataset == "sciknoweval":
+        # SciKnowEval eval: test questions are plain strings, wrap as user messages
+        prompts = [[{"role": "user", "content": q}] for q in test_q]
+        return SciKnowEvalEvaluator(prompts, test_a, renderer, max_tokens=2048)
+    elif config.dataset == "toolalpaca":
+        return ToolUseEvaluator(test_q, test_a, renderer, max_tokens=1024)  # type: ignore[arg-type]
+    else:
+        raise ValueError(f"Unknown dataset: {config.dataset}")
 
 
 async def _resolve_renderer(config: BenchmarkConfig) -> str:
@@ -340,6 +355,30 @@ def _print_metrics(label: str, metrics: dict[str, float]) -> None:
     logger.info(f"{'=' * 60}\n")
 
 
+def _save_results(
+    log_path: str,
+    metrics: dict[str, float],
+    config: BenchmarkConfig,
+    model_path: str | None,
+) -> None:
+    Path(log_path).mkdir(parents=True, exist_ok=True)
+    output_path = Path(log_path) / "eval_results.json"
+    with open(output_path, "w") as f:
+        json.dump(
+            {
+                "metrics": metrics,
+                "config": {
+                    "model_name": config.model_name,
+                    "model_path": model_path,
+                    "dataset": config.dataset,
+                },
+            },
+            f,
+            indent=2,
+        )
+    logger.info(f"Saved results to {output_path}")
+
+
 async def cli_main(config: BenchmarkConfig) -> None:
     """Run the configured benchmark phase(s)."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -352,7 +391,6 @@ async def cli_main(config: BenchmarkConfig) -> None:
     if config.phase in ("all", "sft"):
         sft_path = await run_sft(config)
         if sft_path:
-            # Eval SFT checkpoint
             sft_eval_config = BenchmarkConfig(
                 **{**chz.to_dict(config), "checkpoint_path": sft_path, "phase": "eval_checkpoint"}  # type: ignore[arg-type]
             )
@@ -382,12 +420,12 @@ async def cli_main(config: BenchmarkConfig) -> None:
         logger.info("=" * 60)
 
     # Save summary
-    if config.log_root:
-        summary_path = Path(config.log_root) / f"benchmark_summary_{config.dataset}.json"
-        summary_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(summary_path, "w") as f:
-            json.dump(results, f, indent=2)
-        logger.info(f"Saved summary to {summary_path}")
+    log_root = config.log_root or "/tmp/tinker-examples/sdft-benchmark"
+    summary_path = Path(log_root) / f"benchmark_summary_{config.dataset}.json"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(summary_path, "w") as f:
+        json.dump(results, f, indent=2)
+    logger.info(f"Saved summary to {summary_path}")
 
 
 if __name__ == "__main__":
