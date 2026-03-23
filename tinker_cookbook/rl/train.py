@@ -544,7 +544,9 @@ async def do_sync_training_with_stream_minibatch(
 
         with trace.trace_iteration(step=i_batch) as window:
             # Run evaluations
-            if (config.eval_every > 0 and i_batch % config.eval_every == 0) or i_batch == end_batch - 1:
+            if (
+                config.eval_every > 0 and i_batch % config.eval_every == 0
+            ) or i_batch == end_batch - 1:
                 async with trace.scope_span("run_evals"):
                     eval_metrics = await run_evaluations_parallel(
                         evaluators, sampling_client, config, i_batch
