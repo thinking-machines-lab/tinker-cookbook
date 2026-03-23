@@ -368,7 +368,7 @@ async def cli_main(config: BenchmarkConfig) -> None:
         sft_path = await run_sft(config)
         if sft_path:
             sft_eval_config = BenchmarkConfig(
-                **{**chz.to_dict(config), "checkpoint_path": sft_path, "phase": "eval_checkpoint"}  # type: ignore[arg-type]
+                **{**chz.asdict(config), "checkpoint_path": sft_path, "phase": "eval_checkpoint"}  # type: ignore[arg-type]
             )
             results["sft"] = await run_eval_checkpoint(sft_eval_config)
 
@@ -376,7 +376,7 @@ async def cli_main(config: BenchmarkConfig) -> None:
         sdft_path = await run_sdft(config)
         if sdft_path:
             sdft_eval_config = BenchmarkConfig(
-                **{**chz.to_dict(config), "checkpoint_path": sdft_path, "phase": "eval_checkpoint"}  # type: ignore[arg-type]
+                **{**chz.asdict(config), "checkpoint_path": sdft_path, "phase": "eval_checkpoint"}  # type: ignore[arg-type]
             )
             results["sdft"] = await run_eval_checkpoint(sdft_eval_config)
 
