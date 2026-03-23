@@ -1,7 +1,7 @@
 """
 SDFT Benchmark Script.
 
-Runs the full comparison pipeline: base eval -> SFT -> SDFT -> compare.
+Runs independent SFT and SDFT comparisons from the same base model.
 Uses the paper's eval data from the SDFT repo for exact reproducibility.
 
 Paper target numbers (Qwen2.5-7B-Instruct):
@@ -12,7 +12,7 @@ We use Qwen3-8B (different model), so exact numbers will differ,
 but the pattern (SDFT > SFT) should hold.
 
 Usage:
-    # Full benchmark on SciKnowEval
+    # Run all comparisons (base eval, SFT, SDFT — SFT and SDFT are independent)
     python -m tinker_cookbook.recipes.sdft.benchmark \
         dataset=science \
         sdft_repo_path=~/Repos/Self-Distillation
@@ -23,7 +23,7 @@ Usage:
         sdft_repo_path=~/Repos/Self-Distillation \
         phase=base_eval
 
-    # SDFT training only (skip base eval and SFT)
+    # SDFT training only (independent from SFT)
     python -m tinker_cookbook.recipes.sdft.benchmark \
         dataset=science \
         sdft_repo_path=~/Repos/Self-Distillation \
@@ -68,7 +68,8 @@ class BenchmarkConfig:
     # Benchmark dataset
     dataset: str = "science"  # science | tooluse
 
-    # Which phase to run
+    # Which phase to run. SFT and SDFT are independent comparisons from the
+    # same base model (not a sequential pipeline).
     phase: Phase = "all"
 
     # For eval_checkpoint phase: path to evaluate

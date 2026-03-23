@@ -85,7 +85,16 @@ git clone https://github.com/idshenfeld/Self-Distillation ~/Repos/Self-Distillat
 | SciKnowEval Chemistry L3 | 32.1 | 66.2 | **70.2** |
 | ToolAlpaca Tool Use | 42.9 | 63.2 | **70.6** |
 
-### Run the full benchmark (base eval → SFT → SDFT → compare)
+### Run all three evaluations
+
+SFT and SDFT are **independent comparisons** from the same base model (not a sequential pipeline):
+
+```
+Base model ──→ SFT on task data  ──→ eval   (baseline)
+Base model ──→ SDFT on task data ──→ eval   (proposed method)
+```
+
+Run the full comparison:
 
 ```bash
 python -m tinker_cookbook.recipes.sdft.benchmark \
@@ -96,20 +105,28 @@ python -m tinker_cookbook.recipes.sdft.benchmark \
 
 ### Run individual phases
 
+Each phase is independent and can be run separately:
+
 ```bash
-# Base model eval only
+# Evaluate the base model (no training)
 python -m tinker_cookbook.recipes.sdft.benchmark \
     dataset=science \
     sdft_repo_path=~/Repos/Self-Distillation \
     phase=base_eval
 
-# SDFT training only
+# Train and evaluate SFT (from base model)
+python -m tinker_cookbook.recipes.sdft.benchmark \
+    dataset=science \
+    sdft_repo_path=~/Repos/Self-Distillation \
+    phase=sft
+
+# Train and evaluate SDFT (from base model)
 python -m tinker_cookbook.recipes.sdft.benchmark \
     dataset=science \
     sdft_repo_path=~/Repos/Self-Distillation \
     phase=sdft
 
-# Eval an existing checkpoint
+# Evaluate an existing checkpoint
 python -m tinker_cookbook.recipes.sdft.benchmark \
     dataset=science \
     sdft_repo_path=~/Repos/Self-Distillation \
