@@ -137,8 +137,9 @@ class EnvFromMessageEnv(types.Env):
 
         # Check if the full trajectory + generation budget fits in the context window.
         # next_observation is the entire rendered conversation so far, which becomes
-        # the prompt for the next sampling call.
-        if self._exceeds_context_limit(next_observation.length):
+        # the prompt for the next sampling call. Only check when the episode continues —
+        # if episode_done, there is no next sampling call and the real reward should be kept.
+        if not msg_step.episode_done and self._exceeds_context_limit(next_observation.length):
             return types.StepResult(
                 reward=self.context_overflow_reward,
                 episode_done=True,

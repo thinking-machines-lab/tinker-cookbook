@@ -254,6 +254,37 @@ class TestMaxTrajectoryTokens:
         # Original metrics should be preserved
         assert result.metrics["turns"] == 5.0
 
+    def test_no_overflow_check_when_episode_done(self):
+        """When episode is already done, context overflow check should NOT fire.
+
+        The real reward from the env should be preserved even if the rendered
+        conversation exceeds the limit — there is no next sampling call.
+        """
+        renderer = _make_renderer(gen_prompt_tokens=list(range(100)), stop_sequences=["<s>"])
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(
+                reward=0.9,
+                episode_done=True,  # episode is done (e.g., model gave final answer)
+                next_messages=[{"role": "user", "content": "x"}],
+                metrics={"accuracy": 1.0},
+            ),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer,
+            message_env=msg_env,
+            max_trajectory_tokens=50,  # observation (100) exceeds limit (50)
+            context_overflow_reward=-1.0,
+        )
+
+        result = asyncio.run(env.step([1]))
+
+        # Real reward should be preserved, NOT replaced by context_overflow_reward
+        assert result.reward == 0.9
+        assert result.episode_done is True
+        assert "context_overflow" not in result.metrics
+        assert result.metrics["accuracy"] == 1.0
+
     def test_within_limit_continues(self):
         """When next_observation is within max_trajectory_tokens, episode continues."""
         renderer = _make_renderer(gen_prompt_tokens=[1, 2, 3], stop_sequences=["<s>"])
