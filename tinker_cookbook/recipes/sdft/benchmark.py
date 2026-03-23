@@ -61,9 +61,11 @@ class BenchmarkConfig:
     lora_rank: int = 128
     renderer_name: str | None = None
 
-    # Benchmark dataset
-    dataset: str = "sciknoweval"  # sciknoweval | toolalpaca
-    sciknoweval_domain: str = "Chemistry"
+    # Benchmark dataset: "science" or "tooluse" (matching paper's naming)
+    dataset: str = "science"
+
+    # Path to the cloned SDFT paper repo's data directory
+    data_dir: str = "~/Repos/Self-Distillation/data"
 
     # Which phase to run. SFT and SDFT are independent comparisons from the
     # same base model (not a sequential pipeline).
@@ -137,11 +139,12 @@ async def run_base_eval(config: BenchmarkConfig) -> dict[str, float]:
 
 async def run_sft(config: BenchmarkConfig) -> str | None:
     """Run SFT training from the base model and return checkpoint path."""
-    from tinker_cookbook.recipes.sdft.datasets import SciKnowEvalSFTBuilder
+    from tinker_cookbook.recipes.sdft.datasets import ScienceArrowSFTBuilder
     from tinker_cookbook.supervised import train as sl_train
     from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 
     renderer_name = await _resolve_renderer(config)
+    expanded_data_dir = str(Path(config.data_dir).expanduser())
 
     log_path = _make_log_path(config, "sft")
     cli_utils.check_log_dir(log_path, behavior_if_exists=config.behavior_if_log_dir_exists)
@@ -155,10 +158,10 @@ async def run_sft(config: BenchmarkConfig) -> str | None:
         batch_size=config.sft_batch_size,
     )
 
-    if config.dataset == "sciknoweval":
-        dataset_builder = SciKnowEvalSFTBuilder(
+    if config.dataset == "science":
+        dataset_builder = ScienceArrowSFTBuilder(
             common_config=common_config,
-            domain=config.sciknoweval_domain,
+            data_dir=f"{expanded_data_dir}/science_data",
         )
     else:
         raise ValueError(f"SFT benchmark not yet implemented for dataset: {config.dataset}")
@@ -195,18 +198,22 @@ async def run_sft(config: BenchmarkConfig) -> str | None:
 async def run_sdft(config: BenchmarkConfig) -> str | None:
     """Run SDFT training from the base model and return checkpoint path."""
     from tinker_cookbook.distillation import sdft
-    from tinker_cookbook.recipes.sdft.datasets import SDFTDataset
+    from tinker_cookbook.recipes.sdft.datasets import SDFTDataset, load_science_from_arrow
 
     renderer_name = await _resolve_renderer(config)
     tokenizer = get_tokenizer(config.model_name)
     renderer = renderers.get_renderer(renderer_name, tokenizer=tokenizer)
+    expanded_data_dir = str(Path(config.data_dir).expanduser())
 
     log_path = _make_log_path(config, "sdft")
     cli_utils.check_log_dir(log_path, behavior_if_exists=config.behavior_if_log_dir_exists)
 
     logger.info(f"=== Phase: SDFT training on {config.dataset} ===")
 
-    train_q, train_a, _, _ = _load_data(config)
+    if config.dataset == "science":
+        train_q, train_a, _, _ = load_science_from_arrow(f"{expanded_data_dir}/science_data")
+    else:
+        raise ValueError(f"SDFT benchmark not yet implemented for dataset: {config.dataset}")
 
     train_dataset = SDFTDataset(
         questions=train_q,
@@ -278,37 +285,24 @@ async def run_eval_checkpoint(config: BenchmarkConfig) -> dict[str, float]:
 # ---------------------------------------------------------------------------
 
 
-def _load_data(
-    config: BenchmarkConfig,
-) -> tuple[list[str], list[str], list[str], list[str]]:
-    """Load train and test data from HuggingFace."""
-    from tinker_cookbook.recipes.sdft.datasets import load_sciknoweval, load_toolalpaca
-
-    if config.dataset == "sciknoweval":
-        return load_sciknoweval(domain=config.sciknoweval_domain)
-    elif config.dataset == "toolalpaca":
-        return load_toolalpaca()
-    else:
-        raise ValueError(f"Unknown dataset: {config.dataset}. Options: sciknoweval, toolalpaca")
-
-
 def _build_evaluator(
     config: BenchmarkConfig,
     renderer: renderers.Renderer,
 ):  # type: ignore[return]
-    """Build the appropriate evaluator for the dataset."""
-    from tinker_cookbook.recipes.sdft.eval import SciKnowEvalEvaluator, ToolUseEvaluator
+    """Build the appropriate evaluator for the dataset using the paper's eval data."""
+    from tinker_cookbook.recipes.sdft.datasets import load_science_from_arrow
+    from tinker_cookbook.recipes.sdft.eval import SciKnowEvalEvaluator
 
-    _, _, test_q, test_a = _load_data(config)
+    expanded_data_dir = str(Path(config.data_dir).expanduser())
 
-    if config.dataset == "sciknoweval":
-        # SciKnowEval eval: test questions are plain strings, wrap as user messages
-        prompts = [[{"role": "user", "content": q}] for q in test_q]
-        return SciKnowEvalEvaluator(prompts, test_a, renderer, max_tokens=2048)
-    elif config.dataset == "toolalpaca":
-        return ToolUseEvaluator(test_q, test_a, renderer, max_tokens=1024)  # type: ignore[arg-type]
+    if config.dataset == "science":
+        _, _, eval_prompts, eval_answers = load_science_from_arrow(
+            f"{expanded_data_dir}/science_data"
+        )
+        # eval_prompts are message lists (from paper's Arrow eval data)
+        return SciKnowEvalEvaluator(eval_prompts, eval_answers, renderer, max_tokens=2048)
     else:
-        raise ValueError(f"Unknown dataset: {config.dataset}")
+        raise ValueError(f"Eval not yet implemented for dataset: {config.dataset}")
 
 
 async def _resolve_renderer(config: BenchmarkConfig) -> str:

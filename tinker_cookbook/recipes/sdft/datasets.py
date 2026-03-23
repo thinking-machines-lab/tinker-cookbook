@@ -10,6 +10,7 @@ import logging
 import math
 from collections.abc import Sequence
 from functools import partial
+from pathlib import Path
 
 import chz
 import tinker
@@ -278,45 +279,117 @@ class ToolAlpacaSDFTBuilder(RLDatasetBuilder):
 
 
 # ---------------------------------------------------------------------------
+# Arrow data loaders (paper's exact preprocessed data)
+# ---------------------------------------------------------------------------
+
+
+def load_science_from_arrow(
+    data_dir: str,
+) -> tuple[list[str], list[str], list, list[str]]:
+    """Load science data from the SDFT paper's Arrow format.
+
+    The paper's science dataset has 'messages' (conversation with system prompt)
+    and 'output_text' (full reasoning chain + answer in XML tags).
+
+    Args:
+        data_dir: Path to the dataset directory (e.g., ~/Repos/Self-Distillation/data/science_data).
+            Must contain 'train_data/' and 'eval_data/' subdirectories.
+
+    Returns:
+        (questions, golden_answers, eval_prompts):
+        - questions: user messages from training data
+        - golden_answers: full reasoning chains (output_text) from training data
+        - eval_prompts: list of message lists from eval data
+    """
+    train_ds = load_from_disk(f"{data_dir}/train_data")
+    eval_ds = load_from_disk(f"{data_dir}/eval_data")
+
+    questions = []
+    golden_answers = []
+    for row in train_ds:  # type: ignore[union-attr]
+        msgs = row["messages"]  # type: ignore[index]
+        # Extract user question (messages[1] is the user turn after system prompt)
+        if len(msgs) >= 2:
+            questions.append(msgs[1]["content"])
+        else:
+            questions.append(msgs[0]["content"])
+        golden_answers.append(str(row["output_text"]))  # type: ignore[index]
+
+    # Eval data has 'prompt' (message list) and 'answer' (letter)
+    eval_prompts = [row["prompt"] for row in eval_ds]  # type: ignore[union-attr]
+    eval_answers = [row["answer"] for row in eval_ds]  # type: ignore[union-attr]
+
+    logger.info(
+        f"Loaded science Arrow data: {len(questions)} train, {len(eval_prompts)} eval examples"
+    )
+    return questions, golden_answers, eval_prompts, eval_answers
+
+
+def load_tooluse_from_arrow(
+    data_dir: str,
+) -> tuple[list[str], list[str], list[str], list[list[dict[str, str]]]]:
+    """Load tooluse data from the SDFT paper's Arrow format.
+
+    Args:
+        data_dir: Path to the dataset directory (e.g., ~/Repos/Self-Distillation/data/tooluse_data).
+
+    Returns:
+        (questions, golden_answers, eval_prompts, eval_golden_answers)
+    """
+    train_ds = load_from_disk(f"{data_dir}/train_data")
+    eval_ds = load_from_disk(f"{data_dir}/eval_data")
+
+    questions = [row["prompt"] for row in train_ds]  # type: ignore[union-attr]
+    golden_answers = [
+        "\n".join(row["golden_response"])  # type: ignore[index]
+        if isinstance(row["golden_response"], list)  # type: ignore[index]
+        else str(row["golden_response"])  # type: ignore[index]
+        for row in train_ds  # type: ignore[union-attr]
+    ]
+
+    eval_prompts = [row["prompt"] for row in eval_ds]  # type: ignore[union-attr]
+    eval_golden_answers = [row["golden_answer"] for row in eval_ds]  # type: ignore[union-attr]
+
+    logger.info(
+        f"Loaded tooluse Arrow data: {len(questions)} train, {len(eval_prompts)} eval examples"
+    )
+    return questions, golden_answers, eval_prompts, eval_golden_answers
+
+
+# ---------------------------------------------------------------------------
 # SFT dataset builders (for benchmark comparison)
 # ---------------------------------------------------------------------------
 
 
 @chz.chz
-class SciKnowEvalSFTBuilder(ChatDatasetBuilder):
-    """Builds SciKnowEval SFT dataset for benchmark comparison."""
+class ScienceArrowSFTBuilder(ChatDatasetBuilder):
+    """Builds SFT dataset from the paper's Arrow data (with reasoning chains)."""
 
-    domain: str = "Chemistry"
-    train_fraction: float = 0.9
+    data_dir: str = "~/Repos/Self-Distillation/data/science_data"
 
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
+        expanded_dir = str(Path(self.data_dir).expanduser())
+        questions, golden_answers, _, _ = load_science_from_arrow(expanded_dir)
+
         import datasets as hf_datasets
 
-        train_q, train_a, test_q, test_a = load_sciknoweval(
-            domain=self.domain, train_fraction=self.train_fraction
+        # Training messages: system prompt + user question + assistant reasoning chain
+        system_prompt = (
+            "Given a question and four options, please select the right answer. "
+            "Respond in the following format:\n<reasoning>\n...\n</reasoning>\n"
+            "<answer>\n...\n</answer>\n\n"
+            "For the answer, only output the letter corresponding to the correct option "
+            "(A, B, C, or D), and nothing else."
         )
-
-        # Build HF datasets from the question/answer pairs.
-        # Wrap answer in <answer> tags so the model learns the eval format.
         train_hf = hf_datasets.Dataset.from_dict(
             {
                 "messages": [
                     [
+                        {"role": "system", "content": system_prompt},
                         {"role": "user", "content": q},
-                        {"role": "assistant", "content": f"<answer>{a}</answer>"},
+                        {"role": "assistant", "content": a},
                     ]
-                    for q, a in zip(train_q, train_a)
-                ]
-            }
-        )
-        test_hf = hf_datasets.Dataset.from_dict(
-            {
-                "messages": [
-                    [
-                        {"role": "user", "content": q},
-                        {"role": "assistant", "content": f"<answer>{a}</answer>"},
-                    ]
-                    for q, a in zip(test_q, test_a)
+                    for q, a in zip(questions, golden_answers)
                 ]
             }
         )
@@ -329,7 +402,5 @@ class SciKnowEvalSFTBuilder(ChatDatasetBuilder):
         train_dataset = SupervisedDatasetFromHFDataset(
             train_hf, batch_size=self.common_config.batch_size, map_fn=map_fn
         )
-        test_dataset = SupervisedDatasetFromHFDataset(
-            test_hf, batch_size=self.common_config.batch_size, map_fn=map_fn
-        )
-        return train_dataset, test_dataset
+        # No test dataset for SFT — eval is done separately via the eval phase
+        return train_dataset, None
