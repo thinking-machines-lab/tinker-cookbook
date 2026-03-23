@@ -129,7 +129,11 @@ def load_sciknoweval(
         for row in rows:
             q = row["question"]
             choices_str = _format_sciknoweval_choices(row["choices"])
-            questions.append(f"{q}\n\n{choices_str}\nPlease reason step by step.")
+            questions.append(
+                f"{q}\n\n{choices_str}\n"
+                "Please reason step by step, then give your answer as <answer>X</answer> "
+                "where X is the letter of the correct option."
+            )
             answers.append(str(row["answerKey"]))
         return questions, answers
 
@@ -292,13 +296,14 @@ class SciKnowEvalSFTBuilder(ChatDatasetBuilder):
             domain=self.domain, train_fraction=self.train_fraction
         )
 
-        # Build HF datasets from the question/answer pairs
+        # Build HF datasets from the question/answer pairs.
+        # Wrap answer in <answer> tags so the model learns the eval format.
         train_hf = hf_datasets.Dataset.from_dict(
             {
                 "messages": [
                     [
                         {"role": "user", "content": q},
-                        {"role": "assistant", "content": a},
+                        {"role": "assistant", "content": f"<answer>{a}</answer>"},
                     ]
                     for q, a in zip(train_q, train_a)
                 ]
@@ -309,7 +314,7 @@ class SciKnowEvalSFTBuilder(ChatDatasetBuilder):
                 "messages": [
                     [
                         {"role": "user", "content": q},
-                        {"role": "assistant", "content": a},
+                        {"role": "assistant", "content": f"<answer>{a}</answer>"},
                     ]
                     for q, a in zip(test_q, test_a)
                 ]
