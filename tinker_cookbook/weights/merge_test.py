@@ -22,6 +22,9 @@ from tinker_cookbook.weights._merge import (
     plan_merge_ops,
     validate_merge_op_shapes,
 )
+from tinker_cookbook.weights._merge_deepseek import detect_profile as detect_deepseek_profile
+from tinker_cookbook.weights._merge_default import detect_profile as detect_default_profile
+from tinker_cookbook.weights._merge_gpt_oss import detect_profile as detect_gpt_oss_profile
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -724,3 +727,67 @@ class TestValidateMergeOpShapes:
         }
         shapes = {"down_proj": (2, 4, 8)}
         validate_merge_op_shapes(ops, shapes)  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Per-model profile detection and dispatch
+# ---------------------------------------------------------------------------
+
+
+class TestPerModelProfileDetection:
+    """Tests for per-model detect_profile functions and model_family dispatch."""
+
+    def test_default_profile_sets_model_family(self):
+        config: dict = {"architectures": ["QwenForCausalLM"]}
+        keys = {"model.layers.0.self_attn.q_proj.weight"}
+        profile = detect_default_profile(config, keys)
+        assert profile.model_family == "default"
+
+    def test_gpt_oss_profile_sets_model_family(self):
+        config: dict = {"architectures": ["GptOssForCausalLM"]}
+        keys = {"model.layers.0.self_attn.q_proj.weight"}
+        profile = detect_gpt_oss_profile(config, keys)
+        assert profile is not None
+        assert profile.model_family == "gpt_oss"
+
+    def test_gpt_oss_returns_none_for_non_gpt_oss(self):
+        config: dict = {"architectures": ["QwenForCausalLM"]}
+        keys = {"model.layers.0.self_attn.q_proj.weight"}
+        assert detect_gpt_oss_profile(config, keys) is None
+
+    def test_deepseek_profile_sets_model_family(self):
+        config: dict = {"model_type": "deepseek_v3"}
+        keys = {"model.layers.0.self_attn.q_proj.weight"}
+        profile = detect_deepseek_profile(config, keys)
+        assert profile is not None
+        assert profile.model_family == "deepseek"
+        assert profile.expert_layout == "separate"
+
+    def test_deepseek_returns_none_for_non_deepseek(self):
+        config: dict = {"model_type": "qwen3"}
+        keys = {"model.layers.0.self_attn.q_proj.weight"}
+        assert detect_deepseek_profile(config, keys) is None
+
+    def test_detect_merge_profile_sets_model_family_for_gpt_oss(self):
+        config: dict = {"architectures": ["GptOssForCausalLM"]}
+        keys = {"model.layers.0.self_attn.q_proj.weight"}
+        profile = detect_merge_profile(config, keys)
+        assert profile.model_family == "gpt_oss"
+
+    def test_detect_merge_profile_sets_model_family_for_deepseek(self):
+        config: dict = {"model_type": "deepseek_v3"}
+        keys = {"model.layers.0.self_attn.q_proj.weight"}
+        profile = detect_merge_profile(config, keys)
+        assert profile.model_family == "deepseek"
+
+    def test_detect_merge_profile_defaults_to_default(self):
+        config: dict = {"architectures": ["QwenForCausalLM"]}
+        keys = {"model.layers.0.self_attn.q_proj.weight"}
+        profile = detect_merge_profile(config, keys)
+        assert profile.model_family == "default"
+
+    def test_unknown_model_family_raises(self):
+        """plan_merge_ops rejects unknown model_family values."""
+        profile = MergeProfile(model_family="nonexistent")
+        with pytest.raises(WeightsMergeError, match="Unknown model_family"):
+            plan_merge_ops({}, {"lora_alpha": 1, "r": 1}, set(), profile)
