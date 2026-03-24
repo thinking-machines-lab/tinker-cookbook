@@ -45,11 +45,12 @@ def _save_model_to_disk(
     *,
     tokenizer_name: str,
     is_vision: bool = False,
+    trust_remote_code: bool = True,
 ) -> None:
     auto_cls = AutoModelForImageTextToText if is_vision else AutoModelForCausalLM
-    model = auto_cls.from_config(config, trust_remote_code=True, dtype=torch.float32)
+    model = auto_cls.from_config(config, trust_remote_code=trust_remote_code, dtype=torch.float32)
     model.save_pretrained(path)
-    tok = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
+    tok = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=trust_remote_code)
     tok.save_pretrained(path)
 
 
@@ -402,8 +403,16 @@ class TestQwen3MoeExperts:
 # ---------------------------------------------------------------------------
 
 
+def _deepseek_needs_custom_code() -> bool:
+    """Check if DeepSeek requires trust_remote_code (transformers < 5.0)."""
+    import transformers
+
+    return int(transformers.__version__.split(".")[0]) < 5
+
+
 def _make_tiny_deepseek_v31_config() -> PretrainedConfig:
-    config = AutoConfig.from_pretrained("deepseek-ai/DeepSeek-V3.1", trust_remote_code=True)
+    needs_custom = _deepseek_needs_custom_code()
+    config = AutoConfig.from_pretrained("deepseek-ai/DeepSeek-V3.1", trust_remote_code=needs_custom)
     config.num_hidden_layers = 1
     config.hidden_size = 64
     config.intermediate_size = 64
@@ -505,11 +514,13 @@ def _load_saved_state_dict(output_path: Path) -> dict[str, torch.Tensor]:
 class TestDeepSeekV31FP8Export:
     """DeepSeek V3.1: dense weights stay BF16 while routed experts are quantized to FP8.
 
-    Uses real DeepSeek config from HF (downloads config + custom code, not weights).
+    Uses real DeepSeek config from HF. On transformers < 5.0, uses custom code
+    (trust_remote_code). On 5.0+, uses native support.
     """
 
     def test_dense_weights_change_but_only_routed_experts_are_quantized_to_fp8(self):
         config = _make_tiny_deepseek_v31_config()
+        needs_custom = _deepseek_needs_custom_code()
 
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -518,24 +529,33 @@ class TestDeepSeekV31FP8Export:
             output_path = root / "merged"
 
             # Create model in BF16 to match real DeepSeek checkpoint format
-            _save_model_to_disk(config, model_path, tokenizer_name="deepseek-ai/DeepSeek-V3.1")
-            _copy_hf_files(
-                "deepseek-ai/DeepSeek-V3.1",
+            _save_model_to_disk(
+                config,
                 model_path,
-                ("configuration_deepseek.py", "modeling_deepseek.py"),
+                tokenizer_name="deepseek-ai/DeepSeek-V3.1",
+                trust_remote_code=needs_custom,
             )
-            # Re-save weights in BF16 (from_config creates float32 by default)
-            orig = AutoModelForCausalLM.from_pretrained(model_path, dtype=torch.bfloat16)
+            if needs_custom:
+                _copy_hf_files(
+                    "deepseek-ai/DeepSeek-V3.1",
+                    model_path,
+                    ("configuration_deepseek.py", "modeling_deepseek.py"),
+                )
+            # Re-save weights in BF16 (from_config creates float32 by default).
+            # Read from saved safetensors (separate format) and cast to BF16,
+            # rather than using state_dict() which may return fused keys on 5.x.
+            orig_tensors = load_file(str(model_path / "model.safetensors"))
             save_file(
-                {k: v.to(torch.bfloat16) for k, v in orig.state_dict().items()},
+                {k: v.to(torch.bfloat16) for k, v in orig_tensors.items()},
                 str(model_path / "model.safetensors"),
             )
-            orig = AutoModelForCausalLM.from_pretrained(model_path, dtype=torch.bfloat16)
             num_experts = 2
 
-            gate_shape = orig.state_dict()["model.layers.0.mlp.experts.0.gate_proj.weight"].shape
+            # Re-read after BF16 conversion
+            orig_tensors = load_file(str(model_path / "model.safetensors"))
+            gate_shape = orig_tensors["model.layers.0.mlp.experts.0.gate_proj.weight"].shape
             expert_out_dim, expert_in_dim = gate_shape
-            dense_shape = orig.state_dict()["model.layers.0.self_attn.q_a_proj.weight"].shape
+            dense_shape = orig_tensors["model.layers.0.self_attn.q_a_proj.weight"].shape
             dense_out_dim, dense_in_dim = dense_shape
             dense_key = "model.layers.0.self_attn.q_a_proj.weight"
             shared_expert_key = "model.layers.0.mlp.shared_experts.gate_proj.weight"
@@ -577,14 +597,15 @@ class TestDeepSeekV31FP8Export:
             saved_index = json.loads((output_path / "model.safetensors.index.json").read_text())
             saved_config = json.loads((output_path / "config.json").read_text())
 
-            # -- Custom files copied --
-            assert (output_path / "configuration_deepseek.py").exists()
-            assert (output_path / "modeling_deepseek.py").exists()
+            # -- Custom files copied (only when trust_remote_code is used) --
+            if needs_custom:
+                assert (output_path / "configuration_deepseek.py").exists()
+                assert (output_path / "modeling_deepseek.py").exists()
             assert (output_path / "model.safetensors.index.json").exists()
 
             # -- Dense weight: merged, BF16, shard preserved --
             dense_delta = (
-                (saved_sd[dense_key].float() - orig.state_dict()[dense_key].float()).abs().sum()
+                (saved_sd[dense_key].float() - orig_tensors[dense_key].float()).abs().sum()
             )
             assert dense_delta > 0, "Dense q_a_proj weight was not updated"
             assert saved_sd[dense_key].dtype == torch.bfloat16
