@@ -689,7 +689,6 @@ def ensure_text(content: Content) -> str:
     raise RendererError(f"Expected text content, got multimodal content with {len(content)} parts")
 
 
-
 def ensure_list(content: Content) -> list[ContentPart]:
     """Normalize content to list form. Wraps string content in a TextPart."""
     if isinstance(content, str):
