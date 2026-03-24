@@ -5,7 +5,7 @@ from typing import Any
 
 from PIL import Image
 
-from tinker_cookbook.renderers.base import Message, ToolCall, ToolSpec
+from tinker_cookbook.renderers.base import ImagePart, Message, TextPart, ToolCall, ToolSpec
 from tinker_cookbook.tool_use.agent_tool_message_env import AgentToolMessageEnv
 from tinker_cookbook.tool_use.tools import simple_tool_result
 from tinker_cookbook.tool_use.types import ToolInput, ToolResult
@@ -181,13 +181,18 @@ class TestStepLogs:
 # ---------------------------------------------------------------------------
 
 
-class TestSimpleToolResultImages:
-    """Unit tests for the images parameter on simple_tool_result()."""
+class TestSimpleToolResultMultimodal:
+    """Unit tests for simple_tool_result() with list[ContentPart] content."""
 
     def test_with_text_and_images(self):
         img1 = Image.new("RGB", (10, 10), color="red")
         img2 = Image.new("RGB", (10, 10), color="blue")
-        result = simple_tool_result("Page loaded", images=[img1, img2])
+        parts = [
+            TextPart(type="text", text="Page loaded"),
+            ImagePart(type="image", image=img1),
+            ImagePart(type="image", image=img2),
+        ]
+        result = simple_tool_result(parts)
 
         assert len(result.messages) == 1
         msg = result.messages[0]
@@ -197,12 +202,10 @@ class TestSimpleToolResultImages:
         assert isinstance(content, list)
         assert len(content) == 3
         assert content[0] == {"type": "text", "text": "Page loaded"}
-        assert content[1]["type"] == "image"
-        assert content[1]["image"] is img1
-        assert content[2]["type"] == "image"
-        assert content[2]["image"] is img2
+        assert content[1] == {"type": "image", "image": img1}
+        assert content[2] == {"type": "image", "image": img2}
 
-    def test_no_images_gives_string_content(self):
+    def test_string_content(self):
         result = simple_tool_result("just text", call_id="c1", name="t")
 
         msg = result.messages[0]
@@ -211,47 +214,29 @@ class TestSimpleToolResultImages:
         assert msg.get("tool_call_id") == "c1"
         assert msg.get("name") == "t"
 
-    def test_empty_images_gives_string_content(self):
-        result = simple_tool_result("just text", images=[], call_id="c1", name="t")
-
-        msg = result.messages[0]
-        assert isinstance(msg["content"], str)
-        assert msg["content"] == "just text"
-
-    def test_single_image(self):
+    def test_interleaved_order_preserved(self):
         img = Image.new("RGB", (10, 10))
-        result = simple_tool_result("one image", images=[img])
-
-        content = result.messages[0]["content"]
-        assert isinstance(content, list)
-        assert len(content) == 2
-
-    def test_string_url_images(self):
-        url = "https://example.com/img.png"
-        result = simple_tool_result("see image", images=[url])
-
-        content = result.messages[0]["content"]
-        assert isinstance(content, list)
-        assert len(content) == 2
-        assert content[0] == {"type": "text", "text": "see image"}
-        assert content[1] == {"type": "image", "image": url}
-
-    def test_mixed_pil_and_url_images(self):
-        img = Image.new("RGB", (10, 10))
-        url = "https://example.com/img.png"
-        result = simple_tool_result("mixed", images=[img, url])
+        parts = [
+            ImagePart(type="image", image=img),
+            TextPart(type="text", text="caption"),
+            ImagePart(type="image", image="https://example.com/img.png"),
+        ]
+        result = simple_tool_result(parts)
 
         content = result.messages[0]["content"]
         assert isinstance(content, list)
         assert len(content) == 3
-        assert content[1] == {"type": "image", "image": img}
-        assert content[2] == {"type": "image", "image": url}
+        assert content[0] == {"type": "image", "image": img}
+        assert content[1] == {"type": "text", "text": "caption"}
+        assert content[2] == {"type": "image", "image": "https://example.com/img.png"}
 
     def test_passthrough_fields(self):
         img = Image.new("RGB", (10, 10))
         result = simple_tool_result(
-            "text",
-            images=[img],
+            [
+                TextPart(type="text", text="text"),
+                ImagePart(type="image", image=img),
+            ],
             call_id="call_123",
             name="screenshot",
             should_stop=True,
@@ -265,9 +250,11 @@ class TestSimpleToolResultImages:
         assert result.messages[0].get("tool_call_id") == "call_123"
         assert result.messages[0].get("name") == "screenshot"
 
-    def test_defaults(self):
+    def test_defaults_with_list_content(self):
         img = Image.new("RGB", (10, 10))
-        result = simple_tool_result("text", images=[img])
+        result = simple_tool_result(
+            [TextPart(type="text", text="text"), ImagePart(type="image", image=img)]
+        )
 
         assert result.should_stop is False
         assert result.metrics == {}
@@ -304,8 +291,10 @@ class MultimodalTool:
     async def run(self, input: ToolInput) -> ToolResult:
         img = Image.new("RGB", (10, 10), color="red")
         return simple_tool_result(
-            "Screenshot taken",
-            images=[img],
+            [
+                TextPart(type="text", text="Screenshot taken"),
+                ImagePart(type="image", image=img),
+            ],
             call_id=input.call_id or "",
             name=self.name,
         )

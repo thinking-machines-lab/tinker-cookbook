@@ -14,37 +14,38 @@ from typing import (
     get_type_hints,
 )
 
-from PIL import Image
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
-from tinker_cookbook.renderers.base import ContentPart, ImagePart, TextPart, ToolCall, ToolSpec
+from tinker_cookbook.renderers.base import ContentPart, ToolCall, ToolSpec
 from tinker_cookbook.tool_use.types import Tool, ToolInput, ToolResult
 
 
 def simple_tool_result(
-    content: str,
+    content: str | list[ContentPart],
     *,
     call_id: str = "",
     name: str = "",
-    images: list[Image.Image | str] | None = None,
     should_stop: bool = False,
     metrics: dict[str, float] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> ToolResult:
-    """Helper function to create a ToolResult from a content string, optionally with images.
+    """Helper function to create a ToolResult from content.
 
-    When ``images`` is provided and non-empty, the message content is a
-    ``list[ContentPart]`` (one ``TextPart`` followed by ``ImagePart`` entries).
-    Otherwise the content is a plain string.
+    ``content`` accepts either a plain string or a ``list[ContentPart]`` for
+    multimodal results (e.g. text interleaved with images). This matches the
+    ``Message["content"]`` type, so callers can build parts in any order.
+
+    Note: images in tool-role messages are a cookbook extension — standard APIs
+    (OpenAI, Anthropic, vLLM, SGLang) do not document image content in
+    tool/function messages. It works because our renderers handle all roles
+    uniformly via ``_preprocess_message_parts()``.
 
     Args:
-        content: Text content to return to the model.
+        content: Content to return to the model — a string or list of ContentPart.
         call_id: The tool call ID (usually passed from ToolInput).
         name: The tool name (usually self.name in a tool method).
-        images: Optional list of images (PIL objects or URL strings,
-            matching ``ImagePart["image"]``).
         should_stop: Whether to stop the episode after this tool call.
         metrics: Optional metrics dict (e.g., {"latency": 0.5, "count": 1}).
         metadata: Optional metadata dict for debugging.
@@ -64,21 +65,16 @@ def simple_tool_result(
         @tool
         async def screenshot() -> ToolResult:
             img = take_screenshot()
-            return simple_tool_result("Screenshot taken", images=[img])
+            return simple_tool_result(
+                [TextPart(type="text", text="Screenshot taken"),
+                 ImagePart(type="image", image=img)],
+            )
     """
-    msg_content: str | list[ContentPart]
-    if images:
-        msg_content = [TextPart(type="text", text=content)]
-        for img in images:
-            msg_content.append(ImagePart(type="image", image=img))
-    else:
-        msg_content = content
-
     return ToolResult(
         messages=[
             {
                 "role": "tool",
-                "content": msg_content,
+                "content": content,
                 "tool_call_id": call_id,
                 "name": name,
             }
