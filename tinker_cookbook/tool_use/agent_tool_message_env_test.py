@@ -3,9 +3,7 @@
 import asyncio
 from typing import Any
 
-from PIL import Image
-
-from tinker_cookbook.renderers.base import ImagePart, Message, TextPart, ToolCall, ToolSpec
+from tinker_cookbook.renderers.base import ImagePart, Message, TextPart, ToolCall, ToolSpec, build_content
 from tinker_cookbook.tool_use.agent_tool_message_env import AgentToolMessageEnv
 from tinker_cookbook.tool_use.tools import simple_tool_result
 from tinker_cookbook.tool_use.types import ToolInput, ToolResult
@@ -185,6 +183,8 @@ class TestSimpleToolResultMultimodal:
     """Unit tests for simple_tool_result() with list[ContentPart] content."""
 
     def test_with_text_and_images(self):
+        from PIL import Image
+
         img1 = Image.new("RGB", (10, 10), color="red")
         img2 = Image.new("RGB", (10, 10), color="blue")
         parts = [
@@ -215,6 +215,8 @@ class TestSimpleToolResultMultimodal:
         assert msg.get("name") == "t"
 
     def test_interleaved_order_preserved(self):
+        from PIL import Image
+
         img = Image.new("RGB", (10, 10))
         parts = [
             ImagePart(type="image", image=img),
@@ -231,6 +233,8 @@ class TestSimpleToolResultMultimodal:
         assert content[2] == {"type": "image", "image": "https://example.com/img.png"}
 
     def test_passthrough_fields(self):
+        from PIL import Image
+
         img = Image.new("RGB", (10, 10))
         result = simple_tool_result(
             [
@@ -251,6 +255,8 @@ class TestSimpleToolResultMultimodal:
         assert result.messages[0].get("name") == "screenshot"
 
     def test_defaults_with_list_content(self):
+        from PIL import Image
+
         img = Image.new("RGB", (10, 10))
         result = simple_tool_result(
             [TextPart(type="text", text="text"), ImagePart(type="image", image=img)]
@@ -289,6 +295,8 @@ class MultimodalTool:
         }
 
     async def run(self, input: ToolInput) -> ToolResult:
+        from PIL import Image
+
         img = Image.new("RGB", (10, 10), color="red")
         return simple_tool_result(
             [
@@ -313,6 +321,8 @@ class TestMultimodalToolResults:
 
     def test_multimodal_tool_result_in_history(self):
         """Tool result with image content is appended to history."""
+        from PIL import Image
+
         env = self._make_env()
         asyncio.run(env.initial_observation())
 
@@ -348,3 +358,91 @@ class TestMultimodalToolResults:
         tool_log = str(result.logs["tool_result_0"])
         assert "<image>Image(10x10, RGB)</image>" in tool_log
         assert "Screenshot taken" in tool_log
+
+
+# ---------------------------------------------------------------------------
+# build_content + simple_tool_result end-to-end
+# ---------------------------------------------------------------------------
+
+
+class BuildContentTool:
+    """A tool that uses build_content to construct multimodal results."""
+
+    @property
+    def name(self) -> str:
+        return "capture"
+
+    @property
+    def description(self) -> str:
+        return "Capture a screenshot"
+
+    @property
+    def parameters_schema(self) -> dict[str, Any]:
+        return {"type": "object", "properties": {}}
+
+    def to_spec(self) -> ToolSpec:
+        return {"name": self.name, "description": self.description, "parameters": self.parameters_schema}
+
+    async def run(self, input: ToolInput) -> ToolResult:
+        from PIL import Image
+
+        img = Image.new("RGBA", (20, 15), color="green")
+        return simple_tool_result(
+            build_content("Captured page", images=[img, "https://example.com/thumb.png"]),
+            call_id=input.call_id or "",
+            name=self.name,
+        )
+
+
+class TestBuildContentEndToEnd:
+    """End-to-end: build_content -> simple_tool_result -> AgentToolMessageEnv."""
+
+    def test_build_content_tool_in_history(self):
+        from PIL import Image
+
+        env = AgentToolMessageEnv(
+            tools=[BuildContentTool()],
+            initial_messages=[{"role": "user", "content": "capture the page"}],
+            max_turns=5,
+            reward_fn=_noop_reward,
+        )
+        asyncio.run(env.initial_observation())
+
+        msg: Message = {
+            "role": "assistant",
+            "content": "Capturing now.",
+            "tool_calls": [_make_tool_call("capture")],
+        }
+        asyncio.run(env.step(msg))
+
+        tool_msgs = [m for m in env.history if m["role"] == "tool"]
+        assert len(tool_msgs) == 1
+
+        content = tool_msgs[0]["content"]
+        assert isinstance(content, list)
+        assert len(content) == 3
+        assert content[0] == {"type": "text", "text": "Captured page"}
+        assert content[1]["type"] == "image"
+        assert isinstance(content[1]["image"], Image.Image)
+        assert content[2] == {"type": "image", "image": "https://example.com/thumb.png"}
+
+    def test_build_content_logging(self):
+        env = AgentToolMessageEnv(
+            tools=[BuildContentTool()],
+            initial_messages=[{"role": "user", "content": "capture the page"}],
+            max_turns=5,
+            reward_fn=_noop_reward,
+        )
+        asyncio.run(env.initial_observation())
+
+        msg: Message = {
+            "role": "assistant",
+            "content": "Capturing now.",
+            "tool_calls": [_make_tool_call("capture")],
+        }
+        result = asyncio.run(env.step(msg))
+
+        tool_log = str(result.logs["tool_result_0"])
+        assert "Captured page" in tool_log
+        assert "<image>Image(20x15, RGBA)</image>" in tool_log
+        assert "<image>https://example.com/thumb.png</image>" in tool_log
