@@ -8,6 +8,7 @@ from tinker_cookbook.tool_use.tools import (
     FunctionTool,
     error_tool_result,
     handle_tool_call,
+    multimodal_tool_result,
     simple_tool_result,
     tool,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "ToolSpec",
     "error_tool_result",
     "handle_tool_call",
+    "multimodal_tool_result",
     "simple_tool_result",
     "tool",
 ]

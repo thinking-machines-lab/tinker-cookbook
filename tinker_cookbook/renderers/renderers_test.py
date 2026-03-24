@@ -44,7 +44,13 @@ from tinker_cookbook.renderers import (
     register_renderer,
     unregister_renderer,
 )
-from tinker_cookbook.renderers.base import ContentPart, ensure_list, ensure_text
+from tinker_cookbook.renderers.base import (
+    ContentPart,
+    ImagePart,
+    ensure_list,
+    ensure_text,
+    format_content_for_logging,
+)
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3ThinkingRenderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
@@ -1463,3 +1469,51 @@ def test_register_and_get_custom_tokenizer(cleanup_custom_tokenizer):
     # Unregister and verify it falls back to HF (which will fail for fake name)
     unregister_tokenizer(custom_name)
     assert not is_tokenizer_registered(custom_name)
+
+
+# ---------------------------------------------------------------------------
+# format_content_for_logging
+# ---------------------------------------------------------------------------
+
+
+class TestFormatContentForLogging:
+    def test_string_content(self) -> None:
+        assert format_content_for_logging("hello") == "hello"
+
+    def test_text_part(self) -> None:
+        content: list[ContentPart] = [TextPart(type="text", text="hi")]
+        assert format_content_for_logging(content) == "hi"
+
+    def test_image_part(self) -> None:
+        from PIL import Image
+
+        content: list[ContentPart] = [ImagePart(type="image", image=Image.new("RGB", (10, 10)))]
+        assert format_content_for_logging(content) == "[image]"
+
+    def test_image_string_url(self) -> None:
+        content: list[ContentPart] = [ImagePart(type="image", image="https://example.com/img.png")]
+        assert format_content_for_logging(content) == "[image]"
+
+    def test_thinking_part(self) -> None:
+        content: list[ContentPart] = [ThinkingPart(type="thinking", thinking="let me think...")]
+        assert format_content_for_logging(content) == "<think>let me think...</think>"
+
+    def test_mixed_content(self) -> None:
+        from PIL import Image
+
+        content = [
+            TextPart(type="text", text="Before"),
+            ImagePart(type="image", image=Image.new("RGB", (10, 10))),
+            TextPart(type="text", text="After"),
+        ]
+        assert format_content_for_logging(content) == "Before\n[image]\nAfter"
+
+    def test_custom_separator(self) -> None:
+        from PIL import Image
+
+        content = [
+            TextPart(type="text", text="A"),
+            ImagePart(type="image", image=Image.new("RGB", (10, 10))),
+            TextPart(type="text", text="B"),
+        ]
+        assert format_content_for_logging(content, separator=" | ") == "A | [image] | B"

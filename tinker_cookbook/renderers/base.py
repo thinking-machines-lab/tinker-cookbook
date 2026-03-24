@@ -689,6 +689,36 @@ def ensure_text(content: Content) -> str:
     raise RendererError(f"Expected text content, got multimodal content with {len(content)} parts")
 
 
+def format_content_for_logging(content: Content, separator: str = "\n") -> str:
+    """Format message content for logging, with placeholders for non-text parts.
+
+    Unlike format_content_as_string which only handles text/thinking parts,
+    this handles all content types including images by inserting descriptive
+    placeholders. Use this in logging paths where content may be multimodal.
+
+    Args:
+        content: Message content (string or list of ContentPart).
+        separator: String to join parts with. Default is newline.
+
+    Returns:
+        Formatted string with placeholders for images.
+    """
+    if isinstance(content, str):
+        return content
+
+    parts = []
+    for p in content:
+        if p["type"] == "thinking":
+            parts.append(f"<think>{p['thinking']}</think>")
+        elif p["type"] == "text":
+            parts.append(p["text"])
+        elif p["type"] == "image":
+            parts.append("[image]")
+        else:
+            raise RendererError(f"Unknown content part type: {p['type']}")
+    return separator.join(parts)
+
+
 def ensure_list(content: Content) -> list[ContentPart]:
     """Normalize content to list form. Wraps string content in a TextPart."""
     if isinstance(content, str):

@@ -14,11 +14,12 @@ from typing import (
     get_type_hints,
 )
 
+from PIL import Image
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
-from tinker_cookbook.renderers.base import ToolCall, ToolSpec
+from tinker_cookbook.renderers.base import ContentPart, ImagePart, TextPart, ToolCall, ToolSpec
 from tinker_cookbook.tool_use.types import Tool, ToolInput, ToolResult
 
 
@@ -109,6 +110,62 @@ def error_tool_result(
         should_stop=should_stop,
         metrics={},
         metadata={"error": error_type},
+    )
+
+
+def multimodal_tool_result(
+    text_content: str,
+    images: list[Image.Image],
+    *,
+    call_id: str = "",
+    name: str = "",
+    should_stop: bool = False,
+    metrics: dict[str, float] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> ToolResult:
+    """Helper function to create a ToolResult with text and image content.
+
+    Constructs a Message with a list of ContentPart (TextPart + ImagePart).
+    If images is empty, falls back to string-only content.
+
+    Args:
+        text_content: Text content to return to the model.
+        images: List of PIL images to include in the result.
+        call_id: The tool call ID (usually passed from ToolInput).
+        name: The tool name.
+        should_stop: Whether to stop the episode after this tool call.
+        metrics: Optional metrics dict.
+        metadata: Optional metadata dict for debugging.
+
+    Returns:
+        A ToolResult with multimodal content.
+    """
+    if not images:
+        return simple_tool_result(
+            text_content,
+            call_id=call_id,
+            name=name,
+            should_stop=should_stop,
+            metrics=metrics,
+            metadata=metadata,
+        )
+
+    content: list[ContentPart] = [TextPart(type="text", text=text_content)]
+    for img in images:
+        content.append(ImagePart(type="image", image=img))
+
+    return ToolResult(
+        messages=[
+            {
+                "role": "tool",
+                "content": content,
+                "tool_call_id": call_id,
+                "name": name,
+            }
+        ],
+        should_stop=should_stop,
+        metrics=metrics or {},
+        metadata=metadata or {},
     )
 
 

@@ -35,6 +35,7 @@ from tinker_cookbook.renderers.base import (
     # Utility functions
     ensure_text,
     format_content_as_string,
+    format_content_for_logging,
     get_text_content,
     parse_content_blocks,
 )
@@ -248,6 +249,7 @@ __all__ = [
     # Utility functions
     "ensure_text",
     "format_content_as_string",
+    "format_content_for_logging",
     "get_text_content",
     "parse_content_blocks",
     # Registry
