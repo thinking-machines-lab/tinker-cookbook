@@ -162,7 +162,7 @@ class TestEvalExports:
 
 
 # ---------------------------------------------------------------------------
-# weights: build_lora_adapter not in __all__
+# weights
 # ---------------------------------------------------------------------------
 
 
@@ -170,10 +170,12 @@ class TestWeightsExports:
     def test_all_consistent(self):
         _check_all_exports("tinker_cookbook.weights")
 
-    def test_build_lora_adapter_not_in_all(self):
-        import tinker_cookbook.weights as w
+    def test_core_functions_importable(self):
+        from tinker_cookbook.weights import build_hf_model, build_lora_adapter, download
 
-        assert "build_lora_adapter" not in w.__all__
+        assert callable(build_hf_model)
+        assert callable(build_lora_adapter)
+        assert callable(download)
 
 
 # ---------------------------------------------------------------------------

@@ -22,12 +22,19 @@ from tinker_cookbook.weights._merge_utils import (
     validate_adapter_config,
 )
 
-_SPLIT_QKV_SUFFIXES: dict[str, str] = {
+SPLIT_QKV_SUFFIXES: dict[str, str] = {
     ".in_proj_q.weight": "q",
     ".in_proj_k.weight": "k",
     ".in_proj_v.weight": "v",
 }
-"""Mapping from split-QKV key suffixes to their role (q/k/v)."""
+"""Mapping from split-QKV key suffixes to their role (q/k/v).
+
+Public so that :mod:`tinker_cookbook.weights._adapter` can reuse it for
+PEFT adapter conversion without duplicating the constant.
+"""
+
+# Backward-compatible alias (internal callers may use the old name).
+_SPLIT_QKV_SUFFIXES = SPLIT_QKV_SUFFIXES
 
 
 def detect_profile(model_config: dict, model_state_keys: set[str]) -> MergeProfile | None:
@@ -60,12 +67,16 @@ def detect_profile(model_config: dict, model_state_keys: set[str]) -> MergeProfi
 # ---------------------------------------------------------------------------
 
 
-def _build_name_remaps(profile: MergeProfile, model_state_keys: set[str]) -> list[tuple[str, str]]:
+def build_qwen3_5_name_remaps(
+    profile: MergeProfile, model_state_keys: set[str]
+) -> list[tuple[str, str]]:
     """Build name remaps for Qwen3.5.
 
     Handles the ``unembed_tokens`` remap for vision models with tied
     embeddings: when ``lm_head.weight`` is absent (``tie_word_embeddings=True``,
     e.g. Qwen3.5-4B), merges into ``embed_tokens`` instead.
+
+    Public so that :mod:`tinker_cookbook.weights._adapter` can reuse it.
     """
     remaps: list[tuple[str, str]] = [("base_model.model.", "")]
     if profile.has_language_model_prefix:
@@ -165,7 +176,7 @@ def plan_merge_ops(
 
     is_fused = profile.expert_layout in ("fused_interleaved", "fused_concatenated")
     is_interleaved = profile.expert_layout == "fused_interleaved"
-    name_remaps = _build_name_remaps(profile, model_state_keys)
+    name_remaps = build_qwen3_5_name_remaps(profile, model_state_keys)
 
     ops: dict[str, list[MergeOp]] = {}
 
