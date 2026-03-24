@@ -22,6 +22,7 @@ jobs:
           - test_adapter_qwen3
           - test_adapter_gpt_oss
           - test_adapter_qwen3_5
+          - test_adapter_kimi
           - test_adapter_deepseek
           - test_strategy_consistency
           - test_quantized
