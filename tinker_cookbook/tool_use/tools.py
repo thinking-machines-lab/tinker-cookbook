@@ -133,7 +133,6 @@ def error_tool_result(
     )
 
 
-
 def _extract_annotated_info(annotation: Any) -> tuple[Any, FieldInfo | None, str | None]:
     """
     Extract the base type, FieldInfo, and description from an Annotated type.
