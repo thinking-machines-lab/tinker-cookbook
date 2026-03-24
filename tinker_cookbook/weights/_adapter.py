@@ -31,6 +31,7 @@ from tinker_cookbook.weights._artifacts import (
 from tinker_cookbook.weights._export import (
     cleanup_on_failure,
     load_config_dict,
+    resolve_trust_remote_code,
 )
 from tinker_cookbook.weights._merge import (
     MergeProfile,
@@ -76,6 +77,7 @@ def build_lora_adapter(
     base_model: str,
     adapter_path: str,
     output_path: str,
+    trust_remote_code: bool | None = None,
 ) -> None:
     """Convert a Tinker LoRA adapter to standard PEFT format for serving.
 
@@ -91,6 +93,9 @@ def build_lora_adapter(
             ``adapter_config.json``).
         output_path: Directory where the PEFT adapter will be saved.
             Must not already exist.
+        trust_remote_code: Whether to trust remote code when loading HF
+            model configs. If ``None`` (default), falls back to the
+            ``HF_TRUST_REMOTE_CODE`` environment variable, then ``False``.
 
     Raises:
         FileNotFoundError: If adapter files are missing.
@@ -98,6 +103,9 @@ def build_lora_adapter(
         WeightsAdapterError: If the model family does not support LoRA
             adapter serving, or adapter keys cannot be remapped.
     """
+    # Resolve trust_remote_code from parameter or HF_TRUST_REMOTE_CODE env var,
+    # consistent with build_hf_model and get_tokenizer.
+    _trust = resolve_trust_remote_code(trust_remote_code)  # reserved for future HF calls
     out = Path(output_path)
     if out.exists():
         raise FileExistsError(f"Output path already exists: {out}")

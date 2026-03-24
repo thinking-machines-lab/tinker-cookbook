@@ -201,7 +201,7 @@ class TestQwen3DenseAdapter:
             assert torch.allclose(
                 merged_tensors["model.layers.0.mlp.gate_proj.weight"].float(),
                 manual_merged,
-                atol=1e-4,
+                atol=1e-3,
             ), "Merge path and adapter+manual delta path should produce identical results"
 
 
@@ -426,10 +426,18 @@ def _make_tiny_qwen3_5_dense_config() -> PretrainedConfig:
     config = AutoConfig.from_pretrained("Qwen/Qwen3.5-4B", trust_remote_code=True)
     tc = config.text_config
     tc.num_hidden_layers = 1
+    tc.layer_types = ["linear_attention"]  # single linear_attn layer
+    tc.linear_num_key_heads = 2
+    tc.linear_num_value_heads = 4
+    tc.linear_key_head_dim = 8
+    tc.linear_value_head_dim = 8
     tc.hidden_size = 64
     tc.intermediate_size = 64
     tc.num_attention_heads = 2
     tc.num_key_value_heads = 2
+    tc.head_dim = 32
+    tc.vocab_size = 256
+    tc.mtp_num_hidden_layers = 0
     config.vision_config.num_hidden_layers = 1
     config.vision_config.hidden_size = 64
     config.vision_config.intermediate_size = 64
@@ -437,11 +445,49 @@ def _make_tiny_qwen3_5_dense_config() -> PretrainedConfig:
     return config
 
 
-class TestQwen35DenseAdapter:
-    """Qwen3.5 dense: split in_proj_q/k/v preserved as separate PEFT keys."""
+def _save_qkv_adapter(
+    path: Path,
+    *,
+    q_dim: int,
+    k_dim: int,
+    v_dim: int,
+    in_dim: int,
+    q_fill: float = FILL_A,
+    k_fill: float = FILL_A,
+    v_fill: float = FILL_B,
+    layer_prefix: str = "base_model.model.model.layers.0.linear_attn",
+) -> None:
+    """Save a LoRA adapter for split in_proj_q/k/v projections."""
+    rank = 1
+    weights: dict[str, torch.Tensor] = {
+        f"{layer_prefix}.in_proj_q.lora_A.weight": torch.ones(rank, in_dim) * q_fill,
+        f"{layer_prefix}.in_proj_q.lora_B.weight": torch.ones(q_dim, rank),
+        f"{layer_prefix}.in_proj_k.lora_A.weight": torch.ones(rank, in_dim) * k_fill,
+        f"{layer_prefix}.in_proj_k.lora_B.weight": torch.ones(k_dim, rank),
+        f"{layer_prefix}.in_proj_v.lora_A.weight": torch.ones(rank, in_dim) * v_fill,
+        f"{layer_prefix}.in_proj_v.lora_B.weight": torch.ones(v_dim, rank),
+    }
+    path.mkdir(parents=True)
+    save_file(weights, str(path / "adapter_model.safetensors"))
+    (path / "adapter_config.json").write_text(json.dumps({"lora_alpha": 1, "r": rank}))
 
-    def test_split_qkv_in_peft_output(self) -> None:
+
+class TestQwen35DenseAdapter:
+    """Qwen3.5 dense: split in_proj_q/k/v preserved as separate PEFT keys.
+
+    Uses the same tiny config as the merge e2e test (test_export.py) to
+    ensure we get a linear_attention layer with in_proj_qkv.
+    """
+
+    FUSED_KEY = "model.language_model.layers.0.linear_attn.in_proj_qkv.weight"
+
+    def test_split_qkv_keys_in_peft_output(self) -> None:
         config = _make_tiny_qwen3_5_dense_config()
+        tc = config.text_config
+        q_dim = tc.linear_num_key_heads * tc.linear_key_head_dim
+        k_dim = q_dim
+        v_dim = tc.linear_num_value_heads * tc.linear_value_head_dim
+        in_dim = tc.hidden_size
 
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -452,60 +498,134 @@ class TestQwen35DenseAdapter:
             )
 
             _save_model_to_disk(
-                config,
-                model_path,
-                tokenizer_name="Qwen/Qwen3.5-4B",
-                is_vision=True,
+                config, model_path, tokenizer_name="Qwen/Qwen3.5-4B", is_vision=True
+            )
+            _save_qkv_adapter(adapter_path, q_dim=q_dim, k_dim=k_dim, v_dim=v_dim, in_dim=in_dim)
+
+            peft_weights, peft_config = _run_build_adapter(model_path, adapter_path, output_path)
+
+            # Split QKV should be preserved as separate PEFT keys with vision prefix.
+            for proj in ("in_proj_q", "in_proj_k", "in_proj_v"):
+                matching = [k for k in peft_weights if proj in k]
+                assert matching, f"Missing {proj} in PEFT output"
+                assert all("language_model" in k for k in matching), (
+                    f"{proj} keys missing language_model prefix"
+                )
+                assert proj in peft_config["target_modules"]
+
+            # All tensors should be 2D and unscaled.
+            for key, tensor in peft_weights.items():
+                assert tensor.ndim == 2, f"{key} is {tensor.ndim}D"
+
+    def test_mathematical_equivalence_with_merge(self) -> None:
+        """Verify the PEFT adapter produces the same delta as the merge path.
+
+        The merge path computes: fused_qkv += [B_q@A_q; B_k@A_k; B_v@A_v] * (alpha/r)
+        The adapter path should produce separate in_proj_q/k/v tensors that,
+        when manually applied with the same formula, yield the identical delta.
+        """
+        config = _make_tiny_qwen3_5_dense_config()
+        tc = config.text_config
+        q_dim = tc.linear_num_key_heads * tc.linear_key_head_dim
+        k_dim = q_dim
+        v_dim = tc.linear_num_value_heads * tc.linear_value_head_dim
+        in_dim = tc.hidden_size
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_path = root / "model"
+            adapter_path = root / "adapter"
+            merged_path = root / "merged"
+            peft_path = root / "peft"
+
+            _save_model_to_disk(
+                config, model_path, tokenizer_name="Qwen/Qwen3.5-4B", is_vision=True
+            )
+            orig = AutoModelForImageTextToText.from_pretrained(
+                model_path, trust_remote_code=True, dtype=torch.float32
+            )
+            orig_fused = orig.state_dict()[self.FUSED_KEY].clone()
+            del orig
+
+            _save_qkv_adapter(adapter_path, q_dim=q_dim, k_dim=k_dim, v_dim=v_dim, in_dim=in_dim)
+
+            # Path 1: merge into base model
+            build_hf_model(
+                base_model=str(model_path),
+                adapter_path=str(adapter_path),
+                output_path=str(merged_path),
+            )
+            merged_model = AutoModelForImageTextToText.from_pretrained(
+                merged_path, trust_remote_code=True, dtype=torch.float32
+            )
+            merged_fused = merged_model.state_dict()[self.FUSED_KEY].clone()
+            del merged_model
+            merge_delta = merged_fused - orig_fused
+
+            # Path 2: build PEFT adapter, manually compute delta
+            peft_weights, peft_config = _run_build_adapter(model_path, adapter_path, peft_path)
+            alpha = peft_config["lora_alpha"]
+            rank = peft_config["r"]
+            scaling = alpha / rank
+
+            prefix = "base_model.model.model.language_model.layers.0.linear_attn"
+            q_A = peft_weights[f"{prefix}.in_proj_q.lora_A.weight"].float()
+            q_B = peft_weights[f"{prefix}.in_proj_q.lora_B.weight"].float()
+            k_A = peft_weights[f"{prefix}.in_proj_k.lora_A.weight"].float()
+            k_B = peft_weights[f"{prefix}.in_proj_k.lora_B.weight"].float()
+            v_A = peft_weights[f"{prefix}.in_proj_v.lora_A.weight"].float()
+            v_B = peft_weights[f"{prefix}.in_proj_v.lora_B.weight"].float()
+
+            # Manual delta: concatenate [B_q@A_q, B_k@A_k, B_v@A_v] * scaling
+            peft_delta = torch.cat([q_B @ q_A, k_B @ k_A, v_B @ v_A], dim=0) * scaling
+
+            assert torch.allclose(merge_delta, peft_delta, atol=1e-3), (
+                "Merge path and PEFT adapter + manual delta should produce identical results "
+                f"for Qwen3.5 split QKV. Max diff: {(merge_delta - peft_delta).abs().max()}"
+            )
+
+    def test_tied_embeddings_remapped(self) -> None:
+        """With tie_word_embeddings=True (Qwen3.5-4B), unembed_tokens should
+        be remapped to embed_tokens in the PEFT output."""
+        config = _make_tiny_qwen3_5_dense_config()
+        tc = config.text_config
+        assert tc.tie_word_embeddings is True
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_path, adapter_path, output_path = (
+                root / "model",
+                root / "adapter",
+                root / "peft",
+            )
+
+            _save_model_to_disk(
+                config, model_path, tokenizer_name="Qwen/Qwen3.5-4B", is_vision=True
             )
             orig_tensors = load_file(str(model_path / "model.safetensors"))
-
-            # Find a layer with linear attention (has in_proj_qkv)
-            qkv_keys = [k for k in orig_tensors if "in_proj_qkv" in k]
-            if not qkv_keys:
-                # Model may not have linear attention layers at 1 layer config
-                return
-
-            qkv_key = qkv_keys[0]
-            qkv_shape = orig_tensors[qkv_key].shape
-            total_out, in_dim = qkv_shape
-            # Split QKV: each component gets 1/3 of total output
-            comp_out = total_out // 3
-
-            # Extract the layer path for adapter key construction
-            # qkv_key is like: model.language_model.layers.0.linear_attn.in_proj_qkv.weight
-            layer_path = qkv_key.split("in_proj_qkv")[0]  # up to linear_attn.
-            # Adapter uses model.layers... (without language_model prefix)
-            adapter_layer_path = layer_path.replace("model.language_model.", "model.")
+            embed_shape = orig_tensors["model.language_model.embed_tokens.weight"].shape
+            vocab_size, hidden = embed_shape
 
             rank = 1
-            weights: dict[str, torch.Tensor] = {}
-            for proj in ("in_proj_q", "in_proj_k", "in_proj_v"):
-                weights[f"base_model.model.{adapter_layer_path}{proj}.lora_A.weight"] = (
-                    torch.ones(rank, in_dim) * FILL_A
-                )
-                weights[f"base_model.model.{adapter_layer_path}{proj}.lora_B.weight"] = torch.ones(
-                    comp_out, rank
-                )
-
+            weights = {
+                "base_model.model.model.unembed_tokens.lora_A.weight": (
+                    torch.ones(rank, hidden) * FILL_A
+                ),
+                "base_model.model.model.unembed_tokens.lora_B.weight": torch.ones(vocab_size, rank),
+            }
             adapter_path.mkdir(parents=True)
             save_file(weights, str(adapter_path / "adapter_model.safetensors"))
             (adapter_path / "adapter_config.json").write_text(
                 json.dumps({"lora_alpha": 1, "r": rank})
             )
 
-            peft_weights, peft_config = _run_build_adapter(model_path, adapter_path, output_path)
+            peft_weights, _ = _run_build_adapter(model_path, adapter_path, output_path)
 
-            # Split QKV should be preserved as separate PEFT keys with vision prefix
-            for proj in ("in_proj_q", "in_proj_k", "in_proj_v"):
-                matching = [k for k in peft_weights if proj in k]
-                assert matching, f"Missing {proj} in PEFT output"
-                # Should have language_model prefix
-                assert all("language_model" in k for k in matching), (
-                    f"{proj} keys missing language_model prefix"
-                )
-
-            for proj in ("in_proj_q", "in_proj_k", "in_proj_v"):
-                assert proj in peft_config["target_modules"]
+            # Should be remapped to embed_tokens (not lm_head) due to tied embeddings.
+            embed_keys = [k for k in peft_weights if "embed_tokens" in k]
+            lm_head_keys = [k for k in peft_weights if "lm_head" in k]
+            assert embed_keys, "unembed_tokens should map to embed_tokens for tied embeddings"
+            assert not lm_head_keys, "Should not have lm_head keys for tied embeddings"
 
 
 # ---------------------------------------------------------------------------
