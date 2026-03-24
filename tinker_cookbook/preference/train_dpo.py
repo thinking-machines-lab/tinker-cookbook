@@ -122,7 +122,7 @@ def create_dpo_clients(
             base_model=config.model_name, rank=config.lora_rank, user_metadata=user_metadata
         )
     # Create a sampling client for the reference model from the training client
-    reference_client = training_client.save_weights_and_get_sampling_client("reference")
+    reference_client = training_client.save_weights_and_get_sampling_client()
     return training_client, reference_client
 
 

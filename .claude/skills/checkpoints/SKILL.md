@@ -27,8 +27,11 @@ tc.save_state(name="step_100", ttl_seconds=None)
 # Save sampler weights (for sampling/export)
 tc.save_weights_for_sampler(name="step_100_sampler", ttl_seconds=None)
 
-# Save both + get a SamplingClient
-sc = tc.save_weights_and_get_sampling_client(name="step_100")
+# Get an ephemeral SamplingClient for the current weights (not persistently saved)
+# This is optimized for fast weight transfer in training loops.
+# For persistent saves, use save_weights_for_sampler(name=...) +
+# service_client.create_sampling_client(model_path=...)
+sc = tc.save_weights_and_get_sampling_client()
 ```
 
 `ttl_seconds=None` means indefinite retention. Set a TTL for intermediate checkpoints to avoid storage bloat.

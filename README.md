@@ -46,7 +46,7 @@ training_client.optim_step(...)
 training_client.save_state(...)
 training_client.load_state(...)
 
-sampling_client = training_client.save_weights_and_get_sampling_client(name="my_model")
+sampling_client = training_client.save_weights_and_get_sampling_client()
 sampling_client.sample(...)
 ```
 
