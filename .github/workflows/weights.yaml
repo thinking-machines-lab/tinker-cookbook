@@ -9,7 +9,7 @@ jobs:
   e2e:
     if: github.repository == 'thinking-machines-lab/tinker-cookbook'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     strategy:
       fail-fast: false
@@ -27,12 +27,16 @@ jobs:
           - test_strategy_consistency
           - test_quantized
           - test_quantized_equivalence
+          - test_lifecycle
         transformers-version: ["4.57.6", "5.2.0"]
         exclude:
           # Qwen3.5 requires transformers >= 5.0
           - test: test_export_qwen3_5
             transformers-version: "4.57.6"
           - test: test_adapter_qwen3_5
+            transformers-version: "4.57.6"
+          # Lifecycle test doesn't depend on transformers version
+          - test: test_lifecycle
             transformers-version: "4.57.6"
 
     name: ${{ matrix.test }} (transformers ${{ matrix.transformers-version }})
@@ -56,3 +60,4 @@ jobs:
         run: uv run pytest tests/weights/${{ matrix.test }}.py -v --timeout=120
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          TINKER_API_KEY: ${{ secrets.TINKER_API_KEY }}
