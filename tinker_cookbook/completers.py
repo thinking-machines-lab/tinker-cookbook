@@ -22,6 +22,7 @@ StopCondition: TypeAlias = list[str] | list[int]
 class TokensWithLogprobs:
     tokens: list[int]
     maybe_logprobs: list[float] | None
+    stop_reason: tinker.StopReason = "stop"
 
     @property
     def logprobs(self) -> list[float]:
@@ -71,12 +72,15 @@ class TinkerTokenCompleter(TokenCompleter):
             ),
         )
 
-        # Extract tokens and logprobs from the first (and only) sample
-        sampled_tokens = sample_result.sequences[0].tokens
-        sampled_logprobs = sample_result.sequences[0].logprobs
-        assert sampled_logprobs is not None
+        # Extract tokens, logprobs, and stop_reason from the first (and only) sample
+        sampled_seq = sample_result.sequences[0]
+        assert sampled_seq.logprobs is not None
 
-        return TokensWithLogprobs(tokens=sampled_tokens, maybe_logprobs=sampled_logprobs)
+        return TokensWithLogprobs(
+            tokens=sampled_seq.tokens,
+            maybe_logprobs=sampled_seq.logprobs,
+            stop_reason=sampled_seq.stop_reason,
+        )
 
 
 class TinkerMessageCompleter(MessageCompleter):

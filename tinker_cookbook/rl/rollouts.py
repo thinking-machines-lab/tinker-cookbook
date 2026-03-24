@@ -123,7 +123,9 @@ async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
         async with trace.scope_span("policy_sample"):
             ac_with_logprobs = await policy(ob, stop_condition)
         async with trace.scope_span("env_step"):
-            step_result = await env.step(ac_with_logprobs.tokens)
+            step_result = await env.step(
+                ac_with_logprobs.tokens, stop_reason=ac_with_logprobs.stop_reason
+            )
         transition = Transition(
             ob=ob,
             ac=ac_with_logprobs,

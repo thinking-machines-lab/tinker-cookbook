@@ -135,6 +135,8 @@ class SearchEnvGroupBuilder(EnvGroupBuilder):
         chroma_tool: ChromaTool,
         format_coef: float = 0.1,
         max_trajectory_tokens: int = 32 * 1024,
+        max_generation_tokens: int | None = None,
+        context_overflow_reward: float = -0.1,
     ):
         self.datum = datum
         self.model_name = model_name
@@ -144,6 +146,8 @@ class SearchEnvGroupBuilder(EnvGroupBuilder):
         self.chroma_tool = chroma_tool
         self.format_coef = format_coef
         self.max_trajectory_tokens = max_trajectory_tokens
+        self.max_generation_tokens = max_generation_tokens
+        self.context_overflow_reward = context_overflow_reward
 
     async def make_envs(self) -> Sequence[Env]:
         tokenizer = tokenizer_utils.get_tokenizer(self.model_name)
@@ -166,6 +170,8 @@ class SearchEnvGroupBuilder(EnvGroupBuilder):
                 reward_fn=reward_fn,
                 max_turns=self.max_turns,
                 max_trajectory_tokens=self.max_trajectory_tokens,
+                max_generation_tokens=self.max_generation_tokens,
+                context_overflow_reward=self.context_overflow_reward,
             )
             for _ in range(self.group_size)
         ]
@@ -211,6 +217,8 @@ class SearchR1DatasetBuilder(RLDatasetBuilder):
     max_turns: int = 5
     format_coef: float = 0.1
     max_trajectory_tokens: int = 32 * 1024
+    max_generation_tokens: int | None = None
+    context_overflow_reward: float = -0.1
     seed: int = 0
 
     async def __call__(self) -> tuple[RLDataset, RLDataset | None]:
@@ -236,6 +244,8 @@ class SearchR1DatasetBuilder(RLDatasetBuilder):
                 chroma_tool=chroma_tool,
                 format_coef=self.format_coef,
                 max_trajectory_tokens=self.max_trajectory_tokens,
+                max_generation_tokens=self.max_generation_tokens,
+                context_overflow_reward=self.context_overflow_reward,
             )
             for datum in data
         ]

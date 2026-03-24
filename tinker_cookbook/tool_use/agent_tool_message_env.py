@@ -137,6 +137,8 @@ def build_agent_tool_env(
     max_turns: int = 5,
     failed_parse_reward: float = -0.1,
     max_trajectory_tokens: int | None = None,
+    max_generation_tokens: int | None = None,
+    context_overflow_reward: float = -0.1,
 ) -> EnvFromMessageEnv:
     """Convenience method to build an EnvFromMessageEnv for tool-using agents.
 
@@ -149,6 +151,11 @@ def build_agent_tool_env(
         max_turns: Maximum turns before episode ends.
         failed_parse_reward: Reward when model output fails to parse.
         max_trajectory_tokens: Maximum tokens in trajectory before terminating episode.
+        max_generation_tokens: Maximum tokens per generation. When set, the episode
+            terminates if the trajectory + generation budget would exceed
+            *max_trajectory_tokens*, preventing context overflow errors.
+        context_overflow_reward: Reward assigned when the episode is terminated due to
+            context overflow. Defaults to -0.1.
 
     Returns:
         An EnvFromMessageEnv ready for RL training.
@@ -164,4 +171,6 @@ def build_agent_tool_env(
         message_env=msg_env,
         failed_parse_reward=failed_parse_reward,
         max_trajectory_tokens=max_trajectory_tokens,
+        max_generation_tokens=max_generation_tokens,
+        context_overflow_reward=context_overflow_reward,
     )
