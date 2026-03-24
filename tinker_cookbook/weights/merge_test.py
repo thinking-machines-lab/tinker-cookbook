@@ -873,6 +873,28 @@ class TestQwen35QkvFusion:
         assert torch.allclose(fused[q_out : q_out + k_out], torch.full((k_out, in_dim), 2.0))
         assert torch.allclose(fused[q_out + k_out :], torch.full((v_out, in_dim), 3.0))
 
+    def test_vision_model_qkv_fusion_non_tied(self):
+        """QKV fusion works with has_language_model prefix AND a top-level lm_head
+        (i.e. tie_word_embeddings=False, as in Qwen3.5-27B and 35B-A3B)."""
+        q_out, k_out, v_out, in_dim = self.Q_OUT, self.K_OUT, self.V_OUT, self.IN_DIM
+        adapter_weights, adapter_config = _make_qkv_adapter(q_out, k_out, v_out, in_dim)
+        fused_rows = q_out + k_out + v_out
+        state_dict = {
+            "model.language_model.layers.0.linear_attn.in_proj_qkv.weight": torch.zeros(
+                fused_rows, in_dim
+            ),
+            # Presence of lm_head.weight triggers the non-tied branch
+            "lm_head.weight": torch.zeros(8, in_dim),
+        }
+        model = _make_base_model(state_dict)
+
+        merge_adapter_weights(model, adapter_weights, adapter_config)
+
+        fused = state_dict["model.language_model.layers.0.linear_attn.in_proj_qkv.weight"]
+        assert torch.allclose(fused[:q_out], torch.full((q_out, in_dim), 1.0))
+        assert torch.allclose(fused[q_out : q_out + k_out], torch.full((k_out, in_dim), 2.0))
+        assert torch.allclose(fused[q_out + k_out :], torch.full((v_out, in_dim), 3.0))
+
     def test_validate_passes_for_sliced_ops(self):
         """validate_merge_op_shapes accepts ops whose delta is smaller than the target."""
         ops = {
@@ -950,3 +972,65 @@ class TestQwen35QkvFusion:
         assert torch.allclose(fused[:q_out], torch.full((q_out, in_dim), 1.0))
         assert torch.allclose(fused[q_out : q_out + k_out], torch.full((k_out, in_dim), 2.0))
         assert torch.allclose(fused[q_out + k_out :], torch.full((v_out, in_dim), 3.0))
+
+
+# ---------------------------------------------------------------------------
+# unembed_tokens remapping for vision models (tied vs non-tied embeddings)
+# ---------------------------------------------------------------------------
+#
+# Qwen3.5-4B: tie_word_embeddings=True  → no lm_head.weight; unembed_tokens must
+#             merge into model.language_model.embed_tokens.
+# Qwen3.5-27B / 35B-A3B: tie_word_embeddings=False → lm_head.weight is stored at
+#             the top level; unembed_tokens must merge into lm_head, not embed_tokens.
+
+
+def _make_unembed_adapter(vocab: int, hidden: int, rank: int = 1) -> tuple[dict, dict]:
+    """Build a minimal adapter with a single unembed_tokens LoRA."""
+    prefix = "base_model.model.model.unembed_tokens"
+    adapter_weights = {
+        f"{prefix}.lora_A.weight": torch.ones(rank, hidden),
+        f"{prefix}.lora_B.weight": torch.ones(vocab, rank),
+    }
+    return adapter_weights, {"lora_alpha": 1, "r": rank}
+
+
+class TestUnembedTokensVisionRemap:
+    """Tests for unembed_tokens → lm_head / embed_tokens remap in vision models."""
+
+    VOCAB = 8
+    HIDDEN = 4
+
+    def test_tied_embeddings_merges_into_embed_tokens(self):
+        """When lm_head is absent (tie_word_embeddings=True, e.g. Qwen3.5-4B),
+        unembed_tokens delta is applied to model.language_model.embed_tokens."""
+        embed = torch.zeros(self.VOCAB, self.HIDDEN)
+        state_dict = {"model.language_model.embed_tokens.weight": embed}
+        model = _make_base_model(state_dict)
+
+        adapter_weights, config = _make_unembed_adapter(self.VOCAB, self.HIDDEN)
+        merge_adapter_weights(model, adapter_weights, config)
+
+        # delta = lora_B @ lora_A = ones(V,1) @ ones(1,H) = ones(V,H); scaling=1
+        assert torch.allclose(embed, torch.ones(self.VOCAB, self.HIDDEN))
+
+    def test_non_tied_embeddings_merges_into_lm_head(self):
+        """When lm_head.weight exists at the top level (tie_word_embeddings=False,
+        e.g. Qwen3.5-27B / 35B-A3B), unembed_tokens delta is applied to lm_head,
+        NOT to embed_tokens."""
+        embed = torch.zeros(self.VOCAB, self.HIDDEN)
+        lm_head = torch.zeros(self.VOCAB, self.HIDDEN)
+        state_dict = {
+            "model.language_model.embed_tokens.weight": embed,
+            "lm_head.weight": lm_head,
+        }
+        model = _make_base_model(state_dict)
+
+        adapter_weights, config = _make_unembed_adapter(self.VOCAB, self.HIDDEN)
+        merge_adapter_weights(model, adapter_weights, config)
+
+        assert torch.allclose(lm_head, torch.ones(self.VOCAB, self.HIDDEN)), (
+            "unembed_tokens delta must land on lm_head, not embed_tokens"
+        )
+        assert torch.allclose(embed, torch.zeros(self.VOCAB, self.HIDDEN)), (
+            "embed_tokens must be untouched when lm_head exists separately"
+        )
