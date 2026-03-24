@@ -29,6 +29,7 @@ import uuid
 from collections.abc import Callable
 
 import pytest
+from PIL import Image
 
 from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.image_processing_utils import get_image_processor
@@ -1480,7 +1481,6 @@ def test_register_and_get_custom_tokenizer(cleanup_custom_tokenizer):
 
 class TestFormatContentAsStringImages:
     def test_image_pil_object(self) -> None:
-        from PIL import Image
 
         content: list[ContentPart] = [ImagePart(type="image", image=Image.new("RGB", (10, 10)))]
         assert format_content_as_string(content) == "<image>Image(10x10, RGB)</image>"
@@ -1490,7 +1490,6 @@ class TestFormatContentAsStringImages:
         assert format_content_as_string(content) == "<image>https://example.com/img.png</image>"
 
     def test_mixed_content(self) -> None:
-        from PIL import Image
 
         content = [
             TextPart(type="text", text="Before"),
@@ -1502,7 +1501,6 @@ class TestFormatContentAsStringImages:
         )
 
     def test_custom_separator(self) -> None:
-        from PIL import Image
 
         content = [
             TextPart(type="text", text="A"),
@@ -1539,7 +1537,6 @@ class TestBuildContent:
         assert result == "hello"
 
     def test_text_with_pil_image(self) -> None:
-        from PIL import Image
 
         img = Image.new("RGB", (10, 10))
         result = build_content("caption", images=[img])
@@ -1557,7 +1554,6 @@ class TestBuildContent:
         assert result[1] == {"type": "image", "image": url}
 
     def test_multiple_images(self) -> None:
-        from PIL import Image
 
         img = Image.new("RGB", (10, 10))
         url = "https://example.com/img.png"

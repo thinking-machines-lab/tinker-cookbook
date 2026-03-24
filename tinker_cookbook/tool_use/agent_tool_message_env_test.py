@@ -3,6 +3,8 @@
 import asyncio
 from typing import Any
 
+from PIL import Image
+
 from tinker_cookbook.renderers.base import ImagePart, Message, TextPart, ToolCall, ToolSpec, build_content
 from tinker_cookbook.tool_use.agent_tool_message_env import AgentToolMessageEnv
 from tinker_cookbook.tool_use.tools import simple_tool_result
@@ -183,7 +185,6 @@ class TestSimpleToolResultMultimodal:
     """Unit tests for simple_tool_result() with list[ContentPart] content."""
 
     def test_with_text_and_images(self):
-        from PIL import Image
 
         img1 = Image.new("RGB", (10, 10), color="red")
         img2 = Image.new("RGB", (10, 10), color="blue")
@@ -215,7 +216,6 @@ class TestSimpleToolResultMultimodal:
         assert msg.get("name") == "t"
 
     def test_interleaved_order_preserved(self):
-        from PIL import Image
 
         img = Image.new("RGB", (10, 10))
         parts = [
@@ -233,7 +233,6 @@ class TestSimpleToolResultMultimodal:
         assert content[2] == {"type": "image", "image": "https://example.com/img.png"}
 
     def test_passthrough_fields(self):
-        from PIL import Image
 
         img = Image.new("RGB", (10, 10))
         result = simple_tool_result(
@@ -255,7 +254,6 @@ class TestSimpleToolResultMultimodal:
         assert result.messages[0].get("name") == "screenshot"
 
     def test_defaults_with_list_content(self):
-        from PIL import Image
 
         img = Image.new("RGB", (10, 10))
         result = simple_tool_result(
@@ -295,7 +293,6 @@ class MultimodalTool:
         }
 
     async def run(self, input: ToolInput) -> ToolResult:
-        from PIL import Image
 
         img = Image.new("RGB", (10, 10), color="red")
         return simple_tool_result(
@@ -321,7 +318,6 @@ class TestMultimodalToolResults:
 
     def test_multimodal_tool_result_in_history(self):
         """Tool result with image content is appended to history."""
-        from PIL import Image
 
         env = self._make_env()
         asyncio.run(env.initial_observation())
@@ -384,7 +380,6 @@ class BuildContentTool:
         return {"name": self.name, "description": self.description, "parameters": self.parameters_schema}
 
     async def run(self, input: ToolInput) -> ToolResult:
-        from PIL import Image
 
         img = Image.new("RGBA", (20, 15), color="green")
         return simple_tool_result(
@@ -398,7 +393,6 @@ class TestBuildContentEndToEnd:
     """End-to-end: build_content -> simple_tool_result -> AgentToolMessageEnv."""
 
     def test_build_content_tool_in_history(self):
-        from PIL import Image
 
         env = AgentToolMessageEnv(
             tools=[BuildContentTool()],
