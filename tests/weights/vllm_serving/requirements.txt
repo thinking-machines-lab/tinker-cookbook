@@ -1,0 +1,14 @@
+# Dependencies for vLLM adapter serving tests.
+#
+# These are in a separate requirements file (not pyproject.toml) because vLLM
+# pins its own torch and transformers versions which conflict with the main
+# project's dependencies. Install into an isolated venv:
+#
+#   python3 -m venv /tmp/vllm-test-env
+#   /tmp/vllm-test-env/bin/pip install -r tests/weights/vllm_serving/requirements.txt
+#   /tmp/vllm-test-env/bin/pip install -e .
+#
+vllm>=0.18.0
+safetensors
+huggingface-hub
+pytest
