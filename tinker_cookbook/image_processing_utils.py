@@ -28,6 +28,7 @@ else:
 def get_image_processor(model_name: str) -> ImageProcessor:
     model_name = model_name.split(":")[0]
 
+    import transformers
     from transformers.models.auto.image_processing_auto import AutoImageProcessor
 
     kwargs: dict[str, Any] = {}
@@ -39,8 +40,6 @@ def get_image_processor(model_name: str) -> ImageProcessor:
         kwargs["revision"] = "3367c8d1c68584429fab7faf845a32d5195b6ac1"
 
     processor = AutoImageProcessor.from_pretrained(model_name, use_fast=True, **kwargs)
-
-    import transformers
 
     if not getattr(processor, "is_fast", False) and tuple(
         int(x) for x in transformers.__version__.split(".")[:2]
