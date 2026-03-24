@@ -1604,8 +1604,6 @@ async def main(
         rolling_mgr=rolling_mgr,
     )
 
-    await rolling_mgr.finalize_async()
-
     # Save final checkpoint
     if start_batch < end_batch:
         _ = await checkpoint_utils.save_checkpoint_async(
@@ -1618,6 +1616,10 @@ async def main(
         )
     else:
         logger.info("Training was already complete; nothing to do")
+
+    # Clean up rolling checkpoints after the final save so that the last
+    # entry in checkpoints.jsonl always points to valid server-side data.
+    await rolling_mgr.finalize_async()
 
     # Cleanup
     if rollout_executor is not None:

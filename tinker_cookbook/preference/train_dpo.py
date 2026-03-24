@@ -438,8 +438,6 @@ def main(config: Config):
         if reached_max_steps:
             break
 
-    rolling_mgr.finalize()
-
     # Save final checkpoint if training actually happened
     did_train = start_epoch < config.num_epochs and (
         config.max_steps is None or start_epoch * n_batches + start_batch < config.max_steps
@@ -455,6 +453,9 @@ def main(config: Config):
         )
     else:
         logger.info("Training was already complete; nothing to do")
+    # Clean up rolling checkpoints after the final save so that the last
+    # entry in checkpoints.jsonl always points to valid server-side data.
+    rolling_mgr.finalize()
 
     # Cleanup
     ml_logger.close()

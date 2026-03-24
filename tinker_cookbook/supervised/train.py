@@ -407,8 +407,6 @@ async def main(config: Config):
     did_train = start_epoch < config.num_epochs and (
         config.max_steps is None or start_epoch * n_batches + start_batch < config.max_steps
     )
-    await rolling_mgr.finalize_async()
-
     if did_train:
         await checkpoint_utils.save_checkpoint_async(
             training_client=training_client,
@@ -420,6 +418,9 @@ async def main(config: Config):
         )
     else:
         logger.info("Training was already complete; nothing to do")
+    # Clean up rolling checkpoints after the final save so that the last
+    # entry in checkpoints.jsonl always points to valid server-side data.
+    await rolling_mgr.finalize_async()
 
     ml_logger.close()
     logger.info("Training completed successfully")
