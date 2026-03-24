@@ -3,6 +3,7 @@
 from tinker_cookbook.rl.rollout_strategy import FailFast, RetryOnFailure, RolloutStrategy
 from tinker_cookbook.rl.types import (
     Action,
+    ActionExtra,
     Env,
     EnvGroupBuilder,
     Logs,
@@ -20,6 +21,7 @@ from tinker_cookbook.rl.types import (
 __all__ = [
     # Core protocol and types (types.py)
     "Action",
+    "ActionExtra",
     "Env",
     "EnvGroupBuilder",
     "Logs",

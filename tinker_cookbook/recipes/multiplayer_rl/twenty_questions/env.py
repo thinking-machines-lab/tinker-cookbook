@@ -4,7 +4,6 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import chz
 import tinker
@@ -20,6 +19,7 @@ from tinker_cookbook.model_info import get_recommended_renderer_name
 from tinker_cookbook.renderers import Message, Renderer, get_renderer, get_text_content
 from tinker_cookbook.rl.types import (
     Action,
+    ActionExtra,
     Env,
     EnvGroupBuilder,
     RLDataset,
@@ -96,7 +96,7 @@ class TwentyQuestionsEnv(Env):
         )
         return 1.0 if content_contains_answer else 0.0
 
-    async def step(self, action: Action, **kwargs: Any) -> StepResult:
+    async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
         """
         In one step,
         1. The environment accepts an action from the player (a message containin a question or a guess).

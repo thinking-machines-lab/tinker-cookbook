@@ -22,7 +22,7 @@ Read these for details:
 ### Env (single-use, no reset)
 
 ```python
-from tinker_cookbook.rl.types import Env, Observation, Action, StepResult, StopCondition
+from tinker_cookbook.rl.types import ActionExtra, Env, Observation, Action, StepResult, StopCondition
 
 class MyEnv(Env):
     async def initial_observation(self) -> tuple[Observation, StopCondition]:
@@ -31,7 +31,7 @@ class MyEnv(Env):
         stop = renderer.get_stop_sequences()
         return model_input, stop
 
-    async def step(self, action: Action) -> StepResult:
+    async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
         """Process model output and return next observation + reward."""
         # action is TokensWithLogprobs (tokens + logprobs)
         return StepResult(
