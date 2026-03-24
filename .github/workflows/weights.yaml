@@ -1,0 +1,51 @@
+name: weights-e2e
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    if: github.repository == 'thinking-machines-lab/tinker-cookbook'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        test:
+          - test_export_gpt_oss
+          - test_export_qwen3
+          - test_export_qwen3_5
+          - test_export_deepseek
+          - test_strategy_consistency
+          - test_quantized
+          - test_quantized_equivalence
+        transformers-version: ["4.57.6", "5.2.0"]
+        exclude:
+          # Qwen3.5 requires transformers >= 5.0
+          - test: test_export_qwen3_5
+            transformers-version: "4.57.6"
+
+    name: ${{ matrix.test }} (transformers ${{ matrix.transformers-version }})
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install-uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: venv
+        run: uv venv && uv sync --all-extras
+
+      - name: pin transformers
+        run: uv pip install transformers==${{ matrix.transformers-version }}
+
+      - name: run test
+        run: uv run pytest tests/weights/${{ matrix.test }}.py -v --timeout=120
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
