@@ -1477,35 +1477,35 @@ def test_register_and_get_custom_tokenizer(cleanup_custom_tokenizer):
 
 
 class TestFormatContentAsStringImages:
-    def test_image_part(self) -> None:
+    def test_image_pil_object(self) -> None:
         from PIL import Image
 
         content: list[ContentPart] = [ImagePart(type="image", image=Image.new("RGB", (10, 10)))]
-        assert format_content_as_string(content) == "[image]"
+        assert format_content_as_string(content) == "<image>Image(10x10, RGB)</image>"
 
     def test_image_string_url(self) -> None:
         content: list[ContentPart] = [ImagePart(type="image", image="https://example.com/img.png")]
-        assert format_content_as_string(content) == "[image]"
+        assert format_content_as_string(content) == "<image>https://example.com/img.png</image>"
 
     def test_mixed_content(self) -> None:
         from PIL import Image
 
         content = [
             TextPart(type="text", text="Before"),
-            ImagePart(type="image", image=Image.new("RGB", (10, 10))),
+            ImagePart(type="image", image=Image.new("RGB", (20, 15))),
             TextPart(type="text", text="After"),
         ]
-        assert format_content_as_string(content) == "Before\n[image]\nAfter"
+        assert format_content_as_string(content) == "Before\n<image>Image(20x15, RGB)</image>\nAfter"
 
     def test_custom_separator(self) -> None:
         from PIL import Image
 
         content = [
             TextPart(type="text", text="A"),
-            ImagePart(type="image", image=Image.new("RGB", (10, 10))),
+            ImagePart(type="image", image=Image.new("RGBA", (5, 5))),
             TextPart(type="text", text="B"),
         ]
-        assert format_content_as_string(content, separator=" | ") == "A | [image] | B"
+        assert format_content_as_string(content, separator=" | ") == "A | <image>Image(5x5, RGBA)</image> | B"
 
     def test_unknown_type_graceful_fallback(self) -> None:
         content: list[ContentPart] = [{"type": "audio", "data": b"..."}]  # type: ignore[list-item]

@@ -758,15 +758,19 @@ def get_text_content(message: Message) -> str:
 
 
 def format_content_as_string(content: Content, separator: str = "\n") -> str:
-    """Format message content as a string, preserving all part types.
+    """Format message content as a string, handling all content part types.
 
     Unlike get_text_content which only extracts text parts, this formats
-    all content parts (thinking, text) as a readable string.
+    all content parts as a readable string. Images are wrapped as
+    ``<image>url</image>`` for URL strings or
+    ``<image>Image(WxH, mode)</image>`` for PIL objects, and unknown
+    part types fall back to ``[<type>]``.
 
-    This is useful for compatibility with APIs that expect string content
-    (e.g., OpenAI Chat Completions API), but we don't recommend it if you
-    need to ensure correctness - prefer working with structured content directly
-    and using build_generation_prompt to convert to tokens.
+    This is useful for logging and for compatibility with APIs that expect
+    string content (e.g., OpenAI Chat Completions API), but we don't
+    recommend it if you need to ensure correctness - prefer working with
+    structured content directly and using build_generation_prompt to convert
+    to tokens.
 
     Args:
         content: Message content (string or list of ContentPart).
@@ -785,7 +789,11 @@ def format_content_as_string(content: Content, separator: str = "\n") -> str:
         elif p["type"] == "text":
             parts.append(p["text"])
         elif p["type"] == "image":
-            parts.append("[image]")
+            img = p["image"]
+            if isinstance(img, str):
+                parts.append(f"<image>{img}</image>")
+            else:
+                parts.append(f"<image>Image({img.size[0]}x{img.size[1]}, {img.mode})</image>")
         else:
             parts.append(f"[{p['type']}]")
     return separator.join(parts)

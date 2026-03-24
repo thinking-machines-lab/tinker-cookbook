@@ -28,7 +28,7 @@ def simple_tool_result(
     *,
     call_id: str = "",
     name: str = "",
-    images: list[Image.Image] | None = None,
+    images: list[Image.Image | str] | None = None,
     should_stop: bool = False,
     metrics: dict[str, float] | None = None,
     metadata: dict[str, Any] | None = None,
@@ -37,13 +37,14 @@ def simple_tool_result(
 
     When ``images`` is provided and non-empty, the message content is a
     ``list[ContentPart]`` (one ``TextPart`` followed by ``ImagePart`` entries).
-    Otherwise the content is a plain string, preserving backward compatibility.
+    Otherwise the content is a plain string.
 
     Args:
         content: Text content to return to the model.
         call_id: The tool call ID (usually passed from ToolInput).
         name: The tool name (usually self.name in a tool method).
-        images: Optional list of PIL images to include in the result.
+        images: Optional list of images (PIL objects or URL strings,
+            matching ``ImagePart["image"]``).
         should_stop: Whether to stop the episode after this tool call.
         metrics: Optional metrics dict (e.g., {"latency": 0.5, "count": 1}).
         metadata: Optional metadata dict for debugging.

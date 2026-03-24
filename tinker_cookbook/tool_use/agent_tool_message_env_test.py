@@ -226,6 +226,27 @@ class TestSimpleToolResultImages:
         assert isinstance(content, list)
         assert len(content) == 2
 
+    def test_string_url_images(self):
+        url = "https://example.com/img.png"
+        result = simple_tool_result("see image", images=[url])
+
+        content = result.messages[0]["content"]
+        assert isinstance(content, list)
+        assert len(content) == 2
+        assert content[0] == {"type": "text", "text": "see image"}
+        assert content[1] == {"type": "image", "image": url}
+
+    def test_mixed_pil_and_url_images(self):
+        img = Image.new("RGB", (10, 10))
+        url = "https://example.com/img.png"
+        result = simple_tool_result("mixed", images=[img, url])
+
+        content = result.messages[0]["content"]
+        assert isinstance(content, list)
+        assert len(content) == 3
+        assert content[1]["image"] is img
+        assert content[2]["image"] == url
+
     def test_passthrough_fields(self):
         img = Image.new("RGB", (10, 10))
         result = simple_tool_result(
@@ -324,7 +345,7 @@ class TestMultimodalToolResults:
         assert isinstance(content[1]["image"], Image.Image)
 
     def test_multimodal_logging_uses_image_placeholder(self):
-        """Logs replace images with [image] placeholder."""
+        """Logs replace images with <image>...</image> placeholder."""
         env = self._make_env()
         asyncio.run(env.initial_observation())
 
@@ -336,5 +357,5 @@ class TestMultimodalToolResults:
         result = asyncio.run(env.step(msg))
 
         tool_log = str(result.logs["tool_result_0"])
-        assert "[image]" in tool_log
+        assert "<image>Image(10x10, RGB)</image>" in tool_log
         assert "Screenshot taken" in tool_log
