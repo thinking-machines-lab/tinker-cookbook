@@ -267,7 +267,11 @@ class MultimodalTool:
         return {"type": "object", "properties": {}}
 
     def to_spec(self) -> ToolSpec:
-        return {"name": self.name, "description": self.description, "parameters": self.parameters_schema}
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters_schema,
+        }
 
     async def run(self, input: ToolInput) -> ToolResult:
         img = Image.new("RGB", (10, 10), color="red")
