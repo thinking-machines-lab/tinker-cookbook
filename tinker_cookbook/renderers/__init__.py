@@ -33,6 +33,7 @@ from tinker_cookbook.renderers.base import (
     TrainOnWhat,
     Utf8TokenDecoder,
     # Utility functions
+    build_content,
     ensure_text,
     format_content_as_string,
     get_text_content,
@@ -246,6 +247,7 @@ __all__ = [
     "Renderer",
     "TrainOnWhat",
     # Utility functions
+    "build_content",
     "ensure_text",
     "format_content_as_string",
     "get_text_content",

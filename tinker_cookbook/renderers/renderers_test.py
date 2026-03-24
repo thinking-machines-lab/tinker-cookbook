@@ -47,6 +47,7 @@ from tinker_cookbook.renderers import (
 from tinker_cookbook.renderers.base import (
     ContentPart,
     ImagePart,
+    build_content,
     ensure_list,
     ensure_text,
     format_content_as_string,
@@ -1515,3 +1516,52 @@ class TestFormatContentAsStringImages:
     def test_unknown_type_graceful_fallback(self) -> None:
         content: list[ContentPart] = [{"type": "audio", "data": b"..."}]  # type: ignore[list-item]
         assert format_content_as_string(content) == "[audio]"
+
+
+# ---------------------------------------------------------------------------
+# build_content
+# ---------------------------------------------------------------------------
+
+
+class TestBuildContent:
+    def test_text_only(self) -> None:
+        result = build_content("hello")
+        assert result == "hello"
+
+    def test_text_with_none_images(self) -> None:
+        result = build_content("hello", images=None)
+        assert result == "hello"
+
+    def test_text_with_empty_images(self) -> None:
+        result = build_content("hello", images=[])
+        assert result == "hello"
+
+    def test_text_with_pil_image(self) -> None:
+        from PIL import Image
+
+        img = Image.new("RGB", (10, 10))
+        result = build_content("caption", images=[img])
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert result[0] == {"type": "text", "text": "caption"}
+        assert result[1] == {"type": "image", "image": img}
+
+    def test_text_with_url_image(self) -> None:
+        url = "https://example.com/img.png"
+        result = build_content("caption", images=[url])
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert result[0] == {"type": "text", "text": "caption"}
+        assert result[1] == {"type": "image", "image": url}
+
+    def test_multiple_images(self) -> None:
+        from PIL import Image
+
+        img = Image.new("RGB", (10, 10))
+        url = "https://example.com/img.png"
+        result = build_content("text", images=[img, url])
+        assert isinstance(result, list)
+        assert len(result) == 3
+        assert result[0] == {"type": "text", "text": "text"}
+        assert result[1] == {"type": "image", "image": img}
+        assert result[2] == {"type": "image", "image": url}
