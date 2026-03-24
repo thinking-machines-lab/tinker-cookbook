@@ -30,6 +30,7 @@ from collections.abc import Callable
 
 import pytest
 
+from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.image_processing_utils import get_image_processor
 from tinker_cookbook.model_info import get_model_attributes, get_recommended_renderer_name
 from tinker_cookbook.renderers import (
@@ -1513,9 +1514,10 @@ class TestFormatContentAsStringImages:
             == "A | <image>Image(5x5, RGBA)</image> | B"
         )
 
-    def test_unknown_type_graceful_fallback(self) -> None:
+    def test_unknown_type_raises(self) -> None:
         content: list[ContentPart] = [{"type": "audio", "data": b"..."}]  # type: ignore[list-item]
-        assert format_content_as_string(content) == "[audio]"
+        with pytest.raises(RendererError, match="Unknown content part type: audio"):
+            format_content_as_string(content)
 
 
 # ---------------------------------------------------------------------------

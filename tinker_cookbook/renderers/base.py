@@ -783,8 +783,8 @@ def format_content_as_string(content: Content, separator: str = "\n") -> str:
     Unlike get_text_content which only extracts text parts, this formats
     all content parts as a readable string. Images are wrapped as
     ``<image>url</image>`` for URL strings or
-    ``<image>Image(WxH, mode)</image>`` for PIL objects, and unknown
-    part types fall back to ``[<type>]``.
+    ``<image>Image(WxH, mode)</image>`` for PIL objects. Raises
+    ``RendererError`` for unknown part types.
 
     This is useful for logging and for compatibility with APIs that expect
     string content (e.g., OpenAI Chat Completions API), but we don't
@@ -815,7 +815,7 @@ def format_content_as_string(content: Content, separator: str = "\n") -> str:
             else:
                 parts.append(f"<image>Image({img.size[0]}x{img.size[1]}, {img.mode})</image>")
         else:
-            parts.append(f"[{p['type']}]")
+            raise RendererError(f"Unknown content part type: {p['type']}")
     return separator.join(parts)
 
 
