@@ -121,16 +121,18 @@ def detect_merge_profile(
 # ---------------------------------------------------------------------------
 
 
-def _lazy_load_detectors() -> list[_ProfileDetector]:
-    """Lazily import per-model detectors to avoid circular imports."""
+def _get_profile_detectors() -> list[_ProfileDetector]:
+    """Import per-model detectors. Uses function-local imports to avoid
+    circular dependencies (per-model modules import from this file)."""
     from tinker_cookbook.weights._merge_deepseek import detect_profile as _deepseek
     from tinker_cookbook.weights._merge_gpt_oss import detect_profile as _gpt_oss
 
     return [_gpt_oss, _deepseek]
 
 
-def _lazy_load_plan_functions() -> dict[str, _PlanFn]:
-    """Lazily import per-model plan functions to avoid circular imports."""
+def _get_plan_functions() -> dict[str, _PlanFn]:
+    """Import per-model plan functions. Uses function-local imports to avoid
+    circular dependencies (per-model modules import from this file)."""
     from tinker_cookbook.weights._merge_deepseek import plan_merge_ops as _deepseek_plan
     from tinker_cookbook.weights._merge_default import plan_merge_ops as _default_plan
     from tinker_cookbook.weights._merge_gpt_oss import plan_merge_ops as _gpt_oss_plan
@@ -140,24 +142,6 @@ def _lazy_load_plan_functions() -> dict[str, _PlanFn]:
         "gpt_oss": _gpt_oss_plan,
         "deepseek": _deepseek_plan,
     }
-
-
-_PROFILE_DETECTORS: list[_ProfileDetector] | None = None
-_PLAN_FUNCTIONS: dict[str, _PlanFn] | None = None
-
-
-def _get_profile_detectors() -> list[_ProfileDetector]:
-    global _PROFILE_DETECTORS
-    if _PROFILE_DETECTORS is None:
-        _PROFILE_DETECTORS = _lazy_load_detectors()
-    return _PROFILE_DETECTORS
-
-
-def _get_plan_functions() -> dict[str, _PlanFn]:
-    global _PLAN_FUNCTIONS
-    if _PLAN_FUNCTIONS is None:
-        _PLAN_FUNCTIONS = _lazy_load_plan_functions()
-    return _PLAN_FUNCTIONS
 
 
 # ---------------------------------------------------------------------------
