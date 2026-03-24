@@ -185,7 +185,6 @@ class TestSimpleToolResultMultimodal:
     """Unit tests for simple_tool_result() with list[ContentPart] content."""
 
     def test_with_text_and_images(self):
-
         img1 = Image.new("RGB", (10, 10), color="red")
         img2 = Image.new("RGB", (10, 10), color="blue")
         parts = [
@@ -216,7 +215,6 @@ class TestSimpleToolResultMultimodal:
         assert msg.get("name") == "t"
 
     def test_interleaved_order_preserved(self):
-
         img = Image.new("RGB", (10, 10))
         parts = [
             ImagePart(type="image", image=img),
@@ -233,7 +231,6 @@ class TestSimpleToolResultMultimodal:
         assert content[2] == {"type": "image", "image": "https://example.com/img.png"}
 
     def test_passthrough_fields(self):
-
         img = Image.new("RGB", (10, 10))
         result = simple_tool_result(
             [
@@ -254,7 +251,6 @@ class TestSimpleToolResultMultimodal:
         assert result.messages[0].get("name") == "screenshot"
 
     def test_defaults_with_list_content(self):
-
         img = Image.new("RGB", (10, 10))
         result = simple_tool_result(
             [TextPart(type="text", text="text"), ImagePart(type="image", image=img)]
@@ -293,7 +289,6 @@ class MultimodalTool:
         }
 
     async def run(self, input: ToolInput) -> ToolResult:
-
         img = Image.new("RGB", (10, 10), color="red")
         return simple_tool_result(
             [
@@ -318,7 +313,6 @@ class TestMultimodalToolResults:
 
     def test_multimodal_tool_result_in_history(self):
         """Tool result with image content is appended to history."""
-
         env = self._make_env()
         asyncio.run(env.initial_observation())
 

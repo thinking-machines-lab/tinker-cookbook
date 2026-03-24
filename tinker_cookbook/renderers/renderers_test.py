@@ -1480,7 +1480,6 @@ def test_register_and_get_custom_tokenizer(cleanup_custom_tokenizer):
 
 class TestFormatContentAsStringImages:
     def test_image_pil_object(self) -> None:
-
         content: list[ContentPart] = [ImagePart(type="image", image=Image.new("RGB", (10, 10)))]
         assert format_content_as_string(content) == "<image>Image(10x10, RGB)</image>"
 
@@ -1489,7 +1488,6 @@ class TestFormatContentAsStringImages:
         assert format_content_as_string(content) == "<image>https://example.com/img.png</image>"
 
     def test_mixed_content(self) -> None:
-
         content = [
             TextPart(type="text", text="Before"),
             ImagePart(type="image", image=Image.new("RGB", (20, 15))),
@@ -1500,7 +1498,6 @@ class TestFormatContentAsStringImages:
         )
 
     def test_custom_separator(self) -> None:
-
         content = [
             TextPart(type="text", text="A"),
             ImagePart(type="image", image=Image.new("RGBA", (5, 5))),
