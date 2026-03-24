@@ -133,9 +133,7 @@ async def run_evals(
             nonlocal sampling_client
             if sampling_client is None:
                 # Snapshot the current pre-step weights and create a new sampling client.
-                sampling_client = await training_client.save_weights_and_get_sampling_client_async(
-                    f"evals_step_{step}"
-                )
+                sampling_client = await training_client.save_weights_and_get_sampling_client_async()
             return await evaluator(sampling_client)
         else:
             raise ConfigurationError(f"Unknown evaluator type: {type(evaluator)}")

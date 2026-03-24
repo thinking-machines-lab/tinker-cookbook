@@ -26,7 +26,7 @@ fwdbwd_future = training_client.forward_backward(training_data, "cross_entropy")
 optim_future = training_client.optim_step(types.AdamParams(learning_rate=1e-4))
 fwdbwd_result = fwdbwd_future.result()  # Wait for gradients
 optim_result = optim_future.result()    # Wait for parameter update
-sampling_client = training_client.save_weights_and_get_sampling_client("my-model")
+sampling_client = training_client.save_weights_and_get_sampling_client()
 ```
 
 #### `forward`
@@ -451,14 +451,14 @@ Async version of create_sampling_client.
 
 ```python
 def save_weights_and_get_sampling_client(
-        name: str | None = None,
         retry_config: RetryConfig | None = None) -> SamplingClient
 ```
 
-Save current weights and create a SamplingClient for inference.
+Save current weights and create a SamplingClient for inference. This creates an **ephemeral** checkpoint optimized for fast weight transfer in training loops. The checkpoint is not persistently saved and cannot be retrieved later.
+
+To create a persistent, named checkpoint, use `save_weights_for_sampler(name=...)` followed by `service_client.create_sampling_client(model_path=...)`.
 
 Args:
-- `name`: Optional name for the saved weights (currently ignored for ephemeral saves)
 - `retry_config`: Optional configuration for retrying failed requests
 
 Returns:
@@ -479,7 +479,6 @@ result = sampling_client.sample(prompt, 1, params).result()
 
 ```python
 async def save_weights_and_get_sampling_client_async(
-        name: str | None = None,
         retry_config: RetryConfig | None = None) -> SamplingClient
 ```
 
