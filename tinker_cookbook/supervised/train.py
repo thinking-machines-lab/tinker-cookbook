@@ -95,7 +95,6 @@ class SubmittedBatch:
     infrequent_eval_metrics: dict[str, float] | None = None
 
 
-@trace.scope
 async def run_evals(
     evaluators: list[Evaluator],
     training_client: tinker.TrainingClient,
@@ -111,7 +110,6 @@ async def run_evals(
     checkpoint. Returned metrics are prefixed with ``test/`` so they can be logged next
     to the same-step training metrics.
     """
-    trace.update_scope_context({"step": step})
 
     metrics = {}
     sampling_client = None
