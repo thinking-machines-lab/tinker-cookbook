@@ -520,7 +520,13 @@ class TestUnsupportedModels:
                 output_path=str(output_dir),
             )
 
-    def test_nemotron_raises_error(self, tmp_path: Path) -> None:
+    def test_nemotron_backbone_prefix_remapped(self, tmp_path: Path) -> None:
+        """Nemotron HF checkpoints use 'backbone.*' but vLLM remaps to 'model.*'.
+
+        The adapter conversion must produce PEFT keys with 'model.*' prefix
+        (matching vLLM's internal parameter names) not 'backbone.*' (the HF
+        checkpoint prefix).
+        """
         model_dir = tmp_path / "model"
         adapter_dir = tmp_path / "adapter"
         output_dir = tmp_path / "output"
@@ -542,12 +548,21 @@ class TestUnsupportedModels:
             },
         )
 
-        with pytest.raises(WeightsAdapterError, match="Nemotron"):
-            build_lora_adapter(
-                base_model=str(model_dir),
-                adapter_path=str(adapter_dir),
-                output_path=str(output_dir),
-            )
+        build_lora_adapter(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+        )
+
+        peft_weights, peft_config = _load_peft_output(output_dir)
+
+        # PEFT keys should use model.* (vLLM's internal names), not backbone.*
+        assert "base_model.model.model.layers.0.mixer.q_proj.lora_A.weight" in peft_weights
+        assert "base_model.model.model.layers.0.mixer.q_proj.lora_B.weight" in peft_weights
+        assert not any("backbone" in k for k in peft_weights), (
+            "PEFT keys should not contain 'backbone' — vLLM remaps to 'model'"
+        )
+        assert "q_proj" in peft_config["target_modules"]
 
 
 # ---------------------------------------------------------------------------
