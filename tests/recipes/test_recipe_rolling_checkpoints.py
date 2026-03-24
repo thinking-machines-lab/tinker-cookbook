@@ -54,7 +54,7 @@ def test_rolling_checkpoint_train():
     assert len(periodic_records) > 0, f"Expected periodic checkpoints, got: {records}"
     assert len(final_records) == 1, f"Expected exactly one final checkpoint, got: {records}"
 
-    # Rolling records should have state_path but no sampler_path (state-only)
+    # Rolling records should have state_path but no sampler_path (no sampler export)
     for r in rolling_records:
         assert "state_path" in r, f"Rolling record missing state_path: {r}"
         assert "sampler_path" not in r, f"Rolling record should not have sampler_path: {r}"

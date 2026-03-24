@@ -401,7 +401,8 @@ def save_checkpoint(
 class RollingCheckpointManager:
     """Fire-and-forget rolling checkpoints with automatic cleanup.
 
-    Rolling checkpoints are cheap, state-only resume points saved at a finer
+    Rolling checkpoints are cheap resume points (saves training state for
+    resume but skips the sampler-weight export) saved at a finer
     interval than periodic checkpoints. After each successful save, the previous
     rolling checkpoint is deleted to bound storage usage. A short TTL acts as a
     safety net in case deletion fails.

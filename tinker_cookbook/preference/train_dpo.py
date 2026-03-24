@@ -56,7 +56,8 @@ class Config:
     eval_every: int = 10
     infrequent_eval_every: int = 100
     ttl_seconds: int | None = 604800  # 7 days
-    # Rolling checkpoint cadence (0 = disabled). Saves state-only for cheap resume.
+    # Rolling checkpoint cadence (0 = disabled). Saves training state for resume
+    # but skips the sampler-weight export, making it cheaper than periodic checkpoints.
     rolling_save_every: int = 0
     # TTL for rolling checkpoints; short to auto-clean if explicit deletion fails.
     rolling_ttl_seconds: int = 7200  # 2 hours

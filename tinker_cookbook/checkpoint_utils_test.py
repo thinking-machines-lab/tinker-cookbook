@@ -286,7 +286,7 @@ async def test_maybe_save_async_saves_and_deletes():
         ]
         assert len(ckpts) >= 2
         assert all(c.extra.get("rolling") is True for c in ckpts)
-        assert all(c.sampler_path is None for c in ckpts)  # state-only
+        assert all(c.sampler_path is None for c in ckpts)  # no sampler export
 
 
 @pytest.mark.asyncio
