@@ -79,6 +79,15 @@ class MergeProfile:
     """Identifier for the model family. Used to dispatch to the correct
     per-model planning module in :func:`plan_merge_ops`."""
 
+    split_qkv_projections: bool = False
+    """Whether Tinker trains separate ``in_proj_q/k/v`` LoRA adapters that must
+    be merged into a single fused ``in_proj_qkv`` weight in the HF model. When
+    True, the per-model planner redirects split keys to the fused target with
+    row-slice offsets derived from sibling ``lora_B`` shapes.
+
+    Currently only applies to Qwen3.5 models (hybrid linear attention layers
+    with Q‖K‖V layout where Q, K, V may have unequal dimensions)."""
+
 
 def detect_merge_profile(
     model_config: dict,
@@ -126,8 +135,9 @@ def _get_profile_detectors() -> list[_ProfileDetector]:
     circular dependencies (per-model modules import from this file)."""
     from tinker_cookbook.weights._merge_deepseek import detect_profile as _deepseek
     from tinker_cookbook.weights._merge_gpt_oss import detect_profile as _gpt_oss
+    from tinker_cookbook.weights._merge_qwen3_5 import detect_profile as _qwen3_5
 
-    return [_gpt_oss, _deepseek]
+    return [_gpt_oss, _deepseek, _qwen3_5]
 
 
 def _get_plan_functions() -> dict[str, _PlanFn]:
@@ -136,11 +146,13 @@ def _get_plan_functions() -> dict[str, _PlanFn]:
     from tinker_cookbook.weights._merge_deepseek import plan_merge_ops as _deepseek_plan
     from tinker_cookbook.weights._merge_default import plan_merge_ops as _default_plan
     from tinker_cookbook.weights._merge_gpt_oss import plan_merge_ops as _gpt_oss_plan
+    from tinker_cookbook.weights._merge_qwen3_5 import plan_merge_ops as _qwen3_5_plan
 
     return {
         "default": _default_plan,
         "gpt_oss": _gpt_oss_plan,
         "deepseek": _deepseek_plan,
+        "qwen3_5": _qwen3_5_plan,
     }
 
 
@@ -175,6 +187,18 @@ class MergeOp:
 
     fused_proj_interleaved: bool = False
     """GPT-OSS stores fused gate/up projections interleaved rather than concatenated."""
+
+    slice_start: int | None = None
+    """Row offset into a fused target weight for split projections (e.g.
+    ``in_proj_qkv``). When set, :func:`apply_merge_op` writes the delta only
+    to ``target[slice_start : slice_start + out_dim]``.
+
+    Mutually exclusive with ``is_expert_3d`` — slice targeting is only
+    supported for 2D ops."""
+
+    def __post_init__(self) -> None:
+        if self.slice_start is not None and self.is_expert_3d:
+            raise ValueError("slice_start is not supported for 3D expert ops")
 
 
 # ---------------------------------------------------------------------------
@@ -331,7 +355,17 @@ def validate_merge_op_shapes(
             else:
                 # 2D: delta = lora_B @ lora_A → (out_dim, in_dim)
                 delta_shape = (op.lora_B.shape[0], op.lora_A.shape[1])
-                if delta_shape != target_shape:
+                if op.slice_start is not None:
+                    # Sliced op: check in_dim matches and slice fits within target rows
+                    end = op.slice_start + delta_shape[0]
+                    if delta_shape[1] != target_shape[1] or end > target_shape[0]:
+                        raise WeightsMergeError(
+                            f"Shape mismatch for {target_key!r} "
+                            f"slice [{op.slice_start}:{end}]: "
+                            f"merge op produces {delta_shape} "
+                            f"but target has shape {target_shape}"
+                        )
+                elif delta_shape != target_shape:
                     raise WeightsMergeError(
                         f"Shape mismatch for {target_key!r}: "
                         f"merge op produces {delta_shape} but target expects {target_shape}"
@@ -372,7 +406,11 @@ def apply_merge_op(tensors: dict[str, torch.Tensor], op: MergeOp) -> None:
     else:
         # 2D: standard linear or per-expert (already sliced during planning)
         delta = merge_lora_matrices(op.lora_A, op.lora_B)
-        apply_merged_weight(tensors[op.target_key], delta)
+        if op.slice_start is not None:
+            target = tensors[op.target_key]
+            apply_merged_weight(target[op.slice_start : op.slice_start + delta.shape[0]], delta)
+        else:
+            apply_merged_weight(tensors[op.target_key], delta)
 
 
 # ---------------------------------------------------------------------------

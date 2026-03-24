@@ -10,6 +10,7 @@ Model families tested:
 - Qwen3 MoE: separate per-expert weights
 - DeepSeek V3.1: separate per-expert weights + FP8 quantized export
 - Qwen3 dense: standard linear layers (no experts)
+- Qwen3.5 dense: split in_proj_q/k/v → fused in_proj_qkv + tied vision embeddings
 """
 
 import json
@@ -325,7 +326,7 @@ class TestQwen3VlMoeFusedConcatenated:
 
 
 # ---------------------------------------------------------------------------
-# 3. Qwen3 MoE — separate per-expert weights
+# 3. Qwen3 MoE — expert weights
 # ---------------------------------------------------------------------------
 
 
@@ -341,10 +342,19 @@ def _make_tiny_qwen3_moe_config() -> PretrainedConfig:
     return config
 
 
-class TestQwen3MoeSeparateExperts:
-    """Qwen3 MoE: individual gate_proj/up_proj per expert."""
+class TestQwen3MoeExperts:
+    """Qwen3 MoE: expert weight merge.
 
-    def test_per_expert_weights_updated(self):
+    HuggingFace safetensors stores separate per-expert weights
+    (experts.0.gate_proj.weight), but transformers 5.x may return fused
+    keys (experts.gate_up_proj) from state_dict(). save_pretrained()
+    always writes separate keys regardless of version.
+
+    This test reads dims from the saved safetensors (stable format) and
+    verifies deltas via the saved files (not state_dict).
+    """
+
+    def test_expert_weights_updated(self):
         config = _make_tiny_qwen3_moe_config()
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -356,26 +366,32 @@ class TestQwen3MoeSeparateExperts:
             )
 
             _save_model_to_disk(config, model_path, tokenizer_name="Qwen/Qwen3-30B-A3B")
-            orig = AutoModelForCausalLM.from_pretrained(
-                model_path, trust_remote_code=True, dtype=torch.float32
-            )
-            orig_sd = {k: v.clone() for k, v in orig.state_dict().items()}
+
+            # Read dims from saved safetensors (stable separate format)
+            orig_tensors = load_file(str(model_path / "model.safetensors"))
+            gate_shape = orig_tensors["model.layers.0.mlp.experts.0.gate_proj.weight"].shape
+            expert_out_dim, expert_in_dim = gate_shape
             num_experts = 2
 
-            # Read actual dims from model (gate_proj shape is [intermediate, hidden])
-            gate_shape = orig_sd["model.layers.0.mlp.experts.0.gate_proj.weight"].shape
-            expert_out_dim, expert_in_dim = gate_shape
             _save_expert_adapter(
                 adapter_path, num_experts=num_experts, in_dim=expert_in_dim, out_dim=expert_out_dim
             )
-            merged_sd = _run_build_and_reload(model_path, adapter_path, output_path)
+
+            build_hf_model(
+                base_model=str(model_path),
+                adapter_path=str(adapter_path),
+                output_path=str(output_path),
+            )
+
+            # Compare saved safetensors directly (avoids state_dict format issues)
+            merged_tensors = load_file(str(output_path / "model.safetensors"))
 
             for i in range(num_experts):
                 gate_key = f"model.layers.0.mlp.experts.{i}.gate_proj.weight"
                 up_key = f"model.layers.0.mlp.experts.{i}.up_proj.weight"
 
-                gate_delta = (merged_sd[gate_key] - orig_sd[gate_key]).abs().sum()
-                up_delta = (merged_sd[up_key] - orig_sd[up_key]).abs().sum()
+                gate_delta = (merged_tensors[gate_key] - orig_tensors[gate_key]).abs().sum()
+                up_delta = (merged_tensors[up_key] - orig_tensors[up_key]).abs().sum()
 
                 assert gate_delta > 0, f"Expert {i} gate_proj not updated"
                 assert up_delta > 0, f"Expert {i} up_proj not updated"
@@ -676,3 +692,328 @@ class TestQwen3Dense:
 
             delta = (merged_sd["model.layers.0.mlp.gate_proj.weight"] - orig_gate).abs().sum()
             assert delta > 0, "Dense gate_proj not updated"
+
+
+# ---------------------------------------------------------------------------
+# 6. Qwen3.5 dense — split in_proj_q/k/v → fused in_proj_qkv + tied embeddings
+# ---------------------------------------------------------------------------
+
+
+def _make_tiny_qwen3_5_dense_config() -> PretrainedConfig:
+    config = AutoConfig.from_pretrained("Qwen/Qwen3.5-4B", trust_remote_code=True)
+    tc = config.text_config
+    tc.num_hidden_layers = 1
+    tc.layer_types = ["linear_attention"]  # single linear_attn layer
+    tc.linear_num_key_heads = 2
+    tc.linear_num_value_heads = 4
+    tc.linear_key_head_dim = 8
+    tc.linear_value_head_dim = 8
+    tc.hidden_size = 64
+    tc.intermediate_size = 64
+    tc.num_attention_heads = 2
+    tc.num_key_value_heads = 2
+    tc.head_dim = 32
+    tc.vocab_size = 256
+    tc.mtp_num_hidden_layers = 0
+    config.vision_config.num_hidden_layers = 1
+    config.vision_config.hidden_size = 64
+    config.vision_config.intermediate_size = 64
+    config.vision_config.num_attention_heads = 2
+    return config
+
+
+def _save_qkv_adapter(
+    path: Path,
+    *,
+    q_dim: int,
+    k_dim: int,
+    v_dim: int,
+    in_dim: int,
+    q_fill: float = FILL_A,
+    k_fill: float = FILL_A,
+    v_fill: float = FILL_B,
+    layer_prefix: str = "base_model.model.model.layers.0.linear_attn",
+) -> None:
+    """Save a LoRA adapter for split in_proj_q/k/v projections."""
+    rank = 1
+    weights: dict[str, torch.Tensor] = {
+        f"{layer_prefix}.in_proj_q.lora_A.weight": torch.ones(rank, in_dim) * q_fill,
+        f"{layer_prefix}.in_proj_q.lora_B.weight": torch.ones(q_dim, rank),
+        f"{layer_prefix}.in_proj_k.lora_A.weight": torch.ones(rank, in_dim) * k_fill,
+        f"{layer_prefix}.in_proj_k.lora_B.weight": torch.ones(k_dim, rank),
+        f"{layer_prefix}.in_proj_v.lora_A.weight": torch.ones(rank, in_dim) * v_fill,
+        f"{layer_prefix}.in_proj_v.lora_B.weight": torch.ones(v_dim, rank),
+    }
+
+    path.mkdir(parents=True)
+    save_file(weights, str(path / "adapter_model.safetensors"))
+    (path / "adapter_config.json").write_text(json.dumps({"lora_alpha": 1, "r": rank}))
+
+
+class TestQwen35DenseSplitQkv:
+    """Qwen3.5 dense: split in_proj_q/k/v merged into fused in_proj_qkv.
+
+    Also tests vision model language_model prefix remapping and tied embeddings.
+    """
+
+    FUSED_KEY = "model.language_model.layers.0.linear_attn.in_proj_qkv.weight"
+
+    def test_qkv_deltas_land_in_correct_slices(self):
+        config = _make_tiny_qwen3_5_dense_config()
+        tc = config.text_config
+        q_dim = tc.linear_num_key_heads * tc.linear_key_head_dim
+        k_dim = q_dim
+        v_dim = tc.linear_num_value_heads * tc.linear_value_head_dim
+        in_dim = tc.hidden_size
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_path, adapter_path, output_path = (
+                root / "model",
+                root / "adapter",
+                root / "merged",
+            )
+
+            _save_model_to_disk(
+                config,
+                model_path,
+                tokenizer_name="Qwen/Qwen3.5-4B",
+                is_vision=True,
+            )
+            orig = AutoModelForImageTextToText.from_pretrained(
+                model_path, trust_remote_code=True, dtype=torch.float32
+            )
+            orig_fused = orig.state_dict()[self.FUSED_KEY].clone()
+
+            _save_qkv_adapter(adapter_path, q_dim=q_dim, k_dim=k_dim, v_dim=v_dim, in_dim=in_dim)
+            merged_sd = _run_build_and_reload(model_path, adapter_path, output_path, is_vision=True)
+
+            delta = merged_sd[self.FUSED_KEY] - orig_fused
+            q_delta = delta[:q_dim]
+            k_delta = delta[q_dim : q_dim + k_dim]
+            v_delta = delta[q_dim + k_dim :]
+
+            assert torch.allclose(q_delta, torch.full_like(q_delta, FILL_A), atol=1e-3)
+            assert torch.allclose(k_delta, torch.full_like(k_delta, FILL_A), atol=1e-3)
+            assert torch.allclose(v_delta, torch.full_like(v_delta, FILL_B), atol=1e-3)
+
+    def test_v_only_does_not_modify_q_or_k(self):
+        config = _make_tiny_qwen3_5_dense_config()
+        tc = config.text_config
+        q_dim = tc.linear_num_key_heads * tc.linear_key_head_dim
+        k_dim = q_dim
+        v_dim = tc.linear_num_value_heads * tc.linear_value_head_dim
+        in_dim = tc.hidden_size
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_path, adapter_path, output_path = (
+                root / "model",
+                root / "adapter",
+                root / "merged",
+            )
+
+            _save_model_to_disk(
+                config,
+                model_path,
+                tokenizer_name="Qwen/Qwen3.5-4B",
+                is_vision=True,
+            )
+            orig = AutoModelForImageTextToText.from_pretrained(
+                model_path, trust_remote_code=True, dtype=torch.float32
+            )
+            orig_qk = orig.state_dict()[self.FUSED_KEY][: q_dim + k_dim].clone()
+
+            # Set Q/K fills to 0, only V has nonzero delta
+            rank = 1
+            prefix = "base_model.model.model.layers.0.linear_attn"
+            weights: dict[str, torch.Tensor] = {
+                f"{prefix}.in_proj_q.lora_A.weight": torch.zeros(rank, in_dim),
+                f"{prefix}.in_proj_q.lora_B.weight": torch.ones(q_dim, rank),
+                f"{prefix}.in_proj_k.lora_A.weight": torch.zeros(rank, in_dim),
+                f"{prefix}.in_proj_k.lora_B.weight": torch.ones(k_dim, rank),
+                f"{prefix}.in_proj_v.lora_A.weight": torch.ones(rank, in_dim) * FILL_B,
+                f"{prefix}.in_proj_v.lora_B.weight": torch.ones(v_dim, rank),
+            }
+            adapter_path.mkdir(parents=True)
+            save_file(weights, str(adapter_path / "adapter_model.safetensors"))
+            (adapter_path / "adapter_config.json").write_text(
+                json.dumps({"lora_alpha": 1, "r": rank})
+            )
+
+            merged_sd = _run_build_and_reload(model_path, adapter_path, output_path, is_vision=True)
+
+            merged_qk = merged_sd[self.FUSED_KEY][: q_dim + k_dim]
+            assert torch.allclose(merged_qk, orig_qk, atol=1e-5), (
+                "V-only adapter modified Q or K slices"
+            )
+
+    def test_unembed_tokens_merged_into_embed_tokens_when_tied(self):
+        """With tie_word_embeddings=True (Qwen3.5-4B), unembed_tokens delta
+        must land on model.language_model.embed_tokens."""
+        config = _make_tiny_qwen3_5_dense_config()
+        tc = config.text_config
+        assert tc.tie_word_embeddings is True
+
+        vocab = tc.vocab_size
+        hidden = tc.hidden_size
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_path, adapter_path, output_path = (
+                root / "model",
+                root / "adapter",
+                root / "merged",
+            )
+
+            _save_model_to_disk(
+                config,
+                model_path,
+                tokenizer_name="Qwen/Qwen3.5-4B",
+                is_vision=True,
+            )
+            orig = AutoModelForImageTextToText.from_pretrained(
+                model_path, trust_remote_code=True, dtype=torch.float32
+            )
+            orig_embed = orig.state_dict()["model.language_model.embed_tokens.weight"].clone()
+
+            rank = 1
+            unembed_fill = 0.02
+            weights: dict[str, torch.Tensor] = {
+                "base_model.model.model.unembed_tokens.lora_A.weight": (
+                    torch.ones(rank, hidden) * unembed_fill
+                ),
+                "base_model.model.model.unembed_tokens.lora_B.weight": torch.ones(vocab, rank),
+            }
+            adapter_path.mkdir(parents=True)
+            save_file(weights, str(adapter_path / "adapter_model.safetensors"))
+            (adapter_path / "adapter_config.json").write_text(
+                json.dumps({"lora_alpha": 1, "r": rank})
+            )
+
+            merged_sd = _run_build_and_reload(model_path, adapter_path, output_path, is_vision=True)
+
+            merged_embed = merged_sd["model.language_model.embed_tokens.weight"]
+            delta = (merged_embed - orig_embed).abs().sum()
+            assert delta > 0, "embed_tokens was not updated by unembed_tokens adapter"
+
+            expected_delta = torch.full_like(orig_embed, unembed_fill)
+            assert torch.allclose(merged_embed - orig_embed, expected_delta, atol=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# 7. Qwen3.5 MoE — split QKV + fused experts + vision prefix
+# ---------------------------------------------------------------------------
+
+
+def _make_tiny_qwen3_5_moe_config() -> PretrainedConfig:
+    config = AutoConfig.from_pretrained("Qwen/Qwen3.5-35B-A3B", trust_remote_code=True)
+    tc = config.text_config
+    tc.num_hidden_layers = 1
+    tc.layer_types = ["linear_attention"]
+    tc.linear_num_key_heads = 2
+    tc.linear_num_value_heads = 4
+    tc.linear_key_head_dim = 8
+    tc.linear_value_head_dim = 8
+    tc.hidden_size = 64
+    tc.intermediate_size = 64
+    tc.num_attention_heads = 2
+    tc.num_key_value_heads = 2
+    tc.head_dim = 32
+    tc.vocab_size = 256
+    tc.mtp_num_hidden_layers = 0
+    tc.num_experts = 2
+    tc.num_experts_per_tok = 1
+    tc.shared_expert_intermediate_size = 64
+    config.vision_config.num_hidden_layers = 1
+    config.vision_config.hidden_size = 64
+    config.vision_config.intermediate_size = 64
+    config.vision_config.num_attention_heads = 2
+    return config
+
+
+class TestQwen35MoeSplitQkvAndExperts:
+    """Qwen3.5 MoE: split QKV fusion + fused expert weights + vision prefix.
+
+    Tests that both QKV fusion and expert merging work together on a single
+    model that has both features.
+    """
+
+    FUSED_QKV_KEY = "model.language_model.layers.0.linear_attn.in_proj_qkv.weight"
+
+    def test_qkv_and_expert_deltas_applied(self):
+        config = _make_tiny_qwen3_5_moe_config()
+        tc = config.text_config
+        q_dim = tc.linear_num_key_heads * tc.linear_key_head_dim
+        v_dim = tc.linear_num_value_heads * tc.linear_value_head_dim
+        in_dim = tc.hidden_size
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_path, adapter_path, output_path = (
+                root / "model",
+                root / "adapter",
+                root / "merged",
+            )
+
+            _save_model_to_disk(
+                config,
+                model_path,
+                tokenizer_name="Qwen/Qwen3.5-35B-A3B",
+                is_vision=True,
+            )
+
+            # Read dims from saved safetensors (save_pretrained writes separate keys)
+            saved = load_file(str(model_path / "model.safetensors"))
+            orig_qkv = saved[self.FUSED_QKV_KEY].clone()
+            gate_key_0 = "model.language_model.layers.0.mlp.experts.0.gate_proj.weight"
+            orig_gate = saved[gate_key_0].clone()
+            expert_out_dim, expert_in_dim = orig_gate.shape
+            num_experts = 2
+
+            # Build adapter with both QKV and expert LoRA weights
+            rank = 1
+            qkv_prefix = "base_model.model.model.layers.0.linear_attn"
+            exp_prefix = "base_model.model.model.layers.0.mlp.experts"
+            adapter_weights: dict[str, torch.Tensor] = {
+                # QKV adapter
+                f"{qkv_prefix}.in_proj_q.lora_A.weight": torch.ones(rank, in_dim) * FILL_A,
+                f"{qkv_prefix}.in_proj_q.lora_B.weight": torch.ones(q_dim, rank),
+                f"{qkv_prefix}.in_proj_k.lora_A.weight": torch.ones(rank, in_dim) * FILL_A,
+                f"{qkv_prefix}.in_proj_k.lora_B.weight": torch.ones(q_dim, rank),
+                f"{qkv_prefix}.in_proj_v.lora_A.weight": torch.ones(rank, in_dim) * FILL_B,
+                f"{qkv_prefix}.in_proj_v.lora_B.weight": torch.ones(v_dim, rank),
+                # Expert adapter
+                f"{exp_prefix}.w1.lora_A.weight": (
+                    torch.ones(num_experts, rank, expert_in_dim) * FILL_A
+                ),
+                f"{exp_prefix}.w1.lora_B.weight": torch.ones(num_experts, expert_out_dim, rank),
+                f"{exp_prefix}.w3.lora_A.weight": (
+                    torch.ones(num_experts, rank, expert_in_dim) * FILL_B
+                ),
+                f"{exp_prefix}.w3.lora_B.weight": torch.ones(num_experts, expert_out_dim, rank),
+            }
+            adapter_path.mkdir(parents=True)
+            save_file(adapter_weights, str(adapter_path / "adapter_model.safetensors"))
+            (adapter_path / "adapter_config.json").write_text(
+                json.dumps({"lora_alpha": 1, "r": rank})
+            )
+
+            build_hf_model(
+                base_model=str(model_path),
+                adapter_path=str(adapter_path),
+                output_path=str(output_path),
+            )
+
+            # Compare saved safetensors directly
+            merged = load_file(str(output_path / "model.safetensors"))
+
+            # QKV deltas applied
+            qkv_delta = (merged[self.FUSED_QKV_KEY] - orig_qkv).abs().sum()
+            assert qkv_delta > 0, "QKV weights not updated"
+
+            # Expert deltas applied (check per-expert keys from safetensors)
+            for i in range(num_experts):
+                gate_key = f"model.language_model.layers.0.mlp.experts.{i}.gate_proj.weight"
+                gate_delta = (merged[gate_key] - saved[gate_key]).abs().sum()
+                assert gate_delta > 0, f"Expert {i} gate_proj not updated"
