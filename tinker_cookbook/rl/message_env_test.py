@@ -508,7 +508,7 @@ class TestMaxTokensReached:
         )
         env = EnvFromMessageEnv(renderer=renderer, message_env=msg_env)
 
-        result = asyncio.run(env.step([1, 2, 3], stop_reason="length"))
+        result = asyncio.run(env.step([1, 2, 3], extra={"stop_reason": "length"}))
 
         assert result.episode_done is True
         assert result.reward == -0.1  # default context_overflow_reward
@@ -530,7 +530,7 @@ class TestMaxTokensReached:
             context_overflow_reward=-0.5,
         )
 
-        result = asyncio.run(env.step([1], stop_reason="length"))
+        result = asyncio.run(env.step([1], extra={"stop_reason": "length"}))
 
         assert result.reward == -0.5
         assert result.metrics["max_tokens_reached"] == 1.0

@@ -5,10 +5,11 @@ Basic interfaces and types for reinforcement learning.
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, TypeAlias
+from typing import TypeAlias
 
 import chz
 import tinker
+from typing_extensions import TypedDict
 
 from tinker_cookbook.completers import StopCondition, TokensWithLogprobs
 from tinker_cookbook.utils.misc_utils import safezip
@@ -56,6 +57,19 @@ class Transition:
     """Diagnostic info for display/debugging tools (not aggregated like metrics)."""
 
 
+class ActionExtra(TypedDict, total=False):
+    """Extra metadata passed alongside an action to :meth:`Env.step`.
+
+    All fields are optional so that callers and env implementations can
+    ignore keys they don't care about.  Values must be picklable (the
+    rollout executor may serialise them across process boundaries).
+    """
+
+    stop_reason: tinker.StopReason
+    """Why sampling stopped — ``"stop"`` (hit a stop sequence) or ``"length"``
+    (hit *max_tokens* without a stop sequence)."""
+
+
 class Env(ABC):
     """
     Stateful environment that a single agent interacts with.
@@ -67,9 +81,7 @@ class Env(ABC):
         pass
 
     @abstractmethod
-    async def step(
-        self, action: Action, *, stop_reason: tinker.StopReason = "stop", **kwargs: Any
-    ) -> StepResult:
+    async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
         pass
 
 
