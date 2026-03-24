@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 import torch
-from safetensors.torch import save_file
+from safetensors.torch import load_file, save_file
 from transformers import (
     AutoModelForCausalLM,
     AutoModelForImageTextToText,
@@ -16,7 +16,7 @@ from transformers import (
     PretrainedConfig,
 )
 
-from tinker_cookbook.weights import build_hf_model
+from tinker_cookbook.weights import build_hf_model, build_lora_adapter
 
 FILL_A = 0.01  # LoRA fill for gate / first projection
 FILL_B = 0.05  # LoRA fill for up / second projection
@@ -97,3 +97,20 @@ def run_build_and_reload(
     auto_cls = AutoModelForImageTextToText if is_vision else AutoModelForCausalLM
     reloaded = auto_cls.from_pretrained(output_path, trust_remote_code=True, dtype=torch.float32)
     return reloaded.state_dict()
+
+
+def run_build_adapter(
+    model_path: Path,
+    adapter_path: Path,
+    output_path: Path,
+) -> tuple[dict[str, torch.Tensor], dict]:
+    """Run build_lora_adapter and return (peft_weights, peft_config)."""
+    build_lora_adapter(
+        base_model=str(model_path),
+        adapter_path=str(adapter_path),
+        output_path=str(output_path),
+    )
+    weights = load_file(str(output_path / "adapter_model.safetensors"))
+    with open(output_path / "adapter_config.json") as f:
+        config = json.load(f)
+    return weights, config
