@@ -3,8 +3,6 @@ name: weights-e2e
 on:
   push:
     branches: [main]
-  schedule:
-    - cron: "0 8 * * *"  # daily at 8am UTC
   workflow_dispatch:
 
 jobs:
