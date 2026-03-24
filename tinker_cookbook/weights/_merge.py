@@ -328,12 +328,21 @@ def plan_merge_ops(
     name_remaps: list[tuple[str, str]] = [("base_model.model.", "")]
     if profile.has_language_model_prefix:
         # For vision models: apply the language_model prefix first, then remap
-        # unembed_tokens to the tied embed_tokens weight (lm_head is not stored
-        # separately in the safetensors for these models).
-        name_remaps += [
-            ("model.", "model.language_model."),
-            ("model.language_model.unembed_tokens", "model.language_model.embed_tokens"),
-        ]
+        # unembed_tokens to the correct target.
+        # - tie_word_embeddings=True (e.g. Qwen3.5-4B): no separate lm_head stored;
+        #   merge into the tied embed_tokens weight instead.
+        # - tie_word_embeddings=False (e.g. Qwen3.5-27B, 35B-A3B): lm_head is stored
+        #   at the top level (not under model.language_model.), same as non-vision models.
+        has_top_level_lm_head = any(
+            k == "lm_head" or k.startswith("lm_head.") for k in model_state_keys
+        )
+        name_remaps.append(("model.", "model.language_model."))
+        if has_top_level_lm_head:
+            name_remaps.append(("model.language_model.unembed_tokens", "lm_head"))
+        else:
+            name_remaps.append(
+                ("model.language_model.unembed_tokens", "model.language_model.embed_tokens")
+            )
     else:
         name_remaps.append(("model.unembed_tokens", "lm_head"))
 
