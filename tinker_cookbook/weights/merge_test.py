@@ -790,8 +790,7 @@ class TestQwen35QkvFusion:
         # All three should land on in_proj_qkv, not on separate split keys
         assert "model.layers.0.linear_attn.in_proj_qkv.weight" in ops
         assert not any(
-            k.endswith((".in_proj_q.weight", ".in_proj_k.weight", ".in_proj_v.weight"))
-            for k in ops
+            k.endswith((".in_proj_q.weight", ".in_proj_k.weight", ".in_proj_v.weight")) for k in ops
         )
         assert len(ops["model.layers.0.linear_attn.in_proj_qkv.weight"]) == 3
 
@@ -806,7 +805,7 @@ class TestQwen35QkvFusion:
         ops = plan_merge_ops(adapter_weights, adapter_config, model_state_keys, profile)
         merge_ops = ops["model.layers.0.linear_attn.in_proj_qkv.weight"]
 
-        starts = sorted(op.slice_start for op in merge_ops)
+        starts = sorted(op.slice_start for op in merge_ops if op.slice_start is not None)
         assert starts == [0, self.Q_OUT, self.Q_OUT + self.K_OUT]
 
     def test_correct_delta_applied_to_each_slice(self):

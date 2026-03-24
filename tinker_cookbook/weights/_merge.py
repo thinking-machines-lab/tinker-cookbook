@@ -371,7 +371,9 @@ def plan_merge_ops(
                     k = adapter_weights[pfx + ".in_proj_k.lora_B.weight"].shape[0]
                     start = {"q": 0, "k": q, "v": q + k}[qkv_role]
                     ops.setdefault(fused_key, []).append(
-                        MergeOp(target_key=fused_key, lora_A=lora_A, lora_B=lora_B, slice_start=start)
+                        MergeOp(
+                            target_key=fused_key, lora_A=lora_A, lora_B=lora_B, slice_start=start
+                        )
                     )
                     continue
             _plan_non_expert_op(target_key, lora_A, lora_B, n, profile, model_state_keys, ops)
