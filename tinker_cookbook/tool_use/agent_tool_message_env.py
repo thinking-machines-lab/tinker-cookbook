@@ -150,7 +150,7 @@ def build_agent_tool_env(
             terminates if the trajectory + generation budget would exceed
             *max_trajectory_tokens*, preventing context overflow errors.
         context_overflow_reward: Reward assigned when the episode is terminated due to
-            context overflow. Defaults to 0.0.
+            context overflow. Defaults to -0.1.
 
     Returns:
         An EnvFromMessageEnv ready for RL training.
