@@ -472,8 +472,9 @@ class RollingCheckpointManager:
     async def finalize_async(self) -> None:
         """Await any pending save, then delete the last rolling checkpoint.
 
-        Call before the final checkpoint save. In the happy path this leaves
-        zero rolling checkpoints on the server.
+        Call after the final checkpoint save so that the last entry in
+        ``checkpoints.jsonl`` always points to valid server-side data.
+        In the happy path this leaves zero rolling checkpoints on the server.
         """
         await self._resolve_pending_async()
         await self._delete_prev_async()
