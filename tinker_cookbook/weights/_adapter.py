@@ -37,6 +37,7 @@ from tinker_cookbook.weights._merge import (
     detect_merge_profile,
     expand_expert_lora_tensors,
 )
+from tinker_cookbook.weights._merge_qwen3_5 import build_qwen3_5_name_remaps
 from tinker_cookbook.weights._merge_utils import (
     build_name_remaps,
     extract_adapter_weight_names,
@@ -69,20 +70,12 @@ _EXPERT_KEY_REMAPS = (
     (".w2.weight", ".down_proj.weight"),
 )
 
-# Qwen3.5 split QKV suffixes (from _merge_qwen3_5.py).
-_SPLIT_QKV_SUFFIXES = {
-    ".in_proj_q.weight": "q",
-    ".in_proj_k.weight": "k",
-    ".in_proj_v.weight": "v",
-}
-
 
 def build_lora_adapter(
     *,
     base_model: str,
     adapter_path: str,
     output_path: str,
-    trust_remote_code: bool | None = None,
 ) -> None:
     """Convert a Tinker LoRA adapter to standard PEFT format for serving.
 
@@ -98,9 +91,6 @@ def build_lora_adapter(
             ``adapter_config.json``).
         output_path: Directory where the PEFT adapter will be saved.
             Must not already exist.
-        trust_remote_code: Whether to trust remote code when loading HF
-            model configs. If ``None`` (default), falls back to the
-            ``HF_TRUST_REMOTE_CODE`` environment variable, then ``False``.
 
     Raises:
         FileNotFoundError: If adapter files are missing.
@@ -118,8 +108,8 @@ def build_lora_adapter(
         if key not in adapter_config:
             raise WeightsAdapterError(f"Adapter config missing required key: {key!r}")
 
-    # Resolve model directory first (may download from HF Hub), then load config
-    # from the local directory so trust_remote_code is not needed for config parsing.
+    # Resolve model directory (may download from HF Hub), then load config
+    # from the local directory.
     model_dir = resolve_model_dir(base_model)
     config_dict = load_config_dict(model_dir)
     model_state_keys = get_model_state_keys(model_dir)
@@ -127,6 +117,11 @@ def build_lora_adapter(
     # Detect model family.
     profile = detect_merge_profile(config_dict, model_state_keys)
     _check_model_support(profile, config_dict)
+
+    # Check if adapter contains expert weights (for MoE warning).
+    has_expert_weights = any(".experts" in k for k in adapter_weights)
+    if has_expert_weights:
+        _warn_experimental_moe(profile)
 
     logger.info(
         "Converting adapter for %s (family=%s, expert_layout=%s)",
@@ -167,8 +162,17 @@ def _check_model_support(profile: MergeProfile, config_dict: dict) -> None:
     if model_type in _DEFERRED_MODEL_TYPES:
         raise WeightsAdapterError(_DEFERRED_MODEL_TYPES[model_type])
 
-    # Warn for experimental MoE expert LoRA support.
-    if profile.expert_layout != "separate" or profile.model_family in ("qwen3_5",):
+
+def _warn_experimental_moe(profile: MergeProfile) -> None:
+    """Warn if MoE expert LoRA serving support is experimental for this model family.
+
+    Only called when the adapter actually contains expert weights.
+    GPT-OSS and Kimi-K2 have stable vLLM MoE LoRA support and are excluded.
+    """
+    # Families with confirmed stable MoE LoRA support in vLLM.
+    stable_moe_families = {"gpt_oss"}
+
+    if profile.model_family not in stable_moe_families:
         logger.warning(
             "MoE expert LoRA serving for %s models is experimental in vLLM and "
             "not yet supported in SGLang. The adapter will be produced but may "
@@ -196,7 +200,11 @@ def _convert_adapter(
           PEFT ``adapter_config.json``
     """
     adapter_weight_names = extract_adapter_weight_names(adapter_weights)
-    name_remaps = _build_name_remaps(profile, model_state_keys)
+
+    if profile.split_qkv_projections:
+        name_remaps = build_qwen3_5_name_remaps(profile, model_state_keys)
+    else:
+        name_remaps = build_name_remaps(profile, model_state_keys)
 
     peft_weights: dict[str, torch.Tensor] = {}
     target_modules: set[str] = set()
@@ -216,10 +224,6 @@ def _convert_adapter(
 
         if ".experts" in n:
             _expand_expert_weights(target_key, lora_A, lora_B, peft_weights, target_modules)
-        elif profile.split_qkv_projections and _is_split_qkv_key(target_key):
-            # Qwen3.5 split QKV: output separate PEFT keys for each component.
-            # vLLM's packed_modules_mapping handles fusing at load time.
-            _add_peft_weight(target_key, lora_A, lora_B, peft_weights, target_modules)
         else:
             _add_peft_weight(target_key, lora_A, lora_B, peft_weights, target_modules)
 
@@ -230,34 +234,6 @@ def _convert_adapter(
         )
 
     return peft_weights, sorted(target_modules)
-
-
-def _build_name_remaps(profile: MergeProfile, model_state_keys: set[str]) -> list[tuple[str, str]]:
-    """Build name remaps, with Qwen3.5-specific tied embedding handling."""
-    if not profile.split_qkv_projections:
-        return build_name_remaps(profile, model_state_keys)
-
-    # Qwen3.5-specific: handle tied embeddings (from _merge_qwen3_5.py).
-    remaps: list[tuple[str, str]] = [("base_model.model.", "")]
-    if profile.has_language_model_prefix:
-        remaps.append(("model.", "model.language_model."))
-        has_top_level_lm_head = any(
-            k == "lm_head.weight" or k.startswith("lm_head.") for k in model_state_keys
-        )
-        if has_top_level_lm_head:
-            remaps.append(("model.language_model.unembed_tokens", "lm_head"))
-        else:
-            remaps.append(
-                ("model.language_model.unembed_tokens", "model.language_model.embed_tokens")
-            )
-    else:
-        remaps.append(("model.unembed_tokens", "lm_head"))
-    return remaps
-
-
-def _is_split_qkv_key(target_key: str) -> bool:
-    """Check if a remapped key is a Qwen3.5 split QKV projection."""
-    return any(target_key.endswith(suffix) for suffix in _SPLIT_QKV_SUFFIXES)
 
 
 def _add_peft_weight(
@@ -272,6 +248,13 @@ def _add_peft_weight(
     module_path = target_key.removesuffix(".weight")
     peft_key_a = f"base_model.model.{module_path}.lora_A.weight"
     peft_key_b = f"base_model.model.{module_path}.lora_B.weight"
+
+    if peft_key_a in peft_weights:
+        raise WeightsAdapterError(
+            f"Duplicate PEFT key: {peft_key_a!r}. Two adapter weights mapped to "
+            f"the same target. This likely indicates a misconfigured adapter or "
+            f"an unsupported model architecture."
+        )
 
     peft_weights[peft_key_a] = lora_A
     peft_weights[peft_key_b] = lora_B
