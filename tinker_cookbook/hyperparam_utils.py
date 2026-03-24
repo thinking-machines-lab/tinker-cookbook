@@ -73,66 +73,28 @@ def get_lora_lr_over_full_finetune_lr(model_name: str, lora_alpha: int = 32) -> 
 
 
 def _get_hidden_size(model_name: str) -> int:
-    # Known hidden sizes for models in the lineup. This avoids network lookups and
-    # works around gated repos (Llama) and configs that nest hidden_size under
-    # text_config (Qwen3-VL, Qwen3.5, Kimi-K2.5).
-    _KNOWN_HIDDEN_SIZES: dict[str, int] = {
-        # Llama-3 (gated — cannot fetch config without HF_TOKEN)
-        "meta-llama/Llama-3.2-1B": 2048,
-        "meta-llama/Llama-3.2-1B-Instruct": 2048,
-        "meta-llama/Llama-3.2-3B": 3072,
-        "meta-llama/Llama-3.2-3B-Instruct": 3072,
-        "meta-llama/Llama-3.1-8B": 4096,
-        "meta-llama/Llama-3.1-8B-Instruct": 4096,
-        "meta-llama/Llama-3.1-70B": 8192,
-        "meta-llama/Llama-3.3-70B-Instruct": 8192,
-        # DeepSeek
-        "deepseek-ai/DeepSeek-V3.1": 7168,
-        "deepseek-ai/DeepSeek-V3.1-Base": 7168,
-        # Kimi
-        "moonshotai/Kimi-K2-Thinking": 7168,
-        "moonshotai/Kimi-K2.5": 7168,
-        # Qwen3 (text-only)
-        "Qwen/Qwen3-235B-A22B-Instruct-2507": 4096,
-        "Qwen/Qwen3-30B-A3B-Instruct-2507": 2048,
-        "Qwen/Qwen3-30B-A3B": 2048,
-        "Qwen/Qwen3-30B-A3B-Base": 2048,
-        "Qwen/Qwen3-32B": 5120,
-        "Qwen/Qwen3-8B": 4096,
-        "Qwen/Qwen3-8B-Base": 4096,
-        "Qwen/Qwen3-4B-Instruct-2507": 2560,
-        # Qwen3-VL (config nests hidden_size under text_config)
-        "Qwen/Qwen3-VL-235B-A22B-Instruct": 4096,
-        "Qwen/Qwen3-VL-30B-A3B-Instruct": 2048,
-        # Qwen3.5 (config nests hidden_size under text_config)
-        "Qwen/Qwen3.5-397B-A17B": 4096,
-        "Qwen/Qwen3.5-35B-A3B": 2048,
-        "Qwen/Qwen3.5-27B": 5120,
-        "Qwen/Qwen3.5-4B": 2560,
-        # OpenAI
-        "openai/gpt-oss-120b": 2880,
-        "openai/gpt-oss-20b": 2880,
-        # NVIDIA Nemotron
-        "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": 4096,
-        "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": 2688,
-    }
+    if "meta-llama/Llama-3" in model_name:
+        # Bypass HF_TOKEN requirement for Llama-3 models
+        return {
+            "meta-llama/Llama-3.2-1B": 2048,
+            "meta-llama/Llama-3.2-1B-Instruct": 2048,
+            "meta-llama/Llama-3.2-3B": 3072,
+            "meta-llama/Llama-3.2-3B-Instruct": 3072,
+            "meta-llama/Llama-3.1-8B": 4096,
+            "meta-llama/Llama-3.1-8B-Instruct": 4096,
+            "meta-llama/Llama-3.1-70B": 8192,
+            "meta-llama/Llama-3.3-70B-Instruct": 8192,
+        }[model_name]
 
-    if model_name in _KNOWN_HIDDEN_SIZES:
-        return _KNOWN_HIDDEN_SIZES[model_name]
+    if model_name in (
+        "deepseek-ai/DeepSeek-V3.1",
+        "deepseek-ai/DeepSeek-V3.1-Base",
+        "moonshotai/Kimi-K2-Thinking",
+    ):
+        return 7168
 
-    # Fallback: fetch from HuggingFace config. Some configs (e.g. VL, MoE) nest
-    # hidden_size under text_config rather than at the top level.
     config = AutoConfig.from_pretrained(model_name)
-    hidden_size = getattr(config, "hidden_size", None)
-    if hidden_size is None and hasattr(config, "text_config"):
-        hidden_size = getattr(config.text_config, "hidden_size", None)
-    if hidden_size is None:
-        raise ValueError(
-            f"Could not determine hidden_size for {model_name}. "
-            f"Config type: {type(config).__name__}. "
-            f"Please add this model to _KNOWN_HIDDEN_SIZES in hyperparam_utils.py."
-        )
-    return hidden_size
+    return config.hidden_size
 
 
 def get_lora_param_count(
