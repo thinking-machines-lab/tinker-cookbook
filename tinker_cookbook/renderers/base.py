@@ -696,7 +696,6 @@ def ensure_list(content: Content) -> list[ContentPart]:
     return content
 
 
-
 def content_to_jsonable(content: Content) -> str | list[dict[str, Any]]:
     """Convert message content to a JSON-serializable structure."""
     if isinstance(content, str):
