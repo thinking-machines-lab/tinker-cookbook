@@ -14,6 +14,8 @@ These tests verify that:
 2. image_to_chunk produces correct expected_tokens for various image dimensions
 """
 
+from typing import Any
+
 import pytest
 import tinker.types
 import transformers
@@ -44,7 +46,9 @@ def test_qwen3_vl_image_processor_uses_config_pixels() -> None:
     On transformers <5.0, the slow processor always used min_pixels=3136 (hardcoded)
     instead of min_pixels=65536 (from config), causing wrong token counts.
     """
-    processor = get_image_processor(QWEN3_VL_MODEL)
+    # Cast to Any: get_image_processor returns BaseImageProcessor which doesn't declare
+    # min_pixels/max_pixels, but the concrete Qwen2VL processor has them at runtime.
+    processor: Any = get_image_processor(QWEN3_VL_MODEL)
 
     assert processor.min_pixels == QWEN3_VL_EXPECTED_MIN_PIXELS, (
         f"Image processor min_pixels={processor.min_pixels}, expected {QWEN3_VL_EXPECTED_MIN_PIXELS}. "
@@ -68,7 +72,9 @@ def test_qwen3_vl_image_to_chunk_token_counts() -> None:
     With the buggy processor (min_pixels=3136), small images get far fewer tokens
     because they aren't upscaled to meet the min_pixels threshold.
     """
-    processor = get_image_processor(QWEN3_VL_MODEL)
+    # Cast to Any: get_image_processor returns BaseImageProcessor but image_to_chunk
+    # expects ImageProcessorProtocol; the concrete Qwen2VL processor satisfies it at runtime.
+    processor: Any = get_image_processor(QWEN3_VL_MODEL)
 
     # (width, height, correct_tokens, buggy_tokens_with_min_pixels_3136)
     # The buggy column documents what the old processor would compute, to show the discrepancy.
