@@ -74,8 +74,10 @@ tc.optim_step(adam_params=AdamParams(learning_rate=2e-4))
 tc.save_state(name="step_100", ttl_seconds=None)                # Full state (resumable)
 tc.save_weights_for_sampler(name="step_100_sampler", ttl_seconds=None)  # Sampler-only
 
-# Save + get SamplingClient in one call
-sc = tc.save_weights_and_get_sampling_client(name="step_100")
+# Save + get SamplingClient in one call (ephemeral, not persistently saved)
+# NOTE: This does NOT persist the checkpoint. For persistent saves, use
+# save_weights_for_sampler(name=...) + service_client.create_sampling_client(model_path=...)
+sc = tc.save_weights_and_get_sampling_client()
 
 # Load checkpoint
 tc.load_state(path="tinker://...")
@@ -113,7 +115,7 @@ optim_result = optim_future.result()
 ```python
 from tinker import SamplingParams
 
-sc = tc.save_weights_and_get_sampling_client(name="step_100")
+sc = tc.save_weights_and_get_sampling_client()
 
 response = sc.sample(
     prompt=model_input,

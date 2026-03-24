@@ -18,12 +18,12 @@ from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
-from tinker_cookbook.renderers.base import ToolCall, ToolSpec
+from tinker_cookbook.renderers.base import ContentPart, ToolCall, ToolSpec
 from tinker_cookbook.tool_use.types import Tool, ToolInput, ToolResult
 
 
 def simple_tool_result(
-    content: str,
+    content: str | list[ContentPart],
     *,
     call_id: str = "",
     name: str = "",
@@ -31,10 +31,19 @@ def simple_tool_result(
     metrics: dict[str, float] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> ToolResult:
-    """Helper function to create a simple ToolResult from a content string.
+    """Helper function to create a ToolResult from content.
+
+    ``content`` accepts either a plain string or a ``list[ContentPart]`` for
+    multimodal results (e.g. text interleaved with images). This matches the
+    ``Message["content"]`` type, so callers can build parts in any order.
+
+    Note: images in tool-role messages are a cookbook extension — standard APIs
+    (OpenAI, Anthropic, vLLM, SGLang) do not document image content in
+    tool/function messages. It works because our renderers handle all roles
+    uniformly via ``_preprocess_message_parts()``.
 
     Args:
-        content: The content to return to the model.
+        content: Content to return to the model — a string or list of ContentPart.
         call_id: The tool call ID (usually passed from ToolInput).
         name: The tool name (usually self.name in a tool method).
         should_stop: Whether to stop the episode after this tool call.
@@ -51,6 +60,14 @@ def simple_tool_result(
             return simple_tool_result(
                 json.dumps(results),
                 metrics={"result_count": len(results)}
+            )
+
+        @tool
+        async def screenshot() -> ToolResult:
+            img = take_screenshot()
+            return simple_tool_result(
+                [TextPart(type="text", text="Screenshot taken"),
+                 ImagePart(type="image", image=img)],
             )
     """
     return ToolResult(

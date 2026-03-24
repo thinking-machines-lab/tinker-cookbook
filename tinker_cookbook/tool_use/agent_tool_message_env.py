@@ -7,7 +7,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from tinker_cookbook.renderers import Renderer
-from tinker_cookbook.renderers.base import Message, ToolCall, get_text_content
+from tinker_cookbook.renderers.base import (
+    Message,
+    ToolCall,
+    format_content_as_string,
+    get_text_content,
+)
 from tinker_cookbook.rl import types
 from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
 from tinker_cookbook.tool_use.tools import handle_tool_call
@@ -97,7 +102,7 @@ class AgentToolMessageEnv(MessageEnv):
             tool_result_messages = await self._handle_tool_calls(tool_calls)
 
             for i, msg in enumerate(tool_result_messages):
-                logs[f"tool_result_{i}"] = get_text_content(msg)
+                logs[f"tool_result_{i}"] = format_content_as_string(msg["content"])
 
         # Determine if episode is done
         no_tool_calls = len(tool_calls) == 0
@@ -132,6 +137,8 @@ def build_agent_tool_env(
     max_turns: int = 5,
     failed_parse_reward: float = -0.1,
     max_trajectory_tokens: int | None = None,
+    max_generation_tokens: int | None = None,
+    context_overflow_reward: float = -0.1,
 ) -> EnvFromMessageEnv:
     """Convenience method to build an EnvFromMessageEnv for tool-using agents.
 
@@ -144,6 +151,11 @@ def build_agent_tool_env(
         max_turns: Maximum turns before episode ends.
         failed_parse_reward: Reward when model output fails to parse.
         max_trajectory_tokens: Maximum tokens in trajectory before terminating episode.
+        max_generation_tokens: Maximum tokens per generation. When set, the episode
+            terminates if the trajectory + generation budget would exceed
+            *max_trajectory_tokens*, preventing context overflow errors.
+        context_overflow_reward: Reward assigned when the episode is terminated due to
+            context overflow. Defaults to -0.1.
 
     Returns:
         An EnvFromMessageEnv ready for RL training.
@@ -159,4 +171,6 @@ def build_agent_tool_env(
         message_env=msg_env,
         failed_parse_reward=failed_parse_reward,
         max_trajectory_tokens=max_trajectory_tokens,
+        max_generation_tokens=max_generation_tokens,
+        context_overflow_reward=context_overflow_reward,
     )

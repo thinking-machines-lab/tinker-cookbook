@@ -137,7 +137,7 @@ async def test_set_client_with_finetuned_checkpoint(tinker_provider) -> None:
     training_client = service.create_lora_training_client(base_model=BASE_MODEL, rank=8)
 
     # Save weights and get a sampling client for the checkpoint
-    checkpoint_sampler = training_client.save_weights_and_get_sampling_client(name="litellm_test")
+    checkpoint_sampler = training_client.save_weights_and_get_sampling_client()
 
     # Inject via set_client — base_model is derived from the sampling client
     tinker_provider.set_client(checkpoint_sampler)

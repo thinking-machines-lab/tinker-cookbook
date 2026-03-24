@@ -4,6 +4,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import chz
 import tinker
@@ -95,7 +96,7 @@ class TwentyQuestionsEnv(Env):
         )
         return 1.0 if content_contains_answer else 0.0
 
-    async def step(self, action: Action) -> StepResult:
+    async def step(self, action: Action, **kwargs: Any) -> StepResult:
         """
         In one step,
         1. The environment accepts an action from the player (a message containin a question or a guess).

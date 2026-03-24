@@ -171,7 +171,7 @@ Now we can test our model by sampling from it. In this case, we'll translate the
 
 ```python
 # First, create a sampling client. We need to transfer weights
-sampling_client = training_client.save_weights_and_get_sampling_client(name='pig-latin-model')
+sampling_client = training_client.save_weights_and_get_sampling_client()
 
 # Now, we can sample from the model.
 prompt = types.ModelInput.from_ints(tokenizer.encode("English: coffee break\nPig Latin:"))

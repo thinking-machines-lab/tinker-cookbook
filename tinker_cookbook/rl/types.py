@@ -5,7 +5,7 @@ Basic interfaces and types for reinforcement learning.
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 import chz
 import tinker
@@ -67,7 +67,9 @@ class Env(ABC):
         pass
 
     @abstractmethod
-    async def step(self, action: Action) -> StepResult:
+    async def step(
+        self, action: Action, *, stop_reason: tinker.StopReason = "stop", **kwargs: Any
+    ) -> StepResult:
         pass
 
 

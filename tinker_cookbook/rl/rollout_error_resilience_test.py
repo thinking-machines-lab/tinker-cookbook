@@ -71,7 +71,7 @@ class _FakeEnv(Env):
     async def initial_observation(self):
         return tinker.ModelInput.from_ints([1, 2, 3]), [0]
 
-    async def step(self, action):
+    async def step(self, action, **kwargs):
         return StepResult(
             reward=1.0,
             episode_done=True,
