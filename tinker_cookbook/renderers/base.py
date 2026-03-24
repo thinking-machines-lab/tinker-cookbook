@@ -696,26 +696,6 @@ def ensure_list(content: Content) -> list[ContentPart]:
     return content
 
 
-def build_content(
-    text: str, images: list[Image.Image | str] | None = None
-) -> str | list[ContentPart]:
-    """Build message content from text and optional images.
-
-    Convenience helper for the common pattern of text followed by images.
-    Returns a plain string when there are no images, or a ``list[ContentPart]``
-    with a ``TextPart`` followed by ``ImagePart`` entries.
-
-    Args:
-        text: The text content.
-        images: Optional list of images (PIL objects or URL strings,
-            matching ``ImagePart["image"]``).
-    """
-    if not images:
-        return text
-    parts: list[ContentPart] = [TextPart(type="text", text=text)]
-    parts.extend(ImagePart(type="image", image=img) for img in images)
-    return parts
-
 
 def content_to_jsonable(content: Content) -> str | list[dict[str, Any]]:
     """Convert message content to a JSON-serializable structure."""
