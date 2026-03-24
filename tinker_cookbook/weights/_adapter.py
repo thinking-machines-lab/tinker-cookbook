@@ -47,19 +47,18 @@ from tinker_cookbook.weights._merge_utils import (
 
 logger = logging.getLogger(__name__)
 
-# Model families that do not support LoRA adapter serving in any framework.
-_UNSUPPORTED_FAMILIES = {
-    "deepseek": (
-        "DeepSeek V3/V3.1 does not support LoRA adapter serving in vLLM or SGLang. "
+# Model types (from config.json "model_type") that do not support adapter conversion.
+# Keyed by the exact model_type string so that future models in the same family
+# (e.g. a hypothetical DeepSeek V4 with LoRA support) are not accidentally blocked.
+_UNSUPPORTED_MODEL_TYPES: dict[str, str] = {
+    "deepseek_v3": (
+        "DeepSeek V3/V3.1 (model_type='deepseek_v3') does not support LoRA adapter "
+        "serving in vLLM or SGLang. "
         "Use build_hf_model to merge the adapter into a full HF model instead."
     ),
-}
-
-# Model types that are deferred (not yet validated for adapter conversion).
-_DEFERRED_MODEL_TYPES = {
     "nemotron_h": (
-        "Nemotron-3 adapter conversion is not yet supported (non-standard 'backbone.*' "
-        "weight prefix needs investigation). "
+        "Nemotron-3 (model_type='nemotron_h') adapter conversion is not yet supported "
+        "(non-standard 'backbone.*' weight prefix needs investigation). "
         "Use build_hf_model to merge the adapter into a full HF model instead."
     ),
 }
@@ -124,7 +123,7 @@ def build_lora_adapter(
 
     # Detect model family.
     profile = detect_merge_profile(config_dict, model_state_keys)
-    _check_model_support(profile, config_dict)
+    _check_model_support(config_dict)
 
     # Check if adapter contains expert weights (for MoE warning).
     has_expert_weights = any(".experts" in k for k in adapter_weights)
@@ -159,16 +158,16 @@ def build_lora_adapter(
         raise
 
 
-def _check_model_support(profile: MergeProfile, config_dict: dict) -> None:
-    """Check whether the model family supports LoRA adapter serving."""
-    # Hard-blocked families.
-    if profile.model_family in _UNSUPPORTED_FAMILIES:
-        raise WeightsAdapterError(_UNSUPPORTED_FAMILIES[profile.model_family])
+def _check_model_support(config_dict: dict) -> None:
+    """Check whether the model supports LoRA adapter conversion.
 
-    # Deferred model types (detected from config, not profile.model_family).
+    Uses the exact ``model_type`` from config.json rather than the broad
+    ``profile.model_family`` so that future models in the same family
+    are not accidentally blocked.
+    """
     model_type = config_dict.get("model_type", "")
-    if model_type in _DEFERRED_MODEL_TYPES:
-        raise WeightsAdapterError(_DEFERRED_MODEL_TYPES[model_type])
+    if model_type in _UNSUPPORTED_MODEL_TYPES:
+        raise WeightsAdapterError(_UNSUPPORTED_MODEL_TYPES[model_type])
 
 
 def _warn_experimental_moe(profile: MergeProfile) -> None:
