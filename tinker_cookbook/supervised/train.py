@@ -65,6 +65,10 @@ class Config:
     infrequent_eval_every: int = 100
     # Periodic checkpoints use this TTL; the final checkpoint is kept indefinitely.
     ttl_seconds: int | None = 604800  # 7 days
+    # Rolling checkpoint cadence (0 = disabled). Saves state-only for cheap resume.
+    rolling_save_every: int = 0
+    # TTL for rolling checkpoints; short to auto-clean if explicit deletion fails.
+    rolling_ttl_seconds: int = 7200  # 2 hours
 
     # Adam optimizer parameters
     adam_beta1: float = 0.9
@@ -227,6 +231,15 @@ async def main(config: Config):
             user_metadata=user_metadata,
         )
 
+    rolling_mgr = checkpoint_utils.RollingCheckpointManager(
+        training_client=training_client,
+        service_client=service_client,
+        log_path=config.log_path,
+        rolling_save_every=config.rolling_save_every,
+        save_every=config.save_every,
+        rolling_ttl_seconds=config.rolling_ttl_seconds,
+    )
+
     dataset, maybe_test_dataset = config.dataset_builder()
     n_batches = len(dataset)
     total_steps = n_batches * config.num_epochs
@@ -323,6 +336,11 @@ async def main(config: Config):
                     ttl_seconds=config.ttl_seconds,
                 )
 
+        await rolling_mgr.maybe_save_async(
+            step=submitted.step,
+            loop_state={"epoch": submitted.epoch_idx, "batch": submitted.batch_idx},
+        )
+
         async with trace.scope_span("step"):
             fwd_bwd_result = await submitted.fwd_bwd_future.result_async()
             optim_step_result = await submitted.optim_step_future.result_async()
@@ -389,6 +407,8 @@ async def main(config: Config):
     did_train = start_epoch < config.num_epochs and (
         config.max_steps is None or start_epoch * n_batches + start_batch < config.max_steps
     )
+    await rolling_mgr.finalize_async()
+
     if did_train:
         await checkpoint_utils.save_checkpoint_async(
             training_client=training_client,

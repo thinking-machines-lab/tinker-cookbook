@@ -433,6 +433,10 @@ class Config:
     # Periodic checkpoints use this TTL; the final checkpoint is kept indefinitely.
     # None disables expiry entirely.
     ttl_seconds: int | None = 604800  # 7 days
+    # Rolling checkpoint cadence (0 = disabled). Saves state-only for cheap resume.
+    rolling_save_every: int = 0
+    # TTL for rolling checkpoints; short to auto-clean if explicit deletion fails.
+    rolling_ttl_seconds: int = 7200  # 2 hours
     num_groups_to_log: int = 4  # Number of groups to log per iteration (0 = disable logging)
     rollout_json_export: bool = True
 
@@ -521,6 +525,7 @@ async def do_sync_training_with_stream_minibatch(
     tokenizer: Tokenizer,
     error_counter: RolloutErrorCounter | None = None,
     strategy: RolloutStrategy | None = None,
+    rolling_mgr: checkpoint_utils.RollingCheckpointManager | None = None,
 ):
     """
     Implements fully synchronous on-policy training with minibatch streaming.
@@ -638,6 +643,10 @@ async def do_sync_training_with_stream_minibatch(
             ],
         )
 
+        # Rolling checkpoint (fire-and-forget, overlaps with next iteration)
+        if rolling_mgr is not None:
+            await rolling_mgr.maybe_save_async(step=i_batch + 1, loop_state={"batch": i_batch + 1})
+
         # Log metrics
         metrics.update(full_batch_metrics)
         if error_counter is not None:
@@ -701,6 +710,7 @@ async def do_async_training(
     tokenizer: Tokenizer,
     error_counter: RolloutErrorCounter | None = None,
     strategy: RolloutStrategy | None = None,
+    rolling_mgr: checkpoint_utils.RollingCheckpointManager | None = None,
 ):
     """Implements async off-policy training, capped at K steps off policy."""
     assert config.async_config is not None
@@ -954,6 +964,12 @@ async def do_async_training(
                 )
             sampling_client_step = i_batch + 1
             sampling_client_updated_event.set()
+
+            # Rolling checkpoint (fire-and-forget, overlaps with next iteration)
+            if rolling_mgr is not None:
+                await rolling_mgr.maybe_save_async(
+                    step=i_batch + 1, loop_state={"batch": i_batch + 1}
+                )
 
             # Log metrics
             metrics.update(train_step_metrics)
@@ -1310,6 +1326,7 @@ async def do_sync_training(
     tokenizer: Tokenizer,
     error_counter: RolloutErrorCounter | None = None,
     strategy: RolloutStrategy | None = None,
+    rolling_mgr: checkpoint_utils.RollingCheckpointManager | None = None,
 ):
     """Implements fully synchronous on-policy training"""
     # Initial sampling client
@@ -1415,6 +1432,12 @@ async def do_sync_training(
                 )
 
                 metrics.update(train_step_metrics)
+
+                # Rolling checkpoint (fire-and-forget, overlaps with next iteration)
+                if rolling_mgr is not None:
+                    await rolling_mgr.maybe_save_async(
+                        step=i_batch + 1, loop_state={"batch": i_batch + 1}
+                    )
 
         metrics.update(window.get_timing_metrics())
         if error_counter is not None:
@@ -1549,6 +1572,15 @@ async def main(
     else:
         kl_reference_client = None
 
+    rolling_mgr = checkpoint_utils.RollingCheckpointManager(
+        training_client=training_client,
+        service_client=service_client,
+        log_path=config.log_path,
+        rolling_save_every=config.rolling_save_every,
+        save_every=config.save_every,
+        rolling_ttl_seconds=config.rolling_ttl_seconds,
+    )
+
     # Training loop
     if config.async_config is not None:
         training_func = do_async_training
@@ -1569,7 +1601,10 @@ async def main(
         tokenizer=tokenizer,
         error_counter=error_counter,
         strategy=strategy,
+        rolling_mgr=rolling_mgr,
     )
+
+    await rolling_mgr.finalize_async()
 
     # Save final checkpoint
     if start_batch < end_batch:
