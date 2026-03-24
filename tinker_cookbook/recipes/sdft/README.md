@@ -72,16 +72,42 @@ python -m tinker_cookbook.recipes.sdft.train \
 
 ## Benchmarking Against the Paper
 
-A self-contained benchmark script reproduces the paper's evaluation. All data is loaded from HuggingFace — no external repo needed.
+A benchmark script reproduces the paper's evaluation. Training data with reasoning chains comes from the [SDFT repository](https://github.com/idshenfeld/Self-Distillation) (clone to `~/Repos/Self-Distillation`).
 
-### Paper's reported results (Qwen2.5-7B-Instruct)
+### Paper's reported results (Qwen2.5-7B-Instruct, full fine-tuning)
 
 | Dataset | Base | SFT | SDFT |
 |---------|------|-----|------|
 | SciKnowEval Chemistry L3 | 32.1 | 66.2 | **70.2** |
 | ToolAlpaca Tool Use | 42.9 | 63.2 | **70.6** |
 
-### Run all three evaluations
+### SFT learning rate sweep (Qwen3-4B-Instruct-2507, LoRA rank 128)
+
+The paper uses LR=2e-5 with full fine-tuning. With LoRA, higher learning rates are needed. We swept LRs on SciKnowEval Chemistry L3 (507 eval examples):
+
+| Learning Rate | Accuracy | Notes |
+|--------------|----------|-------|
+| 2e-5 | 43.59% | Paper's default (too low for LoRA) |
+| 4e-5 | 47.93% | |
+| 1e-4 | 53.85% | |
+| 2e-4 | 52.27% | |
+| 4e-4 | 57.59% | |
+| 8e-4 | 62.13% | |
+| 1e-3 | 62.72% | |
+| **2e-3** | **67.26%** | Best — exceeds paper's 66.2% |
+| 4e-3 | 0.00% | Diverged |
+
+To reproduce the best SFT result:
+
+```bash
+python -m tinker_cookbook.recipes.sdft.benchmark \
+    dataset=science phase=sft \
+    model_name=Qwen/Qwen3-4B-Instruct-2507 \
+    sft_learning_rate=2e-3 \
+    wandb_project=sdft-cookbook
+```
+
+### Running the benchmark
 
 SFT and SDFT are **independent comparisons** from the same base model (not a sequential pipeline):
 
@@ -90,38 +116,37 @@ Base model ──→ SFT on task data  ──→ eval   (baseline)
 Base model ──→ SDFT on task data ──→ eval   (proposed method)
 ```
 
-Run the full comparison:
-
-```bash
-python -m tinker_cookbook.recipes.sdft.benchmark \
-    dataset=sciknoweval \
-    wandb_project=sdft_benchmark
-```
-
-### Run individual phases
-
-Each phase is independent and can be run separately:
+Each phase can be run separately:
 
 ```bash
 # Evaluate the base model (no training)
 python -m tinker_cookbook.recipes.sdft.benchmark \
-    dataset=sciknoweval phase=base_eval
+    dataset=science phase=base_eval
 
 # Train and evaluate SFT (from base model)
 python -m tinker_cookbook.recipes.sdft.benchmark \
-    dataset=sciknoweval phase=sft
+    dataset=science phase=sft \
+    model_name=Qwen/Qwen3-4B-Instruct-2507 \
+    sft_learning_rate=2e-3
 
 # Train and evaluate SDFT (from base model)
 python -m tinker_cookbook.recipes.sdft.benchmark \
-    dataset=sciknoweval phase=sdft
+    dataset=science phase=sdft \
+    model_name=Qwen/Qwen3-4B-Instruct-2507 \
+    learning_rate=2e-3
 
 # Evaluate an existing checkpoint
 python -m tinker_cookbook.recipes.sdft.benchmark \
-    dataset=sciknoweval phase=eval_checkpoint \
+    dataset=science phase=eval_checkpoint \
     checkpoint_path=tinker://...
 ```
 
-Note: We use Qwen3-8B (not Qwen2.5-7B-Instruct), so exact numbers will differ, but the pattern (SDFT > SFT on new-task accuracy) should hold.
+### Notes on differences from the paper
+
+- **Model**: We use Qwen3-4B-Instruct-2507 (paper uses Qwen2.5-7B-Instruct)
+- **Fine-tuning**: LoRA rank 128 (paper uses full fine-tuning) — requires ~100x higher LR
+- **Teacher**: Static frozen base model (paper uses EMA with alpha=0.01)
+- **KL computation**: Per-token logprob advantage approximation (paper uses full-vocabulary forward KL)
 
 ## Architecture
 
