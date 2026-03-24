@@ -244,8 +244,8 @@ class TestSimpleToolResultImages:
         content = result.messages[0]["content"]
         assert isinstance(content, list)
         assert len(content) == 3
-        assert content[1]["image"] is img
-        assert content[2]["image"] == url
+        assert content[1] == {"type": "image", "image": img}
+        assert content[2] == {"type": "image", "image": url}
 
     def test_passthrough_fields(self):
         img = Image.new("RGB", (10, 10))

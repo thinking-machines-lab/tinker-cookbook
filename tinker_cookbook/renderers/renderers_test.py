@@ -1495,7 +1495,9 @@ class TestFormatContentAsStringImages:
             ImagePart(type="image", image=Image.new("RGB", (20, 15))),
             TextPart(type="text", text="After"),
         ]
-        assert format_content_as_string(content) == "Before\n<image>Image(20x15, RGB)</image>\nAfter"
+        assert (
+            format_content_as_string(content) == "Before\n<image>Image(20x15, RGB)</image>\nAfter"
+        )
 
     def test_custom_separator(self) -> None:
         from PIL import Image
@@ -1505,7 +1507,10 @@ class TestFormatContentAsStringImages:
             ImagePart(type="image", image=Image.new("RGBA", (5, 5))),
             TextPart(type="text", text="B"),
         ]
-        assert format_content_as_string(content, separator=" | ") == "A | <image>Image(5x5, RGBA)</image> | B"
+        assert (
+            format_content_as_string(content, separator=" | ")
+            == "A | <image>Image(5x5, RGBA)</image> | B"
+        )
 
     def test_unknown_type_graceful_fallback(self) -> None:
         content: list[ContentPart] = [{"type": "audio", "data": b"..."}]  # type: ignore[list-item]
