@@ -28,16 +28,22 @@ def simple_tool_result(
     *,
     call_id: str = "",
     name: str = "",
+    images: list[Image.Image] | None = None,
     should_stop: bool = False,
     metrics: dict[str, float] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> ToolResult:
-    """Helper function to create a simple ToolResult from a content string.
+    """Helper function to create a ToolResult from a content string, optionally with images.
+
+    When ``images`` is provided and non-empty, the message content is a
+    ``list[ContentPart]`` (one ``TextPart`` followed by ``ImagePart`` entries).
+    Otherwise the content is a plain string, preserving backward compatibility.
 
     Args:
-        content: The content to return to the model.
+        content: Text content to return to the model.
         call_id: The tool call ID (usually passed from ToolInput).
         name: The tool name (usually self.name in a tool method).
+        images: Optional list of PIL images to include in the result.
         should_stop: Whether to stop the episode after this tool call.
         metrics: Optional metrics dict (e.g., {"latency": 0.5, "count": 1}).
         metadata: Optional metadata dict for debugging.
@@ -53,12 +59,25 @@ def simple_tool_result(
                 json.dumps(results),
                 metrics={"result_count": len(results)}
             )
+
+        @tool
+        async def screenshot() -> ToolResult:
+            img = take_screenshot()
+            return simple_tool_result("Screenshot taken", images=[img])
     """
+    msg_content: str | list[ContentPart]
+    if images:
+        msg_content = [TextPart(type="text", text=content)]
+        for img in images:
+            msg_content.append(ImagePart(type="image", image=img))
+    else:
+        msg_content = content
+
     return ToolResult(
         messages=[
             {
                 "role": "tool",
-                "content": content,
+                "content": msg_content,
                 "tool_call_id": call_id,
                 "name": name,
             }
@@ -112,61 +131,6 @@ def error_tool_result(
         metadata={"error": error_type},
     )
 
-
-def multimodal_tool_result(
-    text_content: str,
-    images: list[Image.Image],
-    *,
-    call_id: str = "",
-    name: str = "",
-    should_stop: bool = False,
-    metrics: dict[str, float] | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> ToolResult:
-    """Helper function to create a ToolResult with text and image content.
-
-    Constructs a Message with a list of ContentPart (TextPart + ImagePart).
-    If images is empty, falls back to string-only content.
-
-    Args:
-        text_content: Text content to return to the model.
-        images: List of PIL images to include in the result.
-        call_id: The tool call ID (usually passed from ToolInput).
-        name: The tool name.
-        should_stop: Whether to stop the episode after this tool call.
-        metrics: Optional metrics dict.
-        metadata: Optional metadata dict for debugging.
-
-    Returns:
-        A ToolResult with multimodal content.
-    """
-    if not images:
-        return simple_tool_result(
-            text_content,
-            call_id=call_id,
-            name=name,
-            should_stop=should_stop,
-            metrics=metrics,
-            metadata=metadata,
-        )
-
-    content: list[ContentPart] = [TextPart(type="text", text=text_content)]
-    for img in images:
-        content.append(ImagePart(type="image", image=img))
-
-    return ToolResult(
-        messages=[
-            {
-                "role": "tool",
-                "content": content,
-                "tool_call_id": call_id,
-                "name": name,
-            }
-        ],
-        should_stop=should_stop,
-        metrics=metrics or {},
-        metadata=metadata or {},
-    )
 
 
 def _extract_annotated_info(annotation: Any) -> tuple[Any, FieldInfo | None, str | None]:

@@ -49,7 +49,7 @@ from tinker_cookbook.renderers.base import (
     ImagePart,
     ensure_list,
     ensure_text,
-    format_content_for_logging,
+    format_content_as_string,
 )
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3ThinkingRenderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
@@ -1472,31 +1472,20 @@ def test_register_and_get_custom_tokenizer(cleanup_custom_tokenizer):
 
 
 # ---------------------------------------------------------------------------
-# format_content_for_logging
+# format_content_as_string – image and unknown-type handling
 # ---------------------------------------------------------------------------
 
 
-class TestFormatContentForLogging:
-    def test_string_content(self) -> None:
-        assert format_content_for_logging("hello") == "hello"
-
-    def test_text_part(self) -> None:
-        content: list[ContentPart] = [TextPart(type="text", text="hi")]
-        assert format_content_for_logging(content) == "hi"
-
+class TestFormatContentAsStringImages:
     def test_image_part(self) -> None:
         from PIL import Image
 
         content: list[ContentPart] = [ImagePart(type="image", image=Image.new("RGB", (10, 10)))]
-        assert format_content_for_logging(content) == "[image]"
+        assert format_content_as_string(content) == "[image]"
 
     def test_image_string_url(self) -> None:
         content: list[ContentPart] = [ImagePart(type="image", image="https://example.com/img.png")]
-        assert format_content_for_logging(content) == "[image]"
-
-    def test_thinking_part(self) -> None:
-        content: list[ContentPart] = [ThinkingPart(type="thinking", thinking="let me think...")]
-        assert format_content_for_logging(content) == "<think>let me think...</think>"
+        assert format_content_as_string(content) == "[image]"
 
     def test_mixed_content(self) -> None:
         from PIL import Image
@@ -1506,7 +1495,7 @@ class TestFormatContentForLogging:
             ImagePart(type="image", image=Image.new("RGB", (10, 10))),
             TextPart(type="text", text="After"),
         ]
-        assert format_content_for_logging(content) == "Before\n[image]\nAfter"
+        assert format_content_as_string(content) == "Before\n[image]\nAfter"
 
     def test_custom_separator(self) -> None:
         from PIL import Image
@@ -1516,4 +1505,8 @@ class TestFormatContentForLogging:
             ImagePart(type="image", image=Image.new("RGB", (10, 10))),
             TextPart(type="text", text="B"),
         ]
-        assert format_content_for_logging(content, separator=" | ") == "A | [image] | B"
+        assert format_content_as_string(content, separator=" | ") == "A | [image] | B"
+
+    def test_unknown_type_graceful_fallback(self) -> None:
+        content: list[ContentPart] = [{"type": "audio", "data": b"..."}]  # type: ignore[list-item]
+        assert format_content_as_string(content) == "[audio]"

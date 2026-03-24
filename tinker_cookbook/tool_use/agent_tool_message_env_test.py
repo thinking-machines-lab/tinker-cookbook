@@ -7,7 +7,7 @@ from PIL import Image
 
 from tinker_cookbook.renderers.base import Message, ToolCall, ToolSpec
 from tinker_cookbook.tool_use.agent_tool_message_env import AgentToolMessageEnv
-from tinker_cookbook.tool_use.tools import multimodal_tool_result, simple_tool_result
+from tinker_cookbook.tool_use.tools import simple_tool_result
 from tinker_cookbook.tool_use.types import ToolInput, ToolResult
 
 # ---------------------------------------------------------------------------
@@ -177,17 +177,17 @@ class TestStepLogs:
 
 
 # ---------------------------------------------------------------------------
-# multimodal_tool_result helper
+# simple_tool_result with images
 # ---------------------------------------------------------------------------
 
 
-class TestMultimodalToolResult:
-    """Unit tests for the multimodal_tool_result() helper function."""
+class TestSimpleToolResultImages:
+    """Unit tests for the images parameter on simple_tool_result()."""
 
     def test_with_text_and_images(self):
         img1 = Image.new("RGB", (10, 10), color="red")
         img2 = Image.new("RGB", (10, 10), color="blue")
-        result = multimodal_tool_result("Page loaded", [img1, img2])
+        result = simple_tool_result("Page loaded", images=[img1, img2])
 
         assert len(result.messages) == 1
         msg = result.messages[0]
@@ -202,8 +202,8 @@ class TestMultimodalToolResult:
         assert content[2]["type"] == "image"
         assert content[2]["image"] is img2
 
-    def test_empty_images_falls_back_to_simple(self):
-        result = multimodal_tool_result("just text", [], call_id="c1", name="t")
+    def test_no_images_gives_string_content(self):
+        result = simple_tool_result("just text", call_id="c1", name="t")
 
         msg = result.messages[0]
         assert isinstance(msg["content"], str)
@@ -211,9 +211,16 @@ class TestMultimodalToolResult:
         assert msg.get("tool_call_id") == "c1"
         assert msg.get("name") == "t"
 
+    def test_empty_images_gives_string_content(self):
+        result = simple_tool_result("just text", images=[], call_id="c1", name="t")
+
+        msg = result.messages[0]
+        assert isinstance(msg["content"], str)
+        assert msg["content"] == "just text"
+
     def test_single_image(self):
         img = Image.new("RGB", (10, 10))
-        result = multimodal_tool_result("one image", [img])
+        result = simple_tool_result("one image", images=[img])
 
         content = result.messages[0]["content"]
         assert isinstance(content, list)
@@ -221,9 +228,9 @@ class TestMultimodalToolResult:
 
     def test_passthrough_fields(self):
         img = Image.new("RGB", (10, 10))
-        result = multimodal_tool_result(
+        result = simple_tool_result(
             "text",
-            [img],
+            images=[img],
             call_id="call_123",
             name="screenshot",
             should_stop=True,
@@ -239,7 +246,7 @@ class TestMultimodalToolResult:
 
     def test_defaults(self):
         img = Image.new("RGB", (10, 10))
-        result = multimodal_tool_result("text", [img])
+        result = simple_tool_result("text", images=[img])
 
         assert result.should_stop is False
         assert result.metrics == {}
@@ -275,9 +282,9 @@ class MultimodalTool:
 
     async def run(self, input: ToolInput) -> ToolResult:
         img = Image.new("RGB", (10, 10), color="red")
-        return multimodal_tool_result(
+        return simple_tool_result(
             "Screenshot taken",
-            [img],
+            images=[img],
             call_id=input.call_id or "",
             name=self.name,
         )

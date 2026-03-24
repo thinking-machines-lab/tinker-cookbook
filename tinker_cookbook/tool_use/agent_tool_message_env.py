@@ -10,7 +10,7 @@ from tinker_cookbook.renderers import Renderer
 from tinker_cookbook.renderers.base import (
     Message,
     ToolCall,
-    format_content_for_logging,
+    format_content_as_string,
     get_text_content,
 )
 from tinker_cookbook.rl import types
@@ -102,9 +102,7 @@ class AgentToolMessageEnv(MessageEnv):
             tool_result_messages = await self._handle_tool_calls(tool_calls)
 
             for i, msg in enumerate(tool_result_messages):
-                # Use format_content_for_logging to handle multimodal tool results
-                # (e.g., tools returning images alongside text)
-                logs[f"tool_result_{i}"] = format_content_for_logging(msg["content"])
+                logs[f"tool_result_{i}"] = format_content_as_string(msg["content"])
 
         # Determine if episode is done
         no_tool_calls = len(tool_calls) == 0
