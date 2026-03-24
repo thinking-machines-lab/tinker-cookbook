@@ -56,6 +56,10 @@ class CLIConfig:
 
     max_steps: int | None = None
 
+    # Rolling checkpoint cadence (0 = disabled).
+    rolling_save_every: int = 0
+    rolling_ttl_seconds: int = 7200
+
 
 def get_dataset_builder(
     dataset: str,
@@ -165,6 +169,8 @@ def cli_main(cli_config: CLIConfig):
         eval_every=cli_config.eval_every,
         infrequent_eval_every=cli_config.infrequent_eval_every,
         max_steps=cli_config.max_steps,
+        rolling_save_every=cli_config.rolling_save_every,
+        rolling_ttl_seconds=cli_config.rolling_ttl_seconds,
     )
     asyncio.run(train.main(config))
 
