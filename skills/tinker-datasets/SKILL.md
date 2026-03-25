@@ -92,7 +92,7 @@ datum = datum_from_model_input_weights(model_input, weights, max_length)
 
 ## RL datasets
 
-RL datasets return batches of `EnvGroupBuilder` objects. See the `/environments` skill for details.
+RL datasets return batches of `EnvGroupBuilder` objects. See the `/tinker-environments` skill for details.
 
 ```python
 @chz.chz

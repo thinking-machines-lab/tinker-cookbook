@@ -80,7 +80,7 @@ Help the user choose the right model for their task.
 - **Instruction**: Fine-tuned for instruction following. Fast inference, no chain-of-thought.
 - **Reasoning**: Always uses chain-of-thought before visible output.
 - **Hybrid**: Can operate in both thinking and non-thinking modes.
-- **Vision**: Processes images alongside text. See `/renderers` skill for vision input handling.
+- **Vision**: Processes images alongside text. See `/tinker-renderers` skill for vision input handling.
 
 ### Size categories
 - **Compact**: 1B–4B parameters
@@ -102,11 +102,11 @@ Never hardcode renderer names — the mapping is maintained in `model_info.py`.
 
 ## Learning rate by model
 
-Use `hyperparam_utils.get_lr(model_name)` for model-specific LR recommendations. See the `/hyperparams` skill for details.
+Use `hyperparam_utils.get_lr(model_name)` for model-specific LR recommendations. See the `/tinker-hyperparams` skill for details.
 
 ## Common pitfalls
 - MoE models are cheaper than dense — prefer them unless you have a specific reason
 - Base models need full post-training (SFT + alignment) to be useful for chat
 - Instruction models are best for tasks where you want to start from a capable baseline
-- Vision models require `ImageChunk` in messages — see `/renderers` skill
+- Vision models require `ImageChunk` in messages — see `/tinker-renderers` skill
 - Llama models require `HF_TOKEN` for tokenizer download (gated on HuggingFace)

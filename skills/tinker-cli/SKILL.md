@@ -145,5 +145,5 @@ tinker checkpoint push-hf tinker://<RUN_ID>/sampler_weights/final --repo user/my
 ## Common pitfalls
 - `TINKER_API_KEY` must be set — the CLI reads it from the environment
 - Checkpoint paths use the format `tinker://<run-id>/<type>/<checkpoint-id>`
-- `push-hf` uploads the raw checkpoint — for merged HF models, use `weights.build_hf_model()` in Python first (see `/weights` skill)
+- `push-hf` uploads the raw checkpoint — for merged HF models, use `weights.build_hf_model()` in Python first (see `/tinker-weights` skill)
 - `delete` is permanent and irreversible — use `-y` flag carefully

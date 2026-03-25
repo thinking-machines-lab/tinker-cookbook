@@ -34,7 +34,7 @@ Read these files:
 ## Step 3: Configure each stage
 
 ### Stage 1: SFT
-Standard supervised fine-tuning (see `/sft` skill). Key settings:
+Standard supervised fine-tuning (see `/tinker-sft` skill). Key settings:
 - Dataset: NoRobots or similar instruction data
 - `sft_learning_rate`: 2e-4 (LoRA)
 - `train_on_what`: `TrainOnWhat.ALL_ASSISTANT_MESSAGES`
