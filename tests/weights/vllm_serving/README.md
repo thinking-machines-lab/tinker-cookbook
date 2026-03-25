@@ -52,7 +52,7 @@ CUDA_VISIBLE_DEVICES=4   /tmp/vllm-test-env/bin/python -m pytest tests/weights/v
 | GPT-OSS-20B | `test_gpt_oss.py` | Conversion only | mxfp4+LoRA not supported in vLLM |
 | Kimi-K2 | `test_kimi.py` | Placeholder | Model too large for routine testing |
 | DeepSeek V3/V3.1 | `test_deepseek.py` | Placeholder | Intentionally unsupported |
-| Nemotron-3 | `test_nemotron.py` | Placeholder | Adapter conversion not yet implemented |
+| Nemotron-3-Nano-30B-A3B | `test_nemotron.py` | Tested | `backbone.*` → `model.*` remap, TP=2 |
 
 ## Adding a new model
 

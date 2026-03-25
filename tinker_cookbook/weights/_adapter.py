@@ -56,11 +56,17 @@ _UNSUPPORTED_MODEL_TYPES: dict[str, str] = {
         "serving in vLLM or SGLang. "
         "Use build_hf_model to merge the adapter into a full HF model instead."
     ),
-    "nemotron_h": (
-        "Nemotron-3 (model_type='nemotron_h') adapter conversion is not yet supported "
-        "(non-standard 'backbone.*' weight prefix needs investigation). "
-        "Use build_hf_model to merge the adapter into a full HF model instead."
-    ),
+}
+
+# Serving frameworks (vLLM, SGLang) may rename weight prefixes when loading
+# HF checkpoints. For example, vLLM's NemotronH WeightsMapper converts
+# "backbone.*" → "model.*". PEFT adapter keys must match the serving
+# framework's internal parameter names, not the original HF checkpoint names.
+#
+# Map from model_type → list of (old, new) prefix replacements to apply to
+# PEFT output keys.
+_SERVING_PREFIX_REMAPS: dict[str, tuple[tuple[str, str], ...]] = {
+    "nemotron_h": (("backbone.", "model."),),
 }
 
 # Expert remapping: Tinker internal names → HuggingFace parameter names.
@@ -143,6 +149,11 @@ def build_lora_adapter(
         # Core conversion: remap keys, expand experts, produce PEFT tensors.
         peft_weights, target_modules = _convert_adapter(adapter_weights, model_state_keys, profile)
 
+        # Apply serving-framework prefix remaps (e.g., backbone.* → model.* for Nemotron).
+        model_type = config_dict.get("model_type", "")
+        if model_type in _SERVING_PREFIX_REMAPS:
+            peft_weights = _apply_serving_prefix_remaps(peft_weights, model_type)
+
         # Write output.
         peft_config = _build_peft_config(adapter_config, base_model, target_modules)
         _write_peft_adapter(out, peft_weights, peft_config)
@@ -168,6 +179,27 @@ def _check_model_support(config_dict: dict) -> None:
     model_type = config_dict.get("model_type", "")
     if model_type in _UNSUPPORTED_MODEL_TYPES:
         raise WeightsAdapterError(_UNSUPPORTED_MODEL_TYPES[model_type])
+
+
+def _apply_serving_prefix_remaps(
+    peft_weights: dict[str, torch.Tensor],
+    model_type: str,
+) -> dict[str, torch.Tensor]:
+    """Remap PEFT key prefixes so they match the serving framework's internal names.
+
+    Some models use non-standard prefixes in their HF checkpoints (e.g.,
+    Nemotron uses ``backbone.*`` instead of ``model.*``). Serving frameworks
+    like vLLM remap these at load time, so PEFT adapter keys must match the
+    remapped names, not the original HF checkpoint names.
+    """
+    remaps = _SERVING_PREFIX_REMAPS[model_type]
+    remapped: dict[str, torch.Tensor] = {}
+    for key, tensor in peft_weights.items():
+        new_key = key
+        for old, new in remaps:
+            new_key = new_key.replace(old, new)
+        remapped[new_key] = tensor
+    return remapped
 
 
 def _warn_experimental_moe(profile: MergeProfile) -> None:
