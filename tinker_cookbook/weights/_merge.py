@@ -1,11 +1,14 @@
 """LoRA adapter merge logic.
 
-Provides shared merge primitives used by all export strategies:
+Shared infrastructure for all model families:
 
 - ``MergeProfile`` / ``detect_merge_profile``: model-specific merge configuration
 - ``MergeOp`` / ``plan_merge_ops`` / ``apply_merge_op``: plan-then-execute merge pipeline
 - ``merge_lora_matrices`` / ``expand_expert_lora_tensors``: low-level math utilities
 - ``merge_adapter_weights``: backward-compatible convenience wrapper
+
+Per-model planning lives in ``_merge_<model>.py`` modules. This file provides
+the shared primitives they compose and the dispatch layer that routes to them.
 """
 
 from __future__ import annotations
@@ -22,6 +25,12 @@ if TYPE_CHECKING:
 
     # Profile detector: (config_dict, model_state_keys) -> MergeProfile | None
     _ProfileDetector = Callable[[dict, "set[str]"], "MergeProfile | None"]
+
+    # Per-model planning function
+    _PlanFn = Callable[
+        [dict, dict, "set[str]", "MergeProfile"],
+        "dict[str, list[MergeOp]]",
+    ]
 
 # ---------------------------------------------------------------------------
 # MergeProfile — model-specific merge configuration
@@ -66,6 +75,19 @@ class MergeProfile:
     has_language_model_prefix: bool = False
     """Whether model keys use ``model.language_model.`` prefix (vision models)."""
 
+    model_family: str = "default"
+    """Identifier for the model family. Used to dispatch to the correct
+    per-model planning module in :func:`plan_merge_ops`."""
+
+    split_qkv_projections: bool = False
+    """Whether Tinker trains separate ``in_proj_q/k/v`` LoRA adapters that must
+    be merged into a single fused ``in_proj_qkv`` weight in the HF model. When
+    True, the per-model planner redirects split keys to the fused target with
+    row-slice offsets derived from sibling ``lora_B`` shapes.
+
+    Currently only applies to Qwen3.5 models (hybrid linear attention layers
+    with Q‖K‖V layout where Q, K, V may have unequal dimensions)."""
+
 
 def detect_merge_profile(
     model_config: dict,
@@ -74,12 +96,12 @@ def detect_merge_profile(
     """Detect merge profile from model config and weight key names.
 
     Tries each registered model-specific detector in order. The first one
-    that returns a profile wins. Falls back to :func:`_detect_default_profile`
-    if none match.
+    that returns a profile wins. Falls back to the default detector if none
+    match.
 
-    To add support for a new model family, write a detector function with
-    signature ``(dict, set[str]) -> MergeProfile | None`` and append it to
-    :data:`_PROFILE_DETECTORS`.
+    To add support for a new model family, create a ``_merge_<model>.py``
+    module with ``detect_profile`` and ``plan_merge_ops`` functions, then
+    register it in :data:`_PROFILE_DETECTORS` and :data:`_PLAN_FUNCTIONS`.
 
     Works with both loaded models (full path) and safetensors headers
     (shard path), since both can provide a config dict and key names.
@@ -90,81 +112,48 @@ def detect_merge_profile(
         model_state_keys: Weight key names from the model state dict
             or safetensors headers.
     """
-    for detector in _PROFILE_DETECTORS:
+    for detector in _get_profile_detectors():
         profile = detector(model_config, model_state_keys)
         if profile is not None:
             return profile
-    return _detect_default_profile(model_config, model_state_keys)
+    from tinker_cookbook.weights._merge_default import detect_profile as _detect_default
+
+    return _detect_default(model_config, model_state_keys)
 
 
 # ---------------------------------------------------------------------------
-# Per-model profile detectors
+# Per-model profile detectors and plan functions
 #
-# Each detector returns a MergeProfile if it recognizes the model, or None
-# to pass to the next detector. Add new detectors to _PROFILE_DETECTORS.
+# Each per-model module exports detect_profile() and plan_merge_ops().
+# Detectors are tried in order; first match wins. The plan function is
+# dispatched via model_family on the profile.
 # ---------------------------------------------------------------------------
 
 
-def _detect_gpt_oss_profile(model_config: dict, model_state_keys: set[str]) -> MergeProfile | None:
-    """Detect GPT-OSS models.
+def _get_profile_detectors() -> list[_ProfileDetector]:
+    """Import per-model detectors. Uses function-local imports to avoid
+    circular dependencies (per-model modules import from this file)."""
+    from tinker_cookbook.weights._merge_deepseek import detect_profile as _deepseek
+    from tinker_cookbook.weights._merge_gpt_oss import detect_profile as _gpt_oss
+    from tinker_cookbook.weights._merge_qwen3_5 import detect_profile as _qwen3_5
 
-    GPT-OSS uses ``.attn`` instead of ``.self_attn`` for attention layers, and
-    an interleaved ``[g0, u0, g1, u1, ...]`` layout for fused gate/up expert
-    projections.
-    """
-    architectures = model_config.get("architectures", [])
-    if not any("GptOss" in a for a in architectures):
-        return None
-
-    has_fused = any(k.endswith(".experts.gate_up_proj") for k in model_state_keys)
-    has_lm_prefix = any(k.startswith("model.language_model.") for k in model_state_keys)
-
-    return MergeProfile(
-        expert_layout="fused_interleaved" if has_fused else "separate",
-        extra_key_remaps=((".attn", ".self_attn"),),
-        has_language_model_prefix=has_lm_prefix,
-    )
+    return [_gpt_oss, _deepseek, _qwen3_5]
 
 
-def _detect_default_profile(model_config: dict, model_state_keys: set[str]) -> MergeProfile:
-    """Default profile for models without special merge requirements.
+def _get_plan_functions() -> dict[str, _PlanFn]:
+    """Import per-model plan functions. Uses function-local imports to avoid
+    circular dependencies (per-model modules import from this file)."""
+    from tinker_cookbook.weights._merge_deepseek import plan_merge_ops as _deepseek_plan
+    from tinker_cookbook.weights._merge_default import plan_merge_ops as _default_plan
+    from tinker_cookbook.weights._merge_gpt_oss import plan_merge_ops as _gpt_oss_plan
+    from tinker_cookbook.weights._merge_qwen3_5 import plan_merge_ops as _qwen3_5_plan
 
-    Handles Qwen, DeepSeek, and other standard model families. Detects fused
-    expert layout (concatenated, not interleaved) and vision model prefix
-    from key names alone.
-    """
-    has_fused = any(k.endswith(".experts.gate_up_proj") for k in model_state_keys)
-    has_lm_prefix = any(k.startswith("model.language_model.") for k in model_state_keys)
-
-    return MergeProfile(
-        expert_layout="fused_concatenated" if has_fused else "separate",
-        has_language_model_prefix=has_lm_prefix,
-    )
-
-
-def _detect_deepseek_profile(model_config: dict, model_state_keys: set[str]) -> MergeProfile | None:
-    """Detect DeepSeek V3/V3.1 models.
-
-    DeepSeek uses separate per-expert weights (not fused) and standard key
-    naming. Detection is based on ``model_type`` rather than architecture
-    strings for reliability across versions.
-    """
-    if model_config.get("model_type") not in ("deepseek_v3",):
-        return None
-
-    has_lm_prefix = any(k.startswith("model.language_model.") for k in model_state_keys)
-
-    return MergeProfile(
-        expert_layout="separate",
-        has_language_model_prefix=has_lm_prefix,
-    )
-
-
-# Detectors are tried in order. First match wins.
-_PROFILE_DETECTORS: list = [
-    _detect_gpt_oss_profile,
-    _detect_deepseek_profile,
-]
+    return {
+        "default": _default_plan,
+        "gpt_oss": _gpt_oss_plan,
+        "deepseek": _deepseek_plan,
+        "qwen3_5": _qwen3_5_plan,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +187,18 @@ class MergeOp:
 
     fused_proj_interleaved: bool = False
     """GPT-OSS stores fused gate/up projections interleaved rather than concatenated."""
+
+    slice_start: int | None = None
+    """Row offset into a fused target weight for split projections (e.g.
+    ``in_proj_qkv``). When set, :func:`apply_merge_op` writes the delta only
+    to ``target[slice_start : slice_start + out_dim]``.
+
+    Mutually exclusive with ``is_expert_3d`` — slice targeting is only
+    supported for 2D ops."""
+
+    def __post_init__(self) -> None:
+        if self.slice_start is not None and self.is_expert_3d:
+            raise ValueError("slice_start is not supported for 3D expert ops")
 
 
 # ---------------------------------------------------------------------------
@@ -277,9 +278,10 @@ def plan_merge_ops(
 ) -> dict[str, list[MergeOp]]:
     """Plan all merge operations without executing them.
 
-    Maps adapter weight names to model weight keys using the profile's
-    remapping rules, validates all target keys exist, and returns a dict
-    of pending merge operations grouped by target key.
+    Dispatches to the per-model planning function based on
+    ``profile.model_family``. Each per-model module
+    (``_merge_<model>.py``) provides its own ``plan_merge_ops`` that
+    handles model-specific name remapping and op construction.
 
     Args:
         adapter_weights: LoRA weight tensors from the adapter.
@@ -296,147 +298,14 @@ def plan_merge_ops(
         ValueError: If expert LoRA tensors have unexpected shapes, or
             ``profile.expert_layout`` is invalid.
     """
-    for key in ("lora_alpha", "r"):
-        if key not in adapter_config:
-            raise WeightsMergeError(f"Adapter config missing required key: {key!r}")
-
-    if profile.expert_layout not in _VALID_EXPERT_LAYOUTS:
+    plan_functions = _get_plan_functions()
+    plan_fn = plan_functions.get(profile.model_family)
+    if plan_fn is None:
         raise WeightsMergeError(
-            f"Invalid expert_layout {profile.expert_layout!r}. "
-            f"Must be one of: {sorted(_VALID_EXPERT_LAYOUTS)}"
+            f"Unknown model_family {profile.model_family!r}. "
+            f"Registered families: {sorted(plan_functions)}"
         )
-
-    scaling = adapter_config["lora_alpha"] / adapter_config["r"]
-    adapter_weight_names = [n.replace(".lora_A", "") for n in adapter_weights if ".lora_A" in n]
-
-    if not adapter_weight_names:
-        import logging
-
-        logging.getLogger(__name__).warning(
-            "No LoRA weights found in adapter (no keys containing '.lora_A'). "
-            "The output model will be identical to the base model. "
-            "Check that the adapter path points to a valid Tinker LoRA adapter."
-        )
-
-    is_fused = profile.expert_layout in ("fused_interleaved", "fused_concatenated")
-    is_interleaved = profile.expert_layout == "fused_interleaved"
-
-    # Standard name remapping (order matters: strip prefix before vision remap)
-    name_remaps: list[tuple[str, str]] = [
-        ("base_model.model.", ""),
-        ("model.unembed_tokens", "lm_head"),
-    ]
-    if profile.has_language_model_prefix:
-        name_remaps.append(("model.", "model.language_model."))
-
-    ops: dict[str, list[MergeOp]] = {}
-
-    for n in adapter_weight_names:
-        target_key = n
-        for old, new in name_remaps:
-            target_key = target_key.replace(old, new)
-
-        lora_A = adapter_weights[n.replace(".weight", ".lora_A.weight")].float()
-        lora_B = adapter_weights[n.replace(".weight", ".lora_B.weight")].float() * scaling
-
-        if ".experts" not in n:
-            _plan_non_expert_op(target_key, lora_A, lora_B, n, profile, model_state_keys, ops)
-        else:
-            _plan_expert_ops(
-                target_key, lora_A, lora_B, n, model_state_keys, ops, is_fused, is_interleaved
-            )
-
-    return ops
-
-
-def _plan_non_expert_op(
-    target_key: str,
-    lora_A: torch.Tensor,
-    lora_B: torch.Tensor,
-    adapter_name: str,
-    profile: MergeProfile,
-    model_state_keys: set[str],
-    ops: dict[str, list[MergeOp]],
-) -> None:
-    """Plan a merge op for a standard (non-expert) linear layer."""
-    for old, new in profile.extra_key_remaps:
-        target_key = target_key.replace(old, new)
-
-    if target_key not in model_state_keys:
-        raise WeightsMergeError(
-            f"Adapter weight {adapter_name!r} mapped to {target_key!r} "
-            f"which does not exist in the model state dict"
-        )
-    ops.setdefault(target_key, []).append(
-        MergeOp(target_key=target_key, lora_A=lora_A, lora_B=lora_B)
-    )
-
-
-def _plan_expert_ops(
-    target_key: str,
-    lora_A: torch.Tensor,
-    lora_B: torch.Tensor,
-    adapter_name: str,
-    model_state_keys: set[str],
-    ops: dict[str, list[MergeOp]],
-    is_fused: bool,
-    is_interleaved: bool,
-) -> None:
-    """Plan merge ops for expert weights (separate or fused)."""
-    if lora_A.ndim != 3 or lora_B.ndim != 3:
-        raise WeightsMergeError(
-            f"Expert LoRA weights must be 3D, got lora_A: {lora_A.shape}, lora_B: {lora_B.shape}"
-        )
-    lora_A, lora_B = expand_expert_lora_tensors(lora_A, lora_B)
-
-    # Expert weight name remapping
-    target_key = target_key.replace(".w1.weight", ".gate_proj.weight")
-    target_key = target_key.replace(".w3.weight", ".up_proj.weight")
-    target_key = target_key.replace(".w2.weight", ".down_proj.weight")
-
-    if not is_fused:
-        # Separate per-expert weights: create one 2D MergeOp per expert
-        for exp_idx in range(lora_A.shape[0]):
-            target_key_exp = target_key.replace(".experts", f".experts.{exp_idx}")
-            if target_key_exp not in model_state_keys:
-                raise WeightsMergeError(
-                    f"Adapter weight {adapter_name!r} mapped to {target_key_exp!r} "
-                    f"which does not exist in the model state dict"
-                )
-            ops.setdefault(target_key_exp, []).append(
-                MergeOp(
-                    target_key=target_key_exp,
-                    lora_A=lora_A[exp_idx],
-                    lora_B=lora_B[exp_idx],
-                )
-            )
-    else:
-        # Fused expert weights: create one 3D MergeOp
-        fused_proj_idx: int | None = None
-        if target_key.endswith(".gate_proj.weight"):
-            fused_proj_idx = 0
-            target_key = target_key.replace(".gate_proj.weight", ".gate_up_proj")
-        elif target_key.endswith(".up_proj.weight"):
-            fused_proj_idx = 1
-            target_key = target_key.replace(".up_proj.weight", ".gate_up_proj")
-        else:
-            target_key = target_key.replace(".down_proj.weight", ".down_proj")
-
-        if target_key not in model_state_keys:
-            raise WeightsMergeError(
-                f"Adapter weight {adapter_name!r} mapped to {target_key!r} "
-                f"which does not exist in the model state dict"
-            )
-        ops.setdefault(target_key, []).append(
-            MergeOp(
-                target_key=target_key,
-                lora_A=lora_A,
-                lora_B=lora_B,
-                is_expert_3d=True,
-                fused_proj_idx=fused_proj_idx,
-                fused_proj_interleaved=is_interleaved,
-            )
-        )
+    return plan_fn(adapter_weights, adapter_config, model_state_keys, profile)
 
 
 def validate_merge_op_shapes(
@@ -486,7 +355,17 @@ def validate_merge_op_shapes(
             else:
                 # 2D: delta = lora_B @ lora_A → (out_dim, in_dim)
                 delta_shape = (op.lora_B.shape[0], op.lora_A.shape[1])
-                if delta_shape != target_shape:
+                if op.slice_start is not None:
+                    # Sliced op: check in_dim matches and slice fits within target rows
+                    end = op.slice_start + delta_shape[0]
+                    if delta_shape[1] != target_shape[1] or end > target_shape[0]:
+                        raise WeightsMergeError(
+                            f"Shape mismatch for {target_key!r} "
+                            f"slice [{op.slice_start}:{end}]: "
+                            f"merge op produces {delta_shape} "
+                            f"but target has shape {target_shape}"
+                        )
+                elif delta_shape != target_shape:
                     raise WeightsMergeError(
                         f"Shape mismatch for {target_key!r}: "
                         f"merge op produces {delta_shape} but target expects {target_shape}"
@@ -527,7 +406,11 @@ def apply_merge_op(tensors: dict[str, torch.Tensor], op: MergeOp) -> None:
     else:
         # 2D: standard linear or per-expert (already sliced during planning)
         delta = merge_lora_matrices(op.lora_A, op.lora_B)
-        apply_merged_weight(tensors[op.target_key], delta)
+        if op.slice_start is not None:
+            target = tensors[op.target_key]
+            apply_merged_weight(target[op.slice_start : op.slice_start + delta.shape[0]], delta)
+        else:
+            apply_merged_weight(tensors[op.target_key], delta)
 
 
 # ---------------------------------------------------------------------------

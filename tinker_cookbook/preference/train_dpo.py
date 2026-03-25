@@ -123,7 +123,7 @@ def create_dpo_clients(
             base_model=config.model_name, rank=config.lora_rank, user_metadata=user_metadata
         )
     # Create a sampling client for the reference model from the training client
-    reference_client = training_client.save_weights_and_get_sampling_client("reference")
+    reference_client = training_client.save_weights_and_get_sampling_client()
     return training_client, reference_client
 
 
@@ -341,7 +341,9 @@ def do_update(
     window.write_spans_jsonl(Path(log_path) / "timing_spans.jsonl", step=step)
     if config.span_chart_every > 0 and step % config.span_chart_every == 0:
         iter_dir = iteration_dir(log_path, step)
-        trace.save_gantt_chart_html(window, step, iter_dir / "timing_gantt.html")
+        if iter_dir is not None:
+            iter_dir.mkdir(parents=True, exist_ok=True)
+            trace.save_gantt_chart_html(window, step, iter_dir / "timing_gantt.html")
     ml_logger.log_metrics(metrics=metrics, step=step)
 
 

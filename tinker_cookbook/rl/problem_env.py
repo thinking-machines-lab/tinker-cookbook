@@ -9,6 +9,7 @@ from tinker_cookbook import renderers
 from tinker_cookbook.completers import StopCondition
 from tinker_cookbook.rl.types import (
     Action,
+    ActionExtra,
     Env,
     EnvGroupBuilder,
     Metrics,
@@ -60,7 +61,7 @@ class ProblemEnv(Env):
         ]
         return self.renderer.build_generation_prompt(convo), self.stop_condition
 
-    async def step(self, action: Action) -> StepResult:
+    async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
         convo = self.convo_prefix + [{"role": "user", "content": self.get_question()}]
         message, parse_success = self.renderer.parse_response(action)
         content = renderers.get_text_content(message)

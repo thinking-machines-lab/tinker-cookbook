@@ -44,6 +44,7 @@ __all__ = [
     "WeightsError",
     "WeightsDownloadError",
     "WeightsMergeError",
+    "WeightsAdapterError",
     "SandboxError",
 ]
 
@@ -181,6 +182,17 @@ class WeightsMergeError(WeightsError, ValueError):
     (shape mismatches, missing keys, etc.).  Inherits from
     :class:`ValueError` because merge errors are validation failures
     (wrong shapes, missing config keys).
+    """
+
+
+class WeightsAdapterError(WeightsError, ValueError):
+    """Failed to convert a Tinker LoRA adapter to PEFT format.
+
+    Raised when the adapter cannot be converted for serving — e.g. the
+    model family is not supported for adapter serving, adapter key names
+    cannot be remapped, or tensor shapes are inconsistent.  Inherits
+    from :class:`ValueError` because adapter conversion errors are
+    validation failures.
     """
 
 

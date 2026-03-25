@@ -12,12 +12,9 @@ import pytest
 from tinker_cookbook import renderers
 from tinker_cookbook.renderers import (
     ContentPart,
-    DeepSeekV3ThinkingRenderer,
-    GptOssRenderer,
     ImagePart,
     Message,
     MessageDelta,
-    Qwen3Renderer,
     RenderContext,
     Renderer,
     Role,
@@ -40,8 +37,11 @@ from tinker_cookbook.renderers import (
     unregister_renderer,
 )
 from tinker_cookbook.renderers.base import ensure_list
+from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3ThinkingRenderer
+from tinker_cookbook.renderers.gpt_oss import GptOssRenderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
+from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
 
 # ---------------------------------------------------------------------------
 # Type exports

@@ -130,9 +130,9 @@ def _get_hendrycks_math_train() -> Dataset:
     dataset_name = "EleutherAI/hendrycks_math"
     configs = get_dataset_config_names(dataset_name)
     pieces = []
-    for cfg in configs:
+    for dataset_config in configs:
         for split in ("train", "test"):
-            ds = load_dataset(dataset_name, name=cfg, split=split)
+            ds = load_dataset(dataset_name, name=dataset_config, split=split)
             ds = ds.filter(lambda example: example["problem"] not in test_problems)
             pieces.append(ds)
     full_dataset = concatenate_datasets(pieces)

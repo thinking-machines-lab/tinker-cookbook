@@ -37,7 +37,11 @@ import tinker
 
 from tinker_cookbook import renderers
 from tinker_cookbook.model_info import get_recommended_renderer_name
-from tinker_cookbook.renderers.base import ToolCall, ToolSpec
+from tinker_cookbook.renderers.base import ToolCall
+from tinker_cookbook.third_party.openai_compat import (
+    openai_messages_to_tinker,
+    openai_tools_to_tinker,
+)
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 
 try:
@@ -51,7 +55,7 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers: message/tool conversion, sampling, response building
+# Internal helpers: sampling pipeline and response building
 # ---------------------------------------------------------------------------
 
 
@@ -67,41 +71,6 @@ class _SamplingResult:
     model_name: str
 
 
-def _convert_openai_messages(messages: list[dict[str, Any]]) -> list[renderers.Message]:
-    """Convert OpenAI/LiteLLM message dicts to tinker-cookbook Messages."""
-    out: list[renderers.Message] = []
-    for msg in messages:
-        tinker_msg: renderers.Message = {
-            "role": msg["role"],
-            "content": msg.get("content") or "",
-        }
-        if "name" in msg:
-            tinker_msg["name"] = msg["name"]
-        if "tool_call_id" in msg:
-            tinker_msg["tool_call_id"] = msg["tool_call_id"]
-        if "tool_calls" in msg:
-            tinker_msg["tool_calls"] = [ToolCall.model_validate(tc) for tc in msg["tool_calls"]]
-        out.append(tinker_msg)
-    return out
-
-
-def _convert_openai_tools(tools: list[dict[str, Any]]) -> list[ToolSpec]:
-    """Convert OpenAI-format tool dicts to renderer ToolSpec."""
-    out: list[ToolSpec] = []
-    for tool in tools:
-        if tool.get("type") != "function":
-            continue
-        func = tool["function"]
-        out.append(
-            ToolSpec(
-                name=func["name"],
-                description=func.get("description", ""),
-                parameters=func.get("parameters", {}),
-            )
-        )
-    return out
-
-
 def _prepare_messages_with_tools(
     renderer: renderers.Renderer,
     messages: list[renderers.Message],
@@ -113,7 +82,7 @@ def _prepare_messages_with_tools(
     ``renderer.create_conversation_prefix_with_tools``, and prepends the
     resulting prefix messages to the remaining conversation.
     """
-    tool_specs = _convert_openai_tools(tools)
+    tool_specs = openai_tools_to_tinker(tools)
 
     # Split out system message if present
     system_prompt = ""
@@ -143,7 +112,7 @@ async def _sample_chat_completion(
     model_name: str = "tinker",
 ) -> _SamplingResult:
     """Run the full render -> sample -> parse pipeline."""
-    tinker_messages = _convert_openai_messages(messages)
+    tinker_messages = openai_messages_to_tinker(messages)
 
     if tools:
         tinker_messages = _prepare_messages_with_tools(renderer, tinker_messages, tools)

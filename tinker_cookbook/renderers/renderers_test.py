@@ -29,13 +29,13 @@ import uuid
 from collections.abc import Callable
 
 import pytest
+from PIL import Image
 
+from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.image_processing_utils import get_image_processor
 from tinker_cookbook.model_info import get_model_attributes, get_recommended_renderer_name
 from tinker_cookbook.renderers import (
-    DeepSeekV3ThinkingRenderer,
     Message,
-    Qwen3Renderer,
     TextPart,
     ThinkingPart,
     ToolCall,
@@ -46,10 +46,18 @@ from tinker_cookbook.renderers import (
     register_renderer,
     unregister_renderer,
 )
-from tinker_cookbook.renderers.base import ContentPart, ensure_list, ensure_text
+from tinker_cookbook.renderers.base import (
+    ContentPart,
+    ImagePart,
+    ensure_list,
+    ensure_text,
+    format_content_as_string,
+)
+from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3ThinkingRenderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
 from tinker_cookbook.renderers.nemotron3 import Nemotron3Renderer
+from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
 from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
 from tinker_cookbook.renderers.testing_utils import (
     extract_token_ids,
@@ -1463,3 +1471,44 @@ def test_register_and_get_custom_tokenizer(cleanup_custom_tokenizer):
     # Unregister and verify it falls back to HF (which will fail for fake name)
     unregister_tokenizer(custom_name)
     assert not is_tokenizer_registered(custom_name)
+
+
+# ---------------------------------------------------------------------------
+# format_content_as_string – image and unknown-type handling
+# ---------------------------------------------------------------------------
+
+
+class TestFormatContentAsStringImages:
+    def test_image_pil_object(self) -> None:
+        content: list[ContentPart] = [ImagePart(type="image", image=Image.new("RGB", (10, 10)))]
+        assert format_content_as_string(content) == "<image>Image(10x10, RGB)</image>"
+
+    def test_image_string_url(self) -> None:
+        content: list[ContentPart] = [ImagePart(type="image", image="https://example.com/img.png")]
+        assert format_content_as_string(content) == "<image>https://example.com/img.png</image>"
+
+    def test_mixed_content(self) -> None:
+        content = [
+            TextPart(type="text", text="Before"),
+            ImagePart(type="image", image=Image.new("RGB", (20, 15))),
+            TextPart(type="text", text="After"),
+        ]
+        assert (
+            format_content_as_string(content) == "Before\n<image>Image(20x15, RGB)</image>\nAfter"
+        )
+
+    def test_custom_separator(self) -> None:
+        content = [
+            TextPart(type="text", text="A"),
+            ImagePart(type="image", image=Image.new("RGBA", (5, 5))),
+            TextPart(type="text", text="B"),
+        ]
+        assert (
+            format_content_as_string(content, separator=" | ")
+            == "A | <image>Image(5x5, RGBA)</image> | B"
+        )
+
+    def test_unknown_type_raises(self) -> None:
+        content: list[ContentPart] = [{"type": "audio", "data": b"..."}]  # type: ignore[list-item]
+        with pytest.raises(RendererError, match="Unknown content part type: audio"):
+            format_content_as_string(content)

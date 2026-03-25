@@ -4,10 +4,7 @@ import pytest
 
 from tinker_cookbook.renderers import (
     ContentPart,
-    DeepSeekV3ThinkingRenderer,
-    GptOssRenderer,
     Message,
-    Qwen3Renderer,
     RenderContext,
     TextPart,
     ThinkingPart,
@@ -21,9 +18,14 @@ from tinker_cookbook.renderers.base import (
     _longest_matching_suffix_prefix,
     ensure_list,
 )
-from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3DisableThinkingRenderer
+from tinker_cookbook.renderers.deepseek_v3 import (
+    DeepSeekV3DisableThinkingRenderer,
+    DeepSeekV3ThinkingRenderer,
+)
+from tinker_cookbook.renderers.gpt_oss import GptOssRenderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
+from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
 from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
 from tinker_cookbook.renderers.testing_utils import skip_if_deepseek_tokenizer_bug
 from tinker_cookbook.tokenizer_utils import get_tokenizer

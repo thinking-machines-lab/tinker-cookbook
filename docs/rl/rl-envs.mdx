@@ -14,7 +14,7 @@ class Env:
     async def initial_observation(self) -> tuple[Observation, StopCondition]:
         raise NotImplementedError
 
-    async def step(self, action: Action) -> StepResult:
+    async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
         raise NotImplementedError
 ```
 

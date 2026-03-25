@@ -20,6 +20,7 @@ from tinker_cookbook.exceptions import ConfigurationError, DataError
 from tinker_cookbook.rl.problem_env import ProblemEnv, ProblemGroupBuilder, logger
 from tinker_cookbook.rl.types import (
     Action,
+    ActionExtra,
     EnvGroupBuilder,
     RLDataset,
     RLDatasetBuilder,
@@ -109,7 +110,7 @@ class PromptOnlyEnv(ProblemEnv):
         """No reference answer needed for distillation."""
         return ""
 
-    async def step(self, action: Action) -> StepResult:
+    async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
         """Return zero reward always."""
         message, parse_success = self.renderer.parse_response(action)
         return StepResult(

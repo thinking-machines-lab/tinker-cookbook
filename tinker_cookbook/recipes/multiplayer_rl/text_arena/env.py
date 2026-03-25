@@ -22,6 +22,7 @@ from tinker_cookbook.completers import StopCondition, TinkerMessageCompleter
 from tinker_cookbook.renderers import Message, Renderer, get_renderer, get_text_content
 from tinker_cookbook.rl.types import (
     Action,
+    ActionExtra,
     Env,
     EnvGroupBuilder,
     Observation,
@@ -138,7 +139,7 @@ class TwoPlayerEnv(Env):
         opponent_action_content = get_text_content(opponent_response)
         await self.coordinator.make_move(opponent_player_id, opponent_action_content)
 
-    async def step(self, action: Action) -> StepResult:
+    async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
         """Take a step in the environment."""
         if self.coordinator.game_done:
             return self.get_done_step()

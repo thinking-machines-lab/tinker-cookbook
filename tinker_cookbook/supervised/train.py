@@ -96,7 +96,6 @@ class SubmittedBatch:
     infrequent_eval_metrics: dict[str, float] | None = None
 
 
-@trace.scope
 async def run_evals(
     evaluators: list[Evaluator],
     training_client: tinker.TrainingClient,
@@ -112,7 +111,6 @@ async def run_evals(
     checkpoint. Returned metrics are prefixed with ``test/`` so they can be logged next
     to the same-step training metrics.
     """
-    trace.update_scope_context({"step": step})
 
     metrics = {}
     sampling_client = None
@@ -134,9 +132,7 @@ async def run_evals(
             nonlocal sampling_client
             if sampling_client is None:
                 # Snapshot the current pre-step weights and create a new sampling client.
-                sampling_client = await training_client.save_weights_and_get_sampling_client_async(
-                    f"evals_step_{step}"
-                )
+                sampling_client = await training_client.save_weights_and_get_sampling_client_async()
             return await evaluator(sampling_client)
         else:
             raise ConfigurationError(f"Unknown evaluator type: {type(evaluator)}")
@@ -360,7 +356,11 @@ async def main(config: Config):
         window.write_spans_jsonl(log_path / "timing_spans.jsonl", step=submitted.step)
         if config.span_chart_every > 0 and submitted.step % config.span_chart_every == 0:
             iter_dir = iteration_dir(log_path, submitted.step)
-            trace.save_gantt_chart_html(window, submitted.step, iter_dir / "timing_gantt.html")
+            if iter_dir is not None:
+                iter_dir.mkdir(parents=True, exist_ok=True)
+                trace.save_gantt_chart_html(
+                    window, submitted.step, iter_dir / "timing_gantt.html"
+                )
         ml_logger.log_metrics(metrics=submitted.metrics, step=submitted.step)
 
     reached_max_steps = False

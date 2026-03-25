@@ -13,6 +13,7 @@ from tinker_cookbook.completers import TinkerTokenCompleter, TokenCompleter
 from tinker_cookbook.exceptions import AllTrajectoriesFailedError
 from tinker_cookbook.rl.rollout_strategy import FailFast, RolloutStrategy
 from tinker_cookbook.rl.types import (
+    ActionExtra,
     Env,
     EnvGroupBuilder,
     Trajectory,
@@ -123,7 +124,10 @@ async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
         async with trace.scope_span("policy_sample"):
             ac_with_logprobs = await policy(ob, stop_condition)
         async with trace.scope_span("env_step"):
-            step_result = await env.step(ac_with_logprobs.tokens)
+            step_result = await env.step(
+                ac_with_logprobs.tokens,
+                extra=ActionExtra(stop_reason=ac_with_logprobs.stop_reason),
+            )
         transition = Transition(
             ob=ob,
             ac=ac_with_logprobs,

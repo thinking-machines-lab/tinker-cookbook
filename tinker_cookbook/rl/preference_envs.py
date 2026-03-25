@@ -19,6 +19,7 @@ from tinker_cookbook.preference.types import (
 )
 from tinker_cookbook.rl.types import (
     Action,
+    ActionExtra,
     Env,
     EnvGroupBuilder,
     Metrics,
@@ -52,7 +53,7 @@ class PreferenceEnv(Env):
     async def initial_observation(self) -> tuple[Observation, StopCondition]:
         return self.policy_renderer.build_generation_prompt(self.convo_prefix), self.stop_condition
 
-    async def step(self, action: Action) -> StepResult:
+    async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
         """Compute the reward for a given action.
 
         Args:

@@ -97,7 +97,7 @@ def not_none(x: T | None) -> T:
 
 
 def iteration_dir(log_path: str | Path | None, step: int) -> Path | None:
-    """Return the per-iteration subdirectory, creating it if it doesn't exist.
+    """Return the per-iteration subdirectory path for one training step.
 
     Output files for each training step are grouped under
     ``log_path/iteration_NNNNNN/`` to keep the top-level directory manageable.
@@ -105,6 +105,4 @@ def iteration_dir(log_path: str | Path | None, step: int) -> Path | None:
     """
     if not log_path:
         return None
-    d = Path(log_path) / f"iteration_{step:06d}"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    return Path(log_path) / f"iteration_{step:06d}"
