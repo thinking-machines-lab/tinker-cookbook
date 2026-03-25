@@ -45,7 +45,6 @@ from tinker_cookbook.rl.rollout_logging import (
     rollout_summaries_jsonl_path,
     write_rollout_summaries_jsonl_from_groups,
 )
-
 from tinker_cookbook.rl.rollout_strategy import (
     RolloutStrategy,
     rollout_strategy_from_config,
