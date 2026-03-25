@@ -358,9 +358,7 @@ async def main(config: Config):
             iter_dir = iteration_dir(log_path, submitted.step)
             if iter_dir is not None:
                 iter_dir.mkdir(parents=True, exist_ok=True)
-                trace.save_gantt_chart_html(
-                    window, submitted.step, iter_dir / "timing_gantt.html"
-                )
+                trace.save_gantt_chart_html(window, submitted.step, iter_dir / "timing_gantt.html")
         ml_logger.log_metrics(metrics=submitted.metrics, step=submitted.step)
 
     reached_max_steps = False

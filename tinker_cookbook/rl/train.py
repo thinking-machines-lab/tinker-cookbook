@@ -653,10 +653,13 @@ async def do_sync_training_with_stream_minibatch(
             metrics.update(error_counter.get_metrics())
         metrics.update(window.get_timing_metrics())
         window.write_spans_jsonl(Path(config.log_path) / "timing_spans.jsonl", step=i_batch)
-        if config.span_chart_every > 0 and i_batch % config.span_chart_every == 0:
-            if iter_dir is not None:
-                iter_dir.mkdir(parents=True, exist_ok=True)
-                trace.save_gantt_chart_html(window, i_batch, iter_dir / "timing_gantt.html")
+        if (
+            config.span_chart_every > 0
+            and i_batch % config.span_chart_every == 0
+            and iter_dir is not None
+        ):
+            iter_dir.mkdir(parents=True, exist_ok=True)
+            trace.save_gantt_chart_html(window, i_batch, iter_dir / "timing_gantt.html")
         ml_logger.log_metrics(metrics, step=i_batch)
 
 
@@ -1453,10 +1456,13 @@ async def do_sync_training(
         if error_counter is not None:
             metrics.update(error_counter.get_metrics())
         window.write_spans_jsonl(Path(config.log_path) / "timing_spans.jsonl", step=i_batch)
-        if config.span_chart_every > 0 and i_batch % config.span_chart_every == 0:
-            if iter_dir is not None:
-                iter_dir.mkdir(parents=True, exist_ok=True)
-                trace.save_gantt_chart_html(window, i_batch, iter_dir / "timing_gantt.html")
+        if (
+            config.span_chart_every > 0
+            and i_batch % config.span_chart_every == 0
+            and iter_dir is not None
+        ):
+            iter_dir.mkdir(parents=True, exist_ok=True)
+            trace.save_gantt_chart_html(window, i_batch, iter_dir / "timing_gantt.html")
         ml_logger.log_metrics(metrics, step=i_batch)
 
 
