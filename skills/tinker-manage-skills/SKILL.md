@@ -31,9 +31,6 @@ All skills in `skills/` are organized into 5 layers:
 **Scope:** Development workflow — scaffolding, testing, CI, code style, skill maintenance.
 **Key principle:** Reference `CONTRIBUTING.md`, `tests/`, `.github/workflows/`.
 
-### Meta: `tinker-update-skills`
-**Scope:** Managing skill installation via the plugin marketplace.
-
 ## Creating a new skill
 
 ### Step 1: Determine the layer
@@ -145,13 +142,11 @@ skills/
 │   ├── tinker-dpo/              # Direct Preference Optimization
 │   ├── tinker-rlhf/             # RLHF pipeline
 │   └── tinker-multiturn-rl/     # Multi-turn RL
-├── Layer 4: Development
-│   ├── tinker-new-recipe/       # Scaffold new recipe
-│   ├── tinker-ci/               # Testing and CI
-│   ├── tinker-contributing/     # Dev setup and code style
-│   └── tinker-manage-skills/    # This skill
-└── Meta
-    └── tinker-update-skills/    # Plugin marketplace installation
+└── Layer 4: Development
+    ├── tinker-new-recipe/       # Scaffold new recipe
+    ├── tinker-ci/               # Testing and CI
+    ├── tinker-contributing/     # Dev setup and code style
+    └── tinker-manage-skills/    # This skill
 ```
 
 ## Maintenance schedule

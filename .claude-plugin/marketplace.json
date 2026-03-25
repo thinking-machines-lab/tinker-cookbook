@@ -34,8 +34,7 @@
         "./skills/tinker-distillation",
         "./skills/tinker-dpo",
         "./skills/tinker-rlhf",
-        "./skills/tinker-multiturn-rl",
-        "./skills/tinker-update-skills"
+        "./skills/tinker-multiturn-rl"
       ]
     },
     {
