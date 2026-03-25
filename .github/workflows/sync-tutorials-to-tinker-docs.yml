@@ -3,11 +3,11 @@ name: Sync tutorials to tinker-docs
 on:
   pull_request:
     paths:
-      - 'tutorials/marimo/*.py'
+      - 'tutorials/*.py'
   push:
     branches: [main]
     paths:
-      - 'tutorials/marimo/*.py'
+      - 'tutorials/*.py'
   workflow_dispatch:
 
 jobs:
@@ -30,14 +30,14 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             # On manual trigger, export all tutorials
-            CHANGED=$(ls tutorials/marimo/*.py | xargs -n1 basename | paste -sd, -)
+            CHANGED=$(ls tutorials/*.py | xargs -n1 basename | paste -sd, -)
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
             # On PR, compare against base branch
             git fetch origin ${{ github.base_ref }} --depth=1
-            CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- 'tutorials/marimo/*.py' | xargs -n1 basename 2>/dev/null | paste -sd, -)
+            CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- 'tutorials/*.py' | xargs -n1 basename 2>/dev/null | paste -sd, -)
           else
             # On push to main, compare with previous commit
-            CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'tutorials/marimo/*.py' | xargs -n1 basename | paste -sd, -)
+            CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'tutorials/*.py' | xargs -n1 basename | paste -sd, -)
           fi
           echo "files=$CHANGED" >> "$GITHUB_OUTPUT"
           echo "Changed tutorials: $CHANGED"
@@ -59,16 +59,16 @@ jobs:
         env:
           TINKER_API_KEY: ${{ secrets.TINKER_API_KEY }}
         run: |
-          mkdir -p tutorials/marimo/html
+          mkdir -p tutorials/html
 
           IFS=',' read -ra FILES <<< "${{ steps.changes.outputs.files }}"
           for file in "${FILES[@]}"; do
             name="${file%.py}"
             echo "::group::Exporting $file"
             uv run marimo export html \
-              "tutorials/marimo/$file" \
+              "tutorials/$file" \
               --include-code \
-              -o "tutorials/marimo/html/$name.html" || {
+              -o "tutorials/html/$name.html" || {
                 echo "::warning::Failed to export $file"
                 continue
               }
@@ -80,7 +80,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tutorial-html-preview
-          path: tutorials/marimo/html/*.html
+          path: tutorials/html/*.html
           retention-days: 14
 
       - name: Comment on PR with preview link
@@ -109,9 +109,9 @@ jobs:
         id: changes
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            CHANGED=$(ls tutorials/marimo/*.py | xargs -n1 basename | paste -sd, -)
+            CHANGED=$(ls tutorials/*.py | xargs -n1 basename | paste -sd, -)
           else
-            CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'tutorials/marimo/*.py' | xargs -n1 basename | paste -sd, -)
+            CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'tutorials/*.py' | xargs -n1 basename | paste -sd, -)
           fi
           echo "files=$CHANGED" >> "$GITHUB_OUTPUT"
 
@@ -128,16 +128,16 @@ jobs:
         run: |
           uv sync
           uv pip install marimo
-          mkdir -p tutorials/marimo/html
+          mkdir -p tutorials/html
 
           IFS=',' read -ra FILES <<< "${{ steps.changes.outputs.files }}"
           for file in "${FILES[@]}"; do
             name="${file%.py}"
             echo "Exporting $file -> $name.html"
             uv run marimo export html \
-              "tutorials/marimo/$file" \
+              "tutorials/$file" \
               --include-code \
-              -o "tutorials/marimo/html/$name.html" || {
+              -o "tutorials/html/$name.html" || {
                 echo "WARNING: Failed to export $file, skipping"
                 continue
               }
@@ -156,7 +156,7 @@ jobs:
         run: |
           # Copy exported HTML to tinker-docs public directory
           mkdir -p tinker-docs/public/tutorials
-          cp tutorials/marimo/html/*.html tinker-docs/public/tutorials/ 2>/dev/null || true
+          cp tutorials/html/*.html tinker-docs/public/tutorials/ 2>/dev/null || true
 
           # Create wrapper MDX pages with iframes
           mkdir -p tinker-docs/pages/tutorials

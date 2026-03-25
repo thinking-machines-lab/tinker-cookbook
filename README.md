@@ -54,18 +54,18 @@ See [tinker_cookbook/recipes/sl_loop.py](tinker_cookbook/recipes/sl_loop.py) and
 
 ### Tutorials
 
-New to Tinker? The [`tutorials/`](tutorials/) directory has 6 progressive Jupyter notebooks that guide you from your first API call to building custom RL training pipelines:
+New to Tinker? The [`tutorials/`](tutorials/) directory has 6 progressive [marimo](https://marimo.io/) notebooks that guide you from your first API call to building custom RL training pipelines:
 
 | # | Notebook | What you'll learn |
 |---|----------|-------------------|
-| 01 | [Hello Tinker](tutorials/01_hello_tinker.ipynb) | Architecture overview, client hierarchy, sampling |
-| 02 | [First SFT](tutorials/02_first_sft.ipynb) | Renderers, datum construction, training loop |
-| 03 | [Efficient Sampling](tutorials/03_async_patterns.ipynb) | Concurrent futures, `num_samples`, batch evaluation throughput |
-| 04 | [First RL](tutorials/04_first_rl.ipynb) | GRPO on GSM8K: rewards, advantages, degenerate groups |
-| 05 | [Cookbook RL Abstractions](tutorials/05_custom_task.ipynb) | `Env`, `EnvGroupBuilder`, `RLDataset`, `ProblemEnv` |
-| 06 | [Custom RL Environment](tutorials/06_custom_env.ipynb) | Build your own `ProblemEnv` and `RLDataset` |
+| 01 | [Hello Tinker](tutorials/01_hello_tinker.py) | Architecture overview, client hierarchy, sampling |
+| 02 | [First SFT](tutorials/02_first_sft.py) | Renderers, datum construction, training loop, Kimi K2.5 scaling demo |
+| 03 | [Efficient Sampling](tutorials/03_async_patterns.py) | Concurrent futures, `num_samples`, batch evaluation throughput |
+| 04 | [First RL](tutorials/04_first_rl.py) | GRPO on GSM8K: rewards, advantages, degenerate groups |
+| 05 | [Cookbook RL Abstractions](tutorials/05_custom_task.py) | `Env`, `EnvGroupBuilder`, `RLDataset`, `ProblemEnv` |
+| 06 | [Custom RL Environment](tutorials/06_custom_env.py) | Build your own `ProblemEnv` and `RLDataset` |
 
-All notebooks include pre-executed outputs so you can follow along without API access.
+Run any tutorial with `marimo edit tutorials/01_hello_tinker.py`. Rendered versions are available on the [Tinker docs site](https://tinker-docs.thinkingmachines.ai/tutorials).
 
 To download the weights of any model:
 ```python
