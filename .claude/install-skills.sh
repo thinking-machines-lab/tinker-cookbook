@@ -35,9 +35,10 @@ find_skills_src() {
     if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "bash" ]]; then
         local script_dir
         script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        local candidate="$script_dir/skills"
+        # Skills are at <repo>/skills/, script is at <repo>/.claude/install-skills.sh
+        local candidate="$script_dir/../skills"
         if [[ -d "$candidate" ]]; then
-            echo "$candidate"
+            echo "$(cd "$candidate" && pwd)"
             return
         fi
     fi
@@ -49,9 +50,9 @@ find_skills_src() {
     else
         echo "Cloning tinker-cookbook (sparse, skills only) ..." >&2
         git clone --depth=1 --filter=blob:none --sparse "$REPO_URL" "$CACHE_DIR" -q </dev/null
-        git -C "$CACHE_DIR" sparse-checkout set .claude/skills </dev/null
+        git -C "$CACHE_DIR" sparse-checkout set skills </dev/null
     fi
-    echo "$CACHE_DIR/.claude/skills"
+    echo "$CACHE_DIR/skills"
 }
 
 remove_skills() {

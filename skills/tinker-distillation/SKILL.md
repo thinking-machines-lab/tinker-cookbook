@@ -1,7 +1,6 @@
 ---
 name: tinker-distillation
 description: Set up and run knowledge distillation (on-policy, off-policy, or multi-teacher) from a teacher model to a student model using the Tinker API. Use when the user wants to distill knowledge, compress models, or train a student from a teacher.
-argument-hint: "[student-model] [teacher-model]"
 ---
 
 # Knowledge Distillation

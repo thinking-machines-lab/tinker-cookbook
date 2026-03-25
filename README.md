@@ -96,14 +96,14 @@ Tinker cookbook includes several utilities. Here's a quick overview:
 
 Tinker Cookbook ships with [Claude Code skills](https://docs.anthropic.com/en/docs/claude-code/skills) that teach Claude how to use the Tinker API — SFT, RL, DPO, renderers, environments, and more. Install them globally so Claude can help you in any project:
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/thinking-machines-lab/tinker-cookbook/main/.claude/install-skills.sh | bash
+```
+/plugin marketplace add thinking-machines-lab/tinker-cookbook
 ```
 
-Or from a local clone:
+Or via the standalone installer:
 
 ```bash
-bash .claude/install-skills.sh
+curl -fsSL https://raw.githubusercontent.com/thinking-machines-lab/tinker-cookbook/main/.claude/install-skills.sh | bash
 ```
 
 Once installed, use `/tinker-sft`, `/tinker-grpo`, `/tinker-setup`, etc. in Claude Code. To update or uninstall, ask Claude `/tinker-update-skills`.

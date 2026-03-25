@@ -1,8 +1,6 @@
 ---
 name: tinker-manage-skills
 description: Create, update, or organize Claude Code skills in this repo. Use when adding a new skill, reviewing existing skills for consistency, or maintaining the skill taxonomy.
-disable-model-invocation: true
-argument-hint: "[create|update|audit] [skill-name]"
 ---
 
 # Manage Claude Code Skills
@@ -11,7 +9,7 @@ This meta-skill governs how skills are created and maintained in the tinker-cook
 
 ## Skill taxonomy
 
-All skills in `.claude/skills/` are organized into 5 layers:
+All skills in `skills/` are organized into 5 layers:
 
 ### Layer 0: Fundamentals (`setup`, `models`, `hyperparams`, `logging`)
 **Scope:** Getting started, model selection, hyperparameter guidance, training output analysis. Cross-cutting concerns needed before touching any code.
@@ -44,18 +42,16 @@ All skills in `.claude/skills/` are organized into 5 layers:
 Which layer does this skill belong to? Skills should have a clear, non-overlapping scope. If it spans layers, split it.
 
 ### Step 2: Check for overlap
-Read existing skills in `.claude/skills/` to ensure the new skill doesn't duplicate content. If there's overlap, update the existing skill instead.
+Read existing skills in `skills/` to ensure the new skill doesn't duplicate content. If there's overlap, update the existing skill instead.
 
 ### Step 3: Create the skill file
 
-Create `.claude/skills/<skill-name>/SKILL.md` with this structure:
+Create `skills/<skill-name>/SKILL.md` with this structure:
 
 ```yaml
 ---
 name: <skill-name>
 description: <Clear description of what the skill does and when to use it>
-argument-hint: "[optional args]"  # Only if the skill takes arguments
-disable-model-invocation: true    # Only for manual-trigger skills (Layer 4 actions)
 ---
 
 # <Skill Title>
@@ -97,8 +93,7 @@ disable-model-invocation: true    # Only for manual-trigger skills (Layer 4 acti
 
 **Frontmatter rules:**
 - `description` is required and must clearly state **when** to trigger the skill
-- Use `disable-model-invocation: true` only for action-oriented Layer 4 skills
-- Use `argument-hint` if the skill takes positional arguments
+- Follow the [Agent Skills spec](https://agentskills.io/specification) for frontmatter fields
 
 ## Auditing existing skills
 
@@ -113,7 +108,7 @@ When auditing, check each skill for:
 ## Current skill inventory
 
 ```
-.claude/skills/
+skills/
 ├── Layer 0: Fundamentals
 │   ├── tinker-setup/            # Installation, API key, first run
 │   ├── tinker-models/           # Model lineup, selection, families

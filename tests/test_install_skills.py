@@ -9,7 +9,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALL_SCRIPT = REPO_ROOT / ".claude" / "install-skills.sh"
-SKILLS_DIR = REPO_ROOT / ".claude" / "skills"
+SKILLS_DIR = REPO_ROOT / "skills"
 
 
 def _parse_excluded_from_script() -> set[str]:

@@ -1,7 +1,6 @@
 ---
 name: tinker-rlhf
 description: Set up and run the full RLHF pipeline (SFT, reward model training, RL from reward model) using the Tinker API. Use when the user wants to do RLHF, train a reward model, or run the full preference-based RL pipeline.
-argument-hint: "[model-name]"
 ---
 
 # RL from Human Feedback (RLHF) Pipeline

@@ -1,7 +1,6 @@
 ---
 name: tinker-multiturn-rl
 description: Set up and run multi-turn RL training for interactive environments (terminal tasks, tool use, search/RAG, games) using the Tinker API. Use when the user wants multi-turn RL, agentic training, tool-use RL, or interactive environment training.
-argument-hint: "[model-name] [environment-type]"
 ---
 
 # Multi-Turn RL Training

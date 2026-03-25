@@ -1,7 +1,6 @@
 ---
 name: tinker-dpo
 description: Set up and run Direct Preference Optimization (DPO) training on preference datasets using the Tinker API. Use when the user wants to train with preference data, chosen/rejected pairs, or DPO.
-argument-hint: "[model-name] [dataset]"
 ---
 
 # Direct Preference Optimization (DPO)

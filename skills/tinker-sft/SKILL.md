@@ -1,7 +1,6 @@
 ---
 name: tinker-sft
 description: Set up and run supervised fine-tuning (SFT) on instruction or chat datasets using the Tinker API. Use when the user wants to do instruction tuning, chat fine-tuning, or supervised learning.
-argument-hint: "[model-name] [dataset]"
 ---
 
 # Supervised Fine-Tuning (SFT)

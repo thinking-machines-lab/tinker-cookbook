@@ -1,7 +1,6 @@
 ---
 name: tinker-grpo
 description: Set up and run reinforcement learning with verifiable rewards (RLVR/GRPO) for math, code, or custom environments using the Tinker API. Use when the user wants to do RL training, GRPO, reward-based optimization, or train with verifiable rewards.
-argument-hint: "[model-name] [environment]"
 ---
 
 # Group Relative Policy Optimization (GRPO / RL)

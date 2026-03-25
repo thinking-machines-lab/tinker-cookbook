@@ -1,8 +1,6 @@
 ---
 name: tinker-new-recipe
 description: Scaffold a new training recipe for the Tinker cookbook following repo conventions. Use when the user wants to create a new recipe, training script, or experiment.
-disable-model-invocation: true
-argument-hint: "[recipe-name]"
 ---
 
 # Create a New Training Recipe
