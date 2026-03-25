@@ -79,7 +79,8 @@ Adapter serving has been verified end-to-end with vLLM 0.18:
 | Kimi-K2 | Supported (DeepSeekV2) | ⚠️ Conversion verified; model too large (~1TB) for routine e2e testing |
 | Kimi-K2.5 | Not supported | ⚠️ Conversion verified; vLLM 0.18 lacks LoRA for `KimiK25ForConditionalGeneration` |
 | DeepSeek V3/V3.1 | Not supported | ❌ Adapter conversion blocked |
-| Nemotron-3 (30B-A3B) | Full support (vLLM) | ✅ Verified (`backbone.*` → `model.*` remap) |
+| Nemotron-3-Nano (30B-A3B) | Full support (vLLM) | ✅ Verified (`backbone.*` → `model.*` remap, TP=2) |
+| Nemotron-3-Super (120B-A12B) | Full support (vLLM) | ✅ Verified (`backbone.*` → `model.*` remap, TP=4) |
 
 See `tests/weights/vllm_serving/` for the serving test suite.
 

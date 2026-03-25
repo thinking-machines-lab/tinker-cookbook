@@ -50,9 +50,11 @@ CUDA_VISIBLE_DEVICES=4   /tmp/vllm-test-env/bin/python -m pytest tests/weights/v
 | Qwen3-30B-A3B (MoE) | `test_qwen3.py` | Tested | Expert expansion, TP=2 |
 | Qwen3.5-4B (split QKV) | `test_qwen3_5.py` | Tested | Split in_proj_q/k/v + full_attention |
 | GPT-OSS-20B | `test_gpt_oss.py` | Conversion only | mxfp4+LoRA not supported in vLLM |
-| Kimi-K2 | `test_kimi.py` | Placeholder | Model too large for routine testing |
+| Kimi-K2 | `test_kimi.py` | Placeholder | ~1TB bf16, too large; vLLM LoRA supported via DeepSeekV2 |
+| Kimi-K2.5 | `test_kimi.py` | Placeholder | vLLM 0.18 lacks LoRA for KimiK25ForConditionalGeneration |
 | DeepSeek V3/V3.1 | `test_deepseek.py` | Placeholder | Intentionally unsupported |
 | Nemotron-3-Nano-30B-A3B | `test_nemotron.py` | Tested | `backbone.*` → `model.*` remap, TP=2 |
+| Nemotron-3-Super-120B-A12B | `test_nemotron.py` | Tested | `backbone.*` → `model.*` remap, TP=4 |
 
 ## Adding a new model
 
