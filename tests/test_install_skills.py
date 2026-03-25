@@ -23,21 +23,10 @@ def _parse_excluded_from_script() -> set[str]:
 # Derived from the script itself — not a separate hardcoded list
 EXCLUDED_SKILLS = _parse_excluded_from_script()
 
-# Skills already prefixed with tinker-
-ALREADY_PREFIXED = {
-    d.name for d in SKILLS_DIR.iterdir() if d.is_dir() and d.name.startswith("tinker-")
-}
-
 
 def _all_skill_dirs() -> list[str]:
     """Return all skill directory names."""
     return [d.name for d in SKILLS_DIR.iterdir() if d.is_dir()]
-
-
-def _expected_global_name(name: str) -> str:
-    if name.startswith("tinker-"):
-        return name
-    return f"tinker-{name}"
 
 
 def _run_install(home: Path, *extra_args: str) -> subprocess.CompletedProcess[str]:
@@ -59,29 +48,27 @@ class TestInstallSkills:
     def test_installs_all_non_excluded_skills(self, fake_home: Path):
         _run_install(fake_home)
         installed = {p.name for p in (fake_home / ".claude" / "skills").iterdir()}
-        all_skills = _all_skill_dirs()
 
-        for skill in all_skills:
-            expected = _expected_global_name(skill)
+        for skill in _all_skill_dirs():
             if skill in EXCLUDED_SKILLS:
-                assert expected not in installed, f"{skill} should be excluded"
+                assert skill not in installed, f"{skill} should be excluded"
             else:
-                assert expected in installed, f"{skill} should be installed as {expected}"
+                assert skill in installed, f"{skill} should be installed"
 
     def test_excludes_dev_skills(self, fake_home: Path):
         _run_install(fake_home)
         installed = {p.name for p in (fake_home / ".claude" / "skills").iterdir()}
 
         for skill in EXCLUDED_SKILLS:
-            assert f"tinker-{skill}" not in installed
+            assert skill not in installed
 
-    def test_prefix_not_doubled(self, fake_home: Path):
-        _run_install(fake_home)
-        installed = {p.name for p in (fake_home / ".claude" / "skills").iterdir()}
-
-        for skill in ALREADY_PREFIXED:
-            assert skill in installed, f"{skill} should keep its name"
-            assert f"tinker-{skill}" not in installed, f"{skill} should not be double-prefixed"
+    def test_all_skills_have_tinker_prefix(self):
+        """Every skill directory must start with tinker-."""
+        for skill in _all_skill_dirs():
+            assert skill.startswith("tinker-"), (
+                f"Skill directory '{skill}' must start with 'tinker-'. "
+                f"Rename it to 'tinker-{skill}'."
+            )
 
     def test_symlinks_point_to_skill_dirs(self, fake_home: Path):
         _run_install(fake_home)
@@ -148,13 +135,12 @@ class TestInstallSkills:
         installed = {p.name for p in (fake_home / ".claude" / "skills").iterdir()}
 
         for skill in _all_skill_dirs():
-            expected = _expected_global_name(skill)
             in_excluded = skill in EXCLUDED_SKILLS
-            in_installed = expected in installed
+            in_installed = skill in installed
             assert in_excluded or in_installed, (
                 f"Skill '{skill}' is neither excluded in install-skills.sh "
-                f"nor installed as '{expected}'. Add it to the EXCLUDED list "
-                f"in .claude/install-skills.sh if it should not be globally installed."
+                f"nor installed. Add it to the EXCLUDED list in "
+                f".claude/install-skills.sh if it should not be globally installed."
             )
 
     def test_excluded_skills_exist(self):

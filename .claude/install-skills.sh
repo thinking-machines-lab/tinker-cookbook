@@ -18,7 +18,7 @@ CACHE_DIR="${HOME}/.claude/tinker-cookbook"
 SKILLS_DST="${HOME}/.claude/skills"
 
 # Layer 4 (dev-only) skills — excluded from global install
-EXCLUDED=(ci contributing new-recipe manage-skills)
+EXCLUDED=(tinker-ci tinker-contributing tinker-new-recipe tinker-manage-skills)
 
 is_excluded() {
     local name="$1"
@@ -26,16 +26,6 @@ is_excluded() {
         [[ "$name" == "$exc" ]] && return 0
     done
     return 1
-}
-
-# Compute the global name: add tinker- prefix unless already present
-global_name() {
-    local name="$1"
-    if [[ "$name" == tinker-* ]]; then
-        echo "$name"
-    else
-        echo "tinker-$name"
-    fi
 }
 
 # Determine the skills source directory.
@@ -72,7 +62,7 @@ remove_skills() {
         local name
         name="$(basename "$dir")"
         is_excluded "$name" && continue
-        local link="$SKILLS_DST/$(global_name "$name")"
+        local link="$SKILLS_DST/$name"
         if [[ -L "$link" ]]; then
             rm "$link"
             echo "  removed $link"
@@ -91,17 +81,15 @@ install_skills() {
         local name
         name="$(basename "$dir")"
         is_excluded "$name" && continue
-        local gname
-        gname="$(global_name "$name")"
-        local link="$SKILLS_DST/$gname"
+        local link="$SKILLS_DST/$name"
         if [[ -L "$link" ]]; then
             rm "$link"  # refresh existing symlink
         elif [[ -e "$link" ]]; then
-            echo "  SKIP $gname (non-symlink already exists at $link)"
+            echo "  SKIP $name (non-symlink already exists at $link)"
             continue
         fi
         ln -s "$(cd "$dir" && pwd)" "$link"
-        echo "  $gname"
+        echo "  $name"
         count=$((count + 1))
     done
     echo "Installed $count skills. Use '/tinker-<name>' in Claude Code."
