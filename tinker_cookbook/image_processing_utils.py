@@ -7,6 +7,7 @@ Avoid importing AutoImageProcessor and BaseImageProcessor until runtime, because
 
 from __future__ import annotations
 
+import logging
 import os
 from functools import cache
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -27,6 +28,7 @@ else:
 def get_image_processor(model_name: str) -> ImageProcessor:
     model_name = model_name.split(":")[0]
 
+    import transformers
     from transformers.models.auto.image_processing_auto import AutoImageProcessor
 
     kwargs: dict[str, Any] = {}
@@ -38,6 +40,19 @@ def get_image_processor(model_name: str) -> ImageProcessor:
         kwargs["revision"] = "3367c8d1c68584429fab7faf845a32d5195b6ac1"
 
     processor = AutoImageProcessor.from_pretrained(model_name, use_fast=True, **kwargs)
+
+    if not getattr(processor, "is_fast", False) and tuple(
+        int(x) for x in transformers.__version__.split(".")[:2]
+    ) < (5, 0):
+        logging.getLogger(__name__).warning(
+            "Loaded a slow (non-fast) image processor on transformers <5.0. "
+            "The slow Qwen2VLImageProcessor has a known bug that ignores the model's "
+            "min_pixels/max_pixels config, producing wrong image token counts. "
+            "This causes 'Expected N tokens, got M from image' errors from the Tinker server. "
+            "Upgrade to transformers >=5.0 or install torchvision to enable the fast processor. "
+            "See https://github.com/huggingface/transformers/issues/42910"
+        )
+
     return processor
 
 
