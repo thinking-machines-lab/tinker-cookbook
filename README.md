@@ -60,7 +60,7 @@ New to Tinker? The [`tutorials/`](tutorials/) directory has 6 progressive Jupyte
 |---|----------|-------------------|
 | 01 | [Hello Tinker](tutorials/01_hello_tinker.ipynb) | Architecture overview, client hierarchy, sampling |
 | 02 | [First SFT](tutorials/02_first_sft.ipynb) | Renderers, datum construction, training loop |
-| 03 | [Async Patterns](tutorials/03_async_patterns.ipynb) | Double-await pattern, pipelining, timing comparisons |
+| 03 | [Efficient Sampling](tutorials/03_async_patterns.ipynb) | Concurrent futures, `num_samples`, batch evaluation throughput |
 | 04 | [First RL](tutorials/04_first_rl.ipynb) | GRPO on GSM8K: rewards, advantages, degenerate groups |
 | 05 | [Cookbook RL Abstractions](tutorials/05_custom_task.ipynb) | `Env`, `EnvGroupBuilder`, `RLDataset`, `ProblemEnv` |
 | 06 | [Custom RL Environment](tutorials/06_custom_env.ipynb) | Build your own `ProblemEnv` and `RLDataset` |
