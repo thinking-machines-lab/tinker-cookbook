@@ -16,7 +16,8 @@ A guided introduction to Tinker, from your first API call to building custom RL 
 | 02 | [Your First SFT](02_first_sft.ipynb) | Renderers, datum construction, `forward_backward` + `optim_step`, verifying the model learned | ~5 min |
 | 03 | [Async Patterns](03_async_patterns.ipynb) | Double-await pattern, pipelining across steps, timing comparisons | ~5 min |
 | 04 | [First RL](04_first_rl.ipynb) | GRPO on GSM8K: reward functions, group-relative advantages, degenerate groups | ~10 min |
-| 05 | [Custom Task](05_custom_task.ipynb) | Adapt the RL pattern to your own dataset and reward function | ~10 min |
+| 05 | [Cookbook RL Abstractions](05_custom_task.ipynb) | `Env`, `EnvGroupBuilder`, `RLDataset`, `ProblemEnv` — how the raw loop maps to reusable types | ~10 min |
+| 06 | [Custom RL Environment](06_custom_env.ipynb) | Build your own `ProblemEnv` subclass and `RLDataset` for a new task | ~10 min |
 
 Work through them in order -- each builds on concepts from the previous one.
 
