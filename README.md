@@ -52,6 +52,21 @@ sampling_client.sample(...)
 
 See [tinker_cookbook/recipes/sl_loop.py](tinker_cookbook/recipes/sl_loop.py) and [tinker_cookbook/recipes/rl_loop.py](tinker_cookbook/recipes/rl_loop.py) for minimal examples of using these primitives to fine-tune LLMs.
 
+### Tutorials
+
+New to Tinker? The [`tutorials/`](tutorials/) directory has 6 progressive Jupyter notebooks that guide you from your first API call to building custom RL training pipelines:
+
+| # | Notebook | What you'll learn |
+|---|----------|-------------------|
+| 01 | [Hello Tinker](tutorials/01_hello_tinker.ipynb) | Architecture overview, client hierarchy, sampling |
+| 02 | [First SFT](tutorials/02_first_sft.ipynb) | Renderers, datum construction, training loop |
+| 03 | [Async Patterns](tutorials/03_async_patterns.ipynb) | Double-await pattern, pipelining, timing comparisons |
+| 04 | [First RL](tutorials/04_first_rl.ipynb) | GRPO on GSM8K: rewards, advantages, degenerate groups |
+| 05 | [Cookbook RL Abstractions](tutorials/05_custom_task.ipynb) | `Env`, `EnvGroupBuilder`, `RLDataset`, `ProblemEnv` |
+| 06 | [Custom RL Environment](tutorials/06_custom_env.ipynb) | Build your own `ProblemEnv` and `RLDataset` |
+
+All notebooks include pre-executed outputs so you can follow along without API access.
+
 To download the weights of any model:
 ```python
 rest_client = service_client.create_rest_client()
