@@ -1,67 +1,30 @@
-"""Tests for .claude/install-skills.sh"""
+"""Tests for skills/ directory structure and marketplace.json consistency."""
 
-import os
-import re
-import subprocess
+import json
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
-INSTALL_SCRIPT = REPO_ROOT / ".claude" / "install-skills.sh"
 SKILLS_DIR = REPO_ROOT / "skills"
+MARKETPLACE_JSON = REPO_ROOT / ".claude-plugin" / "marketplace.json"
 
 
-def _parse_excluded_from_script() -> set[str]:
-    """Parse the EXCLUDED=(...) array from install-skills.sh."""
-    text = INSTALL_SCRIPT.read_text()
-    match = re.search(r"EXCLUDED=\(([^)]+)\)", text)
-    assert match, "Could not find EXCLUDED=(...) in install-skills.sh"
-    return set(match.group(1).split())
-
-
-# Derived from the script itself — not a separate hardcoded list
-EXCLUDED_SKILLS = _parse_excluded_from_script()
-
-
-def _all_skill_dirs() -> list[str]:
+def _all_skill_dirs() -> set[str]:
     """Return all skill directory names."""
-    return [d.name for d in SKILLS_DIR.iterdir() if d.is_dir()]
+    return {d.name for d in SKILLS_DIR.iterdir() if d.is_dir()}
 
 
-def _run_install(home: Path, *extra_args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["bash", str(INSTALL_SCRIPT), *extra_args],
-        env={**os.environ, "HOME": str(home)},
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+def _marketplace_skills() -> set[str]:
+    """Return all skill directory names referenced in marketplace.json."""
+    data = json.loads(MARKETPLACE_JSON.read_text())
+    names = set()
+    for plugin in data["plugins"]:
+        for path in plugin["skills"]:
+            # paths are like "./skills/tinker-sft"
+            names.add(path.rsplit("/", 1)[-1])
+    return names
 
 
-@pytest.fixture()
-def fake_home(tmp_path: Path) -> Path:
-    return tmp_path
-
-
-class TestInstallSkills:
-    def test_installs_all_non_excluded_skills(self, fake_home: Path):
-        _run_install(fake_home)
-        installed = {p.name for p in (fake_home / ".claude" / "skills").iterdir()}
-
-        for skill in _all_skill_dirs():
-            if skill in EXCLUDED_SKILLS:
-                assert skill not in installed, f"{skill} should be excluded"
-            else:
-                assert skill in installed, f"{skill} should be installed"
-
-    def test_excludes_dev_skills(self, fake_home: Path):
-        _run_install(fake_home)
-        installed = {p.name for p in (fake_home / ".claude" / "skills").iterdir()}
-
-        for skill in EXCLUDED_SKILLS:
-            assert skill not in installed
-
+class TestSkillStructure:
     def test_all_skills_have_tinker_prefix(self):
         """Every skill directory must start with tinker-."""
         for skill in _all_skill_dirs():
@@ -70,87 +33,62 @@ class TestInstallSkills:
                 f"Rename it to 'tinker-{skill}'."
             )
 
-    def test_symlinks_point_to_skill_dirs(self, fake_home: Path):
-        _run_install(fake_home)
-        skills_dst = fake_home / ".claude" / "skills"
+    def test_all_skills_have_skill_md(self):
+        """Every skill directory must contain a SKILL.md file."""
+        for skill in _all_skill_dirs():
+            assert (SKILLS_DIR / skill / "SKILL.md").exists(), (
+                f"Skill directory '{skill}' is missing SKILL.md"
+            )
 
-        for link in skills_dst.iterdir():
-            assert link.is_symlink(), f"{link.name} should be a symlink"
-            target = link.resolve()
-            assert target.is_dir(), f"{link.name} should point to a directory"
-            assert (target / "SKILL.md").exists(), f"{link.name} target should contain SKILL.md"
-
-    def test_remove_cleans_up(self, fake_home: Path):
-        _run_install(fake_home)
-        skills_dst = fake_home / ".claude" / "skills"
-        assert any(skills_dst.iterdir()), "Skills should be installed first"
-
-        _run_install(fake_home, "--remove")
-        remaining = list(skills_dst.iterdir())
-        assert remaining == [], f"All symlinks should be removed, but found: {remaining}"
-
-    def test_idempotent(self, fake_home: Path):
-        _run_install(fake_home)
-        first_run = {p.name for p in (fake_home / ".claude" / "skills").iterdir()}
-
-        _run_install(fake_home)
-        second_run = {p.name for p in (fake_home / ".claude" / "skills").iterdir()}
-
-        assert first_run == second_run
-
-    def test_skips_non_symlink_collision(self, fake_home: Path):
-        skills_dst = fake_home / ".claude" / "skills"
-        skills_dst.mkdir(parents=True)
-        # Create a real directory that would collide
-        (skills_dst / "tinker-sft").mkdir()
-        (skills_dst / "tinker-sft" / "dummy.txt").write_text("user content")
-
-        result = _run_install(fake_home)
-        assert "SKIP tinker-sft" in result.stdout
-
-        # Verify the real directory was not replaced
-        assert (skills_dst / "tinker-sft" / "dummy.txt").exists()
-        assert not (skills_dst / "tinker-sft").is_symlink()
-
-    def test_creates_skills_dir_if_missing(self, fake_home: Path):
-        assert not (fake_home / ".claude").exists()
-        _run_install(fake_home)
-        assert (fake_home / ".claude" / "skills").is_dir()
-
-    def test_skill_count_matches(self, fake_home: Path):
-        """Sanity check: installed count matches expected."""
-        _run_install(fake_home)
-        installed = list((fake_home / ".claude" / "skills").iterdir())
-        expected_count = len(_all_skill_dirs()) - len(EXCLUDED_SKILLS)
-        assert len(installed) == expected_count
-
-    def test_every_skill_is_accounted_for(self, fake_home: Path):
-        """Every skill directory must be either installed or explicitly excluded.
-
-        If this test fails, a new skill was added without deciding whether it
-        should be globally installable. Either add it to the EXCLUDED list in
-        install-skills.sh or leave it as-is to include it.
-        """
-        _run_install(fake_home)
-        installed = {p.name for p in (fake_home / ".claude" / "skills").iterdir()}
+    def test_skill_name_matches_directory(self):
+        """The name field in SKILL.md must match the directory name."""
+        import re
 
         for skill in _all_skill_dirs():
-            in_excluded = skill in EXCLUDED_SKILLS
-            in_installed = skill in installed
-            assert in_excluded or in_installed, (
-                f"Skill '{skill}' is neither excluded in install-skills.sh "
-                f"nor installed. Add it to the EXCLUDED list in "
-                f".claude/install-skills.sh if it should not be globally installed."
+            text = (SKILLS_DIR / skill / "SKILL.md").read_text()
+            match = re.search(r"^name:\s*(.+)$", text, re.MULTILINE)
+            assert match, f"{skill}/SKILL.md is missing a name field"
+            assert match.group(1).strip() == skill, (
+                f"{skill}/SKILL.md has name '{match.group(1).strip()}' but directory is '{skill}'"
             )
 
-    def test_excluded_skills_exist(self):
-        """Every entry in the EXCLUDED list must correspond to an actual skill directory.
+    def test_every_skill_in_marketplace(self):
+        """Every skill directory must be listed in marketplace.json.
 
-        Catches typos or stale entries in the exclusion list.
+        If this test fails, a new skill was added without registering it
+        in .claude-plugin/marketplace.json. Add it to the appropriate
+        plugin bundle (tinker-training or tinker-dev).
         """
-        all_skills = set(_all_skill_dirs())
-        for excluded in EXCLUDED_SKILLS:
-            assert excluded in all_skills, (
-                f"EXCLUDED entry '{excluded}' in install-skills.sh does not match "
-                f"any skill directory in .claude/skills/. Remove it or fix the typo."
+        on_disk = _all_skill_dirs()
+        in_marketplace = _marketplace_skills()
+
+        for skill in on_disk:
+            assert skill in in_marketplace, (
+                f"Skill '{skill}' exists on disk but is not listed in "
+                f".claude-plugin/marketplace.json. Add it to a plugin bundle."
             )
+
+    def test_marketplace_skills_exist(self):
+        """Every skill in marketplace.json must exist on disk.
+
+        Catches typos or stale entries in the marketplace config.
+        """
+        on_disk = _all_skill_dirs()
+        in_marketplace = _marketplace_skills()
+
+        for skill in in_marketplace:
+            assert skill in on_disk, (
+                f"Skill '{skill}' is in marketplace.json but does not exist "
+                f"in skills/. Remove it or fix the path."
+            )
+
+    def test_marketplace_valid_json(self):
+        """marketplace.json must be valid and have required fields."""
+        data = json.loads(MARKETPLACE_JSON.read_text())
+        assert "name" in data
+        assert "plugins" in data
+        for plugin in data["plugins"]:
+            assert "name" in plugin
+            assert "description" in plugin
+            assert "skills" in plugin
+            assert len(plugin["skills"]) > 0

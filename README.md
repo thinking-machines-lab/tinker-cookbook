@@ -100,13 +100,7 @@ Tinker Cookbook ships with [Claude Code skills](https://docs.anthropic.com/en/do
 /plugin marketplace add thinking-machines-lab/tinker-cookbook
 ```
 
-Or via the standalone installer:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/thinking-machines-lab/tinker-cookbook/main/.claude/install-skills.sh | bash
-```
-
-Once installed, use `/tinker-sft`, `/tinker-grpo`, `/tinker-setup`, etc. in Claude Code. To update or uninstall, ask Claude `/tinker-update-skills`.
+Once installed, use `/tinker-sft`, `/tinker-grpo`, `/tinker-setup`, etc. in Claude Code. Skills update automatically from the repo.
 
 ## Development Setup
 
