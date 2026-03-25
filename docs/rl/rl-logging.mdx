@@ -6,18 +6,26 @@ Each RL training run writes files to `log_path`. This page describes each file a
 
 ## Files written to `log_path`
 
+**Top-level files:**
+
 | File | Format | Contents |
 |------|--------|----------|
 | `metrics.jsonl` | JSONL | One JSON object per training iteration with all scalar metrics |
 | `config.json` | JSON | Serialized training config (hyperparams, model, dataset, etc.) |
 | `checkpoints.jsonl` | JSONL | Checkpoint metadata (paths, loop state for resume) |
-| `train_iteration_NNNNNN.html` | HTML | Human-readable logtree report for training rollouts |
-| `train_iteration_NNNNNN_logtree.json` | JSON | Machine-readable export of the same logtree trace |
-| `train_iteration_NNNNNN_rollout_summaries.jsonl` | JSONL | One JSON object per trajectory with rewards, metrics, and step-level data |
-| `eval_<name>_iteration_NNNNNN.html` | HTML | Logtree report for eval rollouts |
-| `eval_<name>_iteration_NNNNNN_logtree.json` | JSON | Machine-readable export of eval logtree trace |
-| `eval_<name>_iteration_NNNNNN_rollout_summaries.jsonl` | JSONL | Per-trajectory eval data (for `RLTestSetEvaluator`) |
 | `code.diff` | text | Git diff at the time training started |
+
+**Per-iteration files** (inside `iteration_NNNNNN/` subdirectories):
+
+| File | Format | Contents |
+|------|--------|----------|
+| `train.html` | HTML | Human-readable logtree report for training rollouts |
+| `train_logtree.json` | JSON | Machine-readable export of the same logtree trace |
+| `train_rollout_summaries.jsonl` | JSONL | One JSON object per trajectory with rewards, metrics, and step-level data |
+| `eval_<name>.html` | HTML | Logtree report for eval rollouts |
+| `eval_<name>_logtree.json` | JSON | Machine-readable export of eval logtree trace |
+| `eval_<name>_rollout_summaries.jsonl` | JSONL | Per-trajectory eval data (for `RLTestSetEvaluator`) |
+| `timing_gantt.html` | HTML | Gantt chart of iteration timing (when `span_chart_every > 0`) |
 
 `<name>` is the evaluator name (sanitized for filenames); iteration numbers are zero-padded to 6 digits.
 
@@ -48,7 +56,7 @@ One line per trajectory. Best for aggregate analysis (reward distributions, per-
 ```python
 import json
 
-with open("train_iteration_000010_rollout_summaries.jsonl") as f:
+with open("iteration_000010/train_rollout_summaries.jsonl") as f:
     trajectories = [json.loads(line) for line in f]
 
 # Each trajectory has:
@@ -79,7 +87,7 @@ def find_conversations(node):
                 results.extend(find_conversations(child))
     return results
 
-with open("eval_test_iteration_000020_logtree.json") as f:
+with open("iteration_000020/eval_test_logtree.json") as f:
     trace = json.load(f)
 
 for conv in find_conversations(trace["root"]):

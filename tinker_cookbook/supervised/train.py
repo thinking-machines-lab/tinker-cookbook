@@ -31,6 +31,7 @@ from tinker_cookbook.supervised.types import SupervisedDatasetBuilder
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.lr_scheduling import LRSchedule, compute_schedule_lr_multiplier
+from tinker_cookbook.utils.misc_utils import iteration_dir
 
 logger = logging.getLogger(__name__)
 
@@ -354,9 +355,10 @@ async def main(config: Config):
         submitted.metrics.update(window.get_timing_metrics())
         window.write_spans_jsonl(log_path / "timing_spans.jsonl", step=submitted.step)
         if config.span_chart_every > 0 and submitted.step % config.span_chart_every == 0:
-            trace.save_gantt_chart_html(
-                window, submitted.step, log_path / f"timing_gantt_{submitted.step:06d}.html"
-            )
+            iter_dir = iteration_dir(log_path, submitted.step)
+            if iter_dir is not None:
+                iter_dir.mkdir(parents=True, exist_ok=True)
+                trace.save_gantt_chart_html(window, submitted.step, iter_dir / "timing_gantt.html")
         ml_logger.log_metrics(metrics=submitted.metrics, step=submitted.step)
 
     reached_max_steps = False

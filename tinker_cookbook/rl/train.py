@@ -64,7 +64,7 @@ from tinker_cookbook.rl.types import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import logtree, ml_log, trace
 from tinker_cookbook.utils.deprecation import warn_deprecated
-from tinker_cookbook.utils.misc_utils import safezip, split_list
+from tinker_cookbook.utils.misc_utils import iteration_dir, safezip, split_list
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +125,8 @@ def _sanitize_filename_component(text: str) -> str:
 def _maybe_export_rollout_summary_jsonl(
     *,
     config: Config,
-    file_prefix: str,
+    output_dir: Path | None,
+    base_name: str,
     split: str,
     iteration: int,
     groups_P: Sequence[RolloutSummaryGroup],
@@ -134,13 +135,13 @@ def _maybe_export_rollout_summary_jsonl(
     Write per-trajectory rollout summaries for one train/eval pass when enabled.
 
     This is a thin policy gate around rollout_logging utilities:
-    - path naming (`<file_prefix>_rollout_summaries.jsonl`)
+    - path naming (`<base_name>_rollout_summaries.jsonl` inside the iteration dir)
     - on/off switch (`config.rollout_json_export`)
     """
-    if not config.rollout_json_export:
+    if not config.rollout_json_export or output_dir is None:
         return
     write_rollout_summaries_jsonl_from_groups(
-        rollout_summaries_jsonl_path(config.log_path, file_prefix),
+        rollout_summaries_jsonl_path(output_dir, base_name),
         split=split,
         iteration=iteration,
         groups_P=groups_P,
@@ -157,27 +158,28 @@ _LOGTREE_EXPLANATION = (
 
 @contextmanager
 def _get_logtree_scope(
-    log_path: str | None, num_groups_to_log: int, f_name: str, scope_name: str
+    output_dir: Path | None, num_groups_to_log: int, f_name: str, scope_name: str
 ) -> Iterator[None]:
     """
     Creates a context manager; all log inside this context will be logged under the section `scope_name`.
-    It will create files with the paths log_path/f_name.html and log_path/f_name_logtree.json.
+    It will create files with the paths output_dir/f_name.html and output_dir/f_name_logtree.json.
     If num_groups_to_log is 0, it will disable logging (but note that this function does not actually implement the logic for logging itself!)
     """
-    if log_path is None or num_groups_to_log <= 0:
+    if output_dir is None or num_groups_to_log <= 0:
         yield
         return
 
-    logtree_path = str(Path(log_path) / f"{f_name}.html")
-    logtree_json_path = str(Path(log_path) / f"{f_name}_logtree.json")
-    trace = None
+    output_dir.mkdir(parents=True, exist_ok=True)
+    logtree_path = str(output_dir / f"{f_name}.html")
+    logtree_json_path = str(output_dir / f"{f_name}_logtree.json")
+    logtree_trace = None
     try:
-        with logtree.init_trace(scope_name, path=logtree_path) as trace:
+        with logtree.init_trace(scope_name, path=logtree_path) as logtree_trace:
             logtree.log_text(_LOGTREE_EXPLANATION)
             yield
     finally:
-        if trace is not None:
-            logtree.write_trace_json(trace, logtree_json_path)
+        if logtree_trace is not None:
+            logtree.write_trace_json(logtree_trace, logtree_json_path)
 
 
 def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]:
@@ -446,22 +448,23 @@ async def run_single_evaluation(
     evaluator_label: str,
 ) -> dict[str, Any]:
     ev_name = _get_evaluator_name(evaluator)
-    eval_file_prefix = f"eval_{evaluator_label}_iteration_{i_batch:06d}"
+    eval_base_name = f"eval_{evaluator_label}"
+    iter_dir = iteration_dir(config.log_path, i_batch)
     with _get_logtree_scope(
-        log_path=config.log_path,
+        output_dir=iter_dir,
         num_groups_to_log=config.num_groups_to_log,
-        f_name=eval_file_prefix,
+        f_name=eval_base_name,
         scope_name=f"Running evaluation {ev_name} {i_batch}",
     ):
         if isinstance(evaluator, RLTestSetEvaluator):
             rollout_summary_export = (
                 RolloutSummaryExportConfig(
-                    path=rollout_summaries_jsonl_path(config.log_path, eval_file_prefix),
+                    path=rollout_summaries_jsonl_path(iter_dir, eval_base_name),
                     split=f"eval/{evaluator_label}",
                     iteration=i_batch,
                     sampling_client_step=i_batch,
                 )
-                if config.rollout_json_export
+                if config.rollout_json_export and iter_dir is not None
                 else None
             )
             eval_metrics = await evaluator(
@@ -553,10 +556,11 @@ async def do_sync_training_with_stream_minibatch(
                     )
                     metrics.update(eval_metrics)
 
+            iter_dir = iteration_dir(config.log_path, i_batch)
             with _get_logtree_scope(
-                config.log_path,
+                iter_dir,
                 config.num_groups_to_log,
-                f"train_iteration_{i_batch:06d}",
+                "train",
                 f"RL Iteration {i_batch}",
             ):
                 # Samplers will produce trajectory groups asynchronously,
@@ -629,7 +633,8 @@ async def do_sync_training_with_stream_minibatch(
 
             _maybe_export_rollout_summary_jsonl(
                 config=config,
-                file_prefix=f"train_iteration_{i_batch:06d}",
+                output_dir=iter_dir,
+                base_name="train",
                 split="train",
                 iteration=i_batch,
                 groups_P=[
@@ -648,10 +653,13 @@ async def do_sync_training_with_stream_minibatch(
             metrics.update(error_counter.get_metrics())
         metrics.update(window.get_timing_metrics())
         window.write_spans_jsonl(Path(config.log_path) / "timing_spans.jsonl", step=i_batch)
-        if config.span_chart_every > 0 and i_batch % config.span_chart_every == 0:
-            trace.save_gantt_chart_html(
-                window, i_batch, Path(config.log_path) / f"timing_gantt_{i_batch:06d}.html"
-            )
+        if (
+            config.span_chart_every > 0
+            and i_batch % config.span_chart_every == 0
+            and iter_dir is not None
+        ):
+            iter_dir.mkdir(parents=True, exist_ok=True)
+            trace.save_gantt_chart_html(window, i_batch, iter_dir / "timing_gantt.html")
         ml_logger.log_metrics(metrics, step=i_batch)
 
 
@@ -898,9 +906,11 @@ async def do_async_training(
                     train_step_metrics,
                     full_batch_wrapped_trajectory_groups,
                 ) = streaming_result
+                iter_dir = iteration_dir(config.log_path, i_batch)
                 _maybe_export_rollout_summary_jsonl(
                     config=config,
-                    file_prefix=f"train_iteration_{i_batch:06d}",
+                    output_dir=iter_dir,
+                    base_name="train",
                     split="train",
                     iteration=i_batch,
                     groups_P=[
@@ -952,9 +962,11 @@ async def do_async_training(
                         [g.env_group_builder for g in wrapped_trajectory_groups],
                         [g.trajectory_group for g in wrapped_trajectory_groups],
                     )
+                iter_dir = iteration_dir(config.log_path, i_batch)
                 _maybe_export_rollout_summary_jsonl(
                     config=config,
-                    file_prefix=f"train_iteration_{i_batch:06d}",
+                    output_dir=iter_dir,
+                    base_name="train",
                     split="train",
                     iteration=i_batch,
                     groups_P=[
@@ -976,9 +988,10 @@ async def do_async_training(
             metrics.update(window.get_timing_metrics())
             window.write_spans_jsonl(Path(config.log_path) / "timing_spans.jsonl", step=i_batch)
             if config.span_chart_every > 0 and i_batch % config.span_chart_every == 0:
-                trace.save_gantt_chart_html(
-                    window, i_batch, Path(config.log_path) / f"timing_gantt_{i_batch:06d}.html"
-                )
+                iter_dir = iteration_dir(config.log_path, i_batch)
+                if iter_dir is not None:
+                    iter_dir.mkdir(parents=True, exist_ok=True)
+                    trace.save_gantt_chart_html(window, i_batch, iter_dir / "timing_gantt.html")
             ml_logger.log_metrics(metrics, step=i_batch)
             i_batch += 1
             wrapped_trajectory_groups = []
@@ -1361,11 +1374,12 @@ async def do_sync_training(
             env_group_builders_P = dataset.get_batch(i_batch)
 
             # Initialize logtree trace for this iteration if logging is enabled
+            iter_dir = iteration_dir(config.log_path, i_batch)
             async with trace.scope_span("sampling"):
                 with _get_logtree_scope(
-                    log_path=config.log_path,
+                    output_dir=iter_dir,
                     num_groups_to_log=config.num_groups_to_log,
-                    f_name=f"train_iteration_{i_batch:06d}",
+                    f_name="train",
                     scope_name=f"RL Iteration {i_batch}",
                 ):
                     # Note: do_remove_constant_reward_groups=False here because we remove
@@ -1406,7 +1420,8 @@ async def do_sync_training(
 
                 _maybe_export_rollout_summary_jsonl(
                     config=config,
-                    file_prefix=f"train_iteration_{i_batch:06d}",
+                    output_dir=iter_dir,
+                    base_name="train",
                     split="train",
                     iteration=i_batch,
                     groups_P=[
@@ -1441,10 +1456,13 @@ async def do_sync_training(
         if error_counter is not None:
             metrics.update(error_counter.get_metrics())
         window.write_spans_jsonl(Path(config.log_path) / "timing_spans.jsonl", step=i_batch)
-        if config.span_chart_every > 0 and i_batch % config.span_chart_every == 0:
-            trace.save_gantt_chart_html(
-                window, i_batch, Path(config.log_path) / f"timing_gantt_{i_batch:06d}.html"
-            )
+        if (
+            config.span_chart_every > 0
+            and i_batch % config.span_chart_every == 0
+            and iter_dir is not None
+        ):
+            iter_dir.mkdir(parents=True, exist_ok=True)
+            trace.save_gantt_chart_html(window, i_batch, iter_dir / "timing_gantt.html")
         ml_logger.log_metrics(metrics, step=i_batch)
 
 
