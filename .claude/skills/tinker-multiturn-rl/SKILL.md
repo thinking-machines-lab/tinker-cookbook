@@ -158,6 +158,19 @@ def test_<recipe_name>():
 
 `run_recipe()` automatically passes `max_steps=2` so the recipe runs 2 training steps and exits. See `tests/recipes/test_recipe_text_arena.py` and `tests/recipes/test_recipe_twenty_questions.py` for existing multi-turn examples. For environment-specific logic (sandbox setup, tool parsing), add unit tests as `*_test.py` next to the source code.
 
+## Context limits & truncation
+
+Multi-turn environments can hit context length limits. The framework handles this automatically:
+- When the conversation exceeds the model's context window, generation is truncated
+- `ActionExtra["response_hit_length_limit"]` is set to `True` when this happens
+- Environments can check this in `step()` to adjust behavior (e.g., end the episode early)
+
+See `tinker_cookbook/rl/message_env.py` for how `MessageEnv` handles context limits.
+
+## Diagnostic logs
+
+`StepResult` supports a `logs` field (dict) for diagnostic information that appears in logtree reports but isn't aggregated as metrics. Use it for per-step debugging data like tool outputs, grading details, etc.
+
 ## Common pitfalls
 - Multi-turn envs are expensive — start with small `groups_per_batch` (4-8)
 - Use `max_steps_off_policy` for async rollouts when env execution is slow
@@ -165,3 +178,4 @@ def test_<recipe_name>():
 - Sandbox timeouts need to be generous enough for complex tasks
 - KV-cache (sequence extension) is key for multi-turn efficiency — see `docs/rl/sequence-extension.mdx`
 - `kl_penalty_coef=0.0` is common for multi-turn since you want the model to explore tool use
+- Use `EnvGroupBuilder.cleanup()` to release expensive resources (sandboxes, connections) after rollouts

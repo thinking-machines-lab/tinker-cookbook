@@ -34,12 +34,14 @@ class MyEnv(Env):
     async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
         """Process model output and return next observation + reward."""
         # action is TokensWithLogprobs (tokens + logprobs)
+        # extra contains optional metadata (e.g., extra["response_hit_length_limit"])
         return StepResult(
-            observation=next_model_input,
-            stop_condition=stop,
+            next_observation=next_model_input,
+            next_stop_condition=stop,
             reward=reward_value,
             episode_done=True,
             metrics={"accuracy": 1.0},
+            logs={"grading_detail": "..."},  # diagnostic info (not aggregated)
         )
 ```
 
@@ -65,6 +67,11 @@ class MyEnvGroupBuilder(EnvGroupBuilder):
 
     def logging_tags(self) -> list[str]:
         return ["my_task"]
+
+    async def cleanup(self) -> None:
+        """Release expensive resources (sandboxes, DB connections, etc.)."""
+        # Called after rollouts + reward computation, regardless of success/failure.
+        pass
 ```
 
 ### RLDatasetBuilder

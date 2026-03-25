@@ -37,8 +37,8 @@ RL requires an environment that produces rewards. Key patterns:
 - `Gsm8kDatasetBuilder` — Grade-school math (from `recipes/math_rl/math_env.py`)
 - `ArithmeticDatasetBuilder` — Simple arithmetic
 - `DeepMathDatasetBuilder`, `PolarisDatasetBuilder` — Advanced math
-- `DeepCoderDatasetBuilder` — Code generation with sandbox
-- `RubricDatasetBuilder` — Rubric-graded tasks
+- `DeepcoderDatasetBuilder` — Code generation with sandbox
+- `RubricGradedDatasetBuilder` — Rubric-graded tasks
 
 **Custom environments:**
 Implement the `Env` protocol from `tinker_cookbook/rl/types.py`. Key points:

@@ -12,7 +12,7 @@ The `tinker_cookbook.weights` subpackage provides a standard pipeline for traine
 Read these for details:
 - `tinker_cookbook/weights/__init__.py` — API overview and workflow example
 - `tinker_cookbook/weights/_download.py` — Download implementation
-- `tinker_cookbook/weights/_export.py` — LoRA merge implementation
+- `tinker_cookbook/weights/_export/` — LoRA merge implementation (full, quantized, sharded)
 - `tinker_cookbook/weights/_publish.py` — HuggingFace Hub publish
 - `docs/download-weights.mdx` — Download guide
 - `docs/publish-weights.mdx` — Publishing guide
@@ -85,8 +85,17 @@ url = weights.publish_to_hf_hub(
 # Returns: URL to published repo
 ```
 
-### `weights.build_lora_adapter()` (not yet implemented)
-Convert Tinker LoRA adapter to standard format for vLLM/SGLang. Currently raises `NotImplementedError` — use `build_hf_model()` instead.
+### `weights.build_lora_adapter()`
+Convert a Tinker LoRA adapter to standard PEFT format for serving with vLLM (`--lora-modules`) or SGLang (`--lora-paths`). Unlike `build_hf_model()`, this does **not** merge weights into the base model — it produces a lightweight adapter directory.
+
+```python
+weights.build_lora_adapter(
+    base_model="Qwen/Qwen3-8B",     # HF model name (for config metadata)
+    adapter_path="./adapter",        # Directory with adapter_model.safetensors
+    output_path="./peft_adapter",    # Where to save PEFT-format adapter
+    trust_remote_code=None,          # Override HF_TRUST_REMOTE_CODE
+)
+```
 
 ## Checkpoint types (during training)
 

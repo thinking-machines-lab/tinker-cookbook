@@ -39,7 +39,7 @@ Match renderer to model family using `model_info.get_recommended_renderer_name(m
 ### TrainOnWhat
 - `TrainOnWhat.ALL_ASSISTANT_MESSAGES` — Train on all assistant turns (most common)
 - `TrainOnWhat.LAST_ASSISTANT_MESSAGE` — Train only on final assistant response
-- `TrainOnWhat.EVERYTHING` — Train on entire conversation including user messages
+- `TrainOnWhat.ALL_TOKENS` — Train on entire conversation including user messages
 
 ### Dataset
 - Built-in: `NoRobotsBuilder`, `Tulu3Builder`
