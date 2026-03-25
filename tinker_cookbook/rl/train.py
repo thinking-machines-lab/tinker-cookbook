@@ -183,7 +183,6 @@ def _get_logtree_scope(
             logtree.write_trace_json(logtree_trace, logtree_json_path)
 
 
-@trace.scope
 def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]:
     assert num_inds <= len(scores)
     sorted_inds = np.argsort(scores)
@@ -191,7 +190,6 @@ def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]
     return [int(sorted_inds[i]) for i in uniform_inds]
 
 
-@trace.scope
 def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
     """
     Print a subset of the trajectory group to the console.
@@ -212,7 +210,6 @@ def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
 
     buf = io.StringIO()
 
-    @trace.scope
     def bprint(s: str):
         print(s, file=buf)
 

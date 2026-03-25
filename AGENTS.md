@@ -87,7 +87,7 @@ Agents often struggle with the nested type hierarchy. Key resources:
 - Logging: `tinker_cookbook/utils/logtree.py`, `tinker_cookbook/rl/rollouts.py`
 - Recipes: `tinker_cookbook/recipes/`
 
-**Training outputs:** RL and SL training write human-readable HTML reports and machine-readable JSON files (metrics, rollout transcripts, per-trajectory summaries) to `log_path`. Per-iteration files live in `iteration_NNNNNN/` subdirectories. Point agents at a `log_path` directory to analyze training runs — `metrics.jsonl` for scalar metrics, `iteration_NNNNNN/*_rollout_summaries.jsonl` for per-trajectory data, and `iteration_NNNNNN/*_logtree.json` for full rollout transcripts including model responses. See `docs/rl/rl-logging.mdx` for the complete file reference and parsing examples.
+**Training outputs:** RL and SL training write human-readable HTML reports and machine-readable JSON files (metrics, rollout transcripts, per-trajectory summaries) to `log_path`. Point agents at a `log_path` directory to analyze training runs — `metrics.jsonl` for scalar metrics, `*_rollout_summaries.jsonl` for per-trajectory data, and `*_logtree.json` for full rollout transcripts including model responses. See `docs/rl/rl-logging.mdx` for the complete file reference and parsing examples.
 
 ---
 
