@@ -123,6 +123,25 @@ Note: IF-RL shows clear reward improvement (+0.058 over 50 steps).
 Paper used batch=128 (vs our 32) and ran 180 steps with dynamic filtering.
 Scaling up batch size and running more steps would likely yield stronger gains.
 
+### Benchmark Evaluation (commit: ef8a12c)
+- Date: 2026-03-26
+- Model: gpt-oss-120b
+- Benchmarks: GSM8K (100 samples), IFEval (100 samples)
+- Temperature: 0.6, max_tokens: 4096
+- Concurrent sampling (64 parallel requests)
+
+| Metric | Base | SFT | IF-RL | Delta |
+|--------|------|-----|-------|-------|
+| **GSM8K accuracy** | 58.0% | 74.0% | **84.0%** | **+26 pts** |
+| IFEval loose | 76.8% | 72.7% | 74.5% | -2.3 then +1.8 |
+| IFEval strict | 56.0% | 50.0% | 52.0% | -6.0 then +2.0 |
+
+Key observations:
+- SFT dramatically improves math (+16 pts) due to heavy math data (100K examples)
+- SFT slightly regresses IF (-4 pts loose) due to domain shift
+- IF-RL recovers instruction following (+1.8 loose, +2.0 strict) while further improving math (+10 pts!)
+- The cascade pipeline works: each stage improves its target without catastrophic forgetting
+
 ## Commit History
 - `8ddbd53` - Initial recipe structure (SFT + IF-RL)
 - `5b17edc` - LR sweep script, fix type annotation
