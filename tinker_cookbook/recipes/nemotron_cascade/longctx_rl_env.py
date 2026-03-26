@@ -326,13 +326,20 @@ def _parse_longcontext_example(row: dict) -> tuple[str, str, str] | None:
     # NarrativeQA format
     if "document" in row and isinstance(row["document"], dict):
         doc = row["document"]
-        context = doc.get("summary") or doc.get("text") or ""
+        # summary and text can be dicts with a "text" key, or strings
+        summary = doc.get("summary", "")
+        if isinstance(summary, dict):
+            summary = summary.get("text", "")
+        text = doc.get("text", "")
+        if isinstance(text, dict):
+            text = text.get("text", "")
+        context = summary or text or ""
         question_obj = row.get("question", {})
         question = question_obj.get("text", "") if isinstance(question_obj, dict) else str(question_obj)
         answers = row.get("answers", [])
         ref = answers[0].get("text", "") if answers and isinstance(answers[0], dict) else ""
         if question and context:
-            return question, context, ref
+            return question, str(context), ref
         return None
 
     # LongBench format
