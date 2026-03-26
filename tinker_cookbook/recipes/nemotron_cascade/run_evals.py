@@ -92,7 +92,7 @@ async def eval_gsm8k(
         ]
 
         try:
-            response = await completer.complete(messages)
+            response = await completer(messages)
             content = renderers.get_text_content(response)
             is_correct = _check_gsm8k(content, expected)
             if is_correct:
@@ -163,7 +163,7 @@ async def eval_ifeval(
         ]
 
         try:
-            response = await completer.complete(messages)
+            response = await completer(messages)
             content = renderers.get_text_content(response)
             fraction, _ = verify_all_instructions(content, instruction_ids, kwargs_list)
             total_score += fraction
@@ -213,7 +213,7 @@ async def run_eval(
 
     service_client = tinker.ServiceClient()
     if checkpoint_path:
-        sampling_client = await service_client.create_sampling_client_from_state_async(checkpoint_path)
+        sampling_client = await service_client.create_sampling_client_async(model_path=checkpoint_path)
         logger.info(f"Loaded checkpoint: {checkpoint_path}")
     else:
         sampling_client = await service_client.create_sampling_client_async(base_model=model_name)
