@@ -86,51 +86,46 @@ async def run_swe_test_in_modal(
     except ImportError:
         return False, "Modal not installed"
 
-    # Create a sandbox that clones the repo and runs tests
+    if not repo or not base_commit or not fail_to_pass:
+        return False, "Missing repo/commit/tests"
+
+    # Escape the patch for bash
+    import base64
+    patch_b64 = base64.b64encode(patch.encode()).decode()
+
+    test_cmds = " && ".join(
+        f'python -m pytest "{t}" -x --timeout=60 2>/dev/null && PASS=$((PASS + 1))'
+        for t in fail_to_pass
+    )
+
     test_script = f"""
-#!/bin/bash
-set -e
-
-# Clone repo
-git clone https://github.com/{repo}.git /workspace/repo 2>/dev/null
+set -x
+git clone --depth=1 https://github.com/{repo}.git /workspace/repo 2>/dev/null || exit 1
 cd /workspace/repo
-git checkout {base_commit} 2>/dev/null
-
-# Apply patch
-echo '{patch.replace("'", "'\"'\"'")}' | git apply - 2>/dev/null || echo "PATCH_FAILED"
-
-# Install deps (best effort)
+git fetch --depth=1 origin {base_commit} 2>/dev/null && git checkout {base_commit} 2>/dev/null || true
+echo '{patch_b64}' | base64 -d | git apply - 2>/dev/null || echo "PATCH_APPLY_FAILED"
 pip install -e . 2>/dev/null || true
-
-# Run tests
 PASS=0
 TOTAL={len(fail_to_pass)}
-"""
-    for test in fail_to_pass:
-        test_script += f"""
-if python -m pytest {test} -x --timeout=60 2>/dev/null; then
-    PASS=$((PASS + 1))
-fi
-"""
-    test_script += """
-echo "RESULT: $PASS/$TOTAL passed"
-if [ "$PASS" -eq "$TOTAL" ]; then
-    exit 0
-else
-    exit 1
-fi
+{test_cmds}
+echo "RESULT: $PASS/$TOTAL"
+test "$PASS" -eq "$TOTAL"
 """
 
     try:
-        sandbox = await modal.Sandbox.create_async(
+        app = await modal.App.lookup.aio("nemotron-cascade-swe-rl", create_if_missing=True)
+        sb = await modal.Sandbox.create.aio(
             "bash", "-c", test_script,
-            image=modal.Image.debian_slim().pip_install("pytest", "pytest-timeout"),
+            image=modal.Image.debian_slim().pip_install("pytest", "pytest-timeout", "setuptools"),
+            app=app,
             timeout=timeout,
         )
-        result = await sandbox.wait_async()
-        stdout = (await sandbox.stdout.read_async()).decode() if hasattr(sandbox.stdout, 'read_async') else ""
-        passed = result.returncode == 0
-        return passed, stdout[-500:] if stdout else f"exit_code={result.returncode}"
+        await sb.wait.aio()
+        stdout = await sb.stdout.read.aio()
+        stderr = await sb.stderr.read.aio()
+        passed = sb.returncode == 0
+        output = (stdout + "\n" + stderr)[-500:]
+        return passed, output
     except Exception as e:
         return False, f"Modal error: {str(e)[:200]}"
 
