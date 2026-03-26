@@ -196,11 +196,11 @@ class SWERLEnv(Env):
                 details = "patch produced (no execution)"
 
         with logtree.scope_header("Problem"):
-            logtree.log(f"Instance: {self.instance_id}")
-            logtree.log(f"Repo: {self.repo}")
-            logtree.log(f"Problem: {self.problem_statement[:500]}...")
+            logtree.log_text(f"Instance: {self.instance_id}")
+            logtree.log_text(f"Repo: {self.repo}")
+            logtree.log_text(f"Problem: {self.problem_statement[:500]}...")
         with logtree.scope_header("Response"):
-            logtree.log(content[:1000])
+            logtree.log_text(content[:1000])
         with logtree.scope_header("Reward"):
             logtree.table_from_dict(
                 {"reward": f"{reward:.1f}", "details": str(details)[:200]},
