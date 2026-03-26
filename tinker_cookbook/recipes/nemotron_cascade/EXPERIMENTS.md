@@ -77,26 +77,46 @@ Key observations:
 ### Full SFT (commit: 929a90d)
 - Date: 2026-03-26
 - Data: math (100K) + science (50K) + IF (10K) + safety (3.5K) = 163.5K examples
-- Model: gpt-oss-120b, lr=5e-4, batch_size=64, max_length=16384
+- batch_size=64, max_length=16384, cosine LR, AdamW (beta1=0.9, beta2=0.98)
 - Total steps: ~2555 per epoch
-- Status: RUNNING (~3.5 hours ETA)
+
+#### gpt-oss-120b (lr=5e-4)
+- Status: RUNNING (1509/2555 = 59%)
+- NLL: started 0.77, current 0.63, min 0.51
+- NLL plateaued at ~0.58 by step 200, then continues slowly improving
+- Checkpoints at: steps 200, 400, 600, 800, 1000 (200-step intervals)
+- Step timing: ~5s (IF data) to ~17s (math data), avg ~12s
 - Log: /tmp/tinker-examples/nemotron_cascade_full_sft/openai-gpt-oss-120b-peft-131072_lr0.0005/
+
+#### Qwen3-8B-Base (lr=5e-4)
+- Status: RUNNING (1499/2555 = 59%)
+- NLL: started 1.08, current 0.68, min 0.62
+- Log: /tmp/tinker-examples/nemotron_cascade_full_sft/Qwen-Qwen3-8B-Base_lr0.0005/
 
 ### IF-RL Environment Test (commit: 929a90d)
 - Date: 2026-03-26
 - Model: gpt-oss-120b base (no SFT), 3 steps, group_size=4, batch=4
 - Result: reward=0.92-1.0 (base model already strong at IF)
-- IFEval verifier works correctly
-- Dynamic filtering (remove_constant_reward_groups) needed for meaningful training
-- Log: /tmp/tinker-examples/nemotron_cascade_ifrl_test/
+- With improved verifier (all 48 types): reward ~0.67 (more discriminative)
+- Dynamic filtering needed for meaningful training
 
-### IF-RL Training (commit: 285973c)
+### IF-RL Training (commit: 4487acd)
 - Date: 2026-03-26
-- Load checkpoint: tinker://a27528b8-b83f-59a0-9334-78129ec565d0:train:0/weights/001000 (SFT step 1000)
-- Config: group_size=16, batch=32 (initial), lr=3e-6, max_tokens=16384
-- Dynamic filtering: enabled (remove_constant_reward_groups=True)
-- Status: RUNNING (initial 50 steps)
+- Load checkpoint: SFT step 1000 (tinker://a27528b8-...001000)
+- Config: group_size=16, batch=32, lr=3e-6, max_tokens=16384
+- Dynamic filtering: enabled
+- Status: RUNNING (7/50 steps)
+- Reward trajectory: 0.667 -> 0.613 -> 0.647 -> 0.694 -> 0.688 -> 0.651 -> 0.690
+- All groups have mixed outcomes (frac_mixed=1.0) - good signal for GRPO
+- ~10-15 min per step with batch=32, group=16
 - Log: /tmp/tinker-examples/nemotron_cascade_ifrl_from_sft/
 
-Note: SFT NLL plateaued at ~0.58 by step 200. Step 1000 checkpoint used while
-full SFT continues running in background (currently 1039/2555 steps).
+## Commit History
+- `8ddbd53` - Initial recipe structure (SFT + IF-RL)
+- `5b17edc` - LR sweep script, fix type annotation
+- `d5f474b` - LR sweep results
+- `929a90d` - Full SFT training script
+- `6b4d518` - Medium SFT results, IF-RL test, data analysis
+- `1967a4b` - Improved IF-RL verifier (all 48 types)
+- `285973c` - IF-RL launch script
+- `4487acd` - IF-RL from SFT checkpoint
