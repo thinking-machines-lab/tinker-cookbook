@@ -25,9 +25,7 @@
         "./skills/tinker-renderers",
         "./skills/tinker-environments",
         "./skills/tinker-weights",
-        "./skills/tinker-completers",
         "./skills/tinker-checkpoints",
-        "./skills/tinker-evals",
         "./skills/tinker-datasets",
         "./skills/tinker-sft",
         "./skills/tinker-grpo",
@@ -46,7 +44,9 @@
         "./skills/tinker-ci",
         "./skills/tinker-contributing",
         "./skills/tinker-new-recipe",
-        "./skills/tinker-manage-skills"
+        "./skills/tinker-manage-skills",
+        "./skills/tinker-evals",
+        "./skills/tinker-completers"
       ]
     }
   ]
