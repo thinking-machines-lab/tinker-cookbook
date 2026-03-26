@@ -22,7 +22,7 @@ import tinker
 from datasets import Dataset, load_dataset
 
 from tinker_cookbook import model_info, renderers
-from tinker_cookbook.completers import MessageCompleter
+from tinker_cookbook.completers import TinkerMessageCompleter
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
@@ -69,7 +69,7 @@ def _check_gsm8k(response: str, expected: str) -> bool:
 
 
 async def eval_gsm8k(
-    completer: MessageCompleter,
+    completer: TinkerMessageCompleter,
     limit: int | None = None,
 ) -> dict[str, float]:
     """Evaluate on GSM8K test set."""
@@ -115,7 +115,7 @@ async def eval_gsm8k(
 # ---------------------------------------------------------------------------
 
 async def eval_ifeval(
-    completer: MessageCompleter,
+    completer: TinkerMessageCompleter,
     limit: int | None = None,
 ) -> dict[str, float]:
     """Evaluate on IFEval using our verifier."""
@@ -219,7 +219,7 @@ async def run_eval(
         sampling_client = await service_client.create_sampling_client_async(base_model=model_name)
         logger.info("Using base model")
 
-    completer = MessageCompleter(
+    completer = TinkerMessageCompleter(
         sampling_client=sampling_client,
         renderer=renderer,
         max_tokens=max_tokens,
