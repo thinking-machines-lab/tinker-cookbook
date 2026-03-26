@@ -72,7 +72,7 @@ description: <Clear description of what the skill does and when to use it>
 ### Step 4: Register in marketplace.json
 
 Add the skill path to the appropriate plugin bundle in `.claude-plugin/marketplace.json`:
-- **`tinker-training`** — user-facing skills (Layers 0–3)
+- **`tinker-cookbook`** — user-facing skills (Layers 0–3)
 - **`tinker-dev`** — development skills (Layer 4)
 
 ```json

@@ -63,7 +63,7 @@ class TestSkillStructure:
         """Skills on disk and in marketplace.json must be the same set.
 
         If a skill exists on disk but not in marketplace.json, add it to
-        the appropriate plugin bundle (tinker-training or tinker-dev).
+        the appropriate plugin bundle (tinker-cookbook or tinker-dev).
         """
         on_disk = _all_skill_dirs()
         in_marketplace = _marketplace_skills()

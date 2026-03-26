@@ -10,8 +10,8 @@
   },
   "plugins": [
     {
-      "name": "tinker-training",
-      "description": "End-to-end training skills for SFT, GRPO, DPO, RLHF, distillation, and multi-turn RL using the Tinker API.",
+      "name": "tinker-cookbook",
+      "description": "Skills for fine-tuning language models with the Tinker API — setup, models, datasets, renderers, SFT, RL, DPO, distillation, and more.",
       "source": "./",
       "strict": false,
       "skills": [
