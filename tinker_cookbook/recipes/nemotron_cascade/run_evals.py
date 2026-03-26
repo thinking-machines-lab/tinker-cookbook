@@ -34,18 +34,49 @@ logger = logging.getLogger(__name__)
 # GSM8K Evaluation
 # ---------------------------------------------------------------------------
 
+def _extract_boxed(text: str) -> str | None:
+    """Extract content from \\boxed{...} handling nested braces."""
+    idx = text.find("\\boxed{")
+    if idx == -1:
+        return None
+    start = idx + len("\\boxed{")
+    depth = 1
+    i = start
+    while i < len(text) and depth > 0:
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+        i += 1
+    return text[start : i - 1] if depth == 0 else None
+
+
+def _extract_number(text: str) -> str:
+    """Extract a number from text, stripping LaTeX formatting."""
+    import re
+    # Remove LaTeX commands
+    cleaned = re.sub(r'\\text\{[^}]*\}', '', text)
+    cleaned = re.sub(r'\\[a-zA-Z]+', '', cleaned)
+    cleaned = cleaned.replace("{", "").replace("}", "").replace("$", "")
+    cleaned = cleaned.replace(",", "").replace(" ", "")
+    # Find number
+    match = re.search(r'[-]?\d+\.?\d*', cleaned)
+    return match.group(0) if match else cleaned.strip()
+
+
 def _extract_gsm8k_answer(text: str) -> str:
     """Extract numeric answer from model response."""
     import re
-    # Try boxed format first
-    boxed = re.search(r'\\boxed\{([^}]+)\}', text)
+
+    # Try boxed format first (handles nested braces)
+    boxed = _extract_boxed(text)
     if boxed:
-        return boxed.group(1).strip().replace(",", "")
+        return _extract_number(boxed)
 
     # Try "#### answer" format
     hash_match = re.search(r'####\s*(.+)', text)
     if hash_match:
-        return hash_match.group(1).strip().replace(",", "")
+        return _extract_number(hash_match.group(1))
 
     # Try "the answer is X" pattern
     answer_match = re.search(r'(?:answer is|answer:)\s*\$?([0-9,.-]+)', text, re.IGNORECASE)
@@ -71,7 +102,7 @@ def _check_gsm8k(response: str, expected: str) -> bool:
 async def eval_gsm8k(
     completer: TinkerMessageCompleter,
     limit: int | None = None,
-    concurrency: int = 64,
+    concurrency: int = 128,
 ) -> dict[str, float]:
     """Evaluate on GSM8K test set with concurrent sampling."""
     ds = cast(Dataset, load_dataset("openai/gsm8k", "main", split="test"))
@@ -116,7 +147,7 @@ async def eval_gsm8k(
 async def eval_ifeval(
     completer: TinkerMessageCompleter,
     limit: int | None = None,
-    concurrency: int = 64,
+    concurrency: int = 128,
 ) -> dict[str, float]:
     """Evaluate on IFEval using our verifier with concurrent sampling."""
     from tinker_cookbook.recipes.nemotron_cascade.if_rl_env import verify_all_instructions
