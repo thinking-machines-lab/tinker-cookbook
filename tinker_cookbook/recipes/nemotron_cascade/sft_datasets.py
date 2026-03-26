@@ -10,6 +10,7 @@ Conversations use standard OpenAI message format:
 """
 
 import logging
+from collections.abc import Callable
 from typing import Literal, cast
 
 import chz
@@ -79,7 +80,7 @@ class NemotronCascadeSFTBuilder(ChatDatasetBuilder):
         return self._build_eager(map_fn)
 
     def _build_eager(
-        self, map_fn: datasets.typing.Callable
+        self, map_fn: Callable[[dict], tinker.Datum]
     ) -> tuple[SupervisedDataset, SupervisedDataset | None]:
         all_datasets = []
         for subset in self.subsets:
@@ -121,7 +122,7 @@ class NemotronCascadeSFTBuilder(ChatDatasetBuilder):
         return train_dataset, test_dataset
 
     def _build_streaming(
-        self, map_fn: datasets.typing.Callable
+        self, map_fn: Callable[[dict], tinker.Datum]
     ) -> tuple[SupervisedDataset, SupervisedDataset | None]:
         """Use streaming for very large datasets to avoid downloading everything upfront."""
         all_streams = []
