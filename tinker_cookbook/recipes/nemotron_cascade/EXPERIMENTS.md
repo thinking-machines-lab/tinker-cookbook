@@ -80,17 +80,16 @@ Key observations:
 - batch_size=64, max_length=16384, cosine LR, AdamW (beta1=0.9, beta2=0.98)
 - Total steps: ~2555 per epoch
 
-#### gpt-oss-120b (lr=5e-4)
-- Status: RUNNING (1509/2555 = 59%)
-- NLL: started 0.77, current 0.63, min 0.51
-- NLL plateaued at ~0.58 by step 200, then continues slowly improving
-- Checkpoints at: steps 200, 400, 600, 800, 1000 (200-step intervals)
-- Step timing: ~5s (IF data) to ~17s (math data), avg ~12s
+#### gpt-oss-120b (lr=5e-4) - COMPLETED
+- 2547 steps, final NLL=0.589, min NLL=0.487
+- NLL plateaued at ~0.58 by step 200, continued slowly improving to ~0.49
+- Checkpoints at: steps 200, 400, 600, 800, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400 + final
+- Final checkpoint: tinker://a27528b8-b83f-59a0-9334-78129ec565d0:train:0/weights/final
 - Log: /tmp/tinker-examples/nemotron_cascade_full_sft/openai-gpt-oss-120b-peft-131072_lr0.0005/
 
-#### Qwen3-8B-Base (lr=5e-4)
-- Status: RUNNING (1499/2555 = 59%)
-- NLL: started 1.08, current 0.68, min 0.62
+#### Qwen3-8B-Base (lr=5e-4) - COMPLETED
+- 2547 steps, final NLL=0.693, min NLL=0.589
+- Final checkpoint: tinker://38e7fb7e-d5be-54b9-a4a4-164e2e65de6f:train:0/weights/final
 - Log: /tmp/tinker-examples/nemotron_cascade_full_sft/Qwen-Qwen3-8B-Base_lr0.0005/
 
 ### IF-RL Environment Test (commit: 929a90d)
@@ -105,8 +104,9 @@ Key observations:
 - Load checkpoint: SFT step 1000 (tinker://a27528b8-...001000)
 - Config: group_size=16, batch=32, lr=3e-6, max_tokens=16384
 - Dynamic filtering: enabled
-- Status: RUNNING (7/50 steps)
-- Reward trajectory: 0.667 -> 0.613 -> 0.647 -> 0.694 -> 0.688 -> 0.651 -> 0.690
+- Status: RUNNING (26/50 steps)
+- Reward: started 0.667, max 0.730, latest 0.681
+- Clear improvement trend from 0.67 baseline to 0.73 peak
 - All groups have mixed outcomes (frac_mixed=1.0) - good signal for GRPO
 - ~10-15 min per step with batch=32, group=16
 - Log: /tmp/tinker-examples/nemotron_cascade_ifrl_from_sft/
