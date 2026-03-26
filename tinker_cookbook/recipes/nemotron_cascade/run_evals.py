@@ -223,12 +223,140 @@ async def eval_ifeval(
 
 
 # ---------------------------------------------------------------------------
+# MMLU Evaluation
+# ---------------------------------------------------------------------------
+
+async def eval_mmlu(
+    completer: TinkerMessageCompleter,
+    limit: int | None = None,
+    concurrency: int = 128,
+) -> dict[str, float]:
+    """Evaluate on MMLU (0-shot) with concurrent sampling."""
+    import re
+
+    # Use MMLU-Redux for cleaner data
+    try:
+        ds = cast(Dataset, load_dataset("TIGER-Lab/MMLU-Pro", split="test"))
+        dataset_name = "mmlu_pro"
+    except Exception:
+        ds = cast(Dataset, load_dataset("cais/mmlu", "all", split="test"))
+        dataset_name = "mmlu"
+
+    if limit:
+        ds = ds.shuffle(seed=42).select(range(min(limit, len(ds))))
+
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def eval_one(row: dict) -> bool | None:
+        async with semaphore:
+            # Format MMLU question
+            question = row.get("question", row.get("input", ""))
+            choices = row.get("options", row.get("choices", []))
+            answer_idx = row.get("answer_index", row.get("answer", None))
+
+            # Build the prompt
+            if choices:
+                choice_text = "\n".join(f"({chr(65+i)}) {c}" for i, c in enumerate(choices))
+                prompt = f"{question}\n\n{choice_text}\n\nAnswer with just the letter (A, B, C, D, etc.)."
+            else:
+                prompt = f"{question}\n\nAnswer with just the letter."
+
+            # Determine expected answer
+            if isinstance(answer_idx, int):
+                expected = chr(65 + answer_idx)
+            elif isinstance(answer_idx, str) and len(answer_idx) == 1:
+                expected = answer_idx.upper()
+            else:
+                expected = str(answer_idx).strip().upper()
+
+            messages: list[Message] = [{"role": "user", "content": prompt}]
+            try:
+                response = await completer(messages)
+                content = renderers.get_text_content(response)
+                # Extract letter answer
+                # Look for standalone letter
+                letters = re.findall(r'\b([A-J])\b', content[-200:])
+                if letters:
+                    extracted = letters[-1]
+                else:
+                    extracted = content.strip()[-1:].upper()
+                return extracted == expected
+            except Exception as e:
+                logger.warning(f"MMLU eval failed: {e}")
+                return None
+
+    logger.info(f"MMLU ({dataset_name}): evaluating {len(ds)} samples with concurrency={concurrency}")
+    tasks = [eval_one(row) for row in ds]
+    results = await asyncio.gather(*tasks)
+
+    correct = sum(1 for r in results if r is True)
+    total = sum(1 for r in results if r is not None)
+    accuracy = correct / total if total > 0 else 0
+    logger.info(f"MMLU final: {correct}/{total} = {accuracy:.4f}")
+    return {"mmlu/accuracy": accuracy, "mmlu/correct": correct, "mmlu/total": total}
+
+
+# ---------------------------------------------------------------------------
+# MATH-500 Evaluation
+# ---------------------------------------------------------------------------
+
+async def eval_math500(
+    completer: TinkerMessageCompleter,
+    limit: int | None = None,
+    concurrency: int = 128,
+) -> dict[str, float]:
+    """Evaluate on MATH-500 (Hendrycks MATH test set)."""
+    from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed, grade_answer
+
+    ds = cast(Dataset, load_dataset("HuggingFaceH4/MATH-500", split="test"))
+    if limit:
+        ds = ds.select(range(min(limit, len(ds))))
+
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def eval_one(row: dict) -> bool | None:
+        async with semaphore:
+            problem = row["problem"]
+            try:
+                expected = extract_boxed(row["solution"])
+            except ValueError:
+                return None
+
+            messages: list[Message] = [
+                {"role": "user", "content": problem + " Put your final answer in \\boxed{}."},
+            ]
+            try:
+                response = await completer(messages)
+                content = renderers.get_text_content(response)
+                try:
+                    given = extract_boxed(content)
+                    return grade_answer(given, expected)
+                except ValueError:
+                    return False
+            except Exception as e:
+                logger.warning(f"MATH-500 eval failed: {e}")
+                return None
+
+    logger.info(f"MATH-500: evaluating {len(ds)} samples with concurrency={concurrency}")
+    tasks = [eval_one(row) for row in ds]
+    results = await asyncio.gather(*tasks)
+
+    correct = sum(1 for r in results if r is True)
+    total = sum(1 for r in results if r is not None)
+    accuracy = correct / total if total > 0 else 0
+    logger.info(f"MATH-500 final: {correct}/{total} = {accuracy:.4f}")
+    return {"math500/accuracy": accuracy, "math500/correct": correct, "math500/total": total}
+
+
+# ---------------------------------------------------------------------------
 # Main evaluation driver
 # ---------------------------------------------------------------------------
 
 BENCHMARKS = {
     "gsm8k": eval_gsm8k,
     "ifeval": eval_ifeval,
+    "mmlu": eval_mmlu,
+    "math500": eval_math500,
 }
 
 
