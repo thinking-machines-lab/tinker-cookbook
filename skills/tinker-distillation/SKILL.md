@@ -7,54 +7,33 @@ description: Set up and run knowledge distillation (on-policy, off-policy, or mu
 
 Help the user set up and run distillation from teacher to student models using the Tinker API.
 
-## Step 1: Understand the request
+## Key concepts
 
-Ask the user (if not already specified):
-- **Student model**: Which model to train (e.g., `Qwen/Qwen3-8B-Base`)
-- **Teacher model**: Which model to distill from (e.g., `Qwen/Qwen3-8B`, or a checkpoint path)
-- **Distillation type**:
-  - **On-policy**: Student generates, teacher scores via KL — best for reasoning/chat
-  - **Off-policy reasoning**: SFT on teacher-generated reasoning traces (e.g., OpenThoughts3)
-  - **Multi-teacher**: Combine multiple teachers on different datasets
+**Distillation types:**
+- **On-policy** (recommended): Student generates, teacher scores via KL divergence. No correctness rewards needed.
+- **Off-policy reasoning**: SFT on teacher-generated reasoning traces (e.g., OpenThoughts3). Simpler but less effective.
+- **Multi-teacher**: Different teachers for different datasets. Each dataset gets its own `DistillationDatasetConfig`.
 
-## Step 2: Reference existing recipes
+**Core abstractions:**
+- `TeacherConfig(base_model, load_checkpoint_path)` — identifies the teacher model
+- `PromptOnlyDatasetBuilder(dataset_name, ...)` — loads prompts (built-in: `"deepmath"`, `"tulu3"`)
+- `DistillationDatasetConfig(dataset_builder, teacher_config, groups_per_batch)` — binds a dataset to a teacher
 
-Read these files for patterns:
-- `tinker_cookbook/recipes/distillation/on_policy_distillation.py` — On-policy distillation CLI
-- `tinker_cookbook/recipes/distillation/off_policy_reasoning.py` — SFT on OpenThoughts3 traces
-- `tinker_cookbook/recipes/distillation/on_policy_multi_teacher.py` — Multi-teacher setup
-- `tinker_cookbook/distillation/train_on_policy.py` — Core on-policy training loop
-- `tinker_cookbook/distillation/datasets.py` — TeacherConfig, PromptOnlyDatasetBuilder, DistillationDatasetConfig
+**Key parameters:**
+- `kl_penalty_coef`: Weight of KL penalty (default 1.0). The only supervision signal — no reward function needed.
+- `kl_discount_factor`: Discount for future KL (0.0 = no discount). Increase for longer sequences.
+- `group_size`: Rollouts per prompt (default 4)
+- `groups_per_batch`: Prompts per batch (default 1024)
 
-## Step 3: Choose distillation approach
+## Minimal working example
 
-### On-Policy Distillation (Recommended)
-Student generates samples, teacher provides KL penalty supervision. No correctness rewards needed.
-
-Key config:
-- `TeacherConfig(base_model="Qwen/Qwen3-8B", load_checkpoint_path=None)`
-- `PromptOnlyDatasetBuilder(dataset_name="deepmath"|"tulu3", ...)`
-- `DistillationDatasetConfig(dataset_builder=..., teacher_config=..., groups_per_batch=...)`
-- `kl_penalty_coef`: Weight of KL penalty (default 1.0)
-- `kl_discount_factor`: Discount for future KL (0.0 = no discount)
-
-### Off-Policy Reasoning (SFT on Traces)
-Standard SFT on pre-generated reasoning traces (e.g., OpenThoughts3). Simpler but less effective than on-policy.
-
-See `recipes/distillation/off_policy_reasoning.py` — uses the standard SL pipeline from `supervised/train.py`.
-
-### Multi-Teacher Distillation
-Combine multiple teacher models on different datasets. Each dataset can have its own teacher.
-
-See `recipes/distillation/on_policy_multi_teacher.py` — passes multiple `DistillationDatasetConfig` objects.
-
-## Step 4: Write the training script
-
-Follow the on-policy distillation pattern:
+This is a complete, runnable on-policy distillation script:
 
 ```python
 import asyncio
+
 import chz
+
 from tinker_cookbook import checkpoint_utils, cli_utils
 from tinker_cookbook.distillation import train_on_policy
 from tinker_cookbook.distillation.datasets import (
@@ -62,6 +41,7 @@ from tinker_cookbook.distillation.datasets import (
     PromptOnlyDatasetBuilder,
     TeacherConfig,
 )
+
 
 @chz.chz
 class CLIConfig:
@@ -75,12 +55,19 @@ class CLIConfig:
     kl_penalty_coef: float = 1.0
     kl_discount_factor: float = 0.0
     lora_rank: int = 128
-    loss_fn: str = "importance_sampling"
+    renderer_name: str | None = None
+    load_checkpoint_path: str | None = None
+    log_path: str | None = None
+    behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
+    max_steps: int | None = None
+
 
 async def cli_main(cli_config: CLIConfig):
     renderer_name = await checkpoint_utils.resolve_renderer_name_from_checkpoint_or_default_async(
-        model_name=cli_config.model_name, ...)
-
+        model_name=cli_config.model_name,
+        explicit_renderer_name=cli_config.renderer_name,
+        load_checkpoint_path=cli_config.load_checkpoint_path,
+    )
     dataset_builder = PromptOnlyDatasetBuilder(
         dataset_name=cli_config.dataset,
         groups_per_batch=cli_config.groups_per_batch,
@@ -94,6 +81,9 @@ async def cli_main(cli_config: CLIConfig):
         teacher_config=teacher_config,
         groups_per_batch=cli_config.groups_per_batch,
     )
+    log_path = cli_config.log_path or f"/tmp/tinker-examples/distillation/{cli_config.dataset}"
+    cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
+
     config = train_on_policy.Config(
         dataset_configs=[dataset_config],
         model_name=cli_config.model_name,
@@ -103,62 +93,38 @@ async def cli_main(cli_config: CLIConfig):
         max_tokens=cli_config.max_tokens,
         kl_penalty_coef=cli_config.kl_penalty_coef,
         kl_discount_factor=cli_config.kl_discount_factor,
-        loss_fn=cli_config.loss_fn,
-        log_path="/tmp/tinker-examples/distillation/my_run",
+        log_path=log_path,
+        max_steps=cli_config.max_steps,
     )
     await train_on_policy.main(config)
+
+
+if __name__ == "__main__":
+    cli_config = chz.entrypoint(CLIConfig)
+    asyncio.run(cli_main(cli_config))
 ```
 
-## Step 5: Run
+Run it: `python my_distill.py` or `python my_distill.py dataset=tulu3 teacher_model=Qwen/Qwen3-32B`
 
-```bash
-# On-policy distillation (reasoning)
-python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
-    model_name=Qwen/Qwen3-8B-Base dataset=deepmath learning_rate=1e-4
+## Customization
 
-# Off-policy reasoning (SFT on traces)
-python -m tinker_cookbook.recipes.distillation.off_policy_reasoning \
-    model_name=Qwen/Qwen3-8B-Base learning_rate=2e-4
-
-# Multi-teacher
-python -m tinker_cookbook.recipes.distillation.on_policy_multi_teacher \
-    model_name=Qwen/Qwen3-8B-Base learning_rate=1e-4
-```
-
-## Step 6: Add tests
-
-If you created a new distillation recipe, add a smoke test:
-
+**Multi-teacher:** Pass multiple `DistillationDatasetConfig` objects with different teachers:
 ```python
-# tests/recipes/test_recipe_<name>.py
-import pytest
-from tests.helpers import run_recipe
-
-@pytest.mark.integration
-def test_<recipe_name>():
-    run_recipe(
-        "tinker_cookbook.recipes.<recipe_name>.train",
-        ["behavior_if_log_dir_exists=delete", "groups_per_batch=16"],
-    )
+config = train_on_policy.Config(
+    dataset_configs=[math_dataset_config, chat_dataset_config],
+    ...
+)
 ```
+See the [multi-teacher recipe](https://github.com/thinking-machines-lab/tinker-cookbook/tree/main/tinker_cookbook/recipes/distillation/on_policy_multi_teacher.py) for a full example.
 
-`run_recipe()` automatically passes `max_steps=2` so the recipe runs 2 training steps and exits. See `tests/recipes/test_recipe_on_policy_distillation.py` and `tests/recipes/test_recipe_on_policy_multi_teacher.py` for existing examples.
+**Off-policy reasoning:** Use standard SFT (see `/tinker-sft`) on teacher-generated traces like OpenThoughts3. See the [off-policy recipe](https://github.com/thinking-machines-lab/tinker-cookbook/tree/main/tinker_cookbook/recipes/distillation/off_policy_reasoning.py).
 
-## Step 7: Export weights (optional)
+**Custom prompt dataset:** Subclass `PromptOnlyDatasetBuilder` or create a custom `RLDatasetBuilder` that returns `EnvGroupBuilder` objects.
 
-After distillation, export the student model using the `tinker_cookbook.weights` API:
-
-```python
-from tinker_cookbook import weights
-
-adapter_dir = weights.download(tinker_path="tinker://run-id/sampler_weights/final", output_dir="./adapter")
-weights.build_hf_model(base_model="Qwen/Qwen3-8B-Base", adapter_path=adapter_dir, output_path="./model")
-weights.publish_to_hf_hub(model_path="./model", repo_id="user/my-distilled-model")
-```
+For testing and weight export patterns, see the [tinker-cookbook repo](https://github.com/thinking-machines-lab/tinker-cookbook).
 
 ## Common pitfalls
 - Teacher model must be compatible with student's tokenizer/renderer
 - On-policy is generally better than off-policy but more compute-intensive
-- `kl_discount_factor=0.0` means no discounting — increase for longer sequences
-- High `kl_penalty_coef` can make training too conservative
-- For multi-teacher, ensure `groups_per_batch` is balanced across datasets
+- High `kl_penalty_coef` can make training too conservative; start with 1.0
+- For multi-teacher, balance `groups_per_batch` across datasets

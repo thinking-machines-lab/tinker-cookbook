@@ -7,174 +7,200 @@ description: Set up and run multi-turn RL training for interactive environments 
 
 Help the user set up RL training for multi-turn interactive environments using the Tinker API.
 
-## Step 1: Understand the request
+## Key concepts
 
-Ask the user (if not already specified):
-- **Model**: Which model to train (e.g., `moonshotai/Kimi-K2-Thinking`, `Qwen/Qwen3-8B`)
-- **Environment type**:
-  - **Terminal/sandbox tasks**: Model executes shell commands (Harbor)
-  - **Search/RAG**: Model uses retrieval tools (Search-R1)
-  - **Multiplayer games**: Two models compete (TicTacToe, Twenty Questions, Guess Number)
-  - **Custom multi-turn**: User-defined interactive environment
-- **Turn structure**: Max turns, tool outputs, observation handling
-
-## Step 2: Reference existing recipes
-
-Read these files for patterns:
-- `tinker_cookbook/recipes/harbor_rl/train.py` — Terminal task RL with sandbox execution
-- `tinker_cookbook/recipes/harbor_rl/harbor_env.py` — HarborDatasetBuilder, sandbox factory
-- `tinker_cookbook/recipes/search_tool/train.py` — Search-R1 with Chroma vector DB
-- `tinker_cookbook/recipes/multiplayer_rl/text_arena/train.py` — Two-player games
-- `tinker_cookbook/recipes/multiplayer_rl/twenty_questions/train.py` — Twenty Questions
-- `tinker_cookbook/recipes/multiplayer_rl/guess_number/train.py` — Guess the Number
-- `tinker_cookbook/rl/message_env.py` — Message-based environment interface
-- `docs/rl/sequence-extension.mdx` — Multi-turn RL and KV-cache
-- `docs/rl/rl-envs.mdx` — Custom environments
-
-## Step 3: Configure the environment
-
-### Harbor (Terminal Tasks)
-Interactive sandbox where model runs shell commands and gets outputs:
+**MessageEnv** is the high-level abstraction for multi-turn environments. It operates at the message level (not tokens), and `EnvFromMessageEnv` bridges it to the token-level `Env` interface used by the training loop.
 
 ```python
-from tinker_cookbook.recipes.harbor_rl.harbor_env import HarborDatasetBuilder, HarborTask
-
-dataset_builder = HarborDatasetBuilder(
-    tasks=tasks,                    # List of HarborTask objects
-    batch_size=8,                   # groups_per_batch
-    group_size=4,                   # rollouts per task
-    model_name=model_name,
-    renderer_name=renderer_name,
-    max_turns=10,                   # max interaction turns
-    sandbox_timeout=3600,           # sandbox lifetime (seconds)
-    command_timeout=120,            # per-command timeout
-    grader_timeout=60,              # grading timeout
-)
+from tinker_cookbook.rl.message_env import MessageEnv, MessageStepResult, EnvFromMessageEnv
 ```
 
-### Search/RAG (Search-R1)
-Model queries a vector database during generation:
-
-See `recipes/search_tool/train.py` for Chroma integration and streaming minibatch config.
-
-### Multiplayer Games
-Two models play against each other:
-
-See `recipes/multiplayer_rl/text_arena/train.py` for the competitive RL pattern.
-
-### Key Multi-Turn Parameters
-
-- `max_turns`: Maximum number of interaction turns
+**Key parameters for multi-turn RL:**
 - `max_tokens`: Max tokens per generation step
-- `kl_penalty_coef`: KL penalty (often 0.0 for multi-turn to allow exploration)
-- `max_steps_off_policy`: Enable async rollouts for expensive environments
+- `max_trajectory_tokens`: Total context budget across all turns
+- `kl_penalty_coef`: Often 0.0 for multi-turn (allow exploration of tool use)
+- `AsyncConfig(max_steps_off_policy=N)`: Overlap sampling and training for slow envs
 
-### Async Rollouts
-Multi-turn envs are slow due to tool execution. Use async config:
-```python
-config = Config(
-    ...
-    async_config=AsyncConfig(
-        max_steps_off_policy=cli_config.max_steps_off_policy,
-        groups_per_batch=cli_config.groups_per_batch,
-    ) if cli_config.max_steps_off_policy is not None else None,
-)
-```
+**Built-in multi-turn recipes:**
+- Harbor — Terminal tasks with sandbox execution (`tinker_cookbook.recipes.harbor_rl`)
+- Search-R1 — Retrieval with Chroma vector DB (`tinker_cookbook.recipes.search_tool`)
+- Multiplayer games — Two-player competitive RL (`tinker_cookbook.recipes.multiplayer_rl`)
 
-## Step 4: Write the training script
+## Minimal working example
 
-Follow the Harbor pattern:
+Here is a complete multi-turn RL environment and training script. This example trains a model to use a calculator tool:
 
 ```python
 import asyncio
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass
+
 import chz
+
 from tinker_cookbook import cli_utils, model_info
-from tinker_cookbook.rl.train import AsyncConfig, Config, main
+from tinker_cookbook.renderers import get_renderer
+from tinker_cookbook.renderers.base import Message
+from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
+from tinker_cookbook.rl.train import Config, main
+from tinker_cookbook.rl.types import EnvGroupBuilder, RLDataset, RLDatasetBuilder
+from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+
+class CalculatorEnv(MessageEnv):
+    """Model must use calc(expr) to solve a math problem."""
+
+    def __init__(self, question: str, answer: float):
+        self.question = question
+        self.answer = answer
+        self.turns = 0
+
+    async def initial_observation(self) -> list[Message]:
+        return [
+            {"role": "system", "content": "You can use calc(expr) to evaluate math. Give your final answer as: Answer: <number>"},
+            {"role": "user", "content": self.question},
+        ]
+
+    async def step(self, message: Message) -> MessageStepResult:
+        content = message.get("content", "")
+        self.turns += 1
+
+        # Check for final answer
+        answer_match = re.search(r"Answer:\s*([\d.]+)", content)
+        if answer_match:
+            correct = abs(float(answer_match.group(1)) - self.answer) < 0.01
+            return MessageStepResult(
+                reward=1.0 if correct else 0.0,
+                episode_done=True,
+                next_messages=[],
+                metrics={"correct": float(correct), "turns": self.turns},
+            )
+
+        # Check for tool call
+        calc_match = re.search(r"calc\((.+?)\)", content)
+        if calc_match:
+            try:
+                result = eval(calc_match.group(1))  # noqa: S307
+            except Exception:
+                result = "Error: invalid expression"
+            return MessageStepResult(
+                reward=0.0,
+                episode_done=False,
+                next_messages=[{"role": "user", "content": f"Result: {result}"}],
+                metrics={},
+            )
+
+        # No tool call or answer — end with 0 reward
+        return MessageStepResult(reward=0.0, episode_done=True, next_messages=[], metrics={})
+
+
+@dataclass(frozen=True)
+class CalculatorEnvGroupBuilder(EnvGroupBuilder):
+    question: str
+    answer: float
+    group_size: int
+    renderer_name: str
+    model_name: str
+
+    async def make_envs(self) -> Sequence:
+        tokenizer = get_tokenizer(self.model_name)
+        renderer = get_renderer(self.renderer_name, tokenizer)
+        return [
+            EnvFromMessageEnv(
+                renderer=renderer,
+                message_env=CalculatorEnv(self.question, self.answer),
+                max_trajectory_tokens=4096,
+            )
+            for _ in range(self.group_size)
+        ]
+
+    def logging_tags(self) -> list[str]:
+        return ["calculator"]
+
+
+class CalculatorDataset(RLDataset):
+    def __init__(self, problems, group_size, renderer_name, model_name):
+        self.problems, self.group_size = problems, group_size
+        self.renderer_name, self.model_name = renderer_name, model_name
+
+    def __len__(self): return len(self.problems) // 4
+
+    def get_batch(self, batch_idx):
+        batch = self.problems[(batch_idx * 4) % len(self.problems):][:4]
+        return [CalculatorEnvGroupBuilder(q, a, self.group_size, self.renderer_name, self.model_name) for q, a in batch]
+
+
+@chz.chz
+class CalculatorDatasetBuilder(RLDatasetBuilder):
+    group_size: int = 4
+    renderer_name: str = "llama3"
+    model_name: str = "meta-llama/Llama-3.1-8B"
+
+    async def __call__(self):
+        problems = [("What is 123 * 456?", 56088), ("What is 789 + 321?", 1110)]
+        return CalculatorDataset(problems, self.group_size, self.renderer_name, self.model_name), None
+
 
 @chz.chz
 class CLIConfig:
-    model_name: str = "moonshotai/Kimi-K2-Thinking"
-    lora_rank: int = 32
-    max_tokens: int = 8192
-    max_turns: int = 10
+    model_name: str = "meta-llama/Llama-3.1-8B"
     group_size: int = 4
     groups_per_batch: int = 8
     learning_rate: float = 1e-5
+    max_tokens: int = 1024
     kl_penalty_coef: float = 0.0
-    max_steps_off_policy: int | None = None
+    lora_rank: int = 32
+    log_path: str = "/tmp/tinker-examples/multiturn"
+    behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
+    max_steps: int | None = None
+
 
 async def cli_main(cli_config: CLIConfig):
     renderer_name = model_info.get_recommended_renderer_name(cli_config.model_name)
-
-    dataset_builder = ...  # Your multi-turn dataset builder
-
+    cli_utils.check_log_dir(cli_config.log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
     config = Config(
         learning_rate=cli_config.learning_rate,
-        dataset_builder=dataset_builder,
+        dataset_builder=CalculatorDatasetBuilder(
+            group_size=cli_config.group_size,
+            renderer_name=renderer_name,
+            model_name=cli_config.model_name,
+        ),
         model_name=cli_config.model_name,
+        renderer_name=renderer_name,
         lora_rank=cli_config.lora_rank,
         max_tokens=cli_config.max_tokens,
         kl_penalty_coef=cli_config.kl_penalty_coef,
-        log_path="/tmp/tinker-examples/multiturn/my_run",
-        async_config=AsyncConfig(
-            max_steps_off_policy=cli_config.max_steps_off_policy,
-            groups_per_batch=cli_config.groups_per_batch,
-        ) if cli_config.max_steps_off_policy is not None else None,
+        log_path=cli_config.log_path,
+        max_steps=cli_config.max_steps,
     )
-
     await main(config)
+
+
+if __name__ == "__main__":
+    cli_config = chz.entrypoint(CLIConfig)
+    asyncio.run(cli_main(cli_config))
 ```
 
-## Step 5: Run
+## Customization
 
-```bash
-# Harbor terminal RL
-python -m tinker_cookbook.recipes.harbor_rl.train
+**Context limits:** `EnvFromMessageEnv` handles context overflow automatically. Set `max_trajectory_tokens` to limit total context. When exceeded, `ActionExtra["response_hit_length_limit"]` is set to `True`.
 
-# Search-R1
-python -m tinker_cookbook.recipes.search_tool.train
-
-# Multiplayer games
-python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.train
-```
-
-## Step 6: Add tests
-
-If you created a new multi-turn recipe, add a smoke test:
-
+**Async rollouts** for expensive environments (sandbox execution, API calls):
 ```python
-# tests/recipes/test_recipe_<name>.py
-import pytest
-from tests.helpers import run_recipe
-
-@pytest.mark.integration
-def test_<recipe_name>():
-    run_recipe(
-        "tinker_cookbook.recipes.<recipe_name>.train",
-        ["behavior_if_log_dir_exists=delete", "groups_per_batch=4", "group_size=2"],
-    )
+from tinker_cookbook.rl.train import AsyncConfig
+config = Config(
+    ...,
+    async_config=AsyncConfig(max_steps_off_policy=4, groups_per_batch=8),
+)
 ```
 
-`run_recipe()` automatically passes `max_steps=2` so the recipe runs 2 training steps and exits. See `tests/recipes/test_recipe_text_arena.py` and `tests/recipes/test_recipe_twenty_questions.py` for existing multi-turn examples. For environment-specific logic (sandbox setup, tool parsing), add unit tests as `*_test.py` next to the source code.
+**Cleanup resources:** Override `cleanup()` on your `EnvGroupBuilder` to release sandboxes, DB connections, etc. It runs after rollouts regardless of success/failure.
 
-## Context limits & truncation
-
-Multi-turn environments can hit context length limits. The framework handles this automatically:
-- When the conversation exceeds the model's context window, generation is truncated
-- `ActionExtra["response_hit_length_limit"]` is set to `True` when this happens
-- Environments can check this in `step()` to adjust behavior (e.g., end the episode early)
-
-See `tinker_cookbook/rl/message_env.py` for how `MessageEnv` handles context limits.
-
-## Diagnostic logs
-
-`StepResult` supports a `logs` field (dict) for diagnostic information that appears in logtree reports but isn't aggregated as metrics. Use it for per-step debugging data like tool outputs, grading details, etc.
+For advanced recipes (Harbor sandbox, Search-R1, multiplayer games), see the [tinker-cookbook repo](https://github.com/thinking-machines-lab/tinker-cookbook/tree/main/tinker_cookbook/recipes).
 
 ## Common pitfalls
-- Multi-turn envs are expensive — start with small `groups_per_batch` (4-8)
-- Use `max_steps_off_policy` for async rollouts when env execution is slow
-- `Env` objects are single-use — the builder creates fresh envs each batch
-- Sandbox timeouts need to be generous enough for complex tasks
-- KV-cache (sequence extension) is key for multi-turn efficiency — see `docs/rl/sequence-extension.mdx`
-- `kl_penalty_coef=0.0` is common for multi-turn since you want the model to explore tool use
-- Use `EnvGroupBuilder.cleanup()` to release expensive resources (sandboxes, connections) after rollouts
+- Multi-turn envs are expensive — start with small `groups_per_batch` (4–8)
+- Use `AsyncConfig` for async rollouts when env execution is slow
+- `kl_penalty_coef=0.0` is common for multi-turn to allow tool-use exploration
+- `EnvGroupBuilder` must be **pickleable** — use config strings + lazy construction in `make_envs()`
+- Set `max_trajectory_tokens` to avoid unbounded context growth

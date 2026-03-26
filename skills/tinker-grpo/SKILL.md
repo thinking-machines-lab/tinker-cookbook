@@ -7,147 +7,166 @@ description: Set up and run reinforcement learning with verifiable rewards (RLVR
 
 Help the user set up and run RL training with verifiable rewards using the Tinker API.
 
-## Step 1: Understand the request
+## Key concepts
 
-Ask the user (if not already specified):
-- **Model**: Which model to train (e.g., `meta-llama/Llama-3.1-8B-Instruct`, `Qwen/Qwen3-8B`)
-- **Environment/Task**: What type of reward signal — math (GSM8K, DeepMath, arithmetic), code (DeepCoder), instruction following (IFBench), or custom
-- **Reward type**: Verifiable (programmatic correctness) or learned (preference model)
+**How GRPO works:** For each problem, the model generates `group_size` responses. Rewards are computed, advantages are centered within each group, and the policy is updated.
 
-## Step 2: Reference existing recipes
-
-Read these files for patterns:
-- `tinker_cookbook/recipes/rl_basic.py` — Minimal RL example (GSM8K)
-- `tinker_cookbook/recipes/math_rl/train.py` — Full math RL with multiple environments and loss functions
-- `tinker_cookbook/recipes/code_rl/train.py` — Code generation RL with sandbox execution
-- `tinker_cookbook/recipes/rubric/train.py` — Rubric-graded RL with LLM scoring
-- `tinker_cookbook/rl/train.py` — Core RL training loop
-- `tinker_cookbook/rl/types.py` — Env, EnvGroupBuilder, RLDatasetBuilder
-- `docs/rl/rl-basic.mdx` — Getting started
-- `docs/rl/rl-envs.mdx` — Custom environments
-- `docs/rl/rl-hyperparams.mdx` — Hyperparameter guidance
-
-## Step 3: Configure the training run
-
-### Environment Setup
-RL requires an environment that produces rewards. Key patterns:
-
-**Built-in environments:**
-- `Gsm8kDatasetBuilder` — Grade-school math (from `recipes/math_rl/math_env.py`)
-- `ArithmeticDatasetBuilder` — Simple arithmetic
-- `DeepMathDatasetBuilder`, `PolarisDatasetBuilder` — Advanced math
-- `DeepcoderDatasetBuilder` — Code generation with sandbox
-- `RubricGradedDatasetBuilder` — Rubric-graded tasks
-
-**Custom environments:**
-Implement the `Env` protocol from `tinker_cookbook/rl/types.py`. Key points:
-- `Env` objects are **single-use** (no reset method)
-- Create new envs via `EnvGroupBuilder` each batch
-- Each env returns a `float` reward
-
-### Key Hyperparameters
-
-- `group_size`: Number of rollouts per prompt (typically 4-16). Advantages are centered within each group.
-- `groups_per_batch` (or `batch_size`): Number of problems per batch
+**Key hyperparameters:**
+- `group_size`: Rollouts per prompt (4–16). Advantages are centered within each group.
+- `batch_size` / `groups_per_batch`: Problems per batch
 - `max_tokens`: Maximum generation length
 - `learning_rate`: Typically 1e-5 to 4e-5 for RL
 - `kl_penalty_coef`: KL penalty against reference model (0.0 = no penalty)
 - `temperature`: Sampling temperature (default 1.0)
-- `rollout_error_tolerance`: Tolerance for rollout errors (`False` = crash on any error, `True` = retry failed trajectories with default budget, `RetryOnFailure(max_retries=5)` = custom retry budget). Error counts logged as `rollout_errors/*` metrics.
 
-### Loss Functions
-- `importance_sampling` — Default, on-policy
-- `ppo` — Proximal Policy Optimization (clipped)
-- `cispo` — Conservative Importance Sampling PPO
-- `dro` — Distributionally Robust Optimization
-- Configure via `loss_fn` and `loss_fn_config` parameters
+**Loss functions:** `importance_sampling` (default), `ppo`, `cispo`, `dro` — set via `loss_fn` parameter.
 
-### Async Training (Off-Policy)
-For overlapping sampling and training:
-```python
-async_config=AsyncConfig(
-    max_steps_off_policy=cli_config.max_steps_off_policy,
-    groups_per_batch=cli_config.groups_per_batch,
-)
-```
+**Built-in environments:**
+- `Gsm8kDatasetBuilder` — Grade-school math (`tinker_cookbook.recipes.math_rl.math_env`)
+- `ArithmeticDatasetBuilder` — Simple arithmetic (`tinker_cookbook.recipes.math_rl.math_env`)
+- `DeepcoderDatasetBuilder` — Code generation with sandbox (`tinker_cookbook.recipes.code_rl`)
 
-## Step 4: Write the training script
+## Minimal working example
 
-Follow the pattern from `rl_basic.py` / `math_rl/train.py`:
+This is a complete, runnable RL script using GSM8K math:
 
 ```python
 import asyncio
+import sys
+
 import chz
+
 from tinker_cookbook import cli_utils, model_info
+from tinker_cookbook.recipes.math_rl.math_env import Gsm8kDatasetBuilder
 from tinker_cookbook.rl import train
 
+
 def build_config_blueprint() -> chz.Blueprint[train.Config]:
-    model_name = "meta-llama/Llama-3.1-8B-Instruct"
+    model_name = "meta-llama/Llama-3.1-8B"
     renderer_name = model_info.get_recommended_renderer_name(model_name)
-
-    # Configure your dataset builder with environment
-    builder = ...  # e.g., Gsm8kDatasetBuilder(...)
-
+    builder = Gsm8kDatasetBuilder(
+        batch_size=128,
+        group_size=16,
+        renderer_name=renderer_name,
+        model_name_for_tokenizer=model_name,
+    )
     return chz.Blueprint(train.Config).apply({
         "model_name": model_name,
         "renderer_name": renderer_name,
-        "log_path": "/tmp/tinker-examples/my_rl_run",
+        "log_path": "/tmp/tinker-examples/rl_basic",
         "dataset_builder": builder,
         "learning_rate": 4e-5,
         "max_tokens": 256,
-        "eval_every": 20,
+        "eval_every": 0,
     })
+
 
 def main(config: train.Config):
     cli_utils.check_log_dir(config.log_path, behavior_if_exists="ask")
     asyncio.run(train.main(config))
+
+
+if __name__ == "__main__":
+    blueprint = build_config_blueprint()
+    blueprint.make_from_argv(sys.argv[1:])
+    main(blueprint.make())
 ```
 
-For the full CLI pattern with `@chz.chz` config class, see `recipes/math_rl/train.py`.
+Run it: `python my_rl.py` or `python my_rl.py learning_rate=1e-5 group_size=8`
 
-## Step 5: Run
+## Custom environment with ProblemEnv
 
-```bash
-python -m tinker_cookbook.recipes.<recipe_name>
-```
-
-Override: `python -m tinker_cookbook.recipes.<recipe_name> env=gsm8k group_size=16 learning_rate=4e-5`
-
-## Step 6: Add tests
-
-If you created a new recipe, add a smoke test so CI catches regressions:
+For single-turn answer-verification tasks, subclass `ProblemEnv` — it handles rendering, reward computation, and logging. You only implement 4 methods:
 
 ```python
-# tests/recipes/test_recipe_<name>.py
-import pytest
-from tests.helpers import run_recipe
+from tinker_cookbook.rl.problem_env import ProblemEnv, ProblemGroupBuilder
 
-@pytest.mark.integration
-def test_<recipe_name>():
-    run_recipe(
-        "tinker_cookbook.recipes.<recipe_name>.train",
-        ["behavior_if_log_dir_exists=delete", "groups_per_batch=4", "group_size=2"],
-    )
+class MyEnv(ProblemEnv):
+    def __init__(self, question: str, answer: str, **kwargs):
+        super().__init__(**kwargs)
+        self.question = question
+        self.answer = answer
+
+    def get_question(self) -> str:
+        return self.question
+
+    def check_answer(self, sample_str: str) -> bool:
+        return self.answer.lower() in sample_str.lower()
+
+    def check_format(self, sample_str: str) -> bool:
+        return True  # No format requirement
+
+    def get_reference_answer(self) -> str:
+        return self.answer
 ```
 
-`run_recipe()` automatically passes `max_steps=2` so the recipe runs 2 training steps and exits. For environment logic (reward grading, env setup), add unit tests as `*_test.py` next to the source:
-- Example: `tinker_cookbook/recipes/math_rl/math_env_test.py`
-
-## Step 7: Export weights (optional)
-
-After training, export weights using the `tinker_cookbook.weights` API:
+Then create an `RLDatasetBuilder` that produces `ProblemGroupBuilder` batches:
 
 ```python
-from tinker_cookbook import weights
+from collections.abc import Sequence
+import chz
+from tinker_cookbook import renderers
+from tinker_cookbook.rl.types import EnvGroupBuilder, RLDatasetBuilder
+from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-adapter_dir = weights.download(tinker_path="tinker://run-id/sampler_weights/final", output_dir="./adapter")
-weights.build_hf_model(base_model="meta-llama/Llama-3.1-8B-Instruct", adapter_path=adapter_dir, output_path="./model")
-weights.publish_to_hf_hub(model_path="./model", repo_id="user/my-finetuned-model")
+@chz.chz
+class MyDatasetBuilder(RLDatasetBuilder):
+    batch_size: int = 64
+    group_size: int = 8
+    renderer_name: str = "llama3"
+    model_name_for_tokenizer: str = "meta-llama/Llama-3.1-8B"
+
+    async def __call__(self) -> "MyDataset":
+        problems = [("What is 2+2?", "4"), ("Capital of France?", "Paris")]
+        tokenizer = get_tokenizer(self.model_name_for_tokenizer)
+        renderer = renderers.get_renderer(self.renderer_name, tokenizer)
+        return MyDataset(problems, self.batch_size, self.group_size, renderer)
+
+class MyDataset:
+    def __init__(self, problems, batch_size, group_size, renderer):
+        self.problems = problems
+        self.batch_size = batch_size
+        self.group_size = group_size
+        self.renderer = renderer
+
+    def __len__(self) -> int:
+        return len(self.problems) // self.batch_size
+
+    def get_batch(self, batch_idx: int) -> Sequence[EnvGroupBuilder]:
+        start = (batch_idx * self.batch_size) % len(self.problems)
+        batch = self.problems[start:start + self.batch_size]
+        return [
+            ProblemGroupBuilder(
+                env_thunk=lambda q=q, a=a: MyEnv(
+                    question=q, answer=a, renderer=self.renderer
+                ),
+                num_envs=self.group_size,
+            )
+            for q, a in batch
+        ]
 ```
+
+For multi-turn and tool-use environments, see `/tinker-multiturn-rl` and `/tinker-environments`.
+
+## Customization
+
+**Async training** for expensive environments (overlaps sampling and training):
+```python
+from tinker_cookbook.rl.train import AsyncConfig
+# Add to config: async_config=AsyncConfig(max_steps_off_policy=4, groups_per_batch=128)
+```
+
+**Error tolerance** for flaky environments:
+```python
+from tinker_cookbook.rl.rollout_strategy import RetryOnFailure
+# Add to config: rollout_error_tolerance=RetryOnFailure(max_retries=5)
+```
+
+For advanced recipes (code RL, rubric grading, multiple environments), see the [tinker-cookbook repo](https://github.com/thinking-machines-lab/tinker-cookbook/tree/main/tinker_cookbook/recipes).
 
 ## Common pitfalls
 - `Env` objects are single-use — always create fresh envs via builder
 - Advantages are centered within each group — `group_size` matters for variance reduction
 - `max_tokens` too small truncates reasoning; too large wastes compute
 - Start with small `groups_per_batch` for debugging, scale up for real runs
-- Use `num_substeps > 1` for very large batches to split optimizer steps
+- `EnvGroupBuilder` and `RLDatasetBuilder` must be pickleable (use config strings + lazy construction)

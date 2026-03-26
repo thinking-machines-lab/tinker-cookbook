@@ -7,61 +7,59 @@ description: Set up and run supervised fine-tuning (SFT) on instruction or chat 
 
 Help the user set up and run supervised fine-tuning using the Tinker API.
 
-## Step 1: Understand the request
+## Key concepts
 
-Ask the user (if not already specified):
-- **Model**: Which base model to fine-tune (e.g., `meta-llama/Llama-3.1-8B`, `Qwen/Qwen3-8B`). See `docs/model-lineup.mdx` for available models.
-- **Dataset**: What data to train on — built-in datasets (NoRobots, Tulu3) or custom JSONL file.
-- **Goal**: General instruction tuning, domain-specific fine-tuning, or chat quality improvement.
+**Renderer:** Converts chat messages to tokens. Always resolve automatically:
+```python
+renderer_name = model_info.get_recommended_renderer_name(model_name)
+```
 
-## Step 2: Reference existing recipes
-
-Read these files for patterns and conventions:
-- `tinker_cookbook/recipes/sl_basic.py` — Minimal SFT example
-- `tinker_cookbook/recipes/chat_sl/train.py` — Full-featured chat SFT with eval
-- `tinker_cookbook/supervised/train.py` — Core training loop
-- `tinker_cookbook/supervised/data.py` — Dataset construction helpers
-- `docs/supervised-learning/sl-basic.mdx` — Getting started guide
-- `docs/supervised-learning/sl-hyperparams.mdx` — Learning rate and batch size guidance
-
-## Step 3: Configure the training run
-
-Key configuration decisions:
-
-### Renderer
-Match renderer to model family using `model_info.get_recommended_renderer_name(model_name)`. Never hardcode renderer names.
-
-### Learning Rate
-- Use `hyperparam_utils.get_lr(model_name)` for recommended LR
-- LoRA fine-tuning typically needs ~10x higher LR than full fine-tuning (e.g., 2e-4 for LoRA vs 2e-5 for full)
-
-### TrainOnWhat
+**TrainOnWhat** controls which tokens get trained on:
 - `TrainOnWhat.ALL_ASSISTANT_MESSAGES` — Train on all assistant turns (most common)
 - `TrainOnWhat.LAST_ASSISTANT_MESSAGE` — Train only on final assistant response
 - `TrainOnWhat.ALL_TOKENS` — Train on entire conversation including user messages
 
-### Dataset
-- Built-in: `NoRobotsBuilder`, `Tulu3Builder`
-- Custom JSONL: Use `FromConversationFileBuilder(common_config=..., file_path="path/to/data.jsonl")`
-- Format: Same as `tinker_cookbook/example_data/conversations.jsonl`
+**ChatDatasetBuilderCommonConfig** bundles tokenizer, renderer, and dataset settings:
+```python
+common_config = ChatDatasetBuilderCommonConfig(
+    model_name_for_tokenizer=model_name,
+    renderer_name=renderer_name,
+    max_length=32768,
+    batch_size=128,
+    train_on_what=TrainOnWhat.ALL_ASSISTANT_MESSAGES,
+)
+```
 
-### Batch Size & Epochs
-- `batch_size`: Number of tokens per training batch (default: 128 for basic, scale up as needed)
+**Built-in datasets:** `NoRobotsBuilder`, `Tulu3Builder` (from `tinker_cookbook.recipes.chat_sl.chat_datasets`)
+
+**Custom JSONL dataset:** Use `FromConversationFileBuilder` with a JSONL file where each line is:
+```json
+{"messages": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]}
+```
+
+**Hyperparameters:**
+- `learning_rate`: Use `hyperparam_utils.get_lr(model_name)` or ~2e-4 for LoRA
+- `batch_size`: Number of tokens per batch (128 is a reasonable starting point)
 - `num_epochs`: Number of passes through the dataset
 - `eval_every`: Evaluate every N batches
 
-## Step 4: Write the training script
+## Minimal working example
 
-Follow the pattern from `sl_basic.py`:
+This is a complete, runnable SFT script:
 
 ```python
 import asyncio
-import chz
 import sys
+
+import chz
+
 from tinker_cookbook import cli_utils, model_info
-from tinker_cookbook.supervised import train
+from tinker_cookbook.recipes.chat_sl import chat_datasets
 from tinker_cookbook.renderers import TrainOnWhat
+from tinker_cookbook.supervised import train
+from tinker_cookbook.supervised.data import FromConversationFileBuilder
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
+
 
 def build_config_blueprint() -> chz.Blueprint[train.Config]:
     model_name = "meta-llama/Llama-3.1-8B"
@@ -73,11 +71,13 @@ def build_config_blueprint() -> chz.Blueprint[train.Config]:
         batch_size=128,
         train_on_what=TrainOnWhat.ALL_ASSISTANT_MESSAGES,
     )
-    # Configure dataset builder here
-    dataset = ...
-
+    dataset = chat_datasets.NoRobotsBuilder(common_config=common_config)
+    if 0:  # To swap in your own dataset:
+        dataset = FromConversationFileBuilder(
+            common_config=common_config, file_path="/path/to/your/dataset.jsonl"
+        )
     return chz.Blueprint(train.Config).apply({
-        "log_path": "/tmp/tinker-examples/my_sft_run",
+        "log_path": "/tmp/tinker-examples/sl_basic",
         "model_name": model_name,
         "renderer_name": renderer_name,
         "dataset_builder": dataset,
@@ -87,9 +87,11 @@ def build_config_blueprint() -> chz.Blueprint[train.Config]:
         "eval_every": 8,
     })
 
+
 def main(config: train.Config):
     cli_utils.check_log_dir(config.log_path, behavior_if_exists="ask")
     asyncio.run(train.main(config))
+
 
 if __name__ == "__main__":
     blueprint = build_config_blueprint()
@@ -97,47 +99,23 @@ if __name__ == "__main__":
     main(blueprint.make())
 ```
 
-## Step 5: Run and iterate
+Run it: `python my_sft.py` or override params: `python my_sft.py learning_rate=1e-4 batch_size=256`
 
-```bash
-python -m tinker_cookbook.recipes.<recipe_name>
-```
+## Customization
 
-Override parameters from CLI: `python -m tinker_cookbook.recipes.<recipe_name> learning_rate=1e-4 batch_size=256`
+**Change the model:** Replace `model_name` — renderer resolves automatically. See `/tinker-models` for available models.
 
-## Step 6: Add tests
+**Use Tulu3 dataset:** Replace `NoRobotsBuilder` with `chat_datasets.Tulu3Builder(common_config=common_config)`.
 
-If you created a new recipe, add a smoke test so CI catches regressions:
+**Use custom JSONL:** Set `if 0` to `if 1` in the example above and point to your file.
 
-```python
-# tests/recipes/test_recipe_<name>.py
-import pytest
-from tests.helpers import run_recipe
+**Add LoRA rank:** Add `"lora_rank": 32` to the blueprint `.apply({...})` dict.
 
-@pytest.mark.integration
-def test_<recipe_name>():
-    run_recipe(
-        "tinker_cookbook.recipes.<recipe_name>.train",
-        ["behavior_if_log_dir_exists=delete", "batch_size=16"],
-    )
-```
+**Add evaluators:** Add `"evaluator_builders": [...]` — see the [GitHub repo](https://github.com/thinking-machines-lab/tinker-cookbook/tree/main/tinker_cookbook/recipes/chat_sl) for examples with inline evaluators.
 
-`run_recipe()` automatically passes `max_steps=2` to the recipe, so it runs 2 training steps and exits cleanly. Tests are auto-discovered by CI and run daily. For unit-testable components (dataset processing, custom logic), add `*_test.py` files next to the source code.
-
-## Step 7: Export weights (optional)
-
-After training, export weights using the `tinker_cookbook.weights` API:
-
-```python
-from tinker_cookbook import weights
-
-adapter_dir = weights.download(tinker_path="tinker://run-id/sampler_weights/final", output_dir="./adapter")
-weights.build_hf_model(base_model="meta-llama/Llama-3.1-8B", adapter_path=adapter_dir, output_path="./model")
-weights.publish_to_hf_hub(model_path="./model", repo_id="user/my-finetuned-model")
-```
+For testing and weight export patterns, see the [tinker-cookbook repo](https://github.com/thinking-machines-lab/tinker-cookbook).
 
 ## Common pitfalls
-- Always use `model_info.get_recommended_renderer_name()` — never hardcode renderer
+- Always use `model_info.get_recommended_renderer_name()` — never hardcode renderer names
 - Use `cli_utils.check_log_dir()` to avoid clobbering previous runs
-- For custom datasets, ensure JSONL matches the conversation format in `example_data/conversations.jsonl`
-- LR too high causes instability; LR too low wastes compute
+- LR too high causes instability; LR too low wastes compute. Use `hyperparam_utils.get_lr(model_name)` for recommendations.

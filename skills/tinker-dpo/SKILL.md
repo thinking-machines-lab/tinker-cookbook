@@ -7,48 +7,20 @@ description: Set up and run Direct Preference Optimization (DPO) training on pre
 
 Help the user set up and run DPO training using the Tinker API.
 
-## Step 1: Understand the request
+## Key concepts
 
-Ask the user (if not already specified):
-- **Model**: Which model to train (e.g., `meta-llama/Llama-3.2-1B`, `Qwen/Qwen3-8B`)
-- **Dataset**: Which preference dataset — built-in (HHH, HelpSteer3, UltraFeedback) or custom
-- **Starting checkpoint**: Train from base model or from an SFT checkpoint
+**DPO parameters:**
+- `dpo_beta`: Controls deviation from reference model. **Start with 0.1** (recommended).
+  - Lower beta → more aggressive optimization; higher beta → stays closer to reference
+- `learning_rate`: Typically **1e-5** for DPO (lower than SFT's ~2e-4)
+- `reference_model_name`: Defaults to the base model; set explicitly if different
 
-## Step 2: Reference existing recipes
+**Preference datasets** use `DPODatasetBuilderFromComparisons` wrapping a `ComparisonBuilder`:
 
-Read these files for patterns:
-- `tinker_cookbook/recipes/preference/dpo/train.py` — DPO CLI with built-in datasets
-- `tinker_cookbook/preference/train_dpo.py` — Core DPO training loop
-- `tinker_cookbook/preference/dpo_datasets.py` — DPO dataset builders
-- `tinker_cookbook/recipes/preference/datasets.py` — HHH, HelpSteer3, UltraFeedback builders
-- `docs/preferences/dpo-guide.mdx` — DPO guide
-
-## Step 3: Configure the training run
-
-### Key Parameters
-
-- `dpo_beta`: Controls how much the model deviates from reference. **Start with 0.1** (recommended default).
-  - Lower beta = more deviation from reference (more aggressive optimization)
-  - Higher beta = stays closer to reference (more conservative)
-- `learning_rate`: Typically **1e-5** for DPO (lower than SFT)
-- `lr_schedule`: `"linear"` decay is standard
-- `batch_size`: Number of tokens per batch (default: 256)
-- `max_length`: Maximum sequence length (default: 8192)
-- `reference_model_name`: Explicit reference model (defaults to the base model)
-
-### Preference Datasets
-
-**Built-in:**
-- `"hhh"` — Anthropic HHH (Helpful, Harmless, Honest) comparisons
-- `"helpsteer3"` — NVIDIA HelpSteer3 preference data
-- `"ultrafeedback"` — UltraFeedback preference data
-
-**Custom:** Create a `ComparisonBuilder` that yields `(chosen, rejected)` conversation pairs. See `recipes/preference/datasets.py` for examples.
-
-### Dataset Construction
 ```python
 from tinker_cookbook.preference.dpo_datasets import DPODatasetBuilderFromComparisons
 from tinker_cookbook.recipes.preference.datasets import HHHComparisonBuilder
+from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 
 common_config = ChatDatasetBuilderCommonConfig(
     model_name_for_tokenizer=model_name,
@@ -62,84 +34,122 @@ dataset = DPODatasetBuilderFromComparisons(
 )
 ```
 
-## Step 4: Write the training script
+**Built-in comparison builders:**
+- `HHHComparisonBuilder` — Anthropic HHH (Helpful, Harmless, Honest)
+- `HelpSteer3ComparisonBuilder` — NVIDIA HelpSteer3
+- `UltraFeedbackComparisonBuilder` — UltraFeedback
 
-Follow the pattern from `recipes/preference/dpo/train.py`:
+All from `tinker_cookbook.recipes.preference.datasets`.
+
+## Minimal working example
+
+This is a complete, runnable DPO script:
 
 ```python
 import chz
-from tinker_cookbook import checkpoint_utils, cli_utils
+
+from tinker_cookbook import checkpoint_utils, cli_utils, model_info
 from tinker_cookbook.preference import train_dpo
 from tinker_cookbook.preference.dpo_datasets import DPODatasetBuilderFromComparisons
-from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
-
-config = train_dpo.Config(
-    log_path="/tmp/tinker-examples/dpo/my_run",
-    model_name="meta-llama/Llama-3.2-1B",
-    renderer_name=renderer_name,
-    dataset_builder=dataset,
-    learning_rate=1e-5,
-    lr_schedule="linear",
-    dpo_beta=0.1,
-    reference_model_name=None,  # Uses base model as reference
-    load_checkpoint_path=None,  # Or path to SFT checkpoint
+from tinker_cookbook.recipes.preference.datasets import (
+    HelpSteer3ComparisonBuilder,
+    HHHComparisonBuilder,
+    UltraFeedbackComparisonBuilder,
 )
+from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
+from tinker_cookbook.utils.lr_scheduling import LRSchedule
 
-train_dpo.main(config)
-```
 
-## Step 5: Run
+@chz.chz
+class CLIConfig:
+    model_name: str = "meta-llama/Llama-3.2-1B"
+    dataset: str = "hhh"  # hhh, helpsteer3, or ultrafeedback
+    load_checkpoint_path: str | None = None
+    renderer_name: str | None = None
+    learning_rate: float = 1e-5
+    lr_schedule: LRSchedule = "linear"
+    dpo_beta: float = 0.1
+    max_length: int | None = 8192
+    batch_size: int = 256
+    log_path: str | None = None
+    reference_model_name: str | None = None
+    behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
+    max_steps: int | None = None
 
-```bash
-# Basic DPO with HHH dataset
-python -m tinker_cookbook.recipes.preference.dpo.train dataset=hhh
 
-# With different model and dataset
-python -m tinker_cookbook.recipes.preference.dpo.train \
-    model_name=meta-llama/Llama-3.1-8B \
-    dataset=ultrafeedback \
-    dpo_beta=0.1 \
-    learning_rate=1e-5
+COMPARISON_BUILDERS = {
+    "hhh": HHHComparisonBuilder,
+    "helpsteer3": HelpSteer3ComparisonBuilder,
+    "ultrafeedback": UltraFeedbackComparisonBuilder,
+}
 
-# From an SFT checkpoint
-python -m tinker_cookbook.recipes.preference.dpo.train \
-    load_checkpoint_path=/tmp/tinker-examples/sft/checkpoint_100
-```
 
-## Step 6: Add tests
-
-If you created a new DPO recipe, add a smoke test:
-
-```python
-# tests/recipes/test_recipe_<name>.py
-import pytest
-from tests.helpers import run_recipe
-
-@pytest.mark.integration
-def test_<recipe_name>():
-    run_recipe(
-        "tinker_cookbook.recipes.<recipe_name>.train",
-        ["behavior_if_log_dir_exists=delete"],
+def cli_main(cli_config: CLIConfig):
+    renderer_name = checkpoint_utils.resolve_renderer_name_from_checkpoint_or_default(
+        model_name=cli_config.model_name,
+        explicit_renderer_name=cli_config.renderer_name,
+        load_checkpoint_path=cli_config.load_checkpoint_path,
     )
+    common_config = ChatDatasetBuilderCommonConfig(
+        model_name_for_tokenizer=cli_config.model_name,
+        renderer_name=renderer_name,
+        max_length=cli_config.max_length,
+        batch_size=cli_config.batch_size,
+    )
+    dataset = DPODatasetBuilderFromComparisons(
+        common_config=common_config,
+        comparison_builder=COMPARISON_BUILDERS[cli_config.dataset](),
+    )
+    log_path = cli_config.log_path or f"/tmp/tinker-examples/dpo/{cli_config.dataset}"
+    cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
+
+    config = train_dpo.Config(
+        log_path=log_path,
+        model_name=cli_config.model_name,
+        renderer_name=renderer_name,
+        dataset_builder=dataset,
+        learning_rate=cli_config.learning_rate,
+        lr_schedule=cli_config.lr_schedule,
+        dpo_beta=cli_config.dpo_beta,
+        load_checkpoint_path=cli_config.load_checkpoint_path,
+        reference_model_name=cli_config.reference_model_name,
+        max_steps=cli_config.max_steps,
+    )
+    train_dpo.main(config)
+
+
+if __name__ == "__main__":
+    cli_config = chz.entrypoint(CLIConfig)
+    cli_main(cli_config)
 ```
 
-`run_recipe()` automatically passes `max_steps=2` so the recipe runs 2 training steps and exits. See `tests/recipes/test_recipe_dpo.py` for the existing example.
+Run it: `python my_dpo.py` or `python my_dpo.py dataset=ultrafeedback dpo_beta=0.05`
 
-## Step 7: Export weights (optional)
+## Customization
 
-After DPO training, export weights using the `tinker_cookbook.weights` API:
+**Custom preference data:** Create a `ComparisonBuilder` that yields `(chosen, rejected)` conversation pairs:
 
 ```python
-from tinker_cookbook import weights
+from tinker_cookbook.preference.dpo_datasets import ComparisonBuilder
+from tinker_cookbook.renderers.base import Message
 
-adapter_dir = weights.download(tinker_path="tinker://run-id/sampler_weights/final", output_dir="./adapter")
-weights.build_hf_model(base_model="meta-llama/Llama-3.2-1B", adapter_path=adapter_dir, output_path="./model")
-weights.publish_to_hf_hub(model_path="./model", repo_id="user/my-dpo-model")
+class MyComparisonBuilder(ComparisonBuilder):
+    async def __call__(self) -> list[tuple[list[Message], list[Message]]]:
+        # Return list of (chosen_messages, rejected_messages) pairs
+        return [
+            (
+                [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Good answer"}],
+                [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Bad answer"}],
+            ),
+        ]
 ```
+
+**From SFT checkpoint:** Set `load_checkpoint_path` to your SFT checkpoint path. DPO works best starting from an SFT model rather than a raw base model.
+
+For testing and weight export patterns, see the [tinker-cookbook repo](https://github.com/thinking-machines-lab/tinker-cookbook).
 
 ## Common pitfalls
-- **Start with `dpo_beta=0.1`** — this is well-tested. Tune from there.
+- **Start with `dpo_beta=0.1`** — well-tested default. Tune from there.
 - DPO LR should be **lower than SFT** (1e-5 vs 2e-4)
-- DPO works best when starting from an SFT checkpoint, not a raw base model
-- Reference model defaults to the base model — set `reference_model_name` explicitly if you want a different reference
-- Preference data quality matters more than quantity — ensure chosen/rejected pairs have clear quality differences
+- DPO works best from an SFT checkpoint, not a raw base model
+- Preference data quality matters more than quantity — ensure clear quality differences between chosen/rejected

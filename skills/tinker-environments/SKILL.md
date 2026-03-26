@@ -5,54 +5,40 @@ description: Guide for defining RL environments — the Env protocol, EnvGroupBu
 
 # RL Environments
 
-RL training requires environments that provide observations and rewards. This skill covers how to define and use them.
+RL training requires environments that provide observations and rewards. This skill covers the core protocols and high-level abstractions for building them.
 
-## Reference
+## Core protocol: Env
 
-Read these for details:
-- `tinker_cookbook/rl/types.py` — Env, EnvGroupBuilder, RLDatasetBuilder, Trajectory
-- `docs/rl/rl-envs.mdx` — Custom environments guide
-- `tinker_cookbook/recipes/math_rl/math_env.py` — Math environment example
-- `tinker_cookbook/recipes/harbor_rl/harbor_env.py` — Multi-turn sandbox environment
-- `tinker_cookbook/rl/message_env.py` — Message-based environment interface
-- `CONTRIBUTING.md` — Env lifecycle and design conventions
-
-## Core types
-
-### Env (single-use, no reset)
+Envs are **single-use** (no reset). Each env handles one episode.
 
 ```python
-from tinker_cookbook.rl.types import ActionExtra, Env, Observation, Action, StepResult, StopCondition
+from tinker_cookbook.rl.types import Env, StepResult, Observation, Action, ActionExtra, StopCondition
 
 class MyEnv(Env):
     async def initial_observation(self) -> tuple[Observation, StopCondition]:
-        """Return the initial prompt and stop condition."""
+        """Return the initial prompt (ModelInput) and stop condition."""
         model_input = renderer.build_generation_prompt(messages)
-        stop = renderer.get_stop_sequences()
-        return model_input, stop
+        return model_input, renderer.get_stop_sequences()
 
     async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
-        """Process model output and return next observation + reward."""
-        # action is TokensWithLogprobs (tokens + logprobs)
-        # extra contains optional metadata (e.g., extra["response_hit_length_limit"])
+        """Process model output and return reward + next state."""
+        # action is TokensWithLogprobs; extra has metadata like response_hit_length_limit
         return StepResult(
-            next_observation=next_model_input,
-            next_stop_condition=stop,
-            reward=reward_value,
+            reward=1.0,
             episode_done=True,
-            metrics={"accuracy": 1.0},
-            logs={"grading_detail": "..."},  # diagnostic info (not aggregated)
+            next_observation=tinker.ModelInput.empty(),
+            next_stop_condition=renderer.get_stop_sequences(),
+            metrics={"accuracy": 1.0},     # aggregated across batches
+            logs={"detail": "..."},         # diagnostic only, not aggregated
         )
 ```
 
-**Important:** Env objects are **single-use** — no reset method. Create fresh envs via EnvGroupBuilder each batch.
+## EnvGroupBuilder
 
-### EnvGroupBuilder
-
-Creates a group of envs for the same prompt/task. Advantages are centered within each group (GRPO).
+Creates a group of envs for the same prompt. Advantages are centered within each group (GRPO).
 
 ```python
-from tinker_cookbook.rl.types import EnvGroupBuilder, TrajectoryGroup
+from tinker_cookbook.rl.types import EnvGroupBuilder, Trajectory, Metrics
 
 class MyEnvGroupBuilder(EnvGroupBuilder):
     async def make_envs(self) -> Sequence[Env]:
@@ -62,21 +48,20 @@ class MyEnvGroupBuilder(EnvGroupBuilder):
     async def compute_group_rewards(
         self, trajectory_group: list[Trajectory], env_group: Sequence[Env]
     ) -> list[tuple[float, Metrics]]:
-        """Compute final rewards for each trajectory in the group."""
-        return [(env.reward, {"solved": env.reward > 0}) for env in env_group]
+        """Optional final group reward (default returns 0.0 for each)."""
+        return [(0.0, {}) for _ in trajectory_group]
 
     def logging_tags(self) -> list[str]:
         return ["my_task"]
 
     async def cleanup(self) -> None:
-        """Release expensive resources (sandboxes, DB connections, etc.)."""
-        # Called after rollouts + reward computation, regardless of success/failure.
+        """Release expensive resources (sandboxes, DB connections)."""
         pass
 ```
 
-### RLDatasetBuilder
+## RLDatasetBuilder
 
-Builds train/test datasets of EnvGroupBuilders:
+Builds train/test datasets of `EnvGroupBuilder` batches:
 
 ```python
 @chz.chz
@@ -86,70 +71,93 @@ class MyDatasetBuilder(RLDatasetBuilder):
 
     async def __call__(self) -> tuple[RLDataset, RLDataset | None]:
         # Return (train_dataset, optional_test_dataset)
-        ...
+        return MyDataset(...), None
 ```
 
-## Key data types
+The dataset's `get_batch(batch_idx)` returns `Sequence[EnvGroupBuilder]`.
+
+## ProblemEnv — single-turn answer verification
+
+For tasks where the model answers a question and gets a correctness reward, use `ProblemEnv`. It handles rendering, reward computation (with format penalty), and logging. You only implement 4 methods:
 
 ```python
-@dataclass
-class Transition:
-    ob: Observation       # ModelInput
-    ac: TokensWithLogprobs  # Action with logprobs
-    reward: float
-    episode_done: bool
+from tinker_cookbook.rl.problem_env import ProblemEnv, ProblemGroupBuilder
 
-@dataclass
-class Trajectory:
-    transitions: list[Transition]
-    final_ob: Observation
+class MyMathEnv(ProblemEnv):
+    def __init__(self, question: str, answer: str, **kwargs):
+        super().__init__(**kwargs)
+        self.question = question
+        self.answer = answer
 
-@dataclass
-class TrajectoryGroup:
-    trajectories_G: list[Trajectory]
-    final_rewards_G: list[float]
-    metrics_G: list[Metrics]
+    def get_question(self) -> str:
+        return self.question
+
+    def check_answer(self, sample_str: str) -> bool:
+        return self.answer.lower() in sample_str.lower()
+
+    def check_format(self, sample_str: str) -> bool:
+        return True  # No format requirement
+
+    def get_reference_answer(self) -> str:
+        return self.answer
 ```
 
-## Patterns
-
-### Single-turn (math, classification)
-Model generates one response, gets a reward. See `recipes/math_rl/math_env.py`.
-
-### Multi-turn (tool use, sandbox)
-Model generates, environment responds, repeat. See `recipes/harbor_rl/harbor_env.py` and `docs/rl/sequence-extension.mdx` for KV-cache support.
-
-### Multiplayer (games)
-Group of envs represents a game — envs within the group interact. See `recipes/multiplayer_rl/text_arena/env.py`.
-
-### Preference-based (RLHF)
-Group of envs generates completions, preference model scores pairs. See `tinker_cookbook/rl/preference_envs.py`.
-
-## Pluggable rollout executor
-
-For scaling rollout collection, `train.main()` accepts an optional `rollout_executor` parameter:
+Use `ProblemGroupBuilder` to wrap it — it automatically creates `group_size` copies of the env:
 
 ```python
-from concurrent.futures import ProcessPoolExecutor
-from tinker_cookbook.rl.train import main
-
-await main(config, rollout_executor=ProcessPoolExecutor(max_workers=4))
+builder = ProblemGroupBuilder(
+    env_thunk=lambda: MyMathEnv(question=q, answer=a, renderer=renderer),
+    num_envs=group_size,
+    dataset_name="my_math",
+)
 ```
 
-EnvGroupBuilders must be **pickleable** for distributed execution. Test with `tinker_cookbook/rl/builder_pickle_test.py`.
+**Reward formula:** `format_coef * (check_format - 1) + check_answer`. The `format_coef` (default 0.1) penalizes bad format without dominating the correctness signal.
+
+## MessageEnv — multi-turn conversations
+
+For multi-turn environments (tool use, interactive tasks), use `MessageEnv`. It operates at the message level instead of tokens:
+
+```python
+from tinker_cookbook.rl.message_env import MessageEnv, MessageStepResult, EnvFromMessageEnv
+from tinker_cookbook.renderers.base import Message
+
+class MyToolEnv(MessageEnv):
+    async def initial_observation(self) -> list[Message]:
+        """Return initial conversation as renderer messages."""
+        return [{"role": "user", "content": "Use the calculator to compute 123 * 456"}]
+
+    async def step(self, message: Message) -> MessageStepResult:
+        """Process an assistant message, return reward + next messages."""
+        content = message.get("content", "")
+        # Parse tool calls, execute, return result
+        return MessageStepResult(
+            reward=1.0 if "56088" in content else 0.0,
+            episode_done=True,
+            next_messages=[],  # Append environment response for multi-turn
+            metrics={"correct": float("56088" in content)},
+        )
+```
+
+Wrap with `EnvFromMessageEnv` to bridge to the token-level `Env` interface:
+
+```python
+env = EnvFromMessageEnv(
+    renderer=renderer,
+    message_env=MyToolEnv(),
+    max_trajectory_tokens=8192,     # Truncate if context gets too long
+    failed_parse_reward=-1.0,       # Penalty for unparseable output
+)
+```
 
 ## Dimension conventions
 
-- `_P` = problems (different prompts/tasks)
-- `_G` = groups (multiple rollouts per problem)
-- `_T` = tokens (sequence position)
-- `_D` = datums (training data items)
-
-Example: `tokens_P_G_T[p][g][t]` = token `t` of group `g` of problem `p`.
+- `_P` = problems, `_G` = groups, `_T` = tokens, `_D` = datums
+- Example: `tokens_P_G_T[p][g][t]` = token `t` of group `g` of problem `p`
 
 ## Common pitfalls
 - Envs are **single-use** — always create fresh ones via EnvGroupBuilder
-- Advantages are centered within each group — `group_size` affects variance reduction
-- EnvGroupBuilders must be pickleable for distributed rollout execution
-- Shared resources (DB connections, sandboxes) should be managed by the builder, not the env
-- For multi-turn envs, use `max_steps_off_policy` for async rollouts when env execution is slow
+- `EnvGroupBuilder` and `RLDatasetBuilder` must be **pickleable** for distributed execution
+- Shared resources (sandboxes, connections) should be managed in `cleanup()`, not in env
+- For multi-turn envs, use `AsyncConfig(max_steps_off_policy=...)` when env execution is slow
+- For more examples, see the [tinker-cookbook recipes](https://github.com/thinking-machines-lab/tinker-cookbook/tree/main/tinker_cookbook/recipes)

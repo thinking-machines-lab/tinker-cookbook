@@ -7,13 +7,6 @@ description: Guide for using renderers — the bridge between chat-style message
 
 Renderers convert chat-style messages into token sequences for training and generation.
 
-## Reference
-
-Read these for details:
-- `tinker_cookbook/renderers/base.py` — Renderer base class and API
-- `tinker_cookbook/renderers/__init__.py` — Registry, factory, TrainOnWhat enum
-- `docs/rendering.mdx` — Rendering guide with examples
-
 ## Getting a renderer
 
 Always use `model_info.get_recommended_renderer_name()` — never hardcode:
@@ -28,7 +21,32 @@ tokenizer = get_tokenizer(model_name)
 renderer = get_renderer(renderer_name, tokenizer)
 ```
 
-**Available renderers:** `llama3`, `qwen3`, `deepseekv3`, `kimi_k2`, `kimi_k25`, `nemotron3`, `nemotron3_disable_thinking`, `role_colon`, and more. See `tinker_cookbook/renderers/__init__.py` for the full registry.
+## Available renderers
+
+| Renderer name | Model family | Notes |
+|---|---|---|
+| `llama3` | Llama 3.x | |
+| `qwen3` | Qwen3 | Thinking enabled |
+| `qwen3_disable_thinking` | Qwen3 | Thinking disabled |
+| `qwen3_instruct` | Qwen3 Instruct 2507 | No thinking |
+| `qwen3_vl` | Qwen3 VL | Vision + thinking |
+| `qwen3_vl_instruct` | Qwen3 VL Instruct | Vision, no thinking |
+| `qwen3_5` | Qwen3.5 VL | Thinking enabled |
+| `qwen3_5_disable_thinking` | Qwen3.5 VL | Thinking disabled |
+| `deepseekv3` | DeepSeek V3 | Defaults to non-thinking |
+| `deepseekv3_thinking` | DeepSeek V3 | Thinking mode |
+| `kimi_k2` | Kimi K2 | Thinking format |
+| `kimi_k25` | Kimi K2.5 | Thinking enabled |
+| `kimi_k25_disable_thinking` | Kimi K2.5 | Thinking disabled |
+| `nemotron3` | Nemotron-3 | Thinking enabled |
+| `nemotron3_disable_thinking` | Nemotron-3 | Thinking disabled |
+| `gpt_oss_no_sysprompt` | GPT-OSS | No system prompt |
+| `gpt_oss_low_reasoning` | GPT-OSS | Low reasoning |
+| `gpt_oss_medium_reasoning` | GPT-OSS | Medium reasoning |
+| `gpt_oss_high_reasoning` | GPT-OSS | High reasoning |
+| `role_colon` | Generic | Simple `role: content` format |
+
+You can also register custom renderers (see below).
 
 ## Key renderer methods
 
@@ -58,25 +76,18 @@ Controls which tokens receive training signal:
 ```python
 from tinker_cookbook.renderers import TrainOnWhat
 
-# Most common — train on all assistant responses
-TrainOnWhat.ALL_ASSISTANT_MESSAGES
-
-# Train only on the final assistant response
-TrainOnWhat.LAST_ASSISTANT_MESSAGE
-
-# Train on everything (including user messages)
-TrainOnWhat.ALL_TOKENS
-
-# Other options
-TrainOnWhat.LAST_ASSISTANT_TURN
-TrainOnWhat.ALL_MESSAGES
-TrainOnWhat.ALL_USER_AND_SYSTEM_MESSAGES
-TrainOnWhat.CUSTOMIZED  # Set trainable=True/False on individual messages
+TrainOnWhat.ALL_ASSISTANT_MESSAGES   # Most common — train on all assistant responses
+TrainOnWhat.LAST_ASSISTANT_MESSAGE   # Train only on the final assistant response
+TrainOnWhat.ALL_TOKENS               # Train on everything (including user messages)
+TrainOnWhat.LAST_ASSISTANT_TURN      # Last assistant turn only
+TrainOnWhat.ALL_MESSAGES             # All messages
+TrainOnWhat.ALL_USER_AND_SYSTEM_MESSAGES  # User + system only
+TrainOnWhat.CUSTOMIZED               # Set trainable=True/False on individual messages
 ```
 
 ## Vision inputs
 
-For VLM models, use `ImageChunk` in messages:
+For VLM models, use image content parts in messages:
 
 ```python
 message = {
@@ -88,11 +99,9 @@ message = {
 }
 ```
 
-See `docs/rendering.mdx` and `tinker_cookbook/recipes/vlm_classifier/train.py` for VLM examples.
+Use a VL renderer (`qwen3_vl`, `qwen3_5`, etc.) and pass an `image_processor` to `get_renderer()`.
 
 ## Custom renderers
-
-Register a custom renderer:
 
 ```python
 from tinker_cookbook.renderers import register_renderer
@@ -103,12 +112,8 @@ def my_renderer_factory(tokenizer, image_processor):
 register_renderer("my_renderer", my_renderer_factory)
 ```
 
-## Picklability
-
-Renderers must be pickleable for distributed rollout execution. The codebase tests this — see `tinker_cookbook/renderers/renderer_pickle_test.py`.
-
 ## Common pitfalls
 - Always use `model_info.get_recommended_renderer_name()` — renderer must match model family
 - After loading a checkpoint trained with a specific renderer, use the same renderer name
 - `build_supervised_example()` returns weights as `list[float]` — wrap with `TensorData.from_numpy()` if needed
-- For tool calling, use `create_conversation_prefix_with_tools()` to inject tool definitions
+- Renderers must be pickleable for distributed rollout execution
