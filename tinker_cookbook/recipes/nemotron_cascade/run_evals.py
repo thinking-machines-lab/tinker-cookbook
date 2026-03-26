@@ -71,40 +71,39 @@ def _check_gsm8k(response: str, expected: str) -> bool:
 async def eval_gsm8k(
     completer: TinkerMessageCompleter,
     limit: int | None = None,
+    concurrency: int = 64,
 ) -> dict[str, float]:
-    """Evaluate on GSM8K test set."""
+    """Evaluate on GSM8K test set with concurrent sampling."""
     ds = cast(Dataset, load_dataset("openai/gsm8k", "main", split="test"))
     if limit:
         ds = ds.select(range(min(limit, len(ds))))
 
-    correct = 0
-    total = 0
+    import re
+    semaphore = asyncio.Semaphore(concurrency)
 
-    for i, row in enumerate(ds):
-        question = row["question"]
-        # Extract expected answer
-        import re
-        answer_match = re.search(r'####\s*(.+)', row["answer"])
-        expected = answer_match.group(1).strip().replace(",", "") if answer_match else ""
+    async def eval_one(row: dict) -> bool | None:
+        async with semaphore:
+            question = row["question"]
+            answer_match = re.search(r'####\s*(.+)', row["answer"])
+            expected = answer_match.group(1).strip().replace(",", "") if answer_match else ""
+            messages: list[Message] = [
+                {"role": "user", "content": question + " Show your work step by step, then give the final numerical answer."},
+            ]
+            try:
+                response = await completer(messages)
+                content = renderers.get_text_content(response)
+                return _check_gsm8k(content, expected)
+            except Exception as e:
+                logger.warning(f"GSM8K eval failed: {e}")
+                return None
 
-        messages: list[Message] = [
-            {"role": "user", "content": question + " Show your work step by step, then give the final numerical answer."},
-        ]
+    # Launch all concurrently
+    logger.info(f"GSM8K: evaluating {len(ds)} samples with concurrency={concurrency}")
+    tasks = [eval_one(row) for row in ds]
+    results = await asyncio.gather(*tasks)
 
-        try:
-            response = await completer(messages)
-            content = renderers.get_text_content(response)
-            is_correct = _check_gsm8k(content, expected)
-            if is_correct:
-                correct += 1
-            total += 1
-        except Exception as e:
-            logger.warning(f"GSM8K sample {i} failed: {e}")
-            total += 1
-
-        if (i + 1) % 50 == 0:
-            logger.info(f"GSM8K: {i+1}/{len(ds)} | accuracy={correct/total:.3f}")
-
+    correct = sum(1 for r in results if r is True)
+    total = sum(1 for r in results if r is not None)
     accuracy = correct / total if total > 0 else 0
     logger.info(f"GSM8K final: {correct}/{total} = {accuracy:.4f}")
     return {"gsm8k/accuracy": accuracy, "gsm8k/correct": correct, "gsm8k/total": total}
@@ -117,8 +116,9 @@ async def eval_gsm8k(
 async def eval_ifeval(
     completer: TinkerMessageCompleter,
     limit: int | None = None,
+    concurrency: int = 64,
 ) -> dict[str, float]:
-    """Evaluate on IFEval using our verifier."""
+    """Evaluate on IFEval using our verifier with concurrent sampling."""
     from tinker_cookbook.recipes.nemotron_cascade.if_rl_env import verify_all_instructions
 
     # Load IFEval data from our downloaded RL data
@@ -131,16 +131,9 @@ async def eval_ifeval(
     if limit:
         rows = rows[:limit]
 
-    total_score = 0
-    total_prompts = 0
-    strict_correct = 0
+    semaphore = asyncio.Semaphore(concurrency)
 
-    for i, row in enumerate(rows):
-        prompt_messages = row["responses_create_params"]["input"]
-        instruction_ids = row.get("instruction_id_list", [])
-        raw_kwargs = row.get("kwargs", [])
-
-        # Parse kwargs
+    def _parse_kwargs(raw_kwargs: list, instruction_ids: list) -> list[dict]:
         kwargs_list = []
         for kw in raw_kwargs:
             if kw is None:
@@ -156,26 +149,37 @@ async def eval_ifeval(
                 kwargs_list.append({})
         while len(kwargs_list) < len(instruction_ids):
             kwargs_list.append({})
+        return kwargs_list
 
-        messages: list[Message] = [
-            {"role": msg["role"], "content": msg["content"]}
-            for msg in prompt_messages
-        ]
+    async def eval_one(row: dict) -> tuple[float, bool] | None:
+        async with semaphore:
+            prompt_messages = row["responses_create_params"]["input"]
+            instruction_ids = row.get("instruction_id_list", [])
+            raw_kwargs = row.get("kwargs", [])
+            kwargs_list = _parse_kwargs(raw_kwargs, instruction_ids)
 
-        try:
-            response = await completer(messages)
-            content = renderers.get_text_content(response)
-            fraction, _ = verify_all_instructions(content, instruction_ids, kwargs_list)
-            total_score += fraction
-            if fraction == 1.0:
-                strict_correct += 1
-            total_prompts += 1
-        except Exception as e:
-            logger.warning(f"IFEval sample {i} failed: {e}")
-            total_prompts += 1
+            messages: list[Message] = [
+                {"role": msg["role"], "content": msg["content"]}
+                for msg in prompt_messages
+            ]
+            try:
+                response = await completer(messages)
+                content = renderers.get_text_content(response)
+                fraction, _ = verify_all_instructions(content, instruction_ids, kwargs_list)
+                return (fraction, fraction == 1.0)
+            except Exception as e:
+                logger.warning(f"IFEval eval failed: {e}")
+                return None
 
-        if (i + 1) % 50 == 0:
-            logger.info(f"IFEval: {i+1}/{len(rows)} | loose={total_score/total_prompts:.3f} strict={strict_correct/total_prompts:.3f}")
+    # Launch all concurrently
+    logger.info(f"IFEval: evaluating {len(rows)} samples with concurrency={concurrency}")
+    tasks = [eval_one(row) for row in rows]
+    results = await asyncio.gather(*tasks)
+
+    valid = [r for r in results if r is not None]
+    total_prompts = len(valid)
+    total_score = sum(r[0] for r in valid)
+    strict_correct = sum(1 for r in valid if r[1])
 
     loose_acc = total_score / total_prompts if total_prompts > 0 else 0
     strict_acc = strict_correct / total_prompts if total_prompts > 0 else 0
