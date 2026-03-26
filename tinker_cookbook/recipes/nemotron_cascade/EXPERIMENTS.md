@@ -123,29 +123,38 @@ Note: IF-RL shows clear reward improvement (+0.058 over 50 steps).
 Paper used batch=128 (vs our 32) and ran 180 steps with dynamic filtering.
 Scaling up batch size and running more steps would likely yield stronger gains.
 
-### Benchmark Evaluation (commit: 3317b54)
+### Benchmark Evaluation (commit: ed3c51e)
 - Date: 2026-03-26
-- Model: gpt-oss-120b
-- Benchmarks: GSM8K (200 samples), IFEval (200 samples)
+- Benchmarks: GSM8K, IFEval, MMLU-Pro, MATH-500 (200 samples each)
 - Temperature: 0.6, max_tokens: 4096
 - Concurrent sampling (128 parallel requests)
 
-| Metric | Base | SFT | IF-RL | Delta |
-|--------|------|-----|-------|-------|
-| **GSM8K** | 90.5% | **93.5%** | 92.0% | +3 then -1.5 |
-| **IFEval loose** | **79.6%** | 72.6% | 72.8% | -7 then +0.2 |
-| **IFEval strict** | **61.0%** | 49.0% | 53.0% | -12 then +4 |
+#### gpt-oss-120b
 
-Note: Initial eval showed inflated GSM8K gains due to answer extraction bug
-(nested LaTeX braces in \boxed{}). Fixed in commit 3317b54.
+| Benchmark | Base | SFT | IF-RL | SFT Δ | IFRL Δ |
+|-----------|------|-----|-------|-------|--------|
+| GSM8K | 90.5% | **94.0%** | 91.5% | +3.5 | -2.5 |
+| IFEval loose | 77.7% | 73.3% | **77.3%** | -4.3 | **+3.9** |
+| IFEval strict | 57.0% | 52.5% | **58.0%** | -4.5 | **+5.5** |
+| MATH-500 | **91.5%** | 84.0% | 87.0% | -7.5 | +3.0 |
+| MMLU-Pro | **78.0%** | 65.5% | 60.5% | -12.5 | -5.0 |
+
+#### Qwen3-8B-Base
+
+| Benchmark | Base | SFT | SFT Δ |
+|-----------|------|-----|-------|
+| GSM8K | 84.0% | **89.0%** | +5.0 |
+| IFEval loose | 69.8% | 70.0% | +0.2 |
+| IFEval strict | 46.5% | 46.0% | -0.5 |
+| MATH-500 | **83.0%** | 73.0% | -10.0 |
+| MMLU-Pro | 54.5% | **60.0%** | +5.5 |
 
 Key observations:
-- Base model is strong (90.5% GSM8K) as expected for gpt-oss-120b
-- SFT improves math slightly (+3 pts) but regresses IFEval (-7 loose, -12 strict)
-  - Likely due to heavy math bias in SFT data (100K math vs 10K IF)
-- IF-RL recovers IFEval strict (+4 pts) without losing much math (-1.5 pts)
-- The cascade approach works: IF-RL partially reverses SFT's IF regression
-- To improve: balance SFT data mix (more IF/chat data) or use more IF-RL steps
+- SFT improves GSM8K (+3.5/+5.0 pts) but regresses MATH-500 and MMLU-Pro
+- SFT data mix is too math-heavy (100K math, only 10K IF) causing IFEval regression
+- IF-RL recovers IFEval strict to **above base** (58% vs 57%) without catastrophic forgetting
+- MMLU-Pro degrades through pipeline (-12.5 then -5.0) → needs multi-domain RL
+- Qwen3-8B shows similar pattern: GSM8K/MMLU up, MATH-500 down from SFT
 
 ## Commit History
 - `8ddbd53` - Initial recipe structure (SFT + IF-RL)
