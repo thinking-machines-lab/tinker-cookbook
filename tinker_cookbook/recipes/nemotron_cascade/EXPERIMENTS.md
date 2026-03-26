@@ -3,21 +3,26 @@
 Replicating NVIDIA's Nemotron-Cascade-2 (arxiv:2603.19220) using Tinker API.
 
 ## Models
-- `openai/gpt-oss-120b:peft:131072` (LoRA fine-tuning, 128K ctx, MoE, hidden=2880)
-- `Qwen/Qwen3-8B-Base` (LoRA fine-tuning, 32K ctx, dense base model)
+- `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16` (paper's base model, LoRA, 131K ctx)
+- `openai/gpt-oss-120b:peft:131072` (secondary experiments)
+- `Qwen/Qwen3-8B-Base` (smaller model experiments)
 
 ## Paper Pipeline
-1. SFT on ~24.8M examples (multi-domain)
-2. IF-RL (instruction following, ~180 steps)
-3. Multi-domain RL (~70 steps)
-4. MOPD (on-policy distillation)
-5. RLHF
-6. Long-context RL
-7. Code RL
-8. SWE RL
+SFT → IF-RL → Multi-domain RL → MOPD → RLHF → Long-ctx RL → Code RL → SWE RL
 
-## Our Replication Plan
-Focus on stages 1-3 (SFT -> IF-RL -> Multi-domain RL).
+## RL Environments (9 built, 5 working)
+| Env | Verifier | Tested | Reward |
+|-----|----------|--------|--------|
+| if_rl | IFEval (48 types) | ✓ Nano | 0.81 |
+| mcqa | Exact match | ✓ Nano | 0.50-0.58 |
+| structured_output | JSON schema | ✓ Nano | 0.75-1.0 |
+| workbench | Tool call match | ~ Multi-turn, mock backend issue |
+| gsm8k (math_rl) | sympy grading | ✓ gpt-oss | 0.95 |
+| swe_rl | Modal test exec | ✓ 0 reward (hard) |
+| rlhf | Qwen3.5-397B GenRM | ⏳ Slow |
+| code_rl | Modal + MBPP | ⏳ Testing |
+| longctx_rl | Qwen3.5-397B judge | ⏳ Slow |
+| swe_agentic | Modal multi-turn | Not tested |
 
 ## Data Analysis Summary
 
