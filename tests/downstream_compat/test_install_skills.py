@@ -1,9 +1,10 @@
 """Tests for skills/ directory structure and marketplace.json consistency."""
 
 import json
+import re
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SKILLS_DIR = REPO_ROOT / "skills"
 MARKETPLACE_JSON = REPO_ROOT / ".claude-plugin" / "marketplace.json"
 
@@ -19,9 +20,17 @@ def _marketplace_skills() -> set[str]:
     names = set()
     for plugin in data["plugins"]:
         for path in plugin["skills"]:
-            # paths are like "./skills/tinker-sft"
             names.add(path.rsplit("/", 1)[-1])
     return names
+
+
+def _frontmatter(text: str) -> str:
+    """Extract YAML frontmatter from between --- fences."""
+    # First fence may be at the very start of the file (no leading newline)
+    if not text.startswith("---"):
+        return ""
+    parts = text.split("\n---", 2)
+    return parts[0][3:] if len(parts) >= 2 else ""
 
 
 class TestSkillStructure:
@@ -29,8 +38,7 @@ class TestSkillStructure:
         """Every skill directory must start with tinker-."""
         for skill in _all_skill_dirs():
             assert skill.startswith("tinker-"), (
-                f"Skill directory '{skill}' must start with 'tinker-'. "
-                f"Rename it to 'tinker-{skill}'."
+                f"Skill directory '{skill}' must start with 'tinker-'"
             )
 
     def test_all_skills_have_skill_md(self):
@@ -41,46 +49,29 @@ class TestSkillStructure:
             )
 
     def test_skill_name_matches_directory(self):
-        """The name field in SKILL.md must match the directory name."""
-        import re
-
+        """The name field in SKILL.md frontmatter must match the directory name."""
         for skill in _all_skill_dirs():
             text = (SKILLS_DIR / skill / "SKILL.md").read_text()
-            match = re.search(r"^name:\s*(.+)$", text, re.MULTILINE)
-            assert match, f"{skill}/SKILL.md is missing a name field"
+            fm = _frontmatter(text)
+            match = re.search(r"^name:\s*(.+)$", fm, re.MULTILINE)
+            assert match, f"{skill}/SKILL.md is missing a name field in frontmatter"
             assert match.group(1).strip() == skill, (
                 f"{skill}/SKILL.md has name '{match.group(1).strip()}' but directory is '{skill}'"
             )
 
-    def test_every_skill_in_marketplace(self):
-        """Every skill directory must be listed in marketplace.json.
+    def test_skills_and_marketplace_match(self):
+        """Skills on disk and in marketplace.json must be the same set.
 
-        If this test fails, a new skill was added without registering it
-        in .claude-plugin/marketplace.json. Add it to the appropriate
-        plugin bundle (tinker-training or tinker-dev).
+        If a skill exists on disk but not in marketplace.json, add it to
+        the appropriate plugin bundle (tinker-training or tinker-dev).
         """
         on_disk = _all_skill_dirs()
         in_marketplace = _marketplace_skills()
-
-        for skill in on_disk:
-            assert skill in in_marketplace, (
-                f"Skill '{skill}' exists on disk but is not listed in "
-                f".claude-plugin/marketplace.json. Add it to a plugin bundle."
-            )
-
-    def test_marketplace_skills_exist(self):
-        """Every skill in marketplace.json must exist on disk.
-
-        Catches typos or stale entries in the marketplace config.
-        """
-        on_disk = _all_skill_dirs()
-        in_marketplace = _marketplace_skills()
-
-        for skill in in_marketplace:
-            assert skill in on_disk, (
-                f"Skill '{skill}' is in marketplace.json but does not exist "
-                f"in skills/. Remove it or fix the path."
-            )
+        assert on_disk == in_marketplace, (
+            f"Mismatch between skills/ and marketplace.json.\n"
+            f"  On disk only: {on_disk - in_marketplace or 'none'}\n"
+            f"  In marketplace only: {in_marketplace - on_disk or 'none'}"
+        )
 
     def test_marketplace_valid_json(self):
         """marketplace.json must be valid and have required fields."""
