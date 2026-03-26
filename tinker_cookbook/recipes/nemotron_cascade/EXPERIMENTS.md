@@ -123,24 +123,29 @@ Note: IF-RL shows clear reward improvement (+0.058 over 50 steps).
 Paper used batch=128 (vs our 32) and ran 180 steps with dynamic filtering.
 Scaling up batch size and running more steps would likely yield stronger gains.
 
-### Benchmark Evaluation (commit: ef8a12c)
+### Benchmark Evaluation (commit: 3317b54)
 - Date: 2026-03-26
 - Model: gpt-oss-120b
-- Benchmarks: GSM8K (100 samples), IFEval (100 samples)
+- Benchmarks: GSM8K (200 samples), IFEval (200 samples)
 - Temperature: 0.6, max_tokens: 4096
-- Concurrent sampling (64 parallel requests)
+- Concurrent sampling (128 parallel requests)
 
 | Metric | Base | SFT | IF-RL | Delta |
 |--------|------|-----|-------|-------|
-| **GSM8K accuracy** | 58.0% | 74.0% | **84.0%** | **+26 pts** |
-| IFEval loose | 76.8% | 72.7% | 74.5% | -2.3 then +1.8 |
-| IFEval strict | 56.0% | 50.0% | 52.0% | -6.0 then +2.0 |
+| **GSM8K** | 90.5% | **93.5%** | 92.0% | +3 then -1.5 |
+| **IFEval loose** | **79.6%** | 72.6% | 72.8% | -7 then +0.2 |
+| **IFEval strict** | **61.0%** | 49.0% | 53.0% | -12 then +4 |
+
+Note: Initial eval showed inflated GSM8K gains due to answer extraction bug
+(nested LaTeX braces in \boxed{}). Fixed in commit 3317b54.
 
 Key observations:
-- SFT dramatically improves math (+16 pts) due to heavy math data (100K examples)
-- SFT slightly regresses IF (-4 pts loose) due to domain shift
-- IF-RL recovers instruction following (+1.8 loose, +2.0 strict) while further improving math (+10 pts!)
-- The cascade pipeline works: each stage improves its target without catastrophic forgetting
+- Base model is strong (90.5% GSM8K) as expected for gpt-oss-120b
+- SFT improves math slightly (+3 pts) but regresses IFEval (-7 loose, -12 strict)
+  - Likely due to heavy math bias in SFT data (100K math vs 10K IF)
+- IF-RL recovers IFEval strict (+4 pts) without losing much math (-1.5 pts)
+- The cascade approach works: IF-RL partially reverses SFT's IF regression
+- To improve: balance SFT data mix (more IF/chat data) or use more IF-RL steps
 
 ## Commit History
 - `8ddbd53` - Initial recipe structure (SFT + IF-RL)
