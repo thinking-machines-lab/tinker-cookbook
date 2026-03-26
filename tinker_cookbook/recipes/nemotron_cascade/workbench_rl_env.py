@@ -1,48 +1,41 @@
 """
 Workbench Tool-Calling RL environment for Nemotron-Cascade-2 replication.
 
-Uses the workbench portion of multi-domain-RL data (5.2K examples).
-Tasks involve calling the right workplace tools (email, calendar, CRM, etc.).
-Reward: fraction of correct tool calls matching ground_truth.
+Multi-turn environment where the model calls workplace tools (email, calendar,
+CRM, etc.) to complete tasks. Uses the `build_agent_tool_env` multi-turn
+infrastructure (same pattern as harbor_rl and swe_agentic).
 
-Categories: email, analytics, calendar, project_management, CRM.
+The tools return mock results since we don't have the actual backend.
+Reward is based on whether the model's tool calls match the ground_truth.
 """
 
 import json
 import logging
 import math
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import cast
 
 import chz
-import tinker
 from datasets import Dataset
 
-from tinker_cookbook import renderers
-from tinker_cookbook.completers import StopCondition
-from tinker_cookbook.renderers import Message, ToolSpec
+from tinker_cookbook import model_info, tokenizer_utils
+from tinker_cookbook.renderers import get_renderer
+from tinker_cookbook.renderers.base import Message, Renderer
 from tinker_cookbook.rl.types import (
-    Action,
-    ActionExtra,
     Env,
     EnvGroupBuilder,
     Metrics,
-    Observation,
     RLDataset,
     RLDatasetBuilder,
-    StepResult,
     Trajectory,
 )
-from tinker_cookbook.tokenizer_utils import get_tokenizer
-from tinker_cookbook.utils import logtree
-from tinker_cookbook.utils.logtree_formatters import ConversationFormatter
+from tinker_cookbook.tool_use import ToolResult, build_agent_tool_env, simple_tool_result, tool
+from tinker_cookbook.tool_use.agent_tool_message_env import RewardFn
 
 logger = logging.getLogger(__name__)
 
 
-def _normalize_args(args_str: str) -> dict:
-    """Parse and normalize tool call arguments."""
+def _normalize_args(args_str: str | dict) -> dict:
     if isinstance(args_str, dict):
         return args_str
     try:
@@ -51,176 +44,229 @@ def _normalize_args(args_str: str) -> dict:
         return {}
 
 
-def check_tool_calls(
-    model_tool_calls: list[dict] | None,
+def check_tool_calls_in_messages(
+    messages: list[Message],
     ground_truth: list[dict],
-) -> tuple[float, dict]:
-    """Compare model's tool calls against ground truth.
-
-    Returns (reward, details).
-    Reward is fraction of ground truth calls that were correctly made.
-    """
+) -> float:
+    """Check if the conversation contains the expected tool calls."""
     if not ground_truth:
-        return 1.0, {"reason": "no ground truth"}
+        return 1.0
 
-    if not model_tool_calls:
-        return 0.0, {"reason": "no tool calls made", "expected": len(ground_truth)}
-
-    # Extract model call names and args
+    # Extract all tool calls from assistant messages
     model_calls = []
-    for tc in model_tool_calls:
-        if hasattr(tc, 'function'):
-            name = tc.function.name
-            args = _normalize_args(tc.function.arguments)
-        elif isinstance(tc, dict):
-            func = tc.get("function", tc)
-            name = func.get("name", "")
-            args = _normalize_args(func.get("arguments", "{}"))
-        else:
-            continue
-        model_calls.append({"name": name, "arguments": args})
+    for msg in messages:
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            for tc in msg["tool_calls"]:
+                if hasattr(tc, 'function'):
+                    model_calls.append({"name": tc.function.name, "arguments": _normalize_args(tc.function.arguments)})
+                elif isinstance(tc, dict):
+                    func = tc.get("function", tc)
+                    model_calls.append({"name": func.get("name", ""), "arguments": _normalize_args(func.get("arguments", "{}"))})
+
+    if not model_calls:
+        return 0.0
 
     # Check each ground truth call
     matched = 0
     for gt in ground_truth:
         gt_name = gt.get("name", "")
         gt_args = _normalize_args(gt.get("arguments", "{}"))
-
         for mc in model_calls:
             if mc["name"] == gt_name:
-                # Check if arguments match (flexible: allow subset match)
-                args_match = True
-                for k, v in gt_args.items():
-                    if str(mc["arguments"].get(k)) != str(v):
-                        args_match = False
-                        break
+                args_match = all(str(mc["arguments"].get(k)) == str(v) for k, v in gt_args.items())
                 if args_match:
                     matched += 1
                     break
 
-    fraction = matched / len(ground_truth)
-    return fraction, {
-        "matched": matched,
-        "total_expected": len(ground_truth),
-        "total_model_calls": len(model_calls),
-        "model_call_names": [mc["name"] for mc in model_calls],
-        "expected_names": [gt["name"] for gt in ground_truth],
-    }
+    return matched / len(ground_truth)
 
 
-class WorkbenchEnv(Env):
-    """Tool-calling workbench environment."""
+class WorkbenchTools:
+    """Mock tool implementations for workbench tasks.
+
+    Returns plausible JSON results for workplace tools.
+    The actual values don't matter much since we grade on tool call correctness,
+    not on the final answer content.
+    """
+
+    @tool
+    def company_directory_find_email_address(self, name: str = "") -> ToolResult:
+        """Finds all email addresses containing the given name."""
+        return simple_tool_result(json.dumps([
+            {"email": f"{name.lower().replace(' ', '.')}@company.com", "name": name}
+        ]))
+
+    @tool
+    def email_search_emails(self, query: str = "", date_min: str = "", date_max: str = "",
+                           page: int = 1, page_size: int = 10) -> ToolResult:
+        """Searches for emails matching the query."""
+        return simple_tool_result(json.dumps({
+            "emails": [{"email_id": f"0000025{i}", "subject": f"Re: {query}",
+                        "sender": f"{query.lower()}@company.com", "sent_datetime": "2023-11-30T10:00:00"}
+                       for i in range(min(3, page_size))],
+            "total": 3, "page": page
+        }))
+
+    @tool
+    def email_get_email_information_by_id(self, email_id: str = "", field: str = "") -> ToolResult:
+        """Retrieves email details by ID."""
+        info = {"email_id": email_id, "subject": "Meeting follow-up",
+                "sender": "user@company.com", "body": "Please review the attached.", "sent_datetime": "2023-11-30T10:00:00"}
+        return simple_tool_result(json.dumps(info.get(field, info) if field else info))
+
+    @tool
+    def email_send_email(self, to: str = "", subject: str = "", body: str = "") -> ToolResult:
+        """Sends an email."""
+        return simple_tool_result(json.dumps({"status": "sent", "email_id": "00000300"}))
+
+    @tool
+    def email_delete_email(self, email_id: str = "") -> ToolResult:
+        """Deletes an email by ID."""
+        return simple_tool_result(json.dumps({"status": "deleted", "email_id": email_id}))
+
+    @tool
+    def calendar_get_events(self, date: str = "", start_date: str = "", end_date: str = "") -> ToolResult:
+        """Gets calendar events."""
+        return simple_tool_result(json.dumps({"events": [
+            {"event_id": "EVT001", "title": "Team standup", "start": f"{date or start_date}T09:00:00",
+             "end": f"{date or start_date}T09:30:00", "attendees": ["user@company.com"]}
+        ]}))
+
+    @tool
+    def calendar_create_event(self, title: str = "", start: str = "", end: str = "",
+                             attendees: str = "") -> ToolResult:
+        """Creates a calendar event."""
+        return simple_tool_result(json.dumps({"status": "created", "event_id": "EVT100"}))
+
+    @tool
+    def calendar_delete_event(self, event_id: str = "") -> ToolResult:
+        """Deletes a calendar event."""
+        return simple_tool_result(json.dumps({"status": "deleted", "event_id": event_id}))
+
+    @tool
+    def calendar_update_event(self, event_id: str = "", **kwargs) -> ToolResult:
+        """Updates a calendar event."""
+        return simple_tool_result(json.dumps({"status": "updated", "event_id": event_id}))
+
+    @tool
+    def project_management_get_tasks(self, project: str = "", status: str = "") -> ToolResult:
+        """Gets project tasks."""
+        return simple_tool_result(json.dumps({"tasks": [
+            {"task_id": "TASK001", "title": "Review PR", "status": "in_progress", "assignee": "user"}
+        ]}))
+
+    @tool
+    def project_management_create_task(self, title: str = "", **kwargs) -> ToolResult:
+        """Creates a project task."""
+        return simple_tool_result(json.dumps({"status": "created", "task_id": "TASK100"}))
+
+    @tool
+    def project_management_update_task(self, task_id: str = "", **kwargs) -> ToolResult:
+        """Updates a project task."""
+        return simple_tool_result(json.dumps({"status": "updated", "task_id": task_id}))
+
+    @tool
+    def analytics_get_report(self, report_type: str = "", **kwargs) -> ToolResult:
+        """Gets an analytics report."""
+        return simple_tool_result(json.dumps({"report_type": report_type, "data": [
+            {"metric": "revenue", "value": 125000}, {"metric": "users", "value": 5432}
+        ]}))
+
+    @tool
+    def customer_relationship_manager_get_customer(self, customer_id: str = "") -> ToolResult:
+        """Gets customer information."""
+        return simple_tool_result(json.dumps({"customer_id": customer_id, "name": "Acme Corp",
+                                              "email": "contact@acme.com", "status": "active"}))
+
+    @tool
+    def customer_relationship_manager_search_customers(self, query: str = "", **kwargs) -> ToolResult:
+        """Searches for customers."""
+        return simple_tool_result(json.dumps({"customers": [
+            {"customer_id": "CUST001", "name": query, "email": f"{query.lower()}@example.com"}
+        ]}))
+
+    @tool
+    def customer_relationship_manager_create_customer(self, **kwargs) -> ToolResult:
+        """Creates a new customer."""
+        return simple_tool_result(json.dumps({"status": "created", "customer_id": "CUST100"}))
+
+    @tool
+    def customer_relationship_manager_update_customer(self, customer_id: str = "", **kwargs) -> ToolResult:
+        """Updates a customer record."""
+        return simple_tool_result(json.dumps({"status": "updated", "customer_id": customer_id}))
+
+    @tool
+    def customer_relationship_manager_delete_customer(self, customer_id: str = "") -> ToolResult:
+        """Deletes a customer record."""
+        return simple_tool_result(json.dumps({"status": "deleted", "customer_id": customer_id}))
+
+
+class WorkbenchReward:
+    """Reward function that checks tool calls against ground_truth."""
+
+    def __init__(self, ground_truth: list[dict]):
+        self.ground_truth = ground_truth
+
+    async def __call__(self, messages: list[Message]) -> tuple[float, Metrics]:
+        reward = check_tool_calls_in_messages(messages, self.ground_truth)
+        return reward, {"correct": reward, "n_expected": len(self.ground_truth)}
+
+
+class WorkbenchEnvGroupBuilder(EnvGroupBuilder):
+    """Builds multi-turn workbench environments."""
 
     def __init__(
         self,
         prompt_messages: list[dict],
-        tools: list[dict],
         ground_truth: list[dict],
-        renderer: renderers.Renderer,
+        renderer_name: str,
+        tokenizer_name: str,
+        num_envs: int,
         category: str = "workbench",
+        max_turns: int = 10,
     ):
-        self.prompt_messages = prompt_messages
-        self.tools = tools
-        self.ground_truth = ground_truth
-        self.renderer = renderer
-        self.category = category
-
-    @property
-    def stop_condition(self) -> StopCondition:
-        return self.renderer.get_stop_sequences()
-
-    async def initial_observation(self) -> tuple[Observation, StopCondition]:
-        # Build messages with tool definitions
-        messages: list[Message] = [
-            {"role": msg["role"], "content": msg["content"]}
-            for msg in self.prompt_messages
-        ]
-
-        # Convert tools to ToolSpec format for the renderer
-        tool_specs: list[ToolSpec] = []
-        for t in self.tools:
-            func = t.get("function", t)
-            tool_specs.append({
-                "name": func.get("name", ""),
-                "description": func.get("description", ""),
-                "parameters": func.get("parameters", {}),
-            })
-
-        # Use renderer's tool-aware prompt building if available
-        if hasattr(self.renderer, 'create_conversation_prefix_with_tools'):
-            prefix = self.renderer.create_conversation_prefix_with_tools(
-                tool_specs,
-                system_prompt=messages[0]["content"] if messages and messages[0]["role"] == "system" else "",
-            )
-            # Remove system message if it was included in prefix
-            if messages and messages[0]["role"] == "system":
-                messages = messages[1:]
-            all_messages = prefix + messages
-        else:
-            all_messages = messages
-
-        return self.renderer.build_generation_prompt(all_messages), self.stop_condition
-
-    async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
-        message, parse_success = self.renderer.parse_response(action)
-
-        # Extract tool calls from response
-        tool_calls = message.get("tool_calls", [])
-
-        stop_reason = (extra or {}).get("stop_reason")
-        if stop_reason == "length":
-            reward = 0.0
-            details = {"reason": "overlong"}
-        else:
-            reward, details = check_tool_calls(tool_calls, self.ground_truth)
-
-        # Logging
-        prompt_msgs: list[Message] = [
-            {"role": msg["role"], "content": msg["content"]}
-            for msg in self.prompt_messages
-        ]
-        with logtree.scope_header("Prompt"):
-            logtree.log_formatter(ConversationFormatter(messages=prompt_msgs))
-        with logtree.scope_header("Response"):
-            logtree.log_formatter(ConversationFormatter(messages=[message]))
-        with logtree.scope_header("Reward"):
-            logtree.table_from_dict(
-                {
-                    "reward": f"{reward:.3f}",
-                    "category": self.category,
-                    **{k: str(v)[:100] for k, v in details.items()},
-                },
-                caption="Tool calling reward",
-            )
-
-        return StepResult(
-            reward=reward,
-            episode_done=True,
-            next_observation=tinker.ModelInput.empty(),
-            next_stop_condition=self.stop_condition,
-            metrics={
-                "correct": reward,
-                "has_tool_calls": float(bool(tool_calls)),
-                "overlong": float(stop_reason == "length") if stop_reason else 0.0,
-            },
-        )
-
-
-@dataclass(frozen=True)
-class WorkbenchGroupBuilder(EnvGroupBuilder):
-    env_thunk: Callable[[], WorkbenchEnv]
-    num_envs: int
-    dataset_name: str = "workbench"
+        self._prompt_messages = prompt_messages
+        self._ground_truth = ground_truth
+        self._renderer_name = renderer_name
+        self._tokenizer_name = tokenizer_name
+        self._num_envs = num_envs
+        self._category = category
+        self._max_turns = max_turns
 
     async def make_envs(self) -> Sequence[Env]:
-        return [self.env_thunk() for _ in range(self.num_envs)]
+        tokenizer = tokenizer_utils.get_tokenizer(self._tokenizer_name)
+        renderer = get_renderer(self._renderer_name, tokenizer)
+
+        tools_obj = WorkbenchTools()
+        all_tools = [getattr(tools_obj, m) for m in dir(tools_obj)
+                     if hasattr(getattr(tools_obj, m), '_tool_spec')]
+
+        # Build initial messages (system + user from data)
+        initial_messages: list[Message] = []
+        for msg in self._prompt_messages:
+            initial_messages.append({"role": msg["role"], "content": msg["content"]})
+
+        reward_fn = WorkbenchReward(self._ground_truth)
+
+        envs = []
+        for _ in range(self._num_envs):
+            env = build_agent_tool_env(
+                renderer=renderer,
+                tools=all_tools,
+                initial_messages=initial_messages,
+                reward_fn=reward_fn,
+                max_turns=self._max_turns,
+            )
+            envs.append(env)
+        return envs
 
     def logging_tags(self) -> list[str]:
-        return [self.dataset_name]
+        return [self._category or "workbench"]
 
 
 class WorkbenchRLDataset(RLDataset):
-    def __init__(self, batch_size: int, group_size: int, renderer: renderers.Renderer, seed: int = 0):
+    def __init__(self, batch_size: int, group_size: int, renderer_name: str,
+                 tokenizer_name: str, max_turns: int = 10, seed: int = 0):
         logger.info("Loading workbench RL data...")
         from datasets import load_dataset
         ds = load_dataset("nvidia/Nemotron-Cascade-2-RL-data", name="multi-domain-RL", split="train")
@@ -229,7 +275,9 @@ class WorkbenchRLDataset(RLDataset):
         self.ds = ds.shuffle(seed=seed)
         self.batch_size = batch_size
         self.group_size = group_size
-        self.renderer = renderer
+        self.renderer_name = renderer_name
+        self.tokenizer_name = tokenizer_name
+        self.max_turns = max_turns
         logger.info(f"Workbench dataset: {len(self.ds)} examples")
 
     def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
@@ -244,21 +292,16 @@ class WorkbenchRLDataset(RLDataset):
     def __len__(self) -> int:
         return math.ceil(len(self.ds) / self.batch_size)
 
-    def _make_builder(self, row: dict) -> WorkbenchGroupBuilder | None:
+    def _make_builder(self, row: dict) -> WorkbenchEnvGroupBuilder | None:
         try:
-            rcp = row["responses_create_params"]
-            prompt_messages = rcp["input"]
-            tools = rcp.get("tools", [])
-            ground_truth = row["ground_truth"]
-            category = row.get("category", "workbench")
-
-            return WorkbenchGroupBuilder(
-                env_thunk=lambda pm=prompt_messages, t=tools, gt=ground_truth, cat=category: WorkbenchEnv(
-                    prompt_messages=pm, tools=t, ground_truth=gt,
-                    renderer=self.renderer, category=cat,
-                ),
+            return WorkbenchEnvGroupBuilder(
+                prompt_messages=row["responses_create_params"]["input"],
+                ground_truth=row["ground_truth"],
+                renderer_name=self.renderer_name,
+                tokenizer_name=self.tokenizer_name,
                 num_envs=self.group_size,
-                dataset_name=category or "workbench",
+                category=row.get("category", "workbench"),
+                max_turns=self.max_turns,
             )
         except Exception as e:
             logger.warning(f"Failed to parse workbench row: {e}")
@@ -271,12 +314,15 @@ class WorkbenchRLDatasetBuilder(RLDatasetBuilder):
     model_name_for_tokenizer: str
     renderer_name: str
     group_size: int = 16
+    max_turns: int = 10
     seed: int = 0
 
     async def __call__(self) -> tuple[WorkbenchRLDataset, None]:
-        tokenizer = get_tokenizer(self.model_name_for_tokenizer)
-        renderer = renderers.get_renderer(self.renderer_name, tokenizer=tokenizer)
         return WorkbenchRLDataset(
-            batch_size=self.batch_size, group_size=self.group_size,
-            renderer=renderer, seed=self.seed,
+            batch_size=self.batch_size,
+            group_size=self.group_size,
+            renderer_name=self.renderer_name,
+            tokenizer_name=self.model_name_for_tokenizer,
+            max_turns=self.max_turns,
+            seed=self.seed,
         ), None
