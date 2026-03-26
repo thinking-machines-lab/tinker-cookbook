@@ -25,6 +25,7 @@ from tinker.types import LossFnType
 from tinker_cookbook import checkpoint_utils, cli_utils
 from tinker_cookbook.recipes.nemotron_cascade.if_rl_env import IFRLDatasetBuilder
 from tinker_cookbook.recipes.nemotron_cascade.mcqa_rl_env import MCQARLDatasetBuilder
+from tinker_cookbook.recipes.nemotron_cascade.structured_output_rl_env import StructuredOutputRLDatasetBuilder
 from tinker_cookbook.rl.train import AsyncConfig, Config, StreamMinibatchConfig, main
 from tinker_cookbook.rl.types import RLDatasetBuilder
 
@@ -42,7 +43,7 @@ class CLIConfig:
     load_checkpoint_path: str | None = None
 
     # Environment configuration
-    env: str = "if_rl"  # Options: if_rl, mcqa
+    env: str = "if_rl"  # Options: if_rl, mcqa, structured_output
 
     # Training hyperparameters (paper defaults for IF-RL)
     group_size: int = 16
@@ -104,8 +105,16 @@ def get_dataset_builder(
             group_size=group_size,
             seed=seed,
         )
+    elif env == "structured_output":
+        return StructuredOutputRLDatasetBuilder(
+            batch_size=batch_size,
+            model_name_for_tokenizer=model_name,
+            renderer_name=renderer_name,
+            group_size=group_size,
+            seed=seed,
+        )
     else:
-        raise ValueError(f"Unknown environment: {env}. Available: if_rl, mcqa")
+        raise ValueError(f"Unknown environment: {env}. Available: if_rl, mcqa, structured_output")
 
 
 async def cli_main(cli_config: CLIConfig):
