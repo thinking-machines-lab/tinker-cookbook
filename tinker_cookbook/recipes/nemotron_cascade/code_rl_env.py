@@ -247,18 +247,27 @@ class CodeRLEnv(Env):
         examples_str = ""
         for i, tc in enumerate(sample_tests):
             examples_str += f"\n**Example {i + 1}:**\n"
-            examples_str += f"Input:\n```\n{tc['input']}\n```\n"
-            examples_str += f"Output:\n```\n{tc['expected_output']}\n```\n"
+            if "assertion" in tc:
+                examples_str += f"Test: `{tc['assertion']}`\n"
+            else:
+                examples_str += f"Input:\n```\n{tc.get('input', '')}\n```\n"
+                examples_str += f"Output:\n```\n{tc.get('expected_output', '')}\n```\n"
+
+        # Adapt prompt based on test type
+        has_assertions = any("assertion" in tc for tc in self.test_cases)
+        if has_assertions:
+            task_desc = "Write a Python function that satisfies the following requirements."
+            instructions = "Provide your solution as a Python function in a fenced code block."
+        else:
+            task_desc = "Solve the following competitive programming problem. Read input from stdin and write output to stdout."
+            instructions = "Provide your solution in a single fenced code block using "
 
         prompt = (
-            f"Solve the following competitive programming problem. "
-            f"Read input from stdin and write output to stdout.\n\n"
+            f"{task_desc}\n\n"
             f"## Problem\n{self.problem_description}\n"
             f"{examples_str}\n"
             f"## Instructions\n"
-            f"Provide your solution in a single fenced code block using "
-            f"```python or ```cpp. The solution must read from stdin and "
-            f"write to stdout."
+            f"{instructions}"
         )
         messages: list[Message] = [{"role": "user", "content": prompt}]
         return self.renderer.build_generation_prompt(messages), self.stop_condition
