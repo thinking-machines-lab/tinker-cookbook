@@ -90,8 +90,13 @@ Key observations:
 - Dynamic filtering (remove_constant_reward_groups) needed for meaningful training
 - Log: /tmp/tinker-examples/nemotron_cascade_ifrl_test/
 
-### IF-RL Training
-- Date: pending (after SFT)
-- Load checkpoint: from full SFT final
-- Config: group_size=16, batch=128, lr=3e-6, max_tokens=49K
-- Steps: ~180 with dynamic filtering
+### IF-RL Training (commit: 285973c)
+- Date: 2026-03-26
+- Load checkpoint: tinker://a27528b8-b83f-59a0-9334-78129ec565d0:train:0/weights/001000 (SFT step 1000)
+- Config: group_size=16, batch=32 (initial), lr=3e-6, max_tokens=16384
+- Dynamic filtering: enabled (remove_constant_reward_groups=True)
+- Status: RUNNING (initial 50 steps)
+- Log: /tmp/tinker-examples/nemotron_cascade_ifrl_from_sft/
+
+Note: SFT NLL plateaued at ~0.58 by step 200. Step 1000 checkpoint used while
+full SFT continues running in background (currently 1039/2555 steps).
