@@ -102,7 +102,7 @@ class CalculatorEnvGroupBuilder(EnvGroupBuilder):
     renderer_name: str
     model_name: str
 
-    async def make_envs(self) -> Sequence:
+    async def make_envs(self) -> Sequence[EnvFromMessageEnv]:
         tokenizer = get_tokenizer(self.model_name)
         renderer = get_renderer(self.renderer_name, tokenizer)
         return [
@@ -119,26 +119,30 @@ class CalculatorEnvGroupBuilder(EnvGroupBuilder):
 
 
 class CalculatorDataset(RLDataset):
-    def __init__(self, problems, group_size, renderer_name, model_name):
-        self.problems, self.group_size = problems, group_size
+    def __init__(self, problems, batch_size, group_size, renderer_name, model_name):
+        self.problems = problems
+        self.batch_size = batch_size
+        self.group_size = group_size
         self.renderer_name, self.model_name = renderer_name, model_name
 
-    def __len__(self): return len(self.problems) // 4
+    def __len__(self): return max(1, len(self.problems) // self.batch_size)
 
     def get_batch(self, batch_idx):
-        batch = self.problems[(batch_idx * 4) % len(self.problems):][:4]
+        start = (batch_idx * self.batch_size) % len(self.problems)
+        batch = self.problems[start:start + self.batch_size]
         return [CalculatorEnvGroupBuilder(q, a, self.group_size, self.renderer_name, self.model_name) for q, a in batch]
 
 
 @chz.chz
 class CalculatorDatasetBuilder(RLDatasetBuilder):
+    batch_size: int = 2
     group_size: int = 4
     renderer_name: str = "llama3"
     model_name: str = "meta-llama/Llama-3.1-8B"
 
     async def __call__(self):
         problems = [("What is 123 * 456?", 56088), ("What is 789 + 321?", 1110)]
-        return CalculatorDataset(problems, self.group_size, self.renderer_name, self.model_name), None
+        return CalculatorDataset(problems, self.batch_size, self.group_size, self.renderer_name, self.model_name), None
 
 
 @chz.chz

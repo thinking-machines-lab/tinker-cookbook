@@ -120,7 +120,7 @@ class MyDatasetBuilder(RLDatasetBuilder):
         problems = [("What is 2+2?", "4"), ("Capital of France?", "Paris")]
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
         renderer = renderers.get_renderer(self.renderer_name, tokenizer)
-        return MyDataset(problems, self.batch_size, self.group_size, renderer)
+        return MyDataset(problems, self.batch_size, self.group_size, renderer), None
 
 class MyDataset:
     def __init__(self, problems, batch_size, group_size, renderer):
