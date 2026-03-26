@@ -112,9 +112,11 @@ Key observations:
 - Checkpoint: tinker://6c99cabe-10a4-5e30-a32e-7ffdc39d896a:train:0/weights/final
 - Log: /tmp/tinker-examples/nemotron_cascade_ifrl_from_sft/
 
-#### Run 2: from final SFT checkpoint - RUNNING
-- Status: 23/50 steps
-- Reward: last5_avg=0.693, max=0.758
+#### Run 2: from final SFT checkpoint - COMPLETED
+- 50/50 steps
+- Reward: first5_avg=0.658, last5_avg=0.724, max=0.784
+- **Improvement: +0.066 (+10.0% relative)**
+- Checkpoint: tinker://ec4ef250-02aa-5f91-b141-fe7c6f8f7d95:train:0/weights/final
 - Log: /tmp/tinker-examples/nemotron_cascade_ifrl_final_sft/
 
 Note: IF-RL shows clear reward improvement (+0.058 over 50 steps).
