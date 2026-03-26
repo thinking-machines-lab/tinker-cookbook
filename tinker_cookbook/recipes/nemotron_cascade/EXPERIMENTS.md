@@ -99,17 +99,25 @@ Key observations:
 - With improved verifier (all 48 types): reward ~0.67 (more discriminative)
 - Dynamic filtering needed for meaningful training
 
-### IF-RL Training (commit: 4487acd)
+### IF-RL Training (commit: 4487acd, 3bc5b53)
 - Date: 2026-03-26
-- Load checkpoint: SFT step 1000 (tinker://a27528b8-...001000)
 - Config: group_size=16, batch=32, lr=3e-6, max_tokens=16384
 - Dynamic filtering: enabled
-- Status: RUNNING (26/50 steps)
-- Reward: started 0.667, max 0.730, latest 0.681
-- Clear improvement trend from 0.67 baseline to 0.73 peak
-- All groups have mixed outcomes (frac_mixed=1.0) - good signal for GRPO
 - ~10-15 min per step with batch=32, group=16
+
+#### Run 1: from SFT step 1000
+- Status: RUNNING (34/50 steps)
+- Reward: avg(first5)=0.662, avg(last5)=0.672, max=0.730
 - Log: /tmp/tinker-examples/nemotron_cascade_ifrl_from_sft/
+
+#### Run 2: from final SFT checkpoint
+- Status: RUNNING (7/50 steps)
+- Reward: avg(first5)=0.658, avg(last5)=0.674, max=0.692
+- Log: /tmp/tinker-examples/nemotron_cascade_ifrl_final_sft/
+
+Note: Both runs show similar performance. Improvement from IF-RL is modest
+(~0.01 in avg reward). Consistent with paper: strong model already good at IF,
+RL gains are incremental. Paper used batch=128 (vs our 32) for more signal.
 
 ## Commit History
 - `8ddbd53` - Initial recipe structure (SFT + IF-RL)
