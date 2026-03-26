@@ -163,9 +163,17 @@ Key observations:
 - Hidden size: 2688, MoE 30B (3B active)
 - This is the paper's actual base model!
 
-#### LR Sweep
-- Data: 500 IF examples, batch_size=16, LRs: 1e-4, 3e-4, 5e-4, 1e-3
-- Status: RUNNING
+#### LR Sweep - COMPLETED
+- Data: 500 IF examples, batch_size=16
+
+| LR | Min NLL | Final NLL |
+|----|---------|-----------|
+| 1e-4 | 0.431 | 0.431 |
+| 3e-4 | 0.415 | 0.415 |
+| **5e-4** | **0.413** | 0.414 |
+| 1e-3 | 0.415 | 0.415 |
+
+All LRs 3e-4 to 1e-3 very similar. 5e-4 confirmed optimal.
 
 #### Full SFT
 - Data: math (100K) + science (50K) + IF (10K) + safety (3.5K) = 163.5K
