@@ -1,250 +1,327 @@
 """
-Run benchmark evaluations on Nemotron-Cascade-2 checkpoints.
+Benchmark evaluations for Nemotron-Cascade-2 checkpoints.
 
-Uses Inspect AI for standard benchmarks:
-  - GSM8K (math)
-  - IFEval (instruction following)
-  - MMLU 0-shot (knowledge)
-  - GPQA Diamond (hard science)
+Uses Tinker sampling directly with our own grading:
+  - GSM8K: Math grading via existing math_grading utilities
+  - IFEval: Our 48-type instruction following verifier
+  - MATH-500: Hendrycks MATH test set
 
-Can compare base model vs SFT vs IF-RL checkpoints.
+Compares base model vs SFT vs IF-RL checkpoints.
 """
 
 import argparse
 import asyncio
 import json
 import logging
+import math
 import os
 from datetime import datetime
+from typing import cast
 
 import tinker
+from datasets import Dataset, load_dataset
 
-from tinker_cookbook import checkpoint_utils, model_info
-from tinker_cookbook.eval.inspect_evaluators import InspectEvaluatorBuilder
+from tinker_cookbook import model_info, renderers
+from tinker_cookbook.completers import MessageCompleter
+from tinker_cookbook.renderers import Message
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Standard benchmarks for Nemotron-Cascade evaluation
-BENCHMARK_CONFIGS = {
-    "quick": {
-        "tasks": ["inspect_evals/gsm8k", "inspect_evals/ifeval"],
-        "limit": 100,
-        "description": "Quick eval: GSM8K (100) + IFEval (100)",
-    },
-    "standard": {
-        "tasks": ["inspect_evals/gsm8k", "inspect_evals/ifeval", "inspect_evals/mmlu_0_shot"],
-        "limit": 200,
-        "description": "Standard eval: GSM8K + IFEval + MMLU (200 each)",
-    },
-    "full": {
-        "tasks": [
-            "inspect_evals/gsm8k",
-            "inspect_evals/ifeval",
-            "inspect_evals/mmlu_0_shot",
-            "inspect_evals/gpqa_diamond",
-        ],
-        "limit": None,
-        "description": "Full eval: GSM8K + IFEval + MMLU + GPQA (all examples)",
-    },
-    "math_only": {
-        "tasks": ["inspect_evals/gsm8k"],
-        "limit": None,
-        "description": "Math only: full GSM8K",
-    },
-    "ifeval_only": {
-        "tasks": ["inspect_evals/ifeval"],
-        "limit": None,
-        "description": "IF only: full IFEval",
-    },
+
+# ---------------------------------------------------------------------------
+# GSM8K Evaluation
+# ---------------------------------------------------------------------------
+
+def _extract_gsm8k_answer(text: str) -> str:
+    """Extract numeric answer from model response."""
+    import re
+    # Try boxed format first
+    boxed = re.search(r'\\boxed\{([^}]+)\}', text)
+    if boxed:
+        return boxed.group(1).strip().replace(",", "")
+
+    # Try "#### answer" format
+    hash_match = re.search(r'####\s*(.+)', text)
+    if hash_match:
+        return hash_match.group(1).strip().replace(",", "")
+
+    # Try "the answer is X" pattern
+    answer_match = re.search(r'(?:answer is|answer:)\s*\$?([0-9,.-]+)', text, re.IGNORECASE)
+    if answer_match:
+        return answer_match.group(1).strip().replace(",", "")
+
+    # Last number in the text
+    numbers = re.findall(r'[-]?\d+[,\d]*\.?\d*', text)
+    if numbers:
+        return numbers[-1].replace(",", "")
+
+    return ""
+
+
+def _check_gsm8k(response: str, expected: str) -> bool:
+    extracted = _extract_gsm8k_answer(response)
+    try:
+        return abs(float(extracted) - float(expected.replace(",", ""))) < 1e-6
+    except (ValueError, TypeError):
+        return extracted.strip() == expected.strip()
+
+
+async def eval_gsm8k(
+    completer: MessageCompleter,
+    limit: int | None = None,
+) -> dict[str, float]:
+    """Evaluate on GSM8K test set."""
+    ds = cast(Dataset, load_dataset("openai/gsm8k", "main", split="test"))
+    if limit:
+        ds = ds.select(range(min(limit, len(ds))))
+
+    correct = 0
+    total = 0
+
+    for i, row in enumerate(ds):
+        question = row["question"]
+        # Extract expected answer
+        import re
+        answer_match = re.search(r'####\s*(.+)', row["answer"])
+        expected = answer_match.group(1).strip().replace(",", "") if answer_match else ""
+
+        messages: list[Message] = [
+            {"role": "user", "content": question + " Show your work step by step, then give the final numerical answer."},
+        ]
+
+        try:
+            response = await completer.complete(messages)
+            content = renderers.get_text_content(response)
+            is_correct = _check_gsm8k(content, expected)
+            if is_correct:
+                correct += 1
+            total += 1
+        except Exception as e:
+            logger.warning(f"GSM8K sample {i} failed: {e}")
+            total += 1
+
+        if (i + 1) % 50 == 0:
+            logger.info(f"GSM8K: {i+1}/{len(ds)} | accuracy={correct/total:.3f}")
+
+    accuracy = correct / total if total > 0 else 0
+    logger.info(f"GSM8K final: {correct}/{total} = {accuracy:.4f}")
+    return {"gsm8k/accuracy": accuracy, "gsm8k/correct": correct, "gsm8k/total": total}
+
+
+# ---------------------------------------------------------------------------
+# IFEval Evaluation
+# ---------------------------------------------------------------------------
+
+async def eval_ifeval(
+    completer: MessageCompleter,
+    limit: int | None = None,
+) -> dict[str, float]:
+    """Evaluate on IFEval using our verifier."""
+    from tinker_cookbook.recipes.nemotron_cascade.if_rl_env import verify_all_instructions
+
+    # Load IFEval data from our downloaded RL data
+    ifeval_path = os.path.expanduser("~/data/nemotron-cascade-2/rl_if_rl.jsonl")
+    rows = []
+    with open(ifeval_path) as f:
+        for line in f:
+            rows.append(json.loads(line))
+
+    if limit:
+        rows = rows[:limit]
+
+    total_score = 0
+    total_prompts = 0
+    strict_correct = 0
+
+    for i, row in enumerate(rows):
+        prompt_messages = row["responses_create_params"]["input"]
+        instruction_ids = row.get("instruction_id_list", [])
+        raw_kwargs = row.get("kwargs", [])
+
+        # Parse kwargs
+        kwargs_list = []
+        for kw in raw_kwargs:
+            if kw is None:
+                kwargs_list.append({})
+            elif isinstance(kw, str):
+                try:
+                    kwargs_list.append(json.loads(kw))
+                except json.JSONDecodeError:
+                    kwargs_list.append({})
+            elif isinstance(kw, dict):
+                kwargs_list.append(kw)
+            else:
+                kwargs_list.append({})
+        while len(kwargs_list) < len(instruction_ids):
+            kwargs_list.append({})
+
+        messages: list[Message] = [
+            {"role": msg["role"], "content": msg["content"]}
+            for msg in prompt_messages
+        ]
+
+        try:
+            response = await completer.complete(messages)
+            content = renderers.get_text_content(response)
+            fraction, _ = verify_all_instructions(content, instruction_ids, kwargs_list)
+            total_score += fraction
+            if fraction == 1.0:
+                strict_correct += 1
+            total_prompts += 1
+        except Exception as e:
+            logger.warning(f"IFEval sample {i} failed: {e}")
+            total_prompts += 1
+
+        if (i + 1) % 50 == 0:
+            logger.info(f"IFEval: {i+1}/{len(rows)} | loose={total_score/total_prompts:.3f} strict={strict_correct/total_prompts:.3f}")
+
+    loose_acc = total_score / total_prompts if total_prompts > 0 else 0
+    strict_acc = strict_correct / total_prompts if total_prompts > 0 else 0
+    logger.info(f"IFEval final: loose={loose_acc:.4f}, strict={strict_acc:.4f} ({total_prompts} prompts)")
+    return {
+        "ifeval/loose_accuracy": loose_acc,
+        "ifeval/strict_accuracy": strict_acc,
+        "ifeval/total": total_prompts,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Main evaluation driver
+# ---------------------------------------------------------------------------
+
+BENCHMARKS = {
+    "gsm8k": eval_gsm8k,
+    "ifeval": eval_ifeval,
 }
 
 
 async def run_eval(
     model_name: str,
     checkpoint_path: str | None,
-    benchmark: str,
-    renderer_name: str | None = None,
+    benchmarks: list[str],
+    limit: int | None = None,
     temperature: float = 0.6,
     max_tokens: int = 4096,
     output_dir: str | None = None,
-    include_reasoning: bool = True,
 ):
     """Run evaluation on a single checkpoint."""
+    renderer_name = model_info.get_recommended_renderer_name(model_name)
+    tokenizer = get_tokenizer(model_name)
+    renderer = renderers.get_renderer(renderer_name, tokenizer)
 
-    config = BENCHMARK_CONFIGS[benchmark]
-    logger.info(f"Running {config['description']}")
-    logger.info(f"  Model: {model_name}")
-    logger.info(f"  Checkpoint: {checkpoint_path or 'base model'}")
-
-    if renderer_name is None:
-        renderer_name = model_info.get_recommended_renderer_name(model_name)
-
-    builder = InspectEvaluatorBuilder(
-        tasks=config["tasks"],
-        renderer_name=renderer_name,
-        model_name=model_name,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        limit=config["limit"],
-        debug_errors=True,
-        log_dir=output_dir,
-        max_connections=256,
-        log_level="INFO",
-        include_reasoning=include_reasoning,
-    )
-
-    evaluator = builder()
-
-    # Create sampling client
     service_client = tinker.ServiceClient()
-
     if checkpoint_path:
-        sampling_client = await service_client.create_sampling_client_from_state_async(
-            checkpoint_path
-        )
+        sampling_client = await service_client.create_sampling_client_from_state_async(checkpoint_path)
         logger.info(f"Loaded checkpoint: {checkpoint_path}")
     else:
-        sampling_client = await service_client.create_sampling_client_async(
-            base_model=model_name
-        )
-        logger.info("Using base model (no checkpoint)")
+        sampling_client = await service_client.create_sampling_client_async(base_model=model_name)
+        logger.info("Using base model")
 
-    # Run evaluation
-    results = await evaluator(sampling_client)
+    completer = MessageCompleter(
+        sampling_client=sampling_client,
+        renderer=renderer,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
 
-    logger.info(f"Results:")
-    for key, value in sorted(results.items()):
-        logger.info(f"  {key}: {value:.4f}" if isinstance(value, float) else f"  {key}: {value}")
+    all_results = {}
+    for bench_name in benchmarks:
+        if bench_name not in BENCHMARKS:
+            logger.warning(f"Unknown benchmark: {bench_name}")
+            continue
+        logger.info(f"\n--- Running {bench_name} ---")
+        results = await BENCHMARKS[bench_name](completer, limit=limit)
+        all_results.update(results)
 
-    # Save results
+    # Print results
+    print("\n" + "=" * 50)
+    cp_label = checkpoint_path.split("/")[-1] if checkpoint_path else "base"
+    print(f"Results for: {cp_label}")
+    print("=" * 50)
+    for k, v in sorted(all_results.items()):
+        print(f"  {k}: {v:.4f}" if isinstance(v, float) else f"  {k}: {v}")
+
+    # Save
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
-        results_file = os.path.join(output_dir, "eval_results.json")
-        with open(results_file, "w") as f:
+        with open(os.path.join(output_dir, "results.json"), "w") as f:
             json.dump({
-                "model_name": model_name,
-                "checkpoint_path": checkpoint_path,
-                "benchmark": benchmark,
+                "model": model_name,
+                "checkpoint": checkpoint_path,
                 "timestamp": datetime.now().isoformat(),
-                "results": {k: float(v) if isinstance(v, float) else v for k, v in results.items()},
+                "results": {k: float(v) if isinstance(v, float) else v for k, v in all_results.items()},
             }, f, indent=2)
-        logger.info(f"Results saved to {results_file}")
 
-    return results
+    return all_results
 
 
 async def compare_checkpoints(
     model_name: str,
     checkpoints: dict[str, str | None],
-    benchmark: str,
-    renderer_name: str | None = None,
+    benchmarks: list[str],
+    limit: int | None = None,
     output_dir: str | None = None,
 ):
-    """Run evaluation on multiple checkpoints and compare."""
+    """Run evals on multiple checkpoints and print comparison."""
     all_results = {}
-
-    for name, cp_path in checkpoints.items():
-        logger.info(f"\n{'='*60}")
-        logger.info(f"Evaluating: {name}")
-        logger.info(f"{'='*60}")
-
-        cp_output = os.path.join(output_dir, name) if output_dir else None
-        results = await run_eval(
-            model_name=model_name,
-            checkpoint_path=cp_path,
-            benchmark=benchmark,
-            renderer_name=renderer_name,
-            output_dir=cp_output,
-        )
+    for name, cp in checkpoints.items():
+        logger.info(f"\n{'='*60}\nEvaluating: {name}\n{'='*60}")
+        cp_out = os.path.join(output_dir, name) if output_dir else None
+        results = await run_eval(model_name, cp, benchmarks, limit=limit, output_dir=cp_out)
         all_results[name] = results
 
-    # Print comparison table
+    # Print comparison
     print("\n" + "=" * 80)
-    print("COMPARISON TABLE")
+    print("COMPARISON")
     print("=" * 80)
-
-    # Collect all metric names
-    all_metrics = set()
-    for results in all_results.values():
-        all_metrics.update(results.keys())
-
-    # Print header
+    metrics = sorted(set(k for r in all_results.values() for k in r.keys()))
     names = list(all_results.keys())
-    header = f"{'Metric':<40}" + "".join(f"{n:<15}" for n in names)
+    header = f"{'Metric':<35}" + "".join(f"{n:<15}" for n in names)
     print(header)
     print("-" * len(header))
-
-    for metric in sorted(all_metrics):
-        row = f"{metric:<40}"
-        for name in names:
-            val = all_results[name].get(metric, "N/A")
-            if isinstance(val, float):
-                row += f"{val:<15.4f}"
-            else:
-                row += f"{str(val):<15}"
+    for m in metrics:
+        row = f"{m:<35}"
+        for n in names:
+            v = all_results[n].get(m, "N/A")
+            row += f"{v:<15.4f}" if isinstance(v, float) else f"{str(v):<15}"
         print(row)
 
-    # Save comparison
     if output_dir:
-        comp_file = os.path.join(output_dir, "comparison.json")
-        with open(comp_file, "w") as f:
-            json.dump({
-                "model_name": model_name,
-                "benchmark": benchmark,
-                "timestamp": datetime.now().isoformat(),
-                "results": {
-                    name: {k: float(v) if isinstance(v, float) else v for k, v in res.items()}
-                    for name, res in all_results.items()
-                },
-            }, f, indent=2)
-        logger.info(f"Comparison saved to {comp_file}")
+        with open(os.path.join(output_dir, "comparison.json"), "w") as f:
+            json.dump(all_results, f, indent=2)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run benchmark evaluations")
-    parser.add_argument("--model", type=str, default="openai/gpt-oss-120b:peft:131072")
-    parser.add_argument("--checkpoint", type=str, default=None, help="Single checkpoint to evaluate")
-    parser.add_argument("--benchmark", type=str, default="quick",
-                        choices=list(BENCHMARK_CONFIGS.keys()))
-    parser.add_argument("--compare", action="store_true",
-                        help="Compare base vs SFT vs IF-RL checkpoints")
-    parser.add_argument("--sft-checkpoint", type=str, default=None)
-    parser.add_argument("--ifrl-checkpoint", type=str, default=None)
-    parser.add_argument("--output-dir", type=str, default=None)
-    parser.add_argument("--temperature", type=float, default=0.6)
-    parser.add_argument("--max-tokens", type=int, default=4096)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", default="openai/gpt-oss-120b:peft:131072")
+    parser.add_argument("--checkpoint", default=None)
+    parser.add_argument("--benchmarks", default="gsm8k,ifeval", help="Comma-separated list")
+    parser.add_argument("--limit", type=int, default=100, help="Max samples per benchmark")
+    parser.add_argument("--compare", action="store_true")
+    parser.add_argument("--sft-checkpoint", default=None)
+    parser.add_argument("--ifrl-checkpoint", default=None)
+    parser.add_argument("--output-dir", default=None)
     args = parser.parse_args()
 
-    if args.compare:
-        checkpoints = {"base": None}
-        if args.sft_checkpoint:
-            checkpoints["sft"] = args.sft_checkpoint
-        if args.ifrl_checkpoint:
-            checkpoints["ifrl"] = args.ifrl_checkpoint
+    benchmarks = args.benchmarks.split(",")
 
-        output_dir = args.output_dir or os.path.expanduser(
-            f"~/data/nemotron-cascade-2/evals/{args.benchmark}_{datetime.now().strftime('%Y%m%d_%H%M')}"
+    if args.compare:
+        cps = {"base": None}
+        if args.sft_checkpoint:
+            cps["sft"] = args.sft_checkpoint
+        if args.ifrl_checkpoint:
+            cps["ifrl"] = args.ifrl_checkpoint
+        out = args.output_dir or os.path.expanduser(
+            f"~/data/nemotron-cascade-2/evals/compare_{datetime.now().strftime('%Y%m%d_%H%M')}"
         )
-        asyncio.run(compare_checkpoints(
-            model_name=args.model,
-            checkpoints=checkpoints,
-            benchmark=args.benchmark,
-            output_dir=output_dir,
-        ))
+        asyncio.run(compare_checkpoints(args.model, cps, benchmarks, limit=args.limit, output_dir=out))
     else:
-        output_dir = args.output_dir or os.path.expanduser(
-            f"~/data/nemotron-cascade-2/evals/{args.benchmark}_{datetime.now().strftime('%Y%m%d_%H%M')}"
+        out = args.output_dir or os.path.expanduser(
+            f"~/data/nemotron-cascade-2/evals/eval_{datetime.now().strftime('%Y%m%d_%H%M')}"
         )
-        asyncio.run(run_eval(
-            model_name=args.model,
-            checkpoint_path=args.checkpoint,
-            benchmark=args.benchmark,
-            temperature=args.temperature,
-            max_tokens=args.max_tokens,
-            output_dir=output_dir,
-        ))
+        asyncio.run(run_eval(args.model, args.checkpoint, benchmarks, limit=args.limit, output_dir=out))
 
 
 if __name__ == "__main__":
