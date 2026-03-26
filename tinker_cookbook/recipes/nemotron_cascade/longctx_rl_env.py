@@ -290,57 +290,63 @@ class LongContextRLGroupBuilder(EnvGroupBuilder):
 # ---------------------------------------------------------------------------
 
 
-def _load_scrolls_qasper(seed: int, max_input_tokens: int, tokenizer_name: str) -> Dataset:
-    """Load and filter the SCROLLS Qasper dataset for long-context QA.
+def _load_longcontext_data(seed: int, max_input_tokens: int, tokenizer_name: str) -> Dataset:
+    """Load long-context QA data from NarrativeQA.
 
-    Keeps examples whose document + question fit within max_input_tokens.
+    Falls back to multiple datasets if primary is unavailable.
     """
-    logger.info("Loading SCROLLS/Qasper dataset from HuggingFace...")
-    ds = load_dataset("tau/scrolls", "qasper", split="train", trust_remote_code=True)
-    ds = cast(Dataset, ds)
-    logger.info(f"Raw SCROLLS/Qasper: {len(ds)} examples")
+    # Try NarrativeQA first (works reliably)
+    try:
+        logger.info("Loading NarrativeQA dataset from HuggingFace...")
+        ds = load_dataset("deepmind/narrativeqa", split="test")
+        ds = cast(Dataset, ds)
+        logger.info(f"NarrativeQA: {len(ds)} examples")
+        return ds.shuffle(seed=seed)
+    except Exception as e:
+        logger.warning(f"NarrativeQA failed: {e}")
 
-    tokenizer = get_tokenizer(tokenizer_name)
+    # Fallback: try LongBench
+    try:
+        logger.info("Trying LongBench/qasper...")
+        ds = load_dataset("THUDM/LongBench", "qasper", split="test")
+        ds = cast(Dataset, ds)
+        logger.info(f"LongBench/qasper: {len(ds)} examples")
+        return ds.shuffle(seed=seed)
+    except Exception as e:
+        logger.warning(f"LongBench failed: {e}")
 
-    def _fits_in_context(example: dict) -> bool:
-        text = example.get("input", "")
-        # Quick character heuristic first (avg ~4 chars/token) to avoid
-        # tokenising every single example
-        if len(text) > max_input_tokens * 6:
-            return False
-        n_tokens = len(tokenizer.encode(text))
-        return n_tokens <= max_input_tokens
-
-    ds = ds.filter(_fits_in_context)
-    ds = ds.shuffle(seed=seed)
-    logger.info(f"After filtering to <={max_input_tokens} tokens: {len(ds)} examples")
-    return ds
+    raise RuntimeError("No long-context dataset available")
 
 
-def _parse_scrolls_example(row: dict) -> tuple[str, str, str] | None:
-    """Parse a SCROLLS row into (question, context, reference_answer).
+def _parse_longcontext_example(row: dict) -> tuple[str, str, str] | None:
+    """Parse a long-context QA row into (question, context, reference_answer).
 
-    SCROLLS Qasper format: the 'input' field contains the concatenated
-    document and question (separated by a newline), and 'output' has the
-    reference answer.
+    Supports NarrativeQA, LongBench/qasper, and SCROLLS formats.
     """
+    # NarrativeQA format
+    if "document" in row and isinstance(row["document"], dict):
+        doc = row["document"]
+        context = doc.get("summary") or doc.get("text") or ""
+        question_obj = row.get("question", {})
+        question = question_obj.get("text", "") if isinstance(question_obj, dict) else str(question_obj)
+        answers = row.get("answers", [])
+        ref = answers[0].get("text", "") if answers and isinstance(answers[0], dict) else ""
+        if question and context:
+            return question, context, ref
+        return None
+
+    # LongBench format
+    if "context" in row and "input" in row:
+        return row.get("input", ""), row.get("context", ""), row.get("answers", [""])[0] if row.get("answers") else ""
+
+    # SCROLLS format (input = question\ncontext)
     raw_input = row.get("input", "")
-    if not raw_input:
-        return None
+    if raw_input:
+        parts = raw_input.split("\n", 1)
+        if len(parts) >= 2:
+            return parts[0].strip(), parts[1].strip(), row.get("output", "")
 
-    # SCROLLS concatenates question + context with a newline separator.
-    # The question comes first, then the document.
-    parts = raw_input.split("\n", 1)
-    if len(parts) < 2:
-        return None
-
-    question = parts[0].strip()
-    context = parts[1].strip()
-    reference_answer = row.get("output", "")
-
-    if not question or not context:
-        return None
-    return question, context, reference_answer
+    return None
 
 
 class LongContextRLDataset(RLDataset):
@@ -358,7 +364,7 @@ class LongContextRLDataset(RLDataset):
         max_input_tokens: int = 32_768,
         seed: int = 0,
     ):
-        ds = _load_scrolls_qasper(
+        ds = _load_longcontext_data(
             seed=seed,
             max_input_tokens=max_input_tokens,
             tokenizer_name=tokenizer_name,
@@ -366,7 +372,7 @@ class LongContextRLDataset(RLDataset):
         # Parse into (question, context, answer) tuples
         parsed: list[dict] = []
         for row in ds:
-            result = _parse_scrolls_example(row)  # pyright: ignore[reportArgumentType]
+            result = _parse_longcontext_example(row)  # pyright: ignore[reportArgumentType]
             if result is not None:
                 q, c, a = result
                 parsed.append({"question": q, "context": c, "reference_answer": a})
