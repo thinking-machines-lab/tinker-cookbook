@@ -83,15 +83,32 @@ def extract_code(response: str) -> tuple[str | None, str]:
 def build_execution_script(code: str, language: str, test_cases: list[dict]) -> str:
     """Build a bash script that runs the solution against all test cases.
 
-    Each test case is a dict with "input" and "expected_output" keys.
+    Supports two formats:
+    - {"input": ..., "expected_output": ...} — stdin/stdout comparison
+    - {"assertion": "assert func(x) == y"} — MBPP-style assertion tests
+
     The script exits 0 only if ALL test cases pass (strict binary reward).
     """
     import base64
-    import json
+
+    # Check if these are assertion-based tests (MBPP format)
+    has_assertions = any("assertion" in tc for tc in test_cases)
+
+    if has_assertions and language == "python":
+        code_b64 = base64.b64encode(code.encode()).decode()
+        assertions = [tc["assertion"] for tc in test_cases if "assertion" in tc]
+        test_code = "\n".join(assertions)
+        test_b64 = base64.b64encode(test_code.encode()).decode()
+        return "\n".join([
+            f"echo '{code_b64}' | base64 -d > /tmp/solution.py",
+            f"echo '{test_b64}' | base64 -d > /tmp/tests.py",
+            # Combine solution + tests and run
+            "cat /tmp/solution.py /tmp/tests.py > /tmp/run.py",
+            "timeout 30 python3 /tmp/run.py 2>/dev/null",
+        ])
 
     if language == "python":
         code_b64 = base64.b64encode(code.encode()).decode()
-        # Write the solution to a file, then run it for each test case
         script_parts = [
             "set -e",
             f"echo '{code_b64}' | base64 -d > /tmp/solution.py",
@@ -99,19 +116,17 @@ def build_execution_script(code: str, language: str, test_cases: list[dict]) -> 
             f"TOTAL={len(test_cases)}",
         ]
         for i, tc in enumerate(test_cases):
-            stdin_b64 = base64.b64encode(tc["input"].encode()).decode()
-            expected_b64 = base64.b64encode(tc["expected_output"].strip().encode()).decode()
+            stdin_b64 = base64.b64encode(tc.get("input", "").encode()).decode()
+            expected_b64 = base64.b64encode(tc.get("expected_output", "").strip().encode()).decode()
             script_parts.append(
                 f"echo '{stdin_b64}' | base64 -d > /tmp/input_{i}.txt"
             )
             script_parts.append(
                 f"echo '{expected_b64}' | base64 -d > /tmp/expected_{i}.txt"
             )
-            # Run with timeout, capture stdout, compare to expected
             script_parts.append(
                 f"timeout 10 python3 /tmp/solution.py < /tmp/input_{i}.txt > /tmp/actual_{i}.txt 2>/dev/null"
             )
-            # Strip trailing whitespace for comparison
             script_parts.append(
                 f'if diff <(sed "s/[[:space:]]*$//" /tmp/expected_{i}.txt) '
                 f'<(sed "s/[[:space:]]*$//" /tmp/actual_{i}.txt) > /dev/null 2>&1; '
@@ -347,9 +362,12 @@ class CodeRLDataset(RLDataset):
                         rows.append(row)
             self.ds = Dataset.from_list(rows).shuffle(seed=seed)
         else:
-            logger.info("Loading LiveCodeBench data from HuggingFace...")
+            logger.info("Loading MBPP code data from HuggingFace...")
             from datasets import load_dataset
-            ds = load_dataset("livecodebench/code_generation_lite", split="test")
+            try:
+                ds = load_dataset("google-research-datasets/mbpp", "sanitized", split="test")
+            except Exception:
+                ds = load_dataset("google-research-datasets/mbpp", "full", split="test")
             ds = cast(Dataset, ds)
             self.ds = ds.shuffle(seed=seed)
 
@@ -382,12 +400,17 @@ class CodeRLDataset(RLDataset):
         Supports:
         - Direct list of {input, expected_output} dicts (local JSONL)
         - LiveCodeBench format (input_output field with JSON-encoded cases)
+        - MBPP format (test_list with assertion strings)
         """
         import json
 
         # Direct format from local JSONL
         if "test_cases" in row and isinstance(row["test_cases"], list):
             return row["test_cases"]
+
+        # MBPP format: test_list contains assertion strings
+        if "test_list" in row and isinstance(row["test_list"], list):
+            return [{"assertion": test} for test in row["test_list"]]
 
         # LiveCodeBench format: input_output is a JSON string
         if "input_output" in row:
@@ -423,9 +446,9 @@ class CodeRLDataset(RLDataset):
                 problem_description = row["problem_description"]
                 test_cases = self._parse_test_cases(row)
             else:
-                # LiveCodeBench format
-                problem_id = str(row.get("question_id", row.get("task_id", "unknown")))
-                problem_description = row.get("question_content", row.get("prompt", ""))
+                # MBPP / LiveCodeBench format
+                problem_id = str(row.get("task_id", row.get("question_id", "unknown")))
+                problem_description = row.get("prompt", row.get("question_content", ""))
                 test_cases = self._parse_test_cases(row)
 
             if not problem_description or not test_cases:
