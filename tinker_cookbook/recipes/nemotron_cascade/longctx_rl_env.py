@@ -233,9 +233,9 @@ class LongContextRLGroupBuilder(EnvGroupBuilder):
         # Lazily create judge completer (not stored as field for pickle safety)
         judge_tokenizer = get_tokenizer(self.judge_model_name)
         judge_renderer = renderers.get_renderer(self.judge_renderer_name, tokenizer=judge_tokenizer)
-        judge_sampling_client = tinker.SamplingClient(
-            model=self.judge_model_name,
-            base_url=self.judge_base_url,
+        service_client = tinker.ServiceClient(base_url=self.judge_base_url)
+        judge_sampling_client = await service_client.create_sampling_client_async(
+            base_model=self.judge_model_name,
         )
         judge_completer = TinkerMessageCompleter(
             sampling_client=judge_sampling_client,
