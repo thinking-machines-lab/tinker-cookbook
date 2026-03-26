@@ -44,32 +44,51 @@ def upload_metrics(
     logger.info(f"Uploaded {run_name} to wandb project {project}")
 
 
+def _make_run_name(rel_path: str) -> str:
+    """Create a readable run name from the relative path."""
+    # Parse model and lr from path
+    parts = rel_path.replace("/", "_")
+
+    # Shorten model names
+    parts = parts.replace("openai-gpt-oss-120b-peft-131072", "gptoss120b")
+    parts = parts.replace("Qwen-Qwen3-8B-Base", "qwen3-8b")
+
+    # Clean up
+    parts = parts.replace("__", "_").strip("_")
+    return parts
+
+
+def _get_tags(rel_path: str) -> list[str]:
+    """Determine tags from path."""
+    tags = []
+    if "lr_sweep" in rel_path:
+        tags.append("lr-sweep")
+    elif "full_sft" in rel_path:
+        tags.append("sft-full")
+    elif "medium_sft" in rel_path:
+        tags.append("sft-medium")
+    elif "ifrl" in rel_path:
+        tags.append("if-rl")
+
+    if "gpt-oss" in rel_path or "gptoss" in rel_path:
+        tags.append("gpt-oss-120b")
+    elif "Qwen" in rel_path or "qwen" in rel_path:
+        tags.append("qwen3-8b")
+
+    return tags
+
+
 def upload_all(
     log_dir: str = os.path.expanduser("~/data/nemotron-cascade-2/experiment_logs"),
-    project: str = "nemotron-cascade-2",
+    project: str = "nemotron-cascade-2-replication",
 ):
-    """Upload all experiment logs to wandb."""
+    """Upload all experiment logs to wandb with clear naming."""
     for root, dirs, files in os.walk(log_dir):
         if "metrics.jsonl" in files:
             metrics_file = os.path.join(root, "metrics.jsonl")
             rel_path = os.path.relpath(root, log_dir)
-            run_name = rel_path.replace("/", "_")
-
-            # Determine tags
-            tags = []
-            if "lr_sweep" in rel_path:
-                tags.append("lr_sweep")
-            elif "full_sft" in rel_path:
-                tags.append("full_sft")
-            elif "medium_sft" in rel_path:
-                tags.append("medium_sft")
-            elif "ifrl" in rel_path:
-                tags.append("if_rl")
-
-            if "gpt-oss" in rel_path:
-                tags.append("gpt-oss-120b")
-            elif "Qwen" in rel_path:
-                tags.append("qwen3-8b")
+            run_name = _make_run_name(rel_path)
+            tags = _get_tags(rel_path)
 
             logger.info(f"Uploading: {run_name} (tags: {tags})")
             try:
