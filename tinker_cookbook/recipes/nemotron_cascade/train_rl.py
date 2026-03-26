@@ -24,10 +24,14 @@ from tinker.types import LossFnType
 
 from tinker_cookbook import checkpoint_utils, cli_utils
 from tinker_cookbook.recipes.nemotron_cascade.if_rl_env import IFRLDatasetBuilder
+from tinker_cookbook.recipes.nemotron_cascade.longctx_rl_env import LongContextRLDatasetBuilder
 from tinker_cookbook.recipes.nemotron_cascade.mcqa_rl_env import MCQARLDatasetBuilder
+from tinker_cookbook.recipes.nemotron_cascade.rlhf_env import RLHFDatasetBuilder
 from tinker_cookbook.recipes.nemotron_cascade.structured_output_rl_env import StructuredOutputRLDatasetBuilder
 from tinker_cookbook.recipes.nemotron_cascade.workbench_rl_env import WorkbenchRLDatasetBuilder
+from tinker_cookbook.recipes.nemotron_cascade.code_rl_env import CodeRLDatasetBuilder
 from tinker_cookbook.recipes.nemotron_cascade.swe_rl_env import SWERLDatasetBuilder
+from tinker_cookbook.recipes.nemotron_cascade.swe_agentic_env import SWEAgenticDatasetBuilder
 from tinker_cookbook.rl.train import AsyncConfig, Config, StreamMinibatchConfig, main
 from tinker_cookbook.rl.types import RLDatasetBuilder
 
@@ -45,7 +49,7 @@ class CLIConfig:
     load_checkpoint_path: str | None = None
 
     # Environment configuration
-    env: str = "if_rl"  # Options: if_rl, mcqa, structured_output, workbench, swe_rl
+    env: str = "if_rl"  # Options: if_rl, longctx_rl, mcqa, structured_output, workbench, swe_rl, swe_agentic, rlhf, code_rl
 
     # Training hyperparameters (paper defaults for IF-RL)
     group_size: int = 16
@@ -131,8 +135,43 @@ def get_dataset_builder(
             group_size=min(group_size, 4),  # Cap at 4 (each test is expensive)
             seed=seed,
         )
+    elif env == "rlhf":
+        return RLHFDatasetBuilder(
+            batch_size=batch_size,
+            model_name_for_tokenizer=model_name,
+            renderer_name=renderer_name,
+            group_size=group_size,
+            seed=seed,
+        )
+    elif env == "code_rl":
+        return CodeRLDatasetBuilder(
+            batch_size=batch_size,
+            model_name_for_tokenizer=model_name,
+            renderer_name=renderer_name,
+            group_size=group_size,
+            seed=seed,
+        )
+    elif env == "longctx_rl":
+        return LongContextRLDatasetBuilder(
+            batch_size=batch_size,
+            model_name_for_tokenizer=model_name,
+            renderer_name=renderer_name,
+            group_size=group_size,
+            seed=seed,
+        )
+    elif env == "swe_agentic":
+        return SWEAgenticDatasetBuilder(
+            batch_size=batch_size,
+            model_name_for_tokenizer=model_name,
+            renderer_name=renderer_name,
+            group_size=group_size,
+            seed=seed,
+        )
     else:
-        raise ValueError(f"Unknown environment: {env}. Available: if_rl, mcqa, structured_output, workbench, swe_rl")
+        raise ValueError(
+            f"Unknown environment: {env}. "
+            "Available: if_rl, longctx_rl, mcqa, structured_output, workbench, swe_rl, swe_agentic, rlhf, code_rl"
+        )
 
 
 async def cli_main(cli_config: CLIConfig):
