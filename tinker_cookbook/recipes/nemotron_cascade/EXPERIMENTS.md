@@ -156,6 +156,26 @@ Key observations:
 - MMLU-Pro degrades through pipeline (-12.5 then -5.0) → needs multi-domain RL
 - Qwen3-8B shows similar pattern: GSM8K/MMLU up, MATH-500 down from SFT
 
+### Nemotron-3-Nano-30B Full Recipe (commit: d37ba64)
+- Date: 2026-03-26
+- Model: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16:peft:131072
+- Renderer: nemotron3
+- Hidden size: 2688, MoE 30B (3B active)
+- This is the paper's actual base model!
+
+#### LR Sweep
+- Data: 500 IF examples, batch_size=16, LRs: 1e-4, 3e-4, 5e-4, 1e-3
+- Status: RUNNING
+
+#### Full SFT
+- Data: math (100K) + science (50K) + IF (10K) + safety (3.5K) = 163.5K
+- lr=5e-4, batch_size=64, max_length=16384, cosine schedule
+- Status: RUNNING
+- Log: /tmp/tinker-examples/nemotron_cascade_full_sft/nvidia-NVIDIA-Nemotron-3-Nano-30B-A3B-BF16-peft-131072_lr0.0005/
+
+#### IF-RL (pending SFT completion)
+#### Multi-domain RL (pending)
+
 ## Commit History
 - `8ddbd53` - Initial recipe structure (SFT + IF-RL)
 - `5b17edc` - LR sweep script, fix type annotation
