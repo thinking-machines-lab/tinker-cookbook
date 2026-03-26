@@ -105,19 +105,21 @@ Key observations:
 - Dynamic filtering: enabled
 - ~10-15 min per step with batch=32, group=16
 
-#### Run 1: from SFT step 1000
-- Status: RUNNING (34/50 steps)
-- Reward: avg(first5)=0.662, avg(last5)=0.672, max=0.730
+#### Run 1: from SFT step 1000 - COMPLETED
+- 50/50 steps
+- Reward: first5_avg=0.662, last5_avg=0.719, max=0.763
+- **Improvement: +0.058 (+8.8% relative)**
+- Checkpoint: tinker://6c99cabe-10a4-5e30-a32e-7ffdc39d896a:train:0/weights/final
 - Log: /tmp/tinker-examples/nemotron_cascade_ifrl_from_sft/
 
-#### Run 2: from final SFT checkpoint
-- Status: RUNNING (7/50 steps)
-- Reward: avg(first5)=0.658, avg(last5)=0.674, max=0.692
+#### Run 2: from final SFT checkpoint - RUNNING
+- Status: 23/50 steps
+- Reward: last5_avg=0.693, max=0.758
 - Log: /tmp/tinker-examples/nemotron_cascade_ifrl_final_sft/
 
-Note: Both runs show similar performance. Improvement from IF-RL is modest
-(~0.01 in avg reward). Consistent with paper: strong model already good at IF,
-RL gains are incremental. Paper used batch=128 (vs our 32) for more signal.
+Note: IF-RL shows clear reward improvement (+0.058 over 50 steps).
+Paper used batch=128 (vs our 32) and ran 180 steps with dynamic filtering.
+Scaling up batch size and running more steps would likely yield stronger gains.
 
 ## Commit History
 - `8ddbd53` - Initial recipe structure (SFT + IF-RL)
