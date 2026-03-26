@@ -237,9 +237,10 @@ class WorkbenchEnvGroupBuilder(EnvGroupBuilder):
         tokenizer = tokenizer_utils.get_tokenizer(self._tokenizer_name)
         renderer = get_renderer(self._renderer_name, tokenizer)
 
+        from tinker_cookbook.tool_use import Tool
         tools_obj = WorkbenchTools()
         all_tools = [getattr(tools_obj, m) for m in dir(tools_obj)
-                     if hasattr(getattr(tools_obj, m), '_tool_spec')]
+                     if isinstance(getattr(tools_obj, m), Tool)]
 
         # Build initial messages (system + user from data)
         initial_messages: list[Message] = []
