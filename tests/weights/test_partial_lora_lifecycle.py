@@ -30,15 +30,12 @@ from tinker_cookbook.supervised.data import (
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.weights import build_hf_model, build_lora_adapter, download
 
-
 BATCH_SIZE = 4
 MAX_LENGTH = 512
 LORA_RANK = 8
 
 
-def _make_sft_dataset(
-    model_name: str, renderer_name: str
-) -> "SupervisedDatasetFromHFDataset":
+def _make_sft_dataset(model_name: str, renderer_name: str) -> "SupervisedDatasetFromHFDataset":
     tokenizer = get_tokenizer(model_name)
     renderer = renderers.get_renderer(renderer_name, tokenizer)
 
@@ -89,9 +86,7 @@ def _train_one_step_and_save(
 
 def _download_and_verify_adapter(tinker_path: str, output_dir: Path) -> Path:
     """Download adapter and verify basic structure."""
-    adapter_dir = Path(
-        download(tinker_path=tinker_path, output_dir=str(output_dir))
-    )
+    adapter_dir = Path(download(tinker_path=tinker_path, output_dir=str(output_dir)))
     assert (adapter_dir / "adapter_model.safetensors").exists()
     assert (adapter_dir / "adapter_config.json").exists()
     return adapter_dir
@@ -102,7 +97,17 @@ def _download_and_verify_adapter(tinker_path: str, output_dir: Path) -> Path:
 _MLP_MARKERS = {"gate_proj", "up_proj", "down_proj", "experts", "shared_experts", "w1", "w2", "w3"}
 # Markers that indicate attention modules (covers both dense q/k/v/o_proj
 # and Qwen3.5 linear_attn.in_proj_k style keys).
-_ATTN_MARKERS = {"self_attn", "linear_attn", "q_proj", "k_proj", "v_proj", "o_proj", "in_proj_q", "in_proj_k", "in_proj_v"}
+_ATTN_MARKERS = {
+    "self_attn",
+    "linear_attn",
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "in_proj_q",
+    "in_proj_k",
+    "in_proj_v",
+}
 
 
 def _has_any_marker(key: str, markers: set[str]) -> bool:

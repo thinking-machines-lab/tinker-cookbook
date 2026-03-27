@@ -492,9 +492,7 @@ def apply_merge_op(tensors: dict[str, torch.Tensor], op: MergeOp) -> None:
 
         if op.fused_proj_idx is not None:
             # Determine which target axis is fused (see _detect_fused_axis).
-            fused_axis = _detect_fused_axis(
-                target.shape, delta.shape, op.target_key
-            )
+            fused_axis = _detect_fused_axis(target.shape, delta.shape, op.target_key)
             if op.fused_proj_interleaved:
                 # Interleaved layout: always along last dim ([g0,u0,g1,u1,...])
                 target_view = target[:, :, op.fused_proj_idx :: 2]

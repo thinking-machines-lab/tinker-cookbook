@@ -370,8 +370,8 @@ class TestFusedConcatenatedTransposedMerge:
     """
 
     NUM_EXPERTS = 2
-    HIDDEN = 8          # hidden_size
-    INTERMEDIATE = 3    # moe_intermediate_size (asymmetric vs HIDDEN)
+    HIDDEN = 8  # hidden_size
+    INTERMEDIATE = 3  # moe_intermediate_size (asymmetric vs HIDDEN)
     FUSED_DIM = INTERMEDIATE * 2  # gate + up = 6
 
     def _make_state_dict(self) -> dict[str, torch.Tensor]:
@@ -433,9 +433,7 @@ class TestFusedConcatenatedTransposedMerge:
         merge_adapter_weights(model, adapter, {"lora_alpha": 1, "r": 1})
 
         fused = state_dict["model.layers.0.mlp.experts.gate_up_proj"]
-        assert fused[:, : self.INTERMEDIATE, :].abs().max() == 0.0, (
-            "up delta leaked into gate half"
-        )
+        assert fused[:, : self.INTERMEDIATE, :].abs().max() == 0.0, "up delta leaked into gate half"
         assert fused[:, self.INTERMEDIATE :, :].abs().sum() > 0
 
     def test_gate_only_does_not_leak_into_up(self):
@@ -456,9 +454,7 @@ class TestFusedConcatenatedTransposedMerge:
 
         fused = state_dict["model.layers.0.mlp.experts.gate_up_proj"]
         assert fused[:, : self.INTERMEDIATE, :].abs().sum() > 0
-        assert fused[:, self.INTERMEDIATE :, :].abs().max() == 0.0, (
-            "gate delta leaked into up half"
-        )
+        assert fused[:, self.INTERMEDIATE :, :].abs().max() == 0.0, "gate delta leaked into up half"
 
 
 # ---------------------------------------------------------------------------
