@@ -249,14 +249,14 @@ class InterleavedDatasetBuilder(ChatDatasetBuilder):
         # If all weights are None, weight by dataset size (uniform row sampling).
         # If any weight is set, all must be set.
         if all(s.weight is None for s in self.sources):
-            weights = [float(len(ds)) for ds in hf_datasets]
+            weights: list[float] = [float(len(ds)) for ds in hf_datasets]
         elif any(s.weight is None for s in self.sources):
             raise ValueError(
                 "Either all sources must have explicit weights or none of them. "
                 "Got a mix of weighted and unweighted sources."
             )
         else:
-            weights = [s.weight for s in self.sources]  # type: ignore[misc]
+            weights = [float(s.weight) for s in self.sources if s.weight is not None]
 
         total_weight = sum(weights)
         if total_weight <= 0:
