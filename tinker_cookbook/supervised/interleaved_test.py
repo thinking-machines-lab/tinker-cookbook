@@ -1,11 +1,11 @@
-"""Tests for InterleavedDatasetBuilder and HFDatasetSource."""
+"""Tests for InterleavedChatDatasetBuilder and HFDatasetSource."""
 
 from unittest.mock import patch
 
 import datasets
 import pytest
 
-from tinker_cookbook.supervised.data import HFDatasetSource, InterleavedDatasetBuilder
+from tinker_cookbook.supervised.data import HFDatasetSource, InterleavedChatDatasetBuilder
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 
 
@@ -34,8 +34,8 @@ def _mock_load_dataset(datasets_by_path: dict[str, datasets.Dataset]):
     return _load
 
 
-class TestInterleavedDatasetBuilder:
-    """Tests that exercise InterleavedDatasetBuilder via mocked load_dataset."""
+class TestInterleavedChatDatasetBuilder:
+    """Tests that exercise InterleavedChatDatasetBuilder via mocked load_dataset."""
 
     def _build(
         self,
@@ -45,7 +45,7 @@ class TestInterleavedDatasetBuilder:
         batch_size: int = 4,
         stopping_strategy: str = "all_exhausted",
     ):
-        builder = InterleavedDatasetBuilder(
+        builder = InterleavedChatDatasetBuilder(
             sources=sources,
             test_size=test_size,
             stopping_strategy=stopping_strategy,

@@ -4,7 +4,7 @@ from tinker_cookbook.supervised.common import compute_mean_nll, datum_from_model
 from tinker_cookbook.supervised.data import (
     FromConversationFileBuilder,
     HFDatasetSource,
-    InterleavedDatasetBuilder,
+    InterleavedChatDatasetBuilder,
     StreamingSupervisedDatasetFromHFDataset,
     SupervisedDatasetFromHFDataset,
     conversation_to_datum,
@@ -25,7 +25,7 @@ __all__ = [
     # Dataset implementations and builders (data.py)
     "HFDatasetSource",
     "FromConversationFileBuilder",
-    "InterleavedDatasetBuilder",
+    "InterleavedChatDatasetBuilder",
     "StreamingSupervisedDatasetFromHFDataset",
     "SupervisedDatasetFromHFDataset",
     "conversation_to_datum",

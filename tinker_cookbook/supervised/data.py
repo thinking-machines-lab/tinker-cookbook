@@ -212,7 +212,7 @@ class HFDatasetSource:
 
 
 @chz.chz
-class InterleavedDatasetBuilder(ChatDatasetBuilder):
+class InterleavedChatDatasetBuilder(ChatDatasetBuilder):
     """Builds an SFT dataset by interleaving multiple HuggingFace datasets.
 
     Uses ``datasets.interleave_datasets`` to mix rows from multiple sources according
