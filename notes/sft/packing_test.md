@@ -83,8 +83,25 @@ python run_full_sft_v2.py \
 
 Note: Used max-length=49152 instead of 131072 because the model's actual context window is 65,536 tokens.
 
+Note: Used max-length=49152 instead of 131072 because the model's actual context window is 65,536 tokens.
+Also used lora-rank=64 (not 128) because max LoRA rank for this model is 64.
+
 Log file: `/tmp/tinker-examples/nemotron_cascade_sft_v2_full_nohup.log`
 Metrics: `/tmp/tinker-examples/nemotron_cascade_sft_v2_full/metrics.jsonl`
+
+### BLOCKING ISSUE: Memory/Time for Full Dataset Packing
+
+`PackedSupervisedDataset` renders ALL examples into memory before training.
+With 24.5M examples:
+- Loading 24.5M JSON rows: ~78GB RSS after 2 min, likely to OOM
+- Rendering at ~3500 examples/min would take ~117 hours
+- Even if rendering completes, storing all packed datums in memory is impractical
+
+**Recommendation**: Need a streaming packing approach that:
+1. Renders examples in chunks (e.g., 100K at a time)
+2. Packs each chunk
+3. Yields packed datums as a streaming dataset
+4. Or: pre-render and save to disk, then load packed datums during training
 
 ## IF-RL batch=128 Status
 
