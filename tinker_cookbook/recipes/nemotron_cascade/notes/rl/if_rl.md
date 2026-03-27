@@ -28,9 +28,15 @@
 - kwargs parsed from JSON strings — handles None, str, dict formats
 - instruction_id_list + kwargs_list correctly zipped
 
+## Paper-Matched batch=128 Result (2026-03-27)
+- **Step 0: reward=0.714, mixed=100%, time=2495s (~42 min/step)**
+- Confirms lr=3e-5 works at full paper scale
+- 100% mixed groups = every group contributes gradient
+- ETA for 180 steps: ~5 days at 42 min/step
+
 ## Potential Improvements
-1. **Scale batch to 128**: Current batch=32 means fewer problems per step, noisier gradients. Paper uses 128.
-2. **Run more steps**: Paper runs ~180 steps with dynamic filtering. We've only done 4-50 steps.
+1. ~~Scale batch to 128~~ DONE — confirmed working at batch=128
+2. **Run more steps**: Paper runs ~180 steps with dynamic filtering. Full run ready to launch.
 3. **Strict vs loose IFEval**: Our verifier only does "loose" matching (e.g., case-insensitive). Adding strict mode would give harder signal for stronger models.
 4. **Two known soft spots in verifier**:
    - `detectable_format:constrained_response` always returns True (hard to verify without specific constraint list)
