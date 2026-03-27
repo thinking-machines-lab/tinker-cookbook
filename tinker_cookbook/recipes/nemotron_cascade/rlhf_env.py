@@ -1,12 +1,13 @@
 """
 RLHF environment for Nemotron-Cascade-2 replication.
 
-Uses a generative reward model (GenRM) — Qwen3.5-397B-A17B — to score
-pairwise comparisons of rollouts.  Prompts come from HelpSteer3 and
-arena-human-preference-140k.
+Uses a generative reward model (GenRM) to score pairwise comparisons of
+rollouts.  Default GenRM is Kimi K2.5 (moonshotai/Kimi-K2.5) with thinking
+disabled so that the model outputs VERDICT directly without consuming tokens
+on chain-of-thought.  Prompts come from HelpSteer3.
 
 Paper hyperparameters (RLHF stage):
-  - Reward model: Qwen3-235B-A22B-Thinking as GenRM (we use Qwen3.5-397B-A17B)
+  - Reward model: Qwen3-235B-A22B-Thinking as GenRM (we use Kimi K2.5)
   - Data: HelpSteer3 + arena-human-preference-140k + synthetic safety
   - Batch size: 128, group_size: 16
   - LR: 3e-6, KL coefficient: 0.03 (only stage with nonzero KL)
@@ -52,8 +53,8 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-GENRM_MODEL_NAME = "Qwen/Qwen3.5-397B-A17B"
-GENRM_RENDERER_NAME = "qwen3_5"
+GENRM_MODEL_NAME = "moonshotai/Kimi-K2.5"
+GENRM_RENDERER_NAME = "kimi_k25_disable_thinking"
 GENRM_MAX_TOKENS = 4096
 GENRM_TEMPERATURE = 0.0  # deterministic judging
 
