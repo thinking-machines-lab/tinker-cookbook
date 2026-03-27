@@ -190,14 +190,14 @@ class FromConversationFileBuilder(ChatDatasetBuilder):
 
 
 @chz.chz
-class DomainSource:
-    """A single HuggingFace dataset to include in a multi-domain mix.
+class DatasetSource:
+    """A single HuggingFace dataset to include in an interleaved mix.
 
     Attributes:
         path: HuggingFace dataset path (e.g. ``"allenai/tulu-3-sft-mixture"``).
         name: HuggingFace dataset config name (passed as ``name`` to ``load_dataset``).
         split: Dataset split to load.
-        weight: Relative mixing weight (will be normalized across domains).
+        weight: Relative mixing weight (will be normalized across sources).
         message_field: Column name containing conversation messages.
     """
 
@@ -210,36 +210,36 @@ class DomainSource:
 
 @chz.chz
 class InterleavedDatasetBuilder(ChatDatasetBuilder):
-    """Builds a multi-domain SFT dataset by interleaving multiple HuggingFace datasets.
+    """Builds an SFT dataset by interleaving multiple HuggingFace datasets.
 
     Uses ``datasets.interleave_datasets`` to mix rows from multiple sources according
     to the configured weights. The resulting dataset is a standard Arrow-backed
     ``datasets.Dataset`` with O(1) random access and deterministic per-epoch shuffling.
     """
 
-    domains: list[DomainSource]
+    sources: list[DatasetSource]
     test_size: int = 0
     shuffle_seed: int = 0
     stopping_strategy: str = "all_exhausted"
 
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
-        if not self.domains:
-            raise ValueError("At least one domain must be provided")
+        if not self.sources:
+            raise ValueError("At least one dataset source must be provided")
 
         hf_datasets: list[datasets.Dataset] = []
         weights: list[float] = []
 
-        for domain in self.domains:
-            ds = datasets.load_dataset(domain.path, name=domain.name, split=domain.split)
+        for source in self.sources:
+            ds = datasets.load_dataset(source.path, name=source.name, split=source.split)
             assert isinstance(ds, datasets.Dataset)
             # Normalize message field name and unify schema
-            if domain.message_field != "messages":
-                ds = ds.rename_column(domain.message_field, "messages")
+            if source.message_field != "messages":
+                ds = ds.rename_column(source.message_field, "messages")
             ds = ds.select_columns(["messages"])
             hf_datasets.append(ds)
-            weights.append(domain.weight)
+            weights.append(source.weight)
             logger.info(
-                f"Loaded domain '{domain.path}' ({len(ds)} rows, weight={domain.weight})"
+                f"Loaded '{source.path}' ({len(ds)} rows, weight={source.weight})"
             )
 
         total_weight = sum(weights)

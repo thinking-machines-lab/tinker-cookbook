@@ -1,4 +1,4 @@
-"""Tests for InterleavedDatasetBuilder and DomainSource."""
+"""Tests for InterleavedDatasetBuilder and DatasetSource."""
 
 import collections
 from unittest.mock import patch
@@ -6,7 +6,7 @@ from unittest.mock import patch
 import datasets
 import pytest
 
-from tinker_cookbook.supervised.data import DomainSource, InterleavedDatasetBuilder
+from tinker_cookbook.supervised.data import DatasetSource, InterleavedDatasetBuilder
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 
 
@@ -48,13 +48,13 @@ class TestInterleavedDatasetBuilder:
 
     def _build(
         self,
-        domains: list[DomainSource],
+        sources: list[DatasetSource],
         datasets_by_path: dict[str, datasets.Dataset],
         test_size: int = 0,
         batch_size: int = 4,
     ):
         builder = InterleavedDatasetBuilder(
-            domains=domains,
+            sources=sources,
             test_size=test_size,
             common_config=ChatDatasetBuilderCommonConfig(
                 model_name_for_tokenizer="meta-llama/Llama-3.1-8B",
@@ -67,14 +67,14 @@ class TestInterleavedDatasetBuilder:
             mock_load.side_effect = _mock_load_dataset(datasets_by_path)
             return builder()
 
-    def test_basic_two_domains(self) -> None:
+    def test_basic_two_sources(self) -> None:
         ds_a = _make_hf_dataset(100, "a")
         ds_b = _make_hf_dataset(100, "b")
-        domains = [
-            DomainSource(path="ds_a", weight=1.0),
-            DomainSource(path="ds_b", weight=1.0),
+        sources = [
+            DatasetSource(path="ds_a", weight=1.0),
+            DatasetSource(path="ds_b", weight=1.0),
         ]
-        train_ds, test_ds = self._build(domains, {"ds_a": ds_a, "ds_b": ds_b})
+        train_ds, test_ds = self._build(sources, {"ds_a": ds_a, "ds_b": ds_b})
         assert test_ds is None
         assert len(train_ds) > 0
         batch = train_ds.get_batch(0)
@@ -84,13 +84,13 @@ class TestInterleavedDatasetBuilder:
         """With 3:1 weights, the interleaved dataset should reflect ~75/25 distribution."""
         ds_heavy = _make_hf_dataset(1000, "heavy")
         ds_light = _make_hf_dataset(1000, "light")
-        domains = [
-            DomainSource(path="heavy", weight=3.0),
-            DomainSource(path="light", weight=1.0),
+        sources = [
+            DatasetSource(path="heavy", weight=3.0),
+            DatasetSource(path="light", weight=1.0),
         ]
 
         builder = InterleavedDatasetBuilder(
-            domains=domains,
+            sources=sources,
             common_config=ChatDatasetBuilderCommonConfig(
                 model_name_for_tokenizer="meta-llama/Llama-3.1-8B",
                 renderer_name="llama3",
@@ -109,8 +109,8 @@ class TestInterleavedDatasetBuilder:
             ):
                 # Build and check the underlying interleaved dataset
                 hf_datasets_list = []
-                for domain in builder.domains:
-                    ds = {"heavy": ds_heavy, "light": ds_light}[domain.path]
+                for source in builder.sources:
+                    ds = {"heavy": ds_heavy, "light": ds_light}[source.path]
                     ds = ds.select_columns(["messages"])
                     hf_datasets_list.append(ds)
 
@@ -132,9 +132,9 @@ class TestInterleavedDatasetBuilder:
 
     def test_test_size_split(self) -> None:
         ds_a = _make_hf_dataset(200, "a")
-        domains = [DomainSource(path="ds_a", weight=1.0)]
+        sources = [DatasetSource(path="ds_a", weight=1.0)]
         train_ds, test_ds = self._build(
-            domains, {"ds_a": ds_a}, test_size=50, batch_size=10
+            sources, {"ds_a": ds_a}, test_size=50, batch_size=10
         )
         assert test_ds is not None
         # Test dataset should have its batch_size == test_size
@@ -143,8 +143,8 @@ class TestInterleavedDatasetBuilder:
 
     def test_set_epoch_changes_order(self) -> None:
         ds_a = _make_hf_dataset(200, "a")
-        domains = [DomainSource(path="ds_a", weight=1.0)]
-        train_ds, _ = self._build(domains, {"ds_a": ds_a}, batch_size=10)
+        sources = [DatasetSource(path="ds_a", weight=1.0)]
+        train_ds, _ = self._build(sources, {"ds_a": ds_a}, batch_size=10)
 
         train_ds.set_epoch(seed=0)
         batch_e0 = train_ds.get_batch(0)
@@ -159,8 +159,8 @@ class TestInterleavedDatasetBuilder:
 
     def test_single_domain(self) -> None:
         ds_a = _make_hf_dataset(50, "a")
-        domains = [DomainSource(path="ds_a", weight=1.0)]
-        train_ds, test_ds = self._build(domains, {"ds_a": ds_a}, batch_size=5)
+        sources = [DatasetSource(path="ds_a", weight=1.0)]
+        train_ds, test_ds = self._build(sources, {"ds_a": ds_a}, batch_size=5)
         assert test_ds is None
         assert len(train_ds) == 10
         batch = train_ds.get_batch(0)
@@ -168,10 +168,10 @@ class TestInterleavedDatasetBuilder:
 
     def test_custom_message_field(self) -> None:
         ds = _make_hf_dataset_custom_field(100, "conv", field="conversations")
-        domains = [DomainSource(path="ds_conv", weight=1.0, message_field="conversations")]
+        sources = [DatasetSource(path="ds_conv", weight=1.0, message_field="conversations")]
 
         builder = InterleavedDatasetBuilder(
-            domains=domains,
+            sources=sources,
             common_config=ChatDatasetBuilderCommonConfig(
                 model_name_for_tokenizer="meta-llama/Llama-3.1-8B",
                 renderer_name="llama3",
@@ -187,9 +187,9 @@ class TestInterleavedDatasetBuilder:
         batch = train_ds.get_batch(0)
         assert len(batch) == 4
 
-    def test_empty_domains_raises(self) -> None:
+    def test_empty_sources_raises(self) -> None:
         builder = InterleavedDatasetBuilder(
-            domains=[],
+            sources=[],
             common_config=ChatDatasetBuilderCommonConfig(
                 model_name_for_tokenizer="meta-llama/Llama-3.1-8B",
                 renderer_name="llama3",
@@ -197,7 +197,7 @@ class TestInterleavedDatasetBuilder:
                 batch_size=4,
             ),
         )
-        with pytest.raises(ValueError, match="At least one domain"):
+        with pytest.raises(ValueError, match="At least one dataset source"):
             builder()
 
     def test_deterministic_batches(self) -> None:
@@ -205,13 +205,13 @@ class TestInterleavedDatasetBuilder:
         ds_a = _make_hf_dataset(100, "a")
         ds_b = _make_hf_dataset(100, "b")
         datasets_map = {"ds_a": ds_a, "ds_b": ds_b}
-        domains = [
-            DomainSource(path="ds_a", weight=1.0),
-            DomainSource(path="ds_b", weight=1.0),
+        sources = [
+            DatasetSource(path="ds_a", weight=1.0),
+            DatasetSource(path="ds_b", weight=1.0),
         ]
 
-        train1, _ = self._build(domains, datasets_map)
-        train2, _ = self._build(domains, datasets_map)
+        train1, _ = self._build(sources, datasets_map)
+        train2, _ = self._build(sources, datasets_map)
 
         for i in range(5):
             b1 = train1.get_batch(i)
@@ -220,17 +220,17 @@ class TestInterleavedDatasetBuilder:
             for d1, d2 in zip(b1, b2):
                 assert d1.model_input == d2.model_input
 
-    def test_small_domain_oversampled(self) -> None:
-        """With all_exhausted strategy, a small domain should be oversampled."""
+    def test_small_source_oversampled(self) -> None:
+        """With all_exhausted strategy, a small source should be oversampled."""
         ds_big = _make_hf_dataset(1000, "big")
         ds_small = _make_hf_dataset(10, "small")
-        domains = [
-            DomainSource(path="big", weight=1.0),
-            DomainSource(path="small", weight=1.0),
+        sources = [
+            DatasetSource(path="big", weight=1.0),
+            DatasetSource(path="small", weight=1.0),
         ]
 
         builder = InterleavedDatasetBuilder(
-            domains=domains,
+            sources=sources,
             stopping_strategy="all_exhausted",
             common_config=ChatDatasetBuilderCommonConfig(
                 model_name_for_tokenizer="meta-llama/Llama-3.1-8B",
