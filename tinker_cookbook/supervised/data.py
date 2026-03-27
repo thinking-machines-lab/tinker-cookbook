@@ -225,7 +225,9 @@ class InterleavedChatDatasetBuilder(ChatDatasetBuilder):
     sources: list[HFDatasetSource]
     test_size: int = 0
     shuffle_seed: int = 0
-    stopping_strategy: Literal["first_exhausted", "all_exhausted"] = "all_exhausted"
+    stopping_strategy: Literal[
+        "first_exhausted", "all_exhausted", "all_exhausted_without_replacement"
+    ] = "all_exhausted"
 
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
         if not self.sources:

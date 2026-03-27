@@ -44,7 +44,9 @@ class TestInterleavedChatDatasetBuilder:
         datasets_by_path: dict[str, datasets.Dataset],
         test_size: int = 0,
         batch_size: int = 4,
-        stopping_strategy: Literal["first_exhausted", "all_exhausted"] = "all_exhausted",
+        stopping_strategy: Literal[
+            "first_exhausted", "all_exhausted", "all_exhausted_without_replacement"
+        ] = "all_exhausted",
     ):
         builder = InterleavedChatDatasetBuilder(
             sources=sources,
