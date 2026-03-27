@@ -47,19 +47,20 @@ checks ALL tool calls in the full conversation.
 ## Test Results
 
 ### v4: Ground-truth seeded mocks + partial credit (Super base, 4 groups x 4 rollouts)
-Step 0:
-- `name_match`: 0.875 (model picks right tool 87.5% of the time)
-- `correct` (exact match): 0.0
-- `partial_reward`: 0.4375
-- `reward/total`: 0.4375
-- `frac_mixed`: 1.0 (all groups have variance -- ideal for RL)
-- `turns_per_episode`: 2.75 (model uses multi-step reasoning)
-- ~233s per step
 
-This is a massive improvement over the previous 0.0 reward. The model correctly
-identifies the tool to call most of the time. The remaining gap between name_match
-(0.875) and exact_match (0.0) is the argument accuracy problem -- the model calls
-the right tool but with slightly wrong arguments.
+Run 1 (from first commit):
+- Step 0: name_match=0.875, correct=0.0, partial_reward=0.4375, frac_mixed=1.0
+- Model picks the right tool 87.5% of the time
+
+Run 2 (confirmation, /tmp/workbench_seeded_test):
+- Step 0: correct=0.375, name_match=0.375, partial_reward=0.375, frac_mixed=1.0
+  - n_expected=2.0 (2-call tasks). 37.5% exact match rate.
+- Step 1: correct=0.0, name_match=0.0, partial_reward=0.0, frac_mixed=0.0
+  - n_expected=3.0 (3-call tasks). Harder tasks, model failed all.
+- ~240-375s per step
+
+This is a massive improvement over the previous 0.0 reward across all runs. The model
+now gets exact matches on some tasks and partial credit on many more.
 
 ### Previous results for comparison
 - v1 (no tool schemas): reward = -0.025, correct = 0.0 (plain text, no tool calls)
