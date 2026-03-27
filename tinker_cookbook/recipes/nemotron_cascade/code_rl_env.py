@@ -45,30 +45,46 @@ from tinker_cookbook.utils import logtree
 logger = logging.getLogger(__name__)
 
 
+def _strip_think_tags(response: str) -> str:
+    """Remove <think>...</think> blocks from a response.
+
+    Reasoning models (like Nemotron-Nano in thinking mode) emit draft code
+    inside <think> tags. We strip these before code extraction so we only
+    see the final answer.
+    """
+    return re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL).strip()
+
+
 def extract_code(response: str) -> tuple[str | None, str]:
     """Extract code from a model response.
 
-    Looks for ```python or ```cpp fenced code blocks.
-    Returns (code, language) where language is "python" or "cpp".
-    Falls back to the last fenced code block if no language is specified.
-    """
-    # Try python first
-    match = re.search(r'```python\s*\n(.*?)\n```', response, re.DOTALL)
-    if match:
-        return match.group(1).strip(), "python"
+    Looks for ```python or ```cpp fenced code blocks, preferring the LAST
+    match (the final answer, not earlier drafts). Falls back to unfenced
+    code if no fenced block is found.
 
-    # Try C++ variants
+    Strips <think>...</think> blocks first so that draft code inside
+    reasoning traces is not extracted.
+    """
+    # Strip thinking blocks first
+    response = _strip_think_tags(response)
+
+    # Try python — use findall and take LAST match to skip drafts
+    matches = re.findall(r'```python\s*\n(.*?)\n```', response, re.DOTALL)
+    if matches:
+        return matches[-1].strip(), "python"
+
+    # Try C++ variants — take last match
     for lang_tag in ("cpp", "c++", "cxx"):
-        match = re.search(rf'```{re.escape(lang_tag)}\s*\n(.*?)\n```', response, re.DOTALL)
-        if match:
-            return match.group(1).strip(), "cpp"
+        matches = re.findall(rf'```{re.escape(lang_tag)}\s*\n(.*?)\n```', response, re.DOTALL)
+        if matches:
+            return matches[-1].strip(), "cpp"
 
     # Try C
-    match = re.search(r'```c\s*\n(.*?)\n```', response, re.DOTALL)
-    if match:
-        return match.group(1).strip(), "cpp"
+    matches = re.findall(r'```c\s*\n(.*?)\n```', response, re.DOTALL)
+    if matches:
+        return matches[-1].strip(), "cpp"
 
-    # Fall back to any fenced code block
+    # Fall back to any fenced code block (last match)
     matches = re.findall(r'```(?:\w*)\s*\n(.*?)\n```', response, re.DOTALL)
     if matches:
         code = matches[-1].strip()
@@ -76,6 +92,18 @@ def extract_code(response: str) -> tuple[str | None, str]:
         if "#include" in code:
             return code, "cpp"
         return code, "python"
+
+    # Fallback: try to extract unfenced Python code.
+    # Look for lines starting with 'def ' or 'import ' followed by indented code.
+    unfenced_match = re.search(
+        r'^((?:import\s+\w+|from\s+\w+|def\s+\w+).*?)(?:\n\n[A-Z]|\n\n\*|\Z)',
+        response,
+        re.DOTALL | re.MULTILINE,
+    )
+    if unfenced_match:
+        code = unfenced_match.group(1).strip()
+        if len(code) > 20:  # Sanity check: must be non-trivial
+            return code, "python"
 
     return None, "unknown"
 
@@ -95,19 +123,46 @@ def build_execution_script(code: str, language: str, test_cases: list[dict]) -> 
     has_assertions = any("assertion" in tc for tc in test_cases)
 
     if has_assertions and language == "python":
+        # Ensure code ends with newline so cat concatenation works correctly.
+        # Without this, the last line of solution.py merges with the first
+        # assertion, causing a SyntaxError every time.
+        if not code.endswith("\n"):
+            code += "\n"
         code_b64 = base64.b64encode(code.encode()).decode()
+
+        # Build a test script that runs each assertion individually and
+        # reports RESULT: passed/total for partial credit parsing.
         assertions = [tc["assertion"] for tc in test_cases if "assertion" in tc]
-        test_code = "\n".join(assertions)
+        test_lines = [
+            "import sys",
+            "PASS = 0",
+            f"TOTAL = {len(assertions)}",
+        ]
+        for i, assertion in enumerate(assertions):
+            # Each assertion is tested in a try/except so later tests still run.
+            # Use a numbered label instead of the assertion text in the error
+            # message to avoid quoting issues (assertions contain quotes).
+            test_lines.append("try:")
+            test_lines.append(f"    {assertion}")
+            test_lines.append("    PASS += 1")
+            test_lines.append("except Exception as e:")
+            test_lines.append(f"    print('FAIL test {i}: ' + str(e), file=sys.stderr)")
+        test_lines.append('print("RESULT: " + str(PASS) + "/" + str(TOTAL))')
+        test_lines.append('sys.exit(0 if PASS == TOTAL else 1)')
+
+        test_code = "\n".join(test_lines) + "\n"
         test_b64 = base64.b64encode(test_code.encode()).decode()
         return "\n".join([
             f"echo '{code_b64}' | base64 -d > /tmp/solution.py",
             f"echo '{test_b64}' | base64 -d > /tmp/tests.py",
             # Combine solution + tests and run
             "cat /tmp/solution.py /tmp/tests.py > /tmp/run.py",
-            "timeout 30 python3 /tmp/run.py 2>/dev/null",
+            "timeout 30 python3 /tmp/run.py",
         ])
 
     if language == "python":
+        if not code.endswith("\n"):
+            code += "\n"
         code_b64 = base64.b64encode(code.encode()).decode()
         script_parts = [
             "set -e",
@@ -137,6 +192,8 @@ def build_execution_script(code: str, language: str, test_cases: list[dict]) -> 
         return "\n".join(script_parts)
 
     elif language == "cpp":
+        if not code.endswith("\n"):
+            code += "\n"
         code_b64 = base64.b64encode(code.encode()).decode()
         script_parts = [
             "set -e",
@@ -175,18 +232,20 @@ async def run_code_in_modal(
     language: str,
     test_cases: list[dict],
     timeout: int = 30,
-) -> tuple[bool, str]:
+) -> tuple[bool, float, str]:
     """Execute a code solution against test cases in a Modal sandbox.
 
-    Returns (all_passed, details).
+    Returns (all_passed, fraction_passed, details).
+    The fraction_passed enables partial credit: e.g. 2/3 tests passing
+    gives fraction_passed=0.667 even if all_passed is False.
     """
     try:
         import modal
     except ImportError:
-        return False, "Modal not installed"
+        return False, 0.0, "Modal not installed"
 
     if not test_cases:
-        return False, "No test cases"
+        return False, 0.0, "No test cases"
 
     script = build_execution_script(code, language, test_cases)
 
@@ -207,11 +266,21 @@ async def run_code_in_modal(
         await sb.wait.aio()
         stdout = await sb.stdout.read.aio()
         stderr = await sb.stderr.read.aio()
-        passed = sb.returncode == 0
+        all_passed = sb.returncode == 0
         output = (stdout + "\n" + stderr)[-500:]
-        return passed, output
+
+        # Parse partial credit from RESULT line (stdin/stdout tests)
+        fraction = 1.0 if all_passed else 0.0
+        result_match = re.search(r'RESULT:\s*(\d+)/(\d+)', stdout)
+        if result_match:
+            passed_count = int(result_match.group(1))
+            total_count = int(result_match.group(2))
+            if total_count > 0:
+                fraction = passed_count / total_count
+
+        return all_passed, fraction, output
     except Exception as e:
-        return False, f"Modal error: {str(e)[:200]}"
+        return False, 0.0, f"Modal error: {str(e)[:200]}"
 
 
 class CodeRLEnv(Env):
@@ -219,7 +288,11 @@ class CodeRLEnv(Env):
 
     The model receives a problem description and generates a solution in
     Python or C++. The solution is executed against test cases in a Modal
-    sandbox. Reward is strict binary: 1 if all tests pass, 0 otherwise.
+    sandbox.
+
+    Reward modes:
+    - strict: 1.0 if all tests pass, 0.0 otherwise (paper default)
+    - partial: fraction of tests passed (smoother gradient signal)
     """
 
     def __init__(
@@ -229,12 +302,14 @@ class CodeRLEnv(Env):
         test_cases: list[dict],
         renderer: renderers.Renderer,
         use_modal: bool = True,
+        partial_credit: bool = False,
     ):
         self.problem_id = problem_id
         self.problem_description = problem_description
         self.test_cases = test_cases
         self.renderer = renderer
         self.use_modal = use_modal
+        self.partial_credit = partial_credit
 
     @property
     def stop_condition(self) -> StopCondition:
@@ -290,10 +365,13 @@ class CodeRLEnv(Env):
                 reward = 0.0
                 details = "no code extracted"
             elif self.use_modal and self.test_cases:
-                passed, details = await run_code_in_modal(
+                all_passed, fraction, details = await run_code_in_modal(
                     code, language, self.test_cases,
                 )
-                reward = 1.0 if passed else 0.0
+                if self.partial_credit:
+                    reward = fraction
+                else:
+                    reward = 1.0 if all_passed else 0.0
             else:
                 # Fallback: reward for producing valid-looking code
                 reward = 0.5 if code else 0.0
@@ -358,6 +436,7 @@ class CodeRLDataset(RLDataset):
         renderer: renderers.Renderer,
         data_path: str | None = None,
         use_modal: bool = True,
+        partial_credit: bool = False,
         seed: int = 0,
     ):
         if data_path:
@@ -384,6 +463,7 @@ class CodeRLDataset(RLDataset):
         self.group_size = group_size
         self.renderer = renderer
         self.use_modal = use_modal
+        self.partial_credit = partial_credit
         self.data_path = data_path
         logger.info(
             f"Code RL dataset: {len(self.ds)} problems, "
@@ -470,6 +550,7 @@ class CodeRLDataset(RLDataset):
                     test_cases=tc,
                     renderer=self.renderer,
                     use_modal=self.use_modal,
+                    partial_credit=self.partial_credit,
                 ),
                 num_envs=self.group_size,
             )
@@ -497,6 +578,7 @@ class CodeRLDatasetBuilder(RLDatasetBuilder):
     group_size: int = 16
     data_path: str | None = None
     use_modal: bool = True
+    partial_credit: bool = False
     seed: int = 0
 
     async def __call__(self) -> tuple[CodeRLDataset, None]:
@@ -508,5 +590,6 @@ class CodeRLDatasetBuilder(RLDatasetBuilder):
             renderer=renderer,
             data_path=self.data_path,
             use_modal=self.use_modal,
+            partial_credit=self.partial_credit,
             seed=self.seed,
         ), None
