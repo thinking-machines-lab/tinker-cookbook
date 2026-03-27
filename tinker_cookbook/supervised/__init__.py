@@ -7,6 +7,12 @@ from tinker_cookbook.supervised.data import (
     SupervisedDatasetFromHFDataset,
     conversation_to_datum,
 )
+from tinker_cookbook.supervised.prepack import (
+    PrepackedSupervisedDataset,
+    load_packed_datums,
+    pack_token_lists,
+    save_packed_datums,
+)
 from tinker_cookbook.supervised.types import (
     ChatDatasetBuilder,
     ChatDatasetBuilderCommonConfig,
@@ -25,6 +31,11 @@ __all__ = [
     "StreamingSupervisedDatasetFromHFDataset",
     "SupervisedDatasetFromHFDataset",
     "conversation_to_datum",
+    # Pre-packing (prepack.py)
+    "PrepackedSupervisedDataset",
+    "load_packed_datums",
+    "pack_token_lists",
+    "save_packed_datums",
     # Helpers (common.py)
     "compute_mean_nll",
     "datum_from_model_input_weights",
