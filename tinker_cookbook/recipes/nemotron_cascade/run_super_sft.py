@@ -7,7 +7,6 @@ Data must be pre-downloaded to ~/data/nemotron-cascade-2/ via download_all.py.
 """
 
 import asyncio
-import shutil
 from pathlib import Path
 
 from tinker_cookbook.supervised.data import HFDatasetSource, InterleavedChatDatasetBuilder
@@ -15,28 +14,26 @@ from tinker_cookbook.supervised.train import Config, main
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 
 DATA_DIR = Path.home() / "data" / "nemotron-cascade-2"
+LOG_DIR = Path.home() / "experiments" / "nemotron-cascade-2" / "sft"
 
 SUBSETS = [
-    ("math", "sft_math_full.jsonl"),
-    ("science", "sft_science_full.jsonl"),
-    ("chat", "sft_chat_full.jsonl"),
-    ("instruction_following", "sft_instruction_following_full.jsonl"),
-    ("safety", "sft_safety_full.jsonl"),
-    ("conversational_agent", "sft_conversational_agent_full.jsonl"),
-    ("swe", "sft_swe_full.jsonl"),
-    ("terminal_agent", "sft_terminal_agent_full.jsonl"),
+    "sft_math_full.jsonl",
+    "sft_science_full.jsonl",
+    "sft_chat_full.jsonl",
+    "sft_instruction_following_full.jsonl",
+    "sft_safety_full.jsonl",
+    "sft_conversational_agent_full.jsonl",
+    "sft_swe_full.jsonl",
+    "sft_terminal_agent_full.jsonl",
 ]
 
 
-def make_config(log_path: str = "/tmp/super_sft_full") -> Config:
-    # Verify all data files exist
+def make_config() -> Config:
     sources = []
-    for name, filename in SUBSETS:
+    for filename in SUBSETS:
         filepath = DATA_DIR / filename
         if not filepath.exists():
-            raise FileNotFoundError(
-                f"Missing {filepath}. Run download_all.py first."
-            )
+            raise FileNotFoundError(f"Missing {filepath}. Run download_all.py first.")
         sources.append(HFDatasetSource(path=str(filepath)))
 
     return Config(
@@ -47,7 +44,7 @@ def make_config(log_path: str = "/tmp/super_sft_full") -> Config:
             shuffle_seed=42,
             common_config=ChatDatasetBuilderCommonConfig(
                 model_name_for_tokenizer="nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",
-                renderer_name="nemotron3_disable_thinking",
+                renderer_name="nemotron3",
                 max_length=49152,
                 batch_size=2048,
             ),
@@ -60,7 +57,7 @@ def make_config(log_path: str = "/tmp/super_sft_full") -> Config:
         save_every=5000,
         rolling_save_every=500,
         eval_every=1000,
-        log_path=log_path,
+        log_path=str(LOG_DIR),
         adam_beta2=0.98,
         wandb_project="nemotron-cascade-2-replication",
         wandb_name="super-262k-sft-full-8domain",
