@@ -105,16 +105,42 @@ async def gather_with_progress(
         list[T]: Results from each coroutine, in the same order as the input.
     """
     coroutine_list = list(coroutines)
-    pbar = tqdm(total=len(coroutine_list), desc=desc)
+    total = len(coroutine_list)
+    pbar = tqdm(total=total, desc=desc)
+    completed = 0
+    t0 = time.monotonic()
 
-    async def track(coro: Coroutine[Any, Any, T]) -> T:
+    async def track(idx: int, coro: Coroutine[Any, Any, T]) -> T:
+        nonlocal completed
         result = await coro
+        completed += 1
+        elapsed = time.monotonic() - t0
         pbar.update(1)
+        if completed % max(1, total // 10) == 0 or completed == total:
+            logger.info(
+                "%s: %d/%d groups done (%.0fs elapsed, %.1fs/group avg)",
+                desc, completed, total, elapsed, elapsed / completed,
+            )
         return result
 
+    # Stale detection: log warning if no progress for 5 minutes
+    async def stale_watchdog() -> None:
+        last_completed = 0
+        while completed < total:
+            await asyncio.sleep(300)  # 5 min
+            if completed == last_completed and completed < total:
+                elapsed = time.monotonic() - t0
+                logger.warning(
+                    "%s: STALE — no progress in 5 min (%d/%d done, %.0fs elapsed)",
+                    desc, completed, total, elapsed,
+                )
+            last_completed = completed
+
+    watchdog = asyncio.create_task(stale_watchdog())
     try:
-        results = await asyncio.gather(*[track(coro) for coro in coroutine_list])
+        results = await asyncio.gather(*[track(i, coro) for i, coro in enumerate(coroutine_list)])
     finally:
+        watchdog.cancel()
         pbar.close()
 
     return results
