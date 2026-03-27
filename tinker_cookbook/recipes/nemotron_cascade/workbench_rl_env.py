@@ -2,16 +2,20 @@
 Workbench Tool-Calling RL environment for Nemotron-Cascade-2 replication.
 
 Single-turn environment where the model calls workplace tools (email, calendar,
-CRM, etc.) to complete tasks. Filtered to single-call tasks only because the
-mock tool backend returns fake data — multi-step tasks can't match ground-truth
-arguments that depend on real return values from earlier calls. The 3,248
-single-call tasks (69% of all workbench data) let the model construct the
-correct tool call directly from the user message.
+CRM, etc.) to complete tasks. Uses ground-truth-seeded mock backends so that
+info-gathering calls (e.g. `email_search_emails`) return IDs and values
+consistent with the expected ground-truth tool calls. This lets the model
+succeed on tasks that require a lookup step before the action call.
+
+The reward function uses partial credit:
+  - 0.0 if the model doesn't call any tools
+  - 0.5 if the model calls the correct tool name(s) but with wrong arguments
+  - 1.0 if the model calls the correct tool(s) with exact argument matches
 
 Uses `build_agent_tool_env` with max_turns=3 so the model can do a short
-info-gathering step before the action call, then is graded against ground_truth.
-The reward function checks ALL tool calls in the conversation, so the model gets
-credit as long as the correct call appears anywhere in the trajectory.
+info-gathering step before the action call. The reward function checks ALL
+tool calls in the conversation, so the model gets credit as long as the
+correct call appears anywhere in the trajectory.
 """
 
 import json
@@ -49,13 +53,42 @@ def _normalize_args(args_str: str | dict) -> dict:
         return {}
 
 
+def _extract_gt_ids(ground_truth: list[dict]) -> dict[str, list[str]]:
+    """Extract IDs from ground-truth tool calls to seed mock backends.
+
+    Scans ground-truth arguments for values that look like IDs (e.g. email_id,
+    event_id, task_id, customer_id) and groups them by ID type. Also extracts
+    email addresses and names that the model might need to discover via lookup.
+
+    Returns a dict like:
+        {"email_id": ["00000259"], "event_id": ["00000170"], "email": ["jinsoo.kim@atlas.com"]}
+    """
+    ids: dict[str, list[str]] = {}
+    for gt_call in ground_truth:
+        args = _normalize_args(gt_call.get("arguments", "{}"))
+        for key, value in args.items():
+            value_str = str(value)
+            # Collect ID-like fields and useful lookup values
+            if key.endswith("_id") or key.endswith("_email") or key == "email" or key == "assigned_to_email":
+                ids.setdefault(key, []).append(value_str)
+            # Also collect all argument values by key for general seeding
+            ids.setdefault(f"_arg_{key}", []).append(value_str)
+    return ids
+
+
 def check_tool_calls_in_messages(
     messages: list[Message],
     ground_truth: list[dict],
-) -> float:
-    """Check if the conversation contains the expected tool calls."""
+) -> tuple[float, float, float]:
+    """Check if the conversation contains the expected tool calls.
+
+    Returns (reward, name_match_rate, exact_match_rate):
+      - reward: 0.5 * name_match_rate + 0.5 * exact_match_rate
+      - name_match_rate: fraction of GT calls matched by tool name
+      - exact_match_rate: fraction of GT calls matched by name + all args
+    """
     if not ground_truth:
-        return 1.0
+        return 1.0, 1.0, 1.0
 
     # Extract all tool calls from assistant messages
     model_calls = []
@@ -69,54 +102,106 @@ def check_tool_calls_in_messages(
                     model_calls.append({"name": func.get("name", ""), "arguments": _normalize_args(func.get("arguments", "{}"))})
 
     if not model_calls:
-        return 0.0
+        return 0.0, 0.0, 0.0
 
-    # Check each ground truth call
-    matched = 0
+    # Check each ground truth call for name match and exact match separately
+    name_matched = 0
+    exact_matched = 0
+    used_indices: set[int] = set()  # Track which model calls we've used
+
     for gt in ground_truth:
         gt_name = gt.get("name", "")
         gt_args = _normalize_args(gt.get("arguments", "{}"))
-        for mc in model_calls:
+
+        best_match = "none"
+        best_idx = -1
+
+        for i, mc in enumerate(model_calls):
+            if i in used_indices:
+                continue
             if mc["name"] == gt_name:
                 args_match = all(str(mc["arguments"].get(k)) == str(v) for k, v in gt_args.items())
                 if args_match:
-                    matched += 1
+                    best_match = "exact"
+                    best_idx = i
                     break
+                elif best_match == "none":
+                    best_match = "name"
+                    best_idx = i
 
-    return matched / len(ground_truth)
+        if best_match == "exact":
+            exact_matched += 1
+            name_matched += 1
+            used_indices.add(best_idx)
+        elif best_match == "name":
+            name_matched += 1
+            used_indices.add(best_idx)
+
+    n = len(ground_truth)
+    name_rate = name_matched / n
+    exact_rate = exact_matched / n
+    # Partial credit: 0.5 for getting the tool name right, 0.5 for exact args
+    reward = 0.5 * name_rate + 0.5 * exact_rate
+    return reward, name_rate, exact_rate
 
 
 class WorkbenchTools:
-    """Mock tool implementations for workbench tasks.
+    """Mock tool implementations seeded with ground-truth IDs.
 
-    Returns plausible JSON results for workplace tools.
-    The actual values don't matter much since we grade on tool call correctness,
-    not on the final answer content.
+    The ground_truth_ids dict maps ID field names to lists of expected values.
+    When lookup tools are called (e.g. email_search_emails, calendar_get_events),
+    the mock returns results containing these real IDs so the model can use them
+    in subsequent action calls and match the ground truth.
     """
+
+    def __init__(self, ground_truth_ids: dict[str, list[str]] | None = None):
+        self._gt_ids = ground_truth_ids or {}
+
+    def _get_gt_id(self, key: str, fallback: str) -> str:
+        """Get the first ground-truth ID for a key, or return fallback."""
+        vals = self._gt_ids.get(key, [])
+        return vals[0] if vals else fallback
+
+    def _get_gt_email(self) -> str:
+        """Get a ground-truth email address if available."""
+        for key in ("assigned_to_email", "email", "to"):
+            vals = self._gt_ids.get(key, []) + self._gt_ids.get(f"_arg_{key}", [])
+            if vals:
+                return vals[0]
+        return ""
 
     @tool
     def company_directory_find_email_address(self, name: str = "") -> ToolResult:
         """Finds all email addresses containing the given name."""
+        gt_email = self._get_gt_email()
+        if gt_email:
+            email = gt_email
+        else:
+            email = f"{name.lower().replace(' ', '.')}@company.com"
         return simple_tool_result(json.dumps([
-            {"email": f"{name.lower().replace(' ', '.')}@company.com", "name": name}
+            {"email": email, "name": name}
         ]))
 
     @tool
     def email_search_emails(self, query: str = "", date_min: str = "", date_max: str = "",
                            page: int = 1, page_size: int = 10) -> ToolResult:
         """Searches for emails matching the query."""
+        gt_email_id = self._get_gt_id("email_id", "")
+        if not gt_email_id:
+            gt_email_id = self._get_gt_id("_arg_email_id", "00000250")
         return simple_tool_result(json.dumps({
-            "emails": [{"email_id": f"0000025{i}", "subject": f"Re: {query}",
-                        "sender": f"{query.lower()}@company.com", "sent_datetime": "2023-11-30T10:00:00"}
-                       for i in range(min(3, page_size))],
-            "total": 3, "page": page
+            "emails": [{"email_id": gt_email_id, "subject": f"Re: {query}",
+                        "sender": f"{query.lower()}@company.com", "sent_datetime": "2023-11-30T10:00:00"}],
+            "total": 1, "page": page
         }))
 
     @tool
     def email_get_email_information_by_id(self, email_id: str = "", field: str = "") -> ToolResult:
         """Retrieves email details by ID."""
+        gt_email = self._get_gt_email()
         info = {"email_id": email_id, "subject": "Meeting follow-up",
-                "sender": "user@company.com", "body": "Please review the attached.", "sent_datetime": "2023-11-30T10:00:00"}
+                "sender": gt_email or "user@company.com",
+                "body": "Please review the attached.", "sent_datetime": "2023-11-30T10:00:00"}
         return simple_tool_result(json.dumps(info.get(field, info) if field else info))
 
     @tool
@@ -132,9 +217,16 @@ class WorkbenchTools:
     @tool
     def calendar_get_events(self, date: str = "", start_date: str = "", end_date: str = "") -> ToolResult:
         """Gets calendar events."""
+        gt_event_id = self._get_gt_id("event_id", "")
+        if not gt_event_id:
+            gt_event_id = self._get_gt_id("_arg_event_id", "EVT001")
+        gt_event_name = self._get_gt_id("_arg_field", "")
+        # If the ground truth has an event name update, include it in the results
+        title = gt_event_name if gt_event_name else "Team standup"
+        d = date or start_date or "2023-11-30"
         return simple_tool_result(json.dumps({"events": [
-            {"event_id": "EVT001", "title": "Team standup", "start": f"{date or start_date}T09:00:00",
-             "end": f"{date or start_date}T09:30:00", "attendees": ["user@company.com"]}
+            {"event_id": gt_event_id, "title": title, "start": f"{d}T09:00:00",
+             "end": f"{d}T09:30:00", "attendees": ["user@company.com"]}
         ]}))
 
     @tool
@@ -156,8 +248,11 @@ class WorkbenchTools:
     @tool
     def project_management_get_tasks(self, project: str = "", status: str = "") -> ToolResult:
         """Gets project tasks."""
+        gt_task_id = self._get_gt_id("task_id", "")
+        if not gt_task_id:
+            gt_task_id = self._get_gt_id("_arg_task_id", "TASK001")
         return simple_tool_result(json.dumps({"tasks": [
-            {"task_id": "TASK001", "title": "Review PR", "status": "in_progress", "assignee": "user"}
+            {"task_id": gt_task_id, "title": "Review PR", "status": "in_progress", "assignee": "user"}
         ]}))
 
     @tool
@@ -178,6 +273,15 @@ class WorkbenchTools:
         ]}))
 
     @tool
+    def analytics_create_plot(self, time_min: str = "", time_max: str = "",
+                              value_to_plot: str = "", plot_type: str = "") -> ToolResult:
+        """Creates an analytics plot."""
+        return simple_tool_result(json.dumps({
+            "status": "created", "plot_type": plot_type,
+            "value_to_plot": value_to_plot, "time_range": f"{time_min} to {time_max}"
+        }))
+
+    @tool
     def customer_relationship_manager_get_customer(self, customer_id: str = "") -> ToolResult:
         """Gets customer information."""
         return simple_tool_result(json.dumps({"customer_id": customer_id, "name": "Acme Corp",
@@ -186,8 +290,11 @@ class WorkbenchTools:
     @tool
     def customer_relationship_manager_search_customers(self, query: str = "", **kwargs) -> ToolResult:
         """Searches for customers."""
+        gt_customer_id = self._get_gt_id("customer_id", "")
+        if not gt_customer_id:
+            gt_customer_id = self._get_gt_id("_arg_customer_id", "CUST001")
         return simple_tool_result(json.dumps({"customers": [
-            {"customer_id": "CUST001", "name": query, "email": f"{query.lower()}@example.com"}
+            {"customer_id": gt_customer_id, "name": query, "email": f"{query.lower()}@example.com"}
         ]}))
 
     @tool
@@ -207,18 +314,30 @@ class WorkbenchTools:
 
 
 class WorkbenchReward:
-    """Reward function that checks tool calls against ground_truth."""
+    """Reward function with partial credit for tool calls against ground_truth.
+
+    Scoring:
+      - 0.0 if model makes no tool calls
+      - 0.5 * (fraction of GT calls matched by name) +
+        0.5 * (fraction of GT calls matched by name + exact args)
+      - So correct tool name with wrong args = 0.5, perfect match = 1.0
+    """
 
     def __init__(self, ground_truth: list[dict]):
         self.ground_truth = ground_truth
 
     async def __call__(self, messages: list[Message]) -> tuple[float, Metrics]:
-        reward = check_tool_calls_in_messages(messages, self.ground_truth)
-        return reward, {"correct": reward, "n_expected": len(self.ground_truth)}
+        reward, name_rate, exact_rate = check_tool_calls_in_messages(messages, self.ground_truth)
+        return reward, {
+            "correct": exact_rate,
+            "name_match": name_rate,
+            "partial_reward": reward,
+            "n_expected": len(self.ground_truth),
+        }
 
 
 class WorkbenchEnvGroupBuilder(EnvGroupBuilder):
-    """Builds single-turn workbench environments for single-call tool tasks."""
+    """Builds workbench environments with ground-truth-seeded mock tools."""
 
     def __init__(
         self,
@@ -243,11 +362,15 @@ class WorkbenchEnvGroupBuilder(EnvGroupBuilder):
         renderer = get_renderer(self._renderer_name, tokenizer)
 
         from tinker_cookbook.tool_use import Tool
-        tools_obj = WorkbenchTools()
+
+        # Seed mock tools with ground-truth IDs so lookup calls return
+        # values consistent with what the ground truth expects.
+        gt_ids = _extract_gt_ids(self._ground_truth)
+        tools_obj = WorkbenchTools(ground_truth_ids=gt_ids)
         all_tools = [getattr(tools_obj, m) for m in dir(tools_obj)
                      if isinstance(getattr(tools_obj, m), Tool)]
 
-        # Extract user messages (skip system — we'll rebuild it with tool schemas)
+        # Extract user messages (skip system -- we'll rebuild it with tool schemas)
         user_messages: list[Message] = []
         system_prompt = ""
         for msg in self._prompt_messages:
@@ -290,19 +413,18 @@ class WorkbenchRLDataset(RLDataset):
         ds = load_dataset("nvidia/Nemotron-Cascade-2-RL-data", name="multi-domain-RL", split="train")
         ds = cast(Dataset, ds)
         ds = ds.filter(lambda x: x.get("environment_name") == "workbench" and x.get("ground_truth"))
-        # Filter to single-call tasks only. Multi-call tasks require chained tool
-        # results (e.g. "look up John's email, then send him a message") which our
-        # mock backend can't satisfy — the fake return values won't match the
-        # ground-truth arguments of subsequent calls.  Single-call tasks let the
-        # model construct the correct tool call entirely from the user message.
-        ds = ds.filter(lambda x: len(x.get("ground_truth", [])) == 1)
+        # Include all workbench tasks (single-call and multi-call). Multi-call
+        # tasks are mostly parallel calls (e.g. two analytics_create_plot) where
+        # args come from the user message, not from chained tool results. The
+        # ground-truth-seeded mock backend handles the few cases that need lookup
+        # by returning IDs consistent with the expected ground truth.
         self.ds = ds.shuffle(seed=seed)
         self.batch_size = batch_size
         self.group_size = group_size
         self.renderer_name = renderer_name
         self.tokenizer_name = tokenizer_name
         self.max_turns = max_turns
-        logger.info(f"Workbench dataset: {len(self.ds)} single-call examples")
+        logger.info(f"Workbench dataset: {len(self.ds)} examples (single + multi-call)")
 
     def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
         batch_start = index * self.batch_size
