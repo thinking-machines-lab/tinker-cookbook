@@ -1,5 +1,6 @@
 """Tests for InterleavedChatDatasetBuilder and HFDatasetSource."""
 
+from typing import Literal
 from unittest.mock import patch
 
 import datasets
@@ -43,7 +44,7 @@ class TestInterleavedChatDatasetBuilder:
         datasets_by_path: dict[str, datasets.Dataset],
         test_size: int = 0,
         batch_size: int = 4,
-        stopping_strategy: str = "all_exhausted",
+        stopping_strategy: Literal["first_exhausted", "all_exhausted"] = "all_exhausted",
     ):
         builder = InterleavedChatDatasetBuilder(
             sources=sources,
