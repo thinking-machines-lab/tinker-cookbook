@@ -1,6 +1,6 @@
 # SWE Agentic RL Environment Analysis
 
-## Status: WORKS E2E, REWARD=0, 19min/step — Very expensive
+## Status: WORKS E2E, REWARD=0, 19min/step — R2E-Gym path verified
 
 ## Architecture
 - Multi-turn: model uses read_file, write_file, run_command tools in Modal sandbox
@@ -70,5 +70,27 @@ Before investing in expensive SWE agentic RL:
 2. Use agentless to pre-filter easy instances
 3. Only run agentic on instances where agentless showed some promise
 
+## R2E-Gym Integration (verified 2026-03-27)
+
+The R2E-Gym path is fully wired up in `swe_agentic_env.py`:
+- `SWEAgenticDatasetBuilder` loads `R2E-Gym/R2E-Gym-Subset` when `use_r2e_gym=True` (default)
+- `docker_image` from dataset -> `modal.Image.from_registry()` with workdir `/testbed`
+- Test files from `execution_result_content` JSON -> written to `r2e_tests/` in sandbox
+- `SWEAgenticReward` runs these test files for binary pass/fail grading
+
+Key data fields used from R2E-Gym:
+- `docker_image`: pre-built Docker image with repo + deps at `/testbed`
+- `problem_statement`: issue description for the prompt
+- `execution_result_content`: JSON with `test_file_names` and `test_file_codes`
+- `repo_name`, `commit_hash`, `instance_id`: metadata
+
+The `expected_output_json` field is not used directly -- the env runs the actual
+test files rather than comparing against expected outputs.
+
 ## Expected Impact
-Without SWE-bench Docker images (P0), this env will likely remain at reward=0 regardless of other changes. Even with proper deps, Nano-30B may need significant SFT on coding tasks before RL on SWE-bench becomes productive. Consider this a "phase 3" env — work on easier envs first.
+The R2E-Gym Docker images solve the dependency problem (P0). However, the agentic env
+remains expensive (~19min/step at group=64). For Nano-30B, getting non-zero reward
+likely requires:
+1. SFT on coding tasks first (the agentless SWE-RL with LLM judge can help here)
+2. Starting with easy instances
+3. Reducing group_size to 4-8 during debugging

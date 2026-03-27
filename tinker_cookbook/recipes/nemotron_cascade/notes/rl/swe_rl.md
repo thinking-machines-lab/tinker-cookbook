@@ -94,4 +94,23 @@ Filter SWE-bench to "easy" instances (those with high pass rates in existing ben
 Change `|| echo "PATCH_APPLY_FAILED"` to `|| exit 1`. Currently, failed patches still run tests against unpatched code, wasting time.
 
 ## Expected Impact
-P0 (adding codebase context) is essential — without it, this env will stay at reward=0. Even with context, agentless SWE-bench is hard. The paper uses GPT-OSS-120B (larger model) and runs ~40-50 steps. For Nano-30B, starting with easy instances (P4) and partial credit (P3) is more realistic.
+With the LLM judge, training is now viable even without codebase context. The judge
+gives partial credit for plausible patches, which provides gradient signal for GRPO.
+
+For execution-based reward, P0 (adding codebase context) remains essential. Even with
+context, agentless SWE-bench is hard. The paper uses GPT-OSS-120B (larger model) and
+runs ~40-50 steps. For Nano-30B, starting with easy instances (P4) is more realistic.
+
+## Configuration
+
+```bash
+# LLM judge mode (default, recommended)
+python train_rl.py env=swe_rl group_size=4 groups_per_batch=4
+
+# Execution mode (requires Modal + Docker images)
+python train_rl.py env=swe_rl reward_mode=execution group_size=4 groups_per_batch=4
+```
+
+Note: `reward_mode` is set in the `SWERLDatasetBuilder` and propagated through. The
+CLI currently uses the default (`llm_judge`). To change it, modify `get_dataset_builder()`
+in `train_rl.py` or add a CLI flag.
