@@ -7,6 +7,11 @@ from tinker_cookbook.supervised.data import (
     SupervisedDatasetFromHFDataset,
     conversation_to_datum,
 )
+from tinker_cookbook.supervised.multi_domain import (
+    DomainConfig,
+    DomainMixer,
+    MultiDomainSupervisedDataset,
+)
 from tinker_cookbook.supervised.types import (
     ChatDatasetBuilder,
     ChatDatasetBuilderCommonConfig,
@@ -25,6 +30,10 @@ __all__ = [
     "StreamingSupervisedDatasetFromHFDataset",
     "SupervisedDatasetFromHFDataset",
     "conversation_to_datum",
+    # Multi-domain dataset (multi_domain.py)
+    "DomainConfig",
+    "DomainMixer",
+    "MultiDomainSupervisedDataset",
     # Helpers (common.py)
     "compute_mean_nll",
     "datum_from_model_input_weights",
