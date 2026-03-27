@@ -1,0 +1,53 @@
+{
+  "name": "tinker-skills",
+  "owner": {
+    "name": "Thinking Machines Lab",
+    "email": "tinker@thinkingmachines.ai"
+  },
+  "metadata": {
+    "description": "Claude Code skills for fine-tuning language models with the Tinker API — SFT, RL, DPO, distillation, and more.",
+    "version": "0.2.0"
+  },
+  "plugins": [
+    {
+      "name": "tinker-cookbook",
+      "description": "Skills for fine-tuning language models with the Tinker API — setup, models, datasets, renderers, SFT, RL, DPO, distillation, and more.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/tinker-setup",
+        "./skills/tinker-models",
+        "./skills/tinker-hyperparams",
+        "./skills/tinker-logging",
+        "./skills/tinker-sdk",
+        "./skills/tinker-types",
+        "./skills/tinker-cli",
+        "./skills/tinker-renderers",
+        "./skills/tinker-environments",
+        "./skills/tinker-weights",
+        "./skills/tinker-checkpoints",
+        "./skills/tinker-datasets",
+        "./skills/tinker-sft",
+        "./skills/tinker-grpo",
+        "./skills/tinker-distillation",
+        "./skills/tinker-dpo",
+        "./skills/tinker-rlhf",
+        "./skills/tinker-multiturn-rl"
+      ]
+    },
+    {
+      "name": "tinker-dev",
+      "description": "Development skills for contributing to the tinker-cookbook repo — testing, CI, code style, and recipe scaffolding.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/tinker-ci",
+        "./skills/tinker-contributing",
+        "./skills/tinker-new-recipe",
+        "./skills/tinker-manage-skills",
+        "./skills/tinker-evals",
+        "./skills/tinker-completers"
+      ]
+    }
+  ]
+}

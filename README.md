@@ -92,6 +92,16 @@ Tinker cookbook includes several utilities. Here's a quick overview:
 - [`hyperparam_utils`](tinker_cookbook/hyperparam_utils.py) helps calculate hyperparameters suitable for LoRAs
 - [`evaluation`](tinker_cookbook/eval/evaluators.py) provides abstractions for evaluating Tinker models and [`inspect_evaluation`](tinker_cookbook/eval/inspect_evaluators.py) shows how to integrate with InspectAI to make evaluating on standard benchmarks easy.
 
+## Claude Code Skills
+
+Tinker Cookbook ships with [Claude Code skills](https://docs.anthropic.com/en/docs/claude-code/skills) that teach Claude how to use the Tinker API — SFT, RL, DPO, renderers, environments, and more. Install them globally so Claude can help you in any project:
+
+```
+/plugin marketplace add thinking-machines-lab/tinker-cookbook
+```
+
+Once installed, use `/tinker-sft`, `/tinker-grpo`, `/tinker-setup`, etc. in Claude Code. Skills update automatically from the repo.
+
 ## Development Setup
 
 ```bash
