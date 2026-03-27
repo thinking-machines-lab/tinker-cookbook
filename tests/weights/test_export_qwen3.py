@@ -36,6 +36,9 @@ def _make_tiny_qwen3_vl_moe_config() -> PretrainedConfig:
     tc.num_experts_per_tok = 1
     tc.hidden_size = 64
     tc.intermediate_size = 64
+    # Use asymmetric moe_intermediate_size (≠ hidden_size) to catch
+    # transposition bugs — real Qwen3-VL has hidden=2048, moe_inter=768.
+    tc.moe_intermediate_size = 48
     tc.num_attention_heads = 2
     tc.num_key_value_heads = 2
     config.vision_config.num_hidden_layers = 1

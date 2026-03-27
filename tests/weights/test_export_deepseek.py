@@ -69,13 +69,13 @@ def _save_mixed_deepseek_adapter(
             dense_out_dim, rank, dtype=torch.bfloat16
         ),
         "base_model.model.model.layers.0.mlp.experts.w1.lora_A.weight": (
-            torch.ones(num_experts, rank, expert_in_dim, dtype=torch.bfloat16) * gate_fill
+            torch.ones(1, rank, expert_in_dim, dtype=torch.bfloat16) * gate_fill
         ),
         "base_model.model.model.layers.0.mlp.experts.w1.lora_B.weight": torch.ones(
             num_experts, expert_out_dim, rank, dtype=torch.bfloat16
         ),
         "base_model.model.model.layers.0.mlp.experts.w3.lora_A.weight": (
-            torch.ones(num_experts, rank, expert_in_dim, dtype=torch.bfloat16) * up_fill
+            torch.ones(1, rank, expert_in_dim, dtype=torch.bfloat16) * up_fill
         ),
         "base_model.model.model.layers.0.mlp.experts.w3.lora_B.weight": torch.ones(
             num_experts, expert_out_dim, rank, dtype=torch.bfloat16

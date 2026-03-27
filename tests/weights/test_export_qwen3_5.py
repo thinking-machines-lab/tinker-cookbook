@@ -238,6 +238,9 @@ def _make_tiny_qwen3_5_moe_config() -> PretrainedConfig:
     tc.linear_value_head_dim = 8
     tc.hidden_size = 64
     tc.intermediate_size = 64
+    # Use asymmetric moe_intermediate_size (≠ hidden_size) to catch
+    # transposition bugs — real Qwen3.5-35B has hidden=2048, moe_inter=512.
+    tc.moe_intermediate_size = 48
     tc.num_attention_heads = 2
     tc.num_key_value_heads = 2
     tc.head_dim = 32
@@ -304,14 +307,10 @@ class TestQwen35MoeSplitQkvAndExperts:
                 f"{qkv_prefix}.in_proj_k.lora_B.weight": torch.ones(q_dim, rank),
                 f"{qkv_prefix}.in_proj_v.lora_A.weight": torch.ones(rank, in_dim) * FILL_B,
                 f"{qkv_prefix}.in_proj_v.lora_B.weight": torch.ones(v_dim, rank),
-                # Expert adapter
-                f"{exp_prefix}.w1.lora_A.weight": (
-                    torch.ones(num_experts, rank, expert_in_dim) * FILL_A
-                ),
+                # Expert adapter (broadcast pattern matches real Tinker adapters)
+                f"{exp_prefix}.w1.lora_A.weight": (torch.ones(1, rank, expert_in_dim) * FILL_A),
                 f"{exp_prefix}.w1.lora_B.weight": torch.ones(num_experts, expert_out_dim, rank),
-                f"{exp_prefix}.w3.lora_A.weight": (
-                    torch.ones(num_experts, rank, expert_in_dim) * FILL_B
-                ),
+                f"{exp_prefix}.w3.lora_A.weight": (torch.ones(1, rank, expert_in_dim) * FILL_B),
                 f"{exp_prefix}.w3.lora_B.weight": torch.ones(num_experts, expert_out_dim, rank),
             }
             adapter_path.mkdir(parents=True)
