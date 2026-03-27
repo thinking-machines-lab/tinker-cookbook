@@ -48,3 +48,44 @@
 - 100% all-bad groups — zero GRPO signal
 
 **Assessment**: SWE agentic should be deferred to later in the cascade. The model needs to be much stronger (post IF-RL + multi-domain RL) before it can produce any correct fixes.
+
+## SWE Agentless — Cascade SWE Data with Golden Patch Judge (3 steps)
+
+**Config**: group_size=4, groups_per_batch=4, lr=3e-6, max_tokens=32768, reward_mode=llm_judge
+**Model**: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 (SFT v1 checkpoint)
+**Dataset**: nvidia/Nemotron-Cascade-RL-SWE (141,191 instances after filtering)
+**Judge**: Qwen3.5-397B with golden-patch comparison prompt
+
+| Step | Reward | Judge Reward | Has Patch | Frac Mixed | Ob Tokens | Ac Tokens |
+|------|--------|-------------|-----------|------------|-----------|-----------|
+| 0 | 0.1125 | 0.1125 | 0.75 | 1.0 | 9725 | 4976 |
+| 1 | 0.075 | 0.075 | 0.71 | 1.0 | - | - |
+| 2 | (still running, ~20 min/step at this scale) | | | | | |
+
+**Key observations:**
+- NON-ZERO REWARD! This is the first time we get real reward signal from SWE tasks.
+  - Previous R2E-Gym execution mode: reward=0.0 (no codebase context -> hallucinated patches)
+  - Previous R2E-Gym LLM judge (no golden patch): reward=0.306 (generous scoring)
+  - This run with golden patch comparison: reward=0.075-0.1125 (calibrated scoring)
+- 75% of rollouts produce parseable patches (model understands diff format)
+- 100% mixed reward groups -> GRPO gets learning signal on every group
+- Prompts tokenize to ~10K tokens (from 14K-80K char prompts with codebase context)
+- Model generates ~5K tokens per response
+- Judge occasionally fails to parse (Qwen3.5-397B thinks before scoring, sometimes exceeds 512 max_tokens)
+
+**Dataset statistics:**
+- 141,191 instances (up from 4,578 R2E-Gym instances)
+- Prompt lengths: min=13,723 chars, median=56,102 chars, max=79,857 chars
+- Sources: SWE-Bench-Train, SWE-reBench, SWE-Smith, R2E-Gym-Subset, SWE-Fixer-Train
+
+**Issues found:**
+1. Context window: Nemotron 30B has 65K context. With max_tokens=49K for generation, prompts > 16K tokens overflow. Reduced to max_tokens=32K.
+   Paper uses max_seq=98,304 -> needs a model with 128K+ context window.
+2. Judge thinking: Qwen3.5-397B outputs reasoning before the score. With judge_max_tokens=512, long reasoning can be truncated before the final score integer. Should increase judge_max_tokens or use a non-thinking judge model.
+3. Reward calibration: 0.075-0.1125 seems low. May need to increase judge_max_tokens so it can finish scoring, or use a different judge prompt that's more lenient.
+
+**Next steps:**
+1. Increase judge_max_tokens to 2048+ to handle thinking model reasoning
+2. Try with a larger context model (128K+) to use max_tokens=49K+
+3. Implement paper's filtering: mask loss where no rollout gets reward > 0.5
+4. Scale up: groups_per_batch=128, group_size=16 (paper config)
