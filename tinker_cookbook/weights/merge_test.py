@@ -358,6 +358,106 @@ class TestFusedConcatenatedMerge:
 
 
 # ---------------------------------------------------------------------------
+# Fused expert weights — concatenated, transposed (Qwen3.5 MoE)
+# ---------------------------------------------------------------------------
+
+
+class TestFusedConcatenatedTransposedMerge:
+    """Qwen3.5 MoE: gate_up_proj = (n_exp, fused, hidden) with fused on dim 1.
+
+    Uses asymmetric dims (HIDDEN != FUSED_DIM) so _detect_fused_axis can
+    distinguish which axis is fused.
+    """
+
+    NUM_EXPERTS = 2
+    HIDDEN = 8  # hidden_size
+    INTERMEDIATE = 3  # moe_intermediate_size (asymmetric vs HIDDEN)
+    FUSED_DIM = INTERMEDIATE * 2  # gate + up = 6
+
+    def _make_state_dict(self) -> dict[str, torch.Tensor]:
+        return {
+            # Qwen3.5 layout: (num_experts, fused_dim, hidden_size)
+            "model.layers.0.mlp.experts.gate_up_proj": torch.zeros(
+                self.NUM_EXPERTS, self.FUSED_DIM, self.HIDDEN
+            ),
+            "model.layers.0.mlp.experts.down_proj": torch.zeros(
+                self.NUM_EXPERTS, self.HIDDEN, self.INTERMEDIATE
+            ),
+        }
+
+    def _make_adapter(self, gate_fill: float, up_fill: float) -> dict[str, torch.Tensor]:
+        prefix = "base_model.model.model.layers.0.mlp.experts"
+        # LoRA for gate_proj: maps hidden→intermediate
+        gate_A, gate_B = _make_expert_lora_pair(
+            self.NUM_EXPERTS, self.INTERMEDIATE, self.HIDDEN, fill=gate_fill
+        )
+        up_A, up_B = _make_expert_lora_pair(
+            self.NUM_EXPERTS, self.INTERMEDIATE, self.HIDDEN, fill=up_fill
+        )
+        return {
+            f"{prefix}.w1.lora_A.weight": gate_A,
+            f"{prefix}.w1.lora_B.weight": gate_B,
+            f"{prefix}.w3.lora_A.weight": up_A,
+            f"{prefix}.w3.lora_B.weight": up_B,
+        }
+
+    def test_gate_and_up_in_correct_halves(self):
+        """Gate delta goes to dim1[:intermediate], up to dim1[intermediate:]."""
+        state_dict = self._make_state_dict()
+        model = _make_base_model(state_dict, class_name="QwenModel")
+        adapter = self._make_adapter(gate_fill=0.02, up_fill=0.07)
+
+        merge_adapter_weights(model, adapter, {"lora_alpha": 1, "r": 1})
+
+        fused = state_dict["model.layers.0.mlp.experts.gate_up_proj"]
+        gate_half = fused[:, : self.INTERMEDIATE, :]
+        up_half = fused[:, self.INTERMEDIATE :, :]
+
+        assert torch.allclose(gate_half, torch.full_like(gate_half, 0.02), atol=1e-6)
+        assert torch.allclose(up_half, torch.full_like(up_half, 0.07), atol=1e-6)
+
+    def test_up_does_not_leak_into_gate(self):
+        """Up-only adapter should not touch the gate half (dim 1)."""
+        state_dict = self._make_state_dict()
+        model = _make_base_model(state_dict, class_name="QwenModel")
+
+        prefix = "base_model.model.model.layers.0.mlp.experts"
+        up_A, up_B = _make_expert_lora_pair(
+            self.NUM_EXPERTS, self.INTERMEDIATE, self.HIDDEN, fill=0.1
+        )
+        adapter = {
+            f"{prefix}.w3.lora_A.weight": up_A,
+            f"{prefix}.w3.lora_B.weight": up_B,
+        }
+
+        merge_adapter_weights(model, adapter, {"lora_alpha": 1, "r": 1})
+
+        fused = state_dict["model.layers.0.mlp.experts.gate_up_proj"]
+        assert fused[:, : self.INTERMEDIATE, :].abs().max() == 0.0, "up delta leaked into gate half"
+        assert fused[:, self.INTERMEDIATE :, :].abs().sum() > 0
+
+    def test_gate_only_does_not_leak_into_up(self):
+        """Gate-only adapter should not touch the up half (dim 1)."""
+        state_dict = self._make_state_dict()
+        model = _make_base_model(state_dict, class_name="QwenModel")
+
+        prefix = "base_model.model.model.layers.0.mlp.experts"
+        gate_A, gate_B = _make_expert_lora_pair(
+            self.NUM_EXPERTS, self.INTERMEDIATE, self.HIDDEN, fill=0.05
+        )
+        adapter = {
+            f"{prefix}.w1.lora_A.weight": gate_A,
+            f"{prefix}.w1.lora_B.weight": gate_B,
+        }
+
+        merge_adapter_weights(model, adapter, {"lora_alpha": 1, "r": 1})
+
+        fused = state_dict["model.layers.0.mlp.experts.gate_up_proj"]
+        assert fused[:, : self.INTERMEDIATE, :].abs().sum() > 0
+        assert fused[:, self.INTERMEDIATE :, :].abs().max() == 0.0, "gate delta leaked into up half"
+
+
+# ---------------------------------------------------------------------------
 # Error cases for expert LoRA
 # ---------------------------------------------------------------------------
 
@@ -504,6 +604,104 @@ class TestNemotronFusedProjectionMerge:
 
         out_proj = model.state_dict()["backbone.layers.0.mixer.out_proj.weight"]
         assert out_proj.abs().sum() == 0, "out_proj should not be affected"
+
+
+class TestNemotronPartialLoraMerge:
+    """Test merge with partial LoRA coverage (train_attn/train_mlp flags)."""
+
+    HIDDEN = 8
+    INTERMEDIATE = 12
+    IN_PROJ_DIM = INTERMEDIATE * 2 + 6
+    NUM_EXPERTS = 2
+
+    def test_attn_only_merges_into_in_proj(self):
+        """Adapter with only Mamba gate_proj/x_proj (train_mlp=False)."""
+        state_dict: dict[str, torch.Tensor] = {
+            "backbone.layers.0.mixer.in_proj.weight": torch.zeros(self.IN_PROJ_DIM, self.HIDDEN),
+            "backbone.layers.0.mixer.out_proj.weight": torch.zeros(self.HIDDEN, self.INTERMEDIATE),
+        }
+        for e in range(self.NUM_EXPERTS):
+            state_dict[f"backbone.layers.1.mixer.experts.{e}.up_proj.weight"] = torch.zeros(
+                self.INTERMEDIATE, self.HIDDEN
+            )
+
+        model = _make_base_model(
+            state_dict, config_dict={"architectures": ["NemotronHForCausalLM"]}
+        )
+
+        # Only ATTN group: gate_proj + x_proj, no experts
+        adapter_weights = {
+            "base_model.model.backbone.layers.0.mixer.gate_proj.lora_A.weight": (
+                torch.ones(1, self.HIDDEN) * 0.5
+            ),
+            "base_model.model.backbone.layers.0.mixer.gate_proj.lora_B.weight": (
+                torch.ones(self.INTERMEDIATE, 1)
+            ),
+            "base_model.model.backbone.layers.0.mixer.x_proj.lora_A.weight": (
+                torch.ones(1, self.HIDDEN) * 0.3
+            ),
+            "base_model.model.backbone.layers.0.mixer.x_proj.lora_B.weight": (
+                torch.ones(self.INTERMEDIATE, 1)
+            ),
+        }
+
+        merge_adapter_weights(model, adapter_weights, {"lora_alpha": 1, "r": 1})
+
+        in_proj = model.state_dict()["backbone.layers.0.mixer.in_proj.weight"]
+        assert torch.allclose(
+            in_proj[: self.INTERMEDIATE],
+            torch.full_like(in_proj[: self.INTERMEDIATE], 0.5),
+            atol=1e-6,
+        )
+        assert torch.allclose(
+            in_proj[self.INTERMEDIATE : 2 * self.INTERMEDIATE],
+            torch.full_like(in_proj[self.INTERMEDIATE : 2 * self.INTERMEDIATE], 0.3),
+            atol=1e-6,
+        )
+
+        # Experts should be unchanged (no LoRA)
+        for e in range(self.NUM_EXPERTS):
+            w = model.state_dict()[f"backbone.layers.1.mixer.experts.{e}.up_proj.weight"]
+            assert w.abs().sum() == 0
+
+    def test_mlp_only_no_mamba_merge(self):
+        """Adapter with only expert weights (train_attn=False)."""
+        state_dict: dict[str, torch.Tensor] = {
+            "backbone.layers.0.mixer.in_proj.weight": torch.zeros(self.IN_PROJ_DIM, self.HIDDEN),
+        }
+        for e in range(self.NUM_EXPERTS):
+            state_dict[f"backbone.layers.1.mixer.experts.{e}.up_proj.weight"] = torch.zeros(
+                self.INTERMEDIATE, self.HIDDEN
+            )
+
+        model = _make_base_model(
+            state_dict, config_dict={"architectures": ["NemotronHForCausalLM"]}
+        )
+
+        # Only MLP group: experts, no Mamba
+        adapter_weights = {
+            "base_model.model.backbone.layers.1.mixer.experts.w1.lora_A.weight": (
+                torch.ones(self.NUM_EXPERTS, 1, self.HIDDEN) * 0.1
+            ),
+            "base_model.model.backbone.layers.1.mixer.experts.w1.lora_B.weight": torch.ones(
+                self.NUM_EXPERTS, self.INTERMEDIATE, 1
+            ),
+            "base_model.model.backbone.layers.1.mixer.experts.w2.lora_A.weight": torch.empty(0),
+            "base_model.model.backbone.layers.1.mixer.experts.w2.lora_B.weight": torch.empty(0),
+            "base_model.model.backbone.layers.1.mixer.experts.w3.lora_A.weight": torch.empty(0),
+            "base_model.model.backbone.layers.1.mixer.experts.w3.lora_B.weight": torch.empty(0),
+        }
+
+        merge_adapter_weights(model, adapter_weights, {"lora_alpha": 1, "r": 1})
+
+        # Experts should have delta
+        for e in range(self.NUM_EXPERTS):
+            w = model.state_dict()[f"backbone.layers.1.mixer.experts.{e}.up_proj.weight"]
+            assert w.abs().sum() > 0, f"Expert {e} should have been merged"
+
+        # in_proj should be unchanged (no Mamba LoRA)
+        in_proj = model.state_dict()["backbone.layers.0.mixer.in_proj.weight"]
+        assert in_proj.abs().sum() == 0, "in_proj should be unchanged without Mamba LoRA"
 
 
 # ===========================================================================
@@ -862,8 +1060,27 @@ class TestValidateMergeOpShapes:
             ]
         }
         shapes = {"gate_up_proj": (2, 4, 8)}  # half is (2, 4, 4), delta is (2, 4, 6)
-        with pytest.raises(WeightsMergeError, match=r"Shape mismatch.*gate_up_proj"):
+        with pytest.raises(WeightsMergeError, match=r"gate_up_proj"):
             validate_merge_op_shapes(ops, shapes)
+
+    def test_valid_3d_fused_transposed_passes(self):
+        """Qwen3.5 MoE: gate_up_proj = (n, fused, hidden) — fused on dim 1."""
+        ops = {
+            "gate_up_proj": [
+                MergeOp(
+                    target_key="gate_up_proj",
+                    lora_A=torch.ones(2, 1, 8),  # (n_exp, rank, hidden=8)
+                    lora_B=torch.ones(2, 3, 1),  # (n_exp, intermediate=3, rank)
+                    is_expert_3d=True,
+                    fused_proj_idx=0,
+                    fused_proj_interleaved=False,
+                )
+            ]
+        }
+        # Target (2, 6, 8): fused on dim 1 (6=2*3), hidden=8
+        # Delta via bmm is (2, 8, 3) → transposed to (2, 3, 8) to match slice
+        shapes = {"gate_up_proj": (2, 6, 8)}
+        validate_merge_op_shapes(ops, shapes)  # should not raise
 
     def test_valid_3d_non_fused_passes(self):
         ops = {

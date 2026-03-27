@@ -812,6 +812,138 @@ class TestNemotronMoE:
 
 
 # ---------------------------------------------------------------------------
+# Tests: Partial LoRA coverage (user configures train_attn/train_mlp)
+# ---------------------------------------------------------------------------
+
+
+class TestNemotronPartialLora:
+    """Test adapter conversion when only a subset of module groups has LoRA.
+
+    In Tinker, users can set ``train_attn=False`` or ``train_mlp=False``
+    in LoraConfig. Untrained modules are completely absent from the adapter
+    (not saved as zeros). The conversion must handle any subset gracefully.
+    """
+
+    def test_attn_only_no_experts(self, tmp_path: Path) -> None:
+        """train_attn=True, train_mlp=False: only Mamba + attention, no experts."""
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+
+        _create_synthetic_model(model_dir, _NEMOTRON_MOE_CONFIG, _make_nemotron_moe_state_dict())
+
+        # Adapter with only ATTN group modules (gate_proj, x_proj, q_proj)
+        prefix = "base_model.model.backbone"
+        _create_adapter(
+            adapter_dir,
+            {
+                f"{prefix}.layers.0.mixer.gate_proj.lora_A.weight": torch.ones(RANK, HIDDEN),
+                f"{prefix}.layers.0.mixer.gate_proj.lora_B.weight": torch.ones(
+                    NEMOTRON_INTERMEDIATE, RANK
+                ),
+                f"{prefix}.layers.0.mixer.x_proj.lora_A.weight": torch.ones(RANK, HIDDEN),
+                f"{prefix}.layers.0.mixer.x_proj.lora_B.weight": torch.ones(
+                    NEMOTRON_INTERMEDIATE, RANK
+                ),
+                f"{prefix}.layers.2.mixer.q_proj.lora_A.weight": torch.ones(RANK, HIDDEN),
+                f"{prefix}.layers.2.mixer.q_proj.lora_B.weight": torch.ones(OUT_DIM, RANK),
+            },
+        )
+
+        build_lora_adapter(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+        )
+
+        weights, config = _load_peft_output(output_dir)
+
+        # Should have in_proj (merged gate+x) and q_proj, nothing else.
+        assert any("in_proj" in k for k in weights)
+        assert any("q_proj" in k for k in weights)
+        assert not any("experts" in k for k in weights)
+        assert not any("shared_experts" in k for k in weights)
+        assert sorted(config["target_modules"]) == ["in_proj", "q_proj"]
+
+    def test_mlp_only_no_attention(self, tmp_path: Path) -> None:
+        """train_mlp=True, train_attn=False: only experts, no Mamba/attention."""
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+
+        _create_synthetic_model(model_dir, _NEMOTRON_MOE_CONFIG, _make_nemotron_moe_state_dict())
+
+        # Adapter with only MLP group modules (experts + shared experts)
+        prefix = "base_model.model.backbone"
+        _create_adapter(
+            adapter_dir,
+            {
+                f"{prefix}.layers.1.mixer.experts.w1.lora_A.weight": torch.ones(1, RANK, HIDDEN),
+                f"{prefix}.layers.1.mixer.experts.w1.lora_B.weight": torch.ones(
+                    NEMOTRON_NUM_EXPERTS, NEMOTRON_INTERMEDIATE, RANK
+                ),
+                f"{prefix}.layers.1.mixer.experts.w2.lora_A.weight": torch.ones(
+                    NEMOTRON_NUM_EXPERTS, RANK, NEMOTRON_INTERMEDIATE
+                ),
+                f"{prefix}.layers.1.mixer.experts.w2.lora_B.weight": torch.ones(1, HIDDEN, RANK),
+                f"{prefix}.layers.1.mixer.experts.w3.lora_A.weight": torch.empty(0),
+                f"{prefix}.layers.1.mixer.experts.w3.lora_B.weight": torch.empty(0),
+                f"{prefix}.layers.1.mixer.shared_experts.up_proj.lora_A.weight": torch.ones(
+                    RANK, HIDDEN
+                ),
+                f"{prefix}.layers.1.mixer.shared_experts.up_proj.lora_B.weight": torch.ones(
+                    NEMOTRON_INTERMEDIATE, RANK
+                ),
+            },
+        )
+
+        build_lora_adapter(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+        )
+
+        weights, config = _load_peft_output(output_dir)
+
+        # Should have expert and shared_expert keys, no in_proj or q_proj.
+        assert any("experts" in k for k in weights)
+        assert any("shared_experts" in k for k in weights)
+        assert not any("in_proj" in k for k in weights)
+        assert not any("q_proj" in k for k in weights)
+
+    def test_unembed_only(self, tmp_path: Path) -> None:
+        """train_unembed=True, train_attn=False, train_mlp=False: only lm_head."""
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+
+        # Need lm_head in the model state dict
+        state_dict = _make_nemotron_moe_state_dict()
+        state_dict["lm_head.weight"] = torch.zeros(100, HIDDEN)
+        _create_synthetic_model(model_dir, _NEMOTRON_MOE_CONFIG, state_dict)
+
+        # Real Tinker adapters use base_model.model.model.lm_head (not unembed_tokens)
+        _create_adapter(
+            adapter_dir,
+            {
+                "base_model.model.model.lm_head.lora_A.weight": torch.ones(RANK, HIDDEN),
+                "base_model.model.model.lm_head.lora_B.weight": torch.ones(100, RANK),
+            },
+        )
+
+        build_lora_adapter(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+        )
+
+        weights, config = _load_peft_output(output_dir)
+
+        assert any("lm_head" in k for k in weights)
+        assert len(weights) == 2  # just lora_A + lora_B for lm_head
+
+
+# ---------------------------------------------------------------------------
 # Tests: Edge cases and validation
 # ---------------------------------------------------------------------------
 

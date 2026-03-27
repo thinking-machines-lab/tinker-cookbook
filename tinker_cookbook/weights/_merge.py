@@ -340,6 +340,53 @@ def plan_merge_ops(
     return plan_fn(adapter_weights, adapter_config, model_state_keys, profile)
 
 
+def _detect_fused_axis(
+    target_shape: tuple[int, ...],
+    delta_shape: tuple[int, ...],
+    target_key: str,
+) -> int:
+    """Detect which axis of a 3D fused expert tensor holds the fused dimension.
+
+    MoE models with fused ``gate_up_proj`` store the concatenated gate+up
+    projections on different axes depending on the model family:
+
+    - **Qwen3-VL MoE**: ``(n_exp, hidden, fused)`` — fused on dim 2
+    - **Qwen3.5 MoE**: ``(n_exp, fused, hidden)`` — fused on dim 1
+
+    The LoRA delta has shape ``(n_exp, in_dim, out_dim)`` where ``out_dim``
+    equals *half* the fused dimension. We detect the fused axis by checking
+    which target dimension is consistent with the delta.
+
+    For dim 2 fused: ``target = (n, in_dim, 2*out_dim)``, delta matches directly.
+    For dim 1 fused: ``target = (n, 2*out_dim, in_dim)``, delta must be
+    transposed before applying (``apply_merge_op`` handles this).
+
+    Returns:
+        ``1`` or ``2`` — the axis index of the fused dimension.
+
+    Raises:
+        WeightsMergeError: If neither axis is consistent with the delta.
+    """
+    _, t1, t2 = target_shape
+    _, d1, d2 = delta_shape
+
+    # Check dim 2: target = (n, in_dim, 2*out_dim)
+    # delta (n, in_dim, out_dim) where d1==t1 and t2==2*d2
+    if d1 == t1 and t2 == 2 * d2:
+        return 2
+
+    # Check dim 1: target = (n, 2*out_dim, in_dim)
+    # delta (n, in_dim, out_dim) is transposed to (n, out_dim, in_dim) at apply time
+    if t2 == d1 and t1 == 2 * d2:
+        return 1
+
+    raise WeightsMergeError(
+        f"Cannot determine fused axis for {target_key!r}: "
+        f"target shape {target_shape}, delta shape {delta_shape}. "
+        f"Expected one axis to be exactly 2x the corresponding delta dimension."
+    )
+
+
 def validate_merge_op_shapes(
     ops: dict[str, list[MergeOp]],
     model_shapes: dict[str, tuple[int, ...]],
@@ -367,15 +414,33 @@ def validate_merge_op_shapes(
                 delta_shape = (n_exp, in_dim, out_dim)
 
                 if op.fused_proj_idx is not None:
-                    # Delta targets a slice of the fused tensor
-                    if op.fused_proj_interleaved:
-                        # Interleaved: target[:, :, idx::2] has shape (n, d, fused//2)
+                    # Delta targets a slice of the fused tensor.  The fused
+                    # dimension can be either dim 1 or dim 2 depending on the
+                    # model family:
+                    #   Qwen3-VL MoE:  gate_up_proj = (n, hidden, fused)  → dim 2
+                    #   Qwen3.5 MoE:   gate_up_proj = (n, fused, hidden)  → dim 1
+                    fused_axis = _detect_fused_axis(target_shape, delta_shape, target_key)
+                    if fused_axis == 2:
+                        # delta (n, in_dim, out_dim) targets slice (n, dim1, dim2//2)
                         expected = (target_shape[0], target_shape[1], target_shape[2] // 2)
                     else:
-                        # Concatenated: target[:, :, start:start+half] has shape (n, d, fused//2)
-                        expected = (target_shape[0], target_shape[1], target_shape[2] // 2)
+                        # delta (n, in_dim, out_dim) is transposed to (n, out_dim, in_dim)
+                        # to match slice (n, dim1//2, dim2)
+                        expected = (target_shape[0], target_shape[2], target_shape[1] // 2)
                 else:
-                    expected = target_shape
+                    # Non-fused 3D expert weight.  Some models store expert
+                    # weights transposed: (n, out_dim, in_dim) instead of
+                    # (n, in_dim, out_dim).  Accept either orientation; the
+                    # delta is transposed at apply time if needed.
+                    transposed = (target_shape[0], target_shape[2], target_shape[1])
+                    if delta_shape != target_shape and delta_shape != transposed:
+                        raise WeightsMergeError(
+                            f"Shape mismatch for {target_key!r}: "
+                            f"merge op produces {delta_shape} but target "
+                            f"expects {target_shape}"
+                        )
+                    # Skip the common check below — already validated.
+                    continue
 
                 if delta_shape != expected:
                     raise WeightsMergeError(
@@ -426,14 +491,29 @@ def apply_merge_op(tensors: dict[str, torch.Tensor], op: MergeOp) -> None:
         delta = torch.bmm(op.lora_A.transpose(-1, -2), op.lora_B.transpose(-1, -2))
 
         if op.fused_proj_idx is not None:
+            # Determine which target axis is fused (see _detect_fused_axis).
+            fused_axis = _detect_fused_axis(target.shape, delta.shape, op.target_key)
             if op.fused_proj_interleaved:
+                # Interleaved layout: always along last dim ([g0,u0,g1,u1,...])
                 target_view = target[:, :, op.fused_proj_idx :: 2]
-            else:
-                proj_width = target.shape[-1] // 2
+            elif fused_axis == 2:
+                # Concatenated along last dim: (n, hidden, [gate|up])
+                proj_width = target.shape[2] // 2
                 start = op.fused_proj_idx * proj_width
                 target_view = target[:, :, start : start + proj_width]
+            else:
+                # Concatenated along dim 1: (n, [gate|up], hidden)
+                # Delta is (n, in_dim, out_dim) but target slice is
+                # (n, out_dim, in_dim), so transpose the delta.
+                delta = delta.transpose(-1, -2)
+                proj_width = target.shape[1] // 2
+                start = op.fused_proj_idx * proj_width
+                target_view = target[:, start : start + proj_width, :]
             apply_merged_weight(target_view, delta)
         else:
+            # Non-fused: transpose delta if target uses opposite layout.
+            if delta.shape != target.shape:
+                delta = delta.transpose(-1, -2)
             apply_merged_weight(target, delta)
     else:
         # 2D: standard linear or per-expert (already sliced during planning)
