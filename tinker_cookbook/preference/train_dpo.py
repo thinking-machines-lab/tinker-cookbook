@@ -57,6 +57,11 @@ class Config:
     eval_every: int = 10
     infrequent_eval_every: int = 100
     ttl_seconds: int | None = 604800  # 7 days
+    # Rolling checkpoint cadence (0 = disabled). Saves training state for resume
+    # but skips the sampler-weight export, making it cheaper than periodic checkpoints.
+    rolling_save_every: int = 0
+    # TTL for rolling checkpoints; short to auto-clean if explicit deletion fails.
+    rolling_ttl_seconds: int = 7200  # 2 hours
 
     # Adam optimizer parameters
     adam_beta1: float = 0.9
@@ -189,6 +194,7 @@ def do_update(
     ml_logger: ml_log.Logger,
     log_path: str,
     tokenizer: Tokenizer,
+    rolling_mgr: checkpoint_utils.RollingCheckpointManager | None = None,
 ):
     """Perform a single DPO training update step."""
     step = epoch_idx * n_batches + batch_idx
@@ -208,6 +214,9 @@ def do_update(
                 )
             if "state_path" in save_result:
                 metrics["state_path"] = save_result["state_path"]
+
+        if rolling_mgr is not None:
+            rolling_mgr.maybe_save(step=step, loop_state={"epoch": epoch_idx, "batch": batch_idx})
 
         learning_rate = config.learning_rate * compute_schedule_lr_multiplier(
             lr_schedule=config.lr_schedule, step=step, total_steps=total_steps
@@ -379,6 +388,15 @@ def main(config: Config):
     checkpoint_utils.add_renderer_name_to_user_metadata(user_metadata, config.renderer_name)
     model_info.warn_if_renderer_not_recommended(config.model_name, config.renderer_name)
     training_client, reference_client = create_dpo_clients(config, resume_info, user_metadata)
+    service_client = tinker.ServiceClient(base_url=config.base_url)
+    rolling_mgr = checkpoint_utils.RollingCheckpointManager(
+        training_client=training_client,
+        service_client=service_client,
+        log_path=config.log_path,
+        rolling_save_every=config.rolling_save_every,
+        save_every=config.save_every,
+        rolling_ttl_seconds=config.rolling_ttl_seconds,
+    )
     tokenizer = get_tokenizer(config.model_name)
 
     # Training setup
@@ -420,6 +438,7 @@ def main(config: Config):
                 ml_logger=ml_logger,
                 log_path=config.log_path,
                 tokenizer=tokenizer,
+                rolling_mgr=rolling_mgr,
             )
         if reached_max_steps:
             break
@@ -439,6 +458,9 @@ def main(config: Config):
         )
     else:
         logger.info("Training was already complete; nothing to do")
+    # Clean up rolling checkpoints after the final save so that the last
+    # entry in checkpoints.jsonl always points to valid server-side data.
+    rolling_mgr.finalize()
 
     # Cleanup
     ml_logger.close()

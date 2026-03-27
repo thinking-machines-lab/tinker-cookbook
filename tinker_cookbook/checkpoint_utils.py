@@ -396,3 +396,154 @@ def save_checkpoint(
             ttl_seconds=ttl_seconds,
         )
     )
+
+
+class RollingCheckpointManager:
+    """Fire-and-forget rolling checkpoints with automatic cleanup.
+
+    Rolling checkpoints are cheap resume points (saves training state for
+    resume but skips the sampler-weight export) saved at a finer
+    interval than periodic checkpoints. After each successful save, the previous
+    rolling checkpoint is deleted to bound storage usage. A short TTL acts as a
+    safety net in case deletion fails.
+
+    Usage::
+
+        mgr = RollingCheckpointManager(
+            training_client=tc,
+            service_client=sc,
+            log_path="/tmp/logs",
+            rolling_save_every=1,
+            save_every=20,
+        )
+        for step in range(num_steps):
+            train_step(...)
+            await mgr.maybe_save_async(step, {"batch": step})
+        await mgr.finalize_async()
+    """
+
+    def __init__(
+        self,
+        training_client: tinker.TrainingClient,
+        service_client: tinker.ServiceClient,
+        log_path: str,
+        rolling_save_every: int,
+        save_every: int = 0,
+        rolling_ttl_seconds: int = 7200,
+    ) -> None:
+        self._training_client = training_client
+        self._service_client = service_client
+        self._log_path = log_path
+        self._rolling_save_every = rolling_save_every
+        self._save_every = save_every
+        self._rolling_ttl_seconds = rolling_ttl_seconds
+
+        self._pending_task: asyncio.Task[None] | None = None
+        self._prev_state_path: str | None = None
+
+    def _should_save(self, step: int) -> bool:
+        """Return True if *step* warrants a rolling save."""
+        if self._rolling_save_every <= 0 or step <= 0:
+            return False
+        if step % self._rolling_save_every != 0:
+            return False
+        # Skip when a periodic checkpoint fires on the same step.
+        return not (self._save_every > 0 and step % self._save_every == 0)
+
+    # ------------------------------------------------------------------
+    # Async interface (SL / RL)
+    # ------------------------------------------------------------------
+
+    async def maybe_save_async(self, step: int, loop_state: dict[str, Any]) -> None:
+        """Resolve any pending save, then fire a new one if *step* warrants it.
+
+        Call once per training step. The save runs as a background
+        ``asyncio.Task`` so it overlaps with the next training step.
+        """
+        await self._resolve_pending_async()
+
+        if not self._should_save(step):
+            return
+
+        self._pending_task = asyncio.create_task(
+            self._do_save_async(step, loop_state),
+            name=f"rolling_checkpoint_{step:06d}",
+        )
+
+    async def finalize_async(self) -> None:
+        """Await any pending save, then delete the last rolling checkpoint.
+
+        Call after the final checkpoint save so that the last entry in
+        ``checkpoints.jsonl`` always points to valid server-side data.
+        In the happy path this leaves zero rolling checkpoints on the server.
+        """
+        await self._resolve_pending_async()
+        await self._delete_prev_async()
+
+    async def _resolve_pending_async(self) -> None:
+        if self._pending_task is None:
+            return
+        try:
+            await self._pending_task
+        except Exception:
+            logger.warning("Rolling checkpoint save failed", exc_info=True)
+        self._pending_task = None
+
+    async def _do_save_async(self, step: int, loop_state: dict[str, Any]) -> None:
+        name = f"{step:06d}"
+        paths = await save_checkpoint_async(
+            training_client=self._training_client,
+            name=name,
+            log_path=self._log_path,
+            loop_state={**loop_state, "rolling": True},
+            kind="state",
+            ttl_seconds=self._rolling_ttl_seconds,
+        )
+        new_state_path = paths.get("state_path")
+
+        # Delete the previous rolling checkpoint now that the new one is saved.
+        await self._delete_prev_async()
+
+        self._prev_state_path = new_state_path
+
+    async def _delete_prev_async(self) -> None:
+        if self._prev_state_path is None:
+            return
+        try:
+            rest_client = self._service_client.create_rest_client()
+            await rest_client.delete_checkpoint_from_tinker_path_async(self._prev_state_path)
+            logger.info("Deleted rolling checkpoint %s", self._prev_state_path)
+        except Exception:
+            logger.warning(
+                "Failed to delete rolling checkpoint %s (TTL will clean up)",
+                self._prev_state_path,
+                exc_info=True,
+            )
+        self._prev_state_path = None
+
+    # ------------------------------------------------------------------
+    # Sync interface (DPO)
+    # ------------------------------------------------------------------
+
+    def maybe_save(self, step: int, loop_state: dict[str, Any]) -> None:
+        """Synchronous version of :meth:`maybe_save_async`.
+
+        Blocks on the save but catches all errors so it never crashes the
+        training loop. Suitable for synchronous training loops (e.g. DPO).
+        """
+        if not self._should_save(step):
+            return
+        try:
+            asyncio.run(self._do_save_async(step, loop_state))
+        except Exception:
+            logger.warning("Rolling checkpoint save failed", exc_info=True)
+
+    def finalize(self) -> None:
+        """Synchronous version of :meth:`finalize_async`."""
+        try:
+            asyncio.run(self._delete_prev_async())
+        except Exception:
+            logger.warning(
+                "Failed to delete last rolling checkpoint (TTL will clean up)",
+                exc_info=True,
+            )

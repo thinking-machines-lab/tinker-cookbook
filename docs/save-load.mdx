@@ -54,3 +54,34 @@ training_client.load_state(resume_path)
 - Adjusting hyperparameters or data mid-run
 - Recovery from interruptions or failures
 - Any scenario where you need to preserve exact optimizer state (momentum, learning rate schedules, etc.)
+
+## Rolling checkpoints
+
+The built-in training loops (SL, RL, DPO) support **rolling checkpoints**: cheap resume points saved at a finer interval than periodic checkpoints. Unlike periodic checkpoints which save both training state and sampler weights, rolling checkpoints only save training state (skipping the sampler-weight export), making them faster and cheaper. This is useful when `save_every` is set to a large value for storage reasons, but you still want frequent resume points in case of interruptions.
+
+### How it works
+
+- A resume-only checkpoint (training state without sampler weights) is saved every `rolling_save_every` steps.
+- After each successful save, the previous rolling checkpoint is **deleted** to bound storage to at most one rolling checkpoint at any time.
+- A short TTL (`rolling_ttl_seconds`, default 2 hours) acts as a safety net: if the process crashes before deleting the old checkpoint, the server cleans it up automatically.
+- Rolling saves are skipped on steps where a periodic `save_every` checkpoint fires (the periodic checkpoint is strictly more valuable).
+- In async training loops (SL, RL), rolling saves run in the background and overlap with the next training step.
+
+### Configuration
+
+Add these fields to your training config:
+
+```python
+config = sl_train.Config(
+    # ... other fields ...
+    save_every=20,           # periodic checkpoints (state + sampler, 7d TTL)
+    rolling_save_every=1,    # rolling checkpoints every step (resume-only, auto-cleaned)
+    rolling_ttl_seconds=7200,  # 2-hour TTL safety net (default)
+)
+```
+
+Set `rolling_save_every=0` (the default) to disable rolling checkpoints.
+
+### Resume behavior
+
+No special handling is needed for resume. Rolling checkpoints are recorded in `checkpoints.jsonl` with a `state_path`, so `get_last_checkpoint()` picks them up automatically if they are the most recent checkpoint. The training loop resumes from whatever checkpoint is last in the file, whether it's a periodic or rolling checkpoint.
