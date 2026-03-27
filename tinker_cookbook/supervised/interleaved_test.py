@@ -12,11 +12,7 @@ from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 def _make_hf_dataset(n: int, prefix: str = "row") -> datasets.Dataset:
     """Create an in-memory HF dataset with chat-formatted messages."""
     return datasets.Dataset.from_dict(
-        {
-            "messages": [
-                [{"role": "user", "content": f"{prefix}_{i}"}] for i in range(n)
-            ]
-        }
+        {"messages": [[{"role": "user", "content": f"{prefix}_{i}"}] for i in range(n)]}
     )
 
 
@@ -25,11 +21,7 @@ def _make_hf_dataset_custom_field(
 ) -> datasets.Dataset:
     """Create an HF dataset with a non-standard message field name."""
     return datasets.Dataset.from_dict(
-        {
-            field: [
-                [{"role": "user", "content": f"{prefix}_{i}"}] for i in range(n)
-            ]
-        }
+        {field: [[{"role": "user", "content": f"{prefix}_{i}"}] for i in range(n)]}
     )
 
 
@@ -106,9 +98,7 @@ class TestInterleavedDatasetBuilder:
     def test_test_size_split(self) -> None:
         ds_a = _make_hf_dataset(200, "a")
         sources = [HFDatasetSource(path="ds_a", weight=1.0)]
-        train_ds, test_ds = self._build(
-            sources, {"ds_a": ds_a}, test_size=50, batch_size=10
-        )
+        train_ds, test_ds = self._build(sources, {"ds_a": ds_a}, test_size=50, batch_size=10)
         assert test_ds is not None
         test_batch = test_ds.get_batch(0)
         assert len(test_batch) == 50

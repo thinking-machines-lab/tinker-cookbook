@@ -244,9 +244,7 @@ class InterleavedDatasetBuilder(ChatDatasetBuilder):
                 ds = ds.rename_column(source.message_field, "messages")
             ds = ds.select_columns(["messages"])
             hf_datasets.append(ds)
-            logger.info(
-                f"Loaded '{source.path}' ({len(ds)} rows, weight={source.weight})"
-            )
+            logger.info(f"Loaded '{source.path}' ({len(ds)} rows, weight={source.weight})")
 
         # If all weights are None, weight by dataset size (uniform row sampling).
         # If any weight is set, all must be set.
@@ -272,7 +270,9 @@ class InterleavedDatasetBuilder(ChatDatasetBuilder):
             stopping_strategy=self.stopping_strategy,
         )
         if not isinstance(interleaved, datasets.Dataset):
-            raise TypeError(f"Expected Dataset from interleave_datasets, got {type(interleaved).__name__}")
+            raise TypeError(
+                f"Expected Dataset from interleave_datasets, got {type(interleaved).__name__}"
+            )
         logger.info(f"Interleaved dataset: {len(interleaved)} rows")
 
         # Split test set
