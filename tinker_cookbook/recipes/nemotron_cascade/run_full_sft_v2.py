@@ -95,6 +95,10 @@ def main():
                         help="Pack multiple short examples into each sequence for efficiency")
     parser.add_argument("--max-packed-length", type=int, default=49152,
                         help="Max tokens per packed sequence (only used with --packing)")
+    parser.add_argument("--wandb-project", type=str, default=None,
+                        help="Wandb project for logging (e.g. nemotron-cascade-2-replication)")
+    parser.add_argument("--wandb-name", type=str, default=None,
+                        help="Wandb run name")
     args = parser.parse_args()
 
     # Combine data
@@ -151,6 +155,8 @@ def main():
         adam_beta2=0.98,
         adam_eps=1e-8,
         max_steps=args.max_steps,
+        wandb_project=args.wandb_project,
+        wandb_name=args.wandb_name or f"sft_v2_rank{args.lora_rank}_lr{args.lr}{'_packed' if args.packing else ''}",
     )
 
     logger.info(f"SFT v2: model={args.model}, rank={args.lora_rank}, "
