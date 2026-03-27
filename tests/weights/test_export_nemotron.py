@@ -136,6 +136,24 @@ class TestNemotronNanoExport:
         )
         assert delta.norm() > 0, "Shared expert up_proj should have non-zero delta"
 
+    def test_routed_expert_has_delta(self, merged_output, merged_index, orig_index):
+        """At least one routed expert should have a non-zero delta.
+
+        With 1-step training, most experts aren't activated by the router.
+        We check that at least one of the 128 experts per layer was updated.
+        """
+        # Check experts in layer 1 (first MoE layer in Nano's pattern)
+        any_nonzero = False
+        for exp_idx in range(128):
+            key = f"backbone.layers.1.mixer.experts.{exp_idx}.up_proj.weight"
+            if key not in merged_index["weight_map"]:
+                continue
+            delta = self._load_delta(key, merged_output, merged_index, orig_index)
+            if delta.norm() > 0:
+                any_nonzero = True
+                break
+        assert any_nonzero, "At least one routed expert should have non-zero delta"
+
     def test_output_has_config_and_shards(self, merged_output, merged_index):
         """Verify output directory structure."""
         assert (merged_output / "config.json").exists()
