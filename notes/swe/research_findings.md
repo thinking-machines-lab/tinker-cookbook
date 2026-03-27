@@ -117,3 +117,17 @@ Paper uses 98,304 max_tokens but with a model that likely supports 128K+ context
 | LLM judge reward | 0.306 | 0.382-0.463 |
 | Frac mixed | 1.0 | 1.0 |
 | Execution reward | 0.0 | Context overflow (fixable) |
+
+## Context Window Verification (2026-03-27)
+
+| Model | Context Window | Verified |
+|---|---|---|
+| nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 | **65,536** | Yes (65535+1=OK, 65536+1=FAIL) |
+| openai/gpt-oss-120b:peft:131072 | **131,072** | Yes (131071+1=OK) |
+
+The 65K limit is Nano-specific. The target model (gpt-oss-120b) supports 131K — enough for:
+- Code RL at 118K (paper-matched)
+- SWE Agentless at 98K (paper-matched)
+- SWE Agentic still needs 256K (exceeds our model)
+
+Nano experiments were useful for dev/debug but should not be used to set context limits for the full replication.
