@@ -146,11 +146,9 @@ def plan_expert_ops(
     lora_A: torch.Tensor,
     lora_B: torch.Tensor,
     adapter_name: str,
+    profile: MergeProfile,
     model_state_keys: set[str],
     ops: dict[str, list[MergeOp]],
-    is_fused: bool,
-    is_interleaved: bool,
-    expert_key_remaps: tuple[tuple[str, str], ...],
 ) -> None:
     """Plan merge ops for expert weights (separate or fused)."""
     # Skip empty expert LoRA tensors — these are placeholders for projections
@@ -164,9 +162,11 @@ def plan_expert_ops(
         )
     lora_A, lora_B = expand_expert_lora_tensors(lora_A, lora_B)
 
-    # Expert weight name remapping (model-specific via profile.expert_key_remaps)
-    for old, new in expert_key_remaps:
+    for old, new in profile.expert_key_remaps:
         target_key = target_key.replace(old, new)
+
+    is_fused = profile.expert_layout in ("fused_interleaved", "fused_concatenated")
+    is_interleaved = profile.expert_layout == "fused_interleaved"
 
     if not is_fused:
         # Separate per-expert weights: create one 2D MergeOp per expert

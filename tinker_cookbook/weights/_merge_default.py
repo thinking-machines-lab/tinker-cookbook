@@ -47,8 +47,6 @@ def plan_merge_ops(
     scaling = validate_adapter_config(adapter_config, profile)
     adapter_weight_names = extract_adapter_weight_names(adapter_weights)
 
-    is_fused = profile.expert_layout in ("fused_interleaved", "fused_concatenated")
-    is_interleaved = profile.expert_layout == "fused_interleaved"
     name_remaps = build_name_remaps(profile, model_state_keys)
 
     ops: dict[str, list[MergeOp]] = {}
@@ -61,9 +59,6 @@ def plan_merge_ops(
         if ".experts" not in n:
             plan_standard_op(target_key, lora_A, lora_B, n, profile, model_state_keys, ops)
         else:
-            plan_expert_ops(
-                target_key, lora_A, lora_B, n, model_state_keys, ops, is_fused, is_interleaved,
-                expert_key_remaps=profile.expert_key_remaps,
-            )
+            plan_expert_ops(target_key, lora_A, lora_B, n, profile, model_state_keys, ops)
 
     return ops
