@@ -2,7 +2,7 @@
 
 from tinker_cookbook.supervised.common import compute_mean_nll, datum_from_model_input_weights
 from tinker_cookbook.supervised.data import (
-    DatasetSource,
+    HFDatasetSource,
     FromConversationFileBuilder,
     InterleavedDatasetBuilder,
     StreamingSupervisedDatasetFromHFDataset,
@@ -23,7 +23,7 @@ __all__ = [
     "SupervisedDataset",
     "SupervisedDatasetBuilder",
     # Dataset implementations and builders (data.py)
-    "DatasetSource",
+    "HFDatasetSource",
     "FromConversationFileBuilder",
     "InterleavedDatasetBuilder",
     "StreamingSupervisedDatasetFromHFDataset",

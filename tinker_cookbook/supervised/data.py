@@ -190,21 +190,24 @@ class FromConversationFileBuilder(ChatDatasetBuilder):
 
 
 @chz.chz
-class DatasetSource:
+class HFDatasetSource:
     """A single HuggingFace dataset to include in an interleaved mix.
 
     Attributes:
         path: HuggingFace dataset path (e.g. ``"allenai/tulu-3-sft-mixture"``).
         name: HuggingFace dataset config name (passed as ``name`` to ``load_dataset``).
         split: Dataset split to load.
-        weight: Relative mixing weight (will be normalized across sources).
+        weight: Relative mixing weight. When set, weights are normalized across sources
+            to determine sampling probabilities. When left as ``None`` (default) for all
+            sources, each row across all sources is equally likely (i.e. simple concatenation
+            with uniform sampling).
         message_field: Column name containing conversation messages.
     """
 
     path: str
     name: str | None = None
     split: str = "train"
-    weight: float = 1.0
+    weight: float | None = None
     message_field: str = "messages"
 
 
@@ -213,11 +216,13 @@ class InterleavedDatasetBuilder(ChatDatasetBuilder):
     """Builds an SFT dataset by interleaving multiple HuggingFace datasets.
 
     Uses ``datasets.interleave_datasets`` to mix rows from multiple sources according
-    to the configured weights. The resulting dataset is a standard Arrow-backed
-    ``datasets.Dataset`` with O(1) random access and deterministic per-epoch shuffling.
+    to the configured weights. When no weights are specified, sources are weighted by
+    size so that every row is equally likely (equivalent to concatenation + shuffle).
+    The resulting dataset is a standard Arrow-backed ``datasets.Dataset`` with O(1)
+    random access and deterministic per-epoch shuffling.
     """
 
-    sources: list[DatasetSource]
+    sources: list[HFDatasetSource]
     test_size: int = 0
     shuffle_seed: int = 0
     stopping_strategy: str = "all_exhausted"
@@ -227,7 +232,7 @@ class InterleavedDatasetBuilder(ChatDatasetBuilder):
             raise ValueError("At least one dataset source must be provided")
 
         hf_datasets: list[datasets.Dataset] = []
-        weights: list[float] = []
+        explicit_weights: list[float | None] = []
 
         for source in self.sources:
             ds = datasets.load_dataset(source.path, name=source.name, split=source.split)
@@ -237,10 +242,22 @@ class InterleavedDatasetBuilder(ChatDatasetBuilder):
                 ds = ds.rename_column(source.message_field, "messages")
             ds = ds.select_columns(["messages"])
             hf_datasets.append(ds)
-            weights.append(source.weight)
+            explicit_weights.append(source.weight)
             logger.info(
                 f"Loaded '{source.path}' ({len(ds)} rows, weight={source.weight})"
             )
+
+        # If all weights are None, weight by dataset size (uniform row sampling).
+        # If any weight is set, all must be set.
+        if all(w is None for w in explicit_weights):
+            weights = [float(len(ds)) for ds in hf_datasets]
+        elif any(w is None for w in explicit_weights):
+            raise ValueError(
+                "Either all sources must have explicit weights or none of them. "
+                "Got a mix of weighted and unweighted sources."
+            )
+        else:
+            weights = [w for w in explicit_weights if w is not None]
 
         total_weight = sum(weights)
         probabilities = [w / total_weight for w in weights]
