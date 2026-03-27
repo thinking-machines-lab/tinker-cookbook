@@ -46,15 +46,34 @@ def save_expert_adapter(
     out_dim: int,
     gate_fill: float = FILL_A,
     up_fill: float = FILL_B,
+    down_fill: float | None = None,
     layer_prefix: str = "base_model.model.model.layers.0.mlp.experts",
 ) -> None:
-    """Save a LoRA adapter for expert gate (w1) and up (w3) projections."""
-    weights: dict[str, torch.Tensor] = {}
+    """Save a LoRA adapter for expert projections matching real Tinker shapes.
+
+    Real Tinker adapters use asymmetric broadcast patterns for 3D expert LoRA:
+    - w1 (gate) / w3 (up): lora_A shared ``(1, rank, in_dim)``,
+      lora_B per-expert ``(num_experts, out_dim, rank)``
+    - w2 (down): lora_A per-expert ``(num_experts, rank, out_dim)``,
+      lora_B shared ``(1, in_dim, rank)``
+
+    Set ``down_fill`` to include w2 (down_proj) in the adapter.
+    """
     rank = 1
-    weights[f"{layer_prefix}.w1.lora_A.weight"] = torch.ones(num_experts, rank, in_dim) * gate_fill
-    weights[f"{layer_prefix}.w1.lora_B.weight"] = torch.ones(num_experts, out_dim, rank)
-    weights[f"{layer_prefix}.w3.lora_A.weight"] = torch.ones(num_experts, rank, in_dim) * up_fill
-    weights[f"{layer_prefix}.w3.lora_B.weight"] = torch.ones(num_experts, out_dim, rank)
+    weights: dict[str, torch.Tensor] = {
+        # w1 (gate_proj): A shared, B per-expert
+        f"{layer_prefix}.w1.lora_A.weight": torch.ones(1, rank, in_dim) * gate_fill,
+        f"{layer_prefix}.w1.lora_B.weight": torch.ones(num_experts, out_dim, rank),
+        # w3 (up_proj): A shared, B per-expert
+        f"{layer_prefix}.w3.lora_A.weight": torch.ones(1, rank, in_dim) * up_fill,
+        f"{layer_prefix}.w3.lora_B.weight": torch.ones(num_experts, out_dim, rank),
+    }
+    if down_fill is not None:
+        # w2 (down_proj): A per-expert, B shared (reversed from w1/w3)
+        weights[f"{layer_prefix}.w2.lora_A.weight"] = (
+            torch.ones(num_experts, rank, out_dim) * down_fill
+        )
+        weights[f"{layer_prefix}.w2.lora_B.weight"] = torch.ones(1, in_dim, rank)
 
     path.mkdir(parents=True)
     save_file(weights, str(path / "adapter_model.safetensors"))

@@ -238,6 +238,9 @@ def _make_tiny_qwen3_5_moe_config() -> PretrainedConfig:
     tc.linear_value_head_dim = 8
     tc.hidden_size = 64
     tc.intermediate_size = 64
+    # Use asymmetric moe_intermediate_size (≠ hidden_size) to catch
+    # transposition bugs — real Qwen3.5-35B has hidden=2048, moe_inter=512.
+    tc.moe_intermediate_size = 48
     tc.num_attention_heads = 2
     tc.num_key_value_heads = 2
     tc.head_dim = 32
@@ -304,14 +307,10 @@ class TestQwen35MoeSplitQkvAndExperts:
                 f"{qkv_prefix}.in_proj_k.lora_B.weight": torch.ones(q_dim, rank),
                 f"{qkv_prefix}.in_proj_v.lora_A.weight": torch.ones(rank, in_dim) * FILL_B,
                 f"{qkv_prefix}.in_proj_v.lora_B.weight": torch.ones(v_dim, rank),
-                # Expert adapter
-                f"{exp_prefix}.w1.lora_A.weight": (
-                    torch.ones(num_experts, rank, expert_in_dim) * FILL_A
-                ),
+                # Expert adapter (broadcast pattern matches real Tinker adapters)
+                f"{exp_prefix}.w1.lora_A.weight": (torch.ones(1, rank, expert_in_dim) * FILL_A),
                 f"{exp_prefix}.w1.lora_B.weight": torch.ones(num_experts, expert_out_dim, rank),
-                f"{exp_prefix}.w3.lora_A.weight": (
-                    torch.ones(num_experts, rank, expert_in_dim) * FILL_B
-                ),
+                f"{exp_prefix}.w3.lora_A.weight": (torch.ones(1, rank, expert_in_dim) * FILL_B),
                 f"{exp_prefix}.w3.lora_B.weight": torch.ones(num_experts, expert_out_dim, rank),
             }
             adapter_path.mkdir(parents=True)
@@ -333,8 +332,64 @@ class TestQwen35MoeSplitQkvAndExperts:
             qkv_delta = (merged[self.FUSED_QKV_KEY] - orig_qkv).abs().sum()
             assert qkv_delta > 0, "QKV weights not updated"
 
-            # Expert deltas applied (check per-expert keys from safetensors)
+            # Expert gate/up deltas applied (check per-expert keys from safetensors)
             for i in range(num_experts):
                 gate_key = f"model.language_model.layers.0.mlp.experts.{i}.gate_proj.weight"
                 gate_delta = (merged[gate_key] - saved[gate_key]).abs().sum()
                 assert gate_delta > 0, f"Expert {i} gate_proj not updated"
+
+    def test_down_proj_with_broadcast_w2(self):
+        """w2 (down_proj) uses reversed broadcast: A per-expert, B shared."""
+        config = _make_tiny_qwen3_5_moe_config()
+        tc = config.text_config
+        num_experts = tc.num_experts
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_path, adapter_path, output_path = (
+                root / "model",
+                root / "adapter",
+                root / "merged",
+            )
+
+            save_model_to_disk(
+                config,
+                model_path,
+                tokenizer_name="Qwen/Qwen3.5-35B-A3B",
+                is_vision=True,
+            )
+
+            saved = load_file(str(model_path / "model.safetensors"))
+            down_key_0 = "model.language_model.layers.0.mlp.experts.0.down_proj.weight"
+            orig_down = saved[down_key_0].clone()
+            down_out_dim, down_in_dim = orig_down.shape
+
+            # w2 adapter: A per-expert, B shared (reversed broadcast)
+            rank = 1
+            exp_prefix = "base_model.model.model.layers.0.mlp.experts"
+            adapter_weights: dict[str, torch.Tensor] = {
+                f"{exp_prefix}.w2.lora_A.weight": (
+                    torch.ones(num_experts, rank, down_in_dim) * 0.03
+                ),
+                f"{exp_prefix}.w2.lora_B.weight": torch.ones(1, down_out_dim, rank),
+            }
+            adapter_path.mkdir(parents=True)
+            save_file(
+                adapter_weights,
+                str(adapter_path / "adapter_model.safetensors"),
+            )
+            (adapter_path / "adapter_config.json").write_text(
+                json.dumps({"lora_alpha": 1, "r": rank})
+            )
+
+            build_hf_model(
+                base_model=str(model_path),
+                adapter_path=str(adapter_path),
+                output_path=str(output_path),
+            )
+
+            merged = load_file(str(output_path / "model.safetensors"))
+            for i in range(num_experts):
+                dk = f"model.language_model.layers.0.mlp.experts.{i}.down_proj.weight"
+                delta = (merged[dk] - saved[dk]).abs().sum()
+                assert delta > 0, f"Expert {i} down_proj not updated"

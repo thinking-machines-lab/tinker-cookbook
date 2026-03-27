@@ -71,9 +71,9 @@ class TestGptOssAdapter:
                 "base_model.model.model.layers.0.attn.q_proj.lora_B.weight": torch.ones(
                     attn_out_dim, rank
                 ),
-                # Expert weights
+                # Expert weights (broadcast pattern matches real Tinker adapters)
                 "base_model.model.model.layers.0.mlp.experts.w1.lora_A.weight": (
-                    torch.ones(num_experts, rank, expert_in_dim) * FILL_A
+                    torch.ones(1, rank, expert_in_dim) * FILL_A
                 ),
                 "base_model.model.model.layers.0.mlp.experts.w1.lora_B.weight": torch.ones(
                     num_experts, expert_out_dim, rank

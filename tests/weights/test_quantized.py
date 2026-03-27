@@ -161,9 +161,9 @@ def _create_deepseek_adapter(adapter_dir: Path) -> None:
         _HIDDEN, rank
     )
 
-    # Target routed experts gate_proj (w1)
+    # Target routed experts gate_proj (w1): A shared, B per-expert
     weights["base_model.model.model.layers.0.mlp.experts.w1.lora_A.weight"] = (
-        torch.ones(_NUM_EXPERTS, rank, _HIDDEN) * 0.01
+        torch.ones(1, rank, _HIDDEN) * 0.01
     )
     weights["base_model.model.model.layers.0.mlp.experts.w1.lora_B.weight"] = torch.ones(
         _NUM_EXPERTS, _INTER, rank

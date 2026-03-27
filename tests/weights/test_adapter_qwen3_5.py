@@ -1,4 +1,4 @@
-"""E2e adapter tests for Qwen3.5 dense: split QKV, tied embeddings, equivalence."""
+"""E2e adapter tests for Qwen3.5: split QKV, tied embeddings, MoE expert expansion."""
 
 import json
 import tempfile
@@ -223,3 +223,104 @@ class TestQwen35DenseAdapter:
             lm_head_keys = [k for k in peft_weights if "lm_head" in k]
             assert embed_keys, "unembed_tokens should map to embed_tokens for tied embeddings"
             assert not lm_head_keys, "Should not have lm_head keys for tied embeddings"
+
+
+# ---------------------------------------------------------------------------
+# Qwen3.5 MoE — expert expansion with broadcast shapes + vision prefix
+# ---------------------------------------------------------------------------
+
+
+def _make_tiny_qwen3_5_moe_config() -> PretrainedConfig:
+    config = AutoConfig.from_pretrained("Qwen/Qwen3.5-35B-A3B", trust_remote_code=True)
+    tc = config.text_config
+    tc.num_hidden_layers = 1
+    tc.layer_types = ["linear_attention"]
+    tc.linear_num_key_heads = 2
+    tc.linear_num_value_heads = 4
+    tc.linear_key_head_dim = 8
+    tc.linear_value_head_dim = 8
+    tc.hidden_size = 64
+    tc.intermediate_size = 64
+    tc.moe_intermediate_size = 48
+    tc.num_attention_heads = 2
+    tc.num_key_value_heads = 2
+    tc.head_dim = 32
+    tc.vocab_size = 256
+    tc.mtp_num_hidden_layers = 0
+    tc.num_experts = 2
+    tc.num_experts_per_tok = 1
+    tc.shared_expert_intermediate_size = 64
+    config.vision_config.num_hidden_layers = 1
+    config.vision_config.hidden_size = 64
+    config.vision_config.intermediate_size = 64
+    config.vision_config.num_attention_heads = 2
+    return config
+
+
+class TestQwen35MoeAdapterExport:
+    """Qwen3.5 MoE: expert expansion with broadcast shapes + vision prefix.
+
+    Verifies that build_lora_adapter handles:
+    - 3D expert LoRA with broadcast (1, rank, dim) lora_A
+    - Vision model language_model prefix
+    - Per-expert 2D PEFT key generation
+    """
+
+    def test_expert_expansion_with_broadcast(self):
+        config = _make_tiny_qwen3_5_moe_config()
+        num_experts = config.text_config.num_experts
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_path, adapter_path, output_path = (
+                root / "model",
+                root / "adapter",
+                root / "peft",
+            )
+
+            save_model_to_disk(
+                config,
+                model_path,
+                tokenizer_name="Qwen/Qwen3.5-35B-A3B",
+                is_vision=True,
+            )
+
+            # Read expert dims from saved model
+            saved = load_file(str(model_path / "model.safetensors"))
+            gate_key = "model.language_model.layers.0.mlp.experts.0.gate_proj.weight"
+            expert_out_dim, expert_in_dim = saved[gate_key].shape
+            down_key = "model.language_model.layers.0.mlp.experts.0.down_proj.weight"
+            down_out_dim, down_in_dim = saved[down_key].shape
+
+            # Broadcast adapter: w1/w3 A shared, w2 B shared
+            rank = 1
+            prefix = "base_model.model.model.layers.0.mlp.experts"
+            weights = {
+                f"{prefix}.w1.lora_A.weight": torch.ones(1, rank, expert_in_dim) * FILL_A,
+                f"{prefix}.w1.lora_B.weight": torch.ones(num_experts, expert_out_dim, rank),
+                f"{prefix}.w3.lora_A.weight": torch.ones(1, rank, expert_in_dim) * FILL_B,
+                f"{prefix}.w3.lora_B.weight": torch.ones(num_experts, expert_out_dim, rank),
+                f"{prefix}.w2.lora_A.weight": torch.ones(num_experts, rank, down_in_dim) * FILL_A,
+                f"{prefix}.w2.lora_B.weight": torch.ones(1, down_out_dim, rank),
+            }
+            adapter_path.mkdir(parents=True)
+            save_file(weights, str(adapter_path / "adapter_model.safetensors"))
+            (adapter_path / "adapter_config.json").write_text(
+                json.dumps({"lora_alpha": 1, "r": rank})
+            )
+
+            peft_weights, peft_config = run_build_adapter(model_path, adapter_path, output_path)
+
+            # Should have per-expert keys with vision prefix
+            for e in range(num_experts):
+                for proj in ("gate_proj", "up_proj", "down_proj"):
+                    a_key = f"base_model.model.model.language_model.layers.0.mlp.experts.{e}.{proj}.lora_A.weight"
+                    assert a_key in peft_weights, f"Missing {a_key}"
+                    assert peft_weights[a_key].ndim == 2
+
+            # Verify target_modules
+            assert sorted(peft_config["target_modules"]) == [
+                "down_proj",
+                "gate_proj",
+                "up_proj",
+            ]

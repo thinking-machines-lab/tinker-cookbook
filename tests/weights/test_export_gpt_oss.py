@@ -88,7 +88,7 @@ class TestGptOssFusedInterleaved:
             prefix = "base_model.model.model.layers.0.mlp.experts"
             rank = 1
             up_only = {
-                f"{prefix}.w3.lora_A.weight": torch.ones(num_experts, rank, in_dim) * FILL_B,
+                f"{prefix}.w3.lora_A.weight": torch.ones(1, rank, in_dim) * FILL_B,
                 f"{prefix}.w3.lora_B.weight": torch.ones(num_experts, fused_dim // 2, rank),
             }
             adapter_path.mkdir(parents=True)

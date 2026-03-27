@@ -284,6 +284,30 @@ class TestFusedInterleavedMerge:
         assert fused[:, :, 0::2].abs().max() == 0.0, "up delta leaked into gate slots"
         assert fused[:, :, 1::2].abs().sum() > 0
 
+    def test_broadcast_lora_a_interleaved(self):
+        """Real Tinker pattern: lora_A shared (1, rank, dim), lora_B per-expert."""
+        state_dict = self._make_state_dict()
+        model = _make_base_model(state_dict, class_name="GptOssModel")
+
+        prefix = "base_model.model.model.layers.0.mlp.experts"
+        rank = 1
+        adapter = {
+            f"{prefix}.w1.lora_A.weight": torch.ones(1, rank, self.IN_DIM) * 0.01,
+            f"{prefix}.w1.lora_B.weight": torch.ones(self.NUM_EXPERTS, self.OUT_DIM, rank),
+            f"{prefix}.w3.lora_A.weight": torch.ones(1, rank, self.IN_DIM) * 0.05,
+            f"{prefix}.w3.lora_B.weight": torch.ones(self.NUM_EXPERTS, self.OUT_DIM, rank),
+        }
+
+        merge_adapter_weights(model, adapter, {"lora_alpha": 1, "r": rank})
+
+        fused = state_dict["model.layers.0.mlp.experts.gate_up_proj"]
+        assert torch.allclose(
+            fused[:, :, 0::2], torch.full_like(fused[:, :, 0::2], 0.01), atol=1e-6
+        )
+        assert torch.allclose(
+            fused[:, :, 1::2], torch.full_like(fused[:, :, 1::2], 0.05), atol=1e-6
+        )
+
 
 # ---------------------------------------------------------------------------
 # Fused expert weights — concatenated (Qwen3.5, Qwen3-VL)
@@ -355,6 +379,27 @@ class TestFusedConcatenatedMerge:
         sz = self.FUSED_DIM // 2
         assert fused[:, :, :sz].abs().max() == 0.0, "up delta leaked into gate half"
         assert fused[:, :, sz:].abs().sum() > 0
+
+    def test_broadcast_lora_a_concatenated(self):
+        """Real Tinker pattern: lora_A shared (1, rank, dim), lora_B per-expert."""
+        state_dict = self._make_state_dict()
+        model = _make_base_model(state_dict, class_name="QwenModel")
+
+        prefix = "base_model.model.model.layers.0.mlp.experts"
+        rank = 1
+        adapter = {
+            f"{prefix}.w1.lora_A.weight": torch.ones(1, rank, self.IN_DIM) * 0.02,
+            f"{prefix}.w1.lora_B.weight": torch.ones(self.NUM_EXPERTS, self.OUT_DIM, rank),
+            f"{prefix}.w3.lora_A.weight": torch.ones(1, rank, self.IN_DIM) * 0.07,
+            f"{prefix}.w3.lora_B.weight": torch.ones(self.NUM_EXPERTS, self.OUT_DIM, rank),
+        }
+
+        merge_adapter_weights(model, adapter, {"lora_alpha": 1, "r": rank})
+
+        fused = state_dict["model.layers.0.mlp.experts.gate_up_proj"]
+        sz = self.FUSED_DIM // 2
+        assert torch.allclose(fused[:, :, :sz], torch.full_like(fused[:, :, :sz], 0.02), atol=1e-6)
+        assert torch.allclose(fused[:, :, sz:], torch.full_like(fused[:, :, sz:], 0.07), atol=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -455,6 +500,28 @@ class TestFusedConcatenatedTransposedMerge:
         fused = state_dict["model.layers.0.mlp.experts.gate_up_proj"]
         assert fused[:, : self.INTERMEDIATE, :].abs().sum() > 0
         assert fused[:, self.INTERMEDIATE :, :].abs().max() == 0.0, "gate delta leaked into up half"
+
+    def test_broadcast_lora_a_transposed(self):
+        """Real Tinker pattern: lora_A shared (1, rank, dim), lora_B per-expert."""
+        state_dict = self._make_state_dict()
+        model = _make_base_model(state_dict, class_name="QwenModel")
+
+        prefix = "base_model.model.model.layers.0.mlp.experts"
+        rank = 1
+        adapter = {
+            f"{prefix}.w1.lora_A.weight": torch.ones(1, rank, self.HIDDEN) * 0.02,
+            f"{prefix}.w1.lora_B.weight": torch.ones(self.NUM_EXPERTS, self.INTERMEDIATE, rank),
+            f"{prefix}.w3.lora_A.weight": torch.ones(1, rank, self.HIDDEN) * 0.07,
+            f"{prefix}.w3.lora_B.weight": torch.ones(self.NUM_EXPERTS, self.INTERMEDIATE, rank),
+        }
+
+        merge_adapter_weights(model, adapter, {"lora_alpha": 1, "r": rank})
+
+        fused = state_dict["model.layers.0.mlp.experts.gate_up_proj"]
+        gate_half = fused[:, : self.INTERMEDIATE, :]
+        up_half = fused[:, self.INTERMEDIATE :, :]
+        assert torch.allclose(gate_half, torch.full_like(gate_half, 0.02), atol=1e-6)
+        assert torch.allclose(up_half, torch.full_like(up_half, 0.07), atol=1e-6)
 
 
 # ---------------------------------------------------------------------------

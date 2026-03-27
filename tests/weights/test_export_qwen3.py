@@ -36,6 +36,9 @@ def _make_tiny_qwen3_vl_moe_config() -> PretrainedConfig:
     tc.num_experts_per_tok = 1
     tc.hidden_size = 64
     tc.intermediate_size = 64
+    # Use asymmetric moe_intermediate_size (≠ hidden_size) to catch
+    # transposition bugs — real Qwen3-VL has hidden=2048, moe_inter=768.
+    tc.moe_intermediate_size = 48
     tc.num_attention_heads = 2
     tc.num_key_value_heads = 2
     config.vision_config.num_hidden_layers = 1
@@ -138,6 +141,44 @@ class TestQwen3VlMoeFusedConcatenated:
             assert torch.allclose(merged_gate, orig_gate, atol=1e-3), (
                 "up adapter modified gate half"
             )
+
+    def test_down_proj_with_broadcast_w2(self):
+        """w2 (down_proj) uses reversed broadcast: A per-expert, B shared."""
+        config = _make_tiny_qwen3_vl_moe_config()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_path, adapter_path, output_path = (
+                root / "model",
+                root / "adapter",
+                root / "merged",
+            )
+
+            save_model_to_disk(
+                config,
+                model_path,
+                tokenizer_name="Qwen/Qwen3-VL-30B-A3B-Instruct",
+                is_vision=True,
+            )
+            down_key = "model.language_model.layers.0.mlp.experts.down_proj"
+            orig = AutoModelForImageTextToText.from_pretrained(
+                model_path, trust_remote_code=True, dtype=torch.float32
+            )
+            orig_down = orig.state_dict()[down_key].clone()
+
+            save_expert_adapter(
+                adapter_path,
+                num_experts=orig_down.shape[0],
+                in_dim=orig_down.shape[1],
+                out_dim=orig_down.shape[2],
+                down_fill=0.03,
+                layer_prefix="base_model.model.model.layers.0.mlp.experts",
+            )
+
+            merged_sd = run_build_and_reload(model_path, adapter_path, output_path, is_vision=True)
+            delta = merged_sd[down_key] - orig_down
+            # gate/up fill defaults produce gate+up deltas too; check down separately
+            assert delta.abs().sum() > 0, "down_proj delta not applied"
 
 
 # ---------------------------------------------------------------------------

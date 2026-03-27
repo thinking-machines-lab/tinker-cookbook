@@ -172,17 +172,17 @@ def _create_test_adapter(adapter_dir: Path) -> None:
         _HIDDEN, rank, dtype=torch.bfloat16
     )
 
-    # Expert gate (w1)
+    # Expert gate (w1): A shared, B per-expert
     weights["base_model.model.model.layers.0.mlp.experts.w1.lora_A.weight"] = (
-        torch.ones(_NUM_EXPERTS, rank, _HIDDEN, dtype=torch.bfloat16) * 0.01
+        torch.ones(1, rank, _HIDDEN, dtype=torch.bfloat16) * 0.01
     )
     weights["base_model.model.model.layers.0.mlp.experts.w1.lora_B.weight"] = torch.ones(
         _NUM_EXPERTS, _INTER, rank, dtype=torch.bfloat16
     )
 
-    # Expert up (w3)
+    # Expert up (w3): A shared, B per-expert
     weights["base_model.model.model.layers.0.mlp.experts.w3.lora_A.weight"] = (
-        torch.ones(_NUM_EXPERTS, rank, _HIDDEN, dtype=torch.bfloat16) * 0.05
+        torch.ones(1, rank, _HIDDEN, dtype=torch.bfloat16) * 0.05
     )
     weights["base_model.model.model.layers.0.mlp.experts.w3.lora_B.weight"] = torch.ones(
         _NUM_EXPERTS, _INTER, rank, dtype=torch.bfloat16

@@ -316,6 +316,61 @@ class TestMoEExpertExpansion:
         _, config = _load_peft_output(output_dir)
         assert sorted(config["target_modules"]) == ["gate_proj", "up_proj"]
 
+    def test_broadcast_lora_a_expanded_correctly(self, tmp_path: Path) -> None:
+        """Real Tinker pattern: lora_A shared (1, rank, dim), lora_B per-expert.
+
+        Verifies that broadcast expansion produces correct per-expert 2D keys
+        with the right shapes and values.
+        """
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+
+        _create_synthetic_model(model_dir, _MOE_CONFIG, _make_moe_state_dict())
+
+        prefix = "base_model.model.model.layers.0.mlp.experts"
+        # w1: A shared (1, rank, hidden), B per-expert (num_experts, out_dim, rank)
+        # w2: A per-expert (num_experts, rank, out_dim), B shared (1, hidden, rank)
+        broadcast_adapter = {
+            f"{prefix}.w1.lora_A.weight": torch.ones(1, RANK, HIDDEN) * 0.1,
+            f"{prefix}.w1.lora_B.weight": torch.ones(NUM_EXPERTS, OUT_DIM, RANK),
+            f"{prefix}.w3.lora_A.weight": torch.ones(1, RANK, HIDDEN) * 0.2,
+            f"{prefix}.w3.lora_B.weight": torch.ones(NUM_EXPERTS, OUT_DIM, RANK),
+            f"{prefix}.w2.lora_A.weight": torch.ones(NUM_EXPERTS, RANK, OUT_DIM) * 0.3,
+            f"{prefix}.w2.lora_B.weight": torch.ones(1, HIDDEN, RANK),
+        }
+        _create_adapter(adapter_dir, broadcast_adapter)
+
+        build_lora_adapter(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+        )
+
+        weights, config = _load_peft_output(output_dir)
+
+        # All per-expert keys should exist
+        for e in range(NUM_EXPERTS):
+            for proj in ("gate_proj", "up_proj", "down_proj"):
+                a_key = f"base_model.model.model.layers.0.mlp.experts.{e}.{proj}.lora_A.weight"
+                b_key = f"base_model.model.model.layers.0.mlp.experts.{e}.{proj}.lora_B.weight"
+                assert a_key in weights, f"Missing {a_key}"
+                assert b_key in weights, f"Missing {b_key}"
+                assert weights[a_key].ndim == 2
+                assert weights[b_key].ndim == 2
+
+        # Verify broadcast: each expert's lora_A for w1 should be identical
+        # (all expanded from the same shared tensor)
+        a0 = weights[f"{prefix}.0.gate_proj.lora_A.weight"]
+        a1 = weights[f"{prefix}.1.gate_proj.lora_A.weight"]
+        assert torch.equal(a0, a1), "Broadcast expansion produced different values"
+
+        assert sorted(config["target_modules"]) == [
+            "down_proj",
+            "gate_proj",
+            "up_proj",
+        ]
+
 
 # ---------------------------------------------------------------------------
 # Tests: Vision model prefix
