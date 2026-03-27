@@ -82,3 +82,38 @@ The paper uses `nvidia/Nemotron-Cascade-RL-SWE` — a SEPARATE dataset from `nvi
 1. **Hybrid rewards**: Combine execution-free (LLM judge) + execution-based for best results
 2. **Group-normalized advantages**: DAPO/GRPO with 10-16 rollouts per group
 3. **Compact filtering**: Mask out context-overflow and timeout trajectories
+
+## Experiment Results: nvidia/Nemotron-Cascade-RL-SWE Dataset (2026-03-27)
+
+### LLM Judge Mode — SUCCESS
+
+Config: group_size=4, groups_per_batch=3, lr=3e-5, max_tokens=49152, reward_mode=llm_judge
+Dataset: nvidia/Nemotron-Cascade-RL-SWE (streaming, ~110K instances)
+
+| Step | Reward | Judge | Has Patch | Frac Mixed | Time (s) |
+|------|--------|-------|-----------|------------|----------|
+| 0 | 0.463 | 0.463 | 1.0 | 1.0 | 884 |
+| 1 | 0.275 | 0.275 | 1.0 | 1.0 | 797 |
+| 2 | 0.408 | 0.408 | 1.0 | 1.0 | 821 |
+
+**Mean reward: 0.382** (vs 0.306 with R2E-Gym-Subset — 25% improvement)
+**100% mixed groups** — perfect GRPO signal at every step
+
+### Execution Mode — CONTEXT OVERFLOW
+
+The Cascade SWE prompts are ~24K tokens. With max_tokens=49152, total exceeds the 65K context window:
+`Prompt length plus max_tokens exceeds the model's context window: 24042 + 49152 > 65536`
+
+Fix: Set max_tokens to min(49152, 65536 - prompt_length) dynamically, or cap at ~40K.
+Paper uses 98,304 max_tokens but with a model that likely supports 128K+ context.
+
+### Comparison: R2E-Gym-Subset vs Cascade SWE Data
+
+| Metric | R2E-Gym-Subset | Cascade SWE |
+|--------|---------------|-------------|
+| Dataset size | 4,578 | ~110,000 |
+| Has codebase context | No | Yes (relevant_file_contents) |
+| Prompt length | ~2K tokens | ~24K tokens |
+| LLM judge reward | 0.306 | 0.382-0.463 |
+| Frac mixed | 1.0 | 1.0 |
+| Execution reward | 0.0 | Context overflow (fixable) |
