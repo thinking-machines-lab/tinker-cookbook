@@ -37,7 +37,7 @@ def make_config(log_path: str = "/tmp/super_sft_full") -> Config:
             raise FileNotFoundError(
                 f"Missing {filepath}. Run download_all.py first."
             )
-        sources.append(HFDatasetSource(path="json", data_files=str(filepath)))
+        sources.append(HFDatasetSource(path=str(filepath)))
 
     return Config(
         model_name="nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16:peft:262144",

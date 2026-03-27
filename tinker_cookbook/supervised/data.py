@@ -5,6 +5,7 @@ Supervised learning dataset implementations from HuggingFace datasets.
 import json
 import logging
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Literal, cast
 
 import blobfile
@@ -325,13 +326,11 @@ class HFDatasetSource:
     """A single HuggingFace dataset to include in an interleaved mix.
 
     Attributes:
-        path: HuggingFace dataset path (e.g. ``"allenai/tulu-3-sft-mixture"``).
-            For local files, set to ``"json"`` (or ``"csv"``, ``"parquet"``, etc.)
-            and provide the file path via ``data_files``.
+        path: HuggingFace dataset path (e.g. ``"allenai/tulu-3-sft-mixture"``)
+            or a local file path (e.g. ``"/data/sft.jsonl"``). Local files are
+            detected automatically and loaded with the appropriate HF loader.
         name: HuggingFace dataset config name (passed as ``name`` to ``load_dataset``).
         split: Dataset split to load.
-        data_files: Path to a local file (e.g. ``"/data/sft.jsonl"``). When set,
-            ``load_dataset`` is called with ``data_files=`` instead of ``name=``.
         weight: Relative mixing weight. When set, weights are normalized across sources
             to determine sampling probabilities. When left as ``None`` (default) for all
             sources, each row across all sources is equally likely (i.e. simple concatenation
@@ -342,7 +341,6 @@ class HFDatasetSource:
     path: str
     name: str | None = None
     split: str = "train"
-    data_files: str | None = None
     weight: float | None = None
     message_field: str = "messages"
 
@@ -372,11 +370,17 @@ class InterleavedChatDatasetBuilder(ChatDatasetBuilder):
         hf_datasets: list[datasets.Dataset] = []
 
         for source in self.sources:
-            if source.data_files is not None:
-                ds = datasets.load_dataset(
-                    source.path, data_files=source.data_files, split=source.split
+            local_path = Path(source.path)
+            if local_path.is_file():
+                # Local file — infer loader from extension
+                ext = local_path.suffix.lstrip(".")
+                loader = {"jsonl": "json", "json": "json", "csv": "csv", "parquet": "parquet"}.get(
+                    ext, "json"
                 )
-                source_label = source.data_files
+                ds = datasets.load_dataset(
+                    loader, data_files=str(local_path), split=source.split
+                )
+                source_label = str(local_path)
             else:
                 ds = datasets.load_dataset(
                     source.path, name=source.name, split=source.split
