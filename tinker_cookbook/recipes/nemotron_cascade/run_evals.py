@@ -4,7 +4,12 @@ Benchmark evaluations for Nemotron-Cascade-2 checkpoints.
 Uses Tinker sampling directly with our own grading:
   - GSM8K: Math grading via existing math_grading utilities
   - IFEval: Our 48-type instruction following verifier
+  - MMLU-Pro: Multi-task language understanding
   - MATH-500: Hendrycks MATH test set
+  - GPQA-Diamond: Graduate-level science QA (multiple choice)
+  - AIME 2025: Math competition problems (integer answers 0-999)
+  - MBPP: Python code generation with execution-based testing
+  - LongBench v2: Long-context comprehension (multiple subtasks)
 
 Compares base model vs SFT vs IF-RL checkpoints.
 """
@@ -349,6 +354,435 @@ async def eval_math500(
 
 
 # ---------------------------------------------------------------------------
+# GPQA-Diamond Evaluation
+# ---------------------------------------------------------------------------
+
+async def eval_gpqa(
+    completer: TinkerMessageCompleter,
+    limit: int | None = None,
+    concurrency: int = 128,
+) -> dict[str, float]:
+    """Evaluate on GPQA-Diamond — hard graduate-level science QA (multiple choice A/B/C/D)."""
+    import re
+
+    ds = cast(Dataset, load_dataset("Idavidrein/gpqa", "gpqa_diamond", split="train"))
+    if limit:
+        ds = ds.select(range(min(limit, len(ds))))
+
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def eval_one(row: dict) -> bool | None:
+        async with semaphore:
+            question = row["Question"]
+            # GPQA has columns: Correct Answer, Incorrect Answer 1/2/3
+            # and a "Random ID" but the correct answer letter depends on
+            # the shuffled order stored in the dataset.
+            # The dataset provides pre-shuffled choices and a correct answer letter.
+            correct_answer = row.get("Answer", row.get("Correct Answer", ""))
+
+            # Build choices from the available choice columns
+            choice_cols = [
+                col for col in row.keys()
+                if col.startswith("Choice") or col in ("choice_a", "choice_b", "choice_c", "choice_d")
+            ]
+
+            if choice_cols:
+                # Dataset has explicit choice columns
+                choices = [row[c] for c in sorted(choice_cols) if row.get(c)]
+            else:
+                # Fallback: construct from Correct Answer + Incorrect Answers
+                choices = [row.get("Correct Answer", "")]
+                for i in range(1, 4):
+                    inc = row.get(f"Incorrect Answer {i}", "")
+                    if inc:
+                        choices.append(inc)
+
+            if not choices:
+                return None
+
+            # Determine expected letter
+            if correct_answer in ("A", "B", "C", "D"):
+                expected = correct_answer
+            else:
+                # Find which choice matches the correct answer text
+                expected = "A"
+                for i, c in enumerate(choices):
+                    if c.strip() == str(correct_answer).strip():
+                        expected = chr(65 + i)
+                        break
+
+            choice_text = "\n".join(f"({chr(65+i)}) {c}" for i, c in enumerate(choices))
+            prompt = (
+                f"{question}\n\n{choice_text}\n\n"
+                "Think step by step, then give your final answer as a single letter (A, B, C, or D)."
+            )
+            messages: list[Message] = [{"role": "user", "content": prompt}]
+            try:
+                response = await completer(messages)
+                content = renderers.get_text_content(response)
+                # Extract the answer letter from the response
+                # Check for boxed format first
+                boxed = _extract_boxed(content)
+                if boxed and boxed.strip().upper() in ("A", "B", "C", "D"):
+                    extracted = boxed.strip().upper()
+                else:
+                    # Look for patterns like "The answer is (B)" or just a standalone letter
+                    answer_match = re.search(
+                        r'(?:answer is|answer:)\s*\(?([A-D])\)?',
+                        content, re.IGNORECASE,
+                    )
+                    if answer_match:
+                        extracted = answer_match.group(1).upper()
+                    else:
+                        # Last standalone A-D letter
+                        letters = re.findall(r'\b([A-D])\b', content[-300:])
+                        extracted = letters[-1] if letters else ""
+                return extracted == expected
+            except Exception as e:
+                logger.warning(f"GPQA eval failed: {e}")
+                return None
+
+    logger.info(f"GPQA-Diamond: evaluating {len(ds)} samples with concurrency={concurrency}")
+    tasks = [eval_one(row) for row in ds]
+    results = await asyncio.gather(*tasks)
+
+    correct = sum(1 for r in results if r is True)
+    total = sum(1 for r in results if r is not None)
+    accuracy = correct / total if total > 0 else 0
+    logger.info(f"GPQA-Diamond final: {correct}/{total} = {accuracy:.4f}")
+    return {"gpqa_diamond/accuracy": accuracy, "gpqa_diamond/correct": correct, "gpqa_diamond/total": total}
+
+
+# ---------------------------------------------------------------------------
+# AIME 2025 Evaluation
+# ---------------------------------------------------------------------------
+
+async def eval_aime2025(
+    completer: TinkerMessageCompleter,
+    limit: int | None = None,
+    concurrency: int = 128,
+) -> dict[str, float]:
+    """Evaluate on AIME 2025 — math competition problems with integer answers (0-999)."""
+    import re
+
+    # Try several known HuggingFace dataset names for AIME 2025
+    ds = None
+    for dataset_id in (
+        "HuggingFaceH4/aime-2025",
+        "yentinglin/aime_2025",
+        "Maxwell-Jia/AIME_2025",
+        "opencompass/AIME2025",
+        "di-zhang-fdu/AIME24-25",
+    ):
+        try:
+            ds = cast(Dataset, load_dataset(dataset_id, split="test"))
+            logger.info(f"Loaded AIME 2025 from {dataset_id} ({len(ds)} problems)")
+            break
+        except Exception:
+            try:
+                ds = cast(Dataset, load_dataset(dataset_id, split="train"))
+                logger.info(f"Loaded AIME 2025 from {dataset_id} ({len(ds)} problems)")
+                break
+            except Exception:
+                continue
+
+    if ds is None:
+        logger.warning("Could not load AIME 2025 dataset from HuggingFace. Skipping.")
+        return {"aime2025/accuracy": 0.0, "aime2025/correct": 0, "aime2025/total": 0}
+
+    if limit:
+        ds = ds.select(range(min(limit, len(ds))))
+
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def eval_one(row: dict) -> bool | None:
+        async with semaphore:
+            # Field names vary across datasets
+            problem = row.get("problem", row.get("question", row.get("Problem", "")))
+            expected_raw = row.get("answer", row.get("Answer", row.get("expected_answer", "")))
+            if not problem or expected_raw is None:
+                return None
+
+            try:
+                expected = int(str(expected_raw).strip())
+            except (ValueError, TypeError):
+                # Try extracting number
+                m = re.search(r'\d+', str(expected_raw))
+                if m:
+                    expected = int(m.group(0))
+                else:
+                    return None
+
+            prompt = (
+                f"{problem}\n\n"
+                "This is an AIME problem. The answer is an integer from 000 to 999. "
+                "Show your work step by step, then put your final answer in \\boxed{}."
+            )
+            messages: list[Message] = [{"role": "user", "content": prompt}]
+            try:
+                response = await completer(messages)
+                content = renderers.get_text_content(response)
+                # Extract answer from boxed or last number
+                boxed = _extract_boxed(content)
+                if boxed:
+                    extracted_str = _extract_number(boxed)
+                else:
+                    extracted_str = _extract_gsm8k_answer(content)
+
+                try:
+                    extracted_val = int(float(extracted_str))
+                    return extracted_val == expected
+                except (ValueError, TypeError):
+                    return False
+            except Exception as e:
+                logger.warning(f"AIME 2025 eval failed: {e}")
+                return None
+
+    logger.info(f"AIME 2025: evaluating {len(ds)} samples with concurrency={concurrency}")
+    tasks = [eval_one(row) for row in ds]
+    results = await asyncio.gather(*tasks)
+
+    correct = sum(1 for r in results if r is True)
+    total = sum(1 for r in results if r is not None)
+    accuracy = correct / total if total > 0 else 0
+    logger.info(f"AIME 2025 final: {correct}/{total} = {accuracy:.4f}")
+    return {"aime2025/accuracy": accuracy, "aime2025/correct": correct, "aime2025/total": total}
+
+
+# ---------------------------------------------------------------------------
+# MBPP Evaluation (code generation)
+# ---------------------------------------------------------------------------
+
+async def eval_mbpp(
+    completer: TinkerMessageCompleter,
+    limit: int | None = None,
+    concurrency: int = 128,
+) -> dict[str, float]:
+    """Evaluate on MBPP (Mostly Basic Python Programming) via code execution.
+
+    Generates a Python function and runs assertion-based test cases.
+    Uses subprocess execution (no Modal dependency for eval).
+    """
+    import subprocess
+    import tempfile
+
+    try:
+        ds = cast(Dataset, load_dataset("google-research-datasets/mbpp", "sanitized", split="test"))
+    except Exception:
+        ds = cast(Dataset, load_dataset("google-research-datasets/mbpp", "full", split="test"))
+
+    if limit:
+        ds = ds.select(range(min(limit, len(ds))))
+
+    semaphore = asyncio.Semaphore(concurrency)
+
+    def _run_python_tests(code: str, test_assertions: list[str], timeout: int = 15) -> bool:
+        """Run code + assertion tests in a subprocess. Returns True if all pass."""
+        test_code = code + "\n\n" + "\n".join(test_assertions)
+        try:
+            result = subprocess.run(
+                ["python3", "-c", test_code],
+                capture_output=True,
+                timeout=timeout,
+                text=True,
+            )
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, Exception):
+            return False
+
+    async def eval_one(row: dict) -> bool | None:
+        async with semaphore:
+            task_prompt = row.get("prompt", row.get("text", ""))
+            test_list = row.get("test_list", [])
+            if not task_prompt or not test_list:
+                return None
+
+            # Show 1 test example in the prompt for format guidance
+            example_test = test_list[0] if test_list else ""
+            prompt = (
+                f"{task_prompt}\n\n"
+                f"Example test: `{example_test}`\n\n"
+                "Write a Python function that satisfies the requirements. "
+                "Provide ONLY the function definition in a ```python code block."
+            )
+            messages: list[Message] = [{"role": "user", "content": prompt}]
+            try:
+                response = await completer(messages)
+                content = renderers.get_text_content(response)
+
+                # Extract code using the same logic as code_rl_env
+                import re
+                match = re.search(r'```python\s*\n(.*?)\n```', content, re.DOTALL)
+                if not match:
+                    matches = re.findall(r'```(?:\w*)\s*\n(.*?)\n```', content, re.DOTALL)
+                    code = matches[-1].strip() if matches else content.strip()
+                else:
+                    code = match.group(1).strip()
+
+                # Run tests in a thread to avoid blocking the event loop
+                loop = asyncio.get_event_loop()
+                passed = await loop.run_in_executor(None, _run_python_tests, code, test_list)
+                return passed
+            except Exception as e:
+                logger.warning(f"MBPP eval failed: {e}")
+                return None
+
+    logger.info(f"MBPP: evaluating {len(ds)} samples with concurrency={concurrency}")
+    tasks = [eval_one(row) for row in ds]
+    results = await asyncio.gather(*tasks)
+
+    correct = sum(1 for r in results if r is True)
+    total = sum(1 for r in results if r is not None)
+    accuracy = correct / total if total > 0 else 0
+    logger.info(f"MBPP final: {correct}/{total} = {accuracy:.4f}")
+    return {"mbpp/accuracy": accuracy, "mbpp/correct": correct, "mbpp/total": total}
+
+
+# ---------------------------------------------------------------------------
+# LongBench v2 Evaluation
+# ---------------------------------------------------------------------------
+
+async def eval_longbench(
+    completer: TinkerMessageCompleter,
+    limit: int | None = None,
+    concurrency: int = 128,
+) -> dict[str, float]:
+    """Evaluate on LongBench v2 — long-context comprehension across multiple subtasks.
+
+    Loads THUDM/LongBench-v2 which contains multiple-choice questions with
+    long contexts. Falls back to THUDM/LongBench if v2 is unavailable.
+    """
+    import re
+
+    ds = None
+    dataset_version = "v2"
+    for dataset_id, split in (
+        ("THUDM/LongBench-v2", "test"),
+        ("THUDM/LongBench-v2", "train"),
+        ("THUDM/LongBench", "test"),
+    ):
+        try:
+            ds = cast(Dataset, load_dataset(dataset_id, split=split))
+            dataset_version = "v2" if "v2" in dataset_id else "v1"
+            logger.info(f"Loaded LongBench from {dataset_id}/{split} ({len(ds)} examples)")
+            break
+        except Exception:
+            # Try loading with a specific config name
+            try:
+                ds = cast(Dataset, load_dataset(dataset_id, "default", split=split))
+                dataset_version = "v2" if "v2" in dataset_id else "v1"
+                logger.info(f"Loaded LongBench from {dataset_id}/default/{split} ({len(ds)} examples)")
+                break
+            except Exception:
+                continue
+
+    if ds is None:
+        logger.warning("Could not load LongBench dataset. Skipping.")
+        return {"longbench/accuracy": 0.0, "longbench/correct": 0, "longbench/total": 0}
+
+    if limit:
+        ds = ds.shuffle(seed=42).select(range(min(limit, len(ds))))
+
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def eval_one(row: dict) -> tuple[bool, str] | None:
+        """Returns (correct, subtask) or None on failure."""
+        async with semaphore:
+            # LongBench v2 format: context, question, choice_A/B/C/D, answer
+            # LongBench v1 format: context, input, answers (list)
+            context = row.get("context", "")
+            subtask = row.get("domain", row.get("dataset", "unknown"))
+
+            if dataset_version == "v2":
+                question = row.get("question", row.get("input", ""))
+                # v2 has choice_A, choice_B, choice_C, choice_D columns
+                choices = []
+                for letter in ("A", "B", "C", "D"):
+                    choice = row.get(f"choice_{letter}", "")
+                    if choice:
+                        choices.append(choice)
+
+                expected = str(row.get("answer", "")).strip().upper()
+
+                if choices:
+                    choice_text = "\n".join(f"({chr(65+i)}) {c}" for i, c in enumerate(choices))
+                    user_content = (
+                        f"Read the following text carefully, then answer the question.\n\n"
+                        f"--- TEXT ---\n{context}\n--- END TEXT ---\n\n"
+                        f"Question: {question}\n\n{choice_text}\n\n"
+                        "Answer with just the letter (A, B, C, or D)."
+                    )
+                else:
+                    user_content = (
+                        f"Read the following text carefully, then answer the question.\n\n"
+                        f"--- TEXT ---\n{context}\n--- END TEXT ---\n\n"
+                        f"Question: {question}\n\n"
+                        "Give a concise answer."
+                    )
+            else:
+                # LongBench v1 format
+                question = row.get("input", "")
+                expected_answers = row.get("answers", row.get("all_classes", []))
+                expected = expected_answers[0] if expected_answers else ""
+                user_content = (
+                    f"Read the following text carefully, then answer the question.\n\n"
+                    f"--- TEXT ---\n{context}\n--- END TEXT ---\n\n"
+                    f"Question: {question}\n\n"
+                    "Give a concise answer."
+                )
+
+            if not question or not context:
+                return None
+
+            messages: list[Message] = [{"role": "user", "content": user_content}]
+            try:
+                response = await completer(messages)
+                content = renderers.get_text_content(response)
+
+                if dataset_version == "v2" and expected in ("A", "B", "C", "D"):
+                    # Multiple choice grading
+                    letters = re.findall(r'\b([A-D])\b', content[-300:])
+                    extracted = letters[-1] if letters else ""
+                    return (extracted == expected, subtask)
+                else:
+                    # Open-ended: check if expected answer appears in response
+                    expected_lower = str(expected).strip().lower()
+                    content_lower = content.strip().lower()
+                    correct = expected_lower in content_lower
+                    return (correct, subtask)
+            except Exception as e:
+                logger.warning(f"LongBench eval failed: {e}")
+                return None
+
+    logger.info(f"LongBench ({dataset_version}): evaluating {len(ds)} samples with concurrency={concurrency}")
+    tasks = [eval_one(row) for row in ds]
+    results = await asyncio.gather(*tasks)
+
+    valid = [r for r in results if r is not None]
+    correct = sum(1 for r in valid if r[0])
+    total = len(valid)
+    accuracy = correct / total if total > 0 else 0
+
+    # Per-subtask breakdown
+    subtask_results: dict[str, list[bool]] = {}
+    for r in valid:
+        st = r[1]
+        subtask_results.setdefault(st, []).append(r[0])
+
+    metrics: dict[str, float] = {
+        "longbench/accuracy": accuracy,
+        "longbench/correct": correct,
+        "longbench/total": total,
+    }
+    for st, st_results in sorted(subtask_results.items()):
+        st_acc = sum(st_results) / len(st_results) if st_results else 0
+        metrics[f"longbench/{st}/accuracy"] = st_acc
+
+    logger.info(f"LongBench final: {correct}/{total} = {accuracy:.4f}")
+    return metrics
+
+
+# ---------------------------------------------------------------------------
 # Main evaluation driver
 # ---------------------------------------------------------------------------
 
@@ -357,6 +791,10 @@ BENCHMARKS = {
     "ifeval": eval_ifeval,
     "mmlu": eval_mmlu,
     "math500": eval_math500,
+    "gpqa": eval_gpqa,
+    "aime2025": eval_aime2025,
+    "mbpp": eval_mbpp,
+    "longbench": eval_longbench,
 }
 
 
