@@ -1,5 +1,7 @@
 """Simplified logging utilities for tinker-cookbook."""
 
+import dataclasses
+import fnmatch
 import json
 import logging
 import os
@@ -77,6 +79,61 @@ def dump_config(config: Any) -> Any:
         return config
 
 
+@dataclasses.dataclass
+class ConsoleMetricsFilter:
+    """Controls which metrics appear in the console table.
+
+    Metrics are matched by ``fnmatch`` glob patterns against the key name.
+    A metric is shown if it matches any *include* pattern AND does not match
+    any *exclude* pattern.  Exclude takes precedence over include.
+    """
+
+    include: list[str]
+    exclude: list[str]
+
+
+CONSOLE_METRICS_PRESETS: dict[str, ConsoleMetricsFilter] = {
+    # Curated summary — only the metrics a user cares about at a glance.
+    "compact": ConsoleMetricsFilter(
+        include=[
+            "progress/*",
+            "optim/*",
+            "env/*/reward/*",
+            "env/*/correct",
+            "env/*/format",
+            "env/*/turns_per_episode",
+            "env/*/ac_tokens_per_turn",
+            "env/*/ob_tokens_per_turn",
+            "time/total",
+            "time/sampling",
+            "time/train_step",
+            "time/run_evals",
+            "time/run_evaluations_parallel",
+            "test/*",
+            "train_mean_nll",
+            "num_tokens",
+            "learning_rate",
+            "dpo_loss",
+            "accuracy",
+            "margin",
+            "chosen_reward",
+            "rejected_reward",
+        ],
+        exclude=[],
+    ),
+    # Everything except noisy aggregates.
+    "detailed": ConsoleMetricsFilter(
+        include=["*"],
+        exclude=["*:total", "*:count"],
+    ),
+    # No filtering — show every metric.
+    "all": ConsoleMetricsFilter(
+        include=["*"],
+        exclude=[],
+    ),
+}
+
+
 class Logger(ABC):
     """Abstract base class for loggers."""
 
@@ -150,11 +207,21 @@ class JsonLogger(Logger):
 
 
 class PrettyPrintLogger(Logger):
-    """Logger that displays metrics in a formatted table in the console."""
+    """Logger that displays metrics in a formatted table in the console.
 
-    def __init__(self):
+    Metrics are filtered according to a :class:`ConsoleMetricsFilter`.
+    See :data:`CONSOLE_METRICS_PRESETS` for built-in presets.
+    """
+
+    def __init__(
+        self,
+        metrics_filter: ConsoleMetricsFilter | None = None,
+        preset_name: str | None = None,
+    ):
         self.console = Console()
-        self._last_step = None
+        self._metrics_filter = metrics_filter or CONSOLE_METRICS_PRESETS["detailed"]
+        self._preset_name = preset_name
+        self._logged_filter_hint = False
 
     def log_hparams(self, config: Any) -> None:
         """Print configuration summary."""
@@ -164,23 +231,31 @@ class PrettyPrintLogger(Logger):
             for key, value in config_dict.items():
                 self.console.print(f"  {key}: {_maybe_truncate_repr(value)}")
 
-    # Metric suffixes to hide from console output. These are still logged to
-    # metrics.jsonl and other sinks — only the pretty-print table is filtered.
-    _HIDDEN_SUFFIXES = (":total", ":count")
+    def _should_display(self, key: str) -> bool:
+        """Return True if *key* passes the include/exclude filter."""
+        if not any(fnmatch.fnmatch(key, p) for p in self._metrics_filter.include):
+            return False
+        return not any(fnmatch.fnmatch(key, p) for p in self._metrics_filter.exclude)
 
     def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
-        """Display metrics in console."""
+        """Display metrics in console, filtered by the active preset."""
         if not metrics:
             return
 
-        # Filter out noisy aggregate keys from the console display
-        display_items = [
-            (k, v)
-            for k, v in sorted(metrics.items())
-            if not any(k.endswith(s) for s in self._HIDDEN_SUFFIXES)
-        ]
+        display_items = [(k, v) for k, v in sorted(metrics.items()) if self._should_display(k)]
         if not display_items:
             return
+
+        # Log a one-time hint when metrics are being filtered
+        if not self._logged_filter_hint and len(display_items) < len(metrics):
+            n_hidden = len(metrics) - len(display_items)
+            preset_desc = f"'{self._preset_name}' preset" if self._preset_name else "custom filter"
+            logger.info(
+                f"Console metrics using {preset_desc} ({n_hidden} metrics hidden). "
+                f"Set console_metrics='all' to show all, or 'detailed' for more. "
+                f"All metrics are always written to metrics.jsonl."
+            )
+            self._logged_filter_hint = True
 
         # Adapt column width to the longest metric name
         max_key_len = max(len(k) for k, _ in display_items)
@@ -408,6 +483,7 @@ def setup_logging(
     wandb_name: str | None = None,
     config: Any | None = None,
     do_configure_logging_module: bool = True,
+    console_metrics: str | ConsoleMetricsFilter = "detailed",
 ) -> Logger:
     """
     Set up logging infrastructure with multiple backends.
@@ -418,22 +494,39 @@ def setup_logging(
         wandb_name: W&B run name
         config: Configuration object to log
         do_configure_logging_module: Whether to configure the logging module
+        console_metrics: Preset name ("compact", "detailed", "all") or a
+            :class:`ConsoleMetricsFilter` instance. Controls which metrics
+            appear in the console table. Default ``"detailed"`` shows
+            everything except ``:total``/``:count`` aggregates.
 
     Returns:
         MultiplexLogger that combines all enabled loggers
     """
+    # Resolve console metrics filter
+    if isinstance(console_metrics, str):
+        if console_metrics not in CONSOLE_METRICS_PRESETS:
+            raise ConfigurationError(
+                f"Unknown console_metrics preset '{console_metrics}'. "
+                f"Options: {', '.join(sorted(CONSOLE_METRICS_PRESETS))}"
+            )
+        metrics_filter = CONSOLE_METRICS_PRESETS[console_metrics]
+        preset_name: str | None = console_metrics
+    else:
+        metrics_filter = console_metrics
+        preset_name = None
+
     # Create log directory
     log_dir_path = Path(log_dir).expanduser()
     log_dir_path.mkdir(parents=True, exist_ok=True)
 
     # Initialize loggers
-    loggers = []
+    loggers: list[Logger] = []
 
     # Always add JSON logger
     loggers.append(JsonLogger(log_dir_path))
 
     # Always add pretty print logger
-    loggers.append(PrettyPrintLogger())
+    loggers.append(PrettyPrintLogger(metrics_filter=metrics_filter, preset_name=preset_name))
 
     # Add W&B logger if available and configured
     if wandb_project:

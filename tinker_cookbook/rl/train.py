@@ -443,6 +443,9 @@ class Config:
     # Maximum number of training iterations. If None, train on the full dataset.
     max_steps: int | None = None
 
+    # Console display preset for metrics. Options: "compact", "detailed", "all".
+    console_metrics: str = "compact"
+
 
 @trace.scope
 async def run_single_evaluation(
@@ -1522,6 +1525,7 @@ async def main(
         wandb_project=config.wandb_project,
         config=config,
         wandb_name=config.wandb_name,
+        console_metrics=config.console_metrics,
     )
     if config.enable_trace:
         # Get and rename the current (main) task
