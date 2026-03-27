@@ -3,6 +3,7 @@ Supervised learning dataset implementations from HuggingFace datasets.
 """
 
 import json
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -15,6 +16,8 @@ from tinker_cookbook.exceptions import DataFormatError, DataValidationError
 from tinker_cookbook.renderers import Message, Renderer, TrainOnWhat
 from tinker_cookbook.supervised.common import datum_from_model_input_weights
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDataset
+
+logger = logging.getLogger(__name__)
 
 
 def conversation_to_datum(
@@ -184,3 +187,101 @@ class FromConversationFileBuilder(ChatDatasetBuilder):
             test_dataset = None
 
         return supervised_dataset, test_dataset
+
+
+@chz.chz
+class DomainSource:
+    """A single HuggingFace dataset to include in a multi-domain mix.
+
+    Attributes:
+        path: HuggingFace dataset path (e.g. ``"allenai/tulu-3-sft-mixture"``).
+        name: HuggingFace dataset config name (passed as ``name`` to ``load_dataset``).
+        split: Dataset split to load.
+        weight: Relative mixing weight (will be normalized across domains).
+        message_field: Column name containing conversation messages.
+    """
+
+    path: str
+    name: str | None = None
+    split: str = "train"
+    weight: float = 1.0
+    message_field: str = "messages"
+
+
+@chz.chz
+class InterleavedDatasetBuilder(ChatDatasetBuilder):
+    """Builds a multi-domain SFT dataset by interleaving multiple HuggingFace datasets.
+
+    Uses ``datasets.interleave_datasets`` to mix rows from multiple sources according
+    to the configured weights. The resulting dataset is a standard Arrow-backed
+    ``datasets.Dataset`` with O(1) random access and deterministic per-epoch shuffling.
+    """
+
+    domains: list[DomainSource]
+    test_size: int = 0
+    shuffle_seed: int = 0
+    stopping_strategy: str = "all_exhausted"
+
+    def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
+        if not self.domains:
+            raise ValueError("At least one domain must be provided")
+
+        hf_datasets: list[datasets.Dataset] = []
+        weights: list[float] = []
+
+        for domain in self.domains:
+            ds = datasets.load_dataset(domain.path, name=domain.name, split=domain.split)
+            assert isinstance(ds, datasets.Dataset)
+            # Normalize message field name and unify schema
+            if domain.message_field != "messages":
+                ds = ds.rename_column(domain.message_field, "messages")
+            ds = ds.select_columns(["messages"])
+            hf_datasets.append(ds)
+            weights.append(domain.weight)
+            logger.info(
+                f"Loaded domain '{domain.path}' ({len(ds)} rows, weight={domain.weight})"
+            )
+
+        total_weight = sum(weights)
+        probabilities = [w / total_weight for w in weights]
+
+        interleaved = datasets.interleave_datasets(
+            hf_datasets,
+            probabilities=probabilities,
+            seed=self.shuffle_seed,
+            stopping_strategy=self.stopping_strategy,
+        )
+        assert isinstance(interleaved, datasets.Dataset)
+        logger.info(f"Interleaved dataset: {len(interleaved)} rows")
+
+        # Split test set
+        if self.test_size > 0 and len(interleaved) > self.test_size:
+            interleaved = interleaved.shuffle(seed=self.shuffle_seed)
+            test_ds = interleaved.take(self.test_size)
+            train_ds = interleaved.skip(self.test_size)
+        else:
+            train_ds = interleaved
+            test_ds = None
+
+        train_on_what = (
+            TrainOnWhat(self.common_config.train_on_what)
+            if self.common_config.train_on_what
+            else TrainOnWhat.ALL_ASSISTANT_MESSAGES
+        )
+
+        def map_fn(row: dict) -> tinker.Datum:
+            return conversation_to_datum(
+                row["messages"], self.renderer, self.common_config.max_length, train_on_what
+            )
+
+        train_dataset = SupervisedDatasetFromHFDataset(
+            train_ds, batch_size=self.common_config.batch_size, map_fn=map_fn
+        )
+
+        test_dataset = (
+            SupervisedDatasetFromHFDataset(test_ds, batch_size=len(test_ds), map_fn=map_fn)
+            if test_ds is not None
+            else None
+        )
+
+        return train_dataset, test_dataset
