@@ -47,15 +47,26 @@ from tinker_cookbook.utils.logtree_formatters import ConversationFormatter
 logger = logging.getLogger(__name__)
 
 
+def _strip_think_blocks(text: str) -> str:
+    """Remove <think>...</think> reasoning blocks from model output."""
+    stripped = re.sub(r'<think>[\s\S]*?</think>', '', text)
+    # If the model started thinking but never closed the tag, strip from <think> onward
+    stripped = re.sub(r'<think>[\s\S]*$', '', stripped)
+    return stripped.strip()
+
+
 def extract_answer(response: str) -> str:
     """Extract the answer from a model response.
 
-    Tries multiple patterns:
+    Strips <think> blocks first, then tries multiple patterns:
     1. \\boxed{answer}
     2. The answer is (X)
     3. **Answer: X**
     4. Last single letter/option on its own line
     """
+    # Strip thinking blocks so we only look at the final answer portion
+    response = _strip_think_blocks(response)
+
     # Try boxed format
     boxed_match = re.search(r'\\boxed\{([^}]+)\}', response)
     if boxed_match:
@@ -81,30 +92,17 @@ def extract_answer(response: str) -> str:
         if re.match(r'^[A-Z]\.?$', line):
             return line.replace('.', '').strip()
 
-    # Fallback: look for any single capital letter option
-    options = re.findall(r'\b([A-Z])\b', response[-200:])
-    if options:
-        return options[-1]
-
     return response.strip()[-10:]  # Last 10 chars as fallback
 
 
 def check_answer(response: str, expected: str) -> bool:
-    """Check if extracted answer matches expected answer."""
+    """Check if extracted answer matches expected answer (exact match only)."""
     extracted = extract_answer(response)
     # Normalize both
     extracted_norm = extracted.strip().upper().replace('.', '')
     expected_norm = expected.strip().upper().replace('.', '')
 
-    # Direct match
-    if extracted_norm == expected_norm:
-        return True
-
-    # Check if expected is contained in extracted (for longer answers)
-    if expected_norm in extracted_norm or extracted_norm in expected_norm:
-        return True
-
-    return False
+    return extracted_norm == expected_norm
 
 
 class MCQAEnv(Env):

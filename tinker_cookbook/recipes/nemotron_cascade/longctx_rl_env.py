@@ -84,10 +84,11 @@ _MAX_JUDGE_CONTEXT_CHARS = 12_000
 
 def _parse_judge_score(response_text: str) -> float:
     """Extract a 0-10 integer score from the judge's response and normalise to [0, 1]."""
-    # Look for the first integer in the response
-    match = re.search(r'\b(\d{1,2})\b', response_text)
-    if match:
-        score = int(match.group(1))
+    # Find the LAST integer in the response.  The judge (a thinking model) may
+    # emit <think> reasoning that contains stray numbers before the final score.
+    matches = re.findall(r'\b(\d{1,2})\b', response_text)
+    if matches:
+        score = int(matches[-1])
         return min(max(score, 0), 10) / 10.0
     # Fallback: couldn't parse -> neutral reward
     logger.warning(f"Could not parse judge score from: {response_text!r}")
@@ -219,7 +220,7 @@ class LongContextRLGroupBuilder(EnvGroupBuilder):
     # Judge configuration (stored as serialisable primitives for pickle safety)
     judge_model_name: str = "Qwen/Qwen3.5-397B-A17B"
     judge_renderer_name: str = "qwen3_5"
-    judge_max_tokens: int = 32
+    judge_max_tokens: int = 512
     judge_temperature: float = 0.0
     judge_base_url: str | None = None
 
