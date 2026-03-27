@@ -13,6 +13,15 @@ Each entry includes:
 
 ---
 
+### [cookbook] Auto-generated model cards for HuggingFace Hub publishing ([#543](https://github.com/thinking-machines-lab/tinker-cookbook/pull/543))
+**Date:** 2026-03-26
+**Type:** new
+**Tags:** weights
+
+`publish_to_hf_hub` now accepts an optional `ModelCardConfig` to auto-generate a HuggingFace-compatible `README.md` with YAML frontmatter, usage snippets, and framework versions. Adapter vs merged model format is auto-detected from `adapter_config.json`. A standalone `generate_model_card` function is also available for previewing cards before publishing.
+
+---
+
 ### [cookbook] Group per-iteration output files into subdirectories ([#517](https://github.com/thinking-machines-lab/tinker-cookbook/pull/517))
 **Date:** 2026-03-25
 **Type:** improvement

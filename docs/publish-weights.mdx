@@ -46,3 +46,60 @@ Loading public weights is exactly the same as loading a non-public one:
 ckpt_path = ...
 training_client = service_client.create_training_client_from_state(ckpt_path)
 ```
+
+## Publishing to HuggingFace Hub
+
+You can also publish trained weights directly to the [HuggingFace Hub](https://huggingface.co/) using `publish_to_hf_hub`. This works with outputs from both `build_hf_model` (merged models) and `build_lora_adapter` (PEFT adapters).
+
+### Basic usage
+
+```python
+from tinker_cookbook.weights import publish_to_hf_hub
+
+url = publish_to_hf_hub(
+    model_path="./model",
+    repo_id="user/my-model",
+)
+```
+
+By default, repositories are created as **private**. Pass `private=False` to make them public. Authentication uses the `HF_TOKEN` environment variable or a cached login from `huggingface-cli login`.
+
+### Auto-generated model cards
+
+Pass a `ModelCardConfig` to auto-generate a `README.md` with HuggingFace-compatible YAML frontmatter:
+
+```python
+from tinker_cookbook.weights import publish_to_hf_hub, ModelCardConfig
+
+publish_to_hf_hub(
+    model_path="./model",
+    repo_id="user/my-model",
+    model_card=ModelCardConfig(
+        base_model="Qwen/Qwen3-8B",
+        datasets=["my-org/my-dataset"],
+        tags=["sft"],
+        license="apache-2.0",
+        language=["en"],
+    ),
+)
+```
+
+The only required field is `base_model`. Tags `tinker` and `tinker-cookbook` are added automatically. For adapters (detected by the presence of `adapter_config.json`), `peft` and `lora` tags are also added, and the usage snippet shows `PeftModel` loading.
+
+If the model directory already contains a `README.md`, it is preserved and the model card is not generated.
+
+### Previewing a model card
+
+Use `generate_model_card` to preview or manually save a card without publishing:
+
+```python
+from tinker_cookbook.weights import generate_model_card, ModelCardConfig
+
+card = generate_model_card(
+    config=ModelCardConfig(base_model="Qwen/Qwen3-8B"),
+    repo_id="user/my-model",
+    model_path="./model",
+)
+print(card)           # preview
+card.save("README.md")  # save manually
+```
