@@ -42,8 +42,15 @@ logger = logging.getLogger(__name__)
 def validate_json_against_schema(response: str, schema_str: str) -> tuple[bool, str]:
     """Validate that response contains valid JSON matching the schema.
 
+    Uses ``jsonschema`` for full JSON Schema validation (type checks, nested
+    required fields, enum/pattern constraints, etc.).
+
     Returns (is_valid, reason).
     """
+    import re
+
+    from jsonschema import ValidationError, validate
+
     # Extract JSON from response
     response = response.strip()
 
@@ -57,7 +64,6 @@ def validate_json_against_schema(response: str, schema_str: str) -> tuple[bool, 
 
     # Try to find JSON in code blocks
     if json_obj is None:
-        import re
         json_match = re.search(r'```(?:json)?\s*\n(.*?)\n```', response, re.DOTALL)
         if json_match:
             try:
@@ -67,7 +73,6 @@ def validate_json_against_schema(response: str, schema_str: str) -> tuple[bool, 
 
     # Try to find any JSON object
     if json_obj is None:
-        import re
         obj_match = re.search(r'\{[\s\S]*\}', response)
         if obj_match:
             try:
@@ -77,7 +82,6 @@ def validate_json_against_schema(response: str, schema_str: str) -> tuple[bool, 
 
     # Try array
     if json_obj is None:
-        import re
         arr_match = re.search(r'\[[\s\S]*\]', response)
         if arr_match:
             try:
@@ -95,24 +99,13 @@ def validate_json_against_schema(response: str, schema_str: str) -> tuple[bool, 
         # If schema is not valid JSON, just check that response is valid JSON
         return True, "Valid JSON (schema unparseable)"
 
-    # Basic schema validation (without jsonschema dependency)
-    schema_type = schema.get("type", schema.get("schema_type", ""))
-
-    if schema_type == "object" and isinstance(json_obj, dict):
-        # Check required fields
-        required = schema.get("required", [])
-        for field in required:
-            if field not in json_obj:
-                return False, f"Missing required field: {field}"
-        return True, "Valid JSON object with required fields"
-
-    elif schema_type == "array" and isinstance(json_obj, list):
-        return True, "Valid JSON array"
-
-    elif isinstance(json_obj, (dict, list)):
-        return True, "Valid JSON"
-
-    return False, f"JSON type mismatch: expected {schema_type}, got {type(json_obj).__name__}"
+    # Full JSON Schema validation
+    try:
+        validate(instance=json_obj, schema=schema)
+        return True, "Valid JSON matching schema"
+    except ValidationError as e:
+        # Use the most specific (deepest) validation error message
+        return False, f"Schema validation failed: {e.message}"
 
 
 class StructuredOutputEnv(Env):
