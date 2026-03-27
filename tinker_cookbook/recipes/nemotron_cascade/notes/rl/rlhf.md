@@ -1,72 +1,74 @@
 # RLHF Environment Analysis
 
-## Status: RUNS BUT NO REWARD LOGGED — Debugging needed
+## Status: FIXED -- Rewards now logged successfully
+
+Two bugs prevented rewards from being logged. Both fixed 2026-03-27.
+
+## Root Causes
+
+### Bug 1: Wrong API parameter for GenRM sampling client (fatal)
+
+`_create_genrm()` in `RLHFGroupBuilder` used `model_path=` instead of `base_model=` when creating the GenRM sampling client:
+
+```python
+# BEFORE (broken): model_path expects a tinker:// checkpoint URL
+service_client.create_sampling_client(model_path=self.genrm_model_name)
+
+# AFTER (fixed): base_model is for model names like "Qwen/Qwen3.5-397B-A17B"
+service_client.create_sampling_client(base_model=self.genrm_model_name)
+```
+
+This raised `ValueError: model_path must start with 'tinker://'` inside `compute_group_rewards`, causing every group rollout to fail. The FailFast strategy re-raised the error, but `asyncio.gather` in `gather_with_progress` propagated it... which resulted in "all groups failed or filtered, skipping batch" and no training or reward logging.
+
+### Bug 2: Wrong dataset field name (fatal)
+
+`_make_env_group_builder()` looked for a `"prompt"` field in HelpSteer3 rows, but HelpSteer3 stores conversations in a `"context"` field (a list of message dicts). Every row returned `None`, so `get_batch()` always produced an empty list of builders.
+
+```python
+# BEFORE (broken): HelpSteer3 has no "prompt" field
+prompt_text = row.get("prompt", "")
+
+# AFTER (fixed): use "context" field, strip trailing assistant turns
+context = row.get("context")
+```
+
+The fix parses the conversation context, strips trailing assistant messages so the prompt ends on the last user turn, and extracts plain text for the GenRM.
 
 ## Reward Architecture (Unique Among All 9 Envs)
 
-RLHF is the **only** env that uses `compute_group_rewards` exclusively for reward computation. All other envs compute reward in `Env.step()`. Here's how it works:
+RLHF is the **only** env that uses `compute_group_rewards` exclusively for reward computation. All other envs compute reward in `Env.step()`.
 
-### Step-level: `RLHFEnv.step()` returns reward=0.0 always
-```python
-async def step(self, action, *, extra=None):
-    return StepResult(reward=0.0, episode_done=True, ...)
-```
+- `RLHFEnv.step()` always returns `reward=0.0`
+- `RLHFGroupBuilder.compute_group_rewards()` runs pairwise GenRM comparisons
+- Total reward = sum of per-step rewards (0) + group reward from `compute_group_rewards`
 
-### Group-level: `RLHFGroupBuilder.compute_group_rewards()` does the real work
-1. Parses responses from all trajectories
-2. Runs pairwise GenRM comparisons (Qwen3.5-397B-A17B)
-3. Aggregates win/loss into per-trajectory win rates
-4. Applies length-normalized reward with conciseness bonus
-5. Returns `list[tuple[float, Metrics]]`
+## Verified Test Results (2-step run, 2026-03-27)
 
-### How total reward is computed (in `TrajectoryGroup.get_total_rewards`):
-```python
-total = sum(transition.reward for transition in trajectory.transitions) + final_reward
-```
-Since per-step reward is always 0.0, total reward = the `compute_group_rewards` value.
+Checkpoint: `tinker://9814478b-c54c-5c5c-9967-40ab181a0b80:train:0/weights/final`
 
-## Why Reward Might Not Be Logged
+**Step 0:**
+- `env/all/reward/total = 0.0076`
+- `env/all/win_rate = 0.500`
+- `env/all/response_length = 393.75`
+- `time/compute_group_rewards = 357s` (GenRM is slow -- 6 pairwise comparisons)
 
-### Hypothesis 1: GenRM call fails silently
-The `compute_group_rewards` method creates a new `TinkerMessageCompleter` for the GenRM. If:
-- The Qwen3.5-397B-A17B model is not available on the Tinker service
-- The sampling client creation fails
-- The GenRM response doesn't parse ("unparseable verdict" → returns 0.0)
+**Step 1:**
+- `env/all/reward/total = 0.0`
+- `env/all/win_rate = 0.500`
+- `env/all/response_length = 1346.5`
+- Most GenRM verdicts unparseable (thinking too long for 512-token limit)
 
-Then all rewards would be 0.0 or close to it. The `logger.warning` for unparseable verdicts goes to stderr, not to the training metrics.
+## Known Issues (non-blocking)
 
-### Hypothesis 2: Reward IS computed but not visible in expected location
-The `compute_group_rewards` rewards flow through `TrajectoryGroup.final_rewards_G` → `get_total_rewards()` → advantage computation → training. Metrics from `compute_group_rewards` (like `win_rate`, `response_length`, `format_valid`) are stored in `TrajectoryGroup.metrics_G`.
+### GenRM verdicts often unparseable
+Qwen3.5-397B-A17B is a thinking model. With `genrm_max_tokens=512`, the `<think>` block often consumes all tokens before the model outputs the `VERDICT:` line. Mitigation options:
+- Increase `genrm_max_tokens` to 2048+ (slower but more reliable)
+- Use `qwen3_5_disable_thinking` renderer for the GenRM (bypasses thinking)
+- Add a system prompt instruction like "Be concise in your reasoning"
 
-Check: Are these metrics being picked up by `compute_trajectory_metrics` in `metric_util.py`? The function aggregates both per-step metrics and group-level metrics. Look for `win_rate` in the logged metrics.
+### format_valid = 0.0
+All responses showed `format_valid=0.0` because the test used `max_tokens=256`, which truncates responses before proper ending tokens. At production lengths (16K+), this should improve.
 
-### Hypothesis 3: matchup_group_size=4 limits comparisons
-With group_size=16 and matchup_group_size=4, comparisons are chunked: only within chunks of 4. This means 6 comparisons per chunk, 4 chunks = 24 total comparisons (vs 120 for full pairwise). Win rates are more noisy but should still be non-zero.
-
-## Actionable Improvements
-
-### P0: Verify GenRM is accessible
-Before training, test that:
-```python
-service_client = tinker.ServiceClient()
-sampling_client = service_client.create_sampling_client(model_path="Qwen/Qwen3.5-397B-A17B")
-```
-works. If this model isn't available, use a different judge model.
-
-### P1: Add reward to per-step metrics for visibility
-Even though reward is computed at group level, log a diagnostic in the step function:
-```python
-metrics={"rlhf_step": 1.0}  # just to confirm steps are happening
-```
-
-### P2: Check metric aggregation
-Verify that `compute_trajectory_metrics` includes the `Metrics` dict returned by `compute_group_rewards` (the `win_rate`, `response_length`, `format_valid` keys). These should appear in `metrics.jsonl`.
-
-### P3: Add fallback for GenRM failures
-If the GenRM call fails, fall back to a simpler reward (e.g., response length penalty or format check) rather than silent 0.0.
-
-### P4: Lower matchup_group_size or increase it
-matchup_group_size=4 means small tournament brackets. For 16 rollouts, try matchup_group_size=8 or 16 for less noisy win rates.
-
-## Expected Impact
-P0 is the most likely fix — if GenRM is not accessible, no reward can be computed. Once GenRM works, RLHF should produce rewards in the 0.3-0.7 range (reflecting preference ranking).
+### Metric aggregation path (confirmed working)
+`compute_group_rewards` returns `list[tuple[float, Metrics]]` where Metrics includes `win_rate`, `response_length`, `format_valid`. These flow through:
+`TrajectoryGroup.metrics_G` -> `_compute_trajectory_metrics` (via `dict_mean`) -> `compute_trajectory_metrics` (prefixed with `env/all/`) -> `metrics.jsonl`
