@@ -197,7 +197,7 @@ async def run_swe_test_in_modal(
             return False, "No R2E-Gym test files"
 
         test_cmds = " && ".join(
-            f'python -m pytest "{t}" -x --timeout=60 2>/dev/null && PASS=$((PASS + 1))'
+            f'python -m pytest "{t}" -x 2>&1 && PASS=$((PASS + 1))'
             for t in test_file_names
         )
 
@@ -205,7 +205,7 @@ async def run_swe_test_in_modal(
 set -x
 cd /testbed
 {test_file_setup}
-echo '{patch_b64}' | base64 -d | git apply - 2>/dev/null || echo "PATCH_APPLY_FAILED"
+echo '{patch_b64}' | base64 -d | git apply - || {{ echo "PATCH_APPLY_FAILED"; exit 1; }}
 PASS=0
 TOTAL={len(test_file_names)}
 {test_cmds}
@@ -239,7 +239,7 @@ test "$PASS" -eq "$TOTAL"
         patch_b64 = base64.b64encode(patch.encode()).decode()
 
         test_cmds = " && ".join(
-            f'python -m pytest "{t}" -x --timeout=60 2>/dev/null && PASS=$((PASS + 1))'
+            f'python -m pytest "{t}" -x 2>&1 && PASS=$((PASS + 1))'
             for t in fail_to_pass
         )
 
@@ -248,7 +248,7 @@ set -x
 git clone --depth=1 https://github.com/{repo}.git /workspace/repo 2>/dev/null || exit 1
 cd /workspace/repo
 git fetch --depth=1 origin {base_commit} 2>/dev/null && git checkout {base_commit} 2>/dev/null || true
-echo '{patch_b64}' | base64 -d | git apply - 2>/dev/null || echo "PATCH_APPLY_FAILED"
+echo '{patch_b64}' | base64 -d | git apply - || {{ echo "PATCH_APPLY_FAILED"; exit 1; }}
 pip install -e . 2>/dev/null || true
 PASS=0
 TOTAL={len(fail_to_pass)}

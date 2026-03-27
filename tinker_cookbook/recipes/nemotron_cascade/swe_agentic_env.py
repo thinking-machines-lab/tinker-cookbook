@@ -161,7 +161,7 @@ class SWEAgenticReward:
 
             for test in self._fail_to_pass:
                 result = await self._sandbox.run_command(
-                    f'python -m pytest "{test}" -x --timeout=60 2>&1',
+                    f'python -m pytest "{test}" -x 2>&1',
                     workdir=self._workdir,
                     timeout=self._test_timeout,
                 )
