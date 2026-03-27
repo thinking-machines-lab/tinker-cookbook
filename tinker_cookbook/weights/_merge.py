@@ -376,10 +376,7 @@ def _detect_fused_axis(
         return 2
 
     # Check dim 1: target = (n, 2*out_dim, in_dim)
-    # delta (n, in_dim, out_dim) → transposed (n, out_dim, in_dim)
-    # where d2==t2 (in_dim matches hidden) and t1==2*d2 (fused==2*out_dim)
-    # But actually: delta = (n, in_dim, out_dim), transposed = (n, out_dim, in_dim)
-    # Target slice = (n, out_dim, in_dim), so we need t1 == 2*d2 and t2 == d1
+    # delta (n, in_dim, out_dim) is transposed to (n, out_dim, in_dim) at apply time
     if t2 == d1 and t1 == 2 * d2:
         return 1
 
@@ -424,12 +421,12 @@ def validate_merge_op_shapes(
                     #   Qwen3.5 MoE:   gate_up_proj = (n, fused, hidden)  → dim 1
                     fused_axis = _detect_fused_axis(target_shape, delta_shape, target_key)
                     if fused_axis == 2:
-                        # delta (n, in_dim, out_dim) matches slice directly
+                        # delta (n, in_dim, out_dim) targets slice (n, dim1, dim2//2)
                         expected = (target_shape[0], target_shape[1], target_shape[2] // 2)
                     else:
-                        # delta (n, in_dim, out_dim) will be transposed to
-                        # (n, out_dim, in_dim) to match slice (n, half, hidden)
-                        expected = delta_shape  # accept as-is; apply transposes
+                        # delta (n, in_dim, out_dim) is transposed to (n, out_dim, in_dim)
+                        # to match slice (n, dim1//2, dim2)
+                        expected = (target_shape[0], target_shape[2], target_shape[1] // 2)
                 else:
                     # Non-fused 3D expert weight.  Some models store expert
                     # weights transposed: (n, out_dim, in_dim) instead of
@@ -510,7 +507,7 @@ def apply_merge_op(tensors: dict[str, torch.Tensor], op: MergeOp) -> None:
                 # Concatenated along dim 1: (n, [gate|up], hidden)
                 # Delta is (n, in_dim, out_dim) but target slice is
                 # (n, out_dim, in_dim), so transpose the delta.
-                delta = delta.transpose(-1, -2).contiguous()
+                delta = delta.transpose(-1, -2)
                 proj_width = target.shape[1] // 2
                 start = op.fused_proj_idx * proj_width
                 target_view = target[:, start : start + proj_width, :]
@@ -518,7 +515,7 @@ def apply_merge_op(tensors: dict[str, torch.Tensor], op: MergeOp) -> None:
         else:
             # Non-fused: transpose delta if target uses opposite layout.
             if delta.shape != target.shape:
-                delta = delta.transpose(-1, -2).contiguous()
+                delta = delta.transpose(-1, -2)
             apply_merged_weight(target, delta)
     else:
         # 2D: standard linear or per-expert (already sliced during planning)

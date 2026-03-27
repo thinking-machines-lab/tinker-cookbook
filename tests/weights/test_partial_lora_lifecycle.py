@@ -4,9 +4,9 @@ Trains models with partial LoRA configurations (attn-only, mlp-only) for
 1 step, downloads the real adapter weights from Tinker, and verifies
 build_lora_adapter and build_hf_model succeed with partial coverage.
 
-Tests both dense (Qwen3-4B-Instruct-2507) and MoE (Qwen3.5-35B-A3B)
-architectures. MoE tests skip full merge to avoid downloading ~70GB of
-base weights; adapter export is still verified.
+Tests three architectures: dense (Qwen3-4B-Instruct-2507), dense Qwen3.5
+(Qwen3.5-4B), and MoE (Qwen3.5-35B-A3B). All tests verify adapter export
+and full weight merge.
 
 Requires TINKER_API_KEY and network access. Skipped otherwise.
 """
@@ -140,7 +140,6 @@ def _assert_adapter_export(adapter_dir: Path, model_name: str, output_dir: Path)
         config = json.load(f)
     assert config["peft_type"] == "LORA"
     assert config["r"] == LORA_RANK
-    return config
 
 
 def _assert_full_merge(adapter_dir: Path, model_name: str, output_dir: Path) -> None:
