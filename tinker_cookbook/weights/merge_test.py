@@ -449,6 +449,63 @@ class TestEmptyExpertMerge:
             assert up_weight.abs().sum() > 0, f"Expert {e} up_proj should have been merged"
 
 
+class TestNemotronFusedProjectionMerge:
+    """Test Mamba gate_proj/x_proj → fused in_proj merge via slice_start."""
+
+    HIDDEN = 8
+    INTERMEDIATE = 12
+    # in_proj = [gate (INTERMEDIATE) | x (INTERMEDIATE) | B+C+dt (6)]
+    IN_PROJ_DIM = INTERMEDIATE * 2 + 6
+
+    def _make_model_and_adapter(self):
+        state_dict = {
+            "backbone.layers.0.mixer.in_proj.weight": torch.zeros(self.IN_PROJ_DIM, self.HIDDEN),
+            "backbone.layers.0.mixer.out_proj.weight": torch.zeros(self.HIDDEN, self.INTERMEDIATE),
+        }
+        model = _make_base_model(
+            state_dict,
+            config_dict={"architectures": ["NemotronHForCausalLM"]},
+        )
+        adapter_weights = {
+            "base_model.model.backbone.layers.0.mixer.gate_proj.lora_A.weight": (
+                torch.ones(1, self.HIDDEN) * 0.5
+            ),
+            "base_model.model.backbone.layers.0.mixer.gate_proj.lora_B.weight": (
+                torch.ones(self.INTERMEDIATE, 1)
+            ),
+            "base_model.model.backbone.layers.0.mixer.x_proj.lora_A.weight": (
+                torch.ones(1, self.HIDDEN) * 0.3
+            ),
+            "base_model.model.backbone.layers.0.mixer.x_proj.lora_B.weight": (
+                torch.ones(self.INTERMEDIATE, 1)
+            ),
+        }
+        return model, adapter_weights
+
+    def test_gate_and_x_merged_into_in_proj(self):
+        model, adapter_weights = self._make_model_and_adapter()
+        merge_adapter_weights(model, adapter_weights, {"lora_alpha": 1, "r": 1})
+
+        in_proj = model.state_dict()["backbone.layers.0.mixer.in_proj.weight"]
+        gate_slice = in_proj[: self.INTERMEDIATE]
+        x_slice = in_proj[self.INTERMEDIATE : 2 * self.INTERMEDIATE]
+        rest = in_proj[2 * self.INTERMEDIATE :]
+
+        # gate delta = lora_B @ lora_A = ones(12,1) @ (ones(1,8)*0.5) = 0.5
+        assert torch.allclose(gate_slice, torch.full_like(gate_slice, 0.5), atol=1e-6)
+        # x delta = ones(12,1) @ (ones(1,8)*0.3) = 0.3
+        assert torch.allclose(x_slice, torch.full_like(x_slice, 0.3), atol=1e-6)
+        # B/C/dt rows should be unchanged (zeros)
+        assert rest.abs().sum() == 0
+
+    def test_out_proj_unchanged(self):
+        model, adapter_weights = self._make_model_and_adapter()
+        merge_adapter_weights(model, adapter_weights, {"lora_alpha": 1, "r": 1})
+
+        out_proj = model.state_dict()["backbone.layers.0.mixer.out_proj.weight"]
+        assert out_proj.abs().sum() == 0, "out_proj should not be affected"
+
+
 # ===========================================================================
 # Tests for new APIs: MergeProfile, detect_merge_profile, plan/apply,
 # merge_lora_matrices, expand_expert_lora_tensors

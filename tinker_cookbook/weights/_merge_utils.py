@@ -8,6 +8,7 @@ Per-model modules compose these to build their ``plan_merge_ops`` functions.
 from __future__ import annotations
 
 import logging
+import re
 
 import torch
 
@@ -137,6 +138,95 @@ def plan_standard_op(
 
 
 # ---------------------------------------------------------------------------
+# Fused projection op planning
+# ---------------------------------------------------------------------------
+
+
+def plan_fused_projection_op(
+    target_key: str,
+    lora_A: torch.Tensor,
+    lora_B: torch.Tensor,
+    adapter_name: str,
+    adapter_weights: dict[str, torch.Tensor],
+    profile: MergeProfile,
+    model_state_keys: set[str],
+    ops: dict[str, list[MergeOp]],
+) -> bool:
+    """Try to plan a fused-projection merge op.
+
+    Checks whether ``target_key`` targets a component projection that the HF
+    model fuses into a single module (e.g. Nemotron Mamba's ``gate_proj`` and
+    ``x_proj`` are fused into ``in_proj``).  If so, computes the row offset
+    from sibling ``lora_B`` shapes and appends a sliced :class:`MergeOp`.
+
+    Follows the same pattern as :func:`_plan_split_qkv_op` in
+    ``_merge_qwen3_5.py``.
+
+    Returns:
+        True if the key was handled (caller should skip normal planning),
+        False if this is not a fused-projection component.
+    """
+    if not profile.fused_projection_map:
+        return False
+
+    leaf = target_key.removesuffix(".weight").rsplit(".", 1)[-1]
+    fused_target: str | None = None
+    comp_idx: int | None = None
+    for target_name, components in profile.fused_projection_map:
+        if leaf in components:
+            fused_target = target_name
+            comp_idx = components.index(leaf)
+            break
+
+    if fused_target is None:
+        return False
+
+    # Derive the fused target key in the model state dict.
+    # The adapter namespace may differ from the model namespace (e.g.
+    # adapter has "model.layers.0.mixer.gate_proj.weight" but model has
+    # "backbone.layers.0.mixer.in_proj.weight").
+    fused_suffix = f".{fused_target}.weight"
+    layer_prefix = target_key.removesuffix(f".{leaf}.weight")
+
+    layer_match = re.search(r"\.layers\.(\d+)\.", layer_prefix)
+    if layer_match is None:
+        return False
+
+    layer_idx = layer_match.group(1)
+    pattern = f".layers.{layer_idx}."
+    fused_key: str | None = None
+    for k in model_state_keys:
+        if pattern in k and k.endswith(fused_suffix):
+            fused_key = k
+            break
+
+    if fused_key is None:
+        return False
+
+    # Compute row offset from sibling lora_B shapes. The fused layout has
+    # components in order, each contributing lora_B.shape[0] rows.
+    _, components = next((t, c) for t, c in profile.fused_projection_map if t == fused_target)
+
+    start = 0
+    adapter_prefix = adapter_name.removesuffix(f".{leaf}.weight")
+    for i, comp_name in enumerate(components):
+        if i == comp_idx:
+            break
+        sibling_B_key = f"{adapter_prefix}.{comp_name}.lora_B.weight"
+        if sibling_B_key not in adapter_weights:
+            raise WeightsMergeError(
+                f"Fused projection merge requires all components {components} "
+                f"for the same layer, but {sibling_B_key!r} is missing"
+            )
+        start += adapter_weights[sibling_B_key].shape[0]
+
+    ops.setdefault(fused_key, []).append(
+        MergeOp(target_key=fused_key, lora_A=lora_A, lora_B=lora_B, slice_start=start)
+    )
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Expert op planning
 # ---------------------------------------------------------------------------
 
@@ -161,6 +251,10 @@ def plan_expert_ops(
             f"Expert LoRA weights must be 3D, got lora_A: {lora_A.shape}, lora_B: {lora_B.shape}"
         )
     lora_A, lora_B = expand_expert_lora_tensors(lora_A, lora_B)
+
+    # Apply general key remaps (e.g. model. → backbone. for Nemotron)
+    for old, new in profile.extra_key_remaps:
+        target_key = target_key.replace(old, new)
 
     for old, new in profile.expert_key_remaps:
         target_key = target_key.replace(old, new)

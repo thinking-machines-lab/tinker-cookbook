@@ -14,6 +14,7 @@ from tinker_cookbook.weights._merge_utils import (
     build_name_remaps,
     extract_adapter_weight_names,
     plan_expert_ops,
+    plan_fused_projection_op,
     plan_standard_op,
     remap_adapter_name,
     validate_adapter_config,
@@ -57,6 +58,17 @@ def plan_merge_ops(
         lora_B = adapter_weights[n.replace(".weight", ".lora_B.weight")].float() * scaling
 
         if ".experts" not in n:
+            if plan_fused_projection_op(
+                target_key,
+                lora_A,
+                lora_B,
+                n,
+                adapter_weights,
+                profile,
+                model_state_keys,
+                ops,
+            ):
+                continue
             plan_standard_op(target_key, lora_A, lora_B, n, profile, model_state_keys, ops)
         else:
             plan_expert_ops(target_key, lora_A, lora_B, n, profile, model_state_keys, ops)
