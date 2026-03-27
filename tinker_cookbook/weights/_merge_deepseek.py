@@ -62,15 +62,6 @@ def plan_merge_ops(
             plan_standard_op(target_key, lora_A, lora_B, n, profile, model_state_keys, ops)
         else:
             # DeepSeek always uses separate expert layout
-            plan_expert_ops(
-                target_key,
-                lora_A,
-                lora_B,
-                n,
-                model_state_keys,
-                ops,
-                is_fused=False,
-                is_interleaved=False,
-            )
+            plan_expert_ops(target_key, lora_A, lora_B, n, profile, model_state_keys, ops)
 
     return ops

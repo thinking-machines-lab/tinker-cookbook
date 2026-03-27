@@ -79,6 +79,36 @@ class MergeProfile:
     """Identifier for the model family. Used to dispatch to the correct
     per-model planning module in :func:`plan_merge_ops`."""
 
+    expert_key_remaps: tuple[tuple[str, str], ...] = (
+        (".w1.weight", ".gate_proj.weight"),
+        (".w3.weight", ".up_proj.weight"),
+        (".w2.weight", ".down_proj.weight"),
+    )
+    """Mapping from Tinker internal expert projection names (w1/w2/w3) to
+    HuggingFace parameter names (gate_proj/up_proj/down_proj).
+
+    The default mapping matches standard 3-projection MoE models (Qwen3 MoE,
+    DeepSeek, Kimi). Override for models with different expert layouts, e.g.
+    Nemotron which has only up_proj and down_proj (no gate_proj).
+
+    Uses tuple-of-tuples rather than dict so ``MergeProfile`` stays hashable.
+    """
+
+    fused_projection_map: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    """Mapping from fused target module → component projection names that
+    Tinker trains as separate LoRA but HF/vLLM fuse into one module.
+
+    During adapter conversion, component weights are merged into the fused
+    target. For example, Nemotron Mamba trains ``gate_proj``/``x_proj``
+    separately, but HF fuses both into ``in_proj``. The mapping would be
+    ``(("in_proj", ("gate_proj", "x_proj")),)``.
+
+    The component projections must map to consecutive row slices in the
+    fused target, in the order listed.
+
+    Empty by default — most models don't have this mismatch.
+    """
+
     split_qkv_projections: bool = False
     """Whether Tinker trains separate ``in_proj_q/k/v`` LoRA adapters that must
     be merged into a single fused ``in_proj_qkv`` weight in the HF model. When
@@ -135,9 +165,10 @@ def _get_profile_detectors() -> list[_ProfileDetector]:
     circular dependencies (per-model modules import from this file)."""
     from tinker_cookbook.weights._merge_deepseek import detect_profile as _deepseek
     from tinker_cookbook.weights._merge_gpt_oss import detect_profile as _gpt_oss
+    from tinker_cookbook.weights._merge_nemotron import detect_profile as _nemotron
     from tinker_cookbook.weights._merge_qwen3_5 import detect_profile as _qwen3_5
 
-    return [_gpt_oss, _deepseek, _qwen3_5]
+    return [_gpt_oss, _deepseek, _nemotron, _qwen3_5]
 
 
 def _get_plan_functions() -> dict[str, _PlanFn]:
@@ -152,6 +183,7 @@ def _get_plan_functions() -> dict[str, _PlanFn]:
         "default": _default_plan,
         "gpt_oss": _gpt_oss_plan,
         "deepseek": _deepseek_plan,
+        "nemotron": _default_plan,
         "qwen3_5": _qwen3_5_plan,
     }
 

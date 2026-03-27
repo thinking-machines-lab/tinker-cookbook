@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 import torch
@@ -25,6 +26,7 @@ from safetensors.torch import save_file
 from tinker_cookbook.exceptions import WeightsAdapterError
 from tinker_cookbook.weights._artifacts import (
     get_model_state_keys,
+    get_model_state_shapes,
     load_adapter_weights,
     resolve_model_dir,
 )
@@ -68,13 +70,6 @@ _UNSUPPORTED_MODEL_TYPES: dict[str, str] = {
 _SERVING_PREFIX_REMAPS: dict[str, tuple[tuple[str, str], ...]] = {
     "nemotron_h": (("backbone.", "model."),),
 }
-
-# Expert remapping: Tinker internal names → HuggingFace parameter names.
-_EXPERT_KEY_REMAPS = (
-    (".w1.weight", ".gate_proj.weight"),
-    (".w3.weight", ".up_proj.weight"),
-    (".w2.weight", ".down_proj.weight"),
-)
 
 
 def build_lora_adapter(
@@ -146,8 +141,18 @@ def build_lora_adapter(
     try:
         out.mkdir(parents=True)
 
+        # Load model weight shapes if needed for fused projection merging.
+        model_state_shapes: dict[str, tuple[int, ...]] | None = None
+        if profile.fused_projection_map:
+            model_state_shapes = get_model_state_shapes(model_dir)
+
         # Core conversion: remap keys, expand experts, produce PEFT tensors.
-        peft_weights, target_modules = _convert_adapter(adapter_weights, model_state_keys, profile)
+        peft_weights, target_modules, rank_overrides = _convert_adapter(
+            adapter_weights,
+            model_state_keys,
+            profile,
+            model_state_shapes,
+        )
 
         # Apply serving-framework prefix remaps (e.g., backbone.* → model.* for Nemotron).
         model_type = config_dict.get("model_type", "")
@@ -155,7 +160,12 @@ def build_lora_adapter(
             peft_weights = _apply_serving_prefix_remaps(peft_weights, model_type)
 
         # Write output.
-        peft_config = _build_peft_config(adapter_config, base_model, target_modules)
+        peft_config = _build_peft_config(
+            adapter_config,
+            base_model,
+            target_modules,
+            rank_overrides,
+        )
         _write_peft_adapter(out, peft_weights, peft_config)
 
         logger.info(
@@ -229,14 +239,18 @@ def _convert_adapter(
     adapter_weights: dict[str, torch.Tensor],
     model_state_keys: set[str],
     profile: MergeProfile,
-) -> tuple[dict[str, torch.Tensor], list[str]]:
+    model_state_shapes: dict[str, tuple[int, ...]] | None = None,
+) -> tuple[dict[str, torch.Tensor], list[str], dict[str, int]]:
     """Convert Tinker adapter weights to PEFT-compatible format.
 
     Returns:
-        Tuple of ``(peft_weights, target_modules)`` where:
+        Tuple of ``(peft_weights, target_modules, rank_overrides)`` where:
         - ``peft_weights``: dict with PEFT key names → raw (unscaled) tensors
         - ``target_modules``: sorted list of short module names for the
           PEFT ``adapter_config.json``
+        - ``rank_overrides``: mapping from module name → rank for modules
+          whose LoRA rank differs from the adapter's base rank (e.g. fused
+          Mamba projections that double the rank)
     """
     adapter_weight_names = extract_adapter_weight_names(adapter_weights)
 
@@ -245,8 +259,17 @@ def _convert_adapter(
     else:
         name_remaps = build_name_remaps(profile, model_state_keys)
 
+    # Build lookup for fused projection merging: component_name → fused_target_name.
+    fused_component_to_target: dict[str, str] = {}
+    for fused_target, components in profile.fused_projection_map:
+        for comp in components:
+            fused_component_to_target[comp] = fused_target
+
     peft_weights: dict[str, torch.Tensor] = {}
     target_modules: set[str] = set()
+    # Collect component LoRA weights for fused projection merging.
+    # Key: (layer_prefix, fused_target) → list of (component_name, lora_A, lora_B)
+    fused_pending: dict[tuple[str, str], list[tuple[str, torch.Tensor, torch.Tensor]]] = {}
 
     for n in adapter_weight_names:
         lora_A_key = n.replace(".weight", ".lora_A.weight")
@@ -262,9 +285,57 @@ def _convert_adapter(
             target_key = target_key.replace(old, new)
 
         if ".experts" in n:
-            _expand_expert_weights(target_key, lora_A, lora_B, peft_weights, target_modules)
+            # Skip empty expert LoRA tensors — these are placeholders for
+            # projections that don't exist in the model (e.g. Nemotron MoE
+            # has no gate_proj, so w3 entries are empty).
+            if lora_A.numel() == 0 and lora_B.numel() == 0:
+                continue
+            _expand_expert_weights(
+                target_key,
+                lora_A,
+                lora_B,
+                peft_weights,
+                target_modules,
+                expert_key_remaps=profile.expert_key_remaps,
+            )
         else:
-            _add_peft_weight(target_key, lora_A, lora_B, peft_weights, target_modules)
+            # Check if this is a component of a fused projection.
+            leaf_module = target_key.removesuffix(".weight").rsplit(".", 1)[-1]
+            if leaf_module in fused_component_to_target:
+                fused_target = fused_component_to_target[leaf_module]
+                layer_prefix = target_key.removesuffix(f".{leaf_module}.weight")
+                key = (layer_prefix, fused_target)
+                fused_pending.setdefault(key, []).append((leaf_module, lora_A, lora_B))
+            else:
+                _add_peft_weight(target_key, lora_A, lora_B, peft_weights, target_modules)
+
+    # Merge collected fused projection components.
+    rank_overrides: dict[str, int] = {}
+    if fused_pending:
+        assert model_state_shapes is not None, (
+            "model_state_shapes required for fused projection merging"
+        )
+        for (layer_prefix, fused_target), components in fused_pending.items():
+            # The layer_prefix comes from the remapped adapter key namespace
+            # (e.g. "model.layers.0.mixer") which may differ from the model
+            # state dict namespace (e.g. "backbone.layers.0.mixer" for
+            # Nemotron).  Find the matching fused target in model_state_keys.
+            fused_suffix = f".{fused_target}.weight"
+            fused_model_key = _find_model_key(
+                layer_prefix,
+                fused_suffix,
+                model_state_keys,
+            )
+            fused_rank = _merge_fused_projections(
+                fused_model_key,
+                layer_prefix,
+                components,
+                model_state_shapes,
+                peft_weights,
+                target_modules,
+                profile,
+            )
+            rank_overrides[fused_target] = fused_rank
 
     if not peft_weights:
         raise WeightsAdapterError(
@@ -272,7 +343,115 @@ def _convert_adapter(
             "points to a valid Tinker LoRA adapter."
         )
 
-    return peft_weights, sorted(target_modules)
+    return peft_weights, sorted(target_modules), rank_overrides
+
+
+def _find_model_key(
+    layer_prefix: str,
+    suffix: str,
+    model_state_keys: set[str],
+) -> str:
+    """Find a model state key matching a layer prefix and suffix.
+
+    The adapter's remapped layer prefix (e.g. ``model.layers.0.mixer``)
+    may differ from the model's prefix (e.g. ``backbone.layers.0.mixer``).
+    This function finds the matching key by extracting the layer index
+    and matching on the suffix.
+    """
+    layer_match = re.search(r"\.layers\.(\d+)\.", layer_prefix)
+    if layer_match:
+        layer_idx = layer_match.group(1)
+        pattern = f".layers.{layer_idx}."
+        for k in model_state_keys:
+            if pattern in k and k.endswith(suffix):
+                return k
+
+    raise WeightsAdapterError(
+        f"Cannot find model state key matching layer prefix {layer_prefix!r} "
+        f"with suffix {suffix!r}."
+    )
+
+
+def _merge_fused_projections(
+    fused_model_key: str,
+    adapter_layer_prefix: str,
+    components: list[tuple[str, torch.Tensor, torch.Tensor]],
+    model_state_shapes: dict[str, tuple[int, ...]],
+    peft_weights: dict[str, torch.Tensor],
+    target_modules: set[str],
+    profile: MergeProfile,
+) -> int:
+    """Merge component LoRA weights into a fused projection target.
+
+    When Tinker trains separate LoRA for projections that the HF model
+    fuses into one module (e.g. Nemotron Mamba ``gate_proj``/``x_proj`` →
+    ``in_proj``), this function combines them into a single LoRA with
+    doubled rank.
+
+    The component projections must correspond to consecutive row slices
+    in the fused target, in the order specified by
+    ``profile.fused_projection_map``.
+
+    Args:
+        fused_model_key: The model state dict key for the fused target
+            (e.g. ``backbone.layers.0.mixer.in_proj.weight``).
+        adapter_layer_prefix: The adapter-namespace layer prefix
+            (e.g. ``model.layers.0.mixer``), used to construct PEFT keys.
+
+    Returns the merged LoRA rank (sum of component ranks).
+    """
+    fused_out_dim = model_state_shapes[fused_model_key][0]
+
+    # Look up the expected component order from the profile.
+    fused_target_name = fused_model_key.removesuffix(".weight").rsplit(".", 1)[-1]
+    component_order: tuple[str, ...] | None = None
+    for target, comps in profile.fused_projection_map:
+        if target == fused_target_name:
+            component_order = comps
+            break
+    assert component_order is not None
+
+    # Sort components to match the expected order.
+    comp_by_name = {name: (lora_A, lora_B) for name, lora_A, lora_B in components}
+
+    # Build merged lora_A by concatenating along rank dimension.
+    # Build merged lora_B by placing each component's lora_B in the
+    # correct row slice of the fused output, with zeros elsewhere.
+    lora_A_parts: list[torch.Tensor] = []
+    merged_rank = 0
+    comp_slices: list[tuple[int, int, int]] = []  # (row_start, row_end, rank)
+    row_offset = 0
+
+    for comp_name in component_order:
+        if comp_name not in comp_by_name:
+            raise WeightsAdapterError(
+                f"Missing component {comp_name!r} for fused target {fused_model_key!r}. "
+                f"Expected components: {component_order}"
+            )
+        lora_A, lora_B = comp_by_name[comp_name]
+        r = lora_A.shape[0]
+        out_dim = lora_B.shape[0]
+        lora_A_parts.append(lora_A)
+        comp_slices.append((row_offset, row_offset + out_dim, r))
+        row_offset += out_dim
+        merged_rank += r
+
+    # lora_A: (merged_rank, hidden_dim) — concatenation of all component A matrices
+    merged_lora_A = torch.cat(lora_A_parts, dim=0)
+
+    # lora_B: (fused_out_dim, merged_rank) — block-diagonal placement
+    merged_lora_B = torch.zeros(fused_out_dim, merged_rank, dtype=lora_A_parts[0].dtype)
+    rank_offset = 0
+    for i, (row_start, row_end, r) in enumerate(comp_slices):
+        _, lora_B = comp_by_name[component_order[i]]
+        merged_lora_B[row_start:row_end, rank_offset : rank_offset + r] = lora_B
+        rank_offset += r
+
+    # Use the adapter-namespace prefix for the PEFT output key (the serving
+    # prefix remap will be applied later by the caller if needed).
+    peft_target_key = f"{adapter_layer_prefix}.{fused_target_name}.weight"
+    _add_peft_weight(peft_target_key, merged_lora_A, merged_lora_B, peft_weights, target_modules)
+    return merged_rank
 
 
 def _add_peft_weight(
@@ -309,6 +488,8 @@ def _expand_expert_weights(
     lora_B: torch.Tensor,
     peft_weights: dict[str, torch.Tensor],
     target_modules: set[str],
+    *,
+    expert_key_remaps: tuple[tuple[str, str], ...],
 ) -> None:
     """Expand 3D expert LoRA tensors to per-expert 2D PEFT keys.
 
@@ -316,8 +497,9 @@ def _expand_expert_weights(
     a shared key like ``experts.w1``. PEFT format requires separate 2D tensors
     per expert like ``experts.0.gate_proj``.
     """
-    # Apply expert key remapping (w1→gate_proj, w3→up_proj, w2→down_proj).
-    for old, new in _EXPERT_KEY_REMAPS:
+    # Apply expert key remapping (e.g. w1→gate_proj for standard MoE,
+    # w1→up_proj for Nemotron).
+    for old, new in expert_key_remaps:
         target_key = target_key.replace(old, new)
 
     if lora_A.ndim != 3 or lora_B.ndim != 3:
@@ -332,7 +514,15 @@ def _expand_expert_weights(
 
     for exp_idx in range(num_experts):
         exp_key = target_key.replace(".experts", f".experts.{exp_idx}")
-        _add_peft_weight(exp_key, lora_A[exp_idx], lora_B[exp_idx], peft_weights, target_modules)
+        # Clone per-expert slices so they don't share storage after broadcast
+        # expansion — safetensors requires each tensor to have its own memory.
+        _add_peft_weight(
+            exp_key,
+            lora_A[exp_idx].clone(),
+            lora_B[exp_idx].clone(),
+            peft_weights,
+            target_modules,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -344,8 +534,23 @@ def _build_peft_config(
     adapter_config: dict,
     base_model: str,
     target_modules: list[str],
+    rank_overrides: dict[str, int] | None = None,
 ) -> dict:
     """Build a PEFT-compatible adapter_config.json dict."""
+    base_rank = adapter_config["r"]
+    base_alpha = adapter_config["lora_alpha"]
+
+    # For fused projections with doubled rank, set rank_pattern and
+    # alpha_pattern so the scaling factor (alpha/rank) stays correct.
+    rank_pattern: dict[str, int] = {}
+    alpha_pattern: dict[str, int] = {}
+    if rank_overrides:
+        for module_name, merged_rank in rank_overrides.items():
+            rank_pattern[module_name] = merged_rank
+            # Scale alpha proportionally to keep alpha/rank unchanged:
+            # merged_alpha / merged_rank == base_alpha / base_rank
+            alpha_pattern[module_name] = int(base_alpha * merged_rank / base_rank)
+
     return {
         "peft_type": "LORA",
         "auto_mapping": None,
@@ -354,12 +559,12 @@ def _build_peft_config(
         "fan_in_fan_out": False,
         "inference_mode": True,
         "init_lora_weights": True,
-        "lora_alpha": adapter_config["lora_alpha"],
+        "lora_alpha": base_alpha,
         "lora_dropout": 0.0,
         "modules_to_save": None,
-        "r": adapter_config["r"],
-        "rank_pattern": {},
-        "alpha_pattern": {},
+        "r": base_rank,
+        "rank_pattern": rank_pattern,
+        "alpha_pattern": alpha_pattern,
         "target_modules": target_modules,
         "task_type": "CAUSAL_LM",
     }
