@@ -326,8 +326,12 @@ class HFDatasetSource:
 
     Attributes:
         path: HuggingFace dataset path (e.g. ``"allenai/tulu-3-sft-mixture"``).
+            For local files, set to ``"json"`` (or ``"csv"``, ``"parquet"``, etc.)
+            and provide the file path via ``data_files``.
         name: HuggingFace dataset config name (passed as ``name`` to ``load_dataset``).
         split: Dataset split to load.
+        data_files: Path to a local file (e.g. ``"/data/sft.jsonl"``). When set,
+            ``load_dataset`` is called with ``data_files=`` instead of ``name=``.
         weight: Relative mixing weight. When set, weights are normalized across sources
             to determine sampling probabilities. When left as ``None`` (default) for all
             sources, each row across all sources is equally likely (i.e. simple concatenation
@@ -338,6 +342,7 @@ class HFDatasetSource:
     path: str
     name: str | None = None
     split: str = "train"
+    data_files: str | None = None
     weight: float | None = None
     message_field: str = "messages"
 
@@ -367,17 +372,26 @@ class InterleavedChatDatasetBuilder(ChatDatasetBuilder):
         hf_datasets: list[datasets.Dataset] = []
 
         for source in self.sources:
-            ds = datasets.load_dataset(source.path, name=source.name, split=source.split)
+            if source.data_files is not None:
+                ds = datasets.load_dataset(
+                    source.path, data_files=source.data_files, split=source.split
+                )
+                source_label = source.data_files
+            else:
+                ds = datasets.load_dataset(
+                    source.path, name=source.name, split=source.split
+                )
+                source_label = f"{source.path}/{source.name}" if source.name else source.path
             if not isinstance(ds, datasets.Dataset):
                 raise TypeError(
                     f"Expected a Dataset but got {type(ds).__name__}. "
-                    f"Check that split='{source.split}' is valid for '{source.path}'."
+                    f"Check that split='{source.split}' is valid for '{source_label}'."
                 )
             if source.message_field != "messages":
                 ds = ds.rename_column(source.message_field, "messages")
             ds = ds.select_columns(["messages"])
             hf_datasets.append(ds)
-            logger.info(f"Loaded '{source.path}' ({len(ds)} rows, weight={source.weight})")
+            logger.info(f"Loaded '{source_label}' ({len(ds)} rows, weight={source.weight})")
 
         # If all weights are None, weight by dataset size (uniform row sampling).
         # If any weight is set, all must be set.
