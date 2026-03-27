@@ -566,6 +566,269 @@ class TestUnsupportedModels:
 
 
 # ---------------------------------------------------------------------------
+# Tests: Nemotron MoE expert conversion
+# ---------------------------------------------------------------------------
+
+# Nemotron MoE has only up_proj and down_proj per expert (no gate_proj).
+# Tinker maps: w1=up_proj, w2=down_proj, w3=empty placeholder.
+_NEMOTRON_MOE_CONFIG = {
+    "architectures": ["NemotronHForCausalLM"],
+    "model_type": "nemotron_h",
+    "hidden_size": HIDDEN,
+}
+
+NEMOTRON_NUM_EXPERTS = 4
+NEMOTRON_INTERMEDIATE = 12  # moe_intermediate_size
+# in_proj fuses: gate (NEMOTRON_INTERMEDIATE) + x (NEMOTRON_INTERMEDIATE) + B + C + dt
+NEMOTRON_IN_PROJ_OUT = NEMOTRON_INTERMEDIATE * 2 + 10  # +10 for B+C+dt
+
+
+def _make_nemotron_moe_state_dict() -> dict[str, torch.Tensor]:
+    """Create a Nemotron-like model with Mamba + attention + MoE layers."""
+    state_dict: dict[str, torch.Tensor] = {
+        # Mamba layer (layer 0) — in_proj fuses gate_proj + x_proj + B + C + dt
+        "backbone.layers.0.mixer.in_proj.weight": torch.zeros(NEMOTRON_IN_PROJ_OUT, HIDDEN),
+        "backbone.layers.0.mixer.out_proj.weight": torch.zeros(HIDDEN, NEMOTRON_INTERMEDIATE),
+        # Attention layer (layer 2)
+        "backbone.layers.2.mixer.q_proj.weight": torch.zeros(OUT_DIM, HIDDEN),
+    }
+    # MoE layer (layer 1) — only up_proj and down_proj per expert
+    for e in range(NEMOTRON_NUM_EXPERTS):
+        state_dict[f"backbone.layers.1.mixer.experts.{e}.up_proj.weight"] = torch.zeros(
+            NEMOTRON_INTERMEDIATE, HIDDEN
+        )
+        state_dict[f"backbone.layers.1.mixer.experts.{e}.down_proj.weight"] = torch.zeros(
+            HIDDEN, NEMOTRON_INTERMEDIATE
+        )
+    # Shared experts (non-MoE, standard dense keys)
+    state_dict["backbone.layers.1.mixer.shared_experts.up_proj.weight"] = torch.zeros(
+        NEMOTRON_INTERMEDIATE, HIDDEN
+    )
+    state_dict["backbone.layers.1.mixer.shared_experts.down_proj.weight"] = torch.zeros(
+        HIDDEN, NEMOTRON_INTERMEDIATE
+    )
+    return state_dict
+
+
+def _make_nemotron_moe_adapter_weights() -> dict[str, torch.Tensor]:
+    """Create adapter weights matching real Tinker output for Nemotron MoE.
+
+    Includes:
+    - Dense attention LoRA (layer 0, q_proj)
+    - Expert LoRA w1 (up_proj, 3D with broadcast) and w2 (down_proj, 3D with broadcast)
+    - Empty w3 placeholder (no gate_proj in Nemotron)
+    - Shared expert LoRA (standard 2D keys)
+    """
+    prefix = "base_model.model.backbone"
+    return {
+        # Mamba layer (layer 0) — gate_proj and x_proj trained separately
+        f"{prefix}.layers.0.mixer.gate_proj.lora_A.weight": torch.ones(RANK, HIDDEN) * 2,
+        f"{prefix}.layers.0.mixer.gate_proj.lora_B.weight": torch.ones(NEMOTRON_INTERMEDIATE, RANK) * 2,
+        f"{prefix}.layers.0.mixer.x_proj.lora_A.weight": torch.ones(RANK, HIDDEN) * 3,
+        f"{prefix}.layers.0.mixer.x_proj.lora_B.weight": torch.ones(NEMOTRON_INTERMEDIATE, RANK) * 3,
+        # Attention layer (layer 2)
+        f"{prefix}.layers.2.mixer.q_proj.lora_A.weight": torch.ones(RANK, HIDDEN),
+        f"{prefix}.layers.2.mixer.q_proj.lora_B.weight": torch.ones(OUT_DIM, RANK),
+        # Expert w1 (up_proj): lora_A shared (1 expert), lora_B per-expert
+        f"{prefix}.layers.1.mixer.experts.w1.lora_A.weight": torch.ones(
+            1, RANK, HIDDEN
+        ),
+        f"{prefix}.layers.1.mixer.experts.w1.lora_B.weight": torch.ones(
+            NEMOTRON_NUM_EXPERTS, NEMOTRON_INTERMEDIATE, RANK
+        ),
+        # Expert w2 (down_proj): lora_A per-expert, lora_B shared (1 expert)
+        f"{prefix}.layers.1.mixer.experts.w2.lora_A.weight": torch.ones(
+            NEMOTRON_NUM_EXPERTS, RANK, NEMOTRON_INTERMEDIATE
+        ),
+        f"{prefix}.layers.1.mixer.experts.w2.lora_B.weight": torch.ones(
+            1, HIDDEN, RANK
+        ),
+        # Expert w3 (gate_proj): empty — Nemotron has no gate_proj
+        f"{prefix}.layers.1.mixer.experts.w3.lora_A.weight": torch.empty(0),
+        f"{prefix}.layers.1.mixer.experts.w3.lora_B.weight": torch.empty(0),
+        # Shared experts (standard 2D, not routed through expert expansion)
+        f"{prefix}.layers.1.mixer.shared_experts.up_proj.lora_A.weight": torch.ones(
+            RANK, HIDDEN
+        ),
+        f"{prefix}.layers.1.mixer.shared_experts.up_proj.lora_B.weight": torch.ones(
+            NEMOTRON_INTERMEDIATE, RANK
+        ),
+        f"{prefix}.layers.1.mixer.shared_experts.down_proj.lora_A.weight": torch.ones(
+            RANK, NEMOTRON_INTERMEDIATE
+        ),
+        f"{prefix}.layers.1.mixer.shared_experts.down_proj.lora_B.weight": torch.ones(
+            HIDDEN, RANK
+        ),
+    }
+
+
+class TestNemotronMoE:
+    def test_empty_expert_tensors_skipped(self, tmp_path: Path) -> None:
+        """Empty w3 expert LoRA tensors should be skipped without error."""
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+
+        _create_synthetic_model(
+            model_dir, _NEMOTRON_MOE_CONFIG, _make_nemotron_moe_state_dict()
+        )
+        _create_adapter(adapter_dir, _make_nemotron_moe_adapter_weights())
+
+        # This should not raise WeightsAdapterError about non-3D tensors.
+        build_lora_adapter(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+        )
+
+        weights, _ = _load_peft_output(output_dir)
+        # No keys should reference w3 or gate_proj (Nemotron doesn't have it).
+        assert not any("w3" in k for k in weights)
+        assert not any("gate_proj" in k for k in weights)
+
+    def test_expert_keys_mapped_to_up_and_down_proj(self, tmp_path: Path) -> None:
+        """Nemotron w1→up_proj, w2→down_proj (not w1→gate_proj)."""
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+
+        _create_synthetic_model(
+            model_dir, _NEMOTRON_MOE_CONFIG, _make_nemotron_moe_state_dict()
+        )
+        _create_adapter(adapter_dir, _make_nemotron_moe_adapter_weights())
+
+        build_lora_adapter(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+        )
+
+        weights, config = _load_peft_output(output_dir)
+
+        # Per-expert keys should use up_proj and down_proj.
+        for e in range(NEMOTRON_NUM_EXPERTS):
+            assert (
+                f"base_model.model.model.layers.1.mixer.experts.{e}.up_proj.lora_A.weight"
+                in weights
+            )
+            assert (
+                f"base_model.model.model.layers.1.mixer.experts.{e}.down_proj.lora_A.weight"
+                in weights
+            )
+
+        # backbone.* should be remapped to model.* for serving.
+        assert not any("backbone" in k for k in weights)
+
+        # target_modules should include up_proj, down_proj, q_proj, in_proj.
+        assert "up_proj" in config["target_modules"]
+        assert "down_proj" in config["target_modules"]
+        assert "q_proj" in config["target_modules"]
+        assert "in_proj" in config["target_modules"]
+
+    def test_mamba_gate_x_merged_into_in_proj(self, tmp_path: Path) -> None:
+        """gate_proj and x_proj LoRA should be merged into fused in_proj."""
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+
+        _create_synthetic_model(
+            model_dir, _NEMOTRON_MOE_CONFIG, _make_nemotron_moe_state_dict()
+        )
+        _create_adapter(adapter_dir, _make_nemotron_moe_adapter_weights())
+
+        build_lora_adapter(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+        )
+
+        weights, config = _load_peft_output(output_dir)
+
+        # gate_proj and x_proj should NOT appear as separate PEFT keys.
+        assert not any("gate_proj" in k for k in weights if "experts" not in k)
+        assert not any("x_proj" in k for k in weights)
+
+        # Instead, in_proj should be present with doubled rank.
+        in_proj_A = weights["base_model.model.model.layers.0.mixer.in_proj.lora_A.weight"]
+        in_proj_B = weights["base_model.model.model.layers.0.mixer.in_proj.lora_B.weight"]
+        assert in_proj_A.shape == (RANK * 2, HIDDEN), (
+            f"in_proj lora_A should have rank 2*{RANK}={RANK * 2}, got {in_proj_A.shape}"
+        )
+        assert in_proj_B.shape == (NEMOTRON_IN_PROJ_OUT, RANK * 2), (
+            f"in_proj lora_B should have shape ({NEMOTRON_IN_PROJ_OUT}, {RANK * 2}), got {in_proj_B.shape}"
+        )
+
+        # Verify block-diagonal structure: gate in first rank columns, x in second.
+        # gate_proj values are 2, x_proj values are 3 (from _make_nemotron_moe_adapter_weights).
+        # Row [0:NEMOTRON_INTERMEDIATE, 0:RANK] should be gate_lora_B (all 2s).
+        assert torch.allclose(
+            in_proj_B[:NEMOTRON_INTERMEDIATE, :RANK],
+            torch.ones(NEMOTRON_INTERMEDIATE, RANK) * 2,
+        )
+        # Row [NEMOTRON_INTERMEDIATE:2*NEMOTRON_INTERMEDIATE, RANK:2*RANK] should be x_lora_B (all 3s).
+        assert torch.allclose(
+            in_proj_B[NEMOTRON_INTERMEDIATE : 2 * NEMOTRON_INTERMEDIATE, RANK : 2 * RANK],
+            torch.ones(NEMOTRON_INTERMEDIATE, RANK) * 3,
+        )
+        # Remaining rows should be zero (B, C, dt don't have LoRA).
+        assert in_proj_B[2 * NEMOTRON_INTERMEDIATE :].abs().sum() == 0
+
+        # PEFT config should have rank_pattern and alpha_pattern for in_proj.
+        assert config["rank_pattern"]["in_proj"] == RANK * 2
+        assert config["alpha_pattern"]["in_proj"] == ALPHA * 2
+
+    def test_per_expert_tensors_are_2d(self, tmp_path: Path) -> None:
+        """All output tensors should be 2D (3D experts expanded to per-expert 2D)."""
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+
+        _create_synthetic_model(
+            model_dir, _NEMOTRON_MOE_CONFIG, _make_nemotron_moe_state_dict()
+        )
+        _create_adapter(adapter_dir, _make_nemotron_moe_adapter_weights())
+
+        build_lora_adapter(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+        )
+
+        weights, _ = _load_peft_output(output_dir)
+        for key, tensor in weights.items():
+            assert tensor.ndim == 2, f"{key} has {tensor.ndim}D, expected 2D"
+
+    def test_shared_experts_alongside_routed_experts(self, tmp_path: Path) -> None:
+        """Shared expert keys (standard 2D) should coexist with routed expert keys."""
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+
+        _create_synthetic_model(
+            model_dir, _NEMOTRON_MOE_CONFIG, _make_nemotron_moe_state_dict()
+        )
+        _create_adapter(adapter_dir, _make_nemotron_moe_adapter_weights())
+
+        build_lora_adapter(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+        )
+
+        weights, _ = _load_peft_output(output_dir)
+
+        # Shared experts should be present as standard 2D keys.
+        assert (
+            "base_model.model.model.layers.1.mixer.shared_experts.up_proj.lora_A.weight"
+            in weights
+        )
+        assert (
+            "base_model.model.model.layers.1.mixer.shared_experts.down_proj.lora_A.weight"
+            in weights
+        )
+
+
+# ---------------------------------------------------------------------------
 # Tests: Edge cases and validation
 # ---------------------------------------------------------------------------
 

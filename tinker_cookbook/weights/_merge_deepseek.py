@@ -71,6 +71,7 @@ def plan_merge_ops(
                 ops,
                 is_fused=False,
                 is_interleaved=False,
+                expert_key_remaps=profile.expert_key_remaps,
             )
 
     return ops

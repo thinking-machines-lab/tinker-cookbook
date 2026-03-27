@@ -150,18 +150,23 @@ def plan_expert_ops(
     ops: dict[str, list[MergeOp]],
     is_fused: bool,
     is_interleaved: bool,
+    expert_key_remaps: tuple[tuple[str, str], ...],
 ) -> None:
     """Plan merge ops for expert weights (separate or fused)."""
+    # Skip empty expert LoRA tensors — these are placeholders for projections
+    # that don't exist in the model (e.g. Nemotron's empty w3).
+    if lora_A.numel() == 0 and lora_B.numel() == 0:
+        return
+
     if lora_A.ndim != 3 or lora_B.ndim != 3:
         raise WeightsMergeError(
             f"Expert LoRA weights must be 3D, got lora_A: {lora_A.shape}, lora_B: {lora_B.shape}"
         )
     lora_A, lora_B = expand_expert_lora_tensors(lora_A, lora_B)
 
-    # Expert weight name remapping
-    target_key = target_key.replace(".w1.weight", ".gate_proj.weight")
-    target_key = target_key.replace(".w3.weight", ".up_proj.weight")
-    target_key = target_key.replace(".w2.weight", ".down_proj.weight")
+    # Expert weight name remapping (model-specific via profile.expert_key_remaps)
+    for old, new in expert_key_remaps:
+        target_key = target_key.replace(old, new)
 
     if not is_fused:
         # Separate per-expert weights: create one 2D MergeOp per expert

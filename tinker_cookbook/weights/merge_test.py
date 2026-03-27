@@ -25,6 +25,7 @@ from tinker_cookbook.weights._merge import (
 from tinker_cookbook.weights._merge_deepseek import detect_profile as detect_deepseek_profile
 from tinker_cookbook.weights._merge_default import detect_profile as detect_default_profile
 from tinker_cookbook.weights._merge_gpt_oss import detect_profile as detect_gpt_oss_profile
+from tinker_cookbook.weights._merge_nemotron import detect_profile as detect_nemotron_profile
 from tinker_cookbook.weights._merge_qwen3_5 import detect_profile as detect_qwen3_5_profile
 
 # ---------------------------------------------------------------------------
@@ -32,13 +33,32 @@ from tinker_cookbook.weights._merge_qwen3_5 import detect_profile as detect_qwen
 # ---------------------------------------------------------------------------
 
 
-def _make_base_model(state_dict: dict[str, torch.Tensor], class_name: str = "SomeModel") -> Any:
+def _make_base_model(
+    state_dict: dict[str, torch.Tensor],
+    class_name: str = "SomeModel",
+    config_dict: dict | None = None,
+) -> Any:
     """Create a minimal mock model with a real state_dict and controllable class name.
 
     Uses a dynamically-created class so ``str(type(model))`` contains the
     desired class name (important for GPT-OSS detection).
+
+    Args:
+        config_dict: If provided, attaches a mock ``config`` with a ``to_dict()``
+            method. This is used by ``merge_adapter_weights`` for profile detection.
     """
-    cls = type(class_name, (), {"state_dict": lambda self: state_dict})
+
+    class _Config:
+        def __init__(self, d: dict) -> None:
+            self._d = d
+
+        def to_dict(self) -> dict:
+            return self._d
+
+    attrs: dict[str, Any] = {"state_dict": lambda self: state_dict}
+    if config_dict is not None:
+        attrs["config"] = _Config(config_dict)
+    cls = type(class_name, (), attrs)
     return cls()
 
 
@@ -353,6 +373,80 @@ class TestExpertErrorCases:
         }
         with pytest.raises(WeightsMergeError, match="must be 3D"):
             merge_adapter_weights(model, adapter_weights, {"lora_alpha": 1, "r": 1})
+
+
+# ---------------------------------------------------------------------------
+# Tests: Nemotron detection and empty expert handling
+# ---------------------------------------------------------------------------
+
+
+class TestNemotronProfile:
+    def test_detect_nemotron_profile(self):
+        config = {"architectures": ["NemotronHForCausalLM"]}
+        keys: set[str] = {"backbone.layers.0.mixer.q_proj.weight"}
+        profile = detect_nemotron_profile(config, keys)
+        assert profile is not None
+        assert profile.model_family == "nemotron"
+        assert profile.expert_layout == "separate"
+        # Nemotron maps w1→up_proj, w2→down_proj (no gate_proj)
+        assert (".w1.weight", ".up_proj.weight") in profile.expert_key_remaps
+        assert (".w2.weight", ".down_proj.weight") in profile.expert_key_remaps
+        assert not any("gate_proj" in new for _, new in profile.expert_key_remaps)
+
+    def test_non_nemotron_not_detected(self):
+        config = {"architectures": ["LlamaForCausalLM"]}
+        keys: set[str] = {"model.layers.0.self_attn.q_proj.weight"}
+        assert detect_nemotron_profile(config, keys) is None
+
+    def test_detect_merge_profile_dispatches_to_nemotron(self):
+        """detect_merge_profile should pick up Nemotron via the registered detector."""
+        config = {"architectures": ["NemotronHForCausalLM"]}
+        keys: set[str] = {"backbone.layers.0.mixer.q_proj.weight"}
+        profile = detect_merge_profile(config, keys)
+        assert profile.model_family == "nemotron"
+
+
+class TestEmptyExpertMerge:
+    def test_empty_expert_tensors_skipped_in_merge(self):
+        """Empty expert LoRA tensors (Nemotron w3) should be silently skipped."""
+        num_experts = 2
+        state_dict: dict[str, torch.Tensor] = {}
+        for e in range(num_experts):
+            state_dict[f"backbone.layers.0.mixer.experts.{e}.up_proj.weight"] = torch.zeros(8, 4)
+            state_dict[f"backbone.layers.0.mixer.experts.{e}.down_proj.weight"] = torch.zeros(4, 8)
+
+        model = _make_base_model(
+            state_dict,
+            config_dict={"architectures": ["NemotronHForCausalLM"]},
+        )
+
+        adapter_weights = {
+            # w1 (up_proj) — real 3D expert tensors
+            "base_model.model.backbone.layers.0.mixer.experts.w1.lora_A.weight": torch.ones(
+                num_experts, 1, 4
+            ),
+            "base_model.model.backbone.layers.0.mixer.experts.w1.lora_B.weight": torch.ones(
+                num_experts, 8, 1
+            ),
+            # w2 (down_proj) — real 3D expert tensors
+            "base_model.model.backbone.layers.0.mixer.experts.w2.lora_A.weight": torch.ones(
+                num_experts, 1, 8
+            ),
+            "base_model.model.backbone.layers.0.mixer.experts.w2.lora_B.weight": torch.ones(
+                num_experts, 4, 1
+            ),
+            # w3 — empty placeholders (no gate_proj in Nemotron)
+            "base_model.model.backbone.layers.0.mixer.experts.w3.lora_A.weight": torch.empty(0),
+            "base_model.model.backbone.layers.0.mixer.experts.w3.lora_B.weight": torch.empty(0),
+        }
+
+        # Should not raise — empty tensors should be skipped.
+        merge_adapter_weights(model, adapter_weights, {"lora_alpha": 1, "r": 1})
+
+        # Verify the non-empty expert weights were actually merged.
+        for e in range(num_experts):
+            up_weight = model.state_dict()[f"backbone.layers.0.mixer.experts.{e}.up_proj.weight"]
+            assert up_weight.abs().sum() > 0, f"Expert {e} up_proj should have been merged"
 
 
 # ===========================================================================

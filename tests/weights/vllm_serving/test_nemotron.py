@@ -29,7 +29,7 @@ from tests.weights.vllm_serving.conftest import (
 
 
 def _make_nemotron_adapter(model: str) -> tuple[dict, dict[str, torch.Tensor]]:
-    """Create a synthetic Tinker adapter for a Nemotron attention layer.
+    """Create a synthetic Tinker adapter for a Nemotron attention layer only.
 
     Returns (config_dict, adapter_weights).
     """
@@ -52,6 +52,47 @@ def _make_nemotron_adapter(model: str) -> tuple[dict, dict[str, torch.Tensor]]:
         f"{prefix}.q_proj.lora_A.weight": torch.randn(LORA_RANK, hidden) * 0.01,
         f"{prefix}.q_proj.lora_B.weight": torch.randn(q_dim, LORA_RANK) * 0.01,
     }
+    return config, weights
+
+
+def _make_nemotron_moe_adapter(model: str) -> tuple[dict, dict[str, torch.Tensor]]:
+    """Create a synthetic Tinker adapter with attention + MoE expert LoRA.
+
+    Extends :func:`_make_nemotron_adapter` with MoE expert weights:
+    w1 (up_proj) + w2 (down_proj) 3D LoRA with broadcast, plus empty w3.
+
+    Returns (config_dict, adapter_weights).
+    """
+    config, weights = _make_nemotron_adapter(model)
+    hidden = config["hidden_size"]
+    n_experts = config.get("n_routed_experts", 128)
+    moe_intermediate = config.get("moe_intermediate_size", 1856)
+
+    pattern = config.get("hybrid_override_pattern", "")
+    moe_idx = next((i for i, ch in enumerate(pattern) if ch == "E"), None)
+    if moe_idx is None:
+        pytest.skip("No MoE layer found in Nemotron config")
+
+    moe_prefix = f"base_model.model.backbone.layers.{moe_idx}.mixer"
+    weights.update({
+        # Expert w1 (up_proj): lora_A shared (1), lora_B per-expert
+        f"{moe_prefix}.experts.w1.lora_A.weight": torch.randn(
+            1, LORA_RANK, hidden
+        ) * 0.01,
+        f"{moe_prefix}.experts.w1.lora_B.weight": torch.randn(
+            n_experts, moe_intermediate, LORA_RANK
+        ) * 0.01,
+        # Expert w2 (down_proj): lora_A per-expert, lora_B shared (1)
+        f"{moe_prefix}.experts.w2.lora_A.weight": torch.randn(
+            n_experts, LORA_RANK, moe_intermediate
+        ) * 0.01,
+        f"{moe_prefix}.experts.w2.lora_B.weight": torch.randn(
+            1, hidden, LORA_RANK
+        ) * 0.01,
+        # Expert w3 (gate_proj): empty — Nemotron has no gate_proj
+        f"{moe_prefix}.experts.w3.lora_A.weight": torch.empty(0),
+        f"{moe_prefix}.experts.w3.lora_B.weight": torch.empty(0),
+    })
     return config, weights
 
 
@@ -107,6 +148,50 @@ class TestNemotron3Nano:
         print(f"  Base: {base_text!r}")
         print(f"  LoRA: {lora_text!r}")
 
+    def test_moe_expert_adapter(self, llm, tmp_path):
+        """Verify MoE expert LoRA with empty w3 converts and serves correctly.
+
+        This is the regression test for #547: build_lora_adapter crashed on
+        empty expert LoRA tensors and mapped w1→gate_proj instead of w1→up_proj.
+        """
+        _, adapter_weights = _make_nemotron_moe_adapter(self.MODEL)
+
+        adapter_path = tmp_path / "tinker_moe_adapter"
+        peft_path = tmp_path / "peft_moe_adapter"
+        save_tinker_adapter(adapter_path, adapter_weights)
+        peft_weights, peft_config = convert_and_load(self.MODEL, adapter_path, peft_path)
+
+        # Verify backbone→model prefix remap
+        assert not any("backbone" in k for k in peft_weights), (
+            "PEFT keys should not contain 'backbone'"
+        )
+
+        # Verify expert keys use up_proj/down_proj (not gate_proj)
+        expert_keys = [k for k in peft_weights if "experts" in k]
+        assert len(expert_keys) > 0, "Should have per-expert PEFT keys"
+        assert not any("gate_proj" in k for k in expert_keys), (
+            "Expert keys should use up_proj/down_proj, not gate_proj"
+        )
+        assert any("up_proj" in k for k in expert_keys)
+        assert any("down_proj" in k for k in expert_keys)
+
+        # Verify target_modules includes expert projections
+        assert "up_proj" in peft_config["target_modules"]
+        assert "down_proj" in peft_config["target_modules"]
+
+        # Verify vLLM can load and generate with the MoE expert adapter
+        base_text = generate(llm, PROMPT)
+        assert len(base_text) > 0
+
+        lora_req = LoRARequest("nemotron3_nano_moe", 1, str(peft_path))
+        lora_text = generate(llm, PROMPT, lora_request=lora_req)
+        assert len(lora_text) > 0
+
+        print(f"\n  Expert PEFT keys: {len(expert_keys)}")
+        print(f"  target_modules: {peft_config['target_modules']}")
+        print(f"  Base: {base_text!r}")
+        print(f"  LoRA: {lora_text!r}")
+
 
 class TestNemotron3Super:
     """Nemotron-3-Super-120B-A12B: 120B MoE (12B active), TP=4."""
@@ -146,5 +231,44 @@ class TestNemotron3Super:
         assert len(lora_text) > 0
 
         print(f"\n  PEFT keys: {sorted(peft_weights.keys())}")
+        print(f"  Base: {base_text!r}")
+        print(f"  LoRA: {lora_text!r}")
+
+    def test_moe_expert_adapter(self, llm, tmp_path):
+        """Verify MoE expert LoRA with empty w3 converts and serves correctly.
+
+        Regression test for #547 on the Super variant.
+        """
+        _, adapter_weights = _make_nemotron_moe_adapter(self.MODEL)
+
+        adapter_path = tmp_path / "tinker_moe_adapter"
+        peft_path = tmp_path / "peft_moe_adapter"
+        save_tinker_adapter(adapter_path, adapter_weights)
+        peft_weights, peft_config = convert_and_load(self.MODEL, adapter_path, peft_path)
+
+        # Verify backbone→model prefix remap
+        assert not any("backbone" in k for k in peft_weights), (
+            "PEFT keys should not contain 'backbone'"
+        )
+
+        # Verify expert keys use up_proj/down_proj (not gate_proj)
+        expert_keys = [k for k in peft_weights if "experts" in k]
+        assert len(expert_keys) > 0, "Should have per-expert PEFT keys"
+        assert not any("gate_proj" in k for k in expert_keys), (
+            "Expert keys should use up_proj/down_proj, not gate_proj"
+        )
+        assert any("up_proj" in k for k in expert_keys)
+        assert any("down_proj" in k for k in expert_keys)
+
+        # Verify vLLM can load and generate with the MoE expert adapter
+        base_text = generate(llm, PROMPT)
+        assert len(base_text) > 0
+
+        lora_req = LoRARequest("nemotron3_super_moe", 1, str(peft_path))
+        lora_text = generate(llm, PROMPT, lora_request=lora_req)
+        assert len(lora_text) > 0
+
+        print(f"\n  Expert PEFT keys: {len(expert_keys)}")
+        print(f"  target_modules: {peft_config['target_modules']}")
         print(f"  Base: {base_text!r}")
         print(f"  LoRA: {lora_text!r}")

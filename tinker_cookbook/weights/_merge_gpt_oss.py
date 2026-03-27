@@ -67,7 +67,8 @@ def plan_merge_ops(
             plan_standard_op(target_key, lora_A, lora_B, n, profile, model_state_keys, ops)
         else:
             plan_expert_ops(
-                target_key, lora_A, lora_B, n, model_state_keys, ops, is_fused, is_interleaved
+                target_key, lora_A, lora_B, n, model_state_keys, ops, is_fused, is_interleaved,
+                expert_key_remaps=profile.expert_key_remaps,
             )
 
     return ops
