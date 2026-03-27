@@ -506,6 +506,104 @@ class TestNemotronFusedProjectionMerge:
         assert out_proj.abs().sum() == 0, "out_proj should not be affected"
 
 
+class TestNemotronPartialLoraMerge:
+    """Test merge with partial LoRA coverage (train_attn/train_mlp flags)."""
+
+    HIDDEN = 8
+    INTERMEDIATE = 12
+    IN_PROJ_DIM = INTERMEDIATE * 2 + 6
+    NUM_EXPERTS = 2
+
+    def test_attn_only_merges_into_in_proj(self):
+        """Adapter with only Mamba gate_proj/x_proj (train_mlp=False)."""
+        state_dict: dict[str, torch.Tensor] = {
+            "backbone.layers.0.mixer.in_proj.weight": torch.zeros(self.IN_PROJ_DIM, self.HIDDEN),
+            "backbone.layers.0.mixer.out_proj.weight": torch.zeros(self.HIDDEN, self.INTERMEDIATE),
+        }
+        for e in range(self.NUM_EXPERTS):
+            state_dict[f"backbone.layers.1.mixer.experts.{e}.up_proj.weight"] = torch.zeros(
+                self.INTERMEDIATE, self.HIDDEN
+            )
+
+        model = _make_base_model(
+            state_dict, config_dict={"architectures": ["NemotronHForCausalLM"]}
+        )
+
+        # Only ATTN group: gate_proj + x_proj, no experts
+        adapter_weights = {
+            "base_model.model.backbone.layers.0.mixer.gate_proj.lora_A.weight": (
+                torch.ones(1, self.HIDDEN) * 0.5
+            ),
+            "base_model.model.backbone.layers.0.mixer.gate_proj.lora_B.weight": (
+                torch.ones(self.INTERMEDIATE, 1)
+            ),
+            "base_model.model.backbone.layers.0.mixer.x_proj.lora_A.weight": (
+                torch.ones(1, self.HIDDEN) * 0.3
+            ),
+            "base_model.model.backbone.layers.0.mixer.x_proj.lora_B.weight": (
+                torch.ones(self.INTERMEDIATE, 1)
+            ),
+        }
+
+        merge_adapter_weights(model, adapter_weights, {"lora_alpha": 1, "r": 1})
+
+        in_proj = model.state_dict()["backbone.layers.0.mixer.in_proj.weight"]
+        assert torch.allclose(
+            in_proj[: self.INTERMEDIATE],
+            torch.full_like(in_proj[: self.INTERMEDIATE], 0.5),
+            atol=1e-6,
+        )
+        assert torch.allclose(
+            in_proj[self.INTERMEDIATE : 2 * self.INTERMEDIATE],
+            torch.full_like(in_proj[self.INTERMEDIATE : 2 * self.INTERMEDIATE], 0.3),
+            atol=1e-6,
+        )
+
+        # Experts should be unchanged (no LoRA)
+        for e in range(self.NUM_EXPERTS):
+            w = model.state_dict()[f"backbone.layers.1.mixer.experts.{e}.up_proj.weight"]
+            assert w.abs().sum() == 0
+
+    def test_mlp_only_no_mamba_merge(self):
+        """Adapter with only expert weights (train_attn=False)."""
+        state_dict: dict[str, torch.Tensor] = {
+            "backbone.layers.0.mixer.in_proj.weight": torch.zeros(self.IN_PROJ_DIM, self.HIDDEN),
+        }
+        for e in range(self.NUM_EXPERTS):
+            state_dict[f"backbone.layers.1.mixer.experts.{e}.up_proj.weight"] = torch.zeros(
+                self.INTERMEDIATE, self.HIDDEN
+            )
+
+        model = _make_base_model(
+            state_dict, config_dict={"architectures": ["NemotronHForCausalLM"]}
+        )
+
+        # Only MLP group: experts, no Mamba
+        adapter_weights = {
+            "base_model.model.backbone.layers.1.mixer.experts.w1.lora_A.weight": (
+                torch.ones(self.NUM_EXPERTS, 1, self.HIDDEN) * 0.1
+            ),
+            "base_model.model.backbone.layers.1.mixer.experts.w1.lora_B.weight": torch.ones(
+                self.NUM_EXPERTS, self.INTERMEDIATE, 1
+            ),
+            "base_model.model.backbone.layers.1.mixer.experts.w2.lora_A.weight": torch.empty(0),
+            "base_model.model.backbone.layers.1.mixer.experts.w2.lora_B.weight": torch.empty(0),
+            "base_model.model.backbone.layers.1.mixer.experts.w3.lora_A.weight": torch.empty(0),
+            "base_model.model.backbone.layers.1.mixer.experts.w3.lora_B.weight": torch.empty(0),
+        }
+
+        merge_adapter_weights(model, adapter_weights, {"lora_alpha": 1, "r": 1})
+
+        # Experts should have delta
+        for e in range(self.NUM_EXPERTS):
+            w = model.state_dict()[f"backbone.layers.1.mixer.experts.{e}.up_proj.weight"]
+            assert w.abs().sum() > 0, f"Expert {e} should have been merged"
+
+        # in_proj should be unchanged (no Mamba LoRA)
+        in_proj = model.state_dict()["backbone.layers.0.mixer.in_proj.weight"]
+        assert in_proj.abs().sum() == 0, "in_proj should be unchanged without Mamba LoRA"
+
+
 # ===========================================================================
 # Tests for new APIs: MergeProfile, detect_merge_profile, plan/apply,
 # merge_lora_matrices, expand_expert_lora_tensors
