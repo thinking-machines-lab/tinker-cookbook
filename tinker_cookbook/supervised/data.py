@@ -5,7 +5,7 @@ Supervised learning dataset implementations from HuggingFace datasets.
 import json
 import logging
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import blobfile
 import chz
@@ -258,7 +258,7 @@ class InterleavedChatDatasetBuilder(ChatDatasetBuilder):
                 "Got a mix of weighted and unweighted sources."
             )
         else:
-            weights = [float(s.weight) for s in self.sources if s.weight is not None]
+            weights = [cast(float, s.weight) for s in self.sources]
 
         total_weight = sum(weights)
         if total_weight <= 0:
@@ -277,7 +277,10 @@ class InterleavedChatDatasetBuilder(ChatDatasetBuilder):
             )
         logger.info(f"Interleaved dataset: {len(interleaved)} rows")
 
-        # Split test set
+        if self.test_size > 0 and len(interleaved) <= self.test_size:
+            logger.warning(
+                f"test_size ({self.test_size}) >= dataset size ({len(interleaved)}), skipping test split"
+            )
         if self.test_size > 0 and len(interleaved) > self.test_size:
             interleaved = interleaved.shuffle(seed=self.shuffle_seed)
             test_ds = interleaved.take(self.test_size)
