@@ -91,6 +91,9 @@ all = [
     "tinker_cookbook[inspect]",
     "tinker_cookbook[litellm]",
 ]
+gem = [
+    "gem-llm",
+]
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
