@@ -347,6 +347,110 @@ class TestBuildShardedFusedExperts:
 
 
 # ---------------------------------------------------------------------------
+# Shard-by-shard with Nemotron (Mamba fused in_proj + MoE experts)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildShardedNemotron:
+    """Shard-by-shard merge for Nemotron: Mamba gate_proj/x_proj → in_proj + MoE experts."""
+
+    HIDDEN = 8
+    INTERMEDIATE = 12
+    IN_PROJ_DIM = INTERMEDIATE * 2 + 6  # gate + x + B + C + dt
+    NUM_EXPERTS = 2
+
+    def test_mamba_fused_and_moe_experts(self, tmp_path: Path):
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+
+        # Nemotron-like model: backbone prefix, in_proj (fused), per-expert up/down
+        config = {"architectures": ["NemotronHForCausalLM"], "model_type": "nemotron_h"}
+        state_dict: dict[str, torch.Tensor] = {
+            # Mamba layer (layer 0)
+            "backbone.layers.0.mixer.in_proj.weight": torch.zeros(
+                self.IN_PROJ_DIM, self.HIDDEN, dtype=torch.float32
+            ),
+            "backbone.layers.0.mixer.out_proj.weight": torch.zeros(
+                self.HIDDEN, self.INTERMEDIATE, dtype=torch.float32
+            ),
+            # MoE layer (layer 1)
+            "backbone.layers.1.mixer.shared_experts.up_proj.weight": torch.zeros(
+                self.INTERMEDIATE, self.HIDDEN, dtype=torch.float32
+            ),
+        }
+        for e in range(self.NUM_EXPERTS):
+            state_dict[f"backbone.layers.1.mixer.experts.{e}.up_proj.weight"] = torch.zeros(
+                self.INTERMEDIATE, self.HIDDEN, dtype=torch.float32
+            )
+            state_dict[f"backbone.layers.1.mixer.experts.{e}.down_proj.weight"] = torch.zeros(
+                self.HIDDEN, self.INTERMEDIATE, dtype=torch.float32
+            )
+        _create_synthetic_model(model_dir, config, state_dict)
+
+        # Adapter: Mamba gate_proj/x_proj + MoE w1/w2 + empty w3
+        prefix = "base_model.model.backbone"
+        gate_fill, x_fill, expert_fill = 0.5, 0.3, 0.1
+        adapter_weights: dict[str, torch.Tensor] = {
+            # Mamba gate_proj/x_proj (will be merged into in_proj)
+            f"{prefix}.layers.0.mixer.gate_proj.lora_A.weight": (
+                torch.ones(1, self.HIDDEN) * gate_fill
+            ),
+            f"{prefix}.layers.0.mixer.gate_proj.lora_B.weight": torch.ones(self.INTERMEDIATE, 1),
+            f"{prefix}.layers.0.mixer.x_proj.lora_A.weight": (torch.ones(1, self.HIDDEN) * x_fill),
+            f"{prefix}.layers.0.mixer.x_proj.lora_B.weight": torch.ones(self.INTERMEDIATE, 1),
+            # MoE w1 (up_proj)
+            f"{prefix}.layers.1.mixer.experts.w1.lora_A.weight": (
+                torch.ones(self.NUM_EXPERTS, 1, self.HIDDEN) * expert_fill
+            ),
+            f"{prefix}.layers.1.mixer.experts.w1.lora_B.weight": torch.ones(
+                self.NUM_EXPERTS, self.INTERMEDIATE, 1
+            ),
+            # MoE w2 (down_proj)
+            f"{prefix}.layers.1.mixer.experts.w2.lora_A.weight": (
+                torch.ones(self.NUM_EXPERTS, 1, self.INTERMEDIATE) * expert_fill
+            ),
+            f"{prefix}.layers.1.mixer.experts.w2.lora_B.weight": torch.ones(
+                self.NUM_EXPERTS, self.HIDDEN, 1
+            ),
+            # Empty w3 placeholder
+            f"{prefix}.layers.1.mixer.experts.w3.lora_A.weight": torch.empty(0),
+            f"{prefix}.layers.1.mixer.experts.w3.lora_B.weight": torch.empty(0),
+        }
+        _create_adapter(adapter_dir, adapter_weights, {"lora_alpha": 1, "r": 1})
+
+        build_hf_model(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+            merge_strategy="shard",
+        )
+
+        out_tensors = _load_output_tensors(output_dir)
+
+        # Verify Mamba in_proj: gate in [0:INTERMEDIATE], x in [INTERMEDIATE:2*INTERMEDIATE]
+        in_proj = out_tensors["backbone.layers.0.mixer.in_proj.weight"]
+        gate_slice = in_proj[: self.INTERMEDIATE]
+        x_slice = in_proj[self.INTERMEDIATE : 2 * self.INTERMEDIATE]
+        rest = in_proj[2 * self.INTERMEDIATE :]
+
+        assert torch.allclose(gate_slice, torch.full_like(gate_slice, gate_fill), atol=1e-6)
+        assert torch.allclose(x_slice, torch.full_like(x_slice, x_fill), atol=1e-6)
+        assert rest.abs().sum() == 0, "B/C/dt rows should be unchanged"
+
+        # Verify MoE expert up_proj and down_proj merged
+        for e in range(self.NUM_EXPERTS):
+            up = out_tensors[f"backbone.layers.1.mixer.experts.{e}.up_proj.weight"]
+            down = out_tensors[f"backbone.layers.1.mixer.experts.{e}.down_proj.weight"]
+            assert torch.allclose(up, torch.full_like(up, expert_fill), atol=1e-6)
+            assert torch.allclose(down, torch.full_like(down, expert_fill), atol=1e-6)
+
+        # Verify out_proj unchanged (no adapter targeting it)
+        out_proj = out_tensors["backbone.layers.0.mixer.out_proj.weight"]
+        assert out_proj.abs().sum() == 0
+
+
+# ---------------------------------------------------------------------------
 # Cleanup on failure
 # ---------------------------------------------------------------------------
 

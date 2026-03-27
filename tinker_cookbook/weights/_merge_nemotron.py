@@ -24,6 +24,15 @@ _NEMOTRON_EXPERT_KEY_REMAPS = (
 # conversion, these are merged into the fused in_proj target.
 _NEMOTRON_FUSED_PROJECTION_MAP = (("in_proj", ("gate_proj", "x_proj")),)
 
+# Nemotron HF checkpoints use "backbone.layers.*" for layer weights but
+# "lm_head" (no prefix) for the output head.  Tinker adapters use
+# "model.*" for everything (after stripping "base_model.model.").
+# These remaps bridge the namespace so merge ops target the correct keys.
+_NEMOTRON_EXTRA_KEY_REMAPS = (
+    ("model.layers.", "backbone.layers."),
+    ("model.lm_head", "lm_head"),
+)
+
 
 def detect_profile(model_config: dict, model_state_keys: set[str]) -> MergeProfile | None:
     """Detect Nemotron-3 models by architecture name."""
@@ -36,6 +45,7 @@ def detect_profile(model_config: dict, model_state_keys: set[str]) -> MergeProfi
     return MergeProfile(
         model_family="nemotron",
         expert_layout="separate",
+        extra_key_remaps=_NEMOTRON_EXTRA_KEY_REMAPS,
         expert_key_remaps=_NEMOTRON_EXPERT_KEY_REMAPS,
         fused_projection_map=_NEMOTRON_FUSED_PROJECTION_MAP,
         has_language_model_prefix=has_lm_prefix,
