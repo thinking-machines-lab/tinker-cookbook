@@ -169,7 +169,6 @@ def plan_fused_projection_op(
     if not profile.fused_projection_map:
         return False
 
-    # Build reverse map: component_name → (fused_target, component_index)
     leaf = target_key.removesuffix(".weight").rsplit(".", 1)[-1]
     fused_target: str | None = None
     comp_idx: int | None = None

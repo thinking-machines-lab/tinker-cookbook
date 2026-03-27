@@ -15,12 +15,9 @@ Requires:
 from __future__ import annotations
 
 import json
-import os
-import shutil
 from pathlib import Path
 
 import pytest
-import torch
 from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
 
@@ -39,6 +36,9 @@ def _have_adapter() -> bool:
 @pytest.mark.skipif(not _have_adapter(), reason="Real Tinker adapter not available")
 class TestNemotronNanoExport:
     """Full weight merge on real Nemotron-3-Nano (30B) with real Tinker adapter."""
+
+    # mamba_num_heads (64) * mamba_head_dim (64) for Nano
+    MAMBA_INTERMEDIATE = 4096
 
     @pytest.fixture(scope="class")
     def merged_output(self, tmp_path_factory):
@@ -67,72 +67,72 @@ class TestNemotronNanoExport:
         """Load merged and original weights and return the delta."""
         merged = load_file(str(merged_output / merged_index["weight_map"][key]))[key]
         orig = load_file(hf_hub_download(MODEL, orig_index["weight_map"][key]))[key]
-        return (merged.float() - orig.float())
+        return merged.float() - orig.float()
 
-    def test_mamba_in_proj_gate_slice_has_delta(
-        self, merged_output, merged_index, orig_index
-    ):
+    def test_mamba_in_proj_gate_slice_has_delta(self, merged_output, merged_index, orig_index):
         """gate_proj LoRA should appear in first intermediate_size rows of in_proj."""
         delta = self._load_delta(
             "backbone.layers.0.mixer.in_proj.weight",
-            merged_output, merged_index, orig_index,
+            merged_output,
+            merged_index,
+            orig_index,
         )
-        intermediate = 4096  # mamba_num_heads * mamba_head_dim
+        intermediate = self.MAMBA_INTERMEDIATE
         gate_delta = delta[:intermediate]
         assert gate_delta.norm() > 0, "gate_proj slice should have non-zero delta"
 
-    def test_mamba_in_proj_x_slice_has_delta(
-        self, merged_output, merged_index, orig_index
-    ):
+    def test_mamba_in_proj_x_slice_has_delta(self, merged_output, merged_index, orig_index):
         """x_proj LoRA should appear in rows [intermediate:2*intermediate] of in_proj."""
         delta = self._load_delta(
             "backbone.layers.0.mixer.in_proj.weight",
-            merged_output, merged_index, orig_index,
+            merged_output,
+            merged_index,
+            orig_index,
         )
-        intermediate = 4096
+        intermediate = self.MAMBA_INTERMEDIATE
         x_delta = delta[intermediate : 2 * intermediate]
         assert x_delta.norm() > 0, "x_proj slice should have non-zero delta"
 
-    def test_mamba_in_proj_bcd_rows_unchanged(
-        self, merged_output, merged_index, orig_index
-    ):
+    def test_mamba_in_proj_bcd_rows_unchanged(self, merged_output, merged_index, orig_index):
         """B/C/dt rows of in_proj should be unchanged (no LoRA targets them)."""
         delta = self._load_delta(
             "backbone.layers.0.mixer.in_proj.weight",
-            merged_output, merged_index, orig_index,
+            merged_output,
+            merged_index,
+            orig_index,
         )
-        intermediate = 4096
+        intermediate = self.MAMBA_INTERMEDIATE
         rest_delta = delta[2 * intermediate :]
         assert rest_delta.norm() == 0, "B/C/dt rows should have zero delta"
 
-    def test_attention_q_proj_has_delta(
-        self, merged_output, merged_index, orig_index
-    ):
+    def test_attention_q_proj_has_delta(self, merged_output, merged_index, orig_index):
         """Attention q_proj should be merged."""
         # Layer 5 is the first attention layer (pattern char '*')
         delta = self._load_delta(
             "backbone.layers.5.mixer.q_proj.weight",
-            merged_output, merged_index, orig_index,
+            merged_output,
+            merged_index,
+            orig_index,
         )
         assert delta.norm() > 0, "Attention q_proj should have non-zero delta"
 
-    def test_lm_head_has_delta(
-        self, merged_output, merged_index, orig_index
-    ):
+    def test_lm_head_has_delta(self, merged_output, merged_index, orig_index):
         """lm_head should be merged."""
         delta = self._load_delta(
             "lm_head.weight",
-            merged_output, merged_index, orig_index,
+            merged_output,
+            merged_index,
+            orig_index,
         )
         assert delta.norm() > 0, "lm_head should have non-zero delta"
 
-    def test_shared_expert_has_delta(
-        self, merged_output, merged_index, orig_index
-    ):
+    def test_shared_expert_has_delta(self, merged_output, merged_index, orig_index):
         """Shared expert weights should be merged."""
         delta = self._load_delta(
             "backbone.layers.1.mixer.shared_experts.up_proj.weight",
-            merged_output, merged_index, orig_index,
+            merged_output,
+            merged_index,
+            orig_index,
         )
         assert delta.norm() > 0, "Shared expert up_proj should have non-zero delta"
 
