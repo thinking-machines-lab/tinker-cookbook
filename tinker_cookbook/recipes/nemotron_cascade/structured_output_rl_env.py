@@ -39,6 +39,26 @@ from tinker_cookbook.utils.logtree_formatters import ConversationFormatter
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_schema(schema: dict | list) -> None:
+    """Remove invalid ``"required": <bool>`` entries from a JSON Schema in-place.
+
+    Some dataset schemas use ``"required": false`` (a boolean) instead of the
+    JSON Schema spec's ``"required": [...]`` (an array of property names).
+    ``jsonschema`` correctly rejects these as meta-schema violations, so we
+    strip them to avoid crashes.
+    """
+    if isinstance(schema, dict):
+        if "required" in schema and isinstance(schema["required"], bool):
+            del schema["required"]
+        for value in schema.values():
+            if isinstance(value, (dict, list)):
+                _sanitize_schema(value)
+    elif isinstance(schema, list):
+        for item in schema:
+            if isinstance(item, (dict, list)):
+                _sanitize_schema(item)
+
+
 def validate_json_against_schema(response: str, schema_str: str) -> tuple[bool, str]:
     """Validate that response contains valid JSON matching the schema.
 
@@ -49,7 +69,7 @@ def validate_json_against_schema(response: str, schema_str: str) -> tuple[bool, 
     """
     import re
 
-    from jsonschema import ValidationError, validate
+    from jsonschema import Draft202012Validator, ValidationError
 
     # Extract JSON from response
     response = response.strip()
@@ -99,13 +119,25 @@ def validate_json_against_schema(response: str, schema_str: str) -> tuple[bool, 
         # If schema is not valid JSON, just check that response is valid JSON
         return True, "Valid JSON (schema unparseable)"
 
-    # Full JSON Schema validation
+    # Sanitize schema: some dataset entries have "required": False (boolean)
+    # instead of an array, which is invalid JSON Schema. Remove those.
+    _sanitize_schema(schema)
+
+    # Validate without meta-schema checking -- dataset schemas are often
+    # not fully spec-compliant (string values where objects are expected,
+    # boolean "required" fields, etc.).  Skipping check_schema lets us
+    # still validate the *instance* against the schema's structural
+    # constraints without crashing on the schema itself.
     try:
-        validate(instance=json_obj, schema=schema)
-        return True, "Valid JSON matching schema"
-    except ValidationError as e:
-        # Use the most specific (deepest) validation error message
-        return False, f"Schema validation failed: {e.message}"
+        validator = Draft202012Validator(schema)
+        error = next(validator.iter_errors(json_obj), None)
+        if error is None:
+            return True, "Valid JSON matching schema"
+        return False, f"Schema validation failed: {error.message}"
+    except Exception as e:
+        # If schema is too malformed for even lenient validation,
+        # fall back to checking that response is valid JSON
+        return True, f"Valid JSON (schema too malformed for validation: {e})"
 
 
 class StructuredOutputEnv(Env):
