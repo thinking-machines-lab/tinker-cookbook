@@ -91,6 +91,12 @@ class CLIConfig:
     # can exceed the model's 65K context limit.
     context_window: int | None = None
 
+    # SWE environment reward mode (only used when env=swe_rl)
+    swe_reward_mode: str = "llm_judge"  # "llm_judge" or "execution"
+    # SWE data source (only used when env=swe_rl)
+    swe_use_cascade_data: bool = True
+    swe_use_r2e_gym: bool = True
+
 
 def get_dataset_builder(
     env: str,
@@ -99,6 +105,9 @@ def get_dataset_builder(
     renderer_name: str,
     group_size: int,
     seed: int = 0,
+    swe_reward_mode: str = "llm_judge",
+    swe_use_cascade_data: bool = True,
+    swe_use_r2e_gym: bool = True,
 ) -> RLDatasetBuilder:
     if env == "if_rl":
         return IFRLDatasetBuilder(
@@ -138,6 +147,9 @@ def get_dataset_builder(
             model_name_for_tokenizer=model_name,
             renderer_name=renderer_name,
             group_size=min(group_size, 4),  # Cap at 4 (each test is expensive)
+            reward_mode=swe_reward_mode,  # type: ignore[arg-type]
+            use_cascade_swe_data=swe_use_cascade_data,
+            use_r2e_gym=swe_use_r2e_gym,
             seed=seed,
         )
     elif env == "rlhf":
@@ -207,6 +219,9 @@ async def cli_main(cli_config: CLIConfig):
             renderer_name=renderer_name,
             group_size=cli_config.group_size,
             seed=cli_config.seed,
+            swe_reward_mode=cli_config.swe_reward_mode,
+            swe_use_cascade_data=cli_config.swe_use_cascade_data,
+            swe_use_r2e_gym=cli_config.swe_use_r2e_gym,
         ),
         model_name=cli_config.model_name,
         renderer_name=renderer_name,
