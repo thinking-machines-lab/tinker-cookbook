@@ -2,8 +2,9 @@
 SWE-RL environment for Nemotron-Cascade-2 replication.
 
 Uses the SWE-RL subset (622 valid SWE-bench instances).
-The model generates a code patch, which is applied to the repo and
-validated by running the FAIL_TO_PASS tests in a Modal sandbox.
+The model generates a code patch, which is scored by either:
+  - An LLM judge (Qwen3.5-397B) — the default, matching the paper's use of GPT-OSS-120B
+  - Execution-based testing in a Modal sandbox (legacy mode)
 
 Paper hyperparameters (Agentless SWE RL):
   - Batch 128×16=2048, max seq 98K, LR 3e-6
@@ -16,14 +17,14 @@ import math
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 
 import chz
 import tinker
 from datasets import Dataset
 
 from tinker_cookbook import renderers
-from tinker_cookbook.completers import StopCondition
+from tinker_cookbook.completers import StopCondition, TinkerMessageCompleter
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.rl.types import (
     Action,
@@ -67,6 +68,93 @@ def extract_patch(response: str) -> str | None:
     if diff_lines:
         return '\n'.join(diff_lines).strip()
     return None
+
+
+# ---------------------------------------------------------------------------
+# LLM Judge for patch quality (matches paper's GPT-OSS-120B reward model)
+# ---------------------------------------------------------------------------
+
+SWE_JUDGE_SYSTEM_PROMPT = """\
+You are an expert software engineer reviewing a proposed code patch for a GitHub issue.
+
+Rate the quality of the patch on a scale of 0 to 10:
+- 0: No valid patch, empty, or completely irrelevant
+- 1-2: Has diff syntax but targets wrong files or is clearly incorrect
+- 3-4: Addresses the right area but the fix is incomplete or wrong
+- 5-6: Reasonable attempt that partially addresses the issue
+- 7-8: Good patch that likely fixes the issue with minor concerns
+- 9-10: Excellent patch that correctly and completely fixes the issue
+
+Consider:
+1. Does it address the described issue?
+2. Is the diff syntactically correct and applicable?
+3. Are the right files and locations targeted?
+4. Would the change likely fix the problem without introducing regressions?
+
+Output ONLY the integer score, nothing else."""
+
+SWE_JUDGE_USER_TEMPLATE = """\
+## GitHub Issue
+{problem_statement}
+
+## Repository
+{repo}
+
+## Proposed Patch
+```diff
+{patch}
+```
+
+Score (0-10):"""
+
+# Maximum characters of problem statement to send to the judge
+_MAX_JUDGE_PROBLEM_CHARS = 8_000
+
+
+def _parse_swe_judge_score(response_text: str) -> float:
+    """Extract a 0-10 integer score from the judge response and normalise to [0, 1]."""
+    # Find the LAST integer in the response (thinking models may emit reasoning first)
+    matches = re.findall(r'\b(\d{1,2})\b', response_text)
+    if matches:
+        score = int(matches[-1])
+        return min(max(score, 0), 10) / 10.0
+    logger.warning(f"Could not parse SWE judge score from: {response_text!r}")
+    return 0.0
+
+
+async def get_swe_llm_judge_reward(
+    problem_statement: str,
+    repo: str,
+    patch: str,
+    judge_completer: TinkerMessageCompleter,
+) -> tuple[float, str]:
+    """Query the LLM judge for patch quality. Returns (normalised_reward, raw_response)."""
+    truncated_problem = problem_statement[:_MAX_JUDGE_PROBLEM_CHARS]
+    if len(problem_statement) > _MAX_JUDGE_PROBLEM_CHARS:
+        truncated_problem += "\n[...truncated...]"
+
+    messages: list[Message] = [
+        {"role": "system", "content": SWE_JUDGE_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": SWE_JUDGE_USER_TEMPLATE.format(
+                problem_statement=truncated_problem,
+                repo=repo,
+                patch=patch[:8_000],  # Cap patch length for judge context
+            ),
+        },
+    ]
+
+    try:
+        judge_response = await judge_completer(messages)
+        response_text = judge_response.get("content", "")
+        if not isinstance(response_text, str):
+            response_text = str(response_text)
+        reward = _parse_swe_judge_score(response_text)
+        return reward, response_text
+    except Exception as e:
+        logger.warning(f"SWE LLM judge call failed: {e}")
+        return 0.0, f"ERROR: {e}"
 
 
 async def run_swe_test_in_modal(
@@ -188,7 +276,14 @@ test "$PASS" -eq "$TOTAL"
 
 
 class SWERLEnv(Env):
-    """Single-turn SWE-bench environment (agentless: generate patch directly)."""
+    """Single-turn SWE-bench environment (agentless: generate patch directly).
+
+    reward_mode controls how patches are scored:
+      - "llm_judge": Use an LLM (Qwen3.5-397B) to rate patch quality (0-10 -> [0,1]).
+        This matches the paper's approach of using GPT-OSS-120B as a reward model.
+        The actual LLM call happens in SWEGroupBuilder.compute_group_rewards().
+      - "execution": Run FAIL_TO_PASS tests in a Modal sandbox (binary 0/1).
+    """
 
     def __init__(
         self,
@@ -198,6 +293,7 @@ class SWERLEnv(Env):
         base_commit: str,
         fail_to_pass: list[str],
         renderer: renderers.Renderer,
+        reward_mode: Literal["execution", "llm_judge"] = "llm_judge",
         use_modal: bool = True,
         docker_image: str | None = None,
         r2e_test_files: list[tuple[str, str]] | None = None,
@@ -208,10 +304,15 @@ class SWERLEnv(Env):
         self.base_commit = base_commit
         self.fail_to_pass = fail_to_pass
         self.renderer = renderer
+        self.reward_mode = reward_mode
         self.use_modal = use_modal
         self.docker_image = docker_image
         # R2E-Gym: list of (filename, code) for test files to write into sandbox
         self.r2e_test_files = r2e_test_files or []
+        # Populated during step() for use by compute_group_rewards()
+        self._extracted_patch: str | None = None
+        self._response_content: str = ""
+        self._stop_reason: str | None = None
 
     @property
     def stop_condition(self) -> StopCondition:
@@ -231,13 +332,23 @@ class SWERLEnv(Env):
     async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
         message, parse_success = self.renderer.parse_response(action)
         content = renderers.get_text_content(message)
+        self._response_content = content
 
         stop_reason = (extra or {}).get("stop_reason")
-        if stop_reason == "length":
+        self._stop_reason = stop_reason
+
+        patch = extract_patch(content)
+        self._extracted_patch = patch
+
+        if self.reward_mode == "llm_judge":
+            # Reward will be computed in SWEGroupBuilder.compute_group_rewards()
+            # Return a placeholder reward of 0; it will be overwritten.
+            reward = 0.0
+            details = "pending llm_judge"
+        elif stop_reason == "length":
             reward = 0.0
             details = "overlong"
         else:
-            patch = extract_patch(content)
             if not patch:
                 reward = 0.0
                 details = "no patch found"
@@ -271,7 +382,7 @@ class SWERLEnv(Env):
             episode_done=True,
             next_observation=tinker.ModelInput.empty(),
             next_stop_condition=self.stop_condition,
-            metrics={"correct": reward, "has_patch": float(bool(extract_patch(content)))},
+            metrics={"correct": reward, "has_patch": float(bool(patch))},
         )
 
 
@@ -279,9 +390,73 @@ class SWERLEnv(Env):
 class SWEGroupBuilder(EnvGroupBuilder):
     env_thunk: Callable[[], SWERLEnv]
     num_envs: int
+    reward_mode: Literal["execution", "llm_judge"] = "llm_judge"
+    # LLM judge config (used only when reward_mode="llm_judge")
+    judge_model_name: str = "Qwen/Qwen3.5-397B-A17B"
+    judge_renderer_name: str = "qwen3_5"
+    judge_max_tokens: int = 512
+    judge_temperature: float = 0.0
+    judge_base_url: str | None = None
 
     async def make_envs(self) -> Sequence[Env]:
         return [self.env_thunk() for _ in range(self.num_envs)]
+
+    async def compute_group_rewards(
+        self, trajectory_group: list[Trajectory], env_group: Sequence[Env]
+    ) -> list[tuple[float, Metrics]]:
+        """Score trajectories. For llm_judge mode, queries the judge model."""
+        if self.reward_mode != "llm_judge":
+            # Execution mode: rewards already computed in env.step(), return 0 group bonus
+            return [(0.0, {}) for _ in trajectory_group]
+
+        # LLM judge mode: create judge completer and score each patch
+        judge_tokenizer = get_tokenizer(self.judge_model_name)
+        judge_renderer = renderers.get_renderer(self.judge_renderer_name, tokenizer=judge_tokenizer)
+        service_client = tinker.ServiceClient(base_url=self.judge_base_url)
+        judge_sampling_client = await service_client.create_sampling_client_async(
+            base_model=self.judge_model_name,
+        )
+        judge_completer = TinkerMessageCompleter(
+            sampling_client=judge_sampling_client,
+            renderer=judge_renderer,
+            max_tokens=self.judge_max_tokens,
+            temperature=self.judge_temperature,
+        )
+
+        results: list[tuple[float, Metrics]] = []
+        for traj, env in zip(trajectory_group, env_group):
+            assert isinstance(env, SWERLEnv)
+
+            if env._stop_reason == "length":
+                results.append((0.0, {"judge_reward": 0.0, "overlong": 1.0, "has_patch": 0.0}))
+                continue
+
+            patch = env._extracted_patch
+            if not patch:
+                results.append((0.0, {"judge_reward": 0.0, "has_patch": 0.0}))
+                continue
+
+            reward, judge_text = await get_swe_llm_judge_reward(
+                problem_statement=env.problem_statement,
+                repo=env.repo,
+                patch=patch,
+                judge_completer=judge_completer,
+            )
+
+            with logtree.scope_header("LLM Judge"):
+                logtree.table_from_dict(
+                    {
+                        "instance_id": env.instance_id,
+                        "judge_raw": judge_text[:200],
+                        "judge_reward": f"{reward:.2f}",
+                        "patch_len": str(len(patch)),
+                    },
+                    caption="SWE-RL LLM judge reward",
+                )
+
+            results.append((reward, {"judge_reward": reward, "has_patch": 1.0}))
+
+        return results
 
     def logging_tags(self) -> list[str]:
         return ["swe_rl"]
@@ -293,12 +468,14 @@ class SWERLDataset(RLDataset):
         batch_size: int,
         group_size: int,
         renderer: renderers.Renderer,
+        reward_mode: Literal["execution", "llm_judge"] = "llm_judge",
         use_modal: bool = True,
         use_r2e_gym: bool = True,
         seed: int = 0,
     ):
         from datasets import load_dataset
 
+        self.reward_mode = reward_mode
         self.use_r2e_gym = use_r2e_gym
 
         if use_r2e_gym:
@@ -362,14 +539,17 @@ class SWERLDataset(RLDataset):
                     return None
 
                 # fail_to_pass is not used in R2E-Gym mode (tests are in r2e_test_files)
+                rm = self.reward_mode
                 return SWEGroupBuilder(
-                    env_thunk=lambda iid=instance_id, p=problem, r=repo, bc=base_commit, di=docker_image, rtf=r2e_test_files: SWERLEnv(
+                    env_thunk=lambda iid=instance_id, p=problem, r=repo, bc=base_commit, di=docker_image, rtf=r2e_test_files, _rm=rm: SWERLEnv(
                         instance_id=iid, problem_statement=p, repo=r,
                         base_commit=bc, fail_to_pass=[],
-                        renderer=self.renderer, use_modal=self.use_modal,
+                        renderer=self.renderer, reward_mode=_rm,
+                        use_modal=self.use_modal,
                         docker_image=di, r2e_test_files=rtf,
                     ),
                     num_envs=self.group_size,
+                    reward_mode=rm,
                 )
             else:
                 # Legacy nvidia SWE-RL schema
@@ -384,13 +564,16 @@ class SWERLDataset(RLDataset):
                     except json.JSONDecodeError:
                         fail_to_pass = [fail_to_pass]
 
+                rm = self.reward_mode
                 return SWEGroupBuilder(
-                    env_thunk=lambda iid=instance_id, p=problem, r=repo, bc=base_commit, ftp=fail_to_pass: SWERLEnv(
+                    env_thunk=lambda iid=instance_id, p=problem, r=repo, bc=base_commit, ftp=fail_to_pass, _rm=rm: SWERLEnv(
                         instance_id=iid, problem_statement=p, repo=r,
                         base_commit=bc, fail_to_pass=ftp,
-                        renderer=self.renderer, use_modal=self.use_modal,
+                        renderer=self.renderer, reward_mode=_rm,
+                        use_modal=self.use_modal,
                     ),
                     num_envs=self.group_size,
+                    reward_mode=rm,
                 )
         except Exception as e:
             logger.warning(f"Failed to parse SWE-RL row: {e}")
@@ -403,6 +586,7 @@ class SWERLDatasetBuilder(RLDatasetBuilder):
     model_name_for_tokenizer: str
     renderer_name: str
     group_size: int = 4  # Smaller default since each test is expensive
+    reward_mode: Literal["execution", "llm_judge"] = "llm_judge"
     use_modal: bool = True
     use_r2e_gym: bool = True  # Use R2E-Gym Docker images (pre-built envs with deps)
     seed: int = 0
@@ -412,6 +596,7 @@ class SWERLDatasetBuilder(RLDatasetBuilder):
         renderer = renderers.get_renderer(self.renderer_name, tokenizer=tokenizer)
         return SWERLDataset(
             batch_size=self.batch_size, group_size=self.group_size,
-            renderer=renderer, use_modal=self.use_modal,
+            renderer=renderer, reward_mode=self.reward_mode,
+            use_modal=self.use_modal,
             use_r2e_gym=self.use_r2e_gym, seed=self.seed,
         ), None

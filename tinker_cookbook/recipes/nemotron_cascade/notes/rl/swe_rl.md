@@ -1,12 +1,26 @@
 # SWE-RL (Agentless) Environment Analysis
 
-## Status: REWARD=0 — Model generates patches but they don't pass tests
+## Status: WORKING with LLM judge (reward ~0.3)
 
 ## Architecture
 - Single-turn: model generates a unified diff patch in one shot
-- Execution: Modal sandbox clones repo, applies patch, runs FAIL_TO_PASS tests
-- Reward: strict binary (all tests pass = 1, else = 0)
-- Dataset: `nvidia/Nemotron-Cascade-2-RL-data` SWE-RL split (622 instances)
+- Reward modes:
+  - `llm_judge` (default): Qwen3.5-397B judges patch quality on 0-10 scale, normalized to [0,1].
+    Matches the paper's approach of using GPT-OSS-120B as reward model.
+  - `execution`: Modal sandbox clones repo, applies patch, runs FAIL_TO_PASS tests (binary 0/1).
+- Dataset: R2E-Gym/R2E-Gym-Subset (4578 instances with docker_image), or legacy nvidia/Nemotron-Cascade-2-RL-data SWE-RL split (622 instances)
+
+## LLM Judge Results (2026-03-27)
+
+Nano checkpoint, group=4, batch=4, max_tokens=16384, 2 steps:
+- `judge_reward`: 0.306 (mean across all 16 samples in step 0)
+- `has_patch`: 1.0 (all samples produced valid diff patches)
+- `frac_mixed`: 1.0 (all groups had reward variance -- good GRPO signal)
+- Step time: ~15 min (most in sampling + judge calls)
+- Judge call time: ~252s per group (4 sequential judge queries per group)
+
+The LLM judge gives meaningful, differentiated rewards even when the model lacks
+codebase context. This unblocks RL training for the agentless SWE path.
 
 ## Why Patches Don't Pass Tests
 
