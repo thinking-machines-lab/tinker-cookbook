@@ -106,15 +106,19 @@ With 24.5M examples:
 
 ## IF-RL batch=128 Status
 
-Run is in progress. After 1 iteration (of 20):
-- **Fraction correct: 71.4%**
-- KL from reference: 0.003 (very small, just started)
+Run is in progress. After 2 iterations (of 20):
+
+| Step | Fraction Correct | KL | Entropy | Time (s) |
+|------|------------------|----|---------|----------|
+| 0 | 71.4% | 0.0031 | 1.12 | 2,495 |
+| 1 | 73.7% | 0.0031 | 1.08 | 1,403 |
+
+- Reward improving: 71.4% -> 73.7% (+2.3pp after 1 training step)
+- KL stable at ~0.003, entropy slightly decreasing (1.12 -> 1.08)
 - Avg completion tokens: 2,494 per episode
-- Total episodes per batch: 1,568 (128 groups x ~12 valid per group after filtering constant reward)
+- Total episodes per batch: 1,568 (128 groups x ~12 valid per group)
 - 100% mixed groups (no all-good or all-bad), good for learning signal
-- Entropy: 1.12
-- Time per iteration: ~2,495 seconds (~42 minutes) -- dominated by sampling (2,413s)
-- Note: some rollouts took up to 2,413s (40 min), suggesting long-context completions or queuing
+- Step 1 was 2x faster (1,403s vs 2,495s), likely warm caching
 
 Metrics: `/tmp/tinker-examples/nano_ifrl_b128/metrics.jsonl`
 WandB: https://wandb.ai/thinking-machines-lab-inc/nemotron-cascade-2-replication/runs/9yh0cogx
