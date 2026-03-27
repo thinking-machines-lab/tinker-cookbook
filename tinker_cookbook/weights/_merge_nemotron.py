@@ -22,9 +22,7 @@ _NEMOTRON_EXPERT_KEY_REMAPS = (
 # Nemotron Mamba layers train separate gate_proj/x_proj LoRA, but the HF
 # checkpoint and vLLM fuse both into a single in_proj.  During adapter
 # conversion, these are merged into the fused in_proj target.
-_NEMOTRON_FUSED_PROJECTION_MAP = (
-    ("in_proj", ("gate_proj", "x_proj")),
-)
+_NEMOTRON_FUSED_PROJECTION_MAP = (("in_proj", ("gate_proj", "x_proj")),)
 
 
 def detect_profile(model_config: dict, model_state_keys: set[str]) -> MergeProfile | None:

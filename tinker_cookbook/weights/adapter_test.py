@@ -623,16 +623,16 @@ def _make_nemotron_moe_adapter_weights() -> dict[str, torch.Tensor]:
     return {
         # Mamba layer (layer 0) — gate_proj and x_proj trained separately
         f"{prefix}.layers.0.mixer.gate_proj.lora_A.weight": torch.ones(RANK, HIDDEN) * 2,
-        f"{prefix}.layers.0.mixer.gate_proj.lora_B.weight": torch.ones(NEMOTRON_INTERMEDIATE, RANK) * 2,
+        f"{prefix}.layers.0.mixer.gate_proj.lora_B.weight": torch.ones(NEMOTRON_INTERMEDIATE, RANK)
+        * 2,
         f"{prefix}.layers.0.mixer.x_proj.lora_A.weight": torch.ones(RANK, HIDDEN) * 3,
-        f"{prefix}.layers.0.mixer.x_proj.lora_B.weight": torch.ones(NEMOTRON_INTERMEDIATE, RANK) * 3,
+        f"{prefix}.layers.0.mixer.x_proj.lora_B.weight": torch.ones(NEMOTRON_INTERMEDIATE, RANK)
+        * 3,
         # Attention layer (layer 2)
         f"{prefix}.layers.2.mixer.q_proj.lora_A.weight": torch.ones(RANK, HIDDEN),
         f"{prefix}.layers.2.mixer.q_proj.lora_B.weight": torch.ones(OUT_DIM, RANK),
         # Expert w1 (up_proj): lora_A shared (1 expert), lora_B per-expert
-        f"{prefix}.layers.1.mixer.experts.w1.lora_A.weight": torch.ones(
-            1, RANK, HIDDEN
-        ),
+        f"{prefix}.layers.1.mixer.experts.w1.lora_A.weight": torch.ones(1, RANK, HIDDEN),
         f"{prefix}.layers.1.mixer.experts.w1.lora_B.weight": torch.ones(
             NEMOTRON_NUM_EXPERTS, NEMOTRON_INTERMEDIATE, RANK
         ),
@@ -640,25 +640,19 @@ def _make_nemotron_moe_adapter_weights() -> dict[str, torch.Tensor]:
         f"{prefix}.layers.1.mixer.experts.w2.lora_A.weight": torch.ones(
             NEMOTRON_NUM_EXPERTS, RANK, NEMOTRON_INTERMEDIATE
         ),
-        f"{prefix}.layers.1.mixer.experts.w2.lora_B.weight": torch.ones(
-            1, HIDDEN, RANK
-        ),
+        f"{prefix}.layers.1.mixer.experts.w2.lora_B.weight": torch.ones(1, HIDDEN, RANK),
         # Expert w3 (gate_proj): empty — Nemotron has no gate_proj
         f"{prefix}.layers.1.mixer.experts.w3.lora_A.weight": torch.empty(0),
         f"{prefix}.layers.1.mixer.experts.w3.lora_B.weight": torch.empty(0),
         # Shared experts (standard 2D, not routed through expert expansion)
-        f"{prefix}.layers.1.mixer.shared_experts.up_proj.lora_A.weight": torch.ones(
-            RANK, HIDDEN
-        ),
+        f"{prefix}.layers.1.mixer.shared_experts.up_proj.lora_A.weight": torch.ones(RANK, HIDDEN),
         f"{prefix}.layers.1.mixer.shared_experts.up_proj.lora_B.weight": torch.ones(
             NEMOTRON_INTERMEDIATE, RANK
         ),
         f"{prefix}.layers.1.mixer.shared_experts.down_proj.lora_A.weight": torch.ones(
             RANK, NEMOTRON_INTERMEDIATE
         ),
-        f"{prefix}.layers.1.mixer.shared_experts.down_proj.lora_B.weight": torch.ones(
-            HIDDEN, RANK
-        ),
+        f"{prefix}.layers.1.mixer.shared_experts.down_proj.lora_B.weight": torch.ones(HIDDEN, RANK),
     }
 
 
@@ -669,9 +663,7 @@ class TestNemotronMoE:
         adapter_dir = tmp_path / "adapter"
         output_dir = tmp_path / "output"
 
-        _create_synthetic_model(
-            model_dir, _NEMOTRON_MOE_CONFIG, _make_nemotron_moe_state_dict()
-        )
+        _create_synthetic_model(model_dir, _NEMOTRON_MOE_CONFIG, _make_nemotron_moe_state_dict())
         _create_adapter(adapter_dir, _make_nemotron_moe_adapter_weights())
 
         # This should not raise WeightsAdapterError about non-3D tensors.
@@ -692,9 +684,7 @@ class TestNemotronMoE:
         adapter_dir = tmp_path / "adapter"
         output_dir = tmp_path / "output"
 
-        _create_synthetic_model(
-            model_dir, _NEMOTRON_MOE_CONFIG, _make_nemotron_moe_state_dict()
-        )
+        _create_synthetic_model(model_dir, _NEMOTRON_MOE_CONFIG, _make_nemotron_moe_state_dict())
         _create_adapter(adapter_dir, _make_nemotron_moe_adapter_weights())
 
         build_lora_adapter(
@@ -731,9 +721,7 @@ class TestNemotronMoE:
         adapter_dir = tmp_path / "adapter"
         output_dir = tmp_path / "output"
 
-        _create_synthetic_model(
-            model_dir, _NEMOTRON_MOE_CONFIG, _make_nemotron_moe_state_dict()
-        )
+        _create_synthetic_model(model_dir, _NEMOTRON_MOE_CONFIG, _make_nemotron_moe_state_dict())
         _create_adapter(adapter_dir, _make_nemotron_moe_adapter_weights())
 
         build_lora_adapter(
@@ -783,9 +771,7 @@ class TestNemotronMoE:
         adapter_dir = tmp_path / "adapter"
         output_dir = tmp_path / "output"
 
-        _create_synthetic_model(
-            model_dir, _NEMOTRON_MOE_CONFIG, _make_nemotron_moe_state_dict()
-        )
+        _create_synthetic_model(model_dir, _NEMOTRON_MOE_CONFIG, _make_nemotron_moe_state_dict())
         _create_adapter(adapter_dir, _make_nemotron_moe_adapter_weights())
 
         build_lora_adapter(
@@ -804,9 +790,7 @@ class TestNemotronMoE:
         adapter_dir = tmp_path / "adapter"
         output_dir = tmp_path / "output"
 
-        _create_synthetic_model(
-            model_dir, _NEMOTRON_MOE_CONFIG, _make_nemotron_moe_state_dict()
-        )
+        _create_synthetic_model(model_dir, _NEMOTRON_MOE_CONFIG, _make_nemotron_moe_state_dict())
         _create_adapter(adapter_dir, _make_nemotron_moe_adapter_weights())
 
         build_lora_adapter(
@@ -819,8 +803,7 @@ class TestNemotronMoE:
 
         # Shared experts should be present as standard 2D keys.
         assert (
-            "base_model.model.model.layers.1.mixer.shared_experts.up_proj.lora_A.weight"
-            in weights
+            "base_model.model.model.layers.1.mixer.shared_experts.up_proj.lora_A.weight" in weights
         )
         assert (
             "base_model.model.model.layers.1.mixer.shared_experts.down_proj.lora_A.weight"

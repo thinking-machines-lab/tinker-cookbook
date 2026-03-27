@@ -72,7 +72,6 @@ _SERVING_PREFIX_REMAPS: dict[str, tuple[tuple[str, str], ...]] = {
 }
 
 
-
 def build_lora_adapter(
     *,
     base_model: str,
@@ -149,7 +148,10 @@ def build_lora_adapter(
 
         # Core conversion: remap keys, expand experts, produce PEFT tensors.
         peft_weights, target_modules, rank_overrides = _convert_adapter(
-            adapter_weights, model_state_keys, profile, model_state_shapes,
+            adapter_weights,
+            model_state_keys,
+            profile,
+            model_state_shapes,
         )
 
         # Apply serving-framework prefix remaps (e.g., backbone.* → model.* for Nemotron).
@@ -159,7 +161,10 @@ def build_lora_adapter(
 
         # Write output.
         peft_config = _build_peft_config(
-            adapter_config, base_model, target_modules, rank_overrides,
+            adapter_config,
+            base_model,
+            target_modules,
+            rank_overrides,
         )
         _write_peft_adapter(out, peft_weights, peft_config)
 
@@ -286,7 +291,11 @@ def _convert_adapter(
             if lora_A.numel() == 0 and lora_B.numel() == 0:
                 continue
             _expand_expert_weights(
-                target_key, lora_A, lora_B, peft_weights, target_modules,
+                target_key,
+                lora_A,
+                lora_B,
+                peft_weights,
+                target_modules,
                 expert_key_remaps=profile.expert_key_remaps,
             )
         else:
@@ -313,11 +322,18 @@ def _convert_adapter(
             # Nemotron).  Find the matching fused target in model_state_keys.
             fused_suffix = f".{fused_target}.weight"
             fused_model_key = _find_model_key(
-                layer_prefix, fused_suffix, model_state_keys,
+                layer_prefix,
+                fused_suffix,
+                model_state_keys,
             )
             fused_rank = _merge_fused_projections(
-                fused_model_key, layer_prefix, components, model_state_shapes,
-                peft_weights, target_modules, profile,
+                fused_model_key,
+                layer_prefix,
+                components,
+                model_state_shapes,
+                peft_weights,
+                target_modules,
+                profile,
             )
             rank_overrides[fused_target] = fused_rank
 
@@ -428,7 +444,7 @@ def _merge_fused_projections(
     rank_offset = 0
     for i, (row_start, row_end, r) in enumerate(comp_slices):
         _, lora_B = comp_by_name[component_order[i]]
-        merged_lora_B[row_start:row_end, rank_offset:rank_offset + r] = lora_B
+        merged_lora_B[row_start:row_end, rank_offset : rank_offset + r] = lora_B
         rank_offset += r
 
     # Use the adapter-namespace prefix for the PEFT output key (the serving
@@ -501,8 +517,11 @@ def _expand_expert_weights(
         # Clone per-expert slices so they don't share storage after broadcast
         # expansion — safetensors requires each tensor to have its own memory.
         _add_peft_weight(
-            exp_key, lora_A[exp_idx].clone(), lora_B[exp_idx].clone(),
-            peft_weights, target_modules,
+            exp_key,
+            lora_A[exp_idx].clone(),
+            lora_B[exp_idx].clone(),
+            peft_weights,
+            target_modules,
         )
 
 

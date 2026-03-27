@@ -80,31 +80,33 @@ def _make_nemotron_moe_adapter(model: str) -> tuple[dict, dict[str, torch.Tensor
 
     mamba_prefix = f"base_model.model.backbone.layers.{mamba_idx}.mixer"
     moe_prefix = f"base_model.model.backbone.layers.{moe_idx}.mixer"
-    weights.update({
-        # Mamba layer: gate_proj/x_proj trained separately by Tinker,
-        # merged into fused in_proj during adapter conversion.
-        f"{mamba_prefix}.gate_proj.lora_A.weight": torch.randn(LORA_RANK, hidden) * 0.01,
-        f"{mamba_prefix}.gate_proj.lora_B.weight": torch.randn(mamba_intermediate, LORA_RANK) * 0.01,
-        f"{mamba_prefix}.x_proj.lora_A.weight": torch.randn(LORA_RANK, hidden) * 0.01,
-        f"{mamba_prefix}.x_proj.lora_B.weight": torch.randn(mamba_intermediate, LORA_RANK) * 0.01,
-        # Expert w1 (up_proj): lora_A shared (1), lora_B per-expert
-        f"{moe_prefix}.experts.w1.lora_A.weight": torch.randn(
-            1, LORA_RANK, hidden
-        ) * 0.01,
-        f"{moe_prefix}.experts.w1.lora_B.weight": torch.randn(
-            n_experts, moe_intermediate, LORA_RANK
-        ) * 0.01,
-        # Expert w2 (down_proj): lora_A per-expert, lora_B shared (1)
-        f"{moe_prefix}.experts.w2.lora_A.weight": torch.randn(
-            n_experts, LORA_RANK, moe_intermediate
-        ) * 0.01,
-        f"{moe_prefix}.experts.w2.lora_B.weight": torch.randn(
-            1, hidden, LORA_RANK
-        ) * 0.01,
-        # Expert w3 (gate_proj): empty — Nemotron has no gate_proj
-        f"{moe_prefix}.experts.w3.lora_A.weight": torch.empty(0),
-        f"{moe_prefix}.experts.w3.lora_B.weight": torch.empty(0),
-    })
+    weights.update(
+        {
+            # Mamba layer: gate_proj/x_proj trained separately by Tinker,
+            # merged into fused in_proj during adapter conversion.
+            f"{mamba_prefix}.gate_proj.lora_A.weight": torch.randn(LORA_RANK, hidden) * 0.01,
+            f"{mamba_prefix}.gate_proj.lora_B.weight": torch.randn(mamba_intermediate, LORA_RANK)
+            * 0.01,
+            f"{mamba_prefix}.x_proj.lora_A.weight": torch.randn(LORA_RANK, hidden) * 0.01,
+            f"{mamba_prefix}.x_proj.lora_B.weight": torch.randn(mamba_intermediate, LORA_RANK)
+            * 0.01,
+            # Expert w1 (up_proj): lora_A shared (1), lora_B per-expert
+            f"{moe_prefix}.experts.w1.lora_A.weight": torch.randn(1, LORA_RANK, hidden) * 0.01,
+            f"{moe_prefix}.experts.w1.lora_B.weight": torch.randn(
+                n_experts, moe_intermediate, LORA_RANK
+            )
+            * 0.01,
+            # Expert w2 (down_proj): lora_A per-expert, lora_B shared (1)
+            f"{moe_prefix}.experts.w2.lora_A.weight": torch.randn(
+                n_experts, LORA_RANK, moe_intermediate
+            )
+            * 0.01,
+            f"{moe_prefix}.experts.w2.lora_B.weight": torch.randn(1, hidden, LORA_RANK) * 0.01,
+            # Expert w3 (gate_proj): empty — Nemotron has no gate_proj
+            f"{moe_prefix}.experts.w3.lora_A.weight": torch.empty(0),
+            f"{moe_prefix}.experts.w3.lora_B.weight": torch.empty(0),
+        }
+    )
     return config, weights
 
 
@@ -195,9 +197,7 @@ class TestNemotron3Nano:
         assert not any("x_proj" in k for k in peft_weights), (
             "Mamba x_proj should be merged into in_proj"
         )
-        assert any("in_proj" in k for k in peft_weights), (
-            "Merged in_proj LoRA should be present"
-        )
+        assert any("in_proj" in k for k in peft_weights), "Merged in_proj LoRA should be present"
         assert "in_proj" in peft_config["target_modules"]
         assert peft_config["rank_pattern"].get("in_proj", 0) > peft_config["r"], (
             "in_proj should have doubled rank in rank_pattern"
@@ -286,9 +286,7 @@ class TestNemotron3Super:
         assert any("down_proj" in k for k in expert_keys)
 
         # Verify Mamba gate_proj/x_proj merged into in_proj
-        assert any("in_proj" in k for k in peft_weights), (
-            "Merged in_proj LoRA should be present"
-        )
+        assert any("in_proj" in k for k in peft_weights), "Merged in_proj LoRA should be present"
 
         # Verify vLLM can load and generate with the full adapter
         base_text = generate(llm, PROMPT)
