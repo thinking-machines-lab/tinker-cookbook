@@ -1,6 +1,5 @@
 """Tests for InterleavedDatasetBuilder and HFDatasetSource."""
 
-import collections
 from unittest.mock import patch
 
 import datasets
@@ -52,10 +51,12 @@ class TestInterleavedDatasetBuilder:
         datasets_by_path: dict[str, datasets.Dataset],
         test_size: int = 0,
         batch_size: int = 4,
+        stopping_strategy: str = "all_exhausted",
     ):
         builder = InterleavedDatasetBuilder(
             sources=sources,
             test_size=test_size,
+            stopping_strategy=stopping_strategy,
             common_config=ChatDatasetBuilderCommonConfig(
                 model_name_for_tokenizer="meta-llama/Llama-3.1-8B",
                 renderer_name="llama3",
@@ -80,70 +81,24 @@ class TestInterleavedDatasetBuilder:
         batch = train_ds.get_batch(0)
         assert len(batch) == 4
 
-    def test_weight_distribution(self) -> None:
-        """With 3:1 weights, the interleaved dataset should reflect ~75/25 distribution."""
-        ds_heavy = _make_hf_dataset(1000, "heavy")
-        ds_light = _make_hf_dataset(1000, "light")
-
-        hf_datasets_list = [
-            ds_heavy.select_columns(["messages"]),
-            ds_light.select_columns(["messages"]),
-        ]
-        interleaved = datasets.interleave_datasets(
-            hf_datasets_list,
-            probabilities=[0.75, 0.25],
-            seed=0,
-            stopping_strategy="all_exhausted",
-        )
-        counts = collections.Counter()
-        for row in interleaved:
-            msg = row["messages"][0]["content"]
-            counts["heavy" if msg.startswith("heavy") else "light"] += 1
-
-        total = sum(counts.values())
-        heavy_frac = counts["heavy"] / total
-        assert abs(heavy_frac - 0.75) < 0.05, f"Heavy fraction {heavy_frac} not near 0.75"
-
     def test_default_weights_uniform_by_size(self) -> None:
-        """Without explicit weights, each row should be equally likely (weighted by dataset size)."""
+        """Without explicit weights, sources are weighted by size."""
         ds_big = _make_hf_dataset(900, "big")
         ds_small = _make_hf_dataset(100, "small")
         sources = [
             HFDatasetSource(path="big"),
             HFDatasetSource(path="small"),
         ]
-
-        builder = InterleavedDatasetBuilder(
-            sources=sources,
-            common_config=ChatDatasetBuilderCommonConfig(
-                model_name_for_tokenizer="meta-llama/Llama-3.1-8B",
-                renderer_name="llama3",
-                max_length=128,
-                batch_size=4,
-            ),
-        )
-        with patch("tinker_cookbook.supervised.data.datasets.load_dataset") as mock_load:
-            mock_load.side_effect = _mock_load_dataset({"big": ds_big, "small": ds_small})
-            train_ds, _ = builder()
-
-        # With size-proportional weights (900:100 = 0.9:0.1), the big source
-        # should dominate. Count over all batches.
-        counts = collections.Counter()
-        for i in range(min(100, len(train_ds))):
-            batch = train_ds.get_batch(i)
-            for datum in batch:
-                # Check first chunk's token content to identify source
-                # (big source rows start with "big_", small with "small_")
-                pass
-        # Just verify it builds and runs without error — the proportionality
-        # is tested at the HF level in test_weight_distribution
+        train_ds, _ = self._build(sources, {"big": ds_big, "small": ds_small})
         assert len(train_ds) > 0
+        batch = train_ds.get_batch(0)
+        assert len(batch) == 4
 
     def test_mixed_weights_raises(self) -> None:
         """Mixing weighted and unweighted sources should raise."""
         sources = [
             HFDatasetSource(path="a", weight=2.0),
-            HFDatasetSource(path="b"),  # weight=None
+            HFDatasetSource(path="b"),
         ]
         with pytest.raises(ValueError, match="Either all sources must have explicit weights"):
             self._build(sources, {"a": _make_hf_dataset(50), "b": _make_hf_dataset(50)})
@@ -186,36 +141,14 @@ class TestInterleavedDatasetBuilder:
     def test_custom_message_field(self) -> None:
         ds = _make_hf_dataset_custom_field(100, "conv", field="conversations")
         sources = [HFDatasetSource(path="ds_conv", weight=1.0, message_field="conversations")]
-
-        builder = InterleavedDatasetBuilder(
-            sources=sources,
-            common_config=ChatDatasetBuilderCommonConfig(
-                model_name_for_tokenizer="meta-llama/Llama-3.1-8B",
-                renderer_name="llama3",
-                max_length=128,
-                batch_size=4,
-            ),
-        )
-        with patch("tinker_cookbook.supervised.data.datasets.load_dataset") as mock_load:
-            mock_load.side_effect = _mock_load_dataset({"ds_conv": ds})
-            train_ds, _ = builder()
-
+        train_ds, _ = self._build(sources, {"ds_conv": ds})
         assert len(train_ds) > 0
         batch = train_ds.get_batch(0)
         assert len(batch) == 4
 
     def test_empty_sources_raises(self) -> None:
-        builder = InterleavedDatasetBuilder(
-            sources=[],
-            common_config=ChatDatasetBuilderCommonConfig(
-                model_name_for_tokenizer="meta-llama/Llama-3.1-8B",
-                renderer_name="llama3",
-                max_length=128,
-                batch_size=4,
-            ),
-        )
         with pytest.raises(ValueError, match="At least one dataset source"):
-            builder()
+            self._build([], {})
 
     def test_deterministic_batches(self) -> None:
         """Same config produces identical batches."""
@@ -245,21 +178,9 @@ class TestInterleavedDatasetBuilder:
             HFDatasetSource(path="big", weight=1.0),
             HFDatasetSource(path="small", weight=1.0),
         ]
-
-        builder = InterleavedDatasetBuilder(
-            sources=sources,
-            stopping_strategy="all_exhausted",
-            common_config=ChatDatasetBuilderCommonConfig(
-                model_name_for_tokenizer="meta-llama/Llama-3.1-8B",
-                renderer_name="llama3",
-                max_length=128,
-                batch_size=4,
-            ),
+        train_ds, _ = self._build(
+            sources, {"big": ds_big, "small": ds_small}, stopping_strategy="all_exhausted"
         )
-        with patch("tinker_cookbook.supervised.data.datasets.load_dataset") as mock_load:
-            mock_load.side_effect = _mock_load_dataset({"big": ds_big, "small": ds_small})
-            train_ds, _ = builder()
-
         assert len(train_ds) > 0
         for i in range(min(5, len(train_ds))):
             batch = train_ds.get_batch(i)

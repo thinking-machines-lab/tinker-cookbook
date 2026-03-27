@@ -5,7 +5,7 @@ Supervised learning dataset implementations from HuggingFace datasets.
 import json
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 import blobfile
 import chz
@@ -225,41 +225,44 @@ class InterleavedDatasetBuilder(ChatDatasetBuilder):
     sources: list[HFDatasetSource]
     test_size: int = 0
     shuffle_seed: int = 0
-    stopping_strategy: str = "all_exhausted"
+    stopping_strategy: Literal["first_exhausted", "all_exhausted"] = "all_exhausted"
 
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
         if not self.sources:
             raise ValueError("At least one dataset source must be provided")
 
         hf_datasets: list[datasets.Dataset] = []
-        explicit_weights: list[float | None] = []
 
         for source in self.sources:
             ds = datasets.load_dataset(source.path, name=source.name, split=source.split)
-            assert isinstance(ds, datasets.Dataset)
-            # Normalize message field name and unify schema
+            if not isinstance(ds, datasets.Dataset):
+                raise TypeError(
+                    f"Expected a Dataset but got {type(ds).__name__}. "
+                    f"Check that split='{source.split}' is valid for '{source.path}'."
+                )
             if source.message_field != "messages":
                 ds = ds.rename_column(source.message_field, "messages")
             ds = ds.select_columns(["messages"])
             hf_datasets.append(ds)
-            explicit_weights.append(source.weight)
             logger.info(
                 f"Loaded '{source.path}' ({len(ds)} rows, weight={source.weight})"
             )
 
         # If all weights are None, weight by dataset size (uniform row sampling).
         # If any weight is set, all must be set.
-        if all(w is None for w in explicit_weights):
+        if all(s.weight is None for s in self.sources):
             weights = [float(len(ds)) for ds in hf_datasets]
-        elif any(w is None for w in explicit_weights):
+        elif any(s.weight is None for s in self.sources):
             raise ValueError(
                 "Either all sources must have explicit weights or none of them. "
                 "Got a mix of weighted and unweighted sources."
             )
         else:
-            weights = [w for w in explicit_weights if w is not None]
+            weights = [s.weight for s in self.sources]  # type: ignore[misc]
 
         total_weight = sum(weights)
+        if total_weight <= 0:
+            raise ValueError("Total weight across all sources must be positive")
         probabilities = [w / total_weight for w in weights]
 
         interleaved = datasets.interleave_datasets(
@@ -268,7 +271,8 @@ class InterleavedDatasetBuilder(ChatDatasetBuilder):
             seed=self.shuffle_seed,
             stopping_strategy=self.stopping_strategy,
         )
-        assert isinstance(interleaved, datasets.Dataset)
+        if not isinstance(interleaved, datasets.Dataset):
+            raise TypeError(f"Expected Dataset from interleave_datasets, got {type(interleaved).__name__}")
         logger.info(f"Interleaved dataset: {len(interleaved)} rows")
 
         # Split test set
