@@ -91,6 +91,10 @@ def main():
     parser.add_argument("--combined-file", type=str, default=None)
     parser.add_argument("--streaming", action="store_true",
                         help="Use streaming for very large datasets")
+    parser.add_argument("--packing", action="store_true",
+                        help="Pack multiple short examples into each sequence for efficiency")
+    parser.add_argument("--max-packed-length", type=int, default=49152,
+                        help="Max tokens per packed sequence (only used with --packing)")
     args = parser.parse_args()
 
     # Combine data
@@ -121,6 +125,8 @@ def main():
         file_path=data_path,
         test_size=1024,
         seed=42,
+        packing=args.packing,
+        max_packed_length=args.max_packed_length,
     )
 
     model_short = args.model.replace("/", "-").replace(":", "-")
