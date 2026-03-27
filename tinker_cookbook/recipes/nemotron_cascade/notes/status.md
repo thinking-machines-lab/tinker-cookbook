@@ -1,30 +1,50 @@
-# Overall Status (2026-03-27)
+# Overall Status (2026-03-27, evening)
 
-## Completed
-- Recipe: 17 Python files, 28 commits
-- SFT v1 on Nano (163K examples, rank 32, 16K tokens) — NLL 0.488
-- SFT on gpt-oss-120b — benchmark: GSM8K 94%, IFEval 58% strict
-- 9 RL environments built and tested on Nano
-- Benchmark eval pipeline (GSM8K, IFEval, MMLU-Pro, MATH-500)
-- Wandb integration
+## Key Milestones Achieved
+- All 8 SFT data subsets downloaded (24.5M examples, 553GB)
+- 9 RL environments built, 7 producing non-zero reward
+- 8 benchmark evaluations available
+- SFT v2 LR sweep running (rank=64, 49K tokens)
+- Paper-matched RL sweep running (group=16, batch=32, 49K tokens)
+- R2E-Gym integration analysis complete
 
-## Running
-- IF-RL lr=3e-5 paper-matched sweep: 4 steps, reward 0.705→0.787 (+0.082)
-- IF-RL lr=1e-5: 3 steps, reward 0.734→0.762 (+0.028)
-- MCQA lr=1e-5 and 3e-5: 2 steps each
+## SFT v2 LR Sweep (50K sample, rank=64, 49K tokens)
+| LR | Steps | Min NLL | Status |
+|----|-------|---------|--------|
+| 1e-4 | 496 | 0.426 | Running |
+| 3e-4 | 498 | **0.424** | Best |
+| 5e-4 | 475 | 0.426 | Running |
 
-## Blocked
-- SFT v2 (full data): data download incomplete (chat, several others)
-- RL cascade: waiting for optimal LR findings + SFT v2
+Decision: lr=3e-4 or 5e-4 for full SFT v2 (both very close).
+
+## RL Environments (with fixes)
+| Env | Reward | Mixed Groups | Status |
+|-----|--------|-------------|--------|
+| IF-RL | 0.69-0.79 | 100% | Working, lr=3e-5 best |
+| MCQA (fixed) | 0.36→0.40 | Yes | Improving! Fix worked |
+| StructOut (jsonschema) | 0.56→0.79 | Yes | Strong learning signal |
+| Long-ctx (fixed) | 0.51-0.61 | Yes | 6x improvement from judge fix |
+| Code RL (g=16) | 0.06-0.09 | 100% | Works with enough rollouts |
+| RLHF (fixed) | 0.008 | Testing g=16 | GenRM bugs fixed |
+| Workbench | -0.006 | 100% | Tool format working, mock data issue |
+| SWE Agentless | 0.0 | — | Needs R2E-Gym Docker |
+| SWE Agentic | 0.0 | — | Needs R2E-Gym Docker |
 
 ## Key Findings
-1. LoRA LR = 10x paper's full-FT LR (SFT: 5e-4, RL: 3e-5)
-2. Paper-matched group=16, 49K tokens shows clear RL learning
-3. IF-RL lr=3e-5 is the best RL config so far
-4. Math SFT data is 229GB for 5.2M examples (very long reasoning chains)
+1. LoRA LR = 10x paper's full-FT LR (SFT: 3-5e-4, RL: 3e-5)
+2. group_size=16 is critical — creates mixed groups even for hard tasks
+3. Long-ctx judge needed 512 tokens (was 32) — thinking models need reasoning space
+4. MCQA needed <think> stripping before answer extraction
+5. StructOut needed real jsonschema validation (was too easy before)
+6. RLHF had two bugs: wrong API param + wrong dataset field
+7. R2E-Gym Docker images can solve SWE dependency issues
 
-## Checkpoints
-- Nano SFT v1 final: tinker://9814478b-c54c-5c5c-9967-40ab181a0b80:train:0/weights/final
-- gpt-oss SFT final: tinker://a27528b8-b83f-59a0-9334-78129ec565d0:train:0/weights/final
-- gpt-oss IF-RL Run 1: tinker://6c99cabe-10a4-5e30-a32e-7ffdc39d896a:train:0/weights/final
-- gpt-oss IF-RL Run 2: tinker://ec4ef250-02aa-5f91-b141-fe7c6f8f7d95:train:0/weights/final
+## Wandb
+https://wandb.ai/thinking-machines-lab-inc/nemotron-cascade-2-replication
+
+## Next Steps
+1. Finish SFT v2 sweep → pick lr → launch full SFT v2 (24.5M examples, rank=64, 49K)
+2. Run full RL cascade: SFT v2 → IF-RL (180 steps) → Multi-domain (70 steps)
+3. Benchmark after each stage
+4. Implement R2E-Gym Docker integration for SWE envs
+5. Ground-truth-seeded mocks for Workbench
