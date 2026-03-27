@@ -22,7 +22,16 @@ SFT → IF-RL → Multi-domain RL → MOPD → RLHF → Long-ctx RL → Code RL 
 | rlhf | Qwen3.5-397B GenRM | ⏳ Slow |
 | code_rl | Modal + MBPP | ⏳ Testing |
 | longctx_rl | Qwen3.5-397B judge | ⏳ Slow |
-| swe_agentic | Modal multi-turn | Not tested |
+| swe_agentic | Modal multi-turn | ✓ 0 reward (19min/step, works e2e) |
+
+### RL LR Sweep (paper-matched, Nano SFT v1 checkpoint)
+- Date: 2026-03-27
+- Model: Nemotron-3-Nano from SFT v1 final checkpoint
+- Settings: group=16, max_tokens=49K (paper-matched)
+- Batch=32 (paper=128, reduced for practical speed)
+- LRs: 1e-5, 3e-5 (LoRA-adjusted from paper's 3e-6)
+- Status: RUNNING (IF-RL, wandb streaming)
+- wandb: https://wandb.ai/thinking-machines-lab-inc/nemotron-cascade-2-replication
 
 ## Data Analysis Summary
 
