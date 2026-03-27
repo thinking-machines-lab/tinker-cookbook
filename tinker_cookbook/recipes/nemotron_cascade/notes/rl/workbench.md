@@ -1,79 +1,87 @@
 # Workbench Tool-Calling RL Environment Analysis
 
-## Status: REWARD=0 — Mock backend returns fake data, model can't match ground truth args
+## Status: PARTIALLY FIXED — Filtered to single-call, tool schemas injected, model makes tool calls but reward still 0 in 3-step test
 
-## Core Problem: Mock Backend Defeats Multi-Step Verification
+## Changes Made
 
-### How the reward works
-```python
-def check_tool_calls_in_messages(messages, ground_truth):
-    # For each ground_truth call, find a model call with same name AND same arguments
-    for gt in ground_truth:
-        for mc in model_calls:
-            if mc["name"] == gt_name:
-                args_match = all(str(mc["arguments"].get(k)) == str(v) for k, v in gt_args.items())
-```
-Reward = fraction of ground truth calls matched (name + exact argument values).
+### 1. Single-call filter (P0 from original analysis)
+Added `ds.filter(lambda x: len(x.get("ground_truth", [])) == 1)` in `WorkbenchRLDataset.__init__`.
+Result: 3,248 of 4,686 workbench tasks (69%) are single-call. These are tasks where the
+correct answer is a single tool call with arguments derived from the user message alone.
 
-### Why this fails with mock backend
-Consider a 2-step task: "Find John's email, then send him a meeting invite."
+### 2. Tool schema injection (CRITICAL BUG FIX)
+The original code copied raw messages from the dataset as `initial_messages` but never told
+the model what tools were available. The model had no tool definitions in its prompt and
+responded with plain text instead of tool calls.
 
-Ground truth:
-1. `company_directory_find_email_address(name="John Smith")` → should return real email
-2. `calendar_create_event(attendees="john.smith@company.com", ...)`
+Fixed by using `renderer.create_conversation_prefix_with_tools()` to inject XML tool schemas
+into the system message, matching the pattern used by harbor_env and swe_agentic_env.
 
-What happens:
-1. Model calls `company_directory_find_email_address(name="John Smith")` ✓ name matches
-2. Mock returns `{"email": "john.smith@company.com"}` — happens to match ground truth pattern
-3. Model uses mock email in next call → MAY match ground truth
+### 3. max_turns=3 (adjusted from original max_turns=10)
+With max_turns=1, the model's first response is its only chance. But even for single-call
+ground-truth tasks, the model often wants to gather info first (e.g., for "cancel meeting
+with X", it calls `calendar_get_events` before `calendar_delete_event`). With max_turns=3,
+the model can do a short info-gathering step, then the action call. The reward function
+already checks ALL tool calls in the full conversation.
 
-**But** for many tasks, the mock data doesn't match ground truth:
-- Mock always returns `event_id="EVT001"` but ground truth might reference `event_id="EVT_REAL_123"`
-- Mock email search returns generic results, ground truth expects specific `email_id` values
-- CRM mock returns `customer_id="CUST001"`, ground truth expects actual IDs
+## Test Results (3 steps, Nano checkpoint, 4 groups x 4 rollouts)
 
-### What fraction of tasks are single-call (verifiable without backend)?
+### v1: Before tool schema fix (max_turns=10, max_tokens=4096)
+- Model generated plain text (no tool calls at all)
+- reward/total = -0.025 (context overflow penalty)
+- correct = 0.0
 
-Looking at the tool implementations and ground truth structure:
-- **Single-call tasks**: Only need name + args match, no dependency on return values. Examples:
-  - "Send an email to X with subject Y" → just needs `email_send_email(to=X, subject=Y)`
-  - "Create a task called X" → just needs `project_management_create_task(title=X)`
-- **Multi-step tasks**: Need return values from step N to construct step N+1's arguments. Examples:
-  - "Find who sent the latest email and add them to the project" (2+ steps, chained)
-  - "Get John's email and send him the report" (2 steps, chained)
+### v2: After tool schema fix (max_turns=1, max_tokens=8192)
+- Model now makes tool calls (tool schemas visible in prompt)
+- But calls info-gathering tools (calendar_get_events) not action tools (calendar_delete_event)
+- reward/total = 0.0, correct = 0.0
+- max_turns hit on every episode (1 turn used, episode ends)
 
-**Estimated split**: Without examining actual data distribution, tool-calling benchmarks typically have 40-60% multi-step tasks. Even single-call tasks may fail if the ground truth expects specific argument formatting.
+### v3: max_turns=3, max_tokens=16384
+- Model does multi-step: calls get_events, gets mock response, tries to reason about it
+- But mock data doesn't match what ground truth expects for the action arguments
+- Still correct = 0.0 in the 4 tasks sampled
+- Much slower (~800s per step vs ~400s)
 
-## Actionable Improvements
+## Why Reward Is Still 0
 
-### P0: Filter to single-call tasks only
-Add a filter in `WorkbenchRLDataset.__init__`:
-```python
-ds = ds.filter(lambda x: len(x.get("ground_truth", [])) == 1)
-```
-Single-call tasks only need correct tool name + arguments, which the model can get right without backend data. This should immediately give non-zero reward.
+Even with all fixes, the 3-step test shows 0 reward. Root causes:
 
-### P1: Relax argument matching for multi-step tasks
-For chained tasks, score tool name correctness separately from argument correctness:
+1. **Model prefers multi-step reasoning**: For tasks like "cancel meeting with X", the model
+   calls `calendar_get_events` first, then tries to use the result to call `calendar_delete_event`.
+   The ground truth expects a direct `calendar_delete_event(event_id="EVT_REAL_123")` with
+   a specific event_id that the model can't know.
+
+2. **Small test size**: Only 4 tasks per step (due to groups_per_batch=4). With 3,248 tasks
+   and many categories (calendar, email, CRM, analytics, project management), we may simply
+   not have sampled an easy-enough task where the model directly calls the correct tool.
+
+3. **Argument exactness**: Ground truth requires exact string matches on argument values.
+   Even if the model calls the right tool, slight formatting differences (e.g., name casing,
+   date format) cause a mismatch.
+
+## Remaining Improvements
+
+### P1: Partial credit for tool name match (high impact)
+Many trajectories call the correct tool but with wrong arguments. Adding partial credit
+for name-only matches would provide training signal:
 ```python
 name_reward = matched_names / len(ground_truth)  # 0-1
 args_reward = matched_name_and_args / len(ground_truth)  # 0-1
 reward = 0.5 * name_reward + 0.5 * args_reward
 ```
-This gives partial credit for calling the right sequence of tools even with wrong arguments.
 
-### P2: Make mock backend return consistent fake data
-Instead of generic mock responses, seed the mock with data derived from the ground truth:
-- Pre-populate email IDs, customer IDs, event IDs that the ground truth expects
-- This requires parsing the ground truth to extract expected return values and configuring mocks accordingly
+### P2: Larger test batch
+Run with groups_per_batch=32+ to sample more diverse tasks. Some task categories
+(email_send_email, project_management_create_task) should be easier for direct matching.
 
-### P3: Grade on tool call SEQUENCE rather than exact args
-Many tool-calling benchmarks grade on:
-1. Correct tool sequence (name order)
-2. Correct argument types (not exact values)
-3. Correct argument values (exact match)
+### P3: Mock backend seeded from ground truth
+For single-call tasks, parse the ground truth to extract expected IDs and seed the mock
+returns. E.g., if ground truth expects `calendar_delete_event(event_id="EVT123")`, the
+mock `calendar_get_events` should return events with `event_id="EVT123"`.
 
-Layer these as partial credit: 0.33 for right sequence, 0.33 for right types, 0.34 for exact values.
-
-## Expected Impact
-P0 (single-call filter) should immediately give reward > 0 for a subset of tasks. Combined with P1 (partial credit), the env should produce meaningful training signal for tool-calling capabilities.
+## Data Distribution
+- Total workbench tasks with ground_truth: 4,686
+- Single-call (len(ground_truth)==1): 3,248 (69%)
+- Multi-call (len(ground_truth)>1): 1,438 (31%)
+- Categories observed in test: workbench_calendar, workbench_email, workbench_analytics

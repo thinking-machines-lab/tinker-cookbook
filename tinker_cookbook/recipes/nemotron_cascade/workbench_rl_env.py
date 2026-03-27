@@ -1,12 +1,17 @@
 """
 Workbench Tool-Calling RL environment for Nemotron-Cascade-2 replication.
 
-Multi-turn environment where the model calls workplace tools (email, calendar,
-CRM, etc.) to complete tasks. Uses the `build_agent_tool_env` multi-turn
-infrastructure (same pattern as harbor_rl and swe_agentic).
+Single-turn environment where the model calls workplace tools (email, calendar,
+CRM, etc.) to complete tasks. Filtered to single-call tasks only because the
+mock tool backend returns fake data — multi-step tasks can't match ground-truth
+arguments that depend on real return values from earlier calls. The 3,248
+single-call tasks (69% of all workbench data) let the model construct the
+correct tool call directly from the user message.
 
-The tools return mock results since we don't have the actual backend.
-Reward is based on whether the model's tool calls match the ground_truth.
+Uses `build_agent_tool_env` with max_turns=3 so the model can do a short
+info-gathering step before the action call, then is graded against ground_truth.
+The reward function checks ALL tool calls in the conversation, so the model gets
+credit as long as the correct call appears anywhere in the trajectory.
 """
 
 import json
@@ -213,7 +218,7 @@ class WorkbenchReward:
 
 
 class WorkbenchEnvGroupBuilder(EnvGroupBuilder):
-    """Builds multi-turn workbench environments."""
+    """Builds single-turn workbench environments for single-call tool tasks."""
 
     def __init__(
         self,
@@ -223,7 +228,7 @@ class WorkbenchEnvGroupBuilder(EnvGroupBuilder):
         tokenizer_name: str,
         num_envs: int,
         category: str = "workbench",
-        max_turns: int = 10,
+        max_turns: int = 3,
     ):
         self._prompt_messages = prompt_messages
         self._ground_truth = ground_truth
@@ -242,10 +247,22 @@ class WorkbenchEnvGroupBuilder(EnvGroupBuilder):
         all_tools = [getattr(tools_obj, m) for m in dir(tools_obj)
                      if isinstance(getattr(tools_obj, m), Tool)]
 
-        # Build initial messages (system + user from data)
-        initial_messages: list[Message] = []
+        # Extract user messages (skip system — we'll rebuild it with tool schemas)
+        user_messages: list[Message] = []
+        system_prompt = ""
         for msg in self._prompt_messages:
-            initial_messages.append({"role": msg["role"], "content": msg["content"]})
+            if msg["role"] == "system":
+                system_prompt = msg["content"]
+            else:
+                user_messages.append({"role": msg["role"], "content": msg["content"]})
+
+        # Build initial messages with tool schemas injected into the system message
+        # so the model knows which tools are available and how to call them.
+        tool_specs = [t.to_spec() for t in all_tools]
+        initial_messages = renderer.create_conversation_prefix_with_tools(
+            tools=tool_specs,
+            system_prompt=system_prompt,
+        ) + user_messages
 
         reward_fn = WorkbenchReward(self._ground_truth)
 
@@ -267,19 +284,25 @@ class WorkbenchEnvGroupBuilder(EnvGroupBuilder):
 
 class WorkbenchRLDataset(RLDataset):
     def __init__(self, batch_size: int, group_size: int, renderer_name: str,
-                 tokenizer_name: str, max_turns: int = 10, seed: int = 0):
+                 tokenizer_name: str, max_turns: int = 3, seed: int = 0):
         logger.info("Loading workbench RL data...")
         from datasets import load_dataset
         ds = load_dataset("nvidia/Nemotron-Cascade-2-RL-data", name="multi-domain-RL", split="train")
         ds = cast(Dataset, ds)
         ds = ds.filter(lambda x: x.get("environment_name") == "workbench" and x.get("ground_truth"))
+        # Filter to single-call tasks only. Multi-call tasks require chained tool
+        # results (e.g. "look up John's email, then send him a message") which our
+        # mock backend can't satisfy — the fake return values won't match the
+        # ground-truth arguments of subsequent calls.  Single-call tasks let the
+        # model construct the correct tool call entirely from the user message.
+        ds = ds.filter(lambda x: len(x.get("ground_truth", [])) == 1)
         self.ds = ds.shuffle(seed=seed)
         self.batch_size = batch_size
         self.group_size = group_size
         self.renderer_name = renderer_name
         self.tokenizer_name = tokenizer_name
         self.max_turns = max_turns
-        logger.info(f"Workbench dataset: {len(self.ds)} examples")
+        logger.info(f"Workbench dataset: {len(self.ds)} single-call examples")
 
     def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
         batch_start = index * self.batch_size
@@ -315,7 +338,7 @@ class WorkbenchRLDatasetBuilder(RLDatasetBuilder):
     model_name_for_tokenizer: str
     renderer_name: str
     group_size: int = 16
-    max_turns: int = 10
+    max_turns: int = 3
     seed: int = 0
 
     async def __call__(self) -> tuple[WorkbenchRLDataset, None]:
