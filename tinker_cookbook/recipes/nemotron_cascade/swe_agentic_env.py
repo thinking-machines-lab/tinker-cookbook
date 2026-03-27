@@ -216,10 +216,10 @@ def _build_repo_setup_script(repo: str, base_commit: str) -> str:
     """Build a bash script that clones and sets up the repository in the sandbox."""
     return f"""\
 set -e
-git clone --depth=50 https://github.com/{repo}.git /workspace/repo 2>/dev/null
+git clone --depth=50 https://github.com/{repo}.git /workspace/repo
 cd /workspace/repo
-git fetch --depth=1 origin {base_commit} 2>/dev/null || true
-git checkout {base_commit} 2>/dev/null || true
+git fetch --depth=1 origin {base_commit} || true
+git checkout {base_commit} || true
 pip install -e . 2>/dev/null || true
 echo "REPO_SETUP_DONE"
 """

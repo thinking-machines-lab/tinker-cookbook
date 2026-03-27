@@ -86,6 +86,11 @@ class CLIConfig:
     max_steps_off_policy: int | None = None
     stream_minibatch_config: StreamMinibatchConfig | None = None
 
+    # Model context window size. Dynamically caps max_tokens per-request.
+    # Needed for Cascade SWE prompts (~24K tokens) where prompt + max_tokens
+    # can exceed the model's 65K context limit.
+    context_window: int | None = None
+
 
 def get_dataset_builder(
     env: str,
@@ -234,6 +239,7 @@ async def cli_main(cli_config: CLIConfig):
         loss_fn=cli_config.loss_fn,
         loss_fn_config=cli_config.loss_fn_config,
         max_steps=cli_config.max_steps,
+        context_window=cli_config.context_window,
     )
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)

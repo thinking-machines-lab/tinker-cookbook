@@ -521,6 +521,12 @@ class Config:
     # Maximum number of training iterations. If None, train on the full dataset.
     max_steps: int | None = None
 
+    # Model context window size. When set, max_tokens is dynamically capped
+    # per-request so that prompt_length + max_tokens <= context_window.
+    # This prevents BadRequestError when long prompts (e.g., Cascade SWE ~24K
+    # tokens) would otherwise exceed the model's context limit.
+    context_window: int | None = None
+
 
 @trace.scope
 async def run_single_evaluation(
@@ -722,6 +728,7 @@ async def do_sync_training_with_stream_minibatch(
                             do_remove_constant_reward_groups=config.remove_constant_reward_groups,
                             enable_logging=enable_logging,
                             strategy=strategy,
+                            context_window=config.context_window,
                         )
                     worker_metrics["time/trajectory_group_worker_loop/total"] = (
                         time.time() - t_start
@@ -987,6 +994,7 @@ async def do_async_training(
                     temperature=config.temperature,
                     do_remove_constant_reward_groups=config.remove_constant_reward_groups,
                     strategy=strategy,
+                    context_window=config.context_window,
                 )
             worker_metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
             # Ingest error info (safe: same event loop thread)
@@ -1727,6 +1735,7 @@ async def do_sync_training(
                                 do_remove_constant_reward_groups=False,
                                 enable_logging=i < config.num_groups_to_log,
                                 strategy=strategy,
+                                context_window=config.context_window,
                             )
                             for i, builder in enumerate(env_group_builders_P)
                         ),

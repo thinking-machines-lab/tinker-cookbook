@@ -1,14 +1,22 @@
 """
 SWE-RL environment for Nemotron-Cascade-2 replication.
 
-Uses the SWE-RL subset (622 valid SWE-bench instances).
+Data sources (in priority order):
+  1. nvidia/Nemotron-Cascade-RL-SWE (~110K instances) — DEFAULT
+     Rich prompts with issue + codebase context + golden patches.
+     This is the exact dataset from the Nemotron Cascade 2 paper.
+  2. R2E-Gym/R2E-Gym-Subset (4,578 instances) — fallback with Docker execution
+  3. nvidia/Nemotron-Cascade-2-RL-data SWE-RL split — legacy
+
 The model generates a code patch, which is scored by either:
-  - An LLM judge (Qwen3.5-397B) — the default, matching the paper's use of GPT-OSS-120B
-  - Execution-based testing in a Modal sandbox (legacy mode)
+  - An LLM judge (Qwen3.5-397B) — the default, matching the paper's use of GPT-OSS-120B.
+    When golden_patch is available (Cascade SWE data), the judge compares proposed vs golden.
+  - Execution-based testing in a Modal sandbox (R2E-Gym / legacy mode)
 
 Paper hyperparameters (Agentless SWE RL):
   - Batch 128×16=2048, max seq 98K, LR 3e-6
   - GPT-OSS-120B as reward model, ~40-50 steps
+  - Mask loss where no rollout in group gets reward > 0.5
 """
 
 import json
@@ -42,6 +50,21 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import logtree
 
 logger = logging.getLogger(__name__)
+
+# Threshold (bytes) above which we warn about test file sizes before sandbox upload
+_LARGE_TEST_FILE_THRESHOLD = 50_000
+
+
+def _summarize_lengths(ds: Dataset, field: str) -> str:
+    """Return a short summary of string lengths for a dataset field."""
+    lengths = [len(row.get(field, "") or "") for row in ds.select(range(min(500, len(ds))))]
+    if not lengths:
+        return "no data"
+    lengths.sort()
+    return (
+        f"min={lengths[0]:,}, median={lengths[len(lengths)//2]:,}, "
+        f"max={lengths[-1]:,}, n_sampled={len(lengths)}"
+    )
 
 
 def extract_patch(response: str) -> str | None:
@@ -107,8 +130,45 @@ SWE_JUDGE_USER_TEMPLATE = """\
 
 Score (0-10):"""
 
+SWE_JUDGE_WITH_GOLDEN_SYSTEM_PROMPT = """\
+You are an expert software engineer comparing a proposed code patch against a known correct patch for a GitHub issue.
+
+Rate the quality of the proposed patch on a scale of 0 to 10:
+- 0: No valid patch, empty, or completely irrelevant
+- 1-2: Has diff syntax but targets entirely wrong files/locations
+- 3-4: Targets some right areas but the approach is fundamentally different and wrong
+- 5-6: Partially overlaps with the correct fix but misses important parts
+- 7-8: Captures the core fix with minor differences (e.g., style, extra changes)
+- 9-10: Functionally equivalent to the correct patch (may differ in style/whitespace)
+
+Consider:
+1. Does the proposed patch modify the same files and locations as the golden patch?
+2. Are the logical changes equivalent or similar?
+3. Would the proposed patch achieve the same fix as the golden patch?
+4. Does it introduce any regressions not present in the golden patch?
+
+Output ONLY the integer score, nothing else."""
+
+SWE_JUDGE_WITH_GOLDEN_USER_TEMPLATE = """\
+## Issue Description
+{problem_statement}
+
+## Golden (Correct) Patch
+```diff
+{golden_patch}
+```
+
+## Proposed Patch
+```diff
+{patch}
+```
+
+Score (0-10):"""
+
 # Maximum characters of problem statement to send to the judge
 _MAX_JUDGE_PROBLEM_CHARS = 8_000
+# Maximum characters for golden patch in judge context
+_MAX_JUDGE_GOLDEN_PATCH_CHARS = 8_000
 
 
 def _parse_swe_judge_score(response_text: str) -> float:
@@ -127,23 +187,47 @@ async def get_swe_llm_judge_reward(
     repo: str,
     patch: str,
     judge_completer: TinkerMessageCompleter,
+    golden_patch: str | None = None,
 ) -> tuple[float, str]:
-    """Query the LLM judge for patch quality. Returns (normalised_reward, raw_response)."""
+    """Query the LLM judge for patch quality. Returns (normalised_reward, raw_response).
+
+    When golden_patch is provided, uses a comparison-based prompt that asks the judge
+    to evaluate the proposed patch against the known correct fix. This produces more
+    calibrated scores since the judge has a concrete reference.
+    """
     truncated_problem = problem_statement[:_MAX_JUDGE_PROBLEM_CHARS]
     if len(problem_statement) > _MAX_JUDGE_PROBLEM_CHARS:
         truncated_problem += "\n[...truncated...]"
 
-    messages: list[Message] = [
-        {"role": "system", "content": SWE_JUDGE_SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": SWE_JUDGE_USER_TEMPLATE.format(
-                problem_statement=truncated_problem,
-                repo=repo,
-                patch=patch[:8_000],  # Cap patch length for judge context
-            ),
-        },
-    ]
+    if golden_patch:
+        # Golden-patch comparison mode (used with nvidia/Nemotron-Cascade-RL-SWE)
+        truncated_golden = golden_patch[:_MAX_JUDGE_GOLDEN_PATCH_CHARS]
+        if len(golden_patch) > _MAX_JUDGE_GOLDEN_PATCH_CHARS:
+            truncated_golden += "\n[...truncated...]"
+        messages: list[Message] = [
+            {"role": "system", "content": SWE_JUDGE_WITH_GOLDEN_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": SWE_JUDGE_WITH_GOLDEN_USER_TEMPLATE.format(
+                    problem_statement=truncated_problem,
+                    golden_patch=truncated_golden,
+                    patch=patch[:8_000],
+                ),
+            },
+        ]
+    else:
+        # No golden patch — original issue-only mode
+        messages = [
+            {"role": "system", "content": SWE_JUDGE_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": SWE_JUDGE_USER_TEMPLATE.format(
+                    problem_statement=truncated_problem,
+                    repo=repo,
+                    patch=patch[:8_000],
+                ),
+            },
+        ]
 
     try:
         judge_response = await judge_completer(messages)
@@ -155,6 +239,23 @@ async def get_swe_llm_judge_reward(
     except Exception as e:
         logger.warning(f"SWE LLM judge call failed: {e}")
         return 0.0, f"ERROR: {e}"
+
+
+async def _write_file_to_sandbox(
+    sandbox: "modal.Sandbox",
+    path: str,
+    content: str,
+) -> None:
+    """Write a file to a Modal sandbox via stdin, avoiding ARG_MAX limits.
+
+    Instead of embedding file contents in a bash command argument (which hits
+    Modal's 65,536-byte CMD limit for large files), we pipe the content through
+    stdin using ``cat > path``.
+    """
+    proc = await sandbox.exec.aio("bash", "-c", f"cat > {path}")
+    proc.stdin.write(content.encode())
+    proc.stdin.write_eof()
+    await proc.wait.aio()
 
 
 async def run_swe_test_in_modal(
@@ -170,8 +271,8 @@ async def run_swe_test_in_modal(
     """Run SWE-bench test in Modal sandbox.
 
     When docker_image is provided (R2E-Gym mode), uses the pre-built Docker image
-    which has the repo at /testbed with all dependencies installed. Test files from
-    r2e_test_files are written into the sandbox before running.
+    which has the repo at /testbed with all dependencies installed. Test files are
+    written into the sandbox via stdin (not embedded in CMD) to avoid ARG_MAX limits.
 
     Returns (passed, details).
     """
@@ -180,75 +281,126 @@ async def run_swe_test_in_modal(
     except ImportError:
         return False, "Modal not installed"
 
+    # Track sandbox metrics
+    sandbox_metrics: dict[str, float] = {}
+
     if docker_image:
         # R2E-Gym mode: repo is pre-installed at /testbed with all deps
-        import base64
-        patch_b64 = base64.b64encode(patch.encode()).decode()
-
-        # Encode test files as base64 and write them into r2e_tests/
-        test_file_setup = "mkdir -p /testbed/r2e_tests\n"
-        test_file_names = []
+        test_file_names: list[str] = []
         for fname, code in (r2e_test_files or []):
-            code_b64 = base64.b64encode(code.encode()).decode()
-            test_file_setup += f"echo '{code_b64}' | base64 -d > /testbed/r2e_tests/{fname}\n"
+            file_size = len(code.encode())
+            if file_size > _LARGE_TEST_FILE_THRESHOLD:
+                logger.warning(
+                    "Large test file for %s: %s is %d bytes (threshold: %d). "
+                    "Will be written via stdin to avoid ARG_MAX limits.",
+                    instance_id, fname, file_size, _LARGE_TEST_FILE_THRESHOLD,
+                )
             test_file_names.append(f"r2e_tests/{fname}")
 
         if not test_file_names:
+            logger.warning("No R2E-Gym test files for instance %s", instance_id)
             return False, "No R2E-Gym test files"
 
-        test_cmds = " && ".join(
-            f'python -m pytest "{t}" -x 2>&1 && PASS=$((PASS + 1))'
-            for t in test_file_names
-        )
+        try:
+            app = await modal.App.lookup.aio("nemotron-cascade-swe-rl", create_if_missing=True)
+            image = modal.Image.from_registry(docker_image)
+            sb = await modal.Sandbox.create.aio(
+                app=app,
+                image=image,
+                timeout=timeout,
+            )
+        except Exception as e:
+            logger.error(
+                "Sandbox creation failed for instance %s (docker_image=%s): %s",
+                instance_id, docker_image, e,
+            )
+            sandbox_metrics["env/all/sandbox_errors"] = 1.0
+            return False, f"Sandbox creation error for {instance_id}: {str(e)[:200]}"
 
-        test_script = f"""
+        try:
+            # Set up test directory
+            setup_proc = await sb.exec.aio("bash", "-c", "mkdir -p /testbed/r2e_tests")
+            await setup_proc.wait.aio()
+
+            # Write test files via stdin (avoids ARG_MAX limit)
+            for fname, code in (r2e_test_files or []):
+                await _write_file_to_sandbox(sb, f"/testbed/r2e_tests/{fname}", code)
+
+            # Write patch via stdin and apply it
+            await _write_file_to_sandbox(sb, "/testbed/_proposed.patch", patch)
+
+            test_cmds = " && ".join(
+                f'python -m pytest "{t}" -x 2>&1 && PASS=$((PASS + 1))'
+                for t in test_file_names
+            )
+
+            test_script = f"""\
 set -x
 cd /testbed
-{test_file_setup}
-echo '{patch_b64}' | base64 -d | git apply - || {{ echo "PATCH_APPLY_FAILED"; exit 1; }}
+git apply _proposed.patch || {{ echo "PATCH_APPLY_FAILED"; exit 1; }}
 PASS=0
 TOTAL={len(test_file_names)}
 {test_cmds}
 echo "RESULT: $PASS/$TOTAL"
 test "$PASS" -eq "$TOTAL"
 """
+            test_proc = await sb.exec.aio("bash", "-c", test_script)
+            stdout = await test_proc.stdout.read.aio()
+            stderr = await test_proc.stderr.read.aio()
+            exit_code = await test_proc.wait.aio()
 
-        try:
-            app = await modal.App.lookup.aio("nemotron-cascade-swe-rl", create_if_missing=True)
-            image = modal.Image.from_registry(docker_image)
-            sb = await modal.Sandbox.create.aio(
-                "bash", "-c", test_script,
-                image=image,
-                app=app,
-                timeout=timeout,
-            )
-            await sb.wait.aio()
-            stdout = await sb.stdout.read.aio()
-            stderr = await sb.stderr.read.aio()
-            passed = sb.returncode == 0
-            output = (stdout + "\n" + stderr)[-500:]
+            passed = exit_code == 0
+            output = (stdout + "\n" + stderr)[-2000:]
+
+            if not passed:
+                logger.info(
+                    "Sandbox test failed for %s (exit_code=%d):\nstdout: %s\nstderr: %s",
+                    instance_id, exit_code, stdout[-500:], stderr[-500:],
+                )
+
             return passed, output
         except Exception as e:
-            return False, f"Modal error: {str(e)[:200]}"
+            logger.error("Sandbox execution error for instance %s: %s", instance_id, e)
+            return False, f"Sandbox exec error for {instance_id}: {str(e)[:200]}"
+        finally:
+            try:
+                await sb.terminate.aio()
+            except Exception:
+                pass
     else:
         # Legacy mode: clone from GitHub
         if not repo or not base_commit:
             return False, "Missing repo/commit"
 
-        import base64
-        patch_b64 = base64.b64encode(patch.encode()).decode()
+        try:
+            app = await modal.App.lookup.aio("nemotron-cascade-swe-rl", create_if_missing=True)
+            sb = await modal.Sandbox.create.aio(
+                image=modal.Image.debian_slim().pip_install("pytest", "pytest-timeout", "setuptools"),
+                app=app,
+                timeout=timeout,
+            )
+        except Exception as e:
+            logger.error(
+                "Sandbox creation failed for instance %s (legacy mode, repo=%s): %s",
+                instance_id, repo, e,
+            )
+            return False, f"Sandbox creation error for {instance_id}: {str(e)[:200]}"
 
-        test_cmds = " && ".join(
-            f'python -m pytest "{t}" -x 2>&1 && PASS=$((PASS + 1))'
-            for t in fail_to_pass
-        )
+        try:
+            # Write patch via stdin
+            await _write_file_to_sandbox(sb, "/tmp/_proposed.patch", patch)
 
-        test_script = f"""
+            test_cmds = " && ".join(
+                f'python -m pytest "{t}" -x 2>&1 && PASS=$((PASS + 1))'
+                for t in fail_to_pass
+            )
+
+            test_script = f"""\
 set -x
-git clone --depth=1 https://github.com/{repo}.git /workspace/repo 2>/dev/null || exit 1
+git clone --depth=1 https://github.com/{repo}.git /workspace/repo || exit 1
 cd /workspace/repo
-git fetch --depth=1 origin {base_commit} 2>/dev/null && git checkout {base_commit} 2>/dev/null || true
-echo '{patch_b64}' | base64 -d | git apply - || {{ echo "PATCH_APPLY_FAILED"; exit 1; }}
+git fetch --depth=1 origin {base_commit} && git checkout {base_commit} || true
+git apply /tmp/_proposed.patch || {{ echo "PATCH_APPLY_FAILED"; exit 1; }}
 pip install -e . 2>/dev/null || true
 PASS=0
 TOTAL={len(fail_to_pass)}
@@ -256,23 +408,29 @@ TOTAL={len(fail_to_pass)}
 echo "RESULT: $PASS/$TOTAL"
 test "$PASS" -eq "$TOTAL"
 """
+            test_proc = await sb.exec.aio("bash", "-c", test_script)
+            stdout = await test_proc.stdout.read.aio()
+            stderr = await test_proc.stderr.read.aio()
+            exit_code = await test_proc.wait.aio()
 
-        try:
-            app = await modal.App.lookup.aio("nemotron-cascade-swe-rl", create_if_missing=True)
-            sb = await modal.Sandbox.create.aio(
-                "bash", "-c", test_script,
-                image=modal.Image.debian_slim().pip_install("pytest", "pytest-timeout", "setuptools"),
-                app=app,
-                timeout=timeout,
-            )
-            await sb.wait.aio()
-            stdout = await sb.stdout.read.aio()
-            stderr = await sb.stderr.read.aio()
-            passed = sb.returncode == 0
-            output = (stdout + "\n" + stderr)[-500:]
+            passed = exit_code == 0
+            output = (stdout + "\n" + stderr)[-2000:]
+
+            if not passed:
+                logger.info(
+                    "Sandbox test failed for %s (exit_code=%d):\nstdout: %s\nstderr: %s",
+                    instance_id, exit_code, stdout[-500:], stderr[-500:],
+                )
+
             return passed, output
         except Exception as e:
-            return False, f"Modal error: {str(e)[:200]}"
+            logger.error("Sandbox execution error for instance %s: %s", instance_id, e)
+            return False, f"Sandbox exec error for {instance_id}: {str(e)[:200]}"
+        finally:
+            try:
+                await sb.terminate.aio()
+            except Exception:
+                pass
 
 
 class SWERLEnv(Env):
@@ -297,6 +455,9 @@ class SWERLEnv(Env):
         use_modal: bool = True,
         docker_image: str | None = None,
         r2e_test_files: list[tuple[str, str]] | None = None,
+        # Cascade SWE data fields (nvidia/Nemotron-Cascade-RL-SWE)
+        prebuilt_prompt: str | None = None,
+        golden_patch: str | None = None,
     ):
         self.instance_id = instance_id
         self.problem_statement = problem_statement
@@ -309,6 +470,10 @@ class SWERLEnv(Env):
         self.docker_image = docker_image
         # R2E-Gym: list of (filename, code) for test files to write into sandbox
         self.r2e_test_files = r2e_test_files or []
+        # Cascade SWE data: pre-constructed prompt with codebase context
+        self.prebuilt_prompt = prebuilt_prompt
+        # Cascade SWE data: golden patch for comparison-based LLM judge
+        self.golden_patch = golden_patch
         # Populated during step() for use by compute_group_rewards()
         self._extracted_patch: str | None = None
         self._response_content: str = ""
@@ -319,13 +484,17 @@ class SWERLEnv(Env):
         return self.renderer.get_stop_sequences()
 
     async def initial_observation(self) -> tuple[Observation, StopCondition]:
-        prompt = (
-            f"You are a software engineer. Fix the following issue in the repository {self.repo}.\n\n"
-            f"## Issue\n{self.problem_statement}\n\n"
-            f"## Instructions\n"
-            f"Generate a unified diff patch that fixes this issue. "
-            f"Output the patch in a ```diff code block."
-        )
+        if self.prebuilt_prompt:
+            # Cascade SWE data: prompt already includes issue + codebase context + instructions
+            prompt = self.prebuilt_prompt
+        else:
+            prompt = (
+                f"You are a software engineer. Fix the following issue in the repository {self.repo}.\n\n"
+                f"## Issue\n{self.problem_statement}\n\n"
+                f"## Instructions\n"
+                f"Generate a unified diff patch that fixes this issue. "
+                f"Output the patch in a ```diff code block."
+            )
         messages: list[Message] = [{"role": "user", "content": prompt}]
         return self.renderer.build_generation_prompt(messages), self.stop_condition
 
@@ -340,6 +509,9 @@ class SWERLEnv(Env):
         patch = extract_patch(content)
         self._extracted_patch = patch
 
+        sandbox_error = False
+        sandbox_ran = False
+
         if self.reward_mode == "llm_judge":
             # Reward will be computed in SWEGroupBuilder.compute_group_rewards()
             # Return a placeholder reward of 0; it will be overwritten.
@@ -353,6 +525,7 @@ class SWERLEnv(Env):
                 reward = 0.0
                 details = "no patch found"
             elif self.use_modal and (self.docker_image or (self.repo and self.base_commit)):
+                sandbox_ran = True
                 passed, details = await run_swe_test_in_modal(
                     self.instance_id, self.repo, self.base_commit,
                     patch, self.fail_to_pass,
@@ -360,6 +533,9 @@ class SWERLEnv(Env):
                     r2e_test_files=self.r2e_test_files,
                 )
                 reward = 1.0 if passed else 0.0
+                # Detect sandbox-level errors (not just test failures)
+                if not passed and ("Sandbox" in details or "Modal error" in details):
+                    sandbox_error = True
             else:
                 # Fallback: reward for producing a valid-looking patch
                 reward = 0.5 if patch else 0.0
@@ -377,12 +553,20 @@ class SWERLEnv(Env):
                 caption="SWE-RL reward",
             )
 
+        metrics: dict[str, float] = {
+            "correct": reward,
+            "has_patch": float(bool(patch)),
+        }
+        if sandbox_ran:
+            metrics["env/all/sandbox_success_rate"] = 0.0 if sandbox_error else 1.0
+            metrics["env/all/sandbox_errors"] = 1.0 if sandbox_error else 0.0
+
         return StepResult(
             reward=reward,
             episode_done=True,
             next_observation=tinker.ModelInput.empty(),
             next_stop_condition=self.stop_condition,
-            metrics={"correct": reward, "has_patch": float(bool(patch))},
+            metrics=metrics,
         )
 
 
@@ -441,6 +625,7 @@ class SWEGroupBuilder(EnvGroupBuilder):
                 repo=env.repo,
                 patch=patch,
                 judge_completer=judge_completer,
+                golden_patch=env.golden_patch,
             )
 
             with logtree.scope_header("LLM Judge"):
@@ -471,14 +656,34 @@ class SWERLDataset(RLDataset):
         reward_mode: Literal["execution", "llm_judge"] = "llm_judge",
         use_modal: bool = True,
         use_r2e_gym: bool = True,
+        use_cascade_swe_data: bool = True,
         seed: int = 0,
     ):
         from datasets import load_dataset
 
         self.reward_mode = reward_mode
         self.use_r2e_gym = use_r2e_gym
+        self.use_cascade_swe_data = use_cascade_swe_data
 
-        if use_r2e_gym:
+        if use_cascade_swe_data:
+            # nvidia/Nemotron-Cascade-RL-SWE: ~110K instances with rich prompts
+            # containing issue + codebase context + golden patches.
+            # This is the exact dataset used in the Nemotron Cascade 2 paper.
+            logger.info("Loading nvidia/Nemotron-Cascade-RL-SWE from HuggingFace...")
+            ds = load_dataset("nvidia/Nemotron-Cascade-RL-SWE", split="train")
+            ds = cast(Dataset, ds)
+            ds = ds.filter(
+                lambda x: (
+                    x.get("prompt") is not None
+                    and len(x.get("prompt", "")) > 100
+                    and x.get("golden_patch") is not None
+                )
+            )
+            logger.info(
+                f"Cascade SWE dataset: {len(ds)} instances after filtering "
+                f"(prompt lengths: {_summarize_lengths(ds, 'prompt')})"
+            )
+        elif use_r2e_gym:
             logger.info("Loading R2E-Gym data from HuggingFace...")
             ds = load_dataset("R2E-Gym/R2E-Gym-Subset", split="train")
             ds = cast(Dataset, ds)
@@ -498,7 +703,8 @@ class SWERLDataset(RLDataset):
         self.group_size = group_size
         self.renderer = renderer
         self.use_modal = use_modal
-        logger.info(f"SWE-RL dataset: {len(self.ds)} valid instances (r2e_gym={use_r2e_gym})")
+        data_source = "cascade_swe" if use_cascade_swe_data else ("r2e_gym" if use_r2e_gym else "legacy")
+        logger.info(f"SWE-RL dataset: {len(self.ds)} valid instances (source={data_source})")
 
     def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
         batch_start = index * self.batch_size
@@ -514,7 +720,41 @@ class SWERLDataset(RLDataset):
 
     def _make_builder(self, row: dict) -> SWEGroupBuilder | None:
         try:
-            if self.use_r2e_gym:
+            if self.use_cascade_swe_data:
+                # nvidia/Nemotron-Cascade-RL-SWE schema:
+                #   source, instance_id, prompt, golden_patch,
+                #   relevant_file_contents, original_prompt
+                instance_id = row.get("instance_id", "unknown")
+                prebuilt_prompt = row.get("prompt", "")
+                golden_patch = row.get("golden_patch", "")
+                original_prompt = row.get("original_prompt", "")
+                source = row.get("source", "")
+
+                if not prebuilt_prompt or not golden_patch:
+                    return None
+
+                # Use original_prompt as problem_statement for judge context
+                # (it's shorter and contains the core issue description)
+                problem_statement = original_prompt or prebuilt_prompt[:_MAX_JUDGE_PROBLEM_CHARS]
+
+                rm = self.reward_mode
+                return SWEGroupBuilder(
+                    env_thunk=lambda iid=instance_id, ps=problem_statement, pp=prebuilt_prompt, gp=golden_patch, _rm=rm: SWERLEnv(
+                        instance_id=iid,
+                        problem_statement=ps,
+                        repo="",  # Not needed — prompt has full context
+                        base_commit="",
+                        fail_to_pass=[],
+                        renderer=self.renderer,
+                        reward_mode=_rm,
+                        use_modal=False,  # No execution for cascade data (LLM judge)
+                        prebuilt_prompt=pp,
+                        golden_patch=gp,
+                    ),
+                    num_envs=self.group_size,
+                    reward_mode=rm,
+                )
+            elif self.use_r2e_gym:
                 # R2E-Gym schema: docker_image, problem_statement, repo_name, commit_hash, etc.
                 docker_image = row.get("docker_image", "")
                 problem = row.get("problem_statement", "")
@@ -589,6 +829,7 @@ class SWERLDatasetBuilder(RLDatasetBuilder):
     reward_mode: Literal["execution", "llm_judge"] = "llm_judge"
     use_modal: bool = True
     use_r2e_gym: bool = True  # Use R2E-Gym Docker images (pre-built envs with deps)
+    use_cascade_swe_data: bool = True  # Use nvidia/Nemotron-Cascade-RL-SWE (~110K instances with codebase context)
     seed: int = 0
 
     async def __call__(self) -> tuple[SWERLDataset, None]:
@@ -598,5 +839,7 @@ class SWERLDatasetBuilder(RLDatasetBuilder):
             batch_size=self.batch_size, group_size=self.group_size,
             renderer=renderer, reward_mode=self.reward_mode,
             use_modal=self.use_modal,
-            use_r2e_gym=self.use_r2e_gym, seed=self.seed,
+            use_r2e_gym=self.use_r2e_gym,
+            use_cascade_swe_data=self.use_cascade_swe_data,
+            seed=self.seed,
         ), None
