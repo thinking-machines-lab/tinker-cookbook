@@ -29,6 +29,7 @@ jobs:
           - test_quantized_equivalence
           - test_lifecycle
           - test_publish
+          - test_adapter_publish
         transformers-version: ["4.57.6", "5.2.0"]
         exclude:
           # Qwen3.5 requires transformers >= 5.0
@@ -41,6 +42,9 @@ jobs:
             transformers-version: "4.57.6"
           # Publish test doesn't depend on transformers version
           - test: test_publish
+            transformers-version: "4.57.6"
+          # Adapter publish test doesn't depend on transformers version
+          - test: test_adapter_publish
             transformers-version: "4.57.6"
 
     name: ${{ matrix.test }} (transformers ${{ matrix.transformers-version }})
