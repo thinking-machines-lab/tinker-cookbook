@@ -255,7 +255,7 @@ class RLHFGroupBuilder(EnvGroupBuilder):
         genrm_renderer = renderers.get_renderer(self.genrm_renderer_name, tokenizer=genrm_tokenizer)
         service_client = tinker.ServiceClient(base_url=self.base_url)
         genrm_sampling_client = service_client.create_sampling_client(
-            model_path=self.genrm_model_name,
+            base_model=self.genrm_model_name,
         )
         completer = TinkerMessageCompleter(
             sampling_client=genrm_sampling_client,
@@ -463,14 +463,29 @@ class RLHFDataset(RLDataset):
 
     def _make_env_group_builder(self, row: dict) -> RLHFGroupBuilder | None:
         try:
-            # HelpSteer3 has a "prompt" field with the user query
-            prompt_text = row.get("prompt", "")
-            if not prompt_text:
+            # HelpSteer3 stores conversations in a "context" field (list of message dicts).
+            # We use all messages up to (but not including) the final assistant turn as
+            # the prompt, so the policy generates a fresh response to the last user query.
+            context = row.get("context")
+            if not context or not isinstance(context, list):
                 return None
 
-            prompt_messages: list[Message] = [
-                {"role": "user", "content": prompt_text},
-            ]
+            # Strip trailing assistant messages so the prompt ends with the last user turn
+            prompt_messages: list[Message] = []
+            for msg in context:
+                prompt_messages.append({"role": msg["role"], "content": msg["content"]})
+
+            # Remove trailing assistant turns so the model generates the response
+            while prompt_messages and prompt_messages[-1]["role"] == "assistant":
+                prompt_messages.pop()
+
+            if not prompt_messages:
+                return None
+
+            # Extract plain-text version of the last user message for the GenRM
+            prompt_text = _extract_prompt_text(prompt_messages)
+            if not prompt_text:
+                return None
 
             return RLHFGroupBuilder(
                 prompt_messages=prompt_messages,
