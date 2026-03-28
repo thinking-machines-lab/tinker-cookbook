@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Comparison:
+    """A pair of completions (A and B) generated from the same prompt conversation."""
+
     prompt_conversation: list[renderers.Message]
     completion_A: list[renderers.Message]
     completion_B: list[renderers.Message]
@@ -36,6 +38,8 @@ class Comparison:
 
 @dataclass
 class LabeledComparison:
+    """A Comparison annotated with a human preference label (A, B, or Tie)."""
+
     comparison: Comparison
     label: Literal["A", "B", "Tie"]
 
@@ -101,12 +105,10 @@ class ComparisonRendererFromChatRenderer(ComparisonRenderer):
 
 
 class PreferenceModel:
+    """Abstract base class for models that score a Comparison and return a preference float."""
+
     async def __call__(self, comparison: Comparison) -> float:
-        """
-        1: B is strongly preferred
-        0: Tie
-        -1: A is strongly preferred
-        """
+        """Return a preference score: -1 means A is preferred, 0 is a tie, 1 means B is preferred."""
         raise NotImplementedError
 
 
@@ -144,6 +146,8 @@ class PreferenceModelFromChatRenderer(PreferenceModel):
 
 @chz.chz
 class PreferenceModelBuilderFromChatRenderer(PreferenceModelBuilder):
+    """Builds a PreferenceModel that uses a chat renderer and a Tinker sampling client."""
+
     renderer_name: str
     model_name: str
     rm_weights_path: str

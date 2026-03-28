@@ -20,6 +20,8 @@ StopCondition: TypeAlias = list[str] | list[int]
 
 @dataclass
 class TokensWithLogprobs:
+    """A sequence of token IDs with optional log-probabilities and a stop reason."""
+
     tokens: list[int]
     maybe_logprobs: list[float] | None
     stop_reason: tinker.StopReason = "stop"

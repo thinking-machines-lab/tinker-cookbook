@@ -125,6 +125,8 @@ class StreamingSupervisedDatasetFromHFDataset(SupervisedDataset):
 
 @chz.chz
 class FromConversationFileBuilder(ChatDatasetBuilder):
+    """Builds a supervised dataset from a JSONL file of chat conversations."""
+
     file_path: str
     test_size: int = 0
     shuffle_seed: int = 0

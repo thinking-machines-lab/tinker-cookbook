@@ -31,6 +31,8 @@ _NEMOTRON3 = ("nemotron3", "nemotron3_disable_thinking")
 
 @dataclass
 class ModelAttributes:
+    """Metadata describing a model's organization, version, size, and recommended renderers."""
+
     organization: str  # meta-llama, Qwen, etc.
     version_str: str  # just the version number e.g. "3.1", "2.5"
     size_str: str  # size of the model e.g. "8B", "72B", "1.5B"

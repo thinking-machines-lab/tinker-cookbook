@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 
 class ProblemEnv(Env):
+    """A single-turn Q&A environment that rewards correct answers and valid formatting."""
+
     def __init__(
         self,
         renderer: renderers.Renderer,
@@ -100,6 +102,8 @@ class ProblemEnv(Env):
 
 @dataclass(frozen=True)
 class ProblemGroupBuilder(EnvGroupBuilder):
+    """Builds a group of ProblemEnv instances from a factory callable."""
+
     env_thunk: Callable[[], ProblemEnv]
     num_envs: int
     dataset_name: str = "problems"
