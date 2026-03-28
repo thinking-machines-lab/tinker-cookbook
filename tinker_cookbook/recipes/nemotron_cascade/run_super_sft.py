@@ -45,7 +45,7 @@ def make_config() -> Config:
             common_config=ChatDatasetBuilderCommonConfig(
                 model_name_for_tokenizer="nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",
                 renderer_name="nemotron3",
-                max_length=49152,
+                max_length=262144,
                 batch_size=2048,
             ),
         ),
