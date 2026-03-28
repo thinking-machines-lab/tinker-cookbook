@@ -83,6 +83,12 @@ class TinkerTokenCompleter(TokenCompleter):
             the model.
         max_tokens (int): Maximum number of tokens to generate per call.
         temperature (float): Sampling temperature. Default: 1.0.
+
+    Example::
+
+        completer = TinkerTokenCompleter(sampling_client, max_tokens=512)
+        result = await completer(model_input, stop=["<|endoftext|>"])
+        print(result.tokens, result.logprobs)
     """
 
     sampling_client: tinker.SamplingClient
@@ -127,6 +133,14 @@ class TinkerMessageCompleter(MessageCompleter):
         stop_condition (StopCondition | None): Custom stop condition. If ``None``,
             uses the renderer's default stop sequences.
         temperature (float): Sampling temperature. Default: 1.0.
+
+    Example::
+
+        completer = TinkerMessageCompleter(sampling_client, renderer, max_tokens=512)
+        response = await completer([
+            {"role": "user", "content": "What is 2+2?"}
+        ])
+        print(response["content"])
     """
 
     def __init__(

@@ -73,6 +73,13 @@ def get_tokenizer(model_name: str) -> Tokenizer:
     """Get a tokenizer by name.
 
     Checks custom registry first, then falls back to HuggingFace AutoTokenizer.
+
+    Example::
+
+        from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+        tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+        tokens = tokenizer.encode("Hello world")
     """
     # Check custom registry first (not cached, factory handles caching if needed)
     if (tokenizer := _CUSTOM_TOKENIZER_REGISTRY.get(model_name)) is not None:

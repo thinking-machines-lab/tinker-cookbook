@@ -24,7 +24,28 @@ logger = logging.getLogger(__name__)
 
 
 class ProblemEnv(Env):
-    """A single-turn Q&A environment that rewards correct answers and valid formatting."""
+    """A single-turn Q&A environment that rewards correct answers and valid formatting.
+
+    Example::
+
+        class MathEnv(ProblemEnv):
+            def __init__(self, renderer, question, answer):
+                super().__init__(renderer)
+                self.question = question
+                self.answer = answer
+
+            def get_question(self):
+                return self.question
+
+            def check_answer(self, response):
+                return self.answer in response
+
+            def check_format(self, response):
+                return response.strip() != ""
+
+            def get_reference_answer(self):
+                return self.answer
+    """
 
     def __init__(
         self,

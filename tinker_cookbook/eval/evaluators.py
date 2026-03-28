@@ -8,7 +8,15 @@ logger = logging.getLogger(__name__)
 
 
 class TrainingClientEvaluator:
-    """An evaluator that uses a TrainingClient to compute metrics (e.g., loss)."""
+    """An evaluator that uses a TrainingClient to compute metrics (e.g., loss).
+
+    Example::
+
+        class NLLEval(TrainingClientEvaluator):
+            async def __call__(self, training_client):
+                loss = await compute_nll(training_client, self.eval_data)
+                return {"eval/nll": loss}
+    """
 
     async def __call__(self, training_client: tinker.TrainingClient) -> dict[str, float]:
         """Run evaluation and return a dict of metric names to values.
@@ -23,7 +31,15 @@ class TrainingClientEvaluator:
 
 
 class SamplingClientEvaluator:
-    """An evaluator that uses a SamplingClient to compute metrics (e.g., accuracy)."""
+    """An evaluator that uses a SamplingClient to compute metrics (e.g., accuracy).
+
+    Example::
+
+        class AccuracyEval(SamplingClientEvaluator):
+            async def __call__(self, sampling_client):
+                acc = await measure_accuracy(sampling_client, self.test_set)
+                return {"eval/accuracy": acc}
+    """
 
     async def __call__(self, sampling_client: tinker.SamplingClient) -> dict[str, float]:
         """Run evaluation and return a dict of metric names to values.

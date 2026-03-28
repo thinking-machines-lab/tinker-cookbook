@@ -129,6 +129,17 @@ def get_renderer(
     Returns:
         A Renderer instance.
 
+    Example::
+
+        from tinker_cookbook import renderers
+        from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+        tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+        renderer = renderers.get_renderer("qwen3", tokenizer)
+        prompt = renderer.build_generation_prompt([
+            {"role": "user", "content": "Hello!"}
+        ])
+
     Raises:
         ValueError: If the renderer name is unknown.
         AssertionError: If a VL renderer is requested without an image_processor.

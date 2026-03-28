@@ -142,6 +142,13 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
     Raises:
         ConfigurationError: If the model organization is unknown.
         KeyError: If the model version is not found within its organization.
+
+    Example::
+
+        from tinker_cookbook.model_info import get_model_attributes
+
+        attrs = get_model_attributes("Qwen/Qwen3-8B")
+        print(attrs.size_str, attrs.recommended_renderers)
     """
     model_name = model_name.split(":")[0]
     org, model_version_full = model_name.split("/")

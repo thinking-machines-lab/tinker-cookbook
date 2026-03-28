@@ -38,7 +38,20 @@ logger = logging.getLogger(__name__)
 
 @chz.chz
 class Config:
-    """Configuration for supervised fine-tuning."""
+    """Configuration for supervised fine-tuning.
+
+    Example::
+
+        from tinker_cookbook.supervised import train
+
+        config = train.Config(
+            log_path="~/logs/sft-run",
+            model_name="Qwen/Qwen3-8B",
+            dataset_builder=my_dataset_builder,
+            learning_rate=1e-4,
+        )
+        asyncio.run(train.main(config))
+    """
 
     # Required parameters
     log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))

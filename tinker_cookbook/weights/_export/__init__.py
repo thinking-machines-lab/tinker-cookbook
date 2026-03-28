@@ -95,6 +95,16 @@ def build_hf_model(
             config for vLLM. Required when ``quantize`` is set.
             ``None`` (default) — no serving-specific metadata.
 
+    Example::
+
+        from tinker_cookbook import weights
+
+        weights.build_hf_model(
+            base_model="Qwen/Qwen3-8B",
+            adapter_path="./adapter",
+            output_path="./merged_model",
+        )
+
     Raises:
         FileNotFoundError: If adapter files are missing.
         FileExistsError: If output_path already exists.
