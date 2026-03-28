@@ -42,17 +42,10 @@ from tinker_cookbook.rl.types import (
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import logtree
+from tinker_cookbook.recipes.nemotron_cascade.utils import strip_think_blocks
 from tinker_cookbook.utils.logtree_formatters import ConversationFormatter
 
 logger = logging.getLogger(__name__)
-
-
-def _strip_think_blocks(text: str) -> str:
-    """Remove <think>...</think> reasoning blocks from model output."""
-    stripped = re.sub(r'<think>[\s\S]*?</think>', '', text)
-    # If the model started thinking but never closed the tag, strip from <think> onward
-    stripped = re.sub(r'<think>[\s\S]*$', '', stripped)
-    return stripped.strip()
 
 
 def _get_think_content(text: str) -> str:
@@ -148,7 +141,7 @@ def extract_answer(response: str, *, include_think: bool = False) -> str:
     reasoning but never produced a formal answer outside <think>.
     """
     # First try the non-thinking portion
-    non_think = _strip_think_blocks(response)
+    non_think = strip_think_blocks(response)
     answer = _extract_answer_from_text(non_think)
     if answer:
         return answer

@@ -39,20 +39,11 @@ from tinker_cookbook.rl.types import (
     StepResult,
     Trajectory,
 )
+from tinker_cookbook.recipes.nemotron_cascade.utils import strip_think_blocks
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import logtree
 
 logger = logging.getLogger(__name__)
-
-
-def _strip_think_tags(response: str) -> str:
-    """Remove <think>...</think> blocks from a response.
-
-    Reasoning models (like Nemotron-Nano in thinking mode) emit draft code
-    inside <think> tags. We strip these before code extraction so we only
-    see the final answer.
-    """
-    return re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL).strip()
 
 
 def extract_code(response: str) -> tuple[str | None, str]:
@@ -66,7 +57,7 @@ def extract_code(response: str) -> tuple[str | None, str]:
     reasoning traces is not extracted.
     """
     # Strip thinking blocks first
-    response = _strip_think_tags(response)
+    response = strip_think_blocks(response)
 
     # Try python — use findall and take LAST match to skip drafts
     matches = re.findall(r'```python\s*\n(.*?)\n```', response, re.DOTALL)
