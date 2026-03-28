@@ -77,7 +77,7 @@ class Config:
 
         config = Config(
             log_path="~/logs/dpo_run",
-            model_name="meta-llama/Llama-3-8B-Instruct",
+            model_name="meta-llama/Llama-3.1-8B-Instruct",
             dataset_builder=my_dpo_dataset_builder,
             dpo_beta=0.1,
             learning_rate=1e-5,
@@ -454,16 +454,7 @@ def main(config: Config):
 
     Args:
         config (Config): Fully-populated DPO training configuration.
-
-    Example::
-
-        config = Config(
-            log_path="~/logs/dpo_run",
-            model_name="meta-llama/Llama-3-8B-Instruct",
-            dataset_builder=my_dpo_dataset_builder,
-            dpo_beta=0.1,
-        )
-        main(config)
+            See :class:`Config` for fields and usage example.
     """
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     if resume_info:

@@ -30,7 +30,7 @@ class DPODatasetBuilderFromComparisons(ChatDatasetBuilder):
         builder = DPODatasetBuilderFromComparisons(
             comparison_builder=my_comparison_builder,
             common_config=ChatDatasetBuilderCommonConfig(
-                model_name_for_tokenizer="meta-llama/Llama-3-8B-Instruct",
+                model_name_for_tokenizer="meta-llama/Llama-3.1-8B-Instruct",
                 renderer_name="llama3",
                 max_length=2048,
                 batch_size=8,

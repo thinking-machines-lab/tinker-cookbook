@@ -298,7 +298,7 @@ class PreferenceModelBuilderFromChatRenderer(PreferenceModelBuilder):
 
         builder = PreferenceModelBuilderFromChatRenderer(
             renderer_name="llama3",
-            model_name="meta-llama/Llama-3-8B-Instruct",
+            model_name="meta-llama/Llama-3.1-8B-Instruct",
             rm_weights_path="path/to/rm_weights",
         )
         pref_model = builder()

@@ -248,19 +248,7 @@ async def main(config: Config):
 
     Args:
         config (Config): Fully populated training configuration.
-
-    Example::
-
-        import asyncio
-        from tinker_cookbook.supervised import train
-
-        config = train.Config(
-            log_path="~/logs/sft-run",
-            model_name="Qwen/Qwen3-8B",
-            dataset_builder=my_dataset_builder,
-            learning_rate=1e-4,
-        )
-        asyncio.run(train.main(config))
+            See :class:`Config` for fields and usage example.
     """
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     if resume_info:

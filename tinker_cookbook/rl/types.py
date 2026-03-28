@@ -128,11 +128,11 @@ class Env(ABC):
 
             async def initial_observation(self):
                 messages = [{"role": "user", "content": self.question}]
-                model_input = self.renderer.apply_chat_template(messages)
-                return model_input, self.renderer.get_stop_strings()
+                model_input, _ = self.renderer.build_generation_prompt(messages)
+                return model_input, self.renderer.get_stop_sequences()
 
             async def step(self, action, *, extra=None):
-                response = self.renderer.decode(action)
+                response = self.renderer.tokenizer.decode(action)
                 reward = 1.0 if self.answer in response else 0.0
                 return StepResult(
                     reward=reward,

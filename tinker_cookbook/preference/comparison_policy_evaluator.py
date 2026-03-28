@@ -45,7 +45,7 @@ class ComparisonEvaluator(SamplingClientEvaluator):
             preference_model_builder=my_pm_builder,
             comparisons=test_comparisons,
             renderer_name="llama3",
-            model_name_for_tokenizer="meta-llama/Llama-3-8B-Instruct",
+            model_name_for_tokenizer="meta-llama/Llama-3.1-8B-Instruct",
         )
         metrics = await evaluator(sampling_client)
         print(metrics["win_rate"])
