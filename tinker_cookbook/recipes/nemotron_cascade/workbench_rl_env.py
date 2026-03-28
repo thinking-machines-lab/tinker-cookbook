@@ -36,7 +36,6 @@ from tinker_cookbook.rl.types import (
     Metrics,
     RLDataset,
     RLDatasetBuilder,
-    Trajectory,
 )
 from tinker_cookbook.tool_use import ToolResult, build_agent_tool_env, simple_tool_result, tool
 from tinker_cookbook.tool_use.agent_tool_message_env import RewardFn

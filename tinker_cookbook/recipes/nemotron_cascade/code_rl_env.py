@@ -13,6 +13,7 @@ Paper hyperparameters (Code RL stage):
   - Async reward verification across 384 CPU cores
 """
 
+import json
 import logging
 import math
 import re
@@ -32,12 +33,10 @@ from tinker_cookbook.rl.types import (
     ActionExtra,
     Env,
     EnvGroupBuilder,
-    Metrics,
     Observation,
     RLDataset,
     RLDatasetBuilder,
     StepResult,
-    Trajectory,
 )
 from tinker_cookbook.recipes.nemotron_cascade.utils import strip_think_blocks
 from tinker_cookbook.tokenizer_utils import get_tokenizer
@@ -432,7 +431,6 @@ class CodeRLDataset(RLDataset):
     ):
         if data_path:
             logger.info(f"Loading Code RL data from {data_path}")
-            import json
             rows = []
             with open(data_path) as f:
                 for line in f:
@@ -482,8 +480,6 @@ class CodeRLDataset(RLDataset):
         - LiveCodeBench format (input_output field with JSON-encoded cases)
         - MBPP format (test_list with assertion strings)
         """
-        import json
-
         # Direct format from local JSONL
         if "test_cases" in row and isinstance(row["test_cases"], list):
             return row["test_cases"]

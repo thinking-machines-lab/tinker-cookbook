@@ -33,12 +33,10 @@ from tinker_cookbook.rl.types import (
     ActionExtra,
     Env,
     EnvGroupBuilder,
-    Metrics,
     Observation,
     RLDataset,
     RLDatasetBuilder,
     StepResult,
-    Trajectory,
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import logtree
