@@ -1,52 +1,21 @@
-# MCQA Environment Analysis
+# MCQA Environment
 
-## Status: SLIGHT REGRESSION at lr=1e-5 and 3e-5
+## Status: Fixed -- reward 1.0 on Super base model
 
-## Core Problem: Noisy Answer Extraction + Overly Generous Matching
+## Configuration
+- max_tokens: 8K (49K causes overlong with base model; paper uses 49K)
+- Dataset: `nvidia/Nemotron-Cascade-2-RL-data`, multi-domain split
 
-### Issue 1: `extract_answer` has ambiguous fallbacks
-The answer extraction pipeline has 5 cascading fallbacks:
-1. `\boxed{...}` — good, unambiguous
-2. "the answer is (X)" — good for single letter
-3. `**X**` bold single letter — reasonable
-4. Last standalone capital letter on its own line — OK
-5. **Last capital letter in the final 200 chars** — VERY NOISY
+## Super Base Model Results
+- Reward: 1.0, frac_mixed: 0.0 (all correct = no GRPO signal at small scale)
+- At scale with diverse questions, mixed groups should emerge
 
-Fallback 5 means almost any response will extract *some* letter. For a 4-option MCQA, random extraction has 25% chance of matching the answer by luck.
+## Fixes Applied
+1. **Expanded answer extraction**: Added patterns for `Option Selected: X`, `<final_answer>X</final_answer>`, `((X))`, `*X*`, and more
+2. **Overlong partial credit**: When stop_reason="length", search thinking content for answer, award 0.5 for correct-but-overlong
+3. **Concise system prompt**: Optional (set `system_prompt=None` to disable); not in original paper
 
-### Issue 2: `check_answer` is too generous
-```python
-if expected_norm in extracted_norm or extracted_norm in expected_norm:
-    return True
-```
-This containment check means:
-- Expected "A" matches extracted "ABC" or "ABCDEF" — false positives
-- Expected "B" matches extracted "B" (correct) but also "BIG" — false positive
-- For numeric answers, "1" matches "12", "21", etc.
-
-This creates **false positive rewards** that pollute the GRPO signal.
-
-### Issue 3: No thinking-chain filtering
-The model uses `<think>` tags. If the answer extraction searches the full response (including reasoning), it may extract intermediate answer mentions rather than the final answer.
-
-## Actionable Improvements
-
-### P0: Fix answer extraction to reduce false positives
-1. **Strip `<think>` block before extraction**: Only search the text after `</think>` (or the whole response if no think tags).
-2. **Remove the containment check in `check_answer`**: Replace with exact match only. The current `expected_norm in extracted_norm` is a major source of noise.
-3. **Tighten fallback 5**: Instead of "any capital letter in last 200 chars", require it to be near answer-like context (e.g., after "answer", "choice", "option").
-
-### P1: Add answer normalization
-- Strip whitespace, periods, parentheses from both sides
-- Handle "A)" vs "A" vs "(A)" uniformly
-- For numeric answers, parse to float and compare with tolerance
-
-### P2: Consider partial credit
-Currently binary (0 or 1). For multi-part questions, partial credit could help.
-
-### P3: Verify data quality
-- Check what fraction of `expected_answer` values are single letters (A/B/C/D) vs longer strings
-- If some are longer (e.g., "The mitochondria..."), the single-letter extraction pipeline will always fail on those → those problems contribute 0 reward and add noise
-
-## Expected Impact
-Fixing the false-positive answer matching should turn the noisy regression into positive signal, since the model will no longer be "rewarded" for wrong answers that happen to contain the right letter.
+## Key Decisions
+- Answer extraction searches after `</think>` first, falls back to full text
+- `check_answer` uses exact match (removed old containment check that caused false positives)
+- Think-content fallback (`include_think=True`) for truncated responses

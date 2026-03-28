@@ -1,50 +1,47 @@
-# Overall Status (2026-03-27, evening)
+# Overall Status
 
-## Key Milestones Achieved
-- All 8 SFT data subsets downloaded (24.5M examples, 553GB)
-- 9 RL environments built, 7 producing non-zero reward
-- 8 benchmark evaluations available
-- SFT v2 LR sweep running (rank=64, 49K tokens)
-- Paper-matched RL sweep running (group=16, batch=32, 49K tokens)
-- R2E-Gym integration analysis complete
+## Model
 
-## SFT v2 LR Sweep (50K sample, rank=64, 49K tokens)
-| LR | Steps | Min NLL | Status |
-|----|-------|---------|--------|
-| 1e-4 | 496 | 0.426 | Running |
-| 3e-4 | 498 | **0.424** | Best |
-| 5e-4 | 475 | 0.426 | Running |
+`nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16:peft:262144` -- MoE (12B active), LoRA rank 64, 262K context.
 
-Decision: lr=3e-4 or 5e-4 for full SFT v2 (both very close).
+See `model_decision.md` for rationale.
 
-## RL Environments (with fixes)
-| Env | Reward | Mixed Groups | Status |
-|-----|--------|-------------|--------|
-| IF-RL | 0.69-0.79 | 100% | Working, lr=3e-5 best |
-| MCQA (fixed) | 0.36→0.40 | Yes | Improving! Fix worked |
-| StructOut (jsonschema) | 0.56→0.79 | Yes | Strong learning signal |
-| Long-ctx (fixed) | 0.51-0.61 | Yes | 6x improvement from judge fix |
-| Code RL (g=16) | 0.06-0.09 | 100% | Works with enough rollouts |
-| RLHF (fixed) | 0.008 | Testing g=16 | GenRM bugs fixed |
-| Workbench | -0.006 | 100% | Tool format working, mock data issue |
-| SWE Agentless | 0.0 | — | Needs R2E-Gym Docker |
-| SWE Agentic | 0.0 | — | Needs R2E-Gym Docker |
+## SFT Progress
+
+- Data: All 8 subsets downloaded (24.5M examples, 553GB)
+- Config: batch=2048, lr=3e-4 cosine, rank=64, 49K tokens
+- Training: step 169/33K, NLL 0.687 -> 0.547 (20% improvement), ~5.5 min/step
+
+## RL Environment Status (Super base model, no SFT checkpoint)
+
+| Env | Reward | frac_mixed | max_tokens | Status |
+|-----|--------|-----------|------------|--------|
+| IF-RL | 0.77-1.0 | 1.0 | 49K | Working |
+| MCQA | 1.0 | 0.0 (too easy) | 8K | Fixed (expanded extraction + overlong partial credit) |
+| Structured Output | 0.67-0.89 | 1.0 | 49K | Working |
+| Code RL | 0.75-1.0 | 1.0 | 118K | Working |
+| Long-Context | 0.60-0.65 | 1.0 | 49K | Working |
+| RLHF | 0.50 | 1.0 | 16K | Working (GenRM Kimi K2.5) |
+| Workbench | 0.44 | 1.0 | 49K | Fixed (ground-truth seeded mocks + partial credit) |
+| SWE Agentless | 0.12-0.46 | 1.0 | 98K | Working (LLM judge); sandbox errors in execution mode |
+| SWE Agentic | TBD | -- | 262K | R2E-Gym Docker integration wired up, untested at scale |
 
 ## Key Findings
-1. LoRA LR = 10x paper's full-FT LR (SFT: 3-5e-4, RL: 3e-5)
-2. group_size=16 is critical — creates mixed groups even for hard tasks
-3. Long-ctx judge needed 512 tokens (was 32) — thinking models need reasoning space
-4. MCQA needed <think> stripping before answer extraction
-5. StructOut needed real jsonschema validation (was too easy before)
-6. RLHF had two bugs: wrong API param + wrong dataset field
-7. R2E-Gym Docker images can solve SWE dependency issues
 
-## Wandb
-https://wandb.ai/thinking-machines-lab-inc/nemotron-cascade-2-replication
+1. LoRA LR = 10x paper's full-FT LR (SFT: 3e-4, RL: 3e-5)
+2. group_size=16 critical for mixed groups and GRPO signal
+3. LLM judge envs need max_tokens >= 256 for thinking models
+4. `<think>` tags must be stripped before answer/code/patch extraction
+5. R2E-Gym Docker images solve SWE dependency issues
 
 ## Next Steps
-1. Finish SFT v2 sweep → pick lr → launch full SFT v2 (24.5M examples, rank=64, 49K)
-2. Run full RL cascade: SFT v2 → IF-RL (180 steps) → Multi-domain (70 steps)
+
+1. Finish SFT (33K steps) -> launch full RL cascade
+2. RL cascade: SFT -> IF-RL (180 steps) -> Multi-domain (70 steps)
 3. Benchmark after each stage
-4. Implement R2E-Gym Docker integration for SWE envs
-5. Ground-truth-seeded mocks for Workbench
+4. Test SWE Agentic at scale with R2E-Gym Docker
+5. Ground-truth-seeded mocks for Workbench production runs
+
+## Wandb
+
+https://wandb.ai/thinking-machines-lab-inc/nemotron-cascade-2-replication

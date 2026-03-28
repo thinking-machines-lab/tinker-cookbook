@@ -1,38 +1,32 @@
-# Nemotron-Cascade-2 Replication Notes
+# Nemotron Cascade 2 Replication Notes
 
-Organized investigation notes for the Nemotron-Cascade-2 replication project.
+Investigation notes for the Nemotron-Cascade-2 replication. See `status.md` for current progress.
 
-## Directory Structure
+## Index
 
-```
-notes/
-├── README.md                  # This file
-├── status.md                  # Current overall status and next steps
-├── data/
-│   ├── sft_download.md        # SFT data download tracking
-│   └── rl_data.md             # RL data analysis and cleaning
-├── sft/
-│   ├── hyperparams.md         # SFT hyperparameter findings
-│   └── training_runs.md       # SFT run logs and results
-├── rl/
-│   ├── shared_findings.md     # Cross-environment RL findings
-│   ├── if_rl.md               # IF-RL environment notes
-│   ├── mcqa.md                # MCQA environment notes
-│   ├── structured_output.md   # Structured output env notes
-│   ├── workbench.md           # Workbench tool calling notes
-│   ├── rlhf.md                # RLHF with GenRM notes
-│   ├── code_rl.md             # Code RL notes
-│   ├── longctx.md             # Long-context RL notes
-│   ├── swe_agentless.md       # SWE agentless notes
-│   └── swe_agentic.md         # SWE agentic notes
-└── eval/
-    ├── benchmarks.md          # Benchmark setup and results
-    └── paper_evals.md         # Paper's eval suite analysis
-```
+| File | Topic |
+|---|---|
+| `status.md` | Current status, env results, next steps |
+| `model_decision.md` | Why Super 120B over Nano 30B |
+| `data/sft_download.md` | SFT data download tracking (8 subsets, 24.5M examples) |
+| `eval/paper_evals.md` | Paper's benchmark suite and our coverage |
+| `rl/shared_findings.md` | Cross-environment RL findings (LR, group size, `<think>` handling) |
+| `rl/super_rl_progress.md` | Super base model validation results across all envs |
+| `rl/if_rl.md` | IF-RL: programmatic IFEval reward |
+| `rl/mcqa.md` | MCQA: answer extraction fixes, partial credit |
+| `rl/structured_output.md` | Structured Output: jsonschema validation |
+| `rl/code_rl.md` | Code RL: MBPP execution, newline bug fix |
+| `rl/longctx_rl.md` | Long-Context: LLM judge token limit fix |
+| `rl/rlhf.md` | RLHF: GenRM pairwise reward, API bug fixes |
+| `rl/workbench.md` | Workbench: ground-truth seeded mocks, partial credit |
+| `rl/swe_rl.md` | SWE Agentless: LLM judge vs execution, Cascade SWE dataset |
+| `rl/swe_agentic.md` | SWE Agentic: R2E-Gym Docker integration |
+| `rl/r2e_gym.md` | R2E-Gym: dataset analysis, Docker image approach |
+| `swe/research_findings.md` | How the paper does SWE RL, Cascade SWE dataset discovery |
+| `swe/docker_integration.md` | R2E-Gym Docker images via Modal, bugs fixed |
 
-## Key References
+## References
 - Paper: arxiv:2603.19220
-- Data: nvidia/Nemotron-Cascade-2-SFT-Data, nvidia/Nemotron-Cascade-2-RL-data
-- Model: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+- Data: nvidia/Nemotron-Cascade-2-SFT-Data, nvidia/Nemotron-Cascade-2-RL-data, nvidia/Nemotron-Cascade-RL-SWE
+- Model: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16:peft:262144
 - Wandb: https://wandb.ai/thinking-machines-lab-inc/nemotron-cascade-2-replication
-- Branch: nemotron-cascade-2-replication on fork
