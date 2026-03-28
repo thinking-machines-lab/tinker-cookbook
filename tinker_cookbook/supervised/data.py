@@ -23,7 +23,39 @@ def conversation_to_datum(
     max_length: int | None,
     train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
 ) -> tinker.Datum:
-    """Common function to process a list of messages into a Datum."""
+    """Convert a chat conversation into a training Datum.
+
+    This is the primary entry point for turning a list of chat messages into a
+    ``tinker.Datum`` suitable for supervised training.  It delegates to the
+    renderer for tokenisation and weight assignment, then wraps the result with
+    ``datum_from_model_input_weights``.
+
+    Args:
+        conversation (list[Message]): Chat messages (each a dict with
+            ``"role"`` and ``"content"`` keys).
+        renderer (Renderer): Renderer that tokenises the conversation.
+        max_length (int | None): Optional maximum sequence length.  The
+            resulting datum is truncated to this many tokens.
+        train_on_what (TrainOnWhat): Which tokens receive non-zero loss
+            weight.  Default ``TrainOnWhat.ALL_ASSISTANT_MESSAGES``.
+
+    Returns:
+        tinker.Datum: A training datum with model input, target tokens,
+        and per-token loss weights.
+
+    Example::
+
+        from tinker_cookbook.renderers import get_renderer, TrainOnWhat
+        from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+        tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+        renderer = get_renderer("qwen3", tokenizer)
+        messages = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi there!"},
+        ]
+        datum = conversation_to_datum(messages, renderer, max_length=2048)
+    """
     model_input, weights = renderer.build_supervised_example(
         conversation, train_on_what=train_on_what
     )
@@ -63,6 +95,14 @@ class SupervisedDatasetFromHFDataset(SupervisedDataset):
         self.flatmap_fn = flatmap_fn
 
     def get_batch(self, index: int) -> list[tinker.Datum]:
+        """Return a batch of Datum objects at the given index.
+
+        Args:
+            index (int): Zero-based batch index.
+
+        Returns:
+            list[tinker.Datum]: Training datums for this batch.
+        """
         rows = self.shuffle_dataset.select(
             range(index * self.batch_size, (index + 1) * self.batch_size)
         )
@@ -73,9 +113,15 @@ class SupervisedDatasetFromHFDataset(SupervisedDataset):
             return [datum for row in rows.to_list() for datum in self.flatmap_fn(row)]
 
     def set_epoch(self, seed: int = 0):
+        """Shuffle the dataset for a new epoch.
+
+        Args:
+            seed (int): Random seed for shuffling. Default ``0``.
+        """
         self.shuffle_dataset = self.hf_dataset.shuffle(seed=seed)
 
     def __len__(self) -> int:
+        """Return the number of complete batches in the dataset."""
         return len(self.hf_dataset) // self.batch_size
 
 
@@ -118,6 +164,21 @@ class StreamingSupervisedDatasetFromHFDataset(SupervisedDataset):
         self.length = length
 
     def get_batch(self, index: int) -> list[tinker.Datum]:
+        """Return a batch of Datum objects at the given index.
+
+        Only forward iteration is supported. Requesting a batch at or before
+        the most recently returned index raises ``DataValidationError``.
+
+        Args:
+            index (int): Zero-based batch index (must be strictly greater than
+                the previous call's index).
+
+        Returns:
+            list[tinker.Datum]: Training datums for this batch.
+
+        Raises:
+            DataValidationError: If ``index`` would require backward seeking.
+        """
         # Error on backward seeks
         if index < self.index + 1:
             raise DataValidationError(
@@ -142,23 +203,64 @@ class StreamingSupervisedDatasetFromHFDataset(SupervisedDataset):
             return [datum for row in rows for datum in self.flatmap_fn(row)]
 
     def set_epoch(self, seed: int = 0):
+        """Reset the stream for a new epoch.
+
+        Args:
+            seed (int): Epoch seed forwarded to the underlying iterable
+                dataset. Default ``0``.
+        """
         self.hf_dataset.set_epoch(seed)
         self.dataset_iterator = iter(self.hf_dataset)
         self.index = -1
 
     def __len__(self) -> int:
+        """Return the number of complete batches in the dataset."""
         return self.length // self.batch_size
 
 
 @chz.chz
 class FromConversationFileBuilder(ChatDatasetBuilder):
-    """Builds a supervised dataset from a JSONL file of chat conversations."""
+    """Build a supervised dataset from a JSONL file of chat conversations.
+
+    Each line of the file must be a JSON object with a ``"messages"`` key whose
+    value is a list of chat messages (dicts with ``"role"`` and ``"content"``).
+
+    Attributes:
+        file_path (str): Path (local or ``blobfile``-compatible) to the JSONL
+            file.
+        test_size (int): Number of examples to hold out for evaluation.
+            Default ``0`` (no held-out set).
+        shuffle_seed (int): Seed used to shuffle before splitting. Default ``0``.
+
+    Example::
+
+        builder = FromConversationFileBuilder(
+            file_path="data/conversations.jsonl",
+            test_size=50,
+            common_config=ChatDatasetBuilderCommonConfig(
+                model_name_for_tokenizer="Qwen/Qwen3-8B",
+                renderer_name="qwen3",
+                max_length=2048,
+                batch_size=8,
+            ),
+        )
+        train_ds, test_ds = builder()
+    """
 
     file_path: str
     test_size: int = 0
     shuffle_seed: int = 0
 
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
+        """Load the JSONL file and return (train_dataset, test_dataset).
+
+        Returns:
+            tuple[SupervisedDataset, SupervisedDataset | None]: Training
+                dataset and an optional held-out evaluation dataset.
+
+        Raises:
+            DataFormatError: If any line in the file lacks a ``"messages"`` key.
+        """
         # Load conversations from JSONL file
         conversations = []
         with blobfile.BlobFile(self.file_path, "r", streaming=False) as f:

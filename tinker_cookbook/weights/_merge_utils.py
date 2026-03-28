@@ -56,10 +56,18 @@ def validate_adapter_config(adapter_config: dict, profile: MergeProfile) -> floa
 
 
 def extract_adapter_weight_names(adapter_weights: dict[str, torch.Tensor]) -> list[str]:
-    """Extract adapter weight names from the adapter dict.
+    """Extract base weight names from an adapter weight dict.
 
-    Returns the base weight names (with ``.lora_A`` stripped). Logs a warning
-    if no LoRA weights are found.
+    Finds all keys containing ``.lora_A`` and strips that suffix to produce
+    the base weight names. Logs a warning if no LoRA weights are found.
+
+    Args:
+        adapter_weights (dict[str, torch.Tensor]): Adapter weight dict
+            (keys like ``"layer.lora_A.weight"``, ``"layer.lora_B.weight"``).
+
+    Returns:
+        list[str]: Base weight names with ``.lora_A`` removed
+            (e.g. ``"layer.weight"``).
     """
     names = [n.replace(".lora_A", "") for n in adapter_weights if ".lora_A" in n]
     if not names:
@@ -86,8 +94,12 @@ def build_name_remaps(
     ``unembed_tokens``, then apply vision model prefix.
 
     Args:
-        profile: Model-specific merge configuration.
-        model_state_keys: Set of weight key names in the base model.
+        profile (MergeProfile): Model-specific merge configuration.
+        model_state_keys (set[str]): Set of weight key names in the base model.
+
+    Returns:
+        list[tuple[str, str]]: Ordered list of ``(old, new)`` string
+            replacement pairs to apply sequentially.
     """
     remaps: list[tuple[str, str]] = [
         ("base_model.model.", ""),
@@ -99,7 +111,16 @@ def build_name_remaps(
 
 
 def remap_adapter_name(name: str, remaps: list[tuple[str, str]]) -> str:
-    """Apply sequential string replacements to map adapter name to model key."""
+    """Apply sequential string replacements to map an adapter name to a model key.
+
+    Args:
+        name (str): Adapter weight name to remap.
+        remaps (list[tuple[str, str]]): Ordered ``(old, new)`` replacement
+            pairs, typically from :func:`build_name_remaps`.
+
+    Returns:
+        str: The remapped model weight key name.
+    """
     for old, new in remaps:
         name = name.replace(old, new)
     return name
@@ -122,7 +143,19 @@ def plan_standard_op(
     """Plan a merge op for a standard (non-expert) linear layer.
 
     Applies ``profile.extra_key_remaps`` and validates the target key exists
-    in the model state dict.
+    in the model state dict. Appends a :class:`MergeOp` to ``ops``.
+
+    Args:
+        target_key (str): Remapped model weight key name.
+        lora_A (torch.Tensor): LoRA A matrix, shape ``(rank, in_dim)``.
+        lora_B (torch.Tensor): LoRA B matrix (pre-scaled), shape ``(out_dim, rank)``.
+        adapter_name (str): Original adapter weight name (for error messages).
+        profile (MergeProfile): Model-specific merge configuration.
+        model_state_keys (set[str]): Valid weight key names in the base model.
+        ops (dict[str, list[MergeOp]]): Accumulator dict, modified in-place.
+
+    Raises:
+        WeightsMergeError: If the remapped target key is not found in the model.
     """
     for old, new in profile.extra_key_remaps:
         target_key = target_key.replace(old, new)
@@ -162,9 +195,27 @@ def plan_fused_projection_op(
     Follows the same pattern as :func:`_plan_split_qkv_op` in
     ``_merge_qwen3_5.py``.
 
+    Args:
+        target_key (str): Remapped model weight key name for the component.
+        lora_A (torch.Tensor): LoRA A matrix, shape ``(rank, in_dim)``.
+        lora_B (torch.Tensor): LoRA B matrix (pre-scaled), shape ``(out_dim, rank)``.
+        adapter_name (str): Original adapter weight name (for error messages
+            and sibling lookup).
+        adapter_weights (dict[str, torch.Tensor]): Full adapter weight dict,
+            needed to look up sibling component shapes for row offset
+            computation.
+        profile (MergeProfile): Model-specific merge configuration containing
+            ``fused_projection_map``.
+        model_state_keys (set[str]): Valid weight key names in the base model.
+        ops (dict[str, list[MergeOp]]): Accumulator dict, modified in-place.
+
     Returns:
-        True if the key was handled (caller should skip normal planning),
-        False if this is not a fused-projection component.
+        bool: True if the key was handled (caller should skip normal planning),
+            False if this is not a fused-projection component.
+
+    Raises:
+        WeightsMergeError: If a required sibling component is missing from
+            the adapter weights.
     """
     if not profile.fused_projection_map:
         return False
@@ -240,7 +291,32 @@ def plan_expert_ops(
     model_state_keys: set[str],
     ops: dict[str, list[MergeOp]],
 ) -> None:
-    """Plan merge ops for expert weights (separate or fused)."""
+    """Plan merge ops for expert weights (separate or fused).
+
+    Handles three expert layouts based on ``profile.expert_layout``:
+
+    - ``"separate"``: Creates one 2D :class:`MergeOp` per expert.
+    - ``"fused_interleaved"``: Creates one 3D :class:`MergeOp` with
+      interleaved gate/up indexing (GPT-OSS style).
+    - ``"fused_concatenated"``: Creates one 3D :class:`MergeOp` with
+      concatenated gate/up layout.
+
+    Skips empty expert LoRA tensors (placeholders for non-existent projections).
+
+    Args:
+        target_key (str): Remapped model weight key name.
+        lora_A (torch.Tensor): LoRA A matrix, shape ``(num_experts, rank, in_dim)``.
+        lora_B (torch.Tensor): LoRA B matrix (pre-scaled),
+            shape ``(num_experts, out_dim, rank)``.
+        adapter_name (str): Original adapter weight name (for error messages).
+        profile (MergeProfile): Model-specific merge configuration.
+        model_state_keys (set[str]): Valid weight key names in the base model.
+        ops (dict[str, list[MergeOp]]): Accumulator dict, modified in-place.
+
+    Raises:
+        WeightsMergeError: If expert tensors are not 3D, or target keys are
+            not found in the model.
+    """
     # Skip empty expert LoRA tensors — these are placeholders for projections
     # that don't exist in the model (e.g. Nemotron's empty w3).
     if lora_A.numel() == 0 and lora_B.numel() == 0:

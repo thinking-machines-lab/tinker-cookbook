@@ -227,6 +227,22 @@ def assemble_training_data(
 def remove_constant_reward_groups(
     trajectory_groups_P: list[TrajectoryGroup],
 ) -> list[TrajectoryGroup]:
+    """Filter out trajectory groups where all trajectories received the same reward.
+
+    Groups with uniform rewards produce zero advantage for every trajectory,
+    contributing no gradient signal.  Removing them avoids wasted compute.
+    If *all* groups are uniform, a single group is returned so downstream code
+    that expects a non-empty list does not break.
+
+    Args:
+        trajectory_groups_P (list[TrajectoryGroup]): Groups of trajectories
+            to filter.
+
+    Returns:
+        list[TrajectoryGroup]: The subset of groups that contain at least two
+            distinct reward values, or a singleton list if every group was
+            uniform.
+    """
     new_groups: list[TrajectoryGroup] = []
     for group in trajectory_groups_P:
         if not all_same(group.get_total_rewards()):

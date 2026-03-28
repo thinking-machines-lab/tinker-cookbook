@@ -76,6 +76,12 @@ class KLReferenceConfig:
     """Configuration for the KL penalty reference model.
 
     If not specified in Config, the training model's base model is used.
+
+    Attributes:
+        base_model (str): Name of the base model to use as the KL reference.
+        load_checkpoint_path (str | None): Optional checkpoint path to load
+            reference model weights from. If None, the base model weights
+            are used directly.
     """
 
     base_model: str
@@ -86,11 +92,17 @@ async def gather_with_progress(
     coroutines: Iterable[Coroutine[Any, Any, T]],
     desc: str,
 ) -> list[T]:
-    """
-    Run coroutines concurrently with a progress bar that updates as each completes.
+    """Run coroutines concurrently with a progress bar that updates as each completes.
 
     This preserves the order of results (like asyncio.gather) while providing
     real-time progress feedback as individual coroutines complete.
+
+    Args:
+        coroutines (Iterable[Coroutine[Any, Any, T]]): Coroutines to run concurrently.
+        desc (str): Description label for the tqdm progress bar.
+
+    Returns:
+        list[T]: Results from each coroutine, in the same order as the input.
     """
     coroutine_list = list(coroutines)
     pbar = tqdm(total=len(coroutine_list), desc=desc)
@@ -190,8 +202,15 @@ def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]
 
 
 def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
-    """
-    Print a subset of the trajectory group to the console.
+    """Print a subset of the trajectory group to the console.
+
+    Selects a representative sample of up to 4 trajectories (spanning the
+    reward distribution) and logs their tokens, rewards, advantages, and
+    per-step metrics via the module logger.
+
+    Args:
+        traj_group (TrajectoryGroup): The trajectory group to display.
+        tokenizer (Tokenizer): Tokenizer used to decode tokens for display.
     """
     # Cut down the number of trajectories to print
     max_trajs_to_print = 4
@@ -267,7 +286,39 @@ async def train_step(
 ) -> list[torch.Tensor]:
     """Train the model on collected trajectories.
 
-    Pipelines forward_backward and optim_step so they land on the same clock cycle.
+    Pipelines ``forward_backward`` and ``optim_step`` so they land on the same
+    clock cycle, maximizing GPU utilization. The data is split into
+    ``num_substeps`` batches; each batch is enqueued before consuming the
+    previous result to keep the pipeline full.
+
+    Args:
+        data_D (list[tinker.Datum]): Training data assembled from trajectory
+            rollouts, including advantages and log-probabilities.
+        training_client (tinker.TrainingClient): Client connected to the
+            Tinker training service.
+        learning_rate (float): Learning rate for the Adam optimizer.
+        num_substeps (int): Number of sub-batches to split data_D into.
+            Each sub-batch triggers one forward_backward + optim_step pair.
+        loss_fn (LossFnType): Loss function identifier (e.g.
+            ``"importance_sampling"``, ``"ppo"``).
+        loss_fn_config (dict[str, Any] | None): Extra configuration passed
+            to the loss function. Defaults to None.
+        metrics (dict[str, Any] | None): If provided, optimizer metrics from
+            the final optim_step are merged into this dict in-place.
+
+    Returns:
+        list[torch.Tensor]: Per-datum training log-probabilities returned by
+        the forward pass, one tensor per datum in data_D.
+
+    Example::
+
+        logprobs = await train_step(
+            data_D=data,
+            training_client=client,
+            learning_rate=1e-5,
+            num_substeps=2,
+            loss_fn="importance_sampling",
+        )
     """
     batches = split_list(data_D, min(num_substeps, len(data_D)))
     if not batches:
@@ -312,11 +363,18 @@ async def train_step(
 
 @chz.chz
 class StreamMinibatchConfig:
-    """
-    Configuration for training with minibatch streaming.
-    Once we have accumulated enough trajectories for a minibatch, we will
-    immediately train on them, instead of waiting for the full batch of
-    trajectories to be ready.
+    """Configuration for training with minibatch streaming.
+
+    Once enough trajectories for a minibatch have been accumulated, training
+    begins immediately rather than waiting for the full batch. This overlaps
+    sampling and training within a single iteration.
+
+    Attributes:
+        groups_per_batch (int): Total number of trajectory groups across all
+            minibatches and substeps in one training iteration.
+        num_minibatches (int): Number of minibatches per optimizer substep.
+            Each minibatch triggers one ``forward_backward()`` call, and one
+            ``optim_step()`` is issued per substep.
     """
 
     # Total number of trajectory groups across all minibatches and substeps
@@ -330,7 +388,18 @@ class StreamMinibatchConfig:
 
 @chz.chz
 class AsyncConfig:
-    """Configuration for async RL training"""
+    """Configuration for async RL training.
+
+    In async mode, sampling and training run concurrently. Trajectory groups
+    generated from a sampler that is too many steps behind the current
+    training step are discarded (or requeued) to limit off-policy staleness.
+
+    Attributes:
+        max_steps_off_policy (int): Maximum number of training steps a sample
+            can lag behind the current step before being considered stale.
+        groups_per_batch (int): Minimum number of trajectory groups required
+            to form a training batch, even after discarding stale samples.
+    """
 
     # If samples are generated from a sample more than this many steps ago,
     # we will skip training on them.
@@ -342,7 +411,16 @@ class AsyncConfig:
 
 @chz.chz
 class Config:
-    """Configuration for RL training."""
+    """Configuration for RL training.
+
+    This is the main configuration object for :func:`main`. It controls the
+    model, dataset, optimizer, loss function, KL penalty, evaluation cadence,
+    checkpointing, logging, and execution mode (sync, async, or streaming
+    minibatch).
+
+    All fields use ``chz`` dataclass semantics and can be overridden via CLI
+    or YAML configuration files.
+    """
 
     # -------------------------------------------------------------------------
     # Core parameters (recommended to set for nearly all runs)
@@ -447,6 +525,23 @@ async def run_single_evaluation(
     sampling_client: tinker.SamplingClient,
     evaluator_label: str,
 ) -> dict[str, Any]:
+    """Run a single evaluator and return its metrics.
+
+    Sets up a logtree scope for the evaluation, exports rollout summary JSONL
+    when applicable (for ``RLTestSetEvaluator``), and delegates to the
+    evaluator callable.
+
+    Args:
+        evaluator (SamplingClientEvaluator): The evaluator to run.
+        config (Config): RL training configuration (used for logging settings).
+        i_batch (int): Current training iteration index.
+        sampling_client (tinker.SamplingClient): Sampling client with the
+            current model weights.
+        evaluator_label (str): Filesystem-safe label used for log file naming.
+
+    Returns:
+        dict[str, Any]: Evaluation metrics produced by the evaluator.
+    """
     ev_name = _get_evaluator_name(evaluator)
     eval_base_name = f"eval_{evaluator_label}"
     iter_dir = iteration_dir(config.log_path, i_batch)
@@ -483,7 +578,21 @@ async def run_evaluations_parallel(
     config: Config,
     i_batch: int,
 ) -> dict[str, Any]:
-    """Run all evaluators in parallel and return aggregated metrics."""
+    """Run all evaluators in parallel and return aggregated metrics.
+
+    Each evaluator is launched as an independent ``asyncio.Task``. Results
+    are gathered and merged into a single metrics dictionary.
+
+    Args:
+        evaluators (list[SamplingClientEvaluator]): Evaluators to execute.
+        sampling_client (tinker.SamplingClient): Sampling client with the
+            current model weights.
+        config (Config): RL training configuration.
+        i_batch (int): Current training iteration index.
+
+    Returns:
+        dict[str, Any]: Merged metrics from all evaluators.
+    """
 
     # Create tasks for all evaluators with names for better traceability
     tasks = []
@@ -522,11 +631,33 @@ async def do_sync_training_with_stream_minibatch(
     error_counter: RolloutErrorCounter | None = None,
     strategy: RolloutStrategy | None = None,
 ):
-    """
-    Implements fully synchronous on-policy training with minibatch streaming.
-    Once we have accumulated enough trajectories for a minibatch, we will
-    immediately train on them, instead of waiting for the full batch of
-    trajectories to be ready. This allows us to overlap sampling and training.
+    """Implement fully synchronous on-policy training with minibatch streaming.
+
+    Once enough trajectories for a minibatch have been accumulated, training
+    begins immediately rather than waiting for the full batch. This overlaps
+    sampling and training within a single iteration, reducing wall-clock time.
+
+    Args:
+        start_batch (int): First training iteration index (inclusive).
+        end_batch (int): Last training iteration index (exclusive).
+        num_batches (int): Total number of batches in the dataset, used for
+            progress fraction calculation.
+        config (Config): RL training configuration. Must have
+            ``stream_minibatch_config`` set.
+        training_client (tinker.TrainingClient): Client connected to the
+            Tinker training service.
+        kl_reference_client (tinker.SamplingClient | None): Sampling client
+            for the KL reference model, or None if KL penalty is disabled.
+        evaluators (list[SamplingClientEvaluator]): Evaluators to run
+            periodically during training.
+        dataset (RLDataset): The RL dataset providing batches of
+            ``EnvGroupBuilder`` instances.
+        ml_logger (ml_log.Logger): Logger for metrics and W&B integration.
+        tokenizer (Tokenizer): Tokenizer for decoding rollout tokens.
+        error_counter (RolloutErrorCounter | None): Optional counter for
+            tracking rollout errors. Defaults to None.
+        strategy (RolloutStrategy | None): Rollout error handling strategy.
+            Defaults to None.
     """
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
@@ -665,9 +796,19 @@ async def do_sync_training_with_stream_minibatch(
 
 @chz.chz
 class WrappedTrajectoryGroup:
-    """
-    A wrapper around a trajectory group that includes metadata about how it was generated.
-    Used when we need to overlap sampling and training.
+    """A wrapper around a trajectory group that includes generation metadata.
+
+    Used when sampling and training are overlapped (streaming minibatch or
+    async modes) so that staleness can be checked and stale groups requeued.
+
+    Attributes:
+        trajectory_group (TrajectoryGroup): The collected trajectory group.
+        env_group_builder (EnvGroupBuilder): The builder that produced this
+            group. Retained so that stale groups can be requeued.
+        sampling_client_step (int): The training step at which the sampling
+            client was created for this rollout.
+        metrics (dict[str, Any]): Timing and worker-level metrics collected
+            during rollout generation.
     """
 
     trajectory_group: TrajectoryGroup
@@ -719,7 +860,44 @@ async def do_async_training(
     error_counter: RolloutErrorCounter | None = None,
     strategy: RolloutStrategy | None = None,
 ):
-    """Implements async off-policy training, capped at K steps off policy."""
+    """Implement async off-policy training, capped at K steps off policy.
+
+    Launches four concurrent coroutine groups that communicate via async
+    queues:
+
+    1. **Dataloader loop** -- feeds ``EnvGroupBuilder`` items into a queue.
+    2. **Trajectory worker loops** (one per ``groups_per_batch``) -- consume
+       builders, run rollouts, and push ``WrappedTrajectoryGroup`` results.
+    3. **Training loop** -- accumulates groups, discards stale samples, and
+       performs forward_backward + optim_step.
+    4. **Evaluation loop** -- runs evaluators whenever the sampling client is
+       updated.
+
+    Shutdown cascades from the dataloader through workers, training, and
+    finally evaluation via ``_Shutdown`` sentinels and ``asyncio.Event`` flags.
+
+    Args:
+        start_batch (int): First training iteration index (inclusive).
+        end_batch (int): Last training iteration index (exclusive).
+        num_batches (int): Total number of batches, used for progress
+            fraction calculation.
+        config (Config): RL training configuration. Must have
+            ``async_config`` set.
+        training_client (tinker.TrainingClient): Client connected to the
+            Tinker training service.
+        kl_reference_client (tinker.SamplingClient | None): Sampling client
+            for the KL reference model, or None if KL penalty is disabled.
+        evaluators (list[SamplingClientEvaluator]): Evaluators to run
+            periodically during training.
+        dataset (RLDataset): The RL dataset providing batches of
+            ``EnvGroupBuilder`` instances.
+        ml_logger (ml_log.Logger): Logger for metrics and W&B integration.
+        tokenizer (Tokenizer): Tokenizer for decoding rollout tokens.
+        error_counter (RolloutErrorCounter | None): Optional counter for
+            tracking rollout errors. Defaults to None.
+        strategy (RolloutStrategy | None): Rollout error handling strategy.
+            Defaults to None.
+    """
     assert config.async_config is not None
 
     # We will have groups_per_batch workers generating rollouts, so cap the
@@ -1048,6 +1226,29 @@ async def save_checkpoint_and_get_sampling_client(
     start_batch: int = 0,
     ttl_seconds: int | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
+    """Save a checkpoint (if due) and return a fresh sampling client.
+
+    When ``save_every > 0`` and ``i_batch`` falls on the save cadence, a
+    full checkpoint (weights + optimizer state) is persisted. Otherwise a
+    lightweight sampler-only snapshot is created so that subsequent rollouts
+    use the latest weights.
+
+    Args:
+        training_client (tinker.TrainingClient): Client connected to the
+            Tinker training service.
+        i_batch (int): Current training iteration index.
+        log_path (str): Directory for checkpoints and logs.
+        save_every (int): Checkpoint cadence in iterations. 0 disables
+            periodic checkpointing.
+        start_batch (int): First iteration index of this run, used to avoid
+            checkpointing on the very first step. Defaults to 0.
+        ttl_seconds (int | None): Time-to-live for periodic checkpoints.
+            None disables expiry. Defaults to None.
+
+    Returns:
+        tuple[tinker.SamplingClient, dict[str, Any]]: A sampling client
+        loaded with the latest weights, and a (possibly empty) metrics dict.
+    """
     metrics: dict[str, Any] = {}
     async with trace.scope_span("save_checkpoint"):
         if save_every > 0 and i_batch > start_batch and i_batch % save_every == 0:
@@ -1073,7 +1274,29 @@ async def prepare_minibatch(
     kl_penalty_coef: float,
     kl_discount_factor: float,
 ) -> tuple[list[tinker.Datum], dict[str, Any]]:
-    """Converts the trajectories into a minibatch, and provides metrics about the minibatch"""
+    """Convert trajectory groups into training data with computed advantages.
+
+    Computes per-trajectory metrics, prints sample groups, assembles
+    ``tinker.Datum`` objects with advantages, and optionally incorporates a
+    KL penalty against a reference policy.
+
+    Args:
+        env_group_builders_P (Sequence[EnvGroupBuilder]): Builders that
+            produced each trajectory group (used for logging tags).
+        trajectory_groups_P (list[TrajectoryGroup]): Collected trajectory
+            groups to convert.
+        tokenizer (Tokenizer): Tokenizer for decoding tokens during logging.
+        kl_reference_client (tinker.SamplingClient | None): Sampling client
+            for the KL reference model, or None if KL penalty is disabled.
+        kl_penalty_coef (float): Coefficient for the KL penalty term. Set
+            to 0 to disable.
+        kl_discount_factor (float): Position-based discount factor for KL
+            penalty terms.
+
+    Returns:
+        tuple[list[tinker.Datum], dict[str, Any]]: A list of training datums
+        and a dict of trajectory and KL penalty metrics.
+    """
 
     # Compute trajectory metrics
     metrics = {}
@@ -1114,12 +1337,31 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     do_compute_post_kl: bool,
     ttl_seconds: int | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
-    """
-    At the end of the iteration, this will compute metrics for the full batch
-    and return the latest sampling client.
+    """Compute end-of-iteration metrics and return a fresh sampling client.
 
-    The reason we return a sampling client is that if do_compute_post_kl is True,
-    we need to create a sampling client from the post-update policy.
+    Calculates KL divergence between the sampling and training log-probs,
+    saves a checkpoint (if due), and optionally computes post-update KL
+    metrics using the newly checkpointed weights.
+
+    Args:
+        training_client (tinker.TrainingClient): Client connected to the
+            Tinker training service.
+        i_batch (int): Current training iteration index (used for checkpoint
+            naming).
+        data_D (list[tinker.Datum]): Training data from the current iteration.
+        training_logprobs_D (list[torch.Tensor]): Per-datum log-probabilities
+            returned by the training forward pass.
+        log_path (str): Directory for checkpoints and logs.
+        save_every (int): Checkpoint cadence in iterations.
+        do_compute_post_kl (bool): Whether to compute post-update KL metrics
+            against the new sampling client (adds an extra sampling call).
+        ttl_seconds (int | None): Time-to-live for periodic checkpoints.
+            Defaults to None.
+
+    Returns:
+        tuple[tinker.SamplingClient, dict[str, Any]]: A sampling client
+        loaded with post-update weights, and a dict of KL / checkpoint
+        metrics.
     """
     metrics = {}
 
@@ -1153,12 +1395,34 @@ async def do_train_step_streaming_and_get_sampling_client(
     tokenizer: Tokenizer,
     trajectory_group_filter: Callable[[WrappedTrajectoryGroup | None], bool] = lambda _: True,
 ) -> tuple[tinker.SamplingClient, dict[str, Any], list[WrappedTrajectoryGroup]] | None:
-    """
-    As soon as we have enough trajectories for a minibatch, we will train on them.
-    This allows us to overlap sampling and training.
+    """Consume trajectory groups from a queue and train as minibatches become ready.
 
-    Returns None if a shutdown sentinel is received, indicating the caller should
-    stop training.
+    As soon as enough trajectories for a minibatch have accumulated, a
+    ``forward_backward`` call is enqueued. After all minibatches in a substep
+    are submitted, one ``optim_step`` is issued. This overlaps sampling I/O
+    with GPU training.
+
+    Args:
+        config (Config): RL training configuration. Must have
+            ``stream_minibatch_config`` set.
+        i_batch (int): Current training iteration index.
+        trajectory_groups_queue (asyncio.Queue): Queue yielding
+            ``WrappedTrajectoryGroup``, ``None`` (filtered/failed group), or
+            ``_Shutdown`` sentinel.
+        training_client (tinker.TrainingClient): Client connected to the
+            Tinker training service.
+        kl_reference_client (tinker.SamplingClient | None): Sampling client
+            for the KL reference model, or None if KL penalty is disabled.
+        tokenizer (Tokenizer): Tokenizer for decoding tokens during logging.
+        trajectory_group_filter (Callable): Predicate applied to each
+            dequeued group. Groups for which the filter returns False are
+            skipped. Defaults to accepting all groups.
+
+    Returns:
+        tuple[tinker.SamplingClient, dict[str, Any], list[WrappedTrajectoryGroup]] | None:
+        A 3-tuple of (sampling client with updated weights, aggregated
+        metrics, list of all trajectory groups used for training), or None
+        if a ``_Shutdown`` sentinel was received.
     """
     assert config.stream_minibatch_config is not None
     assert config.stream_minibatch_config.groups_per_batch % config.num_substeps == 0, (
@@ -1290,6 +1554,30 @@ async def do_train_step_and_get_sampling_client(
     env_group_builders_P: Sequence[EnvGroupBuilder],
     trajectory_groups_P: list[TrajectoryGroup],
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
+    """Prepare a minibatch, run one training step, and return updated weights.
+
+    This is the standard (non-streaming) single-iteration training step. It
+    prepares data from trajectory groups, calls :func:`train_step`, computes
+    full-batch metrics, and checkpoints.
+
+    Args:
+        config (Config): RL training configuration.
+        i_batch (int): Current training iteration index.
+        training_client (tinker.TrainingClient): Client connected to the
+            Tinker training service.
+        kl_reference_client (tinker.SamplingClient | None): Sampling client
+            for the KL reference model, or None if KL penalty is disabled.
+        tokenizer (Tokenizer): Tokenizer for decoding tokens during logging.
+        env_group_builders_P (Sequence[EnvGroupBuilder]): Builders that
+            produced each trajectory group.
+        trajectory_groups_P (list[TrajectoryGroup]): Collected trajectory
+            groups for this iteration.
+
+    Returns:
+        tuple[tinker.SamplingClient, dict[str, Any]]: A sampling client
+        loaded with post-update weights, and a dict of all metrics from
+        minibatch preparation, training, and checkpointing.
+    """
     trace.update_scope_context({"step": i_batch})
 
     metrics = {}
@@ -1344,7 +1632,34 @@ async def do_sync_training(
     error_counter: RolloutErrorCounter | None = None,
     strategy: RolloutStrategy | None = None,
 ):
-    """Implements fully synchronous on-policy training"""
+    """Implement fully synchronous on-policy training.
+
+    Each iteration samples all trajectory groups in parallel (via
+    :func:`gather_with_progress`), trains on the full batch, checkpoints,
+    and then runs evaluations. This is the simplest execution mode and
+    guarantees that all training data is fully on-policy.
+
+    Args:
+        start_batch (int): First training iteration index (inclusive).
+        end_batch (int): Last training iteration index (exclusive).
+        num_batches (int): Total number of batches in the dataset, used for
+            progress fraction calculation.
+        config (Config): RL training configuration.
+        training_client (tinker.TrainingClient): Client connected to the
+            Tinker training service.
+        kl_reference_client (tinker.SamplingClient | None): Sampling client
+            for the KL reference model, or None if KL penalty is disabled.
+        evaluators (list[SamplingClientEvaluator]): Evaluators to run
+            periodically during training.
+        dataset (RLDataset): The RL dataset providing batches of
+            ``EnvGroupBuilder`` instances.
+        ml_logger (ml_log.Logger): Logger for metrics and W&B integration.
+        tokenizer (Tokenizer): Tokenizer for decoding rollout tokens.
+        error_counter (RolloutErrorCounter | None): Optional counter for
+            tracking rollout errors. Defaults to None.
+        strategy (RolloutStrategy | None): Rollout error handling strategy.
+            Defaults to None.
+    """
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
         training_client,
@@ -1475,13 +1790,43 @@ async def main(
 ):
     """Main training loop for MDP RL.
 
+    Orchestrates the full RL training lifecycle: initializes the Tinker
+    service and training clients, resumes from checkpoints if available,
+    builds the dataset and evaluators, dispatches to the appropriate
+    execution mode (sync, async, or streaming minibatch), and saves a
+    final checkpoint upon completion.
+
     Args:
-        config: Training configuration.
-        rollout_executor: Optional ``concurrent.futures.Executor`` for offloading
-            group rollouts to separate processes or remote workers. Pass
-            ``ProcessPoolExecutor(max_workers=N)`` for multi-process execution,
-            or any custom ``Executor`` (Ray, cluster dispatchers, etc.).
-            Default ``None`` runs rollouts as asyncio coroutines in-process.
+        config (Config | None): Training configuration. Exactly one of
+            ``config`` or ``cfg`` must be provided.
+        rollout_executor (Executor | None): Optional ``concurrent.futures.Executor``
+            for offloading group rollouts to separate processes or remote
+            workers. Pass ``ProcessPoolExecutor(max_workers=N)`` for
+            multi-process execution, or any custom ``Executor`` (Ray,
+            cluster dispatchers, etc.). Default ``None`` runs rollouts as
+            asyncio coroutines in-process.
+        cfg (Config | None): Deprecated alias for ``config``. Will be
+            removed in version 0.3.0.
+
+    Raises:
+        ConfigurationError: If neither ``config`` nor ``cfg`` is provided,
+            or if both are provided simultaneously.
+        ConfigurationError: If ``kl_penalty_coef > 0`` but
+            ``kl_reference_config`` is not set.
+
+    Example::
+
+        import asyncio
+        from tinker_cookbook.rl.train import Config, main
+
+        config = Config(
+            learning_rate=1e-5,
+            dataset_builder=my_dataset_builder,
+            model_name="meta-llama/Llama-3.1-8B-Instruct",
+            max_tokens=2048,
+            log_path="./logs/my_rl_run",
+        )
+        asyncio.run(main(config=config))
     """
     if cfg is not None:
         warn_deprecated("cfg", removal_version="0.3.0", message="Use 'config' instead.")

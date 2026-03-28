@@ -39,6 +39,15 @@ _TOOL_CALL_RE = re.compile(
 
 
 def _split_tool_calls_section(content: str) -> tuple[str, str | None]:
+    """Split content into text before tool calls and the tool calls section.
+
+    Args:
+        content (str): Raw response content that may contain tool call sections.
+
+    Returns:
+        tuple[str, str | None]: The text content before the tool calls section, and
+            the tool calls section content (or None if no tool calls found).
+    """
     match = _TOOL_CALLS_SECTION_RE.search(content)
     if not match:
         return content, None
@@ -47,6 +56,17 @@ def _split_tool_calls_section(content: str) -> tuple[str, str | None]:
 
 
 def _extract_tool_name(tool_id: str) -> str:
+    """Extract the tool function name from a Kimi K2 tool ID string.
+
+    Strips the ``functions.`` prefix and ``:index`` suffix from tool IDs
+    like ``functions.get_weather:0``.
+
+    Args:
+        tool_id (str): The tool identifier string.
+
+    Returns:
+        str: The extracted function name, or empty string if tool_id is empty.
+    """
     if not tool_id:
         return ""
     name_part = tool_id.split(":", 1)[0]
@@ -58,6 +78,15 @@ def _extract_tool_name(tool_id: str) -> str:
 def _parse_tool_calls_section(
     tool_section: str,
 ) -> tuple[list[ToolCall], list[UnparsedToolCall]]:
+    """Parse individual tool calls from a Kimi K2 tool calls section.
+
+    Args:
+        tool_section (str): The content inside the tool calls section markers.
+
+    Returns:
+        tuple[list[ToolCall], list[UnparsedToolCall]]: Successfully parsed tool calls
+            and any tool calls that failed to parse (e.g., invalid JSON arguments).
+    """
     tool_calls: list[ToolCall] = []
     unparsed_tool_calls: list[UnparsedToolCall] = []
 
@@ -103,6 +132,14 @@ class KimiK2Renderer(Renderer):
     DEFAULT_SYSTEM_PROMPT = "You are Kimi, an AI assistant created by Moonshot AI."
 
     def __init__(self, tokenizer: Tokenizer, strip_thinking_from_history: bool = True):
+        """Initialize the Kimi K2 renderer.
+
+        Args:
+            tokenizer (Tokenizer): The tokenizer to use for encoding.
+            strip_thinking_from_history (bool): When True (default), replaces thinking
+                content with empty ``<think></think>`` in historical assistant messages.
+                Set to False to preserve thinking in history for multi-turn RL.
+        """
         super().__init__(tokenizer)
         self.strip_thinking_from_history = strip_thinking_from_history
 
@@ -137,9 +174,19 @@ class KimiK2Renderer(Renderer):
         return messages
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
-        """
-        Render a message. For assistant messages, ctx.is_last controls whether thinking is preserved
-        (True) or stripped to empty <think></think> (False).
+        """Render a chat message into Kimi K2 ``<|im_*|>`` token format.
+
+        Each message uses role-specific tokens (``<|im_user|>``, ``<|im_assistant|>``,
+        ``<|im_system|>``) with ``<|im_middle|>`` separating the role from content.
+        For assistant messages, ``ctx.is_last`` controls whether thinking is preserved
+        or replaced with empty ``<think></think>``.
+
+        Args:
+            message (Message): The chat message to render.
+            ctx (RenderContext): Positional context including index and is_last flag.
+
+        Returns:
+            RenderedMessage: Header and output token chunks for the message.
         """
         role = message["role"]
 
@@ -234,6 +281,20 @@ class KimiK2Renderer(Renderer):
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:
+        """Build a generation prompt with Kimi K2 formatting.
+
+        Ensures a default system message is present, renders all messages, and
+        appends the assistant generation header. Preserves thinking for assistant
+        messages after the last non-tool-call assistant message.
+
+        Args:
+            messages (list[Message]): The conversation messages.
+            role (Role): The role for the generation prompt (default "assistant").
+            prefill (str | None): Optional prefill text to append after the prompt header.
+
+        Returns:
+            tinker.ModelInput: The tokenized model input ready for sampling.
+        """
         messages = self._ensure_system_message(messages)
         chunks: list[tinker.types.ModelInputChunk] = []
 
@@ -276,8 +337,22 @@ class KimiK2Renderer(Renderer):
         messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_TURN,
     ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
-        """
-        Build tokens and per-token weights for supervised fine-tuning. Since Kimi K2 renderer does not satisfy the extension property, this method is provided to return multiple examples in case we want to train on multiple assistant messages, potentially across multiple turns of user-assistant conversation.
+        """Build multiple supervised examples for multi-turn conversations.
+
+        Since Kimi K2 does not satisfy the extension property (thinking is stripped
+        from history), this method splits multi-turn conversations into separate
+        training examples -- one per user turn -- to avoid training on incorrect
+        token sequences.
+
+        Args:
+            messages (list[Message]): The full conversation messages.
+            train_on_what (TrainOnWhat): Which message tokens to assign training weight.
+                For LAST_ASSISTANT_MESSAGE or LAST_ASSISTANT_TURN, delegates to
+                build_supervised_example directly.
+
+        Returns:
+            list[tuple[tinker.ModelInput, torch.Tensor]]: A list of (model_input, weights)
+                pairs, one per training example.
         """
 
         if (
@@ -323,9 +398,19 @@ class KimiK2Renderer(Renderer):
         messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_MESSAGE,
     ) -> tuple[tinker.ModelInput, torch.Tensor]:
-        """
-        Override to properly handle thinking preservation for the last assistant message.
-        Also ensures default system message is prepended if none is present.
+        """Build a single supervised training example with proper thinking preservation.
+
+        Ensures a default system message is present and preserves thinking content
+        for assistant messages in the last assistant turn (after the last non-tool-call
+        assistant message).
+
+        Args:
+            messages (list[Message]): The conversation messages for supervised training.
+            train_on_what (TrainOnWhat): Which message tokens to assign training weight.
+
+        Returns:
+            tuple[tinker.ModelInput, torch.Tensor]: The tokenized model input and
+                per-token weight tensor.
         """
         messages = self._ensure_system_message(messages)
 
@@ -413,9 +498,27 @@ class KimiK2Renderer(Renderer):
         return tokens[0]
 
     def get_stop_sequences(self) -> list[int]:
+        """Return stop sequences for Kimi K2 generation.
+
+        Returns:
+            list[int]: Single-element list containing the ``<|im_end|>`` token ID.
+        """
         return [self._end_message_token]
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+        """Parse sampled token IDs back into an assistant Message.
+
+        Normalizes response tokens, strips the ``<|im_end|>`` stop token, and parses
+        ``<think>...</think>`` blocks and Kimi K2 tool call sections into structured
+        content and ToolCall objects.
+
+        Args:
+            response (list[int]): Raw token IDs from the sampler.
+
+        Returns:
+            tuple[Message, bool]: The parsed assistant message (with structured content
+                and optional tool_calls) and whether the stop token was found.
+        """
         response = self._normalize_response_tokens(response)
         assistant_message, parse_success = parse_response_for_stop_token(
             response, self.tokenizer, self._end_message_token

@@ -31,11 +31,17 @@ def register_tokenizer(
 ) -> None:
     """Register a custom tokenizer factory.
 
-    Args:
-        name: The tokenizer name
-        factory: A callable that takes no arguments and returns a Tokenizer.
+    Once registered, :func:`get_tokenizer` will call ``factory()`` instead
+    of loading from HuggingFace when the given ``name`` is requested.
 
-    Example:
+    Args:
+        name (str): The tokenizer name (typically a HuggingFace model ID
+            like ``"Foo/foo_tokenizer"``).
+        factory (Callable[[], Tokenizer]): A callable that takes no arguments
+            and returns a Tokenizer instance.
+
+    Example::
+
         def my_tokenizer_factory():
             return MyCustomTokenizer()
 
@@ -45,12 +51,25 @@ def register_tokenizer(
 
 
 def get_registered_tokenizer_names() -> list[str]:
-    """Return a list of all registered custom tokenizer names."""
+    """Return a list of all registered custom tokenizer names.
+
+    Returns:
+        list[str]: Names of all tokenizers registered via
+            :func:`register_tokenizer`.
+    """
     return list(_CUSTOM_TOKENIZER_REGISTRY.keys())
 
 
 def is_tokenizer_registered(name: str) -> bool:
-    """Check if a tokenizer name is registered."""
+    """Check if a tokenizer name is registered.
+
+    Args:
+        name (str): The tokenizer name to check.
+
+    Returns:
+        bool: True if the name has been registered via
+            :func:`register_tokenizer`.
+    """
     return name in _CUSTOM_TOKENIZER_REGISTRY
 
 
@@ -72,7 +91,16 @@ def unregister_tokenizer(name: str) -> bool:
 def get_tokenizer(model_name: str) -> Tokenizer:
     """Get a tokenizer by name.
 
-    Checks custom registry first, then falls back to HuggingFace AutoTokenizer.
+    Checks the custom registry first (see :func:`register_tokenizer`),
+    then falls back to HuggingFace ``AutoTokenizer``. HuggingFace
+    tokenizers are cached after first load.
+
+    Args:
+        model_name (str): HuggingFace model identifier (e.g.
+            ``"Qwen/Qwen3-8B"``) or a custom registered name.
+
+    Returns:
+        Tokenizer: A ``PreTrainedTokenizer`` instance.
 
     Example::
 

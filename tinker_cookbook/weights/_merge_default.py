@@ -22,11 +22,20 @@ from tinker_cookbook.weights._merge_utils import (
 
 
 def detect_profile(model_config: dict, model_state_keys: set[str]) -> MergeProfile:
-    """Default profile for models without special merge requirements.
+    """Detect merge profile for standard models (Qwen, Kimi, etc.).
 
-    Handles Qwen, Kimi, and other standard model families. Detects fused
-    expert layout (concatenated, not interleaved) and vision model prefix
-    from key names alone.
+    This is the fallback detector used when no model-specific detector
+    matches. Detects fused expert layout (concatenated, not interleaved)
+    and vision model prefix from key names alone.
+
+    Args:
+        model_config (dict): Parsed ``config.json`` dict (unused by the
+            default detector, but present for interface consistency).
+        model_state_keys (set[str]): Weight key names from the model.
+
+    Returns:
+        MergeProfile: Profile with ``model_family="default"`` and detected
+            expert layout and language model prefix settings.
     """
     has_fused = any(k.endswith(".experts.gate_up_proj") for k in model_state_keys)
     has_lm_prefix = any(k.startswith("model.language_model.") for k in model_state_keys)
@@ -44,7 +53,22 @@ def plan_merge_ops(
     model_state_keys: set[str],
     profile: MergeProfile,
 ) -> dict[str, list[MergeOp]]:
-    """Plan merge ops for standard models."""
+    """Plan merge ops for standard models (Qwen, Kimi, etc.).
+
+    Handles both standard linear layers and expert weights. Also supports
+    fused projection merging for models like Nemotron.
+
+    Args:
+        adapter_weights (dict[str, torch.Tensor]): LoRA weight tensors from
+            the adapter.
+        adapter_config (dict): Adapter config with ``lora_alpha`` and ``r``.
+        model_state_keys (set[str]): Weight key names in the base model.
+        profile (MergeProfile): Model-specific merge configuration.
+
+    Returns:
+        dict[str, list[MergeOp]]: Mapping from model weight key to list of
+            merge operations targeting it.
+    """
     scaling = validate_adapter_config(adapter_config, profile)
     adapter_weight_names = extract_adapter_weight_names(adapter_weights)
 

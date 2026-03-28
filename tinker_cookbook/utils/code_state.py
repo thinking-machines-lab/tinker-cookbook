@@ -9,30 +9,30 @@ from typing import cast
 
 
 def code_state(modules: Sequence[str | ModuleType] = ("tinker_cookbook",)) -> str:
-    """
-    Return a single diff-formatted string that captures the current code state for the
-    provided Python modules. For each module, we:
+    """Capture the current code state for one or more Python modules as a diff string.
 
-    - Locate the module on the filesystem
-    - Discover the enclosing Git repository (the module may live inside a larger repo)
-    - Record the current commit hash (HEAD)
-    - Include combined staged+unstaged changes (i.e., diff vs HEAD) for the entire
-      containing Git repository (repo-wide). Subtree diffs are omitted to avoid
-      duplication.
+    For each module this function locates its filesystem path, discovers the
+    enclosing Git repository, records the current commit hash (HEAD), and
+    includes combined staged+unstaged changes (``git diff HEAD``) for the
+    entire repository.  The output is suitable for storage alongside experiment
+    metadata to reproduce the exact code state later.
 
-    The output is suitable for storage alongside experiment or training metadata to
-    reproduce the exact code state later. When multiple modules are provided, their
-    sections are concatenated in order.
-
-    Parameters:
-    - modules: sequence of module import names (e.g., "tinker_cookbook.rl") or already-
-      imported module objects. All entries must be either `str` or `ModuleType`.
+    Args:
+        modules (Sequence[str | ModuleType]): Module import names
+            (e.g. ``"tinker_cookbook.rl"``) or already-imported module objects.
 
     Returns:
-    - A string beginning with a header per module of the form:
-      "### module: <module_name> (repo: <repo_root>) @ <commit_hash>" followed by
-      the staged and unstaged `git diff` outputs restricted to that module directory.
-      If a module is not in a Git repository, a short note is included instead.
+        str: Concatenated sections, one per repository, each beginning with
+            a header of the form
+            ``### repo: <repo_root> @ <commit_hash>`` followed by the
+            repo-wide diff.  Modules not in a Git repository get a short
+            note instead.
+
+    Example::
+
+        state = code_state(["tinker_cookbook", "tinker"])
+        with open("code.diff", "w") as f:
+            f.write(state)
     """
 
     def ensure_module(obj: str | ModuleType) -> ModuleType:

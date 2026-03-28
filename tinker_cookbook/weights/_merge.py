@@ -288,7 +288,19 @@ def expand_expert_lora_tensors(
 
 
 def apply_merged_weight(target: torch.Tensor, merged_lora: torch.Tensor) -> None:
-    """Add a merged LoRA delta to a model weight tensor in-place."""
+    """Add a merged LoRA delta to a model weight tensor in-place.
+
+    Upcasts both tensors to float32 for the addition, then casts back to
+    the target's original dtype.
+
+    Args:
+        target (torch.Tensor): Model weight tensor to modify in-place.
+        merged_lora (torch.Tensor): LoRA delta tensor, must have the same
+            shape as ``target``.
+
+    Raises:
+        WeightsMergeError: If ``target`` and ``merged_lora`` have different shapes.
+    """
     if target.shape != merged_lora.shape:
         raise WeightsMergeError(
             f"Shape mismatch: target {target.shape} vs merged LoRA {merged_lora.shape}"

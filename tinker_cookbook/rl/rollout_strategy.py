@@ -30,7 +30,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class RolloutResult:
-    """Output of a :class:`RolloutStrategy`."""
+    """Output of a :class:`RolloutStrategy`.
+
+    Attributes:
+        trajectories (list[Trajectory]): Successfully completed trajectories.
+        envs (Sequence[Env]): The environments that produced the successful
+            trajectories, in the same order as ``trajectories``.
+        errors (list[RolloutError]): Errors encountered during rollout
+            collection.  Empty when all rollouts succeed.
+    """
 
     trajectories: list[Trajectory]
     envs: Sequence[Env]
@@ -65,6 +73,16 @@ class RolloutStrategy(ABC):
         May raise on unrecoverable errors (e.g. retry budget exhausted).
         The caller (:func:`do_group_rollout`) handles group-level error
         recovery based on :attr:`catches_group_errors`.
+
+        Args:
+            env_group_builder (EnvGroupBuilder): Builder used to create the
+                environments for this rollout group.
+            policy (TokenCompleter): The policy (language model) used to
+                generate actions during rollouts.
+
+        Returns:
+            RolloutResult: The collected trajectories, surviving environments,
+                and any errors encountered.
         """
         ...
 
@@ -82,6 +100,20 @@ class FailFast(RolloutStrategy):
         env_group_builder: EnvGroupBuilder,
         policy: TokenCompleter,
     ) -> RolloutResult:
+        """Run all rollouts concurrently, raising immediately on any failure.
+
+        Args:
+            env_group_builder (EnvGroupBuilder): Builder used to create the
+                environments for this rollout group.
+            policy (TokenCompleter): The policy used to generate actions.
+
+        Returns:
+            RolloutResult: Result with all trajectories and an empty error list.
+
+        Raises:
+            Exception: Any exception raised by a single rollout propagates
+                immediately, cancelling the remaining rollouts.
+        """
         from tinker_cookbook.rl.rollouts import do_single_rollout
 
         envs = await env_group_builder.make_envs()
@@ -124,6 +156,27 @@ class RetryOnFailure(RolloutStrategy):
         env_group_builder: EnvGroupBuilder,
         policy: TokenCompleter,
     ) -> RolloutResult:
+        """Run rollouts with automatic retry on individual trajectory failures.
+
+        Creates environments, launches all rollouts concurrently, and retries
+        any that fail by creating a fresh environment.  Uses
+        ``asyncio.wait(FIRST_COMPLETED)`` so retries begin immediately upon
+        detecting a failure.
+
+        Args:
+            env_group_builder (EnvGroupBuilder): Builder used to create (and
+                re-create on retry) environments for this rollout group.
+            policy (TokenCompleter): The policy used to generate actions.
+
+        Returns:
+            RolloutResult: Result containing the successfully completed
+                trajectories, surviving environments, and a list of any
+                errors encountered (including retried ones).
+
+        Raises:
+            Exception: Re-raises the failing exception when the retry budget
+                is exhausted, after cancelling all remaining in-flight tasks.
+        """
         from tinker_cookbook.rl.rollouts import do_single_rollout
 
         envs = await env_group_builder.make_envs()
@@ -210,6 +263,18 @@ def rollout_strategy_from_config(
     - ``False`` -> :class:`FailFast` (crash on any error, the default)
     - ``True``  -> :class:`RetryOnFailure` with default ``max_retries=3``
     - A :class:`RolloutStrategy` instance -> passed through as-is
+
+    Args:
+        rollout_error_tolerance (bool | RolloutStrategy): The config value to
+            convert.  ``False`` for fail-fast, ``True`` for retry with
+            defaults, or a pre-built :class:`RolloutStrategy` instance.
+
+    Returns:
+        RolloutStrategy: The resolved strategy instance.
+
+    Raises:
+        ConfigurationError: If the value is not a bool or
+            :class:`RolloutStrategy`.
     """
     if isinstance(rollout_error_tolerance, RolloutStrategy):
         return rollout_error_tolerance

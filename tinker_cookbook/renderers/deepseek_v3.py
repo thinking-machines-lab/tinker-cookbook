@@ -52,6 +52,17 @@ class _DeepSeekV3BaseRenderer(Renderer):
         system_role_as_user: bool = False,
         strip_thinking_from_history: bool = True,
     ):
+        """Initialize the DeepSeek V3 base renderer.
+
+        Args:
+            tokenizer (Tokenizer): The tokenizer to use for encoding.
+            system_role_as_user (bool): When True, converts system messages at
+                non-zero positions to user role. Required for multi-system-message
+                conversations.
+            strip_thinking_from_history (bool): When True (default), strips thinking
+                traces from historical assistant messages. Set to False for multi-turn
+                RL to preserve the extension property.
+        """
         super().__init__(tokenizer)
         self.system_role_as_user = system_role_as_user
         self.strip_thinking_from_history = strip_thinking_from_history
@@ -206,6 +217,11 @@ class _DeepSeekV3BaseRenderer(Renderer):
         return self._get_special_token("end▁of▁sentence")
 
     def get_stop_sequences(self) -> list[int]:
+        """Return stop sequences for DeepSeek V3 generation.
+
+        Returns:
+            list[int]: Single-element list containing the end-of-sentence token ID.
+        """
         return [self._end_message_token]
 
     def _parse_deepseek_tool_calls(
@@ -295,6 +311,19 @@ class _DeepSeekV3BaseRenderer(Renderer):
         return assistant_message, parse_success
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+        """Parse sampled token IDs back into an assistant Message.
+
+        Normalizes response tokens, strips the end-of-sentence stop token, and
+        parses ``<think>...</think>`` blocks and DeepSeek-specific tool call tokens
+        into structured content.
+
+        Args:
+            response (list[int]): Raw token IDs from the sampler.
+
+        Returns:
+            tuple[Message, bool]: The parsed assistant message (with structured content
+                and optional tool_calls) and whether the stop token was found.
+        """
         response = self._normalize_response_tokens(response)
         return self._parse_response_content(response, allow_missing_stop=False)
 

@@ -31,18 +31,34 @@ _NEMOTRON3 = ("nemotron3", "nemotron3_disable_thinking")
 
 @dataclass
 class ModelAttributes:
-    """Metadata describing a model's organization, version, size, and recommended renderers."""
+    """Metadata describing a model's organization, version, size, and recommended renderers.
 
-    organization: str  # meta-llama, Qwen, etc.
-    version_str: str  # just the version number e.g. "3.1", "2.5"
-    size_str: str  # size of the model e.g. "8B", "72B", "1.5B"
-    is_chat: bool  # is chat/instruct model
-    recommended_renderers: tuple[str, ...]  # first entry is the most recommended
-    is_vl: bool = False  # is vision-language model
+    Attributes:
+        organization (str): Model provider (e.g. ``"meta-llama"``, ``"Qwen"``).
+        version_str (str): Version number string (e.g. ``"3.1"``, ``"2.5"``).
+        size_str (str): Human-readable size (e.g. ``"8B"``, ``"72B"``, ``"30B-A3B"``).
+        is_chat (bool): Whether this is a chat/instruct-tuned model.
+        recommended_renderers (tuple[str, ...]): Renderer names compatible with
+            this model, ordered by recommendation (first is most recommended).
+        is_vl (bool): Whether this is a vision-language model.
+    """
+
+    organization: str
+    version_str: str
+    size_str: str
+    is_chat: bool
+    recommended_renderers: tuple[str, ...]
+    is_vl: bool = False
 
 
 @cache
 def get_llama_info() -> dict[str, ModelAttributes]:
+    """Return model attributes for all supported Meta Llama models.
+
+    Returns:
+        dict[str, ModelAttributes]: Mapping from model version name
+            (e.g. ``"Llama-3.1-8B-Instruct"``) to its attributes.
+    """
     org = "meta-llama"
     return {
         "Llama-3.2-1B-Instruct": ModelAttributes(org, "3.2", "1B", True, _LLAMA3),
@@ -58,6 +74,14 @@ def get_llama_info() -> dict[str, ModelAttributes]:
 
 @cache
 def get_qwen_info() -> dict[str, ModelAttributes]:
+    """Return model attributes for all supported Qwen models.
+
+    Includes Qwen3, Qwen3-VL (vision-language), and Qwen3.5 variants.
+
+    Returns:
+        dict[str, ModelAttributes]: Mapping from model version name
+            (e.g. ``"Qwen3-8B"``) to its attributes.
+    """
     org = "Qwen"
     return {
         "Qwen3-VL-30B-A3B-Instruct": ModelAttributes(
@@ -91,6 +115,12 @@ def get_qwen_info() -> dict[str, ModelAttributes]:
 
 @cache
 def get_deepseek_info() -> dict[str, ModelAttributes]:
+    """Return model attributes for all supported DeepSeek models.
+
+    Returns:
+        dict[str, ModelAttributes]: Mapping from model version name
+            (e.g. ``"DeepSeek-V3.1"``) to its attributes.
+    """
     org = "deepseek-ai"
     return {
         "DeepSeek-V3.1": ModelAttributes(org, "3", "671B-A37B", True, _DEEPSEEKV3),
@@ -100,6 +130,12 @@ def get_deepseek_info() -> dict[str, ModelAttributes]:
 
 @cache
 def get_gpt_oss_info() -> dict[str, ModelAttributes]:
+    """Return model attributes for all supported GPT-OSS models.
+
+    Returns:
+        dict[str, ModelAttributes]: Mapping from model version name
+            (e.g. ``"gpt-oss-20b"``) to its attributes.
+    """
     org = "openai"
     return {
         "gpt-oss-20b": ModelAttributes(org, "1", "21B-A3.6B", True, _GPT_OSS),
@@ -109,6 +145,12 @@ def get_gpt_oss_info() -> dict[str, ModelAttributes]:
 
 @cache
 def get_moonshot_info() -> dict[str, ModelAttributes]:
+    """Return model attributes for all supported Moonshot/Kimi models.
+
+    Returns:
+        dict[str, ModelAttributes]: Mapping from model version name
+            (e.g. ``"Kimi-K2-Thinking"``) to its attributes.
+    """
     org = "moonshotai"
     return {
         "Kimi-K2-Thinking": ModelAttributes(org, "K2", "1T-A32B", True, _KIMI_K2),
@@ -118,6 +160,12 @@ def get_moonshot_info() -> dict[str, ModelAttributes]:
 
 @cache
 def get_nvidia_info() -> dict[str, ModelAttributes]:
+    """Return model attributes for all supported NVIDIA Nemotron models.
+
+    Returns:
+        dict[str, ModelAttributes]: Mapping from model version name
+            (e.g. ``"NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"``) to its attributes.
+    """
     org = "nvidia"
     return {
         "NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": ModelAttributes(
@@ -176,7 +224,12 @@ def get_recommended_renderer_names(model_name: str) -> list[str]:
     The first result is the most recommended renderer for the model.
 
     Args:
-        model_name: HuggingFace model identifier.
+        model_name (str): HuggingFace model identifier
+            (e.g. ``"Qwen/Qwen3-8B"``).
+
+    Returns:
+        list[str]: Renderer names ordered by recommendation (most
+            recommended first).
     """
     return list(get_model_attributes(model_name).recommended_renderers)
 
@@ -185,17 +238,24 @@ def get_recommended_renderer_name(model_name: str) -> str:
     """Return the most recommended renderer for the model.
 
     Args:
-        model_name: HuggingFace model identifier.
+        model_name (str): HuggingFace model identifier
+            (e.g. ``"Qwen/Qwen3-8B"``).
+
+    Returns:
+        str: The top recommended renderer name for this model.
     """
     return get_recommended_renderer_names(model_name)[0]
 
 
 def warn_if_renderer_not_recommended(model_name: str, renderer_name: str | None) -> None:
-    """
-    Log a warning if ``renderer_name`` is not in the recommended list for ``model_name``.
+    """Log a warning if ``renderer_name`` is not recommended for ``model_name``.
 
-    Silently returns if ``renderer_name`` is None (caller is using the default) or if
-    ``model_name`` is not in the model registry.
+    Silently returns if ``renderer_name`` is ``None`` (caller is using the
+    default) or if ``model_name`` is not in the model registry.
+
+    Args:
+        model_name (str): HuggingFace model identifier.
+        renderer_name (str | None): Renderer name to check, or ``None`` to skip.
     """
     if renderer_name is None:
         return

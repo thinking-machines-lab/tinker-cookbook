@@ -130,6 +130,18 @@ class Qwen3Renderer(Renderer):
         return f"<tool_response>\n{content}\n</tool_response>"
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        """Render a chat message into Qwen3 ``<|im_start|>``/``<|im_end|>`` token chunks.
+
+        Handles structured content (ThinkingPart, TextPart), tool call formatting,
+        and optional stripping of thinking blocks from historical assistant messages.
+
+        Args:
+            message (Message): The chat message to render.
+            ctx (RenderContext): Positional context including index and is_last flag.
+
+        Returns:
+            RenderedMessage: Header and output token chunks for the message.
+        """
         maybe_newline = "\n" if ctx.idx > 0 else ""
 
         role = self._get_qwen_role_for_message(message)
@@ -194,9 +206,27 @@ class Qwen3Renderer(Renderer):
         return tokens[0]
 
     def get_stop_sequences(self) -> list[int]:
+        """Return stop sequences for Qwen3 generation.
+
+        Returns:
+            list[int]: Single-element list containing the ``<|im_end|>`` token ID.
+        """
         return [self._end_message_token]
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+        """Parse sampled token IDs back into an assistant Message.
+
+        Decodes the response, strips the ``<|im_end|>`` stop token, and parses
+        ``<think>...</think>`` blocks into ThinkingPart and ``<tool_call>...</tool_call>``
+        blocks into ToolCall objects.
+
+        Args:
+            response (list[int]): Raw token IDs from the sampler.
+
+        Returns:
+            tuple[Message, bool]: The parsed assistant message (with structured content
+                and optional tool_calls) and whether the stop token was found.
+        """
         response = self._normalize_response_tokens(response)
         assistant_message, parse_success = parse_response_for_stop_token(
             response, self.tokenizer, self._end_message_token
@@ -386,6 +416,18 @@ class Qwen3DisableThinkingRenderer(Qwen3Renderer):
     """
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        """Render a message, prepending an empty thinking block to the last assistant message.
+
+        For the last assistant message that lacks a thinking block, an empty
+        ``<think>\\n\\n</think>\\n\\n`` is added to the header to signal non-thinking mode.
+
+        Args:
+            message (Message): The chat message to render.
+            ctx (RenderContext): Positional context including index and is_last flag.
+
+        Returns:
+            RenderedMessage: Header (with optional empty think block) and output token chunks.
+        """
         # Get the base rendered message
         rendered = super().render_message(message, ctx)
 
@@ -457,6 +499,17 @@ class Qwen3VLRenderer(Qwen3Renderer):
         strip_thinking_from_history: bool = True,
         merge_text_chunks: bool = True,
     ):
+        """Initialize the Qwen3 vision-language renderer.
+
+        Args:
+            tokenizer (Tokenizer): The tokenizer to use for encoding.
+            image_processor (ImageProcessor | None): Processor for converting images
+                to model-compatible chunks. Required if messages contain image content.
+            strip_thinking_from_history (bool): When True (default), strips thinking
+                blocks from historical assistant messages.
+            merge_text_chunks (bool): When True (default), merges consecutive text
+                parts into a single tokenization unit for HF template compatibility.
+        """
         self.tokenizer = tokenizer
         self.image_processor = image_processor
         self.strip_thinking_from_history = strip_thinking_from_history
@@ -537,6 +590,18 @@ class Qwen3VLRenderer(Qwen3Renderer):
         ]
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        """Render a message with interleaved text and image content for vision-language models.
+
+        Handles image wrapping with ``<|vision_start|>``/``<|vision_end|>`` tokens,
+        thinking block stripping, tool calls, and optional text chunk merging.
+
+        Args:
+            message (Message): The chat message, potentially containing image parts.
+            ctx (RenderContext): Positional context including index and is_last flag.
+
+        Returns:
+            RenderedMessage: Header and output chunks (may include ImageChunks).
+        """
         maybe_newline = "\n" if ctx.idx > 0 else ""
 
         role = self._get_qwen_role_for_message(message)

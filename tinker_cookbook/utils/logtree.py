@@ -62,7 +62,16 @@ class Formatter(Protocol):
 
 @dataclass
 class Node:
-    """Represents an HTML element in the tree."""
+    """Represents an HTML element in the logtree output.
+
+    Attributes:
+        tag (str): HTML tag name (e.g. ``"div"``, ``"h2"``, ``"table"``).
+        attrs (dict[str, str]): HTML attribute key/value pairs.
+        children (list[Node | str]): Child nodes or raw HTML/text strings.
+        data (dict[str, Any] | None): Optional structured data for JSON export.
+            When present, raw HTML string children are omitted from the JSON
+            representation -- consumers should use ``data`` instead.
+    """
 
     tag: str
     attrs: dict[str, str] = field(default_factory=dict)
@@ -73,7 +82,14 @@ class Node:
     data: dict[str, Any] | None = field(default=None, repr=False)
 
     def to_html(self, indent: int = 0) -> str:
-        """Convert node to HTML string."""
+        """Convert this node (and its children) to an indented HTML string.
+
+        Args:
+            indent (int): Current indentation depth (number of 2-space levels).
+
+        Returns:
+            str: HTML string with newlines and indentation.
+        """
         ind = "  " * indent
         attrs_str = "".join(
             f' {k}="{html_module.escape(v, quote=True)}"' for k, v in self.attrs.items()
@@ -121,7 +137,15 @@ class Node:
 
 @dataclass
 class Theme:
-    """Theme configuration for HTML output."""
+    """Theme configuration for HTML output.
+
+    Attributes:
+        css_text (str | None): Custom CSS string. If ``None``, the built-in
+            default CSS is used.
+        css_urls (list[str]): External CSS stylesheet URLs to link.
+        css_vars (dict[str, str]): CSS custom properties (variables) injected
+            under ``:root``.
+    """
 
     css_text: str | None = None  # Custom CSS; if None, use built-in
     css_urls: list[str] = field(default_factory=list)
@@ -129,7 +153,16 @@ class Theme:
 
 
 class Trace:
-    """Root trace object representing an HTML document."""
+    """Root trace object representing an HTML document.
+
+    Typically created via :func:`init_trace` rather than directly.
+
+    Args:
+        title (str): Document title (used in ``<h1>`` and ``<title>``).
+        path (str | os.PathLike | None): File path for HTML output, or
+            ``None`` to skip automatic writing.
+        write_on_error (bool): If ``True``, write partial HTML on exception.
+    """
 
     def __init__(self, title: str, path: str | os.PathLike | None, write_on_error: bool):
         self.title = title
@@ -145,7 +178,15 @@ class Trace:
             self._formatter_css.add(css)
 
     def body_html(self, wrap_body: bool = True) -> str:
-        """Get the body HTML."""
+        """Get the body HTML content.
+
+        Args:
+            wrap_body (bool): If ``True``, include the ``<body>`` wrapper tag.
+                If ``False``, return only the inner content.
+
+        Returns:
+            str: HTML string for the document body.
+        """
         inner = self.root.to_html(indent=0)
         if wrap_body:
             return inner
@@ -156,13 +197,28 @@ class Trace:
             )
 
     def get_html(self) -> str:
-        """Alias for body_html()."""
+        """Alias for ``body_html(wrap_body=True)``.
+
+        Returns:
+            str: Full body HTML including ``<body>`` tags.
+        """
         return self.body_html(wrap_body=True)
 
     def head_html(
         self, theme: Theme | None = None, title: str | None = None, extra_head: str | None = None
     ) -> str:
-        """Generate the <head> section of the HTML document."""
+        """Generate the ``<head>`` section of the HTML document.
+
+        Args:
+            theme (Theme | None): Theme to apply. Uses defaults if ``None``.
+            title (str | None): Override document title (falls back to
+                ``self.title``).
+            extra_head (str | None): Additional raw HTML to insert in ``<head>``.
+
+        Returns:
+            str: HTML content for the ``<head>`` element (without the
+                ``<head>`` tags themselves).
+        """
         if theme is None:
             theme = Theme()
 
@@ -200,7 +256,12 @@ class Trace:
         return "\n".join(parts)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert the trace to a JSON-serializable dictionary."""
+        """Convert the trace to a JSON-serializable dictionary.
+
+        Returns:
+            dict[str, Any]: Dictionary with keys ``title``, ``started_at``,
+                ``path``, and ``root`` (recursive node tree).
+        """
         return {
             "title": self.title,
             "started_at": self.started_at.isoformat(),
@@ -644,7 +705,12 @@ def scope_disable() -> Iterator[None]:
 
 @contextmanager
 def optional_enable_logging(enable: bool) -> Iterator[None]:
-    """Context manager to optionally enable logging."""
+    """Context manager that either passes through or disables logging.
+
+    Args:
+        enable (bool): If ``True``, yields without changing state. If
+            ``False``, wraps the body in :func:`scope_disable`.
+    """
     if enable:
         yield
     else:

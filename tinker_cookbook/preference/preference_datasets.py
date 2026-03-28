@@ -25,25 +25,49 @@ logger = logging.getLogger(__name__)
 
 @chz.chz
 class ComparisonDatasetBuilder:
-    """
-    Builds HF datasets and converts to LabeledComparisons.
-    This class is independent of rendering/tokenization.
+    """Abstract builder that loads HuggingFace datasets and converts rows to LabeledComparisons.
+
+    Subclasses implement ``get_train_and_test_datasets`` and
+    ``example_to_labeled_comparison`` to provide dataset-specific loading
+    and parsing logic.  This class is independent of rendering/tokenization.
+
+    Attributes:
+        swap (bool): If ``True``, perform data augmentation by including
+            both orderings (A, B) and (B, A) of each comparison.
     """
 
     swap: bool = False  # do data augmentation by swapping the order of the completions
 
     def get_train_and_test_datasets(self) -> tuple[datasets.Dataset, datasets.Dataset | None]:
-        """Get raw HuggingFace datasets for train and test."""
+        """Load and return the raw HuggingFace train and optional test datasets.
+
+        Returns:
+            tuple[datasets.Dataset, datasets.Dataset | None]: The training
+                dataset and an optional test dataset.
+        """
         raise NotImplementedError
 
     def example_to_labeled_comparison(self, example: dict) -> LabeledComparison | None:
-        """Convert a HuggingFace dataset example to a LabeledComparison."""
+        """Convert a single HuggingFace dataset row to a LabeledComparison.
+
+        Args:
+            example (dict): A single row from the HuggingFace dataset.
+
+        Returns:
+            LabeledComparison | None: The parsed comparison, or ``None`` if
+                the row should be skipped (e.g. invalid data).
+        """
         raise NotImplementedError
 
     def get_labeled_comparisons(
         self,
     ) -> tuple[list[LabeledComparison], list[LabeledComparison] | None]:
-        """Get all labeled comparisons for train and test sets."""
+        """Iterate over the datasets and return all labeled comparisons.
+
+        Returns:
+            tuple[list[LabeledComparison], list[LabeledComparison] | None]:
+                Train comparisons and optional test comparisons.
+        """
         train_dataset, test_dataset = self.get_train_and_test_datasets()
 
         # Process train dataset
@@ -69,9 +93,18 @@ class ComparisonDatasetBuilder:
 
 @chz.chz
 class ChatDatasetBuilderFromComparisons(ChatDatasetBuilder):
-    """
-    Abstract base for chat dataset builders that use comparisons.
-    Subclasses must implement get_comparison_builder() to provide the dataset-specific logic.
+    """Chat dataset builder that renders labeled comparisons as supervised examples.
+
+    Converts each ``LabeledComparison`` into a supervised ``Datum`` by
+    rendering both completions with section markers and training on the
+    preference label token.  Optionally augments data by swapping A/B order.
+
+    Attributes:
+        comparison_builder (ComparisonDatasetBuilder): Provides raw datasets
+            and the ``example_to_labeled_comparison`` conversion.
+        swap (bool): If ``True``, emit both orderings of each comparison
+            (doubles the dataset size).  If ``False``, randomly swap with
+            50% probability for debiasing.
     """
 
     comparison_builder: ComparisonDatasetBuilder
@@ -79,9 +112,21 @@ class ChatDatasetBuilderFromComparisons(ChatDatasetBuilder):
 
     @property
     def comparison_renderer(self) -> ComparisonRenderer:
+        """Return a ComparisonRenderer wrapping this builder's chat renderer.
+
+        Returns:
+            ComparisonRenderer: A ``ComparisonRendererFromChatRenderer``
+                instance.
+        """
         return ComparisonRendererFromChatRenderer(self.renderer)
 
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
+        """Build train and optional test supervised datasets from comparisons.
+
+        Returns:
+            tuple[SupervisedDataset, SupervisedDataset | None]: The training
+                dataset and an optional test dataset.
+        """
         train_dataset, test_dataset = self.comparison_builder.get_train_and_test_datasets()
         comparison_renderer = self.comparison_renderer
         rng = random.Random(0)
@@ -124,13 +169,35 @@ class ChatDatasetBuilderFromComparisons(ChatDatasetBuilder):
 
 @chz.chz
 class ComparisonBuilderFromJsonl(ComparisonDatasetBuilder):
-    """Load LabeledComparisons from JSONL files produced by combine_preference_datasets.py."""
+    """Load LabeledComparisons from JSONL files.
+
+    Each line in the JSONL file must be a JSON object with ``"comparison"``
+    and ``"label"`` keys, as produced by ``combine_preference_datasets.py``.
+
+    Attributes:
+        train_path (str): Path (local or blobfile-compatible) to the
+            training JSONL file.
+        test_path (str | None): Optional path to a test JSONL file.
+
+    Example::
+
+        builder = ComparisonBuilderFromJsonl(
+            train_path="gs://bucket/train.jsonl",
+            test_path="gs://bucket/test.jsonl",
+        )
+        train_ds, test_ds = builder.get_train_and_test_datasets()
+    """
 
     train_path: str
     test_path: str | None = None
 
     def get_train_and_test_datasets(self) -> tuple[datasets.Dataset, datasets.Dataset | None]:
-        """Load datasets from JSONL files."""
+        """Load and return HuggingFace datasets from the JSONL files.
+
+        Returns:
+            tuple[datasets.Dataset, datasets.Dataset | None]: The training
+                dataset and an optional test dataset.
+        """
         import json
 
         import blobfile
@@ -155,7 +222,16 @@ class ComparisonBuilderFromJsonl(ComparisonDatasetBuilder):
         return train_dataset, test_dataset
 
     def example_to_labeled_comparison(self, example: dict) -> LabeledComparison | None:
-        """Convert a dictionary (from JSONL) back to a LabeledComparison."""
+        """Convert a JSONL row dictionary back to a LabeledComparison.
+
+        Args:
+            example (dict): A dictionary with ``"comparison"`` and ``"label"``
+                keys, as loaded from a JSONL file.
+
+        Returns:
+            LabeledComparison | None: The reconstructed comparison, or
+                ``None`` if required keys are missing.
+        """
         # The JSONL contains the raw LabeledComparison as a dict
         # with 'comparison' and 'label' keys
         if "comparison" not in example or "label" not in example:

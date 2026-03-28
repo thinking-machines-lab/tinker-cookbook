@@ -197,6 +197,20 @@ class GptOssRenderer(Renderer):
         reasoning_effort: str | None = None,
         current_date: str | None = None,
     ):
+        """Initialize the GptOss Harmony renderer.
+
+        Args:
+            tokenizer (Tokenizer): The tokenizer to use for encoding.
+            use_system_prompt (bool): When True, prepends OpenAI's system prompt with
+                date and reasoning effort settings. Requires reasoning_effort to be set.
+            reasoning_effort (str | None): Reasoning effort level (e.g. "high", "medium").
+                Must be set if and only if use_system_prompt is True.
+            current_date (str | None): Override for the current date in the system prompt.
+                If None, uses today's date. Set to a fixed value for deterministic prompts.
+
+        Raises:
+            AssertionError: If use_system_prompt and reasoning_effort are inconsistent.
+        """
         super().__init__(tokenizer)
         self.use_system_prompt = use_system_prompt
         self.reasoning_effort = reasoning_effort
@@ -209,6 +223,19 @@ class GptOssRenderer(Renderer):
     _INTERNAL_SYSTEM_ROLE = "_gptoss_internal_system"
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        """Render a chat message into Harmony wire format token chunks.
+
+        Routes messages to the appropriate Harmony channel (analysis, commentary,
+        or final) based on content type. Handles system-to-developer role mapping,
+        tool call rendering, and proper end tokens (``<|return|>`` vs ``<|end|>``).
+
+        Args:
+            message (Message): The chat message to render.
+            ctx (RenderContext): Positional context including index and is_last flag.
+
+        Returns:
+            RenderedMessage: Header and output token chunks in Harmony wire format.
+        """
         role = message["role"]
 
         # Handle tool result messages (role="tool")
@@ -385,7 +412,16 @@ class GptOssRenderer(Renderer):
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:
-        """Build generation prompt, prepending system message if configured."""
+        """Build generation prompt, prepending system message if configured.
+
+        Args:
+            messages (list[Message]): The conversation messages.
+            role (Role): The role for the generation prompt (default "assistant").
+            prefill (str | None): Optional prefill text to append after the prompt header.
+
+        Returns:
+            tinker.ModelInput: The tokenized model input ready for sampling.
+        """
         self._warn_if_user_system_message(messages)
         system_msg = self._get_system_message()
         if system_msg:
@@ -397,7 +433,16 @@ class GptOssRenderer(Renderer):
         messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_MESSAGE,
     ) -> tuple[tinker.ModelInput, torch.Tensor]:
-        """Build supervised example, prepending system message if configured."""
+        """Build supervised example, prepending system message if configured.
+
+        Args:
+            messages (list[Message]): The conversation messages for supervised training.
+            train_on_what (TrainOnWhat): Which message tokens to assign training weight.
+
+        Returns:
+            tuple[tinker.ModelInput, torch.Tensor]: The tokenized model input and
+                per-token weight tensor.
+        """
         self._warn_if_user_system_message(messages)
         system_msg = self._get_system_message()
         if system_msg:
@@ -417,11 +462,34 @@ class GptOssRenderer(Renderer):
         return res[0]
 
     def get_stop_sequences(self) -> list[int]:
-        # Both <|return|> and <|call|> are stop tokens
-        # <|return|> for normal completion, <|call|> for tool calls
+        """Return stop sequences for GptOss Harmony generation.
+
+        Both ``<|return|>`` (normal completion) and ``<|call|>`` (tool call) are
+        stop tokens, as generation should halt at either boundary.
+
+        Returns:
+            list[int]: Two-element list containing the return and call token IDs.
+        """
         return [self._return_token, self._call_token]
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+        """Parse sampled token IDs back into an assistant Message.
+
+        Finds the ``<|return|>`` or ``<|call|>`` stop token, decodes the preceding
+        tokens, and parses Harmony channel structure into ThinkingPart (analysis),
+        TextPart (final/commentary), and ToolCall objects.
+
+        Args:
+            response (list[int]): Raw token IDs from the sampler.
+
+        Returns:
+            tuple[Message, bool]: The parsed assistant message (with structured content
+                and optional tool_calls) and whether a stop token was found.
+
+        Raises:
+            RendererError: If multiple ``<|call|>`` or ``<|return|>`` tokens are found,
+                indicating incorrect stop token configuration during sampling.
+        """
         call_count = response.count(self._call_token)
         return_count = response.count(self._return_token)
         if call_count == 0 and return_count == 0:
