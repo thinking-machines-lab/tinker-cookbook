@@ -78,10 +78,27 @@ class Env(ABC):
 
     @abstractmethod
     async def initial_observation(self) -> tuple[Observation, StopCondition]:
+        """Return the starting observation and stop condition for this episode.
+
+        Returns:
+            tuple[Observation, StopCondition]: The initial observation (model input)
+                and the stop condition for the first generation step.
+        """
         pass
 
     @abstractmethod
     async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
+        """Advance the environment by one step given the agent's action.
+
+        Args:
+            action (Action): Token IDs produced by the agent.
+            extra (ActionExtra | None): Optional metadata about the action,
+                such as the stop reason.
+
+        Returns:
+            StepResult: The reward, next observation, and whether the episode
+                is done.
+        """
         pass
 
 
@@ -139,6 +156,11 @@ class EnvGroupBuilder(ABC):
 
     @abstractmethod
     async def make_envs(self) -> Sequence[Env]:
+        """Create the environments for this group.
+
+        Returns:
+            Sequence[Env]: The environments to run rollouts in.
+        """
         pass
 
     async def compute_group_rewards(
@@ -213,6 +235,15 @@ class RLDataset(ABC):
 
     @abstractmethod
     def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
+        """Return a batch of EnvGroupBuilder instances at the given index.
+
+        Args:
+            index (int): The batch index.
+
+        Returns:
+            Sequence[EnvGroupBuilder]: The environment group builders for
+                this batch.
+        """
         pass
 
     @abstractmethod

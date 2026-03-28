@@ -29,6 +29,7 @@ class Comparison:
     completion_B: list[renderers.Message]
 
     def swap(self) -> "Comparison":
+        """Return a new Comparison with A and B swapped."""
         return Comparison(
             prompt_conversation=self.prompt_conversation,
             completion_A=self.completion_B,
@@ -44,6 +45,7 @@ class LabeledComparison:
     label: Literal["A", "B", "Tie"]
 
     def swap(self) -> "LabeledComparison":
+        """Return a new LabeledComparison with A/B swapped and label inverted."""
         return LabeledComparison(
             comparison=self.comparison.swap(),
             label={"A": "B", "B": "A", "Tie": "Tie"}[self.label],  # pyright: ignore[reportArgumentType]
@@ -51,12 +53,22 @@ class LabeledComparison:
 
 
 class ComparisonRenderer:
+    """Abstract renderer for converting Comparisons to model inputs for preference training."""
+
     def build_generation_prompt(self, comparison: Comparison) -> types.ModelInput:
         raise NotImplementedError
 
     def to_model_input_weights(
         self, labeled_comparison: LabeledComparison
     ) -> tuple[types.ModelInput, torch.Tensor]:
+        """Convert a labeled comparison to model input and per-token loss weights.
+
+        Args:
+            labeled_comparison: A comparison annotated with a preference label.
+
+        Returns:
+            A tuple of (model_input, weights) for training.
+        """
         raise NotImplementedError
 
     @property
@@ -65,6 +77,15 @@ class ComparisonRenderer:
 
 
 class ComparisonRendererFromChatRenderer(ComparisonRenderer):
+    """Wraps a chat Renderer to render Comparisons for preference training.
+
+    Formats comparisons by concatenating the prompt conversation with labeled
+    sections for Completion A and Completion B, separated by system markers.
+
+    Args:
+        convo_renderer: The underlying chat Renderer to delegate to.
+    """
+
     # TODO probably shouldn't be in types.py
     def __init__(self, convo_renderer: renderers.Renderer):
         self.convo_renderer = convo_renderer
@@ -113,11 +134,23 @@ class PreferenceModel:
 
 
 class PreferenceModelBuilder:
+    """Abstract builder that creates PreferenceModel instances."""
+
     def __call__(self) -> PreferenceModel:
         raise NotImplementedError
 
 
 class PreferenceModelFromChatRenderer(PreferenceModel):
+    """A PreferenceModel that uses a chat renderer and Tinker sampling client.
+
+    Renders a Comparison into a prompt, samples a single token (A, B, or Tie),
+    and maps it to a float score (-1 for A, 1 for B, 0 for Tie).
+
+    Args:
+        convo_renderer: Renderer for formatting comparisons as chat prompts.
+        sampling_client: Tinker sampling client for generating preference labels.
+    """
+
     def __init__(self, convo_renderer: renderers.Renderer, sampling_client: SamplingClient):
         self.comparison_renderer = ComparisonRendererFromChatRenderer(convo_renderer)
         self.sampling_client = sampling_client

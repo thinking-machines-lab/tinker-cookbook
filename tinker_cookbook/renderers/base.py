@@ -993,6 +993,19 @@ class RenderedMessage:
 
 
 class TrainOnWhat(StrEnum):
+    """Enum controlling which parts of the sequence to compute loss on.
+
+    Members:
+        LAST_ASSISTANT_MESSAGE: Train only on the final assistant message.
+        LAST_ASSISTANT_TURN: Train on the last assistant turn (including any
+            tool calls and tool responses leading to the final assistant reply).
+        ALL_ASSISTANT_MESSAGES: Train on every assistant message in the conversation.
+        ALL_MESSAGES: Train on all messages regardless of role.
+        ALL_TOKENS: Train on every token in the sequence (including special tokens).
+        ALL_USER_AND_SYSTEM_MESSAGES: Train on user and system messages only.
+        CUSTOMIZED: Use per-message ``train`` flags from the dataset.
+    """
+
     LAST_ASSISTANT_MESSAGE = "last_assistant_message"
     LAST_ASSISTANT_TURN = "last_assistant_turn"
     ALL_ASSISTANT_MESSAGES = "all_assistant_messages"
@@ -1100,7 +1113,7 @@ class Renderer(ABC):
 
     @abstractmethod
     def get_stop_sequences(self) -> list[str] | list[int]:
-        """Return the stop sequences used when sampling from this renderer."""
+        """Return stop token IDs or strings that signal end-of-generation for the model."""
         ...
 
     @abstractmethod
@@ -1332,13 +1345,15 @@ class Renderer(ABC):
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:
-        """
-        Generates tokens for sampling from the model.
+        """Convert a message list to a token prompt for sampling.
 
         Args:
-            messages: a list of messages to render.
-            role: the role of the partial message to be completed.
-            prefill: an optional string to prefill in the model's generation.
+            messages: A list of messages to render.
+            role: The role of the partial message to be completed.
+            prefill: An optional string to prefill in the model's generation.
+
+        Returns:
+            A ModelInput containing the tokenized prompt.
         """
 
         chunks: list[tinker.types.ModelInputChunk] = []
@@ -1390,13 +1405,17 @@ class Renderer(ABC):
         messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_TURN,
     ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
-        """
-        Build tokens and per-token weights for supervised fine-tuning.
-        This function returns a list of examples in the form of tuples, where each tuple contains a model input and a tensor of weights.
-        This is needed because some renderers do not satisfy the extension property, so we need to return a list of examples instead of a single example.
+        """Build tokens and per-token weights for supervised fine-tuning.
 
-        This default implementation concatenates rendered messages in order, which assumes the renderer satisfies the extension property.
-        Override this method if your renderer does not satisfy the extension property.
+        Returns a list of (model_input, weights) tuples. Multiple examples are
+        needed when the renderer does not satisfy the extension property.
+
+        Args:
+            messages: The conversation to render.
+            train_on_what: Which parts of the sequence to compute loss on.
+
+        Returns:
+            A list of (ModelInput, weight tensor) tuples for training.
         """
 
         if self.has_extension_property:

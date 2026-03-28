@@ -35,6 +35,17 @@ def _one_of(a: Any, b: Any) -> bool:
 
 
 class SupervisedDatasetFromHFDataset(SupervisedDataset):
+    """A supervised dataset backed by a HuggingFace dataset.
+
+    Args:
+        hf_dataset (datasets.Dataset): The HuggingFace dataset to draw rows from.
+        batch_size (int): Number of rows per batch.
+        map_fn (Callable[[dict], tinker.Datum] | None): Function mapping a single
+            row to a Datum. Mutually exclusive with ``flatmap_fn``.
+        flatmap_fn (Callable[[dict], list[tinker.Datum]] | None): Function mapping
+            a single row to multiple Datums. Mutually exclusive with ``map_fn``.
+    """
+
     def __init__(
         self,
         hf_dataset: datasets.Dataset,
@@ -69,6 +80,22 @@ class SupervisedDatasetFromHFDataset(SupervisedDataset):
 
 
 class StreamingSupervisedDatasetFromHFDataset(SupervisedDataset):
+    """A supervised dataset that streams from HuggingFace, reducing memory usage.
+
+    Only supports forward iteration; seeking backward raises an error.
+
+    Args:
+        hf_dataset (datasets.IterableDataset): The streaming HuggingFace dataset.
+        batch_size (int): Number of rows per batch.
+        length (int): Total number of rows in the dataset (streaming datasets
+            do not expose a length).
+        map_fn (Callable[[dict], tinker.Datum] | None): Function mapping a single
+            row to a Datum. Mutually exclusive with ``flatmap_fn``.
+        flatmap_fn (Callable[[dict], list[tinker.Datum]] | None): Function mapping
+            a single row to multiple Datums. Mutually exclusive with ``map_fn``.
+        buffer_size (int): Shuffle buffer size. Default: 10000.
+    """
+
     def __init__(
         self,
         hf_dataset: datasets.IterableDataset,

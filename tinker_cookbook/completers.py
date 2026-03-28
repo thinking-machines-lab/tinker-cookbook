@@ -34,15 +34,40 @@ class TokensWithLogprobs:
 
 
 class TokenCompleter:
+    """Abstract interface for generating tokens from a prompt."""
+
     async def __call__(
         self, model_input: tinker.ModelInput, stop: StopCondition
     ) -> TokensWithLogprobs:
+        """Generate a token sequence from the given model input.
+
+        Args:
+            model_input (tinker.ModelInput): The tokenized prompt to complete from.
+            stop (StopCondition): Stop sequences (strings) or stop token IDs
+                that terminate generation.
+
+        Returns:
+            TokensWithLogprobs: The generated tokens with their log-probabilities
+                and stop reason.
+        """
         raise NotImplementedError
 
 
 class MessageCompleter:
+    """Abstract interface for generating message responses."""
+
     # TODO maybe add n_samples to the interfaces?
     async def __call__(self, messages: list[renderers.Message]) -> renderers.Message:
+        """Generate an assistant message given a conversation history.
+
+        Args:
+            messages (list[renderers.Message]): The conversation history as a
+                list of message dicts with ``role`` and ``content`` keys.
+
+        Returns:
+            renderers.Message: The generated assistant message, which may include
+                ``tool_calls`` if the model produced them.
+        """
         raise NotImplementedError
 
 
@@ -51,8 +76,13 @@ class MessageCompleter:
 
 @dataclass
 class TinkerTokenCompleter(TokenCompleter):
-    """
-    The most standard TokenCompleter, which uses a tinker.SamplingClient to sample actions.
+    """Token completer that uses a tinker.SamplingClient to sample actions.
+
+    Args:
+        sampling_client (tinker.SamplingClient): Client used to sample from
+            the model.
+        max_tokens (int): Maximum number of tokens to generate per call.
+        temperature (float): Sampling temperature. Default: 1.0.
     """
 
     sampling_client: tinker.SamplingClient
@@ -86,7 +116,18 @@ class TinkerTokenCompleter(TokenCompleter):
 
 
 class TinkerMessageCompleter(MessageCompleter):
-    """A completer that uses the actual model to generate responses."""
+    """Message completer that uses a tinker.SamplingClient to generate responses.
+
+    Args:
+        sampling_client (tinker.SamplingClient): Client used to sample from
+            the model.
+        renderer (renderers.Renderer): Renderer that converts between messages
+            and token sequences.
+        max_tokens (int): Maximum number of tokens to generate per call.
+        stop_condition (StopCondition | None): Custom stop condition. If ``None``,
+            uses the renderer's default stop sequences.
+        temperature (float): Sampling temperature. Default: 1.0.
+    """
 
     def __init__(
         self,

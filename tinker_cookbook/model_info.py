@@ -130,6 +130,19 @@ def get_nvidia_info() -> dict[str, ModelAttributes]:
 
 
 def get_model_attributes(model_name: str) -> ModelAttributes:
+    """Get model metadata by name.
+
+    Args:
+        model_name: HuggingFace model identifier (e.g. ``"meta-llama/Llama-3.1-8B"``).
+            An optional ``:checkpoint`` suffix is stripped before lookup.
+
+    Returns:
+        A ModelAttributes instance with organization, size, and renderer info.
+
+    Raises:
+        ConfigurationError: If the model organization is unknown.
+        KeyError: If the model version is not found within its organization.
+    """
     model_name = model_name.split(":")[0]
     org, model_version_full = model_name.split("/")
     model_version_full = model_version_full.split(":")[0]
@@ -150,17 +163,22 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
 
 
 def get_recommended_renderer_names(model_name: str) -> list[str]:
-    """
-    Return a list of renderers that are designed for the model.
+    """Return a list of renderers that are designed for the model.
+
     Used so we can emit a warning if you use a non-recommended renderer.
     The first result is the most recommended renderer for the model.
+
+    Args:
+        model_name: HuggingFace model identifier.
     """
     return list(get_model_attributes(model_name).recommended_renderers)
 
 
 def get_recommended_renderer_name(model_name: str) -> str:
-    """
-    Return the most recommended renderer for the model.
+    """Return the most recommended renderer for the model.
+
+    Args:
+        model_name: HuggingFace model identifier.
     """
     return get_recommended_renderer_names(model_name)[0]
 

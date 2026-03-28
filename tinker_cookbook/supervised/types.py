@@ -19,6 +19,14 @@ class SupervisedDataset:
     """
 
     def get_batch(self, index: int) -> list[tinker.Datum]:
+        """Return a batch of training Datum objects at the given index.
+
+        Args:
+            index (int): The batch index.
+
+        Returns:
+            list[tinker.Datum]: The training datums for this batch.
+        """
         raise NotImplementedError
 
     def __len__(self) -> int:
@@ -43,6 +51,12 @@ class SupervisedDatasetBuilder:
     """
 
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
+        """Build and return (train_dataset, eval_dataset).
+
+        Returns:
+            tuple[SupervisedDataset, SupervisedDataset | None]: The training
+                dataset and an optional evaluation dataset.
+        """
         raise NotImplementedError
 
 
@@ -78,10 +92,12 @@ class ChatDatasetBuilder(SupervisedDatasetBuilder):
 
     @property
     def tokenizer(self) -> Tokenizer:
+        """Get the tokenizer for this dataset's model."""
         return get_tokenizer(self.common_config.model_name_for_tokenizer)
 
     @property
     def renderer(self) -> renderers.Renderer:
+        """Get the renderer for this dataset's model."""
         return renderers.get_renderer(
             self.common_config.renderer_name,
             self.tokenizer,

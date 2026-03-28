@@ -289,6 +289,14 @@ async def check_renderer_name_for_checkpoint_async(
 
 @trace.scope
 def load_checkpoints_file(log_dir: str) -> list[CheckpointRecord]:
+    """Load checkpoint records from a JSONL file.
+
+    Args:
+        log_dir: Directory containing the ``checkpoints.jsonl`` file.
+
+    Returns:
+        A list of CheckpointRecord instances, or an empty list if the file does not exist.
+    """
     checkpoint_path = Path(log_dir) / CHECKPOINTS_BASE_NAME
     if not checkpoint_path.exists():
         logger.info(f"No checkpoints found at {checkpoint_path}")
@@ -378,13 +386,18 @@ def save_checkpoint(
     kind: Literal["state", "sampler", "both"] = "state",
     ttl_seconds: int | None = None,
 ) -> dict[str, str]:
-    """Save model checkpoint.
+    """Save model checkpoint (synchronous wrapper around save_checkpoint_async).
+
     Args:
-        training_client: Training client to save from
-        name: Name for the checkpoint
-        log_path: Path to the log directory, where we can find checkpoints.jsonl file
+        training_client: Training client to save from.
+        name: Name for the checkpoint (used in the tinker:// path).
+        log_path: Directory containing ``checkpoints.jsonl``.
+        loop_state: Training loop state dict (may include ``batch``, ``epoch``, etc.).
+        kind: Which checkpoint types to save (``"state"``, ``"sampler"``, or ``"both"``).
+        ttl_seconds: Server-side retention. ``None`` keeps the checkpoint indefinitely.
+
     Returns:
-        Path to the saved checkpoint
+        Dict mapping ``"state_path"`` and/or ``"sampler_path"`` to tinker:// paths.
     """
     return asyncio.run(
         save_checkpoint_async(

@@ -68,6 +68,10 @@ def get_lora_lr_over_full_finetune_lr(model_name: str, lora_alpha: int = 32) -> 
     Return the factor that you should scale the full fine-tuning learning rate by to get the equivalent LoRA learning rate.
     Previously we had a more complicated formula, but the factor of 10 was more accurate empirically.
     See Lora Without Regret (https://thinkingmachines.ai/blog/lora/) for more details.
+
+    Args:
+        model_name: HuggingFace model identifier (currently unused but kept for API consistency).
+        lora_alpha: LoRA alpha scaling parameter (currently unused; multiplier is fixed at 10).
     """
     return 10.0
 
@@ -142,8 +146,18 @@ def get_lora_param_count(
     include_experts: bool = True,
     shared_expert_outer_loras: bool = True,
 ) -> int | dict[str, int]:
-    """
-    Get the number of parameters in the LoRA adapter.
+    """Get the number of parameters in the LoRA adapter.
+
+    Args:
+        model_name: HuggingFace model identifier.
+        lora_rank: Rank of the LoRA decomposition.
+        detailed: If True, return a dict with expert/non-expert/total breakdowns.
+        include_experts: Whether to include MoE expert layers in the count.
+        shared_expert_outer_loras: If True, count shared outer dimensions only once
+            across experts (reflects actual parameter sharing).
+
+    Returns:
+        Total parameter count as an int, or a detailed breakdown dict if ``detailed`` is True.
     """
 
     dim_sum = 0
@@ -190,6 +204,18 @@ def get_lora_param_count(
 
 
 def get_lr(model_name: str, is_lora: bool = True) -> float:
+    """Get a recommended learning rate for the given model.
+
+    Applies model-family-specific scaling based on hidden size. Only Llama and
+    Qwen families have calibrated formulas; other models raise NotImplementedError.
+
+    Args:
+        model_name: HuggingFace model identifier.
+        is_lora: If True, scale the base LR by the LoRA multiplier (10x).
+
+    Returns:
+        The recommended learning rate.
+    """
     base_lr = 5e-05
     lora_multiplier = 10.0
 
@@ -220,22 +246,44 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
 
 
 def get_full_finetune_param_count(model_name: str) -> float:
+    """Get the total parameter count for a model by reading safetensors headers.
+
+    Args:
+        model_name: HuggingFace model identifier.
+
+    Returns:
+        Total number of parameters as a float.
+    """
     count = 0
     for _name, shape in _list_param_shapes_from_safetensors_remote(model_name).items():
         count += np.prod(shape)
     return float(count)
 
 
-def get_full_finetune_lr_multiplier(model_name: str):
+def get_full_finetune_lr_multiplier(model_name: str) -> float:
+    """Get a model-specific LR multiplier for full fine-tuning, proportional to 1/sqrt(param_count).
+
+    Args:
+        model_name: HuggingFace model identifier.
+
+    Returns:
+        The LR multiplier for full fine-tuning.
+    """
     return 1.0 / math.sqrt(get_full_finetune_param_count(model_name))
 
 
-def get_lora_lr_multiplier(model_name: str):
-    """
-    Get a model-specific mutliplier for the LR, when training with LoRA.
+def get_lora_lr_multiplier(model_name: str) -> float:
+    """Get a model-specific multiplier for the LR, when training with LoRA.
+
     Given two models A and B, and learning rate LR_A that's known to be optimal for A,
     we can guess an optimal learning rate for B as
     LR_B = LR_A * get_lora_lr_multiplier(B) / get_lora_lr_multiplier(A)
+
+    Args:
+        model_name: HuggingFace model identifier.
+
+    Returns:
+        The LoRA LR multiplier combining full-finetune scaling and LoRA factor.
     """
     return get_full_finetune_lr_multiplier(model_name) * get_lora_lr_over_full_finetune_lr(
         model_name
