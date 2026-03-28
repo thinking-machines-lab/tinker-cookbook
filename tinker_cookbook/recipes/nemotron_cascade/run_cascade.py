@@ -56,17 +56,6 @@ PAPER_CONFIG = {
         "eval_every": 10,
         "remove_constant_reward_groups": True,
     },
-    "gsm8k": {
-        "group_size": 16,
-        "groups_per_batch": 128,
-        "learning_rate": 3e-6,
-        "max_tokens": 49152,
-        "temperature": 1.0,
-        "kl_penalty_coef": 0.0,
-        "max_steps": 50,
-        "save_every": 10,
-        "eval_every": 10,
-    },
 }
 
 # Smaller config for testing/development
@@ -165,10 +154,6 @@ async def run_cascade(
     # Run each RL stage sequentially
     for stage in stages:
         if stage not in configs:
-            # gsm8k uses math_rl recipe, handle separately
-            if stage == "gsm8k":
-                logger.info("GSM8K RL uses math_rl recipe — run separately")
-                continue
             logger.warning(f"Unknown stage: {stage}")
             continue
 
@@ -228,7 +213,7 @@ async def run_cascade(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16")
+    parser.add_argument("--model", default="nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16:peft:262144")
     parser.add_argument("--sft-checkpoint", required=True, help="SFT checkpoint to start from")
     parser.add_argument("--stages", default="if_rl,mcqa,structured_output",
                         help="Comma-separated RL stages")

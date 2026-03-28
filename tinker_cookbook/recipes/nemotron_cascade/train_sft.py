@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 class CLIConfig:
     # Required parameters
     log_path: str | None = None
-    model_name: str = "openai/gpt-oss-120b:peft:131072"
+    model_name: str = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16:peft:262144"
     load_checkpoint_path: str | None = None
 
     # Dataset parameters

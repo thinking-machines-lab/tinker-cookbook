@@ -43,7 +43,7 @@ class CLIConfig:
     """CLI configuration for Nemotron-Cascade-2 RL training."""
 
     # Model configuration
-    model_name: str = "openai/gpt-oss-120b:peft:131072"
+    model_name: str = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16:peft:262144"
     lora_rank: int = 32
     renderer_name: str | None = None
     load_checkpoint_path: str | None = None
@@ -54,7 +54,7 @@ class CLIConfig:
     # Training hyperparameters (paper defaults for IF-RL)
     group_size: int = 16
     groups_per_batch: int = 128
-    learning_rate: float = 3e-6
+    learning_rate: float = 3e-5
     max_tokens: int = 49152  # 49K tokens
     temperature: float = 1.0
     kl_penalty_coef: float = 0.0
