@@ -201,6 +201,27 @@ python -m tinker_cookbook.recipes.nemotron_cascade.run_evals \
   - Model likely needs SFT on coding tasks before getting non-zero reward.
   - `--timeout` flag removed from pytest commands (R2E-Gym images lack `pytest-timeout`); timeouts handled at sandbox level.
 
+## Expected Results (30-step runs, base model, no SFT)
+
+Results from 30-step RL training on Nemotron-3-Nano-30B (base model, group_size=16, groups_per_batch=8).
+These establish baselines — reward should improve further when starting from an SFT checkpoint.
+
+| Environment | Model | Steps | Avg Reward | Trend (first5 → last5) | Time/Step | Notes |
+|---|---|---|---|---|---|---|
+| `structured_output` | Nano | 30 ✅ | 0.796 | 0.825 → 0.842 | ~3 min | Stable, strong signal |
+| `mcqa` | Nano | 30 ✅ | 0.415 | 0.334 → 0.432 | ~6 min | Improved over training |
+| `if_rl` | Nano | 30 (running) | 0.760 | — | ~15 min | Strong, slow (49K tokens) |
+| `longctx_rl` | Nano | 30 (running) | 0.605 | 0.597 → 0.611 | ~10 min | Stable |
+| `rlhf` | Nano | 30 (running) | 0.504 | Flat | ~4 min | Baseline (pairwise comparison) |
+| `workbench` | Nano | 30 (running) | 0.269 | 0.219 → 0.309 | ~8 min | Slowly improving |
+| `code_rl` | Super | — | — | — | — | Needs 118K context (Super only) |
+| `swe_rl` | Super | — | — | — | — | Needs 98K context (Super only) |
+| `swe_agentic` | Super | — | — | — | — | Needs 262K context, deferred |
+
+**Model requirements:**
+- **Nano (65K context):** IF-RL, MCQA, Structured Output, Workbench, Long-Context, RLHF
+- **Super (262K context):** Code RL (118K), SWE Agentless (98K), SWE Agentic (262K)
+
 ## Key Differences from Paper
 
 | Setting | Paper | This Recipe |
@@ -214,13 +235,15 @@ python -m tinker_cookbook.recipes.nemotron_cascade.run_evals \
 
 ## Files
 
-| File | Purpose |
+| Path | Purpose |
 |---|---|
-| `train_sft.py` | SFT training CLI (chz) |
-| `train_rl.py` | RL training CLI (chz) |
-| `run_super_sft.py` | Full SFT launcher for Super 120B |
-| `run_cascade.py` | Cascade orchestrator |
-| `run_evals.py` | Benchmark evaluation |
-| `sft_datasets.py` | SFT dataset builders |
+| `sft/train.py` | SFT training CLI (chz) |
+| `sft/run_super.py` | Full SFT launcher for Super 120B |
+| `sft/datasets.py` | SFT dataset builders |
+| `rl/train.py` | RL training CLI (chz) |
+| `rl/cascade.py` | Cascade orchestrator |
+| `rl/envs/` | 9 RL environment implementations |
+| `eval/run_evals.py` | Benchmark evaluation (13 benchmarks) |
+| `eval/benchmarks/` | Individual benchmark modules |
 | `utils.py` | Shared utilities (think-block stripping) |
-| `*_env.py` | RL environment implementations |
+| `recipe_test.py` | Unit tests (94 tests) |
