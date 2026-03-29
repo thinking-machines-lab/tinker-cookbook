@@ -1,0 +1,66 @@
+{
+  "skill_name": "tinker-rl",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I want to train a model with GRPO on GSM8K math problems. Give me a complete script.",
+      "expected_output": "Runnable RL script using Gsm8kDatasetBuilder with appropriate hyperparameters",
+      "files": [],
+      "expectations": [
+        "Uses Gsm8kDatasetBuilder from tinker_cookbook.recipes.math_rl.math_env",
+        "Uses train.Config from tinker_cookbook.rl.train",
+        "Sets group_size (typically 4-16) and batch_size",
+        "Uses a learning rate in the 1e-5 to 4e-5 range (appropriate for RL)",
+        "Uses model_info.get_recommended_renderer_name() for renderer",
+        "The script is complete and runnable",
+        "Explains that advantages are centered within each group (why group_size matters)",
+        "Mentions available loss functions (importance_sampling as default, ppo, cispo, dro)",
+        "Warns about sampler desync — must create new SamplingClient after weight saves"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "I have a custom task where the model answers trivia questions. How do I create a custom RL environment for this?",
+      "expected_output": "ProblemEnv subclass with get_question, check_answer, check_format, get_reference_answer methods",
+      "files": [],
+      "expectations": [
+        "Subclasses ProblemEnv from tinker_cookbook.rl.problem_env",
+        "Implements get_question(), check_answer(), check_format(), and get_reference_answer()",
+        "Shows how to wrap it with ProblemGroupBuilder",
+        "Creates an RLDatasetBuilder that produces batches of the custom environment",
+        "Mentions that Env objects are single-use (no reset)",
+        "Explains the reward formula: format_coef * (check_format - 1) + check_answer",
+        "Uses @chz.chz decorator on the RLDatasetBuilder for config serialization"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "I need to train a model to use a search tool in a multi-turn conversation. How do I set up the environment?",
+      "expected_output": "MessageEnv subclass with initial_observation and step methods, wrapped with EnvFromMessageEnv",
+      "files": [],
+      "expectations": [
+        "Uses MessageEnv from tinker_cookbook.rl.message_env",
+        "Implements initial_observation() returning list[Message] and step() returning MessageStepResult",
+        "Wraps with EnvFromMessageEnv to bridge to the token-level Env interface",
+        "Sets max_trajectory_tokens to limit context growth",
+        "Mentions AsyncConfig for expensive multi-turn environments",
+        "Suggests kl_penalty_coef=0.0 for tool-use exploration",
+        "Mentions cleanup() method on EnvGroupBuilder for releasing resources"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "I have an RL training loop that samples rollouts, scores them with a reward model, and trains. How do I write it to maximize throughput?",
+      "expected_output": "Async RL loop that overlaps rollouts with training and evaluates concurrently",
+      "files": [],
+      "expectations": [
+        "Uses forward_backward_async and optim_step_async submitted back-to-back before awaiting",
+        "Overlaps next batch rollouts with current training step (not sequential)",
+        "Evaluates or scores rollouts concurrently — NOT in a sequential for loop",
+        "Creates a new SamplingClient after weight saves for subsequent rollouts",
+        "Mentions AsyncConfig for overlapping sampling and training when env execution is slow",
+        "Does not write sequential .result() chains that serialize GPU work"
+      ]
+    }
+  ]
+}

@@ -5,3 +5,4 @@ tinker_cookbook/_version.py
 .env.*
 .venv
 uv.lock
+skills-workspace/

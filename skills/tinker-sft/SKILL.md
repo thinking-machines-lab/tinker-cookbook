@@ -197,13 +197,40 @@ For custom completer subclassing, read `references/completers.md`.
 - **Add LoRA rank**: Add `"lora_rank": 32` to blueprint
 - **Add evaluators**: Add `"evaluator_builders": [...]` to config
 
+## Async patterns (important for throughput)
+
+The built-in `supervised/train.py` already uses async internally. For custom SL loops or evaluation, always overlap API calls:
+
+```python
+# CORRECT: overlap forward_backward with data prep
+fb_future = tc.forward_backward_async(data=batch, loss_fn="cross_entropy")
+optim_future = tc.optim_step_async(adam_params=adam_params)
+next_batch = dataset.get_batch(i + 1)  # Prepare while GPU works
+fb_result = fb_future.result()
+optim_result = optim_future.result()
+
+# WRONG: sequential calls waste GPU cycles
+result = tc.forward_backward(data=batch, loss_fn="cross_entropy")
+tc.optim_step(adam_params=adam_params)
+next_batch = dataset.get_batch(i + 1)  # GPU idle during data prep
+```
+
+For evaluation, run samples concurrently rather than one-by-one:
+```python
+import asyncio
+eval_tasks = [evaluate_sample(sc, sample) for sample in eval_set]
+results = await asyncio.gather(*eval_tasks)
+```
+
 ## Common pitfalls
 
+- **Sequential API calls**: Always use `_async` variants in training loops and overlap GPU work with data preparation. Sequential `.result()` chains waste GPU cycles.
+- **Sampler desync**: Create a **new** SamplingClient (and new completer) after every weight save. A stale client silently uses old weights.
 - Always use `model_info.get_recommended_renderer_name()` — never hardcode
 - Use `cli_utils.check_log_dir()` to avoid clobbering previous runs
 - `batch_size` is in tokens, not examples
 - Custom JSONL must use the messages format shown above
-- Create a new completer (with new SamplingClient) after saving weights
+- `forward()` computes loss without gradients — use it for eval only, not in training loops
 
 ## Code references
 

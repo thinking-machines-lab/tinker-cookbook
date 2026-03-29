@@ -140,15 +140,69 @@ For the complete Env protocol, EnvGroupBuilder, RLDatasetBuilder, and full multi
 
 For a full multi-turn training script with calculator tool use, read `references/multiturn.md`.
 
-## Advanced configuration
+## Async and concurrency (critical for throughput)
 
-**Async training** for expensive environments (overlaps sampling and training):
+RL training has the most concurrency opportunities in Tinker. Writing sequential code where async is possible is the #1 throughput killer.
+
+### Async training loop
+
+The built-in `rl/train.py` already overlaps rollouts with training. For custom loops, follow the same pattern — submit async calls back-to-back before awaiting:
+
+```python
+# CORRECT: overlap training with next batch's rollouts
+fb_future = tc.forward_backward_async(data=training_data, loss_fn="importance_sampling")
+optim_future = tc.optim_step_async(adam_params=adam_params)
+# Start rollouts for next batch while GPU trains
+next_rollouts = await do_group_rollout(...)
+fb_result = fb_future.result()
+optim_result = optim_future.result()
+
+# WRONG: sequential = wastes GPU cycles
+fb_result = tc.forward_backward_async(data=data, loss_fn="importance_sampling").result()
+tc.optim_step_async(adam_params=adam_params).result()
+next_rollouts = await do_group_rollout(...)  # GPU idle during rollouts!
+```
+
+### Async evaluation
+
+When evaluating multiple problems or computing metrics, run evaluations concurrently:
+
+```python
+# CORRECT: evaluate concurrently
+import asyncio
+tasks = [evaluate_problem(sc, problem) for problem in test_problems]
+results = await asyncio.gather(*tasks)
+
+# WRONG: evaluate sequentially
+results = []
+for problem in test_problems:
+    result = await evaluate_problem(sc, problem)  # Each waits for the last
+    results.append(result)
+```
+
+### AsyncConfig for expensive environments
+
+For environments with slow execution (sandboxes, API calls, tool use), use `AsyncConfig` to overlap sampling with training:
+
 ```python
 from tinker_cookbook.rl.train import AsyncConfig
 config = train.Config(
     ...,
     async_config=AsyncConfig(max_steps_off_policy=4, groups_per_batch=128),
 )
+```
+
+This lets the training loop use slightly off-policy data while new rollouts are being collected, dramatically improving throughput for slow environments.
+
+### Sampler desync
+
+After saving weights, always create a **new** SamplingClient. A stale client silently samples from outdated weights:
+
+```python
+# After training step
+tc.save_weights_for_sampler(name="step_100")
+sc = svc.create_sampling_client(model_path=saved_path)  # MUST create new client
+# Do NOT reuse the old sc — it points at old weights
 ```
 
 **Error tolerance** for flaky environments:
@@ -159,6 +213,8 @@ config = train.Config(..., rollout_error_tolerance=RetryOnFailure(max_retries=5)
 
 ## Common pitfalls
 
+- **Sequential API calls**: The #1 performance mistake. Always use `_async` variants and overlap GPU work with rollouts/data prep. Never chain `.result()` calls sequentially.
+- **Sampler desync**: Create a **new** SamplingClient after every weight save. Reusing a stale client silently samples from old weights.
 - `Env` objects are **single-use** — always create fresh envs via builder
 - Advantages are centered within each group — `group_size` matters for variance reduction
 - `max_tokens` too small truncates reasoning; too large wastes compute

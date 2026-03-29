@@ -88,17 +88,48 @@ tc = svc.create_lora_training_client(base_model="Qwen/Qwen3-8B", rank=32)
 result = tc.forward_backward(data=[datum], loss_fn="cross_entropy")
 tc.optim_step(adam_params=AdamParams(learning_rate=2e-4))
 
-# Sampling
+# Sampling (IMPORTANT: create a NEW client after each weight save)
 sc = tc.save_weights_and_get_sampling_client()
 response = sc.sample(prompt=model_input, num_samples=4,
                      sampling_params=SamplingParams(max_tokens=256))
+```
 
-# Async (overlap GPU work with data prep)
+### Async pattern (critical for throughput)
+
+Tinker runs GPU work on remote servers. The single most important performance pattern is **submitting async calls back-to-back before awaiting** — this overlaps GPU computation with CPU data preparation, maximizing throughput.
+
+```python
+# CORRECT: submit both, then await both — GPU works while CPU prepares next batch
 fb_future = tc.forward_backward_async(data=batch, loss_fn="cross_entropy")
 optim_future = tc.optim_step_async(adam_params=adam_params)
+# ... prepare next batch here while GPU is busy ...
 fb_result = fb_future.result()
 optim_result = optim_future.result()
+
+# WRONG: awaiting between calls serializes everything — wastes GPU cycles
+result = tc.forward_backward_async(data=batch, loss_fn="cross_entropy").result()  # GPU idle during this wait!
+tc.optim_step_async(adam_params=adam_params).result()  # Sequential = slow
 ```
+
+The same principle applies to **evaluation and sampling** — run them concurrently, not in a sequential loop:
+
+```python
+# CORRECT: evaluate all test problems concurrently
+import asyncio
+
+async def evaluate_one(sc, problem):
+    response = await sc.sample_async(prompt=problem, num_samples=1,
+                                     sampling_params=SamplingParams(max_tokens=256))
+    return check_answer(response)
+
+results = await asyncio.gather(*[evaluate_one(sc, p) for p in test_problems])
+
+# WRONG: sequential loop — each problem waits for the previous one
+for problem in test_problems:
+    response = sc.sample(prompt=problem, ...)  # One at a time = very slow
+```
+
+This applies everywhere: training steps, sampling, evaluation, checkpoint saves. All SDK methods have `_async` variants. Never write sequential `.result()` chains or sequential `for` loops over API calls.
 
 For the complete SDK API (all client methods, loss functions, retry behavior), read `references/sdk.md`.
 
@@ -165,11 +196,12 @@ For the full hyperparameter guide (formulas, LoRA rank selection, per-scenario r
 
 ## Common pitfalls
 
+- **Sequential API calls**: The #1 performance mistake. Always use `_async` variants and submit calls back-to-back before awaiting. Sequential `.result()` chains waste GPU cycles. This applies to training, sampling, evaluation, and checkpointing.
+- **Sampler desync**: After saving weights, the old SamplingClient still points at the previous weights. Always create a **new** SamplingClient after each `save_weights_for_sampler()` or `save_state()`. Reusing a stale client silently samples from outdated weights.
 - **Renderer mismatch**: Always use `model_info.get_recommended_renderer_name()`, never hardcode
-- **Sampler desync**: Create a new SamplingClient after saving weights
-- **Async gaps**: Submit `forward_backward_async` and `optim_step_async` back-to-back before awaiting
 - **LoRA LR**: LoRA needs ~10x higher LR than full fine-tuning — use `get_lr()`
 - **Llama tokenizer**: Requires `HF_TOKEN` (gated on HuggingFace)
+- **forward() vs forward_backward()**: `forward()` computes loss without gradients — use it for evaluation only, never in the training loop
 
 ## Further reading
 

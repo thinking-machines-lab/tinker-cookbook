@@ -139,8 +139,30 @@ evaluator = InspectAPIFromTinkerSampling(
 
 For custom evaluator patterns, read `references/evals.md`.
 
+## Async patterns (important for throughput)
+
+Checkpoint saves and evaluations should use async to avoid blocking the training loop:
+
+```python
+# CORRECT: async checkpoint save — training continues while saving
+save_future = checkpoint_utils.save_checkpoint_async(
+    training_client=tc, name="step_100", log_path=log_path,
+    loop_state={"batch": 100}, kind="both",
+)
+# ... continue training or prepare next batch ...
+paths = await save_future
+
+# For evaluation, run test samples concurrently:
+import asyncio
+tasks = [evaluate_problem(sc, p) for p in test_problems]
+results = await asyncio.gather(*tasks)
+# NOT: sequential one-by-one evaluation
+```
+
 ## Common pitfalls
 
+- **Sequential evaluation**: Run eval samples concurrently with `asyncio.gather()`, not in a sequential loop. Sequential evaluation wastes the parallelism Tinker provides.
+- **Sampler desync**: After saving weights, create a **new** SamplingClient. A stale client silently samples from old weights.
 - Use `save_state` for resuming, `save_weights_for_sampler` for export
 - `download()` expects sampler weights, not state checkpoints
 - Set `HF_TOKEN` for private models and publishing

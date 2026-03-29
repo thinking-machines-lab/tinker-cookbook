@@ -248,6 +248,8 @@ if __name__ == "__main__":
 
 ## Common pitfalls
 
+- **Sequential API calls**: In custom DPO/RLHF loops, always use `_async` variants and overlap GPU work with data prep. Sequential `.result()` chains waste GPU cycles. The built-in training loops already handle this, but custom evaluation or reward scoring code should use `asyncio.gather()` for concurrent execution.
+- **Sampler desync**: After saving weights between RLHF stages, create a **new** SamplingClient. A stale client silently uses old weights — especially dangerous when chaining SFT -> RM -> RL.
 - **DPO beta**: Start with 0.1 — well-tested default
 - **DPO LR**: Should be lower than SFT (1e-5 vs 2e-4)
 - **DPO from SFT**: Works best from an SFT checkpoint, not raw base model
