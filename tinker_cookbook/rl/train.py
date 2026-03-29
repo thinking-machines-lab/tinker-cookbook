@@ -105,16 +105,42 @@ async def gather_with_progress(
         list[T]: Results from each coroutine, in the same order as the input.
     """
     coroutine_list = list(coroutines)
-    pbar = tqdm(total=len(coroutine_list), desc=desc)
+    total = len(coroutine_list)
+    pbar = tqdm(total=total, desc=desc)
+    completed = 0
+    t0 = time.monotonic()
 
-    async def track(coro: Coroutine[Any, Any, T]) -> T:
+    async def track(idx: int, coro: Coroutine[Any, Any, T]) -> T:
+        nonlocal completed
         result = await coro
+        completed += 1
+        elapsed = time.monotonic() - t0
         pbar.update(1)
+        if completed % max(1, total // 10) == 0 or completed == total:
+            logger.info(
+                "%s: %d/%d groups done (%.0fs elapsed, %.1fs/group avg)",
+                desc, completed, total, elapsed, elapsed / completed,
+            )
         return result
 
+    # Stale detection: log warning if no progress for 5 minutes
+    async def stale_watchdog() -> None:
+        last_completed = 0
+        while completed < total:
+            await asyncio.sleep(300)  # 5 min
+            if completed == last_completed and completed < total:
+                elapsed = time.monotonic() - t0
+                logger.warning(
+                    "%s: STALE — no progress in 5 min (%d/%d done, %.0fs elapsed)",
+                    desc, completed, total, elapsed,
+                )
+            last_completed = completed
+
+    watchdog = asyncio.create_task(stale_watchdog())
     try:
-        results = await asyncio.gather(*[track(coro) for coro in coroutine_list])
+        results = await asyncio.gather(*[track(i, coro) for i, coro in enumerate(coroutine_list)])
     finally:
+        watchdog.cancel()
         pbar.close()
 
     return results
@@ -521,6 +547,12 @@ class Config:
     # Maximum number of training iterations. If None, train on the full dataset.
     max_steps: int | None = None
 
+    # Model context window size. When set, max_tokens is dynamically capped
+    # per-request so that prompt_length + max_tokens <= context_window.
+    # This prevents BadRequestError when long prompts (e.g., Cascade SWE ~24K
+    # tokens) would otherwise exceed the model's context limit.
+    context_window: int | None = None
+
 
 @trace.scope
 async def run_single_evaluation(
@@ -722,6 +754,7 @@ async def do_sync_training_with_stream_minibatch(
                             do_remove_constant_reward_groups=config.remove_constant_reward_groups,
                             enable_logging=enable_logging,
                             strategy=strategy,
+                            context_window=config.context_window,
                         )
                     worker_metrics["time/trajectory_group_worker_loop/total"] = (
                         time.time() - t_start
@@ -987,6 +1020,7 @@ async def do_async_training(
                     temperature=config.temperature,
                     do_remove_constant_reward_groups=config.remove_constant_reward_groups,
                     strategy=strategy,
+                    context_window=config.context_window,
                 )
             worker_metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
             # Ingest error info (safe: same event loop thread)
@@ -1727,6 +1761,7 @@ async def do_sync_training(
                                 do_remove_constant_reward_groups=False,
                                 enable_logging=i < config.num_groups_to_log,
                                 strategy=strategy,
+                                context_window=config.context_window,
                             )
                             for i, builder in enumerate(env_group_builders_P)
                         ),

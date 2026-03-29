@@ -5,3 +5,5 @@ tinker_cookbook/_version.py
 .env.*
 .venv
 uv.lock
+.worktrees/
+2026-03-26-*.txt

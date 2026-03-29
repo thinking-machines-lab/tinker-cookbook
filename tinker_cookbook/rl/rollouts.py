@@ -319,6 +319,7 @@ class _RolloutTask:
     remove_constant_reward_groups: bool
     enable_logging: bool
     strategy: RolloutStrategy = field(default_factory=FailFast)
+    context_window: int | None = None
 
 
 def _run_rollout_sync(task: _RolloutTask) -> TrajectoryGroup | None:
@@ -336,6 +337,7 @@ def _run_rollout_sync(task: _RolloutTask) -> TrajectoryGroup | None:
             task.remove_constant_reward_groups,
             task.enable_logging,
             strategy=task.strategy,
+            context_window=task.context_window,
         )
     )
 
@@ -349,6 +351,7 @@ async def do_group_rollout_and_filter_constant_reward(
     do_remove_constant_reward_groups: bool,
     enable_logging: bool = True,
     strategy: RolloutStrategy | None = None,
+    context_window: int | None = None,
 ) -> TrajectoryGroup | None:
     """Run a group rollout, optionally dispatching to an external executor.
 
@@ -376,6 +379,8 @@ async def do_group_rollout_and_filter_constant_reward(
         strategy (RolloutStrategy | None): Controls how trajectories are
             collected within the group (error handling, retries, etc.).
             Defaults to :class:`FailFast`.
+        context_window (int | None): When set, dynamically caps max_tokens
+            per-request so that prompt_length + max_tokens <= context_window.
 
     Returns:
         TrajectoryGroup | None: The completed trajectory group, or ``None``
@@ -407,6 +412,7 @@ async def do_group_rollout_and_filter_constant_reward(
             remove_constant_reward_groups=do_remove_constant_reward_groups,
             enable_logging=enable_logging,
             strategy=strategy,
+            context_window=context_window,
         )
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(executor, _run_rollout_sync, task)
@@ -419,6 +425,7 @@ async def do_group_rollout_and_filter_constant_reward(
         do_remove_constant_reward_groups,
         enable_logging,
         strategy=strategy,
+        context_window=context_window,
     )
 
 
@@ -430,11 +437,15 @@ async def _do_group_rollout_and_filter_constant_reward_impl(
     do_remove_constant_reward_groups: bool,
     enable_logging: bool = True,
     strategy: RolloutStrategy | None = None,
+    context_window: int | None = None,
 ) -> TrajectoryGroup | None:
     if strategy is None:
         strategy = FailFast()
 
-    policy = TinkerTokenCompleter(sampling_client, max_tokens=max_tokens, temperature=temperature)
+    policy = TinkerTokenCompleter(
+        sampling_client, max_tokens=max_tokens, temperature=temperature,
+        context_window=context_window,
+    )
 
     try:
         with logtree.optional_enable_logging(enable_logging):
