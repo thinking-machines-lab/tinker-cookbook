@@ -201,7 +201,7 @@ After saving weights, always create a **new** SamplingClient. A stale client sil
 ```python
 # After training step
 tc.save_weights_for_sampler(name="step_100")
-sc = svc.create_sampling_client(model_path=saved_path)  # MUST create new client
+sc = svc.create_sampling_client(model_path=saved_path)  # New client — old one still uses previous weights
 # Do NOT reuse the old sc — it points at old weights
 ```
 

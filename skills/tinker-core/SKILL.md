@@ -88,7 +88,7 @@ tc = svc.create_lora_training_client(base_model="Qwen/Qwen3-8B", rank=32)
 result = tc.forward_backward(data=[datum], loss_fn="cross_entropy")
 tc.optim_step(adam_params=AdamParams(learning_rate=2e-4))
 
-# Sampling (IMPORTANT: create a NEW client after each weight save)
+# Sampling — create a new client after each weight save (old one still points at previous weights)
 sc = tc.save_weights_and_get_sampling_client()
 response = sc.sample(prompt=model_input, num_samples=4,
                      sampling_params=SamplingParams(max_tokens=256))

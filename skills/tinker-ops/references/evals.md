@@ -56,16 +56,16 @@ See `tinker_cookbook/recipes/chat_sl/train.py` for a working example with GSM8K 
 
 ```python
 async def eval_math(sampling_client: SamplingClient) -> dict[str, float]:
-    correct = 0
-    for problem in test_problems:
-        response = sampling_client.sample(
+    async def evaluate_one(problem):
+        response = await sampling_client.sample_async(
             prompt=problem.prompt, num_samples=1,
             sampling_params=SamplingParams(max_tokens=256, temperature=0.0),
         )
-        answer = parse_answer(response.sequences[0].tokens)
-        if answer == problem.expected:
-            correct += 1
-    return {"math_accuracy": correct / len(test_problems)}
+        return parse_answer(response.sequences[0].tokens) == problem.expected
+
+    # Evaluate all problems concurrently — sequential loops waste throughput
+    results = await asyncio.gather(*[evaluate_one(p) for p in test_problems])
+    return {"math_accuracy": sum(results) / len(results)}
 ```
 
 ### NLL-based
