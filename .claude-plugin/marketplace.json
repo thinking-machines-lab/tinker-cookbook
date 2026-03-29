@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Claude Code skills for fine-tuning language models with the Tinker API — SFT, RL, DPO, distillation, and more.",
-    "version": "0.3.0"
+    "version": "0.2.1"
   },
   "plugins": [
     {
