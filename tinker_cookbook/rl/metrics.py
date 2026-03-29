@@ -18,7 +18,25 @@ from tinker_cookbook.utils.misc_utils import safezip
 def compute_kl_sample_train(
     data_D: list[tinker.Datum], training_logprobs_D: list[torch.Tensor]
 ) -> dict[str, float]:
-    """Compute KL divergence metrics between sampling and training logprobs."""
+    """Compute KL divergence metrics between sampling and training logprobs.
+
+    Compares the logprobs from when trajectories were sampled against the current
+    training logprobs to measure how much the policy has shifted. Computes both
+    first-order (v1) and second-order (v2) KL estimates, as well as the sampling
+    entropy. Only action tokens (where mask > 0) are included.
+
+    Args:
+        data_D (list[tinker.Datum]): List of datums, each containing ``logprobs``
+            and ``mask`` tensors in ``loss_fn_inputs``.
+        training_logprobs_D (list[torch.Tensor]): Per-token logprobs from the
+            current training model, one tensor per datum.
+
+    Returns:
+        dict[str, float]: Dictionary with keys:
+            - ``optim/kl_sample_train_v1``: Mean logprob difference (first-order KL estimate).
+            - ``optim/kl_sample_train_v2``: Half mean squared logprob difference (second-order KL).
+            - ``optim/entropy``: Estimated entropy of the sampling distribution.
+    """
     all_diffs: list[torch.Tensor] = []
     all_sampling_logprobs: list[torch.Tensor] = []
 
@@ -53,7 +71,26 @@ def compute_kl_sample_train(
 async def compute_post_kl(
     data_D: list[tinker.Datum], post_sampling_client: tinker.SamplingClient
 ) -> dict[str, float]:
-    """Compute post-update KL divergence metrics."""
+    """Compute post-update KL divergence metrics.
+
+    Measures how much the policy changed after a training update by computing
+    logprobs on the same sequences using a post-update sampling client and
+    comparing them against the original sampling logprobs. Reconstructs the
+    full token sequence from the shifted inputs and targets before computing
+    logprobs.
+
+    Args:
+        data_D (list[tinker.Datum]): List of datums containing the original
+            sampling logprobs, target tokens, and action masks in
+            ``loss_fn_inputs``.
+        post_sampling_client (tinker.SamplingClient): A sampling client loaded
+            with the post-update model weights.
+
+    Returns:
+        dict[str, float]: Dictionary with keys:
+            - ``kl_pre_post_v1``: Mean logprob difference (first-order KL estimate).
+            - ``kl_pre_post_v2``: Half mean squared logprob difference (second-order KL).
+    """
     # Compute logprobs at all data items
     # This is a bit ugly, but we first reconstruct the original sequence from before we did the
     # shifting to get the inputs and targets.
@@ -90,9 +127,33 @@ async def incorporate_kl_penalty(
     kl_penalty_coef: float,
     kl_discount_factor: float,
 ) -> dict[str, float]:
-    """
-    Compute KL against base model. Adjust advantages in-place by logp_base - logp_current - avg_kl,
-    where avg_kl is the average of logp_base - logp_current (which is -KL[current, base])
+    """Compute KL penalty against the base model and adjust advantages in-place.
+
+    Computes the per-token logprob difference between the sampling policy and
+    the base model, then adjusts each datum's advantages by adding a KL penalty
+    term: ``kl_penalty_coef * (avg_kl - per_token_kl)``. When
+    ``kl_discount_factor > 0``, the KL penalty is transformed into discounted
+    future sums before being added to advantages.
+
+    The KL direction is ``logp_sampled - logp_base``, so ``avg_kl`` represents
+    ``-KL[current || base]`` in expectation.
+
+    Args:
+        data_D (list[tinker.Datum]): List of datums whose ``advantages`` in
+            ``loss_fn_inputs`` will be modified in-place. Must also contain
+            ``logprobs``, ``mask``, and ``target_tokens``.
+        base_sampling_client (tinker.SamplingClient): A sampling client loaded
+            with the base (reference) model weights.
+        kl_penalty_coef (float): Coefficient scaling the KL penalty added to
+            advantages. Higher values regularize more strongly toward the base
+            model.
+        kl_discount_factor (float): Discount factor for computing discounted
+            future sums of the KL penalty. Set to 0 to disable discounting.
+
+    Returns:
+        dict[str, float]: Dictionary with key ``kl_policy_base`` containing the
+            mean logprob difference between the sampling policy and base model
+            (averaged over action tokens).
     """
     # Compute logprobs at all data items
     full_sequence_inputs_D = [
@@ -129,17 +190,18 @@ async def incorporate_kl_penalty(
 
 
 def discounted_future_sum_vectorized(x: torch.Tensor, gamma: float) -> torch.Tensor:
-    """
-    Compute discounted sum of future values for each position.
+    """Compute discounted sum of future values for each position.
 
-    For position i, computes: sum_{k=0}^{T-1-i} gamma^k * x[i+k]
+    For position i, computes: ``sum_{k=0}^{T-1-i} gamma^k * x[i+k]``.
+    Uses a single backward pass for O(T) computation.
 
     Args:
-        x: 1D tensor of values.
-        gamma: Discount factor.
+        x (torch.Tensor): 1D tensor of values.
+        gamma (float): Discount factor in [0, 1].
 
     Returns:
-        1D tensor of discounted future sums.
+        torch.Tensor: 1D tensor of the same shape as ``x``, where each element
+            is the discounted sum of current and future values.
     """
     result = torch.empty_like(x)
     running = torch.zeros(1, dtype=x.dtype, device=x.device)
@@ -152,7 +214,26 @@ def discounted_future_sum_vectorized(x: torch.Tensor, gamma: float) -> torch.Ten
 def compute_sampling_client_metrics(
     wrapped_trajectory_groups: list[Any],  # WrappedTrajectoryGroup
 ) -> dict[str, Any]:
-    """Compute metrics about sampling clients used to generate trajectory groups."""
+    """Compute metrics about sampling clients used to generate trajectory groups.
+
+    Aggregates statistics about which training step each sampling client was at
+    when trajectories were generated, and how long sampling took. Useful for
+    monitoring staleness of rollout data in asynchronous training.
+
+    Args:
+        wrapped_trajectory_groups (list[Any]): List of WrappedTrajectoryGroup
+            objects, each having a ``sampling_client_step`` attribute and a
+            ``metrics`` dict containing ``time/trajectory_group_worker_loop/total``.
+
+    Returns:
+        dict[str, Any]: Dictionary with keys:
+            - ``sampling_client/step_max``: Maximum training step across sampling clients.
+            - ``sampling_client/step_min``: Minimum training step across sampling clients.
+            - ``sampling_client/step_mean``: Mean training step across sampling clients.
+            - ``time/sampling_time_max``: Maximum sampling time across groups.
+            - ``time/sampling_time_min``: Minimum sampling time across groups.
+            - ``time/sampling_time_mean``: Mean sampling time across groups.
+    """
     sampling_client_steps = [
         wrapped_trajectory_group.sampling_client_step
         for wrapped_trajectory_group in wrapped_trajectory_groups

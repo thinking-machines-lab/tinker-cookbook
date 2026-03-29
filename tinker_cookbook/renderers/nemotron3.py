@@ -131,9 +131,30 @@ class Nemotron3Renderer(Qwen3_5Renderer):
         return messages
 
     def build_generation_prompt(self, messages: list[Message], *args: object, **kwargs: object):  # type: ignore[override]
+        """Build generation prompt, prepending an empty system message if none exists.
+
+        Args:
+            messages (list[Message]): The conversation messages.
+            *args: Additional positional arguments passed to the parent.
+            **kwargs: Additional keyword arguments passed to the parent.
+
+        Returns:
+            tinker.ModelInput: The tokenized model input ready for sampling.
+        """
         return super().build_generation_prompt(self._normalize_messages(messages), *args, **kwargs)  # type: ignore[arg-type]
 
     def build_supervised_example(self, messages: list[Message], *args: object, **kwargs: object):  # type: ignore[override]
+        """Build supervised example, prepending an empty system message if none exists.
+
+        Args:
+            messages (list[Message]): The conversation messages for supervised training.
+            *args: Additional positional arguments passed to the parent.
+            **kwargs: Additional keyword arguments passed to the parent.
+
+        Returns:
+            tuple[tinker.ModelInput, torch.Tensor]: The tokenized model input and
+                per-token weight tensor.
+        """
         return super().build_supervised_example(self._normalize_messages(messages), *args, **kwargs)  # type: ignore[arg-type]
 
     def _assistant_header_suffix(self, message: Message, ctx: RenderContext) -> str:
@@ -323,6 +344,15 @@ class Nemotron3DisableThinkingRenderer(Nemotron3Renderer):
     """
 
     def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
+        """Return generation suffix tokens with ``<think></think>`` to disable thinking.
+
+        Args:
+            role (Role): The role for the generation prompt.
+            ctx (RenderContext): Positional context for the generation message.
+
+        Returns:
+            list[int]: Encoded tokens for the generation suffix.
+        """
         maybe_newline = "\n" if ctx.idx > 0 else ""
         header_str = f"{maybe_newline}<|im_start|>{role}\n<think></think>"
         return self.tokenizer.encode(header_str, add_special_tokens=False)

@@ -40,6 +40,17 @@ class Llama3Renderer(Renderer):
         return True
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        """Render a chat message into Llama 3 header and output token chunks.
+
+        Formats each message as ``<|start_header_id|>{role}<|end_header_id|>\\n\\n{content}<|eot_id|>``.
+
+        Args:
+            message (Message): The chat message to render.
+            ctx (RenderContext): Positional context for the message in the conversation.
+
+        Returns:
+            RenderedMessage: Header and output token chunks for the message.
+        """
         role = message["role"]
         header_str = f"<|start_header_id|>{role}<|end_header_id|>\n\n"
         output_str = ensure_text(message["content"]) + "<|eot_id|>"
@@ -64,7 +75,24 @@ class Llama3Renderer(Renderer):
         return token
 
     def get_stop_sequences(self) -> list[int]:
+        """Return stop sequences for Llama 3 generation.
+
+        Returns:
+            list[int]: Single-element list containing the ``<|eot_id|>`` token ID.
+        """
         return [self._end_message_token]
 
     def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+        """Parse sampled token IDs back into an assistant Message.
+
+        Strips the ``<|eot_id|>`` stop token if present and decodes the remaining
+        tokens into text content.
+
+        Args:
+            response (list[int]): Raw token IDs from the sampler.
+
+        Returns:
+            tuple[Message, bool]: The parsed assistant message and whether the stop
+                token was found (True means the response terminated cleanly).
+        """
         return parse_response_for_stop_token(response, self.tokenizer, self._end_message_token)

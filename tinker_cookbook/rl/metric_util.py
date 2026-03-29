@@ -49,6 +49,21 @@ def _compute_by_group_metrics(trajectory_groups_P: list[TrajectoryGroup], good_t
 def compute_trajectory_metrics(
     trajectory_groups_P: list[TrajectoryGroup], taglist_P: list[list[str]]
 ) -> dict[str, float]:
+    """Compute per-tag and aggregate trajectory metrics for a batch of rollouts.
+
+    Metrics are computed globally (under the ``env/all/`` prefix) and, when
+    non-trivial tags exist, per-tag (under ``env/<tag>/`` prefixes).  A tag is
+    considered "non-trivial" if it selects a strict subset of all groups.
+
+    Args:
+        trajectory_groups_P (list[TrajectoryGroup]): One trajectory group per
+            problem in the batch.
+        taglist_P (list[list[str]]): Tags for each trajectory group, aligned
+            with *trajectory_groups_P*.
+
+    Returns:
+        dict[str, float]: Flat dictionary of prefixed metric names to values.
+    """
     tag2trajgroups = defaultdict(list)
     for taglist, trajectory_group in zip(taglist_P, trajectory_groups_P):
         for tag in taglist:
@@ -110,13 +125,45 @@ def _compute_trajectory_metrics(trajectory_groups_P: list[TrajectoryGroup]) -> d
 
 
 def dataset_to_env_group_builders(dataset: RLDataset) -> list[EnvGroupBuilder]:
-    """
-    Get the whole dataset as a list of env group builders.
+    """Flatten an entire RL dataset into a single list of env group builders.
+
+    Iterates over every batch in *dataset* and concatenates the resulting
+    :class:`EnvGroupBuilder` lists.
+
+    Args:
+        dataset (RLDataset): The RL dataset to flatten.
+
+    Returns:
+        list[EnvGroupBuilder]: All env group builders across every batch.
     """
     return list(itertools.chain(*[dataset.get_batch(i) for i in range(len(dataset))]))
 
 
 class RLTestSetEvaluator(SamplingClientEvaluator):
+    """Evaluator that runs RL rollouts on a held-out test dataset.
+
+    Rolls out every environment group in the dataset, collects trajectory
+    metrics, and optionally writes per-rollout JSONL summaries.  Supports
+    both direct ``TokenCompleter`` evaluation and executor-dispatched
+    evaluation via a ``SamplingClient``.
+
+    Example::
+
+        eval_dataset = my_dataset_builder.build_test()
+        evaluator = RLTestSetEvaluator(eval_dataset, max_tokens=1024, name="val")
+        metrics = await evaluator(sampling_client)
+
+    Args:
+        dataset (RLDataset): The test/validation RL dataset.
+        max_tokens (int): Maximum number of tokens per completion.
+        name (str): Prefix added to all returned metric keys (default
+            ``"test"``).
+        num_groups_to_log (int): Number of leading groups for which full
+            logtree logging is enabled (default ``4``).
+        strategy (RolloutStrategy | None): Optional rollout error-handling
+            strategy (e.g. ``FailFast``, ``RetryOnFailure``).
+    """
+
     def __init__(
         self,
         dataset: RLDataset,
@@ -137,6 +184,20 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         *,
         rollout_summary_export: RolloutSummaryExportConfig | None = None,
     ) -> dict[str, float]:
+        """Run evaluation rollouts using a :class:`TokenCompleter` policy.
+
+        Args:
+            policy (TokenCompleter): The token completer to use for generating
+                actions during rollouts.
+            rollout_summary_export (RolloutSummaryExportConfig | None): If
+                provided, per-trajectory JSONL summaries are written to the
+                configured path.
+
+        Returns:
+            dict[str, float]: Metric dictionary with keys prefixed by
+                ``self.name``.
+        """
+
         async def run_group_rollout(
             builder: EnvGroupBuilder, group_idx: int
         ) -> TrajectoryGroup | None:
@@ -172,6 +233,22 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         *,
         rollout_summary_export: RolloutSummaryExportConfig | None = None,
     ) -> dict[str, float]:
+        """Evaluate the current policy checkpoint via a sampling client.
+
+        Automatically chooses between direct rollout and executor-dispatched
+        rollout depending on whether a rollout executor is registered.
+
+        Args:
+            sampling_client (tinker.SamplingClient): Sampling client pointing
+                at the checkpoint to evaluate.
+            rollout_summary_export (RolloutSummaryExportConfig | None): If
+                provided, per-trajectory JSONL summaries are written to the
+                configured path.
+
+        Returns:
+            dict[str, float]: Metric dictionary with keys prefixed by
+                ``self.name``.
+        """
         if get_rollout_executor() is not None:
             # Use the executor-aware dispatch path so rollouts are offloaded
             return await self._eval_with_executor(

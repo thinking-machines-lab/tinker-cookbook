@@ -16,8 +16,39 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 
 class ComparisonEvaluator(SamplingClientEvaluator):
-    """
-    Evaluates a policy by comparing its completions to references, with a reward model
+    """Evaluates a policy by comparing its completions to references using a reward model.
+
+    For each ``Comparison`` in the evaluation set, the evaluator generates a
+    new completion B from the current policy, then asks the preference model
+    to judge A vs B (and B vs A when ``both_ways=True``).  The aggregated
+    win-rate and standard error are returned as metrics.
+
+    Args:
+        preference_model_builder (Callable[[], PreferenceModel]): Factory
+            that creates a fresh ``PreferenceModel`` on each evaluation call.
+        comparisons (Sequence[Comparison]): The evaluation set of comparisons.
+            ``completion_A`` is treated as the reference; ``completion_B`` is
+            replaced by the policy's generation.
+        renderer_name (str): Name of the chat renderer matching the policy
+            model family.
+        model_name_for_tokenizer (str): Model name used to select the
+            tokenizer.
+        both_ways (bool): If ``True`` (default), evaluate each comparison in
+            both orderings and average the scores for debiasing.
+        max_tokens (int): Maximum tokens for the policy's sampled completion.
+        content_preprocessor (Callable[[str], str] | None): Optional function
+            applied to the policy's generated text before comparison.
+
+    Example::
+
+        evaluator = ComparisonEvaluator(
+            preference_model_builder=my_pm_builder,
+            comparisons=test_comparisons,
+            renderer_name="llama3",
+            model_name_for_tokenizer="meta-llama/Llama-3.1-8B-Instruct",
+        )
+        metrics = await evaluator(sampling_client)
+        print(metrics["win_rate"])
     """
 
     def __init__(
@@ -41,6 +72,20 @@ class ComparisonEvaluator(SamplingClientEvaluator):
             self.content_preprocessor = content_preprocessor
 
     async def __call__(self, sampling_client: tinker.SamplingClient) -> dict[str, float]:
+        """Run the comparison evaluation against the current policy.
+
+        Generates completions from the policy for each comparison prompt,
+        scores them against the reference completions using the preference
+        model, and returns aggregated metrics.
+
+        Args:
+            sampling_client (tinker.SamplingClient): The Tinker sampling
+                client representing the current policy checkpoint.
+
+        Returns:
+            dict[str, float]: A dict with ``"win_rate"`` (mean score in
+                [0, 1]) and ``"stderr"`` (standard error of the mean).
+        """
         preference_model = self.preference_model_builder()
         policy = TinkerMessageCompleter(sampling_client, self.renderer, self.max_tokens)
 

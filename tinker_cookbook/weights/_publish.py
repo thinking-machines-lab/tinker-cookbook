@@ -40,6 +40,16 @@ def publish_to_hf_hub(
 
     Returns:
         URL of the published repository.
+
+    Example::
+
+        from tinker_cookbook import weights
+
+        url = weights.publish_to_hf_hub(
+            model_path="./merged_model",
+            repo_id="my-org/my-model",
+        )
+        print(url)
     """
     path = Path(model_path)
     if not path.is_dir():

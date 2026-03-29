@@ -14,14 +14,44 @@ from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDatas
 
 @chz.chz
 class DPODatasetBuilderFromComparisons(ChatDatasetBuilder):
-    """
-    DPO dataset builder that uses a ComparisonDatasetBuilder.
-    DPO needs both chosen and rejected examples for training.
+    """DPO dataset builder that converts labeled comparisons into paired datums.
+
+    Each ``LabeledComparison`` is expanded into two ``Datum`` objects
+    (chosen first, rejected second) interleaved in the batch so that the
+    DPO loss function can pair them by index.
+
+    Attributes:
+        comparison_builder (ComparisonDatasetBuilder): Builder that provides
+            raw HuggingFace datasets and the
+            ``example_to_labeled_comparison`` conversion logic.
+
+    Example::
+
+        builder = DPODatasetBuilderFromComparisons(
+            comparison_builder=my_comparison_builder,
+            common_config=ChatDatasetBuilderCommonConfig(
+                model_name_for_tokenizer="meta-llama/Llama-3.1-8B-Instruct",
+                renderer_name="llama3",
+                max_length=2048,
+                batch_size=8,
+            ),
+        )
+        train_ds, test_ds = builder()
     """
 
     comparison_builder: ComparisonDatasetBuilder
 
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
+        """Build train and optional test supervised datasets for DPO.
+
+        Each labeled comparison is split into a chosen and rejected datum
+        pair.  Batches contain interleaved chosen/rejected datums at even/odd
+        indices respectively.
+
+        Returns:
+            tuple[SupervisedDataset, SupervisedDataset | None]: The training
+                dataset and an optional test dataset.
+        """
         train_dataset, test_dataset = self.comparison_builder.get_train_and_test_datasets()
         renderer = self.renderer
 

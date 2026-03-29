@@ -21,11 +21,20 @@ from tinker_cookbook.weights._merge_utils import (
 
 
 def detect_profile(model_config: dict, model_state_keys: set[str]) -> MergeProfile | None:
-    """Detect GPT-OSS models.
+    """Detect GPT-OSS models from config.
 
     GPT-OSS uses ``.attn`` instead of ``.self_attn`` for attention layers, and
     an interleaved ``[g0, u0, g1, u1, ...]`` layout for fused gate/up expert
     projections.
+
+    Args:
+        model_config (dict): Parsed ``config.json`` dict. Checked for
+            ``"GptOss"`` in the ``architectures`` list.
+        model_state_keys (set[str]): Weight key names from the model.
+
+    Returns:
+        MergeProfile | None: Profile with ``model_family="gpt_oss"`` if
+            the model is GPT-OSS, otherwise ``None``.
     """
     architectures = model_config.get("architectures", [])
     if not any("GptOss" in a for a in architectures):
@@ -48,7 +57,22 @@ def plan_merge_ops(
     model_state_keys: set[str],
     profile: MergeProfile,
 ) -> dict[str, list[MergeOp]]:
-    """Plan merge ops for GPT-OSS models."""
+    """Plan merge ops for GPT-OSS models.
+
+    Applies the ``.attn`` to ``.self_attn`` key remap and handles fused
+    interleaved expert layouts.
+
+    Args:
+        adapter_weights (dict[str, torch.Tensor]): LoRA weight tensors from
+            the adapter.
+        adapter_config (dict): Adapter config with ``lora_alpha`` and ``r``.
+        model_state_keys (set[str]): Weight key names in the base model.
+        profile (MergeProfile): Model-specific merge configuration.
+
+    Returns:
+        dict[str, list[MergeOp]]: Mapping from model weight key to list of
+            merge operations targeting it.
+    """
     scaling = validate_adapter_config(adapter_config, profile)
     adapter_weight_names = extract_adapter_weight_names(adapter_weights)
 

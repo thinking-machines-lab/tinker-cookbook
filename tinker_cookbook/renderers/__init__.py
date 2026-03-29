@@ -48,28 +48,50 @@ def register_renderer(
     name: str,
     factory: Callable[[Tokenizer, Any], Renderer],
 ) -> None:
-    """Register a custom renderer factory.
+    """Register a custom renderer factory in the global registry.
+
+    Once registered, the renderer can be created by passing its name to
+    ``get_renderer()``. This is useful for adding support for custom model
+    formats without modifying the built-in renderer registry.
 
     Args:
-        name: The renderer name
-        factory: A callable that takes (tokenizer, image_processor) and returns a Renderer.
+        name (str): The renderer name. Use a namespaced format
+            (e.g., ``"Org/model_renderer"``) to avoid collisions with
+            built-in renderers.
+        factory (Callable[[Tokenizer, Any], Renderer]): A callable that
+            takes ``(tokenizer, image_processor)`` and returns a Renderer
+            instance. ``image_processor`` may be None for text-only models.
 
-    Example:
+    Example::
+
         def my_renderer_factory(tokenizer, image_processor=None):
             return MyCustomRenderer(tokenizer)
 
         register_renderer("Foo/foo_renderer", my_renderer_factory)
+        renderer = get_renderer("Foo/foo_renderer", tokenizer)
     """
     _CUSTOM_RENDERER_REGISTRY[name] = factory
 
 
 def get_registered_renderer_names() -> list[str]:
-    """Return a list of all registered custom renderer names."""
+    """Return a list of all registered custom renderer names.
+
+    Returns:
+        list[str]: Names of all renderers registered via ``register_renderer()``.
+            Does not include built-in renderer names.
+    """
     return list(_CUSTOM_RENDERER_REGISTRY.keys())
 
 
 def is_renderer_registered(name: str) -> bool:
-    """Check if a renderer name is registered."""
+    """Check if a renderer name is registered in the custom registry.
+
+    Args:
+        name (str): The renderer name to check.
+
+    Returns:
+        bool: True if the name has been registered via ``register_renderer()``.
+    """
     return name in _CUSTOM_RENDERER_REGISTRY
 
 
@@ -77,10 +99,11 @@ def unregister_renderer(name: str) -> bool:
     """Unregister a custom renderer factory.
 
     Args:
-        name: The renderer name to unregister.
+        name (str): The renderer name to unregister.
 
     Returns:
-        True if the renderer was unregistered, False if it wasn't registered.
+        bool: True if the renderer was found and unregistered, False if it
+            was not in the registry.
     """
     if name in _CUSTOM_RENDERER_REGISTRY:
         del _CUSTOM_RENDERER_REGISTRY[name]
@@ -97,41 +120,53 @@ def get_renderer(
     """Factory function to create renderers by name.
 
     Args:
-        name: Renderer name. Supported values:
-            - "role_colon": Simple role:content format
-            - "llama3": Llama 3 chat format
-            - "qwen3": Qwen3 with thinking enabled
-            - "qwen3_vl": Qwen3 vision-language with thinking
-            - "qwen3_vl_instruct": Qwen3 vision-language instruct (no thinking)
-            - "qwen3_disable_thinking": Qwen3 with thinking disabled
-            - "qwen3_instruct": Qwen3 instruct 2507 (no thinking)
-            - "qwen3_5": Qwen3.5 VL with thinking
-            - "qwen3_5_disable_thinking": Qwen3.5 VL with thinking disabled
-            - "deepseekv3": DeepSeek V3 (defaults to non-thinking mode)
-            - "deepseekv3_disable_thinking": DeepSeek V3 non-thinking (alias)
-            - "deepseekv3_thinking": DeepSeek V3 thinking mode
-            - "kimi_k2": Kimi K2 Thinking format
-            - "kimi_k25": Kimi K2.5 with thinking enabled
-            - "kimi_k25_disable_thinking": Kimi K2.5 with thinking disabled
-            - "nemotron3": Nemotron-3 with thinking enabled
-            - "nemotron3_disable_thinking": Nemotron-3 with thinking disabled
-            - "gpt_oss_no_sysprompt": GPT-OSS without system prompt
-            - "gpt_oss_low_reasoning": GPT-OSS with low reasoning
-            - "gpt_oss_medium_reasoning": GPT-OSS with medium reasoning
-            - "gpt_oss_high_reasoning": GPT-OSS with high reasoning
-            - Custom renderers registered via register_renderer()
-        tokenizer: The tokenizer to use.
-        image_processor: Required for VL renderers.
-        model_name: Model name for pickle metadata. If None, falls back to
-            ``tokenizer.name_or_path``. Provide this explicitly when the tokenizer
-            was loaded with a remapped name (e.g., Llama 3 models).
+        name (str): Renderer name. Supported values:
+            - ``"role_colon"``: Simple role:content format
+            - ``"llama3"``: Llama 3 chat format
+            - ``"qwen3"``: Qwen3 with thinking enabled
+            - ``"qwen3_vl"``: Qwen3 vision-language with thinking
+            - ``"qwen3_vl_instruct"``: Qwen3 vision-language instruct (no thinking)
+            - ``"qwen3_disable_thinking"``: Qwen3 with thinking disabled
+            - ``"qwen3_instruct"``: Qwen3 instruct 2507 (no thinking)
+            - ``"qwen3_5"``: Qwen3.5 VL with thinking
+            - ``"qwen3_5_disable_thinking"``: Qwen3.5 VL with thinking disabled
+            - ``"deepseekv3"``: DeepSeek V3 (defaults to non-thinking mode)
+            - ``"deepseekv3_disable_thinking"``: DeepSeek V3 non-thinking (alias)
+            - ``"deepseekv3_thinking"``: DeepSeek V3 thinking mode
+            - ``"kimi_k2"``: Kimi K2 Thinking format
+            - ``"kimi_k25"``: Kimi K2.5 with thinking enabled
+            - ``"kimi_k25_disable_thinking"``: Kimi K2.5 with thinking disabled
+            - ``"nemotron3"``: Nemotron-3 with thinking enabled
+            - ``"nemotron3_disable_thinking"``: Nemotron-3 with thinking disabled
+            - ``"gpt_oss_no_sysprompt"``: GPT-OSS without system prompt
+            - ``"gpt_oss_low_reasoning"``: GPT-OSS with low reasoning
+            - ``"gpt_oss_medium_reasoning"``: GPT-OSS with medium reasoning
+            - ``"gpt_oss_high_reasoning"``: GPT-OSS with high reasoning
+            - Custom renderers registered via ``register_renderer()``
+        tokenizer (Tokenizer): The tokenizer to use.
+        image_processor (ImageProcessor | None): Required for VL renderers.
+        model_name (str | None): Model name for pickle metadata. If None,
+            falls back to ``tokenizer.name_or_path``. Provide this explicitly
+            when the tokenizer was loaded with a remapped name (e.g., Llama 3
+            models).
 
     Returns:
-        A Renderer instance.
+        Renderer: A Renderer instance configured for the specified format.
+
+    Example::
+
+        from tinker_cookbook import renderers
+        from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+        tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+        renderer = renderers.get_renderer("qwen3", tokenizer)
+        prompt = renderer.build_generation_prompt([
+            {"role": "user", "content": "Hello!"}
+        ])
 
     Raises:
-        ValueError: If the renderer name is unknown.
-        AssertionError: If a VL renderer is requested without an image_processor.
+        RendererError: If the renderer name is unknown or if a VL renderer
+            is requested without an image_processor.
     """
 
     def _stamp_pickle_metadata(renderer: Renderer) -> Renderer:

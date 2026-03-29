@@ -119,8 +119,13 @@ class TextPart(TypedDict):
 
 
 class ImagePart(TypedDict):
-    """
-    A chunk of image content in a message.
+    """A chunk of image content in a message.
+
+    The image can be a URL string, a data URI string, or a PIL Image object.
+
+    Attributes:
+        type: Must be ``"image"``.
+        image: The image data as a URL/data-URI string or a ``PIL.Image.Image``.
     """
 
     type: Literal["image"]
@@ -233,11 +238,12 @@ class Utf8TokenDecoder:
         """Decode tokens to string, buffering incomplete UTF-8 sequences.
 
         Args:
-            tokens: New tokens to decode.
+            tokens (list[int]): New token IDs to decode.
 
         Returns:
-            Decoded string if complete UTF-8 sequences are available,
-            None if all tokens were buffered (incomplete sequence).
+            str | None: Decoded string if complete UTF-8 sequences are
+                available, None if all tokens were buffered (incomplete
+                sequence).
         """
         self._pending_tokens.extend(tokens)
 
@@ -675,12 +681,26 @@ class ToolSpec(TypedDict):
 
 
 def ensure_text(content: Content) -> str:
-    """
-    Assert that content is text-only and return it as a string.
+    """Assert that content is text-only and return it as a string.
 
-    Raises ValueError if content contains images or multiple parts.
     Use this to validate that message content is text-only before
     processing it in code paths that don't support multimodal content.
+
+    Args:
+        content (Content): Message content, either a string or a list of
+            ContentPart elements.
+
+    Returns:
+        str: The text content as a plain string.
+
+    Raises:
+        RendererError: If content contains images, multiple parts, or is
+            otherwise not pure text.
+
+    Example::
+
+        msg: Message = {"role": "user", "content": "Hello"}
+        text = ensure_text(msg["content"])  # "Hello"
     """
     if isinstance(content, str):
         return content
@@ -690,14 +710,40 @@ def ensure_text(content: Content) -> str:
 
 
 def ensure_list(content: Content) -> list[ContentPart]:
-    """Normalize content to list form. Wraps string content in a TextPart."""
+    """Normalize content to list form. Wraps string content in a TextPart.
+
+    Args:
+        content (Content): Message content, either a string or a list of
+            ContentPart elements.
+
+    Returns:
+        list[ContentPart]: The content as a list of ContentPart elements.
+            If the input is a string, it is wrapped in a single TextPart.
+    """
     if isinstance(content, str):
         return [TextPart(type="text", text=content)]
     return content
 
 
 def content_to_jsonable(content: Content) -> str | list[dict[str, Any]]:
-    """Convert message content to a JSON-serializable structure."""
+    """Convert message content to a JSON-serializable structure.
+
+    Transforms ContentPart lists into plain dicts suitable for ``json.dumps``.
+    String content is returned as-is. PIL Image objects in ImagePart are
+    dropped (only URL strings are preserved).
+
+    Args:
+        content (Content): Message content, either a string or a list of
+            ContentPart elements.
+
+    Returns:
+        str | list[dict[str, Any]]: The content in a JSON-serializable form.
+            Returns the original string if content is a string, otherwise a
+            list of dicts with ``type`` keys.
+
+    Raises:
+        RendererError: If an unknown content part type is encountered.
+    """
     if isinstance(content, str):
         return content
 
@@ -719,7 +765,18 @@ def content_to_jsonable(content: Content) -> str | list[dict[str, Any]]:
 
 
 def message_to_jsonable(message: Message) -> dict[str, Any]:
-    """Convert a Message TypedDict to a JSON-serializable dict without losing metadata."""
+    """Convert a Message TypedDict to a JSON-serializable dict without losing metadata.
+
+    Preserves all optional fields (tool_calls, unparsed_tool_calls, trainable,
+    tool_call_id, name) when present. ToolCall and UnparsedToolCall objects are
+    serialized via their ``model_dump`` method.
+
+    Args:
+        message (Message): The message to convert.
+
+    Returns:
+        dict[str, Any]: A JSON-serializable dict representation of the message.
+    """
     result: dict[str, Any] = {
         "role": message["role"],
         "content": content_to_jsonable(message["content"]),
@@ -740,7 +797,15 @@ def message_to_jsonable(message: Message) -> dict[str, Any]:
 
 
 def remove_thinking(parts: list[ContentPart]) -> list[ContentPart]:
-    """Filter out ThinkingPart elements from a content part list."""
+    """Filter out ThinkingPart elements from a content part list.
+
+    Args:
+        parts (list[ContentPart]): List of content parts that may include
+            ThinkingPart elements.
+
+    Returns:
+        list[ContentPart]: A new list with all ThinkingPart elements removed.
+    """
     return [p for p in parts if p["type"] != "thinking"]
 
 
@@ -749,6 +814,18 @@ def get_text_content(message: Message) -> str:
 
     Use this after parse_response when you only need the text output,
     ignoring any thinking/reasoning content.
+
+    Args:
+        message (Message): The message to extract text from.
+
+    Returns:
+        str: Concatenated text from all TextPart elements. If the message
+            content is a plain string, it is returned as-is.
+
+    Example::
+
+        msg = renderer.parse_response(tokens)[0]
+        answer = get_text_content(msg)  # text only, no <think> blocks
     """
     content = message["content"]
     if isinstance(content, str):
@@ -772,11 +849,14 @@ def format_content_as_string(content: Content, separator: str = "\n") -> str:
     to tokens.
 
     Args:
-        content: Message content (string or list of ContentPart).
-        separator: String to join parts with. Default is newline.
+        content (Content): Message content (string or list of ContentPart).
+        separator (str): String to join parts with. Default is newline.
 
     Returns:
-        Formatted string representation of all content parts.
+        str: Formatted string representation of all content parts.
+
+    Raises:
+        RendererError: If an unknown content part type is encountered.
     """
     if isinstance(content, str):
         return content
@@ -845,12 +925,15 @@ def parse_content_blocks(
     (parse then render) is identity for the content parts.
 
     Args:
-        content: String potentially containing <think> and/or <tool_call> blocks.
+        content (str): String potentially containing ``<think>`` and/or
+            ``<tool_call>`` blocks.
 
     Returns:
-        Tuple of (content_parts, tool_calls), or None if no special tags are found.
-        content_parts contains only ThinkingPart/TextPart.
-        tool_calls contains ToolCall and UnparsedToolCall in order.
+        tuple[list[ContentPart], list[ToolCall | UnparsedToolCall]] | None:
+            A ``(content_parts, tool_calls)`` tuple, or None if no special
+            tags are found. ``content_parts`` contains only ThinkingPart and
+            TextPart. ``tool_calls`` contains ToolCall and UnparsedToolCall
+            in order.
 
     Example:
         >>> parse_content_blocks("<think>step 1</think>answer<tool_call>{...}</tool_call>more")
@@ -908,10 +991,12 @@ def parse_think_blocks(content: str) -> list[ContentPart] | None:
     Whitespace is preserved exactly - roundtrip (parse then render) is identity.
 
     Args:
-        content: String potentially containing <think>...</think> blocks.
+        content (str): String potentially containing ``<think>...</think>``
+            blocks.
 
     Returns:
-        List of ThinkingPart and TextPart in order. None if no <think> tags found.
+        list[ContentPart] | None: List of ThinkingPart and TextPart in order,
+            or None if no ``<think>`` tags are found.
     """
     if "<think>" not in content:
         return None
@@ -993,6 +1078,19 @@ class RenderedMessage:
 
 
 class TrainOnWhat(StrEnum):
+    """Enum controlling which parts of the sequence to compute loss on.
+
+    Members:
+        LAST_ASSISTANT_MESSAGE: Train only on the final assistant message.
+        LAST_ASSISTANT_TURN: Train on the last assistant turn (including any
+            tool calls and tool responses leading to the final assistant reply).
+        ALL_ASSISTANT_MESSAGES: Train on every assistant message in the conversation.
+        ALL_MESSAGES: Train on all messages regardless of role.
+        ALL_TOKENS: Train on every token in the sequence (including special tokens).
+        ALL_USER_AND_SYSTEM_MESSAGES: Train on user and system messages only.
+        CUSTOMIZED: Use per-message ``train`` flags from the dataset.
+    """
+
     LAST_ASSISTANT_MESSAGE = "last_assistant_message"
     LAST_ASSISTANT_TURN = "last_assistant_turn"
     ALL_ASSISTANT_MESSAGES = "all_assistant_messages"
@@ -1100,7 +1198,7 @@ class Renderer(ABC):
 
     @abstractmethod
     def get_stop_sequences(self) -> list[str] | list[int]:
-        """Return the stop sequences used when sampling from this renderer."""
+        """Return stop token IDs or strings that signal end-of-generation for the model."""
         ...
 
     @abstractmethod
@@ -1112,14 +1210,13 @@ class Renderer(ABC):
         for detailed semantics of each component.
 
         Args:
-            message: The message to render.
-            ctx: Context about the message's position in the conversation, including:
-                - idx: The index of this message (0-based)
-                - is_last: Whether this is the last message
-                - prev_message: The previous message, if any
+            message (Message): The message to render.
+            ctx (RenderContext): Context about the message's position in the
+                conversation, including index, is_last flag, and prev_message.
 
         Returns:
-            RenderedMessage with header, output, and optionally stop_overlap.
+            RenderedMessage: Container with header, output, and optionally
+                stop_overlap components for loss masking.
         """
         ...
 
@@ -1129,11 +1226,12 @@ class Renderer(ABC):
         Parse sampled tokens back into a Message.
 
         Args:
-            response: Token IDs returned from sampling.
+            response (list[int]): Token IDs returned from sampling.
 
         Returns:
-            A tuple of (message, success). If success is False, the response could not
-            be parsed (e.g., missing stop token), but a best-effort message is still returned.
+            tuple[Message, bool]: A ``(message, success)`` tuple. If success
+                is False, the response could not be parsed (e.g., missing stop
+                token), but a best-effort message is still returned.
         """
         ...
 
@@ -1190,7 +1288,7 @@ class Renderer(ABC):
         NotImplementedError.
 
         Args:
-            response: Token IDs from the model.
+            response (list[int]): Token IDs from the model.
 
         Yields:
             StreamingMessageHeader: Once at the start of the message.
@@ -1231,10 +1329,10 @@ class Renderer(ABC):
         reasoning_content for thinking models.
 
         Args:
-            message: The Message to convert.
+            message (Message): The Message to convert.
 
         Returns:
-            A dict in OpenAI API message format.
+            dict: A dict in OpenAI API message format.
         """
         result: dict = {"role": message["role"]}
 
@@ -1294,11 +1392,11 @@ class Renderer(ABC):
         start of your message list before user/assistant messages.
 
         Args:
-            tools: List of tool specifications.
-            system_prompt: The system prompt content.
+            tools (list[ToolSpec]): List of tool specifications.
+            system_prompt (str): The system prompt content.
 
         Returns:
-            List of messages to prepend to the conversation.
+            list[Message]: List of messages to prepend to the conversation.
 
         Raises:
             NotImplementedError: If the renderer doesn't support tool calling.
@@ -1332,13 +1430,18 @@ class Renderer(ABC):
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:
-        """
-        Generates tokens for sampling from the model.
+        """Convert a message list to a token prompt for sampling.
 
         Args:
-            messages: a list of messages to render.
-            role: the role of the partial message to be completed.
-            prefill: an optional string to prefill in the model's generation.
+            messages (list[Message]): A list of messages to render.
+            role (Role): The role of the partial message to be completed.
+                Defaults to ``"assistant"``.
+            prefill (str | None): An optional string to prefill in the
+                model's generation. Useful for constraining the start of
+                the model's output.
+
+        Returns:
+            tinker.ModelInput: A ModelInput containing the tokenized prompt.
         """
 
         chunks: list[tinker.types.ModelInputChunk] = []
@@ -1390,13 +1493,19 @@ class Renderer(ABC):
         messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_TURN,
     ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
-        """
-        Build tokens and per-token weights for supervised fine-tuning.
-        This function returns a list of examples in the form of tuples, where each tuple contains a model input and a tensor of weights.
-        This is needed because some renderers do not satisfy the extension property, so we need to return a list of examples instead of a single example.
+        """Build tokens and per-token weights for supervised fine-tuning.
 
-        This default implementation concatenates rendered messages in order, which assumes the renderer satisfies the extension property.
-        Override this method if your renderer does not satisfy the extension property.
+        Returns a list of (model_input, weights) tuples. Multiple examples are
+        needed when the renderer does not satisfy the extension property.
+
+        Args:
+            messages (list[Message]): The conversation to render.
+            train_on_what (TrainOnWhat): Which parts of the sequence to
+                compute loss on.
+
+        Returns:
+            list[tuple[tinker.ModelInput, torch.Tensor]]: A list of
+                ``(ModelInput, weight_tensor)`` tuples for training.
         """
 
         if self.has_extension_property:
@@ -1426,8 +1535,8 @@ class Renderer(ABC):
         distribution it sees at inference time.
 
         Args:
-            messages: A list of messages to render.
-            train_on_what: Controls which tokens receive non-zero training weight:
+            messages (list[Message]): A list of messages to render.
+            train_on_what (TrainOnWhat): Controls which tokens receive non-zero training weight:
                 - LAST_ASSISTANT_MESSAGE: Only the last assistant message
                 - LAST_ASSISTANT_TURN: The last assistant message after the last user message
                 - ALL_ASSISTANT_MESSAGES: All assistant messages
@@ -1437,8 +1546,9 @@ class Renderer(ABC):
                 - CUSTOMIZED: Use the 'trainable' field on each message
 
         Returns:
-            A tuple of (model_input, weights) where weights is a 1D tensor with the
-            same length as the total number of tokens.
+            tuple[tinker.ModelInput, torch.Tensor]: A ``(model_input, weights)``
+                tuple where weights is a 1-D float tensor with the same length
+                as the total number of tokens.
         """
         # Warn if training on multiple assistant messages with a renderer that doesn't
         # satisfy the extension property. In that case, each assistant message sees a
@@ -1537,6 +1647,24 @@ def tokens_weights_from_strings_weights(
     strings_weights: list[tuple[str, float]],
     tokenizer: Tokenizer,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    """Tokenize string segments and build matching per-token weight tensors.
+
+    Each (string, weight) pair is tokenized independently. The first string
+    is tokenized with ``add_special_tokens=True``; subsequent strings use
+    ``add_special_tokens=False``. Each token inherits the weight of its
+    source string.
+
+    Args:
+        strings_weights (list[tuple[str, float]]): List of (text, weight)
+            pairs. The weight is applied uniformly to all tokens from that
+            text segment.
+        tokenizer (Tokenizer): The tokenizer to encode strings with.
+
+    Returns:
+        tuple[torch.Tensor, torch.Tensor]: A ``(tokens, weights)`` tuple where
+            ``tokens`` is a 1-D int64 tensor of token IDs and ``weights`` is a
+            1-D float tensor of the same length.
+    """
     strings, weights = zip(*strings_weights, strict=True)
     token_chunks = [tokenizer.encode(s, add_special_tokens=i == 0) for i, s in enumerate(strings)]
     weights = torch.cat(
@@ -1550,11 +1678,25 @@ def tokens_weights_from_strings_weights(
 def parse_response_for_stop_token(
     response: list[int], tokenizer: Tokenizer, stop_token: int
 ) -> tuple[Message, bool]:
-    """Parse response for a single stop token.
+    """Parse a sampled token sequence by splitting on a stop token.
 
-    We expect a properly rendered response to have exactly one stop token; but it may have zero if e.g. the model
-    ran out of tokens when sampling, which will incur a format error. If there are > 1, there is likely a bug in the
-    sampler and we should error.
+    Expects the response to contain exactly zero or one occurrence of the
+    stop token. Zero means the model ran out of tokens (returns
+    ``success=False``). More than one indicates a sampler bug and raises
+    an error.
+
+    Args:
+        response (list[int]): Token IDs returned from sampling.
+        tokenizer (Tokenizer): The tokenizer used to decode token IDs.
+        stop_token (int): The token ID that signals end-of-generation.
+
+    Returns:
+        tuple[Message, bool]: A ``(message, success)`` tuple. ``success``
+            is True if exactly one stop token was found, False if the stop
+            token was missing (truncated response).
+
+    Raises:
+        RendererError: If more than one stop token is found in the response.
     """
     emt_count = response.count(stop_token)
     if emt_count == 0:
@@ -1575,23 +1717,74 @@ def parse_response_for_stop_token(
 
 
 class ImageProcessorProtocol(Protocol):
+    """Protocol for image processors used by vision-language renderers.
+
+    Implementations must provide either ``get_number_of_image_patches`` (used
+    by Qwen3-VL style processors) or ``get_resize_config`` (used by Kimi-K2.5
+    style processors) to compute the number of image tokens an image will
+    produce after preprocessing.
+
+    Attributes:
+        merge_size (int): The merge factor for vision tokens (e.g., 2 for
+            Qwen3-VL, where patches are merged in 2x2 blocks).
+        patch_size (int): The size of each image patch in pixels.
+    """
+
     merge_size: int
     patch_size: int
 
     def get_number_of_image_patches(
         self, height: int, width: int, images_kwargs: dict | None = None
     ) -> int:
+        """Compute the number of raw image patches for the given dimensions.
+
+        Args:
+            height (int): Image height in pixels.
+            width (int): Image width in pixels.
+            images_kwargs (dict | None): Optional processor-specific kwargs.
+
+        Returns:
+            int: Number of raw patches before merging. Divide by
+                ``merge_size ** 2`` to get the final token count.
+        """
         raise NotImplementedError()
 
     def get_resize_config(self, image_data: dict[str, Any]) -> dict[str, Any]:
+        """Compute resize configuration and token count for an image.
+
+        Args:
+            image_data (dict[str, Any]): Dict with ``"type": "image"`` and
+                an ``"image"`` key containing a PIL Image.
+
+        Returns:
+            dict[str, Any]: Configuration dict that must include a
+                ``"num_tokens"`` key with the final image token count.
+        """
         raise NotImplementedError()
 
 
 def image_to_chunk(
     image_or_str: Image.Image | str, image_processor: ImageProcessorProtocol
 ) -> tinker.types.ImageChunk:
-    """
-    Convert a PIL Image to a tinker.types.ImageChunk for QwenVL
+    """Convert a PIL Image or image URL to a tinker ImageChunk for vision-language models.
+
+    Handles loading from URLs/data URIs, converting non-RGB modes (RGBA, LA, P)
+    to RGB, encoding as JPEG, and computing the expected token count via the
+    image processor.
+
+    Args:
+        image_or_str (Image.Image | str): A PIL Image object, a URL string,
+            or a data URI string pointing to an image.
+        image_processor (ImageProcessorProtocol): The image processor used to
+            compute the expected number of image tokens.
+
+    Returns:
+        tinker.types.ImageChunk: An ImageChunk containing the JPEG-encoded
+            image bytes and the expected token count.
+
+    Raises:
+        RendererError: If ``image_or_str`` is not a PIL Image, URL, or data
+            URI, or if the image processor does not support token counting.
     """
 
     # load an image from a data URI or a URL

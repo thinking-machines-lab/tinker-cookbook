@@ -38,7 +38,60 @@ logger = logging.getLogger(__name__)
 
 @chz.chz
 class Config:
-    """Configuration for supervised fine-tuning."""
+    """Configuration for supervised fine-tuning.
+
+    This ``chz`` dataclass holds every knob for a supervised learning run: model
+    selection, learning-rate schedule, checkpointing cadence, evaluation, and logging.
+
+    Attributes:
+        log_path (str): Directory for checkpoints, metrics, and trace files.
+            Tilde (``~``) is expanded automatically.
+        model_name (str): HuggingFace model identifier (e.g. ``"Qwen/Qwen3-8B"``).
+        load_checkpoint_path (str | None): Path to a Tinker checkpoint to
+            initialise weights from. ``None`` starts from the base model.
+        renderer_name (str | None): Renderer to apply when tokenising chat
+            messages.  Should match the model family (e.g. ``"qwen3"``).
+        dataset_builder (SupervisedDatasetBuilder): Builder that produces
+            the training (and optionally evaluation) dataset.
+        learning_rate (float): Peak learning rate. Default ``1e-4``.
+        lr_schedule (LRSchedule): Learning-rate schedule type.
+            Default ``"linear"`` decay.
+        num_epochs (int): Number of passes over the dataset. Default ``1``.
+        lora_rank (int): LoRA rank for the adapter. Default ``32``.
+        base_url (str | None): Override the Tinker service URL.
+        evaluator_builders (list[EvaluatorBuilder]): Factories for evaluators
+            run every ``eval_every`` steps.
+        infrequent_evaluator_builders (list[EvaluatorBuilder]): Factories for
+            evaluators run every ``infrequent_eval_every`` steps.
+        save_every (int): Save a checkpoint every *N* steps (0 disables).
+        eval_every (int): Run evaluators every *N* steps (0 disables).
+        infrequent_eval_every (int): Run infrequent evaluators every *N* steps
+            (0 disables).
+        ttl_seconds (int | None): Time-to-live for periodic checkpoints.
+            The final checkpoint is kept indefinitely. Default ``604800`` (7 days).
+        adam_beta1 (float): Adam beta1. Default ``0.9``.
+        adam_beta2 (float): Adam beta2. Default ``0.95``.
+        adam_eps (float): Adam epsilon. Default ``1e-8``.
+        wandb_project (str | None): Weights & Biases project name.
+        wandb_name (str | None): Weights & Biases run name.
+        enable_trace (bool): Enable async tracing to ``trace_events.jsonl``.
+        span_chart_every (int): Write a Gantt-chart HTML every *N* steps
+            (0 disables).
+        max_steps (int | None): Hard cap on training steps.  ``None`` trains
+            for ``num_epochs * n_batches``.
+
+    Example::
+
+        from tinker_cookbook.supervised import train
+
+        config = train.Config(
+            log_path="~/logs/sft-run",
+            model_name="Qwen/Qwen3-8B",
+            dataset_builder=my_dataset_builder,
+            learning_rate=1e-4,
+        )
+        asyncio.run(train.main(config))
+    """
 
     # Required parameters
     log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
@@ -90,6 +143,29 @@ class Config:
 
 @dataclass
 class SubmittedBatch:
+    """A batch that has been submitted to the Tinker service but not yet resolved.
+
+    Holds the API futures for the forward-backward and optimizer-step calls along
+    with bookkeeping needed to log metrics and save checkpoints once the futures
+    complete.
+
+    Attributes:
+        fwd_bwd_future (APIFuture[tinker.ForwardBackwardOutput]): Future for
+            the forward-backward pass.
+        optim_step_future (APIFuture[tinker.OptimStepResponse]): Future for
+            the optimizer step.
+        metrics (dict[str, int | float | str]): Accumulated metrics dict that
+            will be logged after the batch resolves.
+        data (list): The list of ``tinker.Datum`` objects sent in this batch.
+        step (int): Global training step index.
+        epoch_idx (int): Current epoch index.
+        batch_idx (int): Batch index within the current epoch.
+        eval_metrics (dict[str, float] | None): Evaluation metrics gathered
+            before this step was submitted, or ``None``.
+        infrequent_eval_metrics (dict[str, float] | None): Infrequent
+            evaluation metrics, or ``None``.
+    """
+
     fwd_bwd_future: APIFuture[tinker.ForwardBackwardOutput]
     optim_step_future: APIFuture[tinker.OptimStepResponse]
     metrics: dict[str, int | float | str]
@@ -108,13 +184,21 @@ async def run_evals(
 ) -> dict[str, float]:
     """Evaluate the current model weights and prefix results with ``test/``.
 
-    The helper is called immediately before optimizer step `step` is submitted, so it
-    measures the weights produced after step `step-1` (or the initial weights for step 0).
-    Training-client evaluators run against the mutable training client, while sampling
-    evaluators request a fresh `SamplingClient` snapshot via
-    `save_weights_and_get_sampling_client_async` to ensure their work uses a fixed
-    checkpoint. Returned metrics are prefixed with ``test/`` so they can be logged next
-    to the same-step training metrics.
+    The helper is called immediately before optimizer step *step* is submitted, so it
+    measures the weights produced after step ``step-1`` (or the initial weights for
+    step 0).  Training-client evaluators run against the mutable training client,
+    while sampling evaluators request a fresh ``SamplingClient`` snapshot via
+    ``save_weights_and_get_sampling_client_async`` to ensure their work uses a fixed
+    checkpoint.
+
+    Args:
+        evaluators (list[Evaluator]): Evaluators to run.
+        training_client (tinker.TrainingClient): The active training client
+            whose weights will be evaluated.
+        step (int): The training step index (used for logging context).
+
+    Returns:
+        dict[str, float]: Metric name to value mapping.
     """
 
     metrics = {}
@@ -155,16 +239,21 @@ async def main(config: Config):
     """Run the standard supervised learning loop used by the supervised recipes.
 
     Responsibilities:
-    1. Initialize logging, build the dataset/evaluator objects, construct (or resume) the
-       training client, and determine the ``epoch``/``batch`` indices to start from.
-    2. Iterate over batches: fetch data, optionally run evaluations before submitting the
-       optimizer step (so they observe pre-step weights), issue `forward_backward` and
-       `optim_step` requests, and log metrics once the futures resolve.
+
+    1. Initialize logging, build the dataset/evaluator objects, construct (or resume)
+       the training client, and determine the ``epoch``/``batch`` indices to start from.
+    2. Iterate over batches: fetch data, optionally run evaluations before submitting
+       the optimizer step (so they observe pre-step weights), issue ``forward_backward``
+       and ``optim_step`` requests, and log metrics once the futures resolve.
     3. Save checkpoints at the configured cadence so runs can resume or export weights,
        then emit a final checkpoint when training completes.
 
-    Training and evaluation metrics share the same ``step`` index to keep dashboards easy
-    to read.
+    Training and evaluation metrics share the same ``step`` index to keep dashboards
+    easy to read.
+
+    Args:
+        config (Config): Fully populated training configuration.
+            See :class:`Config` for fields and usage example.
     """
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     if resume_info:

@@ -8,11 +8,31 @@ logger = logging.getLogger(__name__)
 
 
 LRSchedule = Literal["linear", "cosine", "constant"]
+"""Type alias for supported learning-rate schedule names."""
 
 
 def compute_schedule_lr_multiplier(lr_schedule: LRSchedule, step: int, total_steps: int) -> float:
-    """
-    What factor to multiply the base LR by due to the LR schedule
+    """Compute the learning-rate decay multiplier for a given step.
+
+    The returned value should be multiplied by the base learning rate to
+    obtain the effective LR at this step.
+
+    Args:
+        lr_schedule (LRSchedule): One of ``"linear"``, ``"cosine"``, or
+            ``"constant"``.
+        step (int): Current training step (0-indexed).
+        total_steps (int): Total number of training steps.
+
+    Returns:
+        float: Multiplier in ``[0, 1]`` to apply to the base learning rate.
+
+    Raises:
+        ConfigurationError: If *lr_schedule* is not a recognized schedule.
+
+    Example::
+
+        base_lr = 1e-4
+        effective_lr = base_lr * compute_schedule_lr_multiplier("cosine", step=50, total_steps=100)
     """
     if lr_schedule == "linear":
         return 1 - step / total_steps

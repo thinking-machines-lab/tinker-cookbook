@@ -50,7 +50,17 @@ except ImportError:
 
 
 def dump_config(config: Any) -> Any:
-    """Convert configuration object to JSON-serializable format."""
+    """Recursively convert a configuration object to a JSON-serializable format.
+
+    Handles ``chz`` dataclasses, standard dataclasses, dicts, lists, enums,
+    callables, and plain objects with ``__dict__``.
+
+    Args:
+        config (Any): Configuration object to convert.
+
+    Returns:
+        Any: A JSON-serializable representation (dict, list, str, number, etc.).
+    """
     if hasattr(config, "to_dict"):
         return config.to_dict()
     elif chz.is_chz(config):
@@ -78,32 +88,56 @@ def dump_config(config: Any) -> Any:
 
 
 class Logger(ABC):
-    """Abstract base class for loggers."""
+    """Abstract base class for metric/experiment loggers.
+
+    Subclasses must implement :meth:`log_hparams` and :meth:`log_metrics`.
+    Other methods have default no-op implementations and can be overridden
+    as needed.
+    """
 
     @abstractmethod
     def log_hparams(self, config: Any) -> None:
-        """Log hyperparameters/configuration."""
+        """Log hyperparameters/configuration.
+
+        Args:
+            config (Any): Configuration object (will be passed through
+                :func:`dump_config` by callers).
+        """
         pass
 
     @abstractmethod
     def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
-        """Log metrics dictionary with optional step number."""
+        """Log a dictionary of metrics with an optional step number.
+
+        Args:
+            metrics (dict[str, Any]): Metric name-to-value mapping.
+            step (int | None): Training step (or ``None`` for step-less logging).
+        """
         pass
 
     def log_long_text(self, key: str, text: str) -> None:
-        """Log long text content (optional to implement)."""
+        """Log long text content (optional to implement).
+
+        Args:
+            key (str): Identifier for the text entry.
+            text (str): The text content to log.
+        """
         pass
 
     def close(self) -> None:
-        """Cleanup when done (optional to implement)."""
+        """Release resources and flush pending data (optional to implement)."""
         pass
 
     def sync(self) -> None:
-        """Force synchronization (optional to implement)."""
+        """Force synchronization of buffered data to the backend (optional to implement)."""
         pass
 
     def get_logger_url(self) -> str | None:
-        """Get a permalink to view this logger's results."""
+        """Return a permalink to view this logger's results, or ``None``.
+
+        Returns:
+            str | None: URL string if the backend provides one.
+        """
         return None
 
 
@@ -119,7 +153,16 @@ class _PermissiveJSONEncoder(json.JSONEncoder):
 
 
 class JsonLogger(Logger):
-    """Logger that writes metrics to a JSONL file."""
+    """Logger that writes metrics to a JSONL file and config to JSON.
+
+    On first :meth:`log_hparams` call, writes ``config.json`` and
+    ``code.diff`` (via :func:`code_state`) into *log_dir*.  Subsequent
+    :meth:`log_metrics` calls append one JSON object per line to
+    ``metrics.jsonl``.
+
+    Args:
+        log_dir (str | Path): Directory for output files (created if missing).
+    """
 
     def __init__(self, log_dir: str | Path):
         self.log_dir = Path(log_dir).expanduser()
@@ -150,7 +193,11 @@ class JsonLogger(Logger):
 
 
 class PrettyPrintLogger(Logger):
-    """Logger that displays metrics in a formatted table in the console."""
+    """Logger that displays metrics as a Rich-formatted table in the console.
+
+    Noisy aggregate keys (e.g. ``*:total``, ``*:count``) are hidden from
+    console output but still available in other logger sinks.
+    """
 
     def __init__(self):
         self.console = Console()
@@ -220,7 +267,20 @@ def _rich_console_use_logger(console: Console):
 
 
 class WandbLogger(Logger):
-    """Logger for Weights & Biases."""
+    """Logger that streams metrics and config to Weights & Biases.
+
+    Requires ``wandb`` to be installed and ``WANDB_API_KEY`` to be set.
+
+    Args:
+        project (str | None): W&B project name.
+        config (Any | None): Initial configuration to log.
+        log_dir (str | Path | None): Local directory for W&B files.
+        wandb_name (str | None): Display name for the W&B run.
+
+    Raises:
+        ImportError: If ``wandb`` is not installed.
+        ConfigurationError: If ``WANDB_API_KEY`` is not set.
+    """
 
     def __init__(
         self,
@@ -271,7 +331,21 @@ class WandbLogger(Logger):
 
 
 class NeptuneLogger(Logger):
-    """Logger for Neptune."""
+    """Logger that streams metrics and config to Neptune.
+
+    Requires ``neptune-scale`` to be installed and ``NEPTUNE_API_TOKEN``
+    to be set.
+
+    Args:
+        project (str | None): Neptune project name (``workspace/project``).
+        config (Any | None): Initial configuration to log.
+        log_dir (str | Path | None): Local log directory for Neptune files.
+        neptune_name (str | None): Experiment display name.
+
+    Raises:
+        ImportError: If ``neptune-scale`` is not installed.
+        ConfigurationError: If ``NEPTUNE_API_TOKEN`` is not set.
+    """
 
     def __init__(
         self,
@@ -321,7 +395,20 @@ class NeptuneLogger(Logger):
 
 
 class TrackioLogger(Logger):
-    """Logger for Trackio."""
+    """Logger that streams metrics and config to Trackio.
+
+    Requires ``trackio`` to be installed.
+
+    Args:
+        project (str | None): Trackio project name (defaults to ``"default"``).
+        config (Any | None): Initial configuration to log.
+        log_dir (str | Path | None): Local log directory (unused by Trackio
+            but accepted for interface consistency).
+        trackio_name (str | None): Display name for the run.
+
+    Raises:
+        ImportError: If ``trackio`` is not installed.
+    """
 
     def __init__(
         self,
@@ -361,7 +448,14 @@ class TrackioLogger(Logger):
 
 
 class MultiplexLogger(Logger):
-    """Logger that forwards operations to multiple child loggers."""
+    """Logger that fans out every operation to multiple child loggers.
+
+    This is the logger returned by :func:`setup_logging` and is the primary
+    interface callers use to log metrics, hyperparameters, and text.
+
+    Args:
+        loggers (list[Logger]): Child loggers to forward calls to.
+    """
 
     def __init__(self, loggers: list[Logger]):
         self.loggers = loggers
@@ -507,7 +601,19 @@ def _get_command_line_invocation() -> str:
 
 
 def configure_logging_module(path: str, level: int = logging.INFO) -> logging.Logger:
-    """Configure logging to console (color) and file (plain), forcing override of prior config."""
+    """Configure the Python ``logging`` module with coloured console and plain file handlers.
+
+    Replaces any previously installed root handlers (like ``basicConfig(..., force=True)``).
+    The console handler uses ANSI colours for level names; the file handler
+    writes plain text.
+
+    Args:
+        path (str): File path for the log file (appended to, created if missing).
+        level (int): Root logger level (default ``logging.INFO``).
+
+    Returns:
+        logging.Logger: The root logger instance.
+    """
     # ANSI escape codes for colors
     COLORS = {
         "DEBUG": "\033[94m",  # Blue
