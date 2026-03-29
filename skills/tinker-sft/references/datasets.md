@@ -13,12 +13,14 @@ Complete reference for dataset construction patterns.
 Shared config for all chat-based dataset builders:
 
 ```python
+from tinker_cookbook import model_info
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 from tinker_cookbook.renderers import TrainOnWhat
 
+model_name = "meta-llama/Llama-3.1-8B"
 common_config = ChatDatasetBuilderCommonConfig(
-    model_name_for_tokenizer="meta-llama/Llama-3.1-8B",
-    renderer_name="llama3",
+    model_name_for_tokenizer=model_name,
+    renderer_name=model_info.get_recommended_renderer_name(model_name),
     max_length=32768,
     batch_size=128,
     train_on_what=TrainOnWhat.ALL_ASSISTANT_MESSAGES,
