@@ -6,3 +6,4 @@ tinker_cookbook/_version.py
 .venv
 uv.lock
 skills-workspace/
+tinker-debug-workspace/
