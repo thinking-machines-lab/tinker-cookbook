@@ -83,7 +83,7 @@ async def run_rl_stage(
     log_path: str,
 ):
     """Run a single RL stage."""
-    from tinker_cookbook.recipes.nemotron_cascade.train_rl import CLIConfig, cli_main
+    from tinker_cookbook.recipes.nemotron_cascade.rl.train import CLIConfig, cli_main
 
     cli_config = CLIConfig(
         model_name=model_name,
@@ -112,7 +112,7 @@ async def run_eval_stage(
     limit: int = 200,
 ):
     """Run benchmark evaluation."""
-    from tinker_cookbook.recipes.nemotron_cascade.run_evals import run_eval
+    from tinker_cookbook.recipes.nemotron_cascade.eval.run_evals import run_eval
     logger.info(f"Evaluating: {label}")
     results = await run_eval(
         model_name=model_name,

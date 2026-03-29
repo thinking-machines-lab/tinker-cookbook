@@ -155,7 +155,7 @@ async def eval_ifeval(
     concurrency: int = 128,
 ) -> dict[str, float]:
     """Evaluate on IFEval using our verifier with concurrent sampling."""
-    from tinker_cookbook.recipes.nemotron_cascade.if_rl_env import verify_all_instructions
+    from tinker_cookbook.recipes.nemotron_cascade.rl.envs.if_rl import verify_all_instructions
 
     # Load IFEval data from our downloaded RL data
     ifeval_path = os.path.expanduser("~/data/nemotron-cascade-2/rl_if_rl.jsonl")

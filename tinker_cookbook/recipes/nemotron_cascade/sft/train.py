@@ -26,7 +26,7 @@ from datetime import datetime
 import chz
 
 from tinker_cookbook import checkpoint_utils, cli_utils, renderers
-from tinker_cookbook.recipes.nemotron_cascade.sft_datasets import (
+from tinker_cookbook.recipes.nemotron_cascade.sft.datasets import (
     NemotronCascadeSFTBuilder,
     NemotronCascadeSFTFromFileBuilder,
     SFTSubset,
