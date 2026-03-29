@@ -209,6 +209,18 @@ class TestBenchmarkImports:
         from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks import ifbench
         assert callable(ifbench.evaluate)
 
+    def test_import_swe_bench(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks import swe_bench
+        assert callable(swe_bench.evaluate)
+
+    def test_import_tau2_bench(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks import tau2_bench
+        assert callable(tau2_bench.evaluate)
+
+    def test_import_terminal_bench(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks import terminal_bench
+        assert callable(terminal_bench.evaluate)
+
 
 class TestBenchmarksRegistry:
     """Verify the BENCHMARKS registry in the benchmarks __init__."""
@@ -224,6 +236,12 @@ class TestBenchmarksRegistry:
 
         for name in ("livecodebench", "mmlu_redux", "arena_hard", "bfcl", "ifbench"):
             assert name in BENCHMARKS, f"Missing tier-2 benchmark: {name}"
+
+    def test_registry_has_all_tier3(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks import BENCHMARKS
+
+        for name in ("swe_bench", "tau2_bench", "terminal_bench"):
+            assert name in BENCHMARKS, f"Missing tier-3 benchmark: {name}"
 
     def test_all_entries_are_callable(self):
         from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks import BENCHMARKS
@@ -380,3 +398,124 @@ class TestRunEvalsBackwardCompat:
     def test_run_eval_importable(self):
         from tinker_cookbook.recipes.nemotron_cascade.eval.run_evals import run_eval
         assert callable(run_eval)
+
+
+# ---------------------------------------------------------------------------
+# SWE-bench helpers
+# ---------------------------------------------------------------------------
+
+
+class TestSweBenchExtraction:
+    def test_extract_patch_diff_block(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.swe_bench import _extract_patch
+
+        text = "Here is the fix:\n```diff\n--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-old\n+new\n```\n"
+        result = _extract_patch(text)
+        assert "--- a/foo.py" in result
+        assert "+new" in result
+
+    def test_extract_patch_generic_block(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.swe_bench import _extract_patch
+
+        text = "```\nsome patch content\n```"
+        assert _extract_patch(text) == "some patch content"
+
+    def test_extract_patch_no_block(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.swe_bench import _extract_patch
+
+        assert _extract_patch("raw patch text") == "raw patch text"
+
+    def test_extract_judge_score_bracket(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.swe_bench import _extract_judge_score
+
+        assert _extract_judge_score("The patch is good. Score: [[0.8]]") == 0.8
+
+    def test_extract_judge_score_fallback(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.swe_bench import _extract_judge_score
+
+        assert _extract_judge_score("Score: 0.6") == 0.6
+
+    def test_extract_judge_score_none(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.swe_bench import _extract_judge_score
+
+        assert _extract_judge_score("No score here") is None
+
+
+# ---------------------------------------------------------------------------
+# tau2-Bench helpers
+# ---------------------------------------------------------------------------
+
+
+class TestTau2BenchExtraction:
+    def test_extract_action_json_block(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.tau2_bench import _extract_action
+
+        text = '```json\n{"action": "refund_order", "arguments": {"order_id": "123"}}\n```'
+        result = _extract_action(text)
+        assert result is not None
+        assert result["action"] == "refund_order"
+        assert result["arguments"]["order_id"] == "123"
+
+    def test_extract_action_inline(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.tau2_bench import _extract_action
+
+        text = 'I will perform: {"action": "cancel", "arguments": {}}'
+        result = _extract_action(text)
+        assert result is not None
+        assert result["action"] == "cancel"
+
+    def test_extract_action_none(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.tau2_bench import _extract_action
+
+        assert _extract_action("I cannot help with that") is None
+
+    def test_normalize_action(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.tau2_bench import _normalize_action
+
+        a = {"action": "Refund", "arguments": {"id": "ABC"}}
+        b = {"action": "refund", "arguments": {"id": "abc"}}
+        assert _normalize_action(a) == _normalize_action(b)
+
+
+# ---------------------------------------------------------------------------
+# Terminal-Bench helpers
+# ---------------------------------------------------------------------------
+
+
+class TestTerminalBenchExtraction:
+    def test_extract_script_bash_block(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.terminal_bench import _extract_script
+
+        text = "Here is the solution:\n```bash\nfind / -name '*.log' -delete\n```\n"
+        assert "find" in _extract_script(text)
+
+    def test_extract_script_generic_block(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.terminal_bench import _extract_script
+
+        text = "```\nls -la\n```"
+        assert _extract_script(text) == "ls -la"
+
+    def test_extract_script_no_block(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.terminal_bench import _extract_script
+
+        assert _extract_script("ls -la") == "ls -la"
+
+    def test_extract_judge_verdict_correct(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.terminal_bench import _extract_judge_verdict
+
+        assert _extract_judge_verdict("The solution is right. Verdict: [[CORRECT]]") is True
+
+    def test_extract_judge_verdict_incorrect(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.terminal_bench import _extract_judge_verdict
+
+        assert _extract_judge_verdict("Wrong approach. Verdict: [[INCORRECT]]") is False
+
+    def test_extract_judge_verdict_fallback(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.terminal_bench import _extract_judge_verdict
+
+        assert _extract_judge_verdict("Verdict: CORRECT") is True
+
+    def test_extract_judge_verdict_none(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.terminal_bench import _extract_judge_verdict
+
+        assert _extract_judge_verdict("No verdict given") is None

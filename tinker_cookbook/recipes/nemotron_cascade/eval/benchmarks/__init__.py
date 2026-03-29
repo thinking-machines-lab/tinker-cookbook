@@ -25,6 +25,9 @@ from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.bfcl import evalua
 from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.ifbench import evaluate as eval_ifbench
 from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.livecodebench import evaluate as eval_livecodebench
 from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.mmlu_redux import evaluate as eval_mmlu_redux
+from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.swe_bench import evaluate as eval_swe_bench
+from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.tau2_bench import evaluate as eval_tau2_bench
+from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.terminal_bench import evaluate as eval_terminal_bench
 
 BENCHMARKS = {
     # Tier 1 (original)
@@ -42,6 +45,10 @@ BENCHMARKS = {
     "arena_hard": eval_arena_hard,
     "bfcl": eval_bfcl,
     "ifbench": eval_ifbench,
+    # Tier 3 (agentic / SWE)
+    "swe_bench": eval_swe_bench,
+    "tau2_bench": eval_tau2_bench,
+    "terminal_bench": eval_terminal_bench,
 }
 
 __all__ = ["BENCHMARKS"]
