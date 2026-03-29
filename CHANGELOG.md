@@ -13,6 +13,15 @@ Each entry includes:
 
 ---
 
+### [cookbook] Fix weight merging and adapter export for Nemotron fused Mamba projections ([#548](https://github.com/thinking-machines-lab/tinker-cookbook/pull/548), [#549](https://github.com/thinking-machines-lab/tinker-cookbook/pull/549))
+**Date:** 2026-03-27
+**Type:** fix
+**Tags:** weights, adapters
+
+Fixes `build_hf_model` and `build_lora_adapter` for Nemotron models with fused Mamba projections. `build_hf_model` now correctly handles the backbone prefix and fused projection key mapping. `build_lora_adapter` now handles empty expert LoRA weights and fused Mamba projection splitting.
+
+---
+
 ### [cookbook] Auto-generated model cards for HuggingFace Hub publishing ([#543](https://github.com/thinking-machines-lab/tinker-cookbook/pull/543))
 **Date:** 2026-03-26
 **Type:** new
