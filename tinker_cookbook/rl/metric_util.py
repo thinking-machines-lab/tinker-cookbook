@@ -197,6 +197,7 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
             dict[str, float]: Metric dictionary with keys prefixed by
                 ``self.name``.
         """
+
         async def run_group_rollout(
             builder: EnvGroupBuilder, group_idx: int
         ) -> TrajectoryGroup | None:
