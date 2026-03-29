@@ -6,33 +6,20 @@
   },
   "metadata": {
     "description": "Claude Code skills for fine-tuning language models with the Tinker API — SFT, RL, DPO, distillation, and more.",
-    "version": "0.2.0"
+    "version": "0.3.0"
   },
   "plugins": [
     {
       "name": "tinker-cookbook",
-      "description": "Skills for fine-tuning language models with the Tinker API — setup, models, datasets, renderers, SFT, RL, DPO, distillation, and more.",
+      "description": "Skills for fine-tuning language models with the Tinker API — setup, models, SFT, RL, DPO, distillation, checkpoints, weights, and more.",
       "source": "./",
       "strict": false,
       "skills": [
-        "./skills/tinker-setup",
-        "./skills/tinker-models",
-        "./skills/tinker-hyperparams",
-        "./skills/tinker-logging",
-        "./skills/tinker-sdk",
-        "./skills/tinker-types",
-        "./skills/tinker-cli",
-        "./skills/tinker-renderers",
-        "./skills/tinker-environments",
-        "./skills/tinker-weights",
-        "./skills/tinker-checkpoints",
-        "./skills/tinker-datasets",
+        "./skills/tinker-core",
         "./skills/tinker-sft",
-        "./skills/tinker-grpo",
-        "./skills/tinker-distillation",
-        "./skills/tinker-dpo",
-        "./skills/tinker-rlhf",
-        "./skills/tinker-multiturn-rl"
+        "./skills/tinker-rl",
+        "./skills/tinker-preferences",
+        "./skills/tinker-ops"
       ]
     },
     {
@@ -41,12 +28,7 @@
       "source": "./",
       "strict": false,
       "skills": [
-        "./skills/tinker-ci",
-        "./skills/tinker-contributing",
-        "./skills/tinker-new-recipe",
-        "./skills/tinker-manage-skills",
-        "./skills/tinker-evals",
-        "./skills/tinker-completers"
+        "./skills/tinker-dev"
       ]
     }
   ]
