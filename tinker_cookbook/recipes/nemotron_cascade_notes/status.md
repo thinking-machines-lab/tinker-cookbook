@@ -44,4 +44,4 @@ See `model_decision.md` for rationale.
 
 ## Wandb
 
-https://wandb.ai/thinking-machines-lab-inc/nemotron-cascade-2-replication
+(internal — see team Wandb project)

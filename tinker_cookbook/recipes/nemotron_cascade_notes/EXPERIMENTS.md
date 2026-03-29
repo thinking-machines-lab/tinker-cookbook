@@ -31,7 +31,7 @@ SFT → IF-RL → Multi-domain RL → MOPD → RLHF → Long-ctx RL → Code RL 
 - Batch=32 (paper=128, reduced for practical speed)
 - LRs: 1e-5, 3e-5 (LoRA-adjusted from paper's 3e-6)
 - Status: RUNNING (IF-RL, wandb streaming)
-- wandb: https://wandb.ai/thinking-machines-lab-inc/nemotron-cascade-2-replication
+- wandb: (internal — see team Wandb project)
 
 ## Data Analysis Summary
 
@@ -98,13 +98,11 @@ Key observations:
 - 2547 steps, final NLL=0.589, min NLL=0.487
 - NLL plateaued at ~0.58 by step 200, continued slowly improving to ~0.49
 - Checkpoints at: steps 200, 400, 600, 800, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400 + final
-- Final checkpoint: tinker://a27528b8-b83f-59a0-9334-78129ec565d0:train:0/weights/final
-- Log: /tmp/tinker-examples/nemotron_cascade_full_sft/openai-gpt-oss-120b-peft-131072_lr0.0005/
+- Final checkpoint: (internal)
 
 #### Qwen3-8B-Base (lr=5e-4) - COMPLETED
 - 2547 steps, final NLL=0.693, min NLL=0.589
-- Final checkpoint: tinker://38e7fb7e-d5be-54b9-a4a4-164e2e65de6f:train:0/weights/final
-- Log: /tmp/tinker-examples/nemotron_cascade_full_sft/Qwen-Qwen3-8B-Base_lr0.0005/
+- Final checkpoint: (internal)
 
 ### IF-RL Environment Test (commit: 929a90d)
 - Date: 2026-03-26
@@ -123,15 +121,13 @@ Key observations:
 - 50/50 steps
 - Reward: first5_avg=0.662, last5_avg=0.719, max=0.763
 - **Improvement: +0.058 (+8.8% relative)**
-- Checkpoint: tinker://6c99cabe-10a4-5e30-a32e-7ffdc39d896a:train:0/weights/final
-- Log: /tmp/tinker-examples/nemotron_cascade_ifrl_from_sft/
+- Checkpoint: (internal)
 
 #### Run 2: from final SFT checkpoint - COMPLETED
 - 50/50 steps
 - Reward: first5_avg=0.658, last5_avg=0.724, max=0.784
 - **Improvement: +0.066 (+10.0% relative)**
-- Checkpoint: tinker://ec4ef250-02aa-5f91-b141-fe7c6f8f7d95:train:0/weights/final
-- Log: /tmp/tinker-examples/nemotron_cascade_ifrl_final_sft/
+- Checkpoint: (internal)
 
 Note: IF-RL shows clear reward improvement (+0.058 over 50 steps).
 Paper used batch=128 (vs our 32) and ran 180 steps with dynamic filtering.
@@ -193,7 +189,7 @@ All LRs 3e-4 to 1e-3 very similar. 5e-4 confirmed optimal.
 - Data: math (100K) + science (50K) + IF (10K) + safety (3.5K) = 163.5K
 - lr=5e-4, batch_size=64, max_length=16384, cosine schedule
 - Status: RUNNING
-- Log: /tmp/tinker-examples/nemotron_cascade_full_sft/nvidia-NVIDIA-Nemotron-3-Nano-30B-A3B-BF16-peft-131072_lr0.0005/
+- Log: (local)
 
 #### IF-RL (pending SFT completion)
 #### Multi-domain RL (pending)

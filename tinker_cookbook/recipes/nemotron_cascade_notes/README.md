@@ -29,4 +29,4 @@ Investigation notes for the Nemotron-Cascade-2 replication. See `status.md` for 
 - Paper: arxiv:2603.19220
 - Data: nvidia/Nemotron-Cascade-2-SFT-Data, nvidia/Nemotron-Cascade-2-RL-data, nvidia/Nemotron-Cascade-RL-SWE
 - Model: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16:peft:262144
-- Wandb: https://wandb.ai/thinking-machines-lab-inc/nemotron-cascade-2-replication
+- Wandb: (internal — see team Wandb project)
