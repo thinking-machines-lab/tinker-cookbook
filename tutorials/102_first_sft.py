@@ -64,11 +64,11 @@ def _(mo):
 
 
 @app.cell
-def _(tinker):
+async def _(tinker):
     BASE_MODEL = "Qwen/Qwen3.5-4B"
 
     service_client = tinker.ServiceClient()
-    training_client = service_client.create_lora_training_client(base_model=BASE_MODEL, rank=16)
+    training_client = await service_client.create_lora_training_client_async(base_model=BASE_MODEL, rank=16)
     tokenizer = training_client.get_tokenizer()
     return tokenizer, training_client
 
@@ -242,16 +242,16 @@ def _(mo):
 
 
 @app.cell
-def _(np, time, tinker, training_client, training_data):
+async def _(np, time, tinker, training_client, training_data):
     losses = []
     for _step in range(15):
         _t0 = time.time()
-        _fwdbwd_future = training_client.forward_backward(training_data, "cross_entropy")
-        _optim_future = training_client.optim_step(tinker.AdamParams(learning_rate=0.0002))
+        _fwdbwd_future = await training_client.forward_backward_async(training_data, "cross_entropy")
+        _optim_future = await training_client.optim_step_async(tinker.AdamParams(learning_rate=0.0002))
         _fwdbwd_result = (
-            _fwdbwd_future.result()
+            await _fwdbwd_future.result_async()
         )  # Submit both operations before waiting for results
-        _optim_result = _optim_future.result()
+        _optim_result = await _optim_future.result_async()
         _elapsed = time.time() - _t0
         _logprobs = np.concatenate(
             [out["logprobs"].tolist() for out in _fwdbwd_result.loss_fn_outputs]
@@ -293,9 +293,9 @@ def _(losses):
 
 
 @app.cell
-def _(SYSTEM_PROMPT, get_text_content, renderer, tinker, training_client):
+async def _(SYSTEM_PROMPT, get_text_content, renderer, tinker, training_client):
     # Save weights and create a sampling client in one step
-    sampling_client = training_client.save_weights_and_get_sampling_client(name="tinker-tinker-sft")
+    sampling_client = await training_client.save_weights_and_get_sampling_client_async(name="tinker-tinker-sft")
     stop_sequences = renderer.get_stop_sequences()
     params = tinker.SamplingParams(max_tokens=200, temperature=0.7, stop=stop_sequences)
     _test_questions = [
@@ -311,9 +311,9 @@ def _(SYSTEM_PROMPT, get_text_content, renderer, tinker, training_client):
             {"role": "user", "content": _question},
         ]
         _prompt = renderer.build_generation_prompt(_messages)
-        _result = sampling_client.sample(
+        _result = await sampling_client.sample_async(
             prompt=_prompt, num_samples=1, sampling_params=params
-        ).result()
+        )
         _response, _ = renderer.parse_response(_result.sequences[0].tokens)  # Not in training data
         _answer = get_text_content(_response)  # Not in training data
         print(f"Q: {_question}")
@@ -332,14 +332,14 @@ def _(mo):
 
 
 @app.cell
-def _(conversations, conversation_to_datum, get_renderer, service_client, TrainOnWhat):
+async def _(conversations, conversation_to_datum, get_renderer, service_client, TrainOnWhat):
     import contextlib
     import io
 
     BIG_MODEL = "moonshotai/Kimi-K2.5"
 
     # Create a LoRA training client for Kimi K2.5 -- same API, bigger model
-    big_training_client = service_client.create_lora_training_client(base_model=BIG_MODEL, rank=16)
+    big_training_client = await service_client.create_lora_training_client_async(base_model=BIG_MODEL, rank=16)
     big_tokenizer = big_training_client.get_tokenizer()
 
     # Use the disable-thinking renderer so Kimi K2.5 responds directly without <think> blocks
@@ -357,16 +357,16 @@ def _(conversations, conversation_to_datum, get_renderer, service_client, TrainO
 
 
 @app.cell
-def _(BIG_MODEL, big_training_client, big_training_data, np, time, tinker):
+async def _(BIG_MODEL, big_training_client, big_training_data, np, time, tinker):
     print(f"Model: {BIG_MODEL}")
     print(f"Training data: {len(big_training_data)} examples (same Tinker Tinker conversations)\n")
     big_losses = []
     for _step in range(10):
         _t0 = time.time()
-        _fwdbwd_future = big_training_client.forward_backward(big_training_data, "cross_entropy")
-        _optim_future = big_training_client.optim_step(tinker.AdamParams(learning_rate=0.0005))
-        _fwdbwd_result = _fwdbwd_future.result()
-        _optim_result = _optim_future.result()
+        _fwdbwd_future = await big_training_client.forward_backward_async(big_training_data, "cross_entropy")
+        _optim_future = await big_training_client.optim_step_async(tinker.AdamParams(learning_rate=0.0005))
+        _fwdbwd_result = await _fwdbwd_future.result_async()
+        _optim_result = await _optim_future.result_async()
         _elapsed = time.time() - _t0
         _logprobs = np.concatenate(
             [out["logprobs"].tolist() for out in _fwdbwd_result.loss_fn_outputs]
@@ -403,7 +403,7 @@ def _(big_losses, losses, plt):
 
 
 @app.cell
-def _(
+async def _(
     SYSTEM_PROMPT,
     big_renderer,
     big_training_client,
@@ -411,7 +411,7 @@ def _(
     tinker,
 ):
     # Sample from the fine-tuned Kimi K2.5
-    big_sampling_client = big_training_client.save_weights_and_get_sampling_client(
+    big_sampling_client = await big_training_client.save_weights_and_get_sampling_client_async(
         name="tinker-tinker-kimi"
     )
     big_stop = big_renderer.get_stop_sequences()
@@ -423,9 +423,9 @@ def _(
             {"role": "user", "content": _question},
         ]
         _prompt = big_renderer.build_generation_prompt(_messages)
-        _result = big_sampling_client.sample(
+        _result = await big_sampling_client.sample_async(
             prompt=_prompt, num_samples=1, sampling_params=big_params
-        ).result()
+        )
         _response, _ = big_renderer.parse_response(_result.sequences[0].tokens)
         _answer = get_text_content(_response)
         print(f"Q: {_question}")

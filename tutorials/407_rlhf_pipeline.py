@@ -365,7 +365,7 @@ def _(mo):
 
 
 @app.cell
-def _(
+async def _(
     BASE_MODEL,
     checkpoint_utils,
     rl_log_path,
@@ -377,12 +377,12 @@ def _(
     service = tinker.ServiceClient()
 
     # Base model (no fine-tuning)
-    base_sampler = service.create_sampling_client(base_model=BASE_MODEL)
+    base_sampler = await service.create_sampling_client_async(base_model=BASE_MODEL)
 
     # RLHF model (load RL checkpoint)
     rl_ckpt = checkpoint_utils.get_last_checkpoint(rl_log_path)
     assert rl_ckpt is not None
-    rlhf_sampler = service.create_sampling_client(
+    rlhf_sampler = await service.create_sampling_client_async(
         base_model=BASE_MODEL,
         load_path=rl_ckpt.sampler_path,
     )
@@ -394,8 +394,8 @@ def _(
     prompt_tokens = types.ModelInput.from_ints(tokenizer_eval.encode(test_prompt))
     params = types.SamplingParams(max_tokens=200, temperature=0.7, stop=["\n\n"])
 
-    base_result = base_sampler.sample(prompt=prompt_tokens, sampling_params=params, num_samples=1).result()
-    rlhf_result = rlhf_sampler.sample(prompt=prompt_tokens, sampling_params=params, num_samples=1).result()
+    base_result = await base_sampler.sample_async(prompt=prompt_tokens, sampling_params=params, num_samples=1)
+    rlhf_result = await rlhf_sampler.sample_async(prompt=prompt_tokens, sampling_params=params, num_samples=1)
 
     print("=== Base Model ===")
     print(test_prompt + tokenizer_eval.decode(base_result.sequences[0].tokens))

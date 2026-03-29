@@ -52,11 +52,11 @@ def _(mo):
 
 
 @app.cell
-def _(tinker):
+async def _(tinker):
     MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
 
     service_client = tinker.ServiceClient()
-    training_client = service_client.create_lora_training_client(
+    training_client = await service_client.create_lora_training_client_async(
         base_model=MODEL_NAME, rank=16
     )
     tokenizer = training_client.get_tokenizer()
@@ -142,23 +142,27 @@ def _(mo):
 
 
 @app.cell
-def _(rl_datum, sft_datum, training_client):
+async def _(rl_datum, sft_datum, training_client):
     # Cross-entropy (SFT)
-    ce_result = training_client.forward_backward([sft_datum], loss_fn="cross_entropy").result()
+    ce_future = await training_client.forward_backward_async([sft_datum], loss_fn="cross_entropy")
+    ce_result = await ce_future.result_async()
     print(f"cross_entropy      loss:sum = {ce_result.diagnostics['loss:sum']:.4f}")
 
     # Importance sampling (REINFORCE with IS correction)
-    is_result = training_client.forward_backward(
+    is_future = await training_client.forward_backward_async(
         [rl_datum], loss_fn="importance_sampling"
-    ).result()
+    )
+    is_result = await is_future.result_async()
     print(f"importance_sampling loss:sum = {is_result.diagnostics['loss:sum']:.4f}")
 
     # PPO (clipped objective)
-    ppo_result = training_client.forward_backward([rl_datum], loss_fn="ppo").result()
+    ppo_future = await training_client.forward_backward_async([rl_datum], loss_fn="ppo")
+    ppo_result = await ppo_future.result_async()
     print(f"ppo                loss:sum = {ppo_result.diagnostics['loss:sum']:.4f}")
 
     # CISPO (clipped ratio weighting the log-prob)
-    cispo_result = training_client.forward_backward([rl_datum], loss_fn="cispo").result()
+    cispo_future = await training_client.forward_backward_async([rl_datum], loss_fn="cispo")
+    cispo_result = await cispo_future.result_async()
     print(f"cispo              loss:sum = {cispo_result.diagnostics['loss:sum']:.4f}")
     return ce_result, cispo_result, is_result, ppo_result
 
@@ -196,21 +200,23 @@ def _(mo):
 
 
 @app.cell
-def _(rl_datum, training_client):
+async def _(rl_datum, training_client):
     # Tighter clipping
-    ppo_tight = training_client.forward_backward(
+    ppo_tight_future = await training_client.forward_backward_async(
         [rl_datum],
         loss_fn="ppo",
         loss_fn_config={"clip_low_threshold": 0.9, "clip_high_threshold": 1.1},
-    ).result()
+    )
+    ppo_tight = await ppo_tight_future.result_async()
     print(f"PPO (tight clip) loss:sum = {ppo_tight.diagnostics['loss:sum']:.4f}")
 
     # Wider clipping (more like vanilla IS)
-    ppo_wide = training_client.forward_backward(
+    ppo_wide_future = await training_client.forward_backward_async(
         [rl_datum],
         loss_fn="ppo",
         loss_fn_config={"clip_low_threshold": 0.5, "clip_high_threshold": 1.5},
-    ).result()
+    )
+    ppo_wide = await ppo_wide_future.result_async()
     print(f"PPO (wide clip)  loss:sum = {ppo_wide.diagnostics['loss:sum']:.4f}")
     return ppo_tight, ppo_wide
 
@@ -236,7 +242,7 @@ def _(mo):
 
 
 @app.cell
-def _(sft_datum, torch, training_client):
+async def _(sft_datum, torch, training_client):
     def entropy_penalty_loss(data, logprobs_list):
         """Penalize low-confidence predictions: loss = -sum(logprobs^2)."""
         total_loss = torch.tensor(0.0)
@@ -246,9 +252,10 @@ def _(sft_datum, torch, training_client):
             total_loss = total_loss + (logprobs**2).sum()
         return total_loss, {"entropy_penalty": total_loss.item()}
 
-    custom_result = training_client.forward_backward_custom(
+    custom_future = await training_client.forward_backward_custom_async(
         [sft_datum], entropy_penalty_loss
-    ).result()
+    )
+    custom_result = await custom_future.result_async()
     print(f"Custom loss metrics: {custom_result.metrics}")
     return custom_result, entropy_penalty_loss
 

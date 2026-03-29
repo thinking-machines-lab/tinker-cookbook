@@ -56,11 +56,11 @@ def _(mo):
 
 
 @app.cell
-def _(TensorData, tinker, torch):
+async def _(TensorData, tinker, torch):
     MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
 
     service_client = tinker.ServiceClient()
-    training_client = service_client.create_lora_training_client(
+    training_client = await service_client.create_lora_training_client_async(
         base_model=MODEL_NAME, rank=16
     )
     tokenizer = training_client.get_tokenizer()
@@ -80,8 +80,10 @@ def _(TensorData, tinker, torch):
         },
     )
 
-    training_client.forward_backward([datum], loss_fn="cross_entropy").result()
-    training_client.optim_step(tinker.AdamParams(learning_rate=1e-4)).result()
+    fb_future = await training_client.forward_backward_async([datum], loss_fn="cross_entropy")
+    await fb_future.result_async()
+    optim_future = await training_client.optim_step_async(tinker.AdamParams(learning_rate=1e-4))
+    await optim_future.result_async()
     print("Training step complete")
     return MODEL_NAME, datum, service_client, tokenizer, training_client
 
@@ -104,19 +106,17 @@ def _(mo):
 
 
 @app.cell
-def _(training_client):
+async def _(training_client):
     # Save weights for inference (sampler checkpoint)
-    sampler_future = training_client.save_weights_for_sampler("tutorial-sampler")
-    sampler_result = sampler_future.result()
+    sampler_result = await training_client.save_weights_for_sampler_async("tutorial-sampler")
     sampler_path = sampler_result.path
     print(f"Sampler weights saved to: {sampler_path}")
 
     # Save full state for resuming training
-    state_future = training_client.save_state("tutorial-state")
-    state_result = state_future.result()
+    state_result = await training_client.save_state_async("tutorial-state")
     state_path = state_result.path
     print(f"Training state saved to:  {state_path}")
-    return sampler_future, sampler_path, sampler_result, state_future, state_path, state_result
+    return sampler_path, sampler_result, state_path, state_result
 
 
 @app.cell(hide_code=True)
@@ -130,11 +130,11 @@ def _(mo):
 
 
 @app.cell
-def _(training_client):
+async def _(training_client):
     # Save with a 1-hour TTL
-    ephemeral_result = training_client.save_weights_for_sampler(
+    ephemeral_result = await training_client.save_weights_for_sampler_async(
         "tutorial-ephemeral", ttl_seconds=3600
-    ).result()
+    )
     print(f"Ephemeral checkpoint (1h TTL): {ephemeral_result.path}")
     return (ephemeral_result,)
 
@@ -150,13 +150,13 @@ def _(mo):
 
 
 @app.cell
-def _(service_client, state_path):
+async def _(service_client, state_path):
     # Resume training from the saved state (weights only, fresh optimizer)
-    resumed_client = service_client.create_training_client_from_state(state_path)
+    resumed_client = await service_client.create_training_client_from_state_async(state_path)
     print(f"Resumed training client from: {state_path}")
 
     # The resumed client has the same trained weights but a fresh optimizer.
-    # You can also use create_training_client_from_state_with_optimizer
+    # You can also use create_training_client_from_state_with_optimizer_async
     # to restore the full optimizer state (Adam momentum, etc).
     info = resumed_client.get_info()
     print(f"Training run ID: {info.training_run_id}")
@@ -174,19 +174,19 @@ def _(mo):
 
 
 @app.cell
-def _(sampler_path, service_client, tinker, tokenizer):
+async def _(sampler_path, service_client, tinker, tokenizer):
     # Create a sampling client from the saved checkpoint
-    fine_tuned_sampler = service_client.create_sampling_client(model_path=sampler_path)
+    fine_tuned_sampler = await service_client.create_sampling_client_async(model_path=sampler_path)
 
     prompt_text = "The Pythagorean theorem"
     prompt_ids = tokenizer.encode(prompt_text)
     prompt = tinker.ModelInput.from_ints(prompt_ids)
 
-    result = fine_tuned_sampler.sample(
+    result = await fine_tuned_sampler.sample_async(
         prompt=prompt,
         sampling_params=tinker.SamplingParams(max_tokens=50, temperature=0.5, stop=["\n"]),
         num_samples=1,
-    ).result()
+    )
 
     print(prompt_text + tokenizer.decode(result.sequences[0].tokens))
     return fine_tuned_sampler, prompt, prompt_ids, prompt_text, result

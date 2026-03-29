@@ -48,11 +48,11 @@ def _(mo):
 
 
 @app.cell
-def _(get_renderer, tinker):
+async def _(get_renderer, tinker):
     BASE_MODEL = "Qwen/Qwen3.5-4B"
 
     service_client = tinker.ServiceClient()
-    sampling_client = service_client.create_sampling_client(base_model=BASE_MODEL)
+    sampling_client = await service_client.create_sampling_client_async(base_model=BASE_MODEL)
     tokenizer = sampling_client.get_tokenizer()
     renderer = get_renderer("qwen3_5", tokenizer)
 
@@ -87,15 +87,15 @@ def _(mo):
 
 
 @app.cell
-def _(get_text_content, params, prompts, renderer, sampling_client, time):
+async def _(get_text_content, params, prompts, renderer, sampling_client, time):
     _start = time.time()
     sequential_results = []
     for _prompt_text in prompts:
         _messages = [{"role": "user", "content": _prompt_text}]
         _model_input = renderer.build_generation_prompt(_messages)
-        _result = sampling_client.sample(
+        _result = await sampling_client.sample_async(
             prompt=_model_input, num_samples=1, sampling_params=params
-        ).result()
+        )
         _response_msg, _ = renderer.parse_response(_result.sequences[0].tokens)
         sequential_results.append(
             get_text_content(_response_msg)
@@ -121,7 +121,7 @@ def _(mo):
 
 
 @app.cell
-def _(
+async def _(
     get_text_content,
     params,
     prompts,
@@ -130,18 +130,19 @@ def _(
     sequential_time,
     time,
 ):
+    import asyncio
+
     _start = time.time()
-    _futures = []
-    # Step 1: Submit ALL requests (non-blocking -- each returns a future immediately)
-    for _prompt_text in prompts:
+    # Step 1: Submit ALL requests concurrently using asyncio.gather
+    async def _sample_one(_prompt_text):
         _messages = [{"role": "user", "content": _prompt_text}]
         _model_input = renderer.build_generation_prompt(_messages)
-        _future = sampling_client.sample(prompt=_model_input, num_samples=1, sampling_params=params)
-        _futures.append(_future)
+        return await sampling_client.sample_async(prompt=_model_input, num_samples=1, sampling_params=params)
+
+    _results = await asyncio.gather(*[_sample_one(p) for p in prompts])
     concurrent_results = []
-    for _future in _futures:
-        # Step 2: Collect results (all requests were running in parallel)
-        _result = _future.result()
+    for _result in _results:
+        # Step 2: Parse results (all requests were running in parallel)
         _response_msg, _ = renderer.parse_response(_result.sequences[0].tokens)
         concurrent_results.append(get_text_content(_response_msg))
     concurrent_time = time.time() - _start
@@ -165,15 +166,15 @@ def _(mo):
 
 
 @app.cell
-def _(get_text_content, params, renderer, sampling_client, time):
+async def _(get_text_content, params, renderer, sampling_client, time):
     _GROUP_SIZE = 4
     test_prompt = "Name a famous scientist and explain their key contribution in one sentence."
     _messages = [{"role": "user", "content": test_prompt}]
     _model_input = renderer.build_generation_prompt(_messages)
     _start = time.time()
-    _result = sampling_client.sample(
+    _result = await sampling_client.sample_async(
         prompt=_model_input, num_samples=_GROUP_SIZE, sampling_params=params
-    ).result()
+    )
     # Single call with num_samples=4 -- generates 4 independent completions
     multi_time = time.time() - _start
     print(f"Prompt: {test_prompt}\n")
@@ -183,7 +184,7 @@ def _(get_text_content, params, renderer, sampling_client, time):
         print(f"Completion {i + 1}: {text[:150]}\n")
     _start = time.time()
     for _ in range(_GROUP_SIZE):
-        sampling_client.sample(prompt=_model_input, num_samples=1, sampling_params=params).result()
+        await sampling_client.sample_async(prompt=_model_input, num_samples=1, sampling_params=params)
     sequential_multi_time = time.time() - _start
     print(f"num_samples={_GROUP_SIZE} in one call: {multi_time:.1f}s")
     print(f"{_GROUP_SIZE} sequential calls:        {sequential_multi_time:.1f}s")
@@ -203,21 +204,24 @@ def _(mo):
 
 
 @app.cell
-def _(get_text_content, params, prompts, renderer, sampling_client, time):
+async def _(get_text_content, params, prompts, renderer, sampling_client, time):
+    import asyncio
+
     _GROUP_SIZE = 4
     _start = time.time()
-    _futures = []
-    for _prompt_text in prompts:
-        # Submit all requests concurrently, each with num_samples=GROUP_SIZE
+
+    # Submit all requests concurrently using asyncio.gather, each with num_samples=GROUP_SIZE
+    async def _sample_group(_prompt_text):
         _messages = [{"role": "user", "content": _prompt_text}]
         _model_input = renderer.build_generation_prompt(_messages)
-        _future = sampling_client.sample(
+        _result = await sampling_client.sample_async(
             prompt=_model_input, num_samples=_GROUP_SIZE, sampling_params=params
         )
-        _futures.append((_prompt_text, _future))
+        return _prompt_text, _result
+
+    _results = await asyncio.gather(*[_sample_group(p) for p in prompts])
     total_completions = 0
-    for _prompt_text, _future in _futures:
-        _result = _future.result()
+    for _prompt_text, _result in _results:
         completions = []
         for _seq in _result.sequences:
             # Collect all results

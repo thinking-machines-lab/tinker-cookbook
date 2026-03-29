@@ -72,11 +72,11 @@ def _(mo):
 
 
 @app.cell
-def _(get_renderer, tinker):
+async def _(get_renderer, tinker):
     base_model = "meta-llama/Llama-3.1-8B"
 
     service_client = tinker.ServiceClient()
-    training_client = service_client.create_lora_training_client(base_model=base_model, rank=32)
+    training_client = await service_client.create_lora_training_client_async(base_model=base_model, rank=32)
     tokenizer = training_client.get_tokenizer()
     renderer = get_renderer("llama3", tokenizer)
 
@@ -180,7 +180,7 @@ def _(mo):
 
 
 @app.cell
-def _(
+async def _(
     TensorData,
     adam_params,
     extract_gsm8k_answer,
@@ -195,7 +195,7 @@ def _(
     train_data,
     training_client,
 ):
-    from concurrent.futures import Future
+    import asyncio
 
     # Training hyperparameters
     n_steps = 10
@@ -212,28 +212,30 @@ def _(
         batch_rows = train_data.select(range(batch_start, batch_end))
 
         # 2. Save current weights and create a sampling client
-        sampling_client = training_client.save_weights_and_get_sampling_client()
+        sampling_client = await training_client.save_weights_and_get_sampling_client_async()
 
-        # 3. Submit all sampling requests (non-blocking)
-        futures_P: list[Future] = []
+        # 3. Submit all sampling requests concurrently
         prompts_P: list[tinker.ModelInput] = []
+        _coros = []
         for question in batch_rows["question"]:
             convo = [*fewshot_prefix, {"role": "user", "content": question + question_suffix}]
             prompt = renderer.build_generation_prompt(convo)
-            future = sampling_client.sample(
-                prompt=prompt, num_samples=group_size, sampling_params=sampling_params
+            _coros.append(
+                sampling_client.sample_async(
+                    prompt=prompt, num_samples=group_size, sampling_params=sampling_params
+                )
             )
-            futures_P.append(future)
             prompts_P.append(prompt)
+
+        sample_results_P = await asyncio.gather(*_coros)
 
         # 4. Collect results, grade, compute advantages, build datums
         datums_D: list[tinker.Datum] = []
         rewards_P: list[float] = []
         n_degenerate = 0
 
-        for future, prompt, answer_text in zip(futures_P, prompts_P, batch_rows["answer"]):
+        for sample_result, prompt, answer_text in zip(sample_results_P, prompts_P, batch_rows["answer"]):
             ground_truth = extract_gsm8k_answer(answer_text)
-            sample_result = future.result()
 
             # Grade each completion in the group
             rewards_G: list[float] = []
@@ -278,12 +280,12 @@ def _(
 
         # 5. Training step
         if len(datums_D) > 0:
-            fwd_bwd_future = training_client.forward_backward(
+            fwd_bwd_future = await training_client.forward_backward_async(
                 datums_D, loss_fn="importance_sampling"
             )
-            optim_future = training_client.optim_step(adam_params)
-            fwd_bwd_future.result()
-            optim_future.result()
+            optim_future = await training_client.optim_step_async(adam_params)
+            await fwd_bwd_future.result_async()
+            await optim_future.result_async()
 
         mean_reward = sum(rewards_P) / len(rewards_P)
         frac_degenerate = n_degenerate / len(rewards_P)

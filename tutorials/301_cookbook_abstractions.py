@@ -224,10 +224,10 @@ async def _(
     LORA_RANK = 32
     MAX_TOKENS = 512
     service_client = tinker.ServiceClient()
-    training_client = service_client.create_lora_training_client(
+    training_client = await service_client.create_lora_training_client_async(
         base_model=MODEL_NAME, rank=LORA_RANK
     )
-    _sampling_client = training_client.save_weights_and_get_sampling_client()
+    _sampling_client = await training_client.save_weights_and_get_sampling_client_async()
     _policy = TinkerTokenCompleter(_sampling_client, max_tokens=MAX_TOKENS, temperature=1.0)
     _group_builder = ProblemGroupBuilder(
         env_thunk=partial(
@@ -432,7 +432,7 @@ async def _(
     print(f"Training for {N_STEPS} steps, LR={learning_rate:.2e}")
     for step in range(N_STEPS):
         batch_builders = dataset.get_batch(step)
-        _sampling_client = training_client.save_weights_and_get_sampling_client()
+        _sampling_client = await training_client.save_weights_and_get_sampling_client_async()
         _policy = TinkerTokenCompleter(_sampling_client, max_tokens=MAX_TOKENS, temperature=1.0)
         _trajectory_groups: list[TrajectoryGroup] = []
         for builder in batch_builders:
@@ -442,12 +442,12 @@ async def _(
         _advantages_P = compute_advantages(_trajectory_groups)
         _datums, _metadata = assemble_training_data(_trajectory_groups, _advantages_P)
         if _datums:
-            fwd_bwd_future = training_client.forward_backward(
+            fwd_bwd_future = await training_client.forward_backward_async(
                 [_remove_mask(d) for d in _datums], loss_fn="importance_sampling"
             )
-            optim_future = training_client.optim_step(adam_params)
-            fwd_bwd_future.result()
-            optim_future.result()
+            optim_future = await training_client.optim_step_async(adam_params)
+            await fwd_bwd_future.result_async()
+            await optim_future.result_async()
         all_rewards = [r for tg in _trajectory_groups for r in tg.get_total_rewards()]
         mean_reward = sum(all_rewards) / len(all_rewards) if all_rewards else 0.0
         print(f"Step {step}: mean_reward={mean_reward:.2f}, datums={len(_datums)}")

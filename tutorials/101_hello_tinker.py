@@ -70,12 +70,12 @@ def _(mo):
 
 
 @app.cell
-def _(tinker):
+async def _(tinker):
     # Create a ServiceClient. This reads TINKER_API_KEY from your environment.
     service_client = tinker.ServiceClient()
 
     # Check what models are available
-    capabilities = service_client.get_server_capabilities()
+    capabilities = await service_client.get_server_capabilities_async()
     print("Available models:")
     for model in capabilities.supported_models:
         print(f"  - {model.model_name}")
@@ -99,11 +99,11 @@ def _(mo):
 
 
 @app.cell
-def _(service_client):
+async def _(service_client):
     MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
 
     # Create a sampling client -- this connects to a remote GPU worker
-    sampling_client = service_client.create_sampling_client(base_model=MODEL_NAME)
+    sampling_client = await service_client.create_sampling_client_async(base_model=MODEL_NAME)
 
     # Get the tokenizer for encoding/decoding text
     tokenizer = sampling_client.get_tokenizer()
@@ -111,17 +111,14 @@ def _(service_client):
 
 
 @app.cell
-def _(sampling_client, tokenizer, types):
+async def _(sampling_client, tokenizer, types):
     # Encode a prompt into tokens
     prompt_text = "The three largest cities in the world by population are"
     prompt = types.ModelInput.from_ints(tokenizer.encode(prompt_text))
 
     # Sample a completion
     params = types.SamplingParams(max_tokens=50, temperature=0.7, stop=["\n"])
-    future = sampling_client.sample(prompt=prompt, sampling_params=params, num_samples=1)
-
-    # .sample() returns a future immediately -- call .result() to wait for the GPU response
-    result = future.result()
+    result = await sampling_client.sample_async(prompt=prompt, sampling_params=params, num_samples=1)
 
     # Decode and print
     completion_tokens = result.sequences[0].tokens
@@ -161,12 +158,12 @@ def _(mo):
 
 
 @app.cell
-def _(prompt, sampling_client, tokenizer, types):
-    result_1 = sampling_client.sample(
+async def _(prompt, sampling_client, tokenizer, types):
+    result_1 = await sampling_client.sample_async(
         prompt=prompt,
         sampling_params=types.SamplingParams(max_tokens=50, temperature=0.9, stop=["\n"]),
         num_samples=3,
-    ).result()
+    )
     for i, _seq in enumerate(result_1.sequences):
         text = tokenizer.decode(_seq.tokens)
         print(f"Sample {i}: {text}")

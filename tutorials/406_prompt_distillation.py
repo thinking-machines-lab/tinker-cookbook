@@ -36,15 +36,13 @@ def _(mo):
 
 @app.cell
 def _():
-    import asyncio
-
     import tinker
     from tinker import types
 
     from tinker_cookbook import renderers
     from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-    return asyncio, get_tokenizer, renderers, tinker, types
+    return get_tokenizer, renderers, tinker, types
 
 
 @app.cell(hide_code=True)
@@ -92,13 +90,13 @@ def _(mo):
 
 
 @app.cell
-def _(QUESTIONS, TEACHER_SYSTEM_PROMPT, get_tokenizer, renderers, tinker, types):
+async def _(QUESTIONS, TEACHER_SYSTEM_PROMPT, get_tokenizer, renderers, tinker, types):
     MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
     tokenizer = get_tokenizer(MODEL_NAME)
     renderer = renderers.get_renderer("qwen3", tokenizer)
 
     service_client = tinker.ServiceClient()
-    sampling_client = service_client.create_sampling_client(base_model=MODEL_NAME)
+    sampling_client = await service_client.create_sampling_client_async(base_model=MODEL_NAME)
 
     # Generate teacher completions with the rich system prompt
     teacher_completions = []
@@ -108,11 +106,11 @@ def _(QUESTIONS, TEACHER_SYSTEM_PROMPT, get_tokenizer, renderers, tinker, types)
             {"role": "user", "content": question},
         ]
         prompt = renderer.build_generation_prompt(teacher_messages)
-        result = sampling_client.sample(
+        result = await sampling_client.sample_async(
             prompt=prompt,
             sampling_params=types.SamplingParams(max_tokens=200, temperature=0.7),
             num_samples=1,
-        ).result()
+        )
 
         completion_text = tokenizer.decode(result.sequences[0].tokens)
         teacher_completions.append(completion_text)
@@ -176,9 +174,9 @@ def _(mo):
 
 
 @app.cell
-def _(MODEL_NAME, service_client, student_data, tinker):
+async def _(MODEL_NAME, service_client, student_data, tinker):
     # Create a training client
-    training_client = service_client.create_lora_training_client(
+    training_client = await service_client.create_lora_training_client_async(
         base_model=MODEL_NAME,
         rank=32,
     )
@@ -186,10 +184,12 @@ def _(MODEL_NAME, service_client, student_data, tinker):
     # Train for a few steps (small dataset, just for demonstration)
     adam_params = tinker.AdamParams(learning_rate=1e-4)
     for step in range(3):
-        fwd_bwd = training_client.forward_backward(student_data, loss_fn="cross_entropy")
-        optim = training_client.optim_step(adam_params)
-        loss_outputs = fwd_bwd.result().loss_fn_outputs
+        fwd_bwd_future = await training_client.forward_backward_async(student_data, loss_fn="cross_entropy")
+        optim_future = await training_client.optim_step_async(adam_params)
+        fwd_bwd_result = await fwd_bwd_future.result_async()
+        loss_outputs = fwd_bwd_result.loss_fn_outputs
         nll = sum(o["logprobs"].data[0] for o in loss_outputs) / len(loss_outputs)
+        await optim_future.result_async()
         print(f"Step {step}: mean NLL = {nll:.4f}")
 
     return (training_client,)
@@ -206,9 +206,9 @@ def _(mo):
 
 
 @app.cell
-def _(QUESTIONS, renderer, tinker, tokenizer, training_client, types):
+async def _(QUESTIONS, renderer, tinker, tokenizer, training_client, types):
     # Get a sampling client from the trained student
-    student_client = training_client.save_weights_and_get_sampling_client()
+    student_client = await training_client.save_weights_and_get_sampling_client_async()
 
     # Compare: student (no system prompt) vs teacher behavior
     print("=" * 60)
@@ -216,11 +216,11 @@ def _(QUESTIONS, renderer, tinker, tokenizer, training_client, types):
         # Student: no system prompt
         student_messages = [{"role": "user", "content": question}]
         student_prompt = renderer.build_generation_prompt(student_messages)
-        student_result = student_client.sample(
+        student_result = await student_client.sample_async(
             prompt=student_prompt,
             sampling_params=types.SamplingParams(max_tokens=200, temperature=0.7),
             num_samples=1,
-        ).result()
+        )
         student_text = tokenizer.decode(student_result.sequences[0].tokens)
 
         print(f"Q: {question}")

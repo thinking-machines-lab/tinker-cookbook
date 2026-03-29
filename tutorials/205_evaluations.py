@@ -39,8 +39,6 @@ def _():
 
     warnings.filterwarnings("ignore", message="IProgress not found")
 
-    import asyncio
-
     import tinker
     import torch
     from tinker import TensorData
@@ -55,7 +53,6 @@ def _():
         SamplingClientEvaluator,
         TensorData,
         TrainingClientEvaluator,
-        asyncio,
         get_renderer,
         get_text_content,
         tinker,
@@ -96,11 +93,11 @@ def _(mo):
 
 
 @app.cell
-def _(TensorData, get_renderer, tinker, torch):
+async def _(TensorData, get_renderer, tinker, torch):
     MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
 
     service_client = tinker.ServiceClient()
-    training_client = service_client.create_lora_training_client(
+    training_client = await service_client.create_lora_training_client_async(
         base_model=MODEL_NAME, rank=16
     )
     tokenizer = training_client.get_tokenizer()
@@ -183,10 +180,10 @@ def _(TrainingClientEvaluator, tinker, torch):
 
 
 @app.cell
-def _(NLLEvaluator, asyncio, eval_datums, training_client):
+async def _(NLLEvaluator, eval_datums, training_client):
     # Test the evaluator
     nll_evaluator = NLLEvaluator(eval_datums, name="held_out")
-    nll_metrics = asyncio.run(nll_evaluator(training_client))
+    nll_metrics = await nll_evaluator(training_client)
     print(f"NLL evaluation: {nll_metrics}")
     return nll_evaluator, nll_metrics
 
@@ -219,13 +216,13 @@ def _(SamplingClientEvaluator, get_text_content, tinker):
                 prompt = self.renderer.build_generation_prompt(messages)
                 stop = self.renderer.get_stop_sequences()
 
-                result = sampling_client.sample(
+                result = await sampling_client.sample_async(
                     prompt=prompt,
                     sampling_params=tinker.SamplingParams(
                         max_tokens=64, temperature=0.0, stop=stop
                     ),
                     num_samples=1,
-                ).result()
+                )
 
                 tokens = result.sequences[0].tokens
                 parsed, _ = self.renderer.parse_response(tokens)
@@ -241,9 +238,9 @@ def _(SamplingClientEvaluator, get_text_content, tinker):
 
 
 @app.cell
-def _(AccuracyEvaluator, asyncio, renderer, service_client, tokenizer, training_client):
+async def _(AccuracyEvaluator, renderer, service_client, tokenizer, training_client):
     # Create a sampling client from current weights
-    sampling_client = training_client.save_weights_and_get_sampling_client()
+    sampling_client = await training_client.save_weights_and_get_sampling_client_async()
 
     # Define test questions
     test_qa = [
@@ -253,7 +250,7 @@ def _(AccuracyEvaluator, asyncio, renderer, service_client, tokenizer, training_
     ]
 
     accuracy_evaluator = AccuracyEvaluator(test_qa, renderer, tokenizer)
-    acc_metrics = asyncio.run(accuracy_evaluator(sampling_client))
+    acc_metrics = await accuracy_evaluator(sampling_client)
     print(f"Accuracy evaluation: {acc_metrics}")
     return acc_metrics, accuracy_evaluator, sampling_client, test_qa
 

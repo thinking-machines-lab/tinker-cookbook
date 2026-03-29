@@ -324,8 +324,8 @@ def _(mo):
 
 
 @app.cell
-def _(MODEL_NAME, service_client, tinker):
-    training_client = service_client.create_lora_training_client(base_model=MODEL_NAME, rank=32)
+async def _(MODEL_NAME, service_client, tinker):
+    training_client = await service_client.create_lora_training_client_async(base_model=MODEL_NAME, rank=32)
 
     MAX_TOKENS = 256
     TEMPERATURE = 1.0
@@ -368,7 +368,7 @@ async def _(
         env_group_builders = train_dataset.get_batch(batch_index)
 
         # 1. Save weights and get a sampling client for the current policy
-        sampling_client = training_client.save_weights_and_get_sampling_client()
+        sampling_client = await training_client.save_weights_and_get_sampling_client_async()
 
         # 2. Run rollouts for each group (async, one group per problem)
         trajectory_groups = []
@@ -396,12 +396,12 @@ async def _(
         datums, _metadata = assemble_training_data(trajectory_groups, advantages)
 
         # 5. Train
-        fwd_bwd_future = training_client.forward_backward(
+        fwd_bwd_future = await training_client.forward_backward_async(
             [_remove_mask(d) for d in datums], loss_fn="importance_sampling"
         )
-        optim_future = training_client.optim_step(adam_params)
-        fwd_bwd_future.result()
-        optim_future.result()
+        optim_future = await training_client.optim_step_async(adam_params)
+        await fwd_bwd_future.result_async()
+        await optim_future.result_async()
 
         # Log metrics
         all_rewards = [r for tg in trajectory_groups for r in tg.get_total_rewards()]
@@ -456,7 +456,7 @@ def _(metrics_history):
 
 
 @app.cell
-def _(
+async def _(
     EVAL_PROBLEMS,
     FORMAT_CHECKERS,
     MAX_TOKENS,
@@ -465,18 +465,18 @@ def _(
     tinker,
     training_client,
 ):
-    eval_client = training_client.save_weights_and_get_sampling_client(name="format-env-final")
+    eval_client = await training_client.save_weights_and_get_sampling_client_async(name="format-env-final")
 
     for prompt_text, format_type in EVAL_PROBLEMS:
         messages = [{"role": "user", "content": prompt_text}]
         model_input = renderer.build_generation_prompt(messages)
-        result = eval_client.sample(
+        result = await eval_client.sample_async(
             prompt=model_input,
             num_samples=1,
             sampling_params=tinker.SamplingParams(
                 max_tokens=MAX_TOKENS, temperature=0.5, stop=renderer.get_stop_sequences()
             ),
-        ).result()
+        )
 
         parsed_msg, _ = renderer.parse_response(result.sequences[0].tokens)
         content = get_text_content(parsed_msg)
