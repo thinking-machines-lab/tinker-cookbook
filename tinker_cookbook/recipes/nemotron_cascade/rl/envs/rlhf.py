@@ -16,6 +16,7 @@ Paper hyperparameters (RLHF stage):
   - Length-normalized reward + quality-gated conciseness bonus
 """
 
+import asyncio
 import logging
 import math
 import re
@@ -308,17 +309,17 @@ class RLHFGroupBuilder(EnvGroupBuilder):
             f"(matchup_group_size={self.matchup_group_size})."
         )
 
-        # Run GenRM on each pair
+        # Run GenRM on all pairs concurrently
         genrm = self._create_genrm()
-        j_rewards: list[float] = []
         with logtree.scope_header("Pairwise Comparisons"):
-            for i, j in comparison_indices:
-                reward = await genrm.judge(
+            j_rewards = await asyncio.gather(*[
+                genrm.judge(
                     prompt_text=self.prompt_text,
                     response_a=response_texts[i],
                     response_b=response_texts[j],
                 )
-                j_rewards.append(reward)
+                for i, j in comparison_indices
+            ])
 
             for idx, ((i, j), reward) in enumerate(
                 zip(comparison_indices, j_rewards, strict=True)

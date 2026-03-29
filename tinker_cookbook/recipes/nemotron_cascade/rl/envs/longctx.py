@@ -14,6 +14,7 @@ Paper hyperparameters (Long-context RL stage):
   - Steps: ~30
 """
 
+import asyncio
 import logging
 import math
 import re
@@ -245,42 +246,45 @@ class LongContextRLGroupBuilder(EnvGroupBuilder):
             temperature=self.judge_temperature,
         )
 
-        results: list[tuple[float, Metrics]] = []
-        for traj, env in zip(trajectory_group, env_group):
-            assert isinstance(env, LongContextRLEnv)
+        # Identify which trajectories need judge calls vs can be skipped
+        judge_tasks: list[tuple[int, LongContextRLEnv]] = []
+        results: list[tuple[float, Metrics] | None] = [None] * len(trajectory_group)
 
-            # Check for overlong
+        for idx, (traj, env) in enumerate(zip(trajectory_group, env_group)):
+            assert isinstance(env, LongContextRLEnv)
             stop_reason = getattr(env, "_stop_reason", None)
             if stop_reason == "length":
-                results.append((0.0, {"judge_reward": 0.0, "overlong": 1.0}))
-                continue
+                results[idx] = (0.0, {"judge_reward": 0.0, "overlong": 1.0})
+            elif not getattr(env, "_model_answer", "").strip():
+                results[idx] = (0.0, {"judge_reward": 0.0, "empty_answer": 1.0})
+            else:
+                judge_tasks.append((idx, env))
 
-            model_answer = getattr(env, "_model_answer", "")
-            if not model_answer.strip():
-                results.append((0.0, {"judge_reward": 0.0, "empty_answer": 1.0}))
-                continue
-
-            reward, judge_text = await get_llm_judge_reward(
-                question=env.question,
-                context=env.context,
-                answer=model_answer,
-                judge_completer=judge_completer,
-            )
-
-            # Log judge output
-            with logtree.scope_header("LLM Judge"):
-                logtree.table_from_dict(
-                    {
-                        "judge_raw": judge_text[:200],
-                        "judge_reward": f"{reward:.2f}",
-                        "question": env.question[:100],
-                    },
-                    caption="Long-context judge reward",
+        # Run all judge calls concurrently
+        if judge_tasks:
+            judge_results = await asyncio.gather(*[
+                get_llm_judge_reward(
+                    question=env.question,
+                    context=env.context,
+                    answer=getattr(env, "_model_answer", ""),
+                    judge_completer=judge_completer,
                 )
+                for _, env in judge_tasks
+            ])
 
-            results.append((reward, {"judge_reward": reward}))
+            for (idx, env), (reward, judge_text) in zip(judge_tasks, judge_results):
+                with logtree.scope_header("LLM Judge"):
+                    logtree.table_from_dict(
+                        {
+                            "judge_raw": judge_text[:200],
+                            "judge_reward": f"{reward:.2f}",
+                            "question": env.question[:100],
+                        },
+                        caption="Long-context judge reward",
+                    )
+                results[idx] = (reward, {"judge_reward": reward})
 
-        return results
+        return [r for r in results if r is not None]
 
     def logging_tags(self) -> list[str]:
         return ["longctx_rl"]

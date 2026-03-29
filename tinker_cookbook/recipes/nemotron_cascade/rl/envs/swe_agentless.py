@@ -19,6 +19,7 @@ Paper hyperparameters (Agentless SWE RL):
   - Mask loss where no rollout in group gets reward > 0.5
 """
 
+import asyncio
 import json
 import logging
 import math
@@ -607,41 +608,46 @@ class SWEGroupBuilder(EnvGroupBuilder):
             temperature=self.judge_temperature,
         )
 
-        results: list[tuple[float, Metrics]] = []
-        for traj, env in zip(trajectory_group, env_group):
+        # Identify which trajectories need judge calls vs can be skipped
+        judge_tasks: list[tuple[int, SWERLEnv]] = []
+        results: list[tuple[float, Metrics] | None] = [None] * len(trajectory_group)
+
+        for idx, (traj, env) in enumerate(zip(trajectory_group, env_group)):
             assert isinstance(env, SWERLEnv)
-
             if env._stop_reason == "length":
-                results.append((0.0, {"judge_reward": 0.0, "overlong": 1.0, "has_patch": 0.0}))
-                continue
+                results[idx] = (0.0, {"judge_reward": 0.0, "overlong": 1.0, "has_patch": 0.0})
+            elif not env._extracted_patch:
+                results[idx] = (0.0, {"judge_reward": 0.0, "has_patch": 0.0})
+            else:
+                judge_tasks.append((idx, env))
 
-            patch = env._extracted_patch
-            if not patch:
-                results.append((0.0, {"judge_reward": 0.0, "has_patch": 0.0}))
-                continue
-
-            reward, judge_text = await get_swe_llm_judge_reward(
-                problem_statement=env.problem_statement,
-                repo=env.repo,
-                patch=patch,
-                judge_completer=judge_completer,
-                golden_patch=env.golden_patch,
-            )
-
-            with logtree.scope_header("LLM Judge"):
-                logtree.table_from_dict(
-                    {
-                        "instance_id": env.instance_id,
-                        "judge_raw": judge_text[:200],
-                        "judge_reward": f"{reward:.2f}",
-                        "patch_len": str(len(patch)),
-                    },
-                    caption="SWE-RL LLM judge reward",
+        # Run all judge calls concurrently
+        if judge_tasks:
+            judge_results = await asyncio.gather(*[
+                get_swe_llm_judge_reward(
+                    problem_statement=env.problem_statement,
+                    repo=env.repo,
+                    patch=env._extracted_patch,
+                    judge_completer=judge_completer,
+                    golden_patch=env.golden_patch,
                 )
+                for _, env in judge_tasks
+            ])
 
-            results.append((reward, {"judge_reward": reward, "has_patch": 1.0}))
+            for (idx, env), (reward, judge_text) in zip(judge_tasks, judge_results):
+                with logtree.scope_header("LLM Judge"):
+                    logtree.table_from_dict(
+                        {
+                            "instance_id": env.instance_id,
+                            "judge_raw": judge_text[:200],
+                            "judge_reward": f"{reward:.2f}",
+                            "patch_len": str(len(env._extracted_patch)),
+                        },
+                        caption="SWE-RL LLM judge reward",
+                    )
+                results[idx] = (reward, {"judge_reward": reward, "has_patch": 1.0})
 
-        return results
+        return [r for r in results if r is not None]
 
     def logging_tags(self) -> list[str]:
         return ["swe_rl"]
