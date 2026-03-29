@@ -1188,7 +1188,7 @@ class Renderer(ABC):
         strip_thinking_from_history=True) do NOT have this property because the
         observation at timestep 2 is not a prefix of timestep 1's full sequence.
 
-        See docs/rl/sequence-extension.mdx for details.
+        See the Tinker documentation on sequence extension for details.
         """
         return False
 
@@ -1564,7 +1564,7 @@ class Renderer(ABC):
                 "token prefix than what build_generation_prompt would produce at that turn. "
                 "You should instead create separate conversations for each assistant message "
                 "and call build_supervised_example with train_on_what=LAST_ASSISTANT_MESSAGE "
-                "for each one. See docs/rl/sequence-extension.mdx for details."
+                "for each one. See the Tinker documentation on sequence extension for details."
             )
 
         model_input_chunks_weights: list[tuple[tinker.types.ModelInputChunk, float]] = []

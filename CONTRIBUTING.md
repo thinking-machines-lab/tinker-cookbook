@@ -54,7 +54,7 @@ CI runs pre-commit, pyright, and pytest on every PR.
 - `tinker_cookbook/` — Library code (supervised learning, RL, renderers, utilities)
 - `tinker_cookbook/recipes/` — Example training scripts
 - `tests/` — Integration tests (require API key)
-- `docs/` — Documentation (MDX format, synced to docs site)
+- `skills/` — Claude Code skills for Tinker workflows
 
 ---
 

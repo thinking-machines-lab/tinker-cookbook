@@ -1,0 +1,62 @@
+{
+  "skill_name": "tinker-ops",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "My training finished. How do I download the weights, merge the LoRA adapter, and publish to HuggingFace?",
+      "expected_output": "Three-step pipeline: weights.download(), weights.build_hf_model(), weights.publish_to_hf_hub()",
+      "files": [],
+      "expectations": [
+        "Uses weights.download() with a tinker:// path",
+        "Uses weights.build_hf_model() to merge LoRA into base model",
+        "Uses weights.publish_to_hf_hub() with repo_id parameter",
+        "Mentions that download expects sampler weights (save_weights_for_sampler), not state checkpoints",
+        "Mentions setting HF_TOKEN for publishing",
+        "Mentions weights.build_lora_adapter() as an alternative for serving with vLLM/SGLang",
+        "Recommends dtype='bfloat16' for the merge"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "My RL training seems stuck. How do I analyze the training logs to figure out what's wrong?",
+      "expected_output": "Guide to reading metrics.jsonl, checking reward curves, KL divergence, and rollout summaries",
+      "files": [],
+      "expectations": [
+        "Shows how to load metrics.jsonl with pandas or json",
+        "Mentions checking env/all/reward/total for reward progress",
+        "Mentions checking KL divergence (kl_sample_train) — should stay below 0.01",
+        "Suggests looking at rollout summaries in iteration_NNNNNN/train_rollout_summaries.jsonl",
+        "Suggests practical fixes: lower learning rate if KL is spiking, check reward parsing if stuck at 0",
+        "Mentions the HTML reports (train.html) for human-readable rollout inspection",
+        "Mentions shrinking workloads (batch_size, group_size, max_steps) for debugging"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "How do I set up inline evaluation during training so I can track accuracy on a test set?",
+      "expected_output": "Evaluator setup using evaluator_builders in training config",
+      "files": [],
+      "expectations": [
+        "Shows how to create an evaluator function that takes a SamplingClient and returns metrics dict",
+        "Shows how to add it to the training config via evaluator_builders",
+        "Mentions eval_every parameter to control evaluation frequency",
+        "Mentions infrequent_evaluator_builders for expensive evals",
+        "Mentions Inspect AI integration as an option for standard benchmarks",
+        "Shows the RL test set pattern (RLDatasetBuilder returning optional test_dataset)"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "I need to evaluate my trained model on 200 test problems during training. How do I write the evaluator so it doesn't slow down training?",
+      "expected_output": "Async evaluator using concurrent execution for test problems",
+      "files": [],
+      "expectations": [
+        "Evaluates test problems concurrently using asyncio.gather or similar — NOT sequentially",
+        "Uses infrequent_evaluator_builders for expensive evals to avoid running every step",
+        "Creates samples with SamplingClient.sample() or a completer",
+        "Mentions keeping evaluators fast to avoid stalling the training loop",
+        "Does not evaluate problems in a sequential for loop one-by-one"
+      ]
+    }
+  ]
+}

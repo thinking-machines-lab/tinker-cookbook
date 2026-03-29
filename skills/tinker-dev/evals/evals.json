@@ -1,0 +1,36 @@
+{
+  "skill_name": "tinker-dev",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I want to add a new RL recipe for a coding task with sandbox execution. Walk me through the steps.",
+      "expected_output": "Step-by-step guide to scaffold a recipe with correct file structure, CLI pattern, and tests",
+      "files": [],
+      "expectations": [
+        "Creates files under tinker_cookbook/recipes/<recipe_name>/",
+        "Uses @chz.chz CLIConfig pattern with sensible defaults",
+        "Uses model_info.get_recommended_renderer_name() — not hardcoded renderer",
+        "Uses cli_utils.check_log_dir() before training",
+        "Includes a smoke test template in tests/recipes/test_recipe_<name>.py",
+        "Uses @pytest.mark.integration and run_recipe() helper in the test",
+        "Mentions behavior_if_log_dir_exists=delete for CI tests",
+        "Mentions dimension naming conventions (_P, _G, _T, _D)"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "How do I run the tests for this project? What's the difference between unit and integration tests?",
+      "expected_output": "Explanation of two test layers with commands to run each",
+      "files": [],
+      "expectations": [
+        "Explains unit tests (*_test.py colocated with source, no API key needed)",
+        "Explains integration tests (tests/recipes/test_recipe_*.py, requires TINKER_API_KEY)",
+        "Shows uv run pytest tinker_cookbook/ for unit tests",
+        "Shows uv run pytest tests/ for integration tests",
+        "Mentions @pytest.mark.integration marker",
+        "Mentions that tests/conftest.py auto-skips integration tests without API key",
+        "Mentions pre-commit checks (ruff, pyright)"
+      ]
+    }
+  ]
+}
