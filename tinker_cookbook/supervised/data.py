@@ -5,6 +5,7 @@ Supervised learning dataset implementations from HuggingFace datasets.
 import json
 import logging
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Literal, cast
 
 import blobfile
@@ -325,7 +326,9 @@ class HFDatasetSource:
     """A single HuggingFace dataset to include in an interleaved mix.
 
     Attributes:
-        path: HuggingFace dataset path (e.g. ``"allenai/tulu-3-sft-mixture"``).
+        path: HuggingFace dataset path (e.g. ``"allenai/tulu-3-sft-mixture"``)
+            or a local file path (e.g. ``"/data/sft.jsonl"``). Local files are
+            detected automatically and loaded with the appropriate HF loader.
         name: HuggingFace dataset config name (passed as ``name`` to ``load_dataset``).
         split: Dataset split to load.
         weight: Relative mixing weight. When set, weights are normalized across sources
@@ -367,17 +370,32 @@ class InterleavedChatDatasetBuilder(ChatDatasetBuilder):
         hf_datasets: list[datasets.Dataset] = []
 
         for source in self.sources:
-            ds = datasets.load_dataset(source.path, name=source.name, split=source.split)
+            local_path = Path(source.path)
+            if local_path.is_file():
+                # Local file — infer loader from extension
+                ext = local_path.suffix.lstrip(".")
+                loader = {"jsonl": "json", "json": "json", "csv": "csv", "parquet": "parquet"}.get(
+                    ext, "json"
+                )
+                ds = datasets.load_dataset(
+                    loader, data_files=str(local_path), split=source.split
+                )
+                source_label = str(local_path)
+            else:
+                ds = datasets.load_dataset(
+                    source.path, name=source.name, split=source.split
+                )
+                source_label = f"{source.path}/{source.name}" if source.name else source.path
             if not isinstance(ds, datasets.Dataset):
                 raise TypeError(
                     f"Expected a Dataset but got {type(ds).__name__}. "
-                    f"Check that split='{source.split}' is valid for '{source.path}'."
+                    f"Check that split='{source.split}' is valid for '{source_label}'."
                 )
             if source.message_field != "messages":
                 ds = ds.rename_column(source.message_field, "messages")
             ds = ds.select_columns(["messages"])
             hf_datasets.append(ds)
-            logger.info(f"Loaded '{source.path}' ({len(ds)} rows, weight={source.weight})")
+            logger.info(f"Loaded '{source_label}' ({len(ds)} rows, weight={source.weight})")
 
         # If all weights are None, weight by dataset size (uniform row sampling).
         # If any weight is set, all must be set.

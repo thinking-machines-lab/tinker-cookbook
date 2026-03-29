@@ -6,12 +6,15 @@ The TokenCompleter operates on tokens. This is the version used by RL algorithms
 Evals and other code should use the appropriate interface.
 """
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
 from typing import TypeAlias
 
 import tinker
 
 from tinker_cookbook import renderers
+
+logger = logging.getLogger(__name__)
 
 # Interfaces
 
@@ -78,11 +81,16 @@ class MessageCompleter:
 class TinkerTokenCompleter(TokenCompleter):
     """Token completer that uses a tinker.SamplingClient to sample actions.
 
+    When ``context_window`` is set, ``max_tokens`` is dynamically capped per-request
+    so that ``prompt_length + effective_max_tokens <= context_window``. This prevents
+    ``BadRequestError`` when long prompts would otherwise exceed the model's context.
+
     Args:
         sampling_client (tinker.SamplingClient): Client used to sample from
             the model.
         max_tokens (int): Maximum number of tokens to generate per call.
         temperature (float): Sampling temperature. Default: 1.0.
+        context_window (int | None): If set, dynamically caps max_tokens per-request.
 
     Example::
 
@@ -94,18 +102,43 @@ class TinkerTokenCompleter(TokenCompleter):
     sampling_client: tinker.SamplingClient
     max_tokens: int
     temperature: float = 1.0
+    context_window: int | None = field(default=None)
+
+    # Safety buffer subtracted from context_window to account for special tokens
+    _CONTEXT_BUFFER: int = field(default=64, repr=False)
 
     async def __call__(
         self, model_input: tinker.ModelInput, stop: StopCondition
     ) -> TokensWithLogprobs:
         """Sample an action from the policy given an observation."""
+        effective_max_tokens = self.max_tokens
+
+        if self.context_window is not None:
+            prompt_length = model_input.length
+            available = self.context_window - prompt_length - self._CONTEXT_BUFFER
+            if available < effective_max_tokens:
+                if available <= 0:
+                    logger.warning(
+                        "Prompt length (%d) leaves no room for generation "
+                        "(context_window=%d, buffer=%d). Allowing min 1 token.",
+                        prompt_length, self.context_window, self._CONTEXT_BUFFER,
+                    )
+                    effective_max_tokens = 1
+                else:
+                    logger.info(
+                        "Capping max_tokens from %d to %d "
+                        "(prompt_length=%d, context_window=%d)",
+                        self.max_tokens, available, prompt_length, self.context_window,
+                    )
+                    effective_max_tokens = available
+
         # Sample from the model
         sample_result = await self.sampling_client.sample_async(
             prompt=model_input,
             num_samples=1,
             sampling_params=tinker.SamplingParams(
                 stop=stop,
-                max_tokens=self.max_tokens,
+                max_tokens=effective_max_tokens,
                 temperature=self.temperature,
             ),
         )
