@@ -32,7 +32,7 @@ from tinker_cookbook.recipes.nemotron_cascade.rl.envs.workbench import Workbench
 from tinker_cookbook.recipes.nemotron_cascade.rl.envs.code_rl import CodeRLDatasetBuilder
 from tinker_cookbook.recipes.nemotron_cascade.rl.envs.swe_agentless import SWERLDatasetBuilder
 from tinker_cookbook.recipes.nemotron_cascade.rl.envs.swe_agentic import SWEAgenticDatasetBuilder
-from tinker_cookbook.rl.train import AsyncConfig, Config, StreamMinibatchConfig, main
+from tinker_cookbook.rl.train import AsyncConfig, Config, KLReferenceConfig, StreamMinibatchConfig, main
 from tinker_cookbook.rl.types import RLDatasetBuilder
 
 logger = logging.getLogger(__name__)
@@ -235,6 +235,11 @@ async def cli_main(cli_config: CLIConfig):
         load_checkpoint_path=cli_config.load_checkpoint_path,
         compute_post_kl=cli_config.compute_post_kl,
         kl_penalty_coef=cli_config.kl_penalty_coef,
+        kl_reference_config=(
+            KLReferenceConfig(base_model=cli_config.model_name.split(":peft:")[0])
+            if cli_config.kl_penalty_coef > 0
+            else None
+        ),
         num_substeps=cli_config.num_substeps,
         eval_every=cli_config.eval_every,
         save_every=cli_config.save_every,
