@@ -19,7 +19,8 @@
         "./skills/tinker-sft",
         "./skills/tinker-rl",
         "./skills/tinker-preferences",
-        "./skills/tinker-ops"
+        "./skills/tinker-ops",
+        "./skills/tinker-debug"
       ]
     },
     {
