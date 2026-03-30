@@ -39,10 +39,14 @@ Design:
 from tinker_cookbook.eval.benchmarks._runner import (
     BenchmarkConfig,
     BenchmarkResult,
+    load_result,
+    load_summary,
+    load_trajectories,
+    print_trajectory,
     run_benchmark,
     run_benchmarks,
 )
-from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder
+from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, StoredTrajectory
 
 REGISTRY: dict[str, BenchmarkBuilder] = {}
 """Global registry of available benchmarks. Populated by benchmark modules."""
@@ -55,11 +59,20 @@ def register(builder: BenchmarkBuilder) -> BenchmarkBuilder:
 
 
 __all__ = [
+    # Types
     "BenchmarkBuilder",
     "BenchmarkConfig",
     "BenchmarkResult",
+    "StoredTrajectory",
+    # Registry
     "REGISTRY",
     "register",
+    # Running
     "run_benchmark",
     "run_benchmarks",
+    # Loading / viewing results
+    "load_result",
+    "load_trajectories",
+    "load_summary",
+    "print_trajectory",
 ]

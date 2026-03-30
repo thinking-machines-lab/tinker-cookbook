@@ -391,3 +391,124 @@ async def run_benchmarks(
         logger.info(f"  {name:20s} {r.score:.3f} ({r.num_correct}/{r.num_examples})")
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Result loading — for post-hoc analysis and trajectory browsing
+# ---------------------------------------------------------------------------
+
+
+def load_result(save_dir: str, benchmark_name: str) -> BenchmarkResult | None:
+    """Load a saved BenchmarkResult from disk.
+
+    Args:
+        save_dir: Directory passed as ``BenchmarkConfig.save_dir``.
+        benchmark_name: Benchmark name (e.g. ``"gsm8k"``).
+
+    Returns:
+        BenchmarkResult or None if not found.
+    """
+    path = Path(save_dir) / benchmark_name / "result.json"
+    if not path.exists():
+        return None
+    with open(path) as f:
+        d = json.load(f)
+    return BenchmarkResult(**d)
+
+
+def load_trajectories(
+    save_dir: str,
+    benchmark_name: str,
+    correct_only: bool = False,
+    incorrect_only: bool = False,
+    errors_only: bool = False,
+) -> list[StoredTrajectory]:
+    """Load stored trajectories from disk with optional filtering.
+
+    Args:
+        save_dir: Directory passed as ``BenchmarkConfig.save_dir``.
+        benchmark_name: Benchmark name (e.g. ``"gsm8k"``).
+        correct_only: If True, return only trajectories with reward > 0.
+        incorrect_only: If True, return only trajectories with reward == 0 and no error.
+        errors_only: If True, return only trajectories with an error.
+
+    Returns:
+        List of StoredTrajectory objects.
+
+    Example::
+
+        # Browse incorrect examples
+        wrong = load_trajectories("evals/step500", "gsm8k", incorrect_only=True)
+        for t in wrong[:5]:
+            print(f"Q: {t.logs.get('input', t.turns[0].content[:100])}")
+            print(f"Expected: {t.logs.get('expected')}")
+            print(f"Got: {t.logs.get('extracted')}")
+            print()
+    """
+    path = Path(save_dir) / benchmark_name / "trajectories.jsonl"
+    if not path.exists():
+        return []
+
+    trajectories = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            t = StoredTrajectory.from_dict(json.loads(line))
+            if correct_only and t.reward <= 0:
+                continue
+            if incorrect_only and (t.reward > 0 or t.error is not None):
+                continue
+            if errors_only and t.error is None:
+                continue
+            trajectories.append(t)
+
+    return trajectories
+
+
+def load_summary(save_dir: str) -> dict[str, dict]:
+    """Load the combined summary across all benchmarks.
+
+    Args:
+        save_dir: Directory passed as ``BenchmarkConfig.save_dir``.
+
+    Returns:
+        Dict mapping benchmark name to score/count info.
+
+    Example::
+
+        summary = load_summary("evals/step500")
+        for name, info in summary.items():
+            print(f"{name}: {info['score']:.1%}")
+    """
+    path = Path(save_dir) / "summary.json"
+    if not path.exists():
+        return {}
+    with open(path) as f:
+        return json.load(f)
+
+
+def print_trajectory(traj: StoredTrajectory) -> None:
+    """Pretty-print a trajectory to the terminal.
+
+    Args:
+        traj: A StoredTrajectory to display.
+    """
+    reward_str = f"reward={traj.reward:.2f}"
+    if traj.error:
+        reward_str += f" ERROR: {traj.error}"
+    print(f"--- [{traj.benchmark}#{traj.idx}] {reward_str} ({traj.time_seconds:.1f}s) ---")
+
+    for turn in traj.turns:
+        role_color = {"user": ">>", "assistant": "<<", "environment": "  ", "grader": "##"}.get(
+            turn.role, "??"
+        )
+        content = turn.content
+        if len(content) > 500:
+            content = content[:500] + f"... ({len(content)} chars)"
+        print(f"  {role_color} [{turn.role}] {content}")
+
+    if traj.logs:
+        print(f"  Logs: {traj.logs}")
+    print()
