@@ -45,28 +45,26 @@ def _(mo):
 
 @app.cell
 async def _():
-    import numpy as np
-
     import tinker
+    from tinker_cookbook import renderers
+    from tinker_cookbook.supervised.data import conversation_to_datum
+    from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-    BASE_MODEL = "meta-llama/Llama-3.2-1B"
+    BASE_MODEL = "Qwen/Qwen3.5-4B"
 
     service_client = tinker.ServiceClient()
     training_client = await service_client.create_lora_training_client_async(
         base_model=BASE_MODEL, rank=16
     )
-    _tokenizer = training_client.get_tokenizer()
 
-    # Build a minimal training example (just a short sequence)
-    _tokens = _tokenizer.encode("The capital of France is Paris")
-    _n = len(_tokens)
-    _datum = tinker.Datum(
-        model_input=tinker.ModelInput.from_ints(_tokens[:-1]),
-        loss_fn_inputs={
-            "target_tokens": np.array(_tokens[1:]),
-            "weights": np.ones(_n - 1),
-        },
-    )
+    # Build a minimal training example
+    _tokenizer = get_tokenizer(BASE_MODEL)
+    _renderer = renderers.get_renderer("qwen3", _tokenizer)
+    _messages = [
+        {"role": "user", "content": "What is Tinker?"},
+        {"role": "assistant", "content": "Tinker is a cloud training API for LLM fine-tuning."},
+    ]
+    _datum = conversation_to_datum(_messages, _renderer, max_length=512)
 
     # One training step + save
     _fwd = await training_client.forward_backward_async([_datum], loss_fn="cross_entropy")
@@ -75,10 +73,10 @@ async def _():
     await _opt.result_async()
 
     _save_result = training_client.save_weights_for_sampler(name="export-tutorial")
-    _sampler_path = _save_result.result().tinker_path
+    sampler_path = _save_result.result().path
     print(f"Base model:  {BASE_MODEL}")
-    print(f"Checkpoint:  {_sampler_path}")
-    return BASE_MODEL, _sampler_path, service_client, training_client
+    print(f"Checkpoint:  {sampler_path}")
+    return BASE_MODEL, sampler_path, service_client, training_client
 
 
 @app.cell(hide_code=True)
@@ -92,11 +90,11 @@ def _(mo):
 
 
 @app.cell
-def _(_sampler_path):
+def _(sampler_path):
     from tinker_cookbook import weights
 
     adapter_dir = weights.download(
-        tinker_path=_sampler_path,
+        tinker_path=sampler_path,
         output_dir="/tmp/tinker-export-tutorial/adapter",
     )
     print(f"Adapter downloaded to: {adapter_dir}")
@@ -149,24 +147,35 @@ def _(OUTPUT_PATH):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Step 4: Verify with transformers
+    ## Step 4: Verify the output
 
-    Load the merged model with `transformers` to confirm it works. You can now use this model with vLLM, SGLang, TGI, or any HuggingFace-compatible framework.
+    The merged model is a standard HuggingFace model — you can load it with `transformers`, serve it with vLLM, or deploy with any HF-compatible framework:
+
+    ```python
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained("./merged_model")
+    model = AutoModelForCausalLM.from_pretrained("./merged_model", device_map="auto")
+
+    inputs = tokenizer("The capital of France is", return_tensors="pt").to(model.device)
+    output = model.generate(**inputs, max_new_tokens=20)
+    print(tokenizer.decode(output[0], skip_special_tokens=True))
+    ```
     """)
     return
 
 
 @app.cell
 def _(OUTPUT_PATH):
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    import json
 
-    _tokenizer = AutoTokenizer.from_pretrained(OUTPUT_PATH)
-    _model = AutoModelForCausalLM.from_pretrained(OUTPUT_PATH, device_map="cpu")
-
-    # Quick smoke test
-    _inputs = _tokenizer("The capital of France is", return_tensors="pt")
-    _output = _model.generate(**_inputs, max_new_tokens=20)
-    print(_tokenizer.decode(_output[0], skip_special_tokens=True))
+    # Verify the config is valid
+    with open(f"{OUTPUT_PATH}/config.json") as _f:
+        _config = json.load(_f)
+    print(f"Model type:      {_config.get('model_type', 'unknown')}")
+    print(f"Hidden size:     {_config.get('hidden_size', 'unknown')}")
+    print(f"Num layers:      {_config.get('num_hidden_layers', 'unknown')}")
+    print(f"Vocab size:      {_config.get('vocab_size', 'unknown')}")
     return
 
 

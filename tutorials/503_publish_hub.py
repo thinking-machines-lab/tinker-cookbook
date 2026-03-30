@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 05-3: Publish to HuggingFace Hub
+    # Tutorial: Publish to HuggingFace Hub
 
     Once you have a merged model or PEFT adapter on disk, you can upload it to HuggingFace Hub for sharing, deployment, or version control.
 
@@ -35,21 +35,18 @@ def _(mo):
     ## Basic publish
 
     The simplest case -- push a model directory to a Hub repository. Repositories are created as **private** by default.
-    """)
-    return
 
-
-@app.cell
-def _():
+    ```python
     from tinker_cookbook import weights
 
-    # Publish a merged model (from the Export HF tutorial)
     url = weights.publish_to_hf_hub(
         model_path="./merged_model",
         repo_id="my-org/my-finetuned-qwen3",
     )
     print(f"Published to: {url}")
-    return (weights,)
+    ```
+    """)
+    return
 
 
 @app.cell(hide_code=True)
@@ -63,24 +60,22 @@ def _(mo):
 
 
 @app.cell
-def _(weights):
+def _():
     from tinker_cookbook.weights import ModelCardConfig
 
     card_config = ModelCardConfig(
-        base_model="Qwen/Qwen3-8B",
+        base_model="Qwen/Qwen3.5-4B",
         datasets=["my-org/my-sft-dataset"],
         tags=["sft", "chat"],
         license="apache-2.0",
         language=["en"],
     )
 
-    url_with_card = weights.publish_to_hf_hub(
-        model_path="./merged_model",
-        repo_id="my-org/my-finetuned-qwen3",
-        model_card=card_config,
-    )
-    print(f"Published with model card: {url_with_card}")
-    return card_config, ModelCardConfig
+    print("Model card config:")
+    print(f"  base_model: {card_config.base_model}")
+    print(f"  tags:       {card_config.tags}")
+    print(f"  license:    {card_config.license}")
+    return (ModelCardConfig, card_config)
 
 
 @app.cell(hide_code=True)
@@ -97,40 +92,48 @@ def _(mo):
 def _(card_config):
     from tinker_cookbook.weights import generate_model_card
 
-    card = generate_model_card(
+    _card = generate_model_card(
         config=card_config,
         repo_id="my-org/my-finetuned-qwen3",
-        model_path="./merged_model",  # auto-detects merged vs adapter
     )
-    print(str(card))
+    print(str(_card))
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ## Publishing with a model card
+
+    Pass the config to `publish_to_hf_hub` and the model card is created automatically:
+
+    ```python
+    url = weights.publish_to_hf_hub(
+        model_path="./merged_model",
+        repo_id="my-org/my-finetuned-qwen3",
+        model_card=card_config,
+    )
+    ```
+
     ## Publishing a PEFT adapter
 
-    The same `publish_to_hf_hub` works for adapter directories too. When `model_path` contains `adapter_config.json`, the model card auto-detects the format and adjusts tags and usage snippets accordingly.
-    """)
-    return
+    The same `publish_to_hf_hub` works for adapter directories too. When `model_path` contains `adapter_config.json`, the model card auto-detects the format.
 
-
-@app.cell
-def _(ModelCardConfig, weights):
+    ```python
     adapter_card = ModelCardConfig(
-        base_model="Qwen/Qwen3-8B",
+        base_model="Qwen/Qwen3.5-4B",
         tags=["sft"],
         license="apache-2.0",
     )
 
-    url_adapter = weights.publish_to_hf_hub(
-        model_path="./peft_adapter",  # from the Build LoRA Adapter tutorial
+    url = weights.publish_to_hf_hub(
+        model_path="./peft_adapter",
         repo_id="my-org/my-qwen3-lora",
         model_card=adapter_card,
         private=False,  # make public
     )
-    print(f"Published adapter: {url_adapter}")
+    ```
+    """)
     return
 
 
@@ -166,7 +169,6 @@ def _(mo):
 
     - **[Export a Merged HuggingFace Model](export-hf.md)** -- Merge LoRA into a standalone model
     - **[Build a PEFT LoRA Adapter](lora-adapter.md)** -- Convert to PEFT format for serving
-    - **[weights module docs](https://github.com/thinking-machines-lab/tinker-cookbook)** -- Full API reference
     """)
     return
 
