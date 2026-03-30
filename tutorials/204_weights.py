@@ -317,34 +317,11 @@ def _(mo):
     mo.md(r"""
     ### After downloading
 
-    Once you have the adapter files locally, you can:
+    Once you have the adapter files locally, see the deployment tutorials for next steps:
 
-    1. **Merge into a full HuggingFace model** for standalone deployment:
-    ```python
-    weights.build_hf_model(
-        base_model="Qwen/Qwen3-4B-Instruct-2507",
-        adapter_path=adapter_dir,
-        output_path="./merged_model",
-    )
-    ```
-
-    2. **Convert to PEFT format** for serving with vLLM or SGLang:
-    ```python
-    weights.build_lora_adapter(
-        base_model="Qwen/Qwen3-4B-Instruct-2507",
-        adapter_path=adapter_dir,
-        output_path="./peft_adapter",
-    )
-    # Then: vllm serve Qwen/Qwen3-4B-Instruct-2507 --lora-modules my_model=./peft_adapter
-    ```
-
-    3. **Publish to HuggingFace Hub**:
-    ```python
-    weights.publish_to_hf_hub(
-        model_path="./merged_model",
-        repo_id="your-username/my-finetuned-model",
-    )
-    ```
+    - **Export a Merged HuggingFace Model** -- merge LoRA into a standalone model with `weights.build_hf_model()`
+    - **Build a PEFT LoRA Adapter** -- convert to PEFT format for serving with vLLM or SGLang via `weights.build_lora_adapter()`
+    - **Publish to HuggingFace Hub** -- upload models with custom model cards via `weights.publish_to_hf_hub()`
     """)
     return
 

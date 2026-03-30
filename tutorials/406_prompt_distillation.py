@@ -139,26 +139,26 @@ def _(mo):
 
 
 @app.cell
-def _(QUESTIONS, renderer, teacher_completions, tinker):
+def _(QUESTIONS, renderer, teacher_completions):
+    from tinker_cookbook.supervised.data import conversation_to_datum
+
     # Build supervised training data: student sees only user message + teacher completion
     student_data = []
-    for question, completion in zip(QUESTIONS, teacher_completions):
+    for _question, _completion in zip(QUESTIONS, teacher_completions):
         # Student conversation: NO system prompt
-        student_messages = [
-            {"role": "user", "content": question},
-            {"role": "assistant", "content": completion},
+        _student_messages = [
+            {"role": "user", "content": _question},
+            {"role": "assistant", "content": _completion},
         ]
 
-        model_input, weights = renderer.build_supervised_example(student_messages)
-        datum = tinker.Datum(
-            model_input=model_input,
-            loss_fn_inputs={"weights": tinker.TensorData.from_list(weights.tolist())},
-        )
+        datum = conversation_to_datum(_student_messages, renderer, max_length=512)
         student_data.append(datum)
 
     print(f"Built {len(student_data)} training examples")
     for i, datum in enumerate(student_data):
-        n_train_tokens = sum(1 for w in datum.loss_fn_inputs["weights"].data if w > 0)
+        _w = datum.loss_fn_inputs["weights"]
+        _w_list = _w.tolist() if hasattr(_w, "tolist") else list(_w)
+        n_train_tokens = sum(1 for w in _w_list if w > 0)
         print(f"  Example {i}: {datum.model_input.length} total tokens, {n_train_tokens} trained tokens")
     return (student_data,)
 
@@ -212,10 +212,10 @@ async def _(QUESTIONS, renderer, tinker, tokenizer, training_client, types):
 
     # Compare: student (no system prompt) vs teacher behavior
     print("=" * 60)
-    for question in QUESTIONS[:2]:
+    for _question in QUESTIONS[:2]:
         # Student: no system prompt
-        student_messages = [{"role": "user", "content": question}]
-        student_prompt = renderer.build_generation_prompt(student_messages)
+        _student_messages = [{"role": "user", "content": _question}]
+        student_prompt = renderer.build_generation_prompt(_student_messages)
         student_result = await student_client.sample_async(
             prompt=student_prompt,
             sampling_params=types.SamplingParams(max_tokens=200, temperature=0.7),
@@ -223,7 +223,7 @@ async def _(QUESTIONS, renderer, tinker, tokenizer, training_client, types):
         )
         student_text = tokenizer.decode(student_result.sequences[0].tokens)
 
-        print(f"Q: {question}")
+        print(f"Q: {_question}")
         print(f"Student (no system prompt): {student_text[:200]}")
         print("-" * 60)
     return (student_client,)

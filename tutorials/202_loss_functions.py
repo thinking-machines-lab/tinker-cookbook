@@ -146,24 +146,24 @@ async def _(rl_datum, sft_datum, training_client):
     # Cross-entropy (SFT)
     ce_future = await training_client.forward_backward_async([sft_datum], loss_fn="cross_entropy")
     ce_result = await ce_future.result_async()
-    print(f"cross_entropy      loss:sum = {ce_result.diagnostics['loss:sum']:.4f}")
+    print(f"cross_entropy      loss:sum = {ce_result.metrics['loss:sum']:.4f}")
 
     # Importance sampling (REINFORCE with IS correction)
     is_future = await training_client.forward_backward_async(
         [rl_datum], loss_fn="importance_sampling"
     )
     is_result = await is_future.result_async()
-    print(f"importance_sampling loss:sum = {is_result.diagnostics['loss:sum']:.4f}")
+    print(f"importance_sampling loss:sum = {is_result.metrics['loss:sum']:.4f}")
 
     # PPO (clipped objective)
     ppo_future = await training_client.forward_backward_async([rl_datum], loss_fn="ppo")
     ppo_result = await ppo_future.result_async()
-    print(f"ppo                loss:sum = {ppo_result.diagnostics['loss:sum']:.4f}")
+    print(f"ppo                loss:sum = {ppo_result.metrics['loss:sum']:.4f}")
 
     # CISPO (clipped ratio weighting the log-prob)
     cispo_future = await training_client.forward_backward_async([rl_datum], loss_fn="cispo")
     cispo_result = await cispo_future.result_async()
-    print(f"cispo              loss:sum = {cispo_result.diagnostics['loss:sum']:.4f}")
+    print(f"cispo              loss:sum = {cispo_result.metrics['loss:sum']:.4f}")
     return ce_result, cispo_result, is_result, ppo_result
 
 
@@ -172,7 +172,7 @@ def _(mo):
     mo.md(r"""
     ## Inspect the outputs
 
-    Each result contains `loss_fn_outputs` with per-token logprobs, and `diagnostics` with the scalar loss. The RL losses also return the probability ratio between the training and sampling policies.
+    Each result contains `loss_fn_outputs` with per-token logprobs, and `metrics` with the scalar loss. The RL losses also return the probability ratio between the training and sampling policies.
     """)
     return
 
@@ -208,7 +208,7 @@ async def _(rl_datum, training_client):
         loss_fn_config={"clip_low_threshold": 0.9, "clip_high_threshold": 1.1},
     )
     ppo_tight = await ppo_tight_future.result_async()
-    print(f"PPO (tight clip) loss:sum = {ppo_tight.diagnostics['loss:sum']:.4f}")
+    print(f"PPO (tight clip) loss:sum = {ppo_tight.metrics['loss:sum']:.4f}")
 
     # Wider clipping (more like vanilla IS)
     ppo_wide_future = await training_client.forward_backward_async(
@@ -217,7 +217,7 @@ async def _(rl_datum, training_client):
         loss_fn_config={"clip_low_threshold": 0.5, "clip_high_threshold": 1.5},
     )
     ppo_wide = await ppo_wide_future.result_async()
-    print(f"PPO (wide clip)  loss:sum = {ppo_wide.diagnostics['loss:sum']:.4f}")
+    print(f"PPO (wide clip)  loss:sum = {ppo_wide.metrics['loss:sum']:.4f}")
     return ppo_tight, ppo_wide
 
 

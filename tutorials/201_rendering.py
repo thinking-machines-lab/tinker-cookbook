@@ -202,7 +202,7 @@ def _(messages, renderer, tokenizer):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    Only the final assistant message has weight 1 (completion). Everything else -- system prompt, user messages, and even earlier assistant messages -- has weight 0. The model learns to *continue* conversations, not just answer isolated questions.
+    Only the final assistant message has weight 1 (completion). Everything else -- system prompt, user messages, and even earlier assistant messages -- has weight 0. This way the loss only encourages the model to produce the correct response, without overfitting to the prompt content (system instructions, questions) which the model should not need to memorize.
     """)
     return
 
