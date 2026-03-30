@@ -26,6 +26,7 @@ from tinker_cookbook.eval.benchmarks._types import (
     StoredTrajectory,
     StoredTurn,
 )
+from tinker_cookbook.exceptions import BenchmarkNotFoundError, EvalTimeoutError
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.rollouts import do_single_rollout
 from tinker_cookbook.rl.types import Trajectory
@@ -197,7 +198,7 @@ async def run_benchmark(
     if isinstance(benchmark, str):
         _ensure_registered(benchmark)
         if benchmark not in REGISTRY:
-            raise KeyError(
+            raise BenchmarkNotFoundError(
                 f"Unknown benchmark '{benchmark}'. Available: {sorted(REGISTRY.keys())}. "
                 f"Make sure the benchmark module exists at tinker_cookbook.eval.benchmarks.{benchmark}"
             )
@@ -279,7 +280,7 @@ async def run_benchmark(
                     )
                     await _save_trajectory(config.save_dir, benchmark.name, stored)
 
-            except asyncio.TimeoutError:
+            except (asyncio.TimeoutError, EvalTimeoutError):
                 elapsed = time.monotonic() - t_start
                 logger.warning(
                     f"  {benchmark.name}[{idx}] timed out after {elapsed:.0f}s "
