@@ -16,7 +16,7 @@ from tinker_cookbook.rl.types import Env
 class BenchmarkConfig:
     """Runtime configuration for benchmark evaluation.
 
-    Controls concurrency, limits, storage, and generation parameters.
+    Controls concurrency, limits, storage, timeouts, and generation parameters.
     """
 
     # Limits
@@ -28,6 +28,14 @@ class BenchmarkConfig:
     """Maximum concurrent rollouts for single-turn benchmarks."""
     agent_concurrency: int = 8
     """Maximum concurrent rollouts for multi-turn/sandbox benchmarks (heavier)."""
+
+    # Timeouts
+    timeout_seconds: float = 300
+    """Per-example timeout in seconds. Default 5 min for single-turn.
+    Multi-turn/sandbox benchmarks should increase this (e.g., 1800 for 30 min).
+    Timed-out examples are recorded as failures with ``error="timeout"``
+    and ``reward=0``. They count toward ``num_errors`` in BenchmarkResult,
+    not silently dropped."""
 
     # Generation
     max_tokens: int = 32768
@@ -172,6 +180,15 @@ class BenchmarkBuilder(ABC):
 
     multi_turn: bool = False
     """If True, uses agent_concurrency (lower) instead of concurrency."""
+
+    recommended_timeout: float = 300
+    """Recommended per-example timeout in seconds. Users can override via
+    ``BenchmarkConfig.timeout_seconds``. Guidelines:
+    - Single-turn programmatic grading (gsm8k, mmlu): 60-300s
+    - Single-turn with LLM judge (arena_hard): 300-600s
+    - Code execution (mbpp, livecodebench): 300-600s
+    - Multi-turn agent (terminal_bench, tau2): 600-1800s
+    """
 
     @abstractmethod
     def make_envs(

@@ -154,6 +154,20 @@ def _save_summary(save_dir: str, results: dict[str, BenchmarkResult]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _ensure_registered(name: str) -> None:
+    """Auto-import a benchmark module to populate REGISTRY if needed."""
+    from tinker_cookbook.eval.benchmarks import REGISTRY
+
+    if name in REGISTRY:
+        return
+    # Try importing the benchmark module by name
+    import importlib
+    try:
+        importlib.import_module(f"tinker_cookbook.eval.benchmarks.{name}")
+    except ImportError:
+        pass  # Will raise KeyError later when accessing REGISTRY[name]
+
+
 async def run_benchmark(
     benchmark: BenchmarkBuilder | str,
     sampling_client: tinker.SamplingClient,
@@ -181,6 +195,12 @@ async def run_benchmark(
     from tinker_cookbook.eval.benchmarks import REGISTRY
 
     if isinstance(benchmark, str):
+        _ensure_registered(benchmark)
+        if benchmark not in REGISTRY:
+            raise KeyError(
+                f"Unknown benchmark '{benchmark}'. Available: {sorted(REGISTRY.keys())}. "
+                f"Make sure the benchmark module exists at tinker_cookbook.eval.benchmarks.{benchmark}"
+            )
         benchmark = REGISTRY[benchmark]
 
     t0 = time.monotonic()
@@ -236,7 +256,11 @@ async def run_benchmark(
         async with sem:
             t_start = time.monotonic()
             try:
-                trajectory = await do_single_rollout(policy, env)
+                # Apply per-example timeout
+                trajectory = await asyncio.wait_for(
+                    do_single_rollout(policy, env),
+                    timeout=config.timeout_seconds,
+                )
                 elapsed = time.monotonic() - t_start
 
                 total_reward = sum(t.reward for t in trajectory.transitions)
@@ -255,22 +279,33 @@ async def run_benchmark(
                     )
                     await _save_trajectory(config.save_dir, benchmark.name, stored)
 
+            except asyncio.TimeoutError:
+                elapsed = time.monotonic() - t_start
+                logger.warning(
+                    f"  {benchmark.name}[{idx}] timed out after {elapsed:.0f}s "
+                    f"(limit={config.timeout_seconds}s)"
+                )
+                num_errors += 1
+                rewards[idx] = 0.0  # Timeout = scored failure, reward=0
+
+                if config.save_dir:
+                    await _save_trajectory(config.save_dir, benchmark.name, StoredTrajectory(
+                        idx=idx, benchmark=benchmark.name, turns=[],
+                        reward=0.0, error=f"timeout ({config.timeout_seconds}s)",
+                        time_seconds=elapsed,
+                    ))
+
             except Exception as e:
                 elapsed = time.monotonic() - t_start
                 logger.warning(f"  {benchmark.name}[{idx}] failed ({elapsed:.1f}s): {e}")
                 num_errors += 1
+                rewards[idx] = 0.0  # Error = scored failure, reward=0
 
-                # Save error trajectory
                 if config.save_dir:
-                    error_traj = StoredTrajectory(
-                        idx=idx,
-                        benchmark=benchmark.name,
-                        turns=[],
-                        reward=0.0,
-                        error=str(e),
-                        time_seconds=elapsed,
-                    )
-                    await _save_trajectory(config.save_dir, benchmark.name, error_traj)
+                    await _save_trajectory(config.save_dir, benchmark.name, StoredTrajectory(
+                        idx=idx, benchmark=benchmark.name, turns=[],
+                        reward=0.0, error=str(e), time_seconds=elapsed,
+                    ))
 
             num_completed += 1
             if num_completed % max(1, total_to_run // 10) == 0 or num_completed == total_to_run:
