@@ -49,21 +49,22 @@ class TestSkillStructure:
             )
 
     def test_skill_name_matches_directory(self):
-        """The name field in SKILL.md frontmatter must match the directory name."""
+        """The name field in SKILL.md frontmatter must match the directory name sans tinker- prefix."""
         for skill in _all_skill_dirs():
             text = (SKILLS_DIR / skill / "SKILL.md").read_text()
             fm = _frontmatter(text)
             match = re.search(r"^name:\s*(.+)$", fm, re.MULTILINE)
             assert match, f"{skill}/SKILL.md is missing a name field in frontmatter"
-            assert match.group(1).strip() == skill, (
-                f"{skill}/SKILL.md has name '{match.group(1).strip()}' but directory is '{skill}'"
+            expected_name = skill.removeprefix("tinker-")
+            assert match.group(1).strip() == expected_name, (
+                f"{skill}/SKILL.md has name '{match.group(1).strip()}' but expected '{expected_name}'"
             )
 
     def test_skills_and_marketplace_match(self):
         """Skills on disk and in marketplace.json must be the same set.
 
         If a skill exists on disk but not in marketplace.json, add it to
-        the appropriate plugin bundle (tinker-cookbook or tinker-dev).
+        the tinker plugin bundle in marketplace.json.
         """
         on_disk = _all_skill_dirs()
         in_marketplace = _marketplace_skills()

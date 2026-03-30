@@ -1,5 +1,5 @@
 ---
-name: tinker-debug
+name: debug
 description: Diagnose training issues with Tinker — slow steps, hanging sessions, output mismatches, error messages, renderer problems, and deployment issues. Use this skill whenever a user reports that training is slow, steps take too long, sessions are hanging, model outputs differ between Tinker and external engines (vLLM, SGLang), they get a confusing error message, training quality is poor (high KL, bad outputs), or they suspect something is wrong. Also trigger when users ask "is this a Tinker issue or my issue?", "is Tinker down?", report unexpected wait times, see output quality regressions, get opaque errors, or want to profile/debug their training or deployment pipeline. This skill walks through systematic triage to determine root cause.
 ---
 

@@ -1,5 +1,5 @@
 ---
-name: tinker-ops
+name: ops
 description: Training lifecycle operations — checkpointing, weight export, logging/metrics analysis, and evaluation. Use when the user asks about saving/loading checkpoints, exporting weights to HuggingFace, reading training logs, parsing metrics, debugging training runs, evaluating models, or understanding training outputs.
 ---
 

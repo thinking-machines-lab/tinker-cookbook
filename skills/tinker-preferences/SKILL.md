@@ -1,5 +1,5 @@
 ---
-name: tinker-preferences
+name: preferences
 description: Set up and run preference-based training — DPO (Direct Preference Optimization) and RLHF (RL from Human Feedback) pipelines using the Tinker API. Use when the user wants to train with preference data, chosen/rejected pairs, DPO, reward models, RLHF, or human feedback alignment.
 ---
 

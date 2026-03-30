@@ -1,5 +1,5 @@
 ---
-name: tinker-dev
+name: dev
 description: Contributing to tinker-cookbook — development setup, code style, creating new recipes, testing, CI, and skill management. Use when the user wants to contribute code, create a new recipe, run tests, understand CI pipelines, or manage skills in this repo.
 ---
 

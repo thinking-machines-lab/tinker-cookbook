@@ -1,5 +1,5 @@
 ---
-name: tinker-rl
+name: rl
 description: Set up and run reinforcement learning — GRPO with verifiable rewards, custom RL environments, and multi-turn interactive training using the Tinker API. Use when the user wants to do RL training, GRPO, reward-based optimization, custom environments, multi-turn RL, tool-use training, or agentic training — even if they don't say "RL" explicitly.
 ---
 
