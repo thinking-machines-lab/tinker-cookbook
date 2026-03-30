@@ -47,6 +47,10 @@ class CLIConfig:
     lora_rank: int = 32
     renderer_name: str | None = None
     load_checkpoint_path: str | None = None
+    # TODO: warm_start support requires core library change to add
+    # load_checkpoint_with_optimizer_path to rl.train.Config.
+    # For now, all RL stages use cold start (fresh optimizer).
+    # Paper likely uses warm start between RL stages.
 
     # Environment configuration
     env: str = "if_rl"  # Options: if_rl, longctx_rl, mcqa, structured_output, workbench, swe_rl, swe_agentic, rlhf, code_rl
