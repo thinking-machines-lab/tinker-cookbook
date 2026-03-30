@@ -218,3 +218,47 @@ class TestMCQExtraction:
         result = _extract_action(text)
         assert result is not None
         assert result["action"] == "refund"
+
+
+class TestGradingConsistency:
+    """Validate that new framework grading matches recipe implementation."""
+
+    def test_gsm8k_extraction_matches_recipe(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks._common import extract_gsm8k_answer as old
+        from tinker_cookbook.eval.benchmarks.gsm8k import extract_gsm8k_answer as new
+
+        cases = [
+            "The answer is 42",
+            "\\boxed{123}",
+            "#### 7",
+            "Result is 3.14159",
+            "99 + 1 = 100",
+        ]
+        for resp in cases:
+            assert old(resp) == new(resp), f"Mismatch on: {resp}"
+
+    def test_gsm8k_check_matches_recipe(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.gsm8k import _check_gsm8k as old
+        from tinker_cookbook.eval.benchmarks.gsm8k import check_gsm8k as new
+
+        cases = [
+            ("The answer is 42", "42", True),
+            ("\\boxed{42}", "42", True),
+            ("The answer is 43", "42", False),
+            ("#### 0", "0", True),
+        ]
+        for resp, expected, should_be in cases:
+            assert old(resp, expected) == new(resp, expected), f"Mismatch: {resp} vs {expected}"
+
+    def test_mcq_extraction_matches_recipe(self):
+        from tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks._common import extract_mcq_answer as old
+        from tinker_cookbook.eval.benchmarks.mmlu_pro import extract_mcq_answer as new
+
+        cases = [
+            "The answer is (B).",
+            "\\boxed{C}",
+            "I believe A is correct.",
+            "D",
+        ]
+        for resp in cases:
+            assert old(resp) == new(resp), f"Mismatch on: {resp}"
