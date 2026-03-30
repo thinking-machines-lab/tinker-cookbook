@@ -375,12 +375,8 @@ async def build_topk_distillation_datums(
                     continue
 
                 k_actual = len(filtered)
-                token_ids = torch.tensor(
-                    [tok_id for tok_id, _ in filtered], dtype=torch.long
-                )
-                logprobs = torch.tensor(
-                    [lp for _, lp in filtered], dtype=torch.float32
-                )
+                token_ids = torch.tensor([tok_id for tok_id, _ in filtered], dtype=torch.long)
+                logprobs = torch.tensor([lp for _, lp in filtered], dtype=torch.float32)
 
                 # Renormalize over top-K via logsumexp
                 logprobs -= torch.logsumexp(logprobs, dim=0)
@@ -415,6 +411,52 @@ async def build_topk_distillation_datums(
     return new_datums, metrics
 
 
+@trace.scope
+async def hybrid_train_step(
+    is_data_D: list[tinker.Datum],
+    topk_data_D: list[tinker.Datum],
+    ce_coef: float,
+    training_client: tinker.TrainingClient,
+    learning_rate: float,
+    metrics: dict[str, Any] | None = None,
+) -> None:
+    """Train with IS + top-K CE gradients in a single optimizer step.
+
+    Submits two ``forward_backward`` calls (importance_sampling for task learning,
+    cross_entropy for distribution matching) so gradients accumulate, then a
+    single ``optim_step`` applies the combined update.
+
+    The CE datums' weights are pre-scaled by ``ce_coef`` so the effective loss is
+    ``L = L_IS + ce_coef * L_CE``.
+    """
+    from tinker_cookbook.rl.train import _remove_mask
+
+    adam_params = tinker.AdamParams(learning_rate=learning_rate, beta1=0.9, beta2=0.95, eps=1e-8)
+
+    # Scale CE weights by ce_coef
+    if ce_coef != 1.0:
+        for datum in topk_data_D:
+            w = datum.loss_fn_inputs["weights"].to_torch() * ce_coef
+            datum.loss_fn_inputs["weights"] = tinker.TensorData.from_torch(w)
+
+    # Submit IS forward_backward
+    is_future = await training_client.forward_backward_async(
+        [_remove_mask(d) for d in is_data_D], loss_fn="importance_sampling"
+    )
+    # Submit CE forward_backward (gradients accumulate with IS)
+    ce_future = await training_client.forward_backward_async(topk_data_D, loss_fn="cross_entropy")
+    # Single optim step consumes accumulated gradients
+    optim_future = await training_client.optim_step_async(adam_params)
+
+    # Await results
+    await is_future.result_async()
+    await ce_future.result_async()
+    optim_result = await optim_future.result_async()
+
+    if metrics is not None and optim_result is not None and optim_result.metrics:
+        metrics.update(optim_result.metrics)
+
+
 @chz.chz
 class Config:
     """Configuration for SDFT training."""
@@ -433,6 +475,7 @@ class Config:
 
     # SDFT-specific
     topk: int = 20
+    ce_coef: float = 1.0
     demo_template: str = DEFAULT_DEMO_TEMPLATE
     system_prompt: str | None = None
     teacher_sync_every: int | None = None
@@ -609,10 +652,21 @@ async def main(
                 for question, golden_answer in zip(questions_P, golden_answers_P)
             ]
 
+            # Compute IS advantages (teacher_lp - student_lp)
+            async with trace.scope_span("compute_sdft_advantages"):
+                is_metrics = await compute_sdft_advantages(
+                    data_D,
+                    metadata_D,
+                    teacher_client,
+                    teacher_prompts_P,
+                    max_context_length=cfg.max_context_length,
+                )
+            metrics.update(is_metrics)
+
             if cfg.topk > 0:
-                # Top-K distillation: forward KL over top-K vocabulary
+                # Hybrid: IS (task learning) + top-K CE (distribution matching)
                 async with trace.scope_span("build_topk_distillation_datums"):
-                    train_datums, sdft_metrics = await build_topk_distillation_datums(
+                    topk_datums, topk_metrics = await build_topk_distillation_datums(
                         data_D,
                         metadata_D,
                         teacher_client,
@@ -621,32 +675,28 @@ async def main(
                         max_context_length=cfg.max_context_length,
                         vocab_size=len(tokenizer),
                     )
-                metrics.update(sdft_metrics)
-                loss_fn: LossFnType = "cross_entropy"
-            else:
-                # Fallback: per-token importance_sampling with advantage = teacher_lp - student_lp
-                async with trace.scope_span("compute_sdft_advantages"):
-                    sdft_metrics = await compute_sdft_advantages(
-                        data_D,
-                        metadata_D,
-                        teacher_client,
-                        teacher_prompts_P,
-                        max_context_length=cfg.max_context_length,
-                    )
-                metrics.update(sdft_metrics)
-                train_datums = data_D
-                loss_fn = cfg.loss_fn
+                metrics.update(topk_metrics)
 
-            # Train step
-            async with trace.scope_span("train"):
-                await train_step(
-                    data_D=train_datums,
-                    training_client=training_client,
-                    learning_rate=cfg.learning_rate,
-                    num_substeps=cfg.num_substeps,
-                    loss_fn=loss_fn,
-                    metrics=metrics,
-                )
+                async with trace.scope_span("train"):
+                    await hybrid_train_step(
+                        is_data_D=data_D,
+                        topk_data_D=topk_datums,
+                        ce_coef=cfg.ce_coef,
+                        training_client=training_client,
+                        learning_rate=cfg.learning_rate,
+                        metrics=metrics,
+                    )
+            else:
+                # IS only (old approach)
+                async with trace.scope_span("train"):
+                    await train_step(
+                        data_D=data_D,
+                        training_client=training_client,
+                        learning_rate=cfg.learning_rate,
+                        num_substeps=cfg.num_substeps,
+                        loss_fn=cfg.loss_fn,
+                        metrics=metrics,
+                    )
 
             # Refresh sampling client
             sampling_client, _ = await save_checkpoint_and_get_sampling_client(
