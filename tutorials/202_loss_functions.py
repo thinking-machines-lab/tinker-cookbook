@@ -243,21 +243,21 @@ def _(mo):
 
 @app.cell
 async def _(sft_datum, torch, training_client):
-    def entropy_penalty_loss(data, logprobs_list):
-        """Penalize low-confidence predictions: loss = -sum(logprobs^2)."""
+    def logprob_squared_loss(data, logprobs_list):
+        """Sum of squared target-token logprobs. Penalizes low-confidence predictions."""
         total_loss = torch.tensor(0.0)
         for logprobs in logprobs_list:
-            # Squaring logprobs penalizes tokens where the model is uncertain
-            # (logprobs close to 0 = high confidence, logprobs << 0 = low confidence)
+            # logprobs close to 0 = high confidence (small penalty)
+            # logprobs << 0 = low confidence (large penalty)
             total_loss = total_loss + (logprobs**2).sum()
-        return total_loss, {"entropy_penalty": total_loss.item()}
+        return total_loss, {"logprob_sq": total_loss.item()}
 
     custom_future = await training_client.forward_backward_custom_async(
-        [sft_datum], entropy_penalty_loss
+        [sft_datum], logprob_squared_loss
     )
     custom_result = await custom_future.result_async()
     print(f"Custom loss metrics: {custom_result.metrics}")
-    return custom_result, entropy_penalty_loss
+    return custom_result, logprob_squared_loss
 
 
 @app.cell(hide_code=True)
