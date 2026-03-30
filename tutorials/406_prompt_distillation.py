@@ -16,81 +16,130 @@ def _(mo):
     mo.md(r"""
     # Tutorial 14: Prompt Distillation
 
-    Teacher generates with a rich system prompt; student learns without it.
+    **Prompt distillation** (also called context distillation) transfers knowledge embedded in a system prompt into the model's weights. The idea:
 
-    **Context distillation** (also called prompt distillation) transfers knowledge embedded in a system prompt into the model's weights. The workflow:
+    1. **Teacher**: Generate labels using a detailed system prompt with classification rules
+    2. **Student**: Train on those labels but *without* the system prompt
 
-    1. **Teacher**: Generate high-quality completions using a detailed system prompt
-    2. **Student**: Train on those completions but *without* the system prompt
-
-    After training, the student behaves as if it had the system prompt, but without the inference-time cost of processing extra tokens.
+    After training, the student produces the same outputs as the teacher, but without the inference-time cost of processing the long prompt.
 
     ```
-    Teacher (inference):  [System: Be concise, use bullets...] + [User question] -> [Good answer]
-    Student (training):   [User question] -> [Good answer]   (learns the behavior)
-    Student (inference):  [User question] -> [Good answer]   (no system prompt needed)
+    Teacher (inference):  [System: 70 lines of rules] + [Text to classify] -> "Final Answer: en"
+    Student (training):   [Text to classify] -> "Final Answer: en"   (learns the mapping)
+    Student (inference):  [Text to classify] -> "Final Answer: en"   (no system prompt needed)
     ```
+
+    **Our task:** We use a language classification prompt -- a 70-line system prompt with script-based rules, Latin-script heuristics, and edge-case handling. The teacher classifies multilingual text into language codes (en, fr, es, zh, ar, etc.). The student learns to do the same classification with just the raw text as input.
     """)
     return
 
 
 @app.cell
 def _():
+    import re
+
     import tinker
     from tinker import types
 
     from tinker_cookbook import renderers
     from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-    return get_tokenizer, renderers, tinker, types
+    return get_tokenizer, re, renderers, tinker, types
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Step 1 -- Define teacher and student prompts
+    ## Step 1 -- The classification prompt
 
-    The teacher gets a rich system prompt that encodes the desired behavior. The student gets the same user messages but *without* the system prompt.
+    This is the teacher's system prompt -- a detailed set of rules for classifying text into one of 13 language codes. It handles script detection, Latin-script heuristics, mixed-language text, transliteration, and edge cases. At inference time, this prompt consumes hundreds of tokens per request.
     """)
     return
 
 
 @app.cell
 def _():
-    TEACHER_SYSTEM_PROMPT = """You are a precise, helpful assistant. Follow these rules:
-1. Always structure your response with a one-sentence summary first
-2. Use numbered steps for any process or procedure
-3. Include a concrete example for every concept
-4. Keep total response under 100 words
-5. End with a single actionable takeaway"""
+    CLASSIFICATION_PROMPT = """You are a precise language classifier.
 
-    # Example questions for distillation
-    QUESTIONS = [
-        "How do I make a good cup of coffee?",
-        "What is the Pythagorean theorem?",
-        "How do I write a for loop in Python?",
-        "What causes rainbows?",
-        "How do I negotiate a salary raise?",
-    ]
+Goal: Classify the language of the provided text into exactly one of these labels:
+ar (Arabic), de (German), el (Greek), en (English), es (Spanish), fr (French),
+hi (Hindi), ru (Russian), tr (Turkish), ur (Urdu), vi (Vietnamese),
+zh (Chinese - Simplified), ot (Other/Unknown).
 
-    print("Teacher system prompt:")
-    print(TEACHER_SYSTEM_PROMPT)
-    print(f"\nNumber of questions: {len(QUESTIONS)}")
-    return QUESTIONS, TEACHER_SYSTEM_PROMPT
+Instructions:
+1) Preprocess carefully (without changing the intended meaning):
+   - Trim whitespace.
+   - Ignore URLs, emails, file paths, hashtags, user handles, and emojis.
+   - Ignore numbers, math expressions, and standalone punctuation.
+   - If there is code, IGNORE code syntax and focus ONLY on human language in comments and string literals.
+   - If after ignoring the above there are no alphabetic letters left, output 'ot'.
+
+2) Script-based rules (highest priority):
+   - Devanagari script -> hi.
+   - Greek script -> el.
+   - Cyrillic script -> ru.
+   - Han characters -> zh.
+   - Arabic script -> ar vs ur (check for Urdu-specific letters).
+
+3) Latin-script heuristics:
+   - vi: Vietnamese-specific diacritics.
+   - tr: Turkish-specific letters and function words.
+   - de: umlauts or eszett and German function words.
+   - es: ñ, inverted punctuation, Spanish function words.
+   - fr: French diacritics and function words.
+   - en: default among Latin languages if strong evidence for others is absent.
+
+4) When in doubt, choose 'ot' rather than guessing.
+
+Output format:
+- Respond with EXACTLY one line: "Final Answer: xx"
+- Where xx is one of {ar, de, el, en, es, fr, hi, ru, tr, ur, vi, zh, ot} and nothing else.
+
+Text to classify:
+{text}"""
+
+    print(f"Classification prompt: {len(CLASSIFICATION_PROMPT)} characters")
+    print(f"(This is ~{len(CLASSIFICATION_PROMPT.split())} words the teacher sees per request)")
+    return (CLASSIFICATION_PROMPT,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Step 2 -- Generate teacher completions
+    ## Step 2 -- Sample teacher labels
 
-    We sample completions from the model *with* the system prompt. These become the training targets.
+    We pick a diverse set of multilingual sentences and ask the teacher to classify each one. The teacher sees the full system prompt; the student will only see the raw text.
     """)
     return
 
 
 @app.cell
-async def _(QUESTIONS, TEACHER_SYSTEM_PROMPT, get_tokenizer, renderers, tinker, types):
+def _():
+    # Diverse multilingual examples -- one per language
+    SENTENCES = [
+        ("And he said, Mama, I'm home.", "en"),
+        ("Et il a dit, maman, je suis à la maison.", "fr"),
+        ("Y él dijo: Mamá, estoy en casa.", "es"),
+        ("und er hat gesagt, Mama ich bin daheim.", "de"),
+        ("Ve Anne, evdeyim dedi.", "tr"),
+        ("Và anh ấy nói, Mẹ, con đã về nhà.", "vi"),
+        ("他说，妈妈，我回来了。", "zh"),
+        ("और उसने कहा, माँ, मैं घर आया हूं।", "hi"),
+        ("И он сказал: Мама, я дома.", "ru"),
+        ("Και είπε, Μαμά, έφτασα στο σπίτι.", "el"),
+        ("وقال، ماما، لقد عدت للمنزل.", "ar"),
+        ("اور اس نے کہا امّی، میں گھر آگیا ہوں۔", "ur"),
+    ]
+
+    print(f"Test sentences: {len(SENTENCES)} across {len(set(l for _, l in SENTENCES))} languages")
+    for _text, _label in SENTENCES[:4]:
+        print(f"  [{_label}] {_text[:50]}")
+    print(f"  ... and {len(SENTENCES) - 4} more")
+    return (SENTENCES,)
+
+
+@app.cell
+async def _(CLASSIFICATION_PROMPT, SENTENCES, get_tokenizer, re, renderers, tinker, types):
     MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
     tokenizer = get_tokenizer(MODEL_NAME)
     renderer = renderers.get_renderer("qwen3", tokenizer)
@@ -98,32 +147,34 @@ async def _(QUESTIONS, TEACHER_SYSTEM_PROMPT, get_tokenizer, renderers, tinker, 
     service_client = tinker.ServiceClient()
     sampling_client = await service_client.create_sampling_client_async(base_model=MODEL_NAME)
 
-    # Generate teacher completions with the rich system prompt
-    teacher_completions = []
-    for question in QUESTIONS:
-        teacher_messages = [
-            {"role": "system", "content": TEACHER_SYSTEM_PROMPT},
-            {"role": "user", "content": question},
+    # Generate teacher labels with the full classification prompt
+    teacher_labels = []
+    for _text, _expected in SENTENCES:
+        _teacher_messages = [
+            {"role": "system", "content": CLASSIFICATION_PROMPT},
+            {"role": "user", "content": _text},
         ]
-        prompt = renderer.build_generation_prompt(teacher_messages)
-        result = await sampling_client.sample_async(
-            prompt=prompt,
-            sampling_params=types.SamplingParams(max_tokens=200, temperature=0.7),
+        _prompt = renderer.build_generation_prompt(_teacher_messages)
+        _result = await sampling_client.sample_async(
+            prompt=_prompt,
+            sampling_params=types.SamplingParams(max_tokens=50, temperature=0.0),
             num_samples=1,
         )
+        _response = tokenizer.decode(_result.sequences[0].tokens)
+        _match = re.search(r"Final Answer:\s*(\w+)", _response)
+        _label = _match.group(1) if _match else "??"
+        teacher_labels.append(_label)
+        _status = "OK" if _label == _expected else "WRONG"
+        print(f"  [{_expected}] -> [{_label}] {_status:5s}  {_text[:45]}")
 
-        completion_text = tokenizer.decode(result.sequences[0].tokens)
-        teacher_completions.append(completion_text)
-        print(f"Q: {question}")
-        print(f"A: {completion_text[:150]}...")
-        print()
+    _correct = sum(1 for (_t, _e), _l in zip(SENTENCES, teacher_labels) if _l == _e)
+    print(f"\nTeacher accuracy: {_correct}/{len(SENTENCES)}")
 
     return (
         MODEL_NAME,
         renderer,
-        sampling_client,
         service_client,
-        teacher_completions,
+        teacher_labels,
         tokenizer,
     )
 
@@ -133,33 +184,30 @@ def _(mo):
     mo.md(r"""
     ## Step 3 -- Build student training data
 
-    The student training data pairs each question with the teacher's completion, but **without** the system prompt. The model learns to produce teacher-quality outputs from the bare user message.
+    The student training data pairs each sentence with the teacher's label, but **without** the system prompt. The student sees only: `[user: text] -> [assistant: Final Answer: xx]`.
     """)
     return
 
 
 @app.cell
-def _(QUESTIONS, renderer, teacher_completions):
+def _(SENTENCES, renderer, teacher_labels):
     from tinker_cookbook.supervised.data import conversation_to_datum
 
-    # Build supervised training data: student sees only user message + teacher completion
     student_data = []
-    for _question, _completion in zip(QUESTIONS, teacher_completions):
-        # Student conversation: NO system prompt
+    for (_text, _expected), _label in zip(SENTENCES, teacher_labels):
         _student_messages = [
-            {"role": "user", "content": _question},
-            {"role": "assistant", "content": _completion},
+            {"role": "user", "content": _text},
+            {"role": "assistant", "content": f"Final Answer: {_label}"},
         ]
-
-        datum = conversation_to_datum(_student_messages, renderer, max_length=512)
-        student_data.append(datum)
+        _datum = conversation_to_datum(_student_messages, renderer, max_length=512)
+        student_data.append(_datum)
 
     print(f"Built {len(student_data)} training examples")
-    for i, datum in enumerate(student_data):
-        _w = datum.loss_fn_inputs["weights"]
+    for i, _datum in enumerate(student_data):
+        _w = _datum.loss_fn_inputs["weights"]
         _w_list = _w.tolist() if hasattr(_w, "tolist") else list(_w)
-        n_train_tokens = sum(1 for w in _w_list if w > 0)
-        print(f"  Example {i}: {datum.model_input.length} total tokens, {n_train_tokens} trained tokens")
+        _n_train = sum(1 for w in _w_list if w > 0)
+        print(f"  Example {i:2d}: {_datum.model_input.length:4d} total tokens, {_n_train:3d} trained tokens")
     return (student_data,)
 
 
@@ -168,29 +216,26 @@ def _(mo):
     mo.md(r"""
     ## Step 4 -- Train the student
 
-    Standard SFT on the teacher's completions. The student learns to reproduce the teacher's behavior without seeing the system prompt.
+    Standard SFT on the teacher's labels. The student learns to map raw text to language codes without seeing the classification rules.
     """)
     return
 
 
 @app.cell
 async def _(MODEL_NAME, service_client, student_data, tinker):
-    # Create a training client
     training_client = await service_client.create_lora_training_client_async(
         base_model=MODEL_NAME,
         rank=32,
     )
 
-    # Train for a few steps (small dataset, just for demonstration)
-    adam_params = tinker.AdamParams(learning_rate=1e-4)
-    for step in range(3):
-        fwd_bwd_future = await training_client.forward_backward_async(student_data, loss_fn="cross_entropy")
-        optim_future = await training_client.optim_step_async(adam_params)
-        fwd_bwd_result = await fwd_bwd_future.result_async()
-        loss_outputs = fwd_bwd_result.loss_fn_outputs
-        nll = sum(o["logprobs"].data[0] for o in loss_outputs) / len(loss_outputs)
-        await optim_future.result_async()
-        print(f"Step {step}: mean NLL = {nll:.4f}")
+    adam_params = tinker.AdamParams(learning_rate=2e-4)
+    for _step in range(10):
+        _fwd_bwd_future = await training_client.forward_backward_async(student_data, loss_fn="cross_entropy")
+        _optim_future = await training_client.optim_step_async(adam_params)
+        _fwd_bwd_result = await _fwd_bwd_future.result_async()
+        _loss = _fwd_bwd_result.metrics["loss:sum"]
+        await _optim_future.result_async()
+        print(f"Step {_step:2d}: loss = {_loss:.4f}")
 
     return (training_client,)
 
@@ -198,35 +243,38 @@ async def _(MODEL_NAME, service_client, student_data, tinker):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Step 5 -- Compare student vs teacher
+    ## Step 5 -- Evaluate: student vs base model
 
-    After training, the student should produce structured, concise responses even without the system prompt.
+    The key test: can the student classify languages **without** the 70-line system prompt? We compare the trained student against the base model (which has never seen the classification task).
     """)
     return
 
 
 @app.cell
-async def _(QUESTIONS, renderer, tinker, tokenizer, training_client, types):
-    # Get a sampling client from the trained student
+async def _(SENTENCES, re, renderer, tinker, tokenizer, training_client, types):
     student_client = await training_client.save_weights_and_get_sampling_client_async()
 
-    # Compare: student (no system prompt) vs teacher behavior
-    print("=" * 60)
-    for _question in QUESTIONS[:2]:
-        # Student: no system prompt
-        _student_messages = [{"role": "user", "content": _question}]
-        student_prompt = renderer.build_generation_prompt(_student_messages)
-        student_result = await student_client.sample_async(
-            prompt=student_prompt,
-            sampling_params=types.SamplingParams(max_tokens=200, temperature=0.7),
+    _student_correct = 0
+    print(f"{'Text':<45s}  {'Expected':>8s}  {'Student':>8s}  {'Match':>5s}")
+    print("-" * 75)
+
+    for _text, _expected in SENTENCES:
+        _student_messages = [{"role": "user", "content": _text}]
+        _prompt = renderer.build_generation_prompt(_student_messages)
+        _result = await student_client.sample_async(
+            prompt=_prompt,
+            sampling_params=types.SamplingParams(max_tokens=20, temperature=0.0),
             num_samples=1,
         )
-        student_text = tokenizer.decode(student_result.sequences[0].tokens)
+        _response = tokenizer.decode(_result.sequences[0].tokens)
+        _match = re.search(r"Final Answer:\s*(\w+)", _response)
+        _label = _match.group(1) if _match else "??"
+        _ok = _label == _expected
+        _student_correct += int(_ok)
+        print(f"  {_text[:43]:<43s}  {_expected:>8s}  {_label:>8s}  {'OK' if _ok else 'MISS':>5s}")
 
-        print(f"Q: {_question}")
-        print(f"Student (no system prompt): {student_text[:200]}")
-        print("-" * 60)
-    return (student_client,)
+    print(f"\nStudent accuracy (no system prompt): {_student_correct}/{len(SENTENCES)}")
+    return
 
 
 @app.cell(hide_code=True)
@@ -235,20 +283,19 @@ def _(mo):
     ## When to use prompt distillation
 
     **Good use cases:**
+    - Classification tasks with detailed rule-based prompts (like this language classifier)
     - Baking safety guidelines into the model (no need to send them every call)
-    - Enforcing output format (JSON, markdown, bullet points) without format instructions
-    - Reducing inference cost by removing long system prompts
-    - Creating specialized models from a general-purpose base
+    - Enforcing output format (JSON, specific answer patterns) without format instructions
+    - Reducing inference cost by removing long system prompts (our prompt was ~200 words)
 
     **Limitations:**
+    - Works best when the system prompt encodes *rules* rather than *world knowledge*
+    - Complex prompts may need many diverse examples to distill well
     - The student can only learn behaviors the teacher demonstrates
-    - Complex system prompts may need many examples to distill well
-    - Works best when the system prompt encodes *style* rather than *knowledge*
 
-    **Tips:**
-    - Generate multiple teacher completions per question and pick the best
-    - Use diverse questions to avoid overfitting to specific topics
-    - Evaluate on held-out questions to check generalization
+    **Scaling up:**
+    - The production recipe (`tinker_cookbook.recipes.prompt_distillation`) uses 2100 multilingual sentences across 4 epochs
+    - For better results: more examples, more training steps, and diverse inputs
     """)
     return
 
