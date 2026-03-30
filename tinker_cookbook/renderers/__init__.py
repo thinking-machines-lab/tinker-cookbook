@@ -211,12 +211,8 @@ def get_renderer(
     elif name == "qwen3":
         renderer = Qwen3Renderer(tokenizer)
     elif name == "qwen3_vl":
-        if image_processor is None:
-            raise RendererError("qwen3_vl renderer requires an image_processor")
         renderer = Qwen3VLRenderer(tokenizer, image_processor)
     elif name == "qwen3_vl_instruct":
-        if image_processor is None:
-            raise RendererError("qwen3_vl_instruct renderer requires an image_processor")
         renderer = Qwen3VLInstructRenderer(tokenizer, image_processor)
     elif name == "qwen3_disable_thinking":
         renderer = Qwen3DisableThinkingRenderer(tokenizer)

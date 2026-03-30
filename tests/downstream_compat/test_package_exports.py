@@ -7,8 +7,6 @@ and that __all__ matches the actual exports.
 
 import importlib
 
-import pytest
-
 from tinker_cookbook import renderers
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
@@ -192,12 +190,13 @@ class TestRendererExports:
         assert "GptOssRenderer" not in renderers.__all__
         assert "Qwen3Renderer" not in renderers.__all__
 
-    def test_get_renderer_raises_renderer_error_without_image_processor(self):
-        """get_renderer should raise RendererError (not AssertionError) for VL renderers."""
-        from tinker_cookbook import RendererError
+    def test_vl_renderer_without_image_processor_succeeds_for_text(self):
+        """VL renderers should construct without image_processor for text-only use."""
+        from tinker_cookbook.renderers.base import RenderContext
 
         tokenizer = get_tokenizer("Qwen/Qwen2.5-VL-3B-Instruct")
-        with pytest.raises(RendererError, match="requires an image_processor"):
-            renderers.get_renderer("qwen3_vl", tokenizer)
-        with pytest.raises(RendererError, match="requires an image_processor"):
-            renderers.get_renderer("qwen3_vl_instruct", tokenizer)
+        for name in ("qwen3_vl", "qwen3_vl_instruct"):
+            renderer = renderers.get_renderer(name, tokenizer)
+            ctx = RenderContext(idx=0, is_last=True)
+            result = renderer.render_message({"role": "user", "content": "hello"}, ctx)
+            assert len(result.output) > 0
