@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+import tinker
+
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.types import Env
 
@@ -15,21 +17,104 @@ class BenchmarkConfig:
     """Runtime configuration for benchmark evaluation.
 
     Controls concurrency, limits, storage, and generation parameters.
-    Passed to :meth:`BenchmarkBuilder.make_envs` and the runner.
     """
 
+    # Limits
     max_examples: int | None = None
     """Maximum number of examples to evaluate. ``None`` = all."""
+
+    # Concurrency
     concurrency: int = 64
-    """Maximum number of concurrent rollouts (semaphore bound)."""
+    """Maximum concurrent rollouts for single-turn benchmarks."""
+    agent_concurrency: int = 8
+    """Maximum concurrent rollouts for multi-turn/sandbox benchmarks (heavier)."""
+
+    # Generation
     max_tokens: int = 32768
     """Maximum tokens per model generation."""
     temperature: float = 0.6
     """Sampling temperature for model generation."""
+    context_window: int | None = None
+    """If set, dynamically cap max_tokens per request to fit in context."""
+
+    # Storage
     save_dir: str | None = None
     """Directory for saving trajectories and results. ``None`` = no saving."""
-    save_every: int = 50
-    """Flush partial results to disk every N completed examples."""
+
+    # Judge model (for benchmarks that need LLM-as-judge)
+    judge_sampling_client: tinker.SamplingClient | None = None
+    """Sampling client for LLM judge. Required for arena_hard, swe_bench, etc."""
+    judge_renderer: Renderer | None = None
+    """Renderer for the judge model. If None, uses the candidate renderer."""
+
+
+@dataclass
+class StoredTurn:
+    """A single turn in a stored trajectory — human-readable for visualization."""
+
+    role: str
+    """``"user"``, ``"assistant"``, ``"environment"``, ``"grader"``."""
+    content: str
+    """Decoded text content of this turn."""
+    token_count: int = 0
+    """Number of tokens in this turn."""
+    metadata: dict = field(default_factory=dict)
+    """Arbitrary per-turn data (timing, tool calls, etc.)."""
+
+
+@dataclass
+class StoredTrajectory:
+    """A complete eval trajectory stored for visualization and analysis.
+
+    Written to ``trajectories.jsonl`` — one per line, self-contained.
+    """
+
+    idx: int
+    """Index in the benchmark's example list (for resumability)."""
+    benchmark: str
+    """Benchmark name."""
+    turns: list[StoredTurn]
+    """Full conversation history (decoded text, not tokens)."""
+    reward: float
+    """Total reward (sum of per-step rewards)."""
+    metrics: dict = field(default_factory=dict)
+    """Per-example metrics from Env.step() (e.g., correct, overlong)."""
+    logs: dict = field(default_factory=dict)
+    """Per-example logs from Env.step() (e.g., input, expected, extracted)."""
+    error: str | None = None
+    """Error message if this example failed."""
+    time_seconds: float = 0.0
+    """Wall time for this example."""
+
+    def to_dict(self) -> dict:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "idx": self.idx,
+            "benchmark": self.benchmark,
+            "turns": [
+                {"role": t.role, "content": t.content, "token_count": t.token_count, "metadata": t.metadata}
+                for t in self.turns
+            ],
+            "reward": self.reward,
+            "metrics": self.metrics,
+            "logs": self.logs,
+            "error": self.error,
+            "time_seconds": self.time_seconds,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> StoredTrajectory:
+        """Deserialize from a dict."""
+        return cls(
+            idx=d["idx"],
+            benchmark=d["benchmark"],
+            turns=[StoredTurn(**t) for t in d["turns"]],
+            reward=d["reward"],
+            metrics=d.get("metrics", {}),
+            logs=d.get("logs", {}),
+            error=d.get("error"),
+            time_seconds=d.get("time_seconds", 0.0),
+        )
 
 
 @dataclass
@@ -41,14 +126,18 @@ class BenchmarkResult:
         score: Primary metric normalized to 0–1.
         num_examples: Total examples evaluated (excluding errors).
         num_correct: Examples graded as correct (reward > 0).
+        num_errors: Examples that failed with an error.
         metrics: Benchmark-specific additional metrics.
+        time_seconds: Total wall time for the benchmark.
     """
 
     name: str
     score: float
     num_examples: int
     num_correct: int
+    num_errors: int = 0
     metrics: dict = field(default_factory=dict)
+    time_seconds: float = 0.0
 
 
 class BenchmarkBuilder(ABC):
@@ -80,6 +169,9 @@ class BenchmarkBuilder(ABC):
 
     name: str
     """Unique benchmark name used in the registry and file paths."""
+
+    multi_turn: bool = False
+    """If True, uses agent_concurrency (lower) instead of concurrency."""
 
     @abstractmethod
     def make_envs(

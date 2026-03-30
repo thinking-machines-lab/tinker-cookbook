@@ -2,7 +2,13 @@
 
 import pytest
 
-from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig, BenchmarkResult
+from tinker_cookbook.eval.benchmarks._types import (
+    BenchmarkBuilder,
+    BenchmarkConfig,
+    BenchmarkResult,
+    StoredTrajectory,
+    StoredTurn,
+)
 
 
 class TestBenchmarkResult:
@@ -21,10 +27,11 @@ class TestBenchmarkConfig:
         c = BenchmarkConfig()
         assert c.max_examples is None
         assert c.concurrency == 64
+        assert c.agent_concurrency == 8
         assert c.max_tokens == 32768
         assert c.temperature == 0.6
         assert c.save_dir is None
-        assert c.save_every == 50
+        assert c.judge_sampling_client is None
 
 
 class TestGSM8KImport:
@@ -71,3 +78,56 @@ class TestDefaultAggregate:
         result = builder.aggregate([], [])
         assert result.score == 0.0
         assert result.num_examples == 0
+
+
+class TestStoredTrajectory:
+    def test_roundtrip(self):
+        traj = StoredTrajectory(
+            idx=42,
+            benchmark="gsm8k",
+            turns=[
+                StoredTurn(role="user", content="What is 2+2?", token_count=5),
+                StoredTurn(role="assistant", content="The answer is 4.", token_count=6),
+            ],
+            reward=1.0,
+            metrics={"correct": 1.0},
+            logs={"expected": "4", "extracted": "4"},
+            time_seconds=1.5,
+        )
+        d = traj.to_dict()
+        restored = StoredTrajectory.from_dict(d)
+        assert restored.idx == 42
+        assert restored.reward == 1.0
+        assert len(restored.turns) == 2
+        assert restored.turns[0].role == "user"
+        assert restored.turns[1].content == "The answer is 4."
+        assert restored.metrics["correct"] == 1.0
+
+    def test_error_trajectory(self):
+        traj = StoredTrajectory(
+            idx=0,
+            benchmark="test",
+            turns=[],
+            reward=0.0,
+            error="Connection timeout",
+        )
+        d = traj.to_dict()
+        assert d["error"] == "Connection timeout"
+        assert d["turns"] == []
+
+    def test_multi_turn(self):
+        traj = StoredTrajectory(
+            idx=0,
+            benchmark="terminal_bench",
+            turns=[
+                StoredTurn(role="user", content="Fix the bug in server.py"),
+                StoredTurn(role="assistant", content="cat server.py"),
+                StoredTurn(role="environment", content="import flask\n..."),
+                StoredTurn(role="assistant", content="sed -i 's/old/new/' server.py"),
+                StoredTurn(role="environment", content="File modified"),
+            ],
+            reward=1.0,
+            time_seconds=45.0,
+        )
+        assert len(traj.turns) == 5
+        assert traj.turns[2].role == "environment"
