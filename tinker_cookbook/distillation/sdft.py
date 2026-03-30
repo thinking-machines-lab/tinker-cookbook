@@ -269,6 +269,7 @@ async def build_topk_distillation_datums(
     teacher_prompts_P: list[tinker.ModelInput],
     topk: int = 20,
     max_context_length: int = 32768,
+    vocab_size: int | None = None,
 ) -> tuple[list[tinker.Datum], dict[str, float]]:
     """Build cross_entropy datums with top-K teacher soft targets.
 
@@ -363,12 +364,22 @@ async def build_topk_distillation_datums(
                 if topk_entries is None:
                     continue
 
-                k_actual = min(len(topk_entries), topk)
+                # Filter out token IDs that exceed the student's vocab size
+                # (teacher sampling may return IDs for special/added tokens)
+                filtered = [
+                    (tok_id, lp)
+                    for tok_id, lp in topk_entries[:topk]
+                    if vocab_size is None or tok_id < vocab_size
+                ]
+                if not filtered:
+                    continue
+
+                k_actual = len(filtered)
                 token_ids = torch.tensor(
-                    [tok_id for tok_id, _ in topk_entries[:k_actual]], dtype=torch.long
+                    [tok_id for tok_id, _ in filtered], dtype=torch.long
                 )
                 logprobs = torch.tensor(
-                    [lp for _, lp in topk_entries[:k_actual]], dtype=torch.float32
+                    [lp for _, lp in filtered], dtype=torch.float32
                 )
 
                 # Renormalize over top-K via logsumexp
@@ -608,6 +619,7 @@ async def main(
                         teacher_prompts_P,
                         topk=cfg.topk,
                         max_context_length=cfg.max_context_length,
+                        vocab_size=len(tokenizer),
                     )
                 metrics.update(sdft_metrics)
                 loss_fn: LossFnType = "cross_entropy"
