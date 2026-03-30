@@ -266,9 +266,19 @@ def generate_nll_plot(
         ax.legend(fontsize=7, loc="upper right")
         ax.grid(True, alpha=0.3)
 
-    # Fixed y-axis across all plots for easy cross-model comparison
-    for col in range(n_ranks):
-        axes[0][col].set_ylim(0.45, 0.75)
+    # Shared y-axis across subplots for this model, with a small margin
+    all_nlls = [
+        nll
+        for r in runs
+        if r.test_nll < DIVERGENCE_THRESHOLD
+        for _, nll in r.history
+        if nll < DIVERGENCE_THRESHOLD
+    ]
+    if all_nlls:
+        ymin = min(all_nlls) - 0.02
+        ymax = max(all_nlls) + 0.02
+        for col in range(n_ranks):
+            axes[0][col].set_ylim(ymin, ymax)
 
     plt.tight_layout()
 
