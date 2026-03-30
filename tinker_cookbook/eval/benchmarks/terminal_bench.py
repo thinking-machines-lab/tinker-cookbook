@@ -170,9 +170,18 @@ class TerminalBenchEnv(Env):
 
 
 class TerminalBenchBenchmarkBuilder(BenchmarkBuilder):
-    """Terminal-Bench: terminal task solving with LLM judge (89 tasks)."""
+    """Terminal-Bench 2.0: terminal task solving (89 tasks).
+
+    TODO: Implement full multi-turn sandbox execution with Harbor framework.
+    Current implementation generates a solution script and uses an LLM judge
+    to compare against the reference. The full implementation requires a
+    terminal sandbox where the model executes commands interactively.
+    See https://github.com/laude-institute/terminal-bench for the reference.
+    """
 
     name = "terminal_bench"
+    multi_turn = True
+    recommended_timeout = 1800
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
         ds = cast(Dataset, load_dataset("ia03/terminal-bench", split="test"))

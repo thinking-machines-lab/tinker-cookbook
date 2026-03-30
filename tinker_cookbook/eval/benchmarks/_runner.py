@@ -109,15 +109,23 @@ def _load_completed(save_dir: str, benchmark_name: str) -> dict[int, float]:
     return results
 
 
-_save_lock = asyncio.Lock()
+_save_locks: dict[str, asyncio.Lock] = {}
+
+
+def _get_save_lock(key: str) -> asyncio.Lock:
+    """Get or create a per-file lock. Supports parallel benchmarks and checkpoints."""
+    if key not in _save_locks:
+        _save_locks[key] = asyncio.Lock()
+    return _save_locks[key]
 
 
 async def _save_trajectory(save_dir: str, benchmark_name: str, traj: StoredTrajectory) -> None:
-    """Append one trajectory to the JSONL file (thread-safe)."""
+    """Append one trajectory to the JSONL file (per-file lock for parallel safety)."""
     dir_path = Path(save_dir) / benchmark_name
     dir_path.mkdir(parents=True, exist_ok=True)
-    async with _save_lock:
-        with open(dir_path / "trajectories.jsonl", "a") as f:
+    filepath = str(dir_path / "trajectories.jsonl")
+    async with _get_save_lock(filepath):
+        with open(filepath, "a") as f:
             f.write(json.dumps(traj.to_dict()) + "\n")
 
 
@@ -343,21 +351,35 @@ async def run_benchmarks(
     sampling_client: tinker.SamplingClient,
     renderer: Renderer,
     config: BenchmarkConfig = BenchmarkConfig(),
+    parallel: bool = True,
 ) -> dict[str, BenchmarkResult]:
-    """Run multiple benchmarks sequentially, saving a combined summary.
+    """Run multiple benchmarks concurrently, saving a combined summary.
+
+    Benchmarks run in parallel by default — each benchmark gets its own
+    save subdirectory and per-file locks, so concurrent execution is safe.
+    Set ``parallel=False`` to run sequentially (useful for debugging or
+    when resources are constrained).
 
     Args:
         names: List of benchmark names from REGISTRY.
         sampling_client: Tinker sampling client.
         renderer: Renderer for tokenization.
         config: Shared runtime configuration.
+        parallel: If True, run all benchmarks concurrently.
 
     Returns:
         Dict mapping benchmark name to BenchmarkResult.
     """
-    results = {}
-    for name in names:
-        results[name] = await run_benchmark(name, sampling_client, renderer, config)
+    if parallel:
+        benchmark_results = await asyncio.gather(*[
+            run_benchmark(name, sampling_client, renderer, config)
+            for name in names
+        ])
+        results = dict(zip(names, benchmark_results))
+    else:
+        results = {}
+        for name in names:
+            results[name] = await run_benchmark(name, sampling_client, renderer, config)
 
     # Save combined summary
     if config.save_dir:

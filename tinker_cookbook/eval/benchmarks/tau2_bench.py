@@ -158,9 +158,18 @@ class Tau2BenchEnv(Env):
 
 
 class Tau2BenchBenchmarkBuilder(BenchmarkBuilder):
-    """tau2-Bench: customer service action prediction (simplified single-turn)."""
+    """tau2-Bench: customer service agent evaluation.
+
+    TODO: Implement full multi-turn agent interaction with tool dispatch.
+    Current implementation uses single-turn action prediction as a proxy.
+    The full implementation requires a tool dispatch environment that
+    simulates the customer service backend (database queries, actions).
+    See https://github.com/sierra-research/tau2-bench for the reference.
+    """
 
     name = "tau2_bench"
+    multi_turn = True
+    recommended_timeout = 600
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
         ds = cast(Dataset, load_dataset("HuggingFaceH4/tau2-bench-data", split="test"))

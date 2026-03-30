@@ -14,11 +14,19 @@ Usage::
     result = await run_benchmark("gsm8k", sampling_client, renderer)
     print(f"GSM8K: {result.score:.1%}")
 
-    # Run multiple benchmarks
+    # Run multiple benchmarks (parallel by default)
     results = await run_benchmarks(
         ["gsm8k", "mmlu_pro", "ifeval"],
         sampling_client, renderer,
     )
+
+    # Compare across checkpoints (each gets its own save_dir)
+    for name, path in checkpoints.items():
+        client = sc.create_sampling_client(model_path=path)
+        results[name] = await run_benchmarks(
+            ["gsm8k", "ifeval"], client, renderer,
+            BenchmarkConfig(save_dir=f"evals/{name}"),
+        )
 
 Design:
     - Benchmarks reuse the RL ``Env`` protocol — same step/reward interface
