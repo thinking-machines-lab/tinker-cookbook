@@ -155,6 +155,7 @@ async def run_model_sweep(
     jobs_per_model: int,
     dry_run: bool,
     semaphore: asyncio.Semaphore,
+    log_dir: str = "/tmp/tinker-sweep-logs",
 ) -> tuple[str, bool]:
     """Run sweep for one model, respecting the concurrency semaphore."""
     cmd = build_sweep_command(cfg, jobs_per_model)
@@ -167,26 +168,29 @@ async def run_model_sweep(
         return cfg.model_name, True
 
     async with semaphore:
+        short_name = cfg.model_name.split("/")[-1]
         print(f"\n{'='*60}")
         print(f"LAUNCHING: {cfg.model_name} ({cfg.tier}, {n_combos} combos, {jobs_per_model} parallel)")
         print(f"{'='*60}")
 
+        # Write output to a log file instead of piping through asyncio.
+        # Piping breaks when training data produces very long lines, which
+        # fills the pipe buffer and hangs the subprocess.
+        import os
+
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, f"{short_name}.log")
+        log_file = open(log_path, "w")  # noqa: SIM115
+        print(f"[{short_name}] Log: {log_path}")
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
-            stdout=asyncio.subprocess.PIPE,
+            stdout=log_file,
             stderr=asyncio.subprocess.STDOUT,
         )
 
-        # Stream output with model prefix
-        short_name = cfg.model_name.split("/")[-1]
-        assert proc.stdout is not None
-        while True:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            print(f"[{short_name}] {line.decode().rstrip()}")
-
         await proc.wait()
+        log_file.close()
         success = proc.returncode == 0
 
         status = "DONE" if success else "FAILED"
