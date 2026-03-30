@@ -45,3 +45,10 @@ See `model_decision.md` for rationale.
 ## Wandb
 
 (internal — see team Wandb project)
+
+## SFT Checkpoint (2026-03-30)
+
+- **Step 500** saved with 14-day TTL
+- **State**: `tinker://dcac3236-4699-55be-8375-9e54e071c056:train:0/weights/sft_step500_permanent`
+- **Sampler**: `tinker://dcac3236-4699-55be-8375-9e54e071c056:train:0/sampler_weights/sft_step500_permanent`
+- **NLL**: 0.687 -> 0.542 (500 steps, Super 120B, LoRA rank 64)
