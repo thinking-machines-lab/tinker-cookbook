@@ -404,3 +404,38 @@ class ScienceArrowSFTBuilder(ChatDatasetBuilder):
         )
         # No test dataset for SFT — eval is done separately via the eval phase
         return train_dataset, None
+
+
+@chz.chz
+class TooluseArrowSFTBuilder(ChatDatasetBuilder):
+    """Builds SFT dataset from the paper's Arrow tool-use data."""
+
+    data_dir: str = "~/Repos/Self-Distillation/data/tooluse_data"
+
+    def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
+        expanded_dir = str(Path(self.data_dir).expanduser())
+        questions, golden_answers, _, _ = load_tooluse_from_arrow(expanded_dir)
+
+        import datasets as hf_datasets
+
+        train_hf = hf_datasets.Dataset.from_dict(
+            {
+                "messages": [
+                    [
+                        {"role": "user", "content": q},
+                        {"role": "assistant", "content": a},
+                    ]
+                    for q, a in zip(questions, golden_answers)
+                ]
+            }
+        )
+
+        def map_fn(row: dict) -> tinker.Datum:
+            return conversation_to_datum(
+                row["messages"], self.renderer, self.common_config.max_length
+            )
+
+        train_dataset = SupervisedDatasetFromHFDataset(
+            train_hf, batch_size=self.common_config.batch_size, map_fn=map_fn
+        )
+        return train_dataset, None

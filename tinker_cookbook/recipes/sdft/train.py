@@ -62,6 +62,7 @@ class CLIConfig:
     temperature: float = 1.0
 
     # SDFT-specific
+    topk: int = 20
     teacher_sync_every: int | None = None
     max_context_length: int = 32768
 
@@ -144,6 +145,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
         learning_rate=cli_config.learning_rate,
         max_tokens=cli_config.max_tokens,
         temperature=cli_config.temperature,
+        topk=cli_config.topk,
         teacher_sync_every=cli_config.teacher_sync_every,
         max_context_length=cli_config.max_context_length,
         num_substeps=cli_config.num_substeps,
