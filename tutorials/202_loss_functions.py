@@ -236,7 +236,7 @@ def _(mo):
 
     The `logprobs` tensors have `requires_grad=True`, so you can backprop through them. Tinker handles the chain rule to get gradients on model weights.
 
-    Here is a simple example: a loss that penalizes high-entropy (low-confidence) predictions.
+    Here is a simple example: a loss that penalizes low-confidence predictions by squaring the target-token logprobs.
     """)
     return
 
