@@ -16,83 +16,170 @@ def _(mo):
     mo.md(r"""
     # Tutorial 09: SL Hyperparameters
 
-    Use `get_lora_lr_multiplier` to pick learning rate; compare rank and batch size effects.
+    Finding the right learning rate and LoRA rank for SFT. The cookbook provides a `sweep` module that automates grid search over these parameters.
 
-    Choosing the right learning rate for LoRA fine-tuning depends on the model architecture. The cookbook provides utilities that encode empirical scaling laws so you can transfer good hyperparameters across models.
+    The two most important hyperparameters for LoRA SFT are:
+    - **Learning rate** -- too high diverges, too low underfits
+    - **LoRA rank** -- higher rank = more expressive adapter, but higher compute cost
+
+    The right values depend on the model, dataset, and task. Rather than guessing, run a sweep.
     """)
     return
 
 
 @app.cell
 def _():
-    from tinker_cookbook.hyperparam_utils import (
-        get_lora_lr_multiplier,
-        get_lora_lr_over_full_finetune_lr,
-        get_lora_param_count,
-        get_lr,
-    )
+    from tinker_cookbook.utils.lr_scheduling import compute_schedule_lr_multiplier
 
-    return (
-        get_lora_lr_multiplier,
-        get_lora_lr_over_full_finetune_lr,
-        get_lora_param_count,
-        get_lr,
-    )
+    return (compute_schedule_lr_multiplier,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## The LoRA LR multiplier
+    ## Running a sweep
 
-    `get_lora_lr_multiplier(model_name)` returns a model-specific scalar. Given a known-good LR for model A, you can estimate the LR for model B:
-
-    ```
-    LR_B = LR_A * get_lora_lr_multiplier(B) / get_lora_lr_multiplier(A)
-    ```
-
-    Under the hood, it combines two factors:
-    1. **Full fine-tune scaling**: `1 / sqrt(param_count)` -- larger models need smaller LRs
-    2. **LoRA factor**: a fixed 10x multiplier (LoRA adapters converge faster than full fine-tuning)
+    The `sweep.run()` function takes a recipe's `main` function and config, then runs all combinations of the specified hyperparameters. Each run gets its own log directory, and results are collected into a DataFrame.
     """)
     return
-
-
-@app.cell
-def _(get_lora_lr_over_full_finetune_lr, get_lr):
-    # The LoRA multiplier over full fine-tuning is a constant 10x
-    lora_factor = get_lora_lr_over_full_finetune_lr("Qwen/Qwen3-8B")
-    print(f"LoRA over full-FT multiplier: {lora_factor}x")
-
-    # get_lr() gives a recommended starting LR for calibrated model families
-    for model in ["Qwen/Qwen3-4B-Instruct-2507", "Qwen/Qwen3-8B"]:
-        lr = get_lr(model, is_lora=True)
-        print(f"  {model}: LR = {lr:.6f}")
-    return (lora_factor,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Comparing LoRA ranks
+    ### CLI
 
-    Higher LoRA rank = more trainable parameters = more expressive adapter, but also higher memory and compute cost. Use `get_lora_param_count` to see the trade-off.
+    The quickest way to run a sweep:
+
+    ```bash
+    python -m tinker_cookbook.recipes.chat_sl.sweep \
+        recipe=sft \
+        base.model_name=Qwen/Qwen3.5-4B \
+        base.dataset=tulu3 \
+        'learning_rates=[1e-4, 3e-4, 1e-3]' \
+        'lora_ranks=[32, 128]'
+    ```
+
+    This runs 6 configurations (3 LRs x 2 ranks) sequentially and prints a results table.
+
+    ### Python API
+
+    For more control, use the Python API directly:
+
+    ```python
+    from tinker_cookbook.recipes.chat_sl import sweep
+    from tinker_cookbook.recipes.chat_sl.train import CLIConfig, cli_main
+
+    results = sweep.run(
+        cli_main,
+        CLIConfig(model_name="Qwen/Qwen3.5-4B", dataset="tulu3"),
+        learning_rate=[1e-4, 3e-4, 1e-3],
+        lora_rank=[32, 128],
+    )
+
+    # Results is a pandas DataFrame with one row per run
+    best = results.loc[results["train_mean_nll"].idxmin()]
+    print(f"Best LR: {best['learning_rate']:.2e}, rank: {best['lora_rank']}")
+    ```
+
+    For parallel execution, set `max_parallel`:
+
+    ```python
+    results = sweep.run(
+        cli_main,
+        CLIConfig(model_name="Qwen/Qwen3.5-4B", dataset="tulu3"),
+        max_parallel=4,
+        learning_rate=[1e-4, 3e-4, 1e-3],
+        lora_rank=[32, 128],
+    )
+    ```
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## How it works
+
+    `sweep.run()` builds a cartesian product grid over the parameters you specify, then runs each configuration:
     """)
     return
 
 
 @app.cell
-def _(get_lora_param_count):
-    model = "Qwen/Qwen3-4B-Instruct-2507"
-    ranks = [8, 32, 128]
+def _():
+    from tinker_cookbook.recipes.chat_sl.sweep.grid import grid
 
-    print(f"Model: {model}")
-    print(f"{'Rank':<8} {'Params':<15} {'Params (M)':<12}")
-    print("-" * 35)
-    for rank in ranks:
-        count = get_lora_param_count(model, lora_rank=rank)
-        print(f"{rank:<8} {count:<15,} {count / 1e6:<12.1f}")
-    return (model, ranks)
+    # Generate all combinations
+    configs = grid(learning_rate=[1e-4, 3e-4, 1e-3], lora_rank=[32, 128])
+    print(f"Grid: {len(configs)} configurations\n")
+    for _cfg in configs:
+        print(f"  lr={_cfg['learning_rate']:.0e}, rank={_cfg['lora_rank']}")
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    Each run writes `metrics.jsonl` and `config.json` to its own subdirectory. After the sweep, `sweep.collect()` reads all results into a DataFrame:
+
+    ```
+    /tmp/tinker-sweeps/20260330_143000/
+    ├── learning_rate=0.0001_lora_rank=32/
+    │   ├── config.json
+    │   └── metrics.jsonl
+    ├── learning_rate=0.0001_lora_rank=128/
+    │   ├── config.json
+    │   └── metrics.jsonl
+    └── ...
+    ```
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Reference results
+
+    Here are pre-computed sweep results across several models and configurations. Use these as starting points for your own experiments.
+
+    ### DeepSeek V3.1 Base
+
+    | LR | LoRA Rank | Test NLL | Train NLL |
+    |---:|----------:|---------:|----------:|
+    | 1e-04 | 1 | 0.4853 | 0.5137 |
+    | 4e-04 | 2 | 0.4842 | 0.5132 |
+    | **4e-04** | **4** | **0.4826** | **0.5128** |
+    | 1e-03 | 4 | 0.4904 | 0.5221 |
+
+    Best: **rank=4, lr=4e-04** (test NLL = 0.4826)
+
+    ### Nemotron Nano 30B (3B active)
+
+    | LR | LoRA Rank | Test NLL | Train NLL |
+    |---:|----------:|---------:|----------:|
+    | 4e-04 | 4 | 0.5482 | 0.6228 |
+    | 4e-04 | 16 | 0.5455 | 0.6190 |
+    | 2e-04 | 64 | 0.5501 | 0.6219 |
+    | **4e-04** | **64** | **0.5449** | **0.6181** |
+
+    Best: **rank=64, lr=4e-04** (test NLL = 0.5449)
+
+    ### Nemotron Super 120B (12B active)
+
+    | LR | LoRA Rank | Test NLL | Train NLL |
+    |---:|----------:|---------:|----------:|
+    | 4e-04 | 16 | 0.4783 | 0.5334 |
+    | 4e-04 | 64 | 0.4776 | 0.5330 |
+    | **1e-03** | **64** | **0.4767** | **0.5348** |
+
+    Best: **rank=64, lr=1e-03** (test NLL = 0.4767)
+
+    All results use tulu3 dataset, batch size 128, 780 training steps. Full results with NLL curves: [sft_sweep.md](https://github.com/thinking-machines-lab/tinker-cookbook/blob/main/tinker_cookbook/recipes/chat_sl/results/sft_sweep.md).
+    """)
+    return
 
 
 @app.cell(hide_code=True)
@@ -111,66 +198,57 @@ def _(mo):
 
 
 @app.cell
-def _():
-    from tinker_cookbook.utils.lr_scheduling import compute_schedule_lr_multiplier
+def _(compute_schedule_lr_multiplier):
+    _total_steps = 100
+    _schedules = ["linear", "cosine", "constant"]
 
-    total_steps = 100
-    schedules = ["linear", "cosine", "constant"]
-
-    for schedule in schedules:
-        mults = [
-            compute_schedule_lr_multiplier(schedule, step, total_steps)
-            for step in range(total_steps)
+    for _schedule in _schedules:
+        _mults = [
+            compute_schedule_lr_multiplier(_schedule, _step, _total_steps)
+            for _step in range(_total_steps)
         ]
-        print(f"{schedule:>8}: start={mults[0]:.2f}, mid={mults[50]:.2f}, end={mults[-1]:.2f}")
-    return (schedules, total_steps)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Sweep pattern
-
-    A typical hyperparameter sweep for SFT:
-
-    | Parameter | Values to try | Notes |
-    |-----------|---------------|-------|
-    | `learning_rate` | `get_lr(model)`, 0.5x, 2x | Start from the recommended LR |
-    | `lora_rank` | 8, 32, 128 | Higher rank = more capacity |
-    | `lr_schedule` | linear, cosine | Linear is the default |
-    | `batch_size` | 4, 8, 16 | Larger = smoother gradients |
-    | `num_epochs` | 1, 2, 3 | Watch for overfitting |
-
-    Start with the recommended LR and rank 32, then sweep outward.
-    """)
+        print(f"{_schedule:>8}: start={_mults[0]:.2f}, mid={_mults[50]:.2f}, end={_mults[-1]:.2f}")
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Transferring LR across models
+    ## Comparing LoRA ranks
 
-    If you have a good LR for one model, use `get_lora_lr_multiplier` to estimate the LR for another:
+    Higher LoRA rank means more trainable parameters. Use `get_lora_param_count` to see the trade-off:
     """)
     return
 
 
 @app.cell
-def _(get_lora_lr_multiplier):
-    # Suppose LR=5e-4 works well for Qwen3-4B
-    known_lr = 5e-4
-    source_model = "Qwen/Qwen3-4B-Instruct-2507"
-    target_model = "Qwen/Qwen3-8B"
+def _():
+    from tinker_cookbook.hyperparam_utils import get_lora_param_count
 
-    source_mult = get_lora_lr_multiplier(source_model)
-    target_mult = get_lora_lr_multiplier(target_model)
-    estimated_lr = known_lr * target_mult / source_mult
+    _model = "Qwen/Qwen3-4B-Instruct-2507"
+    _ranks = [8, 32, 128]
 
-    print(f"Source:    {source_model}, LR = {known_lr}")
-    print(f"Target:    {target_model}, estimated LR = {estimated_lr:.6f}")
-    print(f"Ratio:     {target_mult / source_mult:.4f}")
-    return (estimated_lr, known_lr, source_model, source_mult, target_model, target_mult)
+    print(f"Model: {_model}")
+    print(f"{'Rank':<8} {'Params':<15} {'Params (M)':<12}")
+    print("-" * 35)
+    for _rank in _ranks:
+        _count = get_lora_param_count(_model, lora_rank=_rank)
+        print(f"{_rank:<8} {_count:<15,} {_count / 1e6:<12.1f}")
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Practical recommendations
+
+    1. **Start with a sweep** -- even a small one (3 LRs x 2 ranks) gives much better results than guessing
+    2. **Use `training_budget_examples`** -- set a smaller budget for quick iteration, then scale up the best config
+    3. **LR matters more than rank** -- for most tasks, rank 32 is sufficient; bad LR is harder to recover from
+    4. **Watch for divergence** -- if NLL increases after initial decrease, the LR is too high
+    5. **Use test NLL** -- if you have a held-out set, use `metric=test/nll` to avoid overfitting
+    """)
+    return
 
 
 if __name__ == "__main__":
