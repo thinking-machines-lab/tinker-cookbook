@@ -90,7 +90,7 @@ def _slug_to_hf_name(slug: str) -> str:
     for org in known_orgs:
         prefix = org + "-"
         if slug.startswith(prefix):
-            return org + "/" + slug[len(prefix):]
+            return org + "/" + slug[len(prefix) :]
     # Unknown org – best-effort: split on first hyphen.
     return slug.replace("-", "/", 1)
 
