@@ -63,14 +63,43 @@ def _parse_run_name(name: str) -> tuple[str, int, float, int] | None:
     return model, rank, lr, batch_size
 
 
+# Hand-curated pretty names for known models. For anything not listed,
+# _pretty_model_name falls back to a generated name.
+_PRETTY_NAMES: dict[str, str] = {
+    "nvidia-NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": "Nemotron Nano 30B (3B active)",
+    "nvidia-NVIDIA-Nemotron-3-Super-120B-A12B-BF16": "Nemotron Super 120B (12B active)",
+    "deepseek-ai-DeepSeek-V3.1-Base": "DeepSeek V3.1 Base",
+    "deepseek-ai-DeepSeek-V3.1": "DeepSeek V3.1",
+    "Qwen-Qwen3.5-397B-A17B": "Qwen 3.5 397B (17B active)",
+    "Qwen-Qwen3.5-35B-A3B": "Qwen 3.5 35B (3B active)",
+    "Qwen-Qwen3.5-27B": "Qwen 3.5 27B",
+    "Qwen-Qwen3.5-4B": "Qwen 3.5 4B",
+    "Qwen-Qwen3-VL-235B-A22B-Instruct": "Qwen3 VL 235B (22B active)",
+    "Qwen-Qwen3-VL-30B-A3B-Instruct": "Qwen3 VL 30B (3B active)",
+    "Qwen-Qwen3-235B-A22B-Instruct-2507": "Qwen3 235B Instruct (22B active)",
+    "Qwen-Qwen3-30B-A3B-Instruct-2507": "Qwen3 30B Instruct (3B active)",
+    "Qwen-Qwen3-30B-A3B": "Qwen3 30B (3B active)",
+    "Qwen-Qwen3-30B-A3B-Base": "Qwen3 30B Base (3B active)",
+    "Qwen-Qwen3-32B": "Qwen3 32B",
+    "Qwen-Qwen3-8B": "Qwen3 8B",
+    "Qwen-Qwen3-8B-Base": "Qwen3 8B Base",
+    "Qwen-Qwen3-4B-Instruct-2507": "Qwen3 4B Instruct",
+    "openai-gpt-oss-120b": "GPT-OSS 120B",
+    "openai-gpt-oss-20b": "GPT-OSS 20B",
+    "meta-llama-Llama-3.1-70B": "Llama 3.1 70B",
+    "meta-llama-Llama-3.3-70B-Instruct": "Llama 3.3 70B Instruct",
+    "meta-llama-Llama-3.1-8B": "Llama 3.1 8B",
+    "meta-llama-Llama-3.1-8B-Instruct": "Llama 3.1 8B Instruct",
+    "meta-llama-Llama-3.2-3B": "Llama 3.2 3B",
+    "meta-llama-Llama-3.2-1B": "Llama 3.2 1B",
+    "moonshotai-Kimi-K2-Thinking": "Kimi K2 Thinking",
+    "moonshotai-Kimi-K2.5": "Kimi K2.5",
+}
+
+
 def _pretty_model_name(raw: str) -> str:
     """Convert raw model slug to a human-readable name."""
-    table: dict[str, str] = {
-        "nvidia-NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": "Nemotron Nano 30B (3B active)",
-        "nvidia-NVIDIA-Nemotron-3-Super-120B-A12B-BF16": "Nemotron Super 120B (12B active)",
-        "deepseek-ai-DeepSeek-V3.1-Base": "DeepSeek V3.1 Base",
-    }
-    return table.get(raw, raw)
+    return _PRETTY_NAMES.get(raw, raw)
 
 
 def _slug_to_hf_name(slug: str) -> str:
