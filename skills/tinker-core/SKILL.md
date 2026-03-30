@@ -1,5 +1,5 @@
 ---
-name: tinker-core
+name: core
 description: Core guide for using the Tinker API — installation, model selection, SDK basics, types, CLI, and hyperparameters. Use this skill whenever the user asks about getting started with Tinker, choosing a model, using the SDK, API types, CLI commands, or tuning hyperparameters. This is the foundational skill — trigger it for any general Tinker question.
 ---
 

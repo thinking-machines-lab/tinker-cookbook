@@ -1,5 +1,5 @@
 ---
-name: tinker-sft
+name: sft
 description: Set up and run supervised fine-tuning (SFT), knowledge distillation, or any supervised learning workflow using the Tinker API. Covers datasets, renderers, completers, and distillation. Use when the user wants to do instruction tuning, chat fine-tuning, supervised learning, dataset preparation, rendering, text generation, or knowledge distillation — even if they don't say "SFT" explicitly.
 ---
 

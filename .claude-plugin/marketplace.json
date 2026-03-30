@@ -10,7 +10,7 @@
   },
   "plugins": [
     {
-      "name": "tinker-cookbook",
+      "name": "tinker",
       "description": "Skills for fine-tuning language models with the Tinker API — setup, models, SFT, RL, DPO, distillation, checkpoints, weights, and more.",
       "source": "./",
       "strict": false,
@@ -20,15 +20,7 @@
         "./skills/tinker-rl",
         "./skills/tinker-preferences",
         "./skills/tinker-ops",
-        "./skills/tinker-debug"
-      ]
-    },
-    {
-      "name": "tinker-dev",
-      "description": "Development skills for contributing to the tinker-cookbook repo — testing, CI, code style, and recipe scaffolding.",
-      "source": "./",
-      "strict": false,
-      "skills": [
+        "./skills/tinker-debug",
         "./skills/tinker-dev"
       ]
     }
