@@ -141,8 +141,8 @@ def _(mo):
     mo.md(r"""
     ## Next steps
 
-    - **[Tutorial 05-1](./501_export_hf.py)** -- Merge into a full HuggingFace model instead
-    - **[Tutorial 05-3](./503_publish_hub.py)** -- Publish the adapter to HuggingFace Hub
+    - **[Export a Merged HuggingFace Model](export-hf.md)** -- Merge LoRA into a standalone model
+    - **[Publish to HuggingFace Hub](publish-hub.md)** -- Upload the adapter with a custom model card
     """)
     return
 

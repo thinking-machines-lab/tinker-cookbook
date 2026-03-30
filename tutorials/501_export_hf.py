@@ -23,11 +23,11 @@ def _(mo):
     ```
     Tinker checkpoint          Merged HuggingFace model
     +-------------------+      +---------------------------+
-    | adapter_model.safetensors |  -->  | model-00001-of-00002.safetensors |
-    | adapter_config.json |  -->  | model-00002-of-00002.safetensors |
-    +-------------------+      | config.json               |
-          + base model         | tokenizer files ...        |
-          (from HF Hub)        +---------------------------+
+    | adapter weights   |  -->  | model shards (.safetensors)|
+    | adapter config    |  -->  | config.json               |
+    +-------------------+      | tokenizer files ...        |
+          + base model         +---------------------------+
+          (from HF Hub)
     ```
     """)
     return
@@ -36,27 +36,71 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Step 1: Download the checkpoint
+    ## Setup: create a checkpoint
 
-    Use `weights.download()` to fetch a Tinker checkpoint to local disk. The `tinker_path` follows the format `tinker://<run_id>/sampler_weights/<step_or_final>`.
+    First we need a Tinker checkpoint to export. We create a training client, run one step of SFT, and save the weights. In practice, you would use a checkpoint from a real training run.
     """)
     return
 
 
 @app.cell
-def _():
+async def _():
+    import numpy as np
+
+    import tinker
+
+    BASE_MODEL = "meta-llama/Llama-3.2-1B"
+
+    service_client = tinker.ServiceClient()
+    training_client = await service_client.create_lora_training_client_async(
+        base_model=BASE_MODEL, rank=16
+    )
+    _tokenizer = training_client.get_tokenizer()
+
+    # Build a minimal training example (just a short sequence)
+    _tokens = _tokenizer.encode("The capital of France is Paris")
+    _n = len(_tokens)
+    _datum = tinker.Datum(
+        model_input=tinker.ModelInput.from_ints(_tokens[:-1]),
+        loss_fn_inputs={
+            "target_tokens": np.array(_tokens[1:]),
+            "weights": np.ones(_n - 1),
+        },
+    )
+
+    # One training step + save
+    _fwd = await training_client.forward_backward_async([_datum], loss_fn="cross_entropy")
+    _opt = await training_client.optim_step_async(tinker.AdamParams(learning_rate=1e-4))
+    await _fwd.result_async()
+    await _opt.result_async()
+
+    _save_result = training_client.save_weights_for_sampler(name="export-tutorial")
+    _sampler_path = _save_result.result().tinker_path
+    print(f"Base model:  {BASE_MODEL}")
+    print(f"Checkpoint:  {_sampler_path}")
+    return BASE_MODEL, _sampler_path, service_client, training_client
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Step 1: Download the checkpoint
+
+    Use `weights.download()` to fetch a Tinker checkpoint to local disk. The `tinker_path` follows the format `tinker://<run_id>/sampler_weights/<name>`.
+    """)
+    return
+
+
+@app.cell
+def _(_sampler_path):
     from tinker_cookbook import weights
 
-    # Replace with your actual run ID
-    RUN_ID = "your-run-id"
-    BASE_MODEL = "Qwen/Qwen3-8B"
-
     adapter_dir = weights.download(
-        tinker_path=f"tinker://{RUN_ID}/sampler_weights/final",
-        output_dir="./adapter",
+        tinker_path=_sampler_path,
+        output_dir="/tmp/tinker-export-tutorial/adapter",
     )
     print(f"Adapter downloaded to: {adapter_dir}")
-    return BASE_MODEL, RUN_ID, adapter_dir, weights
+    return adapter_dir, weights
 
 
 @app.cell(hide_code=True)
@@ -64,14 +108,14 @@ def _(mo):
     mo.md(r"""
     ## Step 2: Merge the adapter into a full model
 
-    `build_hf_model` downloads the base model from HuggingFace Hub, applies the LoRA deltas, and saves the merged result. By default it uses shard-by-shard merging for low memory usage.
+    `build_hf_model` downloads the base model from HuggingFace Hub, applies the LoRA deltas, and saves the merged result.
     """)
     return
 
 
 @app.cell
 def _(BASE_MODEL, adapter_dir, weights):
-    OUTPUT_PATH = "./merged_model"
+    OUTPUT_PATH = "/tmp/tinker-export-tutorial/merged_model"
 
     weights.build_hf_model(
         base_model=BASE_MODEL,
@@ -96,9 +140,9 @@ def _(mo):
 def _(OUTPUT_PATH):
     import os
 
-    for f in sorted(os.listdir(OUTPUT_PATH)):
-        size_mb = os.path.getsize(os.path.join(OUTPUT_PATH, f)) / 1e6
-        print(f"  {f:45s} {size_mb:>8.1f} MB")
+    for _f in sorted(os.listdir(OUTPUT_PATH)):
+        _size_mb = os.path.getsize(os.path.join(OUTPUT_PATH, _f)) / 1e6
+        print(f"  {_f:45s} {_size_mb:>8.1f} MB")
     return
 
 
@@ -116,13 +160,13 @@ def _(mo):
 def _(OUTPUT_PATH):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(OUTPUT_PATH)
-    model = AutoModelForCausalLM.from_pretrained(OUTPUT_PATH, device_map="auto")
+    _tokenizer = AutoTokenizer.from_pretrained(OUTPUT_PATH)
+    _model = AutoModelForCausalLM.from_pretrained(OUTPUT_PATH, device_map="cpu")
 
     # Quick smoke test
-    inputs = tokenizer("The capital of France is", return_tensors="pt").to(model.device)
-    output = model.generate(**inputs, max_new_tokens=20)
-    print(tokenizer.decode(output[0], skip_special_tokens=True))
+    _inputs = _tokenizer("The capital of France is", return_tensors="pt")
+    _output = _model.generate(**_inputs, max_new_tokens=20)
+    print(_tokenizer.decode(_output[0], skip_special_tokens=True))
     return
 
 
@@ -131,8 +175,8 @@ def _(mo):
     mo.md(r"""
     ## Next steps
 
-    - **[Tutorial 05-2](./502_lora_adapter.py)** -- Convert to PEFT adapter format (lighter, for vLLM `--lora-modules`)
-    - **[Tutorial 05-3](./503_publish_hub.py)** -- Publish the merged model to HuggingFace Hub
+    - **[Build a PEFT LoRA Adapter](lora-adapter.md)** -- Convert to PEFT format for vLLM `--lora-modules`
+    - **[Publish to HuggingFace Hub](publish-hub.md)** -- Upload the merged model with a custom model card
     """)
     return
 

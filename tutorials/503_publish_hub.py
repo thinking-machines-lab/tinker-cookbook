@@ -43,7 +43,7 @@ def _(mo):
 def _():
     from tinker_cookbook import weights
 
-    # Publish a merged model (from Tutorial 05-1)
+    # Publish a merged model (from the Export HF tutorial)
     url = weights.publish_to_hf_hub(
         model_path="./merged_model",
         repo_id="my-org/my-finetuned-qwen3",
@@ -125,7 +125,7 @@ def _(ModelCardConfig, weights):
     )
 
     url_adapter = weights.publish_to_hf_hub(
-        model_path="./peft_adapter",  # from Tutorial 05-2
+        model_path="./peft_adapter",  # from the Build LoRA Adapter tutorial
         repo_id="my-org/my-qwen3-lora",
         model_card=adapter_card,
         private=False,  # make public
@@ -164,8 +164,8 @@ def _(mo):
     mo.md(r"""
     ## Next steps
 
-    - **[Tutorial 05-1](./501_export_hf.py)** -- Merge LoRA into a full HuggingFace model
-    - **[Tutorial 05-2](./502_lora_adapter.py)** -- Convert to PEFT adapter format
+    - **[Export a Merged HuggingFace Model](export-hf.md)** -- Merge LoRA into a standalone model
+    - **[Build a PEFT LoRA Adapter](lora-adapter.md)** -- Convert to PEFT format for serving
     - **[weights module docs](https://github.com/thinking-machines-lab/tinker-cookbook)** -- Full API reference
     """)
     return
