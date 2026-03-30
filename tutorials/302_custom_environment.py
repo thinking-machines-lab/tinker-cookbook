@@ -416,16 +416,6 @@ async def _(
     return (metrics_history,)
 
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Evaluate on held-out prompts
-
-    We sample from the trained model on prompts it has not seen during training and check format compliance.
-    """)
-    return
-
-
 @app.cell
 def _(metrics_history):
     import matplotlib.pyplot as plt
@@ -452,6 +442,16 @@ def _(metrics_history):
 
     plt.tight_layout()
     plt.show()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Evaluate on held-out prompts
+
+    We sample from the trained model on prompts it has not seen during training and check format compliance.
+    """)
     return
 
 

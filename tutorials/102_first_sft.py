@@ -267,16 +267,6 @@ async def _(np, time, tinker, training_client, training_data):
     return (losses,)
 
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Sample from the trained model
-
-    To verify the model learned, we save the current weights and create a sampling client. Then we ask "Tinker Tinker" questions -- including ones it hasn't seen exact answers to during training.
-    """)
-    return
-
-
 @app.cell
 def _(losses):
     import matplotlib.pyplot as plt
@@ -290,6 +280,16 @@ def _(losses):
     plt.tight_layout()
     plt.show()
     return (plt,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Sample from the trained model
+
+    To verify the model learned, we save the current weights and create a sampling client. Then we ask "Tinker Tinker" questions -- including ones it hasn't seen exact answers to during training.
+    """)
+    return
 
 
 @app.cell
