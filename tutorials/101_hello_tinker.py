@@ -32,16 +32,6 @@ def _(mo):
     return
 
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Setup
-
-    Install the Tinker SDK and set your API key. Get a key from the [Tinker console](https://tinker-console.thinkingmachines.ai).
-    """)
-    return
-
-
 @app.cell
 def _():
     import warnings

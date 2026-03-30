@@ -172,10 +172,12 @@ def _(OUTPUT_PATH):
     # Verify the config is valid
     with open(f"{OUTPUT_PATH}/config.json") as _f:
         _config = json.load(_f)
-    print(f"Model type:      {_config.get('model_type', 'unknown')}")
-    print(f"Hidden size:     {_config.get('hidden_size', 'unknown')}")
-    print(f"Num layers:      {_config.get('num_hidden_layers', 'unknown')}")
-    print(f"Vocab size:      {_config.get('vocab_size', 'unknown')}")
+    # Some models nest text params under text_config (e.g. vision-language models)
+    _tc = _config.get("text_config", _config)
+    print(f"Architecture:    {_config.get('architectures', ['unknown'])[0]}")
+    print(f"Hidden size:     {_tc.get('hidden_size', 'unknown')}")
+    print(f"Num layers:      {_tc.get('num_hidden_layers', 'unknown')}")
+    print(f"Vocab size:      {_tc.get('vocab_size', 'unknown')}")
     return
 
 
