@@ -131,3 +131,90 @@ class TestStoredTrajectory:
         )
         assert len(traj.turns) == 5
         assert traj.turns[2].role == "environment"
+
+
+# ---------------------------------------------------------------------------
+# Import / registration tests for all benchmark modules
+# ---------------------------------------------------------------------------
+
+
+class TestBenchmarkRegistration:
+    """Verify that importing each benchmark module registers it in the REGISTRY."""
+
+    def _check_registered(self, module_path: str, expected_name: str):
+        import importlib
+        importlib.import_module(module_path)
+        from tinker_cookbook.eval.benchmarks import REGISTRY
+        assert expected_name in REGISTRY, f"{expected_name} not found in REGISTRY"
+        assert REGISTRY[expected_name].name == expected_name
+
+    def test_mmlu_pro_registered(self):
+        self._check_registered("tinker_cookbook.eval.benchmarks.mmlu_pro", "mmlu_pro")
+
+    def test_mmlu_redux_registered(self):
+        self._check_registered("tinker_cookbook.eval.benchmarks.mmlu_redux", "mmlu_redux")
+
+    def test_gpqa_registered(self):
+        self._check_registered("tinker_cookbook.eval.benchmarks.gpqa", "gpqa")
+
+    def test_math500_registered(self):
+        self._check_registered("tinker_cookbook.eval.benchmarks.math500", "math500")
+
+    def test_aime_registered(self):
+        self._check_registered("tinker_cookbook.eval.benchmarks.aime", "aime")
+
+    def test_ifeval_registered(self):
+        self._check_registered("tinker_cookbook.eval.benchmarks.ifeval", "ifeval")
+
+    def test_ifbench_registered(self):
+        self._check_registered("tinker_cookbook.eval.benchmarks.ifbench", "ifbench")
+
+    def test_bfcl_registered(self):
+        self._check_registered("tinker_cookbook.eval.benchmarks.bfcl", "bfcl")
+
+    def test_longbench_registered(self):
+        self._check_registered("tinker_cookbook.eval.benchmarks.longbench", "longbench")
+
+    def test_tau2_bench_registered(self):
+        self._check_registered("tinker_cookbook.eval.benchmarks.tau2_bench", "tau2_bench")
+
+    def test_arena_hard_registered(self):
+        self._check_registered("tinker_cookbook.eval.benchmarks.arena_hard", "arena_hard")
+
+    def test_swe_bench_registered(self):
+        self._check_registered("tinker_cookbook.eval.benchmarks.swe_bench", "swe_bench")
+
+    def test_terminal_bench_registered(self):
+        self._check_registered("tinker_cookbook.eval.benchmarks.terminal_bench", "terminal_bench")
+
+    def test_mbpp_registered(self):
+        self._check_registered("tinker_cookbook.eval.benchmarks.mbpp", "mbpp")
+
+    def test_livecodebench_registered(self):
+        self._check_registered("tinker_cookbook.eval.benchmarks.livecodebench", "livecodebench")
+
+
+class TestMCQExtraction:
+    """Test answer extraction functions from MCQ benchmarks."""
+
+    def test_mmlu_pro_extract(self):
+        from tinker_cookbook.eval.benchmarks.mmlu_pro import extract_mcq_answer
+        assert extract_mcq_answer("The answer is (B).", "ABCDEFGHIJ") == "B"
+        assert extract_mcq_answer("\\boxed{C}", "ABCDEFGHIJ") == "C"
+        assert extract_mcq_answer("I think D is correct.", "ABCDEFGHIJ") == "D"
+
+    def test_bfcl_function_matching(self):
+        from tinker_cookbook.eval.benchmarks.bfcl import _match_function_call
+        gen = {"name": "get_weather", "arguments": {"city": "London"}}
+        exp = {"name": "get_weather", "arguments": {"city": "london"}}
+        assert _match_function_call(gen, exp)
+
+        gen_wrong = {"name": "get_weather", "arguments": {"city": "Paris"}}
+        assert not _match_function_call(gen_wrong, exp)
+
+    def test_tau2_bench_action_extraction(self):
+        from tinker_cookbook.eval.benchmarks.tau2_bench import _extract_action
+        text = '```json\n{"action": "refund", "arguments": {"order_id": "123"}}\n```'
+        result = _extract_action(text)
+        assert result is not None
+        assert result["action"] == "refund"
