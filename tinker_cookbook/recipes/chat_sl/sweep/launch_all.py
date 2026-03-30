@@ -127,10 +127,18 @@ NEW_MODELS: list[ModelSweepConfig] = [
 # ---------------------------------------------------------------------------
 
 
+SWEEP_ROOT = "/tmp/tinker-sweeps"
+
+
 def build_sweep_command(cfg: ModelSweepConfig, jobs_per_model: int) -> list[str]:
     """Build the CLI command for one model's sweep."""
     lr_str = ", ".join(str(lr) for lr in cfg.learning_rates)
     rank_str = ", ".join(str(r) for r in cfg.lora_ranks)
+
+    # Use a model-specific sweep directory to avoid collisions when
+    # multiple models launch concurrently with the same timestamp.
+    model_slug = cfg.model_name.replace("/", "-")
+    sweep_dir = f"{SWEEP_ROOT}/{model_slug}"
 
     return [
         sys.executable,
@@ -145,6 +153,7 @@ def build_sweep_command(cfg: ModelSweepConfig, jobs_per_model: int) -> list[str]
         "metric=test/nll",
         f"training_budget_examples={TRAINING_BUDGET}",
         f"max_parallel={jobs_per_model}",
+        f"sweep_dir={sweep_dir}",
         f"learning_rates=[{lr_str}]",
         f"lora_ranks=[{rank_str}]",
     ]
