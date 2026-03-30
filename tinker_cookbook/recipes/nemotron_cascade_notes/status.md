@@ -52,3 +52,19 @@ See `model_decision.md` for rationale.
 - **State**: `tinker://dcac3236-4699-55be-8375-9e54e071c056:train:0/weights/sft_step500_permanent`
 - **Sampler**: `tinker://dcac3236-4699-55be-8375-9e54e071c056:train:0/sampler_weights/sft_step500_permanent`
 - **NLL**: 0.687 -> 0.542 (500 steps, Super 120B, LoRA rank 64)
+
+## Eval Results (2026-03-30)
+
+Model: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16:peft:262144 (200 samples per benchmark)
+
+| Benchmark | Base | SFT step-500 | Delta |
+|---|---|---|---|
+| MATH-500 | 91.5% | 93.0% | +1.5 |
+| GSM8K | 89.5% | 90.0% | +0.5 |
+| MMLU-Redux | 89.5% | 89.0% | -0.5 |
+| MMLU-Pro | 76.0% | 76.0% | 0.0 |
+| GPQA-Diamond | 52.0% | 55.1% | +3.1 |
+| IFEval (loose) | 77.2% | 74.6% | -2.6 |
+| IFEval (strict) | 58.5% | 54.0% | -4.5 |
+
+SFT improves math/science, degrades instruction following. IF-RL (Stage 1) should recover IFEval.
