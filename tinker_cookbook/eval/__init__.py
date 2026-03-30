@@ -1,6 +1,6 @@
-"""Evaluation: evaluator interfaces, benchmark framework, and builders.
+"""Evaluation: evaluator interfaces, benchmark framework, and eval store.
 
-Two evaluation systems:
+Three layers:
 
 1. **Evaluators** (:class:`SamplingClientEvaluator`, :class:`TrainingClientEvaluator`):
    Lightweight interfaces for inline evaluation during training. Called every N
@@ -12,26 +12,33 @@ Two evaluation systems:
    and aggregation. Use :class:`BenchmarkEvaluator` to bridge benchmarks into
    the training evaluator interface.
 
-Example — standalone benchmark::
+3. **EvalStore** (:class:`tinker_cookbook.eval.store.EvalStore`):
+   Persistent storage for evaluation runs. Tracks metadata, scores, and
+   trajectories across checkpoints. Supports cross-run comparison to identify
+   regressions and improvements.
 
+Example — run and store::
+
+    from tinker_cookbook.eval.store import EvalStore
     from tinker_cookbook.eval.benchmarks import run_benchmarks, BenchmarkConfig
 
-    results = await run_benchmarks(
-        ["gsm8k", "mmlu_pro", "ifeval"],
-        sampling_client, renderer,
-        BenchmarkConfig(save_dir="evals/checkpoint_001"),
+    store = EvalStore("~/experiments/evals")
+    run_id = store.create_run(
+        model_name="nvidia/...",
+        checkpoint_name="sft_step500",
+        benchmarks=["gsm8k", "ifeval"],
     )
-
-Example — inline training eval::
-
-    from tinker_cookbook.eval.benchmark_evaluator import BenchmarkEvaluator
-
-    config = Config(
-        evaluator_builders=[
-            lambda: BenchmarkEvaluator("gsm8k", renderer, max_examples=100),
-        ],
-        ...
+    await run_benchmarks(
+        ["gsm8k", "ifeval"], sampling_client, renderer,
+        BenchmarkConfig(save_dir=store.run_dir(run_id)),
     )
+    store.finalize_run(run_id)
+
+Example — compare checkpoints::
+
+    comp = store.compare_runs("sft_step500", "sft_step500_ifrl", "ifeval")
+    store.print_comparison(comp)
+    # Regressions: 3, Improvements: 18
 """
 
 from tinker_cookbook.eval.evaluators import (
@@ -49,6 +56,8 @@ __all__ = [
     "SamplingClientEvaluator",
     "SamplingClientEvaluatorBuilder",
     "TrainingClientEvaluator",
-    # Benchmark sub-package accessible via tinker_cookbook.eval.benchmarks
-    # BenchmarkEvaluator accessible via tinker_cookbook.eval.benchmark_evaluator
+    # Sub-modules:
+    #   tinker_cookbook.eval.benchmarks — benchmark framework
+    #   tinker_cookbook.eval.store — persistent eval storage
+    #   tinker_cookbook.eval.benchmark_evaluator — bridge to training evaluators
 ]
