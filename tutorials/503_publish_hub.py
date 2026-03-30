@@ -44,6 +44,7 @@ def _(mo):
         repo_id="my-org/my-finetuned-qwen3",
     )
     print(f"Published to: {url}")
+    # -> Published to: https://huggingface.co/my-org/my-finetuned-qwen3
     ```
     """)
     return
@@ -113,6 +114,7 @@ def _(mo):
         repo_id="my-org/my-finetuned-qwen3",
         model_card=card_config,
     )
+    # -> Published to: https://huggingface.co/my-org/my-finetuned-qwen3
     ```
 
     ## Publishing a PEFT adapter
@@ -132,6 +134,7 @@ def _(mo):
         model_card=adapter_card,
         private=False,  # make public
     )
+    # -> Published to: https://huggingface.co/my-org/my-qwen3-lora
     ```
     """)
     return
