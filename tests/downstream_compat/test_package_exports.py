@@ -7,8 +7,6 @@ and that __all__ matches the actual exports.
 
 import importlib
 
-import pytest
-
 from tinker_cookbook import renderers
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
