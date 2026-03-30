@@ -73,14 +73,26 @@ def _pretty_model_name(raw: str) -> str:
     return table.get(raw, raw)
 
 
-def _hf_model_name(raw: str) -> str:
-    """Convert raw model slug to HuggingFace model ID for reproduction commands."""
-    table: dict[str, str] = {
-        "nvidia-NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
-        "nvidia-NVIDIA-Nemotron-3-Super-120B-A12B-BF16": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",
-        "deepseek-ai-DeepSeek-V3.1-Base": "deepseek-ai/DeepSeek-V3.1-Base",
-    }
-    return table.get(raw, raw.replace("-", "/", 1))
+def _slug_to_hf_name(slug: str) -> str:
+    """Restore the ``org/model`` HuggingFace name from a run-name slug.
+
+    Run names replace ``/`` with ``-`` (see ``train.py``), making the
+    org/model boundary ambiguous for orgs that contain hyphens (e.g.
+    ``deepseek-ai``, ``meta-llama``).  We resolve the ambiguity by
+    checking known org prefixes longest-first.
+    """
+    # Sorted longest-first so "deepseek-ai" is tried before "deepseek".
+    known_orgs = sorted(
+        ["meta-llama", "deepseek-ai", "Qwen", "nvidia", "openai", "moonshotai"],
+        key=len,
+        reverse=True,
+    )
+    for org in known_orgs:
+        prefix = org + "-"
+        if slug.startswith(prefix):
+            return org + "/" + slug[len(prefix):]
+    # Unknown org – best-effort: split on first hyphen.
+    return slug.replace("-", "/", 1)
 
 
 def fetch_runs(wandb_project: str) -> list[RunResult]:
@@ -258,7 +270,7 @@ def generate_model_section(
     """Generate a markdown section for one model."""
     lines: list[str] = []
     pretty = _pretty_model_name(model_slug)
-    hf_name = _hf_model_name(model_slug)
+    hf_name = _slug_to_hf_name(model_slug)
     lines.append(f"## {pretty}")
     lines.append("")
 
