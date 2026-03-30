@@ -57,9 +57,12 @@ class ModelSweepConfig:
     learning_rates: list[float]
     lora_ranks: list[int]
     note: str = ""  # e.g. "MoE", "Dense", etc.
+    renderer_name: str | None = None  # Override default renderer
 
 
-def _cfg(model: str, tier: str, note: str = "") -> ModelSweepConfig:
+def _cfg(
+    model: str, tier: str, note: str = "", renderer_name: str | None = None
+) -> ModelSweepConfig:
     rank_map = {
         "large": RANKS_LARGE,
         "medium": RANKS_MEDIUM,
@@ -72,6 +75,7 @@ def _cfg(model: str, tier: str, note: str = "") -> ModelSweepConfig:
         learning_rates=LR_ALL,
         lora_ranks=rank_map[tier],
         note=note,
+        renderer_name=renderer_name,
     )
 
 
@@ -94,7 +98,7 @@ NEW_MODELS: list[ModelSweepConfig] = [
     _cfg("Qwen/Qwen3.5-397B-A17B", "large", "MoE Hybrid+Vision"),
     _cfg("Qwen/Qwen3-VL-235B-A22B-Instruct", "large", "MoE Vision"),
     _cfg("Qwen/Qwen3-235B-A22B-Instruct-2507", "large", "MoE Instruction"),
-    _cfg("deepseek-ai/DeepSeek-V3.1", "large", "MoE Hybrid"),
+    _cfg("deepseek-ai/DeepSeek-V3.1", "large", "MoE Hybrid", renderer_name="deepseekv3_thinking"),
     _cfg("meta-llama/Llama-3.1-70B", "large", "Dense Base"),
     _cfg("meta-llama/Llama-3.3-70B-Instruct", "large", "Dense Instruction"),
     _cfg("moonshotai/Kimi-K2-Thinking", "large", "MoE Reasoning"),
@@ -140,7 +144,7 @@ def build_sweep_command(cfg: ModelSweepConfig, jobs_per_model: int) -> list[str]
     model_slug = cfg.model_name.replace("/", "-")
     sweep_dir = f"{SWEEP_ROOT}/{model_slug}"
 
-    return [
+    cmd = [
         sys.executable,
         "-m",
         "tinker_cookbook.recipes.chat_sl.sweep",
@@ -157,6 +161,9 @@ def build_sweep_command(cfg: ModelSweepConfig, jobs_per_model: int) -> list[str]
         f"learning_rates=[{lr_str}]",
         f"lora_ranks=[{rank_str}]",
     ]
+    if cfg.renderer_name is not None:
+        cmd.append(f"base.renderer_name={cfg.renderer_name}")
+    return cmd
 
 
 async def run_model_sweep(
