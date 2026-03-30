@@ -78,9 +78,13 @@ def _trajectory_to_stored(
         all_metrics.update(t.metrics)
         all_logs.update(t.logs)
 
+    # Use example_id from logs if provided by the Env, otherwise fall back to idx
+    example_id = all_logs.pop("example_id", str(idx))
+
     return StoredTrajectory(
         idx=idx,
         benchmark=benchmark_name,
+        example_id=example_id,
         turns=turns,
         reward=total_reward,
         metrics=all_metrics,

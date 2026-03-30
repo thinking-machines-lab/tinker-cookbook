@@ -81,9 +81,14 @@ class StoredTrajectory:
     """Index in the benchmark's example list (for resumability)."""
     benchmark: str
     """Benchmark name."""
-    turns: list[StoredTurn]
+    example_id: str = ""
+    """Stable identifier for this example across runs. Deterministic from the
+    dataset (e.g., question hash, dataset-provided ID). Used for cross-run
+    comparison — the same question always gets the same example_id regardless
+    of which checkpoint is being evaluated. If empty, falls back to ``idx``."""
+    turns: list[StoredTurn] = field(default_factory=list)
     """Full conversation history (decoded text, not tokens)."""
-    reward: float
+    reward: float = 0.0
     """Total reward (sum of per-step rewards)."""
     metrics: dict = field(default_factory=dict)
     """Per-example metrics from Env.step() (e.g., correct, overlong)."""
@@ -99,6 +104,7 @@ class StoredTrajectory:
         return {
             "idx": self.idx,
             "benchmark": self.benchmark,
+            "example_id": self.example_id,
             "turns": [
                 {"role": t.role, "content": t.content, "token_count": t.token_count, "metadata": t.metadata}
                 for t in self.turns
@@ -116,8 +122,9 @@ class StoredTrajectory:
         return cls(
             idx=d["idx"],
             benchmark=d["benchmark"],
-            turns=[StoredTurn(**t) for t in d["turns"]],
-            reward=d["reward"],
+            example_id=d.get("example_id", ""),
+            turns=[StoredTurn(**t) for t in d.get("turns", [])],
+            reward=d.get("reward", 0.0),
             metrics=d.get("metrics", {}),
             logs=d.get("logs", {}),
             error=d.get("error"),

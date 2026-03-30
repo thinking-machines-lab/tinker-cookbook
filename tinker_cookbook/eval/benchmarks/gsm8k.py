@@ -91,10 +91,11 @@ def check_gsm8k(response: str, expected: str) -> bool:
 class GSM8KEnv(Env):
     """Single-turn env for one GSM8K problem."""
 
-    def __init__(self, question: str, expected: str, renderer: Renderer):
+    def __init__(self, question: str, expected: str, renderer: Renderer, example_id: str = ""):
         self.question = question
         self.expected = expected
         self.renderer = renderer
+        self.example_id = example_id
 
     async def initial_observation(self):
         messages: list[Message] = [{"role": "user", "content": self.question}]
@@ -112,6 +113,7 @@ class GSM8KEnv(Env):
             next_stop_condition=[],
             metrics={"correct": float(correct)},
             logs={
+                "example_id": self.example_id,
                 "input": self.question[:200],
                 "expected": self.expected,
                 "extracted": extract_gsm8k_answer(response),
@@ -136,9 +138,12 @@ class GSM8KBenchmarkBuilder(BenchmarkBuilder):
             ds = ds.select(range(min(config.max_examples, len(ds))))
 
         envs = []
-        for row in ds:
+        for i, row in enumerate(ds):
             expected = row["answer"].split("####")[-1].strip()
-            envs.append(GSM8KEnv(row["question"], expected, renderer))
+            # Stable ID: hash of question text (same question = same ID across runs)
+            import hashlib
+            example_id = f"gsm8k_{hashlib.md5(row['question'].encode()).hexdigest()[:12]}"
+            envs.append(GSM8KEnv(row["question"], expected, renderer, example_id=example_id))
         return envs
 
 

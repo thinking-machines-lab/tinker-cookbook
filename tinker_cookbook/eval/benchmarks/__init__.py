@@ -46,6 +46,7 @@ from tinker_cookbook.eval.benchmarks._runner import (
     run_benchmark,
     run_benchmarks,
 )
+from tinker_cookbook.eval.benchmarks._store import EvalStore, RunComparison, RunMetadata
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, StoredTrajectory
 
 REGISTRY: dict[str, BenchmarkBuilder] = {}
@@ -75,4 +76,8 @@ __all__ = [
     "load_trajectories",
     "load_summary",
     "print_trajectory",
+    # Eval store (persistent, cross-run comparison)
+    "EvalStore",
+    "RunMetadata",
+    "RunComparison",
 ]
