@@ -68,3 +68,16 @@ Model: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16:peft:262144 (200 samples pe
 | IFEval (strict) | 58.5% | 54.0% | -4.5 |
 
 SFT improves math/science, degrades instruction following. IF-RL (Stage 1) should recover IFEval.
+
+## Nano RL Baselines Complete (2026-03-30)
+
+30-step RL on Nemotron-3-Nano base model (group_size=16, groups_per_batch=8):
+
+| Env | Avg Reward | First5 | Last5 | Notes |
+|---|---|---|---|---|
+| Structured Output | 0.796 | 0.825 | 0.842 | Stable, strong |
+| IF-RL | 0.729 | 0.766 | 0.653 | Noisy, slight decline |
+| Long-Context | 0.588 | 0.597 | 0.591 | Stable |
+| MCQA | 0.415 | 0.334 | 0.432 | Improved over training |
+| Workbench | 0.252 | 0.219 | 0.230 | Slow improvement |
+| RLHF | 0.503 (13 steps) | Flat | — | GenRM hangs (parallelization helped but still flaky) |
