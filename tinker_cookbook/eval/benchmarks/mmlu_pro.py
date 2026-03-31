@@ -15,6 +15,7 @@ import tinker
 from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
+    decode_response,
     extract_mcq_answer,
     format_mcq_choices,
     limit_dataset,
@@ -61,7 +62,7 @@ class MMLUProEnv(Env):
         return model_input, stop
 
     async def step(self, action, *, extra=None):
-        response = self.renderer.tokenizer.decode(action)
+        response = decode_response(action, self.renderer)
         extracted = extract_mcq_answer(response, self.valid_letters)
         correct = extracted == self.expected
         return StepResult(

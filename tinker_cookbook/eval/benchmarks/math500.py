@@ -15,6 +15,7 @@ import tinker
 from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
+    decode_response,
     limit_dataset,
     load_benchmark_dataset,
     make_example_id,
@@ -51,7 +52,7 @@ class MATH500Env(Env):
     async def step(self, action, *, extra=None):
         from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed, grade_answer
 
-        response = self.renderer.tokenizer.decode(action)
+        response = decode_response(action, self.renderer)
         try:
             given = extract_boxed(response)
             correct = grade_answer(given, self.expected)

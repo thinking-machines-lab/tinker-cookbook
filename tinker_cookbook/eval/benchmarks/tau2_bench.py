@@ -25,6 +25,7 @@ from datasets import Dataset
 
 from tinker_cookbook.completers import TinkerMessageCompleter
 from tinker_cookbook.eval.benchmarks._common import (
+    decode_response,
     limit_dataset,
     load_benchmark_dataset,
     make_example_id,
@@ -552,7 +553,7 @@ class Tau2BenchEnv(Env):
 
     async def step(self, action, *, extra=None):
         self.turn_count += 1
-        response_text = self.renderer.tokenizer.decode(action)
+        response_text = decode_response(action, self.renderer)
 
         # Append assistant message
         self.messages.append({"role": "assistant", "content": response_text})

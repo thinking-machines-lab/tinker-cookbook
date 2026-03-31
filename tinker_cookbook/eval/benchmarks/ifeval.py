@@ -13,6 +13,7 @@ from collections.abc import Sequence
 import tinker
 
 from tinker_cookbook.eval.benchmarks._common import (
+    decode_response,
     limit_dataset,
     load_benchmark_dataset,
     parse_kwargs,
@@ -59,7 +60,7 @@ class IFEvalEnv(Env):
     async def step(self, action, *, extra=None):
         from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_all_instructions
 
-        response = self.renderer.tokenizer.decode(action)
+        response = decode_response(action, self.renderer)
         fraction, _ = verify_all_instructions(response, self.instruction_ids, self.kwargs_list)
         correct = fraction == 1.0
         return StepResult(

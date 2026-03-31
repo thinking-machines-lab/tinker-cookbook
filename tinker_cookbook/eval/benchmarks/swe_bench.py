@@ -26,6 +26,7 @@ from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
     SandboxMixin,
+    decode_response,
     extract_command,
     get_sandbox_factory,
     is_task_complete,
@@ -201,7 +202,7 @@ class SWEBenchEnv(SandboxMixin, Env):
 
     async def step(self, action, *, extra=None):
         self.turn_count += 1
-        response_text = self.renderer.tokenizer.decode(action)
+        response_text = decode_response(action, self.renderer)
 
         self.messages.append({"role": "assistant", "content": response_text})
 

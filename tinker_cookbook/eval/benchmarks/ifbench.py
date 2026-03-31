@@ -18,6 +18,7 @@ import tinker
 from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
+    decode_response,
     limit_dataset,
     load_benchmark_dataset,
     make_example_id,
@@ -106,7 +107,7 @@ class IFBenchEnv(Env):
         return model_input, stop
 
     async def step(self, action, *, extra=None):
-        response = self.renderer.tokenizer.decode(action)
+        response = decode_response(action, self.renderer)
         fraction, all_satisfied = _verify_constraints(
             response, self.instruction_ids, self.kwargs_list
         )

@@ -16,6 +16,7 @@ import tinker
 from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
+    decode_response,
     format_mcq_choices,
     limit_dataset,
     load_benchmark_dataset,
@@ -89,7 +90,7 @@ class LongBenchEnv(Env):
         return model_input, stop
 
     async def step(self, action, *, extra=None):
-        response = self.renderer.tokenizer.decode(action)
+        response = decode_response(action, self.renderer)
         if self.is_mcq:
             letters = re.findall(r"\b([A-D])\b", response[-300:])
             extracted = letters[-1] if letters else ""

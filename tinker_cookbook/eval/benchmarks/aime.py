@@ -21,6 +21,7 @@ import tinker
 from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
+    decode_response,
     extract_boxed,
     extract_gsm8k_answer,
     extract_number,
@@ -97,7 +98,7 @@ class AIMEEnv(Env):
         return model_input, stop
 
     async def step(self, action, *, extra=None):
-        response = self.renderer.tokenizer.decode(action)
+        response = decode_response(action, self.renderer)
         boxed = extract_boxed(response)
         extracted_str = extract_number(boxed) if boxed else extract_gsm8k_answer(response)
         try:

@@ -14,6 +14,7 @@ import tinker
 
 from tinker_cookbook.eval.benchmarks._common import (
     check_gsm8k,
+    decode_response,
     extract_boxed,
     extract_gsm8k_answer,
     extract_number,
@@ -53,7 +54,7 @@ class GSM8KEnv(Env):
         return model_input, stop
 
     async def step(self, action, *, extra=None):
-        response = self.renderer.tokenizer.decode(action)
+        response = decode_response(action, self.renderer)
         correct = check_gsm8k(response, self.expected)
         return StepResult(
             reward=1.0 if correct else 0.0,

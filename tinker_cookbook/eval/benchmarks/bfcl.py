@@ -23,6 +23,7 @@ from datasets import Dataset, load_dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
     _resolve_trust_remote_code,
+    decode_response,
     limit_dataset,
     make_example_id,
 )
@@ -131,7 +132,7 @@ class BFCLEnv(Env):
         return model_input, stop
 
     async def step(self, action, *, extra=None):
-        response = self.renderer.tokenizer.decode(action)
+        response = decode_response(action, self.renderer)
         generated = _extract_function_call(response)
         if generated is None:
             correct = False

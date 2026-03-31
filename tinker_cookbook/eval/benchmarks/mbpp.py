@@ -16,6 +16,7 @@ from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
     SandboxMixin,
+    decode_response,
     extract_python_code,
     get_sandbox_factory,
     limit_dataset,
@@ -64,7 +65,7 @@ class MBPPEnv(SandboxMixin, Env):
         return model_input, stop
 
     async def step(self, action, *, extra=None):
-        response = self.renderer.tokenizer.decode(action)
+        response = decode_response(action, self.renderer)
         code = extract_python_code(response)
 
         # Build test code: solution + assertion tests

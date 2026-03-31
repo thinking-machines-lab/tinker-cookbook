@@ -20,6 +20,7 @@ from datasets import Dataset
 
 from tinker_cookbook.completers import TinkerMessageCompleter
 from tinker_cookbook.eval.benchmarks._common import (
+    decode_response,
     limit_dataset,
     load_benchmark_dataset,
     make_example_id,
@@ -96,7 +97,7 @@ class ArenaHardEnv(Env):
         return model_input, stop
 
     async def step(self, action, *, extra=None):
-        answer = self.renderer.tokenizer.decode(action)
+        answer = decode_response(action, self.renderer)
 
         # Judge the response
         judge_prompt = _JUDGE_PROMPT_TEMPLATE.format(question=self.question, answer=answer)
