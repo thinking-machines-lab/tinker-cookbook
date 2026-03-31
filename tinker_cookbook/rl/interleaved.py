@@ -304,9 +304,11 @@ class InterleavedRLDatasetBuilder(RLDatasetBuilder):
             ``[0.55, 0.30, 0.15]`` are equivalent). All weights must be
             positive.
         groups_per_batch: Number of :class:`EnvGroupBuilder` instances
-            per output batch. This is independent of each source's own
-            batch size — sources with different groups-per-batch compose
-            correctly.
+            (problems) per output batch. This controls how many groups
+            are in each batch, not how many rollouts per group — each
+            source's ``EnvGroupBuilder`` independently determines its
+            own ``group_size`` (number of rollouts per problem). Sources
+            with different groups-per-batch compose correctly.
         total_batches: Fixed number of training batches. With cycling,
             sources wrap around when exhausted. If ``None``, training
             runs until the smallest source is exhausted (no cycling).
