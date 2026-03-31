@@ -32,6 +32,8 @@ from tinker_cookbook.recipes.nemotron_cascade.rl.envs.workbench import Workbench
 from tinker_cookbook.recipes.nemotron_cascade.rl.envs.code_rl import CodeRLDatasetBuilder
 from tinker_cookbook.recipes.nemotron_cascade.rl.envs.swe_agentless import SWERLDatasetBuilder
 from tinker_cookbook.recipes.nemotron_cascade.rl.envs.swe_agentic import SWEAgenticDatasetBuilder
+from tinker_cookbook.rl.rollout_strategy import RetryOnFailure
+from tinker_cookbook.rl.interleaved import InterleavedRLDatasetBuilder
 from tinker_cookbook.rl.train import AsyncConfig, Config, KLReferenceConfig, StreamMinibatchConfig, main
 from tinker_cookbook.rl.types import RLDatasetBuilder
 
@@ -188,10 +190,41 @@ def get_dataset_builder(
             group_size=group_size,
             seed=seed,
         )
+    elif env == "multi_domain":
+        # Paper Table 8: MCQA 55%, Workbench 30%, Structured Output 15%
+        mcqa = MCQARLDatasetBuilder(
+            batch_size=batch_size,
+            model_name_for_tokenizer=model_name,
+            renderer_name=renderer_name,
+            group_size=group_size,
+            seed=seed,
+        )
+        workbench = WorkbenchRLDatasetBuilder(
+            batch_size=batch_size,
+            model_name_for_tokenizer=model_name,
+            renderer_name=renderer_name,
+            group_size=group_size,
+            seed=seed,
+        )
+        structured = StructuredOutputRLDatasetBuilder(
+            batch_size=batch_size,
+            model_name_for_tokenizer=model_name,
+            renderer_name=renderer_name,
+            group_size=group_size,
+            seed=seed,
+        )
+        return InterleavedRLDatasetBuilder(
+            sources=[mcqa, workbench, structured],
+            weights=[0.55, 0.30, 0.15],
+            groups_per_batch=batch_size,
+            total_batches=None,  # Use max_steps from Config
+            seed=seed,
+        )
     else:
         raise ValueError(
             f"Unknown environment: {env}. "
-            "Available: if_rl, longctx_rl, mcqa, structured_output, workbench, swe_rl, swe_agentic, rlhf, code_rl"
+            "Available: if_rl, longctx_rl, mcqa, structured_output, workbench, "
+            "swe_rl, swe_agentic, rlhf, code_rl, multi_domain"
         )
 
 
