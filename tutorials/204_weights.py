@@ -70,13 +70,13 @@ async def _(TensorData, tinker, torch):
     ids = tokenizer.encode(text)
     model_input = tinker.ModelInput.from_ints(ids[:-1])
     target_tokens = ids[1:]
-    weights = [1.0] * len(target_tokens)
+    _weights = [1.0] * len(target_tokens)
 
     datum = tinker.Datum(
         model_input=model_input,
         loss_fn_inputs={
             "target_tokens": TensorData.from_torch(torch.tensor(target_tokens)),
-            "weights": TensorData.from_torch(torch.tensor(weights)),
+            "weights": TensorData.from_torch(torch.tensor(_weights)),
         },
     )
 
@@ -158,8 +158,8 @@ async def _(service_client, state_path):
     # The resumed client has the same trained weights but a fresh optimizer.
     # You can also use create_training_client_from_state_with_optimizer_async
     # to restore the full optimizer state (Adam momentum, etc).
-    info = resumed_client.get_info()
-    print(f"Training run ID: {info.training_run_id}")
+    info = await resumed_client.get_info_async()
+    print(f"Model ID: {info.model_id}")
     return info, resumed_client
 
 
@@ -203,14 +203,15 @@ def _(mo):
 
 
 @app.cell
-def _(service_client, training_client):
+async def _(service_client, training_client):
     rest_client = service_client.create_rest_client()
 
-    # Get the training run ID from the training client
-    run_info = training_client.get_info()
-    run_id = run_info.training_run_id
+    # Get the run ID from the training client's model_id
+    _info = await training_client.get_info_async()
+    # model_id format: "<run_id>:train:<seq>"
+    run_id = _info.model_id.split(":")[0]
     print(f"Training run: {run_id}")
-    return rest_client, run_id, run_info
+    return rest_client, run_id
 
 
 @app.cell(hide_code=True)
@@ -239,7 +240,7 @@ def _(rest_client):
     all_checkpoints = rest_client.list_user_checkpoints(limit=5).result()
     print(f"Recent checkpoints across all runs ({len(all_checkpoints.checkpoints)}):")
     for _cp in all_checkpoints.checkpoints:
-        print(f"  {_cp.training_run_id}/{_cp.checkpoint_id} ({_cp.checkpoint_type})")
+        print(f"  {_cp.tinker_path} ({_cp.checkpoint_type})")
     return (all_checkpoints,)
 
 
