@@ -1,6 +1,11 @@
-"""AIME 2025 benchmark -- math competition problems with integer answers (0-999).
+"""AIME benchmarks -- math competition problems with integer answers (0-999).
 
-Dataset: Tries multiple HuggingFace sources for AIME 2025 problems.
+Provides separate benchmarks for each year:
+- ``aime_2025``: AIME 2025 (30 problems)
+- ``aime_2026``: AIME 2026 (30 problems)
+- ``aime``: Alias for ``aime_2025`` (backward compatibility)
+
+Datasets: Tries multiple HuggingFace sources per year.
 Metric: Accuracy -- fraction of problems where the extracted integer matches ground truth.
 Pattern: Single-turn generate + programmatic grading.
 """
@@ -30,22 +35,35 @@ from tinker_cookbook.rl.types import Env, StepResult
 
 logger = logging.getLogger(__name__)
 
-# Known HuggingFace dataset IDs for AIME 2025 (tried in order)
-_AIME_DATASET_IDS = (
-    "HuggingFaceH4/aime-2025",
-    "yentinglin/aime_2025",
-    "Maxwell-Jia/AIME_2025",
-    "opencompass/AIME2025",
-    "di-zhang-fdu/AIME24-25",
-)
+# Dataset sources per year (tried in order)
+_AIME_DATASETS: dict[str, tuple[str, ...]] = {
+    "2025": (
+        "MathArena/aime_2025",
+        "HuggingFaceH4/aime-2025",
+        "yentinglin/aime_2025",
+        "Maxwell-Jia/AIME_2025",
+        "opencompass/AIME2025",
+        "math-ai/aime25",
+        "di-zhang-fdu/AIME24-25",
+    ),
+    "2026": (
+        "MathArena/aime_2026",
+        "math-ai/aime26",
+    ),
+}
 
 
-def _load_aime_dataset() -> Dataset | None:
-    for dataset_id in _AIME_DATASET_IDS:
+def _load_aime_dataset(year: str) -> Dataset | None:
+    """Load AIME dataset for a specific year, trying multiple HF sources."""
+    dataset_ids = _AIME_DATASETS.get(year, ())
+    if not dataset_ids:
+        logger.warning(f"No known dataset sources for AIME {year}")
+        return None
+    for dataset_id in dataset_ids:
         for split in ("test", "train"):
             try:
                 ds = cast(Dataset, load_benchmark_dataset(dataset_id, split=split))
-                logger.info(f"Loaded AIME 2025 from {dataset_id}/{split} ({len(ds)} problems)")
+                logger.info(f"Loaded AIME {year} from {dataset_id}/{split} ({len(ds)} problems)")
                 return ds
             except Exception:
                 continue
@@ -104,19 +122,21 @@ class AIMEEnv(Env):
 
 
 # ---------------------------------------------------------------------------
-# Benchmark builder
+# Benchmark builders
 # ---------------------------------------------------------------------------
 
 
-class AIMEBenchmarkBuilder(BenchmarkBuilder):
-    """AIME 2025: math competition problems with integer answers (0-999)."""
+class _AIMEBenchmarkBuilder(BenchmarkBuilder):
+    """Base builder for AIME benchmarks — parameterized by year."""
 
-    name = "aime"
+    def __init__(self, year: str, benchmark_name: str):
+        self._year = year
+        self.name = benchmark_name
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
-        ds = _load_aime_dataset()
+        ds = _load_aime_dataset(self._year)
         if ds is None:
-            logger.warning("Could not load AIME 2025 dataset from HuggingFace.")
+            logger.warning(f"Could not load AIME {self._year} dataset from HuggingFace.")
             return []
 
         ds = limit_dataset(ds, config.max_examples)
@@ -137,7 +157,7 @@ class AIMEBenchmarkBuilder(BenchmarkBuilder):
                 else:
                     continue
 
-            example_id = make_example_id("aime", problem)
+            example_id = make_example_id(self.name, problem)
             envs.append(AIMEEnv(problem, expected, renderer, example_id=example_id))
         return envs
 
@@ -145,4 +165,7 @@ class AIMEBenchmarkBuilder(BenchmarkBuilder):
 # Auto-register
 from tinker_cookbook.eval.benchmarks import register  # noqa: E402
 
-register(AIMEBenchmarkBuilder())
+register(_AIMEBenchmarkBuilder("2025", "aime_2025"))
+register(_AIMEBenchmarkBuilder("2026", "aime_2026"))
+# Backward-compatible alias: "aime" -> AIME 2025
+register(_AIMEBenchmarkBuilder("2025", "aime"))
