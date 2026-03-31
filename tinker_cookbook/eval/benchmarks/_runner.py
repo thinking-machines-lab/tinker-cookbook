@@ -277,12 +277,22 @@ def _ensure_registered(name: str) -> None:
 
     if name in REGISTRY:
         return
-    # Try importing the benchmark module by name
+    # Try importing the benchmark module by name.
+    # Also try the base name (e.g., "aime" for "aime_2026") since a single
+    # module may register multiple benchmark variants.
     import contextlib
     import importlib
 
-    with contextlib.suppress(ImportError):
-        importlib.import_module(f"tinker_cookbook.eval.benchmarks.{name}")
+    candidates = [name]
+    # Strip trailing _YYYY suffix to find parent module
+    if len(name) > 5 and name[-4:].isdigit() and name[-5] == "_":
+        candidates.append(name[:-5])
+
+    for module_name in candidates:
+        with contextlib.suppress(ImportError):
+            importlib.import_module(f"tinker_cookbook.eval.benchmarks.{module_name}")
+        if name in REGISTRY:
+            return
 
 
 async def run_benchmark(
