@@ -1,5 +1,6 @@
 """Reinforcement learning: environment protocol, types, and training loops."""
 
+from tinker_cookbook.rl.interleaved import InterleavedRLDatasetBuilder
 from tinker_cookbook.rl.rollout_strategy import FailFast, RetryOnFailure, RolloutStrategy
 from tinker_cookbook.rl.types import (
     Action,
@@ -34,6 +35,8 @@ __all__ = [
     "Trajectory",
     "TrajectoryGroup",
     "Transition",
+    # Interleaved datasets (interleaved.py)
+    "InterleavedRLDatasetBuilder",
     # Rollout strategies (rollout_strategy.py)
     "FailFast",
     "RetryOnFailure",
