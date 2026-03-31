@@ -731,17 +731,6 @@ async def main(
                 for question, golden_answer in zip(questions_P, golden_answers_P)
             ]
 
-            # Compute IS advantages (teacher_lp - student_lp)
-            async with trace.scope_span("compute_sdft_advantages"):
-                is_metrics = await compute_sdft_advantages(
-                    data_D,
-                    metadata_D,
-                    teacher_client,
-                    teacher_prompts_P,
-                    max_context_length=cfg.max_context_length,
-                )
-            metrics.update(is_metrics)
-
             if cfg.topk > 0:
                 # Top-K CE distillation
                 async with trace.scope_span("build_topk_distillation_datums"):
@@ -756,38 +745,28 @@ async def main(
                     )
                 metrics.update(topk_metrics)
 
-                if cfg.ce_coef > 0:
-                    # Hybrid: IS + CE
-                    async with trace.scope_span("train"):
-                        await hybrid_train_step(
-                            is_data_D=data_D,
-                            topk_data_D=topk_datums,
-                            ce_coef=cfg.ce_coef,
-                            training_client=training_client,
-                            learning_rate=cfg.learning_rate,
-                            metrics=metrics,
-                        )
-                else:
-                    # Top-K forward KL only (with student renormalization)
-                    async with trace.scope_span("train"):
-                        adam_params = tinker.AdamParams(
-                            learning_rate=cfg.learning_rate,
-                            beta1=0.9,
-                            beta2=0.95,
-                            eps=1e-8,
-                        )
-                        fwd_bwd_future = await training_client.forward_backward_custom_async(
-                            topk_datums, _topk_forward_kl_loss
-                        )
-                        optim_future = await training_client.optim_step_async(adam_params)
-                        fwd_bwd_result = await fwd_bwd_future.result_async()
-                        optim_result = await optim_future.result_async()
-                        if fwd_bwd_result.metrics:
-                            metrics.update(fwd_bwd_result.metrics)
-                        if optim_result and optim_result.metrics:
-                            metrics.update(optim_result.metrics)
+                async with trace.scope_span("train"):
+                    # Top-K CE only (no IS, no student renormalization)
+                    await train_step(
+                        data_D=topk_datums,
+                        training_client=training_client,
+                        learning_rate=cfg.learning_rate,
+                        num_substeps=cfg.num_substeps,
+                        loss_fn="cross_entropy",
+                        metrics=metrics,
+                    )
             else:
-                # IS only (old approach)
+                # IS only (old approach): compute advantages then train
+                async with trace.scope_span("compute_sdft_advantages"):
+                    is_metrics = await compute_sdft_advantages(
+                        data_D,
+                        metadata_D,
+                        teacher_client,
+                        teacher_prompts_P,
+                        max_context_length=cfg.max_context_length,
+                    )
+                metrics.update(is_metrics)
+
                 async with trace.scope_span("train"):
                     await train_step(
                         data_D=data_D,
