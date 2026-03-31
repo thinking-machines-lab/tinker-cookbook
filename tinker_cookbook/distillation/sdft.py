@@ -270,6 +270,7 @@ async def build_topk_distillation_datums(
     topk: int = 20,
     max_context_length: int = 32768,
     vocab_size: int | None = None,
+    skip_first_n_tokens: int = 3,
 ) -> tuple[list[tinker.Datum], dict[str, float]]:
     """Build cross_entropy datums with top-K teacher soft targets.
 
@@ -357,6 +358,10 @@ async def build_topk_distillation_datums(
 
             num_tokens = min(completion_len, len(completion_mask_indices))
             for t in range(num_tokens):
+                # Skip first N completion tokens (reference skips 3)
+                if t < skip_first_n_tokens:
+                    continue
+
                 teacher_pos = teacher_prompt_len + t
                 student_pos = int(completion_mask_indices[t].item())
 
@@ -395,14 +400,18 @@ async def build_topk_distillation_datums(
 
         raw_datums.append((target_tokens_NK, weights_NK, n_completion_positions))
 
-    # No normalization — Tinker's CE loss uses raw sum, matching the convention
-    # used by the IS loss. Both produce gradients of similar magnitude (~1000s),
-    # so they work at the same learning rate. The reference implementation
-    # normalizes differently but compensates with a lower LR.
+    # Normalize weights to match the reference implementation's per-token-mean
+    # normalization: loss = mean_per_token_CE / batch_size.
+    # Since Tinker's CE does raw sum, we bake normalization into weights.
+    # Also skip first `skip_first_n_tokens` completion tokens (reference skips 3).
+    n_datums = len(data_D)
     new_datums: list[tinker.Datum] = []
 
     for i, datum in enumerate(data_D):
         target_tokens_NK, weights_NK, n_comp = raw_datums[i]
+
+        if n_comp > 0 and n_datums > 0:
+            weights_NK = weights_NK / n_comp / n_datums
 
         new_datum = tinker.Datum(
             model_input=datum.model_input,
