@@ -434,6 +434,62 @@ async def build_topk_distillation_datums(
     return new_datums, metrics
 
 
+def _topk_forward_kl_loss(
+    data: list[tinker.Datum],
+    logprobs_list: list[torch.Tensor],
+) -> tuple[torch.Tensor, dict[str, float]]:
+    """Custom loss: top-K forward KL with student renormalization.
+
+    This matches the reference Self-Distillation implementation which
+    renormalizes BOTH teacher and student logprobs over the top-K tokens
+    before computing KL. The student renormalization is critical — without
+    it, the gradient spreads across the full 150K vocab instead of focusing
+    on redistributing probability among the K teacher-preferred tokens.
+
+    Args:
+        data: List of datums with ``weights`` (teacher renormalized probs, shape N×K)
+            and ``target_tokens`` (token IDs, shape N×K) in loss_fn_inputs.
+        logprobs_list: Student's log P(token_k) from full-vocab softmax,
+            one tensor per datum with shape matching target_tokens.
+
+    Returns:
+        (loss, metrics) where loss is the mean per-token forward KL.
+    """
+    total_loss = torch.tensor(0.0, device=logprobs_list[0].device if logprobs_list else "cpu")
+    total_tokens = 0
+
+    for datum, student_logprobs in zip(data, logprobs_list):
+        # student_logprobs: (N, K) — from full-vocab log_softmax, gathered at K positions
+        # weights: (N, K) — teacher probs renormalized over K (pre-normalized in build_topk_distillation_datums)
+        weights = datum.loss_fn_inputs["weights"].to_torch().to(student_logprobs.device)
+
+        # Find positions with non-zero weights (completion positions)
+        pos_mask = weights.sum(dim=-1) > 0  # (N,)
+        if not pos_mask.any():
+            continue
+
+        # Renormalize student logprobs over K (the key operation!)
+        student_renorm = student_logprobs - torch.logsumexp(student_logprobs, dim=-1, keepdim=True)
+
+        # Forward KL per position: -sum_k P_teacher(k) * log P_student_renorm(k)
+        per_token_kl = -(weights * student_renorm).sum(dim=-1)  # (N,)
+
+        # Sum only over completion positions
+        total_loss = total_loss + (per_token_kl * pos_mask.float()).sum()
+        total_tokens += int(pos_mask.sum().item())
+
+    # Normalize by total completion tokens (per-token mean)
+    if total_tokens > 0:
+        mean_loss = total_loss / total_tokens
+    else:
+        mean_loss = total_loss
+
+    return mean_loss, {
+        "topk_fkl/loss": mean_loss.item(),
+        "topk_fkl/total_tokens": float(total_tokens),
+    }
+
+
 @trace.scope
 async def hybrid_train_step(
     is_data_D: list[tinker.Datum],
@@ -687,7 +743,7 @@ async def main(
             metrics.update(is_metrics)
 
             if cfg.topk > 0:
-                # Hybrid: IS (task learning) + top-K CE (distribution matching)
+                # Top-K CE distillation
                 async with trace.scope_span("build_topk_distillation_datums"):
                     topk_datums, topk_metrics = await build_topk_distillation_datums(
                         data_D,
@@ -700,15 +756,36 @@ async def main(
                     )
                 metrics.update(topk_metrics)
 
-                async with trace.scope_span("train"):
-                    await hybrid_train_step(
-                        is_data_D=data_D,
-                        topk_data_D=topk_datums,
-                        ce_coef=cfg.ce_coef,
-                        training_client=training_client,
-                        learning_rate=cfg.learning_rate,
-                        metrics=metrics,
-                    )
+                if cfg.ce_coef > 0:
+                    # Hybrid: IS + CE
+                    async with trace.scope_span("train"):
+                        await hybrid_train_step(
+                            is_data_D=data_D,
+                            topk_data_D=topk_datums,
+                            ce_coef=cfg.ce_coef,
+                            training_client=training_client,
+                            learning_rate=cfg.learning_rate,
+                            metrics=metrics,
+                        )
+                else:
+                    # Top-K forward KL only (with student renormalization)
+                    async with trace.scope_span("train"):
+                        adam_params = tinker.AdamParams(
+                            learning_rate=cfg.learning_rate,
+                            beta1=0.9,
+                            beta2=0.95,
+                            eps=1e-8,
+                        )
+                        fwd_bwd_future = await training_client.forward_backward_custom_async(
+                            topk_datums, _topk_forward_kl_loss
+                        )
+                        optim_future = await training_client.optim_step_async(adam_params)
+                        fwd_bwd_result = await fwd_bwd_future.result_async()
+                        optim_result = await optim_future.result_async()
+                        if fwd_bwd_result.metrics:
+                            metrics.update(fwd_bwd_result.metrics)
+                        if optim_result and optim_result.metrics:
+                            metrics.update(optim_result.metrics)
             else:
                 # IS only (old approach)
                 async with trace.scope_span("train"):
