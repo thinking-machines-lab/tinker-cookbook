@@ -36,11 +36,10 @@ See `model_decision.md` for rationale.
 
 ## Next Steps
 
-1. SFT continuing (~step 760 as of 2026-03-31, NLL 0.529)
-2. Run eval on IF-RL checkpoint to measure IFEval recovery
-3. Launch Stage 2 multi-domain RL from IF-RL checkpoint
-4. Test SWE Agentic at scale with R2E-Gym Docker
-5. Full cascade benchmark after each stage
+1. Validate multi-domain RL (current run, groups_per_batch=16), then scale to 64
+2. SFT continuing (~step 918 as of 2026-03-31, NLL 0.525)
+3. Test SWE Agentic at scale with R2E-Gym Docker
+4. Full cascade benchmark after each stage
 
 ## Wandb
 
@@ -67,7 +66,21 @@ Model: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16:peft:262144 (200 samples pe
 | IFEval (loose) | 77.2% | 74.6% | -2.6 |
 | IFEval (strict) | 58.5% | 54.0% | -4.5 |
 
-SFT improves math/science, degrades instruction following. IF-RL (Stage 1) should recover IFEval.
+SFT improves math/science, degrades instruction following. IF-RL should recover IFEval.
+
+## Eval Results (2026-03-31) — IF-RL Final
+
+| Benchmark | Base | SFT-500 | IF-RL | Δ (Base→IF-RL) |
+|---|---|---|---|---|
+| GSM8K | 89.5% | 90.0% | 91.0% | +1.5 |
+| MATH-500 | 91.5% | 93.0% | 94.5% | +3.0 |
+| GPQA-Diamond | 52.0% | 55.1% | 59.6% | **+7.6** |
+| IFEval (strict) | 58.5% | 54.0% | 61.0% | **+2.5** |
+| IFEval (loose) | 77.2% | 74.6% | 79.0% | **+1.8** |
+| MMLU-Redux | 89.5% | 89.0% | 90.5% | +1.0 |
+| MMLU-Pro | 76.0% | 76.0% | 73.5% | -2.5 |
+
+IF-RL recovered IFEval (54%→61% strict, above base 58.5%) and improved math/science across the board. Only MMLU-Pro slight regression.
 
 ## Super IF-RL from SFT Complete (2026-03-31)
 
@@ -98,6 +111,40 @@ await training_client.save_state_permanently_async("ifrl_step30_permanent")
 ### Wandb
 
 Project: `nemotron-cascade-2-replication`, run: `super-ifrl-from-sft500-resumed`
+
+## Multi-Domain RL (Stage 2) — In Progress (2026-03-31)
+
+Starting from IF-RL final checkpoint. Uses InterleavedRLDatasetBuilder.
+
+### Rollout & Group Size Reference
+
+| Stage | Paper | Our Run | Rollouts/Step |
+|---|---|---|---|
+| IF-RL | group=16, batch=128 | group=16, batch=8 | 128 |
+| Multi-domain (validation) | group=16, batch=128 | group=16, batch=16 | 256 |
+| Multi-domain (production) | group=16, batch=128 | group=16, **batch=64** | 1024 |
+
+**Domain weights**: MCQA 55%, Workbench 30%, Structured Output 15% (paper Table 8)
+
+At batch=64: ~35 MCQA, ~19 workbench, ~10 structured output groups per step.
+
+### Current run (validation, groups_per_batch=16)
+
+- **Config**: group_size=16, groups_per_batch=16, lr=3e-5, max_tokens=49K, 70 steps
+- **From**: IF-RL final checkpoint (cold start — fresh optimizer)
+- **Purpose**: Validate 3-domain interleaving works, all domains produce metrics
+- **Issues found**: Previous run (batch=8) missed structured output due to jsonschema missing + Python import caching. Fixed by installing deps and restarting.
+
+### Production run plan
+
+Once validation confirms 3-domain blend works:
+```bash
+python -m tinker_cookbook.recipes.nemotron_cascade.rl.train \
+  env=multi_domain groups_per_batch=64 group_size=16 \
+  max_tokens=49152 max_steps=70 save_every=10 \
+  load_checkpoint_path=<ifrl_final> \
+  rollout_error_tolerance=True per_rollout_timeout=1800
+```
 
 ## Nano RL Baselines Complete (2026-03-30)
 
