@@ -395,19 +395,14 @@ async def build_topk_distillation_datums(
 
         raw_datums.append((target_tokens_NK, weights_NK, n_completion_positions))
 
-    # Second pass: normalize weights to match the reference implementation's
-    # per-token-mean / batch-mean normalization. Since Tinker's cross_entropy
-    # loss does a raw sum, we bake the normalization into the weights:
-    #   w_normalized = w / n_completion_tokens / n_datums
-    # So loss.sum() ≈ mean_per_token_ce, matching the reference.
-    n_datums = len(data_D)
+    # No normalization — Tinker's CE loss uses raw sum, matching the convention
+    # used by the IS loss. Both produce gradients of similar magnitude (~1000s),
+    # so they work at the same learning rate. The reference implementation
+    # normalizes differently but compensates with a lower LR.
     new_datums: list[tinker.Datum] = []
 
     for i, datum in enumerate(data_D):
         target_tokens_NK, weights_NK, n_comp = raw_datums[i]
-
-        if n_comp > 0 and n_datums > 0:
-            weights_NK = weights_NK / n_comp / n_datums
 
         new_datum = tinker.Datum(
             model_input=datum.model_input,

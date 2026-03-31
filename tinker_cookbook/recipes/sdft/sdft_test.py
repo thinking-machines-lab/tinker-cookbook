@@ -319,14 +319,10 @@ class TestBuildTopkDistillationDatums:
         assert weights[1].sum() == 0.0
 
         # Completion positions (2, 3, 4) should have non-zero weights
-        # Weights are normalized by n_completion_tokens (3) * n_datums (1)
-        # so each position sums to ~1/3 instead of ~1.0
-        n_comp = 3  # 3 completion positions
-        n_datums = 1
-        expected_sum = 1.0 / n_comp / n_datums
         for pos in [2, 3, 4]:
             assert weights[pos].sum() > 0.0
-            assert abs(weights[pos].sum().item() - expected_sum) < 0.01
+            # Weights should sum to ~1.0 (renormalized probabilities, no normalization)
+            assert abs(weights[pos].sum().item() - 1.0) < 0.01
 
         # Check token IDs at completion positions
         assert target_tokens[2, 0].item() == 40
