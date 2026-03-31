@@ -40,7 +40,10 @@ class BenchmarkConfig:
 
     # Generation
     max_tokens: int = 32768
-    """Maximum tokens per model generation."""
+    """Maximum tokens per model generation. The runner will automatically
+    cap this so that prompt + max_tokens fits the model's context window.
+    For thinking models that generate long reasoning chains, increase this
+    (MathArena uses 64K for AIME)."""
     temperature: float = 0.6
     """Sampling temperature for model generation."""
     context_window: int | None = None

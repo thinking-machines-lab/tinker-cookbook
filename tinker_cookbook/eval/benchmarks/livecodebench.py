@@ -179,13 +179,19 @@ class LiveCodeBenchBenchmarkBuilder(BenchmarkBuilder):
             test_cases_json = row.get("input_output", "")
             if not test_cases_json:
                 public_tests = row.get("public_test_cases", [])
+                # Normalize to {"inputs": [...], "outputs": [...]} format
+                if isinstance(public_tests, str) and public_tests:
+                    try:
+                        public_tests = json.loads(public_tests)
+                    except json.JSONDecodeError:
+                        public_tests = []
                 if isinstance(public_tests, list) and public_tests:
                     test_cases_json = json.dumps(
-                        {"inputs": [t["input"] for t in public_tests],
-                         "outputs": [t["output"] for t in public_tests]}
+                        {
+                            "inputs": [t["input"] for t in public_tests],
+                            "outputs": [t["output"] for t in public_tests],
+                        }
                     )
-                elif isinstance(public_tests, str) and public_tests:
-                    test_cases_json = public_tests
             difficulty = row.get("difficulty", "unknown")
 
             if not question or not test_cases_json:
