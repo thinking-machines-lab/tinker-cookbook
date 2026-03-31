@@ -335,8 +335,9 @@ async def build_topk_distillation_datums(
         ]
     )
 
-    # Step 3: Build new datums with (N, K) shaped target_tokens and weights
-    new_datums: list[tinker.Datum] = []
+    # Step 3: Build new datums with (N, K) shaped target_tokens and weights.
+    # First pass: collect raw weights and count completion tokens per datum.
+    raw_datums: list[tuple[torch.Tensor, torch.Tensor, int]] = []  # (targets, weights, n_comp)
     total_completion_tokens = 0.0
     total_teacher_entropy = 0.0
 
@@ -349,6 +350,7 @@ async def build_topk_distillation_datums(
 
         target_tokens_NK = torch.zeros(N, topk, dtype=torch.long)
         weights_NK = torch.zeros(N, topk, dtype=torch.float32)
+        n_completion_positions = 0
 
         if completion_len > 0 and len(completion_mask_indices) > 0:
             topk_all = topk_responses_D[i].topk_prompt_logprobs
@@ -384,11 +386,28 @@ async def build_topk_distillation_datums(
 
                 target_tokens_NK[student_pos, :k_actual] = token_ids
                 weights_NK[student_pos, :k_actual] = probs
+                n_completion_positions += 1
 
                 # Teacher entropy for monitoring (H = -sum p log p)
                 total_teacher_entropy += -(probs * logprobs).sum().item()
 
             total_completion_tokens += num_tokens
+
+        raw_datums.append((target_tokens_NK, weights_NK, n_completion_positions))
+
+    # Second pass: normalize weights to match the reference implementation's
+    # per-token-mean / batch-mean normalization. Since Tinker's cross_entropy
+    # loss does a raw sum, we bake the normalization into the weights:
+    #   w_normalized = w / n_completion_tokens / n_datums
+    # So loss.sum() ≈ mean_per_token_ce, matching the reference.
+    n_datums = len(data_D)
+    new_datums: list[tinker.Datum] = []
+
+    for i, datum in enumerate(data_D):
+        target_tokens_NK, weights_NK, n_comp = raw_datums[i]
+
+        if n_comp > 0 and n_datums > 0:
+            weights_NK = weights_NK / n_comp / n_datums
 
         new_datum = tinker.Datum(
             model_input=datum.model_input,
