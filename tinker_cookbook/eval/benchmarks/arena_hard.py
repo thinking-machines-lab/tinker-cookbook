@@ -19,8 +19,16 @@ import tinker
 from datasets import Dataset
 
 from tinker_cookbook.completers import TinkerMessageCompleter
-from tinker_cookbook.eval.benchmarks._common import limit_dataset, load_benchmark_dataset, make_example_id
-from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig, BenchmarkResult
+from tinker_cookbook.eval.benchmarks._common import (
+    limit_dataset,
+    load_benchmark_dataset,
+    make_example_id,
+)
+from tinker_cookbook.eval.benchmarks._types import (
+    BenchmarkBuilder,
+    BenchmarkConfig,
+    BenchmarkResult,
+)
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.types import Env, StepResult
@@ -95,6 +103,7 @@ class ArenaHardEnv(Env):
         judge_messages: list[Message] = [{"role": "user", "content": judge_prompt}]
         try:
             from tinker_cookbook import renderers
+
             judge_response = await self.judge_completer(judge_messages)
             judge_text = renderers.get_text_content(judge_response)
             score = _extract_judge_score(judge_text)
@@ -109,7 +118,10 @@ class ArenaHardEnv(Env):
             episode_done=True,
             next_observation=tinker.ModelInput.empty(),
             next_stop_condition=[],
-            metrics={"correct": float(correct), "score": float(score) if score is not None else 0.0},
+            metrics={
+                "correct": float(correct),
+                "score": float(score) if score is not None else 0.0,
+            },
             logs={
                 "example_id": self.example_id,
                 "input": self.question[:200],
@@ -162,7 +174,9 @@ class ArenaHardBenchmarkBuilder(BenchmarkBuilder):
                 continue
             cluster = row.get("cluster", "unknown")
             example_id = make_example_id("arena_hard", question)
-            envs.append(ArenaHardEnv(question, cluster, judge_completer, renderer, example_id=example_id))
+            envs.append(
+                ArenaHardEnv(question, cluster, judge_completer, renderer, example_id=example_id)
+            )
         return envs
 
     def aggregate(self, rewards: list[float], metrics_list: list[dict]) -> BenchmarkResult:

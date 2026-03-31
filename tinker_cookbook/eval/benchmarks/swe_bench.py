@@ -24,8 +24,20 @@ from typing import cast
 import tinker
 from datasets import Dataset
 
-from tinker_cookbook.eval.benchmarks._common import SandboxMixin, extract_command, get_sandbox_factory, is_task_complete, limit_dataset, load_benchmark_dataset, make_example_id
-from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig, BenchmarkResult
+from tinker_cookbook.eval.benchmarks._common import (
+    SandboxMixin,
+    extract_command,
+    get_sandbox_factory,
+    is_task_complete,
+    limit_dataset,
+    load_benchmark_dataset,
+    make_example_id,
+)
+from tinker_cookbook.eval.benchmarks._types import (
+    BenchmarkBuilder,
+    BenchmarkConfig,
+    BenchmarkResult,
+)
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.types import Env, StepResult
@@ -221,7 +233,9 @@ class SWEBenchEnv(SandboxMixin, Env):
         self.commands_executed.append(command)
         try:
             result = await self.sandbox.run_command(
-                command, workdir="/workspace/repo", timeout=120,
+                command,
+                workdir="/workspace/repo",
+                timeout=120,
             )
             output_parts = []
             if result.stdout.strip():
@@ -285,7 +299,9 @@ class SWEBenchEnv(SandboxMixin, Env):
             if all_passed:
                 test_output = f"All {num_tests_total} fail_to_pass tests now pass."
             elif not test_output:
-                test_output = f"{len(failed_tests)}/{num_tests_total} tests still failing: {failed_tests[:3]}"
+                test_output = (
+                    f"{len(failed_tests)}/{num_tests_total} tests still failing: {failed_tests[:3]}"
+                )
 
         elif not self.fail_to_pass:
             test_output = "No fail_to_pass tests defined for this instance."
@@ -373,19 +389,21 @@ class SWEBenchBenchmarkBuilder(BenchmarkBuilder):
                 else make_example_id("swe_bench", problem_statement)
             )
 
-            envs.append(SWEBenchEnv(
-                repo=repo,
-                base_commit=base_commit,
-                problem_statement=problem_statement,
-                hints_text=hints_text,
-                instance_id=instance_id,
-                fail_to_pass=fail_to_pass,
-                pass_to_pass=pass_to_pass,
-                test_patch=test_patch,
-                sandbox_factory=sandbox_factory,
-                renderer=renderer,
-                example_id=example_id,
-            ))
+            envs.append(
+                SWEBenchEnv(
+                    repo=repo,
+                    base_commit=base_commit,
+                    problem_statement=problem_statement,
+                    hints_text=hints_text,
+                    instance_id=instance_id,
+                    fail_to_pass=fail_to_pass,
+                    pass_to_pass=pass_to_pass,
+                    test_patch=test_patch,
+                    sandbox_factory=sandbox_factory,
+                    renderer=renderer,
+                    example_id=example_id,
+                )
+            )
 
         return envs
 

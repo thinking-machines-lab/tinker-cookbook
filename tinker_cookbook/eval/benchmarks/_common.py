@@ -47,7 +47,9 @@ def format_mcq_choices(choices: list[str]) -> str:
     return "\n".join(f"({chr(65 + i)}) {c}" for i, c in enumerate(choices))
 
 
-def limit_dataset(ds: Dataset, max_examples: int | None, shuffle_seed: int | None = None) -> Dataset:
+def limit_dataset(
+    ds: Dataset, max_examples: int | None, shuffle_seed: int | None = None
+) -> Dataset:
     """Optionally shuffle and limit a dataset to ``max_examples``.
 
     Args:
@@ -111,7 +113,12 @@ def load_benchmark_dataset(
     except Exception as e:
         err_str = str(e).lower()
         # Gated dataset — needs HF auth + terms acceptance
-        if "gated" in err_str or "401" in err_str or "unauthorized" in err_str or "access" in err_str:
+        if (
+            "gated" in err_str
+            or "401" in err_str
+            or "unauthorized" in err_str
+            or "access" in err_str
+        ):
             raise PermissionError(
                 f"Dataset '{path}' is gated and requires authentication.\n"
                 f"1. Create a HuggingFace token at https://huggingface.co/settings/tokens\n"
@@ -196,6 +203,7 @@ def get_sandbox_factory(config) -> object:
 
         return factory
     except ImportError:
+
         async def factory():
             raise RuntimeError(
                 "Code execution benchmarks require a sandbox backend. "
@@ -293,9 +301,7 @@ def extract_gsm8k_answer(text: str) -> str:
     if hash_match:
         return extract_number(hash_match.group(1))
 
-    answer_match = re.search(
-        r"(?:answer is|answer:)\s*\$?([0-9,.-]+)", text, re.IGNORECASE
-    )
+    answer_match = re.search(r"(?:answer is|answer:)\s*\$?([0-9,.-]+)", text, re.IGNORECASE)
     if answer_match:
         return answer_match.group(1).strip().replace(",", "")
 

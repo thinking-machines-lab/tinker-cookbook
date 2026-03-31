@@ -14,7 +14,14 @@ from typing import cast
 import tinker
 from datasets import Dataset
 
-from tinker_cookbook.eval.benchmarks._common import SandboxMixin, extract_python_code, get_sandbox_factory, limit_dataset, load_benchmark_dataset, make_example_id
+from tinker_cookbook.eval.benchmarks._common import (
+    SandboxMixin,
+    extract_python_code,
+    get_sandbox_factory,
+    limit_dataset,
+    load_benchmark_dataset,
+    make_example_id,
+)
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -102,7 +109,9 @@ class MBPPBenchmarkBuilder(BenchmarkBuilder):
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
         try:
-            ds = cast(Dataset, load_benchmark_dataset("google-research-datasets/mbpp", name="sanitized"))
+            ds = cast(
+                Dataset, load_benchmark_dataset("google-research-datasets/mbpp", name="sanitized")
+            )
         except Exception:
             ds = cast(Dataset, load_benchmark_dataset("google-research-datasets/mbpp", name="full"))
 
@@ -129,7 +138,11 @@ class MBPPBenchmarkBuilder(BenchmarkBuilder):
                 example_id = f"mbpp_{task_id}"
             else:
                 example_id = make_example_id("mbpp", task_prompt)
-            envs.append(MBPPEnv(prompt, task_prompt, test_list, renderer, sandbox_factory, example_id=example_id))
+            envs.append(
+                MBPPEnv(
+                    prompt, task_prompt, test_list, renderer, sandbox_factory, example_id=example_id
+                )
+            )
         return envs
 
 

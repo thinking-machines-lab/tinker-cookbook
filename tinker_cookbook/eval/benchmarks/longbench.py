@@ -15,8 +15,17 @@ from typing import cast
 import tinker
 from datasets import Dataset
 
-from tinker_cookbook.eval.benchmarks._common import format_mcq_choices, limit_dataset, load_benchmark_dataset, make_example_id
-from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig, BenchmarkResult
+from tinker_cookbook.eval.benchmarks._common import (
+    format_mcq_choices,
+    limit_dataset,
+    load_benchmark_dataset,
+    make_example_id,
+)
+from tinker_cookbook.eval.benchmarks._types import (
+    BenchmarkBuilder,
+    BenchmarkConfig,
+    BenchmarkResult,
+)
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.types import Env, StepResult
@@ -40,7 +49,9 @@ def _load_longbench() -> tuple[Dataset | None, str]:
             try:
                 ds = cast(Dataset, load_benchmark_dataset(dataset_id, name="default", split=split))
                 version = "v2" if "v2" in dataset_id else "v1"
-                logger.info(f"Loaded LongBench from {dataset_id}/default/{split} ({len(ds)} examples)")
+                logger.info(
+                    f"Loaded LongBench from {dataset_id}/default/{split} ({len(ds)} examples)"
+                )
                 return ds, version
             except Exception:
                 continue
@@ -85,7 +96,7 @@ class LongBenchEnv(Env):
             correct = extracted == self.expected
         else:
             extracted = response.strip()[:200]
-            pattern = r'\b' + re.escape(str(self.expected).strip()) + r'\b'
+            pattern = r"\b" + re.escape(str(self.expected).strip()) + r"\b"
             correct = bool(re.search(pattern, response, re.IGNORECASE))
         return StepResult(
             reward=1.0 if correct else 0.0,
@@ -167,7 +178,11 @@ class LongBenchBenchmarkBuilder(BenchmarkBuilder):
                 continue
 
             example_id = make_example_id("longbench", question)
-            envs.append(LongBenchEnv(user_content, expected, subtask, is_mcq, renderer, example_id=example_id))
+            envs.append(
+                LongBenchEnv(
+                    user_content, expected, subtask, is_mcq, renderer, example_id=example_id
+                )
+            )
         return envs
 
     def aggregate(self, rewards: list[float], metrics_list: list[dict]) -> BenchmarkResult:

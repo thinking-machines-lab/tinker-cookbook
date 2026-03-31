@@ -20,12 +20,19 @@ import tarfile
 from collections.abc import Sequence
 from typing import cast
 
-import yaml
-
 import tinker
+import yaml
 from datasets import Dataset
 
-from tinker_cookbook.eval.benchmarks._common import SandboxMixin, extract_command, get_sandbox_factory, is_task_complete, limit_dataset, load_benchmark_dataset, make_example_id
+from tinker_cookbook.eval.benchmarks._common import (
+    SandboxMixin,
+    extract_command,
+    get_sandbox_factory,
+    is_task_complete,
+    limit_dataset,
+    load_benchmark_dataset,
+    make_example_id,
+)
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -177,7 +184,9 @@ class TerminalBenchEnv(SandboxMixin, Env):
 
         # Write test script to sandbox for later grading (may override archive version)
         if self.test_script:
-            await self.sandbox.write_file("/workspace/run_tests.sh", self.test_script, executable=True)
+            await self.sandbox.write_file(
+                "/workspace/run_tests.sh", self.test_script, executable=True
+            )
 
         # Build initial prompt
         self.messages = [
@@ -224,7 +233,9 @@ class TerminalBenchEnv(SandboxMixin, Env):
         self.commands_executed.append(command)
         try:
             result = await self.sandbox.run_command(
-                command, workdir="/workspace", timeout=60,
+                command,
+                workdir="/workspace",
+                timeout=60,
             )
             output_parts = []
             if result.stdout.strip():
@@ -331,15 +342,17 @@ class TerminalBenchBenchmarkBuilder(BenchmarkBuilder):
             else:
                 example_id = make_example_id("terminal_bench", task_description)
 
-            envs.append(TerminalBenchEnv(
-                task_description=task_description,
-                test_script=test_script,
-                sandbox_factory=sandbox_factory,
-                renderer=renderer,
-                example_id=example_id,
-                setup_script="",
-                setup_files=setup_files,
-            ))
+            envs.append(
+                TerminalBenchEnv(
+                    task_description=task_description,
+                    test_script=test_script,
+                    sandbox_factory=sandbox_factory,
+                    renderer=renderer,
+                    example_id=example_id,
+                    setup_script="",
+                    setup_files=setup_files,
+                )
+            )
 
         return envs
 

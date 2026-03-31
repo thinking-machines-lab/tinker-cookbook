@@ -142,7 +142,12 @@ class StoredTrajectory:
             "benchmark": self.benchmark,
             "example_id": self.example_id,
             "turns": [
-                {"role": t.role, "content": t.content, "token_count": t.token_count, "metadata": t.metadata}
+                {
+                    "role": t.role,
+                    "content": t.content,
+                    "token_count": t.token_count,
+                    "metadata": t.metadata,
+                }
                 for t in self.turns
             ],
             "reward": self.reward,

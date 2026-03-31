@@ -18,8 +18,17 @@ from typing import cast
 import tinker
 from datasets import Dataset
 
-from tinker_cookbook.eval.benchmarks._common import extract_mcq_answer, format_mcq_choices, load_benchmark_dataset, make_example_id
-from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig, BenchmarkResult
+from tinker_cookbook.eval.benchmarks._common import (
+    extract_mcq_answer,
+    format_mcq_choices,
+    load_benchmark_dataset,
+    make_example_id,
+)
+from tinker_cookbook.eval.benchmarks._types import (
+    BenchmarkBuilder,
+    BenchmarkConfig,
+    BenchmarkResult,
+)
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.types import Env, StepResult
@@ -28,15 +37,36 @@ logger = logging.getLogger(__name__)
 
 # All 30 MMLU-Redux subjects
 _SUBJECTS = [
-    "anatomy", "astronomy", "business_ethics", "clinical_knowledge",
-    "college_chemistry", "college_computer_science", "college_mathematics",
-    "college_medicine", "college_physics", "conceptual_physics",
-    "econometrics", "electrical_engineering", "formal_logic", "global_facts",
-    "high_school_chemistry", "high_school_geography", "high_school_macroeconomics",
-    "high_school_mathematics", "high_school_physics", "high_school_statistics",
-    "high_school_us_history", "human_aging", "logical_fallacies",
-    "machine_learning", "miscellaneous", "philosophy",
-    "professional_accounting", "professional_law", "public_relations", "virology",
+    "anatomy",
+    "astronomy",
+    "business_ethics",
+    "clinical_knowledge",
+    "college_chemistry",
+    "college_computer_science",
+    "college_mathematics",
+    "college_medicine",
+    "college_physics",
+    "conceptual_physics",
+    "econometrics",
+    "electrical_engineering",
+    "formal_logic",
+    "global_facts",
+    "high_school_chemistry",
+    "high_school_geography",
+    "high_school_macroeconomics",
+    "high_school_mathematics",
+    "high_school_physics",
+    "high_school_statistics",
+    "high_school_us_history",
+    "human_aging",
+    "logical_fallacies",
+    "machine_learning",
+    "miscellaneous",
+    "philosophy",
+    "professional_accounting",
+    "professional_law",
+    "public_relations",
+    "virology",
 ]
 
 
@@ -71,7 +101,9 @@ def _load_mmlu_redux(max_examples: int | None) -> list[dict]:
 class MMLUReduxEnv(Env):
     """Single-turn env for one MMLU-Redux question."""
 
-    def __init__(self, prompt: str, expected: str, subject: str, renderer: Renderer, example_id: str = ""):
+    def __init__(
+        self, prompt: str, expected: str, subject: str, renderer: Renderer, example_id: str = ""
+    ):
         self.prompt = prompt
         self.expected = expected
         self.subject = subject
@@ -150,7 +182,9 @@ class MMLUReduxBenchmarkBuilder(BenchmarkBuilder):
 
         metrics: dict[str, float] = {"mmlu_redux/accuracy": accuracy}
         for subj, subj_res in sorted(subject_results.items()):
-            metrics[f"mmlu_redux/{subj}/accuracy"] = sum(subj_res) / len(subj_res) if subj_res else 0.0
+            metrics[f"mmlu_redux/{subj}/accuracy"] = (
+                sum(subj_res) / len(subj_res) if subj_res else 0.0
+            )
 
         return BenchmarkResult(
             name=self.name,

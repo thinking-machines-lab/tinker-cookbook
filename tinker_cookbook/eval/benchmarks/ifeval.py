@@ -12,8 +12,16 @@ from collections.abc import Sequence
 
 import tinker
 
-from tinker_cookbook.eval.benchmarks._common import limit_dataset, load_benchmark_dataset, parse_kwargs
-from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig, BenchmarkResult
+from tinker_cookbook.eval.benchmarks._common import (
+    limit_dataset,
+    load_benchmark_dataset,
+    parse_kwargs,
+)
+from tinker_cookbook.eval.benchmarks._types import (
+    BenchmarkBuilder,
+    BenchmarkConfig,
+    BenchmarkResult,
+)
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.types import Env, StepResult
@@ -91,7 +99,9 @@ class IFEvalBenchmarkBuilder(BenchmarkBuilder):
 
             messages: list[Message] = [{"role": "user", "content": row["prompt"]}]
             example_id = f"ifeval_{row['key']}"
-            envs.append(IFEvalEnv(messages, instruction_ids, kwargs_list, renderer, example_id=example_id))
+            envs.append(
+                IFEvalEnv(messages, instruction_ids, kwargs_list, renderer, example_id=example_id)
+            )
         return envs
 
     def aggregate(self, rewards: list[float], metrics_list: list[dict]) -> BenchmarkResult:

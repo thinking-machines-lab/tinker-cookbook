@@ -21,7 +21,11 @@ from typing import cast
 import tinker
 from datasets import Dataset, load_dataset
 
-from tinker_cookbook.eval.benchmarks._common import _resolve_trust_remote_code, limit_dataset, make_example_id
+from tinker_cookbook.eval.benchmarks._common import (
+    _resolve_trust_remote_code,
+    limit_dataset,
+    make_example_id,
+)
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -81,9 +85,12 @@ def _match_function_call(generated: dict, expected: dict) -> bool:
     """Check if a generated function call matches the expected one."""
     gen_name = generated.get("name", generated.get("function", ""))
     exp_name = expected.get("name", expected.get("function", ""))
-    if isinstance(gen_name, str) and isinstance(exp_name, str):
-        if gen_name.strip().lower() != exp_name.strip().lower():
-            return False
+    if (
+        isinstance(gen_name, str)
+        and isinstance(exp_name, str)
+        and gen_name.strip().lower() != exp_name.strip().lower()
+    ):
+        return False
 
     gen_args = generated.get("arguments", generated.get("parameters", {}))
     exp_args = expected.get("arguments", expected.get("parameters", {}))
@@ -108,7 +115,9 @@ def _match_function_call(generated: dict, expected: dict) -> bool:
 class BFCLEnv(Env):
     """Single-turn env for one BFCL function-calling problem."""
 
-    def __init__(self, prompt: str, user_query: str, expected: dict, renderer: Renderer, example_id: str = ""):
+    def __init__(
+        self, prompt: str, user_query: str, expected: dict, renderer: Renderer, example_id: str = ""
+    ):
         self.prompt = prompt
         self.user_query = user_query
         self.expected = expected

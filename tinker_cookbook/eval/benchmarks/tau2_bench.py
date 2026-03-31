@@ -24,7 +24,11 @@ import tinker
 from datasets import Dataset
 
 from tinker_cookbook.completers import TinkerMessageCompleter
-from tinker_cookbook.eval.benchmarks._common import limit_dataset, load_benchmark_dataset, make_example_id
+from tinker_cookbook.eval.benchmarks._common import (
+    limit_dataset,
+    load_benchmark_dataset,
+    make_example_id,
+)
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -79,7 +83,11 @@ class ToolBackend:
                 tool_name,
                 sorted(self._tools_by_name.keys()),
             )
-            return json.dumps({"error": f"Unknown tool: {tool_name}. Available: {sorted(self._tools_by_name.keys())}"})
+            return json.dumps(
+                {
+                    "error": f"Unknown tool: {tool_name}. Available: {sorted(self._tools_by_name.keys())}"
+                }
+            )
 
         try:
             result = self._execute_tool(tool_name, arguments)
@@ -108,7 +116,9 @@ class ToolBackend:
 
         # Decide read vs write based on whether there are non-ID value args
         # that would mutate a record.  Pure-ID calls are lookups.
-        is_write = bool(value_args) and self._schema_looks_like_write(tool_name, param_props, value_args)
+        is_write = bool(value_args) and self._schema_looks_like_write(
+            tool_name, param_props, value_args
+        )
 
         if is_write:
             return self._handle_write(collection_name, collection, id_args, value_args)
@@ -153,7 +163,19 @@ class ToolBackend:
         the value args go beyond pure lookup filters.
         """
         # Check value-arg descriptions for mutation language
-        mutation_words = {"update", "set", "change", "modify", "new", "replace", "cancel", "create", "delete", "remove", "add"}
+        mutation_words = {
+            "update",
+            "set",
+            "change",
+            "modify",
+            "new",
+            "replace",
+            "cancel",
+            "create",
+            "delete",
+            "remove",
+            "add",
+        }
         for key in value_args:
             prop = param_props.get(key, {})
             desc = str(prop.get("description", "")).lower()
@@ -200,9 +222,8 @@ class ToolBackend:
             # Singular/plural: "reservation" in "reservations"
             for ct in coll_tokens:
                 for tt in tool_tokens:
-                    if ct.startswith(tt) or tt.startswith(ct):
-                        if abs(len(ct) - len(tt)) <= 1:
-                            overlap += 1
+                    if (ct.startswith(tt) or tt.startswith(ct)) and abs(len(ct) - len(tt)) <= 1:
+                        overlap += 1
             if overlap > best_score:
                 best_name, best_coll, best_score = coll_name, coll, overlap
         if best_score > 0:
@@ -224,7 +245,7 @@ class ToolBackend:
                     return collection[key]
             # Return all entries matching filter
             results = []
-            for entry_key, entry in collection.items():
+            for _entry_key, entry in collection.items():
                 if isinstance(entry, dict) and self._matches(entry, args):
                     results.append(entry)
             if len(results) == 1:
@@ -255,7 +276,7 @@ class ToolBackend:
                     collection[key].update(value_args)
                     return {"status": "success", "updated": collection[key]}
             # Fallback: find by matching and update
-            for entry_key, entry in collection.items():
+            for _entry_key, entry in collection.items():
                 if isinstance(entry, dict) and self._matches(entry, id_args):
                     entry.update(value_args)
                     return {"status": "success", "updated": entry}
@@ -267,7 +288,12 @@ class ToolBackend:
                     return {"status": "success", "updated": record}
 
         # No matching record — still report success for grading purposes
-        return {"status": "success", "tool": f"write to {collection_name}", "id": id_args, "values": value_args}
+        return {
+            "status": "success",
+            "tool": f"write to {collection_name}",
+            "id": id_args,
+            "values": value_args,
+        }
 
     @staticmethod
     def _matches(record: dict, filters: dict) -> bool:
@@ -312,8 +338,10 @@ def _format_tool_definitions(tool_definitions: list[dict]) -> str:
             pdesc = pschema.get("description", "")
             req_marker = " (required)" if pname in required else " (optional)"
             enum_vals = pschema.get("enum")
-            enum_str = f', enum: {enum_vals}' if enum_vals else ""
-            param_parts.append(f"    - {pname}: {ptype}{req_marker}{enum_str}" + (f" — {pdesc}" if pdesc else ""))
+            enum_str = f", enum: {enum_vals}" if enum_vals else ""
+            param_parts.append(
+                f"    - {pname}: {ptype}{req_marker}{enum_str}" + (f" — {pdesc}" if pdesc else "")
+            )
 
         lines.append(f"### {name}")
         if desc:
@@ -340,10 +368,12 @@ def _extract_tool_calls(text: str) -> list[dict]:
         try:
             parsed = json.loads(match.group(1).strip())
             if isinstance(parsed, dict) and ("name" in parsed or "action" in parsed):
-                calls.append({
-                    "name": parsed.get("name", parsed.get("action", "")),
-                    "arguments": parsed.get("arguments", parsed.get("parameters", {})),
-                })
+                calls.append(
+                    {
+                        "name": parsed.get("name", parsed.get("action", "")),
+                        "arguments": parsed.get("arguments", parsed.get("parameters", {})),
+                    }
+                )
         except json.JSONDecodeError:
             pass
 
@@ -360,14 +390,18 @@ def _extract_tool_calls(text: str) -> list[dict]:
             elif text[i] == "}":
                 depth -= 1
                 if depth == 0:
-                    candidate = text[start:i + 1]
+                    candidate = text[start : i + 1]
                     if '"name"' in candidate or '"action"' in candidate:
                         try:
                             parsed = json.loads(candidate)
-                            calls.append({
-                                "name": parsed.get("name", parsed.get("action", "")),
-                                "arguments": parsed.get("arguments", parsed.get("parameters", {})),
-                            })
+                            calls.append(
+                                {
+                                    "name": parsed.get("name", parsed.get("action", "")),
+                                    "arguments": parsed.get(
+                                        "arguments", parsed.get("parameters", {})
+                                    ),
+                                }
+                            )
                         except json.JSONDecodeError:
                             pass
                     break
@@ -590,12 +624,18 @@ class Tau2BenchEnv(Env):
         """Generate the initial user message from the scenario."""
         scenario_text = json.dumps(self.user_scenario, indent=2)[:3000]
         prompt_messages: list[Message] = [
-            {"role": "system", "content": (
-                "You are simulating a customer calling for support. "
-                "Follow the scenario below exactly. Stay in character. "
-                "State your problem or request naturally as a customer would."
-            )},
-            {"role": "user", "content": f"Scenario:\n{scenario_text}\n\nGenerate your opening message as the customer."},
+            {
+                "role": "system",
+                "content": (
+                    "You are simulating a customer calling for support. "
+                    "Follow the scenario below exactly. Stay in character. "
+                    "State your problem or request naturally as a customer would."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Scenario:\n{scenario_text}\n\nGenerate your opening message as the customer.",
+            },
         ]
         try:
             response = await self.user_completer(prompt_messages)
@@ -611,14 +651,17 @@ class Tau2BenchEnv(Env):
         """Generate a user response based on the conversation and scenario."""
         scenario_text = json.dumps(self.user_scenario, indent=2)[:2000]
         sim_messages: list[Message] = [
-            {"role": "system", "content": (
-                "You are simulating a customer in a support conversation. "
-                f"Follow this scenario:\n{scenario_text}\n\n"
-                "Respond naturally as the customer. If the agent has resolved "
-                "your issue, say goodbye and end with USER_STOP. "
-                "If the agent asks for information, provide it from your scenario. "
-                "If you don't have the information, say you don't know."
-            )},
+            {
+                "role": "system",
+                "content": (
+                    "You are simulating a customer in a support conversation. "
+                    f"Follow this scenario:\n{scenario_text}\n\n"
+                    "Respond naturally as the customer. If the agent has resolved "
+                    "your issue, say goodbye and end with USER_STOP. "
+                    "If the agent asks for information, provide it from your scenario. "
+                    "If you don't have the information, say you don't know."
+                ),
+            },
         ]
         # Add conversation history (condensed).
         # The simulator plays the customer, so:
@@ -636,7 +679,9 @@ class Tau2BenchEnv(Env):
                 # Customer's prior reply → simulator's own output → assistant role
                 sim_messages.append({"role": "assistant", "content": content})
 
-        sim_messages.append({"role": "user", "content": "Continue as the customer. What do you say next?"})
+        sim_messages.append(
+            {"role": "user", "content": "Continue as the customer. What do you say next?"}
+        )
 
         try:
             response = await self.user_completer(sim_messages)
@@ -738,16 +783,18 @@ class Tau2BenchBenchmarkBuilder(BenchmarkBuilder):
             else:
                 example_id = make_example_id("tau2_bench", str(system_prompt))
 
-            envs.append(Tau2BenchEnv(
-                system_prompt=str(system_prompt)[:8000],
-                tool_definitions=tools,
-                user_scenario=user_scenario,
-                expected_actions=expected_actions,
-                db=db,
-                user_completer=user_completer,
-                renderer=renderer,
-                example_id=example_id,
-            ))
+            envs.append(
+                Tau2BenchEnv(
+                    system_prompt=str(system_prompt)[:8000],
+                    tool_definitions=tools,
+                    user_scenario=user_scenario,
+                    expected_actions=expected_actions,
+                    db=db,
+                    user_completer=user_completer,
+                    renderer=renderer,
+                    example_id=example_id,
+                )
+            )
 
         return envs
 

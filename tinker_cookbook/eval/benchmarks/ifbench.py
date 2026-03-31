@@ -17,8 +17,17 @@ from typing import cast
 import tinker
 from datasets import Dataset
 
-from tinker_cookbook.eval.benchmarks._common import limit_dataset, load_benchmark_dataset, make_example_id, parse_kwargs
-from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig, BenchmarkResult
+from tinker_cookbook.eval.benchmarks._common import (
+    limit_dataset,
+    load_benchmark_dataset,
+    make_example_id,
+    parse_kwargs,
+)
+from tinker_cookbook.eval.benchmarks._types import (
+    BenchmarkBuilder,
+    BenchmarkConfig,
+    BenchmarkResult,
+)
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.types import Env, StepResult
@@ -34,6 +43,7 @@ def _verify_constraints(
     """Verify constraints using the IF-RL verifier if available, else basic heuristics."""
     try:
         from tinker_cookbook.recipes.nemotron_cascade.rl.envs.if_rl import verify_all_instructions
+
         fraction, _ = verify_all_instructions(response, instruction_ids, kwargs_list)
         return fraction, fraction == 1.0
     except (ImportError, Exception):
@@ -147,7 +157,9 @@ class IFBenchBenchmarkBuilder(BenchmarkBuilder):
                 kwargs_list.append({})
 
             example_id = make_example_id("ifbench", prompt)
-            envs.append(IFBenchEnv(prompt, instruction_ids, kwargs_list, renderer, example_id=example_id))
+            envs.append(
+                IFBenchEnv(prompt, instruction_ids, kwargs_list, renderer, example_id=example_id)
+            )
         return envs
 
     def aggregate(self, rewards: list[float], metrics_list: list[dict]) -> BenchmarkResult:

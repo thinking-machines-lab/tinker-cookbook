@@ -167,8 +167,17 @@ class EvalStore:
         # Append to index (locked to prevent interleaving from concurrent writers)
         with open(self._index_path, "a") as f:
             fcntl.flock(f, fcntl.LOCK_EX)
-            f.write(json.dumps({"run_id": run_id, "timestamp": metadata.timestamp,
-                                "model": model_name, "checkpoint": checkpoint_name}) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "run_id": run_id,
+                        "timestamp": metadata.timestamp,
+                        "model": model_name,
+                        "checkpoint": checkpoint_name,
+                    }
+                )
+                + "\n"
+            )
 
         logger.info(f"Created eval run: {run_id} at {run_dir}")
         return run_id
@@ -230,7 +239,9 @@ class EvalStore:
                     with open(meta_path) as f:
                         runs.append(RunMetadata.from_dict(json.load(f)))
                 except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
-                    logger.warning(f"Skipping run {run_dir.name}: failed to load metadata.json: {e}")
+                    logger.warning(
+                        f"Skipping run {run_dir.name}: failed to load metadata.json: {e}"
+                    )
         return runs
 
     def load_run(self, run_id: str) -> RunMetadata:
@@ -407,19 +418,21 @@ class EvalStore:
             comparison: The RunComparison to display (from :meth:`compare_runs`).
         """
         print(f"=== {comparison.benchmark}: {comparison.run_a_id} vs {comparison.run_b_id} ===")
-        print(f"  Score: {comparison.score_a:.3f} -> {comparison.score_b:.3f} "
-              f"(delta={comparison.score_delta:+.3f})")
+        print(
+            f"  Score: {comparison.score_a:.3f} -> {comparison.score_b:.3f} "
+            f"(delta={comparison.score_delta:+.3f})"
+        )
         print(f"  Shared examples: {comparison.num_shared}")
-        print(f"  Regressions: {len(comparison.regressions)} "
-              f"(correct in A, wrong in B)")
-        print(f"  Improvements: {len(comparison.improvements)} "
-              f"(wrong in A, correct in B)")
+        print(f"  Regressions: {len(comparison.regressions)} (correct in A, wrong in B)")
+        print(f"  Improvements: {len(comparison.improvements)} (wrong in A, correct in B)")
 
         if comparison.regressions:
-            print(f"\n  Top regressions:")
+            print("\n  Top regressions:")
             for ex_id, (a, b) in list(comparison.regressions.items())[:5]:
-                print(f"    {ex_id}: {a.logs.get('expected', '?')} "
-                      f"(A: {a.logs.get('extracted', '?')}, B: {b.logs.get('extracted', '?')})")
+                print(
+                    f"    {ex_id}: {a.logs.get('expected', '?')} "
+                    f"(A: {a.logs.get('extracted', '?')}, B: {b.logs.get('extracted', '?')})"
+                )
 
     def print_dashboard(self) -> None:
         """Print a summary dashboard of all runs."""

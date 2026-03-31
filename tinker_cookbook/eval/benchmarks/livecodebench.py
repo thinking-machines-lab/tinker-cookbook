@@ -19,8 +19,19 @@ from typing import cast
 import tinker
 from datasets import Dataset
 
-from tinker_cookbook.eval.benchmarks._common import SandboxMixin, extract_python_code, get_sandbox_factory, limit_dataset, load_benchmark_dataset, make_example_id
-from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig, BenchmarkResult
+from tinker_cookbook.eval.benchmarks._common import (
+    SandboxMixin,
+    extract_python_code,
+    get_sandbox_factory,
+    limit_dataset,
+    load_benchmark_dataset,
+    make_example_id,
+)
+from tinker_cookbook.eval.benchmarks._types import (
+    BenchmarkBuilder,
+    BenchmarkConfig,
+    BenchmarkResult,
+)
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.types import Env, StepResult
@@ -105,7 +116,9 @@ class LiveCodeBenchEnv(SandboxMixin, Env):
 
         for inp, expected_out in zip(inputs, outputs):
             stdin_str = inp if isinstance(inp, str) else str(inp)
-            expected_str = expected_out.strip() if isinstance(expected_out, str) else str(expected_out).strip()
+            expected_str = (
+                expected_out.strip() if isinstance(expected_out, str) else str(expected_out).strip()
+            )
 
             try:
                 await self.sandbox.write_file("/tmp/stdin.txt", stdin_str)
@@ -136,7 +149,9 @@ class LiveCodeBenchBenchmarkBuilder(BenchmarkBuilder):
         try:
             ds = cast(
                 Dataset,
-                load_benchmark_dataset("livecodebench/code_generation_lite", trust_remote_code=True),
+                load_benchmark_dataset(
+                    "livecodebench/code_generation_lite", trust_remote_code=True
+                ),
             )
         except Exception:
             try:
@@ -176,7 +191,17 @@ class LiveCodeBenchBenchmarkBuilder(BenchmarkBuilder):
             prompt = "\n".join(prompt_parts)
 
             example_id = make_example_id("livecodebench", question)
-            envs.append(LiveCodeBenchEnv(prompt, question, test_cases_json, difficulty, renderer, sandbox_factory, example_id=example_id))
+            envs.append(
+                LiveCodeBenchEnv(
+                    prompt,
+                    question,
+                    test_cases_json,
+                    difficulty,
+                    renderer,
+                    sandbox_factory,
+                    example_id=example_id,
+                )
+            )
         return envs
 
     def aggregate(self, rewards: list[float], metrics_list: list[dict]) -> BenchmarkResult:
@@ -192,7 +217,9 @@ class LiveCodeBenchBenchmarkBuilder(BenchmarkBuilder):
 
         metrics: dict[str, float] = {"livecodebench/pass_at_1": accuracy}
         for d, d_results in sorted(difficulty_results.items()):
-            metrics[f"livecodebench/{d}/pass_at_1"] = sum(d_results) / len(d_results) if d_results else 0.0
+            metrics[f"livecodebench/{d}/pass_at_1"] = (
+                sum(d_results) / len(d_results) if d_results else 0.0
+            )
 
         return BenchmarkResult(
             name=self.name,

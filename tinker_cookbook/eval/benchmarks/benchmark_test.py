@@ -2,7 +2,11 @@
 
 import pytest
 
-from tinker_cookbook.eval.benchmarks._runner import _pass_at_k_single, _compute_pass_at_k, _choose_k_values
+from tinker_cookbook.eval.benchmarks._runner import (
+    _choose_k_values,
+    _compute_pass_at_k,
+    _pass_at_k_single,
+)
 from tinker_cookbook.eval.benchmarks._types import (
     BenchmarkBuilder,
     BenchmarkConfig,
@@ -62,20 +66,28 @@ class TestGSM8KImport:
 
 class TestDefaultAggregate:
     def test_accuracy(self):
-        builder = type("B", (BenchmarkBuilder,), {
-            "name": "test",
-            "make_envs": lambda self, r, c: [],
-        })()
+        builder = type(
+            "B",
+            (BenchmarkBuilder,),
+            {
+                "name": "test",
+                "make_envs": lambda self, r, c: [],
+            },
+        )()
         result = builder.aggregate([1.0, 0.0, 1.0, 1.0], [{}, {}, {}, {}])
         assert result.score == 0.75
         assert result.num_correct == 3
         assert result.num_examples == 4
 
     def test_empty(self):
-        builder = type("B", (BenchmarkBuilder,), {
-            "name": "test",
-            "make_envs": lambda self, r, c: [],
-        })()
+        builder = type(
+            "B",
+            (BenchmarkBuilder,),
+            {
+                "name": "test",
+                "make_envs": lambda self, r, c: [],
+            },
+        )()
         result = builder.aggregate([], [])
         assert result.score == 0.0
         assert result.num_examples == 0
@@ -144,8 +156,10 @@ class TestBenchmarkRegistration:
 
     def _check_registered(self, module_path: str, expected_name: str):
         import importlib
+
         importlib.import_module(module_path)
         from tinker_cookbook.eval.benchmarks import REGISTRY
+
         assert expected_name in REGISTRY, f"{expected_name} not found in REGISTRY"
         assert REGISTRY[expected_name].name == expected_name
 
@@ -200,12 +214,14 @@ class TestMCQExtraction:
 
     def test_mmlu_pro_extract(self):
         from tinker_cookbook.eval.benchmarks.mmlu_pro import extract_mcq_answer
+
         assert extract_mcq_answer("The answer is (B).", "ABCDEFGHIJ") == "B"
         assert extract_mcq_answer("\\boxed{C}", "ABCDEFGHIJ") == "C"
         assert extract_mcq_answer("I think D is correct.", "ABCDEFGHIJ") == "D"
 
     def test_bfcl_function_matching(self):
         from tinker_cookbook.eval.benchmarks.bfcl import _match_function_call
+
         gen = {"name": "get_weather", "arguments": {"city": "London"}}
         exp = {"name": "get_weather", "arguments": {"city": "london"}}
         assert _match_function_call(gen, exp)
@@ -215,6 +231,7 @@ class TestMCQExtraction:
 
     def test_tau2_bench_action_extraction(self):
         from tinker_cookbook.eval.benchmarks.tau2_bench import _extract_tool_calls
+
         text = '```json\n{"name": "refund", "arguments": {"order_id": "123"}}\n```'
         results = _extract_tool_calls(text)
         assert len(results) == 1
@@ -226,7 +243,9 @@ class TestGradingConsistency:
     """Validate that new framework grading matches recipe implementation."""
 
     def test_gsm8k_extraction_matches_recipe(self):
-        recipe_common = pytest.importorskip("tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks._common")
+        recipe_common = pytest.importorskip(
+            "tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks._common"
+        )
         old = recipe_common.extract_gsm8k_answer
         from tinker_cookbook.eval.benchmarks.gsm8k import extract_gsm8k_answer as new
 
@@ -241,7 +260,9 @@ class TestGradingConsistency:
             assert old(resp) == new(resp), f"Mismatch on: {resp}"
 
     def test_gsm8k_check_matches_recipe(self):
-        recipe_gsm8k = pytest.importorskip("tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.gsm8k")
+        recipe_gsm8k = pytest.importorskip(
+            "tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks.gsm8k"
+        )
         old = recipe_gsm8k._check_gsm8k
         from tinker_cookbook.eval.benchmarks.gsm8k import check_gsm8k as new
 
@@ -251,11 +272,13 @@ class TestGradingConsistency:
             ("The answer is 43", "42", False),
             ("#### 0", "0", True),
         ]
-        for resp, expected, should_be in cases:
+        for resp, expected, _should_be in cases:
             assert old(resp, expected) == new(resp, expected), f"Mismatch: {resp} vs {expected}"
 
     def test_mcq_extraction_matches_recipe(self):
-        recipe_common = pytest.importorskip("tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks._common")
+        recipe_common = pytest.importorskip(
+            "tinker_cookbook.recipes.nemotron_cascade.eval.benchmarks._common"
+        )
         old = recipe_common.extract_mcq_answer
         from tinker_cookbook.eval.benchmarks.mmlu_pro import extract_mcq_answer as new
 
@@ -291,18 +314,23 @@ class TestEvalStore:
 
         store = EvalStore(tmp_path / "eval_store")
         run_id = store.create_run(
-            model_name="test", benchmarks=["gsm8k"], run_id="my_run",
+            model_name="test",
+            benchmarks=["gsm8k"],
+            run_id="my_run",
         )
         assert run_id == "my_run"
         assert "my_run" in store.run_dir(run_id)
 
     def test_finalize_run(self, tmp_path):
         import json
+
         from tinker_cookbook.eval.store import EvalStore
 
         store = EvalStore(tmp_path / "eval_store")
         run_id = store.create_run(
-            model_name="test", benchmarks=["gsm8k"], run_id="test_run",
+            model_name="test",
+            benchmarks=["gsm8k"],
+            run_id="test_run",
         )
 
         # Simulate a result file
@@ -316,16 +344,19 @@ class TestEvalStore:
 
     def test_compare_runs(self, tmp_path):
         import json
-        from tinker_cookbook.eval.store import EvalStore
+
         from tinker_cookbook.eval.benchmarks._types import StoredTrajectory
+        from tinker_cookbook.eval.store import EvalStore
 
         store = EvalStore(tmp_path / "eval_store")
 
         # Create two runs
-        store.create_run(model_name="test", benchmarks=["gsm8k"], run_id="run_a",
-                        checkpoint_name="step100")
-        store.create_run(model_name="test", benchmarks=["gsm8k"], run_id="run_b",
-                        checkpoint_name="step200")
+        store.create_run(
+            model_name="test", benchmarks=["gsm8k"], run_id="run_a", checkpoint_name="step100"
+        )
+        store.create_run(
+            model_name="test", benchmarks=["gsm8k"], run_id="run_b", checkpoint_name="step200"
+        )
 
         # Write trajectories with stable example_ids
         for run_id, rewards in [("run_a", [1.0, 0.0, 1.0]), ("run_b", [1.0, 1.0, 0.0])]:
@@ -334,8 +365,11 @@ class TestEvalStore:
             with open(traj_dir / "trajectories.jsonl", "w") as f:
                 for i, r in enumerate(rewards):
                     t = StoredTrajectory(
-                        idx=i, benchmark="gsm8k", example_id=f"q_{i}",
-                        reward=r, logs={"example_id": f"q_{i}"},
+                        idx=i,
+                        benchmark="gsm8k",
+                        example_id=f"q_{i}",
+                        reward=r,
+                        logs={"example_id": f"q_{i}"},
                     )
                     f.write(json.dumps(t.to_dict()) + "\n")
 
@@ -348,7 +382,7 @@ class TestEvalStore:
 
         comp = store.compare_runs("run_a", "run_b", "gsm8k")
         assert comp.num_shared == 3
-        assert len(comp.regressions) == 1   # q_2: A correct, B wrong
+        assert len(comp.regressions) == 1  # q_2: A correct, B wrong
         assert len(comp.improvements) == 1  # q_1: A wrong, B correct
         assert "q_2" in comp.regressions
         assert "q_1" in comp.improvements

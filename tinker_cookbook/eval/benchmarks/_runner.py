@@ -11,6 +11,7 @@ Key design decisions:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import math
@@ -62,19 +63,23 @@ def _trajectory_to_stored(
             # First turn's observation is the initial prompt (role=user)
             # Subsequent turns are environment responses
             role = "user" if len(turns) == 0 else "environment"
-            turns.append(StoredTurn(
-                role=role,
-                content=ob_text,
-                token_count=t.ob.length,
-            ))
+            turns.append(
+                StoredTurn(
+                    role=role,
+                    content=ob_text,
+                    token_count=t.ob.length,
+                )
+            )
 
         # Decode action (the model's response)
         ac_text = tokenizer.decode(t.ac.tokens) if t.ac.tokens else ""
-        turns.append(StoredTurn(
-            role="assistant",
-            content=ac_text,
-            token_count=len(t.ac.tokens),
-        ))
+        turns.append(
+            StoredTurn(
+                role="assistant",
+                content=ac_text,
+                token_count=len(t.ac.tokens),
+            )
+        )
 
         all_metrics.update(t.metrics)
         all_logs.update(t.logs)
@@ -158,7 +163,11 @@ def _save_summary(save_dir: str, results: dict[str, BenchmarkResult]) -> None:
     """Save a combined summary across all benchmarks."""
     summary = {}
     for name, r in results.items():
-        entry: dict = {"score": r.score, "num_examples": r.num_examples, "num_correct": r.num_correct}
+        entry: dict = {
+            "score": r.score,
+            "num_examples": r.num_examples,
+            "num_correct": r.num_correct,
+        }
         if r.pass_at_k:
             entry["pass_at_k"] = {str(k): v for k, v in r.pass_at_k.items()}
         summary[name] = entry
@@ -269,11 +278,11 @@ def _ensure_registered(name: str) -> None:
     if name in REGISTRY:
         return
     # Try importing the benchmark module by name
+    import contextlib
     import importlib
-    try:
+
+    with contextlib.suppress(ImportError):
         importlib.import_module(f"tinker_cookbook.eval.benchmarks.{name}")
-    except ImportError:
-        pass  # Will raise KeyError later when accessing REGISTRY[name]
 
 
 async def run_benchmark(
@@ -397,7 +406,7 @@ async def run_benchmark(
                     )
                     await _save_trajectory(config.save_dir, benchmark.name, stored)
 
-            except (asyncio.TimeoutError, EvalTimeoutError):
+            except (TimeoutError, EvalTimeoutError):
                 elapsed = time.monotonic() - t_start
                 logger.warning(
                     f"  {benchmark.name}[{idx}] timed out after {elapsed:.0f}s "
@@ -407,12 +416,19 @@ async def run_benchmark(
                 rewards[idx] = 0.0  # Timeout = scored failure, reward=0
 
                 if config.save_dir:
-                    await _save_trajectory(config.save_dir, benchmark.name, StoredTrajectory(
-                        idx=idx, benchmark=benchmark.name, turns=[],
-                        reward=0.0, error=f"timeout ({config.timeout_seconds}s)",
-                        time_seconds=elapsed,
-                        example_id=getattr(env, 'example_id', ''),
-                    ))
+                    await _save_trajectory(
+                        config.save_dir,
+                        benchmark.name,
+                        StoredTrajectory(
+                            idx=idx,
+                            benchmark=benchmark.name,
+                            turns=[],
+                            reward=0.0,
+                            error=f"timeout ({config.timeout_seconds}s)",
+                            time_seconds=elapsed,
+                            example_id=getattr(env, "example_id", ""),
+                        ),
+                    )
 
             except Exception as e:
                 elapsed = time.monotonic() - t_start
@@ -421,19 +437,25 @@ async def run_benchmark(
                 rewards[idx] = 0.0  # Error = scored failure, reward=0
 
                 if config.save_dir:
-                    await _save_trajectory(config.save_dir, benchmark.name, StoredTrajectory(
-                        idx=idx, benchmark=benchmark.name, turns=[],
-                        reward=0.0, error=str(e), time_seconds=elapsed,
-                        example_id=getattr(env, 'example_id', ''),
-                    ))
+                    await _save_trajectory(
+                        config.save_dir,
+                        benchmark.name,
+                        StoredTrajectory(
+                            idx=idx,
+                            benchmark=benchmark.name,
+                            turns=[],
+                            reward=0.0,
+                            error=str(e),
+                            time_seconds=elapsed,
+                            example_id=getattr(env, "example_id", ""),
+                        ),
+                    )
 
             finally:
                 # Clean up env resources (e.g., sandboxes) on timeout or error
-                if hasattr(env, 'cleanup'):
-                    try:
+                if hasattr(env, "cleanup"):
+                    with contextlib.suppress(Exception):
                         await env.cleanup()
-                    except Exception:
-                        pass
 
             num_completed += 1
             if num_completed % max(1, total_to_run // 10) == 0 or num_completed == total_to_run:
@@ -500,7 +522,7 @@ async def run_benchmark(
             if r is None:
                 continue
             # Determine example_id: prefer env attribute, fall back to idx
-            example_id = getattr(sample_envs[idx], 'example_id', '') or str(idx)
+            example_id = getattr(sample_envs[idx], "example_id", "") or str(idx)
             per_example_rewards.setdefault(example_id, []).append(r)
             all_rewards.append(r)
             all_metrics.append(m)
@@ -555,10 +577,9 @@ async def run_benchmarks(
         Dict mapping benchmark name to BenchmarkResult.
     """
     if parallel:
-        benchmark_results = await asyncio.gather(*[
-            run_benchmark(name, sampling_client, renderer, config)
-            for name in names
-        ])
+        benchmark_results = await asyncio.gather(
+            *[run_benchmark(name, sampling_client, renderer, config) for name in names]
+        )
         results = dict(zip(names, benchmark_results))
     else:
         results = {}

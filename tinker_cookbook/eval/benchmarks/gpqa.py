@@ -14,7 +14,13 @@ from typing import cast
 import tinker
 from datasets import Dataset
 
-from tinker_cookbook.eval.benchmarks._common import extract_mcq_answer, format_mcq_choices, limit_dataset, load_benchmark_dataset, make_example_id
+from tinker_cookbook.eval.benchmarks._common import (
+    extract_mcq_answer,
+    format_mcq_choices,
+    limit_dataset,
+    load_benchmark_dataset,
+    make_example_id,
+)
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -74,7 +80,9 @@ class GPQABenchmarkBuilder(BenchmarkBuilder):
     name = "gpqa"
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
-        ds = cast(Dataset, load_benchmark_dataset("Idavidrein/gpqa", name="gpqa_diamond", split="train"))
+        ds = cast(
+            Dataset, load_benchmark_dataset("Idavidrein/gpqa", name="gpqa_diamond", split="train")
+        )
         ds = limit_dataset(ds, config.max_examples)
 
         envs = []
@@ -83,8 +91,10 @@ class GPQABenchmarkBuilder(BenchmarkBuilder):
             correct_answer = row.get("Answer", row.get("Correct Answer", ""))
 
             choice_cols = [
-                col for col in row.keys()
-                if col.startswith("Choice") or col in ("choice_a", "choice_b", "choice_c", "choice_d")
+                col
+                for col in row
+                if col.startswith("Choice")
+                or col in ("choice_a", "choice_b", "choice_c", "choice_d")
             ]
 
             if choice_cols:

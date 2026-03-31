@@ -14,7 +14,13 @@ from typing import cast
 import tinker
 from datasets import Dataset
 
-from tinker_cookbook.eval.benchmarks._common import extract_mcq_answer, format_mcq_choices, limit_dataset, load_benchmark_dataset, make_example_id
+from tinker_cookbook.eval.benchmarks._common import (
+    extract_mcq_answer,
+    format_mcq_choices,
+    limit_dataset,
+    load_benchmark_dataset,
+    make_example_id,
+)
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -116,7 +122,9 @@ class MMLUProBenchmarkBuilder(BenchmarkBuilder):
                 example_id = f"mmlu_pro_{question_id}"
             else:
                 example_id = make_example_id("mmlu_pro", question)
-            envs.append(MMLUProEnv(prompt, expected, valid_letters, renderer, example_id=example_id))
+            envs.append(
+                MMLUProEnv(prompt, expected, valid_letters, renderer, example_id=example_id)
+            )
         return envs
 
 
