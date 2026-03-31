@@ -14,7 +14,6 @@ Requires ``config.judge_sampling_client`` for the user simulator and NL grading.
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import logging
 import re
@@ -25,7 +24,7 @@ import tinker
 from datasets import Dataset
 
 from tinker_cookbook.completers import TinkerMessageCompleter
-from tinker_cookbook.eval.benchmarks._common import load_benchmark_dataset
+from tinker_cookbook.eval.benchmarks._common import limit_dataset, load_benchmark_dataset, make_example_id
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -669,8 +668,7 @@ class Tau2BenchBenchmarkBuilder(BenchmarkBuilder):
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
         ds = cast(Dataset, load_benchmark_dataset("sierra-research/tau2-bench"))
-        if config.max_examples is not None:
-            ds = ds.select(range(min(config.max_examples, len(ds))))
+        ds = limit_dataset(ds, config.max_examples)
 
         j_client = config.judge_sampling_client
         j_renderer = config.judge_renderer or renderer
@@ -738,8 +736,7 @@ class Tau2BenchBenchmarkBuilder(BenchmarkBuilder):
             if task_id is not None:
                 example_id = f"tau2_bench_{task_id}"
             else:
-                prompt_hash = hashlib.md5(str(system_prompt).encode()).hexdigest()[:12]
-                example_id = f"tau2_bench_{prompt_hash}"
+                example_id = make_example_id("tau2_bench", str(system_prompt))
 
             envs.append(Tau2BenchEnv(
                 system_prompt=str(system_prompt)[:8000],

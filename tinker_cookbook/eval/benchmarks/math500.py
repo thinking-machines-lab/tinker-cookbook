@@ -7,7 +7,6 @@ Pattern: Single-turn generate + programmatic grading.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from collections.abc import Sequence
 from typing import cast
@@ -15,7 +14,7 @@ from typing import cast
 import tinker
 from datasets import Dataset
 
-from tinker_cookbook.eval.benchmarks._common import load_benchmark_dataset
+from tinker_cookbook.eval.benchmarks._common import limit_dataset, load_benchmark_dataset, make_example_id
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -85,8 +84,7 @@ class MATH500BenchmarkBuilder(BenchmarkBuilder):
         from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed
 
         ds = cast(Dataset, load_benchmark_dataset("HuggingFaceH4/MATH-500"))
-        if config.max_examples is not None:
-            ds = ds.select(range(min(config.max_examples, len(ds))))
+        ds = limit_dataset(ds, config.max_examples)
 
         envs = []
         for row in ds:
@@ -94,7 +92,7 @@ class MATH500BenchmarkBuilder(BenchmarkBuilder):
                 expected = extract_boxed(row["solution"])
             except ValueError:
                 continue
-            example_id = f"math500_{hashlib.md5(row['problem'].encode()).hexdigest()[:12]}"
+            example_id = make_example_id("math500", row["problem"])
             envs.append(MATH500Env(row["problem"], expected, renderer, example_id=example_id))
         return envs
 

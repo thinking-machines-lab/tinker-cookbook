@@ -12,7 +12,6 @@ one by comparing function name and argument values.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import re
@@ -22,7 +21,7 @@ from typing import cast
 import tinker
 from datasets import Dataset, load_dataset
 
-from tinker_cookbook.eval.benchmarks._common import _resolve_trust_remote_code
+from tinker_cookbook.eval.benchmarks._common import _resolve_trust_remote_code, limit_dataset, make_example_id
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -171,8 +170,7 @@ class BFCLBenchmarkBuilder(BenchmarkBuilder):
             logger.warning(f"Could not load BFCL dataset: {exc}.")
             return []
 
-        if config.max_examples is not None:
-            ds = ds.select(range(min(config.max_examples, len(ds))))
+        ds = limit_dataset(ds, config.max_examples)
 
         envs = []
         for row in ds:
@@ -222,7 +220,7 @@ class BFCLBenchmarkBuilder(BenchmarkBuilder):
                 "Respond with a JSON object containing 'name' and 'arguments' keys."
             )
 
-            example_id = f"bfcl_{hashlib.md5(user_query.encode()).hexdigest()[:12]}"
+            example_id = make_example_id("bfcl", user_query)
             envs.append(BFCLEnv(prompt, user_query, gt_parsed, renderer, example_id=example_id))
         return envs
 

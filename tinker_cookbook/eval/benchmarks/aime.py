@@ -7,7 +7,6 @@ Pattern: Single-turn generate + programmatic grading.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import re
 from collections.abc import Sequence
@@ -20,7 +19,9 @@ from tinker_cookbook.eval.benchmarks._common import (
     extract_boxed,
     extract_gsm8k_answer,
     extract_number,
+    limit_dataset,
     load_benchmark_dataset,
+    make_example_id,
 )
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
 from tinker_cookbook.renderers import Message
@@ -118,8 +119,7 @@ class AIMEBenchmarkBuilder(BenchmarkBuilder):
             logger.warning("Could not load AIME 2025 dataset from HuggingFace.")
             return []
 
-        if config.max_examples is not None:
-            ds = ds.select(range(min(config.max_examples, len(ds))))
+        ds = limit_dataset(ds, config.max_examples)
 
         envs = []
         for row in ds:
@@ -137,7 +137,7 @@ class AIMEBenchmarkBuilder(BenchmarkBuilder):
                 else:
                     continue
 
-            example_id = f"aime_{hashlib.md5(problem.encode()).hexdigest()[:12]}"
+            example_id = make_example_id("aime", problem)
             envs.append(AIMEEnv(problem, expected, renderer, example_id=example_id))
         return envs
 

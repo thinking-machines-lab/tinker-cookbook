@@ -7,7 +7,6 @@ Pattern: Single-turn generate + programmatic grading.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from collections.abc import Sequence
 
@@ -18,7 +17,9 @@ from tinker_cookbook.eval.benchmarks._common import (
     extract_boxed,
     extract_gsm8k_answer,
     extract_number,
+    limit_dataset,
     load_benchmark_dataset,
+    make_example_id,
 )
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
 from tinker_cookbook.renderers import Message
@@ -82,13 +83,12 @@ class GSM8KBenchmarkBuilder(BenchmarkBuilder):
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
         ds = load_benchmark_dataset("openai/gsm8k", name="main")
-        if config.max_examples is not None:
-            ds = ds.select(range(min(config.max_examples, len(ds))))
+        ds = limit_dataset(ds, config.max_examples)
 
         envs = []
         for i, row in enumerate(ds):
             expected = row["answer"].split("####")[-1].strip()
-            example_id = f"gsm8k_{hashlib.md5(row['question'].encode()).hexdigest()[:12]}"
+            example_id = make_example_id("gsm8k", row["question"])
             envs.append(GSM8KEnv(row["question"], expected, renderer, example_id=example_id))
         return envs
 

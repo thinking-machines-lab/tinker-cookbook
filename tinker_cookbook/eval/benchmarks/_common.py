@@ -2,14 +2,67 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import re
+from typing import TYPE_CHECKING
 
 from datasets import Dataset
 
+if TYPE_CHECKING:
+    from tinker_cookbook.sandbox.sandbox_interface import SandboxInterface
+
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Common helpers used across many benchmarks
+# ---------------------------------------------------------------------------
+
+
+def make_example_id(prefix: str, seed_text: str) -> str:
+    """Create a stable, deterministic example ID from a prefix and seed text.
+
+    Args:
+        prefix: Benchmark name prefix (e.g. ``"gsm8k"``, ``"mmlu_pro"``).
+        seed_text: Text to hash (e.g. the question text).
+
+    Returns:
+        A string like ``"gsm8k_a1b2c3d4e5f6"``.
+    """
+    return f"{prefix}_{hashlib.md5(seed_text.encode()).hexdigest()[:12]}"
+
+
+def format_mcq_choices(choices: list[str]) -> str:
+    """Format a list of choices as lettered options.
+
+    Args:
+        choices: List of choice strings.
+
+    Returns:
+        Formatted string like ``"(A) choice1\\n(B) choice2\\n..."``.
+    """
+    return "\n".join(f"({chr(65 + i)}) {c}" for i, c in enumerate(choices))
+
+
+def limit_dataset(ds: Dataset, max_examples: int | None, shuffle_seed: int | None = None) -> Dataset:
+    """Optionally shuffle and limit a dataset to ``max_examples``.
+
+    Args:
+        ds: The dataset to limit.
+        max_examples: Maximum number of examples, or ``None`` for all.
+        shuffle_seed: If set, shuffle before limiting (for representative sampling).
+
+    Returns:
+        The (possibly shuffled and truncated) dataset.
+    """
+    if max_examples is None:
+        return ds
+    if shuffle_seed is not None:
+        ds = ds.shuffle(seed=shuffle_seed)
+    return ds.select(range(min(max_examples, len(ds))))
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +205,35 @@ def get_sandbox_factory(config) -> object:
             )
 
         return factory
+
+
+# ---------------------------------------------------------------------------
+# Sandbox env mixin (shared by mbpp, livecodebench, terminal_bench, swe_bench)
+# ---------------------------------------------------------------------------
+
+
+class SandboxMixin:
+    """Mixin providing sandbox lifecycle management for benchmark envs.
+
+    Provides default ``sandbox = None`` and ``_cleaned_up = False`` so
+    subclasses don't need to initialize them manually (though they may
+    override in ``__init__`` if needed).
+
+    The runner discovers ``cleanup`` via ``hasattr(env, 'cleanup')``.
+    """
+
+    sandbox: SandboxInterface | None = None
+    _cleaned_up: bool = False
+
+    async def cleanup(self) -> None:
+        """Clean up sandbox resources. Safe to call multiple times."""
+        if self._cleaned_up or self.sandbox is None:
+            return
+        self._cleaned_up = True
+        try:
+            await self.sandbox.cleanup()
+        except Exception:
+            logger.debug("Sandbox cleanup failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------

@@ -352,7 +352,7 @@ async def run_benchmark(
 
     # Per-example results (None = not yet run or errored)
     rewards: list[float | None] = [None] * len(envs)
-    metrics_list: list[dict] = [{}] * len(envs)
+    metrics_list: list[dict] = [{} for _ in range(len(envs))]
     num_errors = 0
     num_completed = 0
     total_to_run = len(envs) - len(completed_rewards)

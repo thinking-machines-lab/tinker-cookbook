@@ -10,7 +10,6 @@ questions with errors. We evaluate only on samples with ``error_type == "ok"``.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import random
 from collections.abc import Sequence
@@ -19,7 +18,7 @@ from typing import cast
 import tinker
 from datasets import Dataset
 
-from tinker_cookbook.eval.benchmarks._common import extract_mcq_answer, load_benchmark_dataset
+from tinker_cookbook.eval.benchmarks._common import extract_mcq_answer, format_mcq_choices, load_benchmark_dataset, make_example_id
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig, BenchmarkResult
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -132,10 +131,9 @@ class MMLUReduxBenchmarkBuilder(BenchmarkBuilder):
                 continue
 
             expected = chr(65 + int(answer_idx))
-            choice_text = "\n".join(f"({chr(65 + i)}) {c}" for i, c in enumerate(choices))
-            prompt = f"{question}\n\n{choice_text}\n\nAnswer with just the letter (A, B, C, or D)."
+            prompt = f"{question}\n\n{format_mcq_choices(choices)}\n\nAnswer with just the letter (A, B, C, or D)."
             subject = row.get("_subject", "unknown")
-            example_id = f"mmlu_redux_{hashlib.md5(question.encode()).hexdigest()[:12]}"
+            example_id = make_example_id("mmlu_redux", question)
             envs.append(MMLUReduxEnv(prompt, expected, subject, renderer, example_id=example_id))
         return envs
 

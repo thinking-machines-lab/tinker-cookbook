@@ -14,7 +14,6 @@ Requires a sandbox backend (Modal or local Docker) for command execution.
 from __future__ import annotations
 
 import gzip
-import hashlib
 import io
 import logging
 import tarfile
@@ -26,7 +25,7 @@ import yaml
 import tinker
 from datasets import Dataset
 
-from tinker_cookbook.eval.benchmarks._common import extract_command, is_task_complete, load_benchmark_dataset, get_sandbox_factory
+from tinker_cookbook.eval.benchmarks._common import SandboxMixin, extract_command, get_sandbox_factory, is_task_complete, limit_dataset, load_benchmark_dataset, make_example_id
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -124,7 +123,7 @@ def _parse_task(row: dict) -> tuple[str, str, dict[str, str]]:
 # ---------------------------------------------------------------------------
 
 
-class TerminalBenchEnv(Env):
+class TerminalBenchEnv(SandboxMixin, Env):
     """Multi-turn env for one Terminal-Bench task.
 
     On each turn:
@@ -153,21 +152,9 @@ class TerminalBenchEnv(Env):
         self.setup_files = setup_files or {}
 
         # Runtime state
-        self.sandbox = None
         self.messages: list[Message] = []
         self.turn_count = 0
         self.commands_executed: list[str] = []
-        self._cleaned_up = False
-
-    async def cleanup(self) -> None:
-        """Clean up sandbox resources. Safe to call multiple times."""
-        if self._cleaned_up or self.sandbox is None:
-            return
-        self._cleaned_up = True
-        try:
-            await self.sandbox.cleanup()
-        except Exception:
-            pass
 
     async def initial_observation(self):
         # Create sandbox
@@ -325,8 +312,7 @@ class TerminalBenchBenchmarkBuilder(BenchmarkBuilder):
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
         ds = cast(Dataset, load_benchmark_dataset("ia03/terminal-bench"))
-        if config.max_examples is not None:
-            ds = ds.select(range(min(config.max_examples, len(ds))))
+        ds = limit_dataset(ds, config.max_examples)
 
         # Create sandbox factory
         sandbox_factory = get_sandbox_factory(config)
@@ -343,7 +329,7 @@ class TerminalBenchBenchmarkBuilder(BenchmarkBuilder):
             if task_id:
                 example_id = f"terminal_bench_{task_id}"
             else:
-                example_id = f"terminal_bench_{hashlib.md5(task_description.encode()).hexdigest()[:12]}"
+                example_id = make_example_id("terminal_bench", task_description)
 
             envs.append(TerminalBenchEnv(
                 task_description=task_description,

@@ -7,7 +7,6 @@ Pattern: Single-turn generate + programmatic grading.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from collections.abc import Sequence
 from typing import cast
@@ -15,7 +14,7 @@ from typing import cast
 import tinker
 from datasets import Dataset
 
-from tinker_cookbook.eval.benchmarks._common import extract_mcq_answer, load_benchmark_dataset
+from tinker_cookbook.eval.benchmarks._common import extract_mcq_answer, format_mcq_choices, limit_dataset, load_benchmark_dataset, make_example_id
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -91,8 +90,7 @@ class MMLUProBenchmarkBuilder(BenchmarkBuilder):
         except Exception:
             ds = cast(Dataset, load_benchmark_dataset("cais/mmlu", name="all"))
 
-        if config.max_examples is not None:
-            ds = ds.shuffle(seed=42).select(range(min(config.max_examples, len(ds))))
+        ds = limit_dataset(ds, config.max_examples, shuffle_seed=42)
 
         valid_letters = "ABCDEFGHIJ"
         envs = []
@@ -102,8 +100,7 @@ class MMLUProBenchmarkBuilder(BenchmarkBuilder):
             answer_idx = row.get("answer_index", row.get("answer", None))
 
             if choices:
-                choice_text = "\n".join(f"({chr(65 + i)}) {c}" for i, c in enumerate(choices))
-                prompt = f"{question}\n\n{choice_text}\n\nAnswer with just the letter (A, B, C, D, etc.)."
+                prompt = f"{question}\n\n{format_mcq_choices(choices)}\n\nAnswer with just the letter (A, B, C, D, etc.)."
             else:
                 prompt = f"{question}\n\nAnswer with just the letter."
 
@@ -118,7 +115,7 @@ class MMLUProBenchmarkBuilder(BenchmarkBuilder):
             if question_id is not None:
                 example_id = f"mmlu_pro_{question_id}"
             else:
-                example_id = f"mmlu_pro_{hashlib.md5(question.encode()).hexdigest()[:12]}"
+                example_id = make_example_id("mmlu_pro", question)
             envs.append(MMLUProEnv(prompt, expected, valid_letters, renderer, example_id=example_id))
         return envs
 

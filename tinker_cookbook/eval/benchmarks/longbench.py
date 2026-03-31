@@ -7,7 +7,6 @@ Pattern: Single-turn generate + programmatic grading.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import re
 from collections.abc import Sequence
@@ -16,7 +15,7 @@ from typing import cast
 import tinker
 from datasets import Dataset
 
-from tinker_cookbook.eval.benchmarks._common import load_benchmark_dataset
+from tinker_cookbook.eval.benchmarks._common import format_mcq_choices, limit_dataset, load_benchmark_dataset, make_example_id
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig, BenchmarkResult
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -121,8 +120,7 @@ class LongBenchBenchmarkBuilder(BenchmarkBuilder):
             logger.warning("Could not load LongBench dataset.")
             return []
 
-        if config.max_examples is not None:
-            ds = ds.shuffle(seed=42).select(range(min(config.max_examples, len(ds))))
+        ds = limit_dataset(ds, config.max_examples, shuffle_seed=42)
 
         envs = []
         for row in ds:
@@ -140,11 +138,10 @@ class LongBenchBenchmarkBuilder(BenchmarkBuilder):
                 expected = str(row.get("answer", "")).strip().upper()
 
                 if choices:
-                    choice_text = "\n".join(f"({chr(65 + i)}) {c}" for i, c in enumerate(choices))
                     user_content = (
                         f"Read the following text carefully, then answer the question.\n\n"
                         f"--- TEXT ---\n{context}\n--- END TEXT ---\n\n"
-                        f"Question: {question}\n\n{choice_text}\n\n"
+                        f"Question: {question}\n\n{format_mcq_choices(choices)}\n\n"
                         "Answer with just the letter (A, B, C, or D)."
                     )
                     is_mcq = expected in ("A", "B", "C", "D")
@@ -169,7 +166,7 @@ class LongBenchBenchmarkBuilder(BenchmarkBuilder):
             if not question or not context:
                 continue
 
-            example_id = f"longbench_{hashlib.md5(question.encode()).hexdigest()[:12]}"
+            example_id = make_example_id("longbench", question)
             envs.append(LongBenchEnv(user_content, expected, subtask, is_mcq, renderer, example_id=example_id))
         return envs
 

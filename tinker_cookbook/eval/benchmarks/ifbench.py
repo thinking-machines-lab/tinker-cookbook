@@ -10,7 +10,6 @@ objective verification functions.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from collections.abc import Sequence
 from typing import cast
@@ -18,7 +17,7 @@ from typing import cast
 import tinker
 from datasets import Dataset
 
-from tinker_cookbook.eval.benchmarks._common import load_benchmark_dataset, parse_kwargs
+from tinker_cookbook.eval.benchmarks._common import limit_dataset, load_benchmark_dataset, make_example_id, parse_kwargs
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig, BenchmarkResult
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -133,8 +132,7 @@ class IFBenchBenchmarkBuilder(BenchmarkBuilder):
             logger.warning(f"Could not load IFBench dataset: {exc}.")
             return []
 
-        if config.max_examples is not None:
-            ds = ds.select(range(min(config.max_examples, len(ds))))
+        ds = limit_dataset(ds, config.max_examples)
 
         envs = []
         for row in ds:
@@ -148,7 +146,7 @@ class IFBenchBenchmarkBuilder(BenchmarkBuilder):
             while len(kwargs_list) < len(instruction_ids):
                 kwargs_list.append({})
 
-            example_id = f"ifbench_{hashlib.md5(prompt.encode()).hexdigest()[:12]}"
+            example_id = make_example_id("ifbench", prompt)
             envs.append(IFBenchEnv(prompt, instruction_ids, kwargs_list, renderer, example_id=example_id))
         return envs
 

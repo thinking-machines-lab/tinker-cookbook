@@ -7,7 +7,6 @@ Pattern: Single-turn generate + sandboxed execution.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from collections.abc import Sequence
 from typing import cast
@@ -15,7 +14,7 @@ from typing import cast
 import tinker
 from datasets import Dataset
 
-from tinker_cookbook.eval.benchmarks._common import extract_python_code, get_sandbox_factory, load_benchmark_dataset
+from tinker_cookbook.eval.benchmarks._common import SandboxMixin, extract_python_code, get_sandbox_factory, limit_dataset, load_benchmark_dataset, make_example_id
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -29,7 +28,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-class MBPPEnv(Env):
+class MBPPEnv(SandboxMixin, Env):
     """Single-turn env for one MBPP problem with sandboxed execution-based grading."""
 
     def __init__(
@@ -47,20 +46,6 @@ class MBPPEnv(Env):
         self.renderer = renderer
         self.sandbox_factory = sandbox_factory
         self.example_id = example_id
-
-        # Runtime state
-        self.sandbox = None
-        self._cleaned_up = False
-
-    async def cleanup(self) -> None:
-        """Clean up sandbox resources. Safe to call multiple times."""
-        if self._cleaned_up or self.sandbox is None:
-            return
-        self._cleaned_up = True
-        try:
-            await self.sandbox.cleanup()
-        except Exception:
-            pass
 
     async def initial_observation(self):
         # Create sandbox for code execution
@@ -121,8 +106,7 @@ class MBPPBenchmarkBuilder(BenchmarkBuilder):
         except Exception:
             ds = cast(Dataset, load_benchmark_dataset("google-research-datasets/mbpp", name="full"))
 
-        if config.max_examples is not None:
-            ds = ds.select(range(min(config.max_examples, len(ds))))
+        ds = limit_dataset(ds, config.max_examples)
 
         sandbox_factory = get_sandbox_factory(config)
 
@@ -144,7 +128,7 @@ class MBPPBenchmarkBuilder(BenchmarkBuilder):
             if task_id is not None:
                 example_id = f"mbpp_{task_id}"
             else:
-                example_id = f"mbpp_{hashlib.md5(task_prompt.encode()).hexdigest()[:12]}"
+                example_id = make_example_id("mbpp", task_prompt)
             envs.append(MBPPEnv(prompt, task_prompt, test_list, renderer, sandbox_factory, example_id=example_id))
         return envs
 

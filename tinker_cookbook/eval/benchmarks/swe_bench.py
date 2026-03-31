@@ -15,7 +15,6 @@ Requires a sandbox backend (Modal) for command execution.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import shlex
@@ -25,7 +24,7 @@ from typing import cast
 import tinker
 from datasets import Dataset
 
-from tinker_cookbook.eval.benchmarks._common import extract_command, is_task_complete, load_benchmark_dataset, get_sandbox_factory
+from tinker_cookbook.eval.benchmarks._common import SandboxMixin, extract_command, get_sandbox_factory, is_task_complete, limit_dataset, load_benchmark_dataset, make_example_id
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig, BenchmarkResult
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -81,7 +80,7 @@ def _parse_test_ids(raw: str | list) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-class SWEBenchEnv(Env):
+class SWEBenchEnv(SandboxMixin, Env):
     """Multi-turn env for one SWE-bench problem.
 
     On each turn:
@@ -119,21 +118,9 @@ class SWEBenchEnv(Env):
         self.example_id = example_id
 
         # Runtime state
-        self.sandbox = None
         self.messages: list[Message] = []
         self.turn_count = 0
         self.commands_executed: list[str] = []
-        self._cleaned_up = False
-
-    async def cleanup(self) -> None:
-        """Clean up sandbox resources. Safe to call multiple times."""
-        if self._cleaned_up or self.sandbox is None:
-            return
-        self._cleaned_up = True
-        try:
-            await self.sandbox.cleanup()
-        except Exception:
-            pass
 
     async def initial_observation(self):
         # Create sandbox
@@ -353,8 +340,7 @@ class SWEBenchBenchmarkBuilder(BenchmarkBuilder):
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
         ds = cast(Dataset, load_benchmark_dataset("princeton-nlp/SWE-bench_Verified"))
-        if config.max_examples is not None:
-            ds = ds.select(range(min(config.max_examples, len(ds))))
+        ds = limit_dataset(ds, config.max_examples)
 
         sandbox_factory = get_sandbox_factory(config)
 
@@ -384,7 +370,7 @@ class SWEBenchBenchmarkBuilder(BenchmarkBuilder):
             example_id = (
                 f"swe_bench_{instance_id}"
                 if instance_id
-                else f"swe_bench_{hashlib.md5(problem_statement.encode()).hexdigest()[:12]}"
+                else make_example_id("swe_bench", problem_statement)
             )
 
             envs.append(SWEBenchEnv(

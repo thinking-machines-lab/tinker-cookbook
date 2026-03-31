@@ -12,7 +12,7 @@ from collections.abc import Sequence
 
 import tinker
 
-from tinker_cookbook.eval.benchmarks._common import load_benchmark_dataset, parse_kwargs
+from tinker_cookbook.eval.benchmarks._common import limit_dataset, load_benchmark_dataset, parse_kwargs
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig, BenchmarkResult
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -81,9 +81,7 @@ class IFEvalBenchmarkBuilder(BenchmarkBuilder):
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
         ds = load_benchmark_dataset("google/IFEval", split="train")
-
-        if config.max_examples is not None:
-            ds = ds.select(range(min(config.max_examples, len(ds))))
+        ds = limit_dataset(ds, config.max_examples)
 
         envs = []
         for row in ds:

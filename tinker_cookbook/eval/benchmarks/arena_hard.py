@@ -10,7 +10,6 @@ self-judging (same model) if no judge is configured.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import re
 from collections.abc import Sequence
@@ -20,7 +19,7 @@ import tinker
 from datasets import Dataset
 
 from tinker_cookbook.completers import TinkerMessageCompleter
-from tinker_cookbook.eval.benchmarks._common import load_benchmark_dataset
+from tinker_cookbook.eval.benchmarks._common import limit_dataset, load_benchmark_dataset, make_example_id
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig, BenchmarkResult
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -135,8 +134,7 @@ class ArenaHardBenchmarkBuilder(BenchmarkBuilder):
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
         ds = cast(Dataset, load_benchmark_dataset("lmarena-ai/arena-hard-auto-v0.1", split="train"))
-        if config.max_examples is not None:
-            ds = ds.select(range(min(config.max_examples, len(ds))))
+        ds = limit_dataset(ds, config.max_examples)
 
         # Build judge completer
         j_client = config.judge_sampling_client
@@ -163,7 +161,7 @@ class ArenaHardBenchmarkBuilder(BenchmarkBuilder):
             if not question:
                 continue
             cluster = row.get("cluster", "unknown")
-            example_id = f"arena_hard_{hashlib.md5(question.encode()).hexdigest()[:12]}"
+            example_id = make_example_id("arena_hard", question)
             envs.append(ArenaHardEnv(question, cluster, judge_completer, renderer, example_id=example_id))
         return envs
 

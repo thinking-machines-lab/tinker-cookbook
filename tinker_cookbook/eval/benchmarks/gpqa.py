@@ -7,7 +7,6 @@ Pattern: Single-turn generate + programmatic grading.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from collections.abc import Sequence
 from typing import cast
@@ -15,7 +14,7 @@ from typing import cast
 import tinker
 from datasets import Dataset
 
-from tinker_cookbook.eval.benchmarks._common import extract_mcq_answer, load_benchmark_dataset
+from tinker_cookbook.eval.benchmarks._common import extract_mcq_answer, format_mcq_choices, limit_dataset, load_benchmark_dataset, make_example_id
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -76,8 +75,7 @@ class GPQABenchmarkBuilder(BenchmarkBuilder):
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
         ds = cast(Dataset, load_benchmark_dataset("Idavidrein/gpqa", name="gpqa_diamond", split="train"))
-        if config.max_examples is not None:
-            ds = ds.select(range(min(config.max_examples, len(ds))))
+        ds = limit_dataset(ds, config.max_examples)
 
         envs = []
         for row in ds:
@@ -110,12 +108,11 @@ class GPQABenchmarkBuilder(BenchmarkBuilder):
                         expected = chr(65 + i)
                         break
 
-            choice_text = "\n".join(f"({chr(65 + i)}) {c}" for i, c in enumerate(choices))
             prompt = (
-                f"{question}\n\n{choice_text}\n\n"
+                f"{question}\n\n{format_mcq_choices(choices)}\n\n"
                 "Think step by step, then give your final answer as a single letter (A, B, C, or D)."
             )
-            example_id = f"gpqa_{hashlib.md5(question.encode()).hexdigest()[:12]}"
+            example_id = make_example_id("gpqa", question)
             envs.append(GPQAEnv(prompt, expected, renderer, example_id=example_id))
         return envs
 

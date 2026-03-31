@@ -45,6 +45,7 @@ Usage::
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import uuid
@@ -163,8 +164,9 @@ class EvalStore:
         with open(run_dir / "metadata.json", "w") as f:
             json.dump(metadata.to_dict(), f, indent=2)
 
-        # Append to index
+        # Append to index (locked to prevent interleaving from concurrent writers)
         with open(self._index_path, "a") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
             f.write(json.dumps({"run_id": run_id, "timestamp": metadata.timestamp,
                                 "model": model_name, "checkpoint": checkpoint_name}) + "\n")
 
@@ -201,7 +203,7 @@ class EvalStore:
                     with open(result_path) as f:
                         result = json.load(f)
                     metadata.scores[benchmark] = result.get("score", 0.0)
-                except (json.JSONDecodeError, Exception) as e:
+                except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
                     logger.warning(
                         f"Skipping benchmark {benchmark} in run {run_id}: "
                         f"failed to load result.json: {e}"
@@ -227,7 +229,7 @@ class EvalStore:
                 try:
                     with open(meta_path) as f:
                         runs.append(RunMetadata.from_dict(json.load(f)))
-                except (json.JSONDecodeError, Exception) as e:
+                except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
                     logger.warning(f"Skipping run {run_dir.name}: failed to load metadata.json: {e}")
         return runs
 
@@ -268,7 +270,7 @@ class EvalStore:
             if "pass_at_k" in d:
                 d["pass_at_k"] = {int(k): v for k, v in d["pass_at_k"].items()}
             return BenchmarkResult(**d)
-        except (json.JSONDecodeError, Exception) as e:
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
             logger.warning(f"Failed to read result for {run_id}/{benchmark}: {e}")
             return None
 
@@ -287,7 +289,7 @@ class EvalStore:
         try:
             with open(path) as f:
                 return json.load(f)
-        except (json.JSONDecodeError, Exception) as e:
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
             logger.warning(f"Failed to read summary for {run_id}: {e}")
             return {}
 
@@ -324,7 +326,7 @@ class EvalStore:
                     continue
                 try:
                     t = StoredTrajectory.from_dict(json.loads(line))
-                except (json.JSONDecodeError, Exception) as e:
+                except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
                     logger.warning(
                         f"Skipping corrupted trajectory line {line_num} in "
                         f"{run_id}/{benchmark}/trajectories.jsonl: {e}"
