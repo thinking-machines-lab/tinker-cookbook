@@ -88,7 +88,9 @@ SFT improves math/science, degrades instruction following. IF-RL (Stage 1) shoul
 | Step 25 (session 2) | `tinker://72b86fbb-afd9-5b12-b9a5-c1e553a3a18e:train:0/weights/000025` | `tinker://72b86fbb-afd9-5b12-b9a5-c1e553a3a18e:train:0/sampler_weights/000025` |
 | Step 30 / Final | `tinker://72b86fbb-afd9-5b12-b9a5-c1e553a3a18e:train:0/weights/final` | `tinker://72b86fbb-afd9-5b12-b9a5-c1e553a3a18e:train:0/sampler_weights/final` |
 
-**WARNING**: TTL is 7 days (expires ~2026-04-07). Save permanently before expiry:
+**TTL**: 7 days. Session 1 (step 20) created 2026-03-30 ~03:40 UTC, expires **2026-04-06**.
+Session 2 (steps 25, 30, final) created 2026-03-30 ~19:28 UTC, expires **2026-04-06**.
+Save permanently before expiry:
 ```python
 await training_client.save_state_permanently_async("ifrl_step30_permanent")
 ```
