@@ -57,7 +57,7 @@ class IFEvalEnv(Env):
         return model_input, stop
 
     async def step(self, action, *, extra=None):
-        from tinker_cookbook.recipes.nemotron_cascade.rl.envs.if_rl import verify_all_instructions
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_all_instructions
 
         response = self.renderer.tokenizer.decode(action)
         fraction, _ = verify_all_instructions(response, self.instruction_ids, self.kwargs_list)

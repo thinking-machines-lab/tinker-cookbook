@@ -40,9 +40,9 @@ def _verify_constraints(
     instruction_ids: list[str],
     kwargs_list: list[dict],
 ) -> tuple[float, bool]:
-    """Verify constraints using the IF-RL verifier if available, else basic heuristics."""
+    """Verify constraints using the IFEval verifier, falling back to basic heuristics."""
     try:
-        from tinker_cookbook.recipes.nemotron_cascade.rl.envs.if_rl import verify_all_instructions
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_all_instructions
 
         fraction, _ = verify_all_instructions(response, instruction_ids, kwargs_list)
         return fraction, fraction == 1.0
