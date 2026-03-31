@@ -3,6 +3,7 @@
 import asyncio
 from collections import Counter
 from collections.abc import Sequence
+from typing import cast
 
 import pytest
 
@@ -277,7 +278,7 @@ class Test_InterleavedRLDataset:
         for i in range(20):
             batch = ds.get_batch(i)
             for builder in batch:
-                seen_indices.add(builder.idx)
+                seen_indices.add(cast(MockEnvGroupBuilder, builder).idx)
 
         # All 20 groups should be reachable (indices 0-19)
         assert len(seen_indices) == 20, (
@@ -299,7 +300,7 @@ class Test_InterleavedRLDataset:
         seen = set()
         for i in range(9):
             for builder in ds.get_batch(i):
-                seen.add(builder.idx)
+                seen.add(cast(MockEnvGroupBuilder, builder).idx)
 
         # Should see all 9 groups, not just indices 0, 3, 6 (first of each batch)
         assert seen == set(range(9))
@@ -317,8 +318,8 @@ class Test_InterleavedRLDataset:
         )
 
         # Collect group indices for cycle 1 (batches 0-4) and cycle 2 (batches 5-9)
-        cycle1 = [ds.get_batch(i)[0].idx for i in range(5)]
-        cycle2 = [ds.get_batch(i)[0].idx for i in range(5, 10)]
+        cycle1 = [cast(MockEnvGroupBuilder, ds.get_batch(i)[0]).idx for i in range(5)]
+        cycle2 = [cast(MockEnvGroupBuilder, ds.get_batch(i)[0]).idx for i in range(5, 10)]
 
         # Both cycles should cover all 5 groups
         assert set(cycle1) == set(range(5))
