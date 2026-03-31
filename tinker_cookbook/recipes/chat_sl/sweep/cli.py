@@ -130,6 +130,7 @@ def _make_sweep_config_cls(recipe_config_cls: type) -> type:
         # Execution
         max_parallel: int = 1
         sweep_dir: str | None = None
+        skip_existing: bool = False
 
         # Metric to optimize (depends on recipe)
         metric: str = "train_mean_nll"
@@ -176,6 +177,7 @@ def run_sweep(config: Any, recipe_name: str) -> None:
         main_fn,
         base,
         max_parallel=config.max_parallel,
+        skip_existing=config.skip_existing,
         **sweep_kwargs,
         learning_rate=config.learning_rates,
         lora_rank=config.lora_ranks,

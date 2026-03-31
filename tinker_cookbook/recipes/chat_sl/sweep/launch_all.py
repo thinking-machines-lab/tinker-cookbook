@@ -134,7 +134,9 @@ NEW_MODELS: list[ModelSweepConfig] = [
 SWEEP_ROOT = "/tmp/tinker-sweeps"
 
 
-def build_sweep_command(cfg: ModelSweepConfig, jobs_per_model: int) -> list[str]:
+def build_sweep_command(
+    cfg: ModelSweepConfig, jobs_per_model: int, skip_existing: bool = False
+) -> list[str]:
     """Build the CLI command for one model's sweep."""
     lr_str = ", ".join(str(lr) for lr in cfg.learning_rates)
     rank_str = ", ".join(str(r) for r in cfg.lora_ranks)
@@ -161,6 +163,8 @@ def build_sweep_command(cfg: ModelSweepConfig, jobs_per_model: int) -> list[str]
         f"learning_rates=[{lr_str}]",
         f"lora_ranks=[{rank_str}]",
     ]
+    if skip_existing:
+        cmd.append("skip_existing=True")
     if cfg.renderer_name is not None:
         cmd.append(f"base.renderer_name={cfg.renderer_name}")
     return cmd
@@ -172,9 +176,10 @@ async def run_model_sweep(
     dry_run: bool,
     semaphore: asyncio.Semaphore,
     log_dir: str = "/tmp/tinker-sweep-logs",
+    skip_existing: bool = False,
 ) -> tuple[str, bool]:
     """Run sweep for one model, respecting the concurrency semaphore."""
-    cmd = build_sweep_command(cfg, jobs_per_model)
+    cmd = build_sweep_command(cfg, jobs_per_model, skip_existing=skip_existing)
     n_combos = len(cfg.learning_rates) * len(cfg.lora_ranks)
     cmd_str = " \\\n    ".join(cmd)
 
@@ -219,6 +224,7 @@ async def run_all(
     models_parallel: int,
     jobs_per_model: int,
     dry_run: bool,
+    skip_existing: bool = False,
 ) -> None:
     """Launch all model sweeps with bounded concurrency."""
     semaphore = asyncio.Semaphore(models_parallel)
@@ -229,7 +235,10 @@ async def run_all(
     print(f"W&B project: {WANDB_PROJECT}")
     print(f"Dataset: {DATASET}, batch_size: {BATCH_SIZE}, budget: {TRAINING_BUDGET}")
 
-    tasks = [run_model_sweep(cfg, jobs_per_model, dry_run, semaphore) for cfg in models]
+    tasks = [
+        run_model_sweep(cfg, jobs_per_model, dry_run, semaphore, skip_existing=skip_existing)
+        for cfg in models
+    ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Summary
@@ -270,6 +279,11 @@ def main() -> None:
         action="store_true",
         help="Also re-run already-completed models",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip runs that already have metrics.jsonl (for resuming interrupted sweeps)",
+    )
     args = parser.parse_args()
 
     models = list(NEW_MODELS)
@@ -291,7 +305,15 @@ def main() -> None:
         print("No models to sweep.")
         sys.exit(0)
 
-    asyncio.run(run_all(models, args.models_parallel, args.jobs_per_model, args.dry_run))
+    asyncio.run(
+        run_all(
+            models,
+            args.models_parallel,
+            args.jobs_per_model,
+            args.dry_run,
+            skip_existing=args.resume,
+        )
+    )
 
 
 if __name__ == "__main__":
