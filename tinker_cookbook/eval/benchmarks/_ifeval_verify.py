@@ -292,8 +292,12 @@ def verify_instruction(instruction_id: str, response: str, kwargs: dict) -> bool
 
                 detected = detect(response).lower()
                 lang_map = {
-                    "english": "en", "french": "fr", "german": "de",
-                    "spanish": "es", "chinese": "zh-cn", "japanese": "ja",
+                    "english": "en",
+                    "french": "fr",
+                    "german": "de",
+                    "spanish": "es",
+                    "chinese": "zh-cn",
+                    "japanese": "ja",
                     "korean": "ko",
                 }
                 target = lang_map.get(language, language)

@@ -175,7 +175,9 @@ class BFCLBenchmarkBuilder(BenchmarkBuilder):
             # Ground truth is in a separate file — load and index by id
             gt_ds = cast(
                 Dataset,
-                load_dataset(repo, data_files="possible_answer/BFCL_v3_simple.json", split="train", **kwargs),
+                load_dataset(
+                    repo, data_files="possible_answer/BFCL_v3_simple.json", split="train", **kwargs
+                ),
             )
             gt_by_id = {row["id"]: row["ground_truth"] for row in gt_ds}
         except Exception as exc:
