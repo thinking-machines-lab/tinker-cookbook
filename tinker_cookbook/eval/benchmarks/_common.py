@@ -351,21 +351,11 @@ def extract_mcq_answer(text: str, valid_letters: str = "ABCD") -> str:
     pattern = f"[{valid_letters}]"
 
     # Try \boxed{X}
-    idx = text.find("\\boxed{")
-    if idx != -1:
-        start = idx + len("\\boxed{")
-        depth = 1
-        i = start
-        while i < len(text) and depth > 0:
-            if text[i] == "{":
-                depth += 1
-            elif text[i] == "}":
-                depth -= 1
-            i += 1
-        if depth == 0:
-            boxed = text[start : i - 1].strip().upper()
-            if re.fullmatch(pattern, boxed):
-                return boxed
+    boxed = extract_boxed(text)
+    if boxed is not None:
+        boxed_upper = boxed.strip().upper()
+        if re.fullmatch(pattern, boxed_upper):
+            return boxed_upper
 
     answer_match = re.search(
         rf"(?:answer is|answer:)\s*\(?([{valid_letters}])\)?",

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -65,7 +65,7 @@ class BenchmarkConfig:
     """Renderer for the judge model. If None, uses the candidate renderer."""
 
     # Sandbox (for benchmarks that execute code: mbpp, livecodebench, terminal_bench, swe_bench)
-    sandbox_factory: Any = None
+    sandbox_factory: Callable[..., Any] | None = None
     """Async callable returning a :class:`~tinker_cookbook.sandbox.SandboxInterface`.
     Called once per eval example to create an isolated execution environment.
     When ``None``, defaults to Modal (requires ``pip install 'tinker-cookbook[modal]'``).

@@ -4,7 +4,7 @@ Key design decisions:
 - Uses ``do_single_rollout`` from RL infrastructure (same Env protocol)
 - Trajectories stored as JSONL with decoded text for visualization
 - Resumability via idx-based deduplication
-- Thread-safe saving via asyncio.Lock
+- Coroutine-safe saving via asyncio.Lock
 - Multi-turn benchmarks get lower concurrency (agent_concurrency)
 """
 

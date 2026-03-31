@@ -46,7 +46,7 @@ def _verify_constraints(
 
         fraction, _ = verify_all_instructions(response, instruction_ids, kwargs_list)
         return fraction, fraction == 1.0
-    except (ImportError, Exception):
+    except ImportError:
         pass
 
     # Fallback: basic heuristic verification

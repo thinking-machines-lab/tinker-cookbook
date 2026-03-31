@@ -86,7 +86,7 @@ class GSM8KBenchmarkBuilder(BenchmarkBuilder):
         ds = limit_dataset(ds, config.max_examples)
 
         envs = []
-        for _i, row in enumerate(ds):
+        for row in ds:
             expected = row["answer"].split("####")[-1].strip()
             example_id = make_example_id("gsm8k", row["question"])
             envs.append(GSM8KEnv(row["question"], expected, renderer, example_id=example_id))

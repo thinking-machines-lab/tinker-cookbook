@@ -65,7 +65,8 @@ def _load_aime_dataset(year: str) -> Dataset | None:
                 ds = cast(Dataset, load_benchmark_dataset(dataset_id, split=split))
                 logger.info(f"Loaded AIME {year} from {dataset_id}/{split} ({len(ds)} problems)")
                 return ds
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Failed to load {dataset_id}/{split}: {e}")
                 continue
     return None
 
