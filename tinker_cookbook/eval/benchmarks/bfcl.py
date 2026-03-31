@@ -162,19 +162,22 @@ class BFCLBenchmarkBuilder(BenchmarkBuilder):
     name = "bfcl"
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
+        repo = "gorilla-llm/Berkeley-Function-Calling-Leaderboard"
         try:
             kwargs: dict = {}
-            if _resolve_trust_remote_code(None):
+            trust = _resolve_trust_remote_code(None)
+            if trust:
                 kwargs["trust_remote_code"] = True
             ds = cast(
                 Dataset,
-                load_dataset(
-                    "gorilla-llm/Berkeley-Function-Calling-Leaderboard",
-                    data_files="BFCL_v3_simple.json",
-                    split="train",
-                    **kwargs,
-                ),
+                load_dataset(repo, data_files="BFCL_v3_simple.json", split="train", **kwargs),
             )
+            # Ground truth is in a separate file — load and index by id
+            gt_ds = cast(
+                Dataset,
+                load_dataset(repo, data_files="possible_answer/BFCL_v3_simple.json", split="train", **kwargs),
+            )
+            gt_by_id = {row["id"]: row["ground_truth"] for row in gt_ds}
         except Exception as exc:
             logger.warning(f"Could not load BFCL dataset: {exc}.")
             return []
@@ -185,7 +188,8 @@ class BFCLBenchmarkBuilder(BenchmarkBuilder):
         for row in ds:
             question_msgs = row.get("question", [])
             functions = row.get("function", [])
-            ground_truth = row.get("ground_truth", row.get("expected_output", None))
+            row_id = row.get("id", "")
+            ground_truth = row.get("ground_truth", gt_by_id.get(row_id))
 
             if not question_msgs or ground_truth is None:
                 continue

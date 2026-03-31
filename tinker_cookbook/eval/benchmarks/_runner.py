@@ -352,7 +352,6 @@ async def run_benchmark(
         sampling_client=sampling_client,
         max_tokens=config.max_tokens,
         temperature=config.temperature,
-        context_window=config.context_window,
     )
 
     # Choose concurrency based on benchmark type

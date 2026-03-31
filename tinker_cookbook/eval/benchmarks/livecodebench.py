@@ -147,22 +147,21 @@ class LiveCodeBenchBenchmarkBuilder(BenchmarkBuilder):
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
         try:
-            ds = cast(
-                Dataset,
-                load_benchmark_dataset(
-                    "livecodebench/code_generation_lite", trust_remote_code=True
-                ),
-            )
+            ds = cast(Dataset, load_benchmark_dataset("livecodebench/code_generation_lite"))
         except Exception:
+            # The dataset has a legacy loading script that newer `datasets` versions reject.
+            # Fall back to downloading the JSONL directly via huggingface_hub.
             try:
-                ds = cast(
-                    Dataset,
-                    load_benchmark_dataset(
-                        "livecodebench/code_generation_lite",
-                        name="release_v6",
-                        trust_remote_code=True,
-                    ),
+                from datasets import Dataset as HFDataset
+                from huggingface_hub import hf_hub_download
+
+                path = hf_hub_download(
+                    "livecodebench/code_generation_lite",
+                    "test6.jsonl",
+                    repo_type="dataset",
                 )
+                ds = cast(Dataset, HFDataset.from_json(path))
+                logger.info(f"Loaded LiveCodeBench from JSONL fallback ({len(ds)} examples)")
             except Exception as exc:
                 logger.warning(f"Could not load LiveCodeBench dataset: {exc}.")
                 return []
@@ -175,7 +174,18 @@ class LiveCodeBenchBenchmarkBuilder(BenchmarkBuilder):
         for row in ds:
             question = row.get("question_content", row.get("question", ""))
             starter_code = row.get("starter_code", "")
+            # Test cases may be under "input_output" (old format) or
+            # "public_test_cases"/"private_test_cases" (JSONL format)
             test_cases_json = row.get("input_output", "")
+            if not test_cases_json:
+                public_tests = row.get("public_test_cases", [])
+                if isinstance(public_tests, list) and public_tests:
+                    test_cases_json = json.dumps(
+                        {"inputs": [t["input"] for t in public_tests],
+                         "outputs": [t["output"] for t in public_tests]}
+                    )
+                elif isinstance(public_tests, str) and public_tests:
+                    test_cases_json = public_tests
             difficulty = row.get("difficulty", "unknown")
 
             if not question or not test_cases_json:
