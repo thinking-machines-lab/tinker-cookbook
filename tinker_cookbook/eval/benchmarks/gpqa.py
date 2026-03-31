@@ -1,0 +1,126 @@
+"""GPQA-Diamond benchmark -- graduate-level science QA (multiple choice).
+
+Dataset: ``Idavidrein/gpqa`` (gpqa_diamond config) on HuggingFace.
+Metric: Multiple-choice accuracy (A/B/C/D).
+Pattern: Single-turn generate + programmatic grading.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import logging
+from collections.abc import Sequence
+from typing import cast
+
+import tinker
+from datasets import Dataset
+
+from tinker_cookbook.eval.benchmarks._common import extract_mcq_answer, load_benchmark_dataset
+from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
+from tinker_cookbook.renderers import Message
+from tinker_cookbook.renderers.base import Renderer
+from tinker_cookbook.rl.types import Env, StepResult
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Env
+# ---------------------------------------------------------------------------
+
+
+class GPQAEnv(Env):
+    """Single-turn env for one GPQA-Diamond question."""
+
+    def __init__(self, prompt: str, expected: str, renderer: Renderer, example_id: str = ""):
+        self.prompt = prompt
+        self.expected = expected
+        self.renderer = renderer
+        self.example_id = example_id
+
+    async def initial_observation(self):
+        messages: list[Message] = [{"role": "user", "content": self.prompt}]
+        model_input = self.renderer.build_generation_prompt(messages)
+        stop = self.renderer.get_stop_sequences()
+        return model_input, stop
+
+    async def step(self, action, *, extra=None):
+        response = self.renderer.tokenizer.decode(action)
+        extracted = extract_mcq_answer(response)
+        correct = extracted == self.expected
+        return StepResult(
+            reward=1.0 if correct else 0.0,
+            episode_done=True,
+            next_observation=tinker.ModelInput.empty(),
+            next_stop_condition=[],
+            metrics={"correct": float(correct)},
+            logs={
+                "example_id": self.example_id,
+                "input": self.prompt[:200],
+                "expected": self.expected,
+                "extracted": extracted,
+                "output": response[:500],
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# Benchmark builder
+# ---------------------------------------------------------------------------
+
+
+class GPQABenchmarkBuilder(BenchmarkBuilder):
+    """GPQA-Diamond: graduate-level science multiple-choice (198 questions)."""
+
+    name = "gpqa"
+
+    def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
+        ds = cast(Dataset, load_benchmark_dataset("Idavidrein/gpqa", name="gpqa_diamond", split="train"))
+        if config.max_examples is not None:
+            ds = ds.select(range(min(config.max_examples, len(ds))))
+
+        envs = []
+        for row in ds:
+            question = row["Question"]
+            correct_answer = row.get("Answer", row.get("Correct Answer", ""))
+
+            choice_cols = [
+                col for col in row.keys()
+                if col.startswith("Choice") or col in ("choice_a", "choice_b", "choice_c", "choice_d")
+            ]
+
+            if choice_cols:
+                choices = [row[c] for c in sorted(choice_cols) if row.get(c)]
+            else:
+                choices = [row.get("Correct Answer", "")]
+                for i in range(1, 4):
+                    inc = row.get(f"Incorrect Answer {i}", "")
+                    if inc:
+                        choices.append(inc)
+
+            if not choices:
+                continue
+
+            if correct_answer in ("A", "B", "C", "D"):
+                expected = correct_answer
+            else:
+                expected = "A"
+                for i, c in enumerate(choices):
+                    if c.strip() == str(correct_answer).strip():
+                        expected = chr(65 + i)
+                        break
+
+            choice_text = "\n".join(f"({chr(65 + i)}) {c}" for i, c in enumerate(choices))
+            prompt = (
+                f"{question}\n\n{choice_text}\n\n"
+                "Think step by step, then give your final answer as a single letter (A, B, C, or D)."
+            )
+            example_id = f"gpqa_{hashlib.md5(question.encode()).hexdigest()[:12]}"
+            envs.append(GPQAEnv(prompt, expected, renderer, example_id=example_id))
+        return envs
+
+
+# Auto-register
+from tinker_cookbook.eval.benchmarks import register  # noqa: E402
+
+register(GPQABenchmarkBuilder())

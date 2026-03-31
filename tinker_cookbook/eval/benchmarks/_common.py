@@ -1,0 +1,347 @@
+"""Shared utilities for benchmark environments."""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+
+from datasets import Dataset
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Dataset loading with consistent HF_TRUST_REMOTE_CODE + gated dataset handling
+# ---------------------------------------------------------------------------
+
+
+def load_benchmark_dataset(
+    path: str,
+    name: str | None = None,
+    split: str = "test",
+    trust_remote_code: bool | None = None,
+) -> Dataset:
+    """Load a HuggingFace dataset with consistent trust_remote_code and error handling.
+
+    Respects the ``HF_TRUST_REMOTE_CODE`` environment variable (``1``, ``true``,
+    ``yes``).  Provides clear error messages for gated datasets that require
+    authentication.
+
+    Args:
+        path: HuggingFace dataset path (e.g. ``"openai/gsm8k"``).
+        name: Dataset configuration name (e.g. ``"main"``).
+        split: Dataset split (default ``"test"``).
+        trust_remote_code: If ``None``, resolved from ``HF_TRUST_REMOTE_CODE``
+            env var. If ``True``/``False``, used directly.
+
+    Returns:
+        The loaded Dataset.
+
+    Raises:
+        PermissionError: If the dataset is gated and requires authentication.
+        RuntimeError: If the dataset cannot be loaded for other reasons.
+    """
+    from datasets import load_dataset
+
+    resolved_trust = _resolve_trust_remote_code(trust_remote_code)
+
+    kwargs: dict = {"split": split}
+    if name is not None:
+        kwargs["name"] = name
+    if resolved_trust:
+        kwargs["trust_remote_code"] = True
+
+    try:
+        ds = load_dataset(path, **kwargs)
+    except Exception as e:
+        err_str = str(e).lower()
+        # Gated dataset — needs HF auth + terms acceptance
+        if "gated" in err_str or "401" in err_str or "unauthorized" in err_str or "access" in err_str:
+            raise PermissionError(
+                f"Dataset '{path}' is gated and requires authentication.\n"
+                f"1. Create a HuggingFace token at https://huggingface.co/settings/tokens\n"
+                f"2. Accept the dataset terms at https://huggingface.co/datasets/{path}\n"
+                f"3. Set the token: export HF_TOKEN=hf_...\n"
+                f"   Or run: huggingface-cli login\n"
+                f"Original error: {e}"
+            ) from e
+        # Trust remote code needed
+        if "trust_remote_code" in err_str or "custom code" in err_str:
+            raise RuntimeError(
+                f"Dataset '{path}' requires trust_remote_code=True.\n"
+                f"Set the environment variable: export HF_TRUST_REMOTE_CODE=1\n"
+                f"Original error: {e}"
+            ) from e
+        raise
+    return ds  # type: ignore[return-value]
+
+
+def _resolve_trust_remote_code(trust_remote_code: bool | None) -> bool:
+    """Resolve trust_remote_code from parameter or HF_TRUST_REMOTE_CODE env var."""
+    if trust_remote_code is not None:
+        return trust_remote_code
+    env_val = os.environ.get("HF_TRUST_REMOTE_CODE", "").lower()
+    return env_val in ("1", "true", "yes")
+
+
+def extract_command(text: str) -> str | None:
+    """Extract a bash command from a model response.
+
+    Looks for a ``bash``/``sh``/``shell`` fenced code block first, then any
+    fenced block whose content does not look like Python, JSON, or XML.
+
+    Returns:
+        The extracted command string, or ``None`` if no command is found.
+    """
+    match = re.search(r"```(?:bash|sh|shell)\s*\n(.*?)\n```", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    match = re.search(r"```\s*\n(.*?)\n```", text, re.DOTALL)
+    if match:
+        cmd = match.group(1).strip()
+        if cmd and not cmd.startswith(("{", "[", "<", "def ", "class ", "import ")):
+            return cmd
+    return None
+
+
+def is_task_complete(text: str) -> bool:
+    """Check if the model signals task completion."""
+    lower = text.lower()
+    return "task_complete" in lower or "task complete" in lower
+
+
+# ---------------------------------------------------------------------------
+# Sandbox factory (shared by terminal_bench, swe_bench, mbpp, livecodebench)
+# ---------------------------------------------------------------------------
+
+
+def get_sandbox_factory(config) -> object:
+    """Get a sandbox factory from config, falling back to Modal.
+
+    If ``config.sandbox_factory`` is set, returns it directly — the user
+    provides their own :class:`~tinker_cookbook.sandbox.SandboxInterface`
+    implementation.  Otherwise, falls back to Modal with a clear error
+    if Modal is not installed.
+
+    Args:
+        config: A :class:`BenchmarkConfig` (imported at call time to avoid
+            circular imports).
+
+    Returns:
+        An async callable that creates a new sandbox on each call.
+    """
+    if config.sandbox_factory is not None:
+        return config.sandbox_factory
+
+    try:
+        from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
+
+        async def factory():
+            return await ModalSandbox.create()
+
+        return factory
+    except ImportError:
+        async def factory():
+            raise RuntimeError(
+                "Code execution benchmarks require a sandbox backend. "
+                "Either:\n"
+                "  1. Install Modal: pip install 'tinker-cookbook[modal]'\n"
+                "  2. Provide a custom sandbox_factory in BenchmarkConfig"
+            )
+
+        return factory
+
+
+# ---------------------------------------------------------------------------
+# Math answer extraction (shared by gsm8k, aime, math benchmarks)
+# ---------------------------------------------------------------------------
+
+
+def extract_boxed(text: str) -> str | None:
+    r"""Extract content from ``\boxed{...}`` handling nested braces.
+
+    Returns:
+        The content inside the outermost ``\boxed{}``, or ``None`` if not found.
+    """
+    idx = text.find("\\boxed{")
+    if idx == -1:
+        return None
+    start = idx + len("\\boxed{")
+    depth = 1
+    i = start
+    while i < len(text) and depth > 0:
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+        i += 1
+    return text[start : i - 1] if depth == 0 else None
+
+
+def extract_number(text: str) -> str:
+    """Extract a number from text, stripping LaTeX formatting.
+
+    Removes ``\\text{}``, other LaTeX commands, braces, dollar signs, and
+    commas, then returns the first number found (or the stripped text).
+    """
+    cleaned = re.sub(r"\\text\{[^}]*\}", "", text)
+    cleaned = re.sub(r"\\[a-zA-Z]+", "", cleaned)
+    cleaned = cleaned.replace("{", "").replace("}", "").replace("$", "")
+    cleaned = cleaned.replace(",", "").replace(" ", "")
+    match = re.search(r"[-]?\d+\.?\d*", cleaned)
+    return match.group(0) if match else cleaned.strip()
+
+
+def extract_gsm8k_answer(text: str) -> str:
+    """Extract numeric answer from a model response.
+
+    Tries ``\\boxed{}``, ``#### <answer>``, ``answer is/answer:`` patterns,
+    then falls back to the last number in the text.
+
+    Returns:
+        Extracted numeric string, or ``""`` if no number is found.
+    """
+    boxed = extract_boxed(text)
+    if boxed:
+        return extract_number(boxed)
+
+    hash_match = re.search(r"####\s*(.+)", text)
+    if hash_match:
+        return extract_number(hash_match.group(1))
+
+    answer_match = re.search(
+        r"(?:answer is|answer:)\s*\$?([0-9,.-]+)", text, re.IGNORECASE
+    )
+    if answer_match:
+        return answer_match.group(1).strip().replace(",", "")
+
+    numbers = re.findall(r"[-]?\d+[,\d]*\.?\d*", text)
+    if numbers:
+        return numbers[-1].replace(",", "")
+
+    return ""
+
+
+def check_gsm8k(response: str, expected: str) -> bool:
+    """Check if the extracted numeric answer matches the expected answer.
+
+    Args:
+        response: Full model response text.
+        expected: Expected numeric answer string.
+
+    Returns:
+        True if the extracted answer matches (within 1e-5 for floats,
+        exact match for non-numeric strings).
+    """
+    extracted = extract_gsm8k_answer(response)
+    try:
+        return abs(float(extracted) - float(expected)) < 1e-5
+    except (ValueError, TypeError):
+        return extracted.strip() == expected.strip()
+
+
+# ---------------------------------------------------------------------------
+# MCQ answer extraction (shared by mmlu_pro, gpqa, mmlu_redux)
+# ---------------------------------------------------------------------------
+
+
+def extract_mcq_answer(text: str, valid_letters: str = "ABCD") -> str:
+    """Extract a multiple-choice letter from a model response.
+
+    Tries ``\\boxed{X}``, ``answer is (X)`` pattern, then the last standalone
+    letter in the final 300 characters.
+
+    Args:
+        text: Full model response text.
+        valid_letters: Allowed answer letters (default ``"ABCD"``).
+
+    Returns:
+        Uppercase letter from *valid_letters*, or ``""`` if none found.
+    """
+    pattern = f"[{valid_letters}]"
+
+    # Try \boxed{X}
+    idx = text.find("\\boxed{")
+    if idx != -1:
+        start = idx + len("\\boxed{")
+        depth = 1
+        i = start
+        while i < len(text) and depth > 0:
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+            i += 1
+        if depth == 0:
+            boxed = text[start : i - 1].strip().upper()
+            if re.fullmatch(pattern, boxed):
+                return boxed
+
+    answer_match = re.search(
+        rf"(?:answer is|answer:)\s*\(?([{valid_letters}])\)?",
+        text,
+        re.IGNORECASE,
+    )
+    if answer_match:
+        return answer_match.group(1).upper()
+
+    letters = re.findall(rf"\b({pattern})\b", text[-300:])
+    if letters:
+        return letters[-1]
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Python code extraction (shared by mbpp, livecodebench)
+# ---------------------------------------------------------------------------
+
+
+def extract_python_code(text: str) -> str:
+    """Extract Python code from a model response.
+
+    Tries a ``python`` fenced code block first, then any fenced block,
+    then falls back to the full text.
+    """
+    match = re.search(r"```python\s*\n(.*?)\n```", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    matches = re.findall(r"```(?:\w*)\s*\n(.*?)\n```", text, re.DOTALL)
+    if matches:
+        return matches[-1].strip()
+    return text.strip()
+
+
+# ---------------------------------------------------------------------------
+# Kwargs parsing (shared by ifeval, ifbench)
+# ---------------------------------------------------------------------------
+
+
+def parse_kwargs(raw_kwargs: list, instruction_ids: list | None = None) -> list[dict]:
+    """Parse a list of raw kwargs (str/dict/None) into a list of dicts.
+
+    Args:
+        raw_kwargs: List of kwargs entries (None, JSON strings, or dicts).
+        instruction_ids: If provided, pads the result to match its length.
+
+    Returns:
+        List of dicts, one per entry, with unparseable entries replaced by ``{}``.
+    """
+    kwargs_list: list[dict] = []
+    for kw in raw_kwargs:
+        if kw is None:
+            kwargs_list.append({})
+        elif isinstance(kw, str):
+            try:
+                kwargs_list.append(json.loads(kw))
+            except json.JSONDecodeError:
+                kwargs_list.append({})
+        elif isinstance(kw, dict):
+            kwargs_list.append(kw)
+        else:
+            kwargs_list.append({})
+    if instruction_ids is not None:
+        while len(kwargs_list) < len(instruction_ids):
+            kwargs_list.append({})
+    return kwargs_list

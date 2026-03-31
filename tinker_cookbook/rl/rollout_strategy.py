@@ -125,12 +125,12 @@ class FailFast(RolloutStrategy):
 
 @dataclass(frozen=True)
 class RetryOnFailure(RolloutStrategy):
-    """Retry failed trajectories with fresh environments.
+    """Retry failed or timed-out trajectories with fresh environments.
 
-    When a trajectory fails (container crash, sandbox flake, transient error),
-    a fresh env is created via ``make_envs()`` and the rollout is retried.
-    This continues until either all trajectories succeed or the retry budget
-    is exhausted.
+    When a trajectory fails (container crash, sandbox flake, transient error)
+    or exceeds ``per_rollout_timeout`` seconds, a fresh env is created via
+    ``make_envs()`` and the rollout is retried. This continues until either
+    all trajectories succeed or the retry budget is exhausted.
 
     If the retry budget is exhausted and a failure still occurs, the remaining
     in-flight tasks are cancelled and the exception is re-raised. This avoids
@@ -143,9 +143,14 @@ class RetryOnFailure(RolloutStrategy):
         max_retries: Total retry budget across all trajectories in the group.
             For example, with ``max_retries=3`` and a group of 8 envs, up to
             3 individual trajectory failures will be retried.
+        per_rollout_timeout: Maximum seconds for a single rollout before it
+            is cancelled and retried. ``0`` disables the timeout (default).
+            Set this to catch sampling requests that hang indefinitely — e.g.,
+            ``per_rollout_timeout=1800`` for a 30-minute deadline per rollout.
     """
 
     max_retries: int = 3
+    per_rollout_timeout: float = 0
 
     @property
     def catches_group_errors(self) -> bool:
@@ -159,7 +164,7 @@ class RetryOnFailure(RolloutStrategy):
         """Run rollouts with automatic retry on individual trajectory failures.
 
         Creates environments, launches all rollouts concurrently, and retries
-        any that fail by creating a fresh environment.  Uses
+        any that fail (or time out) by creating a fresh environment. Uses
         ``asyncio.wait(FIRST_COMPLETED)`` so retries begin immediately upon
         detecting a failure.
 
@@ -180,11 +185,18 @@ class RetryOnFailure(RolloutStrategy):
         from tinker_cookbook.rl.rollouts import do_single_rollout
 
         envs = await env_group_builder.make_envs()
+        timeout = self.per_rollout_timeout if self.per_rollout_timeout > 0 else None
+
+        def _launch(env: Env) -> asyncio.Task[Trajectory]:
+            coro = do_single_rollout(policy, env)
+            if timeout is not None:
+                coro = asyncio.wait_for(coro, timeout=timeout)
+            return asyncio.create_task(coro)
 
         # Map task -> env for tracking
         task_to_env: dict[asyncio.Task[Trajectory], Env] = {}
         for env in envs:
-            task = asyncio.create_task(do_single_rollout(policy, env))
+            task = _launch(env)
             task_to_env[task] = env
 
         trajectories: list[Trajectory] = []
@@ -207,8 +219,11 @@ class RetryOnFailure(RolloutStrategy):
                     await asyncio.gather(*pending, return_exceptions=True)
                     raise
                 except Exception as exc:
+                    is_timeout = isinstance(exc, (asyncio.TimeoutError, TimeoutError))
+                    label = "timed out" if is_timeout else "failed"
                     logger.warning(
-                        "Trajectory failed (%s): %s (retries_remaining=%d)",
+                        "Trajectory %s (%s): %s (retries_remaining=%d)",
+                        label,
                         type(exc).__name__,
                         exc,
                         retries_remaining,
@@ -227,7 +242,7 @@ class RetryOnFailure(RolloutStrategy):
                         # envs the unused containers get GC'd.
                         new_envs = await env_group_builder.make_envs()
                         new_env = new_envs[0]
-                        new_task = asyncio.create_task(do_single_rollout(policy, new_env))
+                        new_task = _launch(new_env)
                         task_to_env[new_task] = new_env
                         pending.add(new_task)
                     else:

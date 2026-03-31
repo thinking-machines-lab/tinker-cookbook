@@ -1,3 +1,5 @@
+"""Base evaluator interfaces for inline evaluation during training."""
+
 import logging
 from collections.abc import Callable
 
