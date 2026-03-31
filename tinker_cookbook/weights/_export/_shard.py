@@ -4,9 +4,9 @@ Processes one safetensors shard at a time, keeping peak memory proportional to
 the largest shard rather than the full model. Produces output identical to the
 full-model path.
 
-Supports models with compressed-tensors INT4 quantized weights (e.g. Kimi
-K2.5): packed expert weights are dequantized before LoRA merge, then
-re-quantized to the same format in the output.
+Model-specific shard processing (e.g. INT4 dequant/requant for Kimi K2.5)
+lives in dedicated ``_shard_<model>.py`` modules and is invoked via hooks
+that this file dispatches to based on the detected merge profile.
 """
 
 from __future__ import annotations
@@ -32,6 +32,8 @@ from tinker_cookbook.weights._export import (
     save_tokenizer_and_processor,
 )
 from tinker_cookbook.weights._merge import (
+    MergeOp,
+    MergeProfile,
     apply_merge_op,
     detect_merge_profile,
     plan_merge_ops,
@@ -39,11 +41,6 @@ from tinker_cookbook.weights._merge import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Suffix conventions for compressed-tensors pack-quantized format.
-_PACKED_SUFFIX = ".weight_packed"
-_SCALE_SUFFIX = ".weight_scale"
-_SHAPE_SUFFIX = ".weight_shape"
 
 
 def build_sharded(
@@ -56,11 +53,6 @@ def build_sharded(
     config_dict: dict,
 ) -> None:
     """Merge by processing one safetensors shard at a time.
-
-    For models with compressed-tensors INT4 quantized weights (detected by
-    the presence of ``.weight_packed`` keys), packed expert weights are
-    transparently dequantized before LoRA merge and re-quantized in the
-    output.
 
     Args:
         base_model: Original model name (used for tokenizer loading).
@@ -91,23 +83,12 @@ def build_sharded(
         profile.has_language_model_prefix,
     )
 
-    # 4. Handle compressed-tensors INT4 packed weights (e.g. Kimi K2.5).
-    #    Create virtual .weight keys so the planner can target them; the
-    #    actual dequant/merge/requant happens during shard processing.
-    packed_map: dict[str, str] = {}
-    if profile.model_family == "kimi_k25":
-        from tinker_cookbook.weights._merge_kimi_k25 import (
-            create_virtual_weight_keys,
-            create_virtual_weight_shapes,
+    # 4. Model-specific pre-planning (e.g. virtual key creation for packed weights)
+    shard_hooks = _build_shard_hooks(profile, config_dict)
+    if shard_hooks is not None:
+        model_state_keys, model_shapes = shard_hooks.augment_for_planning(
+            model_state_keys, model_shapes
         )
-
-        model_state_keys, packed_map = create_virtual_weight_keys(model_state_keys)
-        model_shapes = create_virtual_weight_shapes(model_shapes, packed_map)
-        if packed_map:
-            logger.info(
-                "Created %d virtual .weight keys for INT4 packed experts",
-                len(packed_map),
-            )
 
     # 5. Plan all merge ops (validates keys before any heavy I/O)
     merge_ops = plan_merge_ops(adapter_weights, adapter_config, model_state_keys, profile)
@@ -117,10 +98,7 @@ def build_sharded(
     # 6. Validate shapes upfront (catches mismatches before loading any shards)
     validate_merge_op_shapes(merge_ops, model_shapes)
 
-    # 7. Resolve INT4 quantization config for re-quantization
-    int4_group_size = _get_int4_group_size(config_dict) if packed_map else None
-
-    # 8. Process shards
+    # 7. Process shards
     out.mkdir(parents=True, exist_ok=False)
 
     try:
@@ -134,10 +112,8 @@ def build_sharded(
             logger.info("Processing shard %d/%d: %s", i + 1, len(shard_files), shard_file)
             tensors = load_file(str(model_dir / shard_file))
 
-            # Apply merge ops targeting keys in this shard.
-            # For packed weights, we handle dequant → merge → requant.
+            # Apply any merge ops targeting keys in this shard
             for key in list(tensors.keys()):
-                # Direct key match (standard path)
                 ops_for_key = merge_ops.pop(key, [])
                 if ops_for_key:
                     for op in ops_for_key:
@@ -145,14 +121,9 @@ def build_sharded(
                         ops_applied += 1
                     continue
 
-                # Check if this packed key has ops targeting a virtual .weight
-                if key.endswith(_PACKED_SUFFIX) and packed_map:
-                    virtual_key = key.removesuffix(_PACKED_SUFFIX) + ".weight"
-                    ops_for_virtual = merge_ops.pop(virtual_key, [])
-                    if ops_for_virtual:
-                        ops_applied += _apply_packed_merge_ops(
-                            tensors, key, virtual_key, ops_for_virtual, int4_group_size
-                        )
+                # Model-specific handling (e.g. INT4 packed weights)
+                if shard_hooks is not None:
+                    ops_applied += shard_hooks.try_apply(key, tensors, merge_ops)
 
             # Write all tensors from this shard to output
             for key, tensor in tensors.items():
@@ -160,7 +131,7 @@ def build_sharded(
             del tensors
             writer.flush()
 
-        # 9. Verify all ops were consumed
+        # 8. Verify all ops were consumed
         if merge_ops:
             unconsumed = list(merge_ops.keys())
             raise WeightsMergeError(
@@ -170,10 +141,10 @@ def build_sharded(
 
         logger.info("Applied %d/%d merge operations", ops_applied, total_ops)
 
-        # 10. Finalize output shards
+        # 9. Finalize output shards
         weight_map = writer.finalize()
 
-        # 11. Write index file (only for multi-shard output; HF convention
+        # 10. Write index file (only for multi-shard output; HF convention
         #     is no index for single-shard models)
         shard_names = set(weight_map.values())
         if len(shard_names) > 1:
@@ -185,7 +156,7 @@ def build_sharded(
             with open(index_path, "w") as f:
                 json.dump(index, f, indent=2)
 
-        # 12. Save config, tokenizer, and model code files.
+        # 11. Save config, tokenizer, and model code files.
         #     Copy config.json directly (safe — it's a single known file).
         #     Copy *.py files for trust_remote_code model support.
         #     We intentionally don't glob-copy all non-weight files to avoid
@@ -206,95 +177,60 @@ def build_sharded(
 
 
 # ---------------------------------------------------------------------------
-# INT4 packed weight handling
+# Model-specific shard hooks
 # ---------------------------------------------------------------------------
 
 
-def _apply_packed_merge_ops(
-    tensors: dict,
-    packed_key: str,
-    virtual_key: str,
-    ops: list,
-    group_size: int | None,
-) -> int:
-    """Dequantize a packed weight, apply merge ops, re-quantize.
+class _ShardHooks:
+    """Interface for model-specific shard processing hooks."""
 
-    Modifies ``tensors`` in-place: the packed/scale/shape keys are updated
-    with re-quantized values after the LoRA delta is applied.
+    def augment_for_planning(
+        self,
+        model_state_keys: set[str],
+        model_shapes: dict[str, tuple[int, ...]],
+    ) -> tuple[set[str], dict[str, tuple[int, ...]]]:
+        """Augment model state before planning (e.g. add virtual keys)."""
+        return model_state_keys, model_shapes
 
-    Args:
-        tensors: Shard tensor dict (from safetensors load).
-        packed_key: The actual key ending in ``.weight_packed``.
-        virtual_key: The virtual ``.weight`` key that merge ops target.
-        ops: List of merge ops targeting this weight.
-        group_size: INT4 group size for re-quantization.
+    def try_apply(
+        self,
+        key: str,
+        tensors: dict,
+        merge_ops: dict[str, list[MergeOp]],
+    ) -> int:
+        """Try to apply model-specific merge handling for a key. Returns ops applied."""
+        return 0
 
-    Returns:
-        Number of merge ops applied.
-    """
-    from tinker_cookbook.weights._packed_int4 import dequantize_int4_group, quantize_int4_group
 
-    base = packed_key.removesuffix(_PACKED_SUFFIX)
-    scale_key = base + _SCALE_SUFFIX
-    shape_key = base + _SHAPE_SUFFIX
+class _KimiK25ShardHooks(_ShardHooks):
+    """Kimi K2.5: INT4 packed expert dequant → merge → requant."""
 
-    packed_tensor = tensors[packed_key]
-    scale_tensor = tensors.get(scale_key)
-    shape_tensor = tensors.get(shape_key)
+    def __init__(self, config_dict: dict) -> None:
+        from tinker_cookbook.weights._export._shard_kimi_k25 import get_int4_group_size
 
-    if scale_tensor is None:
-        raise WeightsMergeError(
-            f"Missing scale tensor {scale_key!r} for packed weight {packed_key!r}"
-        )
-    if shape_tensor is None:
-        raise WeightsMergeError(
-            f"Missing shape tensor {shape_key!r} for packed weight {packed_key!r}"
+        self._group_size = get_int4_group_size(config_dict)
+        self._packed_map: dict[str, str] = {}
+
+    def augment_for_planning(self, model_state_keys, model_shapes):
+        from tinker_cookbook.weights._export._shard_kimi_k25 import (
+            augment_model_state_for_planning,
         )
 
-    gs = group_size or 32
-    original_shape = tuple(shape_tensor.tolist())
-    assert len(original_shape) == 2, f"Expected 2D shape, got {original_shape}"
+        augmented_keys, augmented_shapes, self._packed_map = augment_model_state_for_planning(
+            model_state_keys, model_shapes
+        )
+        return augmented_keys, augmented_shapes
 
-    # Dequantize INT4 → bf16
-    weight_bf16 = dequantize_int4_group(packed_tensor, scale_tensor, original_shape, gs)
+    def try_apply(self, key, tensors, merge_ops):
+        if not self._packed_map:
+            return 0
+        from tinker_cookbook.weights._export._shard_kimi_k25 import try_apply_packed_ops
 
-    # Apply merge ops on the dequantized weight
-    temp = {virtual_key: weight_bf16}
-    for op in ops:
-        apply_merge_op(temp, op)
-    weight_bf16 = temp[virtual_key]
-
-    # Re-quantize bf16 → INT4
-    new_packed, new_scale = quantize_int4_group(weight_bf16, gs)
-
-    # Update tensors in-place
-    tensors[packed_key] = new_packed
-    tensors[scale_key] = new_scale
-    # weight_shape stays unchanged
-
-    return len(ops)
+        return try_apply_packed_ops(key, tensors, merge_ops, self._packed_map, self._group_size)
 
 
-def _get_int4_group_size(config_dict: dict) -> int:
-    """Extract INT4 group size from compressed-tensors quantization config.
-
-    Checks both top-level and nested ``text_config`` for the quantization
-    config (Kimi K2.5 stores it under ``text_config``).
-    """
-    for config in [config_dict, config_dict.get("text_config", {})]:
-        if not isinstance(config, dict):
-            continue
-        quant = config.get("quantization_config")
-        if not isinstance(quant, dict):
-            continue
-        groups = quant.get("config_groups", {})
-        for group in groups.values():
-            if not isinstance(group, dict):
-                continue
-            weights_cfg = group.get("weights", {})
-            if not isinstance(weights_cfg, dict):
-                continue
-            gs = weights_cfg.get("group_size")
-            if isinstance(gs, int) and gs > 0:
-                return gs
-    return 32  # Default fallback
+def _build_shard_hooks(profile: MergeProfile, config_dict: dict) -> _ShardHooks | None:
+    """Build model-specific shard hooks based on the detected profile."""
+    if profile.model_family == "kimi_k25":
+        return _KimiK25ShardHooks(config_dict)
+    return None

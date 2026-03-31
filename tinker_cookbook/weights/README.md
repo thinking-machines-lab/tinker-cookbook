@@ -16,7 +16,7 @@ Two build paths for trained LoRA adapters:
 | **Qwen3.5 MoE** (35B-A3B, 397B-A17B) | ✅ | ✅ | 5.x only | Split QKV + fused experts; vLLM MoE LoRA experimental |
 | **GPT-OSS** (20B, 120B) | ✅ | ✅ | 4.x, 5.x | `.attn` → `.self_attn` remap; interleaved expert layout |
 | **Kimi-K2** | ✅ | ✅ | 4.x, 5.x | DeepSeek architecture, separate experts; ~1TB bf16 |
-| **Kimi-K2.5** | ✅ | ✅ | 4.x, 5.x | VL model (`kimi_k25`); vLLM LoRA not yet supported |
+| **Kimi-K2.5** | ✅ | ✅ | 4.x, 5.x | VL model (`kimi_k25`); INT4 packed experts; vLLM LoRA not yet supported |
 | **DeepSeek V3 / V3.1** | ✅ | ❌ | 4.x (custom code), 5.x (native) | vLLM/SGLang don't support DeepSeek LoRA |
 | **Nemotron-3** (Nano 30B, Super 120B) | ✅ | ✅ | 4.x, 5.x | `backbone.*` weight prefix (handled automatically) |
 
@@ -34,7 +34,7 @@ MoE models store expert weights in different layouts. The merge/adapter code han
 
 | Layout | Models | Structure |
 |---|---|---|
-| **Separate** | DeepSeek, Kimi-K2, Qwen3 MoE (transformers 4.x) | Individual `experts.{i}.gate_proj.weight` per expert |
+| **Separate** | DeepSeek, Kimi-K2, Kimi-K2.5, Qwen3 MoE (transformers 4.x) | Individual `experts.{i}.gate_proj.weight` per expert |
 | **Fused concatenated** | Qwen3 MoE (transformers 5.x), Qwen3.5 MoE, Qwen3-VL MoE | Single `experts.gate_up_proj` with `[gate \| up]` layout |
 | **Fused interleaved** | GPT-OSS | Single `experts.gate_up_proj` with `[g0, u0, g1, u1, ...]` layout |
 
