@@ -400,18 +400,13 @@ async def build_topk_distillation_datums(
 
         raw_datums.append((target_tokens_NK, weights_NK, n_completion_positions))
 
-    # Normalize weights to match the reference implementation's per-token-mean
-    # normalization: loss = mean_per_token_CE / batch_size.
-    # Since Tinker's CE does raw sum, we bake normalization into weights.
-    # Also skip first `skip_first_n_tokens` completion tokens (reference skips 3).
-    n_datums = len(data_D)
+    # No weight normalization — Tinker's CE loss uses raw sum, same convention
+    # as the SFT loss. Both produce gradients proportional to num_tokens * lr.
+    # Use the same LR range for both.
     new_datums: list[tinker.Datum] = []
 
     for i, datum in enumerate(data_D):
         target_tokens_NK, weights_NK, n_comp = raw_datums[i]
-
-        if n_comp > 0 and n_datums > 0:
-            weights_NK = weights_NK / n_comp / n_datums
 
         new_datum = tinker.Datum(
             model_input=datum.model_input,
