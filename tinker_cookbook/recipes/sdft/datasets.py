@@ -283,8 +283,53 @@ class ToolAlpacaSDFTBuilder(RLDatasetBuilder):
 # ---------------------------------------------------------------------------
 
 
+def _convert_golden_answer_to_thinking_format(output_text: str, for_sft: bool = False) -> str:
+    """Convert paper's <reasoning>/<answer> format to thinking model format.
+
+    Args:
+        output_text: Original format '<reasoning>\\n...\\n</reasoning>\\n<answer>\\nX\\n</answer>'
+        for_sft: If True, wrap reasoning in <think>...</think> tags (for SFT assistant content).
+            If False, return plain reasoning + answer (for SDFT teacher demo in user message).
+
+    Returns:
+        For SFT:  '<think>\\n{reasoning}\\n</think>\\n\\nThe answer is X.'
+        For SDFT: '{reasoning}\\n\\nThe answer is X.'
+    """
+    import re
+
+    reasoning = output_text
+    answer_letter = ""
+
+    # Extract reasoning content
+    reasoning_match = re.search(r"<reasoning>\s*(.*?)\s*</reasoning>", output_text, re.DOTALL)
+    if reasoning_match:
+        reasoning = reasoning_match.group(1).strip()
+
+    # Extract answer letter
+    answer_match = re.search(r"<answer>\s*([A-D])\s*</answer>", output_text)
+    if answer_match:
+        answer_letter = answer_match.group(1)
+
+    if for_sft:
+        answer_part = f"The answer is {answer_letter}." if answer_letter else ""
+        return f"<think>\n{reasoning}\n</think>\n\n{answer_part}"
+    else:
+        if answer_letter:
+            return f"{reasoning}\n\nThe answer is {answer_letter}."
+        return reasoning
+
+
+# System prompt for science tasks with thinking models.
+SCIENCE_SYSTEM_PROMPT_THINKING = (
+    "Given a question and four options, please select the right answer. "
+    "Think step by step, then output ONLY the letter (A, B, C, or D) as your final answer."
+)
+
+
 def load_science_from_arrow(
     data_dir: str,
+    thinking_format: bool = False,
+    for_sft: bool = False,
 ) -> tuple[list[str], list[str], list, list[str]]:
     """Load science data from the SDFT paper's Arrow format.
 
@@ -294,12 +339,16 @@ def load_science_from_arrow(
     Args:
         data_dir: Path to the dataset directory (e.g., ~/Repos/Self-Distillation/data/science_data).
             Must contain 'train_data/' and 'eval_data/' subdirectories.
+        thinking_format: If True, convert golden answers from <reasoning>/<answer>
+            format to thinking model format (plain reasoning + "The answer is X."),
+            and replace the system prompt in eval prompts.
 
     Returns:
-        (questions, golden_answers, eval_prompts):
+        (questions, golden_answers, eval_prompts, eval_answers):
         - questions: user messages from training data
         - golden_answers: full reasoning chains (output_text) from training data
         - eval_prompts: list of message lists from eval data
+        - eval_answers: list of answer letters
     """
     train_ds = load_from_disk(f"{data_dir}/train_data")
     eval_ds = load_from_disk(f"{data_dir}/eval_data")
@@ -313,14 +362,30 @@ def load_science_from_arrow(
             questions.append(msgs[1]["content"])
         else:
             questions.append(msgs[0]["content"])
-        golden_answers.append(str(row["output_text"]))  # type: ignore[index]
+
+        output_text = str(row["output_text"])  # type: ignore[index]
+        if thinking_format:
+            output_text = _convert_golden_answer_to_thinking_format(output_text, for_sft=for_sft)
+        golden_answers.append(output_text)
 
     # Eval data has 'prompt' (message list) and 'answer' (letter)
-    eval_prompts = [row["prompt"] for row in eval_ds]  # type: ignore[union-attr]
+    eval_prompts_raw = [row["prompt"] for row in eval_ds]  # type: ignore[union-attr]
     eval_answers = [row["answer"] for row in eval_ds]  # type: ignore[union-attr]
+
+    if thinking_format:
+        # Replace system prompt in eval prompts for thinking models
+        eval_prompts = []
+        for msgs in eval_prompts_raw:
+            new_msgs = list(msgs)
+            if new_msgs and new_msgs[0].get("role") == "system":
+                new_msgs[0] = {**new_msgs[0], "content": SCIENCE_SYSTEM_PROMPT_THINKING}
+            eval_prompts.append(new_msgs)
+    else:
+        eval_prompts = eval_prompts_raw
 
     logger.info(
         f"Loaded science Arrow data: {len(questions)} train, {len(eval_prompts)} eval examples"
+        + (" (thinking format)" if thinking_format else "")
     )
     return questions, golden_answers, eval_prompts, eval_answers
 
@@ -366,21 +431,26 @@ class ScienceArrowSFTBuilder(ChatDatasetBuilder):
     """Builds SFT dataset from the paper's Arrow data (with reasoning chains)."""
 
     data_dir: str = "~/Repos/Self-Distillation/data/science_data"
+    thinking_format: bool = False
 
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
         expanded_dir = str(Path(self.data_dir).expanduser())
-        questions, golden_answers, _, _ = load_science_from_arrow(expanded_dir)
+        questions, golden_answers, _, _ = load_science_from_arrow(
+            expanded_dir, thinking_format=self.thinking_format, for_sft=True
+        )
 
         import datasets as hf_datasets
 
-        # Training messages: system prompt + user question + assistant reasoning chain
-        system_prompt = (
-            "Given a question and four options, please select the right answer. "
-            "Respond in the following format:\n<reasoning>\n...\n</reasoning>\n"
-            "<answer>\n...\n</answer>\n\n"
-            "For the answer, only output the letter corresponding to the correct option "
-            "(A, B, C, or D), and nothing else."
-        )
+        if self.thinking_format:
+            system_prompt = SCIENCE_SYSTEM_PROMPT_THINKING
+        else:
+            system_prompt = (
+                "Given a question and four options, please select the right answer. "
+                "Respond in the following format:\n<reasoning>\n...\n</reasoning>\n"
+                "<answer>\n...\n</answer>\n\n"
+                "For the answer, only output the letter corresponding to the correct option "
+                "(A, B, C, or D), and nothing else."
+            )
         train_hf = hf_datasets.Dataset.from_dict(
             {
                 "messages": [
