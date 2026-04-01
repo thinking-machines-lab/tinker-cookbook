@@ -1,23 +1,42 @@
 """
 Self-Distillation Fine-Tuning (SDFT).
 
-Implements the SDFT algorithm from "Self-Distillation Enables Continual Learning"
-(arxiv 2601.19897). A teacher model conditioned on golden demonstrations provides
-distillation signals to a student model that sees only the original question.
+Implements the SDFT algorithm from
+`"Self-Distillation Enables Continual Learning" <https://arxiv.org/abs/2601.19897>`_
+(Shenfeld et al., 2026). SDFT is an on-policy distillation method that learns new
+skills from demonstrations while preserving prior capabilities.
 
-The teacher prompt includes the question and a golden answer as an in-context
-demonstration. The student generates completions on-policy. Training uses the
-teacher's top-K token distribution as soft targets for ``cross_entropy`` loss,
-approximating the paper's full-vocabulary forward KL.
+**How it works:** A teacher model (frozen base weights) sees the question **and** a
+golden answer as an in-context demonstration. The student sees only the question and
+generates completions on-policy. The teacher's top-K token distribution at each
+position is recovered via Tinker's ``topk_prompt_logprobs`` API and used as soft
+targets for ``cross_entropy`` loss — approximating the paper's full-vocabulary
+forward KL divergence.
 
-Two modes are supported (controlled by ``Config.topk``):
+Two distillation modes are supported (controlled by :class:`Config` ``.topk``):
 
-- **Top-K distillation** (``topk > 0``, default): Teacher-forces student
-  completions through the teacher to recover the top-K token distribution.
-  Trains with ``cross_entropy`` on renormalized teacher probabilities.
+- **Top-K distillation** (``topk > 0``, default): Recovers the teacher's top-K
+  token distribution and trains with ``cross_entropy``. Validated to match
+  full-vocabulary KL on the
+  `reference implementation <https://github.com/Continual-Intelligence/Self-Distillation>`_.
 
 - **Per-token importance sampling** (``topk = 0``): Single-sample approximation
   using ``advantage = teacher_lp - student_lp`` with ``importance_sampling`` loss.
+
+Example usage::
+
+    # SDFT with top-K=20 distillation on tool-use data
+    python -m tinker_cookbook.recipes.sdft.train \\
+        model_name=Qwen/Qwen3.5-35B-A3B \\
+        dataset=toolalpaca \\
+        toolalpaca_data_path=~/Self-Distillation/data/tooluse_data/train_data \\
+        groups_per_batch=128 \\
+        learning_rate=5e-4 \\
+        topk=20 \\
+        lora_rank=64
+
+See the `recipe README <https://github.com/thinking-machines-lab/tinker-cookbook/tree/main/tinker_cookbook/recipes/sdft>`_
+for full setup instructions and continual learning results.
 """
 
 import asyncio
@@ -275,25 +294,37 @@ async def build_topk_distillation_datums(
     """Build cross_entropy datums with top-K teacher soft targets.
 
     Teacher-forces each student completion through the teacher model to recover
-    the teacher's top-K token distribution at each position. Returns new datums
-    with ``(N, K)``-shaped ``target_tokens`` and ``weights`` for
-    ``cross_entropy`` loss.
+    the teacher's top-K token distribution at each position using Tinker's
+    ``topk_prompt_logprobs`` sampling API. Returns new datums with
+    ``(N, K)``-shaped ``target_tokens`` and ``weights`` for ``cross_entropy``
+    loss.
 
-    This implements forward KL distillation restricted to the top-K vocabulary:
-    ``L = -sum_t sum_k P_teacher(x_k|t) * log P_student(x_k|t)``
+    This implements forward KL distillation restricted to the top-K vocabulary::
+
+        L = -sum_t sum_k P_teacher(x_k|t) * log P_student(x_k|t)
+
     which is equivalent to minimizing forward KL (up to constant teacher entropy)
-    over the top-K tokens that carry most of the teacher's probability mass.
+    over the top-K tokens. Validated to match full-vocabulary KL on the
+    `reference implementation <https://github.com/Continual-Intelligence/Self-Distillation>`_
+    (68.04% vs 68.04% on tooluse with Qwen2.5-7B).
 
     Args:
         data_D: Datums from rollout (used for model_input and mask alignment).
         metadata_D: Per-datum metadata with ``group_idx`` mapping.
         teacher_client: SamplingClient for the teacher model.
-        teacher_prompts_P: Per-problem teacher prompts.
-        topk: Number of top tokens to distill (K).
+        teacher_prompts_P: Per-problem teacher prompts (built by
+            :func:`build_sdft_teacher_prompt`).
+        topk: Number of top tokens to distill (K). K=20 is recommended.
         max_context_length: Maximum teacher context length.
+        vocab_size: If set, filter out token IDs >= vocab_size (handles
+            special tokens from vLLM that exceed the tokenizer's vocabulary).
+        skip_first_n_tokens: Skip the first N completion tokens from the
+            loss (default 3, matching the reference implementation).
 
     Returns:
-        (new_datums, metrics) where new_datums have cross_entropy loss_fn_inputs.
+        (new_datums, metrics) where new_datums have ``cross_entropy``
+        loss_fn_inputs with ``target_tokens`` shape ``(N, K)`` and
+        ``weights`` shape ``(N, K)``.
     """
     # Step 1: Build teacher-forced sequences
     teacher_forced_sequences_D: list[tinker.ModelInput] = []
@@ -431,7 +462,23 @@ async def build_topk_distillation_datums(
 
 @chz.chz
 class Config:
-    """Configuration for SDFT training."""
+    """Configuration for SDFT training.
+
+    Key parameters:
+
+    - ``topk``: Number of top tokens for distillation (default 20). Set to 0
+      for the importance-sampling fallback. K=20 matches full-vocabulary KL
+      in practice.
+    - ``learning_rate``: For LoRA, use 5e-4 to 1e-3. The top-K CE loss
+      produces larger gradients than SFT at the same LR due to more
+      completion tokens per step (on-policy generation), so use the lower
+      end of the range.
+    - ``teacher_sync_every``: Optional periodic hard-sync of student weights
+      into the teacher (approximating EMA). ``None`` = static frozen teacher,
+      which works comparably to EMA in our experiments.
+
+    See :func:`main` for the training loop.
+    """
 
     # Model
     model_name: str
@@ -477,9 +524,20 @@ async def main(
 ) -> None:
     """Main training loop for SDFT.
 
+    Runs on-policy self-distillation: at each step, the student generates
+    completions, the teacher scores them (conditioned on the golden answer
+    demonstration), and the student is trained to match the teacher's
+    distribution.
+
+    When ``cfg.topk > 0``, uses top-K distillation via Tinker's
+    ``cross_entropy`` loss with ``(N, K)``-shaped soft targets. When
+    ``cfg.topk == 0``, falls back to importance sampling with per-token
+    advantages.
+
     Args:
-        cfg: Training configuration.
-        sdft_dataset: Dataset providing (builders, questions, golden_answers) batches.
+        cfg: Training configuration. See :class:`Config`.
+        sdft_dataset: Dataset providing (builders, questions, golden_answers)
+            batches. Use :class:`~tinker_cookbook.recipes.sdft.datasets.SDFTDataset`.
         test_dataset: Optional test dataset for periodic evaluation.
     """
     ml_logger = ml_log.setup_logging(
