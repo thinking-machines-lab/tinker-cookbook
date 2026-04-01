@@ -36,39 +36,27 @@ from tinker_cookbook.rl.types import Env, StepResult
 
 logger = logging.getLogger(__name__)
 
-# Dataset sources per year (tried in order)
-_AIME_DATASETS: dict[str, tuple[str, ...]] = {
-    "2025": (
-        "MathArena/aime_2025",
-        "HuggingFaceH4/aime-2025",
-        "yentinglin/aime_2025",
-        "Maxwell-Jia/AIME_2025",
-        "opencompass/AIME2025",
-        "math-ai/aime25",
-        "di-zhang-fdu/AIME24-25",
-    ),
-    "2026": (
-        "MathArena/aime_2026",
-        "math-ai/aime26",
-    ),
+# Pinned dataset source per year (MathArena — verified against published scores)
+_AIME_DATASETS: dict[str, str] = {
+    "2025": "MathArena/aime_2025",
+    "2026": "MathArena/aime_2026",
 }
 
 
 def _load_aime_dataset(year: str) -> Dataset | None:
-    """Load AIME dataset for a specific year, trying multiple HF sources."""
-    dataset_ids = _AIME_DATASETS.get(year, ())
-    if not dataset_ids:
-        logger.warning(f"No known dataset sources for AIME {year}")
+    """Load AIME dataset for a specific year from MathArena."""
+    dataset_id = _AIME_DATASETS.get(year)
+    if dataset_id is None:
+        logger.warning(f"No known dataset for AIME {year}")
         return None
-    for dataset_id in dataset_ids:
-        for split in ("test", "train"):
-            try:
-                ds = cast(Dataset, load_benchmark_dataset(dataset_id, split=split))
-                logger.info(f"Loaded AIME {year} from {dataset_id}/{split} ({len(ds)} problems)")
-                return ds
-            except Exception as e:
-                logger.debug(f"Failed to load {dataset_id}/{split}: {e}")
-                continue
+    for split in ("test", "train"):
+        try:
+            ds = cast(Dataset, load_benchmark_dataset(dataset_id, split=split))
+            logger.info(f"Loaded AIME {year} from {dataset_id}/{split} ({len(ds)} problems)")
+            return ds
+        except Exception as e:
+            logger.debug(f"Failed to load {dataset_id}/{split}: {e}")
+            continue
     return None
 
 
