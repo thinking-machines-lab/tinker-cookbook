@@ -444,7 +444,7 @@ async def run_benchmark(
                         step_logs.update(t.logs)
                     # Decode only the last action (assistant response)
                     last_action_tokens = trajectory.transitions[-1].ac.tokens
-                    response = tokenizer.decode(last_action_tokens) if last_action_tokens else ""
+                    response = str(tokenizer.decode(last_action_tokens)) if last_action_tokens else ""
                     total_reward = config.grade_fn(response, step_logs)
                     step_metrics["custom_graded"] = 1.0
 

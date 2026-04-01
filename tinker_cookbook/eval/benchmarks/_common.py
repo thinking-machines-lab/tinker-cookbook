@@ -261,13 +261,13 @@ def get_sandbox_factory(config) -> object:
     try:
         from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
 
-        async def factory():
+        async def _modal_factory():
             return await ModalSandbox.create()
 
-        return factory
+        return _modal_factory
     except ImportError:
 
-        async def factory():
+        async def _missing_factory():
             raise RuntimeError(
                 "Code execution benchmarks require a sandbox backend. "
                 "Either:\n"
@@ -275,7 +275,7 @@ def get_sandbox_factory(config) -> object:
                 "  2. Provide a custom sandbox_factory in BenchmarkConfig"
             )
 
-        return factory
+        return _missing_factory
 
 
 # ---------------------------------------------------------------------------
