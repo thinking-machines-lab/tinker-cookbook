@@ -13,6 +13,7 @@ from collections.abc import Sequence
 import tinker
 
 from tinker_cookbook.eval.benchmarks._common import (
+    build_messages,
     check_gsm8k,
     decode_response,
     extract_boxed,
@@ -23,7 +24,6 @@ from tinker_cookbook.eval.benchmarks._common import (
     make_example_id,
 )
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
-from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.types import Env, StepResult
 
@@ -41,14 +41,22 @@ __all__ = ["extract_boxed", "extract_number", "extract_gsm8k_answer", "check_gsm
 class GSM8KEnv(Env):
     """Single-turn env for one GSM8K problem."""
 
-    def __init__(self, question: str, expected: str, renderer: Renderer, example_id: str = ""):
+    def __init__(
+        self,
+        question: str,
+        expected: str,
+        renderer: Renderer,
+        example_id: str = "",
+        system_prompt: str | None = None,
+    ):
         self.question = question
         self.expected = expected
         self.renderer = renderer
         self.example_id = example_id
+        self.system_prompt = system_prompt
 
     async def initial_observation(self):
-        messages: list[Message] = [{"role": "user", "content": self.question}]
+        messages = build_messages(self.question, self.system_prompt)
         model_input = self.renderer.build_generation_prompt(messages)
         stop = self.renderer.get_stop_sequences()
         return model_input, stop
@@ -90,7 +98,15 @@ class GSM8KBenchmarkBuilder(BenchmarkBuilder):
         for row in ds:
             expected = row["answer"].split("####")[-1].strip()
             example_id = make_example_id("gsm8k", row["question"])
-            envs.append(GSM8KEnv(row["question"], expected, renderer, example_id=example_id))
+            envs.append(
+                GSM8KEnv(
+                    row["question"],
+                    expected,
+                    renderer,
+                    example_id=example_id,
+                    system_prompt=config.system_prompt,
+                )
+            )
         return envs
 
 

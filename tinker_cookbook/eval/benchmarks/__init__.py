@@ -43,6 +43,7 @@ from tinker_cookbook.eval.benchmarks._runner import (
     load_summary,
     load_trajectories,
     print_trajectory,
+    regrade_trajectories,
     run_benchmark,
     run_benchmarks,
 )
@@ -70,9 +71,10 @@ __all__ = [
     # Running
     "run_benchmark",
     "run_benchmarks",
-    # Loading / viewing results
+    # Loading / viewing / regrading results
     "load_result",
     "load_trajectories",
     "load_summary",
     "print_trajectory",
+    "regrade_trajectories",
 ]

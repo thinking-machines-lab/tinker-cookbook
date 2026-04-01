@@ -16,6 +16,7 @@ import json
 import logging
 import math
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import tinker
@@ -400,19 +401,41 @@ async def run_benchmark(
                 elapsed = time.monotonic() - t_start
 
                 total_reward = sum(t.reward for t in trajectory.transitions)
-                rewards[idx] = total_reward
 
                 # Collect metrics from all transitions
                 step_metrics: dict = {}
+                step_logs: dict = {}
                 for t in trajectory.transitions:
                     step_metrics.update(t.metrics)
+                    step_logs.update(t.logs)
+
+                # Apply custom grade_fn override if provided
+                if config.grade_fn is not None:
+                    stored_for_grade = _trajectory_to_stored(
+                        idx, trajectory, benchmark.name, tokenizer, elapsed
+                    )
+                    # Get the assistant response (last assistant turn)
+                    response = ""
+                    for turn in reversed(stored_for_grade.turns):
+                        if turn.role == "assistant":
+                            response = turn.content
+                            break
+                    total_reward = config.grade_fn(response, step_logs)
+                    step_metrics["custom_graded"] = 1.0
+
+                rewards[idx] = total_reward
                 metrics_list[idx] = step_metrics
 
                 # Save trajectory with decoded text
                 if config.save_dir:
-                    stored = _trajectory_to_stored(
-                        idx, trajectory, benchmark.name, tokenizer, elapsed
-                    )
+                    if config.grade_fn is not None:
+                        # Already built above — update reward
+                        stored_for_grade.reward = total_reward
+                        stored = stored_for_grade
+                    else:
+                        stored = _trajectory_to_stored(
+                            idx, trajectory, benchmark.name, tokenizer, elapsed
+                        )
                     await _save_trajectory(config.save_dir, benchmark.name, stored)
 
             except (TimeoutError, EvalTimeoutError):
@@ -729,3 +752,77 @@ def print_trajectory(traj: StoredTrajectory) -> None:
     if traj.logs:
         print(f"  Logs: {traj.logs}")
     print()
+
+
+def regrade_trajectories(
+    save_dir: str,
+    benchmark_name: str,
+    grade_fn: Callable[[str, dict], float],
+    aggregate_fn: Callable[[list[float], list[dict]], BenchmarkResult] | None = None,
+) -> BenchmarkResult:
+    """Re-grade existing trajectories with a new grading function.
+
+    Reads stored trajectories, applies ``grade_fn`` to each one, and
+    re-aggregates the results — **without re-running the model**. This is
+    useful for iterating on answer extraction logic after a costly eval run.
+
+    Args:
+        save_dir: Directory containing saved benchmark results.
+        benchmark_name: Name of the benchmark (e.g. ``"gsm8k"``).
+        grade_fn: ``(response, logs) -> reward``. ``response`` is the last
+            assistant turn (thinking already stripped in stored trajectories).
+            ``logs`` contains benchmark-specific fields (``expected``, etc.).
+        aggregate_fn: Optional custom aggregation. If ``None``, computes
+            simple accuracy (fraction with reward > 0).
+
+    Returns:
+        New BenchmarkResult with re-graded scores.
+
+    Example::
+
+        def my_grader(response: str, logs: dict) -> float:
+            import re
+            expected = logs["expected"]
+            # Look for \\boxed{answer} first, then last number
+            match = re.search(r"\\\\boxed\\{(.+?)\\}", response)
+            extracted = match.group(1) if match else ""
+            return 1.0 if extracted.strip() == expected.strip() else 0.0
+
+        result = regrade_trajectories("evals/step500", "gsm8k", my_grader)
+        print(f"Re-graded: {result.score:.1%}")
+    """
+    trajectories = load_trajectories(save_dir, benchmark_name)
+
+    rewards: list[float] = []
+    metrics_list: list[dict] = []
+
+    for traj in trajectories:
+        if traj.error:
+            rewards.append(0.0)
+            metrics_list.append({})
+            continue
+
+        # Get the last assistant response
+        response = ""
+        for turn in reversed(traj.turns):
+            if turn.role == "assistant":
+                response = turn.content
+                break
+
+        reward = grade_fn(response, traj.logs)
+        rewards.append(reward)
+        metrics_list.append(traj.metrics)
+
+    if aggregate_fn is not None:
+        return aggregate_fn(rewards, metrics_list)
+
+    # Default: simple accuracy
+    num_correct = sum(1 for r in rewards if r > 0)
+    num_errors = sum(1 for t in trajectories if t.error)
+    return BenchmarkResult(
+        name=benchmark_name,
+        score=num_correct / len(rewards) if rewards else 0.0,
+        num_examples=len(rewards),
+        num_correct=num_correct,
+        num_errors=num_errors,
+    )

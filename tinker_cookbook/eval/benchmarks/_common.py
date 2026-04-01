@@ -18,6 +18,31 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Message building — respects config.system_prompt
+# ---------------------------------------------------------------------------
+
+
+def build_messages(
+    user_content: str,
+    system_prompt: str | None = None,
+) -> list[dict]:
+    """Build a message list, optionally prepending a system prompt.
+
+    Args:
+        user_content: The user message content.
+        system_prompt: If set, prepended as a system message.
+
+    Returns:
+        List of message dicts ready for ``renderer.build_generation_prompt``.
+    """
+    messages: list[dict] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": user_content})
+    return messages
+
+
+# ---------------------------------------------------------------------------
 # Response decoding — strips thinking tokens before grading
 # ---------------------------------------------------------------------------
 

@@ -76,6 +76,36 @@ class BenchmarkConfig:
         config = BenchmarkConfig(sandbox_factory=ModalSandbox.create)
     """
 
+    # Customization hooks
+    system_prompt: str | None = None
+    """If set, prepend this system prompt to every benchmark example.
+    Overrides any benchmark-specific default system prompt. Useful for
+    model-specific instructions (e.g., "Always put your answer in \\\\boxed{}").
+
+    Example::
+
+        config = BenchmarkConfig(
+            system_prompt="You are a helpful math assistant. Always put your final answer in \\\\boxed{}."
+        )
+    """
+
+    grade_fn: Callable[[str, dict], float] | None = None
+    """Custom grading function: ``(response, logs) -> reward``.
+    If set, overrides the benchmark's built-in grading logic.
+    ``response`` is the decoded model output (thinking stripped).
+    ``logs`` contains benchmark-specific fields like ``expected``, ``example_id``.
+
+    Example::
+
+        def my_grader(response: str, logs: dict) -> float:
+            expected = logs["expected"]
+            # Custom extraction logic
+            extracted = my_extract(response)
+            return 1.0 if extracted == expected else 0.0
+
+        config = BenchmarkConfig(grade_fn=my_grader)
+    """
+
     def __post_init__(self) -> None:
         if self.concurrency <= 0:
             raise ValueError(f"concurrency must be > 0, got {self.concurrency}")
