@@ -9,6 +9,38 @@ Use these as a reference when choosing learning rate and LoRA rank for your mode
 - Training steps: 780
 - Adapter: LoRA
 
+> **Note:** Wall times are approximate and depend on server load at the time of the run. They may fluctuate significantly between runs.
+
+## Table of Contents
+
+- [Qwen3 235B Instruct (22B active)](#qwen3-235b-instruct-22b-active)
+- [Qwen3 30B (3B active)](#qwen3-30b-3b-active)
+- [Qwen3 30B Base (3B active)](#qwen3-30b-base-3b-active)
+- [Qwen3 30B Instruct (3B active)](#qwen3-30b-instruct-3b-active)
+- [Qwen3 32B](#qwen3-32b)
+- [Qwen3 4B Instruct](#qwen3-4b-instruct)
+- [Qwen3 8B](#qwen3-8b)
+- [Qwen3 8B Base](#qwen3-8b-base)
+- [Qwen3 VL 235B (22B active)](#qwen3-vl-235b-22b-active)
+- [Qwen3 VL 30B (3B active)](#qwen3-vl-30b-3b-active)
+- [Qwen 3.5 27B](#qwen-3.5-27b)
+- [Qwen 3.5 35B (3B active)](#qwen-3.5-35b-3b-active)
+- [Qwen 3.5 397B (17B active)](#qwen-3.5-397b-17b-active)
+- [Qwen 3.5 4B](#qwen-3.5-4b)
+- [DeepSeek V3.1 Base](#deepseek-v3.1-base)
+- [Llama 3.1 70B](#llama-3.1-70b)
+- [Llama 3.1 8B](#llama-3.1-8b)
+- [Llama 3.1 8B Instruct](#llama-3.1-8b-instruct)
+- [Llama 3.2 1B](#llama-3.2-1b)
+- [Llama 3.2 3B](#llama-3.2-3b)
+- [Llama 3.3 70B Instruct](#llama-3.3-70b-instruct)
+- [Kimi K2 Thinking](#kimi-k2-thinking)
+- [Kimi K2.5](#kimi-k2.5)
+- [Nemotron Nano 30B (3B active)](#nemotron-nano-30b-3b-active)
+- [Nemotron Super 120B (12B active)](#nemotron-super-120b-12b-active)
+- [GPT-OSS 120B](#gpt-oss-120b)
+- [GPT-OSS 20B](#gpt-oss-20b)
+
 ---
 
 ## Qwen3 235B Instruct (22B active)

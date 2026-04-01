@@ -263,22 +263,10 @@ def generate_nll_plot(
                 alpha=lr_alpha.get(r.lr, 0.5),
             )
 
+        ax.set_xscale("log")
+        ax.set_yscale("log")
         ax.legend(fontsize=7, loc="upper right")
-        ax.grid(True, alpha=0.3)
-
-    # Shared y-axis across subplots for this model, with a small margin
-    all_nlls = [
-        nll
-        for r in runs
-        if r.test_nll < DIVERGENCE_THRESHOLD
-        for _, nll in r.history
-        if nll < DIVERGENCE_THRESHOLD
-    ]
-    if all_nlls:
-        ymin = min(all_nlls) - 0.02
-        ymax = max(all_nlls) + 0.02
-        for col in range(n_ranks):
-            axes[0][col].set_ylim(ymin, ymax)
+        ax.grid(True, alpha=0.3, which="both")
 
     plt.tight_layout()
 
@@ -396,7 +384,13 @@ def generate_model_section(
     return "\n".join(lines)
 
 
+def _heading_to_anchor(heading: str) -> str:
+    """Convert a markdown heading to a GitHub-compatible anchor link."""
+    return heading.lower().replace(" ", "-").replace("(", "").replace(")", "")
+
+
 def generate_sft_sweep_md(
+    model_names: list[str],
     model_sections: list[str],
 ) -> str:
     """Generate the full sft_sweep.md document."""
@@ -413,6 +407,19 @@ def generate_sft_sweep_md(
     lines.append("- Batch size: 128")
     lines.append("- Training steps: 780")
     lines.append("- Adapter: LoRA")
+    lines.append("")
+    lines.append(
+        "> **Note:** Wall times are approximate and depend on server load at the time of "
+        "the run. They may fluctuate significantly between runs."
+    )
+    lines.append("")
+
+    # Table of contents
+    lines.append("## Table of Contents")
+    lines.append("")
+    for name in model_names:
+        anchor = _heading_to_anchor(name)
+        lines.append(f"- [{name}](#{anchor})")
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -467,9 +474,11 @@ def main() -> None:
     print(f"Found {len(by_model)} models: {list(by_model.keys())}")
 
     model_sections: list[str] = []
+    model_names: list[str] = []
     # Sort models by name for deterministic output
     for model_slug in sorted(by_model.keys()):
         model_runs = by_model[model_slug]
+        model_names.append(_pretty_model_name(model_slug))
         print(f"\n--- {_pretty_model_name(model_slug)} ({len(model_runs)} runs) ---")
 
         plot_path: str | None = None
@@ -487,7 +496,7 @@ def main() -> None:
         print(section)
 
     # Write the combined markdown
-    md_content = generate_sft_sweep_md(model_sections)
+    md_content = generate_sft_sweep_md(model_names, model_sections)
     md_path = output_dir / "sft_sweep.md"
     md_path.write_text(md_content)
     print(f"\nResults written to {md_path}")
