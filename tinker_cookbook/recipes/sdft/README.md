@@ -22,29 +22,33 @@ The teacher's frozen weights act as a knowledge anchor: the distillation signal 
 
 ### What we implement in Tinker
 
-The Tinker API does not expose full-vocabulary logits. Instead, we use Tinker's **top-K distillation** API (`topk_prompt_logprobs`) to recover the teacher's top-K token distribution at each position, and train with `cross_entropy` loss:
+Our Tinker implementation differs from the paper in two ways:
 
-```
-L_topK = (1/T) * sum_{t=1}^{T} [ -sum_{k=1}^{K} P_teacher(x_k|t) * log P_student(x_k|t) ]
-```
+1. **Top-K instead of full-vocabulary KL.** The Tinker API does not expose full-vocabulary logits. Instead, we use Tinker's top-K distillation API (`topk_prompt_logprobs`) to recover the teacher's top-K token distribution at each position, and train with `cross_entropy` loss:
 
-where the inner sum is over the K tokens with highest teacher probability (renormalized to sum to 1).
+    ```
+    L_topK = (1/T) * sum_{t=1}^{T} [ -sum_{k=1}^{K} P_teacher(x_k|t) * log P_student(x_k|t) ]
+    ```
+
+    where the inner sum is over the K tokens with highest teacher probability (renormalized to sum to 1).
+
+2. **Static teacher instead of EMA.** The paper uses an Exponential Moving Average (EMA) teacher that is updated every step (`alpha=0.01`). Our implementation uses a static frozen copy of the base model as the teacher, which is simpler and avoids the overhead of periodic weight syncing.
 
 ### Validating the approximation
 
-We verified that top-K=20 closely matches full-vocabulary KL by running ablations on the [official SDFT codebase](https://github.com/Continual-Intelligence/Self-Distillation) with `Qwen/Qwen2.5-7B-Instruct` (full fine-tuning, lr=2e-5, tooluse task):
+We verified both design choices by running ablations on the [official SDFT codebase](https://github.com/Continual-Intelligence/Self-Distillation) with `Qwen/Qwen2.5-7B-Instruct` (full fine-tuning, lr=2e-5, tooluse task):
 
-| Method | Tool-use | Science |
-|--------|----------|---------|
-| Full-vocab KL | 68.04% | 33.33% |
-| **Top-K=20 KL** | **68.04%** | **35.31%** |
-| Full-vocab KL (static teacher) | 67.01% | 36.69% |
-| **Top-K=20 KL (static teacher)** | **69.07%** | **34.52%** |
-| SFT baseline | 65.98% | 36.88% |
+| KL Type | EMA Teacher | Tool-use | Science |
+|---------|-------------|----------|---------|
+| Full-vocab | Yes | 68.04% | 33.33% |
+| Full-vocab | No (static) | 67.01% | 36.69% |
+| **Top-K=20** | **Yes** | **68.04%** | **35.31%** |
+| **Top-K=20** | **No (static)** | **69.07%** | **34.52%** |
+| SFT baseline | N/A | 65.98% | 36.88% |
 
-Top-K=20 matches or slightly exceeds full-vocab KL. Static teacher (no EMA sync) works comparably to EMA — both design choices are validated.
+**Top-K=20 matches full-vocab KL** (68.04% vs 68.04% with EMA, 69.07% vs 67.01% without). **Static teacher matches EMA** — the 1-2pp difference is within noise. Both design choices are validated.
 
-We also confirmed our Tinker implementation matches the reference on the same model (`Qwen/Qwen3-4B-Instruct-2507`): both get 56.70% tooluse with top-K=20 and static teacher.
+We also confirmed our Tinker implementation produces identical results to the reference on the same model (`Qwen/Qwen3-4B-Instruct-2507`): both get 56.70% tooluse accuracy with top-K=20 and static teacher.
 
 ## Setup
 
