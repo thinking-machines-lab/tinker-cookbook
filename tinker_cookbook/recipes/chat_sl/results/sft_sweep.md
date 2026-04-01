@@ -13,37 +13,37 @@ Use these as a reference when choosing learning rate and LoRA rank for your mode
 
 ## Table of Contents
 
-- [Qwen3 235B Instruct (22B active)](#qwen3-235b-instruct-22b-active)
-- [Qwen3 30B (3B active)](#qwen3-30b-3b-active)
-- [Qwen3 30B Base (3B active)](#qwen3-30b-base-3b-active)
-- [Qwen3 30B Instruct (3B active)](#qwen3-30b-instruct-3b-active)
-- [Qwen3 32B](#qwen3-32b)
-- [Qwen3 4B Instruct](#qwen3-4b-instruct)
-- [Qwen3 8B](#qwen3-8b)
-- [Qwen3 8B Base](#qwen3-8b-base)
-- [Qwen3 VL 235B (22B active)](#qwen3-vl-235b-22b-active)
-- [Qwen3 VL 30B (3B active)](#qwen3-vl-30b-3b-active)
-- [Qwen 3.5 27B](#qwen-3.5-27b)
-- [Qwen 3.5 35B (3B active)](#qwen-3.5-35b-3b-active)
-- [Qwen 3.5 397B (17B active)](#qwen-3.5-397b-17b-active)
-- [Qwen 3.5 4B](#qwen-3.5-4b)
-- [DeepSeek V3.1 Base](#deepseek-v3.1-base)
-- [Llama 3.1 70B](#llama-3.1-70b)
-- [Llama 3.1 8B](#llama-3.1-8b)
-- [Llama 3.1 8B Instruct](#llama-3.1-8b-instruct)
-- [Llama 3.2 1B](#llama-3.2-1b)
-- [Llama 3.2 3B](#llama-3.2-3b)
-- [Llama 3.3 70B Instruct](#llama-3.3-70b-instruct)
-- [Kimi K2 Thinking](#kimi-k2-thinking)
-- [Kimi K2.5](#kimi-k2.5)
-- [Nemotron Nano 30B (3B active)](#nemotron-nano-30b-3b-active)
-- [Nemotron Super 120B (12B active)](#nemotron-super-120b-12b-active)
-- [GPT-OSS 120B](#gpt-oss-120b)
-- [GPT-OSS 20B](#gpt-oss-20b)
+- [Qwen/Qwen3-235B-A22B-Instruct-2507](#qwen/qwen3-235b-a22b-instruct-2507)
+- [Qwen/Qwen3-30B-A3B](#qwen/qwen3-30b-a3b)
+- [Qwen/Qwen3-30B-A3B-Base](#qwen/qwen3-30b-a3b-base)
+- [Qwen/Qwen3-30B-A3B-Instruct-2507](#qwen/qwen3-30b-a3b-instruct-2507)
+- [Qwen/Qwen3-32B](#qwen/qwen3-32b)
+- [Qwen/Qwen3-4B-Instruct-2507](#qwen/qwen3-4b-instruct-2507)
+- [Qwen/Qwen3-8B](#qwen/qwen3-8b)
+- [Qwen/Qwen3-8B-Base](#qwen/qwen3-8b-base)
+- [Qwen/Qwen3-VL-235B-A22B-Instruct](#qwen/qwen3-vl-235b-a22b-instruct)
+- [Qwen/Qwen3-VL-30B-A3B-Instruct](#qwen/qwen3-vl-30b-a3b-instruct)
+- [Qwen/Qwen3.5-27B](#qwen/qwen3.5-27b)
+- [Qwen/Qwen3.5-35B-A3B](#qwen/qwen3.5-35b-a3b)
+- [Qwen/Qwen3.5-397B-A17B](#qwen/qwen3.5-397b-a17b)
+- [Qwen/Qwen3.5-4B](#qwen/qwen3.5-4b)
+- [deepseek-ai/DeepSeek-V3.1-Base](#deepseek-ai/deepseek-v3.1-base)
+- [meta-llama/Llama-3.1-70B](#meta-llama/llama-3.1-70b)
+- [meta-llama/Llama-3.1-8B](#meta-llama/llama-3.1-8b)
+- [meta-llama/Llama-3.1-8B-Instruct](#meta-llama/llama-3.1-8b-instruct)
+- [meta-llama/Llama-3.2-1B](#meta-llama/llama-3.2-1b)
+- [meta-llama/Llama-3.2-3B](#meta-llama/llama-3.2-3b)
+- [meta-llama/Llama-3.3-70B-Instruct](#meta-llama/llama-3.3-70b-instruct)
+- [moonshotai/Kimi-K2-Thinking](#moonshotai/kimi-k2-thinking)
+- [moonshotai/Kimi-K2.5](#moonshotai/kimi-k2.5)
+- [nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16](#nvidia/nvidia-nemotron-3-nano-30b-a3b-bf16)
+- [nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16](#nvidia/nvidia-nemotron-3-super-120b-a12b-bf16)
+- [openai/gpt-oss-120b](#openai/gpt-oss-120b)
+- [openai/gpt-oss-20b](#openai/gpt-oss-20b)
 
 ---
 
-## Qwen3 235B Instruct (22B active)
+## Qwen/Qwen3-235B-A22B-Instruct-2507
 
 **Configuration:**
 - Model: `Qwen/Qwen3-235B-A22B-Instruct-2507`
@@ -93,13 +93,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 264 min
 
-![NLL curves for Qwen3 235B Instruct (22B active)](plots/Qwen-Qwen3-235B-A22B-Instruct-2507_nll_curves.png)
-
 > **Note:** 3 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 2, 4} and are excluded from the table above.
 
 ---
 
-## Qwen3 30B (3B active)
+## Qwen/Qwen3-30B-A3B
 
 **Configuration:**
 - Model: `Qwen/Qwen3-30B-A3B`
@@ -161,13 +159,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 162 min
 
-![NLL curves for Qwen3 30B (3B active)](plots/Qwen-Qwen3-30B-A3B_nll_curves.png)
-
 > **Note:** 4 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 4, 64} and are excluded from the table above.
 
 ---
 
-## Qwen3 30B Base (3B active)
+## Qwen/Qwen3-30B-A3B-Base
 
 **Configuration:**
 - Model: `Qwen/Qwen3-30B-A3B-Base`
@@ -225,13 +221,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 112 min
 
-![NLL curves for Qwen3 30B Base (3B active)](plots/Qwen-Qwen3-30B-A3B-Base_nll_curves.png)
-
 > **Note:** 2 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 4} and are excluded from the table above.
 
 ---
 
-## Qwen3 30B Instruct (3B active)
+## Qwen/Qwen3-30B-A3B-Instruct-2507
 
 **Configuration:**
 - Model: `Qwen/Qwen3-30B-A3B-Instruct-2507`
@@ -285,13 +279,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 104 min
 
-![NLL curves for Qwen3 30B Instruct (3B active)](plots/Qwen-Qwen3-30B-A3B-Instruct-2507_nll_curves.png)
-
 > **Note:** 4 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 4, 16, 64} and are excluded from the table above.
 
 ---
 
-## Qwen3 32B
+## Qwen/Qwen3-32B
 
 **Configuration:**
 - Model: `Qwen/Qwen3-32B`
@@ -342,11 +334,9 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 341 min
 
-![NLL curves for Qwen3 32B](plots/Qwen-Qwen3-32B_nll_curves.png)
-
 ---
 
-## Qwen3 4B Instruct
+## Qwen/Qwen3-4B-Instruct-2507
 
 **Configuration:**
 - Model: `Qwen/Qwen3-4B-Instruct-2507`
@@ -400,13 +390,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 52 min
 
-![NLL curves for Qwen3 4B Instruct](plots/Qwen-Qwen3-4B-Instruct-2507_nll_curves.png)
-
 > **Note:** 4 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={4, 16, 64, 128} and are excluded from the table above.
 
 ---
 
-## Qwen3 8B
+## Qwen/Qwen3-8B
 
 **Configuration:**
 - Model: `Qwen/Qwen3-8B`
@@ -460,13 +448,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 69 min
 
-![NLL curves for Qwen3 8B](plots/Qwen-Qwen3-8B_nll_curves.png)
-
 > **Note:** 4 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={4, 16, 64, 128} and are excluded from the table above.
 
 ---
 
-## Qwen3 8B Base
+## Qwen/Qwen3-8B-Base
 
 **Configuration:**
 - Model: `Qwen/Qwen3-8B-Base`
@@ -520,13 +506,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 87 min
 
-![NLL curves for Qwen3 8B Base](plots/Qwen-Qwen3-8B-Base_nll_curves.png)
-
 > **Note:** 4 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={4, 16, 64, 128} and are excluded from the table above.
 
 ---
 
-## Qwen3 VL 235B (22B active)
+## Qwen/Qwen3-VL-235B-A22B-Instruct
 
 **Configuration:**
 - Model: `Qwen/Qwen3-VL-235B-A22B-Instruct`
@@ -573,13 +557,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 321 min
 
-![NLL curves for Qwen3 VL 235B (22B active)](plots/Qwen-Qwen3-VL-235B-A22B-Instruct_nll_curves.png)
-
 > **Note:** 3 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 2, 4} and are excluded from the table above.
 
 ---
 
-## Qwen3 VL 30B (3B active)
+## Qwen/Qwen3-VL-30B-A3B-Instruct
 
 **Configuration:**
 - Model: `Qwen/Qwen3-VL-30B-A3B-Instruct`
@@ -631,13 +613,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 149 min
 
-![NLL curves for Qwen3 VL 30B (3B active)](plots/Qwen-Qwen3-VL-30B-A3B-Instruct_nll_curves.png)
-
 > **Note:** 3 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 16, 64} and are excluded from the table above.
 
 ---
 
-## Qwen 3.5 27B
+## Qwen/Qwen3.5-27B
 
 **Configuration:**
 - Model: `Qwen/Qwen3.5-27B`
@@ -691,13 +671,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 120 min
 
-![NLL curves for Qwen 3.5 27B](plots/Qwen-Qwen3.5-27B_nll_curves.png)
-
 > **Note:** 4 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 4, 16, 64} and are excluded from the table above.
 
 ---
 
-## Qwen 3.5 35B (3B active)
+## Qwen/Qwen3.5-35B-A3B
 
 **Configuration:**
 - Model: `Qwen/Qwen3.5-35B-A3B`
@@ -751,13 +729,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 98 min
 
-![NLL curves for Qwen 3.5 35B (3B active)](plots/Qwen-Qwen3.5-35B-A3B_nll_curves.png)
-
 > **Note:** 4 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 4, 16, 64} and are excluded from the table above.
 
 ---
 
-## Qwen 3.5 397B (17B active)
+## Qwen/Qwen3.5-397B-A17B
 
 **Configuration:**
 - Model: `Qwen/Qwen3.5-397B-A17B`
@@ -807,13 +783,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 386 min
 
-![NLL curves for Qwen 3.5 397B (17B active)](plots/Qwen-Qwen3.5-397B-A17B_nll_curves.png)
-
 > **Note:** 3 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 2, 4} and are excluded from the table above.
 
 ---
 
-## Qwen 3.5 4B
+## Qwen/Qwen3.5-4B
 
 **Configuration:**
 - Model: `Qwen/Qwen3.5-4B`
@@ -867,13 +841,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 66 min
 
-![NLL curves for Qwen 3.5 4B](plots/Qwen-Qwen3.5-4B_nll_curves.png)
-
 > **Note:** 4 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={4, 16, 64, 128} and are excluded from the table above.
 
 ---
 
-## DeepSeek V3.1 Base
+## deepseek-ai/DeepSeek-V3.1-Base
 
 **Configuration:**
 - Model: `deepseek-ai/DeepSeek-V3.1-Base`
@@ -918,11 +890,9 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 560 min
 
-![NLL curves for DeepSeek V3.1 Base](plots/deepseek-ai-DeepSeek-V3.1-Base_nll_curves.png)
-
 ---
 
-## Llama 3.1 70B
+## meta-llama/Llama-3.1-70B
 
 **Configuration:**
 - Model: `meta-llama/Llama-3.1-70B`
@@ -969,13 +939,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 343 min
 
-![NLL curves for Llama 3.1 70B](plots/meta-llama-Llama-3.1-70B_nll_curves.png)
-
 > **Note:** 6 run(s) diverged (test_nll > 2.0) at lr={1e-03, 3e-03} with rank={1, 2, 4} and are excluded from the table above.
 
 ---
 
-## Llama 3.1 8B
+## meta-llama/Llama-3.1-8B
 
 **Configuration:**
 - Model: `meta-llama/Llama-3.1-8B`
@@ -1029,13 +997,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 86 min
 
-![NLL curves for Llama 3.1 8B](plots/meta-llama-Llama-3.1-8B_nll_curves.png)
-
 > **Note:** 4 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={4, 16, 64, 128} and are excluded from the table above.
 
 ---
 
-## Llama 3.1 8B Instruct
+## meta-llama/Llama-3.1-8B-Instruct
 
 **Configuration:**
 - Model: `meta-llama/Llama-3.1-8B-Instruct`
@@ -1089,13 +1055,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 59 min
 
-![NLL curves for Llama 3.1 8B Instruct](plots/meta-llama-Llama-3.1-8B-Instruct_nll_curves.png)
-
 > **Note:** 4 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={4, 16, 64, 128} and are excluded from the table above.
 
 ---
 
-## Llama 3.2 1B
+## meta-llama/Llama-3.2-1B
 
 **Configuration:**
 - Model: `meta-llama/Llama-3.2-1B`
@@ -1149,13 +1113,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 43 min
 
-![NLL curves for Llama 3.2 1B](plots/meta-llama-Llama-3.2-1B_nll_curves.png)
-
 > **Note:** 4 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={4, 16, 64, 128} and are excluded from the table above.
 
 ---
 
-## Llama 3.2 3B
+## meta-llama/Llama-3.2-3B
 
 **Configuration:**
 - Model: `meta-llama/Llama-3.2-3B`
@@ -1209,13 +1171,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 61 min
 
-![NLL curves for Llama 3.2 3B](plots/meta-llama-Llama-3.2-3B_nll_curves.png)
-
 > **Note:** 4 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={4, 16, 64, 128} and are excluded from the table above.
 
 ---
 
-## Llama 3.3 70B Instruct
+## meta-llama/Llama-3.3-70B-Instruct
 
 **Configuration:**
 - Model: `meta-llama/Llama-3.3-70B-Instruct`
@@ -1259,11 +1219,9 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 548 min
 
-![NLL curves for Llama 3.3 70B Instruct](plots/meta-llama-Llama-3.3-70B-Instruct_nll_curves.png)
-
 ---
 
-## Kimi K2 Thinking
+## moonshotai/Kimi-K2-Thinking
 
 **Configuration:**
 - Model: `moonshotai/Kimi-K2-Thinking`
@@ -1310,13 +1268,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 534 min
 
-![NLL curves for Kimi K2 Thinking](plots/moonshotai-Kimi-K2-Thinking_nll_curves.png)
-
 > **Note:** 3 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 2, 4} and are excluded from the table above.
 
 ---
 
-## Kimi K2.5
+## moonshotai/Kimi-K2.5
 
 **Configuration:**
 - Model: `moonshotai/Kimi-K2.5`
@@ -1363,13 +1319,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 569 min
 
-![NLL curves for Kimi K2.5](plots/moonshotai-Kimi-K2.5_nll_curves.png)
-
 > **Note:** 3 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 2, 4} and are excluded from the table above.
 
 ---
 
-## Nemotron Nano 30B (3B active)
+## nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
 
 **Configuration:**
 - Model: `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16`
@@ -1420,13 +1374,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 153 min
 
-![NLL curves for Nemotron Nano 30B (3B active)](plots/nvidia-NVIDIA-Nemotron-3-Nano-30B-A3B-BF16_nll_curves.png)
-
 > **Note:** 5 run(s) diverged (test_nll > 2.0) at lr={2e-03, 4e-03} with rank={1, 4, 16, 64} and are excluded from the table above.
 
 ---
 
-## Nemotron Super 120B (12B active)
+## nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
 
 **Configuration:**
 - Model: `nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16`
@@ -1471,11 +1423,9 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 153 min
 
-![NLL curves for Nemotron Super 120B (12B active)](plots/nvidia-NVIDIA-Nemotron-3-Super-120B-A12B-BF16_nll_curves.png)
-
 ---
 
-## GPT-OSS 120B
+## openai/gpt-oss-120b
 
 **Configuration:**
 - Model: `openai/gpt-oss-120b`
@@ -1522,13 +1472,11 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 **Avg wall time per run:** 113 min
 
-![NLL curves for GPT-OSS 120B](plots/openai-gpt-oss-120b_nll_curves.png)
-
 > **Note:** 1 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1} and are excluded from the table above.
 
 ---
 
-## GPT-OSS 20B
+## openai/gpt-oss-20b
 
 **Configuration:**
 - Model: `openai/gpt-oss-20b`
@@ -1568,7 +1516,5 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 **Best config:** rank=16, lr=1e-04, test_nll=0.5420
 
 **Avg wall time per run:** 49 min
-
-![NLL curves for GPT-OSS 20B](plots/openai-gpt-oss-20b_nll_curves.png)
 
 ---
