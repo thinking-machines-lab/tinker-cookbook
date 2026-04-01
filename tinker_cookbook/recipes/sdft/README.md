@@ -32,7 +32,7 @@ Our Tinker implementation differs from the paper in two ways:
 
 ### Validating the approximation
 
-We verified both design choices by running ablations on the [official SDFT codebase](https://github.com/Continual-Intelligence/Self-Distillation) with `Qwen/Qwen2.5-7B-Instruct` (full fine-tuning, lr=2e-5, tooluse task):
+We verified both design choices by running ablations on the [official SDFT codebase](https://github.com/idanshen/Self-Distillation) with `Qwen/Qwen2.5-7B-Instruct` (full fine-tuning, lr=2e-5, tooluse task):
 
 | KL Type | EMA Teacher | Tool-use | Science |
 |---------|-------------|----------|---------|
@@ -50,10 +50,10 @@ We also confirmed our Tinker implementation produces identical results to the re
 
 ### 1. Download the data
 
-Training data comes from the [Self-Distillation repository](https://github.com/Continual-Intelligence/Self-Distillation), which includes preprocessed golden reasoning chains for tool-use and science tasks.
+Training data comes from the [Self-Distillation repository](https://github.com/idanshen/Self-Distillation), which includes preprocessed golden reasoning chains for tool-use and science tasks.
 
 ```bash
-git clone https://github.com/Continual-Intelligence/Self-Distillation.git
+git clone https://github.com/idanshen/Self-Distillation.git
 # Data is at Self-Distillation/data/tooluse_data/ and Self-Distillation/data/science_data/
 ```
 
@@ -174,5 +174,5 @@ python -m tinker_cookbook.recipes.sdft.train \
 ## References
 
 - Shenfeld et al., ["Self-Distillation Enables Continual Learning"](https://arxiv.org/abs/2601.19897), 2026
-- [Official implementation](https://github.com/Continual-Intelligence/Self-Distillation) (TRL-based, Qwen2.5-7B)
+- [Official implementation](https://github.com/idanshen/Self-Distillation) (TRL-based, Qwen2.5-7B)
 - [Tinker loss functions](https://tinker-docs.thinkingmachines.ai/tinker/losses) (top-K distillation, cross_entropy)

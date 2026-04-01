@@ -18,7 +18,7 @@ Two distillation modes are supported (controlled by :class:`Config` ``.topk``):
 - **Top-K distillation** (``topk > 0``, default): Recovers the teacher's top-K
   token distribution and trains with ``cross_entropy``. Validated to match
   full-vocabulary KL on the
-  `reference implementation <https://github.com/Continual-Intelligence/Self-Distillation>`_.
+  `reference implementation <https://github.com/idanshen/Self-Distillation>`_.
 
 - **Per-token importance sampling** (``topk = 0``): Single-sample approximation
   using ``advantage = teacher_lp - student_lp`` with ``importance_sampling`` loss.
@@ -309,7 +309,7 @@ async def build_topk_distillation_datums(
     This is equivalent to forward KL (up to constant teacher entropy) over the
     top-K tokens that carry most of the probability mass. Validated to match
     full-vocabulary KL on the
-    `reference implementation <https://github.com/Continual-Intelligence/Self-Distillation>`_
+    `reference implementation <https://github.com/idanshen/Self-Distillation>`_
     (68.04% vs 68.04% on tooluse with Qwen2.5-7B).
 
     Args:
