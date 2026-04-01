@@ -73,7 +73,7 @@ This opens the notebook in your browser with an interactive editor. Rendered ver
 | # | Notebook | What you'll learn |
 |---|----------|-------------------|
 | 501 | [Export to HF](501_export_hf.py) | Merge LoRA into full model |
-| 502 | [Build LoRA Adapter](502_lora_adapter.py) | PEFT format for vLLM/TGI |
+| 502 | [Build LoRA Adapter](502_lora_adapter.py) | PEFT format for vLLM/SGLang |
 | 503 | [Publish to Hub](503_publish_hub.py) | Upload to HuggingFace with model card |
 
 Work through them in order — each builds on concepts from the previous one.

@@ -72,7 +72,7 @@ async def _(tinker):
         base_model=BASE_MODEL, rank=16
     )
     tokenizer = training_client.get_tokenizer()
-    return tokenizer, training_client
+    return service_client, tokenizer, training_client
 
 
 @app.cell(hide_code=True)
@@ -454,7 +454,7 @@ def _(mo):
 
     In this tutorial, you trained both a 4B and a frontier-class model with the same code -- no GPU setup, no infrastructure changes. That is the core value of Tinker.
 
-    - **Efficient sampling** shows how to run many inference requests concurrently for maximum throughput. See `tutorials/03_async_patterns.ipynb`.
+    - **Efficient sampling** shows how to run many inference requests concurrently for maximum throughput. See `tutorials/103_async_patterns.py`.
     - **Real training loops** iterate over a full dataset with proper batching and evaluation. See `tinker_cookbook/recipes/sl_loop.py`.
     - **Renderers** handle chat templates, vision inputs, and per-token weight assignment. See the [Rendering docs](https://tinker-docs.thinkingmachines.ai/rendering).
     """)

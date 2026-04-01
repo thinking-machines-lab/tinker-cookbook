@@ -248,7 +248,7 @@ def _(mo):
 
     This tutorial showed the two key techniques for efficient sampling: **concurrent futures** (submit all requests before collecting results) and **num_samples** (generate multiple completions per call). Together, they give you high throughput with minimal code changes.
 
-    - **Tutorial 04** (`04_first_rl.ipynb`): Uses this exact pattern -- sample many completions, grade them with a reward function, and train with GRPO.
+    - **Tutorial 04** (`104_first_rl.py`): Uses this exact pattern -- sample many completions, grade them with a reward function, and train with GRPO.
     - **Async docs** (`docs/async.mdx`): Full reference for sync/async APIs, the double-await pattern, and overlapping training requests.
     """)
     return

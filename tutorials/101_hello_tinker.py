@@ -187,7 +187,7 @@ def _(mo):
     mo.md(r"""
     ## Next steps
 
-    - **[Tutorial 02: First SFT](./02_first_sft.ipynb)** -- Train a model with supervised fine-tuning
+    - **[Tutorial 02: First SFT](./102_first_sft.py)** -- Train a model with supervised fine-tuning
     - **[Getting Started Guide](https://docs.thinkingmachines.ai/training-sampling)** -- Full walkthrough of training and sampling
     - **[Available Models](https://docs.thinkingmachines.ai/model-lineup)** -- All supported models and their characteristics
     """)

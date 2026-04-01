@@ -52,6 +52,7 @@ def _():
     import tinker
 
     from tinker_cookbook import checkpoint_utils, model_info
+    from tinker_cookbook.supervised.types import TrainOnWhat
 
     BASE_MODEL = "meta-llama/Llama-3.2-3B"
     LORA_RANK = 64
@@ -70,6 +71,7 @@ def _():
         LORA_RANK,
         LOG_ROOT,
         MAX_LENGTH,
+        TrainOnWhat,
         asyncio,
         checkpoint_utils,
         model_info,
@@ -430,7 +432,7 @@ def _(mo):
     - **SFT** gives the model basic instruction-following ability
     - **Preference Model** provides a learned reward signal, replacing expensive human feedback at RL time
     - **RL** uses self-play with tournament scoring -- sample multiple completions, grade all pairs, reward winners
-    - Learning rates decrease across stages: 2e-4 (SFT) > 3e-4 (PM) > 1e-5 (RL) -- RL needs small steps due to noisy gradients
+    - Learning rates: 2e-4 (SFT), 3e-4 (PM), 1e-5 (RL) -- RL needs much smaller steps due to noisy gradients
 
     For production use, see the [RLHF recipe](https://github.com/thinking-machines-lab/tinker-cookbook/blob/main/tinker_cookbook/recipes/preference/rlhf/rlhf_pipeline.py) which adds CLI configuration, wandb logging, and checkpoint management.
     """)
