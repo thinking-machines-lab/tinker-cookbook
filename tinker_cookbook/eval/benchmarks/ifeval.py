@@ -68,10 +68,10 @@ class IFEvalEnv(Env):
             episode_done=True,
             next_observation=tinker.ModelInput.empty(),
             next_stop_condition=[],
-            metrics={"correct": float(correct), "fraction": fraction},
-            logs={
+            metrics={"correct": float(correct), "fraction": fraction},  # type: ignore[arg-type]
+            logs={  # type: ignore[arg-type]
                 "example_id": self.example_id,
-                "input": self.messages[-1]["content"][:200] if self.messages else "",
+                "input": str(self.messages[-1]["content"])[:200] if self.messages else "",
                 "fraction": fraction,
                 "output": response[:500],
             },
@@ -94,6 +94,7 @@ class IFEvalBenchmarkBuilder(BenchmarkBuilder):
 
         envs = []
         for row in ds:
+            row = dict(row)
             instruction_ids = row["instruction_id_list"]
             raw_kwargs = row["kwargs"]
             kwargs_list = parse_kwargs(raw_kwargs, instruction_ids)

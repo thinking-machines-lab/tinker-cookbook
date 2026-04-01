@@ -138,6 +138,7 @@ class SWEBenchEnv(SandboxMixin, Env):
     async def initial_observation(self):
         # Create sandbox
         self.sandbox = await self.sandbox_factory()
+        assert self.sandbox is not None
 
         # Clone the repository and checkout the base commit.
         # These are critical — if they fail, cleanup and re-raise.
@@ -201,6 +202,7 @@ class SWEBenchEnv(SandboxMixin, Env):
         return model_input, stop
 
     async def step(self, action, *, extra=None):
+        assert self.sandbox is not None
         self.turn_count += 1
         response_text = decode_response(action, self.renderer)
 
@@ -265,6 +267,7 @@ class SWEBenchEnv(SandboxMixin, Env):
         )
 
     async def _finalize(self) -> StepResult:
+        assert self.sandbox is not None
         """Run fail_to_pass tests and grade the result."""
         all_passed = False
         test_output = ""
@@ -363,6 +366,7 @@ class SWEBenchBenchmarkBuilder(BenchmarkBuilder):
 
         envs = []
         for row in ds:
+            row = dict(row)
             instance_id = row.get("instance_id", "")
             repo = row.get("repo", "unknown")
             problem_statement = row.get("problem_statement", "")

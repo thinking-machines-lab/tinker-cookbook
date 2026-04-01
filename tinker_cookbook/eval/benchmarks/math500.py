@@ -93,6 +93,7 @@ class MATH500BenchmarkBuilder(BenchmarkBuilder):
 
         envs = []
         for row in ds:
+            row = dict(row)
             try:
                 expected = extract_boxed(row["solution"])
             except ValueError:

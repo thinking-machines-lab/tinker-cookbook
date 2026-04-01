@@ -553,7 +553,7 @@ class Tau2BenchEnv(Env):
     async def step(self, action, *, extra=None):
         self.turn_count += 1
         # Use raw decode — tau2 needs tool calls which decode_response strips
-        response_text = self.renderer.tokenizer.decode(action)
+        response_text = str(self.renderer.tokenizer.decode(action))
 
         # Append assistant message
         self.messages.append({"role": "assistant", "content": response_text})
@@ -640,7 +640,7 @@ class Tau2BenchEnv(Env):
         ]
         try:
             response = await self.user_completer(prompt_messages)
-            return response.get("content", "Hi, I need help with my account.")
+            return str(response.get("content", "Hi, I need help with my account."))
         except Exception as e:
             logger.warning(f"User simulator failed for opening: {e}")
             # Fallback: construct from scenario
@@ -676,7 +676,7 @@ class Tau2BenchEnv(Env):
             elif role == "assistant":
                 # Agent's message → what the customer sees → user role for simulator
                 sim_messages.append({"role": "user", "content": content})
-            elif role == "user" and not content.startswith("[Tool"):
+            elif role == "user" and not str(content).startswith("[Tool"):
                 # Customer's prior reply → simulator's own output → assistant role
                 sim_messages.append({"role": "assistant", "content": content})
 
@@ -686,7 +686,7 @@ class Tau2BenchEnv(Env):
 
         try:
             response = await self.user_completer(sim_messages)
-            return response.get("content", "I see, thank you.")
+            return str(response.get("content", "I see, thank you."))
         except Exception as e:
             logger.warning(f"User simulator failed: {e}")
             return "I see, thank you. Is there anything else you need from me?"
@@ -735,8 +735,9 @@ class Tau2BenchBenchmarkBuilder(BenchmarkBuilder):
 
         envs = []
         for row in ds:
+            row = dict(row)
             # Extract task data
-            task_id = row.get("task_id", row.get("id", None))
+            task_id = row.get("task_id", row.get("id"))
             system_prompt = row.get("system_prompt", row.get("instructions", row.get("policy", "")))
             tools = row.get("tools", row.get("available_actions", []))
             if isinstance(tools, str):

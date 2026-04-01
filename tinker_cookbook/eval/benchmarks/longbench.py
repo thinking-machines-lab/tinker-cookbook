@@ -91,7 +91,7 @@ class LongBenchEnv(Env):
             episode_done=True,
             next_observation=tinker.ModelInput.empty(),
             next_stop_condition=[],
-            metrics={"correct": float(correct), "subtask": self.subtask},
+            metrics={"correct": float(correct), "subtask": self.subtask},  # type: ignore[arg-type]
             logs={
                 "example_id": self.example_id,
                 "input": self.user_content[:200],
@@ -123,6 +123,7 @@ class LongBenchBenchmarkBuilder(BenchmarkBuilder):
 
         envs = []
         for row in ds:
+            row = dict(row)
             context = row.get("context", "")
             subtask = row.get("domain", row.get("dataset", "unknown"))
 

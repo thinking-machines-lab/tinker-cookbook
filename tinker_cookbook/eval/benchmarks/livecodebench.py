@@ -76,6 +76,7 @@ class LiveCodeBenchEnv(SandboxMixin, Env):
         return model_input, stop
 
     async def step(self, action, *, extra=None):
+        assert self.sandbox is not None
         response = decode_response(action, self.renderer)
         code = extract_python_code(response)
 
@@ -89,7 +90,7 @@ class LiveCodeBenchEnv(SandboxMixin, Env):
             episode_done=True,
             next_observation=tinker.ModelInput.empty(),
             next_stop_condition=[],
-            metrics={"correct": float(passed), "difficulty": self.difficulty},
+            metrics={"correct": float(passed), "difficulty": self.difficulty},  # type: ignore[arg-type]
             logs={
                 "example_id": self.example_id,
                 "input": self.question[:200],
@@ -100,6 +101,7 @@ class LiveCodeBenchEnv(SandboxMixin, Env):
         )
 
     async def _check_solution(self, code: str) -> bool:
+        assert self.sandbox is not None
         """Run the solution against all test cases in the sandbox."""
         try:
             tests = json.loads(self.test_cases_json)
@@ -173,6 +175,7 @@ class LiveCodeBenchBenchmarkBuilder(BenchmarkBuilder):
 
         envs = []
         for row in ds:
+            row = dict(row)
             question = row.get("question_content", row.get("question", ""))
             starter_code = row.get("starter_code", "")
             # Test cases may be under "input_output" (old format) or

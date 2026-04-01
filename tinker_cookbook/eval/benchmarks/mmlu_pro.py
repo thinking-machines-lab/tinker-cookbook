@@ -99,9 +99,10 @@ class MMLUProBenchmarkBuilder(BenchmarkBuilder):
         valid_letters = "ABCDEFGHIJ"
         envs = []
         for row in ds:
+            row = dict(row)
             question = row.get("question", row.get("input", ""))
             choices = row.get("options", row.get("choices", []))
-            answer_idx = row.get("answer_index", row.get("answer", None))
+            answer_idx = row.get("answer_index", row.get("answer"))
 
             if choices:
                 prompt = f"{question}\n\n{format_mcq_choices(choices)}\n\nAnswer with just the letter (A, B, C, D, etc.)."
@@ -115,7 +116,7 @@ class MMLUProBenchmarkBuilder(BenchmarkBuilder):
             else:
                 expected = str(answer_idx).strip().upper()
 
-            question_id = row.get("question_id", None)
+            question_id = row.get("question_id")
             if question_id is not None:
                 example_id = f"mmlu_pro_{question_id}"
             else:

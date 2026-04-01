@@ -88,6 +88,7 @@ class GPQABenchmarkBuilder(BenchmarkBuilder):
 
         envs = []
         for row in ds:
+            row = dict(row)
             question = row["Question"]
             correct_answer = row.get("Answer", row.get("Correct Answer", ""))
 

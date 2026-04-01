@@ -283,7 +283,7 @@ def verify_instruction(instruction_id: str, response: str, kwargs: dict) -> bool
         elif iid == "language:response_language":
             language = kwargs.get("language", "").lower()
             try:
-                from langdetect import detect
+                from langdetect import detect  # type: ignore[import-untyped]
 
                 detected = detect(response).lower()
                 lang_map = {
@@ -296,7 +296,7 @@ def verify_instruction(instruction_id: str, response: str, kwargs: dict) -> bool
                     "korean": "ko",
                 }
                 target = lang_map.get(language, language)
-                return detected == target or detected.startswith(target.split("-")[0])
+                return detected == target or detected.startswith(target.split("-")[0])  # type: ignore[union-attr]
             except Exception:
                 return True  # Can't verify without langdetect, be lenient
 

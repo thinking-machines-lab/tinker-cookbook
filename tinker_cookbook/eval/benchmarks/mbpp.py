@@ -65,6 +65,7 @@ class MBPPEnv(SandboxMixin, Env):
         return model_input, stop
 
     async def step(self, action, *, extra=None):
+        assert self.sandbox is not None
         response = decode_response(action, self.renderer)
         code = extract_python_code(response)
 
@@ -119,6 +120,7 @@ class MBPPBenchmarkBuilder(BenchmarkBuilder):
 
         envs = []
         for row in ds:
+            row = dict(row)
             task_prompt = row.get("prompt", row.get("text", ""))
             test_list = row.get("test_list", [])
             if not task_prompt or not test_list:
@@ -131,7 +133,7 @@ class MBPPBenchmarkBuilder(BenchmarkBuilder):
                 "Write a Python function that satisfies the requirements. "
                 "Provide ONLY the function definition in a ```python code block."
             )
-            task_id = row.get("task_id", None)
+            task_id = row.get("task_id")
             if task_id is not None:
                 example_id = f"mbpp_{task_id}"
             else:

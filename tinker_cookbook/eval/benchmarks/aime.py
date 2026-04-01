@@ -133,6 +133,7 @@ class _AIMEBenchmarkBuilder(BenchmarkBuilder):
 
         envs = []
         for row in ds:
+            row = dict(row)
             problem = row.get("problem", row.get("question", row.get("Problem", "")))
             expected_raw = row.get("answer", row.get("Answer", row.get("expected_answer", "")))
             if not problem or expected_raw is None:

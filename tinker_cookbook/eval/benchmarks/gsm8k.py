@@ -56,8 +56,8 @@ class GSM8KEnv(Env):
         self.system_prompt = system_prompt
 
     async def initial_observation(self):
-        messages = build_messages(self.question, self.system_prompt)
-        model_input = self.renderer.build_generation_prompt(messages)
+        messages = build_messages(self.question, self.system_prompt)  # type: ignore[arg-type]
+        model_input = self.renderer.build_generation_prompt(messages)  # type: ignore[arg-type]
         stop = self.renderer.get_stop_sequences()
         return model_input, stop
 
@@ -96,6 +96,7 @@ class GSM8KBenchmarkBuilder(BenchmarkBuilder):
 
         envs = []
         for row in ds:
+            row = dict(row)
             expected = row["answer"].split("####")[-1].strip()
             example_id = make_example_id("gsm8k", row["question"])
             envs.append(

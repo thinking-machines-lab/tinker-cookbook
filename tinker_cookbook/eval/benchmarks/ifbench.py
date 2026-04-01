@@ -147,6 +147,7 @@ class IFBenchBenchmarkBuilder(BenchmarkBuilder):
 
         envs = []
         for row in ds:
+            row = dict(row)
             prompt = row.get("prompt", "")
             instruction_ids = row.get("instruction_id_list", [])
             raw_kwargs = row.get("kwargs", [])

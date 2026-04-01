@@ -167,6 +167,7 @@ class TerminalBenchEnv(SandboxMixin, Env):
     async def initial_observation(self):
         # Create sandbox
         self.sandbox = await self.sandbox_factory()
+        assert self.sandbox is not None
 
         # Write task files (tests, configs, etc.) extracted from archive
         for filepath, content in self.setup_files.items():
@@ -200,6 +201,7 @@ class TerminalBenchEnv(SandboxMixin, Env):
         return model_input, stop
 
     async def step(self, action, *, extra=None):
+        assert self.sandbox is not None
         self.turn_count += 1
         response_text = decode_response(action, self.renderer)
 
@@ -265,6 +267,7 @@ class TerminalBenchEnv(SandboxMixin, Env):
         )
 
     async def _finalize(self) -> StepResult:
+        assert self.sandbox is not None
         """Run test scripts and grade the task."""
         test_passed = False
         test_output = ""
@@ -331,6 +334,7 @@ class TerminalBenchBenchmarkBuilder(BenchmarkBuilder):
 
         envs = []
         for row in ds:
+            row = dict(row)
             task_id = row.get("task_id", "")
             task_description, test_script, setup_files = _parse_task(row)
 

@@ -167,6 +167,7 @@ class ArenaHardBenchmarkBuilder(BenchmarkBuilder):
 
         envs = []
         for row in ds:
+            row = dict(row)
             turns = row.get("turns", [])
             if not turns:
                 continue

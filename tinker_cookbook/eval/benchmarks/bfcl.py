@@ -75,7 +75,7 @@ def _normalize_value(v: object) -> object:
     if isinstance(v, str):
         return v.strip().lower()
     if isinstance(v, list):
-        return sorted(_normalize_value(x) for x in v)
+        return sorted(_normalize_value(x) for x in v)  # type: ignore[type-var]
     if isinstance(v, dict):
         return {k: _normalize_value(val) for k, val in v.items()}
     return v
@@ -132,7 +132,7 @@ class BFCLEnv(Env):
 
     async def step(self, action, *, extra=None):
         # Use raw decode — BFCL grades the function call itself, not text content
-        response = self.renderer.tokenizer.decode(action)
+        response = str(self.renderer.tokenizer.decode(action))
         generated = _extract_function_call(response)
         if generated is None:
             correct = False
@@ -180,7 +180,7 @@ class BFCLBenchmarkBuilder(BenchmarkBuilder):
                     repo, data_files="possible_answer/BFCL_v3_simple.json", split="train", **kwargs
                 ),
             )
-            gt_by_id = {row["id"]: row["ground_truth"] for row in gt_ds}
+            gt_by_id = {row["id"]: row["ground_truth"] for row in gt_ds}  # type: ignore[index]
         except Exception as exc:
             logger.warning(f"Could not load BFCL dataset: {exc}.")
             return []
@@ -189,6 +189,7 @@ class BFCLBenchmarkBuilder(BenchmarkBuilder):
 
         envs = []
         for row in ds:
+            row = dict(row)
             question_msgs = row.get("question", [])
             functions = row.get("function", [])
             row_id = row.get("id", "")

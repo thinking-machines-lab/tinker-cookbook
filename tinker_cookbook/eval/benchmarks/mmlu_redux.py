@@ -126,7 +126,7 @@ class MMLUReduxEnv(Env):
             episode_done=True,
             next_observation=tinker.ModelInput.empty(),
             next_stop_condition=[],
-            metrics={"correct": float(correct), "subject": self.subject},
+            metrics={"correct": float(correct), "subject": self.subject},  # type: ignore[arg-type]
             logs={
                 "example_id": self.example_id,
                 "input": self.prompt[:200],
