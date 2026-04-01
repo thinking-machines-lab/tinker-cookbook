@@ -1530,10 +1530,10 @@ class TestUnembedTokensVisionRemap:
 # Kimi K2.5 — profile detection, name remapping, INT4 pack/unpack
 # ---------------------------------------------------------------------------
 
-from tinker_cookbook.weights._merge_kimi_k25 import (
+from tinker_cookbook.weights._merge_kimi_k25 import detect_profile as detect_kimi_k25_profile
+from tinker_cookbook.weights._merge_utils import (
     create_virtual_weight_keys,
     create_virtual_weight_shapes,
-    detect_profile as detect_kimi_k25_profile,
 )
 from tinker_cookbook.weights._packed_int4 import (
     dequantize_int4_group,

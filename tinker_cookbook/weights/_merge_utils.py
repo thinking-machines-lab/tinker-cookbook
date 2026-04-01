@@ -1,7 +1,9 @@
 """Shared planning building blocks for per-model merge modules.
 
 Provides reusable functions for common merge planning patterns:
-name remapping, standard (non-expert) op planning, and expert op planning.
+name remapping, standard (non-expert) op planning, expert op planning,
+and compressed-tensors virtual key creation.
+
 Per-model modules compose these to build their ``plan_merge_ops`` functions.
 """
 
@@ -381,3 +383,74 @@ def plan_expert_ops(
                 fused_proj_interleaved=is_interleaved,
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# Compressed-tensors virtual weight keys
+# ---------------------------------------------------------------------------
+
+_PACKED_SUFFIX = ".weight_packed"
+_WEIGHT_SUFFIX = ".weight"
+
+
+def create_virtual_weight_keys(
+    model_state_keys: set[str],
+) -> tuple[set[str], dict[str, str]]:
+    """Add virtual ``.weight`` keys for compressed-tensors packed weights.
+
+    Some model checkpoints (e.g. Kimi K2, K2.5) store routed expert weights
+    in the compressed-tensors ``pack-quantized`` format: ``weight_packed``,
+    ``weight_scale``, ``weight_shape``.  LoRA merge planning targets plain
+    ``.weight`` keys, so we create virtual entries for the planner.
+
+    Args:
+        model_state_keys: Original key set from safetensors headers.
+
+    Returns:
+        Tuple of ``(augmented_keys, packed_map)`` where:
+        - ``augmented_keys``: keys with virtual ``.weight`` entries added
+        - ``packed_map``: mapping from virtual ``.weight`` key →
+          ``.weight_packed`` key (used during shard processing)
+    """
+    packed_map: dict[str, str] = {}
+    augmented = set(model_state_keys)
+    for k in model_state_keys:
+        if k.endswith(_PACKED_SUFFIX):
+            virtual = k.removesuffix(_PACKED_SUFFIX) + _WEIGHT_SUFFIX
+            if virtual not in model_state_keys:
+                augmented.add(virtual)
+                packed_map[virtual] = k
+    return augmented, packed_map
+
+
+def create_virtual_weight_shapes(
+    model_shapes: dict[str, tuple[int, ...]],
+    packed_map: dict[str, str],
+) -> dict[str, tuple[int, ...]]:
+    """Add virtual ``.weight`` shape entries from packed weight shapes.
+
+    For INT4 ``pack-quantized`` format, the packed tensor shape is
+    ``(out_dim, in_dim // 8)`` (8 INT4 values per int32).  We reconstruct
+    the original shape as ``(out_dim, in_dim // 8 * 8)`` which equals
+    ``(out_dim, in_dim)`` for the correctly-padded case.
+
+    Args:
+        model_shapes: Original shapes from safetensors headers.
+        packed_map: Virtual-key → packed-key map from
+            :func:`create_virtual_weight_keys`.
+
+    Returns:
+        Augmented shape dict with virtual entries added.
+    """
+    augmented = dict(model_shapes)
+    for virtual_key, packed_key in packed_map.items():
+        packed_shape = model_shapes.get(packed_key)
+        if packed_shape is not None and len(packed_shape) == 2:
+            # I32 packs 8 INT4 values → multiply packed cols by 8
+            augmented[virtual_key] = (packed_shape[0], packed_shape[1] * 8)
+    return augmented
+
+
+def has_packed_weights(model_state_keys: set[str]) -> bool:
+    """Check if model has any compressed-tensors packed weights."""
+    return any(k.endswith(_PACKED_SUFFIX) for k in model_state_keys)

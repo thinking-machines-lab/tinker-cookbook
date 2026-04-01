@@ -1,19 +1,18 @@
-"""Kimi K2.5 shard processing: INT4 packed expert weight handling.
+"""Compressed-tensors INT4 shard processing: packed expert weight handling.
 
-Provides the model-specific hooks used by the generic shard export
-(:mod:`_shard`) when processing Kimi K2.5 checkpoints. This keeps all
-K2.5 logic (virtual key creation, INT4 dequant/merge/requant, config
-parsing) isolated so it cannot affect other model families.
+Provides the shard processing hooks used by the generic shard export
+(:mod:`_shard`) when processing checkpoints with INT4 quantized expert
+weights (e.g. Kimi K2, K2.5). This keeps all INT4 dequant/merge/requant
+logic isolated so it cannot affect other model families.
 """
 
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 from tinker_cookbook.exceptions import WeightsMergeError
-from tinker_cookbook.weights._merge import MergeOp, MergeProfile, apply_merge_op
-from tinker_cookbook.weights._merge_kimi_k25 import (
+from tinker_cookbook.weights._merge import MergeOp, apply_merge_op
+from tinker_cookbook.weights._merge_utils import (
     create_virtual_weight_keys,
     create_virtual_weight_shapes,
 )

@@ -22,12 +22,17 @@ import torch
 
 from tinker_cookbook.weights._merge import MergeOp, MergeProfile
 from tinker_cookbook.weights._merge_utils import (
+    create_virtual_weight_keys,
+    create_virtual_weight_shapes,
     extract_adapter_weight_names,
     plan_expert_ops,
     plan_standard_op,
     remap_adapter_name,
     validate_adapter_config,
 )
+
+# Re-export for backward compatibility with existing imports.
+__all__ = ["create_virtual_weight_keys", "create_virtual_weight_shapes"]
 
 # ---------------------------------------------------------------------------
 # Profile detection
@@ -59,77 +64,6 @@ def detect_profile(model_config: dict, model_state_keys: set[str]) -> MergeProfi
         expert_layout="separate",
         has_language_model_prefix=False,  # We handle the prefix ourselves
     )
-
-
-# ---------------------------------------------------------------------------
-# Virtual weight keys
-# ---------------------------------------------------------------------------
-
-_PACKED_SUFFIX = ".weight_packed"
-_WEIGHT_SUFFIX = ".weight"
-
-
-def create_virtual_weight_keys(
-    model_state_keys: set[str],
-) -> tuple[set[str], dict[str, str]]:
-    """Add virtual ``.weight`` keys for compressed-tensors packed weights.
-
-    Some model checkpoints (Kimi K2.5) store routed expert weights in the
-    compressed-tensors ``pack-quantized`` format: ``weight_packed``,
-    ``weight_scale``, ``weight_shape``.  LoRA merge planning targets plain
-    ``.weight`` keys, so we create virtual entries for the planner.
-
-    Args:
-        model_state_keys: Original key set from safetensors headers.
-
-    Returns:
-        Tuple of ``(augmented_keys, packed_map)`` where:
-        - ``augmented_keys``: keys with virtual ``.weight`` entries added
-        - ``packed_map``: mapping from virtual ``.weight`` key →
-          ``.weight_packed`` key (used during shard processing)
-    """
-    packed_map: dict[str, str] = {}
-    augmented = set(model_state_keys)
-    for k in model_state_keys:
-        if k.endswith(_PACKED_SUFFIX):
-            virtual = k.removesuffix(_PACKED_SUFFIX) + _WEIGHT_SUFFIX
-            if virtual not in model_state_keys:
-                augmented.add(virtual)
-                packed_map[virtual] = k
-    return augmented, packed_map
-
-
-def create_virtual_weight_shapes(
-    model_shapes: dict[str, tuple[int, ...]],
-    packed_map: dict[str, str],
-) -> dict[str, tuple[int, ...]]:
-    """Add virtual ``.weight`` shape entries from packed weight shapes.
-
-    For INT4 ``pack-quantized`` format, the packed tensor shape is
-    ``(out_dim, in_dim // 8)`` (8 INT4 values per int32).  We reconstruct
-    the original shape as ``(out_dim, in_dim // 8 * 8)`` which equals
-    ``(out_dim, in_dim)`` for the correctly-padded case.
-
-    If a ``weight_shape`` tensor is available (stores the original
-    dimensions), its shape ``(2,)`` tells us the tensor is a shape
-    descriptor, but we can't read its *values* from headers alone.
-    So we use the packed shape + pack ratio instead.
-
-    Args:
-        model_shapes: Original shapes from safetensors headers.
-        packed_map: Virtual-key → packed-key map from
-            :func:`create_virtual_weight_keys`.
-
-    Returns:
-        Augmented shape dict with virtual entries added.
-    """
-    augmented = dict(model_shapes)
-    for virtual_key, packed_key in packed_map.items():
-        packed_shape = model_shapes.get(packed_key)
-        if packed_shape is not None and len(packed_shape) == 2:
-            # I32 packs 8 INT4 values → multiply packed cols by 8
-            augmented[virtual_key] = (packed_shape[0], packed_shape[1] * 8)
-    return augmented
 
 
 # ---------------------------------------------------------------------------

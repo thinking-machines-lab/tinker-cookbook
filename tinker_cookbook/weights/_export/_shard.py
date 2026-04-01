@@ -84,7 +84,7 @@ def build_sharded(
     )
 
     # 4. Model-specific pre-planning (e.g. virtual key creation for packed weights)
-    shard_hooks = _build_shard_hooks(profile, config_dict)
+    shard_hooks = _build_shard_hooks(profile, config_dict, model_state_keys)
     if shard_hooks is not None:
         model_state_keys, model_shapes = shard_hooks.augment_for_planning(
             model_state_keys, model_shapes
@@ -202,8 +202,13 @@ class _ShardHooks:
         return 0
 
 
-class _KimiK25ShardHooks(_ShardHooks):
-    """Kimi K2.5: INT4 packed expert dequant → merge → requant."""
+class _PackedInt4ShardHooks(_ShardHooks):
+    """INT4 packed expert weights: dequant → merge → requant.
+
+    Used for models with compressed-tensors ``pack-quantized`` format
+    (e.g. Kimi K2, K2.5) where routed expert weights are stored as
+    ``weight_packed``/``weight_scale``/``weight_shape``.
+    """
 
     def __init__(self, config_dict: dict) -> None:
         from tinker_cookbook.weights._export._shard_kimi_k25 import get_int4_group_size
@@ -229,8 +234,19 @@ class _KimiK25ShardHooks(_ShardHooks):
         return try_apply_packed_ops(key, tensors, merge_ops, self._packed_map, self._group_size)
 
 
-def _build_shard_hooks(profile: MergeProfile, config_dict: dict) -> _ShardHooks | None:
-    """Build model-specific shard hooks based on the detected profile."""
-    if profile.model_family == "kimi_k25":
-        return _KimiK25ShardHooks(config_dict)
+def _build_shard_hooks(
+    profile: MergeProfile,
+    config_dict: dict,
+    model_state_keys: set[str],
+) -> _ShardHooks | None:
+    """Build shard hooks based on the model's weight format.
+
+    Detects compressed-tensors INT4 packed weights by key presence
+    (model-agnostic) rather than model family, so any model with
+    this format gets correct handling automatically.
+    """
+    from tinker_cookbook.weights._merge_utils import has_packed_weights
+
+    if has_packed_weights(model_state_keys):
+        return _PackedInt4ShardHooks(config_dict)
     return None
