@@ -55,6 +55,7 @@ from tinker_cookbook.eval.evaluators import SamplingClientEvaluatorBuilder
 from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.supervised.types import SupervisedDataset, SupervisedDatasetBuilder
 from tinker_cookbook.utils import ml_log, trace
+from tinker_cookbook.utils.misc_utils import safezip
 
 logger = logging.getLogger(__name__)
 
@@ -110,8 +111,6 @@ class Config:
     # Training parameters
     batch_size: int = 64
     """Number of examples per training step."""
-    max_length: int | None = None
-    """Max sequence length. None = no truncation."""
 
     # Checkpointing and logging
     save_every: int = 10
@@ -126,7 +125,6 @@ class Config:
     """Server-side checkpoint retention (seconds). None = keep indefinitely."""
 
     enable_trace: bool = False
-    span_chart_every: int = 0
 
     evaluator_builders: list[SamplingClientEvaluatorBuilder] = chz.field(default_factory=list)
 
@@ -186,8 +184,6 @@ async def _collect_topk_for_datum(
     offset = len(topk_prompt) - seq_len
     relevant_topk = topk_prompt[offset:]
 
-    K = n_teacher_targets
-
     # Unpack teacher response into tensors in one shot.
     # The offset calculation above skips prompt position 0 (which has no
     # logprobs), so all entries in relevant_topk should be non-None.
@@ -195,28 +191,29 @@ async def _collect_topk_for_datum(
     logprob_lists: list[list[float]] = []
     for position_topk in relevant_topk:
         assert position_topk is not None, "Unexpected None in teacher logprobs after offset"
-        entries = position_topk[:K]
-        toks = [tok for tok, _ in entries]
-        lps = [lp for _, lp in entries]
-        # Pad to K if fewer entries returned
-        toks += [toks[0]] * (K - len(toks))
-        lps += [float("-inf")] * (K - len(lps))
+        entries = position_topk[:n_teacher_targets]
+        toks: list[int] = []
+        lps: list[float] = []
+        for tok, lp in entries:
+            toks.append(tok)
+            lps.append(lp)
+        # Pad if fewer entries returned
+        toks += [toks[0]] * (n_teacher_targets - len(toks))
+        lps += [float("-inf")] * (n_teacher_targets - len(lps))
         token_lists.append(toks)
         logprob_lists.append(lps)
 
     topk_tokens = torch.tensor(token_lists, dtype=torch.long)
     topk_logprobs = torch.tensor(logprob_lists)
 
-    # Renormalize teacher probs over top-K via logsumexp
+    # Renormalize over selected teacher tokens via logsumexp
     topk_logprobs -= torch.logsumexp(topk_logprobs, dim=-1, keepdim=True)
     topk_weights = topk_logprobs.exp()
 
-    # Apply original per-position mask: zero out positions where original weight was 0
-    # (e.g., prompt tokens that shouldn't contribute to the loss)
+    # Zero out positions where original weight was 0 (e.g., prompt tokens)
     position_mask = (original_weights > 0).float().unsqueeze(-1)  # (N, 1)
     topk_weights = topk_weights * position_mask
 
-    # Build new datum with (N, K) targets
     return tinker.Datum(
         model_input=datum.model_input,
         loss_fn_inputs={
@@ -255,7 +252,7 @@ async def _collect_topk_batch(
 
     return list(
         await asyncio.gather(
-            *[_one(client, datum) for client, datum in zip(teacher_clients, datums)]
+            *[_one(client, datum) for client, datum in safezip(teacher_clients, datums)]
         )
     )
 
@@ -309,7 +306,7 @@ class _CompositeSupervisedDataset:
         all_datums: list[tinker.Datum] = []
         all_indices: list[int] = []
 
-        for domain_idx, (dataset, count) in enumerate(zip(self._datasets, self._counts)):
+        for domain_idx, (dataset, count) in enumerate(safezip(self._datasets, self._counts)):
             batch = dataset.get_batch(index)
             # Take up to `count` datums from this domain
             selected = batch[:count]
