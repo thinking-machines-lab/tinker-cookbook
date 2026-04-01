@@ -28,13 +28,43 @@ logger = logging.getLogger(__name__)
 
 
 def extract_xml_answer(text: str) -> str:
-    """Extract answer from <answer>...</answer> XML tags.
+    """Extract answer from model response.
 
-    Matches the paper's eval_science.py:extract_xml_answer exactly.
+    Tries multiple extraction strategies:
+    1. <answer>...</answer> XML tags (paper format, Qwen2.5)
+    2. After </think> tag (thinking models like Qwen3.5)
+    3. Last single letter A-D in the response
     """
-    answer = text.split("<answer>")[-1]
-    answer = answer.split("</answer>")[0]
-    return answer.strip()
+    # Strategy 1: <answer> tags
+    if "<answer>" in text:
+        answer = text.split("<answer>")[-1]
+        answer = answer.split("</answer>")[0]
+        return answer.strip()
+
+    # Strategy 2: after </think> tag (thinking models)
+    if "</think>" in text:
+        after_think = text.split("</think>")[-1].strip()
+        # Look for <answer> tags after think block
+        if "<answer>" in after_think:
+            answer = after_think.split("<answer>")[-1].split("</answer>")[0]
+            return answer.strip()
+        # Look for a single letter A-D
+        for line in after_think.split("\n"):
+            line = line.strip()
+            if line in ("A", "B", "C", "D"):
+                return line
+        # Return first non-empty line as fallback
+        if after_think:
+            return after_think.split("\n")[0].strip()
+
+    # Strategy 3: last single letter A-D anywhere
+    import re
+
+    matches = re.findall(r"\b([A-D])\b", text)
+    if matches:
+        return matches[-1]
+
+    return text.strip()
 
 
 def evaluate_science_correctness(responses: list[str], answers: list[str]) -> list[int]:
@@ -99,11 +129,21 @@ def evaluate_tooluse_correctness(
 # ---------------------------------------------------------------------------
 
 
+# System prompt for thinking models (Qwen3.5): relies on native <think> block,
+# just asks for the answer letter after thinking.
+SCIENCE_SYSTEM_PROMPT_THINKING = (
+    "Given a question and four options, please select the right answer. "
+    "Think step by step, then give your final answer as just the letter "
+    "(A, B, C, or D) after your reasoning."
+)
+
+
 class SciKnowEvalEvaluator(SamplingClientEvaluator):
     """Evaluates SciKnowEval accuracy during training.
 
     Generates greedy completions for each prompt and checks exact match
-    on the extracted <answer> tag, matching the paper's eval methodology.
+    on the extracted answer, supporting both <answer> tags (Qwen2.5)
+    and thinking model outputs (Qwen3.5).
     """
 
     def __init__(
@@ -112,11 +152,13 @@ class SciKnowEvalEvaluator(SamplingClientEvaluator):
         answers: list[str],
         renderer: renderers.Renderer,
         max_tokens: int = 2048,
+        system_prompt_override: str | None = None,
     ):
         self.prompts = prompts
         self.answers = answers
         self.renderer = renderer
         self.max_tokens = max_tokens
+        self.system_prompt_override = system_prompt_override
 
     async def __call__(self, sampling_client: tinker.SamplingClient) -> dict[str, float]:
         stop_condition = self.renderer.get_stop_sequences()
@@ -128,7 +170,16 @@ class SciKnowEvalEvaluator(SamplingClientEvaluator):
 
         tasks = []
         for prompt_messages in self.prompts:
-            model_input = self.renderer.build_generation_prompt(prompt_messages)  # type: ignore[arg-type]
+            if self.system_prompt_override is not None:
+                # Replace system prompt for thinking models
+                messages = list(prompt_messages)
+                if messages and messages[0].get("role") == "system":
+                    messages[0] = {**messages[0], "content": self.system_prompt_override}
+                else:
+                    messages.insert(0, {"role": "system", "content": self.system_prompt_override})
+                model_input = self.renderer.build_generation_prompt(messages)  # type: ignore[arg-type]
+            else:
+                model_input = self.renderer.build_generation_prompt(prompt_messages)  # type: ignore[arg-type]
             tasks.append(
                 sampling_client.sample_async(
                     prompt=model_input, num_samples=1, sampling_params=sampling_params
