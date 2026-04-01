@@ -414,7 +414,7 @@ def load_tooluse_from_arrow(
 
     eval_prompts: list[str] = [row["prompt"] for row in eval_ds]  # type: ignore[union-attr]
     eval_golden_answers: list[list[dict[str, str]]] = [
-        row["golden_answer"]
+        row["golden_answer"]  # type: ignore[index]
         for row in eval_ds  # type: ignore[union-attr]
     ]
 
