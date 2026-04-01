@@ -449,16 +449,14 @@ async def main(config: Config) -> None:
 
         # 5. Checkpoint
         if config.save_every > 0 and i_batch > start_batch and i_batch % config.save_every == 0:
-            await checkpoint_utils.save_checkpoint_async(
+            path_dict = await checkpoint_utils.save_checkpoint_async(
                 training_client=training_client,
                 name=f"{i_batch:06d}",
                 log_path=config.log_path,
                 kind="both",
                 loop_state={"batch": i_batch},
             )
-            sampling_client = training_client.create_sampling_client(
-                (await training_client.save_weights_for_sampler_async())
-            )
+            sampling_client = training_client.create_sampling_client(path_dict["sampler_path"])
         else:
             sampling_client = await training_client.save_weights_and_get_sampling_client_async()
 
