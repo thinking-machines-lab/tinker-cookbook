@@ -51,7 +51,8 @@ def pack_int4(values: torch.Tensor) -> torch.Tensor:
         ``int32`` tensor of shape ``(rows, cols // 8)``.
     """
     rows, cols = values.shape
-    assert cols % 8 == 0, f"cols ({cols}) must be divisible by 8"
+    if cols % 8 != 0:
+        raise ValueError(f"cols ({cols}) must be divisible by 8")
     # Mask to unsigned nibble [0, 15]
     unsigned = values.to(torch.int32) & 0xF
     unsigned = unsigned.reshape(rows, -1, 8)
@@ -104,9 +105,10 @@ def quantize_int4_group(
         - ``scale``: BF16 tensor of shape ``(out_dim, in_dim // group_size)``
     """
     out_dim, in_dim = tensor.shape
-    assert in_dim % group_size == 0, (
-        f"in_dim ({in_dim}) must be divisible by group_size ({group_size})"
-    )
+    if in_dim % group_size != 0:
+        raise ValueError(
+            f"in_dim ({in_dim}) must be divisible by group_size ({group_size})"
+        )
     grouped = tensor.float().reshape(out_dim, -1, group_size)  # (out, n_groups, gs)
     # Symmetric scale: max(|vals|) / 7
     group_max = grouped.abs().amax(dim=-1)  # (out, n_groups)

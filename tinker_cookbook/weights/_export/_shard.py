@@ -211,13 +211,13 @@ class _PackedInt4ShardHooks(_ShardHooks):
     """
 
     def __init__(self, config_dict: dict) -> None:
-        from tinker_cookbook.weights._export._shard_kimi_k25 import get_int4_group_size
+        from tinker_cookbook.weights._export._shard_packed_int4 import get_int4_group_size
 
         self._group_size = get_int4_group_size(config_dict)
         self._packed_map: dict[str, str] = {}
 
     def augment_for_planning(self, model_state_keys, model_shapes):
-        from tinker_cookbook.weights._export._shard_kimi_k25 import (
+        from tinker_cookbook.weights._export._shard_packed_int4 import (
             augment_model_state_for_planning,
         )
 
@@ -229,7 +229,7 @@ class _PackedInt4ShardHooks(_ShardHooks):
     def try_apply(self, key, tensors, merge_ops):
         if not self._packed_map:
             return 0
-        from tinker_cookbook.weights._export._shard_kimi_k25 import try_apply_packed_ops
+        from tinker_cookbook.weights._export._shard_packed_int4 import try_apply_packed_ops
 
         return try_apply_packed_ops(key, tensors, merge_ops, self._packed_map, self._group_size)
 

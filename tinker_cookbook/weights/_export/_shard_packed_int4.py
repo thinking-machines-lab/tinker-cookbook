@@ -13,14 +13,13 @@ import logging
 from tinker_cookbook.exceptions import WeightsMergeError
 from tinker_cookbook.weights._merge import MergeOp, apply_merge_op
 from tinker_cookbook.weights._merge_utils import (
+    PACKED_SUFFIX,
     create_virtual_weight_keys,
     create_virtual_weight_shapes,
 )
 
 logger = logging.getLogger(__name__)
 
-# Suffix conventions for compressed-tensors pack-quantized format.
-_PACKED_SUFFIX = ".weight_packed"
 _SCALE_SUFFIX = ".weight_scale"
 _SHAPE_SUFFIX = ".weight_shape"
 
@@ -84,7 +83,7 @@ def apply_packed_merge_ops(
     """
     from tinker_cookbook.weights._packed_int4 import dequantize_int4_group, quantize_int4_group
 
-    base = packed_key.removesuffix(_PACKED_SUFFIX)
+    base = packed_key.removesuffix(PACKED_SUFFIX)
     scale_key = base + _SCALE_SUFFIX
     shape_key = base + _SHAPE_SUFFIX
 
@@ -102,24 +101,22 @@ def apply_packed_merge_ops(
         )
 
     original_shape = tuple(shape_tensor.tolist())
-    assert len(original_shape) == 2, f"Expected 2D shape, got {original_shape}"
+    if len(original_shape) != 2:
+        raise WeightsMergeError(
+            f"Expected 2D weight_shape for {packed_key!r}, got {original_shape}"
+        )
 
-    # Dequantize INT4 → bf16
     weight_bf16 = dequantize_int4_group(packed_tensor, scale_tensor, original_shape, group_size)
 
-    # Apply merge ops on the dequantized weight
     temp = {virtual_key: weight_bf16}
     for op in ops:
         apply_merge_op(temp, op)
     weight_bf16 = temp[virtual_key]
 
-    # Re-quantize bf16 → INT4
     new_packed, new_scale = quantize_int4_group(weight_bf16, group_size)
 
-    # Update tensors in-place
     tensors[packed_key] = new_packed
     tensors[scale_key] = new_scale
-    # weight_shape stays unchanged
 
     return len(ops)
 
@@ -146,9 +143,9 @@ def try_apply_packed_ops(
     Returns:
         Number of ops applied (0 if this key wasn't handled).
     """
-    if not key.endswith(_PACKED_SUFFIX):
+    if not key.endswith(PACKED_SUFFIX):
         return 0
-    virtual_key = key.removesuffix(_PACKED_SUFFIX) + ".weight"
+    virtual_key = key.removesuffix(PACKED_SUFFIX) + ".weight"
     ops = merge_ops.pop(virtual_key, [])
     if not ops:
         return 0

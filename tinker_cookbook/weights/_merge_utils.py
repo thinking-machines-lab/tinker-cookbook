@@ -389,7 +389,7 @@ def plan_expert_ops(
 # Compressed-tensors virtual weight keys
 # ---------------------------------------------------------------------------
 
-_PACKED_SUFFIX = ".weight_packed"
+PACKED_SUFFIX = ".weight_packed"
 _WEIGHT_SUFFIX = ".weight"
 
 
@@ -415,8 +415,8 @@ def create_virtual_weight_keys(
     packed_map: dict[str, str] = {}
     augmented = set(model_state_keys)
     for k in model_state_keys:
-        if k.endswith(_PACKED_SUFFIX):
-            virtual = k.removesuffix(_PACKED_SUFFIX) + _WEIGHT_SUFFIX
+        if k.endswith(PACKED_SUFFIX):
+            virtual = k.removesuffix(PACKED_SUFFIX) + _WEIGHT_SUFFIX
             if virtual not in model_state_keys:
                 augmented.add(virtual)
                 packed_map[virtual] = k
@@ -453,4 +453,4 @@ def create_virtual_weight_shapes(
 
 def has_packed_weights(model_state_keys: set[str]) -> bool:
     """Check if model has any compressed-tensors packed weights."""
-    return any(k.endswith(_PACKED_SUFFIX) for k in model_state_keys)
+    return any(k.endswith(PACKED_SUFFIX) for k in model_state_keys)

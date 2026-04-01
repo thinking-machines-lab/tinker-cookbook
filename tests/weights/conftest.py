@@ -118,6 +118,28 @@ def run_build_and_reload(
     return reloaded.state_dict()
 
 
+def load_merged_tensors(output_dir: Path) -> dict[str, torch.Tensor]:
+    """Load all tensors from a merged output directory (all safetensors shards)."""
+    all_tensors: dict[str, torch.Tensor] = {}
+    for sf in sorted(output_dir.glob("*.safetensors")):
+        all_tensors.update(load_file(str(sf)))
+    return all_tensors
+
+
+def save_minimal_tokenizer(path: Path) -> None:
+    """Write a minimal tokenizer so tests don't need HF downloads."""
+    (path / "tokenizer_config.json").write_text(
+        json.dumps({"tokenizer_class": "PreTrainedTokenizerFast"})
+    )
+    (path / "tokenizer.json").write_text(
+        json.dumps({
+            "version": "1.0",
+            "model": {"type": "BPE", "vocab": {"a": 0, "b": 1}, "merges": []},
+            "added_tokens": [],
+        })
+    )
+
+
 def run_build_adapter(
     model_path: Path,
     adapter_path: Path,

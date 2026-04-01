@@ -22,17 +22,12 @@ import torch
 
 from tinker_cookbook.weights._merge import MergeOp, MergeProfile
 from tinker_cookbook.weights._merge_utils import (
-    create_virtual_weight_keys,
-    create_virtual_weight_shapes,
     extract_adapter_weight_names,
     plan_expert_ops,
     plan_standard_op,
     remap_adapter_name,
     validate_adapter_config,
 )
-
-# Re-export for backward compatibility with existing imports.
-__all__ = ["create_virtual_weight_keys", "create_virtual_weight_shapes"]
 
 # ---------------------------------------------------------------------------
 # Profile detection
@@ -51,18 +46,12 @@ def detect_profile(model_config: dict, model_state_keys: set[str]) -> MergeProfi
     Returns ``None`` for non-K2.5 models so the detector chain continues.
     """
     if model_config.get("model_type") != "kimi_k25":
-        # Also check nested text_config for wrapper configs
-        text_config = model_config.get("text_config", {})
-        if not isinstance(text_config, dict):
-            return None
-        # The outer model_type should be kimi_k25
-        if model_config.get("model_type") != "kimi_k25":
-            return None
+        return None
 
     return MergeProfile(
         model_family="kimi_k25",
         expert_layout="separate",
-        has_language_model_prefix=False,  # We handle the prefix ourselves
+        has_language_model_prefix=False,
     )
 
 
