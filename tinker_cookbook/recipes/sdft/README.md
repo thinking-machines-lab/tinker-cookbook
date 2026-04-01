@@ -76,7 +76,7 @@ export TINKER_API_KEY=<your-key>
 python -m tinker_cookbook.recipes.sdft.train \
     model_name=Qwen/Qwen3.5-35B-A3B \
     dataset=toolalpaca \
-    toolalpaca_data_path=~/Self-Distillation/data/tooluse_data/train_data \
+    toolalpaca_data_path=Self-Distillation/data/tooluse_data/train_data \
     groups_per_batch=128 \
     learning_rate=5e-4 \
     topk=20 \
@@ -97,7 +97,7 @@ python -m tinker_cookbook.recipes.sdft.run_continual_learning \
     lora_rank=64 \
     topk=20 \
     thinking_format=true \
-    wandb_project=sdft-replication
+    wandb_project=my-sdft-project
 ```
 
 ### Debug run
@@ -179,4 +179,4 @@ python -m tinker_cookbook.recipes.sdft.train \
 
 - Shenfeld et al., ["Self-Distillation Enables Continual Learning"](https://arxiv.org/abs/2601.19897), 2026
 - [Official implementation](https://github.com/Continual-Intelligence/Self-Distillation) (TRL-based, Qwen2.5-7B)
-- [Tinker top-K distillation docs](https://tinker-docs.thinkingmachines.ai/losses#top-k-distillation)
+- [Tinker loss functions](https://tinker-docs.thinkingmachines.ai/tinker/losses) (top-K distillation, cross_entropy)

@@ -36,7 +36,8 @@ Example usage::
         lora_rank=64
 
 See the `recipe README <https://github.com/thinking-machines-lab/tinker-cookbook/tree/main/tinker_cookbook/recipes/sdft>`_
-for full setup instructions and continual learning results.
+for full setup instructions and continual learning results. For background on the
+loss functions used, see the `Tinker loss docs <https://tinker-docs.thinkingmachines.ai/tinker/losses>`_.
 """
 
 import asyncio
