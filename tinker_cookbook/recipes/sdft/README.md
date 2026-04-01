@@ -12,7 +12,7 @@ SDFT uses the same model in two roles with different prompts:
 2. **Student** sees only the question and generates a completion on-policy
 3. The loss minimizes forward KL divergence between teacher and student distributions at each token position of the student's completion:
 
-$$\mathcal{L} = \frac{1}{T} \sum_{t=1}^{T} \text{KL}\big(P_{\text{teacher}}(\cdot \mid t) \;\|\; P_{\text{student}}(\cdot \mid t)\big)$$
+$$\mathcal{L} = \frac{1}{T} \sum_{t=1}^{T} \text{KL}\big(P_{\text{teacher}}(\cdot \mid t) \| P_{\text{student}}(\cdot \mid t)\big)$$
 
 where $T$ is the number of completion tokens, and the KL at each position sums over the **full vocabulary** (~150K tokens).
 
