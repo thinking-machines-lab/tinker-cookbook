@@ -6,7 +6,7 @@ This recipe implements the SDFT algorithm from ["Self-Distillation Enables Conti
 
 ### What the paper does
 
-SDFT uses the same model as both teacher and student:
+SDFT uses the same model in two roles with different prompts:
 
 1. **Teacher** sees the question + golden answer as an in-context demonstration
 2. **Student** sees only the question and generates a completion on-policy
@@ -16,7 +16,9 @@ SDFT uses the same model as both teacher and student:
 L = (1/T) * sum_{t=1}^{T} KL(P_teacher(·|t) || P_student(·|t))
 ```
 
-where `T` is the number of completion tokens, and the KL at each position sums over the **full vocabulary** (~150K tokens). The paper uses an EMA teacher (updated every step with `alpha=0.01`) to provide stable targets.
+where `T` is the number of completion tokens, and the KL at each position sums over the **full vocabulary** (~150K tokens).
+
+Both teacher and student start from the same base model weights. The paper maintains the teacher as an EMA (Exponential Moving Average) of the student, updated every step with `alpha=0.01` — so the teacher slowly tracks the student's learning while providing stable distillation targets.
 
 ### What we implement in Tinker
 
@@ -30,7 +32,7 @@ Our Tinker implementation differs from the paper in two ways:
 
     where the inner sum is over the K tokens with highest teacher probability (renormalized to sum to 1).
 
-2. **Static teacher instead of EMA.** The paper uses an Exponential Moving Average (EMA) teacher that is updated every step. Our implementation uses a static frozen copy of the base model as the teacher, which is simpler and avoids the overhead of periodic weight syncing.
+2. **Static teacher instead of EMA.** The paper maintains the teacher as an EMA of the student (updated every step with `alpha=0.01`). Our implementation keeps the teacher frozen at the initial base model weights, which is simpler and avoids the overhead of periodic weight syncing.
 
 ### Validating the approximation
 
