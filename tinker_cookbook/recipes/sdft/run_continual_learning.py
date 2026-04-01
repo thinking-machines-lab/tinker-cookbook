@@ -71,7 +71,6 @@ class ExperimentConfig:
 
     # SDFT-TopK specific
     topk: int = 20
-    ce_coef: float = 1.0
     thinking_format: bool = False
 
     # Logging
@@ -170,7 +169,6 @@ async def run_sdft_stage(
     renderer_name: str,
     log_path: str,
     topk: int,
-    ce_coef: float = 1.0,
     wandb_name: str | None = None,
     load_checkpoint_path: str | None = None,
 ) -> str | None:
@@ -209,7 +207,6 @@ async def run_sdft_stage(
         learning_rate=learning_rate,
         max_tokens=config.max_tokens,
         topk=topk,
-        ce_coef=ce_coef,
         loss_fn=loss_fn,  # type: ignore[arg-type]
         eval_every=EVAL_EVERY,
         save_every=SAVE_EVERY,
@@ -297,7 +294,6 @@ async def run_single(
             renderer_name,
             log_path,
             topk=config.topk,
-            ce_coef=config.ce_coef,
             wandb_name=run_id,
             load_checkpoint_path=load_checkpoint_path,
         )

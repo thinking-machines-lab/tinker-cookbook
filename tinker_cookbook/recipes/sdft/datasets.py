@@ -359,9 +359,9 @@ def load_science_from_arrow(
         msgs = row["messages"]  # type: ignore[index]
         # Extract user question (messages[1] is the user turn after system prompt)
         if len(msgs) >= 2:
-            questions.append(msgs[1]["content"])
+            questions.append(msgs[1]["content"])  # type: ignore[index]
         else:
-            questions.append(msgs[0]["content"])
+            questions.append(msgs[0]["content"])  # type: ignore[index]
 
         output_text = str(row["output_text"])  # type: ignore[index]
         if thinking_format:
@@ -374,14 +374,14 @@ def load_science_from_arrow(
 
     if thinking_format:
         # Replace system prompt in eval prompts for thinking models
-        eval_prompts = []
-        for msgs in eval_prompts_raw:
-            new_msgs = list(msgs)
+        eval_prompts: list = []
+        for prompt_msgs in eval_prompts_raw:
+            new_msgs: list[dict[str, str]] = [dict(m) for m in prompt_msgs]  # type: ignore[union-attr]
             if new_msgs and new_msgs[0].get("role") == "system":
-                new_msgs[0] = {**new_msgs[0], "content": SCIENCE_SYSTEM_PROMPT_THINKING}
+                new_msgs[0]["content"] = SCIENCE_SYSTEM_PROMPT_THINKING
             eval_prompts.append(new_msgs)
     else:
-        eval_prompts = eval_prompts_raw
+        eval_prompts = eval_prompts_raw  # type: ignore[assignment]
 
     logger.info(
         f"Loaded science Arrow data: {len(questions)} train, {len(eval_prompts)} eval examples"
@@ -412,8 +412,10 @@ def load_tooluse_from_arrow(
         for row in train_ds  # type: ignore[union-attr]
     ]
 
-    eval_prompts = [row["prompt"] for row in eval_ds]  # type: ignore[union-attr]
-    eval_golden_answers = [row["golden_answer"] for row in eval_ds]  # type: ignore[union-attr]
+    eval_prompts: list[str] = [row["prompt"] for row in eval_ds]  # type: ignore[union-attr]
+    eval_golden_answers: list[list[dict[str, str]]] = [
+        row["golden_answer"] for row in eval_ds  # type: ignore[union-attr]
+    ]
 
     logger.info(
         f"Loaded tooluse Arrow data: {len(questions)} train, {len(eval_prompts)} eval examples"
