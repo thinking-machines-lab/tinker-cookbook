@@ -30,10 +30,11 @@ logger = logging.getLogger(__name__)
 def extract_xml_answer(text: str) -> str:
     """Extract answer from model response.
 
-    Tries multiple extraction strategies:
+    Tries multiple extraction strategies in order:
     1. <answer>...</answer> XML tags (paper format, Qwen2.5)
-    2. After </think> tag (thinking models like Qwen3.5)
-    3. Last single letter A-D in the response
+    2. "The answer is X" pattern (thinking models like Qwen3.5)
+    3. After </think> tag — look for <answer> tags or "The answer is X"
+    4. Last single letter A-D in the text after </think> (or full text)
     """
     # Strategy 1: <answer> tags
     if "<answer>" in text:
@@ -41,26 +42,24 @@ def extract_xml_answer(text: str) -> str:
         answer = answer.split("</answer>")[0]
         return answer.strip()
 
-    # Strategy 2: after </think> tag (thinking models)
+    # For thinking models, focus on text after </think>
+    search_text = text
     if "</think>" in text:
-        after_think = text.split("</think>")[-1].strip()
-        # Look for <answer> tags after think block
-        if "<answer>" in after_think:
-            answer = after_think.split("<answer>")[-1].split("</answer>")[0]
-            return answer.strip()
-        # Look for a single letter A-D
-        for line in after_think.split("\n"):
-            line = line.strip()
-            if line in ("A", "B", "C", "D"):
-                return line
-        # Return first non-empty line as fallback
-        if after_think:
-            return after_think.split("\n")[0].strip()
+        search_text = text.split("</think>")[-1]
 
-    # Strategy 3: last single letter A-D anywhere
-    import re
+    # Strategy 2: "The answer is X" pattern
+    match = re.search(r"[Tt]he answer is\s*([A-D])", search_text)
+    if match:
+        return match.group(1)
 
-    matches = re.findall(r"\b([A-D])\b", text)
+    # Strategy 3: single letter A-D on its own line after </think>
+    for line in search_text.strip().split("\n"):
+        line = line.strip()
+        if line in ("A", "B", "C", "D"):
+            return line
+
+    # Strategy 4: last single letter A-D in search_text
+    matches = re.findall(r"\b([A-D])\b", search_text)
     if matches:
         return matches[-1]
 
@@ -130,11 +129,11 @@ def evaluate_tooluse_correctness(
 
 
 # System prompt for thinking models (Qwen3.5): relies on native <think> block,
-# just asks for the answer letter after thinking.
+# asks model to write "The answer is X." for unambiguous parsing.
 SCIENCE_SYSTEM_PROMPT_THINKING = (
     "Given a question and four options, please select the right answer. "
-    "Think step by step, then give your final answer as just the letter "
-    "(A, B, C, or D) after your reasoning."
+    'After your reasoning, write your final answer as "The answer is X." '
+    "where X is the letter (A, B, C, or D)."
 )
 
 
