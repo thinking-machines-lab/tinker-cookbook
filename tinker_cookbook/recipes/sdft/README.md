@@ -16,15 +16,13 @@ SDFT uses the same model as both teacher and student:
 L = (1/T) * sum_{t=1}^{T} KL(P_teacher(·|t) || P_student(·|t))
 ```
 
-where `T` is the number of completion tokens, and the KL at each position sums over the **full vocabulary** (~150K tokens).
-
-The teacher's frozen weights act as a knowledge anchor: the distillation signal prevents the student from drifting too far from the base distribution, even as it acquires new skills.
+where `T` is the number of completion tokens, and the KL at each position sums over the **full vocabulary** (~150K tokens). The paper uses an EMA teacher (updated every step with `alpha=0.01`) to provide stable targets.
 
 ### What we implement in Tinker
 
 Our Tinker implementation differs from the paper in two ways:
 
-1. **Top-K instead of full-vocabulary KL.** The Tinker API does not expose full-vocabulary logits. Instead, we use Tinker's top-K distillation API (`topk_prompt_logprobs`) to recover the teacher's top-K token distribution at each position, and train with `cross_entropy` loss:
+1. **Top-K instead of full-vocabulary KL.** The Tinker API does not expose full-vocabulary logits. Instead, we use Tinker's [top-K distillation API](https://tinker-docs.thinkingmachines.ai/tinker/losses) (`topk_prompt_logprobs`) to recover the teacher's top-K token distribution at each position, and train with `cross_entropy` loss:
 
     ```
     L_topK = (1/T) * sum_{t=1}^{T} [ -sum_{k=1}^{K} P_teacher(x_k|t) * log P_student(x_k|t) ]
@@ -32,7 +30,7 @@ Our Tinker implementation differs from the paper in two ways:
 
     where the inner sum is over the K tokens with highest teacher probability (renormalized to sum to 1).
 
-2. **Static teacher instead of EMA.** The paper uses an Exponential Moving Average (EMA) teacher that is updated every step (`alpha=0.01`). Our implementation uses a static frozen copy of the base model as the teacher, which is simpler and avoids the overhead of periodic weight syncing.
+2. **Static teacher instead of EMA.** The paper uses an Exponential Moving Average (EMA) teacher that is updated every step. Our implementation uses a static frozen copy of the base model as the teacher, which is simpler and avoids the overhead of periodic weight syncing.
 
 ### Validating the approximation
 
@@ -88,16 +86,15 @@ python -m tinker_cookbook.recipes.sdft.train \
 The key experiment: train sequentially on two tasks and measure retention.
 
 ```bash
-# Stage 1: Train on tool-use, then Stage 2: Train on science
 python -m tinker_cookbook.recipes.sdft.run_continual_learning \
     model_name=Qwen/Qwen3.5-35B-A3B \
+    data_dir=Self-Distillation/data \
     methods=sft,sdft_topk \
     learning_rates=5e-4 \
     stages=1,2 \
     lora_rank=64 \
     topk=20 \
-    thinking_format=true \
-    wandb_project=my-sdft-project
+    thinking_format=true
 ```
 
 ### Debug run
@@ -105,6 +102,7 @@ python -m tinker_cookbook.recipes.sdft.run_continual_learning \
 ```bash
 python -m tinker_cookbook.recipes.sdft.train \
     model_name=Qwen/Qwen3.5-35B-A3B \
+    dataset=sciknoweval \
     groups_per_batch=4 \
     max_tokens=256 \
     max_steps=3 \
@@ -120,7 +118,7 @@ python -m tinker_cookbook.recipes.sdft.train \
 | `topk` | `20` | Top-K tokens for distillation (0 = importance sampling fallback) |
 | `learning_rate` | `2e-5` | Adam learning rate. For LoRA, use 5e-4 to 1e-3 |
 | `groups_per_batch` | `32` | Problems per training batch |
-| `lora_rank` | `128` | LoRA adapter rank |
+| `lora_rank` | `128` | LoRA adapter rank (64 for `Qwen/Qwen3.5-35B-A3B`) |
 | `max_tokens` | `2048` | Max completion length |
 | `thinking_format` | `false` | Convert data for thinking models (e.g., Qwen3.5) |
 | `teacher_sync_every` | `None` | Optional periodic teacher weight sync |
@@ -134,10 +132,9 @@ python -m tinker_cookbook.recipes.sdft.train \
 | Method | LR | Tool-use | Science | Sci Δ |
 |--------|-----|----------|---------|-------|
 | Base model | — | 61.86% | 46.35% | — |
-| SFT | 1e-4 | 8.25% | 36.88% | -9.47 |
 | SFT | 5e-4 | 67.01% | 29.19% | **-17.16** |
 | SFT | 1e-3 | 69.07% | 37.08% | **-9.27** |
-| **SDFT** | **1e-4** | **63.92%** | **45.17%** | **-1.18** |
+| SDFT | 1e-4 | 63.92% | 45.17% | -1.18 |
 | **SDFT** | **5e-4** | **65.98%** | **46.55%** | **+0.20** |
 | **SDFT** | **1e-3** | **67.01%** | **53.65%** | **+7.30** |
 
@@ -145,14 +142,11 @@ python -m tinker_cookbook.recipes.sdft.train \
 
 | Method | LR | Tool-use | Science | TU Retention |
 |--------|-----|----------|---------|-------------|
-| SFT | 1e-4 | 64.95% | 57.40% | — * |
 | SFT | 5e-4 | 68.04% | 63.71% | 101% |
 | SFT | 1e-3 | 8.25% | 64.69% | **12%** |
 | **SDFT** | **1e-4** | **61.86%** | **56.80%** | **97%** |
 | **SDFT** | **5e-4** | **61.86%** | **63.51%** | **94%** |
-| **SDFT** | **1e-3** | **35.05%** | **60.75%** | **52%** |
-
-\* SFT lr=1e-4 S1 checkpoint had 8.25% tool-use (broken), so retention is not meaningful.
+| SDFT | 1e-3 | 35.05% | 60.75% | 52% |
 
 ### Findings
 
