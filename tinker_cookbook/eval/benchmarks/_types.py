@@ -78,9 +78,11 @@ class BenchmarkConfig:
 
     # Customization hooks
     system_prompt: str | None = None
-    """If set, prepend this system prompt to every benchmark example.
-    Overrides any benchmark-specific default system prompt. Useful for
-    model-specific instructions (e.g., "Always put your answer in \\\\boxed{}").
+    """System prompt to prepend to benchmark examples. Benchmarks that
+    support this will use it instead of their default (or no) system prompt.
+
+    Currently supported by: gsm8k. Other benchmarks can adopt the pattern
+    via ``build_messages(content, config.system_prompt)`` in ``_common.py``.
 
     Example::
 

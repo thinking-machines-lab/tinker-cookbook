@@ -100,6 +100,14 @@ def _trajectory_to_stored(
     )
 
 
+def _last_assistant_content(turns: list[StoredTurn]) -> str:
+    """Return the content of the last assistant turn, or empty string."""
+    for turn in reversed(turns):
+        if turn.role == "assistant":
+            return turn.content
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Storage helpers
 # ---------------------------------------------------------------------------
@@ -404,22 +412,17 @@ async def run_benchmark(
 
                 # Collect metrics from all transitions
                 step_metrics: dict = {}
-                step_logs: dict = {}
                 for t in trajectory.transitions:
                     step_metrics.update(t.metrics)
-                    step_logs.update(t.logs)
 
                 # Apply custom grade_fn override if provided
                 if config.grade_fn is not None:
-                    stored_for_grade = _trajectory_to_stored(
-                        idx, trajectory, benchmark.name, tokenizer, elapsed
-                    )
-                    # Get the assistant response (last assistant turn)
-                    response = ""
-                    for turn in reversed(stored_for_grade.turns):
-                        if turn.role == "assistant":
-                            response = turn.content
-                            break
+                    step_logs: dict = {}
+                    for t in trajectory.transitions:
+                        step_logs.update(t.logs)
+                    # Decode only the last action (assistant response)
+                    last_action_tokens = trajectory.transitions[-1].ac.tokens
+                    response = tokenizer.decode(last_action_tokens) if last_action_tokens else ""
                     total_reward = config.grade_fn(response, step_logs)
                     step_metrics["custom_graded"] = 1.0
 
@@ -428,14 +431,11 @@ async def run_benchmark(
 
                 # Save trajectory with decoded text
                 if config.save_dir:
+                    stored = _trajectory_to_stored(
+                        idx, trajectory, benchmark.name, tokenizer, elapsed
+                    )
                     if config.grade_fn is not None:
-                        # Already built above — update reward
-                        stored_for_grade.reward = total_reward
-                        stored = stored_for_grade
-                    else:
-                        stored = _trajectory_to_stored(
-                            idx, trajectory, benchmark.name, tokenizer, elapsed
-                        )
+                        stored.reward = total_reward
                     await _save_trajectory(config.save_dir, benchmark.name, stored)
 
             except (TimeoutError, EvalTimeoutError):
@@ -803,11 +803,7 @@ def regrade_trajectories(
             continue
 
         # Get the last assistant response
-        response = ""
-        for turn in reversed(traj.turns):
-            if turn.role == "assistant":
-                response = turn.content
-                break
+        response = _last_assistant_content(traj.turns)
 
         reward = grade_fn(response, traj.logs)
         rewards.append(reward)
