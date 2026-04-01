@@ -25,8 +25,20 @@ from tinker_cookbook.weights._merge import (
 from tinker_cookbook.weights._merge_deepseek import detect_profile as detect_deepseek_profile
 from tinker_cookbook.weights._merge_default import detect_profile as detect_default_profile
 from tinker_cookbook.weights._merge_gpt_oss import detect_profile as detect_gpt_oss_profile
+from tinker_cookbook.weights._merge_kimi_k25 import detect_profile as detect_kimi_k25_profile
 from tinker_cookbook.weights._merge_nemotron import detect_profile as detect_nemotron_profile
 from tinker_cookbook.weights._merge_qwen3_5 import detect_profile as detect_qwen3_5_profile
+from tinker_cookbook.weights._merge_utils import (
+    create_virtual_weight_keys,
+    create_virtual_weight_shapes,
+    is_pack_quantized,
+)
+from tinker_cookbook.weights._packed_int4 import (
+    dequantize_int4_group,
+    pack_int4,
+    quantize_int4_group,
+    unpack_int4,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1530,19 +1542,6 @@ class TestUnembedTokensVisionRemap:
 # Kimi K2.5 — profile detection, name remapping, INT4 pack/unpack
 # ---------------------------------------------------------------------------
 
-from tinker_cookbook.weights._merge_kimi_k25 import detect_profile as detect_kimi_k25_profile
-from tinker_cookbook.weights._merge_utils import (
-    create_virtual_weight_keys,
-    create_virtual_weight_shapes,
-    is_pack_quantized,
-)
-from tinker_cookbook.weights._packed_int4 import (
-    dequantize_int4_group,
-    pack_int4,
-    quantize_int4_group,
-    unpack_int4,
-)
-
 
 class TestKimiK25ProfileDetection:
     """Profile detection for Kimi K2.5 (model_type=kimi_k25)."""
@@ -1617,9 +1616,7 @@ class TestKimiK25NameRemapping:
         model_keys = set()
         for i in range(n_exp):
             for proj in ("gate_proj", "up_proj"):
-                model_keys.add(
-                    f"language_model.model.layers.1.mlp.experts.{i}.{proj}.weight"
-                )
+                model_keys.add(f"language_model.model.layers.1.mlp.experts.{i}.{proj}.weight")
         adapter_weights = {
             "base_model.model.model.layers.1.mlp.experts.w1.lora_A.weight": torch.ones(
                 1, self.RANK, self.HIDDEN

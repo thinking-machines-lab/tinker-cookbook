@@ -110,10 +110,8 @@ def build_synthetic_kimi_model(
         str(model_dir / "model-00002-of-00002.safetensors"),
     )
 
-    weight_map = {
-        **{k: "model-00001-of-00002.safetensors" for k in shard1_keys},
-        **{k: "model-00002-of-00002.safetensors" for k in shard2_keys},
-    }
+    weight_map = dict.fromkeys(shard1_keys, "model-00001-of-00002.safetensors")
+    weight_map.update(dict.fromkeys(shard2_keys, "model-00002-of-00002.safetensors"))
     (model_dir / "model.safetensors.index.json").write_text(
         json.dumps({"metadata": {"total_size": 0}, "weight_map": weight_map}, indent=2)
     )
@@ -155,6 +153,4 @@ def save_kimi_adapter(
 
     adapter_dir.mkdir(parents=True)
     save_file(weights, str(adapter_dir / "adapter_model.safetensors"))
-    (adapter_dir / "adapter_config.json").write_text(
-        json.dumps({"lora_alpha": 1, "r": RANK})
-    )
+    (adapter_dir / "adapter_config.json").write_text(json.dumps({"lora_alpha": 1, "r": RANK}))

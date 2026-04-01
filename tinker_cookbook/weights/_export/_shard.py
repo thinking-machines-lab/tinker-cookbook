@@ -32,7 +32,6 @@ from tinker_cookbook.weights._export import (
     save_tokenizer_and_processor,
 )
 from tinker_cookbook.weights._merge import (
-    MergeOp,
     MergeProfile,
     apply_merge_op,
     detect_merge_profile,

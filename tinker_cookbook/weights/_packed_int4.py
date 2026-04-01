@@ -106,9 +106,7 @@ def quantize_int4_group(
     """
     out_dim, in_dim = tensor.shape
     if in_dim % group_size != 0:
-        raise ValueError(
-            f"in_dim ({in_dim}) must be divisible by group_size ({group_size})"
-        )
+        raise ValueError(f"in_dim ({in_dim}) must be divisible by group_size ({group_size})")
     grouped = tensor.float().reshape(out_dim, -1, group_size)  # (out, n_groups, gs)
     # Symmetric scale: max(|vals|) / 7
     group_max = grouped.abs().amax(dim=-1)  # (out, n_groups)

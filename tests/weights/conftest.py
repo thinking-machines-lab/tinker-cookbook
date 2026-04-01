@@ -132,11 +132,13 @@ def save_minimal_tokenizer(path: Path) -> None:
         json.dumps({"tokenizer_class": "PreTrainedTokenizerFast"})
     )
     (path / "tokenizer.json").write_text(
-        json.dumps({
-            "version": "1.0",
-            "model": {"type": "BPE", "vocab": {"a": 0, "b": 1}, "merges": []},
-            "added_tokens": [],
-        })
+        json.dumps(
+            {
+                "version": "1.0",
+                "model": {"type": "BPE", "vocab": {"a": 0, "b": 1}, "merges": []},
+                "added_tokens": [],
+            }
+        )
     )
 
 
