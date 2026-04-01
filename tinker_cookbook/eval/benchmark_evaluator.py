@@ -29,18 +29,36 @@ logger = logging.getLogger(__name__)
 
 
 class BenchmarkEvaluator(SamplingClientEvaluator):
-    """Wraps a BenchmarkBuilder as a SamplingClientEvaluator for inline training eval.
+    """Run a benchmark as an inline evaluator during training.
 
-    This bridges the benchmark framework with the training loop's evaluator
-    interface. When called, it runs the benchmark and returns metrics as a
-    flat dict suitable for logging.
+    Bridges the benchmark framework with the training loop's evaluator
+    interface. When called with a sampling client (at each eval step),
+    it runs the benchmark on a small sample and returns metrics as a
+    flat ``dict[str, float]`` for logging to TensorBoard / W&B.
+
+    Returned metrics are prefixed with ``eval/{benchmark_name}/``
+    (e.g. ``eval/gsm8k/score``, ``eval/gsm8k/num_correct``).
 
     Args:
-        benchmark_name: Name of the benchmark in the registry (e.g. ``"gsm8k"``).
+        benchmark_name: Name of the benchmark in the registry
+            (e.g. ``"gsm8k"``, ``"ifeval"``).
         renderer: Renderer for tokenization and prompt building.
-        max_examples: Limit for quick eval during training. Default 100.
+        max_examples: Number of examples to evaluate per call.
+            Default 100 — small enough for fast inline eval.
         max_tokens: Maximum generation tokens. Default 32768.
         temperature: Sampling temperature. Default 0.6.
+
+    Example::
+
+        # In training config:
+        evaluator_builders = [
+            lambda: BenchmarkEvaluator("gsm8k", renderer, max_examples=100),
+            lambda: BenchmarkEvaluator("ifeval", renderer, max_examples=50),
+        ]
+
+        # Each eval step calls:
+        metrics = await evaluator(sampling_client)
+        # {"eval/gsm8k/score": 0.85, "eval/gsm8k/num_correct": 85, ...}
     """
 
     def __init__(

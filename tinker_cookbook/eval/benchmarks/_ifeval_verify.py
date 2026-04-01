@@ -19,13 +19,8 @@ logger = logging.getLogger(__name__)
 
 
 def _relation_check(count: int, relation: str, target: int) -> bool:
-    if relation == "at least":
-        return count >= target
-    elif relation == "at most":
-        return count <= target
-    elif relation == "exactly":
-        return count == target
-    return True
+    checks = {"at least": count >= target, "at most": count <= target, "exactly": count == target}
+    return checks.get(relation, True)
 
 
 def _count_words(text: str) -> int:

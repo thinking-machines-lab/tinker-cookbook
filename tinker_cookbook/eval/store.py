@@ -99,13 +99,39 @@ class RunComparison:
 
 
 class EvalStore:
-    """Persistent, file-based storage for evaluation runs.
+    """Persistent, file-based storage for tracking evaluation across checkpoints.
 
-    Supports creating runs, saving results/trajectories, listing past runs,
-    and comparing runs side-by-side.
+    Creates a directory structure under ``root_dir`` with one subdirectory per
+    evaluation run. Each run stores metadata, per-benchmark results, and
+    per-example trajectories. Supports cross-run comparison by matching
+    examples via stable ``example_id``.
 
     Args:
-        root_dir: Root directory for the eval store. Created if it doesn't exist.
+        root_dir: Root directory for the eval store. Created if it doesn't
+            exist. Supports ``~`` expansion.
+
+    Example::
+
+        store = EvalStore("~/experiments/evals")
+
+        # Create a run, evaluate, finalize
+        run_id = store.create_run(
+            model_name="Qwen/Qwen3.5-35B-A3B",
+            checkpoint_name="sft_step500",
+            benchmarks=["gsm8k", "mmlu_pro"],
+        )
+        await run_benchmarks(
+            ["gsm8k", "mmlu_pro"], client, renderer,
+            BenchmarkConfig(save_dir=store.run_dir(run_id)),
+        )
+        store.finalize_run(run_id)
+
+        # Compare two checkpoints
+        comp = store.compare_runs("run_001", "run_002", "gsm8k")
+        store.print_comparison(comp)
+
+        # Dashboard across all runs
+        store.print_dashboard()
     """
 
     def __init__(self, root_dir: str | Path):

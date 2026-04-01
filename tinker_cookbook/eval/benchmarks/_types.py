@@ -17,7 +17,28 @@ from tinker_cookbook.rl.types import Env
 class BenchmarkConfig:
     """Runtime configuration for benchmark evaluation.
 
-    Controls concurrency, limits, storage, timeouts, and generation parameters.
+    Controls concurrency, timeouts, generation parameters, storage, and
+    optional customization hooks (system prompt, custom grading).
+
+    Example::
+
+        # Basic usage — run all examples with defaults
+        config = BenchmarkConfig()
+
+        # Production eval with storage and higher timeout for thinking models
+        config = BenchmarkConfig(
+            save_dir="evals/checkpoint_500",
+            timeout_seconds=1800,
+            max_tokens=65536,
+        )
+
+        # Custom grading — override built-in answer extraction
+        config = BenchmarkConfig(
+            grade_fn=lambda response, logs: 1.0 if logs["expected"] in response else 0.0,
+        )
+
+        # Pass@k evaluation — run each example 4 times
+        config = BenchmarkConfig(num_samples=4, save_dir="evals/pass_at_k")
     """
 
     # Limits

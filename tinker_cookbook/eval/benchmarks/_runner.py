@@ -312,21 +312,43 @@ async def run_benchmark(
 ) -> BenchmarkResult:
     """Run a single benchmark end-to-end.
 
-    Handles:
-    - Concurrent rollouts with semaphore (adjusts for multi-turn)
-    - Trajectory storage with decoded text (JSONL)
-    - Resumability (skips already-completed examples by idx)
-    - Error isolation (failed examples logged, not fatal)
-    - Progress logging
+    Creates one :class:`Env` per dataset example, runs them concurrently with
+    the model, grades responses, and returns aggregated results. Trajectories
+    are saved to disk as JSONL for later inspection via :func:`load_trajectories`.
+
+    If ``config.save_dir`` is set and a previous run's trajectories exist,
+    completed examples are skipped automatically (resumability).
 
     Args:
-        benchmark: A BenchmarkBuilder instance or a name from REGISTRY.
+        benchmark: A :class:`BenchmarkBuilder` instance, or a benchmark name
+            (e.g. ``"gsm8k"``, ``"mmlu_pro"``) that will be looked up in the
+            global :data:`REGISTRY`.
         sampling_client: Tinker sampling client for model generation.
-        renderer: Renderer for tokenization and prompt building.
-        config: Runtime configuration.
+        renderer: Renderer for tokenization and prompt building. Must match
+            the model family (e.g. ``"qwen3_5"`` for Qwen3.5 models).
+        config: Runtime configuration controlling concurrency, timeouts,
+            generation parameters, and optional customization hooks
+            (``system_prompt``, ``grade_fn``). See :class:`BenchmarkConfig`.
 
     Returns:
-        Aggregated BenchmarkResult.
+        A :class:`BenchmarkResult` with the aggregated score, per-example
+        metrics, and optional pass@k estimates (when ``config.num_samples > 1``).
+
+    Raises:
+        BenchmarkNotFoundError: If ``benchmark`` is a string not in REGISTRY.
+
+    Example::
+
+        result = await run_benchmark("gsm8k", sampling_client, renderer)
+        print(f"GSM8K: {result.score:.1%}")  # e.g. "GSM8K: 84.7%"
+
+        # With custom grading and trajectory storage:
+        config = BenchmarkConfig(
+            save_dir="evals/step500",
+            timeout_seconds=1800,
+            grade_fn=my_custom_grader,
+        )
+        result = await run_benchmark("gsm8k", sampling_client, renderer, config)
     """
     from tinker_cookbook.eval.benchmarks import REGISTRY
 
@@ -591,22 +613,37 @@ async def run_benchmarks(
     config: BenchmarkConfig = BenchmarkConfig(),
     parallel: bool = True,
 ) -> dict[str, BenchmarkResult]:
-    """Run multiple benchmarks concurrently, saving a combined summary.
+    """Run multiple benchmarks and save a combined summary.
 
-    Benchmarks run in parallel by default — each benchmark gets its own
-    save subdirectory and per-file locks, so concurrent execution is safe.
-    Set ``parallel=False`` to run sequentially (useful for debugging or
-    when resources are constrained).
+    Each benchmark runs independently with its own save subdirectory and
+    per-file locks. By default all benchmarks run concurrently; set
+    ``parallel=False`` for sequential execution (useful for debugging).
+
+    When ``config.save_dir`` is set, a ``summary.json`` is written with
+    scores across all benchmarks after completion.
 
     Args:
-        names: List of benchmark names from REGISTRY.
-        sampling_client: Tinker sampling client.
-        renderer: Renderer for tokenization.
-        config: Shared runtime configuration.
-        parallel: If True, run all benchmarks concurrently.
+        names: List of benchmark names from :data:`REGISTRY`
+            (e.g. ``["gsm8k", "mmlu_pro", "ifeval"]``).
+        sampling_client: Tinker sampling client for model generation.
+        renderer: Renderer for tokenization and prompt building.
+        config: Shared runtime configuration. See :class:`BenchmarkConfig`.
+        parallel: If ``True`` (default), run all benchmarks concurrently
+            via ``asyncio.gather``. If ``False``, run sequentially.
 
     Returns:
-        Dict mapping benchmark name to BenchmarkResult.
+        Dict mapping benchmark name to its :class:`BenchmarkResult`.
+
+    Example::
+
+        results = await run_benchmarks(
+            ["gsm8k", "mmlu_pro", "ifeval"],
+            sampling_client,
+            renderer,
+            BenchmarkConfig(save_dir="evals/step500"),
+        )
+        for name, result in results.items():
+            print(f"{name}: {result.score:.1%}")
     """
     if parallel:
         benchmark_results = await asyncio.gather(

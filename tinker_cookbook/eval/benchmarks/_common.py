@@ -50,19 +50,29 @@ def build_messages(
 def decode_response(action, renderer) -> str:
     """Decode model action tokens into grading text, stripping thinking traces.
 
-    Uses the renderer's ``parse_response`` (which handles model-specific
-    thinking formats — ``<think>``, ``<|begin_of_thought|>``, etc.) followed
-    by ``get_text_content`` to extract only the non-thinking text.
+    Uses ``renderer.parse_response()`` followed by ``get_text_content()`` to
+    extract only the non-thinking text. This correctly handles model-specific
+    thinking formats (``<think>`` for Qwen, ``<|begin_of_thought|>`` for
+    DeepSeek, etc.) without benchmark-specific logic.
 
-    This is the same pipeline used by the RL training code in
-    ``tinker_cookbook.rl.problem_env``.
+    Note:
+        For benchmarks that grade tool calls (BFCL, tau2_bench), use
+        ``renderer.tokenizer.decode(action)`` directly instead — this
+        function strips tool call content.
 
     Args:
-        action: Raw token sequence from the model.
-        renderer: The renderer used for this model.
+        action: Raw token sequence (list of ints) from the model.
+        renderer: The :class:`~tinker_cookbook.renderers.base.Renderer` used
+            for this model. Must match the model family.
 
     Returns:
-        The non-thinking text content of the response.
+        The non-thinking text content of the response, suitable for
+        answer extraction and grading.
+
+    Example::
+
+        response = decode_response(action, renderer)
+        correct = check_gsm8k(response, expected_answer)
     """
     from tinker_cookbook.renderers import get_text_content
 
