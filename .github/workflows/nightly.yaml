@@ -77,3 +77,6 @@ jobs:
             --notes-file /tmp/release-notes.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update nightly branch
+        run: git push origin HEAD:refs/heads/nightly --force
