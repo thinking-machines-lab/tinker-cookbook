@@ -94,15 +94,22 @@ def _slug_to_hf_name(slug: str) -> str:
     return slug.replace("-", "/", 1)
 
 
-def fetch_runs(wandb_project: str) -> list[RunResult]:
-    """Fetch all finished runs from a W&B project."""
+def fetch_runs(wandb_project: str, fetch_history: bool = True) -> list[RunResult]:
+    """Fetch all finished runs from a W&B project.
+
+    Args:
+        wandb_project: W&B project name.
+        fetch_history: If True, fetch step-level history for NLL curve plots.
+            This is slow (~1s per run) so set to False when only summary
+            metrics are needed (e.g. with ``--no-plots``).
+    """
     import wandb  # type: ignore[import-untyped]
 
     api = wandb.Api()
     raw_runs = api.runs(wandb_project, filters={"state": "finished"})
 
     results: list[RunResult] = []
-    for r in raw_runs:
+    for i, r in enumerate(raw_runs):
         parsed = _parse_run_name(r.name)
         if parsed is None:
             print(f"  Skipping unparseable run: {r.name}")
@@ -118,15 +125,18 @@ def fetch_runs(wandb_project: str) -> list[RunResult]:
             print(f"  Skipping run with missing metrics: {r.name}")
             continue
 
-        # Fetch step-level history for NLL curves
-        hist = r.history(keys=["test/nll"], pandas=False)
+        # Fetch step-level history for NLL curves (slow)
         history_points: list[tuple[int, float]] = []
-        for row in hist:
-            step = row.get("_step")
-            nll = row.get("test/nll")
-            if step is not None and nll is not None:
-                history_points.append((int(step), float(nll)))
-        history_points.sort(key=lambda x: x[0])
+        if fetch_history:
+            if (i + 1) % 50 == 0:
+                print(f"  Fetching history... ({i + 1} runs processed)")
+            hist = r.history(keys=["test/nll"], pandas=False)
+            for row in hist:
+                step = row.get("_step")
+                nll = row.get("test/nll")
+                if step is not None and nll is not None:
+                    history_points.append((int(step), float(nll)))
+            history_points.sort(key=lambda x: x[0])
 
         results.append(
             RunResult(
@@ -534,8 +544,11 @@ def main() -> None:
         print(f"Loading runs from local directory: {args.local_dir}")
         runs = fetch_runs_local(args.local_dir)
     else:
+        need_history = not args.no_plots
         print(f"Fetching runs from W&B project: {args.wandb_project}")
-        runs = fetch_runs(args.wandb_project)
+        if not need_history:
+            print("  (skipping step-level history since --no-plots)")
+        runs = fetch_runs(args.wandb_project, fetch_history=need_history)
 
     if not runs:
         print("No runs found.")
