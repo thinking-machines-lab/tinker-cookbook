@@ -182,7 +182,11 @@ async def run_sdft_stage(
     if task == "tooluse":
         train_q, train_a, _, _ = load_tooluse_from_arrow(f"{expanded_data_dir}/tooluse_data")
     elif task == "science":
-        train_q, train_a, _, _ = load_science_from_arrow(f"{expanded_data_dir}/science_data")
+        train_q, train_a, _, _ = load_science_from_arrow(
+            f"{expanded_data_dir}/science_data",
+            thinking_format=config.thinking_format,
+            for_sft=False,
+        )
     else:
         raise ValueError(f"Unknown task: {task}")
 
