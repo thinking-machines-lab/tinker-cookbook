@@ -1534,7 +1534,7 @@ from tinker_cookbook.weights._merge_kimi_k25 import detect_profile as detect_kim
 from tinker_cookbook.weights._merge_utils import (
     create_virtual_weight_keys,
     create_virtual_weight_shapes,
-    has_packed_weights,
+    is_pack_quantized,
 )
 from tinker_cookbook.weights._packed_int4 import (
     dequantize_int4_group,
@@ -1683,43 +1683,47 @@ class TestKimiK25VirtualWeightKeys:
         assert augmented["layer.weight"] == (2048, 7168)
 
 
-class TestHasPackedWeightsGuard:
-    """Ensure has_packed_weights only fires for compressed-tensors pack-quantized format."""
+class TestIsPackQuantizedGuard:
+    """Ensure is_pack_quantized only fires for compressed-tensors pack-quantized format.
+
+    Detection is based on the explicit ``format: pack-quantized`` field in
+    ``quantization_config``, not weight key heuristics.  This makes it safe
+    when new quantized model formats are added.
+    """
+
+    _PACK_QUANTIZED_CONFIG = {
+        "quantization_config": {
+            "quant_method": "compressed-tensors",
+            "format": "pack-quantized",
+            "config_groups": {"group_0": {"weights": {"num_bits": 4, "group_size": 32}}},
+        },
+    }
 
     def test_kimi_k2_triggers(self):
-        keys = {"model.layers.1.mlp.experts.0.gate_proj.weight_packed"}
-        assert has_packed_weights(keys)
+        """Kimi K2 has quantization_config at top level."""
+        assert is_pack_quantized(self._PACK_QUANTIZED_CONFIG)
 
-    def test_kimi_k25_triggers(self):
-        keys = {"language_model.model.layers.1.mlp.experts.0.gate_proj.weight_packed"}
-        assert has_packed_weights(keys)
+    def test_kimi_k25_triggers_via_text_config(self):
+        """Kimi K2.5 nests quantization_config under text_config."""
+        config = {"model_type": "kimi_k25", "text_config": self._PACK_QUANTIZED_CONFIG}
+        assert is_pack_quantized(config)
 
     def test_nemotron_nvfp4_does_not_trigger(self):
-        """Nemotron NVFP4 uses .weight (U8 dtype) + .weight_scale + .weight_scale_2,
-        NOT .weight_packed. The hook must not fire."""
-        keys = {
-            "backbone.layers.1.mixer.experts.0.up_proj.weight",
-            "backbone.layers.1.mixer.experts.0.up_proj.weight_scale",
-            "backbone.layers.1.mixer.experts.0.up_proj.weight_scale_2",
-            "backbone.layers.1.mixer.experts.0.up_proj.input_scale",
-        }
-        assert not has_packed_weights(keys)
+        """Nemotron NVFP4 has no quantization_config (quantization is implicit in dtypes)."""
+        config = {"model_type": "nemotron_h"}
+        assert not is_pack_quantized(config)
 
     def test_deepseek_native_fp8_does_not_trigger(self):
-        """DeepSeek V3.1 native FP8 uses .weight (FP8 dtype) + .weight_scale_inv,
-        NOT .weight_packed."""
-        keys = {
-            "model.layers.1.mlp.experts.0.gate_proj.weight",
-            "model.layers.1.mlp.experts.0.gate_proj.weight_scale_inv",
-        }
-        assert not has_packed_weights(keys)
+        """DeepSeek V3.1 native FP8 uses quant_method=fp8, not pack-quantized."""
+        config = {"quantization_config": {"quant_method": "fp8"}}
+        assert not is_pack_quantized(config)
 
     def test_standard_bf16_does_not_trigger(self):
-        keys = {"model.layers.0.self_attn.q_proj.weight"}
-        assert not has_packed_weights(keys)
+        config = {"model_type": "qwen3"}
+        assert not is_pack_quantized(config)
 
-    def test_empty_keys_does_not_trigger(self):
-        assert not has_packed_weights(set())
+    def test_empty_config_does_not_trigger(self):
+        assert not is_pack_quantized({})
 
 
 class TestPackedInt4:

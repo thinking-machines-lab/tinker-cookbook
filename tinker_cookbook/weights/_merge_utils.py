@@ -451,6 +451,21 @@ def create_virtual_weight_shapes(
     return augmented
 
 
-def has_packed_weights(model_state_keys: set[str]) -> bool:
-    """Check if model has any compressed-tensors packed weights."""
-    return any(k.endswith(PACKED_SUFFIX) for k in model_state_keys)
+def is_pack_quantized(config_dict: dict) -> bool:
+    """Check if the model uses compressed-tensors ``pack-quantized`` format.
+
+    This format (used by Kimi K2, K2.5) stores quantized weights as
+    ``weight_packed`` / ``weight_scale`` / ``weight_shape`` triplets.
+    Detection is based on the explicit ``format: pack-quantized`` field
+    in ``quantization_config``, not on weight key heuristics.
+
+    Other quantized formats (Nemotron NVFP4, DeepSeek native FP8) use
+    different conventions and are NOT matched by this check.
+    """
+    for config in [config_dict, config_dict.get("text_config", {})]:
+        if not isinstance(config, dict):
+            continue
+        quant = config.get("quantization_config")
+        if isinstance(quant, dict) and quant.get("format") == "pack-quantized":
+            return True
+    return False

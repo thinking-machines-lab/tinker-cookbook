@@ -84,7 +84,7 @@ def build_sharded(
     )
 
     # 4. Model-specific pre-planning (e.g. virtual key creation for packed weights)
-    shard_hooks = _build_shard_hooks(profile, config_dict, model_state_keys)
+    shard_hooks = _build_shard_hooks(profile, config_dict)
     if shard_hooks is not None:
         model_state_keys, model_shapes = shard_hooks.augment_for_planning(
             model_state_keys, model_shapes
@@ -237,16 +237,16 @@ class _PackedInt4ShardHooks(_ShardHooks):
 def _build_shard_hooks(
     profile: MergeProfile,
     config_dict: dict,
-    model_state_keys: set[str],
 ) -> _ShardHooks | None:
-    """Build shard hooks based on the model's weight format.
+    """Build shard hooks based on the model's quantization config.
 
-    Detects compressed-tensors INT4 packed weights by key presence
-    (model-agnostic) rather than model family, so any model with
-    this format gets correct handling automatically.
+    Uses the explicit ``format: pack-quantized`` field from the model's
+    ``quantization_config`` to detect compressed-tensors INT4 format
+    (Kimi K2, K2.5).  Other quantized formats (Nemotron NVFP4, DeepSeek
+    native FP8) are NOT matched — they use different weight conventions.
     """
-    from tinker_cookbook.weights._merge_utils import has_packed_weights
+    from tinker_cookbook.weights._merge_utils import is_pack_quantized
 
-    if has_packed_weights(model_state_keys):
+    if is_pack_quantized(config_dict):
         return _PackedInt4ShardHooks(config_dict)
     return None
