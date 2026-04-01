@@ -134,6 +134,7 @@ python -m tinker_cookbook.recipes.sdft.train \
 | Method | LR | Tool-use | Science | Sci Δ |
 |--------|-----|----------|---------|-------|
 | Base model | — | 61.86% | 46.35% | — |
+| SFT | 1e-4 | 8.25% | 36.88% | -9.47 |
 | SFT | 5e-4 | 67.01% | 29.19% | **-17.16** |
 | SFT | 1e-3 | 69.07% | 37.08% | **-9.27** |
 | SDFT | 1e-4 | 63.92% | 45.17% | -1.18 |
@@ -144,11 +145,14 @@ python -m tinker_cookbook.recipes.sdft.train \
 
 | Method | LR | Tool-use | Science | TU Retention |
 |--------|-----|----------|---------|-------------|
+| SFT | 1e-4 | 64.95% | 57.40% | — * |
 | SFT | 5e-4 | 68.04% | 63.71% | 101% |
 | SFT | 1e-3 | 8.25% | 64.69% | **12%** |
 | **SDFT** | **1e-4** | **61.86%** | **56.80%** | **97%** |
 | **SDFT** | **5e-4** | **61.86%** | **63.51%** | **94%** |
 | SDFT | 1e-3 | 35.05% | 60.75% | 52% |
+
+\* SFT lr=1e-4 Stage 1 tool-use was 8.25% (anomalous), so Stage 2 retention is not meaningful.
 
 ### Findings
 
