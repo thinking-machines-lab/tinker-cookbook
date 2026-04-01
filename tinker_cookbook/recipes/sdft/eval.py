@@ -129,11 +129,10 @@ def evaluate_tooluse_correctness(
 
 
 # System prompt for thinking models (Qwen3.5): relies on native <think> block,
-# asks model to write "The answer is X." for unambiguous parsing.
+# asks model to output only the letter after reasoning.
 SCIENCE_SYSTEM_PROMPT_THINKING = (
     "Given a question and four options, please select the right answer. "
-    'After your reasoning, write your final answer as "The answer is X." '
-    "where X is the letter (A, B, C, or D)."
+    "Think step by step, then output ONLY the letter (A, B, C, or D) as your final answer."
 )
 
 
