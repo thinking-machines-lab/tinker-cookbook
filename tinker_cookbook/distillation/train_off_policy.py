@@ -1,4 +1,4 @@
-"""Off-policy distillation with top-K soft targets from teacher model(s).
+"""Off-policy distillation with soft targets from teacher model(s).
 
 Two distillation approaches are available in ``tinker_cookbook.distillation``:
 
@@ -9,9 +9,10 @@ Two distillation approaches are available in ``tinker_cookbook.distillation``:
 
 **Off-policy** (this module):
   The student trains on fixed data (e.g., an SFT data mix). At each token
-  position, the teacher's top-K distribution is used as soft targets for
-  cross-entropy. The student learns to match the teacher's distribution
-  on ground-truth data. No rollouts, no sampling from the student.
+  position, the teacher's highest-probability tokens are used as soft
+  targets for cross-entropy. The student learns to match the teacher's
+  distribution on ground-truth data. No rollouts, no sampling from the
+  student.
 
 Off-policy supports both single-teacher and multi-teacher configurations:
 
@@ -68,7 +69,7 @@ class DatasetWithTeacher:
     """Pairs a supervised dataset with its teacher model.
 
     Each domain in multi-teacher distillation gets one of these. The
-    teacher's top-K distribution is used as soft targets for training.
+    teacher's highest-probability tokens are used as soft targets for training.
 
     Args:
         dataset_builder: Builds the supervised dataset for this domain.
@@ -83,13 +84,13 @@ class DatasetWithTeacher:
 
 @chz.chz
 class Config:
-    """Configuration for off-policy top-K distillation.
+    """Configuration for off-policy distillation with soft teacher targets.
 
     Args:
         learning_rate: Optimizer learning rate.
         dataset_configs: One per domain. Each pairs a dataset with a teacher.
         model_name: Student model name.
-        K: Number of top-K tokens to distill per position.
+        n_teacher_targets: Number of teacher tokens per position used as soft targets.
         teacher_concurrency: Max concurrent teacher forward passes.
         batch_size: Number of examples per training step.
     """
@@ -101,8 +102,8 @@ class Config:
     lora_rank: int = 32
 
     # Distillation parameters
-    K: int = 20
-    """Number of top-K tokens per position from the teacher."""
+    n_teacher_targets: int = 20
+    """Number of highest-probability teacher tokens per position used as soft targets."""
     teacher_concurrency: int = 64
     """Max concurrent teacher forward passes per batch."""
 
@@ -126,28 +127,29 @@ class Config:
 
 
 # ---------------------------------------------------------------------------
-# Teacher top-K collection
+# Teacher soft-target collection
 # ---------------------------------------------------------------------------
 
 
 async def _collect_topk_for_datum(
     teacher_client: tinker.SamplingClient,
     datum: tinker.Datum,
-    K: int,
+    n_teacher_targets: int,
 ) -> tinker.Datum:
-    """Replace a datum's (N,) targets with (N, K) soft targets from the teacher.
+    """Replace a datum's (N,) targets with (N, n_teacher_targets) soft targets from the teacher.
 
     Teacher-forces the full sequence through the teacher model and reads
-    top-K (token_id, logprob) at each position. The teacher probabilities
-    are renormalized over the top-K set and used as soft target weights.
+    the highest-probability (token_id, logprob) pairs at each position.
+    The teacher probabilities are renormalized over the selected set and
+    used as soft target weights.
 
     Args:
         teacher_client: Sampling client for the teacher model.
         datum: Original SFT datum with (N,) target_tokens and weights.
-        K: Number of top tokens per position.
+        n_teacher_targets: Number of top teacher tokens per position.
 
     Returns:
-        New datum with (N, K) shaped target_tokens and weights.
+        New datum with (N, n_teacher_targets) shaped target_tokens and weights.
     """
     # The datum's model_input is the shifted input (tokens 0..N-1).
     # target_tokens contains the next-token targets (tokens 1..N).
@@ -160,13 +162,12 @@ async def _collect_topk_for_datum(
     last_target = int(original_targets[-1].item())
     full_sequence = datum.model_input.append_int(last_target)
 
-    # Teacher-force to get top-K logprobs at each position
     response = await teacher_client.sample_async(
         prompt=full_sequence,
         num_samples=1,
         sampling_params=tinker.SamplingParams(max_tokens=1),
         include_prompt_logprobs=True,
-        topk_prompt_logprobs=K,
+        topk_prompt_logprobs=n_teacher_targets,
     )
 
     topk_prompt = response.topk_prompt_logprobs
@@ -174,18 +175,15 @@ async def _collect_topk_for_datum(
         logger.warning("Teacher returned no prompt logprobs, falling back to hard targets")
         return datum
 
-    # Extract top-K from the response positions (skip prompt, align with targets).
     # topk_prompt has one entry per input token. The target at position t
-    # corresponds to predicting the token at position t+1, so we take
-    # topk_prompt[1:] to align with the target sequence.
-    # But we need to be careful: topk_prompt has length = full_sequence.length,
-    # and we want the last seq_len positions.
+    # corresponds to predicting the token at position t+1, so we need the
+    # last seq_len entries to align with the target sequence.
     offset = len(topk_prompt) - seq_len
     relevant_topk = topk_prompt[offset:]
 
-    # Build (N, K) tensors. Initialize tokens to original targets so that
-    # unused slots (weight=0 after renormalization) are harmless if weights
-    # are ever ignored downstream.
+    # Initialize tokens to original targets so that unused slots (weight=0
+    # after renormalization) are harmless if weights are ever ignored downstream.
+    K = n_teacher_targets
     topk_tokens = original_targets.unsqueeze(-1).expand(seq_len, K).clone()
     topk_logprobs = torch.full((seq_len, K), float("-inf"))
 
@@ -221,10 +219,10 @@ async def _collect_topk_for_datum(
 async def _collect_topk_batch(
     teacher_clients: list[tinker.SamplingClient],
     datums: list[tinker.Datum],
-    K: int,
+    n_teacher_targets: int,
     concurrency: int = 64,
 ) -> list[tinker.Datum]:
-    """Collect top-K soft targets for a batch of datums, concurrently.
+    """Collect soft targets for a batch of datums, concurrently.
 
     Each datum is paired with its domain-specific teacher client. All
     teacher forward passes run concurrently, bounded by a semaphore.
@@ -233,17 +231,17 @@ async def _collect_topk_batch(
         teacher_clients: One teacher client per datum (may repeat for
             datums from the same domain).
         datums: Original SFT datums with (N,) targets.
-        K: Number of top tokens per position.
+        n_teacher_targets: Number of top teacher tokens per position.
         concurrency: Max concurrent teacher requests.
 
     Returns:
-        Datums with (N, K) shaped target_tokens and weights.
+        Datums with (N, n_teacher_targets) shaped target_tokens and weights.
     """
     sem = asyncio.Semaphore(concurrency)
 
     async def _one(client: tinker.SamplingClient, datum: tinker.Datum) -> tinker.Datum:
         async with sem:
-            return await _collect_topk_for_datum(client, datum, K)
+            return await _collect_topk_for_datum(client, datum, n_teacher_targets)
 
     return list(
         await asyncio.gather(
@@ -320,14 +318,14 @@ class _CompositeSupervisedDataset:
 
 
 async def main(config: Config) -> None:
-    """Run off-policy top-K distillation.
+    """Run off-policy distillation with soft teacher targets.
 
     For each training step:
     1. Get a batch of SFT datums from the composite dataset
     2. Route each datum to its domain-specific teacher
-    3. Collect top-K logprobs from teachers (concurrently)
-    4. Replace hard targets with soft top-K targets
-    5. Train student with built-in cross_entropy on (N, K) targets
+    3. Collect teacher logprobs (concurrently)
+    4. Replace hard targets with soft teacher targets
+    5. Train student with cross_entropy on (N, n_teacher_targets) targets
     """
     if not config.dataset_configs:
         raise ConfigurationError("At least one dataset_config is required")
@@ -399,7 +397,9 @@ async def main(config: Config) -> None:
     total_batches = len(composite)
     if config.max_steps is not None:
         total_batches = min(config.max_steps, total_batches)
-    logger.info(f"Will train for {total_batches} steps, K={config.K}")
+    logger.info(
+        f"Will train for {total_batches} steps, n_teacher_targets={config.n_teacher_targets}"
+    )
 
     evaluators = [eb() for eb in config.evaluator_builders]
 
@@ -425,11 +425,11 @@ async def main(config: Config) -> None:
         datum_teacher_clients = [teacher_clients[idx] for idx in teacher_indices]
 
         logger.info(
-            f"Step {i_batch}: collecting top-{config.K} from {len(datums)} examples "
-            f"({len(set(teacher_indices))} teachers)"
+            f"Step {i_batch}: collecting {config.n_teacher_targets} teacher targets "
+            f"from {len(datums)} examples ({len(set(teacher_indices))} teachers)"
         )
         topk_datums = await _collect_topk_batch(
-            datum_teacher_clients, datums, config.K, config.teacher_concurrency
+            datum_teacher_clients, datums, config.n_teacher_targets, config.teacher_concurrency
         )
 
         fwd_bwd_future = await training_client.forward_backward_async(
