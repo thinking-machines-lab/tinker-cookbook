@@ -54,7 +54,7 @@ from tinker_cookbook.distillation.datasets import TeacherConfig
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluatorBuilder
 from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.supervised.types import SupervisedDataset, SupervisedDatasetBuilder
-from tinker_cookbook.utils import ml_log
+from tinker_cookbook.utils import ml_log, trace
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +122,11 @@ class Config:
     wandb_project: str | None = None
     wandb_name: str | None = None
     base_url: str | None = None
+    ttl_seconds: int | None = 604800
+    """Server-side checkpoint retention (seconds). None = keep indefinitely."""
+
+    enable_trace: bool = False
+    span_chart_every: int = 0
 
     evaluator_builders: list[SamplingClientEvaluatorBuilder] = chz.field(default_factory=list)
 
@@ -336,6 +341,10 @@ async def main(config: Config) -> None:
         config=config,
         wandb_name=config.wandb_name,
     )
+    if config.enable_trace:
+        trace_events_path = str(Path(config.log_path) / "trace_events.jsonl")
+        logger.info(f"Tracing enabled. Events saved to {trace_events_path}")
+        trace.trace_init(output_file=trace_events_path)
 
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     start_batch = resume_info.batch if resume_info else 0
@@ -417,7 +426,7 @@ async def main(config: Config) -> None:
                 sampling_client = await training_client.save_weights_and_get_sampling_client_async()
             for evaluator in evaluators:
                 eval_metrics = await evaluator(sampling_client)
-                metrics.update({f"eval/{k}": v for k, v in eval_metrics.items()})
+                metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
 
         datums, teacher_indices = composite.get_batch(i_batch)
         metrics["batch_size"] = len(datums)
@@ -450,6 +459,7 @@ async def main(config: Config) -> None:
                 log_path=config.log_path,
                 kind="both",
                 loop_state={"batch": i_batch},
+                ttl_seconds=config.ttl_seconds,
             )
             sampling_client = training_client.create_sampling_client(path_dict["sampler_path"])
         else:
