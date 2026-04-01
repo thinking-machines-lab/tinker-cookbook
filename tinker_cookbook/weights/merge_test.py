@@ -1609,6 +1609,16 @@ class TestKimiK25NameRemapping:
         ops = plan_merge_ops(adapter_weights, config, model_keys, profile)
         assert "language_model.lm_head.weight" in ops
 
+    def test_direct_lm_head_remaps_to_language_model_lm_head(self):
+        """Adapter lm_head (direct ref) → language_model.lm_head in model."""
+        model_keys = {"language_model.lm_head.weight"}
+        adapter_weights, config = self._make_adapter(
+            "base_model.model.lm_head", self.HIDDEN, self.HIDDEN
+        )
+        profile = MergeProfile(model_family="kimi_k25", expert_layout="separate")
+        ops = plan_merge_ops(adapter_weights, config, model_keys, profile)
+        assert "language_model.lm_head.weight" in ops
+
     def test_expert_remaps_to_per_expert_keys(self):
         """3D expert LoRA → per-expert 2D ops under language_model.model.*."""
         n_exp = 2

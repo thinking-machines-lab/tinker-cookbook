@@ -67,19 +67,36 @@ def _build_kimi_k25_name_remaps() -> list[tuple[str, str]]:
 
     1. Strip Tinker's ``base_model.model.`` prefix.
     2. Apply VL prefix: ``model.`` → ``language_model.model.``
-       (so ``model.unembed_tokens`` becomes ``language_model.model.unembed_tokens``
-       and ``model.layers.*`` becomes ``language_model.model.layers.*``).
+       (so ``model.layers.*`` becomes ``language_model.model.layers.*``).
     3. Remap ``language_model.model.unembed_tokens`` → ``language_model.lm_head``
-       (lm_head lives directly under ``language_model.``, not ``language_model.model.``).
+       (catches adapters using Tinker's internal unembed_tokens name).
 
-    Step 2 must come before step 3 because ``str.replace("model.", ...)``
-    would match inside ``language_model.`` if we did the unembed remap first.
+    After these remaps, :func:`plan_merge_ops` applies
+    :func:`_fixup_kimi_k25_lm_head` to handle direct ``lm_head`` references.
     """
     return [
         ("base_model.model.", ""),
         ("model.", "language_model.model."),
         ("language_model.model.unembed_tokens", "language_model.lm_head"),
     ]
+
+
+def _fixup_kimi_k25_lm_head(target_key: str) -> str:
+    """Add ``language_model.`` prefix to bare ``lm_head`` keys.
+
+    Some adapters reference ``lm_head`` directly (``base_model.model.lm_head``)
+    rather than using Tinker's ``unembed_tokens`` alias. After the standard
+    remap chain strips ``base_model.model.``, these keys become bare
+    ``lm_head.weight`` which needs the VL prefix.
+
+    ``str.replace`` can't anchor to the start of the string, so we handle
+    this as a post-remap fixup rather than adding it to the remap list
+    (where it would double-prefix keys that already contain ``lm_head``
+    as a substring of ``language_model.``).
+    """
+    if target_key.startswith("lm_head"):
+        return "language_model." + target_key
+    return target_key
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +136,7 @@ def plan_merge_ops(
 
     for n in adapter_weight_names:
         target_key = remap_adapter_name(n, name_remaps)
+        target_key = _fixup_kimi_k25_lm_head(target_key)
         lora_A = adapter_weights[n.replace(".weight", ".lora_A.weight")].float()
         lora_B = adapter_weights[n.replace(".weight", ".lora_B.weight")].float() * scaling
 
