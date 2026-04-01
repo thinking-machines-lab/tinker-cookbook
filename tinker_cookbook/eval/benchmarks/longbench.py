@@ -34,29 +34,16 @@ from tinker_cookbook.rl.types import Env, StepResult
 logger = logging.getLogger(__name__)
 
 
-def _load_longbench() -> tuple[Dataset | None, str]:
-    """Try loading LongBench v2, falling back to v1. Returns (dataset, version)."""
-    for dataset_id, split in (
-        ("THUDM/LongBench-v2", "test"),
-        ("THUDM/LongBench-v2", "train"),
-        ("THUDM/LongBench", "test"),
-    ):
+def _load_longbench() -> Dataset | None:
+    """Load LongBench v2 from THUDM/LongBench-v2."""
+    for split in ("test", "train"):
         try:
-            ds = cast(Dataset, load_benchmark_dataset(dataset_id, split=split))
-            version = "v2" if "v2" in dataset_id else "v1"
-            logger.info(f"Loaded LongBench from {dataset_id}/{split} ({len(ds)} examples)")
-            return ds, version
+            ds = cast(Dataset, load_benchmark_dataset("THUDM/LongBench-v2", split=split))
+            logger.info(f"Loaded LongBench v2 from THUDM/LongBench-v2/{split} ({len(ds)} examples)")
+            return ds
         except Exception:
-            try:
-                ds = cast(Dataset, load_benchmark_dataset(dataset_id, name="default", split=split))
-                version = "v2" if "v2" in dataset_id else "v1"
-                logger.info(
-                    f"Loaded LongBench from {dataset_id}/default/{split} ({len(ds)} examples)"
-                )
-                return ds, version
-            except Exception:
-                continue
-    return None, "v2"
+            continue
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +114,7 @@ class LongBenchBenchmarkBuilder(BenchmarkBuilder):
     name = "longbench"
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
-        ds, dataset_version = _load_longbench()
+        ds = _load_longbench()
         if ds is None:
             logger.warning("Could not load LongBench dataset.")
             return []
@@ -139,35 +126,24 @@ class LongBenchBenchmarkBuilder(BenchmarkBuilder):
             context = row.get("context", "")
             subtask = row.get("domain", row.get("dataset", "unknown"))
 
-            if dataset_version == "v2":
-                question = row.get("question", row.get("input", ""))
-                choices = []
-                for letter in ("A", "B", "C", "D"):
-                    choice = row.get(f"choice_{letter}", "")
-                    if choice:
-                        choices.append(choice)
+            question = row.get("question", row.get("input", ""))
+            choices = []
+            for letter in ("A", "B", "C", "D"):
+                choice = row.get(f"choice_{letter}", "")
+                if choice:
+                    choices.append(choice)
 
-                expected = str(row.get("answer", "")).strip().upper()
+            expected = str(row.get("answer", "")).strip().upper()
 
-                if choices:
-                    user_content = (
-                        f"Read the following text carefully, then answer the question.\n\n"
-                        f"--- TEXT ---\n{context}\n--- END TEXT ---\n\n"
-                        f"Question: {question}\n\n{format_mcq_choices(choices)}\n\n"
-                        "Answer with just the letter (A, B, C, or D)."
-                    )
-                    is_mcq = expected in ("A", "B", "C", "D")
-                else:
-                    user_content = (
-                        f"Read the following text carefully, then answer the question.\n\n"
-                        f"--- TEXT ---\n{context}\n--- END TEXT ---\n\n"
-                        f"Question: {question}\n\nGive a concise answer."
-                    )
-                    is_mcq = False
+            if choices:
+                user_content = (
+                    f"Read the following text carefully, then answer the question.\n\n"
+                    f"--- TEXT ---\n{context}\n--- END TEXT ---\n\n"
+                    f"Question: {question}\n\n{format_mcq_choices(choices)}\n\n"
+                    "Answer with just the letter (A, B, C, or D)."
+                )
+                is_mcq = expected in ("A", "B", "C", "D")
             else:
-                question = row.get("input", "")
-                expected_answers = row.get("answers", row.get("all_classes", []))
-                expected = expected_answers[0] if expected_answers else ""
                 user_content = (
                     f"Read the following text carefully, then answer the question.\n\n"
                     f"--- TEXT ---\n{context}\n--- END TEXT ---\n\n"

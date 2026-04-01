@@ -109,12 +109,9 @@ class MBPPBenchmarkBuilder(BenchmarkBuilder):
     requires_sandbox = True
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
-        try:
-            ds = cast(
-                Dataset, load_benchmark_dataset("google-research-datasets/mbpp", name="sanitized")
-            )
-        except Exception:
-            ds = cast(Dataset, load_benchmark_dataset("google-research-datasets/mbpp", name="full"))
+        ds = cast(
+            Dataset, load_benchmark_dataset("google-research-datasets/mbpp", name="sanitized")
+        )
 
         ds = limit_dataset(ds, config.max_examples)
 

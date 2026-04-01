@@ -92,10 +92,7 @@ class MMLUProBenchmarkBuilder(BenchmarkBuilder):
     name = "mmlu_pro"
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
-        try:
-            ds = cast(Dataset, load_benchmark_dataset("TIGER-Lab/MMLU-Pro"))
-        except Exception:
-            ds = cast(Dataset, load_benchmark_dataset("cais/mmlu", name="all"))
+        ds = cast(Dataset, load_benchmark_dataset("TIGER-Lab/MMLU-Pro"))
 
         ds = limit_dataset(ds, config.max_examples, shuffle_seed=42)
 
