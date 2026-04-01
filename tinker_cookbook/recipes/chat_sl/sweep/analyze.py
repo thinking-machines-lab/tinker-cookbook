@@ -208,23 +208,11 @@ def fetch_runs_local(sweep_root: str) -> list[RunResult]:
             if test_nll is None or train_nll is None:
                 continue
 
-            # Estimate wall time from first and last step timestamps
-            first_row = json.loads(lines[0])
+            # Estimate wall time from sum of per-step times
             wall_time_min = 0.0
-            if "time/step" in last_row and "step" in last_row:
-                # Rough estimate: avg step time × total steps
-                total_steps = last_row["step"]
-                if total_steps > 0 and len(lines) > 1:
-                    first_ts = os.path.getmtime(metrics_file)
-                    # Use file creation vs modification as proxy
-                    import stat
-
-                    st = os.stat(metrics_file)
-                    # Fall back to total runtime from step times
-                    total_time = sum(
-                        json.loads(l).get("time/step", 0) for l in lines
-                    )
-                    wall_time_min = total_time / 60.0
+            if len(lines) > 1:
+                total_time = sum(json.loads(l).get("time/step", 0) for l in lines)
+                wall_time_min = total_time / 60.0
 
             run_name = f"tulu3-{model_slug}-{rank}rank-{lr}lr-128batch-local"
             results.append(
