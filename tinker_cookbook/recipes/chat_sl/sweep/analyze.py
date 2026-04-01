@@ -480,9 +480,6 @@ def _generate_key_findings(by_model: dict[str, list[RunResult]]) -> list[str]:
         lines.append(f"- `{lr:.0e}`: best for {count} model(s)")
     lines.append("")
 
-    # LR by model size pattern
-    large_lrs = [lr for name, lr, rank, _ in best_configs if rank <= 4]
-    small_lrs = [lr for name, lr, rank, _ in best_configs if rank >= 64]
     lines.append(
         "**Large models (small ranks 1–4) tend to prefer moderate LRs** (1e-4 to 3e-4), "
         "while **smaller models (ranks 64–128) can tolerate higher LRs** (3e-4 to 1e-3) "
