@@ -12,11 +12,9 @@ SDFT uses the same model in two roles with different prompts:
 2. **Student** sees only the question and generates a completion on-policy
 3. The loss minimizes forward KL divergence between teacher and student distributions at each token position of the student's completion:
 
-```
-L = (1/T) * sum_{t=1}^{T} KL(P_teacher(·|t) || P_student(·|t))
-```
+$$\mathcal{L} = \frac{1}{T} \sum_{t=1}^{T} \text{KL}\big(P_{\text{teacher}}(\cdot \mid t) \;\|\; P_{\text{student}}(\cdot \mid t)\big)$$
 
-where `T` is the number of completion tokens, and the KL at each position sums over the **full vocabulary** (~150K tokens).
+where $T$ is the number of completion tokens, and the KL at each position sums over the **full vocabulary** (~150K tokens).
 
 Both teacher and student start from the same base model weights. The paper maintains the teacher as an EMA (Exponential Moving Average) of the student, updated every step with `alpha=0.01` — so the teacher slowly tracks the student's learning while providing stable distillation targets.
 
@@ -26,11 +24,9 @@ Our Tinker implementation differs from the paper in two ways:
 
 1. **Top-K instead of full-vocabulary KL.** The Tinker API does not expose full-vocabulary logits. Instead, we use Tinker's [top-K distillation API](https://tinker-docs.thinkingmachines.ai/tinker/losses) (`topk_prompt_logprobs`) to recover the teacher's top-K token distribution at each position, and train with `cross_entropy` loss:
 
-    ```
-    L_topK = (1/T) * sum_{t=1}^{T} [ -sum_{k=1}^{K} P_teacher(x_k|t) * log P_student(x_k|t) ]
-    ```
+    $$\mathcal{L}_{\text{top-K}} = \frac{1}{T} \sum_{t=1}^{T} \left[ -\sum_{k=1}^{K} P_{\text{teacher}}(x_k \mid t) \cdot \log P_{\text{student}}(x_k \mid t) \right]$$
 
-    where the inner sum is over the K tokens with highest teacher probability (renormalized to sum to 1).
+    where the inner sum is over the $K$ tokens with highest teacher probability (renormalized to sum to 1).
 
 2. **Static teacher instead of EMA.** The paper maintains the teacher as an EMA of the student (updated every step with `alpha=0.01`). Our implementation keeps the teacher frozen at the initial base model weights, which is simpler and avoids the overhead of periodic weight syncing.
 
