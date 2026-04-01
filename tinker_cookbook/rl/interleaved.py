@@ -213,9 +213,9 @@ class _InterleavedRLDataset(RLDataset):
         the builder from the source dataset.
 
         Raises:
-            IndexError: If the source batch has fewer groups than expected
-                (ragged batches). All batches from a source must have the
-                same number of groups as batch 0.
+            IndexError: If a non-last source batch has fewer groups than
+                expected. All batches except the last must have the same
+                number of groups as batch 0.
         """
         gpb = self._source_groups_per_batch[src_idx]
         batch_idx = flat_idx // gpb
@@ -225,8 +225,8 @@ class _InterleavedRLDataset(RLDataset):
             raise IndexError(
                 f"Source {src_idx} batch {batch_idx} has {len(src_batch)} groups, "
                 f"expected {gpb} (based on batch 0). "
-                f"InterleavedRLDataset requires all batches from a source to "
-                f"have the same number of groups."
+                f"InterleavedRLDataset requires all batches except the last to "
+                f"have the same number of groups as batch 0."
             )
         return src_batch[within_idx]
 

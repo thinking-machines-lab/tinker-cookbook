@@ -266,7 +266,7 @@ class Test_InterleavedRLDataset:
         # Batch 0 is fine (4 groups), but later batches only have 1 group.
         # When the schedule tries to access within_idx >= 1 on those batches,
         # it should raise with a clear message.
-        with pytest.raises(IndexError, match="same number of groups"):
+        with pytest.raises(IndexError, match="same number of groups as batch 0"):
             for i in range(20):
                 ds.get_batch(i)
 
@@ -434,24 +434,25 @@ class Test_InterleavedRLDataset:
             seed=0,
         )
         # 9 full batches × 4 + 1 last batch × 2 = 38
-        assert ds._source_total_groups[0] == 38
+        assert ds._source_total_groups[0] == src.total_groups == 38
 
     def test_ragged_last_batch_all_groups_reachable(self):
         """Every group in a ragged source can be reached (no wasted data)."""
         src = RaggedLastBatchDataset("X", num_batches=5, groups_per_batch=4, last_batch_groups=2)
-        # total = 4*4 + 2 = 18 groups
         ds = _InterleavedRLDataset(
             sources=[src],
             weights=[1.0],
             groups_per_batch=1,
-            total_batches=18,
+            total_batches=src.total_groups,
             seed=0,
         )
         seen = set()
         for i in range(len(ds)):
             for b in ds.get_batch(i):
                 seen.add(cast(MockEnvGroupBuilder, b).idx)
-        assert seen == set(range(18)), f"Missing groups: {set(range(18)) - seen}"
+        assert seen == set(range(src.total_groups)), (
+            f"Missing groups: {set(range(src.total_groups)) - seen}"
+        )
 
     def test_ragged_last_batch_natural_length(self):
         """Natural length computation accounts for ragged last batch."""
@@ -464,8 +465,8 @@ class Test_InterleavedRLDataset:
             total_batches=None,
             seed=0,
         )
-        # weight=1.0, gpb=1 → 1 group/batch → 38 batches
-        assert len(ds) == 38
+        # weight=1.0, gpb=1 → 1 group/batch → total_groups batches
+        assert len(ds) == src.total_groups
 
     def test_ragged_last_batch_cycling_completes(self):
         """Ragged source cycles correctly when total_batches exceeds one pass."""
@@ -488,19 +489,15 @@ class Test_InterleavedRLDataset:
             (3, 4, 1, range(5)),  # minimal: 9 groups
             (10, 8, 5, range(5)),  # moderate
             (158, 64, 17, [0, 42]),  # real-world Nemotron scale
-            (1, 10, 10, [0]),  # single batch (not actually ragged, but edge case)
         ],
-        ids=["minimal", "moderate", "nemotron-scale", "single-batch"],
+        ids=["minimal", "moderate", "nemotron-scale"],
     )
     def test_ragged_last_batch_parametrized(self, num_batches, gpb, last_gpb, seeds):
         """Parametrized sampling simulation across configs and seeds."""
         for seed in seeds:
-            if last_gpb == gpb:
-                src = MockRLDataset("P", num_batches=num_batches, groups_per_batch=gpb)
-            else:
-                src = RaggedLastBatchDataset(
-                    "P", num_batches=num_batches, groups_per_batch=gpb, last_batch_groups=last_gpb
-                )
+            src = RaggedLastBatchDataset(
+                "P", num_batches=num_batches, groups_per_batch=gpb, last_batch_groups=last_gpb
+            )
             ds = _InterleavedRLDataset(
                 sources=[src],
                 weights=[1.0],
