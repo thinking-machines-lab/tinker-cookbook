@@ -211,7 +211,7 @@ def fetch_runs_local(sweep_root: str) -> list[RunResult]:
             # Estimate wall time from sum of per-step times
             wall_time_min = 0.0
             if len(lines) > 1:
-                total_time = sum(json.loads(l).get("time/step", 0) for l in lines)
+                total_time = sum(json.loads(line).get("time/step", 0) for line in lines)
                 wall_time_min = total_time / 60.0
 
             run_name = f"tulu3-{model_slug}-{rank}rank-{lr}lr-128batch-local"
