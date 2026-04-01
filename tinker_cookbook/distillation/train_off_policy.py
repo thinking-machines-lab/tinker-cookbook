@@ -385,6 +385,8 @@ async def main(config: Config) -> None:
         )
 
     teacher_clients: list[tinker.SamplingClient] = []
+    datasets: list[SupervisedDataset] = []
+    weights: list[float] = []
     for dc in config.dataset_configs:
         tc = dc.teacher_config
         if tc.load_checkpoint_path:
@@ -396,9 +398,6 @@ async def main(config: Config) -> None:
         teacher_clients.append(client)
         logger.info(f"Teacher: {tc.base_model} (checkpoint: {tc.load_checkpoint_path})")
 
-    datasets: list[SupervisedDataset] = []
-    weights: list[float] = []
-    for dc in config.dataset_configs:
         train_ds, _ = dc.dataset_builder()
         datasets.append(train_ds)
         weights.append(dc.weight)
