@@ -23,12 +23,14 @@ logger = logging.getLogger(__name__)
 
 
 def decode_response(action, renderer) -> str:
-    """Decode model action tokens into text for grading, stripping thinking traces.
+    """Decode model action tokens into grading text, stripping thinking traces.
 
-    Different models wrap reasoning in different schemas (``<think>...</think>``,
-    ``<|begin_of_thought|>...</|end_of_thought|>``, etc.). The renderer's
-    ``parse_content_blocks`` handles all of these. This function extracts only
-    the non-thinking text content, which is what should be graded.
+    Uses the renderer's ``parse_response`` (which handles model-specific
+    thinking formats — ``<think>``, ``<|begin_of_thought|>``, etc.) followed
+    by ``get_text_content`` to extract only the non-thinking text.
+
+    This is the same pipeline used by the RL training code in
+    ``tinker_cookbook.rl.problem_env``.
 
     Args:
         action: Raw token sequence from the model.
@@ -37,18 +39,10 @@ def decode_response(action, renderer) -> str:
     Returns:
         The non-thinking text content of the response.
     """
-    from tinker_cookbook.renderers import parse_content_blocks
+    from tinker_cookbook.renderers import get_text_content
 
-    full_text = renderer.tokenizer.decode(action)
-    blocks = parse_content_blocks(full_text)
-    text_parts = []
-    for block_list in blocks:
-        for block in block_list:
-            if block.get("type") == "text":
-                text_parts.append(block["text"])
-    result = "".join(text_parts).strip()
-    # Fall back to full text if no text blocks found (model without thinking)
-    return result if result else full_text
+    message, _ = renderer.parse_response(action)
+    return get_text_content(message)
 
 
 # ---------------------------------------------------------------------------
