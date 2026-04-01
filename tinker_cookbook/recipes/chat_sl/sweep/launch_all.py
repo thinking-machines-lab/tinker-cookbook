@@ -190,9 +190,11 @@ async def run_model_sweep(
 
     async with semaphore:
         short_name = cfg.model_name.split("/")[-1]
-        print(f"\n{'='*60}")
-        print(f"LAUNCHING: {cfg.model_name} ({cfg.tier}, {n_combos} combos, {jobs_per_model} parallel)")
-        print(f"{'='*60}")
+        print(f"\n{'=' * 60}")
+        print(
+            f"LAUNCHING: {cfg.model_name} ({cfg.tier}, {n_combos} combos, {jobs_per_model} parallel)"
+        )
+        print(f"{'=' * 60}")
 
         # Write output to a log file instead of piping through asyncio.
         # Piping breaks when training data produces very long lines, which
@@ -242,11 +244,11 @@ async def run_all(
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Summary
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("SUMMARY")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     for result in results:
-        if isinstance(result, Exception):
+        if isinstance(result, BaseException):
             print(f"  ERROR: {result}")
         else:
             name, success = result
