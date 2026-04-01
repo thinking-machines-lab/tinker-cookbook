@@ -299,12 +299,15 @@ async def build_topk_distillation_datums(
     ``(N, K)``-shaped ``target_tokens`` and ``weights`` for ``cross_entropy``
     loss.
 
-    This implements forward KL distillation restricted to the top-K vocabulary::
+    This implements forward KL distillation restricted to the top-K vocabulary.
+    At each of the T completion token positions, the loss is the cross-entropy
+    between the teacher's renormalized top-K distribution and the student::
 
-        L = -sum_t sum_k P_teacher(x_k|t) * log P_student(x_k|t)
+        L = (1/T) * sum_{t=1}^{T} [ -sum_{k=1}^{K} P_teacher(x_k|t) * log P_student(x_k|t) ]
 
-    which is equivalent to minimizing forward KL (up to constant teacher entropy)
-    over the top-K tokens. Validated to match full-vocabulary KL on the
+    This is equivalent to forward KL (up to constant teacher entropy) over the
+    top-K tokens that carry most of the probability mass. Validated to match
+    full-vocabulary KL on the
     `reference implementation <https://github.com/Continual-Intelligence/Self-Distillation>`_
     (68.04% vs 68.04% on tooluse with Qwen2.5-7B).
 

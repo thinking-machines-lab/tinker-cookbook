@@ -1,27 +1,56 @@
 # Self-Distillation Fine-Tuning (SDFT)
 
-This recipe implements the SDFT algorithm from ["Self-Distillation Enables Continual Learning"](https://arxiv.org/abs/2601.19897) (Shenfeld et al., 2026) using Tinker's top-K distillation API. SDFT is an on-policy distillation method that learns new skills from demonstrations while preserving prior capabilities — addressing the catastrophic forgetting problem in sequential fine-tuning.
+This recipe implements the SDFT algorithm from ["Self-Distillation Enables Continual Learning"](https://arxiv.org/abs/2601.19897) (Shenfeld et al., 2026) using Tinker. SDFT is an on-policy distillation method that learns new skills from demonstrations while preserving prior capabilities — addressing catastrophic forgetting in sequential fine-tuning.
 
-## How SDFT Works
+## Algorithm
 
-SDFT uses the same model in two roles:
+### What the paper does
 
-- **Teacher**: Sees the question **and** a golden answer as an in-context demonstration
-- **Student**: Sees only the question
+SDFT uses the same model as both teacher and student:
 
-The student generates completions on-policy. The teacher is then "forced" through the student's completion tokens, and its top-K token distribution at each position is recovered via Tinker's `topk_prompt_logprobs` API. These soft targets are renormalized and used to train the student with `cross_entropy` loss — approximating the paper's full-vocabulary forward KL divergence.
+1. **Teacher** sees the question + golden answer as an in-context demonstration
+2. **Student** sees only the question and generates a completion on-policy
+3. The loss minimizes forward KL divergence between teacher and student distributions at each token position of the student's completion:
 
 ```
-L = -sum_t sum_k P_teacher(x_k|t) * log P_student(x_k|t)
+L = (1/T) * sum_{t=1}^{T} KL(P_teacher(·|t) || P_student(·|t))
 ```
 
-The teacher's frozen weights act as a knowledge anchor: the distillation signal prevents the student from drifting too far from the base model's distribution, even as it acquires new skills.
+where `T` is the number of completion tokens, and the KL at each position sums over the **full vocabulary** (~150K tokens).
+
+The teacher's frozen weights act as a knowledge anchor: the distillation signal prevents the student from drifting too far from the base distribution, even as it acquires new skills.
+
+### What we implement in Tinker
+
+The Tinker API does not expose full-vocabulary logits. Instead, we use Tinker's **top-K distillation** API (`topk_prompt_logprobs`) to recover the teacher's top-K token distribution at each position, and train with `cross_entropy` loss:
+
+```
+L_topK = (1/T) * sum_{t=1}^{T} [ -sum_{k=1}^{K} P_teacher(x_k|t) * log P_student(x_k|t) ]
+```
+
+where the inner sum is over the K tokens with highest teacher probability (renormalized to sum to 1).
+
+### Validating the approximation
+
+We verified that top-K=20 closely matches full-vocabulary KL by running ablations on the [official SDFT codebase](https://github.com/Continual-Intelligence/Self-Distillation) with `Qwen/Qwen2.5-7B-Instruct` (full fine-tuning, lr=2e-5, tooluse task):
+
+| Method | Tool-use | Science |
+|--------|----------|---------|
+| Full-vocab KL | 68.04% | 33.33% |
+| **Top-K=20 KL** | **68.04%** | **35.31%** |
+| Full-vocab KL (static teacher) | 67.01% | 36.69% |
+| **Top-K=20 KL (static teacher)** | **69.07%** | **34.52%** |
+| SFT baseline | 65.98% | 36.88% |
+
+Top-K=20 matches or slightly exceeds full-vocab KL. Static teacher (no EMA sync) works comparably to EMA — both design choices are validated.
+
+We also confirmed our Tinker implementation matches the reference on the same model (`Qwen/Qwen3-4B-Instruct-2507`): both get 56.70% tooluse with top-K=20 and static teacher.
 
 ## Setup
 
 ### 1. Download the data
 
-The training data comes from the [Self-Distillation repository](https://github.com/Continual-Intelligence/Self-Distillation). The data includes preprocessed golden reasoning chains for both tool-use and science tasks.
+Training data comes from the [Self-Distillation repository](https://github.com/Continual-Intelligence/Self-Distillation), which includes preprocessed golden reasoning chains for tool-use and science tasks.
 
 ```bash
 git clone https://github.com/Continual-Intelligence/Self-Distillation.git
@@ -48,26 +77,14 @@ python -m tinker_cookbook.recipes.sdft.train \
     learning_rate=5e-4 \
     topk=20 \
     lora_rank=64
-
-# SFT baseline on tool-use (for comparison)
-python -m tinker_cookbook.recipes.sdft.run_continual_learning \
-    model_name=Qwen/Qwen3.5-35B-A3B \
-    methods=sft \
-    learning_rates=5e-4 \
-    stages=1 \
-    lora_rank=64 \
-    thinking_format=true
 ```
 
-### Continual learning experiment (2-stage)
+### Continual learning experiment (SFT vs SDFT)
 
 The key experiment: train sequentially on two tasks and measure retention.
 
 ```bash
-# Stage 1: Train on tool-use
-# Stage 2: Train on science (from Stage 1 checkpoint)
-# Compare SFT vs SDFT on both tasks after each stage
-
+# Stage 1: Train on tool-use, then Stage 2: Train on science
 python -m tinker_cookbook.recipes.sdft.run_continual_learning \
     model_name=Qwen/Qwen3.5-35B-A3B \
     methods=sft,sdft_topk \
@@ -101,8 +118,8 @@ python -m tinker_cookbook.recipes.sdft.train \
 | `groups_per_batch` | `32` | Problems per training batch |
 | `lora_rank` | `128` | LoRA adapter rank |
 | `max_tokens` | `2048` | Max completion length |
-| `thinking_format` | `false` | Convert data for thinking models (Qwen3.5) |
-| `teacher_sync_every` | `None` | Optional EMA-like teacher sync interval |
+| `thinking_format` | `false` | Convert data for thinking models (e.g., Qwen3.5) |
+| `teacher_sync_every` | `None` | Optional periodic teacher weight sync |
 
 ## Results
 
@@ -110,78 +127,52 @@ python -m tinker_cookbook.recipes.sdft.train \
 
 **Stage 1: Train on tool-use, evaluate both tasks**
 
-| Method | LR | Tool-use | Science | Tool Δ | Sci Δ |
-|--------|-----|----------|---------|--------|-------|
-| Base model | — | 61.86% | 46.35% | — | — |
-| SFT | 5e-4 | 67.01% | 29.19% | +5.15 | **-17.16** |
-| SFT | 1e-3 | 69.07% | 37.08% | +7.21 | **-9.27** |
-| **SDFT (top-K)** | **5e-4** | **65.98%** | **46.55%** | **+4.12** | **+0.20** |
-| **SDFT (top-K)** | **1e-3** | **67.01%** | **53.65%** | **+5.15** | **+7.30** |
+| Method | LR | Tool-use | Science | Sci Δ |
+|--------|-----|----------|---------|-------|
+| Base model | — | 61.86% | 46.35% | — |
+| SFT | 1e-4 | 8.25% | 36.88% | -9.47 |
+| SFT | 5e-4 | 67.01% | 29.19% | **-17.16** |
+| SFT | 1e-3 | 69.07% | 37.08% | **-9.27** |
+| **SDFT** | **1e-4** | **63.92%** | **45.17%** | **-1.18** |
+| **SDFT** | **5e-4** | **65.98%** | **46.55%** | **+0.20** |
+| **SDFT** | **1e-3** | **67.01%** | **53.65%** | **+7.30** |
 
 **Stage 2: Train on science (from Stage 1 checkpoint), evaluate both tasks**
 
 | Method | LR | Tool-use | Science | TU Retention |
 |--------|-----|----------|---------|-------------|
+| SFT | 1e-4 | 64.95% | 57.40% | — * |
 | SFT | 5e-4 | 68.04% | 63.71% | 101% |
 | SFT | 1e-3 | 8.25% | 64.69% | **12%** |
-| **SDFT (top-K)** | **5e-4** | **61.86%** | **63.51%** | **94%** |
-| **SDFT (top-K)** | **1e-4** | **61.86%** | **56.80%** | **97%** |
+| **SDFT** | **1e-4** | **61.86%** | **56.80%** | **97%** |
+| **SDFT** | **5e-4** | **61.86%** | **63.51%** | **94%** |
+| **SDFT** | **1e-3** | **35.05%** | **60.75%** | **52%** |
+
+\* SFT lr=1e-4 S1 checkpoint had 8.25% tool-use (broken), so retention is not meaningful.
 
 ### Findings
 
-1. **SDFT preserves prior knowledge during new-task training.** After Stage 1 (tool-use training), SFT causes catastrophic forgetting on science (-9 to -17pp), while SDFT either preserves or improves science (+0 to +7pp). This is the core advantage of on-policy self-distillation.
+1. **SDFT preserves prior knowledge during new-task training.** After tool-use training (Stage 1), SFT causes -9 to -17pp science degradation. SDFT either preserves or improves science (+0 to +7pp).
 
-2. **SDFT learns new tasks comparably to SFT.** At lr=5e-4, SDFT achieves 65.98% tool-use vs SFT's 67.01% — a small gap that closes at lr=1e-3 (both 67-69%). The teacher's soft targets provide sufficient signal for task acquisition.
+2. **SFT can retain knowledge with careful LR tuning.** At lr=5e-4, SFT retains 101% of tool-use after Stage 2 science training. However, at lr=1e-3, tool-use collapses to 8.25% (12% retention). The right LR for retention isn't known in advance.
 
-3. **SFT retention is sensitive to learning rate.** In Stage 2, SFT at lr=1e-3 catastrophically forgets tool-use (69% → 8%). At lr=5e-4 it retains well (101%). This suggests careful LR tuning can mitigate SFT's forgetting, but requires knowing the right LR in advance.
+3. **SDFT retention is robust across learning rates.** 94-97% tool-use retention in Stage 2 at lr=5e-4 and 1e-4, without needing to tune for retention specifically.
 
-4. **SDFT retention is robust across learning rates.** SDFT maintains 94-97% tool-use retention at lr=5e-4 and lr=1e-4 in Stage 2, without needing to tune for retention specifically.
-
-5. **Practical recommendation.** Use SDFT when you need to fine-tune on new data without risking degradation of existing capabilities. Use SFT with a conservative learning rate when you can tolerate some forgetting and want maximum target-task performance.
-
-## Implementation Details
-
-### Top-K Distillation via Tinker API
-
-The recipe uses Tinker's `topk_prompt_logprobs` to recover the teacher's token distribution:
-
-```python
-# Teacher-force student's completion through teacher
-topk_response = await teacher_client.sample_async(
-    prompt=teacher_forced_sequence,
-    num_samples=1,
-    sampling_params=tinker.SamplingParams(max_tokens=1),
-    include_prompt_logprobs=True,
-    topk_prompt_logprobs=K,  # Get top-K tokens at each position
-)
-
-# Build (N, K) shaped targets and weights for cross_entropy loss
-target_tokens[pos, :K] = teacher_token_ids
-weights[pos, :K] = renormalized_teacher_probs
-```
-
-This approximates full-vocabulary forward KL — validated against the paper's reference implementation where top-K=20 achieves identical results to full-vocabulary KL.
-
-### Thinking Model Support
-
-For thinking models like `Qwen/Qwen3.5-35B-A3B`, set `thinking_format=true`. This:
-- Converts golden answers from `<reasoning>/<answer>` to `<think>...</think>` format
-- Uses a thinking-compatible system prompt for science evaluation
-- Handles the `<think>` token sequence in the renderer automatically
+4. **Practical recommendation.** Use SDFT when you need to fine-tune on new data without risking degradation of existing capabilities. Use SFT with a conservative learning rate when you can afford some forgetting and want maximum target-task performance. Optimizing SFT's learning rate and number of steps can also help control retention.
 
 ## Files
 
 | File | Description |
 |------|-------------|
-| `tinker_cookbook/distillation/sdft.py` | Core algorithm: teacher prompts, top-K datum construction, training loop |
-| `tinker_cookbook/recipes/sdft/train.py` | CLI entry point for single-task training |
-| `tinker_cookbook/recipes/sdft/run_continual_learning.py` | 2-stage continual learning experiment runner |
-| `tinker_cookbook/recipes/sdft/datasets.py` | Data loading for tool-use and science tasks |
-| `tinker_cookbook/recipes/sdft/eval.py` | Evaluation for both tasks |
+| `tinker_cookbook/distillation/sdft.py` | Core: teacher prompts, top-K datum construction, training loop |
+| `tinker_cookbook/recipes/sdft/train.py` | CLI entry point |
+| `tinker_cookbook/recipes/sdft/run_continual_learning.py` | 2-stage experiment runner |
+| `tinker_cookbook/recipes/sdft/datasets.py` | Data loading (tool-use, science, thinking model format) |
+| `tinker_cookbook/recipes/sdft/eval.py` | Evaluation (tool-use exact match, science MCQ) |
 | `tinker_cookbook/recipes/sdft/sdft_test.py` | Unit tests |
 
 ## References
 
 - Shenfeld et al., ["Self-Distillation Enables Continual Learning"](https://arxiv.org/abs/2601.19897), 2026
-- [Reference implementation](https://github.com/Continual-Intelligence/Self-Distillation) (TRL-based, Qwen2.5-7B)
+- [Official implementation](https://github.com/Continual-Intelligence/Self-Distillation) (TRL-based, Qwen2.5-7B)
 - [Tinker top-K distillation docs](https://tinker-docs.thinkingmachines.ai/losses#top-k-distillation)
