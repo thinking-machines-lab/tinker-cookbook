@@ -45,7 +45,7 @@ def _():
 
     tokenizer = tokenizer_utils.get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = renderers.get_renderer("qwen3", tokenizer)
-    renderer
+    renderer  # noqa: B018
     return renderer, renderers, tokenizer, tokenizer_utils
 
 
@@ -123,7 +123,7 @@ def _(renderer, tokenizer):
     # For Qwen3, this is the <|im_end|> token
     for tok in stop_sequences:
         if isinstance(tok, int):
-            print(f"  Token {tok} decodes to: {repr(tokenizer.decode([tok]))}")
+            print(f"  Token {tok} decodes to: {tokenizer.decode([tok])!r}")
     return (stop_sequences,)
 
 
@@ -195,7 +195,7 @@ def _(messages, renderer, tokenizer):
     token_ids = model_input.to_ints()
     for i, (tok_id, w) in enumerate(zip(token_ids, weights.tolist())):
         label = "COMPLETION" if w > 0 else "prompt"
-        print(f"  [{i:3d}] {label:10s}  {repr(tokenizer.decode([tok_id]))}")
+        print(f"  [{i:3d}] {label:10s}  {tokenizer.decode([tok_id])!r}")
     return model_input, token_ids, weights
 
 

@@ -126,8 +126,8 @@ def _(TensorData, tinker, tokenizer, torch):
         },
     )
 
-    print(f"SFT datum: {len(all_ids)-1} tokens, {sum(sft_weights):.0f} completion tokens")
-    print(f"RL datum:  {len(all_ids)-1} tokens, advantage=+1.0 on completion")
+    print(f"SFT datum: {len(all_ids) - 1} tokens, {sum(sft_weights):.0f} completion tokens")
+    print(f"RL datum:  {len(all_ids) - 1} tokens, advantage=+1.0 on completion")
     return model_input_rl, model_input_sft, rl_datum, sft_datum
 
 

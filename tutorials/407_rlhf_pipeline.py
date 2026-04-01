@@ -50,8 +50,8 @@ def _():
     warnings.filterwarnings("ignore", message="IProgress not found")
 
     import tinker
+
     from tinker_cookbook import checkpoint_utils, model_info
-    from tinker_cookbook.renderers import TrainOnWhat
 
     BASE_MODEL = "meta-llama/Llama-3.2-3B"
     LORA_RANK = 64
@@ -281,7 +281,8 @@ def _(
         ComparisonEvaluator,
     )
     from tinker_cookbook.preference.types import PreferenceModelBuilderFromChatRenderer
-    from tinker_cookbook.rl import preference_envs, train as rl_train
+    from tinker_cookbook.rl import preference_envs
+    from tinker_cookbook.rl import train as rl_train
 
     # Load checkpoints from Stages 1 and 2
     sft_ckpt = checkpoint_utils.get_last_checkpoint(sft_log_path)
@@ -390,12 +391,18 @@ async def _(
     tokenizer_eval = base_sampler.get_tokenizer()
 
     # Sample from both models on the same prompt
-    test_prompt = "What is the most important thing to consider when learning a new programming language?"
+    test_prompt = (
+        "What is the most important thing to consider when learning a new programming language?"
+    )
     prompt_tokens = types.ModelInput.from_ints(tokenizer_eval.encode(test_prompt))
     params = types.SamplingParams(max_tokens=200, temperature=0.7, stop=["\n\n"])
 
-    base_result = await base_sampler.sample_async(prompt=prompt_tokens, sampling_params=params, num_samples=1)
-    rlhf_result = await rlhf_sampler.sample_async(prompt=prompt_tokens, sampling_params=params, num_samples=1)
+    base_result = await base_sampler.sample_async(
+        prompt=prompt_tokens, sampling_params=params, num_samples=1
+    )
+    rlhf_result = await rlhf_sampler.sample_async(
+        prompt=prompt_tokens, sampling_params=params, num_samples=1
+    )
 
     print("=== Base Model ===")
     print(test_prompt + tokenizer_eval.decode(base_result.sequences[0].tokens))

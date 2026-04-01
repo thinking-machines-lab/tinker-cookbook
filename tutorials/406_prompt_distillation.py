@@ -131,7 +131,9 @@ def _():
         ("اور اس نے کہا امّی، میں گھر آگیا ہوں۔", "ur"),
     ]
 
-    print(f"Test sentences: {len(SENTENCES)} across {len(set(l for _, l in SENTENCES))} languages")
+    print(
+        f"Test sentences: {len(SENTENCES)} across {len({lang for _, lang in SENTENCES})} languages"
+    )
     for _text, _label in SENTENCES[:4]:
         print(f"  [{_label}] {_text[:50]}")
     print(f"  ... and {len(SENTENCES) - 4} more")
@@ -207,7 +209,9 @@ def _(SENTENCES, renderer, teacher_labels):
         _w = _datum.loss_fn_inputs["weights"]
         _w_list = _w.tolist() if hasattr(_w, "tolist") else list(_w)
         _n_train = sum(1 for w in _w_list if w > 0)
-        print(f"  Example {i:2d}: {_datum.model_input.length:4d} total tokens, {_n_train:3d} trained tokens")
+        print(
+            f"  Example {i:2d}: {_datum.model_input.length:4d} total tokens, {_n_train:3d} trained tokens"
+        )
     return (student_data,)
 
 
@@ -230,7 +234,9 @@ async def _(MODEL_NAME, service_client, student_data, tinker):
 
     adam_params = tinker.AdamParams(learning_rate=2e-4)
     for _step in range(10):
-        _fwd_bwd_future = await training_client.forward_backward_async(student_data, loss_fn="cross_entropy")
+        _fwd_bwd_future = await training_client.forward_backward_async(
+            student_data, loss_fn="cross_entropy"
+        )
         _optim_future = await training_client.optim_step_async(adam_params)
         _fwd_bwd_result = await _fwd_bwd_future.result_async()
         _loss = _fwd_bwd_result.metrics["loss:sum"]

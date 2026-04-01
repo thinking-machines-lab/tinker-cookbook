@@ -43,6 +43,7 @@ def _(mo):
 @app.cell
 async def _():
     import tinker
+
     from tinker_cookbook import renderers
     from tinker_cookbook.supervised.data import conversation_to_datum
     from tinker_cookbook.tokenizer_utils import get_tokenizer

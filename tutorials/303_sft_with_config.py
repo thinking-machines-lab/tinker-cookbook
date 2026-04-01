@@ -76,21 +76,28 @@ def _(
     SupervisedDatasetFromHFDataset,
     chz,
     datasets,
+    tinker,
 ):
     # Create a simple instruction-following dataset
     EXAMPLES = [
-        {"messages": [
-            {"role": "user", "content": "What is 2 + 3?"},
-            {"role": "assistant", "content": "2 + 3 = 5"},
-        ]},
-        {"messages": [
-            {"role": "user", "content": "Translate 'hello' to French."},
-            {"role": "assistant", "content": "Bonjour"},
-        ]},
-        {"messages": [
-            {"role": "user", "content": "What color is the sky?"},
-            {"role": "assistant", "content": "The sky is blue."},
-        ]},
+        {
+            "messages": [
+                {"role": "user", "content": "What is 2 + 3?"},
+                {"role": "assistant", "content": "2 + 3 = 5"},
+            ]
+        },
+        {
+            "messages": [
+                {"role": "user", "content": "Translate 'hello' to French."},
+                {"role": "assistant", "content": "Bonjour"},
+            ]
+        },
+        {
+            "messages": [
+                {"role": "user", "content": "What color is the sky?"},
+                {"role": "assistant", "content": "The sky is blue."},
+            ]
+        },
     ] * 10  # Repeat for a small dataset
 
     @chz.chz
@@ -103,10 +110,12 @@ def _(
 
             def example_to_data(example):
                 model_input, weights = renderer.build_supervised_example(example["messages"])
-                return [tinker.Datum(
-                    model_input=model_input,
-                    loss_fn_inputs={"weights": tinker.TensorData.from_list(weights.tolist())},
-                )]
+                return [
+                    tinker.Datum(
+                        model_input=model_input,
+                        loss_fn_inputs={"weights": tinker.TensorData.from_list(weights.tolist())},
+                    )
+                ]
 
             train_ds = SupervisedDatasetFromHFDataset(
                 hf_dataset, batch_size=self.common_config.batch_size, flatmap_fn=example_to_data

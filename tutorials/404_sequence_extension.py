@@ -41,9 +41,9 @@ def _(mo):
 def _():
     import tinker
 
+    from tinker_cookbook.completers import TokensWithLogprobs
     from tinker_cookbook.rl.data_processing import trajectory_to_data
     from tinker_cookbook.rl.types import Trajectory, Transition
-    from tinker_cookbook.completers import TokensWithLogprobs
 
     return (TokensWithLogprobs, Trajectory, Transition, tinker, trajectory_to_data)
 
@@ -71,29 +71,32 @@ def _(mo):
 def _(TokensWithLogprobs, Trajectory, Transition, tinker, trajectory_to_data):
     # Simulate a 3-turn conversation
     # Observation tokens (prompt parts)
-    o1 = [100, 101, 102, 103]       # "What is 2+3?"
-    a1 = [200, 201]                  # "5"
-    o2 = [300, 301]                  # "Correct! Now what is 5*3?"
-    a2 = [400, 401, 402]             # "15"
-    o3 = [500]                       # "Right! Final: 15+1?"
-    a3 = [600, 601]                  # "16"
+    o1 = [100, 101, 102, 103]  # "What is 2+3?"
+    a1 = [200, 201]  # "5"
+    o2 = [300, 301]  # "Correct! Now what is 5*3?"
+    a2 = [400, 401, 402]  # "15"
+    o3 = [500]  # "Right! Final: 15+1?"
+    a3 = [600, 601]  # "16"
 
     # Build transitions -- each observation extends the previous
     transitions = [
         Transition(
             ob=tinker.ModelInput.from_ints(o1),
             ac=TokensWithLogprobs(tokens=a1, logprobs=[-0.5, -0.3]),
-            reward=0.0, episode_done=False,
+            reward=0.0,
+            episode_done=False,
         ),
         Transition(
             ob=tinker.ModelInput.from_ints(o1 + a1 + o2),  # Extends previous
             ac=TokensWithLogprobs(tokens=a2, logprobs=[-0.4, -0.2, -0.1]),
-            reward=0.0, episode_done=False,
+            reward=0.0,
+            episode_done=False,
         ),
         Transition(
             ob=tinker.ModelInput.from_ints(o1 + a1 + o2 + a2 + o3),  # Extends again
             ac=TokensWithLogprobs(tokens=a3, logprobs=[-0.6, -0.3]),
-            reward=1.0, episode_done=True,
+            reward=1.0,
+            episode_done=True,
         ),
     ]
 
@@ -130,12 +133,14 @@ def _(TokensWithLogprobs, Trajectory, Transition, tinker, trajectory_to_data):
         Transition(
             ob=tinker.ModelInput.from_ints([100, 101]),
             ac=TokensWithLogprobs(tokens=[200, 201], logprobs=[-0.5, -0.3]),
-            reward=0.5, episode_done=False,
+            reward=0.5,
+            episode_done=False,
         ),
         Transition(
             ob=tinker.ModelInput.from_ints([300, 301, 302]),  # New context, not a prefix
             ac=TokensWithLogprobs(tokens=[400, 401], logprobs=[-0.4, -0.2]),
-            reward=0.5, episode_done=True,
+            reward=0.5,
+            episode_done=True,
         ),
     ]
 

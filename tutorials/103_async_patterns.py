@@ -133,11 +133,14 @@ async def _(
     import asyncio
 
     _start = time.time()
+
     # Step 1: Submit ALL requests concurrently using asyncio.gather
     async def _sample_one(_prompt_text):
         _messages = [{"role": "user", "content": _prompt_text}]
         _model_input = renderer.build_generation_prompt(_messages)
-        return await sampling_client.sample_async(prompt=_model_input, num_samples=1, sampling_params=params)
+        return await sampling_client.sample_async(
+            prompt=_model_input, num_samples=1, sampling_params=params
+        )
 
     _results = await asyncio.gather(*[_sample_one(p) for p in prompts])
     concurrent_results = []
@@ -184,7 +187,9 @@ async def _(get_text_content, params, renderer, sampling_client, time):
         print(f"Completion {i + 1}: {text[:150]}\n")
     _start = time.time()
     for _ in range(_GROUP_SIZE):
-        await sampling_client.sample_async(prompt=_model_input, num_samples=1, sampling_params=params)
+        await sampling_client.sample_async(
+            prompt=_model_input, num_samples=1, sampling_params=params
+        )
     sequential_multi_time = time.time() - _start
     print(f"num_samples={_GROUP_SIZE} in one call: {multi_time:.1f}s")
     print(f"{_GROUP_SIZE} sequential calls:        {sequential_multi_time:.1f}s")

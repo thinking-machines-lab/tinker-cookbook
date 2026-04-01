@@ -108,7 +108,9 @@ async def _(sampling_client, tokenizer, types):
 
     # Sample a completion
     params = types.SamplingParams(max_tokens=50, temperature=0.7, stop=["\n"])
-    result = await sampling_client.sample_async(prompt=prompt, sampling_params=params, num_samples=1)
+    result = await sampling_client.sample_async(
+        prompt=prompt, sampling_params=params, num_samples=1
+    )
 
     # Decode and print
     completion_tokens = result.sequences[0].tokens

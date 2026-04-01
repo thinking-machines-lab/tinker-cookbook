@@ -62,7 +62,10 @@ def _(Comparison, LabeledComparison):
             {"role": "user", "content": "Explain gravity in one sentence."},
         ],
         completion_A=[
-            {"role": "assistant", "content": "Gravity is the force that attracts objects with mass toward each other."},
+            {
+                "role": "assistant",
+                "content": "Gravity is the force that attracts objects with mass toward each other.",
+            },
         ],
         completion_B=[
             {"role": "assistant", "content": "Gravity is like magnets but for everything."},
@@ -77,7 +80,7 @@ def _(Comparison, LabeledComparison):
 
     # Swapping reverses the label
     swapped = labeled.swap()
-    print(f"\nAfter swap:")
+    print("\nAfter swap:")
     print(f"Completion A: {swapped.comparison.completion_A[0]['content']}")
     print(f"Preferred:    {swapped.label}")
     return (comparison, labeled, swapped)
@@ -139,10 +142,10 @@ def _(MODEL_NAME):
     # Example config (not running training here)
     print("DPO Config fields:")
     print(f"  model_name:      {MODEL_NAME}")
-    print(f"  dpo_beta:        0.1  (default)")
-    print(f"  learning_rate:   1e-5 (default, lower than SFT)")
-    print(f"  lr_schedule:     linear")
-    print(f"  lora_rank:       32")
+    print("  dpo_beta:        0.1  (default)")
+    print("  learning_rate:   1e-5 (default, lower than SFT)")
+    print("  lr_schedule:     linear")
+    print("  lora_rank:       32")
     return DPOConfig, compute_dpo_loss
 
 
@@ -178,12 +181,16 @@ def _(compute_dpo_loss):
 
     for beta in [0.05, 0.1, 0.5]:
         loss, metrics = compute_dpo_loss(
-            chosen_logprobs, rejected_logprobs,
-            chosen_ref_logprobs, rejected_ref_logprobs,
+            chosen_logprobs,
+            rejected_logprobs,
+            chosen_ref_logprobs,
+            rejected_ref_logprobs,
             dpo_beta=beta,
         )
-        print(f"beta={beta:.2f}: loss={metrics['dpo_loss']:.4f}, "
-              f"accuracy={metrics['accuracy']:.2f}, margin={metrics['margin']:.4f}")
+        print(
+            f"beta={beta:.2f}: loss={metrics['dpo_loss']:.4f}, "
+            f"accuracy={metrics['accuracy']:.2f}, margin={metrics['margin']:.4f}"
+        )
     return (chosen_logprobs, chosen_ref_logprobs, rejected_logprobs, rejected_ref_logprobs)
 
 

@@ -90,7 +90,10 @@ def _(MessageEnv, MessageStepResult):
 
         async def initial_observation(self):
             return [
-                {"role": "system", "content": "You are a creative naming expert. Reply with just a name, nothing else."},
+                {
+                    "role": "system",
+                    "content": "You are a creative naming expert. Reply with just a name, nothing else.",
+                },
                 {"role": "user", "content": f"Invent a creative name for a {self.topic}."},
             ]
 
@@ -130,9 +133,9 @@ def _(EnvFromMessageEnv, NamingGameEnv, get_tokenizer, renderers):
     token_env = EnvFromMessageEnv(
         renderer=renderer,
         message_env=message_env,
-        failed_parse_reward=-1.0,      # Penalty for unparseable responses
-        max_trajectory_tokens=256,     # Context limit
-        max_generation_tokens=64,      # Max tokens per generation
+        failed_parse_reward=-1.0,  # Penalty for unparseable responses
+        max_trajectory_tokens=256,  # Context limit
+        max_generation_tokens=64,  # Max tokens per generation
     )
 
     print(f"EnvFromMessageEnv wraps {type(message_env).__name__}")
@@ -168,6 +171,7 @@ def _(
     @dataclass(frozen=True)
     class NamingGameGroupBuilder(EnvGroupBuilder):
         """Build a group of naming game environments for pairwise competition."""
+
         topic: str
         renderer: renderers.Renderer
         num_envs: int = 4

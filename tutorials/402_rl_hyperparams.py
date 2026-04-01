@@ -126,20 +126,20 @@ def _(compute_advantages, torch):
     all_rewards = [0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0]
 
     # Group size 2: 4 groups
-    groups_2 = [make_mock_group(all_rewards[i:i+2]) for i in range(0, 8, 2)]
+    groups_2 = [make_mock_group(all_rewards[i : i + 2]) for i in range(0, 8, 2)]
     advs_2 = compute_advantages(groups_2)
     print("Group size 2:")
     for i, adv in enumerate(advs_2):
-        print(f"  Group {i}: rewards={all_rewards[i*2:i*2+2]}, advantages={adv.tolist()}")
+        print(f"  Group {i}: rewards={all_rewards[i * 2 : i * 2 + 2]}, advantages={adv.tolist()}")
 
     print()
 
     # Group size 4: 2 groups
-    groups_4 = [make_mock_group(all_rewards[i:i+4]) for i in range(0, 8, 4)]
+    groups_4 = [make_mock_group(all_rewards[i : i + 4]) for i in range(0, 8, 4)]
     advs_4 = compute_advantages(groups_4)
     print("Group size 4:")
     for i, adv in enumerate(advs_4):
-        print(f"  Group {i}: rewards={all_rewards[i*4:i*4+4]}, advantages={adv.tolist()}")
+        print(f"  Group {i}: rewards={all_rewards[i * 4 : i * 4 + 4]}, advantages={adv.tolist()}")
 
     print()
 

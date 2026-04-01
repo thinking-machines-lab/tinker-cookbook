@@ -159,9 +159,7 @@ def _(TrainingClientEvaluator, tinker, torch):
 
         async def __call__(self, training_client: tinker.TrainingClient) -> dict[str, float]:
             # Run a forward pass (no gradients) to get logprobs
-            future = await training_client.forward_async(
-                self.eval_data, loss_fn="cross_entropy"
-            )
+            future = await training_client.forward_async(self.eval_data, loss_fn="cross_entropy")
             result = await future.result_async()
 
             # Compute weighted mean NLL

@@ -125,7 +125,9 @@ def _(TinkerTokenCompleter, sampling_client):
         max_tokens=128,
         temperature=0.7,
     )
-    print(f"TokenCompleter: max_tokens={token_completer.max_tokens}, temp={token_completer.temperature}")
+    print(
+        f"TokenCompleter: max_tokens={token_completer.max_tokens}, temp={token_completer.temperature}"
+    )
     return (token_completer,)
 
 
@@ -251,9 +253,7 @@ def _(asyncio, get_text_content, message_completer):
 
     # Step 1: Generate a candidate answer
     question = "Why do leaves change color in autumn?"
-    candidate = asyncio.run(
-        message_completer([{"role": "user", "content": question}])
-    )
+    candidate = asyncio.run(message_completer([{"role": "user", "content": question}]))
     candidate_text = get_text_content(candidate)
     print(f"Candidate answer:\n{candidate_text}\n")
 
@@ -265,9 +265,7 @@ Answer: {candidate_text}
 
 Respond with ONLY a number from 1 to 5."""
 
-    judge_response = asyncio.run(
-        message_completer([{"role": "user", "content": judge_prompt}])
-    )
+    judge_response = asyncio.run(message_completer([{"role": "user", "content": judge_prompt}]))
     judge_text = get_text_content(judge_response)
 
     # Step 3: Parse the score
@@ -275,7 +273,17 @@ Respond with ONLY a number from 1 to 5."""
     score = int(match.group()) if match else None
     print(f"Judge response: {judge_text}")
     print(f"Parsed score: {score}")
-    return candidate, candidate_text, judge_prompt, judge_response, judge_text, match, question, re, score
+    return (
+        candidate,
+        candidate_text,
+        judge_prompt,
+        judge_response,
+        judge_text,
+        match,
+        question,
+        re,
+        score,
+    )
 
 
 @app.cell(hide_code=True)

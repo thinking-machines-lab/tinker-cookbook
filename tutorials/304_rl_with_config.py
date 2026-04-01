@@ -158,7 +158,9 @@ def _(
         async def __call__(self):
             tokenizer = get_tokenizer(self.model_name)
             renderer = renderers.get_renderer(self.renderer_name, tokenizer)
-            train_ds = ArithmeticDataset(renderer, self.batch_size, self.num_batches, self.group_size)
+            train_ds = ArithmeticDataset(
+                renderer, self.batch_size, self.num_batches, self.group_size
+            )
             return train_ds, None
 
     return (ArithmeticDataset, ArithmeticDatasetBuilder)

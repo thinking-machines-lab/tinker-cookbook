@@ -76,7 +76,9 @@ async def _(get_renderer, tinker):
     base_model = "meta-llama/Llama-3.1-8B"
 
     service_client = tinker.ServiceClient()
-    training_client = await service_client.create_lora_training_client_async(base_model=base_model, rank=32)
+    training_client = await service_client.create_lora_training_client_async(
+        base_model=base_model, rank=32
+    )
     tokenizer = training_client.get_tokenizer()
     renderer = get_renderer("llama3", tokenizer)
 
@@ -234,7 +236,9 @@ async def _(
         rewards_P: list[float] = []
         n_degenerate = 0
 
-        for sample_result, prompt, answer_text in zip(sample_results_P, prompts_P, batch_rows["answer"]):
+        for sample_result, prompt, answer_text in zip(
+            sample_results_P, prompts_P, batch_rows["answer"]
+        ):
             ground_truth = extract_gsm8k_answer(answer_text)
 
             # Grade each completion in the group
