@@ -97,9 +97,7 @@ class RaggedLastBatchDataset(RLDataset):
     Builder indices are globally unique so tests can verify coverage.
     """
 
-    def __init__(
-        self, name: str, num_batches: int, groups_per_batch: int, last_batch_groups: int
-    ):
+    def __init__(self, name: str, num_batches: int, groups_per_batch: int, last_batch_groups: int):
         self.name = name
         self._num_batches = num_batches
         self._gpb = groups_per_batch
@@ -392,7 +390,9 @@ class Test_InterleavedRLDataset:
     def test_ragged_last_batch_single_source_completes(self):
         """A single ragged source can be iterated to completion without IndexError."""
         # 158 batches × 64 groups, last batch has 17 groups → 10065 total
-        src = RaggedLastBatchDataset("mcqa", num_batches=158, groups_per_batch=64, last_batch_groups=17)
+        src = RaggedLastBatchDataset(
+            "mcqa", num_batches=158, groups_per_batch=64, last_batch_groups=17
+        )
         ds = _InterleavedRLDataset(
             sources=[src],
             weights=[1.0],
@@ -407,7 +407,9 @@ class Test_InterleavedRLDataset:
     def test_ragged_last_batch_multi_source_completes(self):
         """Multiple ragged sources blend without IndexError."""
         src_a = RaggedLastBatchDataset("A", num_batches=50, groups_per_batch=8, last_batch_groups=3)
-        src_b = RaggedLastBatchDataset("B", num_batches=30, groups_per_batch=16, last_batch_groups=7)
+        src_b = RaggedLastBatchDataset(
+            "B", num_batches=30, groups_per_batch=16, last_batch_groups=7
+        )
         src_c = MockRLDataset("C", num_batches=40, groups_per_batch=4)  # uniform for contrast
 
         ds = _InterleavedRLDataset(
@@ -496,7 +498,9 @@ class Test_InterleavedRLDataset:
             if last_gpb == gpb:
                 src = MockRLDataset("P", num_batches=num_batches, groups_per_batch=gpb)
             else:
-                src = RaggedLastBatchDataset("P", num_batches=num_batches, groups_per_batch=gpb, last_batch_groups=last_gpb)
+                src = RaggedLastBatchDataset(
+                    "P", num_batches=num_batches, groups_per_batch=gpb, last_batch_groups=last_gpb
+                )
             ds = _InterleavedRLDataset(
                 sources=[src],
                 weights=[1.0],
