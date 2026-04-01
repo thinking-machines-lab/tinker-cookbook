@@ -186,37 +186,26 @@ async def _collect_topk_for_datum(
     offset = len(topk_prompt) - seq_len
     relevant_topk = topk_prompt[offset:]
 
-    # Initialize tokens to original targets so that unused slots (weight=0
-    # after renormalization) are harmless if weights are ever ignored downstream.
     K = n_teacher_targets
-    topk_tokens = original_targets.unsqueeze(-1).expand(seq_len, K).clone()
-    topk_logprobs = torch.full((seq_len, K), float("-inf"))
 
-    # Unpack teacher response into flat lists, then build tensors in one shot.
-    # Positions where the teacher returned None fall back to the hard target
-    # (already set by the initialization above).
-    has_logprobs = torch.zeros(seq_len, dtype=torch.bool)
+    # Unpack teacher response into tensors in one shot.
+    # The offset calculation above skips prompt position 0 (which has no
+    # logprobs), so all entries in relevant_topk should be non-None.
     token_lists: list[list[int]] = []
     logprob_lists: list[list[float]] = []
-    for t, position_topk in enumerate(relevant_topk):
-        if position_topk is not None:
-            has_logprobs[t] = True
-            entries = position_topk[:K]
-            toks = [tok for tok, _ in entries]
-            lps = [lp for _, lp in entries]
-            # Pad to K if fewer entries returned
-            toks += [toks[0]] * (K - len(toks))
-            lps += [float("-inf")] * (K - len(lps))
-            token_lists.append(toks)
-            logprob_lists.append(lps)
+    for position_topk in relevant_topk:
+        assert position_topk is not None, "Unexpected None in teacher logprobs after offset"
+        entries = position_topk[:K]
+        toks = [tok for tok, _ in entries]
+        lps = [lp for _, lp in entries]
+        # Pad to K if fewer entries returned
+        toks += [toks[0]] * (K - len(toks))
+        lps += [float("-inf")] * (K - len(lps))
+        token_lists.append(toks)
+        logprob_lists.append(lps)
 
-    if token_lists:
-        topk_tokens[has_logprobs] = torch.tensor(token_lists, dtype=torch.long)
-        topk_logprobs[has_logprobs] = torch.tensor(logprob_lists)
-
-    # Positions without logprobs: hard target with prob 1.0
-    no_logprobs = ~has_logprobs
-    topk_logprobs[no_logprobs, 0] = 0.0
+    topk_tokens = torch.tensor(token_lists, dtype=torch.long)
+    topk_logprobs = torch.tensor(logprob_lists)
 
     # Renormalize teacher probs over top-K via logsumexp
     topk_logprobs -= torch.logsumexp(topk_logprobs, dim=-1, keepdim=True)
