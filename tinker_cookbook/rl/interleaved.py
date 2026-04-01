@@ -108,7 +108,15 @@ class _InterleavedRLDataset(RLDataset):
                     f"all sources must produce at least 1 group per batch"
                 )
             self._source_groups_per_batch.append(gpb)
-            self._source_total_groups.append(len(src) * gpb)
+            # Account for the last batch potentially being shorter (ragged).
+            # Probe the last batch to get the actual count instead of assuming
+            # all batches have the same size as batch 0.
+            if len(src) == 1:
+                total = gpb
+            else:
+                last_batch = src.get_batch(len(src) - 1)
+                total = (len(src) - 1) * gpb + len(last_batch)
+            self._source_total_groups.append(total)
 
         if total_batches is None:
             total_batches = self._compute_natural_length()
@@ -205,9 +213,9 @@ class _InterleavedRLDataset(RLDataset):
         the builder from the source dataset.
 
         Raises:
-            IndexError: If the source batch has fewer groups than expected
-                (ragged batches). All batches from a source must have the
-                same number of groups as batch 0.
+            IndexError: If a non-last source batch has fewer groups than
+                expected. All batches except the last must have the same
+                number of groups as batch 0.
         """
         gpb = self._source_groups_per_batch[src_idx]
         batch_idx = flat_idx // gpb
@@ -217,8 +225,8 @@ class _InterleavedRLDataset(RLDataset):
             raise IndexError(
                 f"Source {src_idx} batch {batch_idx} has {len(src_batch)} groups, "
                 f"expected {gpb} (based on batch 0). "
-                f"InterleavedRLDataset requires all batches from a source to "
-                f"have the same number of groups."
+                f"InterleavedRLDataset requires all batches except the last to "
+                f"have the same number of groups as batch 0."
             )
         return src_batch[within_idx]
 
