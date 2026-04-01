@@ -53,7 +53,7 @@ from tinker_cookbook.distillation.datasets import TeacherConfig
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluatorBuilder
 from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.supervised.types import SupervisedDataset, SupervisedDatasetBuilder
-from tinker_cookbook.utils import ml_log, trace
+from tinker_cookbook.utils import ml_log
 
 logger = logging.getLogger(__name__)
 
@@ -245,9 +245,11 @@ async def _collect_topk_batch(
         async with sem:
             return await _collect_topk_for_datum(client, datum, K)
 
-    return list(await asyncio.gather(
-        *[_one(client, datum) for client, datum in zip(teacher_clients, datums)]
-    ))
+    return list(
+        await asyncio.gather(
+            *[_one(client, datum) for client, datum in zip(teacher_clients, datums)]
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -383,9 +385,7 @@ async def main(config: Config) -> None:
         else:
             client = service_client.create_sampling_client(base_model=tc.base_model)
         teacher_clients.append(client)
-        logger.info(
-            f"Teacher: {tc.base_model} (checkpoint: {tc.load_checkpoint_path})"
-        )
+        logger.info(f"Teacher: {tc.base_model} (checkpoint: {tc.load_checkpoint_path})")
 
     datasets: list[SupervisedDataset] = []
     weights: list[float] = []
@@ -457,7 +457,9 @@ async def main(config: Config) -> None:
             sampling_client = None
 
         ml_logger.log_metrics(metrics, step=i_batch)
-        logger.info(f"Step {i_batch}: loss={train_result.total_loss:.4f}")
+        logger.info(
+            f"Step {i_batch}: loss={train_result.metrics.get('total_loss', float('nan')):.4f}"
+        )
 
     # Final checkpoint
     if start_batch < total_batches:
