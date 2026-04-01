@@ -78,12 +78,5 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  push-nightly-branch:
-    runs-on: ubuntu-latest
-    needs: build-and-release
-    steps:
-      - name: checkout
-        uses: actions/checkout@v4
-
-      - name: Push nightly branch
+      - name: Update nightly branch
         run: git push origin HEAD:refs/heads/nightly --force
