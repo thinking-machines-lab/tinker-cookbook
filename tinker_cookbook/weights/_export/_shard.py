@@ -181,33 +181,9 @@ def build_sharded(
 # ---------------------------------------------------------------------------
 
 
-class _ShardHooks:
-    """Interface for model-specific shard processing hooks."""
-
-    def augment_for_planning(
-        self,
-        model_state_keys: set[str],
-        model_shapes: dict[str, tuple[int, ...]],
-    ) -> tuple[set[str], dict[str, tuple[int, ...]]]:
-        """Augment model state before planning (e.g. add virtual keys)."""
-        return model_state_keys, model_shapes
-
-    def try_apply(
-        self,
-        key: str,
-        tensors: dict,
-        merge_ops: dict[str, list[MergeOp]],
-    ) -> int:
-        """Try to apply model-specific merge handling for a key. Returns ops applied."""
-        return 0
-
-
-class _PackedInt4ShardHooks(_ShardHooks):
-    """INT4 packed expert weights: dequant → merge → requant.
-
-    Used for models with compressed-tensors ``pack-quantized`` format
-    (e.g. Kimi K2, K2.5) where routed expert weights are stored as
-    ``weight_packed``/``weight_scale``/``weight_shape``.
+class _PackedInt4ShardHooks:
+    """Hooks for models with compressed-tensors ``pack-quantized`` format
+    (e.g. Kimi K2, K2.5): dequant INT4 → merge LoRA → requant INT4.
     """
 
     def __init__(self, config_dict: dict) -> None:
@@ -237,7 +213,7 @@ class _PackedInt4ShardHooks(_ShardHooks):
 def _build_shard_hooks(
     profile: MergeProfile,
     config_dict: dict,
-) -> _ShardHooks | None:
+) -> _PackedInt4ShardHooks | None:
     """Build shard hooks based on the model's quantization config.
 
     Uses the explicit ``format: pack-quantized`` field from the model's

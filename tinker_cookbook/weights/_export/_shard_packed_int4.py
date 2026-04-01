@@ -158,25 +158,17 @@ def try_apply_packed_ops(
 
 
 def get_int4_group_size(config_dict: dict) -> int:
-    """Extract INT4 group size from compressed-tensors quantization config.
+    """Extract INT4 group size from compressed-tensors quantization config."""
+    from tinker_cookbook.weights._merge_utils import find_quantization_config
 
-    Checks both top-level and nested ``text_config`` for the quantization
-    config (Kimi K2.5 stores it under ``text_config``).
-    """
-    for config in [config_dict, config_dict.get("text_config", {})]:
-        if not isinstance(config, dict):
-            continue
-        quant = config.get("quantization_config")
-        if not isinstance(quant, dict):
-            continue
-        groups = quant.get("config_groups", {})
-        for group in groups.values():
+    quant = find_quantization_config(config_dict)
+    if quant is not None:
+        for group in quant.get("config_groups", {}).values():
             if not isinstance(group, dict):
                 continue
             weights_cfg = group.get("weights", {})
-            if not isinstance(weights_cfg, dict):
-                continue
-            gs = weights_cfg.get("group_size")
-            if isinstance(gs, int) and gs > 0:
-                return gs
-    return 32  # Default fallback
+            if isinstance(weights_cfg, dict):
+                gs = weights_cfg.get("group_size")
+                if isinstance(gs, int) and gs > 0:
+                    return gs
+    return 32

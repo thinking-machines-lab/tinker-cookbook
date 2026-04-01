@@ -7,7 +7,6 @@ Creates a synthetic model directory mimicking Kimi K2's weight layout:
 - model_type=kimi_k2 (falls through to default merge profile, NOT blocked as deepseek_v3)
 """
 
-import json
 import tempfile
 from pathlib import Path
 

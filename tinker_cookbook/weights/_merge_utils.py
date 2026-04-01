@@ -451,6 +451,23 @@ def create_virtual_weight_shapes(
     return augmented
 
 
+def find_quantization_config(config_dict: dict) -> dict | None:
+    """Find the ``quantization_config`` dict, checking both top-level and ``text_config``.
+
+    Vision-language models (e.g. Kimi K2.5) nest quantization config under
+    ``text_config``, while standard models have it at the top level.
+
+    Returns the first ``quantization_config`` dict found, or ``None``.
+    """
+    for config in [config_dict, config_dict.get("text_config", {})]:
+        if not isinstance(config, dict):
+            continue
+        quant = config.get("quantization_config")
+        if isinstance(quant, dict):
+            return quant
+    return None
+
+
 def is_pack_quantized(config_dict: dict) -> bool:
     """Check if the model uses compressed-tensors ``pack-quantized`` format.
 
@@ -462,10 +479,5 @@ def is_pack_quantized(config_dict: dict) -> bool:
     Other quantized formats (Nemotron NVFP4, DeepSeek native FP8) use
     different conventions and are NOT matched by this check.
     """
-    for config in [config_dict, config_dict.get("text_config", {})]:
-        if not isinstance(config, dict):
-            continue
-        quant = config.get("quantization_config")
-        if isinstance(quant, dict) and quant.get("format") == "pack-quantized":
-            return True
-    return False
+    quant = find_quantization_config(config_dict)
+    return quant is not None and quant.get("format") == "pack-quantized"
