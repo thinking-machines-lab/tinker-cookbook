@@ -108,7 +108,15 @@ class _InterleavedRLDataset(RLDataset):
                     f"all sources must produce at least 1 group per batch"
                 )
             self._source_groups_per_batch.append(gpb)
-            self._source_total_groups.append(len(src) * gpb)
+            # Account for the last batch potentially being shorter (ragged).
+            # Probe the last batch to get the actual count instead of assuming
+            # all batches have the same size as batch 0.
+            if len(src) == 1:
+                total = gpb
+            else:
+                last_batch = src.get_batch(len(src) - 1)
+                total = (len(src) - 1) * gpb + len(last_batch)
+            self._source_total_groups.append(total)
 
         if total_batches is None:
             total_batches = self._compute_natural_length()
