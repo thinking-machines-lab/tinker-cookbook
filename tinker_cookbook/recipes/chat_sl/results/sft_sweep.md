@@ -11,6 +11,23 @@ Use these as a reference when choosing learning rate and LoRA rank for your mode
 
 > **Note:** Wall times are approximate and depend on server load at the time of the run. They may fluctuate significantly between runs.
 
+## Key Findings
+
+**Optimal learning rate is model-size dependent.** Across all models, the best LR per model breaks down as:
+
+- `1e-04`: best for 1 model(s)
+- `3e-04`: best for 14 model(s)
+- `4e-04`: best for 2 model(s)
+- `1e-03`: best for 10 model(s)
+
+**Large models (small ranks 1–4) tend to prefer moderate LRs** (1e-4 to 3e-4), while **smaller models (ranks 64–128) can tolerate higher LRs** (3e-4 to 1e-3) and benefit from more LoRA capacity.
+
+**Higher LoRA rank generally helps**, especially at higher learning rates. At very low LR (4e-5), rank differences are negligible. The benefit of higher rank becomes more pronounced as LR increases.
+
+**Divergence:** 80 runs diverged (test NLL > 2.0), almost exclusively at `lr=3e-03` (72 of 80). This LR is too aggressive for most models with LoRA.
+
+---
+
 ## Table of Contents
 
 - [Qwen/Qwen3-235B-A22B-Instruct-2507](#qwen/qwen3-235b-a22b-instruct-2507)

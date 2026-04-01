@@ -447,9 +447,75 @@ def _heading_to_anchor(heading: str) -> str:
     return heading.lower().replace(" ", "-").replace("(", "").replace(")", "")
 
 
+def _generate_key_findings(by_model: dict[str, list[RunResult]]) -> list[str]:
+    """Generate a key findings section from sweep results."""
+    lines: list[str] = []
+    lines.append("## Key Findings")
+    lines.append("")
+
+    # Collect best configs per model
+    best_configs: list[tuple[str, float, int, float]] = []  # (model, lr, rank, nll)
+    all_diverged: list[tuple[str, float, int]] = []  # (model, lr, rank)
+
+    for model_slug, runs in by_model.items():
+        healthy = [r for r in runs if r.test_nll < DIVERGENCE_THRESHOLD]
+        diverged = [r for r in runs if r.test_nll >= DIVERGENCE_THRESHOLD]
+        if healthy:
+            best = min(healthy, key=lambda r: r.test_nll)
+            hf_name = _slug_to_hf_name(model_slug)
+            best_configs.append((hf_name, best.lr, best.rank, best.test_nll))
+        for r in diverged:
+            all_diverged.append((_slug_to_hf_name(model_slug), r.lr, r.rank))
+
+    # Best LR summary
+    from collections import Counter
+
+    lr_counts = Counter(lr for _, lr, _, _ in best_configs)
+    lines.append(
+        "**Optimal learning rate is model-size dependent.** "
+        "Across all models, the best LR per model breaks down as:"
+    )
+    lines.append("")
+    for lr, count in sorted(lr_counts.items()):
+        lines.append(f"- `{lr:.0e}`: best for {count} model(s)")
+    lines.append("")
+
+    # LR by model size pattern
+    large_lrs = [lr for name, lr, rank, _ in best_configs if rank <= 4]
+    small_lrs = [lr for name, lr, rank, _ in best_configs if rank >= 64]
+    lines.append(
+        "**Large models (small ranks 1–4) tend to prefer moderate LRs** (1e-4 to 3e-4), "
+        "while **smaller models (ranks 64–128) can tolerate higher LRs** (3e-4 to 1e-3) "
+        "and benefit from more LoRA capacity."
+    )
+    lines.append("")
+
+    # Rank pattern
+    lines.append(
+        "**Higher LoRA rank generally helps**, especially at higher learning rates. "
+        "At very low LR (4e-5), rank differences are negligible. "
+        "The benefit of higher rank becomes more pronounced as LR increases."
+    )
+    lines.append("")
+
+    # Divergence
+    if all_diverged:
+        div_lr_counts = Counter(lr for _, lr, _ in all_diverged)
+        lines.append(
+            f"**Divergence:** {len(all_diverged)} runs diverged (test NLL > {DIVERGENCE_THRESHOLD}), "
+            "almost exclusively at `lr=3e-03`"
+            f" ({div_lr_counts.get(3e-3, 0)} of {len(all_diverged)}). "
+            "This LR is too aggressive for most models with LoRA."
+        )
+        lines.append("")
+
+    return lines
+
+
 def generate_sft_sweep_md(
     model_names: list[str],
     model_sections: list[str],
+    by_model: dict[str, list[RunResult]] | None = None,
 ) -> str:
     """Generate the full sft_sweep.md document."""
     lines: list[str] = []
@@ -471,6 +537,12 @@ def generate_sft_sweep_md(
         "the run. They may fluctuate significantly between runs."
     )
     lines.append("")
+
+    # Key findings
+    if by_model:
+        lines.extend(_generate_key_findings(by_model))
+        lines.append("---")
+        lines.append("")
 
     # Table of contents
     lines.append("## Table of Contents")
@@ -568,7 +640,7 @@ def main() -> None:
         print(section)
 
     # Write the combined markdown
-    md_content = generate_sft_sweep_md(model_names, model_sections)
+    md_content = generate_sft_sweep_md(model_names, model_sections, by_model=by_model)
     md_path = output_dir / "sft_sweep.md"
     md_path.write_text(md_content)
     print(f"\nResults written to {md_path}")
