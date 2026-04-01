@@ -333,6 +333,11 @@ def extract_gsm8k_answer(text: str) -> str:
     if answer_match:
         return answer_match.group(1).strip().replace(",", "")
 
+    # Bold pattern: **123** or **$123.00** (common in chat model responses)
+    bold_numbers = re.findall(r"\*\*\$?([-]?\d+[,\d]*\.?\d*)", text)
+    if bold_numbers:
+        return bold_numbers[-1].replace(",", "")
+
     numbers = re.findall(r"[-]?\d+[,\d]*\.?\d*", text)
     if numbers:
         return numbers[-1].replace(",", "")
