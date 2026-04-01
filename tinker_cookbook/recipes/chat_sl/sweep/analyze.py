@@ -145,6 +145,95 @@ def fetch_runs(wandb_project: str) -> list[RunResult]:
     return results
 
 
+def fetch_runs_local(sweep_root: str) -> list[RunResult]:
+    """Load results from local sweep directories (no W&B needed).
+
+    Reads metrics.jsonl files from ``sweep_root/<model>/<lr_rank>/metrics.jsonl``.
+    Much faster than the W&B API since all data is local.
+    """
+    import json
+    import os
+
+    results: list[RunResult] = []
+    for model_dir in sorted(os.listdir(sweep_root)):
+        model_path = os.path.join(sweep_root, model_dir)
+        if not os.path.isdir(model_path) or not model_dir[0].isalpha():
+            continue
+
+        model_slug = model_dir  # e.g. "Qwen-Qwen3-8B"
+
+        for run_dir in sorted(os.listdir(model_path)):
+            if not run_dir.startswith("learning_rate="):
+                continue
+            metrics_file = os.path.join(model_path, run_dir, "metrics.jsonl")
+            if not os.path.exists(metrics_file):
+                continue
+
+            # Parse lr and rank from dir name
+            m = re.match(r"learning_rate=(.+?)_lora_rank=(\d+)", run_dir)
+            if not m:
+                continue
+            lr = float(m.group(1))
+            rank = int(m.group(2))
+
+            # Read all metrics lines
+            with open(metrics_file) as f:
+                lines = f.readlines()
+            if not lines:
+                continue
+
+            # Step-level history
+            history_points: list[tuple[int, float]] = []
+            last_row: dict = {}
+            for line in lines:
+                row = json.loads(line)
+                last_row = row
+                step = row.get("step")
+                nll = row.get("test/nll")
+                if step is not None and nll is not None:
+                    history_points.append((int(step), float(nll)))
+
+            test_nll = last_row.get("test/nll")
+            train_nll = last_row.get("train_mean_nll")
+            if test_nll is None or train_nll is None:
+                continue
+
+            # Estimate wall time from first and last step timestamps
+            first_row = json.loads(lines[0])
+            wall_time_min = 0.0
+            if "time/step" in last_row and "step" in last_row:
+                # Rough estimate: avg step time × total steps
+                total_steps = last_row["step"]
+                if total_steps > 0 and len(lines) > 1:
+                    first_ts = os.path.getmtime(metrics_file)
+                    # Use file creation vs modification as proxy
+                    import stat
+
+                    st = os.stat(metrics_file)
+                    # Fall back to total runtime from step times
+                    total_time = sum(
+                        json.loads(l).get("time/step", 0) for l in lines
+                    )
+                    wall_time_min = total_time / 60.0
+
+            run_name = f"tulu3-{model_slug}-{rank}rank-{lr}lr-128batch-local"
+            results.append(
+                RunResult(
+                    model=model_slug,
+                    rank=rank,
+                    lr=lr,
+                    test_nll=float(test_nll),
+                    train_nll=float(train_nll),
+                    wall_time_min=wall_time_min,
+                    run_name=run_name,
+                    history=history_points,
+                )
+            )
+
+    print(f"Loaded {len(results)} runs from {sweep_root}")
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Grouping and analysis
 # ---------------------------------------------------------------------------
@@ -427,6 +516,13 @@ def main() -> None:
         action="store_true",
         help="Skip plot generation (useful if matplotlib is not available)",
     )
+    parser.add_argument(
+        "--local-dir",
+        default=None,
+        help="Load results from local sweep directories instead of W&B. "
+        "Pass the root directory containing model subdirectories "
+        "(e.g. /tmp/tinker-sweeps).",
+    )
     args = parser.parse_args()
 
     # Default output: tinker_cookbook/recipes/chat_sl/results/
@@ -434,8 +530,12 @@ def main() -> None:
     output_dir = Path(args.output_dir) if args.output_dir else default_output
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Fetching runs from W&B project: {args.wandb_project}")
-    runs = fetch_runs(args.wandb_project)
+    if args.local_dir:
+        print(f"Loading runs from local directory: {args.local_dir}")
+        runs = fetch_runs_local(args.local_dir)
+    else:
+        print(f"Fetching runs from W&B project: {args.wandb_project}")
+        runs = fetch_runs(args.wandb_project)
 
     if not runs:
         print("No runs found.")
