@@ -3,21 +3,21 @@ Self-Distillation Fine-Tuning (SDFT).
 
 Implements the SDFT algorithm from "Self-Distillation Enables Continual Learning"
 (arxiv 2601.19897). A teacher model conditioned on golden demonstrations provides
-KL distillation signals to a student model that sees only the original question.
+distillation signals to a student model that sees only the original question.
 
 The teacher prompt includes the question and a golden answer as an in-context
-demonstration. The student generates completions from the plain question.
+demonstration. The student generates completions on-policy. Training uses the
+teacher's top-K token distribution as soft targets for ``cross_entropy`` loss,
+approximating the paper's full-vocabulary forward KL.
 
-Two distillation modes are supported (controlled by ``Config.topk``):
+Two modes are supported (controlled by ``Config.topk``):
 
-- **Top-K distillation** (``topk > 0``, default): Teacher-forces student completions
-  through the teacher to recover the top-K token distribution at each position.
-  Trains with ``cross_entropy`` loss using renormalized teacher probabilities as
-  soft targets. This closely approximates the paper's full-vocabulary forward KL.
+- **Top-K distillation** (``topk > 0``, default): Teacher-forces student
+  completions through the teacher to recover the top-K token distribution.
+  Trains with ``cross_entropy`` on renormalized teacher probabilities.
 
-- **Per-token importance sampling** (``topk = 0``): Falls back to the original
-  single-sample approximation using ``advantage = teacher_lp - student_lp`` with
-  ``importance_sampling`` loss.
+- **Per-token importance sampling** (``topk = 0``): Single-sample approximation
+  using ``advantage = teacher_lp - student_lp`` with ``importance_sampling`` loss.
 """
 
 import asyncio
@@ -429,108 +429,6 @@ async def build_topk_distillation_datums(
     return new_datums, metrics
 
 
-def _topk_forward_kl_loss(
-    data: list[tinker.Datum],
-    logprobs_list: list[torch.Tensor],
-) -> tuple[torch.Tensor, dict[str, float]]:
-    """Custom loss: top-K forward KL with student renormalization.
-
-    This matches the reference Self-Distillation implementation which
-    renormalizes BOTH teacher and student logprobs over the top-K tokens
-    before computing KL. The student renormalization is critical — without
-    it, the gradient spreads across the full 150K vocab instead of focusing
-    on redistributing probability among the K teacher-preferred tokens.
-
-    Args:
-        data: List of datums with ``weights`` (teacher renormalized probs, shape N×K)
-            and ``target_tokens`` (token IDs, shape N×K) in loss_fn_inputs.
-        logprobs_list: Student's log P(token_k) from full-vocab softmax,
-            one tensor per datum with shape matching target_tokens.
-
-    Returns:
-        (loss, metrics) where loss is the mean per-token forward KL.
-    """
-    total_loss = torch.tensor(0.0, device=logprobs_list[0].device if logprobs_list else "cpu")
-    total_tokens = 0
-
-    for datum, student_logprobs in zip(data, logprobs_list):
-        # student_logprobs: (N, K) — from full-vocab log_softmax, gathered at K positions
-        # weights: (N, K) — teacher probs renormalized over K (pre-normalized in build_topk_distillation_datums)
-        weights = datum.loss_fn_inputs["weights"].to_torch().to(student_logprobs.device)
-
-        # Find positions with non-zero weights (completion positions)
-        pos_mask = weights.sum(dim=-1) > 0  # (N,)
-        if not pos_mask.any():
-            continue
-
-        # Renormalize student logprobs over K (the key operation!)
-        student_renorm = student_logprobs - torch.logsumexp(student_logprobs, dim=-1, keepdim=True)
-
-        # Forward KL per position: -sum_k P_teacher(k) * log P_student_renorm(k)
-        per_token_kl = -(weights * student_renorm).sum(dim=-1)  # (N,)
-
-        # Sum only over completion positions
-        total_loss = total_loss + (per_token_kl * pos_mask.float()).sum()
-        total_tokens += int(pos_mask.sum().item())
-
-    # Normalize by total completion tokens (per-token mean)
-    if total_tokens > 0:
-        mean_loss = total_loss / total_tokens
-    else:
-        mean_loss = total_loss
-
-    return mean_loss, {
-        "topk_fkl/loss": mean_loss.item(),
-        "topk_fkl/total_tokens": float(total_tokens),
-    }
-
-
-@trace.scope
-async def hybrid_train_step(
-    is_data_D: list[tinker.Datum],
-    topk_data_D: list[tinker.Datum],
-    ce_coef: float,
-    training_client: tinker.TrainingClient,
-    learning_rate: float,
-    metrics: dict[str, Any] | None = None,
-) -> None:
-    """Train with IS + top-K CE gradients in a single optimizer step.
-
-    Submits two ``forward_backward`` calls (importance_sampling for task learning,
-    cross_entropy for distribution matching) so gradients accumulate, then a
-    single ``optim_step`` applies the combined update.
-
-    The CE datums' weights are pre-scaled by ``ce_coef`` so the effective loss is
-    ``L = L_IS + ce_coef * L_CE``.
-    """
-    from tinker_cookbook.rl.train import _remove_mask
-
-    adam_params = tinker.AdamParams(learning_rate=learning_rate, beta1=0.9, beta2=0.95, eps=1e-8)
-
-    # Scale CE weights by ce_coef
-    if ce_coef != 1.0:
-        for datum in topk_data_D:
-            w = datum.loss_fn_inputs["weights"].to_torch() * ce_coef
-            datum.loss_fn_inputs["weights"] = tinker.TensorData.from_torch(w)
-
-    # Submit IS forward_backward
-    is_future = await training_client.forward_backward_async(
-        [_remove_mask(d) for d in is_data_D], loss_fn="importance_sampling"
-    )
-    # Submit CE forward_backward (gradients accumulate with IS)
-    ce_future = await training_client.forward_backward_async(topk_data_D, loss_fn="cross_entropy")
-    # Single optim step consumes accumulated gradients
-    optim_future = await training_client.optim_step_async(adam_params)
-
-    # Await results
-    await is_future.result_async()
-    await ce_future.result_async()
-    optim_result = await optim_future.result_async()
-
-    if metrics is not None and optim_result is not None and optim_result.metrics:
-        metrics.update(optim_result.metrics)
-
-
 @chz.chz
 class Config:
     """Configuration for SDFT training."""
@@ -549,7 +447,6 @@ class Config:
 
     # SDFT-specific
     topk: int = 20
-    ce_coef: float = 1.0
     demo_template: str = DEFAULT_DEMO_TEMPLATE
     system_prompt: str | None = None
     teacher_sync_every: int | None = None
