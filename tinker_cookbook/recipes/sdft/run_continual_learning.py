@@ -43,14 +43,14 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 logger = logging.getLogger(__name__)
 
-Method = Literal["sft", "sdft_is", "sdft_topk"]
+Method = Literal["sft", "sdft_is", "sdft_topk", "sdft_hybrid"]
 
 MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
 DATA_DIR = "~/Self-Distillation/data"
 LORA_RANK = 128
 BATCH_SIZE = 128
 MAX_TOKENS = 2048
-EVAL_EVERY = 0  # Eval at start and end only
+EVAL_EVERY = 10  # Eval every N batches
 SAVE_EVERY = 100  # Save infrequently, we'll save at end
 
 
@@ -71,9 +71,11 @@ class ExperimentConfig:
 
     # SDFT-TopK specific
     topk: int = 20
+    ce_coef: float = 1.0
+    thinking_format: bool = False
 
     # Logging
-    log_root: str = "/tmp/tinker-sdft-continual-v2"
+    log_root: str = "/tmp/tinker-sdft-continual-v3"
     wandb_project: str | None = None
     base_url: str | None = None
 
@@ -101,6 +103,7 @@ async def run_sft_stage(
     learning_rate: float,
     renderer_name: str,
     log_path: str,
+    wandb_name: str | None = None,
     load_checkpoint_path: str | None = None,
 ) -> str | None:
     """Run SFT training on a task and return the checkpoint path."""
@@ -127,6 +130,7 @@ async def run_sft_stage(
         dataset_builder = ScienceArrowSFTBuilder(
             common_config=common_config,
             data_dir=f"{expanded_data_dir}/science_data",
+            thinking_format=config.thinking_format,
         )
     else:
         raise ValueError(f"Unknown task: {task}")
@@ -138,6 +142,7 @@ async def run_sft_stage(
         lora_rank=config.lora_rank,
         log_path=log_path,
         wandb_project=config.wandb_project,
+        wandb_name=wandb_name,
         base_url=config.base_url,
         eval_every=EVAL_EVERY,
         save_every=SAVE_EVERY,
@@ -148,8 +153,8 @@ async def run_sft_stage(
     await sl_train.main(sl_config)
 
     ckpt = checkpoint_utils.get_last_checkpoint(log_path)
-    if ckpt and ckpt.sampler_path:
-        return ckpt.sampler_path
+    if ckpt and ckpt.state_path:
+        return ckpt.state_path
     return None
 
 
@@ -165,6 +170,8 @@ async def run_sdft_stage(
     renderer_name: str,
     log_path: str,
     topk: int,
+    ce_coef: float = 1.0,
+    wandb_name: str | None = None,
     load_checkpoint_path: str | None = None,
 ) -> str | None:
     """Run SDFT training on a task and return the checkpoint path."""
@@ -198,19 +205,21 @@ async def run_sdft_stage(
         learning_rate=learning_rate,
         max_tokens=config.max_tokens,
         topk=topk,
+        ce_coef=ce_coef,
         loss_fn=loss_fn,  # type: ignore[arg-type]
         eval_every=EVAL_EVERY,
         save_every=SAVE_EVERY,
         log_path=log_path,
         wandb_project=config.wandb_project,
+        wandb_name=wandb_name,
         load_checkpoint_path=load_checkpoint_path,
     )
 
     await sdft.main(sdft_config, train_dataset, test_dataset=None)
 
     ckpt = checkpoint_utils.get_last_checkpoint(log_path)
-    if ckpt and ckpt.sampler_path:
-        return ckpt.sampler_path
+    if ckpt and ckpt.state_path:
+        return ckpt.state_path
     return None
 
 
@@ -262,6 +271,7 @@ async def run_single(
             learning_rate,
             renderer_name,
             log_path,
+            wandb_name=run_id,
             load_checkpoint_path=load_checkpoint_path,
         )
     elif method == "sdft_is":
@@ -272,9 +282,10 @@ async def run_single(
             renderer_name,
             log_path,
             topk=0,
+            wandb_name=run_id,
             load_checkpoint_path=load_checkpoint_path,
         )
-    elif method == "sdft_topk":
+    elif method in ("sdft_topk", "sdft_hybrid"):
         checkpoint_path = await run_sdft_stage(
             config,
             task,
@@ -282,6 +293,8 @@ async def run_single(
             renderer_name,
             log_path,
             topk=config.topk,
+            ce_coef=config.ce_coef,
+            wandb_name=run_id,
             load_checkpoint_path=load_checkpoint_path,
         )
     else:
