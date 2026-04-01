@@ -50,10 +50,9 @@ import torch
 
 from tinker_cookbook import checkpoint_utils, model_info
 from tinker_cookbook.distillation.datasets import TeacherConfig
-from tinker_cookbook.eval.evaluators import SamplingClientEvaluator, SamplingClientEvaluatorBuilder
+from tinker_cookbook.eval.evaluators import SamplingClientEvaluatorBuilder
 from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.supervised.types import SupervisedDataset, SupervisedDatasetBuilder
-from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import ml_log, trace
 
 logger = logging.getLogger(__name__)
@@ -184,8 +183,10 @@ async def _collect_topk_for_datum(
     offset = len(topk_prompt) - seq_len
     relevant_topk = topk_prompt[offset:]
 
-    # Build (N, K) tensors
-    topk_tokens = torch.zeros(seq_len, K, dtype=torch.long)
+    # Build (N, K) tensors. Initialize tokens to original targets so that
+    # unused slots (weight=0 after renormalization) are harmless if weights
+    # are ever ignored downstream.
+    topk_tokens = original_targets.unsqueeze(-1).expand(seq_len, K).clone()
     topk_logprobs = torch.full((seq_len, K), float("-inf"))
 
     for t, position_topk in enumerate(relevant_topk):
@@ -270,7 +271,11 @@ class _CompositeSupervisedDataset:
         self._datasets = datasets
         self._batch_size = batch_size
 
-        # Compute per-domain examples per batch
+        if batch_size < len(weights):
+            raise ConfigurationError(
+                f"batch_size ({batch_size}) must be >= number of domains ({len(weights)})"
+            )
+
         total_weight = sum(weights)
         self._counts: list[int] = []
         remaining = batch_size
@@ -332,11 +337,9 @@ async def main(config: Config) -> None:
         wandb_name=config.wandb_name,
     )
 
-    # Resume support
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     start_batch = resume_info.batch if resume_info else 0
 
-    # Create student
     service_client = tinker.ServiceClient(base_url=config.base_url)
     user_metadata: dict[str, str] = {}
     if wandb_link := ml_logger.get_logger_url():
@@ -370,7 +373,6 @@ async def main(config: Config) -> None:
             config.model_name, rank=config.lora_rank, user_metadata=user_metadata
         )
 
-    # Create teacher sampling clients (one per domain)
     teacher_clients: list[tinker.SamplingClient] = []
     for dc in config.dataset_configs:
         tc = dc.teacher_config
@@ -385,7 +387,6 @@ async def main(config: Config) -> None:
             f"Teacher: {tc.base_model} (checkpoint: {tc.load_checkpoint_path})"
         )
 
-    # Build datasets
     datasets: list[SupervisedDataset] = []
     weights: list[float] = []
     for dc in config.dataset_configs:
@@ -400,11 +401,9 @@ async def main(config: Config) -> None:
         total_batches = min(config.max_steps, total_batches)
     logger.info(f"Will train for {total_batches} steps, K={config.K}")
 
-    # Build evaluators
     evaluators = [eb() for eb in config.evaluator_builders]
 
-    # Training loop
-    sampling_client = await training_client.save_weights_and_get_sampling_client_async()
+    sampling_client: tinker.SamplingClient | None = None
 
     for i_batch in range(start_batch, total_batches):
         metrics: dict[str, Any] = {
@@ -413,20 +412,18 @@ async def main(config: Config) -> None:
             "optim/lr": config.learning_rate,
         }
 
-        # Eval
-        if config.eval_every > 0 and i_batch % config.eval_every == 0:
+        if config.eval_every > 0 and i_batch % config.eval_every == 0 and evaluators:
+            if sampling_client is None:
+                sampling_client = await training_client.save_weights_and_get_sampling_client_async()
             for evaluator in evaluators:
                 eval_metrics = await evaluator(sampling_client)
                 metrics.update({f"eval/{k}": v for k, v in eval_metrics.items()})
 
-        # 1. Get batch with domain indices
         datums, teacher_indices = composite.get_batch(i_batch)
         metrics["batch_size"] = len(datums)
 
-        # 2. Map each datum to its teacher client
         datum_teacher_clients = [teacher_clients[idx] for idx in teacher_indices]
 
-        # 3. Collect top-K from teachers (concurrent)
         logger.info(
             f"Step {i_batch}: collecting top-{config.K} from {len(datums)} examples "
             f"({len(set(teacher_indices))} teachers)"
@@ -435,7 +432,6 @@ async def main(config: Config) -> None:
             datum_teacher_clients, datums, config.K, config.teacher_concurrency
         )
 
-        # 4. Train student with cross_entropy on (N, K) soft targets
         fwd_bwd_future = await training_client.forward_backward_async(
             topk_datums, loss_fn="cross_entropy"
         )
@@ -447,7 +443,6 @@ async def main(config: Config) -> None:
         if train_result.metrics:
             metrics.update({f"train/{k}": v for k, v in train_result.metrics.items()})
 
-        # 5. Checkpoint
         if config.save_every > 0 and i_batch > start_batch and i_batch % config.save_every == 0:
             path_dict = await checkpoint_utils.save_checkpoint_async(
                 training_client=training_client,
@@ -458,7 +453,8 @@ async def main(config: Config) -> None:
             )
             sampling_client = training_client.create_sampling_client(path_dict["sampler_path"])
         else:
-            sampling_client = await training_client.save_weights_and_get_sampling_client_async()
+            # Invalidate; will be lazily created if needed for eval
+            sampling_client = None
 
         ml_logger.log_metrics(metrics, step=i_batch)
         logger.info(f"Step {i_batch}: loss={train_result.total_loss:.4f}")
