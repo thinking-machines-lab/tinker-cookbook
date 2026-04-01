@@ -1534,6 +1534,7 @@ from tinker_cookbook.weights._merge_kimi_k25 import detect_profile as detect_kim
 from tinker_cookbook.weights._merge_utils import (
     create_virtual_weight_keys,
     create_virtual_weight_shapes,
+    has_packed_weights,
 )
 from tinker_cookbook.weights._packed_int4 import (
     dequantize_int4_group,
@@ -1680,6 +1681,45 @@ class TestKimiK25VirtualWeightKeys:
         }
         augmented = create_virtual_weight_shapes(shapes, packed_map)
         assert augmented["layer.weight"] == (2048, 7168)
+
+
+class TestHasPackedWeightsGuard:
+    """Ensure has_packed_weights only fires for compressed-tensors pack-quantized format."""
+
+    def test_kimi_k2_triggers(self):
+        keys = {"model.layers.1.mlp.experts.0.gate_proj.weight_packed"}
+        assert has_packed_weights(keys)
+
+    def test_kimi_k25_triggers(self):
+        keys = {"language_model.model.layers.1.mlp.experts.0.gate_proj.weight_packed"}
+        assert has_packed_weights(keys)
+
+    def test_nemotron_nvfp4_does_not_trigger(self):
+        """Nemotron NVFP4 uses .weight (U8 dtype) + .weight_scale + .weight_scale_2,
+        NOT .weight_packed. The hook must not fire."""
+        keys = {
+            "backbone.layers.1.mixer.experts.0.up_proj.weight",
+            "backbone.layers.1.mixer.experts.0.up_proj.weight_scale",
+            "backbone.layers.1.mixer.experts.0.up_proj.weight_scale_2",
+            "backbone.layers.1.mixer.experts.0.up_proj.input_scale",
+        }
+        assert not has_packed_weights(keys)
+
+    def test_deepseek_native_fp8_does_not_trigger(self):
+        """DeepSeek V3.1 native FP8 uses .weight (FP8 dtype) + .weight_scale_inv,
+        NOT .weight_packed."""
+        keys = {
+            "model.layers.1.mlp.experts.0.gate_proj.weight",
+            "model.layers.1.mlp.experts.0.gate_proj.weight_scale_inv",
+        }
+        assert not has_packed_weights(keys)
+
+    def test_standard_bf16_does_not_trigger(self):
+        keys = {"model.layers.0.self_attn.q_proj.weight"}
+        assert not has_packed_weights(keys)
+
+    def test_empty_keys_does_not_trigger(self):
+        assert not has_packed_weights(set())
 
 
 class TestPackedInt4:
