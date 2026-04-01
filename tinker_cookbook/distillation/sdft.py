@@ -639,7 +639,11 @@ async def main(
             # Get batch: builders + questions + golden answers
             builders_P, questions_P, golden_answers_P = sdft_dataset.get_batch(i_batch)
 
-            # Rollout: student generates completions (PromptOnlyEnv, reward=0)
+            # Rollout: student generates completions on-policy.
+            # Uses the RL rollout infrastructure (do_group_rollout) rather than
+            # raw sampling so that group_size > 1 and multi-turn environments
+            # work out of the box. With the default group_size=1, this is
+            # equivalent to a single sample_async call per problem.
             async with trace.scope_span("sample"):
                 trajectory_groups_raw = await asyncio.gather(
                     *[
