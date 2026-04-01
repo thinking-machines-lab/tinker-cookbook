@@ -1076,6 +1076,20 @@ class RenderedMessage:
     stop_overlap: tinker.EncodedTextChunk | None = None
     """Tokens that overlap between stop sequence and next message's header."""
 
+    def __post_init__(self) -> None:
+        # Filter out empty EncodedTextChunks from output. These arise when renderers
+        # strip thinking content from historical assistant messages and the message has
+        # no remaining text. Tinker rejects empty token chunks with
+        # "Chunk N has empty tokens list", so we filter them at construction time to
+        # prevent any consumer from encountering them.
+        filtered = [
+            chunk
+            for chunk in self.output
+            if not isinstance(chunk, tinker.EncodedTextChunk) or chunk.tokens
+        ]
+        if len(filtered) != len(self.output):
+            object.__setattr__(self, "output", filtered)
+
 
 class TrainOnWhat(StrEnum):
     """Enum controlling which parts of the sequence to compute loss on.
@@ -1465,10 +1479,7 @@ class Renderer(ABC):
             output_chunks = rendered_message.output
             if header_chunk:
                 chunks.append(header_chunk)
-            # Filter out empty EncodedTextChunks, which cause 400 errors in model requests
-            chunks.extend(
-                [x for x in output_chunks if not isinstance(x, tinker.EncodedTextChunk) or x.tokens]
-            )
+            chunks.extend(output_chunks)
 
         suffix_ctx = RenderContext(
             idx=len(messages),
@@ -1628,7 +1639,7 @@ class Renderer(ABC):
                     raise RendererError(f"Unknown train_on_what: {train_on_what}")
 
             model_input_chunks_weights += [
-                (output_part, int(output_has_weight)) for output_part in output_parts if output_part
+                (output_part, int(output_has_weight)) for output_part in output_parts
             ]
 
             # stop_overlap completes the stop sequence for formats like RoleColon (e.g., "User:")

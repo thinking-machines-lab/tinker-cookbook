@@ -482,7 +482,7 @@ class KimiK2Renderer(Renderer):
                     raise RendererError(f"Unknown train_on_what: {train_on_what}")
 
             model_input_chunks_weights += [
-                (output_part, int(output_has_weight)) for output_part in output_parts if output_part
+                (output_part, int(output_has_weight)) for output_part in output_parts
             ]
 
         weights_data = [w for chunk, w in model_input_chunks_weights for _ in range(chunk.length)]

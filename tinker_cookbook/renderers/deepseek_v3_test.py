@@ -269,3 +269,34 @@ class TestDeepSeekStreamingBatchEquivalence:
         text = [p for p in content if p["type"] == "text"]
         assert len(thinking) == 1 and thinking[0]["thinking"] == "reasoning"
         assert len(text) == 1 and text[0]["text"] == "partial"
+
+
+# =============================================================================
+# RenderedMessage empty chunk filtering (DeepSeek-specific)
+# =============================================================================
+
+
+def test_deepseek_render_message_thinking_only_produces_no_empty_chunks():
+    """
+    When a historical assistant message has only thinking content, render_message
+    should not produce EncodedTextChunk(tokens=[]) in the output.
+    """
+    model_name = "deepseek-ai/DeepSeek-V3.1"
+    tokenizer = get_tokenizer(model_name)
+    renderer = DeepSeekV3ThinkingRenderer(tokenizer)
+
+    message: Message = {
+        "role": "assistant",
+        "content": [
+            ThinkingPart(type="thinking", thinking="Only reasoning, no text output."),
+        ],
+    }
+
+    ctx = RenderContext(idx=1, is_last=False, prev_message={"role": "user", "content": "Hi"})
+    rendered = renderer.render_message(message, ctx)
+
+    for chunk in rendered.output:
+        if isinstance(chunk, tinker.EncodedTextChunk):
+            assert len(chunk.tokens) > 0, (
+                "render_message should not produce EncodedTextChunk with empty tokens"
+            )

@@ -876,6 +876,97 @@ def test_strip_thinking_from_history_false(model_name: str, renderer_class):
     assert "Second turn reasoning" in decoded, f"Second thinking should be preserved: {decoded}"
 
 
+@pytest.mark.parametrize(
+    "model_name,renderer_class",
+    [
+        ("Qwen/Qwen3-8B", Qwen3Renderer),
+        ("Qwen/Qwen3.5-35B-A3B", Qwen3_5Renderer),
+        ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3ThinkingRenderer),
+        ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer),
+        ("moonshotai/Kimi-K2.5", KimiK25Renderer),
+        ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", Nemotron3Renderer),
+    ],
+)
+def test_thinking_only_assistant_message_does_not_crash(model_name: str, renderer_class):
+    """
+    Regression test: when an earlier assistant message has ONLY thinking content (no text),
+    stripping thinking produces an empty token sequence. This must not produce an
+    EncodedTextChunk(tokens=[]) which Tinker would reject.
+    """
+    skip_if_deepseek_tokenizer_bug(model_name)
+    tokenizer = get_tokenizer(model_name)
+    renderer = renderer_class(tokenizer)  # Default strip_thinking_from_history=True
+
+    messages: list[Message] = [
+        {"role": "user", "content": "Think about this carefully."},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="Deep internal reasoning only."),
+            ],
+        },
+        {"role": "user", "content": "Now answer: what is 2+2?"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="Simple arithmetic."),
+                TextPart(type="text", text="The answer is 4."),
+            ],
+        },
+    ]
+
+    # Should not raise — the thinking-only message's empty chunk must be filtered
+    model_input, weights = renderer.build_supervised_example(messages)
+    tokens = model_input.to_ints()
+
+    assert len(tokens) == len(weights), (
+        f"Token/weight length mismatch: {len(tokens)} vs {len(weights)}"
+    )
+    assert len(tokens) > 0, "Should produce a non-empty token sequence"
+
+    # The thinking-only message's content should be fully stripped
+    assert "Deep internal reasoning only" not in tokenizer.decode(tokens), (
+        "First assistant thinking should be stripped from history"
+    )
+    # The last message's content should be present
+    assert "The answer is 4" in tokenizer.decode(tokens), (
+        "Last assistant text should be present"
+    )
+
+
+# =============================================================================
+# RenderedMessage empty chunk filtering
+# =============================================================================
+
+
+def test_rendered_message_filters_empty_encoded_text_chunks():
+    """RenderedMessage.__post_init__ should drop EncodedTextChunk(tokens=[])."""
+    import tinker
+    from tinker_cookbook.renderers.base import RenderedMessage
+
+    non_empty = tinker.EncodedTextChunk(tokens=[1, 2, 3])
+    empty = tinker.EncodedTextChunk(tokens=[])
+
+    msg = RenderedMessage(output=[non_empty, empty, non_empty])
+    assert len(msg.output) == 2
+    assert all(
+        isinstance(c, tinker.EncodedTextChunk) and len(c.tokens) > 0 for c in msg.output
+    )
+
+
+def test_rendered_message_preserves_non_empty_chunks():
+    """RenderedMessage should not filter non-empty EncodedTextChunks."""
+    import tinker
+    from tinker_cookbook.renderers.base import RenderedMessage
+
+    chunks = [
+        tinker.EncodedTextChunk(tokens=[1]),
+        tinker.EncodedTextChunk(tokens=[2, 3]),
+    ]
+    msg = RenderedMessage(output=chunks)
+    assert len(msg.output) == 2
+
+
 # =============================================================================
 # Supervised/Generation/Parse Consistency Tests
 # =============================================================================
