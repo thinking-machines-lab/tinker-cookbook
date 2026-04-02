@@ -229,9 +229,12 @@ pytest tinker_cookbook/recipes/true_thinking_score/tts_test.py -v
 
 4. **Self-verification is often fake:** 36-57% of "Wait, let me re-check"
    steps are decorative across all models. DeepSeek-V3.1 is the most honest
-   at 36%. This is higher than the paper's 12-21%, possibly because our
-   discourse-marker segmentation creates more granular self-verification
-   fragments.
+   at 36%. This is higher than the paper's 12-21%, likely because of **step
+   granularity**: the paper segments by sentences, bundling self-verification
+   cues ("Wait") with the recomputation that follows into one step. Our
+   discourse-marker segmentation splits these apart, creating short SV
+   fragments (e.g. just `"Wait, let me re-check."`) that are individually
+   decorative even if the surrounding recomputation is not.
 
 5. **TTS rises near the answer:** The final steps before the answer
    consistently have the highest TTS, suggesting the model "commits" to an
