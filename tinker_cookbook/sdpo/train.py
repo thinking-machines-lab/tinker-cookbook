@@ -550,7 +550,7 @@ async def main(config: Config):
                         rollout_summary_export = (
                             RolloutSummaryExportConfig(
                                 path=rollout_summaries_jsonl_path(
-                                    config.log_path, eval_file_prefix
+                                    Path(config.log_path), eval_file_prefix
                                 ),
                                 split=f"eval/{ev_name}",
                                 iteration=i_batch,
@@ -606,7 +606,7 @@ async def main(config: Config):
         # Export train rollout summaries
         if config.rollout_json_export:
             write_rollout_summaries_jsonl(
-                rollout_summaries_jsonl_path(config.log_path, train_file_prefix),
+                rollout_summaries_jsonl_path(Path(config.log_path), train_file_prefix),
                 split="train",
                 iteration=i_batch,
                 trajectory_groups_P=trajectory_groups,
@@ -630,6 +630,15 @@ async def main(config: Config):
 
         metrics["time/total"] = time.time() - t_start
         ml_logger.log_metrics(metrics, step=i_batch)
+
+        # Log a summary line so nohup output shows progress.
+        correct = metrics.get("env/all/correct", "?")
+        success_frac = metrics.get("sdpo/success_fraction", "?")
+        t_total = metrics["time/total"]
+        logger.info(
+            f"Step {i_batch}/{num_batches} | correct={correct} | "
+            f"success_frac={success_frac} | time={t_total:.1f}s"
+        )
 
     # ---- Final checkpoint ----
     if start_batch < num_batches:
