@@ -195,7 +195,7 @@ class TestBenchmarkRegistration:
         self._check_registered("tinker_cookbook.eval.benchmarks._tau2_bench", "tau2_bench")
 
     def test_arena_hard_registered(self):
-        self._check_registered("tinker_cookbook.eval.benchmarks._arena_hard", "arena_hard")
+        self._check_registered("tinker_cookbook.eval.benchmarks.arena_hard", "arena_hard")
 
     def test_swe_bench_registered(self):
         self._check_registered("tinker_cookbook.eval.benchmarks._swe_bench", "swe_bench")
@@ -204,7 +204,7 @@ class TestBenchmarkRegistration:
         self._check_registered("tinker_cookbook.eval.benchmarks._terminal_bench", "terminal_bench")
 
     def test_mbpp_registered(self):
-        self._check_registered("tinker_cookbook.eval.benchmarks._mbpp", "mbpp")
+        self._check_registered("tinker_cookbook.eval.benchmarks.mbpp", "mbpp")
 
     def test_livecodebench_registered(self):
         self._check_registered("tinker_cookbook.eval.benchmarks._livecodebench", "livecodebench")

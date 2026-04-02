@@ -54,19 +54,19 @@ results = await run_benchmarks(
 | mmlu_redux | Single-turn | Programmatic (MCQA) | — |
 | gpqa | Single-turn | Programmatic (MCQA) | HF auth (gated) |
 | ifeval | Single-turn | Programmatic (IF constraints) | — |
+| arena_hard | Single-turn | LLM-as-judge | `judge_sampling_client` in config |
+| mbpp | Single-turn | Code execution | Modal |
 
 **Experimental benchmarks** (``_``-prefixed modules) — functional but need further validation:
 
 | Benchmark | Type | Grading | Status |
 |-----------|------|---------|--------|
-| mbpp | Single-turn | Code execution (Modal) | 92% on 50 samples, needs broader testing |
 | longbench | Single-turn | Programmatic | Limited by 65K context window |
 | livecodebench | Single-turn | Code execution (Modal) | Score gap vs public (23% vs 75%) |
 | ifbench | Single-turn | IF constraints | Verifier doesn't cover IFBench instruction types |
 | bfcl | Single-turn | Function call AST | Ground truth format mismatch |
 | terminal_bench | Multi-turn | Sandbox + tests (Modal) | Multi-turn works, test grading needs work |
 | swe_bench | Multi-turn | Sandbox + pytest (Modal) | Not yet tested end-to-end |
-| arena_hard | Single-turn | LLM-as-judge | Needs ``judge_sampling_client`` |
 | tau2_bench | Multi-turn | Tool dispatch + user sim | Needs ``judge_sampling_client`` |
 
 **Prerequisites:**
