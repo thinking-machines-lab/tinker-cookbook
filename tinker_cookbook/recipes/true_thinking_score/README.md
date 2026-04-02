@@ -254,7 +254,7 @@ pytest tinker_cookbook/recipes/true_thinking_score/tts_test.py -v
 | `tts.py` | Core TTS computation: step segmentation, number perturbation, early-exit confidence, TTS scoring |
 | `analyze.py` | CLI entry point for running TTS analysis on MATH-500 or GSM8K |
 | `run_small_experiment.py` | Quick validation script (3 hardcoded problems) |
-| `tts_test.py` | 16 unit tests for segmentation, perturbation, and self-verification detection |
+| `tts_test.py` | 18 unit tests for segmentation, perturbation, and self-verification detection |
 
 ### References
 

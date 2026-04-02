@@ -26,16 +26,18 @@ Usage:
 import asyncio
 import json
 import logging
+import random
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 import chz
 import tinker
 from datasets import Dataset, load_dataset
 
-from tinker_cookbook.recipes.math_rl.math_env import extract_boxed
+from tinker_cookbook.recipes.math_rl.math_env import extract_gsm8k_final_answer
+from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed
 from tinker_cookbook.recipes.true_thinking_score.tts import (
     generate_cot_and_compute_tts,
 )
@@ -56,32 +58,23 @@ def _load_problems(dataset: str, n_problems: int, seed: int) -> list[dict[str, s
                 problems.append({"question": row["problem"], "answer": answer})
             except ValueError:
                 continue
-        # Deterministic shuffle
-        import random
-
-        random.Random(seed).shuffle(problems)
-        return problems[:n_problems]
 
     elif dataset == "gsm8k":
         ds = cast(Dataset, load_dataset("openai/gsm8k", name="main", split="test"))
         problems = []
         for row in ds:
             row = cast(dict[str, str], row)
-            # Extract final numeric answer after ####
-            lines = row["answer"].splitlines()
-            for line in reversed(lines):
-                s = line.strip()
-                if s.startswith("####"):
-                    answer = s[4:].strip().replace(",", "")
-                    problems.append({"question": row["question"], "answer": answer})
-                    break
-        import random
-
-        random.Random(seed).shuffle(problems)
-        return problems[:n_problems]
+            try:
+                answer = extract_gsm8k_final_answer(row["answer"])
+                problems.append({"question": row["question"], "answer": answer})
+            except ValueError:
+                continue
 
     else:
         raise ValueError(f"Unknown dataset: {dataset}. Use 'math' or 'gsm8k'.")
+
+    random.Random(seed).shuffle(problems)
+    return problems[:n_problems]
 
 
 @chz.chz
@@ -93,7 +86,7 @@ class CLIConfig:
     renderer_name: str | None = None  # Override renderer (e.g. deepseekv3_thinking)
 
     # Dataset
-    dataset: str = "math"  # math | gsm8k
+    dataset: Literal["math", "gsm8k"] = "math"
     n_problems: int = 50
 
     # Generation

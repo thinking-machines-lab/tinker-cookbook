@@ -177,10 +177,6 @@ def perturb_numbers(text: str, rng: random.Random | None = None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# TTS computation
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
 # Early-exit cue configuration
 # ---------------------------------------------------------------------------
 #
@@ -219,7 +215,6 @@ class TTSResult:
     question: str
     answer: str
     cot_text: str
-    steps: list[str]
     step_scores: list[StepTTS]
     model_correct: bool
 
@@ -317,12 +312,9 @@ async def compute_early_exit_confidence(
         return 0.0
 
     # Build the full sequence: base_prompt + prefix_tokens + answer_tokens
-    full_input = base_prompt
-    for tok in prefix_tokens:
-        full_input = full_input.append_int(tok)
-    answer_start_pos = full_input.length  # This is where answer tokens begin
-    for tok in answer_tokens:
-        full_input = full_input.append_int(tok)
+    full_input = base_prompt.append(tinker.EncodedTextChunk(tokens=prefix_tokens))
+    answer_start_pos = full_input.length
+    full_input = full_input.append(tinker.EncodedTextChunk(tokens=answer_tokens))
 
     # Compute logprobs for the full sequence
     logprobs = await sampling_client.compute_logprobs_async(full_input)
@@ -450,7 +442,6 @@ async def compute_tts_for_cot(
             question=question,
             answer=answer_str,
             cot_text=cot_text,
-            steps=[],
             step_scores=[],
             model_correct=False,
         )
@@ -481,7 +472,6 @@ async def compute_tts_for_cot(
         question=question,
         answer=answer_str,
         cot_text=cot_text,
-        steps=steps,
         step_scores=step_scores,
         model_correct=model_correct,
     )
@@ -555,7 +545,7 @@ async def generate_cot_and_compute_tts(
         thinking_text = cot_text
         final_part = ""
 
-    logger.info(f"CoT ({len(thinking_text)} chars, {len(segment_cot_steps(thinking_text))} steps)")
+    logger.info(f"CoT: {len(thinking_text)} chars")
     if final_part:
         logger.info(f"Final answer: {final_part[:200]}")
 
