@@ -1,14 +1,28 @@
 """tau2-Bench benchmark — multi-turn customer service agent evaluation.
 
-Dataset: ``sierra-research/tau2-bench`` on HuggingFace.
-Evaluation: Multi-turn agent interaction with tool dispatch and user simulation.
-The model acts as a customer service agent, calling tools against a simulated
-backend database while conversing with an LLM-simulated customer.
+**Status: Experimental** — needs significant work before production use:
 
-Metric: Task completion rate — fraction of tasks where the agent takes all
-required actions correctly.
+1. **Data loading**: Dataset is NOT on HuggingFace. It ships with the
+   ``tau2-bench`` GitHub repo (https://github.com/sierra-research/tau2-bench).
+   Current implementation tries to load from HF and fails.
 
-Requires ``config.judge_sampling_client`` for the user simulator and NL grading.
+2. **Tool definitions**: The official benchmark defines domain-specific tools
+   (airline booking, retail orders) as Python functions in the repo's source
+   code. Our implementation uses a simplified simulated backend that may not
+   match the official tool behavior.
+
+3. **User simulation**: Requires an LLM to simulate the customer. Quality
+   depends heavily on the simulator model.
+
+4. **NL grading**: The official benchmark uses ``nl_assertions`` (natural
+   language checks like "Agent should refuse the cancellation") which require
+   an LLM judge. Our implementation only checks action-based criteria.
+
+5. **Architecture**: Should be migrated to ``MessageEnv`` + ``EnvFromMessageEnv``
+   pattern (like terminal_bench and swe_bench) for proper renderer integration.
+
+Metric: Task completion rate.
+Requires ``config.judge_sampling_client`` for the user simulator.
 """
 
 from __future__ import annotations
