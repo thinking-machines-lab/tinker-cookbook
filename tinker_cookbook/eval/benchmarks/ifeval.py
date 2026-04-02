@@ -13,6 +13,7 @@ from collections.abc import Sequence
 import tinker
 
 from tinker_cookbook.eval.benchmarks._common import (
+    build_messages,
     decode_response,
     limit_dataset,
     load_benchmark_dataset,
@@ -99,7 +100,7 @@ class IFEvalBenchmarkBuilder(BenchmarkBuilder):
             raw_kwargs = row["kwargs"]
             kwargs_list = parse_kwargs(raw_kwargs, instruction_ids)
 
-            messages: list[Message] = [{"role": "user", "content": row["prompt"]}]
+            messages = build_messages(row["prompt"], self.system_prompt)
             example_id = f"ifeval_{row['key']}"
             envs.append(
                 IFEvalEnv(messages, instruction_ids, kwargs_list, renderer, example_id=example_id)

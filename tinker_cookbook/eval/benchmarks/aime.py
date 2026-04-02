@@ -21,6 +21,7 @@ import tinker
 from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
+    build_messages,
     decode_response,
     extract_boxed,
     extract_gsm8k_answer,
@@ -30,7 +31,6 @@ from tinker_cookbook.eval.benchmarks._common import (
     make_example_id,
 )
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
-from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.types import Env, StepResult
 
@@ -68,11 +68,19 @@ def _load_aime_dataset(year: str) -> Dataset | None:
 class AIMEEnv(Env):
     """Single-turn env for one AIME problem."""
 
-    def __init__(self, problem: str, expected: int, renderer: Renderer, example_id: str = ""):
+    def __init__(
+        self,
+        problem: str,
+        expected: int,
+        renderer: Renderer,
+        example_id: str = "",
+        system_prompt: str | None = None,
+    ):
         self.problem = problem
         self.expected = expected
         self.renderer = renderer
         self.example_id = example_id
+        self.system_prompt = system_prompt
 
     async def initial_observation(self):
         prompt = (
@@ -80,7 +88,7 @@ class AIMEEnv(Env):
             "This is an AIME problem. The answer is an integer from 000 to 999. "
             "Show your work step by step, then put your final answer in \\boxed{}."
         )
-        messages: list[Message] = [{"role": "user", "content": prompt}]
+        messages = build_messages(prompt, self.system_prompt)
         model_input = self.renderer.build_generation_prompt(messages)
         stop = self.renderer.get_stop_sequences()
         return model_input, stop
@@ -149,7 +157,15 @@ class _AIMEBenchmarkBuilder(BenchmarkBuilder):
                     continue
 
             example_id = make_example_id(self.name, problem)
-            envs.append(AIMEEnv(problem, expected, renderer, example_id=example_id))
+            envs.append(
+                AIMEEnv(
+                    problem,
+                    expected,
+                    renderer,
+                    example_id=example_id,
+                    system_prompt=config.system_prompt,
+                )
+            )
         return envs
 
 

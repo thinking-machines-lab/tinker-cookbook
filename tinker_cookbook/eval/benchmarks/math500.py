@@ -15,13 +15,13 @@ import tinker
 from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
+    build_messages,
     decode_response,
     limit_dataset,
     load_benchmark_dataset,
     make_example_id,
 )
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
-from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.types import Env, StepResult
 
@@ -36,15 +36,23 @@ logger = logging.getLogger(__name__)
 class MATH500Env(Env):
     """Single-turn env for one MATH-500 problem."""
 
-    def __init__(self, problem: str, expected: str, renderer: Renderer, example_id: str = ""):
+    def __init__(
+        self,
+        problem: str,
+        expected: str,
+        renderer: Renderer,
+        example_id: str = "",
+        system_prompt: str | None = None,
+    ):
         self.problem = problem
         self.expected = expected
         self.renderer = renderer
         self.example_id = example_id
+        self.system_prompt = system_prompt
 
     async def initial_observation(self):
         prompt = self.problem + " Put your final answer in \\boxed{}."
-        messages: list[Message] = [{"role": "user", "content": prompt}]
+        messages = build_messages(prompt, self.system_prompt)
         model_input = self.renderer.build_generation_prompt(messages)
         stop = self.renderer.get_stop_sequences()
         return model_input, stop
@@ -99,7 +107,15 @@ class MATH500BenchmarkBuilder(BenchmarkBuilder):
             except ValueError:
                 continue
             example_id = make_example_id("math500", row["problem"])
-            envs.append(MATH500Env(row["problem"], expected, renderer, example_id=example_id))
+            envs.append(
+                MATH500Env(
+                    row["problem"],
+                    expected,
+                    renderer,
+                    example_id=example_id,
+                    system_prompt=config.system_prompt,
+                )
+            )
         return envs
 
 

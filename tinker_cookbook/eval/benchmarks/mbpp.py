@@ -16,6 +16,7 @@ from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
     SandboxMixin,
+    build_messages,
     decode_response,
     extract_python_code,
     get_sandbox_factory,
@@ -24,7 +25,6 @@ from tinker_cookbook.eval.benchmarks._common import (
     make_example_id,
 )
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
-from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.types import Env, StepResult
 
@@ -47,6 +47,7 @@ class MBPPEnv(SandboxMixin, Env):
         renderer: Renderer,
         sandbox_factory,
         example_id: str = "",
+        system_prompt: str | None = None,
     ):
         self.prompt = prompt
         self.task_prompt = task_prompt
@@ -54,12 +55,13 @@ class MBPPEnv(SandboxMixin, Env):
         self.renderer = renderer
         self.sandbox_factory = sandbox_factory
         self.example_id = example_id
+        self.system_prompt = system_prompt
 
     async def initial_observation(self):
         # Create sandbox for code execution
         self.sandbox = await self.sandbox_factory()
 
-        messages: list[Message] = [{"role": "user", "content": self.prompt}]
+        messages = build_messages(self.prompt, self.system_prompt)
         model_input = self.renderer.build_generation_prompt(messages)
         stop = self.renderer.get_stop_sequences()
         return model_input, stop

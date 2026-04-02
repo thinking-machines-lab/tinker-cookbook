@@ -15,6 +15,7 @@ import tinker
 from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
+    build_messages,
     decode_response,
     extract_mcq_answer,
     format_mcq_choices,
@@ -23,7 +24,6 @@ from tinker_cookbook.eval.benchmarks._common import (
     make_example_id,
 )
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
-from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.types import Env, StepResult
 
@@ -48,15 +48,17 @@ class MMLUProEnv(Env):
         valid_letters: str,
         renderer: Renderer,
         example_id: str = "",
+        system_prompt: str | None = None,
     ):
         self.prompt = prompt
         self.expected = expected
         self.valid_letters = valid_letters
         self.renderer = renderer
         self.example_id = example_id
+        self.system_prompt = system_prompt
 
     async def initial_observation(self):
-        messages: list[Message] = [{"role": "user", "content": self.prompt}]
+        messages = build_messages(self.prompt, self.system_prompt)
         model_input = self.renderer.build_generation_prompt(messages)
         stop = self.renderer.get_stop_sequences()
         return model_input, stop
@@ -122,7 +124,14 @@ class MMLUProBenchmarkBuilder(BenchmarkBuilder):
             else:
                 example_id = make_example_id("mmlu_pro", question)
             envs.append(
-                MMLUProEnv(prompt, expected, valid_letters, renderer, example_id=example_id)
+                MMLUProEnv(
+                    prompt,
+                    expected,
+                    valid_letters,
+                    renderer,
+                    example_id=example_id,
+                    system_prompt=config.system_prompt,
+                )
             )
         return envs
 

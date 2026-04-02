@@ -19,6 +19,7 @@ import tinker
 from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
+    build_messages,
     decode_response,
     extract_mcq_answer,
     format_mcq_choices,
@@ -30,7 +31,6 @@ from tinker_cookbook.eval.benchmarks._types import (
     BenchmarkConfig,
     BenchmarkResult,
 )
-from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.types import Env, StepResult
 
@@ -103,16 +103,23 @@ class MMLUReduxEnv(Env):
     """Single-turn env for one MMLU-Redux question."""
 
     def __init__(
-        self, prompt: str, expected: str, subject: str, renderer: Renderer, example_id: str = ""
+        self,
+        prompt: str,
+        expected: str,
+        subject: str,
+        renderer: Renderer,
+        example_id: str = "",
+        system_prompt: str | None = None,
     ):
         self.prompt = prompt
         self.expected = expected
         self.subject = subject
         self.renderer = renderer
         self.example_id = example_id
+        self.system_prompt = system_prompt
 
     async def initial_observation(self):
-        messages: list[Message] = [{"role": "user", "content": self.prompt}]
+        messages = build_messages(self.prompt, self.system_prompt)
         model_input = self.renderer.build_generation_prompt(messages)
         stop = self.renderer.get_stop_sequences()
         return model_input, stop
@@ -167,7 +174,16 @@ class MMLUReduxBenchmarkBuilder(BenchmarkBuilder):
             prompt = f"{question}\n\n{format_mcq_choices(choices)}\n\nAnswer with just the letter (A, B, C, or D)."
             subject = row.get("_subject", "unknown")
             example_id = make_example_id("mmlu_redux", question)
-            envs.append(MMLUReduxEnv(prompt, expected, subject, renderer, example_id=example_id))
+            envs.append(
+                MMLUReduxEnv(
+                    prompt,
+                    expected,
+                    subject,
+                    renderer,
+                    example_id=example_id,
+                    system_prompt=config.system_prompt,
+                )
+            )
         return envs
 
     def aggregate(self, rewards: list[float], metrics_list: list[dict]) -> BenchmarkResult:
