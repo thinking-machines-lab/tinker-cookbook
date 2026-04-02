@@ -227,7 +227,6 @@ pytest tinker_cookbook/recipes/true_thinking_score/tts_test.py -v
 | `analyze.py` | CLI entry point for running TTS analysis on MATH-500 or GSM8K |
 | `run_small_experiment.py` | Quick validation script (3 hardcoded problems) |
 | `tts_test.py` | 16 unit tests for segmentation, perturbation, and self-verification detection |
-| `RESEARCH_NOTES.md` | Development notes and experiment log |
 
 ### References
 
