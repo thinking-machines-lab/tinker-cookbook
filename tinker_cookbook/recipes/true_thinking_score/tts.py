@@ -306,7 +306,6 @@ async def compute_early_exit_confidence(
     # starts generating. For thinking models (Qwen3.5) this already includes
     # <think>\n, for others it ends at the assistant header.
     base_prompt = renderer.build_generation_prompt(messages)
-    base_length = base_prompt.length
 
     # Tokenize the CoT + early-exit cue (prefix of the answer)
     prefix_text = cot_prefix + EARLY_EXIT_CUE
@@ -383,10 +382,18 @@ async def compute_tts_for_step(
 
     # Compute all four conditions concurrently
     s1_c1, s0_c1, s1_c0, s0_c0 = await asyncio.gather(
-        compute_early_exit_confidence(sampling_client, renderer, question, prefix_s1_c1, answer_str),
-        compute_early_exit_confidence(sampling_client, renderer, question, prefix_s0_c1, answer_str),
-        compute_early_exit_confidence(sampling_client, renderer, question, prefix_s1_c0, answer_str),
-        compute_early_exit_confidence(sampling_client, renderer, question, prefix_s0_c0, answer_str),
+        compute_early_exit_confidence(
+            sampling_client, renderer, question, prefix_s1_c1, answer_str
+        ),
+        compute_early_exit_confidence(
+            sampling_client, renderer, question, prefix_s0_c1, answer_str
+        ),
+        compute_early_exit_confidence(
+            sampling_client, renderer, question, prefix_s1_c0, answer_str
+        ),
+        compute_early_exit_confidence(
+            sampling_client, renderer, question, prefix_s0_c0, answer_str
+        ),
     )
 
     # TTS = 1/2 * (|S_1(1) - S_0(1)| + |S_1(0) - S_0(0)|)
@@ -453,7 +460,7 @@ async def compute_tts_for_cot(
         )
         step_scores.append(score)
         logger.info(
-            f"  Step {i}/{len(steps)-1}: TTS={score.tts:.4f} "
+            f"  Step {i}/{len(steps) - 1}: TTS={score.tts:.4f} "
             f"[S1C1={score.s1_c1:.4f} S0C1={score.s0_c1:.4f} "
             f"S1C0={score.s1_c0:.4f} S0C0={score.s0_c0:.4f}] "
             f"SV={score.is_self_verification}"
@@ -523,14 +530,16 @@ async def generate_cot_and_compute_tts(
     )
 
     cot_tokens = sample_result.sequences[0].tokens
-    cot_text = tokenizer.decode(cot_tokens)
+    cot_text_raw = tokenizer.decode(cot_tokens)
+    assert isinstance(cot_text_raw, str)
+    cot_text: str = cot_text_raw
     logger.info(f"Generated {len(cot_tokens)} tokens of CoT")
 
     # Extract thinking content from <think>...</think> tags (Qwen3 format)
     think_match = re.search(r"<think>(.*?)</think>", cot_text, re.DOTALL)
     if think_match:
         thinking_text = think_match.group(1).strip()
-        final_part = cot_text[think_match.end():].strip()
+        final_part = cot_text[think_match.end() :].strip()
     else:
         # No think tags - treat entire output as reasoning
         thinking_text = cot_text

@@ -31,9 +31,7 @@ logger = logging.getLogger(__name__)
 PROBLEMS = [
     # AMC-level problems (competition math, should produce longer CoT)
     {
-        "question": (
-            "How many positive integers less than 100 are divisible by 3, 5, or 7?"
-        ),
+        "question": ("How many positive integers less than 100 are divisible by 3, 5, or 7?"),
         "answer": "54",
     },
     {
@@ -60,7 +58,7 @@ async def main():
     log_dir = Path("/tmp/tinker-tts-experiment")
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info(f"=== TTS Small-Scale Experiment ===")
+    logger.info("=== TTS Small-Scale Experiment ===")
     logger.info(f"Model: {MODEL_NAME}")
     logger.info(f"Problems: {len(PROBLEMS)}")
     logger.info(f"Log dir: {log_dir}")
@@ -71,8 +69,8 @@ async def main():
     all_tts_scores: list[float] = []
 
     for i, problem in enumerate(PROBLEMS):
-        logger.info(f"\n{'='*60}")
-        logger.info(f"Problem {i+1}/{len(PROBLEMS)}: {problem['question'][:60]}...")
+        logger.info(f"\n{'=' * 60}")
+        logger.info(f"Problem {i + 1}/{len(PROBLEMS)}: {problem['question'][:60]}...")
         logger.info(f"Expected answer: {problem['answer']}")
 
         try:
@@ -92,12 +90,12 @@ async def main():
             logger.info(f"\nResult: {json.dumps(summary, indent=2)}")
 
         except Exception as e:
-            logger.error(f"Failed on problem {i+1}: {e}", exc_info=True)
+            logger.error(f"Failed on problem {i + 1}: {e}", exc_info=True)
             results.append({"question": problem["question"][:100], "error": str(e)})
 
     # Aggregate statistics
-    logger.info(f"\n{'='*60}")
-    logger.info(f"=== AGGREGATE RESULTS ===")
+    logger.info(f"\n{'=' * 60}")
+    logger.info("=== AGGREGATE RESULTS ===")
     logger.info(f"Total problems: {len(results)}")
     logger.info(f"Total steps analyzed: {len(all_tts_scores)}")
 
@@ -112,9 +110,9 @@ async def main():
         logger.info(f"TTS distribution: {sorted(all_tts_scores, reverse=True)[:20]}")
 
         # Paper reports: mean TTS ~ 0.03, only 2.3% >= 0.7
-        logger.info(f"\nComparison with paper (AIME, Qwen-7B):")
+        logger.info("\nComparison with paper (AIME, Qwen-7B):")
         logger.info(f"  Paper mean TTS: ~0.03  |  Ours: {mean_tts:.4f}")
-        logger.info(f"  Paper high TTS: ~2.3%  |  Ours: {high_tts*100:.1f}%")
+        logger.info(f"  Paper high TTS: ~2.3%  |  Ours: {high_tts * 100:.1f}%")
 
     # Save results
     results_path = log_dir / "tts_results.json"

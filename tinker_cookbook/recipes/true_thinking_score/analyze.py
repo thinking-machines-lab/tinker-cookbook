@@ -29,16 +29,14 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 import chz
 import tinker
-from datasets import load_dataset
+from datasets import Dataset, load_dataset
 
-from tinker_cookbook import model_info
 from tinker_cookbook.recipes.math_rl.math_env import extract_boxed
-from tinker_cookbook.recipes.math_rl.math_grading import grade_answer
 from tinker_cookbook.recipes.true_thinking_score.tts import (
-    TTSResult,
     generate_cot_and_compute_tts,
 )
 
@@ -49,9 +47,10 @@ logger = logging.getLogger(__name__)
 def _load_problems(dataset: str, n_problems: int, seed: int) -> list[dict[str, str]]:
     """Load math problems with known answers."""
     if dataset == "math":
-        ds = load_dataset("HuggingFaceH4/MATH-500", name="default", split="test")
+        ds = cast(Dataset, load_dataset("HuggingFaceH4/MATH-500", name="default", split="test"))
         problems = []
         for row in ds:
+            row = cast(dict[str, str], row)
             try:
                 answer = extract_boxed(row["solution"])
                 problems.append({"question": row["problem"], "answer": answer})
@@ -64,9 +63,10 @@ def _load_problems(dataset: str, n_problems: int, seed: int) -> list[dict[str, s
         return problems[:n_problems]
 
     elif dataset == "gsm8k":
-        ds = load_dataset("openai/gsm8k", name="main", split="test")
+        ds = cast(Dataset, load_dataset("openai/gsm8k", name="main", split="test"))
         problems = []
         for row in ds:
+            row = cast(dict[str, str], row)
             # Extract final numeric answer after ####
             lines = row["answer"].splitlines()
             for line in reversed(lines):
@@ -118,7 +118,7 @@ async def analyze_one_problem(
     seed: int,
 ) -> dict | None:
     """Analyze a single problem and return its summary dict."""
-    logger.info(f"[{problem_idx+1}/{total}] {problem['question'][:60]}...")
+    logger.info(f"[{problem_idx + 1}/{total}] {problem['question'][:60]}...")
     try:
         result = await generate_cot_and_compute_tts(
             service_client=service_client,
@@ -131,12 +131,12 @@ async def analyze_one_problem(
         summary = result.summary()
         summary["problem_idx"] = problem_idx
         logger.info(
-            f"[{problem_idx+1}/{total}] Done: {summary['n_steps']} steps, "
+            f"[{problem_idx + 1}/{total}] Done: {summary['n_steps']} steps, "
             f"mean_tts={summary['mean_tts']:.4f}, correct={summary['model_correct']}"
         )
         return summary
     except Exception as e:
-        logger.error(f"[{problem_idx+1}/{total}] Failed: {e}")
+        logger.error(f"[{problem_idx + 1}/{total}] Failed: {e}")
         return {
             "question": problem["question"][:100],
             "answer": problem["answer"],
@@ -159,7 +159,7 @@ async def cli_main(config: CLIConfig) -> None:
         log_dir = Path(f"/tmp/tinker-examples/tts/{run_name}")
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info(f"=== TTS Analysis ===")
+    logger.info("=== TTS Analysis ===")
     logger.info(f"Model: {config.model_name}")
     logger.info(f"Dataset: {config.dataset}")
     logger.info(f"Problems: {config.n_problems}")
@@ -178,8 +178,13 @@ async def cli_main(config: CLIConfig) -> None:
     async def _bounded(problem: dict, idx: int) -> dict | None:
         async with sem:
             return await analyze_one_problem(
-                service_client, config.model_name, problem, idx,
-                len(problems), config.max_tokens, config.seed,
+                service_client,
+                config.model_name,
+                problem,
+                idx,
+                len(problems),
+                config.max_tokens,
+                config.seed,
             )
 
     tasks = [_bounded(p, i) for i, p in enumerate(problems)]
@@ -235,9 +240,11 @@ async def cli_main(config: CLIConfig) -> None:
         json.dump(aggregate, f, indent=2)
 
     # Print results
-    logger.info(f"\n{'='*60}")
-    logger.info(f"=== RESULTS ===")
-    logger.info(f"Problems: {aggregate['n_problems_succeeded']}/{aggregate['n_problems']} succeeded")
+    logger.info(f"\n{'=' * 60}")
+    logger.info("=== RESULTS ===")
+    logger.info(
+        f"Problems: {aggregate['n_problems_succeeded']}/{aggregate['n_problems']} succeeded"
+    )
     logger.info(f"Model accuracy: {aggregate['accuracy']:.1%}")
     logger.info(f"Total steps: {aggregate['n_steps_total']}")
     logger.info(f"Mean steps/problem: {aggregate['mean_steps_per_problem']:.1f}")
@@ -248,13 +255,13 @@ async def cli_main(config: CLIConfig) -> None:
     logger.info(f"Self-verification steps: {n_sv_total}")
     logger.info(f"  of which decorative: {n_sv_decorative} ({aggregate['frac_sv_decorative']:.1%})")
 
-    logger.info(f"\nComparison with paper (AIME, DeepSeek-R1-Distill-Qwen-7B):")
+    logger.info("\nComparison with paper (AIME, DeepSeek-R1-Distill-Qwen-7B):")
     logger.info(f"  Paper mean TTS:       ~0.03    | Ours: {aggregate['mean_tts']:.4f}")
     logger.info(f"  Paper high TTS>=0.7:   2.3%    | Ours: {aggregate['frac_high_tts_0.7']:.1%}")
     logger.info(f"  Paper high TTS>=0.3:   6.4%    | Ours: {aggregate['frac_high_tts_0.3']:.1%}")
     logger.info(f"  Paper SV decorative:  12-21%   | Ours: {aggregate['frac_sv_decorative']:.1%}")
 
-    logger.info(f"\nResults saved to:")
+    logger.info("\nResults saved to:")
     logger.info(f"  Per-problem: {jsonl_path}")
     logger.info(f"  Summary:     {summary_path}")
 
