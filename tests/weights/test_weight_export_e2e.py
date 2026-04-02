@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import tempfile
 from pathlib import Path
 from typing import cast
 
@@ -26,9 +25,9 @@ import datasets
 import pytest
 import tinker
 import torch
-from safetensors.torch import load_file
 
-from tinker_cookbook import model_info, renderers
+from tests.weights.conftest import load_merged_tensors
+from tinker_cookbook import renderers
 from tinker_cookbook.supervised.data import (
     SupervisedDatasetFromHFDataset,
     conversation_to_datum,
@@ -46,9 +45,7 @@ LORA_RANK = 8
 # ---------------------------------------------------------------------------
 
 
-def _make_sft_dataset(
-    model_name: str, renderer_name: str
-) -> SupervisedDatasetFromHFDataset:
+def _make_sft_dataset(model_name: str, renderer_name: str) -> SupervisedDatasetFromHFDataset:
     tokenizer = get_tokenizer(model_name)
     renderer = renderers.get_renderer(renderer_name, tokenizer)
 
@@ -109,12 +106,35 @@ def _verify_merged_model(output_path: Path, *, expect_config_key: str | None = N
         assert expect_config_key in config, f"{expect_config_key} missing from config.json"
 
 
-def _load_all_tensors(output_path: Path) -> dict[str, torch.Tensor]:
-    """Load all safetensors shards from output directory."""
-    tensors: dict[str, torch.Tensor] = {}
-    for sf in sorted(output_path.glob("*.safetensors")):
-        tensors.update(load_file(str(sf)))
-    return tensors
+def _verify_fp8_output(output: Path) -> None:
+    """Verify FP8 quantized output: routed experts in FP8, rest in BF16."""
+    tensors = load_merged_tensors(output)
+
+    expert_weights = [
+        k
+        for k in tensors
+        if ".experts." in k and ".shared_experts." not in k and k.endswith(".weight")
+    ]
+    for key in expert_weights:
+        assert tensors[key].dtype == torch.float8_e4m3fn, (
+            f"Expected FP8 for routed expert {key}, got {tensors[key].dtype}"
+        )
+        scale_key = key.removesuffix(".weight") + ".weight_scale"
+        assert scale_key in tensors, f"Missing scale for {key}"
+        assert tensors[scale_key].dtype == torch.float32
+
+    dense_weights = [k for k in tensors if k.endswith(".weight") and ".experts." not in k]
+    for key in dense_weights:
+        assert tensors[key].dtype != torch.float8_e4m3fn, f"Dense weight {key} should not be FP8"
+
+    config = json.loads((output / "config.json").read_text())
+    comp = config["compression_config"]
+    assert comp["quant_method"] == "compressed-tensors"
+    assert comp["format"] == "float-quantized"
+    ignore = set(comp.get("ignore", []))
+    for key in expert_weights:
+        prefix = key.removesuffix(".weight")
+        assert prefix not in ignore, f"Routed expert {prefix} in ignore list"
 
 
 # ---------------------------------------------------------------------------
@@ -147,11 +167,11 @@ class TestDenseQwen3:
         _verify_merged_model(output)
 
         # All weights should be BF16 (no quantization)
-        tensors = _load_all_tensors(output)
+        tensors = load_merged_tensors(output)
         weight_keys = [k for k in tensors if k.endswith(".weight")]
-        assert all(
-            tensors[k].dtype in (torch.bfloat16, torch.float32) for k in weight_keys
-        ), "Expected all weights to be BF16/FP32"
+        assert all(tensors[k].dtype in (torch.bfloat16, torch.float32) for k in weight_keys), (
+            "Expected all weights to be BF16/FP32"
+        )
 
     def test_lora_adapter_export(self, adapter_dir, tmp_path):
         output = tmp_path / "peft"
@@ -197,7 +217,7 @@ class TestMoEQwen35:
         _verify_merged_model(output)
 
         # MoE model should have expert weights
-        tensors = _load_all_tensors(output)
+        tensors = load_merged_tensors(output)
         expert_keys = [k for k in tensors if ".experts." in k]
         assert len(expert_keys) > 0, "Expected expert weights in MoE model output"
 
@@ -223,25 +243,7 @@ class TestMoEQwen35:
             serving_format="vllm",
         )
         _verify_merged_model(output, expect_config_key="compression_config")
-
-        # Verify routed experts are FP8, rest is BF16
-        tensors = _load_all_tensors(output)
-        expert_weights = [
-            k for k in tensors
-            if ".experts." in k
-            and ".shared_experts." not in k
-            and k.endswith(".weight")
-        ]
-        for key in expert_weights:
-            assert tensors[key].dtype == torch.float8_e4m3fn, (
-                f"Expected FP8 for routed expert {key}"
-            )
-            scale_key = key.removesuffix(".weight") + ".weight_scale"
-            assert scale_key in tensors, f"Missing scale for {key}"
-
-        # Check compression_config
-        config = json.loads((output / "config.json").read_text())
-        assert config["compression_config"]["quant_method"] == "compressed-tensors"
+        _verify_fp8_output(output)
 
 
 # ---------------------------------------------------------------------------
@@ -319,8 +321,8 @@ class TestDeepSeekFP8:
             device="cuda",
         )
 
-        cpu_tensors = _load_all_tensors(cpu_out)
-        gpu_tensors = _load_all_tensors(gpu_out)
+        cpu_tensors = load_merged_tensors(cpu_out)
+        gpu_tensors = load_merged_tensors(gpu_out)
 
         assert set(cpu_tensors.keys()) == set(gpu_tensors.keys()), "Key mismatch"
 
@@ -331,53 +333,12 @@ class TestDeepSeekFP8:
             assert cpu_t.dtype == gpu_t.dtype, f"Dtype mismatch for {key}"
             if cpu_t.dtype == torch.float8_e4m3fn:
                 # FP8 tensors: compare as float
-                assert torch.equal(
-                    cpu_t.to(torch.float32), gpu_t.to(torch.float32)
-                ), f"FP8 tensor mismatch for {key}"
+                assert torch.equal(cpu_t.to(torch.float32), gpu_t.to(torch.float32)), (
+                    f"FP8 tensor mismatch for {key}"
+                )
             else:
                 assert torch.equal(cpu_t, gpu_t), f"Tensor mismatch for {key}"
 
     @staticmethod
     def _verify_fp8_output(output: Path) -> None:
-        """Verify FP8 quantized output structure."""
-        tensors = _load_all_tensors(output)
-
-        # Check routed expert weights are FP8
-        expert_weights = [
-            k for k in tensors
-            if ".mlp.experts." in k
-            and ".shared_experts." not in k
-            and k.endswith(".weight")
-        ]
-        for key in expert_weights:
-            assert tensors[key].dtype == torch.float8_e4m3fn, (
-                f"Expected FP8 for routed expert {key}, got {tensors[key].dtype}"
-            )
-            # Should have corresponding scale
-            scale_key = key.removesuffix(".weight") + ".weight_scale"
-            assert scale_key in tensors, f"Missing scale for {key}"
-            assert tensors[scale_key].dtype == torch.float32, (
-                f"Expected float32 scale for {key}"
-            )
-
-        # Check dense weights are NOT FP8
-        dense_weights = [
-            k for k in tensors
-            if k.endswith(".weight")
-            and ".mlp.experts." not in k
-        ]
-        for key in dense_weights:
-            assert tensors[key].dtype != torch.float8_e4m3fn, (
-                f"Dense weight {key} should not be FP8"
-            )
-
-        # Check vLLM compression config
-        config = json.loads((output / "config.json").read_text())
-        comp = config["compression_config"]
-        assert comp["quant_method"] == "compressed-tensors"
-        assert comp["format"] == "float-quantized"
-        # Verify ignore list doesn't include routed experts
-        ignore = set(comp.get("ignore", []))
-        for key in expert_weights:
-            prefix = key.removesuffix(".weight")
-            assert prefix not in ignore, f"Routed expert {prefix} in ignore list"
+        _verify_fp8_output(output)

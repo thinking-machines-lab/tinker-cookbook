@@ -136,16 +136,13 @@ def _compute_total_size(output_path: Path, shard_names: set[str]) -> int:
     total = 0
     for name in shard_names:
         shard_path = output_path / name
-        if not shard_path.exists():
-            continue
         with safe_open(str(shard_path), framework="pt") as f:
             for key in f.keys():  # noqa: SIM118
-                shape = f.get_slice(key).get_shape()
-                dtype_str = f.get_slice(key).get_dtype()
+                sl = f.get_slice(key)
                 numel = 1
-                for dim in shape:
+                for dim in sl.get_shape():
                     numel *= dim
-                total += numel * _DTYPE_SIZES.get(dtype_str, 4)
+                total += numel * _DTYPE_SIZES.get(sl.get_dtype(), 4)
     return total
 
 
@@ -194,6 +191,9 @@ def run_shard_merge(
             and are written atomically (enables resume). If False, uses
             :class:`~tinker_cookbook.weights._artifacts.ShardWriter`.
     """
+    if resume and not preserve_shard_names:
+        raise ValueError("resume=True requires preserve_shard_names=True")
+
     out = Path(output_path)
 
     # --- Resume / output directory setup ---
@@ -294,15 +294,14 @@ def _run_shard_merge_inner(
     all_completed: list[str] = list(completed_shards)
     weight_map: dict[str, str] = {}
 
-    # Rebuild weight map from already-completed shards (resume support)
+    # Rebuild weight map from already-completed shards (resume support).
+    # Uses safe_open to read only headers — avoids loading tensor data.
     if completed_shards:
         for shard_name in completed_shards:
-            shard_tensors = load_file(str(out / shard_name))
-            for key in shard_tensors:
-                weight_map[key] = shard_name
-            for key in shard_tensors:
-                merge_ops.pop(key, None)
-            del shard_tensors
+            with safe_open(str(out / shard_name), framework="pt") as f:
+                for key in f.keys():  # noqa: SIM118
+                    weight_map[key] = shard_name
+                    merge_ops.pop(key, None)
 
     logger.info(
         "Processing %d input shard(s)%s",
@@ -324,20 +323,16 @@ def _run_shard_merge_inner(
         tensors = load_file(str(model_dir / shard_file))
 
         if quant_format is not None:
-            # Quantized path: build separate output dict, apply transforms
             output_tensors: dict[str, torch.Tensor] = {}
 
             for key in list(tensors.keys()):
                 tensor = tensors[key]
 
-                # Skip keys that shouldn't be in output
                 if quant_format.should_skip_output_key(key):
                     continue
 
-                # Pre-merge transform (e.g. native FP8 dequant)
                 tensor = quant_format.pre_merge_transform(key, tensor, tensors)
 
-                # Apply LoRA merge ops
                 ops_for_key = merge_ops.pop(key, [])
                 if ops_for_key:
                     temp = {key: tensor}
@@ -346,22 +341,16 @@ def _run_shard_merge_inner(
                         ops_applied += 1
                     tensor = temp[key]
 
-                # Post-merge transform (e.g. FP8 quantize)
                 transformed = quant_format.post_merge_transform(key, tensor)
                 output_tensors.update(transformed)
-
-                # Track weight map for index file
                 for out_key in transformed:
                     weight_map[out_key] = out_shard_name
 
             del tensors
-
-            # Write shard atomically (preserving input shard name)
             _save_shard_atomic(out, out_shard_name, output_tensors)
             del output_tensors
 
         else:
-            # Standard path: apply merge ops + shard hooks, use ShardWriter
             for key in list(tensors.keys()):
                 ops_for_key = merge_ops.pop(key, [])
                 if ops_for_key:
@@ -370,11 +359,9 @@ def _run_shard_merge_inner(
                         ops_applied += 1
                     continue
 
-                # Shard hooks (e.g. INT4 dequant-merge-requant)
                 if shard_hooks is not None:
                     ops_applied += shard_hooks.try_apply(key, tensors, merge_ops)
 
-            # Write all tensors from this shard to output
             assert writer is not None
             for key, tensor in tensors.items():
                 writer.add_tensor(key, tensor)
@@ -408,9 +395,13 @@ def _run_shard_merge_inner(
     # 10. Write index file
     shard_names = set(weight_map.values())
     if preserve_shard_names or len(shard_names) > 1:
+        if preserve_shard_names:
+            total_size = _compute_total_size(out, shard_names)
+        else:
+            assert writer is not None
+            total_size = writer.total_size
         index = {
-            "metadata": {"total_size": _compute_total_size(out, shard_names)
-                         if preserve_shard_names else writer.total_size},
+            "metadata": {"total_size": total_size},
             "weight_map": dict(sorted(weight_map.items())),
         }
         index_path = out / "model.safetensors.index.json"
@@ -418,21 +409,19 @@ def _run_shard_merge_inner(
             json.dump(index, f, indent=2)
 
     # 11. Copy config and apply format-specific patches
-    src_config = model_dir / "config.json"
-    if src_config.exists():
-        copy_artifact_file(src_config, out / "config.json")
-
     if quant_format is not None:
         patched_config = quant_format.finalize_config(config_dict, weight_map)
         config_path = out / "config.json"
         with open(config_path, "w") as f:
             json.dump(patched_config, f, indent=2)
+    else:
+        src_config = model_dir / "config.json"
+        if src_config.exists():
+            copy_artifact_file(src_config, out / "config.json")
 
     # 12. Copy model code and tokenizer
     copy_model_code_files(model_dir, out)
-    save_tokenizer_and_processor(
-        base_model, out, is_multimodal_from_dict(config_dict)
-    )
+    save_tokenizer_and_processor(base_model, out, is_multimodal_from_dict(config_dict))
 
     # 13. Mark complete (resume support)
     if resume:

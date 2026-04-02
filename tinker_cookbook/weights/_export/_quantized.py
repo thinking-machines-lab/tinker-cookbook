@@ -457,7 +457,9 @@ class FP8BlockFormat:
 
         # Native FP8 handling
         self._is_native_fp8 = _has_native_fp8_quantization(config_dict)
-        self._native_block_size = _get_native_block_size(config_dict) if self._is_native_fp8 else None
+        self._native_block_size = (
+            _get_native_block_size(config_dict) if self._is_native_fp8 else None
+        )
         self._cross_shard_loader = (
             _make_cross_shard_tensor_loader(model_dir) if self._is_native_fp8 else None
         )
@@ -468,21 +470,17 @@ class FP8BlockFormat:
                 self._native_block_size,
             )
 
-    def filter_model_keys(self, keys: set[str]) -> set[str]:
-        """Exclude keys that shouldn't be merge targets.
-
-        Filters out DeepSeek-specific placeholder keys (layer 61,
-        rotary_emb.inv_freq) and native FP8 scale tensors.
-        """
-        return {
-            k
-            for k in keys
-            if not _should_skip_checkpoint_key(k) and not k.endswith(".weight_scale_inv")
-        }
-
     def should_skip_output_key(self, key: str) -> bool:
         """Skip checkpoint keys and native scale tensors in output."""
         return _should_skip_checkpoint_key(key) or key.endswith(".weight_scale_inv")
+
+    def filter_model_keys(self, keys: set[str]) -> set[str]:
+        """Exclude keys that shouldn't be merge targets.
+
+        Delegates to :meth:`should_skip_output_key` to keep skip logic
+        in one place.
+        """
+        return {k for k in keys if not self.should_skip_output_key(k)}
 
     def pre_merge_transform(
         self,
@@ -496,9 +494,7 @@ class FP8BlockFormat:
         We dequantize to BF16 so LoRA merge math works in float precision.
         """
         if not (
-            key.endswith(".weight")
-            and tensor.dtype == torch.float8_e4m3fn
-            and self._is_native_fp8
+            key.endswith(".weight") and tensor.dtype == torch.float8_e4m3fn and self._is_native_fp8
         ):
             return tensor
 

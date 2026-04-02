@@ -177,14 +177,11 @@ def build_hf_model(
             "for correct FP8-aware merging."
         )
 
-    # --- Resolve device for quantization ---
-    if device is None:
-        resolved_device = "cuda" if torch.cuda.is_available() else "cpu"
-    else:
-        resolved_device = device
-
     # --- Quantized export path ---
     if quantize is not None:
+        resolved_device = (
+            device if device is not None else ("cuda" if torch.cuda.is_available() else "cpu")
+        )
         from tinker_cookbook.weights._export._quantized import build_quantized
 
         model_dir = resolve_model_dir(base_model)

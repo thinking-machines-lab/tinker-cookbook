@@ -14,8 +14,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from tinker_cookbook.weights._export._quant_format import ShardHooks
 from tinker_cookbook.weights._export._shard_engine import run_shard_merge
-from tinker_cookbook.weights._merge import MergeProfile
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ def build_sharded(
 
 def _build_shard_hooks(
     config_dict: dict,
-) -> "PackedInt4ShardHooks | None":
+) -> ShardHooks | None:
     """Build shard hooks based on the model's quantization config.
 
     Uses the explicit ``format: pack-quantized`` field from the model's
