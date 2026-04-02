@@ -312,12 +312,13 @@ class _TerminalBenchEnvFactory(Env):
         bash_tool = _BashTool(self._sandbox)
         reward_fn = _TerminalBenchReward(self._sandbox, self.test_script)
 
-        # Build initial messages
+        # Build initial messages with tool specs in the renderer's native format
         system_content = self.system_prompt or _SYSTEM_PROMPT
-        initial_messages: list[Message] = [
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": f"## Task\n{self.task_description}"},
-        ]
+        tool_specs = [bash_tool.bash.to_spec()]
+        initial_messages = self.renderer.create_conversation_prefix_with_tools(
+            tools=tool_specs, system_prompt=system_content,
+        )
+        initial_messages.append({"role": "user", "content": f"## Task\n{self.task_description}"})
 
         # Create the inner MessageEnv + adapter
         msg_env = AgentToolMessageEnv(

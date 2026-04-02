@@ -266,10 +266,12 @@ class _SWEBenchEnvFactory(Env):
             f"Explore the codebase, find and fix the issue."
         )
 
-        initial_messages: list[Message] = [
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": user_prompt},
-        ]
+        # Build initial messages with tool specs in the renderer's native format
+        tool_specs = [bash_tool.bash.to_spec()]
+        initial_messages = self.renderer.create_conversation_prefix_with_tools(
+            tools=tool_specs, system_prompt=system_content,
+        )
+        initial_messages.append({"role": "user", "content": user_prompt})
 
         # Create inner MessageEnv + adapter
         msg_env = AgentToolMessageEnv(
