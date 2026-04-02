@@ -10,25 +10,27 @@ finding is that most CoT steps are *decorative* — they look like reasoning
 but barely influence the answer. Only ~2% of steps are truly causal.
 
 This recipe implements TTS computation using the Tinker API and validates
-the finding on Qwen3.5-4B with competition-math problems.
+the finding across 4 models (Qwen3.5-4B, Qwen3-8B, Qwen3.5-27B,
+DeepSeek-V3.1) on MATH-500 problems.
 
 ---
 
 ### What the paper reports
 
-The authors test three reasoning models (DeepSeek-R1-Distill-Qwen-7B,
+The authors test three distilled reasoning models (DeepSeek-R1-Distill-Qwen-7B,
 DeepSeek-R1-Distill-Llama-8B, Nemotron-1.5B) on AMC, AIME, MATH, and
-CommonsenseQA:
+CommonsenseQA. Key findings on AIME with DeepSeek-R1-Distill-Qwen-7B:
 
-| Metric | AIME (Qwen-7B) |
-|---|---|
-| Mean TTS | ~0.03 |
-| Steps with TTS >= 0.7 | 2.3% |
-| Steps with TTS >= 0.3 | 6.4% |
-| Self-verification steps with TTS < 0.005 | 12% |
+- Mean TTS ~0.03 — most steps contribute almost nothing
+- Only **2.3%** of steps have TTS >= 0.7 (truly causal)
+- Only **6.4%** of steps have TTS >= 0.3
+- **12%** of self-verification steps in Qwen-7B (21% in Nemotron) have
+  TTS < 0.005 — "aha moments" that are purely decorative
 
-The distribution is heavily long-tailed: the vast majority of reasoning
-steps have near-zero causal impact.
+The paper also extracts "TrueThinking" steering vectors from internal
+activations (Section 6), achieving ~55% prediction flip rates on AMC/AIME.
+This requires residual-stream access which Tinker does not expose, so we
+focus on TTS computation only.
 
 ### How TTS works
 
@@ -69,8 +71,12 @@ We replicate TTS computation using Tinker's `compute_logprobs_async` API:
 
 **Approximations vs. the paper:**
 
-- **Models:** The paper uses DeepSeek-R1-Distill models; we use Qwen3.5
-  thinking models. Both produce `<think>...</think>` delimited CoT.
+- **Models:** The paper uses DeepSeek-R1-Distill (7B, 8B) and Nemotron-1.5B.
+  We use Qwen3.5-4B, Qwen3-8B, Qwen3.5-27B, and DeepSeek-V3.1 (671B-A37B).
+  All produce `<think>...</think>` delimited CoT. Our DeepSeek-V3.1 is a
+  much larger non-distilled model than the paper's distilled 7B variant.
+- **Dataset:** The paper tests on AMC, AIME, MATH, and CommonsenseQA. We
+  test on MATH-500 (a held-out subset of MATH).
 - **Early-exit cue:** The paper appends `"The final result is"` **inside**
   the reasoning block, probing "what would you predict mid-thought?" We
   close the `</think>` block and use `\boxed{}` format — probing "if you
@@ -84,16 +90,17 @@ We replicate TTS computation using Tinker's `compute_logprobs_async` API:
 - **Step segmentation:** Both the paper and our implementation use heuristic
   text-based segmentation. The exact boundary detection differs but produces
   comparable step counts.
-- **No steering vectors:** The paper's Section 6 extracts steering directions
-  from internal activations to control step reliance. Tinker does not expose
-  residual-stream activations, so this part is not replicated.
+- **No steering vectors:** The paper's Section 6 extracts "TrueThinking"
+  steering directions from internal activations to control step reliance,
+  achieving ~55% prediction flip rates vs <30% for random vectors. Tinker
+  does not expose residual-stream activations, so this part is not replicated.
 
 ---
 
 ### Setup
 
-No special data download is needed. The experiment uses hardcoded math
-problems. You only need a Tinker API key:
+No special data download is needed — MATH-500 and GSM8K are loaded
+automatically from HuggingFace. You only need a Tinker API key:
 
 ```bash
 export TINKER_API_KEY=<your-key>
@@ -172,6 +179,7 @@ pytest tinker_cookbook/recipes/true_thinking_score/tts_test.py -v
 | Parameter | Default | Description |
 |---|---|---|
 | `model_name` | `Qwen/Qwen3.5-4B` | Thinking model to analyze |
+| `renderer_name` | `None` (auto) | Override renderer (e.g. `deepseekv3_thinking` for DeepSeek) |
 | `dataset` | `math` | Dataset: `math` (MATH-500) or `gsm8k` |
 | `n_problems` | `50` | Number of problems to analyze |
 | `concurrency` | `64` | Max parallel problems (steps within a problem are sequential) |
@@ -184,7 +192,7 @@ pytest tinker_cookbook/recipes/true_thinking_score/tts_test.py -v
 
 **50 MATH-500 problems per model, concurrency=64:**
 
-| Metric | Paper (7B) | Qwen3.5-4B | Qwen3-8B | Qwen3.5-27B | DeepSeek-V3.1 (671B) |
+| Metric | Paper (R1-Distill-7B) | Qwen3.5-4B | Qwen3-8B | Qwen3.5-27B | DeepSeek-V3.1 (671B) |
 |---|---|---|---|---|---|
 | Steps/problem | — | 30.4 | 31.6 | 30.4 | **10.6** |
 | Mean TTS | ~0.03 | 0.057 | 0.070 | 0.075 | **0.154** |
