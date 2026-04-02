@@ -649,3 +649,138 @@ class TestCrossShardFP8Scale:
             f"Expected delta ~{lora_fill}, got {delta.mean().item():.4f}. "
             "Merge may have been applied before dequantization."
         )
+
+
+# ---------------------------------------------------------------------------
+# GPU device parameter tests
+# ---------------------------------------------------------------------------
+
+_HAVE_CUDA = torch.cuda.is_available()
+
+
+class TestFP8BlockFormatDevice:
+    """Test FP8BlockFormat with device parameter (GPU acceleration)."""
+
+    def _make_format(self, tmp_path: Path, device: str = "cpu"):
+        from tinker_cookbook.weights._export._quantized import FP8BlockFormat
+
+        config_dict = {"model_type": "deepseek_v3"}
+        # Create minimal model dir with a single safetensors file
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        save_file({"dummy.weight": torch.randn(4, 4)}, str(model_dir / "model.safetensors"))
+        (model_dir / "config.json").write_text(json.dumps(config_dict))
+        return FP8BlockFormat(config_dict, model_dir, "vllm", device=device)
+
+    def test_cpu_post_merge_transform_routed_expert(self, tmp_path: Path):
+        fmt = self._make_format(tmp_path, "cpu")
+        tensor = torch.randn(256, 512, dtype=torch.bfloat16)
+        key = "model.layers.0.mlp.experts.0.gate_proj.weight"
+        scale_key = "model.layers.0.mlp.experts.0.gate_proj.weight_scale"
+        result = fmt.post_merge_transform(key, tensor)
+        assert key in result
+        assert scale_key in result
+        assert result[key].dtype == torch.float8_e4m3fn
+        assert result[scale_key].dtype == torch.float32
+        assert result[key].shape == (256, 512)
+
+    @pytest.mark.skipif(not _HAVE_CUDA, reason="No CUDA GPU available")
+    def test_gpu_post_merge_transform_matches_cpu(self, tmp_path: Path):
+        """GPU and CPU produce identical FP8 output for post_merge_transform."""
+        from tinker_cookbook.weights._export._quantized import FP8BlockFormat
+
+        config_dict = {"model_type": "deepseek_v3"}
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        save_file({"dummy.weight": torch.randn(4, 4)}, str(model_dir / "model.safetensors"))
+        (model_dir / "config.json").write_text(json.dumps(config_dict))
+
+        cpu_fmt = FP8BlockFormat(config_dict, model_dir, "vllm", device="cpu")
+        gpu_fmt = FP8BlockFormat(config_dict, model_dir, "vllm", device="cuda")
+
+        tensor = torch.randn(256, 512, dtype=torch.bfloat16)
+        key = "model.layers.0.mlp.experts.0.gate_proj.weight"
+
+        cpu_result = cpu_fmt.post_merge_transform(key, tensor)
+        gpu_result = gpu_fmt.post_merge_transform(key, tensor)
+
+        # Both should produce same keys
+        assert set(cpu_result.keys()) == set(gpu_result.keys())
+
+        for k in cpu_result:
+            assert cpu_result[k].device.type == "cpu", f"CPU result on wrong device: {k}"
+            assert gpu_result[k].device.type == "cpu", f"GPU result not moved back to CPU: {k}"
+            assert cpu_result[k].dtype == gpu_result[k].dtype, f"Dtype mismatch: {k}"
+            assert cpu_result[k].shape == gpu_result[k].shape, f"Shape mismatch: {k}"
+            if cpu_result[k].dtype == torch.float8_e4m3fn:
+                assert torch.equal(
+                    cpu_result[k].to(torch.float32), gpu_result[k].to(torch.float32)
+                ), f"FP8 tensor mismatch: {k}"
+            else:
+                assert torch.equal(cpu_result[k], gpu_result[k]), f"Tensor mismatch: {k}"
+
+    @pytest.mark.skipif(not _HAVE_CUDA, reason="No CUDA GPU available")
+    def test_gpu_pre_merge_transform_native_fp8(self, tmp_path: Path):
+        """GPU device doesn't break pre_merge_transform (dequant stays on CPU)."""
+        from tinker_cookbook.weights._export._quantized import FP8BlockFormat
+
+        config_dict = {
+            "model_type": "deepseek_v3",
+            "quantization_config": {"quant_method": "fp8", "weight_block_size": [4, 4]},
+        }
+        # Create model with FP8 weight + scale
+        fp8_weight = torch.randn(8, 8, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
+        scale_inv = torch.ones(2, 2, dtype=torch.float32) * 0.1
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        save_file(
+            {
+                "model.layers.0.mlp.experts.0.gate_proj.weight": fp8_weight,
+                "model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv": scale_inv,
+            },
+            str(model_dir / "model.safetensors"),
+        )
+        (model_dir / "config.json").write_text(json.dumps(config_dict))
+
+        fmt = FP8BlockFormat(config_dict, model_dir, "vllm", device="cuda")
+        shard = {
+            "model.layers.0.mlp.experts.0.gate_proj.weight": fp8_weight,
+            "model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv": scale_inv,
+        }
+        result = fmt.pre_merge_transform(
+            "model.layers.0.mlp.experts.0.gate_proj.weight", fp8_weight, shard
+        )
+        assert result.dtype == torch.bfloat16
+        assert result.device.type == "cpu"
+
+    def test_non_expert_passthrough(self, tmp_path: Path):
+        """Non-expert weights pass through post_merge_transform unchanged."""
+        fmt = self._make_format(tmp_path)
+        tensor = torch.randn(64, 64, dtype=torch.bfloat16)
+        result = fmt.post_merge_transform("model.layers.0.self_attn.q_proj.weight", tensor)
+        assert list(result.keys()) == ["model.layers.0.self_attn.q_proj.weight"]
+        assert torch.equal(result["model.layers.0.self_attn.q_proj.weight"], tensor)
+
+
+# ---------------------------------------------------------------------------
+# Shard engine validation tests
+# ---------------------------------------------------------------------------
+
+
+class TestShardEngineValidation:
+    """Test shard engine parameter validation and edge cases."""
+
+    def test_resume_requires_preserve_shard_names(self, tmp_path: Path):
+        from tinker_cookbook.weights._export._shard_engine import run_shard_merge
+
+        with pytest.raises(ValueError, match="resume=True requires preserve_shard_names=True"):
+            run_shard_merge(
+                base_model="dummy",
+                adapter_path=str(tmp_path),
+                output_path=str(tmp_path / "out"),
+                trust_remote_code=False,
+                model_dir=tmp_path,
+                config_dict={},
+                resume=True,
+                preserve_shard_names=False,
+            )
