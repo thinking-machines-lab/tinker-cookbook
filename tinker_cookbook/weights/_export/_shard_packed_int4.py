@@ -1,14 +1,19 @@
 """Compressed-tensors INT4 shard processing: packed expert weight handling.
 
-Provides the shard processing hooks used by the generic shard export
-(:mod:`_shard`) when processing checkpoints with INT4 quantized expert
-weights (e.g. Kimi K2, K2.5). This keeps all INT4 dequant/merge/requant
-logic isolated so it cannot affect other model families.
+Provides the shard processing hooks used by the shard engine
+(:mod:`_shard_engine`) when processing checkpoints with INT4 quantized
+expert weights (e.g. Kimi K2, K2.5). This keeps all INT4 dequant/merge/
+requant logic isolated so it cannot affect other model families.
+
+The :class:`PackedInt4ShardHooks` class implements the
+:class:`~._quant_format.ShardHooks` protocol.
 """
 
 from __future__ import annotations
 
 import logging
+
+import torch
 
 from tinker_cookbook.exceptions import WeightsMergeError
 from tinker_cookbook.weights._merge import MergeOp, apply_merge_op
@@ -172,3 +177,40 @@ def get_int4_group_size(config_dict: dict) -> int:
                 if isinstance(gs, int) and gs > 0:
                     return gs
     return 32
+
+
+# ---------------------------------------------------------------------------
+# ShardHooks implementation
+# ---------------------------------------------------------------------------
+
+
+class PackedInt4ShardHooks:
+    """Hooks for models with compressed-tensors ``pack-quantized`` format
+    (e.g. Kimi K2, K2.5): dequant INT4 → merge LoRA → requant INT4.
+
+    Implements the :class:`~._quant_format.ShardHooks` protocol.
+    """
+
+    def __init__(self, config_dict: dict) -> None:
+        self._group_size = get_int4_group_size(config_dict)
+        self._packed_map: dict[str, str] = {}
+
+    def augment_for_planning(
+        self,
+        model_state_keys: set[str],
+        model_shapes: dict[str, tuple[int, ...]],
+    ) -> tuple[set[str], dict[str, tuple[int, ...]]]:
+        augmented_keys, augmented_shapes, self._packed_map = augment_model_state_for_planning(
+            model_state_keys, model_shapes
+        )
+        return augmented_keys, augmented_shapes
+
+    def try_apply(
+        self,
+        key: str,
+        tensors: dict[str, torch.Tensor],
+        merge_ops: dict[str, list[MergeOp]],
+    ) -> int:
+        if not self._packed_map:
+            return 0
+        return try_apply_packed_ops(key, tensors, merge_ops, self._packed_map, self._group_size)

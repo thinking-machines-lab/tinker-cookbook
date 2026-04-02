@@ -53,6 +53,7 @@ def build_hf_model(
     dequantize: bool = False,
     quantize: str | None = None,
     serving_format: str | None = None,
+    device: str | None = None,
 ) -> None:
     """Build a complete HuggingFace model from Tinker LoRA adapter weights.
 
@@ -93,6 +94,11 @@ def build_hf_model(
             Currently supported: ``"vllm"`` — write compressed-tensors
             config for vLLM. Required when ``quantize`` is set.
             ``None`` (default) — no serving-specific metadata.
+        device: Device for quantization math. ``"cpu"`` forces CPU,
+            ``"cuda"`` or ``"cuda:0"`` etc. uses GPU for faster
+            quantization. ``None`` (default) auto-detects: uses CUDA
+            if available, otherwise CPU. Only affects the quantized
+            export path (``quantize`` is set).
 
     Example::
 
@@ -173,6 +179,9 @@ def build_hf_model(
 
     # --- Quantized export path ---
     if quantize is not None:
+        resolved_device = (
+            device if device is not None else ("cuda" if torch.cuda.is_available() else "cpu")
+        )
         from tinker_cookbook.weights._export._quantized import build_quantized
 
         model_dir = resolve_model_dir(base_model)
@@ -184,6 +193,7 @@ def build_hf_model(
             model_dir=model_dir,
             config_dict=config_dict,
             serving_format=serving_format,  # type: ignore[arg-type]  # validated non-None above
+            device=resolved_device,
         )
         return
 

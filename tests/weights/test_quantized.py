@@ -532,7 +532,7 @@ class TestResume:
             return result
 
         with patch(
-            "tinker_cookbook.weights._export._quantized.load_file",
+            "tinker_cookbook.weights._export._shard_engine.load_file",
             side_effect=crash_on_second_shard,
         ):
             with pytest.raises(RuntimeError, match="Simulated crash"):
@@ -567,7 +567,7 @@ class TestResume:
             return result
 
         with patch(
-            "tinker_cookbook.weights._export._quantized.load_file",
+            "tinker_cookbook.weights._export._shard_engine.load_file",
             side_effect=crash_on_second_shard,
         ):
             with pytest.raises(RuntimeError):
