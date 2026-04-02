@@ -57,6 +57,10 @@ class CLIConfig:
     # Useful for code tasks where error messages provide rich signal.
     include_environment_feedback: bool = False
 
+    # Distillation
+    topk: int = 20  # 0 = importance_sampling fallback
+    max_context_length: int = 32768
+
     # Logging
     log_path: str | None = None
     wandb_project: str | None = None
@@ -142,6 +146,8 @@ async def cli_main(cli_config: CLIConfig):
         dont_reprompt_on_self_success=cli_config.dont_reprompt_on_self_success,
         remove_thinking_from_demonstration=cli_config.remove_thinking_from_demonstration,
         include_environment_feedback=cli_config.include_environment_feedback,
+        topk=cli_config.topk,
+        max_context_length=cli_config.max_context_length,
         renderer_name=renderer_name,
         base_url=cli_config.base_url,
         load_checkpoint_path=cli_config.load_checkpoint_path,

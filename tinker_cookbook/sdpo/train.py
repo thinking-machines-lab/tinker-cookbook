@@ -8,17 +8,18 @@ own successful trajectories.
 Standard RL (e.g. GRPO) assigns a single scalar reward per sequence — every
 token in a correct solution gets the same credit. SDPO instead constructs a
 "teacher" by conditioning a reference model on a successful solution, then
-computes per-token advantages as:
+uses the teacher's distribution as soft targets for training.
 
-    advantage_t = log pi_teacher(y_t) - log pi_student(y_t)
+Two distillation modes are supported (controlled by ``Config.topk``):
 
-Tokens where the teacher is more confident than the student get positive
-advantage (reinforced), and vice versa. From Proposition 2.1, this is
-mathematically a policy gradient — so it maps directly to tinker's
-``importance_sampling`` loss. We encode the SDPO signal as advantages in
-the datum and use ``forward_backward(..., loss_fn="importance_sampling")``,
-which is faster than ``forward_backward_custom`` and also provides free
-off-policy correction via the importance weight.
+- **Top-K distillation** (``topk > 0``, default): Recovers the teacher's top-K
+  token distribution at each completion position using Tinker's
+  ``topk_prompt_logprobs`` API and trains with ``cross_entropy`` loss. This
+  approximates the paper's full-vocabulary JSD.
+
+- **Per-token importance sampling** (``topk = 0``): Uses per-token
+  ``advantage = teacher_lp - student_lp`` with ``importance_sampling`` loss.
+  Single-token approximation — the teacher signal only covers the sampled token.
 """
 
 from __future__ import annotations
@@ -33,11 +34,15 @@ from typing import cast
 
 import chz
 import tinker
-import torch
 
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.completers import TinkerTokenCompleter
+from tinker_cookbook.distillation.sdft import (
+    build_topk_distillation_datums,
+    compute_sdft_advantages,
+)
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator, SamplingClientEvaluatorBuilder
+from tinker_cookbook.rl.data_processing import assemble_training_data, compute_advantages
 from tinker_cookbook.rl.metric_util import compute_trajectory_metrics
 from tinker_cookbook.rl.problem_env import ProblemEnv, ProblemGroupBuilder
 from tinker_cookbook.rl.rollout_logging import (
@@ -49,15 +54,12 @@ from tinker_cookbook.rl.rollouts import do_group_rollout
 from tinker_cookbook.rl.train import gather_with_progress
 from tinker_cookbook.rl.types import EnvGroupBuilder, RLDatasetBuilder, TrajectoryGroup
 from tinker_cookbook.sdpo.data import (
-    build_sdpo_datum,
     extract_feedback,
-    extract_response_logprobs,
     extract_response_tokens,
 )
 from tinker_cookbook.sdpo.teacher import (
     build_teacher_prompt,
     build_teacher_prompt_from_messages,
-    compute_teacher_logprobs,
     strip_thinking_blocks,
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
@@ -164,15 +166,11 @@ class Config:
     reprompt_suffix: str = "Correctly solve the original question."
     dont_reprompt_on_self_success: bool = True
     remove_thinking_from_demonstration: bool = True
-    # Include environment feedback (e.g. compiler errors) in the teacher prompt.
-    # Useful for code tasks. The paper (Table 6) shows feedback and solutions
-    # are complementary: solution alone 42.6%, feedback alone 39.9%, both 48.3%.
     include_environment_feedback: bool = False
-    # Maximum context length for the model. The teacher prompt is longer than
-    # the student prompt (it includes a solution and/or feedback), so the
-    # response tokens are truncated to fit within this limit when computing
-    # teacher logprobs. Positions beyond the truncation get advantage=0.
     max_context_length: int = 32768
+
+    # Distillation mode
+    topk: int = 20  # 0 = importance_sampling fallback
 
     # Infrastructure
     renderer_name: str | None = None
@@ -193,47 +191,34 @@ class Config:
 
 
 # ---------------------------------------------------------------------------
-# SDPO training iteration
+# SDPO: select successful trajectories and build teacher prompts
 # ---------------------------------------------------------------------------
 
 
-async def sdpo_training_iteration(
+def _build_teacher_prompts_and_filter(
     trajectory_groups: list[TrajectoryGroup],
     env_group_builders: Sequence[EnvGroupBuilder],
-    training_client: tinker.TrainingClient,
-    reference_client: tinker.SamplingClient,
     tokenizer: Tokenizer,
     config: Config,
-) -> dict[str, float | int]:
-    """Run one SDPO training iteration.
+) -> tuple[
+    list[TrajectoryGroup],
+    list[list[tinker.ModelInput | None]],
+    dict[str, float | int],
+]:
+    """Identify successes, build per-trajectory teacher prompts, filter empty groups.
 
-    For each batch of trajectory groups:
-
-    1. **Identify successes**: Find groups where at least one rollout solved
-       the problem. Groups with no teacher signal (no successes and no
-       environment feedback) are skipped.
-    2. **Build teacher prompts**: Condition the reference model on a successful
-       solution and/or environment feedback (e.g. compiler errors). This gives
-       the teacher an informational advantage over the student.
-    3. **Compute teacher logprobs**: The frozen reference model scores each
-       trajectory's response tokens under the teacher prompt. This tells us
-       "how likely is each token given the extra information?"
-    4. **Build datums**: Set per-token advantages = teacher_lp - student_lp.
-       Positive advantage means the teacher is more confident → reinforce.
-       Near-zero means the student already matches → no gradient.
-    5. **Train**: ``forward_backward(datums, loss_fn="importance_sampling")``
-       followed by ``optim_step()``.
+    Returns:
+        filtered_groups: TrajectoryGroups with at least one teacher signal.
+        teacher_prompts_P_G: Per-group, per-trajectory teacher prompts (None
+            for trajectories that should not be trained on).
+        metrics: SDPO-specific metrics (success rates, etc.).
     """
-    datums: list[tinker.Datum] = []
-    teacher_logprob_coros: list = []
-    # Store (datum_builder_args) to construct datums after teacher logprobs arrive.
-    pending: list[tuple[tinker.ModelInput, list[int], list[float]]] = []
+    filtered_groups: list[TrajectoryGroup] = []
+    teacher_prompts_P_G: list[list[tinker.ModelInput | None]] = []
 
     n_groups_with_success = 0
     n_total_trajectories = 0
     n_sdpo_trajectories = 0
-    n_teacher_truncated = 0
-    total_tokens_truncated = 0
     total_success_rate = 0.0
 
     for group, builder in zip(trajectory_groups, env_group_builders, strict=True):
@@ -246,24 +231,20 @@ async def sdpo_training_iteration(
             i for i, r in enumerate(rewards) if r >= config.success_reward_threshold
         ]
 
-        # Skip groups with no teacher signal: need either a successful
-        # solution or environment feedback (when enabled).
         has_solutions = len(successful_indices) > 0
         if not has_solutions and not config.include_environment_feedback:
             continue
 
         n_groups_with_success += 1 if has_solutions else 0
 
-        # Resolve how to build the teacher prompt based on builder type.
         teacher_prompt_builder = _resolve_teacher_prompt_builder(builder)
+        prompts_G: list[tinker.ModelInput | None] = []
 
         for traj_idx, traj in enumerate(group.trajectories_G):
             response_tokens = extract_response_tokens(traj)
-            sampled_logprobs = extract_response_logprobs(traj)
             if not response_tokens:
+                prompts_G.append(None)
                 continue
-
-            # --- Gather teacher conditioning: solution and/or feedback ---
 
             # Solution: pick a successful rollout from the group.
             solution_text: str | None = None
@@ -278,14 +259,13 @@ async def sdpo_training_iteration(
                 if config.remove_thinking_from_demonstration:
                     solution_text = strip_thinking_blocks(solution_text)
 
-            # Feedback: extract from this trajectory's own execution logs
-            # (e.g. compiler errors, failing test cases).
+            # Feedback from this trajectory's own execution logs.
             feedback_text: str | None = None
             if config.include_environment_feedback:
                 feedback_text = extract_feedback(traj)
 
-            # Need at least one conditioning signal for the teacher.
             if solution_text is None and feedback_text is None:
+                prompts_G.append(None)
                 continue
 
             teacher_ob = teacher_prompt_builder(
@@ -293,69 +273,15 @@ async def sdpo_training_iteration(
                 solution_text=solution_text,
                 feedback_text=feedback_text,
             )
-
-            student_ob = traj.transitions[0].ob
-            pending.append((student_ob, response_tokens, sampled_logprobs))
-            teacher_logprob_coros.append(
-                compute_teacher_logprobs(
-                    reference_client,
-                    teacher_ob,
-                    response_tokens,
-                    max_context_length=config.max_context_length,
-                )
-            )
-            # Track context window truncation.
-            total_teacher_len = teacher_ob.length + len(response_tokens)
-            if total_teacher_len > config.max_context_length:
-                n_teacher_truncated += 1
-                total_tokens_truncated += total_teacher_len - config.max_context_length
+            prompts_G.append(teacher_ob)
             n_sdpo_trajectories += 1
 
+        # Only keep groups that have at least one trajectory with teacher signal.
+        if any(p is not None for p in prompts_G):
+            filtered_groups.append(group)
+            teacher_prompts_P_G.append(prompts_G)
+
     n_groups = len(trajectory_groups)
-
-    if not pending:
-        logger.warning(
-            "No teacher signal in batch (no successes or feedback) — skipping SDPO update"
-        )
-        return {
-            "sdpo/loss": 0.0,
-            "sdpo/groups_with_success": 0,
-            "sdpo/groups_total": n_groups,
-        }
-
-    # Compute all teacher logprobs in parallel.
-    teacher_logprobs_list: list[torch.Tensor] = await gather_with_progress(
-        teacher_logprob_coros, desc="Teacher logprobs"
-    )
-
-    # Build datums with SDPO advantages.
-    mean_advantage = 0.0
-    for (student_ob, response_tokens, sampled_lps), teacher_lps in zip(
-        pending, teacher_logprobs_list, strict=True
-    ):
-        datums.append(build_sdpo_datum(student_ob, response_tokens, sampled_lps, teacher_lps))
-        # Track mean advantage for logging.
-        min_len = min(len(sampled_lps), len(teacher_lps))
-        if min_len > 0:
-            mean_advantage += (
-                sum(teacher_lps[k].item() - sampled_lps[k] for k in range(min_len)) / min_len
-            )
-
-    mean_advantage /= max(len(datums), 1)
-
-    # ---- Forward-backward with importance_sampling + optimizer step ----
-
-    fwd_bwd_future = await training_client.forward_backward_async(
-        datums, loss_fn="importance_sampling"
-    )
-    adam_params = tinker.AdamParams(
-        learning_rate=config.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8
-    )
-    optim_future = await training_client.optim_step_async(adam_params)
-
-    fwd_bwd_result = await fwd_bwd_future.result_async()
-    await optim_future.result_async()
-
     metrics: dict[str, float | int] = {
         "sdpo/groups_with_success": n_groups_with_success,
         "sdpo/groups_total": n_groups,
@@ -363,18 +289,188 @@ async def sdpo_training_iteration(
         "sdpo/trajectories_trained": n_sdpo_trajectories,
         "sdpo/trajectories_total": n_total_trajectories,
         "sdpo/mean_group_success_rate": total_success_rate / n_groups if n_groups else 0.0,
-        "sdpo/mean_advantage": mean_advantage,
-        "sdpo/teacher_truncated_count": n_teacher_truncated,
-        "sdpo/teacher_truncated_frac": n_teacher_truncated / n_sdpo_trajectories
-        if n_sdpo_trajectories
-        else 0.0,
-        "sdpo/teacher_truncated_tokens_avg": total_tokens_truncated / n_teacher_truncated
-        if n_teacher_truncated
-        else 0.0,
     }
-    if fwd_bwd_result.metrics:
-        metrics.update(fwd_bwd_result.metrics)
-    return metrics
+    return filtered_groups, teacher_prompts_P_G, metrics
+
+
+def _flatten_teacher_prompts(
+    data_D: list[tinker.Datum],
+    metadata_D: list[dict[str, int]],
+    teacher_prompts_P_G: list[list[tinker.ModelInput | None]],
+) -> tuple[list[tinker.ModelInput], list[dict[str, int]], list[int]]:
+    """Build per-datum teacher prompts and remap metadata for the distillation functions.
+
+    The SDFT distillation functions (``build_topk_distillation_datums`` and
+    ``compute_sdft_advantages``) expect teacher prompts indexed by
+    ``metadata[i]["group_idx"]``. SDPO's teacher prompts vary per trajectory
+    (not just per group), so we flatten them into a per-datum list and remap
+    each datum's ``group_idx`` to point to its own teacher prompt.
+
+    Datums whose trajectory has no teacher prompt (None) are dropped.
+
+    Returns:
+        (teacher_prompts_flat, remapped_metadata, kept_indices): teacher prompts
+        and metadata aligned with the filtered datums, plus indices into data_D
+        for the caller to filter.
+    """
+    teacher_prompts_flat: list[tinker.ModelInput] = []
+    remapped_metadata: list[dict[str, int]] = []
+    kept_indices: list[int] = []
+
+    for i, meta in enumerate(metadata_D):
+        group_idx = meta["group_idx"]
+        traj_idx = meta["traj_idx"]
+        teacher_prompt = teacher_prompts_P_G[group_idx][traj_idx]
+        if teacher_prompt is None:
+            continue
+        flat_idx = len(teacher_prompts_flat)
+        teacher_prompts_flat.append(teacher_prompt)
+        remapped_metadata.append({"group_idx": flat_idx, "traj_idx": traj_idx})
+        kept_indices.append(i)
+
+    return teacher_prompts_flat, remapped_metadata, kept_indices
+
+
+def _scale_advantages(data_D: list[tinker.Datum], scale: float) -> list[tinker.Datum]:
+    """Return new datums with advantages scaled by a constant factor."""
+    scaled: list[tinker.Datum] = []
+    for datum in data_D:
+        new_inputs = dict(datum.loss_fn_inputs)
+        adv = datum.loss_fn_inputs["advantages"].to_torch()
+        new_inputs["advantages"] = tinker.TensorData.from_torch(adv * scale)
+        scaled.append(tinker.Datum(model_input=datum.model_input, loss_fn_inputs=new_inputs))
+    return scaled
+
+
+# ---------------------------------------------------------------------------
+# SDPO training iteration
+# ---------------------------------------------------------------------------
+
+
+async def sdpo_training_iteration(
+    trajectory_groups: list[TrajectoryGroup],
+    env_group_builders: Sequence[EnvGroupBuilder],
+    training_client: tinker.TrainingClient,
+    teacher_client: tinker.SamplingClient,
+    tokenizer: Tokenizer,
+    config: Config,
+) -> dict[str, float | int]:
+    """Run one SDPO training iteration.
+
+    1. **Identify successes** and build per-trajectory teacher prompts.
+    2. **Assemble datums** using the standard RL pipeline.
+    3. **Distill**: either top-K cross_entropy or importance_sampling.
+    4. **Train** via ``train_step``.
+    """
+    # Step 1: Build teacher prompts and filter to groups with teacher signal.
+    filtered_groups, teacher_prompts_P_G, sdpo_metrics = _build_teacher_prompts_and_filter(
+        trajectory_groups, env_group_builders, tokenizer, config,
+    )
+
+    if not filtered_groups:
+        logger.warning(
+            "No teacher signal in batch (no successes or feedback) — skipping SDPO update"
+        )
+        sdpo_metrics["sdpo/loss"] = 0.0
+        return sdpo_metrics
+
+    # Step 2: Assemble datums via the standard RL pipeline.
+    # Advantages start as 0 (placeholder — overwritten by distillation step).
+    advantages_P = compute_advantages(filtered_groups)
+    data_D, metadata_D = assemble_training_data(filtered_groups, advantages_P)
+
+    if not data_D:
+        logger.warning("No datums after assembly — skipping SDPO update")
+        sdpo_metrics["sdpo/loss"] = 0.0
+        return sdpo_metrics
+
+    # Step 3: Flatten teacher prompts to per-datum and filter.
+    teacher_prompts_flat, remapped_metadata, kept_indices = _flatten_teacher_prompts(
+        data_D, metadata_D, teacher_prompts_P_G,
+    )
+
+    filtered_data_D = [data_D[i] for i in kept_indices]
+    if not filtered_data_D:
+        logger.warning("No datums with teacher signal — skipping SDPO update")
+        sdpo_metrics["sdpo/loss"] = 0.0
+        return sdpo_metrics
+
+    # Step 4: Compute IS advantages (needed for both combined and IS-only modes).
+    is_metrics = await compute_sdft_advantages(
+        filtered_data_D,
+        remapped_metadata,
+        teacher_client,
+        teacher_prompts_flat,
+        max_context_length=config.max_context_length,
+    )
+    sdpo_metrics.update(is_metrics)
+
+    # Step 5: Distill and train.
+    adam_params = tinker.AdamParams(
+        learning_rate=config.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8
+    )
+
+    if config.topk > 0:
+        # Combined loss: 0.5 * CE (forward KL) + 0.5 * IS (reverse KL).
+        # We issue two forward_backward calls and one optim_step; gradients
+        # accumulate across the two calls. The 0.5 weighting is applied by
+        # scaling the CE weights and IS advantages by 0.5.
+
+        # Build top-K CE datums (forward KL term).
+        topk_datums, topk_metrics = await build_topk_distillation_datums(
+            filtered_data_D,
+            remapped_metadata,
+            teacher_client,
+            teacher_prompts_flat,
+            topk=config.topk,
+            max_context_length=config.max_context_length,
+            vocab_size=len(tokenizer),
+        )
+        sdpo_metrics.update(topk_metrics)
+
+        # Scale CE weights by 0.5.
+        for datum in topk_datums:
+            w = datum.loss_fn_inputs["weights"].to_torch()
+            datum.loss_fn_inputs["weights"] = tinker.TensorData.from_torch(w * 0.5)
+
+        # Scale IS advantages by 0.5.
+        is_datums = _scale_advantages(filtered_data_D, 0.5)
+
+        # Two forward_backward calls, one optim_step — gradients accumulate.
+        ce_future = await training_client.forward_backward_async(
+            topk_datums, loss_fn="cross_entropy"
+        )
+        is_future = await training_client.forward_backward_async(
+            is_datums, loss_fn="importance_sampling"
+        )
+        optim_future = await training_client.optim_step_async(adam_params)
+
+        ce_result = await ce_future.result_async()
+        is_result = await is_future.result_async()
+        optim_result = await optim_future.result_async()
+
+        if ce_result.metrics:
+            sdpo_metrics.update({f"ce/{k}": v for k, v in ce_result.metrics.items()})
+        if is_result.metrics:
+            sdpo_metrics.update({f"is/{k}": v for k, v in is_result.metrics.items()})
+        if optim_result.metrics:
+            sdpo_metrics.update(optim_result.metrics)
+    else:
+        # IS-only mode (topk=0): single forward_backward + optim_step.
+        is_future = await training_client.forward_backward_async(
+            filtered_data_D, loss_fn="importance_sampling"
+        )
+        optim_future = await training_client.optim_step_async(adam_params)
+
+        is_result = await is_future.result_async()
+        optim_result = await optim_future.result_async()
+
+        if is_result.metrics:
+            sdpo_metrics.update(is_result.metrics)
+        if optim_result.metrics:
+            sdpo_metrics.update(optim_result.metrics)
+
+    return sdpo_metrics
 
 
 # ---------------------------------------------------------------------------
@@ -386,11 +482,11 @@ async def main(config: Config):
     """Main SDPO training loop.
 
     Each iteration: (1) evaluate, (2) sample rollouts from the current policy,
-    (3) run ``sdpo_training_iteration`` to compute teacher logprobs and update,
+    (3) run ``sdpo_training_iteration`` to distill from successful solutions,
     (4) refresh the sampling client with updated weights.
 
-    The reference model (``reference_client``) is frozen at initialization and
-    never updated — this is the theta_ref teacher from the paper (Table 4).
+    The teacher model is frozen at initialization and never updated — this is
+    the theta_ref from the paper (Table 4).
     """
     ml_logger = ml_log.setup_logging(
         log_dir=config.log_path,
@@ -415,14 +511,14 @@ async def main(config: Config):
 
     if resume_info:
         await checkpoint_utils.check_renderer_name_for_checkpoint_async(
-            service_client, resume_info["state_path"], config.renderer_name
+            service_client, resume_info.state_path, config.renderer_name
         )
         training_client = (
             await service_client.create_training_client_from_state_with_optimizer_async(
-                resume_info["state_path"], user_metadata=user_metadata
+                resume_info.state_path, user_metadata=user_metadata
             )
         )
-        logger.info(f"Resumed training from {resume_info['state_path']}")
+        logger.info(f"Resumed training from {resume_info.state_path}")
     elif config.load_checkpoint_path:
         await checkpoint_utils.check_renderer_name_for_checkpoint_async(
             service_client, config.load_checkpoint_path, config.renderer_name
@@ -438,8 +534,8 @@ async def main(config: Config):
             user_metadata=user_metadata,
         )
 
-    # Frozen reference model for teacher logprobs (theta_ref).
-    reference_client = await training_client.save_weights_and_get_sampling_client_async("reference")
+    # Frozen teacher model (theta_ref).
+    teacher_client = await training_client.save_weights_and_get_sampling_client_async("reference")
 
     tokenizer = training_client.get_tokenizer()
 
@@ -449,7 +545,7 @@ async def main(config: Config):
     num_batches = len(dataset)
     logger.info(f"Will train for {num_batches} iterations")
 
-    start_batch = resume_info["batch"] if resume_info else 0
+    start_batch = resume_info.batch if resume_info else 0
 
     # Evaluators.
     from tinker_cookbook.rl.metric_util import RLTestSetEvaluator
@@ -536,8 +632,6 @@ async def main(config: Config):
                 )
 
         # ---- Training rollout metrics (reward, accuracy, etc.) ----
-        # No prefix — matches GRPO's convention so metrics are directly
-        # comparable in W&B (e.g. env/all/correct, env/all/reward/total).
         taglist_P = [b.logging_tags() for b in env_group_builders]
         metrics.update(compute_trajectory_metrics(trajectory_groups, taglist_P))
 
@@ -557,7 +651,7 @@ async def main(config: Config):
                 trajectory_groups=trajectory_groups,
                 env_group_builders=env_group_builders,
                 training_client=training_client,
-                reference_client=reference_client,
+                teacher_client=teacher_client,
                 tokenizer=tokenizer,
                 config=config,
             )
