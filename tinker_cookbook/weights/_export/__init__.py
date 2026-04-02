@@ -164,7 +164,7 @@ def build_hf_model(
     resolved_trust = resolve_trust_remote_code(trust_remote_code)
 
     # Load model config for model-family detection (lightweight, no weight download).
-    config_dict = load_config_dict(base_model)
+    config_dict = load_config_dict(base_model, trust_remote_code=resolved_trust)
 
     # --- Warn if native FP8 model without quantized export ---
     if quantize is None and _has_native_fp8(config_dict):
@@ -265,11 +265,17 @@ def resolve_trust_remote_code(trust_remote_code: bool | None) -> bool:
     return env_val in ("1", "true", "yes")
 
 
-def load_config_dict(model_dir_or_name: str | Path) -> dict:
+def load_config_dict(model_dir_or_name: str | Path, trust_remote_code: bool = False) -> dict:
     """Load config.json as a raw dict from a local directory or HF model name.
 
     For local directories, reads config.json directly. For HF model names
     (not a local directory), falls back to ``AutoConfig.from_pretrained``.
+
+    Args:
+        model_dir_or_name: Local path or HuggingFace model name.
+        trust_remote_code: Whether to trust remote code when loading
+            the config via ``AutoConfig``. Required for models with
+            custom architectures (e.g. Kimi K2, Nemotron).
 
     Raises:
         FileNotFoundError: If ``model_dir_or_name`` is a local directory
@@ -289,7 +295,7 @@ def load_config_dict(model_dir_or_name: str | Path) -> dict:
             f"Ensure this is a valid HuggingFace model directory."
         )
     # Fall back to HF config loading for remote model names
-    config = AutoConfig.from_pretrained(str(model_dir_or_name))
+    config = AutoConfig.from_pretrained(str(model_dir_or_name), trust_remote_code=trust_remote_code)
     return config.to_dict()
 
 
