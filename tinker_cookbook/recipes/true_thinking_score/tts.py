@@ -15,21 +15,20 @@ Where:
 This captures both necessity (does removing the step hurt?) and sufficiency
 (can the step alone drive correct answers?).
 
-**Approximations vs. the paper:**
+**Key design choices:**
 
-1. The paper uses DeepSeek-R1-Distill models; we use Qwen3 thinking models.
-   Both produce ``<think>...</think>`` delimited CoT, so the structure is analogous.
+1. Perturbation follows Appendix A: integer offsets from {-3..3} for numeric
+   steps, drop non-numeric steps entirely. Context perturbation only changes
+   numbers.
 
-2. Early-exit confidence: The paper appends "The final result is" and measures
-   model confidence. We compute ``sum(logprobs)`` over the answer tokens after
-   the cue, which gives ``log P(y* | prefix)`` — a continuous, fine-grained
-   measure equivalent to the paper's confidence score.
+2. Early-exit: we close ``</think>`` and use ``\\boxed{}`` format. The paper
+   appends "The final result is" mid-thinking. Both measure relative changes
+   in confidence, which is what TTS captures.
 
-3. Step segmentation uses heuristic patterns rather than any model-specific
-   boundary detection.  The paper also uses heuristic segmentation.
+3. Confidence is ``exp(sum(logprobs))`` over answer tokens — a continuous
+   measure of P(y* | prefix).
 
-4. Perturbation: We apply 10-30% relative numerical offsets, matching the
-   paper's "small random numerical offsets" approach.
+4. Step segmentation uses discourse markers. The paper uses sentences.
 """
 
 import asyncio
