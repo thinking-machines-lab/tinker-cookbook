@@ -60,8 +60,9 @@ We replicate TTS computation using Tinker's `compute_logprobs_async` API:
    (numbered lists, transition words like "So", "Wait", "Therefore", etc.).
 
 3. **Perturb steps**: For numeric steps, add small integer offsets from
-   {-3,-2,-1,1,2,3} to numbers (matching Appendix A). For non-numeric
-   steps, drop them entirely.
+   {-3,-2,-1,1,2,3} to numbers (matching Appendix A), e.g.
+   `"5 * 12 = 60"` becomes `"5 * 14 = 57"`. For non-numeric steps,
+   drop them entirely.
 
 4. **Early-exit confidence**: For each of the four conditions, build
    a sequence `[prompt + <think> CoT_prefix </think> \boxed{answer}]`
