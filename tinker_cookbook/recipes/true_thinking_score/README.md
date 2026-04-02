@@ -10,8 +10,8 @@ finding is that most CoT steps are *decorative* — they look like reasoning
 but barely influence the answer. Only ~2% of steps are truly causal.
 
 This recipe implements TTS computation using the Tinker API and validates
-the finding across 4 models (Qwen3.5-4B, Qwen3-8B, Qwen3.5-27B,
-DeepSeek-V3.1) on MATH-500 problems.
+the finding across 3 models (Qwen3.5-4B, Qwen3.5-27B, DeepSeek-V3.1)
+on MATH-500 problems.
 
 ---
 
@@ -73,7 +73,7 @@ We replicate TTS computation using Tinker's `compute_logprobs_async` API:
 **Approximations vs. the paper:**
 
 - **Models:** The paper uses DeepSeek-R1-Distill (7B, 8B) and Nemotron-1.5B.
-  We use Qwen3.5-4B, Qwen3-8B, Qwen3.5-27B, and DeepSeek-V3.1 (671B-A37B).
+  We use Qwen3.5-4B, Qwen3.5-27B, and DeepSeek-V3.1 (671B-A37B).
   All produce `<think>...</think>` delimited CoT. Our DeepSeek-V3.1 is a
   much larger non-distilled model than the paper's distilled 7B variant.
 - **Dataset:** The paper tests on AMC, AIME, MATH, and CommonsenseQA. We
@@ -199,39 +199,39 @@ pytest tinker_cookbook/recipes/true_thinking_score/tts_test.py -v
 
 **50 MATH-500 problems per model, concurrency=64:**
 
-| Metric | Paper (R1-Distill-7B) | Qwen3.5-4B | Qwen3-8B | Qwen3.5-27B | DeepSeek-V3.1 (671B) |
-|---|---|---|---|---|---|
-| Steps/problem | — | 30.4 | 31.6 | 30.4 | **10.6** |
-| Mean TTS | ~0.03 | 0.057 | 0.070 | 0.075 | **0.154** |
-| TTS >= 0.7 | 2.3% | 2.2% | 2.0% | 2.6% | **6.0%** |
-| TTS >= 0.3 | 6.4% | 6.7% | 9.2% | 9.0% | **21.3%** |
-| Decorative (<=0.005) | — | 61.8% | 64.4% | 53.8% | **37.9%** |
-| SV steps | — | 132 | 517 | 99 | 110 |
-| SV decorative | 12-21% | 62.1% | 60.9% | 51.5% | **37.3%** |
-| Accuracy | — | 60% | 62% | 62% | **66%** |
+| Metric | Paper (R1-Distill-7B) | Qwen3.5-4B | Qwen3.5-27B | DeepSeek-V3.1 (671B) |
+|---|---|---|---|---|
+| Steps/problem | — | 31.7 | 31.9 | **11.3** |
+| Mean TTS | ~0.03 | 0.054 | 0.070 | **0.144** |
+| TTS >= 0.7 | 2.3% | 2.0% | 1.8% | **5.0%** |
+| TTS >= 0.3 | 6.4% | 5.7% | 8.0% | **19.1%** |
+| Decorative (<=0.005) | — | 59.3% | 51.1% | **35.1%** |
+| SV steps | — | 115 | 110 | 113 |
+| SV decorative | 12-21% | 56.5% | 49.1% | **36.3%** |
+| Accuracy | — | 58% | 62% | **70%** |
 
 ### Findings
 
-1. **The paper's core claim is validated across 4 models:** The ~2% high-TTS
-   finding is remarkably consistent across Qwen3.5-4B (2.2%), Qwen3-8B
-   (2.0%), and Qwen3.5-27B (2.6%) — closely matching the paper's 2.3%.
-   DeepSeek-V3.1 is an outlier at 6.0%, likely because its concise reasoning
-   style (10.6 steps vs 30+) packs more causal content per step.
+1. **The paper's core claim is validated across 3 models:** The ~2% high-TTS
+   finding is consistent across Qwen3.5-4B (2.0%) and Qwen3.5-27B (1.8%)
+   — closely matching the paper's 2.3%. DeepSeek-V3.1 is higher at 5.0%,
+   likely because its concise reasoning style (11 steps vs 32) packs more
+   causal content per step.
 
 2. **Scaling reduces decorative reasoning:** DeepSeek-V3.1 (671B) has far
-   fewer decorative steps (37.9%) than the smaller Qwen models (53-64%).
-   Among the Qwen models, the larger Qwen3.5-27B also has fewer decorative
-   steps (53.8%) than Qwen3.5-4B (61.8%).
+   fewer decorative steps (35.1%) than Qwen models (51-59%). Among Qwen
+   models, the larger 27B also has fewer decorative steps (51.1%) than 4B
+   (59.3%).
 
 3. **Larger models are more concise:** DeepSeek-V3.1 solves problems in
-   10.6 steps on average vs 30+ for Qwen models. Each step carries more
+   11.3 steps on average vs 32 for Qwen models. Each step carries more
    causal weight — the model "wastes" fewer steps exploring dead ends.
 
-4. **Self-verification is often fake:** 51-62% of "Wait, let me re-check"
-   steps are decorative across all models. Qwen3-8B is the worst offender
-   with 517 self-verification steps (vs 99-132 for others), 61% of which
-   are fake. DeepSeek-V3.1 is the most honest: only 37% of its
-   self-verification steps are decorative.
+4. **Self-verification is often fake:** 36-57% of "Wait, let me re-check"
+   steps are decorative across all models. DeepSeek-V3.1 is the most honest
+   at 36%. This is higher than the paper's 12-21%, possibly because our
+   discourse-marker segmentation creates more granular self-verification
+   fragments.
 
 5. **TTS rises near the answer:** The final steps before the answer
    consistently have the highest TTS, suggesting the model "commits" to an
