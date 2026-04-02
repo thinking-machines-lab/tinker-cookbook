@@ -408,16 +408,20 @@ def _run_shard_merge_inner(
         with open(index_path, "w") as f:
             json.dump(index, f, indent=2)
 
-    # 11. Copy config and apply format-specific patches
+    # 11. Copy config.json from source model, then apply format-specific patches.
+    #     Always start from the raw file to preserve the original config format
+    #     (AutoConfig serialization adds default fields that weren't in the original).
+    src_config = model_dir / "config.json"
+    if src_config.exists():
+        copy_artifact_file(src_config, out / "config.json")
+
     if quant_format is not None:
-        patched_config = quant_format.finalize_config(config_dict, weight_map)
         config_path = out / "config.json"
+        with open(config_path) as f:
+            on_disk_config = json.load(f)
+        patched_config = quant_format.finalize_config(on_disk_config, weight_map)
         with open(config_path, "w") as f:
             json.dump(patched_config, f, indent=2)
-    else:
-        src_config = model_dir / "config.json"
-        if src_config.exists():
-            copy_artifact_file(src_config, out / "config.json")
 
     # 12. Copy model code and tokenizer
     copy_model_code_files(model_dir, out)
