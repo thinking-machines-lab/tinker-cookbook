@@ -59,6 +59,17 @@ class BenchmarkConfig:
     and ``reward=0``. They count toward ``num_errors`` in BenchmarkResult,
     not silently dropped."""
 
+    # Context management (multi-turn)
+    max_trajectory_tokens: int | None = None
+    """Maximum total tokens in the conversation before terminating the episode.
+    When set, multi-turn benchmarks (terminal_bench, swe_bench) will end the
+    episode gracefully instead of crashing with a context overflow error.
+    Should be set below the model's context window (e.g., 60000 for 65K context)."""
+
+    max_generation_tokens: int | None = None
+    """Maximum tokens per generation step. Used with ``max_trajectory_tokens``
+    to ensure prompt + generation fits in the context window."""
+
     # Generation
     max_tokens: int = 32768
     """Maximum tokens per model generation. The runner will automatically

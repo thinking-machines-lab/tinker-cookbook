@@ -247,6 +247,8 @@ class TerminalBenchBenchmarkBuilder(BenchmarkBuilder):
                     renderer=renderer,
                     example_id=example_id,
                     system_prompt=config.system_prompt,
+                    max_trajectory_tokens=config.max_trajectory_tokens,
+                    max_generation_tokens=config.max_generation_tokens,
                 )
             )
 
@@ -270,6 +272,8 @@ class _TerminalBenchEnvFactory(Env):
         renderer: Renderer,
         example_id: str,
         system_prompt: str | None = None,
+        max_trajectory_tokens: int | None = None,
+        max_generation_tokens: int | None = None,
     ):
         self.task_description = task_description
         self.test_script = test_script
@@ -278,6 +282,8 @@ class _TerminalBenchEnvFactory(Env):
         self.renderer = renderer
         self.example_id = example_id
         self.system_prompt = system_prompt
+        self.max_trajectory_tokens = max_trajectory_tokens
+        self.max_generation_tokens = max_generation_tokens
 
         self._inner: EnvFromMessageEnv | None = None
         self._sandbox: SandboxInterface | None = None
@@ -332,9 +338,9 @@ class _TerminalBenchEnvFactory(Env):
             message_env=msg_env,
             failed_parse_reward=0.0,
             terminate_on_parse_error=False,
-            max_trajectory_tokens=60000,  # Leave room within 65K context
-            max_generation_tokens=4096,
-            context_overflow_reward=0.0,  # Treat as failure, not penalty
+            max_trajectory_tokens=self.max_trajectory_tokens,
+            max_generation_tokens=self.max_generation_tokens,
+            context_overflow_reward=0.0,
         )
 
         return await self._inner.initial_observation()
