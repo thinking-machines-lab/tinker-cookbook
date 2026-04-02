@@ -22,12 +22,11 @@ from pathlib import Path
 import torch
 from transformers import (
     AutoConfig,
-    AutoProcessor,
-    AutoTokenizer,
     PretrainedConfig,
 )
 
 from tinker_cookbook.exceptions import ConfigurationError
+from tinker_cookbook.weights._artifacts import copy_artifact_file, resolve_model_dir
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +173,6 @@ def build_hf_model(
 
     # --- Quantized export path ---
     if quantize is not None:
-        from tinker_cookbook.weights._artifacts import resolve_model_dir
         from tinker_cookbook.weights._export._quantized import build_quantized
 
         model_dir = resolve_model_dir(base_model)
@@ -213,7 +211,6 @@ def build_hf_model(
                 dtype,
             )
 
-        from tinker_cookbook.weights._artifacts import resolve_model_dir
         from tinker_cookbook.weights._export._shard import build_sharded
 
         model_dir = resolve_model_dir(base_model)
@@ -304,25 +301,56 @@ def save_tokenizer_and_processor(
     base_model: str,
     output_path: Path,
     multimodal: bool,
-    trust_remote_code: bool,
 ) -> None:
-    """Save tokenizer and optional processor to the output directory."""
-    tokenizer = AutoTokenizer.from_pretrained(base_model, trust_remote_code=trust_remote_code)
-    tokenizer.save_pretrained(output_path)
+    """Save tokenizer and optional processor to the output directory.
 
-    if multimodal:
-        try:
-            processor = AutoProcessor.from_pretrained(
-                base_model, trust_remote_code=trust_remote_code
-            )
-            processor.save_pretrained(output_path)
-        except (OSError, ValueError) as e:
-            logger.warning(
-                "Could not load processor for vision model %s: %s. "
-                "You may need to copy the processor files manually.",
-                base_model,
-                e,
-            )
+    Copies tokenizer files directly from the source model rather than
+    loading and re-serializing via ``save_pretrained()``. This avoids
+    transformers v5 silently rewriting ``tokenizer_class`` to
+    ``"TokenizersBackend"`` in ``tokenizer_config.json``, which breaks
+    downstream loaders (vLLM, SGLang, older transformers).
+    """
+    model_dir = resolve_model_dir(base_model)
+
+    copied = []
+    for name in _TOKENIZER_AND_PROCESSOR_FILES:
+        src = model_dir / name
+        if src.exists():
+            copy_artifact_file(src, output_path / name)
+            copied.append(name)
+
+    if copied:
+        logger.info("Copied tokenizer/processor files: %s", ", ".join(copied))
+    else:
+        logger.warning(
+            "No tokenizer/processor files found in %s. You may need to copy them manually.",
+            model_dir,
+        )
+
+
+# All tokenizer and processor files across every model in the Tinker lineup.
+# When adding a new model, run the test in export_test.py::TestTokenizerFileCopy::
+# test_all_supported_models_tokenizer_loadable to verify coverage.
+_TOKENIZER_AND_PROCESSOR_FILES = (
+    # Core tokenizer
+    "tokenizer_config.json",
+    "tokenizer.json",
+    "tokenizer.model",
+    "special_tokens_map.json",
+    "added_tokens.json",
+    # Vocabulary
+    "vocab.json",
+    "merges.txt",
+    # Chat templates
+    "chat_template.jinja",
+    "chat_template.json",
+    # Tiktoken (Kimi)
+    "tiktoken.model",
+    # Multimodal processor
+    "preprocessor_config.json",
+    "processor_config.json",
+    "video_preprocessor_config.json",
+)
 
 
 def cleanup_on_failure(out: Path) -> None:

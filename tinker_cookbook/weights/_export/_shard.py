@@ -165,9 +165,7 @@ def build_sharded(
         if src_config.exists():
             copy_artifact_file(src_config, out / "config.json")
         copy_model_code_files(model_dir, out)
-        save_tokenizer_and_processor(
-            base_model, out, is_multimodal_from_dict(config_dict), trust_remote_code
-        )
+        save_tokenizer_and_processor(base_model, out, is_multimodal_from_dict(config_dict))
 
         logger.info("Done — merged model saved to %s", out)
     except Exception:

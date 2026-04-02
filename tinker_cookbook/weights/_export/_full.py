@@ -75,9 +75,7 @@ def build_full(
         logger.info("Saving merged model to: %s", out)
         hf_model.save_pretrained(out)
 
-        save_tokenizer_and_processor(
-            base_model, out, is_multimodal_from_dict(config_dict), trust_remote_code
-        )
+        save_tokenizer_and_processor(base_model, out, is_multimodal_from_dict(config_dict))
 
         logger.info("Done — merged model saved to %s", out)
     except Exception:
