@@ -2,7 +2,7 @@
 
 Dataset: ``google-research-datasets/mbpp`` (sanitized) on HuggingFace.
 Metric: Pass@1 -- fraction of problems where generated code passes assertion tests.
-Pattern: Single-turn generate + sandboxed execution.
+Pattern: Single-turn ``MessageEnv`` (with sandbox) + ``EnvFromMessageEnv`` wrapper.
 """
 
 from __future__ import annotations
@@ -11,13 +11,11 @@ import logging
 from collections.abc import Sequence
 from typing import cast
 
-import tinker
 from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
     SandboxMixin,
     build_messages,
-    decode_response,
     extract_python_code,
     get_sandbox_factory,
     limit_dataset,
@@ -25,26 +23,32 @@ from tinker_cookbook.eval.benchmarks._common import (
     make_example_id,
 )
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
-from tinker_cookbook.renderers.base import Renderer
-from tinker_cookbook.rl.types import Env, StepResult
+from tinker_cookbook.renderers import get_text_content
+from tinker_cookbook.renderers.base import Message, Renderer
+from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
+from tinker_cookbook.rl.types import Env
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Env
+# MessageEnv implementation
 # ---------------------------------------------------------------------------
 
 
-class MBPPEnv(SandboxMixin, Env):
-    """Single-turn env for one MBPP problem with sandboxed execution-based grading."""
+class MBPPMessageEnv(SandboxMixin, MessageEnv):
+    """Single-turn message env for one MBPP problem with sandboxed execution-based grading.
+
+    The sandbox is created in ``initial_observation`` and used in ``step``
+    to run the generated code against assertion tests. Wrapped by
+    ``EnvFromMessageEnv`` which handles rendering and thinking extraction.
+    """
 
     def __init__(
         self,
         prompt: str,
         task_prompt: str,
         test_list: list[str],
-        renderer: Renderer,
         sandbox_factory,
         example_id: str = "",
         system_prompt: str | None = None,
@@ -52,23 +56,18 @@ class MBPPEnv(SandboxMixin, Env):
         self.prompt = prompt
         self.task_prompt = task_prompt
         self.test_list = test_list
-        self.renderer = renderer
         self.sandbox_factory = sandbox_factory
         self.example_id = example_id
         self.system_prompt = system_prompt
 
-    async def initial_observation(self):
+    async def initial_observation(self) -> list[Message]:
         # Create sandbox for code execution
         self.sandbox = await self.sandbox_factory()
+        return build_messages(self.prompt, self.system_prompt)
 
-        messages = build_messages(self.prompt, self.system_prompt)
-        model_input = self.renderer.build_generation_prompt(messages)
-        stop = self.renderer.get_stop_sequences()
-        return model_input, stop
-
-    async def step(self, action, *, extra=None):
+    async def step(self, message: Message) -> MessageStepResult:
         assert self.sandbox is not None
-        response = decode_response(action, self.renderer)
+        response = get_text_content(message)
         code = extract_python_code(response)
 
         # Build test code: solution + assertion tests
@@ -85,11 +84,10 @@ class MBPPEnv(SandboxMixin, Env):
         # Cleanup sandbox -- single-turn, episode is done
         await self.cleanup()
 
-        return StepResult(
+        return MessageStepResult(
             reward=1.0 if passed else 0.0,
             episode_done=True,
-            next_observation=tinker.ModelInput.empty(),
-            next_stop_condition=[],
+            next_messages=[],
             metrics={"correct": float(passed)},
             logs={
                 "example_id": self.example_id,
@@ -120,7 +118,7 @@ class MBPPBenchmarkBuilder(BenchmarkBuilder):
 
         sandbox_factory = get_sandbox_factory(config)
 
-        envs = []
+        envs: list[Env] = []
         for row in ds:
             row = dict(row)
             task_prompt = row.get("prompt", row.get("text", ""))
@@ -140,9 +138,19 @@ class MBPPBenchmarkBuilder(BenchmarkBuilder):
                 example_id = f"mbpp_{task_id}"
             else:
                 example_id = make_example_id("mbpp", task_prompt)
+            msg_env = MBPPMessageEnv(
+                prompt,
+                task_prompt,
+                test_list,
+                sandbox_factory,
+                example_id=example_id,
+                system_prompt=config.system_prompt,
+            )
             envs.append(
-                MBPPEnv(
-                    prompt, task_prompt, test_list, renderer, sandbox_factory, example_id=example_id
+                EnvFromMessageEnv(
+                    renderer=renderer,
+                    message_env=msg_env,
+                    failed_parse_reward=0.0,
                 )
             )
         return envs

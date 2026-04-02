@@ -2,7 +2,7 @@
 
 Dataset: ``edinburgh-dawg/mmlu-redux`` on HuggingFace.
 Metric: Multiple-choice accuracy (A/B/C/D).
-Pattern: Single-turn generate + programmatic grading.
+Pattern: Single-turn ``MessageEnv`` + programmatic grading.
 
 MMLU-Redux re-annotates 3,000 MMLU examples (30 subjects x 100) and flags
 questions with errors. We evaluate only on samples with ``error_type == "ok"``.
@@ -15,12 +15,10 @@ import random
 from collections.abc import Sequence
 from typing import cast
 
-import tinker
 from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
     build_messages,
-    decode_response,
     extract_mcq_answer,
     format_mcq_choices,
     load_benchmark_dataset,
@@ -31,8 +29,10 @@ from tinker_cookbook.eval.benchmarks._types import (
     BenchmarkConfig,
     BenchmarkResult,
 )
-from tinker_cookbook.renderers.base import Renderer
-from tinker_cookbook.rl.types import Env, StepResult
+from tinker_cookbook.renderers import get_text_content
+from tinker_cookbook.renderers.base import Message, Renderer
+from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
+from tinker_cookbook.rl.types import Env
 
 logger = logging.getLogger(__name__)
 
@@ -95,45 +95,43 @@ def _load_mmlu_redux(max_examples: int | None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Env implementation
+# MessageEnv implementation
 # ---------------------------------------------------------------------------
 
 
-class MMLUReduxEnv(Env):
-    """Single-turn env for one MMLU-Redux question."""
+class MMLUReduxMessageEnv(MessageEnv):
+    """Single-turn message env for one MMLU-Redux question.
+
+    Receives a parsed ``Message`` (thinking already stripped by
+    ``EnvFromMessageEnv``), grades the answer, and returns the result.
+    """
 
     def __init__(
         self,
         prompt: str,
         expected: str,
         subject: str,
-        renderer: Renderer,
         example_id: str = "",
         system_prompt: str | None = None,
     ):
         self.prompt = prompt
         self.expected = expected
         self.subject = subject
-        self.renderer = renderer
         self.example_id = example_id
         self.system_prompt = system_prompt
 
-    async def initial_observation(self):
-        messages = build_messages(self.prompt, self.system_prompt)
-        model_input = self.renderer.build_generation_prompt(messages)
-        stop = self.renderer.get_stop_sequences()
-        return model_input, stop
+    async def initial_observation(self) -> list[Message]:
+        return build_messages(self.prompt, self.system_prompt)
 
-    async def step(self, action, *, extra=None):
-        response = decode_response(action, self.renderer)
+    async def step(self, message: Message) -> MessageStepResult:
+        response = get_text_content(message)
         extracted = extract_mcq_answer(response)
         correct = extracted == self.expected
-        return StepResult(
+        return MessageStepResult(
             reward=1.0 if correct else 0.0,
             episode_done=True,
-            next_observation=tinker.ModelInput.empty(),
-            next_stop_condition=[],
-            metrics={"correct": float(correct), "subject": self.subject},  # type: ignore[arg-type]
+            next_messages=[],
+            metrics={"correct": float(correct), "subject": self.subject},
             logs={
                 "example_id": self.example_id,
                 "input": self.prompt[:200],
@@ -161,7 +159,7 @@ class MMLUReduxBenchmarkBuilder(BenchmarkBuilder):
             logger.warning("Could not load MMLU-Redux dataset.")
             return []
 
-        envs = []
+        envs: list[Env] = []
         for row in rows:
             question = row.get("question", "")
             choices = row.get("choices", [])
@@ -174,14 +172,18 @@ class MMLUReduxBenchmarkBuilder(BenchmarkBuilder):
             prompt = f"{question}\n\n{format_mcq_choices(choices)}\n\nAnswer with just the letter (A, B, C, or D)."
             subject = row.get("_subject", "unknown")
             example_id = make_example_id("mmlu_redux", question)
+            msg_env = MMLUReduxMessageEnv(
+                prompt,
+                expected,
+                subject,
+                example_id=example_id,
+                system_prompt=config.system_prompt,
+            )
             envs.append(
-                MMLUReduxEnv(
-                    prompt,
-                    expected,
-                    subject,
-                    renderer,
-                    example_id=example_id,
-                    system_prompt=config.system_prompt,
+                EnvFromMessageEnv(
+                    renderer=renderer,
+                    message_env=msg_env,
+                    failed_parse_reward=0.0,
                 )
             )
         return envs

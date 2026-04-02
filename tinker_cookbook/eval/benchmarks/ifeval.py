@@ -2,7 +2,7 @@
 
 Dataset: ``google/IFEval`` on HuggingFace (541 examples, split="train").
 Metric: Strict accuracy (fraction of prompts where ALL constraints are satisfied).
-Pattern: Single-turn generate + programmatic grading (multi-verifier).
+Pattern: Single-turn ``MessageEnv`` + programmatic grading (multi-verifier).
 """
 
 from __future__ import annotations
@@ -10,11 +10,8 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 
-import tinker
-
 from tinker_cookbook.eval.benchmarks._common import (
     build_messages,
-    decode_response,
     limit_dataset,
     load_benchmark_dataset,
     parse_kwargs,
@@ -24,55 +21,55 @@ from tinker_cookbook.eval.benchmarks._types import (
     BenchmarkConfig,
     BenchmarkResult,
 )
-from tinker_cookbook.renderers import Message
-from tinker_cookbook.renderers.base import Renderer
-from tinker_cookbook.rl.types import Env, StepResult
+from tinker_cookbook.renderers import get_text_content
+from tinker_cookbook.renderers.base import Message, Renderer
+from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
+from tinker_cookbook.rl.types import Env
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Env
+# MessageEnv implementation
 # ---------------------------------------------------------------------------
 
 
-class IFEvalEnv(Env):
-    """Single-turn env for one IFEval prompt with multiple instruction constraints."""
+class IFEvalMessageEnv(MessageEnv):
+    """Single-turn message env for one IFEval prompt with multiple instruction constraints.
+
+    Receives a parsed ``Message`` (thinking already stripped by
+    ``EnvFromMessageEnv``), verifies all constraints, and returns the result.
+    """
 
     def __init__(
         self,
         messages: list[Message],
         instruction_ids: list[str],
         kwargs_list: list[dict],
-        renderer: Renderer,
         example_id: str = "",
     ):
-        self.messages = messages
+        self._messages = messages
         self.instruction_ids = instruction_ids
         self.kwargs_list = kwargs_list
-        self.renderer = renderer
         self.example_id = example_id
 
-    async def initial_observation(self):
-        model_input = self.renderer.build_generation_prompt(self.messages)
-        stop = self.renderer.get_stop_sequences()
-        return model_input, stop
+    async def initial_observation(self) -> list[Message]:
+        return self._messages
 
-    async def step(self, action, *, extra=None):
+    async def step(self, message: Message) -> MessageStepResult:
         from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_all_instructions
 
-        response = decode_response(action, self.renderer)
+        response = get_text_content(message)
         fraction, _ = verify_all_instructions(response, self.instruction_ids, self.kwargs_list)
         correct = fraction == 1.0
-        return StepResult(
+        return MessageStepResult(
             reward=1.0 if correct else 0.0,
             episode_done=True,
-            next_observation=tinker.ModelInput.empty(),
-            next_stop_condition=[],
-            metrics={"correct": float(correct), "fraction": fraction},  # type: ignore[arg-type]
-            logs={  # type: ignore[arg-type]
+            next_messages=[],
+            metrics={"correct": float(correct), "fraction": fraction},
+            logs={
                 "example_id": self.example_id,
-                "input": str(self.messages[-1]["content"])[:200] if self.messages else "",
+                "input": str(self._messages[-1]["content"])[:200] if self._messages else "",
                 "fraction": fraction,
                 "output": response[:500],
             },
@@ -93,17 +90,27 @@ class IFEvalBenchmarkBuilder(BenchmarkBuilder):
         ds = load_benchmark_dataset("google/IFEval", split="train")
         ds = limit_dataset(ds, config.max_examples)
 
-        envs = []
+        envs: list[Env] = []
         for row in ds:
             row = dict(row)
             instruction_ids = row["instruction_id_list"]
             raw_kwargs = row["kwargs"]
             kwargs_list = parse_kwargs(raw_kwargs, instruction_ids)
 
-            messages = build_messages(row["prompt"], self.system_prompt)
+            messages = build_messages(row["prompt"], config.system_prompt)
             example_id = f"ifeval_{row['key']}"
+            msg_env = IFEvalMessageEnv(
+                messages,
+                instruction_ids,
+                kwargs_list,
+                example_id=example_id,
+            )
             envs.append(
-                IFEvalEnv(messages, instruction_ids, kwargs_list, renderer, example_id=example_id)
+                EnvFromMessageEnv(
+                    renderer=renderer,
+                    message_env=msg_env,
+                    failed_parse_reward=0.0,
+                )
             )
         return envs
 

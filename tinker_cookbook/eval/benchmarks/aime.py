@@ -7,7 +7,7 @@ Provides separate benchmarks for each year:
 
 Datasets: Tries multiple HuggingFace sources per year.
 Metric: Accuracy -- fraction of problems where the extracted integer matches ground truth.
-Pattern: Single-turn generate + programmatic grading.
+Pattern: Single-turn ``MessageEnv`` + programmatic grading.
 """
 
 from __future__ import annotations
@@ -17,12 +17,10 @@ import re
 from collections.abc import Sequence
 from typing import cast
 
-import tinker
 from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
     build_messages,
-    decode_response,
     extract_boxed,
     extract_gsm8k_answer,
     extract_number,
@@ -31,8 +29,10 @@ from tinker_cookbook.eval.benchmarks._common import (
     make_example_id,
 )
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
-from tinker_cookbook.renderers.base import Renderer
-from tinker_cookbook.rl.types import Env, StepResult
+from tinker_cookbook.renderers import get_text_content
+from tinker_cookbook.renderers.base import Message, Renderer
+from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
+from tinker_cookbook.rl.types import Env
 
 logger = logging.getLogger(__name__)
 
@@ -61,40 +61,39 @@ def _load_aime_dataset(year: str) -> Dataset | None:
 
 
 # ---------------------------------------------------------------------------
-# Env
+# MessageEnv implementation
 # ---------------------------------------------------------------------------
 
 
-class AIMEEnv(Env):
-    """Single-turn env for one AIME problem."""
+class AIMEMessageEnv(MessageEnv):
+    """Single-turn message env for one AIME problem.
+
+    Receives a parsed ``Message`` (thinking already stripped by
+    ``EnvFromMessageEnv``), grades the answer, and returns the result.
+    """
 
     def __init__(
         self,
         problem: str,
         expected: int,
-        renderer: Renderer,
         example_id: str = "",
         system_prompt: str | None = None,
     ):
         self.problem = problem
         self.expected = expected
-        self.renderer = renderer
         self.example_id = example_id
         self.system_prompt = system_prompt
 
-    async def initial_observation(self):
+    async def initial_observation(self) -> list[Message]:
         prompt = (
             f"{self.problem}\n\n"
             "This is an AIME problem. The answer is an integer from 000 to 999. "
             "Show your work step by step, then put your final answer in \\boxed{}."
         )
-        messages = build_messages(prompt, self.system_prompt)
-        model_input = self.renderer.build_generation_prompt(messages)
-        stop = self.renderer.get_stop_sequences()
-        return model_input, stop
+        return build_messages(prompt, self.system_prompt)
 
-    async def step(self, action, *, extra=None):
-        response = decode_response(action, self.renderer)
+    async def step(self, message: Message) -> MessageStepResult:
+        response = get_text_content(message)
         boxed = extract_boxed(response)
         extracted_str = extract_number(boxed) if boxed else extract_gsm8k_answer(response)
         try:
@@ -103,11 +102,10 @@ class AIMEEnv(Env):
         except (ValueError, TypeError):
             extracted_val = None
             correct = False
-        return StepResult(
+        return MessageStepResult(
             reward=1.0 if correct else 0.0,
             episode_done=True,
-            next_observation=tinker.ModelInput.empty(),
-            next_stop_condition=[],
+            next_messages=[],
             metrics={"correct": float(correct)},
             logs={
                 "example_id": self.example_id,
@@ -139,7 +137,7 @@ class _AIMEBenchmarkBuilder(BenchmarkBuilder):
 
         ds = limit_dataset(ds, config.max_examples)
 
-        envs = []
+        envs: list[Env] = []
         for row in ds:
             row = dict(row)
             problem = row.get("problem", row.get("question", row.get("Problem", "")))
@@ -157,13 +155,17 @@ class _AIMEBenchmarkBuilder(BenchmarkBuilder):
                     continue
 
             example_id = make_example_id(self.name, problem)
+            msg_env = AIMEMessageEnv(
+                problem,
+                expected,
+                example_id=example_id,
+                system_prompt=config.system_prompt,
+            )
             envs.append(
-                AIMEEnv(
-                    problem,
-                    expected,
-                    renderer,
-                    example_id=example_id,
-                    system_prompt=config.system_prompt,
+                EnvFromMessageEnv(
+                    renderer=renderer,
+                    message_env=msg_env,
+                    failed_parse_reward=0.0,
                 )
             )
         return envs

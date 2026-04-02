@@ -2,7 +2,7 @@
 
 Dataset: ``HuggingFaceH4/MATH-500`` on HuggingFace.
 Metric: Accuracy -- fraction of problems where the extracted boxed answer matches ground truth.
-Pattern: Single-turn generate + programmatic grading.
+Pattern: Single-turn ``MessageEnv`` + programmatic grading.
 """
 
 from __future__ import annotations
@@ -11,67 +11,65 @@ import logging
 from collections.abc import Sequence
 from typing import cast
 
-import tinker
 from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
     build_messages,
-    decode_response,
     limit_dataset,
     load_benchmark_dataset,
     make_example_id,
 )
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
-from tinker_cookbook.renderers.base import Renderer
-from tinker_cookbook.rl.types import Env, StepResult
+from tinker_cookbook.renderers import get_text_content
+from tinker_cookbook.renderers.base import Message, Renderer
+from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
+from tinker_cookbook.rl.types import Env
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Env
+# MessageEnv implementation
 # ---------------------------------------------------------------------------
 
 
-class MATH500Env(Env):
-    """Single-turn env for one MATH-500 problem."""
+class MATH500MessageEnv(MessageEnv):
+    """Single-turn message env for one MATH-500 problem.
+
+    Receives a parsed ``Message`` (thinking already stripped by
+    ``EnvFromMessageEnv``), grades the answer, and returns the result.
+    """
 
     def __init__(
         self,
         problem: str,
         expected: str,
-        renderer: Renderer,
         example_id: str = "",
         system_prompt: str | None = None,
     ):
         self.problem = problem
         self.expected = expected
-        self.renderer = renderer
         self.example_id = example_id
         self.system_prompt = system_prompt
 
-    async def initial_observation(self):
+    async def initial_observation(self) -> list[Message]:
         prompt = self.problem + " Put your final answer in \\boxed{}."
-        messages = build_messages(prompt, self.system_prompt)
-        model_input = self.renderer.build_generation_prompt(messages)
-        stop = self.renderer.get_stop_sequences()
-        return model_input, stop
+        return build_messages(prompt, self.system_prompt)
 
-    async def step(self, action, *, extra=None):
+    async def step(self, message: Message) -> MessageStepResult:
         from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed, grade_answer
 
-        response = decode_response(action, self.renderer)
+        response = get_text_content(message)
         try:
             given = extract_boxed(response)
             correct = grade_answer(given, self.expected)
         except ValueError:
             given = ""
             correct = False
-        return StepResult(
+        return MessageStepResult(
             reward=1.0 if correct else 0.0,
             episode_done=True,
-            next_observation=tinker.ModelInput.empty(),
-            next_stop_condition=[],
+            next_messages=[],
             metrics={"correct": float(correct)},
             logs={
                 "example_id": self.example_id,
@@ -99,7 +97,7 @@ class MATH500BenchmarkBuilder(BenchmarkBuilder):
         ds = cast(Dataset, load_benchmark_dataset("HuggingFaceH4/MATH-500"))
         ds = limit_dataset(ds, config.max_examples)
 
-        envs = []
+        envs: list[Env] = []
         for row in ds:
             row = dict(row)
             try:
@@ -107,13 +105,17 @@ class MATH500BenchmarkBuilder(BenchmarkBuilder):
             except ValueError:
                 continue
             example_id = make_example_id("math500", row["problem"])
+            msg_env = MATH500MessageEnv(
+                row["problem"],
+                expected,
+                example_id=example_id,
+                system_prompt=config.system_prompt,
+            )
             envs.append(
-                MATH500Env(
-                    row["problem"],
-                    expected,
-                    renderer,
-                    example_id=example_id,
-                    system_prompt=config.system_prompt,
+                EnvFromMessageEnv(
+                    renderer=renderer,
+                    message_env=msg_env,
+                    failed_parse_reward=0.0,
                 )
             )
         return envs

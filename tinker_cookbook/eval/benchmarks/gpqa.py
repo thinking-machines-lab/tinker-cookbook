@@ -2,7 +2,7 @@
 
 Dataset: ``Idavidrein/gpqa`` (gpqa_diamond config) on HuggingFace.
 Metric: Multiple-choice accuracy (A/B/C/D).
-Pattern: Single-turn generate + programmatic grading.
+Pattern: Single-turn ``MessageEnv`` + programmatic grading.
 """
 
 from __future__ import annotations
@@ -11,12 +11,10 @@ import logging
 from collections.abc import Sequence
 from typing import cast
 
-import tinker
 from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
     build_messages,
-    decode_response,
     extract_mcq_answer,
     format_mcq_choices,
     limit_dataset,
@@ -24,49 +22,49 @@ from tinker_cookbook.eval.benchmarks._common import (
     make_example_id,
 )
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
-from tinker_cookbook.renderers.base import Renderer
-from tinker_cookbook.rl.types import Env, StepResult
+from tinker_cookbook.renderers import get_text_content
+from tinker_cookbook.renderers.base import Message, Renderer
+from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
+from tinker_cookbook.rl.types import Env
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Env
+# MessageEnv implementation
 # ---------------------------------------------------------------------------
 
 
-class GPQAEnv(Env):
-    """Single-turn env for one GPQA-Diamond question."""
+class GPQAMessageEnv(MessageEnv):
+    """Single-turn message env for one GPQA-Diamond question.
+
+    Receives a parsed ``Message`` (thinking already stripped by
+    ``EnvFromMessageEnv``), grades the answer, and returns the result.
+    """
 
     def __init__(
         self,
         prompt: str,
         expected: str,
-        renderer: Renderer,
         example_id: str = "",
         system_prompt: str | None = None,
     ):
         self.prompt = prompt
         self.expected = expected
-        self.renderer = renderer
         self.example_id = example_id
         self.system_prompt = system_prompt
 
-    async def initial_observation(self):
-        messages = build_messages(self.prompt, self.system_prompt)
-        model_input = self.renderer.build_generation_prompt(messages)
-        stop = self.renderer.get_stop_sequences()
-        return model_input, stop
+    async def initial_observation(self) -> list[Message]:
+        return build_messages(self.prompt, self.system_prompt)
 
-    async def step(self, action, *, extra=None):
-        response = decode_response(action, self.renderer)
+    async def step(self, message: Message) -> MessageStepResult:
+        response = get_text_content(message)
         extracted = extract_mcq_answer(response)
         correct = extracted == self.expected
-        return StepResult(
+        return MessageStepResult(
             reward=1.0 if correct else 0.0,
             episode_done=True,
-            next_observation=tinker.ModelInput.empty(),
-            next_stop_condition=[],
+            next_messages=[],
             metrics={"correct": float(correct)},
             logs={
                 "example_id": self.example_id,
@@ -94,7 +92,7 @@ class GPQABenchmarkBuilder(BenchmarkBuilder):
         )
         ds = limit_dataset(ds, config.max_examples)
 
-        envs = []
+        envs: list[Env] = []
         for row in ds:
             row = dict(row)
             question = row["Question"]
@@ -133,13 +131,17 @@ class GPQABenchmarkBuilder(BenchmarkBuilder):
                 "Think step by step, then give your final answer as a single letter (A, B, C, or D)."
             )
             example_id = make_example_id("gpqa", question)
+            msg_env = GPQAMessageEnv(
+                prompt,
+                expected,
+                example_id=example_id,
+                system_prompt=config.system_prompt,
+            )
             envs.append(
-                GPQAEnv(
-                    prompt,
-                    expected,
-                    renderer,
-                    example_id=example_id,
-                    system_prompt=config.system_prompt,
+                EnvFromMessageEnv(
+                    renderer=renderer,
+                    message_env=msg_env,
+                    failed_parse_reward=0.0,
                 )
             )
         return envs
