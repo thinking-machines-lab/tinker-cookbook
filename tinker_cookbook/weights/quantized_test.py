@@ -784,3 +784,190 @@ class TestShardEngineValidation:
                 resume=True,
                 preserve_shard_names=False,
             )
+
+
+class TestShardEngineWithMockFormat:
+    """Test run_shard_merge with a mock QuantizationFormat.
+
+    Verifies the engine calls protocol methods in the right order and
+    wires pre/post transforms correctly, independent of any specific
+    quantization format implementation.
+    """
+
+    @staticmethod
+    def _setup_model_and_adapter(tmp_path: Path):
+        """Create a minimal 1-layer model and adapter for shard engine tests."""
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+
+        # Model with one dense weight and one expert weight
+        weights = {
+            "model.layers.0.self_attn.q_proj.weight": torch.randn(8, 4, dtype=torch.bfloat16),
+            "model.layers.0.mlp.experts.0.gate_proj.weight": torch.randn(
+                8, 4, dtype=torch.bfloat16
+            ),
+            "model.layers.0.norm.weight": torch.ones(8, dtype=torch.bfloat16),
+        }
+        save_file(weights, str(model_dir / "model.safetensors"))
+
+        config = {"model_type": "test", "architectures": ["TestModel"]}
+        (model_dir / "config.json").write_text(json.dumps(config))
+
+        # Minimal tokenizer
+        (model_dir / "tokenizer_config.json").write_text(json.dumps({"model_max_length": 512}))
+        (model_dir / "tokenizer.json").write_text(
+            json.dumps(
+                {
+                    "version": "1.0",
+                    "model": {"type": "BPE", "vocab": {"a": 0}, "merges": []},
+                    "added_tokens": [],
+                }
+            )
+        )
+
+        # Adapter targeting the attention weight
+        adapter_dir = tmp_path / "adapter"
+        adapter_dir.mkdir()
+        adapter_weights = {
+            "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": (
+                torch.ones(1, 4) * 0.01
+            ),
+            "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": torch.ones(8, 1),
+        }
+        save_file(adapter_weights, str(adapter_dir / "adapter_model.safetensors"))
+        (adapter_dir / "adapter_config.json").write_text(json.dumps({"lora_alpha": 1, "r": 1}))
+
+        return model_dir, adapter_dir, config, weights
+
+    def test_mock_format_transforms_called(self, tmp_path: Path):
+        """Verify pre/post transforms are called and output includes transformed keys."""
+        from tinker_cookbook.weights._export._shard_engine import run_shard_merge
+
+        model_dir, adapter_dir, config, orig_weights = self._setup_model_and_adapter(tmp_path)
+        output_dir = tmp_path / "output"
+
+        # Mock format: adds a ".transformed" suffix key for expert weights
+        class MockFormat:
+            def filter_model_keys(self, keys):
+                return keys
+
+            def should_skip_output_key(self, key):
+                return False
+
+            def pre_merge_transform(self, key, tensor, shard_tensors):
+                return tensor
+
+            def post_merge_transform(self, key, tensor):
+                if "experts" in key:
+                    # Simulate quantization: add a scale key
+                    scale_key = key.replace(".weight", ".weight_scale")
+                    return {key: tensor, scale_key: torch.tensor([1.0])}
+                return {key: tensor}
+
+            def finalize_config(self, config_dict, weight_map):
+                patched = dict(config_dict)
+                patched["test_patched"] = True
+                return patched
+
+        run_shard_merge(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+            trust_remote_code=False,
+            model_dir=model_dir,
+            config_dict=config,
+            quant_format=MockFormat(),
+            preserve_shard_names=True,
+        )
+
+        # Load output
+        out_tensors = load_file(str(output_dir / "model.safetensors"))
+
+        # Expert weight should have a .weight_scale added by post_merge_transform
+        assert "model.layers.0.mlp.experts.0.gate_proj.weight" in out_tensors
+        assert "model.layers.0.mlp.experts.0.gate_proj.weight_scale" in out_tensors
+
+        # Dense weight should be present (passthrough)
+        assert "model.layers.0.self_attn.q_proj.weight" in out_tensors
+
+        # Norm weight should be present (passthrough)
+        assert "model.layers.0.norm.weight" in out_tensors
+
+        # Config should have been patched by finalize_config
+        out_config = json.loads((output_dir / "config.json").read_text())
+        assert out_config.get("test_patched") is True
+
+    def test_mock_format_skip_keys(self, tmp_path: Path):
+        """Verify should_skip_output_key excludes keys from output."""
+        from tinker_cookbook.weights._export._shard_engine import run_shard_merge
+
+        model_dir, adapter_dir, config, _ = self._setup_model_and_adapter(tmp_path)
+        output_dir = tmp_path / "output"
+
+        class SkipNormFormat:
+            def filter_model_keys(self, keys):
+                return keys
+
+            def should_skip_output_key(self, key):
+                return "norm" in key
+
+            def pre_merge_transform(self, key, tensor, shard_tensors):
+                return tensor
+
+            def post_merge_transform(self, key, tensor):
+                return {key: tensor}
+
+            def finalize_config(self, config_dict, weight_map):
+                return config_dict
+
+        run_shard_merge(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+            trust_remote_code=False,
+            model_dir=model_dir,
+            config_dict=config,
+            quant_format=SkipNormFormat(),
+            preserve_shard_names=True,
+        )
+
+        out_tensors = load_file(str(output_dir / "model.safetensors"))
+        assert "model.layers.0.norm.weight" not in out_tensors
+        assert "model.layers.0.self_attn.q_proj.weight" in out_tensors
+
+    def test_mock_format_filter_model_keys(self, tmp_path: Path):
+        """Verify filter_model_keys excludes keys from merge planning."""
+        from tinker_cookbook.weights._export._shard_engine import run_shard_merge
+
+        model_dir, adapter_dir, config, _ = self._setup_model_and_adapter(tmp_path)
+        output_dir = tmp_path / "output"
+
+        class FilterFormat:
+            def filter_model_keys(self, keys):
+                # Exclude the attention weight from merge planning
+                return {k for k in keys if "q_proj" not in k}
+
+            def should_skip_output_key(self, key):
+                return False
+
+            def pre_merge_transform(self, key, tensor, shard_tensors):
+                return tensor
+
+            def post_merge_transform(self, key, tensor):
+                return {key: tensor}
+
+            def finalize_config(self, config_dict, weight_map):
+                return config_dict
+
+        # This should fail because adapter targets q_proj but it's filtered out
+        with pytest.raises(WeightsMergeError, match="does not exist in the model"):
+            run_shard_merge(
+                base_model=str(model_dir),
+                adapter_path=str(adapter_dir),
+                output_path=str(output_dir),
+                trust_remote_code=False,
+                model_dir=model_dir,
+                config_dict=config,
+                quant_format=FilterFormat(),
+                preserve_shard_names=True,
+            )
