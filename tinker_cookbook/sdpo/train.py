@@ -37,10 +37,7 @@ import tinker
 
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.completers import TinkerTokenCompleter
-from tinker_cookbook.distillation.sdft import (
-    build_topk_distillation_datums,
-    compute_sdft_advantages,
-)
+from tinker_cookbook.distillation.sdft import compute_sdft_advantages
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator, SamplingClientEvaluatorBuilder
 from tinker_cookbook.rl.data_processing import assemble_training_data, compute_advantages
 from tinker_cookbook.rl.metric_util import compute_trajectory_metrics
@@ -54,8 +51,10 @@ from tinker_cookbook.rl.rollouts import do_group_rollout
 from tinker_cookbook.rl.train import gather_with_progress
 from tinker_cookbook.rl.types import EnvGroupBuilder, RLDatasetBuilder, TrajectoryGroup
 from tinker_cookbook.sdpo.data import (
+    build_sdpo_combined_datums,
     extract_feedback,
     extract_response_tokens,
+    sdpo_combined_loss,
 )
 from tinker_cookbook.sdpo.teacher import (
     build_teacher_prompt,
@@ -331,17 +330,6 @@ def _flatten_teacher_prompts(
     return teacher_prompts_flat, remapped_metadata, kept_indices
 
 
-def _scale_advantages(data_D: list[tinker.Datum], scale: float) -> list[tinker.Datum]:
-    """Return new datums with advantages scaled by a constant factor."""
-    scaled: list[tinker.Datum] = []
-    for datum in data_D:
-        new_inputs = dict(datum.loss_fn_inputs)
-        adv = datum.loss_fn_inputs["advantages"].to_torch()
-        new_inputs["advantages"] = tinker.TensorData.from_torch(adv * scale)
-        scaled.append(tinker.Datum(model_input=datum.model_input, loss_fn_inputs=new_inputs))
-    return scaled
-
-
 # ---------------------------------------------------------------------------
 # SDPO training iteration
 # ---------------------------------------------------------------------------
@@ -395,29 +383,16 @@ async def sdpo_training_iteration(
         sdpo_metrics["sdpo/loss"] = 0.0
         return sdpo_metrics
 
-    # Step 4: Compute IS advantages (needed for both combined and IS-only modes).
-    is_metrics = await compute_sdft_advantages(
-        filtered_data_D,
-        remapped_metadata,
-        teacher_client,
-        teacher_prompts_flat,
-        max_context_length=config.max_context_length,
-    )
-    sdpo_metrics.update(is_metrics)
-
-    # Step 5: Distill and train.
+    # Step 4: Distill and train.
     adam_params = tinker.AdamParams(
         learning_rate=config.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8
     )
 
     if config.topk > 0:
         # Combined loss: 0.5 * CE (forward KL) + 0.5 * IS (reverse KL).
-        # We issue two forward_backward calls and one optim_step; gradients
-        # accumulate across the two calls. The 0.5 weighting is applied by
-        # scaling the CE weights and IS advantages by 0.5.
-
-        # Build top-K CE datums (forward KL term).
-        topk_datums, topk_metrics = await build_topk_distillation_datums(
+        # Uses forward_backward_custom with (N, K+1) targets to compute both
+        # terms in a single forward pass (1.5x cost instead of 2x).
+        combined_datums, distill_metrics = await build_sdpo_combined_datums(
             filtered_data_D,
             remapped_metadata,
             teacher_client,
@@ -426,37 +401,30 @@ async def sdpo_training_iteration(
             max_context_length=config.max_context_length,
             vocab_size=len(tokenizer),
         )
-        sdpo_metrics.update(topk_metrics)
+        sdpo_metrics.update(distill_metrics)
 
-        # Scale CE weights by 0.5.
-        for datum in topk_datums:
-            w = datum.loss_fn_inputs["weights"].to_torch()
-            datum.loss_fn_inputs["weights"] = tinker.TensorData.from_torch(w * 0.5)
-
-        # Scale IS advantages by 0.5.
-        is_datums = _scale_advantages(filtered_data_D, 0.5)
-
-        # Two forward_backward calls, one optim_step — gradients accumulate.
-        ce_future = await training_client.forward_backward_async(
-            topk_datums, loss_fn="cross_entropy"
+        custom_result = await training_client.forward_backward_custom_async(
+            combined_datums, sdpo_combined_loss
         )
-        is_future = await training_client.forward_backward_async(
-            is_datums, loss_fn="importance_sampling"
-        )
+        custom_output = await custom_result.result_async()
+        if custom_output.metrics:
+            sdpo_metrics.update(custom_output.metrics)
+
         optim_future = await training_client.optim_step_async(adam_params)
-
-        ce_result = await ce_future.result_async()
-        is_result = await is_future.result_async()
         optim_result = await optim_future.result_async()
-
-        if ce_result.metrics:
-            sdpo_metrics.update({f"ce/{k}": v for k, v in ce_result.metrics.items()})
-        if is_result.metrics:
-            sdpo_metrics.update({f"is/{k}": v for k, v in is_result.metrics.items()})
         if optim_result.metrics:
             sdpo_metrics.update(optim_result.metrics)
     else:
-        # IS-only mode (topk=0): single forward_backward + optim_step.
+        # IS-only mode (topk=0): compute advantages then train.
+        is_metrics = await compute_sdft_advantages(
+            filtered_data_D,
+            remapped_metadata,
+            teacher_client,
+            teacher_prompts_flat,
+            max_context_length=config.max_context_length,
+        )
+        sdpo_metrics.update(is_metrics)
+
         is_future = await training_client.forward_backward_async(
             filtered_data_D, loss_fn="importance_sampling"
         )
