@@ -16,14 +16,16 @@ from tinker_cookbook.exceptions import WeightsMergeError
 from tinker_cookbook.weights._export._quantized import (
     _build_vllm_quantization_config,
     _is_routed_expert_weight,
-    _load_resume_state,
-    _save_merge_state,
-    _save_shard_atomic,
     _serialize_for_vllm,
     _should_skip_checkpoint_key,
     dequantize_blockwise,
     is_deepseek_config,
     quantize_blockwise,
+)
+from tinker_cookbook.weights._export._shard_engine import (
+    _load_resume_state,
+    _save_merge_state,
+    _save_shard_atomic,
 )
 
 # ---------------------------------------------------------------------------
