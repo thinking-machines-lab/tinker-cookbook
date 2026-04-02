@@ -12,7 +12,13 @@ from transformers import (
     PretrainedConfig,
 )
 
-from tests.weights.conftest import FILL_A, FILL_B, load_merged_tensors, run_build_and_reload, save_model_to_disk
+from tests.weights.conftest import (
+    FILL_A,
+    FILL_B,
+    load_merged_tensors,
+    run_build_and_reload,
+    save_model_to_disk,
+)
 from tinker_cookbook.weights import build_hf_model
 
 # ---------------------------------------------------------------------------
