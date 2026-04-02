@@ -267,16 +267,12 @@ async def compute_early_exit_confidence(
 ) -> float:
     """Compute P(y* | question, cot_prefix) via early-exit prompting.
 
-    Builds a properly templated sequence using the renderer's chat format:
-        <system> ... <user> question <assistant> <think> cot_prefix </think> answer
+    Builds a chat-templated sequence ending with the CoT prefix + answer,
+    then measures how much probability mass the model places on the answer
+    tokens via ``compute_logprobs_async``.
 
-    Then uses compute_logprobs_async to measure how much probability mass
-    the model places on the answer tokens.
-
-    The function uses build_generation_prompt (which handles the chat template and
-    any thinking-mode prefix like ``<think>\\n``) and then manually appends the
-    CoT + early-exit cue + answer tokens.  This avoids double-``<think>`` issues
-    across different renderers.
+    The full sequence is:
+        <chat template> <think> cot_prefix </think> \\boxed{answer}
 
     Args:
         sampling_client: Tinker sampling client.
@@ -420,8 +416,8 @@ async def compute_tts_for_cot(
 ) -> TTSResult:
     """Compute TTS for all steps in a chain-of-thought.
 
-    Steps are processed sequentially since each step's "preceding context" depends on
-    earlier steps. Within each step, the four TTS conditions run concurrently.
+    Steps are processed sequentially (the shared RNG state must advance in
+    order). Within each step, the four TTS conditions run concurrently.
 
     Args:
         sampling_client: Tinker sampling client.
