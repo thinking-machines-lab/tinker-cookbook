@@ -321,7 +321,9 @@ class SWEBenchBenchmarkBuilder(BenchmarkBuilder):
         ds = cast(Dataset, load_benchmark_dataset("princeton-nlp/SWE-bench_Verified"))
         ds = limit_dataset(ds, config.max_examples)
 
-        sandbox_factory = get_sandbox_factory(config)
+        sandbox_factory = get_sandbox_factory(
+            config, packages=["git", "python3", "python3-pip", "python3-venv"]
+        )
 
         envs: list[Env] = []
         for row in ds:

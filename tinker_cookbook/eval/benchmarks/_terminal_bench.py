@@ -216,7 +216,9 @@ class TerminalBenchBenchmarkBuilder(BenchmarkBuilder):
         ds = cast(Dataset, load_benchmark_dataset("ia03/terminal-bench"))
         ds = limit_dataset(ds, config.max_examples)
 
-        sandbox_factory = get_sandbox_factory(config)
+        sandbox_factory = get_sandbox_factory(
+            config, packages=["git", "python3", "python3-pip", "curl", "wget", "build-essential"]
+        )
 
         envs: list[Env] = []
         for row in ds:

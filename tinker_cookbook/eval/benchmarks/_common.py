@@ -240,7 +240,7 @@ def is_task_complete(text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def get_sandbox_factory(config) -> object:
+def get_sandbox_factory(config, *, packages: list[str] | None = None) -> object:
     """Get a sandbox factory from config, falling back to Modal.
 
     If ``config.sandbox_factory`` is set, returns it directly — the user
@@ -251,6 +251,9 @@ def get_sandbox_factory(config) -> object:
     Args:
         config: A :class:`BenchmarkConfig` (imported at call time to avoid
             circular imports).
+        packages: Optional apt packages to install in the sandbox image.
+            Only applies when using the default Modal backend. For example,
+            ``["git", "python3-pip"]`` for SWE-bench.
 
     Returns:
         An async callable that creates a new sandbox on each call.
@@ -259,10 +262,16 @@ def get_sandbox_factory(config) -> object:
         return config.sandbox_factory
 
     try:
+        import modal
+
         from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
 
+        image = modal.Image.debian_slim()
+        if packages:
+            image = image.apt_install(*packages)
+
         async def _modal_factory():
-            return await ModalSandbox.create()
+            return await ModalSandbox.create(image=image, timeout=1800)
 
         return _modal_factory
     except ImportError:

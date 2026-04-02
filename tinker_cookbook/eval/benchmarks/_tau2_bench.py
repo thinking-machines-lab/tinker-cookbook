@@ -32,15 +32,13 @@ import json
 import logging
 import re
 from collections.abc import Sequence
-from typing import Any, cast
+from pathlib import Path
+from typing import Any
 
 import tinker
-from datasets import Dataset
 
 from tinker_cookbook.completers import TinkerMessageCompleter
 from tinker_cookbook.eval.benchmarks._common import (
-    limit_dataset,
-    load_benchmark_dataset,
     make_example_id,
 )
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
@@ -52,6 +50,43 @@ logger = logging.getLogger(__name__)
 
 MAX_TURNS = 30
 """Maximum number of agent turns before forced termination."""
+
+_TAU2_REPO = "https://raw.githubusercontent.com/sierra-research/tau2-bench/main"
+_TAU2_CACHE = Path.home() / ".cache" / "tau2_bench"
+
+
+def _load_tau2_data(domain: str = "airline") -> tuple[list[dict], str, dict]:
+    """Load tau2-bench data from GitHub repo (cached locally).
+
+    Returns:
+        Tuple of (tasks, policy_text, db_dict).
+    """
+    import urllib.request
+
+    cache_dir = _TAU2_CACHE / domain
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    files = {
+        "tasks.json": f"{_TAU2_REPO}/data/tau2/domains/{domain}/tasks.json",
+        "policy.md": f"{_TAU2_REPO}/data/tau2/domains/{domain}/policy.md",
+        "db.json": f"{_TAU2_REPO}/data/tau2/domains/{domain}/db.json",
+    }
+
+    for filename, url in files.items():
+        local_path = cache_dir / filename
+        if not local_path.exists():
+            logger.info(f"Downloading tau2-bench {domain}/{filename}...")
+            try:
+                urllib.request.urlretrieve(url, local_path)
+            except Exception as e:
+                logger.warning(f"Failed to download {url}: {e}")
+                return [], "", {}
+
+    tasks = json.loads((cache_dir / "tasks.json").read_text())
+    policy = (cache_dir / "policy.md").read_text()
+    db = json.loads((cache_dir / "db.json").read_text())
+    logger.info(f"Loaded tau2-bench {domain}: {len(tasks)} tasks")
+    return tasks, policy, db
 
 
 # ---------------------------------------------------------------------------
@@ -727,8 +762,12 @@ class Tau2BenchBenchmarkBuilder(BenchmarkBuilder):
     recommended_timeout = 600
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
-        ds = cast(Dataset, load_benchmark_dataset("sierra-research/tau2-bench"))
-        ds = limit_dataset(ds, config.max_examples)
+        tasks, policy, db = _load_tau2_data("airline")
+        if not tasks:
+            logger.warning("Could not load tau2-bench data.")
+            return []
+        if config.max_examples is not None:
+            tasks = tasks[: config.max_examples]
 
         j_client = config.judge_sampling_client
         j_renderer = config.judge_renderer or renderer
@@ -748,61 +787,29 @@ class Tau2BenchBenchmarkBuilder(BenchmarkBuilder):
             )
 
         envs = []
-        for row in ds:
-            row = dict(row)
-            # Extract task data
-            task_id = row.get("task_id", row.get("id"))
-            system_prompt = row.get("system_prompt", row.get("instructions", row.get("policy", "")))
-            tools = row.get("tools", row.get("available_actions", []))
-            if isinstance(tools, str):
-                try:
-                    tools = json.loads(tools)
-                except json.JSONDecodeError:
-                    tools = []
-            if not isinstance(tools, list):
-                tools = []
-
-            user_scenario = row.get("user_scenario", row.get("scenario", {}))
+        for task in tasks:
+            task_id = task.get("id")
+            user_scenario = task.get("user_scenario", {})
             if isinstance(user_scenario, str):
-                try:
-                    user_scenario = json.loads(user_scenario)
-                except json.JSONDecodeError:
-                    user_scenario = {"task_instructions": user_scenario}
-            if not isinstance(user_scenario, dict):
-                user_scenario = {}
+                user_scenario = {"task_instructions": user_scenario}
+            eval_criteria = task.get("evaluation_criteria", {})
+            expected_actions = (
+                eval_criteria.get("actions", []) if isinstance(eval_criteria, dict) else []
+            )
 
-            # Expected actions for grading
-            eval_criteria = row.get("evaluation_criteria", row.get("gold_actions", {}))
-            if isinstance(eval_criteria, str):
-                try:
-                    eval_criteria = json.loads(eval_criteria)
-                except json.JSONDecodeError:
-                    eval_criteria = {}
-            expected_actions = []
-            if isinstance(eval_criteria, dict):
-                expected_actions = eval_criteria.get("actions", [])
-            elif isinstance(eval_criteria, list):
-                expected_actions = eval_criteria
+            # Use the domain policy as the system prompt
+            task_system_prompt = config.system_prompt or policy[:8000]
 
-            # Database
-            db = row.get("db", row.get("database", row.get("initial_state", {})))
-            if isinstance(db, str):
-                try:
-                    db = json.loads(db)
-                except json.JSONDecodeError:
-                    db = {}
-            if not isinstance(db, dict):
-                db = {}
-
-            if task_id is not None:
-                example_id = f"tau2_bench_{task_id}"
-            else:
-                example_id = make_example_id("tau2_bench", str(system_prompt))
+            example_id = (
+                f"tau2_bench_{task_id}"
+                if task_id is not None
+                else make_example_id("tau2_bench", str(task))
+            )
 
             envs.append(
                 Tau2BenchEnv(
-                    system_prompt=str(system_prompt)[:8000],
-                    tool_definitions=tools,
+                    system_prompt=task_system_prompt,
+                    tool_definitions=[],  # Tools are simulated via the backend DB
                     user_scenario=user_scenario,
                     expected_actions=expected_actions,
                     db=db,
