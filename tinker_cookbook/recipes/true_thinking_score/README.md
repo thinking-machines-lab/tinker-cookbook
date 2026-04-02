@@ -101,15 +101,30 @@ export TINKER_API_KEY=<your-key>
 
 ### Running the recipe
 
-**Quick validation (3 problems, ~4 minutes):**
+**50 MATH-500 problems (~14 minutes with concurrency=64):**
 
 ```bash
-python -m tinker_cookbook.recipes.true_thinking_score.run_small_experiment
+python -m tinker_cookbook.recipes.true_thinking_score.analyze \
+    dataset=math n_problems=50
 ```
 
-This runs 3 AMC-level math problems through Qwen3.5-4B, generates CoT,
-computes TTS for each step, and reports aggregate statistics. Results are
-saved to `/tmp/tinker-tts-experiment/tts_results.json`.
+**Quick smoke test (5 problems, ~3 minutes):**
+
+```bash
+python -m tinker_cookbook.recipes.true_thinking_score.analyze \
+    n_problems=5
+```
+
+**GSM8K, larger model:**
+
+```bash
+python -m tinker_cookbook.recipes.true_thinking_score.analyze \
+    dataset=gsm8k model_name=Qwen/Qwen3.5-27B n_problems=50
+```
+
+Results are saved to `/tmp/tinker-examples/tts/<run-name>/`:
+- `tts_per_problem.jsonl` — per-problem details (steps, TTS scores)
+- `tts_summary.json` — aggregate statistics
 
 **Using TTS programmatically:**
 
@@ -149,51 +164,58 @@ pytest tinker_cookbook/recipes/true_thinking_score/tts_test.py -v
 | Parameter | Default | Description |
 |---|---|---|
 | `model_name` | `Qwen/Qwen3.5-4B` | Thinking model to analyze |
+| `dataset` | `math` | Dataset: `math` (MATH-500) or `gsm8k` |
+| `n_problems` | `50` | Number of problems to analyze |
+| `concurrency` | `64` | Max parallel problems (steps within a problem are sequential) |
 | `max_tokens` | `4096` | Max tokens for CoT generation |
-| `temperature` | `0.0` | Greedy decoding (matches paper) |
 | `seed` | `42` | Random seed for perturbation reproducibility |
-| `min_step_chars` | `20` | Minimum characters for a step (shorter segments are merged) |
 
 ---
 
 ### Results
 
-**Qwen3.5-4B on 3 AMC-level problems (54 total steps):**
+**Qwen3.5-4B on 50 MATH-500 problems (1,521 total steps):**
 
-| Metric | Paper (AIME, Qwen-7B) | Ours (AMC, Qwen3.5-4B) |
+| Metric | Paper (AIME, Qwen-7B) | Ours (MATH-500, Qwen3.5-4B) |
 |---|---|---|
-| Mean TTS | ~0.03 | 0.061 |
-| Steps with TTS >= 0.7 | 2.3% | 1.9% |
-| Decorative steps (TTS <= 0.005) | — | 59% |
-| Self-verification steps found | — | 5 |
-| Self-verification steps decorative | 12% | 40% (2/5) |
+| Mean TTS | ~0.03 | 0.057 |
+| Steps with TTS >= 0.7 | 2.3% | **2.2%** |
+| Steps with TTS >= 0.3 | 6.4% | **6.7%** |
+| Decorative steps (TTS <= 0.005) | — | 61.8% |
+| Self-verification steps | — | 132 |
+| Self-verification steps decorative | 12-21% | **62.1%** |
 
-**Per-problem breakdown:**
-
-| Problem | Steps | Mean TTS | High TTS | Decorative | Model correct |
-|---|---|---|---|---|---|
-| Inclusion-exclusion (divisible by 3,5,7) | 10 | 0.147 | 10% | 20% | Yes |
-| $n^2 \equiv 1 \pmod{24}$ sum | 32 | 0.002 | 0% | 88% | No |
-| Probability (balls) | 12 | 0.146 | 0% | 17% | No |
+**Additional statistics:**
+- Model accuracy: 60% (30/50 correct)
+- Mean steps per problem: 30.4
+- Total compute: 50 problems in ~14 minutes (concurrency=64)
 
 ### Findings
 
-1. **The paper's core claim is validated:** Most reasoning steps are decorative.
-   On the hardest problem (32 steps of number theory), 88% of steps had
-   TTS <= 0.005 — the model's lengthy exploration barely affected its output.
+1. **The paper's core claim is validated at scale:** On 50 MATH-500 problems
+   with 1,521 total steps, **only 2.2% have TTS >= 0.7** (paper: 2.3%) and
+   **6.7% have TTS >= 0.3** (paper: 6.4%). The TTS distribution closely
+   matches the paper despite using a different model family and dataset.
 
-2. **Difficulty matters:** Easy problems produce fewer, higher-TTS steps.
-   The model's confidence is concentrated in a small number of key calculations.
-   Hard problems produce many decorative steps as the model "searches" without
+2. **Most reasoning is decorative:** 61.8% of steps have TTS <= 0.005 —
+   perturbing these steps has essentially zero effect on the model's answer
+   prediction. The model generates elaborate-looking reasoning that it
+   doesn't actually use.
+
+3. **Self-verification is often fake:** 62.1% of "Wait, let me re-check"
+   steps are decorative (TTS <= 0.005). The model frequently performs
+   self-verification rituals that don't causally influence its answer.
+   This is higher than the paper's 12-21%, possibly because Qwen3.5-4B
+   generates more verbose self-checks.
+
+4. **TTS rises near the answer:** The final steps before the answer
+   consistently have the highest TTS, suggesting the model "commits" to an
+   answer path late in the chain. Early reasoning steps explore without
    making progress.
 
-3. **Self-verification can be fake:** "Wait, let me re-check" steps sometimes
-   have near-zero TTS — the model appears to verify its work but the
-   verification doesn't causally influence the answer.
-
-4. **TTS rises at the end:** The final steps before the answer tend to have
-   the highest TTS (steps 8-9 in problem 1: TTS=0.76, 0.62). This suggests
-   the model "commits" to an answer path late in the reasoning chain.
+5. **Wrong answers have lower TTS:** Problems where the model gets the wrong
+   answer tend to have near-zero TTS across all steps — the model never
+   locks onto a viable solution path.
 
 ---
 
@@ -202,9 +224,10 @@ pytest tinker_cookbook/recipes/true_thinking_score/tts_test.py -v
 | File | Description |
 |---|---|
 | `tts.py` | Core TTS computation: step segmentation, number perturbation, early-exit confidence, TTS scoring |
-| `run_small_experiment.py` | End-to-end validation script with AMC-level problems |
-| `tts_test.py` | Unit tests for segmentation, perturbation, and self-verification detection |
-| `RESEARCH_NOTES.md` | Internal development notes and experiment log |
+| `analyze.py` | CLI entry point for running TTS analysis on MATH-500 or GSM8K |
+| `run_small_experiment.py` | Quick validation script (3 hardcoded problems) |
+| `tts_test.py` | 16 unit tests for segmentation, perturbation, and self-verification detection |
+| `RESEARCH_NOTES.md` | Development notes and experiment log |
 
 ### References
 
