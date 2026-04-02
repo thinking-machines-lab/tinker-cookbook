@@ -84,9 +84,12 @@ We replicate TTS computation using Tinker's `compute_logprobs_async` API:
   the model's answer-prediction **changes** when a step is perturbed (i.e.
   TTS is relative), so the choice of cue mainly shifts the baseline
   probability, not the TTS scores.
-- **Confidence measurement:** We compute `exp(sum(logprobs))` over the
-  answer tokens after the cue, giving P(y* | prefix). This is a
-  continuous, fine-grained equivalent of the paper's model confidence.
+- **Confidence measurement:** The paper uses "model's confidence Pr(y*)"
+  but does not fully specify the implementation (details are in Appendix A).
+  We compute `exp(sum(logprobs))` over the answer tokens, giving the joint
+  probability P(answer_tokens | prefix). Since TTS measures *relative
+  changes* in confidence across conditions, the exact choice of confidence
+  metric should not significantly affect the TTS scores.
 - **Step segmentation:** Both the paper and our implementation use heuristic
   text-based segmentation. The exact boundary detection differs but produces
   comparable step counts.
