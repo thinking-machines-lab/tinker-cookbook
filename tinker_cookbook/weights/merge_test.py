@@ -25,8 +25,20 @@ from tinker_cookbook.weights._merge import (
 from tinker_cookbook.weights._merge_deepseek import detect_profile as detect_deepseek_profile
 from tinker_cookbook.weights._merge_default import detect_profile as detect_default_profile
 from tinker_cookbook.weights._merge_gpt_oss import detect_profile as detect_gpt_oss_profile
+from tinker_cookbook.weights._merge_kimi_k25 import detect_profile as detect_kimi_k25_profile
 from tinker_cookbook.weights._merge_nemotron import detect_profile as detect_nemotron_profile
 from tinker_cookbook.weights._merge_qwen3_5 import detect_profile as detect_qwen3_5_profile
+from tinker_cookbook.weights._merge_utils import (
+    create_virtual_weight_keys,
+    create_virtual_weight_shapes,
+    is_pack_quantized,
+)
+from tinker_cookbook.weights._packed_int4 import (
+    dequantize_int4_group,
+    pack_int4,
+    quantize_int4_group,
+    unpack_int4,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1524,3 +1536,239 @@ class TestUnembedTokensVisionRemap:
                 apply_merge_op(state_dict, op)
         assert torch.allclose(lm_head, torch.ones(self.VOCAB, self.HIDDEN))
         assert torch.allclose(embed, torch.zeros(self.VOCAB, self.HIDDEN))
+
+
+# ---------------------------------------------------------------------------
+# Kimi K2.5 — profile detection, name remapping, INT4 pack/unpack
+# ---------------------------------------------------------------------------
+
+
+class TestKimiK25ProfileDetection:
+    """Profile detection for Kimi K2.5 (model_type=kimi_k25)."""
+
+    def test_detects_kimi_k25(self):
+        config = {"model_type": "kimi_k25", "architectures": ["KimiK25ForConditionalGeneration"]}
+        keys: set[str] = set()
+        profile = detect_kimi_k25_profile(config, keys)
+        assert profile is not None
+        assert profile.model_family == "kimi_k25"
+        assert profile.expert_layout == "separate"
+        assert profile.has_language_model_prefix is False
+
+    def test_ignores_non_k25(self):
+        config = {"model_type": "kimi_k2"}
+        assert detect_kimi_k25_profile(config, set()) is None
+
+    def test_dispatch_detects_k25(self):
+        config = {"model_type": "kimi_k25"}
+        keys = {"language_model.model.layers.0.self_attn.q_a_proj.weight"}
+        profile = detect_merge_profile(config, keys)
+        assert profile.model_family == "kimi_k25"
+
+    def test_kimi_k2_falls_through_to_default(self):
+        """Kimi-K2 (model_type=kimi_k2) should NOT match K2.5 detector."""
+        config = {"model_type": "kimi_k2"}
+        keys = {"model.layers.0.self_attn.q_a_proj.weight"}
+        profile = detect_merge_profile(config, keys)
+        assert profile.model_family == "default"
+
+
+class TestKimiK25NameRemapping:
+    """Name remapping for K2.5's language_model.model.* prefix."""
+
+    HIDDEN = 64
+    RANK = 1
+
+    def _make_adapter(
+        self, adapter_key_base: str, out_dim: int, in_dim: int
+    ) -> tuple[dict[str, torch.Tensor], dict]:
+        """Create a minimal adapter targeting a single key."""
+        weights = {
+            f"{adapter_key_base}.lora_A.weight": torch.ones(self.RANK, in_dim),
+            f"{adapter_key_base}.lora_B.weight": torch.ones(out_dim, self.RANK),
+        }
+        return weights, {"lora_alpha": 1, "r": self.RANK}
+
+    def test_attention_remaps_to_language_model_prefix(self):
+        """Adapter attention key → language_model.model.layers.* in model."""
+        model_keys = {"language_model.model.layers.0.self_attn.q_a_proj.weight"}
+        adapter_weights, config = self._make_adapter(
+            "base_model.model.model.layers.0.self_attn.q_a_proj", self.HIDDEN, self.HIDDEN
+        )
+        profile = MergeProfile(model_family="kimi_k25", expert_layout="separate")
+        ops = plan_merge_ops(adapter_weights, config, model_keys, profile)
+        assert "language_model.model.layers.0.self_attn.q_a_proj.weight" in ops
+
+    def test_unembed_remaps_to_language_model_lm_head(self):
+        """Adapter unembed_tokens → language_model.lm_head in model."""
+        model_keys = {"language_model.lm_head.weight"}
+        adapter_weights, config = self._make_adapter(
+            "base_model.model.model.unembed_tokens", self.HIDDEN, self.HIDDEN
+        )
+        profile = MergeProfile(model_family="kimi_k25", expert_layout="separate")
+        ops = plan_merge_ops(adapter_weights, config, model_keys, profile)
+        assert "language_model.lm_head.weight" in ops
+
+    def test_direct_lm_head_remaps_to_language_model_lm_head(self):
+        """Adapter lm_head (direct ref) → language_model.lm_head in model."""
+        model_keys = {"language_model.lm_head.weight"}
+        adapter_weights, config = self._make_adapter(
+            "base_model.model.lm_head", self.HIDDEN, self.HIDDEN
+        )
+        profile = MergeProfile(model_family="kimi_k25", expert_layout="separate")
+        ops = plan_merge_ops(adapter_weights, config, model_keys, profile)
+        assert "language_model.lm_head.weight" in ops
+
+    def test_expert_remaps_to_per_expert_keys(self):
+        """3D expert LoRA → per-expert 2D ops under language_model.model.*."""
+        n_exp = 2
+        exp_dim = 16
+        model_keys = set()
+        for i in range(n_exp):
+            for proj in ("gate_proj", "up_proj"):
+                model_keys.add(f"language_model.model.layers.1.mlp.experts.{i}.{proj}.weight")
+        adapter_weights = {
+            "base_model.model.model.layers.1.mlp.experts.w1.lora_A.weight": torch.ones(
+                1, self.RANK, self.HIDDEN
+            ),
+            "base_model.model.model.layers.1.mlp.experts.w1.lora_B.weight": torch.ones(
+                n_exp, exp_dim, self.RANK
+            ),
+            "base_model.model.model.layers.1.mlp.experts.w3.lora_A.weight": torch.ones(
+                1, self.RANK, self.HIDDEN
+            ),
+            "base_model.model.model.layers.1.mlp.experts.w3.lora_B.weight": torch.ones(
+                n_exp, exp_dim, self.RANK
+            ),
+        }
+        config = {"lora_alpha": 1, "r": self.RANK}
+        profile = MergeProfile(model_family="kimi_k25", expert_layout="separate")
+        ops = plan_merge_ops(adapter_weights, config, model_keys, profile)
+        # Should have per-expert ops
+        for i in range(n_exp):
+            assert f"language_model.model.layers.1.mlp.experts.{i}.gate_proj.weight" in ops
+            assert f"language_model.model.layers.1.mlp.experts.{i}.up_proj.weight" in ops
+
+
+class TestKimiK25VirtualWeightKeys:
+    """Virtual .weight key creation from .weight_packed keys."""
+
+    def test_creates_virtual_keys(self):
+        keys = {
+            "language_model.model.layers.1.mlp.experts.0.gate_proj.weight_packed",
+            "language_model.model.layers.1.mlp.experts.0.gate_proj.weight_scale",
+            "language_model.model.layers.1.mlp.experts.0.gate_proj.weight_shape",
+            "language_model.model.layers.0.self_attn.q_a_proj.weight",  # bf16, no packed
+        }
+        augmented, packed_map = create_virtual_weight_keys(keys)
+        virtual = "language_model.model.layers.1.mlp.experts.0.gate_proj.weight"
+        assert virtual in augmented
+        assert virtual in packed_map
+        assert packed_map[virtual].endswith(".weight_packed")
+        # bf16 key unchanged
+        assert "language_model.model.layers.0.self_attn.q_a_proj.weight" in augmented
+        assert "language_model.model.layers.0.self_attn.q_a_proj.weight" not in packed_map
+
+    def test_no_virtual_key_when_plain_weight_exists(self):
+        """If a key has both .weight and .weight_packed, don't create virtual."""
+        keys = {
+            "layer.gate_proj.weight",
+            "layer.gate_proj.weight_packed",
+        }
+        _, packed_map = create_virtual_weight_keys(keys)
+        assert "layer.gate_proj.weight" not in packed_map
+
+    def test_virtual_shapes(self):
+        packed_map = {
+            "layer.weight": "layer.weight_packed",
+        }
+        shapes = {
+            "layer.weight_packed": (2048, 896),  # I32: 896 * 8 = 7168
+            "layer.weight_scale": (2048, 224),
+        }
+        augmented = create_virtual_weight_shapes(shapes, packed_map)
+        assert augmented["layer.weight"] == (2048, 7168)
+
+
+class TestIsPackQuantizedGuard:
+    """Ensure is_pack_quantized only fires for compressed-tensors pack-quantized format.
+
+    Detection is based on the explicit ``format: pack-quantized`` field in
+    ``quantization_config``, not weight key heuristics.  This makes it safe
+    when new quantized model formats are added.
+    """
+
+    _PACK_QUANTIZED_CONFIG = {
+        "quantization_config": {
+            "quant_method": "compressed-tensors",
+            "format": "pack-quantized",
+            "config_groups": {"group_0": {"weights": {"num_bits": 4, "group_size": 32}}},
+        },
+    }
+
+    def test_kimi_k2_triggers(self):
+        """Kimi K2 has quantization_config at top level."""
+        assert is_pack_quantized(self._PACK_QUANTIZED_CONFIG)
+
+    def test_kimi_k25_triggers_via_text_config(self):
+        """Kimi K2.5 nests quantization_config under text_config."""
+        config = {"model_type": "kimi_k25", "text_config": self._PACK_QUANTIZED_CONFIG}
+        assert is_pack_quantized(config)
+
+    def test_nemotron_nvfp4_does_not_trigger(self):
+        """Nemotron NVFP4 has no quantization_config (quantization is implicit in dtypes)."""
+        config = {"model_type": "nemotron_h"}
+        assert not is_pack_quantized(config)
+
+    def test_deepseek_native_fp8_does_not_trigger(self):
+        """DeepSeek V3.1 native FP8 uses quant_method=fp8, not pack-quantized."""
+        config = {"quantization_config": {"quant_method": "fp8"}}
+        assert not is_pack_quantized(config)
+
+    def test_standard_bf16_does_not_trigger(self):
+        config = {"model_type": "qwen3"}
+        assert not is_pack_quantized(config)
+
+    def test_empty_config_does_not_trigger(self):
+        assert not is_pack_quantized({})
+
+
+class TestPackedInt4:
+    """INT4 pack/unpack and quantization round-trip."""
+
+    def test_pack_unpack_roundtrip(self):
+        values = torch.randint(-8, 8, (4, 32), dtype=torch.int8)
+        packed = pack_int4(values)
+        assert packed.shape == (4, 4)  # 32 / 8 = 4
+        assert packed.dtype == torch.int32
+        unpacked = unpack_int4(packed)
+        assert unpacked.shape == (4, 32)
+        assert torch.equal(unpacked, values)
+
+    def test_pack_unpack_boundary_values(self):
+        """Test with min/max INT4 values."""
+        values = torch.tensor([[-8, 7, 0, -1, 3, -5, 6, -8]], dtype=torch.int8)
+        packed = pack_int4(values)
+        unpacked = unpack_int4(packed)
+        assert torch.equal(unpacked, values)
+
+    def test_quantize_dequantize_roundtrip(self):
+        """Quantize then dequantize should approximately preserve values."""
+        tensor = torch.randn(8, 64, dtype=torch.bfloat16) * 2.0
+        packed, scale = quantize_int4_group(tensor, group_size=32)
+        assert packed.shape == (8, 8)  # 64 / 8
+        assert scale.shape == (8, 2)  # 64 / 32
+        dequantized = dequantize_int4_group(packed, scale, (8, 64), group_size=32)
+        assert dequantized.shape == (8, 64)
+        # INT4 quantization is lossy but should be reasonably close
+        assert torch.allclose(tensor.float(), dequantized.float(), atol=0.5)
+
+    def test_dequantize_known_values(self):
+        """Dequantize hand-crafted values to verify math."""
+        # 1 row, 8 cols, group_size=8
+        # All values = 2, scale = 1.0 → dequant = 2.0
+        values = torch.full((1, 8), 2, dtype=torch.int8)
+        packed = pack_int4(values)
+        scale = torch.ones(1, 1, dtype=torch.bfloat16)
+        result = dequantize_int4_group(packed, scale, (1, 8), group_size=8)
+        assert torch.allclose(result.float(), torch.full((1, 8), 2.0))

@@ -165,10 +165,11 @@ def _get_profile_detectors() -> list[_ProfileDetector]:
     circular dependencies (per-model modules import from this file)."""
     from tinker_cookbook.weights._merge_deepseek import detect_profile as _deepseek
     from tinker_cookbook.weights._merge_gpt_oss import detect_profile as _gpt_oss
+    from tinker_cookbook.weights._merge_kimi_k25 import detect_profile as _kimi_k25
     from tinker_cookbook.weights._merge_nemotron import detect_profile as _nemotron
     from tinker_cookbook.weights._merge_qwen3_5 import detect_profile as _qwen3_5
 
-    return [_gpt_oss, _deepseek, _nemotron, _qwen3_5]
+    return [_gpt_oss, _deepseek, _nemotron, _qwen3_5, _kimi_k25]
 
 
 def _get_plan_functions() -> dict[str, _PlanFn]:
@@ -177,6 +178,7 @@ def _get_plan_functions() -> dict[str, _PlanFn]:
     from tinker_cookbook.weights._merge_deepseek import plan_merge_ops as _deepseek_plan
     from tinker_cookbook.weights._merge_default import plan_merge_ops as _default_plan
     from tinker_cookbook.weights._merge_gpt_oss import plan_merge_ops as _gpt_oss_plan
+    from tinker_cookbook.weights._merge_kimi_k25 import plan_merge_ops as _kimi_k25_plan
     from tinker_cookbook.weights._merge_qwen3_5 import plan_merge_ops as _qwen3_5_plan
 
     return {
@@ -185,6 +187,7 @@ def _get_plan_functions() -> dict[str, _PlanFn]:
         "deepseek": _deepseek_plan,
         "nemotron": _default_plan,
         "qwen3_5": _qwen3_5_plan,
+        "kimi_k25": _kimi_k25_plan,
     }
 
 
