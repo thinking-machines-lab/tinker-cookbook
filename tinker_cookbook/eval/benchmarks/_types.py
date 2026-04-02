@@ -99,11 +99,10 @@ class BenchmarkConfig:
 
     # Customization hooks
     system_prompt: str | None = None
-    """System prompt to prepend to benchmark examples. Benchmarks that
-    support this will use it instead of their default (or no) system prompt.
-
-    Currently supported by: gsm8k. Other benchmarks can adopt the pattern
-    via ``build_messages(content, config.system_prompt)`` in ``_common.py``.
+    """System prompt to prepend to benchmark examples. All stable benchmarks
+    support this. Single-turn benchmarks prepend it via ``build_messages()``,
+    multi-turn benchmarks (terminal_bench, swe_bench) use it as the system
+    message in the agent conversation.
 
     Example::
 
