@@ -90,6 +90,7 @@ class CLIConfig:
 
     # Model
     model_name: str = "Qwen/Qwen3.5-4B"
+    renderer_name: str | None = None  # Override renderer (e.g. deepseekv3_thinking)
 
     # Dataset
     dataset: str = "math"  # math | gsm8k
@@ -116,6 +117,7 @@ async def analyze_one_problem(
     total: int,
     max_tokens: int,
     seed: int,
+    renderer_name: str | None = None,
 ) -> dict | None:
     """Analyze a single problem and return its summary dict."""
     logger.info(f"[{problem_idx + 1}/{total}] {problem['question'][:60]}...")
@@ -127,6 +129,7 @@ async def analyze_one_problem(
             answer_str=problem["answer"],
             max_tokens=max_tokens,
             seed=seed,
+            renderer_name=renderer_name,
         )
         summary = result.summary()
         summary["problem_idx"] = problem_idx
@@ -185,6 +188,7 @@ async def cli_main(config: CLIConfig) -> None:
                 len(problems),
                 config.max_tokens,
                 config.seed,
+                config.renderer_name,
             )
 
     tasks = [_bounded(p, i) for i, p in enumerate(problems)]

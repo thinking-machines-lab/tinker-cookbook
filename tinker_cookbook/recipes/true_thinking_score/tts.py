@@ -487,6 +487,7 @@ async def generate_cot_and_compute_tts(
     answer_str: str,
     max_tokens: int = 4096,
     seed: int = 42,
+    renderer_name: str | None = None,
 ) -> TTSResult:
     """Generate chain-of-thought and compute TTS for all steps.
 
@@ -495,16 +496,18 @@ async def generate_cot_and_compute_tts(
 
     Args:
         service_client: Tinker service client.
-        model_name: Model to use (e.g. "Qwen/Qwen3-4B").
+        model_name: Model to use (e.g. "Qwen/Qwen3.5-4B").
         question: Math question.
         answer_str: Correct answer string.
         max_tokens: Max tokens for CoT generation.
         seed: Random seed.
+        renderer_name: Override the default renderer (e.g. "deepseekv3_thinking").
 
     Returns:
         TTSResult with per-step TTS scores.
     """
-    renderer_name = model_info.get_recommended_renderer_name(model_name)
+    if renderer_name is None:
+        renderer_name = model_info.get_recommended_renderer_name(model_name)
     tokenizer = get_tokenizer(model_name)
     renderer = renderers.get_renderer(renderer_name, tokenizer=tokenizer)
 
