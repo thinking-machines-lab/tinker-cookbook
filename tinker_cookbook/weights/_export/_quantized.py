@@ -733,9 +733,7 @@ def build_quantized(
 
     # 7. Copy model code and tokenizer
     copy_model_code_files(model_dir, out)
-    save_tokenizer_and_processor(
-        base_model, out, is_multimodal_from_dict(config_dict), trust_remote_code
-    )
+    save_tokenizer_and_processor(base_model, out, is_multimodal_from_dict(config_dict))
 
     # 8. Mark complete
     _save_merge_state(

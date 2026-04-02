@@ -11,7 +11,7 @@ import pytest
 import torch
 from safetensors.torch import load_file, save_file
 
-from tinker_cookbook.weights._export import build_hf_model
+from tinker_cookbook.weights._export import _TOKENIZER_AND_PROCESSOR_FILES, build_hf_model
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -448,6 +448,117 @@ class TestBuildShardedNemotron:
         # Verify out_proj unchanged (no adapter targeting it)
         out_proj = out_tensors["backbone.layers.0.mixer.out_proj.weight"]
         assert out_proj.abs().sum() == 0
+
+
+# ---------------------------------------------------------------------------
+# Tokenizer file copy (no re-serialization)
+# ---------------------------------------------------------------------------
+
+
+class TestTokenizerFileCopy:
+    """Verify that tokenizer files are copied verbatim from the source model.
+
+    Transformers v5 rewrites ``tokenizer_class`` to ``"TokenizersBackend"``
+    when loading and re-saving via ``save_pretrained()``.  Our export copies
+    files directly to preserve the original values.
+    """
+
+    def test_tokenizer_class_preserved(self, tmp_path: Path):
+        """tokenizer_config.json must be byte-identical to the source."""
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+
+        # Use a tokenizer_class that would be corrupted by save_pretrained()
+        tok_config = json.dumps({"tokenizer_class": "Qwen2Tokenizer", "model_max_length": 4096})
+
+        config = {"architectures": ["TestModel"], "model_type": "test"}
+        state_dict = {"model.layers.0.proj.weight": torch.zeros(4, 4, dtype=torch.float32)}
+        _create_synthetic_model(model_dir, config, state_dict)
+        # Overwrite tokenizer_config.json with our specific content
+        (model_dir / "tokenizer_config.json").write_text(tok_config)
+
+        _create_adapter(
+            adapter_dir,
+            {
+                "base_model.model.model.layers.0.proj.lora_A.weight": torch.ones(1, 4),
+                "base_model.model.model.layers.0.proj.lora_B.weight": torch.ones(4, 1),
+            },
+            {"lora_alpha": 1, "r": 1},
+        )
+
+        build_hf_model(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+        )
+
+        # tokenizer_config.json must be byte-identical to the source
+        assert (output_dir / "tokenizer_config.json").read_text() == tok_config
+
+    def test_all_allowlisted_files_copied(self, tmp_path: Path):
+        """Every file in _TOKENIZER_AND_PROCESSOR_FILES is copied when present."""
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+
+        config = {"architectures": ["TestModel"], "model_type": "test"}
+        state_dict = {"model.layers.0.proj.weight": torch.zeros(4, 4, dtype=torch.float32)}
+        _create_synthetic_model(model_dir, config, state_dict)
+
+        # Write every allowlisted file into the source model dir
+        for name in _TOKENIZER_AND_PROCESSOR_FILES:
+            (model_dir / name).write_text(f"content-of-{name}")
+
+        _create_adapter(
+            adapter_dir,
+            {
+                "base_model.model.model.layers.0.proj.lora_A.weight": torch.ones(1, 4),
+                "base_model.model.model.layers.0.proj.lora_B.weight": torch.ones(4, 1),
+            },
+            {"lora_alpha": 1, "r": 1},
+        )
+
+        build_hf_model(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+        )
+
+        for name in _TOKENIZER_AND_PROCESSOR_FILES:
+            assert (output_dir / name).exists(), f"{name} missing from output"
+            assert (output_dir / name).read_bytes() == (model_dir / name).read_bytes(), (
+                f"{name} content differs from source"
+            )
+
+    def test_tiktoken_model_copied(self, tmp_path: Path):
+        """tiktoken.model (used by Kimi) is copied as a tokenizer file."""
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+
+        config = {"architectures": ["TestModel"], "model_type": "test"}
+        state_dict = {"model.layers.0.proj.weight": torch.zeros(4, 4, dtype=torch.float32)}
+        _create_synthetic_model(model_dir, config, state_dict)
+        (model_dir / "tiktoken.model").write_text("fake-tiktoken-data")
+
+        _create_adapter(
+            adapter_dir,
+            {
+                "base_model.model.model.layers.0.proj.lora_A.weight": torch.ones(1, 4),
+                "base_model.model.model.layers.0.proj.lora_B.weight": torch.ones(4, 1),
+            },
+            {"lora_alpha": 1, "r": 1},
+        )
+
+        build_hf_model(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+        )
+
+        assert (output_dir / "tiktoken.model").exists()
+        assert (output_dir / "tiktoken.model").read_text() == "fake-tiktoken-data"
 
 
 # ---------------------------------------------------------------------------
