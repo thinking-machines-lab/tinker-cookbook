@@ -34,19 +34,36 @@ focus on TTS computation only.
 
 ### How TTS works
 
-For each reasoning step $s$ in a chain-of-thought, TTS measures what
-happens when you perturb it (by introducing small numerical offsets)
-under two contexts:
+For each reasoning step $s_i$ in a chain-of-thought, we run **4 forward
+passes** that measure the model's confidence in the correct answer under
+different perturbation conditions:
+
+| | Intact step ($x$=1) | Perturbed step ($x$=0) |
+|---|---|---|
+| **Intact context** ($c$=1) | $S_1(1)$: original steps 1..i-1 + original step i | $S_0(1)$: original steps 1..i-1 + perturbed step i |
+| **Perturbed context** ($c$=0) | $S_1(0)$: perturbed steps 1..i-1 + original step i | $S_0(0)$: perturbed steps 1..i-1 + perturbed step i |
+
+Each cell measures $S_x(c) = P(y^* \mid \text{context}=c,\;\text{step}=x)$
+— the probability of the correct answer given that CoT prefix — via
+`compute_logprobs_async`.
+
+TTS is then the average of the two row-wise diffs:
 
 $$\text{TTS}(s) = \tfrac{1}{2}\bigl(|S_1(1) - S_0(1)| + |S_1(0) - S_0(0)|\bigr)$$
 
-where $S_x(c) = P(y^* \mid \text{context}=c,\;\text{step}=x)$ and:
-- $c=1$: preceding steps are **intact**, $c=0$: preceding steps are **perturbed**
-- $x=1$: step $s$ is **intact**, $x=0$: step $s$ is **perturbed**
+- **Row 1** $|S_1(1) - S_0(1)|$: hold context intact, toggle the step.
+  Measures **necessity** — does the model rely on this step?
+- **Row 2** $|S_1(0) - S_0(0)|$: hold context perturbed, toggle the step.
+  Measures **sufficiency** — can this step alone drive the correct answer?
 
-This captures both **necessity** (does perturbing the step hurt performance
-when the context is intact?) and **sufficiency** (can the step drive the
-correct answer even when the context is corrupted?).
+Testing under both contexts matters because a single diff can miss
+"OR-type" steps: two steps that independently lead to the answer. With
+intact context, each looks unimportant (the other still works). With
+perturbed context, each is revealed as sufficient on its own.
+
+A **decorative step** has TTS $\approx$ 0: toggling it makes no difference.
+A **true-thinking step** has high TTS: the model's prediction meaningfully
+changes when you perturb it.
 
 ### What we implement in Tinker
 
