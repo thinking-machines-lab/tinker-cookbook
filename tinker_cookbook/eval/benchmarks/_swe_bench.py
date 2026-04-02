@@ -285,6 +285,9 @@ class _SWEBenchEnvFactory(Env):
             message_env=msg_env,
             failed_parse_reward=0.0,
             terminate_on_parse_error=False,
+            max_trajectory_tokens=60000,  # Leave room within 65K context
+            max_generation_tokens=4096,
+            context_overflow_reward=0.0,  # Treat as failure, not penalty
         )
 
         return await self._inner.initial_observation()
