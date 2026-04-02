@@ -12,7 +12,7 @@ from transformers import (
     PretrainedConfig,
 )
 
-from tests.weights.conftest import FILL_A, FILL_B, run_build_and_reload, save_model_to_disk
+from tests.weights.conftest import FILL_A, FILL_B, load_merged_tensors, run_build_and_reload, save_model_to_disk
 from tinker_cookbook.weights import build_hf_model
 
 # ---------------------------------------------------------------------------
@@ -393,3 +393,128 @@ class TestQwen35MoeSplitQkvAndExperts:
                 dk = f"model.language_model.layers.0.mlp.experts.{i}.down_proj.weight"
                 delta = (merged[dk] - saved[dk]).abs().sum()
                 assert delta > 0, f"Expert {i} down_proj not updated"
+
+
+# ---------------------------------------------------------------------------
+# Qwen3.5 MoE — FP8 quantized export (experts-fp8 + vllm)
+# ---------------------------------------------------------------------------
+
+
+class TestQwen35MoeFP8Export:
+    """Qwen3.5 MoE: routed experts quantized to FP8, everything else stays BF16.
+
+    Verifies that the compression_config ignore list correctly covers all of
+    Qwen 3.5's non-standard nn.Linear modules (linear attention projections,
+    vision encoder, shared expert gate) so vLLM doesn't try to load them as FP8.
+    """
+
+    def test_routed_experts_fp8_dense_bf16_ignore_list_complete(self):
+        config = _make_tiny_qwen3_5_moe_config()
+        tc = config.text_config
+        num_experts = tc.num_experts
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_path = root / "model"
+            adapter_path = root / "adapter"
+            output_path = root / "merged"
+
+            save_model_to_disk(
+                config,
+                model_path,
+                tokenizer_name="Qwen/Qwen3.5-35B-A3B",
+                is_vision=True,
+            )
+
+            # Re-save weights in BF16 (from_config creates float32 by default)
+            orig_tensors = load_file(str(model_path / "model.safetensors"))
+            save_file(
+                {k: v.to(torch.bfloat16) for k, v in orig_tensors.items()},
+                str(model_path / "model.safetensors"),
+            )
+            orig_tensors = load_file(str(model_path / "model.safetensors"))
+
+            # Read expert dims from saved checkpoint
+            gate_key_0 = "model.language_model.layers.0.mlp.experts.0.gate_proj.weight"
+            expert_out_dim, expert_in_dim = orig_tensors[gate_key_0].shape
+
+            # Build adapter with expert LoRA weights
+            rank = 1
+            exp_prefix = "base_model.model.model.layers.0.mlp.experts"
+            adapter_weights: dict[str, torch.Tensor] = {
+                f"{exp_prefix}.w1.lora_A.weight": torch.ones(1, rank, expert_in_dim) * FILL_A,
+                f"{exp_prefix}.w1.lora_B.weight": torch.ones(num_experts, expert_out_dim, rank),
+                f"{exp_prefix}.w3.lora_A.weight": torch.ones(1, rank, expert_in_dim) * FILL_B,
+                f"{exp_prefix}.w3.lora_B.weight": torch.ones(num_experts, expert_out_dim, rank),
+            }
+            adapter_path.mkdir(parents=True)
+            save_file(adapter_weights, str(adapter_path / "adapter_model.safetensors"))
+            (adapter_path / "adapter_config.json").write_text(
+                json.dumps({"lora_alpha": 1, "r": rank})
+            )
+
+            build_hf_model(
+                base_model=str(model_path),
+                adapter_path=str(adapter_path),
+                output_path=str(output_path),
+                quantize="experts-fp8",
+                serving_format="vllm",
+            )
+
+            saved_sd = load_merged_tensors(output_path)
+            saved_config = json.loads((output_path / "config.json").read_text())
+
+            # -- Routed experts: FP8 with scale tensors --
+            for i in range(num_experts):
+                for proj in ("gate_proj", "up_proj", "down_proj"):
+                    key = f"model.language_model.layers.0.mlp.experts.{i}.{proj}.weight"
+                    assert saved_sd[key].dtype == torch.float8_e4m3fn, (
+                        f"Routed expert should be FP8: {key}"
+                    )
+                    scale_key = key.removesuffix(".weight") + ".weight_scale"
+                    assert scale_key in saved_sd, f"Missing scale: {scale_key}"
+                    assert saved_sd[scale_key].dtype == torch.float32
+
+            # -- Non-expert weights: BF16, no scale --
+            qkv_key = "model.language_model.layers.0.linear_attn.in_proj_qkv.weight"
+            assert saved_sd[qkv_key].dtype == torch.bfloat16
+            assert qkv_key.removesuffix(".weight") + ".weight_scale" not in saved_sd
+
+            # -- Compressed-tensors config present --
+            cc = saved_config.get("compression_config")
+            assert cc is not None
+            assert "quantization_config" not in saved_config
+            assert cc["quant_method"] == "compressed-tensors"
+            assert cc["config_groups"]["group_0"]["targets"] == ["Linear"]
+
+            # -- Ignore list covers ALL non-quantized nn.Linear modules --
+            # These are the modules that would cause vLLM to fail if missing
+            # from the ignore list (they are nn.Linear but not FP8-quantized).
+            ignore = set(cc["ignore"])
+
+            # Linear attention projections
+            for suffix in ("in_proj_qkv", "in_proj_z", "in_proj_a", "in_proj_b", "out_proj"):
+                module = f"model.language_model.layers.0.linear_attn.{suffix}"
+                assert module in ignore, f"Linear attention module missing from ignore: {module}"
+
+            # Shared expert projections
+            for proj in ("gate_proj", "up_proj", "down_proj"):
+                module = f"model.language_model.layers.0.mlp.shared_expert.{proj}"
+                assert module in ignore, f"Shared expert module missing from ignore: {module}"
+
+            # Shared expert gate
+            assert "model.language_model.layers.0.mlp.shared_expert_gate" in ignore
+
+            # Vision encoder modules
+            vision_modules_in_ignore = [m for m in ignore if m.startswith("model.visual.")]
+            assert len(vision_modules_in_ignore) > 0, (
+                "Vision encoder nn.Linear modules missing from ignore list"
+            )
+
+            # Routed experts must NOT be in ignore
+            for i in range(num_experts):
+                for proj in ("gate_proj", "up_proj", "down_proj"):
+                    module = f"model.language_model.layers.0.mlp.experts.{i}.{proj}"
+                    assert module not in ignore, (
+                        f"Quantized expert should not be in ignore: {module}"
+                    )

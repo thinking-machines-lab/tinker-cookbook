@@ -299,27 +299,23 @@ def _weight_scale_key(weight_key: str) -> str:
     return weight_key.removesuffix(".weight") + ".weight_scale"
 
 
-# Linear projection suffixes used to build the compressed-tensors ignore list.
-# Only modules matching these suffixes are considered for the ignore list.
-_LINEAR_PROJ_SUFFIXES = (
-    ".q_proj.weight",
-    ".q_a_proj.weight",
-    ".q_b_proj.weight",
-    ".kv_a_proj_with_mqa.weight",
-    ".kv_b_proj.weight",
-    ".o_proj.weight",
-    ".gate_proj.weight",
-    ".up_proj.weight",
-    ".down_proj.weight",
-)
-
-
 def _build_vllm_quantization_config(output_weight_map: dict[str, str]) -> dict:
     """Build compressed-tensors quantization config for vLLM.
 
     Produces a config dict that tells vLLM which layers are FP8-quantized
     (routed experts) and which to ignore (everything else). No library
     imports needed — the schema is fixed and well-known.
+
+    The decision is binary for every ``.weight`` key in the output:
+
+    * **Has a matching ``.weight_scale``** → quantized → omitted from
+      ``ignore`` so vLLM loads it as FP8.
+    * **No matching ``.weight_scale``** → not quantized → added to
+      ``ignore`` so vLLM leaves it alone.
+
+    Adding non-``nn.Linear`` modules (norms, embeddings) to ``ignore`` is
+    harmless — vLLM only consults the ignore list for modules that match
+    ``targets: ["Linear"]``, so extra entries are silently skipped.
 
     Args:
         output_weight_map: Mapping of weight key -> shard filename.
@@ -334,18 +330,16 @@ def _build_vllm_quantization_config(output_weight_map: dict[str, str]) -> dict:
         if key.endswith(".weight_scale")
     }
 
-    # Build ignore list: linear projection modules that were NOT quantized
+    # Build ignore list: every .weight module that was NOT quantized.
+    # This is model-agnostic — no need to enumerate projection suffixes
+    # per architecture.
     ignore: list[str] = []
     for key in sorted(output_weight_map):
-        if not any(key.endswith(suffix) for suffix in _LINEAR_PROJ_SUFFIXES):
+        if not key.endswith(".weight"):
             continue
         prefix = key.removesuffix(".weight")
         if prefix not in quantized_prefixes:
             ignore.append(prefix)
-
-    # Also ignore lm_head if present and not quantized
-    if "lm_head.weight" in output_weight_map and "lm_head" not in quantized_prefixes:
-        ignore.append("lm_head")
 
     return {
         "quant_method": "compressed-tensors",
