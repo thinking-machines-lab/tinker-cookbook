@@ -13,6 +13,105 @@ Each entry includes:
 
 ---
 
+### [cookbook] Fix tokenizer_class corrupted to TokenizersBackend during export ([#582](https://github.com/thinking-machines-lab/tinker-cookbook/pull/582))
+**Date:** 2026-04-02
+**Type:** fix
+**Tags:** weights
+
+Fixes a bug where `tokenizer_class` in `tokenizer_config.json` was being overwritten with `TokenizersBackend` during weight export, breaking downstream tokenizer loading.
+
+---
+
+### [cookbook] Fix experts-fp8 compression_config for non-DeepSeek models ([#580](https://github.com/thinking-machines-lab/tinker-cookbook/pull/580))
+**Date:** 2026-04-02
+**Type:** fix
+**Tags:** weights
+
+Fixes FP8 expert quantization config generation for non-DeepSeek MoE models (e.g., Qwen3.5).
+
+---
+
+### [cookbook] Kimi K2 / K2.5 shard-by-shard merge with INT4 expert dequant/requant ([#573](https://github.com/thinking-machines-lab/tinker-cookbook/pull/573))
+**Date:** 2026-04-02
+**Type:** new
+**Tags:** weights, models
+
+Adds shard-by-shard LoRA merge support for Kimi K2 and K2.5, including INT4 expert dequantization and requantization during merge.
+
+---
+
+### [cookbook] SDFT (Self-Distillation Fine-Tuning) recipe with top-K distillation ([#524](https://github.com/thinking-machines-lab/tinker-cookbook/pull/524))
+**Date:** 2026-04-01
+**Type:** new
+**Tags:** recipes, distillation
+
+New SDFT recipe implementing self-distillation fine-tuning with top-K forward KL loss, enabling efficient knowledge distillation without a separate teacher deployment.
+
+---
+
+### [cookbook] Off-policy top-K distillation for multi-teacher knowledge merging ([#572](https://github.com/thinking-machines-lab/tinker-cookbook/pull/572))
+**Date:** 2026-04-01
+**Type:** new
+**Tags:** distillation, supervised
+
+Adds off-policy top-K distillation support, enabling knowledge merging from multiple teacher models into a single student.
+
+---
+
+### [cookbook] InterleavedRLDatasetBuilder for multi-domain RL training ([#570](https://github.com/thinking-machines-lab/tinker-cookbook/pull/570))
+**Date:** 2026-04-01
+**Type:** new
+**Tags:** rl, datasets
+
+New `InterleavedRLDatasetBuilder` that interleaves examples from multiple RL dataset sources, enabling multi-domain RL training in a single run.
+
+---
+
+### [cookbook] Fix InterleavedRLDataset crash on ragged last source batch ([#574](https://github.com/thinking-machines-lab/tinker-cookbook/pull/574))
+**Date:** 2026-04-01
+**Type:** fix
+**Tags:** rl, datasets
+
+Fixes a crash in `InterleavedRLDataset` when the last batch from a source dataset is smaller than expected.
+
+---
+
+### [cookbook] Extend SFT LR sweep to full Tinker model lineup ([#575](https://github.com/thinking-machines-lab/tinker-cookbook/pull/575))
+**Date:** 2026-04-01
+**Type:** improvement
+**Tags:** supervised, recipes
+
+Extends the SFT learning rate sweep results to cover all models in the Tinker lineup.
+
+---
+
+### [cookbook] Make image_processor optional for Qwen3VL renderers ([#566](https://github.com/thinking-machines-lab/tinker-cookbook/pull/566))
+**Date:** 2026-03-31
+**Type:** improvement
+**Tags:** renderers, models
+
+The Qwen3VL renderer no longer requires `image_processor` when used for text-only workloads.
+
+---
+
+### [cookbook] Fix slug-to-HF-name parsing for orgs with hyphens ([#567](https://github.com/thinking-machines-lab/tinker-cookbook/pull/567))
+**Date:** 2026-03-31
+**Type:** fix
+**Tags:** weights
+
+Fixes HuggingFace model name parsing for organizations with hyphens in their name.
+
+---
+
+### [cookbook] 22 marimo tutorials (101–503) ([#562](https://github.com/thinking-machines-lab/tinker-cookbook/pull/562))
+**Date:** 2026-03-31
+**Type:** new
+**Tags:** tutorials
+
+Adds 22 interactive marimo notebook tutorials covering core workflows from SFT basics through advanced RL and distillation.
+
+---
+
 ### [cookbook] Fix weight merging and adapter export for Nemotron fused Mamba projections ([#548](https://github.com/thinking-machines-lab/tinker-cookbook/pull/548), [#549](https://github.com/thinking-machines-lab/tinker-cookbook/pull/549))
 **Date:** 2026-03-27
 **Type:** fix
