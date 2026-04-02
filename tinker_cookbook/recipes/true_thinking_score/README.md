@@ -71,9 +71,16 @@ We replicate TTS computation using Tinker's `compute_logprobs_async` API:
 
 - **Models:** The paper uses DeepSeek-R1-Distill models; we use Qwen3.5
   thinking models. Both produce `<think>...</think>` delimited CoT.
-- **Early-exit measurement:** The paper appends "The final result is" and
-  measures confidence. We compute the joint probability of the answer tokens
-  via logprob summation — a continuous, fine-grained equivalent.
+- **Early-exit cue:** The paper appends `"The final result is"` **inside**
+  the reasoning block, probing "what would you predict mid-thought?" We
+  close the `</think>` block and use `\boxed{}` format — probing "if you
+  stopped thinking here, what would your final answer be?" Both measure how
+  the model's answer-prediction **changes** when a step is perturbed (i.e.
+  TTS is relative), so the choice of cue mainly shifts the baseline
+  probability, not the TTS scores.
+- **Confidence measurement:** We compute `exp(sum(logprobs))` over the
+  answer tokens after the cue, giving P(y* | prefix). This is a
+  continuous, fine-grained equivalent of the paper's model confidence.
 - **Step segmentation:** Both the paper and our implementation use heuristic
   text-based segmentation. The exact boundary detection differs but produces
   comparable step counts.

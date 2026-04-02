@@ -183,9 +183,20 @@ def perturb_numbers(text: str, rng: random.Random | None = None) -> str:
 # TTS computation
 # ---------------------------------------------------------------------------
 
-# Early-exit cue: closes the thinking block, then prompts for the boxed answer.
-# The opening <think> tag is NOT included here because the renderer's
-# build_generation_prompt already adds it for thinking models (e.g. Qwen3.5).
+# ---------------------------------------------------------------------------
+# Early-exit cue configuration
+# ---------------------------------------------------------------------------
+#
+# The paper appends "The final result is" INSIDE the reasoning, measuring what
+# the model would predict mid-thought.  We close the </think> block and use
+# the boxed-answer format that Qwen3.5 is trained on.  This probes a slightly
+# different question: "if you stopped thinking here, what would your final
+# answer be?"  Both measure how the model's answer-prediction *changes* when
+# a step is perturbed, which is the core of TTS (relative, not absolute).
+#
+# The opening <think> tag is NOT part of the cue because the renderer's
+# build_generation_prompt already adds it for thinking models (Qwen3.5).
+
 EARLY_EXIT_CUE = "\n</think>\n\nThe answer is \\boxed{"
 EARLY_EXIT_SUFFIX = "}"
 
