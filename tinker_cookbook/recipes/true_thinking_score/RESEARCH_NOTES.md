@@ -103,9 +103,29 @@ The formula captures both:
 - Idea 2: Filter SFT data to only include high-TTS reasoning chains
 - Idea 3: Train verifier that predicts TTS scores
 
-## Open Questions
-- [ ] Does Tinker API expose logprobs for specific tokens? (needed for P(y*))
-- [ ] Can we get completion probabilities conditioned on different prefixes?
-- [ ] What reasoning models are available on Tinker?
-- [ ] How to segment CoT steps programmatically?
-- [ ] What's the best perturbation strategy for numbers?
+## Experiment Results (2026-04-02)
+
+### Small-scale validation (3 AMC-level problems, Qwen3.5-4B)
+- Total steps analyzed: 54
+- **Mean TTS: 0.061** (paper: ~0.03 on AIME)
+- **High TTS (>=0.7): 1.9%** (paper: ~2.3%)
+- **Decorative (<=0.005): 59%**
+- TTS distribution is heavy-tailed, matching the paper
+
+### Key findings
+1. Easy problems produce fewer steps with high TTS (model is very confident)
+2. Harder problems (n^2 ≡ 1 mod 24) produce 32 steps, nearly all decorative
+3. Self-verification "Wait" steps found but often with near-zero TTS
+4. The pattern is robust across problem types
+
+### Resolved questions
+- [x] Tinker API exposes logprobs via compute_logprobs_async ✓
+- [x] Conditional probabilities: build_generation_prompt + append tokens + compute_logprobs ✓
+- [x] Qwen3.5-4B is a good thinking model (produces <think> blocks) ✓
+- [x] Step segmentation: discourse cues + numbered lists + markdown headers ✓
+- [x] Perturbation: 10-30% relative offsets on numbers ✓
+
+### Open questions
+- [ ] How does TTS distribution change with model size?
+- [ ] Can we use TTS as a reward signal for RL training?
+- [ ] Does training on high-TTS-only data improve reasoning faithfulness?
