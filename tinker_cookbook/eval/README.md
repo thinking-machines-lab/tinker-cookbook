@@ -54,7 +54,6 @@ results = await run_benchmarks(
 | mmlu_redux | Single-turn | Programmatic (MCQA) | — |
 | gpqa | Single-turn | Programmatic (MCQA) | HF auth (gated) |
 | ifeval | Single-turn | Programmatic (IF constraints) | — |
-| arena_hard | Single-turn | LLM-as-judge | `judge_sampling_client` in config |
 | mbpp | Single-turn | Code execution | Modal |
 
 **Experimental benchmarks** (``_``-prefixed modules) — functional but need further validation:

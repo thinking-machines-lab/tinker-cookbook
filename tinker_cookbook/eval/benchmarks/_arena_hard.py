@@ -1,11 +1,16 @@
-"""Arena-Hard-Auto benchmark -- LLM-judge evaluation on challenging user queries.
+"""Arena-Hard-Auto v0.1 benchmark -- LLM-judge evaluation on challenging user queries.
 
 Dataset: ``lmarena-ai/arena-hard-auto-v0.1`` on HuggingFace (500 questions).
 Metric: Win rate -- fraction of questions where the judge scores >= 7 out of 10.
 Pattern: Single-turn generate + LLM judge grading.
 
-Requires ``config.judge_sampling_client`` for the judge model. Falls back to
-self-judging (same model) if no judge is configured.
+Requires ``config.judge_sampling_client`` for the judge model.
+
+Note:
+    The official Arena-Hard protocol uses GPT-4.1 or Gemini-2.5 as judge.
+    Using the candidate model as its own judge (self-judging) inflates scores
+    due to self-preference bias. Always use a separate, stronger judge model
+    for meaningful results.
 """
 
 from __future__ import annotations
