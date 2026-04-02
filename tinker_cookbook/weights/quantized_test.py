@@ -159,7 +159,7 @@ class TestBuildVllmQuantizationConfig:
         assert ia["dynamic"] is True
 
     def test_ignore_list_correct(self):
-        """Dense projections should be in ignore, routed experts should NOT."""
+        """Non-quantized modules should be in ignore, quantized experts should NOT."""
         weight_map = {
             "model.layers.0.mlp.experts.0.gate_proj.weight": "s.safetensors",
             "model.layers.0.mlp.experts.0.gate_proj.weight_scale": "s.safetensors",
@@ -173,6 +173,40 @@ class TestBuildVllmQuantizationConfig:
         assert "model.layers.0.mlp.shared_experts.gate_proj" in ignore
         # Routed expert should NOT be in ignore
         assert "model.layers.0.mlp.experts.0.gate_proj" not in ignore
+
+    def test_ignore_list_covers_non_standard_linear_modules(self):
+        """Modules outside _LINEAR_PROJ_SUFFIXES (e.g. Qwen 3.5 linear attention,
+        vision encoder) must also land in the ignore list when not quantized."""
+        weight_map = {
+            # Quantized routed expert
+            "model.language_model.layers.0.mlp.experts.0.gate_proj.weight": "s.safetensors",
+            "model.language_model.layers.0.mlp.experts.0.gate_proj.weight_scale": "s.safetensors",
+            # Linear attention projections (Qwen 3.5 - nn.Linear, not quantized)
+            "model.language_model.layers.0.linear_attn.in_proj_qkv.weight": "s.safetensors",
+            "model.language_model.layers.0.linear_attn.in_proj_z.weight": "s.safetensors",
+            "model.language_model.layers.0.linear_attn.out_proj.weight": "s.safetensors",
+            # Vision encoder (nn.Linear, not quantized)
+            "model.visual.blocks.0.attn.proj.weight": "s.safetensors",
+            "model.visual.blocks.0.mlp.linear_fc1.weight": "s.safetensors",
+            # Shared expert gate (nn.Linear, not quantized)
+            "model.language_model.layers.0.mlp.shared_expert_gate.weight": "s.safetensors",
+            # Non-Linear modules (harmless to include in ignore)
+            "model.language_model.layers.0.input_layernorm.weight": "s.safetensors",
+            "model.language_model.embed_tokens.weight": "s.safetensors",
+        }
+        config = _build_vllm_quantization_config(weight_map)
+        ignore = set(config["ignore"])
+
+        # All non-quantized modules in ignore
+        assert "model.language_model.layers.0.linear_attn.in_proj_qkv" in ignore
+        assert "model.language_model.layers.0.linear_attn.in_proj_z" in ignore
+        assert "model.language_model.layers.0.linear_attn.out_proj" in ignore
+        assert "model.visual.blocks.0.attn.proj" in ignore
+        assert "model.visual.blocks.0.mlp.linear_fc1" in ignore
+        assert "model.language_model.layers.0.mlp.shared_expert_gate" in ignore
+
+        # Quantized expert NOT in ignore
+        assert "model.language_model.layers.0.mlp.experts.0.gate_proj" not in ignore
 
 
 class TestSerializeForVllm:
