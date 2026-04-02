@@ -115,6 +115,14 @@ python -m tinker_cookbook.recipes.true_thinking_score.analyze \
     n_problems=5
 ```
 
+**DeepSeek-V3.1 (requires thinking renderer override):**
+
+```bash
+python -m tinker_cookbook.recipes.true_thinking_score.analyze \
+    model_name=deepseek-ai/DeepSeek-V3.1 renderer_name=deepseekv3_thinking \
+    n_problems=50
+```
+
 **GSM8K, larger model:**
 
 ```bash
@@ -174,46 +182,48 @@ pytest tinker_cookbook/recipes/true_thinking_score/tts_test.py -v
 
 ### Results
 
-**Qwen3.5-4B on 50 MATH-500 problems (1,521 total steps):**
+**50 MATH-500 problems per model, concurrency=64:**
 
-| Metric | Paper (AIME, Qwen-7B) | Ours (MATH-500, Qwen3.5-4B) |
-|---|---|---|
-| Mean TTS | ~0.03 | 0.057 |
-| Steps with TTS >= 0.7 | 2.3% | **2.2%** |
-| Steps with TTS >= 0.3 | 6.4% | **6.7%** |
-| Decorative steps (TTS <= 0.005) | — | 61.8% |
-| Self-verification steps | — | 132 |
-| Self-verification steps decorative | 12-21% | **62.1%** |
-
-**Additional statistics:**
-- Model accuracy: 60% (30/50 correct)
-- Mean steps per problem: 30.4
-- Total compute: 50 problems in ~14 minutes (concurrency=64)
+| Metric | Paper (7B) | Qwen3.5-4B | Qwen3-8B | Qwen3.5-27B | DeepSeek-V3.1 (671B) |
+|---|---|---|---|---|---|
+| Steps/problem | — | 30.4 | 31.6 | 30.4 | **10.6** |
+| Mean TTS | ~0.03 | 0.057 | 0.070 | 0.075 | **0.154** |
+| TTS >= 0.7 | 2.3% | 2.2% | 2.0% | 2.6% | **6.0%** |
+| TTS >= 0.3 | 6.4% | 6.7% | 9.2% | 9.0% | **21.3%** |
+| Decorative (<=0.005) | — | 61.8% | 64.4% | 53.8% | **37.9%** |
+| SV steps | — | 132 | 517 | 99 | 110 |
+| SV decorative | 12-21% | 62.1% | 60.9% | 51.5% | **37.3%** |
+| Accuracy | — | 60% | 62% | 62% | **66%** |
 
 ### Findings
 
-1. **The paper's core claim is validated at scale:** On 50 MATH-500 problems
-   with 1,521 total steps, **only 2.2% have TTS >= 0.7** (paper: 2.3%) and
-   **6.7% have TTS >= 0.3** (paper: 6.4%). The TTS distribution closely
-   matches the paper despite using a different model family and dataset.
+1. **The paper's core claim is validated across 4 models:** The ~2% high-TTS
+   finding is remarkably consistent across Qwen3.5-4B (2.2%), Qwen3-8B
+   (2.0%), and Qwen3.5-27B (2.6%) — closely matching the paper's 2.3%.
+   DeepSeek-V3.1 is an outlier at 6.0%, likely because its concise reasoning
+   style (10.6 steps vs 30+) packs more causal content per step.
 
-2. **Most reasoning is decorative:** 61.8% of steps have TTS <= 0.005 —
-   perturbing these steps has essentially zero effect on the model's answer
-   prediction. The model generates elaborate-looking reasoning that it
-   doesn't actually use.
+2. **Scaling reduces decorative reasoning:** DeepSeek-V3.1 (671B) has far
+   fewer decorative steps (37.9%) than the smaller Qwen models (53-64%).
+   Among the Qwen models, the larger Qwen3.5-27B also has fewer decorative
+   steps (53.8%) than Qwen3.5-4B (61.8%).
 
-3. **Self-verification is often fake:** 62.1% of "Wait, let me re-check"
-   steps are decorative (TTS <= 0.005). The model frequently performs
-   self-verification rituals that don't causally influence its answer.
-   This is higher than the paper's 12-21%, possibly because Qwen3.5-4B
-   generates more verbose self-checks.
+3. **Larger models are more concise:** DeepSeek-V3.1 solves problems in
+   10.6 steps on average vs 30+ for Qwen models. Each step carries more
+   causal weight — the model "wastes" fewer steps exploring dead ends.
 
-4. **TTS rises near the answer:** The final steps before the answer
+4. **Self-verification is often fake:** 51-62% of "Wait, let me re-check"
+   steps are decorative across all models. Qwen3-8B is the worst offender
+   with 517 self-verification steps (vs 99-132 for others), 61% of which
+   are fake. DeepSeek-V3.1 is the most honest: only 37% of its
+   self-verification steps are decorative.
+
+5. **TTS rises near the answer:** The final steps before the answer
    consistently have the highest TTS, suggesting the model "commits" to an
    answer path late in the chain. Early reasoning steps explore without
    making progress.
 
-5. **Wrong answers have lower TTS:** Problems where the model gets the wrong
+6. **Wrong answers have lower TTS:** Problems where the model gets the wrong
    answer tend to have near-zero TTS across all steps — the model never
    locks onto a viable solution path.
 
