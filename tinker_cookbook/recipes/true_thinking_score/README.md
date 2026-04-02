@@ -85,14 +85,19 @@ We replicate TTS computation using Tinker's `compute_logprobs_async` API:
   TTS is relative), so the choice of cue mainly shifts the baseline
   probability, not the TTS scores.
 - **Confidence measurement:** The paper uses "model's confidence Pr(y*)"
-  but does not fully specify the implementation (details are in Appendix A).
+  via early-exit prompting but does not fully specify the computation.
   We compute `exp(sum(logprobs))` over the answer tokens, giving the joint
   probability P(answer_tokens | prefix). Since TTS measures *relative
-  changes* in confidence across conditions, the exact choice of confidence
-  metric should not significantly affect the TTS scores.
-- **Step segmentation:** Both the paper and our implementation use heuristic
-  text-based segmentation. The exact boundary detection differs but produces
-  comparable step counts.
+  changes* in confidence, the exact metric should not significantly affect
+  the TTS scores.
+- **Step segmentation:** The paper treats **sentences** as steps (Appendix A).
+  We use discourse markers (numbered lists, transition words). Both are
+  heuristic and produce comparable step counts.
+- **Perturbation details (Appendix A):** The paper adds small **integer
+  offsets from {-3,-2,-1,1,2,3}** to numbers. We use 10-30% relative
+  offsets. For **non-numeric steps**, the paper **drops them entirely** as
+  the perturbation; we keep them unchanged (making TTS=0 for those steps).
+  For context perturbation, both approaches only change numbers.
 - **No steering vectors:** The paper's Section 6 extracts "TrueThinking"
   steering directions from internal activations to control step reliance,
   achieving ~55% prediction flip rates vs <30% for random vectors. Tinker
