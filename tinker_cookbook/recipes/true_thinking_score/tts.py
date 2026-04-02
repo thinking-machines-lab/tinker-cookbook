@@ -54,12 +54,23 @@ logger = logging.getLogger(__name__)
 STEP_SPLIT_PATTERN = re.compile(
     r"(?:^|\n)"  # Start of text or newline
     r"(?="  # Lookahead for step boundaries
-    r"(?:Step \d|First|Second|Third|Fourth|Fifth|Next|Then|Now|Finally|"
+    r"(?:"
+    # Numbered lists and markdown headers
+    r"\d+[\.\)]\s|"
+    r"\*\*\w|"
+    r"#{1,3}\s|"
+    # Explicit step markers
+    r"Step \d|First|Second|Third|Fourth|Fifth|Next|Then|Now|Finally|"
+    # Discourse transitions
     r"So |Therefore|Thus|Hence|Let me|Let's|Wait|Hmm|Actually|"
+    # Subject-verb patterns
     r"We (?:can|have|know|need|get|see|find|note|observe)|"
     r"I (?:can|need|should|will|notice|think|see)|"
     r"This (?:means|gives|implies|shows|is)|"
-    r"Since |Because |Given |If |But |However |Note )"
+    # Causal/conditional cues
+    r"Since |Because |Given |If |But |However |Note |"
+    # Calculation cues
+    r"For |Using |Substitut|Comput|Calculat|Evaluat|Apply|Recall )"
     r")",
     re.MULTILINE,
 )
@@ -172,8 +183,9 @@ def perturb_numbers(text: str, rng: random.Random | None = None) -> str:
 # TTS computation
 # ---------------------------------------------------------------------------
 
-# Early-exit cue appended to CoT prefix before measuring answer confidence.
-# Using \boxed{} format since math models are trained to produce answers this way.
+# Early-exit cue: closes the thinking block, then prompts for the boxed answer.
+# The opening <think> tag is NOT included here because the renderer's
+# build_generation_prompt already adds it for thinking models (e.g. Qwen3.5).
 EARLY_EXIT_CUE = "\n</think>\n\nThe answer is \\boxed{"
 EARLY_EXIT_SUFFIX = "}"
 
@@ -258,6 +270,11 @@ async def compute_early_exit_confidence(
     Then uses compute_logprobs_async to measure how much probability mass
     the model places on the answer tokens.
 
+    The function uses build_generation_prompt (which handles the chat template and
+    any thinking-mode prefix like ``<think>\\n``) and then manually appends the
+    CoT + early-exit cue + answer tokens.  This avoids double-``<think>`` issues
+    across different renderers.
+
     Args:
         sampling_client: Tinker sampling client.
         renderer: Renderer for the model.
@@ -270,41 +287,43 @@ async def compute_early_exit_confidence(
     """
     tokenizer = renderer.tokenizer
 
-    # Build the chat-templated prompt with the CoT as a prefill.
-    # The prefill includes <think>...(cot)...</think> + early-exit cue + answer.
-    # For Qwen3 thinking: build_generation_prompt gives us up to
-    #   <|im_start|>assistant\n
-    # and we prefill the rest.
-    prefill_text = "<think>\n" + cot_prefix + EARLY_EXIT_CUE + answer_str + EARLY_EXIT_SUFFIX
-
     messages: list[renderers.Message] = [
         {"role": "user", "content": question},
     ]
-    # build_generation_prompt returns ModelInput with the prefill appended
-    prompt_with_answer = renderer.build_generation_prompt(messages, prefill=prefill_text)
 
-    # To find where the answer starts, build the prefix without the answer
-    prefill_without_answer = "<think>\n" + cot_prefix + EARLY_EXIT_CUE
-    prompt_without_answer = renderer.build_generation_prompt(
-        messages, prefill=prefill_without_answer
-    )
-    answer_start_pos = prompt_without_answer.length
+    # build_generation_prompt gives us the full prompt up to where the model
+    # starts generating. For thinking models (Qwen3.5) this already includes
+    # <think>\n, for others it ends at the assistant header.
+    base_prompt = renderer.build_generation_prompt(messages)
+    base_length = base_prompt.length
 
-    total_length = prompt_with_answer.length
-    n_answer_tokens = total_length - answer_start_pos
+    # Tokenize the CoT + early-exit cue (prefix of the answer)
+    prefix_text = cot_prefix + EARLY_EXIT_CUE
+    prefix_tokens = tokenizer.encode(prefix_text, add_special_tokens=False)
 
-    if n_answer_tokens <= 0:
+    # Tokenize the answer + suffix
+    answer_text = answer_str + EARLY_EXIT_SUFFIX
+    answer_tokens = tokenizer.encode(answer_text, add_special_tokens=False)
+
+    if not answer_tokens:
         logger.warning("No answer tokens after tokenization; returning 0.0")
         return 0.0
 
+    # Build the full sequence: base_prompt + prefix_tokens + answer_tokens
+    full_input = base_prompt
+    for tok in prefix_tokens:
+        full_input = full_input.append_int(tok)
+    answer_start_pos = full_input.length  # This is where answer tokens begin
+    for tok in answer_tokens:
+        full_input = full_input.append_int(tok)
+
     # Compute logprobs for the full sequence
-    logprobs = await sampling_client.compute_logprobs_async(prompt_with_answer)
+    logprobs = await sampling_client.compute_logprobs_async(full_input)
 
     # Extract logprobs for the answer tokens.
     # compute_logprobs_async returns logprobs[i] = log P(token[i+1] | token[0..i])
-    # So for answer starting at position answer_start_pos:
-    #   logprobs[answer_start_pos - 1] = log P(token[answer_start_pos] | prefix)
-    answer_lps = logprobs[answer_start_pos - 1 : answer_start_pos - 1 + n_answer_tokens]
+    # So logprobs[answer_start_pos - 1] = log P(first_answer_token | prefix)
+    answer_lps = logprobs[answer_start_pos - 1 : answer_start_pos - 1 + len(answer_tokens)]
 
     if not answer_lps:
         return 0.0
@@ -471,7 +490,7 @@ async def generate_cot_and_compute_tts(
     tokenizer = get_tokenizer(model_name)
     renderer = renderers.get_renderer(renderer_name, tokenizer=tokenizer)
 
-    sampling_client = service_client.create_sampling_client(model_name)
+    sampling_client = await service_client.create_sampling_client_async(base_model=model_name)
 
     # Build generation prompt using the renderer's chat template
     messages: list[renderers.Message] = [

@@ -33,37 +33,31 @@ logger = logging.getLogger(__name__)
 # Small set of math problems with known answers for initial validation.
 # Mix of difficulty levels to see if TTS varies.
 PROBLEMS = [
+    # AMC-level problems (competition math, should produce longer CoT)
     {
-        "question": "What is the sum of the first 10 positive integers?",
-        "answer": "55",
-    },
-    {
-        "question": "If a rectangle has length 12 and width 5, what is its area?",
-        "answer": "60",
+        "question": (
+            "How many positive integers less than 100 are divisible by 3, 5, or 7?"
+        ),
+        "answer": "54",
     },
     {
         "question": (
-            "A store sells apples for $2 each and oranges for $3 each. "
-            "If John buys 4 apples and 3 oranges, how much does he spend in total?"
+            "Let $S$ be the set of all positive integers $n$ such that $n^2 \\equiv 1 \\pmod{24}$. "
+            "What is the sum of all elements of $S$ that are less than or equal to 100?"
         ),
-        "answer": "17",
+        "answer": "2500",
     },
     {
         "question": (
-            "Let f(x) = x^2 + 3x + 2. What is f(5)?"
+            "A bag contains 5 red balls and 3 blue balls. Two balls are drawn without replacement. "
+            "What is the probability that both balls are red? Express your answer as a common fraction."
         ),
-        "answer": "42",
-    },
-    {
-        "question": (
-            "In how many ways can 5 people be seated in a row?"
-        ),
-        "answer": "120",
+        "answer": "5/14",
     },
 ]
 
 # Use a small model for faster iteration
-MODEL_NAME = "Qwen/Qwen3-4B"
+MODEL_NAME = "Qwen/Qwen3.5-4B"
 
 
 async def main():
