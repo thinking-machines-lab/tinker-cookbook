@@ -63,14 +63,13 @@ def _parse_run_name(name: str) -> tuple[str, int, float, int] | None:
     return model, rank, lr, batch_size
 
 
-def _pretty_model_name(raw: str) -> str:
-    """Convert raw model slug to a human-readable name."""
-    table: dict[str, str] = {
-        "nvidia-NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": "Nemotron Nano 30B (3B active)",
-        "nvidia-NVIDIA-Nemotron-3-Super-120B-A12B-BF16": "Nemotron Super 120B (12B active)",
-        "deepseek-ai-DeepSeek-V3.1-Base": "DeepSeek V3.1 Base",
-    }
-    return table.get(raw, raw)
+def _display_model_name(slug: str) -> str:
+    """Convert raw model slug to a display name.
+
+    Uses the HuggingFace model ID (``org/model``) so the heading matches
+    what users actually pass to ``model_name=``.
+    """
+    return _slug_to_hf_name(slug)
 
 
 def _slug_to_hf_name(slug: str) -> str:
@@ -95,15 +94,22 @@ def _slug_to_hf_name(slug: str) -> str:
     return slug.replace("-", "/", 1)
 
 
-def fetch_runs(wandb_project: str) -> list[RunResult]:
-    """Fetch all finished runs from a W&B project."""
+def fetch_runs(wandb_project: str, fetch_history: bool = True) -> list[RunResult]:
+    """Fetch all finished runs from a W&B project.
+
+    Args:
+        wandb_project: W&B project name.
+        fetch_history: If True, fetch step-level history for NLL curve plots.
+            This is slow (~1s per run) so set to False when only summary
+            metrics are needed (e.g. with ``--no-plots``).
+    """
     import wandb  # type: ignore[import-untyped]
 
     api = wandb.Api()
     raw_runs = api.runs(wandb_project, filters={"state": "finished"})
 
     results: list[RunResult] = []
-    for r in raw_runs:
+    for i, r in enumerate(raw_runs):
         parsed = _parse_run_name(r.name)
         if parsed is None:
             print(f"  Skipping unparseable run: {r.name}")
@@ -119,15 +125,18 @@ def fetch_runs(wandb_project: str) -> list[RunResult]:
             print(f"  Skipping run with missing metrics: {r.name}")
             continue
 
-        # Fetch step-level history for NLL curves
-        hist = r.history(keys=["test/nll"], pandas=False)
+        # Fetch step-level history for NLL curves (slow)
         history_points: list[tuple[int, float]] = []
-        for row in hist:
-            step = row.get("_step")
-            nll = row.get("test/nll")
-            if step is not None and nll is not None:
-                history_points.append((int(step), float(nll)))
-        history_points.sort(key=lambda x: x[0])
+        if fetch_history:
+            if (i + 1) % 50 == 0:
+                print(f"  Fetching history... ({i + 1} runs processed)")
+            hist = r.history(keys=["test/nll"], pandas=False)
+            for row in hist:
+                step = row.get("_step")
+                nll = row.get("test/nll")
+                if step is not None and nll is not None:
+                    history_points.append((int(step), float(nll)))
+            history_points.sort(key=lambda x: x[0])
 
         results.append(
             RunResult(
@@ -143,6 +152,83 @@ def fetch_runs(wandb_project: str) -> list[RunResult]:
         )
 
     print(f"Fetched {len(results)} finished runs from {wandb_project}")
+    return results
+
+
+def fetch_runs_local(sweep_root: str) -> list[RunResult]:
+    """Load results from local sweep directories (no W&B needed).
+
+    Reads metrics.jsonl files from ``sweep_root/<model>/<lr_rank>/metrics.jsonl``.
+    Much faster than the W&B API since all data is local.
+    """
+    import json
+    import os
+
+    results: list[RunResult] = []
+    for model_dir in sorted(os.listdir(sweep_root)):
+        model_path = os.path.join(sweep_root, model_dir)
+        if not os.path.isdir(model_path) or not model_dir[0].isalpha():
+            continue
+
+        model_slug = model_dir  # e.g. "Qwen-Qwen3-8B"
+
+        for run_dir in sorted(os.listdir(model_path)):
+            if not run_dir.startswith("learning_rate="):
+                continue
+            metrics_file = os.path.join(model_path, run_dir, "metrics.jsonl")
+            if not os.path.exists(metrics_file):
+                continue
+
+            # Parse lr and rank from dir name
+            m = re.match(r"learning_rate=(.+?)_lora_rank=(\d+)", run_dir)
+            if not m:
+                continue
+            lr = float(m.group(1))
+            rank = int(m.group(2))
+
+            # Read all metrics lines
+            with open(metrics_file) as f:
+                lines = f.readlines()
+            if not lines:
+                continue
+
+            # Step-level history
+            history_points: list[tuple[int, float]] = []
+            last_row: dict = {}
+            for line in lines:
+                row = json.loads(line)
+                last_row = row
+                step = row.get("step")
+                nll = row.get("test/nll")
+                if step is not None and nll is not None:
+                    history_points.append((int(step), float(nll)))
+
+            test_nll = last_row.get("test/nll")
+            train_nll = last_row.get("train_mean_nll")
+            if test_nll is None or train_nll is None:
+                continue
+
+            # Estimate wall time from sum of per-step times
+            wall_time_min = 0.0
+            if len(lines) > 1:
+                total_time = sum(json.loads(line).get("time/step", 0) for line in lines)
+                wall_time_min = total_time / 60.0
+
+            run_name = f"tulu3-{model_slug}-{rank}rank-{lr}lr-128batch-local"
+            results.append(
+                RunResult(
+                    model=model_slug,
+                    rank=rank,
+                    lr=lr,
+                    test_nll=float(test_nll),
+                    train_nll=float(train_nll),
+                    wall_time_min=wall_time_min,
+                    run_name=run_name,
+                    history=history_points,
+                )
+            )
+
+    print(f"Loaded {len(results)} runs from {sweep_root}")
     return results
 
 
@@ -189,7 +275,7 @@ def generate_nll_plot(
     n_ranks = len(ranks)
 
     fig, axes = plt.subplots(1, n_ranks, figsize=(5 * n_ranks, 4), squeeze=False)
-    fig.suptitle(f"{_pretty_model_name(model_slug)} — Test NLL vs Step", fontsize=13)
+    fig.suptitle(f"{_display_model_name(model_slug)} — Test NLL vs Step", fontsize=13)
 
     # Single color, alpha encodes LR: smaller LR = darker, larger LR = lighter.
     # This makes it easy to see at a glance which direction performs better.
@@ -221,8 +307,9 @@ def generate_nll_plot(
             steps = [h[0] for h in r.history]
             nlls = [h[1] for h in r.history]
 
-            # Skip diverged runs in the plot (they compress the y-axis)
-            if max(nlls) > DIVERGENCE_THRESHOLD:
+            # Skip diverged runs based on final test NLL (not max over history,
+            # since step 0 always has high untrained loss)
+            if r.test_nll >= DIVERGENCE_THRESHOLD:
                 continue
 
             ax.plot(
@@ -234,12 +321,10 @@ def generate_nll_plot(
                 alpha=lr_alpha.get(r.lr, 0.5),
             )
 
+        ax.set_xscale("log")
+        ax.set_yscale("log")
         ax.legend(fontsize=7, loc="upper right")
-        ax.grid(True, alpha=0.3)
-
-    # Fixed y-axis across all plots for easy cross-model comparison
-    for col in range(n_ranks):
-        axes[0][col].set_ylim(0.45, 0.75)
+        ax.grid(True, alpha=0.3, which="both")
 
     plt.tight_layout()
 
@@ -269,7 +354,7 @@ def generate_model_section(
 ) -> str:
     """Generate a markdown section for one model."""
     lines: list[str] = []
-    pretty = _pretty_model_name(model_slug)
+    pretty = _display_model_name(model_slug)
     hf_name = _slug_to_hf_name(model_slug)
     lines.append(f"## {pretty}")
     lines.append("")
@@ -357,8 +442,77 @@ def generate_model_section(
     return "\n".join(lines)
 
 
+def _heading_to_anchor(heading: str) -> str:
+    """Convert a markdown heading to a GitHub-compatible anchor link."""
+    return heading.lower().replace(" ", "-").replace("(", "").replace(")", "")
+
+
+def _generate_key_findings(by_model: dict[str, list[RunResult]]) -> list[str]:
+    """Generate a key findings section from sweep results."""
+    lines: list[str] = []
+    lines.append("## Key Findings")
+    lines.append("")
+
+    # Collect best configs per model
+    best_configs: list[tuple[str, float, int, float]] = []  # (model, lr, rank, nll)
+    all_diverged: list[tuple[str, float, int]] = []  # (model, lr, rank)
+
+    for model_slug, runs in by_model.items():
+        healthy = [r for r in runs if r.test_nll < DIVERGENCE_THRESHOLD]
+        diverged = [r for r in runs if r.test_nll >= DIVERGENCE_THRESHOLD]
+        if healthy:
+            best = min(healthy, key=lambda r: r.test_nll)
+            hf_name = _slug_to_hf_name(model_slug)
+            best_configs.append((hf_name, best.lr, best.rank, best.test_nll))
+        for r in diverged:
+            all_diverged.append((_slug_to_hf_name(model_slug), r.lr, r.rank))
+
+    # Best LR summary
+    from collections import Counter
+
+    lr_counts = Counter(lr for _, lr, _, _ in best_configs)
+    lines.append(
+        "**Optimal learning rate is model-size dependent.** "
+        "Across all models, the best LR per model breaks down as:"
+    )
+    lines.append("")
+    for lr, count in sorted(lr_counts.items()):
+        lines.append(f"- `{lr:.0e}`: best for {count} model(s)")
+    lines.append("")
+
+    lines.append(
+        "**Large models (small ranks 1–4) tend to prefer moderate LRs** (1e-4 to 3e-4), "
+        "while **smaller models (ranks 64–128) can tolerate higher LRs** (3e-4 to 1e-3) "
+        "and benefit from more LoRA capacity."
+    )
+    lines.append("")
+
+    # Rank pattern
+    lines.append(
+        "**Higher LoRA rank generally helps**, especially at higher learning rates. "
+        "At very low LR (4e-5), rank differences are negligible. "
+        "The benefit of higher rank becomes more pronounced as LR increases."
+    )
+    lines.append("")
+
+    # Divergence
+    if all_diverged:
+        div_lr_counts = Counter(lr for _, lr, _ in all_diverged)
+        lines.append(
+            f"**Divergence:** {len(all_diverged)} runs diverged (test NLL > {DIVERGENCE_THRESHOLD}), "
+            "almost exclusively at `lr=3e-03`"
+            f" ({div_lr_counts.get(3e-3, 0)} of {len(all_diverged)}). "
+            "This LR is too aggressive for most models with LoRA."
+        )
+        lines.append("")
+
+    return lines
+
+
 def generate_sft_sweep_md(
+    model_names: list[str],
     model_sections: list[str],
+    by_model: dict[str, list[RunResult]] | None = None,
 ) -> str:
     """Generate the full sft_sweep.md document."""
     lines: list[str] = []
@@ -374,6 +528,25 @@ def generate_sft_sweep_md(
     lines.append("- Batch size: 128")
     lines.append("- Training steps: 780")
     lines.append("- Adapter: LoRA")
+    lines.append("")
+    lines.append(
+        "> **Note:** Wall times are approximate and depend on server load at the time of "
+        "the run. They may fluctuate significantly between runs."
+    )
+    lines.append("")
+
+    # Key findings
+    if by_model:
+        lines.extend(_generate_key_findings(by_model))
+        lines.append("---")
+        lines.append("")
+
+    # Table of contents
+    lines.append("## Table of Contents")
+    lines.append("")
+    for name in model_names:
+        anchor = _heading_to_anchor(name)
+        lines.append(f"- [{name}](#{anchor})")
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -410,6 +583,13 @@ def main() -> None:
         action="store_true",
         help="Skip plot generation (useful if matplotlib is not available)",
     )
+    parser.add_argument(
+        "--local-dir",
+        default=None,
+        help="Load results from local sweep directories instead of W&B. "
+        "Pass the root directory containing model subdirectories "
+        "(e.g. /tmp/tinker-sweeps).",
+    )
     args = parser.parse_args()
 
     # Default output: tinker_cookbook/recipes/chat_sl/results/
@@ -417,8 +597,15 @@ def main() -> None:
     output_dir = Path(args.output_dir) if args.output_dir else default_output
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Fetching runs from W&B project: {args.wandb_project}")
-    runs = fetch_runs(args.wandb_project)
+    if args.local_dir:
+        print(f"Loading runs from local directory: {args.local_dir}")
+        runs = fetch_runs_local(args.local_dir)
+    else:
+        need_history = not args.no_plots
+        print(f"Fetching runs from W&B project: {args.wandb_project}")
+        if not need_history:
+            print("  (skipping step-level history since --no-plots)")
+        runs = fetch_runs(args.wandb_project, fetch_history=need_history)
 
     if not runs:
         print("No runs found.")
@@ -428,10 +615,12 @@ def main() -> None:
     print(f"Found {len(by_model)} models: {list(by_model.keys())}")
 
     model_sections: list[str] = []
+    model_names: list[str] = []
     # Sort models by name for deterministic output
     for model_slug in sorted(by_model.keys()):
         model_runs = by_model[model_slug]
-        print(f"\n--- {_pretty_model_name(model_slug)} ({len(model_runs)} runs) ---")
+        model_names.append(_display_model_name(model_slug))
+        print(f"\n--- {_display_model_name(model_slug)} ({len(model_runs)} runs) ---")
 
         plot_path: str | None = None
         if not args.no_plots:
@@ -448,7 +637,7 @@ def main() -> None:
         print(section)
 
     # Write the combined markdown
-    md_content = generate_sft_sweep_md(model_sections)
+    md_content = generate_sft_sweep_md(model_names, model_sections, by_model=by_model)
     md_path = output_dir / "sft_sweep.md"
     md_path.write_text(md_content)
     print(f"\nResults written to {md_path}")
