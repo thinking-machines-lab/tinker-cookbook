@@ -59,8 +59,9 @@ We replicate TTS computation using Tinker's `compute_logprobs_async` API:
 2. **Segment steps**: Split the thinking text using discourse markers
    (numbered lists, transition words like "So", "Wait", "Therefore", etc.).
 
-3. **Perturb numbers**: Apply 10-30% relative offsets to numerical values
-   in the reasoning text, preserving grammatical structure.
+3. **Perturb steps**: For numeric steps, add small integer offsets from
+   {-3,-2,-1,1,2,3} to numbers (matching Appendix A). For non-numeric
+   steps, drop them entirely.
 
 4. **Early-exit confidence**: For each of the four conditions, build
    a sequence `[prompt + <think> CoT_prefix </think> \boxed{answer}]`
@@ -93,11 +94,9 @@ We replicate TTS computation using Tinker's `compute_logprobs_async` API:
 - **Step segmentation:** The paper treats **sentences** as steps (Appendix A).
   We use discourse markers (numbered lists, transition words). Both are
   heuristic and produce comparable step counts.
-- **Perturbation details (Appendix A):** The paper adds small **integer
-  offsets from {-3,-2,-1,1,2,3}** to numbers. We use 10-30% relative
-  offsets. For **non-numeric steps**, the paper **drops them entirely** as
-  the perturbation; we keep them unchanged (making TTS=0 for those steps).
-  For context perturbation, both approaches only change numbers.
+- **Perturbation (matches Appendix A):** We add integer offsets from
+  {-3,-2,-1,1,2,3} to numbers and **drop non-numeric steps entirely**,
+  matching the paper. Context perturbation only changes numbers.
 - **No steering vectors:** The paper's Section 6 extracts "TrueThinking"
   steering directions from internal activations to control step reliance,
   achieving ~55% prediction flip rates vs <30% for random vectors. Tinker

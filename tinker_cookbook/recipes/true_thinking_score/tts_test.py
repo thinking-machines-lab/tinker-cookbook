@@ -3,6 +3,7 @@
 import random
 
 from tinker_cookbook.recipes.true_thinking_score.tts import (
+    has_numbers,
     is_self_verification_step,
     perturb_numbers,
     segment_cot_steps,
@@ -81,8 +82,27 @@ class TestPerturbNumbers:
         rng = random.Random(42)
         text = "The value is 0"
         perturbed = perturb_numbers(text, rng)
-        # Should not remain 0
-        assert "is 0" not in perturbed
+        # 0 + offset from {-3..3} should produce a non-zero integer
+        assert perturbed != text
+
+    def test_integer_offsets(self):
+        """Verify perturbation uses small integer offsets per Appendix A."""
+        rng = random.Random(42)
+        text = "The answer is 100"
+        perturbed = perturb_numbers(text, rng)
+        import re
+
+        match = re.search(r"is (\S+)", perturbed)
+        assert match is not None
+        new_val = int(match.group(1))
+        # Offset should be in {-3,-2,-1,1,2,3}
+        assert abs(new_val - 100) in {1, 2, 3}
+
+    def test_has_numbers(self):
+        assert has_numbers("The sum is 55")
+        assert has_numbers("x = 3.14")
+        assert not has_numbers("Let me think about this")
+        assert not has_numbers("variable x1 equals y2")  # attached to letters
 
     def test_reproducibility(self):
         text = "x = 10, y = 20, z = 30"

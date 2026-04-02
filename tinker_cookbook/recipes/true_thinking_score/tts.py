@@ -133,19 +133,26 @@ NUMBER_PATTERN = re.compile(
 )
 
 
-def perturb_numbers(text: str, rng: random.Random | None = None) -> str:
-    """Perturb numerical values in text with small random offsets.
+_OFFSETS = [-3, -2, -1, 1, 2, 3]
 
-    Follows the paper: "small random numerical offsets to quantities appearing
-    in the reasoning text" to weaken logical associations while maintaining
-    grammatical coherence.
+
+def has_numbers(text: str) -> bool:
+    """Check whether text contains any numeric values."""
+    return bool(NUMBER_PATTERN.search(text))
+
+
+def perturb_numbers(text: str, rng: random.Random | None = None) -> str:
+    """Perturb numerical values in text with small integer offsets.
+
+    Follows Appendix A of the paper: "add small random offsets (chosen from
+    [-3, -2, -1, 1, 2, 3]) to the numbers in a reasoning step."
 
     Args:
         text: Text containing numerical values.
         rng: Random number generator for reproducibility.
 
     Returns:
-        Text with numbers perturbed by small offsets.
+        Text with numbers perturbed by small integer offsets.
     """
     if rng is None:
         rng = random.Random()
@@ -157,20 +164,11 @@ def perturb_numbers(text: str, rng: random.Random | None = None) -> str:
         except ValueError:
             return original
 
-        if val == 0:
-            offset = rng.choice([-1, 1]) * rng.uniform(0.5, 2.0)
-        else:
-            # Relative perturbation: 10-30% of the value
-            scale = abs(val) * rng.uniform(0.1, 0.3)
-            offset = rng.choice([-1, 1]) * scale
-
+        offset = rng.choice(_OFFSETS)
         new_val = val + offset
 
         # Preserve integer format if original was integer
         if "." not in original:
-            new_val = round(new_val)
-            if new_val == int(val):
-                new_val += rng.choice([-1, 1])
             return str(int(new_val))
         else:
             decimals = len(original.split(".")[1])
@@ -363,17 +361,27 @@ async def compute_tts_for_step(
     - S_1(0): perturbed context + intact step
     - S_0(0): perturbed context + perturbed step
 
+    Following Appendix A: for numeric steps, X=0 means numbers are offset.
+    For non-numeric steps, X=0 means the step is **dropped entirely**.
+    Context perturbation only changes numbers (non-numeric context steps
+    are kept intact).
+
     All four conditions are computed concurrently (4 parallel API calls).
     """
     intact_context = "\n".join(preceding_steps)
+    # Context perturbation: only change numbers, keep non-numeric steps intact
     perturbed_context = "\n".join(perturb_numbers(s, rng) for s in preceding_steps)
     intact_step = step
-    perturbed_step = perturb_numbers(step, rng)
+
+    # Step perturbation: perturb numbers if present, otherwise drop entirely
+    if has_numbers(step):
+        perturbed_step = perturb_numbers(step, rng)
+    else:
+        perturbed_step = ""  # Drop non-numeric steps (Appendix A)
 
     def _build_prefix(context: str, step_text: str) -> str:
-        if context:
-            return context + "\n" + step_text
-        return step_text
+        parts = [p for p in [context, step_text] if p]
+        return "\n".join(parts)
 
     prefix_s1_c1 = _build_prefix(intact_context, intact_step)
     prefix_s0_c1 = _build_prefix(intact_context, perturbed_step)
