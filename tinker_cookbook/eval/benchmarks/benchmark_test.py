@@ -181,32 +181,33 @@ class TestBenchmarkRegistration:
     def test_ifeval_registered(self):
         self._check_registered("tinker_cookbook.eval.benchmarks.ifeval", "ifeval")
 
+    # Experimental benchmarks (_-prefixed modules)
     def test_ifbench_registered(self):
-        self._check_registered("tinker_cookbook.eval.benchmarks.ifbench", "ifbench")
+        self._check_registered("tinker_cookbook.eval.benchmarks._ifbench", "ifbench")
 
     def test_bfcl_registered(self):
-        self._check_registered("tinker_cookbook.eval.benchmarks.bfcl", "bfcl")
+        self._check_registered("tinker_cookbook.eval.benchmarks._bfcl", "bfcl")
 
     def test_longbench_registered(self):
-        self._check_registered("tinker_cookbook.eval.benchmarks.longbench", "longbench")
+        self._check_registered("tinker_cookbook.eval.benchmarks._longbench", "longbench")
 
     def test_tau2_bench_registered(self):
-        self._check_registered("tinker_cookbook.eval.benchmarks.tau2_bench", "tau2_bench")
+        self._check_registered("tinker_cookbook.eval.benchmarks._tau2_bench", "tau2_bench")
 
     def test_arena_hard_registered(self):
-        self._check_registered("tinker_cookbook.eval.benchmarks.arena_hard", "arena_hard")
+        self._check_registered("tinker_cookbook.eval.benchmarks._arena_hard", "arena_hard")
 
     def test_swe_bench_registered(self):
-        self._check_registered("tinker_cookbook.eval.benchmarks.swe_bench", "swe_bench")
+        self._check_registered("tinker_cookbook.eval.benchmarks._swe_bench", "swe_bench")
 
     def test_terminal_bench_registered(self):
-        self._check_registered("tinker_cookbook.eval.benchmarks.terminal_bench", "terminal_bench")
+        self._check_registered("tinker_cookbook.eval.benchmarks._terminal_bench", "terminal_bench")
 
     def test_mbpp_registered(self):
-        self._check_registered("tinker_cookbook.eval.benchmarks.mbpp", "mbpp")
+        self._check_registered("tinker_cookbook.eval.benchmarks._mbpp", "mbpp")
 
     def test_livecodebench_registered(self):
-        self._check_registered("tinker_cookbook.eval.benchmarks.livecodebench", "livecodebench")
+        self._check_registered("tinker_cookbook.eval.benchmarks._livecodebench", "livecodebench")
 
 
 class TestMCQExtraction:
@@ -220,7 +221,7 @@ class TestMCQExtraction:
         assert extract_mcq_answer("I think D is correct.", "ABCDEFGHIJ") == "D"
 
     def test_bfcl_function_matching(self):
-        from tinker_cookbook.eval.benchmarks.bfcl import _match_function_call
+        from tinker_cookbook.eval.benchmarks._bfcl import _match_function_call
 
         gen = {"name": "get_weather", "arguments": {"city": "London"}}
         exp = {"name": "get_weather", "arguments": {"city": "london"}}
@@ -230,7 +231,7 @@ class TestMCQExtraction:
         assert not _match_function_call(gen_wrong, exp)
 
     def test_tau2_bench_action_extraction(self):
-        from tinker_cookbook.eval.benchmarks.tau2_bench import _extract_tool_calls
+        from tinker_cookbook.eval.benchmarks._tau2_bench import _extract_tool_calls
 
         text = '```json\n{"name": "refund", "arguments": {"order_id": "123"}}\n```'
         results = _extract_tool_calls(text)

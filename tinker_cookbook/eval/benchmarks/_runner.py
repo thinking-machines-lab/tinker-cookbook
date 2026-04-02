@@ -298,10 +298,12 @@ def _ensure_registered(name: str) -> None:
         candidates.append(name[:-5])
 
     for module_name in candidates:
-        with contextlib.suppress(ImportError):
-            importlib.import_module(f"tinker_cookbook.eval.benchmarks.{module_name}")
-        if name in REGISTRY:
-            return
+        # Try public module, then _-prefixed (experimental) module
+        for prefix in ("", "_"):
+            with contextlib.suppress(ImportError):
+                importlib.import_module(f"tinker_cookbook.eval.benchmarks.{prefix}{module_name}")
+            if name in REGISTRY:
+                return
 
 
 async def run_benchmark(

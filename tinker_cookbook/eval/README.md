@@ -42,6 +42,8 @@ results = await run_benchmarks(
 
 ### Available benchmarks
 
+**Stable benchmarks** — verified against published scores:
+
 | Benchmark | Type | Grading | Prerequisites |
 |-----------|------|---------|---------------|
 | gsm8k | Single-turn | Programmatic (numeric) | — |
@@ -51,21 +53,26 @@ results = await run_benchmarks(
 | mmlu_pro | Single-turn | Programmatic (MCQA) | — |
 | mmlu_redux | Single-turn | Programmatic (MCQA) | — |
 | gpqa | Single-turn | Programmatic (MCQA) | HF auth (gated) |
-| ifeval | Single-turn | Programmatic (IF constraints) | Local JSONL data |
-| ifbench | Single-turn | Programmatic (IF constraints) | — |
-| bfcl | Single-turn | Programmatic (function call) | — |
-| longbench | Single-turn | Programmatic (F1/EM) | — |
-| mbpp | Single-turn | Code execution | Modal (`pip install 'tinker-cookbook[modal]'`) |
-| livecodebench | Single-turn | Code execution | Modal |
-| arena_hard | Single-turn | LLM-as-judge | `judge_sampling_client` in config |
-| tau2_bench | Multi-turn | Tool dispatch + user sim | `judge_sampling_client` in config |
-| terminal_bench | Multi-turn | Sandbox + test scripts | Modal |
-| swe_bench | Multi-turn | Sandbox + pytest | Modal, HF auth (gated) |
+| ifeval | Single-turn | Programmatic (IF constraints) | — |
+
+**Experimental benchmarks** (``_``-prefixed modules) — functional but need further validation:
+
+| Benchmark | Type | Grading | Status |
+|-----------|------|---------|--------|
+| mbpp | Single-turn | Code execution (Modal) | 92% on 50 samples, needs broader testing |
+| longbench | Single-turn | Programmatic | Limited by 65K context window |
+| livecodebench | Single-turn | Code execution (Modal) | Score gap vs public (23% vs 75%) |
+| ifbench | Single-turn | IF constraints | Verifier doesn't cover IFBench instruction types |
+| bfcl | Single-turn | Function call AST | Ground truth format mismatch |
+| terminal_bench | Multi-turn | Sandbox + tests (Modal) | Multi-turn works, test grading needs work |
+| swe_bench | Multi-turn | Sandbox + pytest (Modal) | Not yet tested end-to-end |
+| arena_hard | Single-turn | LLM-as-judge | Needs ``judge_sampling_client`` |
+| tau2_bench | Multi-turn | Tool dispatch + user sim | Needs ``judge_sampling_client`` |
 
 **Prerequisites:**
 
-- **HF auth (gated)**: The dataset requires accepting terms on HuggingFace. Set `HF_TOKEN` or run `huggingface-cli login`. The framework provides clear error messages if auth is missing.
-- **`HF_TRUST_REMOTE_CODE=1`**: Some datasets use custom loading scripts. Set this env var to allow them. The framework respects this consistently across all benchmarks.
+- **HF auth (gated)**: Set `HF_TOKEN` or run `huggingface-cli login`.
+- **Modal**: Install with `pip install 'tinker-cookbook[modal]'` and authenticate with `modal token new`.
 - **Modal**: Benchmarks that execute code in a sandbox require Modal. Install with `pip install 'tinker-cookbook[modal]'` and authenticate with `modal token new`.
 - **`judge_sampling_client`**: Benchmarks using LLM-as-judge or user simulation require a separate Tinker sampling client for the judge model. Pass via `BenchmarkConfig(judge_sampling_client=..., judge_renderer=...)`.
 
