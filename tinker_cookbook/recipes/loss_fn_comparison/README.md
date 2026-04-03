@@ -2,57 +2,72 @@
 
 Tinker provides four built-in RL loss functions: `importance_sampling`, `ppo`, `cispo`, and `dro`. This recipe trains the **same task** with each loss function so you can see how they differ in practice.
 
-## Background
+## How RL loss functions work
 
-All four losses optimize the same objective — increase the probability of high-reward completions — but differ in how they handle the importance sampling ratio between the sampling and training policies.
+All four losses solve the same problem: given a batch of rollouts sampled from policy `q`, update parameters `θ` to increase the probability of high-reward completions. The key quantity is the **importance sampling ratio**:
 
-### importance_sampling (REINFORCE with IS correction)
+```
+ratio = p_θ(x) / q(x)
+```
 
-The default. Applies the raw importance weight to correct for the distribution shift between sampler and learner:
+This ratio corrects for the mismatch between the policy that generated the data (`q`, the sampler) and the policy being trained (`p_θ`, the learner). When `ratio > 1`, the learner assigns higher probability than the sampler did; when `ratio < 1`, lower.
+
+The four losses differ in how they use this ratio to compute gradients. These differences determine **how aggressively the policy can change in a single step**, which directly affects convergence speed, stability, and what tokens receive gradient signal.
+
+### importance_sampling
+
+Standard REINFORCE with importance sampling correction:
 
 ```
 L = -(p_θ(x) / q(x)) * A(x)
 ```
 
-**When to use:** On-policy or near-on-policy training with a single gradient step per rollout batch. Simple and effective for most tasks.
+The gradient of this loss is `∇L = -A(x) * ∇ log p_θ(x)` — the ratio disappears in the gradient because `∇(p_θ/q) = (p_θ/q) * ∇ log p_θ`. This means **every token gets a gradient proportional to its advantage**, regardless of how much the policy has shifted.
+
+The catch: if `p_θ` diverges far from `q` (large ratio), the loss landscape becomes steep and updates can overshoot. This is fine for single-step on-policy training but can destabilize multi-step updates.
 
 ### ppo (Proximal Policy Optimization)
 
-Clips the importance ratio to prevent destructively large policy updates:
+Clips the ratio to prevent destructively large updates:
 
 ```
 L = -min(ratio * A, clip(ratio, 1-ε, 1+ε) * A)
 ```
 
-Default clip range: `[0.8, 1.2]`. Configurable via `loss_fn_config={"clip_low_threshold": 0.9, "clip_high_threshold": 1.1}`.
+Default clip range: `[0.8, 1.2]`. The `min` selects the **pessimistic** estimate — if the unclipped objective looks better than the clipped one, PPO uses the clipped version instead. This creates a "trust region" where the policy can move freely, but updates beyond `±ε` are suppressed.
 
-**When to use:** When training is unstable with `importance_sampling`, or when taking multiple gradient steps per rollout batch (`num_substeps > 1`).
+**The problem for reasoning:** When a token is rare under `q` but important for the correct answer (e.g., a "Wait, let me reconsider" correction token), its ratio quickly exceeds the clip threshold. Once clipped, that token receives **zero gradient** — PPO completely drops it from the update. For short outputs this rarely matters, but for long chain-of-thought reasoning, these "fork" tokens (where the model decides to backtrack or try a different approach) are exactly the tokens that matter most.
 
 ### cispo (Clipped Importance Sampling Policy Optimization)
 
-From the MiniMax-M1 paper. Clips the IS ratio but applies it as a **detached weight** on `log p_θ` rather than clipping the product:
+From the [MiniMax-M1 paper](https://arxiv.org/abs/2506.13585). Clips the ratio but uses it as a **detached coefficient** on `log p_θ`:
 
 ```
-L = -sg(clip(ratio, 1-ε_low, 1+ε_high)) * A * log p_θ(x)
+L = -sg(clip(ratio, 1-ε_low, 1+ε_high)) * A(x) * log p_θ(x)
 ```
 
-where `sg()` is stop-gradient. Unlike PPO, **all tokens contribute gradients** — rare but important tokens (e.g., "Wait", "Actually", correction tokens in chain-of-thought) are not dropped.
+where `sg()` is stop-gradient (PyTorch `detach()`). The key difference from PPO:
 
-Default clip range: `[0.8, 1.2]`. Configurable via `loss_fn_config`.
+- **PPO:** gradient flows through `ratio * A` → when ratio is clipped, gradient is exactly zero
+- **CISPO:** gradient flows through `log p_θ` → the clipped ratio is just a scalar weight, and `∇ log p_θ` always contributes
 
-**When to use:** Long chain-of-thought reasoning tasks where rare correction/reflection tokens carry important learning signal. Can converge faster than PPO on reasoning-heavy tasks.
+This means **every token always contributes gradients**, even when the ratio is far from 1. The clipped ratio controls *how much* each token contributes (downweighting tokens where the policy has already moved far from the sampler), but never drops tokens entirely.
+
+In practice, CISPO uses **asymmetric clipping**: `ε_low` is set large (permissive downweighting) while `ε_high` is tuned (caps upweighting). This allows the policy to freely reduce probability of bad tokens but limits how fast it can concentrate probability on good ones.
 
 ### dro (Distributionally Robust Optimization)
 
-Adds a quadratic KL penalty that makes the policy conservative about deviating too far from the sampling policy:
+Replaces hard clipping with a **soft quadratic penalty** on policy divergence:
 
 ```
 L = -(log p_θ(x) * A(x) - 0.5 * β * (log(p_θ(x)/q(x)))²)
 ```
 
-The quadratic term penalizes large divergence between the training and sampling policies. Configurable via `loss_fn_config={"beta": 0.05}`.
+The gradient is `∇L = -(A(x) - β * log(p_θ/q)) * ∇ log p_θ`, which means the effective advantage is **reduced** when the policy moves far from the sampler. Unlike PPO's hard wall at `ratio = 1±ε`, DRO's penalty grows smoothly — large deviations are increasingly expensive but never fully blocked.
 
-**When to use:** Off-policy or offline RL settings, or when you want robust updates that are less sensitive to distribution shift. Particularly relevant when training on stale rollout data or when mixing data from multiple sources.
+`β` controls the tradeoff: higher β = more conservative updates. At `β = 0`, DRO reduces to plain REINFORCE (`-log p_θ * A`). At very high β, the penalty dominates and the policy barely moves.
+
+**When DRO helps:** The quadratic penalty ensures the policy stays close to the distribution that generated the training data. This is valuable when the data is **off-policy** (generated by an older version of the policy, or a different policy entirely). In that regime, IS and PPO can make updates that look good under the stale data but perform poorly under the actual current policy. DRO prevents this by keeping updates conservative. On-policy (fresh rollouts each step), this conservatism is unnecessary and just slows learning.
 
 ## Quick start
 
@@ -106,16 +121,12 @@ python -m tinker_cookbook.recipes.loss_fn_comparison.analyze --log-dir /tmp/tink
 
 ## Results
 
-### Arithmetic (Llama-3.2-1B, 50 steps)
+### GSM8K (Qwen3-8B, 100 steps, lr=2e-5, group_size=16, groups_per_batch=64)
 
-All four loss functions solve this toy task quickly. IS, PPO, and CISPO reach 95%+ reward in 3-5 steps. DRO converges 3-4x slower (12 steps to 95%) due to its quadratic penalty constraining update size. All reach 100% by step 50.
-
-### GSM8K (Qwen3-8B, 100 steps, lr=2e-5, group_size=16)
-
-This is where the loss functions diverge meaningfully:
+#### Test accuracy over training
 
 | Step | IS | PPO | CISPO | DRO |
-|------|------|------|------|------|
+|------|---:|---:|---:|---:|
 | 0 | 8.9% | 6.6% | 7.7% | 8.1% |
 | 10 | 11.3% | 12.1% | 11.2% | 6.6% |
 | 20 | 42.9% | **51.3%** | 46.1% | 7.4% |
@@ -124,31 +135,54 @@ This is where the loss functions diverge meaningfully:
 | 50 | 92.9% | **93.8%** | 93.4% | 12.5% |
 | 80 | **94.2%** | 94.0% | 93.3% | 18.2% |
 
-**Best test accuracy:** IS=94.2%, PPO=94.0%, CISPO=93.7%, DRO=19.9%
+#### Wall-clock time (100 steps)
 
-Key observations:
+| Metric | IS | PPO | CISPO | DRO |
+|--------|---:|---:|---:|---:|
+| Avg step (sec) | 59.6 | 75.4 | **50.2** | 76.8 |
+| Avg train step (sec) | 14.6 | 29.3 | **11.3** | 23.6 |
+| Avg sampling (sec) | 35.6 | 32.5 | **31.2** | 40.8 |
+| Total wall clock | 99 min | 126 min | **84 min** | 128 min |
 
-1. **IS, PPO, and CISPO all reach ~94% test accuracy.** The three IS-based losses converge to essentially the same final performance.
-2. **PPO leads early** (51% at step 20 vs 43-46% for IS/CISPO). Its clipping stabilizes the rapid early policy changes.
-3. **CISPO maintains the highest entropy** (0.085 at step 99 vs PPO 0.035, IS 0.059) while matching accuracy — it keeps the policy more exploratory, consistent with preserving gradient signal for diverse tokens.
-4. **DRO fails on this on-policy task.** The quadratic KL penalty is too conservative for the large policy changes needed to learn math reasoning from scratch. Even with reduced `beta=0.01`, DRO only reaches 29% after 100 steps.
+CISPO is **33% faster** than PPO per step. Most of this comes from the training step itself (11.3s vs 29.3s) — PPO's `min` operation over clipped and unclipped objectives adds overhead compared to CISPO's simpler detached-weight multiply.
 
-### When DRO makes sense
+DRO's sampling is 30% slower because its policy barely learns — it keeps generating long, unfocused responses (514K tokens/step at step 90 vs 234K for IS/PPO and 203K for CISPO). A model that has learned the task generates shorter, more confident answers.
 
-DRO is designed for **off-policy/offline** RL where rollout data is stale and conservative updates prevent distributional collapse. On standard on-policy training (fresh rollouts every step), the conservatism slows learning without benefit. Use DRO when:
-- Training on a fixed dataset of pre-collected rollouts
-- Mixing data from multiple policies or sources
-- Using `async_config` with high `max_steps_off_policy`
+#### Entropy (policy diversity)
+
+| Step | IS | PPO | CISPO | DRO |
+|------|---:|---:|---:|---:|
+| 0 | 0.170 | 0.171 | 0.171 | 0.170 |
+| 20 | 0.177 | 0.090 | 0.168 | 0.233 |
+| 50 | 0.103 | 0.030 | 0.076 | 0.289 |
+| 99 | 0.059 | 0.035 | 0.085 | 0.271 |
+
+PPO collapses entropy fastest (0.035 at step 99) — its clipping aggressively concentrates the policy. CISPO maintains 2.4x more entropy than PPO (0.085 vs 0.035) while matching accuracy. DRO barely reduces entropy because it barely learns.
+
+### Why these results make sense
+
+**IS, PPO, CISPO converge to the same accuracy** because GSM8K is learnable within 100 steps at this scale. When the task is solvable, all three reach the same solution — they just take different paths.
+
+**PPO leads at step 20 (51% vs 43-46%)** because its aggressive clipping prevents overshooting during the rapid early phase when the policy is changing most. IS and CISPO allow larger individual updates, which occasionally overshoot and need correction.
+
+**CISPO maintains higher entropy** because it never zeros out gradients for any token. When PPO clips a rare correction token, the policy learns to avoid generating it (entropy drops). CISPO caps the weight but still learns from it, preserving the model's ability to generate diverse reasoning paths.
+
+**DRO fails on on-policy GSM8K** because learning math reasoning requires the policy to move from ~10% to ~94% accuracy — a massive distributional shift. DRO's quadratic penalty directly penalizes this shift, requiring many more small steps. With β=0.01, DRO reaches 29% after 100 steps (vs 20% with default β), confirming that lower β helps but the fundamental issue is that DRO is designed for a different regime (off-policy/stale data) where conservative updates are necessary.
+
+### Arithmetic (Llama-3.2-1B, 50 steps)
+
+On this toy task (single-token addition answers), all four loss functions converge within 3-12 steps. The per-step wall time is identical (~11s) because the sequences are too short for the loss function computation to matter. This confirms that **the choice of loss function only matters for harder tasks with longer outputs**.
 
 ## Choosing a loss function
 
 | Scenario | Recommended | Why |
 |----------|------------|-----|
 | Default / getting started | `importance_sampling` | Simple, effective, the default |
-| Training instability (loss spikes) | `ppo` | Clipping prevents large updates |
-| Long chain-of-thought reasoning | `cispo` | Preserves gradients for rare correction tokens |
-| Off-policy / stale rollout data | `dro` | Quadratic penalty handles distribution shift |
+| Training instability (loss spikes) | `ppo` | Hard clip prevents large updates |
+| Long chain-of-thought reasoning | `cispo` | Preserves gradients for rare correction tokens; faster per step |
+| Off-policy / stale rollout data | `dro` | Quadratic penalty prevents distributional collapse |
 | Multiple gradient steps per batch | `ppo` or `cispo` | Both handle multi-step updates well |
+| Fastest wall-clock time | `cispo` | 33% faster training step than PPO on GSM8K |
 
 ## Configuration reference
 
@@ -165,4 +199,4 @@ Optional `loss_fn_config` parameters:
 | `ppo` | `clip_high_threshold` | 1.2 | Upper clip bound for IS ratio |
 | `cispo` | `clip_low_threshold` | 0.8 | Lower clip bound for IS weight |
 | `cispo` | `clip_high_threshold` | 1.2 | Upper clip bound for IS weight |
-| `dro` | `beta` | 0.05 | Strength of quadratic KL penalty |
+| `dro` | `beta` | — | Strength of quadratic KL penalty (try 0.01–0.1) |
