@@ -1,15 +1,14 @@
 """tau2-Bench benchmark — multi-turn customer service agent evaluation.
 
-**Status: Experimental** — needs significant work before production use:
+**Status: Experimental** — functional but needs further validation:
 
-1. **Data loading**: Dataset is NOT on HuggingFace. It ships with the
-   ``tau2-bench`` GitHub repo (https://github.com/sierra-research/tau2-bench).
-   Current implementation tries to load from HF and fails.
+1. **Tool definitions**: Downloads domain-specific tool schemas from the
+   tau2-bench GitHub repo and converts them to OpenAI function-calling format.
+   The model receives proper tool specs to make structured calls.
 
-2. **Tool definitions**: The official benchmark defines domain-specific tools
-   (airline booking, retail orders) as Python functions in the repo's source
-   code. Our implementation uses a simplified simulated backend that may not
-   match the official tool behavior.
+2. **Tool backend**: Uses a simplified simulated DB backend that matches
+   tools against collections by name/argument heuristics. May not exactly
+   replicate the official Python tool implementations.
 
 3. **User simulation**: Requires an LLM to simulate the customer. Quality
    depends heavily on the simulator model.
@@ -18,10 +17,13 @@
    language checks like "Agent should refuse the cancellation") which require
    an LLM judge. Our implementation only checks action-based criteria.
 
-5. **Architecture**: Should be migrated to ``MessageEnv`` + ``EnvFromMessageEnv``
+5. **DB state grading**: The official benchmark checks final DB state against
+   expected state (``db_check``). Not yet implemented.
+
+6. **Architecture**: Should be migrated to ``MessageEnv`` + ``EnvFromMessageEnv``
    pattern (like terminal_bench and swe_bench) for proper renderer integration.
 
-Metric: Task completion rate.
+Metric: Task completion rate (action matching).
 Requires ``config.judge_sampling_client`` for the user simulator.
 """
 
@@ -55,11 +57,55 @@ _TAU2_REPO = "https://raw.githubusercontent.com/sierra-research/tau2-bench/main"
 _TAU2_CACHE = Path.home() / ".cache" / "tau2_bench"
 
 
-def _load_tau2_data(domain: str = "airline") -> tuple[list[dict], str, dict]:
+_TAU2_TOOLS_URL = (
+    "https://raw.githubusercontent.com/sierra-research/tau2-bench/main"
+    "/web/leaderboard/public/task-data/tools-data.json"
+)
+
+
+def _convert_tau2_tools_to_openai(tau2_tools: list[dict]) -> list[dict]:
+    """Convert tau2-bench tool format to OpenAI function-calling format.
+
+    tau2 uses flat ``parameters: [{name, type, required, description}]``.
+    OpenAI uses ``parameters: {type: object, properties: {...}, required: [...]}``.
+    """
+    openai_tools = []
+    for tool in tau2_tools:
+        properties: dict[str, dict] = {}
+        required: list[str] = []
+        for param in tool.get("parameters", []):
+            pname = param["name"]
+            ptype = param.get("type", "string")
+            prop: dict[str, Any] = {"type": ptype}
+            if param.get("description"):
+                prop["description"] = param["description"]
+            if param.get("enum"):
+                prop["enum"] = param["enum"]
+            properties[pname] = prop
+            if param.get("required", False):
+                required.append(pname)
+        openai_tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool.get("description", ""),
+                    "parameters": {
+                        "type": "object",
+                        "properties": properties,
+                        "required": required,
+                    },
+                },
+            }
+        )
+    return openai_tools
+
+
+def _load_tau2_data(domain: str = "airline") -> tuple[list[dict], str, dict, list[dict]]:
     """Load tau2-bench data from GitHub repo (cached locally).
 
     Returns:
-        Tuple of (tasks, policy_text, db_dict).
+        Tuple of (tasks, policy_text, db_dict, tool_definitions).
     """
     import urllib.request
 
@@ -80,13 +126,31 @@ def _load_tau2_data(domain: str = "airline") -> tuple[list[dict], str, dict]:
                 urllib.request.urlretrieve(url, local_path)
             except Exception as e:
                 logger.warning(f"Failed to download {url}: {e}")
-                return [], "", {}
+                return [], "", {}, []
+
+    # Load tool definitions (separate file, shared across all domains)
+    tools_path = cache_dir / "tools.json"
+    if not tools_path.exists():
+        logger.info("Downloading tau2-bench tool definitions...")
+        try:
+            urllib.request.urlretrieve(_TAU2_TOOLS_URL, tools_path)
+        except Exception as e:
+            logger.warning(f"Failed to download tool definitions: {e}")
+            return [], "", {}, []
 
     tasks = json.loads((cache_dir / "tasks.json").read_text())
     policy = (cache_dir / "policy.md").read_text()
     db = json.loads((cache_dir / "db.json").read_text())
-    logger.info(f"Loaded tau2-bench {domain}: {len(tasks)} tasks")
-    return tasks, policy, db
+
+    # Extract domain-specific tools and convert to OpenAI format
+    all_tools_data = json.loads(tools_path.read_text())
+    domain_tools_raw = all_tools_data.get(domain, {}).get("tools", [])
+    tool_definitions = _convert_tau2_tools_to_openai(domain_tools_raw)
+
+    logger.info(
+        f"Loaded tau2-bench {domain}: {len(tasks)} tasks, {len(tool_definitions)} tools"
+    )
+    return tasks, policy, db, tool_definitions
 
 
 # ---------------------------------------------------------------------------
@@ -692,9 +756,14 @@ class Tau2BenchEnv(Env):
             return str(response.get("content", "Hi, I need help with my account."))
         except Exception as e:
             logger.warning(f"User simulator failed for opening: {e}")
-            # Fallback: construct from scenario
-            task_instructions = self.user_scenario.get("task_instructions", "")
-            reason = self.user_scenario.get("reason_for_call", "")
+            # Fallback: construct from scenario (may be nested under "instructions")
+            instructions = self.user_scenario.get("instructions", self.user_scenario)
+            if isinstance(instructions, dict):
+                task_instructions = instructions.get("task_instructions", "")
+                reason = instructions.get("reason_for_call", "")
+            else:
+                task_instructions = str(instructions)
+                reason = ""
             return f"Hi, {reason} {task_instructions}".strip() or "Hi, I need help with my account."
 
     async def _simulate_user_response(self) -> str:
@@ -762,10 +831,12 @@ class Tau2BenchBenchmarkBuilder(BenchmarkBuilder):
     recommended_timeout = 600
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
-        tasks, policy, db = _load_tau2_data("airline")
+        tasks, policy, db, tool_definitions = _load_tau2_data("airline")
         if not tasks:
             logger.warning("Could not load tau2-bench data.")
             return []
+        if not tool_definitions:
+            logger.warning("tau2_bench: no tool definitions loaded — model won't be able to call tools.")
         if config.max_examples is not None:
             tasks = tasks[: config.max_examples]
 
@@ -809,7 +880,7 @@ class Tau2BenchBenchmarkBuilder(BenchmarkBuilder):
             envs.append(
                 Tau2BenchEnv(
                     system_prompt=task_system_prompt,
-                    tool_definitions=[],  # Tools are simulated via the backend DB
+                    tool_definitions=tool_definitions,
                     user_scenario=user_scenario,
                     expected_actions=expected_actions,
                     db=db,
