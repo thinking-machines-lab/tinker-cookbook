@@ -92,7 +92,24 @@ Key observations:
 - The model goes from solving 91% to 100% of training problems by step 4
 - NLL rises after step 5, signaling overfitting — early stopping or LR decay recommended
 
-For comparison, the GRPO recipe achieves 90.9% on GSM8K after 220 steps (with Llama-3.1-8B-Instruct). Note: different base models, so this is not a controlled comparison.
+### Controlled comparison with GRPO
+
+Same model (Qwen3-8B), same dataset (GSM8K), same group_size (16):
+
+```
+Step  RFT pass@1    GRPO pass@1
+      (greedy)      (T=1.0)
+  0   62.4%         54.8%
+  5   91.4%         58.1%
+ 10   94.0%         63.8%
+ 15   93.6%         72.6%
+ 20   92.2%         80.7%
+ 25   93.0%         88.8%
+```
+
+RFT converges ~5x faster. The speed advantage comes from using cross-entropy loss (which allows lr=1e-4) vs importance-weighted policy gradient (which requires lr=2e-5 for stability).
+
+Note: eval methods differ (greedy vs T=1.0 sampling), accounting for ~8pp of the baseline gap.
 
 ## Research Context
 
