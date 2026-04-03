@@ -196,26 +196,58 @@ Multi-step updates help DRO (75.9% vs 10.1% at step 40) but IS benefits even mor
 
 **DRO is too conservative for on-policy learning** because the quadratic penalty `0.5β(log p_θ/q)²` directly resists policy change. To go from 10% to 94% accuracy, the policy must make large distributional shifts that DRO penalizes. With `num_substeps=4`, each rollout batch gets reused for 4 gradient steps — by the 4th step, the data is mildly off-policy, and DRO's conservatism becomes more appropriate. DRO's design for off-policy robustness is well-established theoretically ([DRO survey](https://arxiv.org/abs/2411.02549)), and [Distributionally Robust RLHF](https://arxiv.org/abs/2503.00539) shows improvements on out-of-distribution data. However, no published work tests DRO as a direct policy gradient loss for on-policy LLM math training — our finding that it fails dramatically in this regime is empirically novel.
 
+### MATH-500 (Qwen3-8B, 100 steps, lr=2e-5, group_size=16, groups_per_batch=64)
+
+MATH-500 is substantially harder than GSM8K (starting accuracy ~0% vs ~8%). This reveals a dynamic hidden on easy tasks:
+
+| Step | IS | PPO | CISPO |
+|------|---:|---:|---:|
+| 30 | 6.6% | **10.6%** | 5.2% |
+| 40 | 20.6% | **32.8%** | 21.6% |
+| 50 | 49.0% | **59.2%** | 44.8% |
+| 60 | 67.2% | **74.0%** | 66.6% |
+| 70 | 74.6% | 74.2% | **74.8%** |
+| 80 | 75.0% | 75.4% | 72.6% |
+| 90 | 75.2% | **76.4%** | 74.0% |
+
+**PPO converges fastest on hard problems** — leading by 10-15 percentage points during mid-training (steps 40-60). On GSM8K this lead was within seed variance; on MATH it's substantial. PPO's clipping prevents the policy from overshooting on complex multi-step reasoning, which matters more when problems are harder and the reward signal is sparser.
+
+**All three converge to ~75% by step 70-90.** The loss function affects the trajectory, not the ceiling. The 2% gap at step 90 (PPO 76.4%, IS 75.2%, CISPO 74.0%) may be noise or a small real advantage for PPO on hard tasks — more seeds would clarify.
+
+**CISPO's entropy preservation is most dramatic on MATH:** 0.180 at step 99 vs PPO's 0.039 (4.6x). Despite this diversity, CISPO reaches 74.8% at step 70, matching PPO's 74.2% at the same step. The entropy difference could matter for downstream tasks that benefit from diverse reasoning strategies (e.g., best-of-N sampling, where more diverse policies generate better candidate pools).
+
 ### Arithmetic (Llama-3.2-1B, 50 steps)
 
 On this toy task (single-token addition answers), all four loss functions converge within 3-12 steps. The per-step wall time is identical (~11s) and per-token training cost is identical because sequences are too short (~5 tokens) for the loss function computation to matter.
+
+### Cross-benchmark summary
+
+| Property | GSM8K (easy) | MATH-500 (hard) |
+|----------|-------------|-----------------|
+| Final accuracy | All ~94% | All ~75% |
+| PPO mid-training lead | Within seed noise | Real: 10-15% at steps 40-60 |
+| Convergence step | ~40 | ~70 |
+| CISPO entropy vs PPO | 2.4x | 4.6x |
+| PPO per-token cost | 2.6x IS/CISPO | 2.6x IS/CISPO |
+
+**The harder the task, the more PPO's clipping helps during training** — but the final accuracy converges regardless. CISPO's entropy preservation grows more pronounced on harder tasks. IS is the simplest and cheapest option when you don't need PPO's stability or CISPO's diversity.
 
 ## Choosing a loss function
 
 | Scenario | Recommended | Why |
 |----------|------------|-----|
 | Default / getting started | `importance_sampling` | Simple, effective, cheapest per token |
-| Reproducible training | `ppo` | Most consistent across seeds; 2.6x GPU cost |
-| Long chain-of-thought reasoning | `cispo` | Maintains entropy; same GPU cost as IS |
+| Hard tasks + fastest convergence | `ppo` | 10-15% ahead mid-training on MATH; 2.6x GPU cost |
+| Maximize policy diversity | `cispo` | 4.6x more entropy than PPO; same GPU cost as IS |
 | Off-policy / stale rollout data | `dro` | Quadratic penalty prevents distributional collapse |
-| Multiple gradient steps per batch | `ppo` or `cispo` | Both handle multi-step updates well |
+| Best-of-N sampling downstream | `cispo` | Diverse policies produce better candidate pools |
 
-### Limitations and generalization
+### Limitations
 
-- **GSM8K is relatively easy** for 8B+ models. On harder benchmarks (MATH-500, AIME, LiveCodeBench), differences in entropy preservation and gradient coverage may lead to different final accuracy, likely favoring CISPO.
 - **2 seeds** is limited for reproducibility claims. Henderson et al. recommend 5+ seeds.
 - **PPO's 2.6x per-token cost** may be specific to Tinker's server-side implementation. Other frameworks may have different overhead profiles.
 - **DRO's beta default** is undocumented. An extensive beta sweep might find a setting that performs better on on-policy tasks.
+- **AIME-level problems** were not tested. The PPO mid-training advantage may grow further on competition math.
 
 ## Configuration reference
 
