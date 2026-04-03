@@ -123,30 +123,42 @@ python -m tinker_cookbook.recipes.loss_fn_comparison.analyze --log-dir /tmp/tink
 
 ### GSM8K (Qwen3-8B, 100 steps, lr=2e-5, group_size=16, groups_per_batch=64)
 
-#### Test accuracy over training
+#### Test accuracy over training (averaged over 2 seeds where available)
 
 | Step | IS | PPO | CISPO | DRO |
 |------|---:|---:|---:|---:|
-| 0 | 8.9% | 6.6% | 7.7% | 8.1% |
-| 10 | 11.3% | 12.1% | 11.2% | 6.6% |
-| 20 | 42.9% | **51.3%** | 46.1% | 7.4% |
-| 30 | **88.7%** | 85.7% | 88.5% | 8.7% |
-| 40 | 93.3% | 93.0% | **93.7%** | 10.1% |
-| 50 | 92.9% | **93.8%** | 93.4% | 12.5% |
-| 80 | **94.2%** | 94.0% | 93.3% | 18.2% |
+| 0 | 7.8% | 7.2% | 7.9% | 8.1% |
+| 10 | 12.7% | 13.1% | 12.2% | 6.6% |
+| 20 | 47.8% | 51.2% | 47.4% | 7.4% |
+| 30 | 89.6% | 86.7% | 88.2% | 8.7% |
+| 40 | 93.3% | 93.4% | 93.7% | 10.1% |
 
-#### Wall-clock time (100 steps)
+All three IS-based methods converge to **~93-94% test accuracy** by step 40. DRO barely learns.
 
-| Metric | IS | PPO | CISPO | DRO |
-|--------|---:|---:|---:|---:|
-| Avg step (sec) | 59.6 | 75.4 | **50.2** | 76.8 |
-| Avg train step (sec) | 14.6 | 29.3 | **11.3** | 23.6 |
-| Avg sampling (sec) | 35.6 | 32.5 | **31.2** | 40.8 |
-| Total wall clock | 99 min | 126 min | **84 min** | 128 min |
+#### Reproducibility (seed-to-seed variance at step 20)
 
-CISPO is **33% faster** than PPO per step. Most of this comes from the training step itself (11.3s vs 29.3s) — PPO's `min` operation over clipped and unclipped objectives adds overhead compared to CISPO's simpler detached-weight multiply.
+| Loss | seed=0 | seed=1 | |Δ| |
+|------|--------|--------|-----|
+| IS | 42.9% | 52.6% | 9.7% |
+| PPO | 51.3% | 51.1% | **0.2%** |
+| CISPO | 46.1% | 48.7% | 2.6% |
 
-DRO's sampling is 30% slower because its policy barely learns — it keeps generating long, unfocused responses (514K tokens/step at step 90 vs 234K for IS/PPO and 203K for CISPO). A model that has learned the task generates shorter, more confident answers.
+PPO is the **most reproducible** — its clipping constrains the update direction, producing nearly identical learning curves across seeds (|Δ|=0.2% at step 20). IS has the highest variance (|Δ|=9.7%). By step 40 all three converge to within 1% regardless of seed.
+
+#### Per-token training cost (controlled for sequence length)
+
+Measured at steps 0-4 when all methods generate ~520K tokens per batch:
+
+| Loss | µs/token | Relative cost |
+|------|---------|--------------|
+| IS | 30.5 | 1.0x |
+| CISPO | 32.1 | 1.1x |
+| DRO | 33.3 | 1.1x |
+| PPO | 80.2 | **2.6x** |
+
+PPO is **2.6x more expensive per token** than IS/CISPO/DRO. IS, CISPO, and DRO have essentially identical per-token GPU cost. PPO's overhead comes from computing both the clipped and unclipped objectives and taking their `min`.
+
+As training progresses, the gap widens further: methods that learn faster produce shorter responses, making each step cheaper. At step 80-99, CISPO averages 203K tokens/step (8.8s train time) while PPO averages 236K tokens/step (23.4s train time) — a combined 2.7x wall-clock difference from both algorithmic cost and learned efficiency.
 
 #### Entropy (policy diversity)
 
@@ -157,32 +169,44 @@ DRO's sampling is 30% slower because its policy barely learns — it keeps gener
 | 50 | 0.103 | 0.030 | 0.076 | 0.289 |
 | 99 | 0.059 | 0.035 | 0.085 | 0.271 |
 
-PPO collapses entropy fastest (0.035 at step 99) — its clipping aggressively concentrates the policy. CISPO maintains 2.4x more entropy than PPO (0.085 vs 0.035) while matching accuracy. DRO barely reduces entropy because it barely learns.
+PPO collapses entropy fastest (0.035 at step 99). CISPO maintains 2.4x more entropy than PPO (0.085 vs 0.035) while matching accuracy. Theoretically, this is because CISPO never zeros out gradients — all tokens contribute, preserving diverse reasoning strategies. DRO barely reduces entropy because it barely learns.
+
+#### DRO with multiple gradient steps (num_substeps=4)
+
+With 4 gradient updates per rollout batch (creating mild off-policy conditions), DRO improves substantially:
+
+| Step | DRO (substeps=1) | DRO (substeps=4) | IS (substeps=1) | IS (substeps=4) |
+|------|---:|---:|---:|---:|
+| 10 | 6.6% | 9.5% | 11.3% | 79.9% |
+| 20 | 7.4% | 15.7% | 42.9% | 93.0% |
+| 30 | 8.7% | 37.5% | 88.7% | 93.6% |
+| 40 | 10.1% | 75.9% | 93.3% | 93.6% |
+
+Multi-step updates help DRO (75.9% vs 10.1% at step 40) but IS benefits even more. The `num_substeps` parameter effectively multiplies gradient updates per batch; IS with substeps=4 reaches 93% at step 20 — equivalent to IS substeps=1 at step 40, as expected.
 
 ### Why these results make sense
 
-**IS, PPO, CISPO converge to the same accuracy** because GSM8K is learnable within 100 steps at this scale. When the task is solvable, all three reach the same solution — they just take different paths.
+**IS, PPO, CISPO converge to the same final accuracy** because GSM8K is learnable at this scale. The loss function affects the learning trajectory, not the destination.
 
-**PPO leads at step 20 (51% vs 43-46%)** because its aggressive clipping prevents overshooting during the rapid early phase when the policy is changing most. IS and CISPO allow larger individual updates, which occasionally overshoot and need correction.
+**PPO is the most reproducible** (not the fastest) because clipping constrains both the magnitude and direction of each update. This reduces variance across seeds but does not accelerate learning on average.
 
-**CISPO maintains higher entropy** because it never zeros out gradients for any token. When PPO clips a rare correction token, the policy learns to avoid generating it (entropy drops). CISPO caps the weight but still learns from it, preserving the model's ability to generate diverse reasoning paths.
+**CISPO maintains higher entropy** because it never zeros out the gradient for any token. In the CISPO gradient, the clipped ratio acts as a scalar weight on `∇ log p_θ` — even tokens with extreme importance ratios contribute. In PPO, the `min` operation completely drops tokens whose ratio exceeds the clip threshold, removing them from the gradient. Over many steps, this causes PPO to concentrate probability faster (lower entropy).
 
-**DRO fails on on-policy GSM8K** because learning math reasoning requires the policy to move from ~10% to ~94% accuracy — a massive distributional shift. DRO's quadratic penalty directly penalizes this shift, requiring many more small steps. With β=0.01, DRO reaches 29% after 100 steps (vs 20% with default β), confirming that lower β helps but the fundamental issue is that DRO is designed for a different regime (off-policy/stale data) where conservative updates are necessary.
+**DRO is too conservative for on-policy learning** because the quadratic penalty `0.5β(log p_θ/q)²` directly resists policy change. To go from 10% to 94% accuracy, the policy must make large distributional shifts that DRO penalizes. With `num_substeps=4`, each rollout batch gets reused for 4 gradient steps — by the 4th step, the data is mildly off-policy, and DRO's conservatism becomes more appropriate.
 
 ### Arithmetic (Llama-3.2-1B, 50 steps)
 
-On this toy task (single-token addition answers), all four loss functions converge within 3-12 steps. The per-step wall time is identical (~11s) because the sequences are too short for the loss function computation to matter. This confirms that **the choice of loss function only matters for harder tasks with longer outputs**.
+On this toy task (single-token addition answers), all four loss functions converge within 3-12 steps. The per-step wall time is identical (~11s) and per-token training cost is identical because sequences are too short (~5 tokens) for the loss function computation to matter.
 
 ## Choosing a loss function
 
 | Scenario | Recommended | Why |
 |----------|------------|-----|
-| Default / getting started | `importance_sampling` | Simple, effective, the default |
-| Training instability (loss spikes) | `ppo` | Hard clip prevents large updates |
-| Long chain-of-thought reasoning | `cispo` | Preserves gradients for rare correction tokens; faster per step |
+| Default / getting started | `importance_sampling` | Simple, effective, cheapest per token |
+| Reproducible training | `ppo` | Most consistent across seeds; 2.6x GPU cost |
+| Long chain-of-thought reasoning | `cispo` | Maintains entropy; same GPU cost as IS |
 | Off-policy / stale rollout data | `dro` | Quadratic penalty prevents distributional collapse |
 | Multiple gradient steps per batch | `ppo` or `cispo` | Both handle multi-step updates well |
-| Fastest wall-clock time | `cispo` | 33% faster training step than PPO on GSM8K |
 
 ## Configuration reference
 
