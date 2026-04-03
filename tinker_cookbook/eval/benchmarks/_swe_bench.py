@@ -44,22 +44,41 @@ from tinker_cookbook.tool_use.types import ToolResult
 
 logger = logging.getLogger(__name__)
 
-MAX_TURNS = 40
+MAX_TURNS = 100
 """Maximum number of agent turns before forced termination."""
 
 _SYSTEM_PROMPT = """\
-You are an expert software engineer. You have shell access to a repository \
-checked out at the relevant commit. Your task is to diagnose and fix the \
-issue described below.
+You are a helpful assistant that can interact with a computer shell to solve \
+programming tasks.
 
-Use the bash tool to explore the codebase, understand the bug, edit files, \
-and verify your fix. When you are confident the fix is complete, stop calling tools.
+You're a software engineer fixing an issue in a code repository. Your task is \
+to make changes to source files to fix the issue described in the problem statement.
 
-Important:
-- The repository is at /workspace/repo
-- Your working directory is /workspace/repo
-- Use standard tools: grep, find, cat, sed, python, git diff, etc.
-- Test your changes before stopping"""
+For each response:
+1. Include reasoning explaining what you're trying to accomplish
+2. Use the bash tool to execute commands
+
+## Recommended Workflow
+
+1. Analyze the codebase by finding and reading relevant files
+2. Create a script to reproduce the issue
+3. Edit the source code to resolve the issue
+4. Verify your fix by running your reproduction script again
+5. Test edge cases to ensure your fix is robust
+
+## Important Rules
+
+- The repository is at /workspace/repo — use `cd /workspace/repo && ...` in each command
+- MODIFY only source code files, NOT tests or configuration files
+- Use non-interactive commands only (no vi, nano, etc.)
+- Use sed, awk, or python for file editing
+- When you are confident the fix is complete, stop calling tools
+
+## Environment
+
+- Full Linux shell with git, grep, find, python3, sed, etc.
+- PAGER=cat (no interactive paging)
+- Each command runs in a subshell — cd is not persistent between commands"""
 
 
 def _parse_test_ids(raw: str | list) -> list[str]:
@@ -95,16 +114,28 @@ class _SWEBashTool:
         command: Annotated[str, "The bash command to execute."],
     ) -> ToolResult:
         """Execute a bash command in the repository sandbox."""
+        # Wrap command with env vars to prevent interactive pagers
+        wrapped = f"PAGER=cat MANPAGER=cat PIP_PROGRESS_BAR=off TQDM_DISABLE=1 {command}"
         result = await self._sandbox.run_command(
-            command, workdir="/workspace/repo", timeout=120, max_output_bytes=16000
+            wrapped, workdir="/workspace/repo", timeout=120, max_output_bytes=16000
         )
-        output = json.dumps(
-            {
-                "exit_code": result.exit_code,
-                "stdout": result.stdout[:8000],
-                "stderr": result.stderr[:4000],
-            }
-        )
+        stdout = result.stdout
+        stderr = result.stderr
+
+        # Truncate long output with a warning (matches mini-swe-agent behavior)
+        max_chars = 10000
+        if len(stdout) > max_chars:
+            head = stdout[:5000]
+            tail = stdout[-5000:]
+            elided = len(stdout) - max_chars
+            stdout = (
+                f"{head}\n\n[... {elided} characters elided ...]\n\n{tail}\n"
+                "[Output truncated. Use head/tail/grep for smaller output.]"
+            )
+        if len(stderr) > 4000:
+            stderr = stderr[:4000] + "\n[stderr truncated]"
+
+        output = json.dumps({"exit_code": result.exit_code, "stdout": stdout, "stderr": stderr})
         return simple_tool_result(output)
 
 

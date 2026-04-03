@@ -45,21 +45,36 @@ from tinker_cookbook.tool_use.types import ToolResult
 
 logger = logging.getLogger(__name__)
 
-MAX_TURNS = 40
+MAX_TURNS = 100
 """Maximum number of agent turns before forced termination."""
 
 _SYSTEM_PROMPT = """\
 You are an expert Linux/Unix systems administrator solving a terminal task \
-in a sandboxed environment. You have full shell access.
+in a sandboxed environment.
 
-Use the bash tool to execute commands. You can run multiple commands \
-across multiple turns. When you are done, stop calling tools.
+For each response:
+1. Include reasoning explaining what you're trying to accomplish
+2. Use the bash tool to execute commands
 
-Important:
-- You are in a fresh Linux environment
-- You can install packages, create files, run scripts
+## Workflow
+
+1. Read the task description carefully
+2. Plan your approach
+3. Execute commands step by step
+4. Verify your work before stopping
+
+## Important Rules
+
 - Your working directory is /workspace
-- Be precise and verify your work before stopping"""
+- You can install packages, create files, run scripts
+- Use non-interactive commands only (no vi, nano, etc.)
+- Use sed, awk, or python for file editing
+- When you are done, stop calling tools
+
+## Environment
+
+- Fresh Linux environment with bash, python3, git, curl, build-essential
+- PAGER=cat (no interactive paging)"""
 
 
 # ---------------------------------------------------------------------------
@@ -81,13 +96,19 @@ class _BashTool:
     ) -> ToolResult:
         """Execute a bash command in the sandbox environment."""
         self.commands_executed.append(command)
+        wrapped = f"PAGER=cat MANPAGER=cat {command}"
         result = await self._sandbox.run_command(
-            command, workdir="/workspace", timeout=60, max_output_bytes=8000
+            wrapped, workdir="/workspace", timeout=60, max_output_bytes=16000
         )
+        stdout = result.stdout
+        if len(stdout) > 10000:
+            head = stdout[:5000]
+            tail = stdout[-5000:]
+            stdout = f"{head}\n\n[... {len(stdout) - 10000} chars elided ...]\n\n{tail}"
         output = json.dumps(
             {
                 "exit_code": result.exit_code,
-                "stdout": result.stdout[:4000],
+                "stdout": stdout[:10000],
                 "stderr": result.stderr[:2000],
             }
         )
