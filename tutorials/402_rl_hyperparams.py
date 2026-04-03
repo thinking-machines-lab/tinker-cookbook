@@ -100,6 +100,14 @@ def _(mo):
     advantage_i = reward_i - mean(rewards in group)
     ```
 
+    > **Note:** The original DeepSeek GRPO paper normalizes by standard deviation:
+    > `advantage_i = (reward_i - mean) / std`. We intentionally omit this.
+    > [Dr. GRPO (Liu et al., 2025)](https://arxiv.org/abs/2503.20783) shows that
+    > dividing by std introduces a **difficulty bias** (easy/hard questions with
+    > low reward variance get disproportionately large gradients) and a **length
+    > bias** (incorrect responses grow longer during training). Mean-centering
+    > alone recovers an unbiased policy gradient objective.
+
     **Group size** controls the variance of the advantage estimate:
     - **Small groups (2-4)**: High variance, but every problem gets gradient signal even if most rollouts fail
     - **Large groups (8-16)**: Lower variance, better advantage estimates, but more compute per problem
