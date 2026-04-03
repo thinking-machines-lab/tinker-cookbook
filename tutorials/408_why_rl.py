@@ -182,20 +182,24 @@ def _():
 
 
 # ==============================================================================
-# Training functions
+# Part 1: RFT
 # ==============================================================================
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## The training loops
+    ## Part 1: RFT (Rejection Sampling Fine-Tuning)
 
-    Below we define both training methods. Each function:
-    1. Creates a fresh LoRA model from the same base
-    2. Runs the training loop for `N_STEPS` steps
-    3. Evaluates on the test set every `EVAL_EVERY` steps
-    4. Returns the metrics history
+    The RFT loop:
+    1. Sample K solutions per problem from the current model
+    2. Grade them -- keep only correct ones
+    3. Run standard SFT (cross-entropy) on the correct solutions
+    4. Evaluate on the test set periodically
+    5. Repeat
+
+    No advantages, no importance weights, no negative signal.
+    Just **SFT on whatever the model gets right**.
     """)
     return
 
@@ -339,23 +343,6 @@ def _(
         return metrics
 
     return (run_rft,)
-
-
-# ==============================================================================
-# Part 1: Run RFT
-# ==============================================================================
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Part 1: RFT (Rejection Sampling Fine-Tuning)
-
-    The loop: sample K solutions per problem, keep the correct ones, SFT on them.
-    No advantages, no importance weights, no negative signal.
-    Just **SFT on whatever the model gets right**.
-    """)
-    return
 
 
 @app.cell
