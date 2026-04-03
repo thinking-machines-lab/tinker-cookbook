@@ -265,3 +265,21 @@ Optional `loss_fn_config` parameters:
 | `cispo` | `clip_low_threshold` | 0.8 | Lower clip bound for IS weight |
 | `cispo` | `clip_high_threshold` | 1.2 | Upper clip bound for IS weight |
 | `dro` | `beta` | — | Strength of quadratic KL penalty (try 0.01–0.1) |
+
+## References
+
+Papers referenced in this recipe and how they relate to our findings:
+
+- **[MiniMax-M1](https://arxiv.org/abs/2506.13585)** — Introduced CISPO. Shows PPO drops "fork tokens" (rare correction/backtracking tokens) from the gradient, while CISPO preserves them via detached clipped weights. Our entropy measurements (CISPO 2.4-4.6x PPO) quantify what this paper describes qualitatively.
+- **[DAPO](https://arxiv.org/abs/2503.14476)** — Independently identified PPO's entropy collapse and proposed "Clip-Higher" (asymmetric clipping) as mitigation. Confirms the token-dropout mechanism we observe.
+- **[GRPO](https://arxiv.org/abs/2402.03300)** (DeepSeekMath) — Eliminates the critic network from PPO, saving ~50% compute. Our setup uses critic-free PPO; the 2.6x overhead we measure comes from the loss computation alone, not the critic.
+- **[A Minimalist Approach to LLM Reasoning](https://arxiv.org/abs/2504.11343)** — Shows even simple rejection sampling matches GRPO/PPO final performance. Consistent with our finding that IS/PPO/CISPO converge to the same accuracy.
+- **[Stabilizing RL with LLMs](https://arxiv.org/abs/2512.01374)** — Finds "prolonged optimization consistently yields comparable final performance." Matches our cross-benchmark result that loss function affects trajectory, not ceiling.
+- **[Henderson et al. (2018)](https://arxiv.org/abs/1709.06560)** — Established that seed variance is a major problem in RL. Our finding that PPO reduces seed variance in LLM RL (|Δ|=0.2% vs IS 9.7%) extends this to the LLM setting.
+- **[REINFORCE++](https://arxiv.org/abs/2501.03262)** — Argues PPO's stability benefits are "less of a concern for LLMs." Our MATH-500 results suggest this understates PPO's value on hard tasks, where its mid-training lead is 10-15%.
+- **[ReMax](https://arxiv.org/abs/2310.10505)** — Reports >2x GPU cost for PPO. Attributes it to the critic network; our 2.6x cost from the loss function alone is a distinct overhead source.
+- **[Distributionally Robust RLHF](https://arxiv.org/abs/2503.00539)** — Applies DRO to RLHF reward models and shows improvements on OOD data. Our work tests DRO as a direct policy gradient loss, finding it fails on-policy but partially recovers with multi-step updates.
+- **[DRO Survey](https://arxiv.org/abs/2411.02549)** — Comprehensive survey confirming DRO is designed for worst-case distributional robustness, consistent with our finding that it needs off-policy conditions.
+- **[F-GRPO](https://arxiv.org/abs/2602.06717)** — Shows CISPO achieves higher asymptotic reward than DAPO/GRPO on harder math problems (Qwen2.5-7B). Suggests our equal-accuracy finding on GSM8K/MATH may not hold on competition-level benchmarks (AIME).
+- **[ASPO](https://arxiv.org/abs/2510.06062)** — Argues IS ratio mismatches lead to "premature convergence" on difficult problems. May explain why IS slightly trails PPO on MATH-500.
+- **[DISPO](https://arxiv.org/abs/2602.00983)** — Reports even better entropy preservation than CISPO. Positions CISPO's entropy as moderate, not maximal.
