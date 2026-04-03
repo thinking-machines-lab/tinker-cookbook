@@ -100,3 +100,7 @@ class TestQuantized:
                 )
             else:
                 assert torch.equal(cpu_t, gpu_t), f"Tensor mismatch: {key}"
+
+
+# vLLM serving: DeepSeek V3/V3.1 LoRA adapter serving is intentionally
+# unsupported — the model uses adapter-free FP8 quantized merge instead.

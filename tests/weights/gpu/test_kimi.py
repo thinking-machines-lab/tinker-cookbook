@@ -89,3 +89,7 @@ class TestAdapter:
         config = json.loads((output / "adapter_config.json").read_text())
         assert "peft_type" in config
         assert config.get("r") == LORA_RANK
+
+
+# vLLM serving: Kimi K2 is ~1TB in BF16 — too large for single-node vLLM test.
+# vLLM LoRA is supported via DeepSeekV2 architecture but requires multi-node.

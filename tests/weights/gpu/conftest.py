@@ -69,6 +69,46 @@ def _vllm_available() -> bool:
 
 skip_no_vllm = pytest.mark.skipif(not _vllm_available(), reason="vLLM not installed")
 
+PROMPT = "The capital of France is"
+
+
+def vllm_generate(model_name: str, peft_path: Path, *, trust_remote_code: bool = False) -> str:
+    """Load a model in vLLM with a PEFT adapter and generate text.
+
+    Only call from tests decorated with ``@skip_no_vllm``.
+
+    Returns:
+        Generated text from the adapter-loaded model.
+    """
+    from vllm import LLM, SamplingParams
+    from vllm.lora.request import LoRARequest
+
+    llm = LLM(
+        model=model_name,
+        enable_lora=True,
+        max_lora_rank=LORA_RANK,
+        max_loras=1,
+        max_model_len=256,
+        enforce_eager=True,
+        gpu_memory_utilization=0.4,
+        trust_remote_code=trust_remote_code,
+    )
+    params = SamplingParams(max_tokens=20, temperature=0.0)
+
+    # Generate without adapter (baseline)
+    base_outputs = llm.generate([PROMPT], sampling_params=params)
+    base_text = base_outputs[0].outputs[0].text
+    assert len(base_text) > 0, "Base model should generate text"
+
+    # Generate with adapter
+    lora_req = LoRARequest("test_adapter", 1, str(peft_path))
+    lora_outputs = llm.generate([PROMPT], sampling_params=params, lora_request=lora_req)
+    lora_text = lora_outputs[0].outputs[0].text
+    assert len(lora_text) > 0, "LoRA adapter should generate text"
+
+    return lora_text
+
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------

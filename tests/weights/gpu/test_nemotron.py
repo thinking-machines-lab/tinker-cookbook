@@ -13,8 +13,10 @@ import pytest
 from tests.weights.gpu.conftest import (
     LORA_RANK,
     download_adapter,
+    skip_no_vllm,
     train_one_step,
     verify_merged_model,
+    vllm_generate,
 )
 from tinker_cookbook.weights import build_hf_model, build_lora_adapter
 
@@ -57,3 +59,17 @@ class TestAdapter:
         config = json.loads((output / "adapter_config.json").read_text())
         assert "peft_type" in config
         assert config.get("r") == LORA_RANK
+
+
+class TestVllmServing:
+    @skip_no_vllm
+    def test_adapter_serves_in_vllm(self, adapter_dir, tmp_path):
+        """Export adapter to PEFT, load in vLLM, generate text."""
+        peft_dir = tmp_path / "peft"
+        build_lora_adapter(
+            base_model=MODEL,
+            adapter_path=str(adapter_dir),
+            output_path=str(peft_dir),
+            trust_remote_code=True,
+        )
+        vllm_generate(MODEL, peft_dir, trust_remote_code=True)

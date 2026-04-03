@@ -87,3 +87,7 @@ class TestAdapter:
         config = json.loads((output / "adapter_config.json").read_text())
         assert "peft_type" in config
         assert config.get("r") == LORA_RANK
+
+
+# vLLM serving: MXFP4+LoRA is not yet supported in vLLM.
+# Adapter conversion works, but vLLM cannot load the base model with LoRA adapters.
