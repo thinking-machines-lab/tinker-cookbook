@@ -104,17 +104,41 @@ python -m tinker_cookbook.recipes.loss_fn_comparison.sweep loss_fns=ppo,cispo
 python -m tinker_cookbook.recipes.loss_fn_comparison.analyze --log-dir /tmp/tinker-examples/math_rl
 ```
 
-## Expected results
+## Results
 
-On **arithmetic** (Llama-3.2-1B, 50 steps):
+### Arithmetic (Llama-3.2-1B, 50 steps)
 
-All four loss functions solve this toy task quickly (reward approaches 1.0 within ~10 steps). The differences are subtle at this scale — you may observe:
+All four loss functions solve this toy task quickly. IS, PPO, and CISPO reach 95%+ reward in 3-5 steps. DRO converges 3-4x slower (12 steps to 95%) due to its quadratic penalty constraining update size. All reach 100% by step 50.
 
-- `importance_sampling` and `cispo` converge slightly faster due to unbounded/wider gradient signal
-- `ppo` is the most conservative, with the smoothest reward curve
-- `dro` behaves similarly to `importance_sampling` with light regularization
+### GSM8K (Qwen3-8B, 100 steps, lr=2e-5, group_size=16)
 
-On **GSM8K** or longer reasoning tasks, the differences become more pronounced — particularly `cispo` vs `ppo` on chain-of-thought stability, and `dro` vs `importance_sampling` on robustness to off-policy data.
+This is where the loss functions diverge meaningfully:
+
+| Step | IS | PPO | CISPO | DRO |
+|------|------|------|------|------|
+| 0 | 8.9% | 6.6% | 7.7% | 8.1% |
+| 10 | 11.3% | 12.1% | 11.2% | 6.6% |
+| 20 | 42.9% | **51.3%** | 46.1% | 7.4% |
+| 30 | **88.7%** | 85.7% | 88.5% | 8.7% |
+| 40 | 93.3% | 93.0% | **93.7%** | 10.1% |
+| 50 | 92.9% | **93.8%** | 93.4% | 12.5% |
+| 80 | **94.2%** | 94.0% | 93.3% | 18.2% |
+
+**Best test accuracy:** IS=94.2%, PPO=94.0%, CISPO=93.7%, DRO=19.9%
+
+Key observations:
+
+1. **IS, PPO, and CISPO all reach ~94% test accuracy.** The three IS-based losses converge to essentially the same final performance.
+2. **PPO leads early** (51% at step 20 vs 43-46% for IS/CISPO). Its clipping stabilizes the rapid early policy changes.
+3. **CISPO maintains the highest entropy** (0.085 at step 99 vs PPO 0.035, IS 0.059) while matching accuracy — it keeps the policy more exploratory, consistent with preserving gradient signal for diverse tokens.
+4. **DRO fails on this on-policy task.** The quadratic KL penalty is too conservative for the large policy changes needed to learn math reasoning from scratch. Even with reduced `beta=0.01`, DRO only reaches 29% after 100 steps.
+
+### When DRO makes sense
+
+DRO is designed for **off-policy/offline** RL where rollout data is stale and conservative updates prevent distributional collapse. On standard on-policy training (fresh rollouts every step), the conservatism slows learning without benefit. Use DRO when:
+- Training on a fixed dataset of pre-collected rollouts
+- Mixing data from multiple policies or sources
+- Using `async_config` with high `max_steps_off_policy`
 
 ## Choosing a loss function
 
@@ -131,7 +155,7 @@ On **GSM8K** or longer reasoning tasks, the differences become more pronounced �
 All RL loss functions accept the same `loss_fn_inputs` in each Datum:
 - `target_tokens`: The token sequence to compute logprobs on
 - `logprobs`: Sampling logprobs from the policy that generated the completion
-- `advantages`: Per-token advantages (typically group-relative: `(R - mean) / std`)
+- `advantages`: Per-token advantages (group-relative, mean-centered: `R - mean(R)`, no std normalization)
 
 Optional `loss_fn_config` parameters:
 
