@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 import chz
-import modal
 
 from tinker_cookbook import model_info, tokenizer_utils
 from tinker_cookbook.recipes.harbor_rl.harbor_tools import HarborBashTool, HarborReward
@@ -31,10 +30,20 @@ HARBOR_SYSTEM_PROMPT = (
     "Complete the task described by the user."
 )
 
-SandboxFactory = Callable[[modal.Image, int], Awaitable[SandboxInterface]]
+SandboxFactory = Callable[[Path, int], Awaitable[SandboxInterface]]
 
 
-async def default_sandbox_factory(image: modal.Image, timeout: int) -> SandboxInterface:
+async def default_sandbox_factory(env_dir: Path, timeout: int) -> SandboxInterface:
+    """Create a Modal sandbox from a task environment directory.
+
+    Args:
+        env_dir: Path to the task's environment/ directory (must contain a Dockerfile).
+        timeout: Sandbox lifetime in seconds.
+    """
+    import modal
+
+    dockerfile_path = env_dir / "Dockerfile"
+    image = modal.Image.from_dockerfile(path=str(dockerfile_path), context_dir=str(env_dir))
     return await ModalSandbox.create(image=image, timeout=timeout)
 
 
@@ -52,8 +61,9 @@ def load_harbor_tasks(dataset: str) -> list[HarborTask]:
     """Load Harbor tasks from ~/.cache/harbor/tasks/<dataset>/."""
     tasks_dir = HARBOR_CACHE_DIR / dataset
     tasks: list[HarborTask] = []
-    for uuid_dir in sorted(tasks_dir.iterdir()):
-        (task_dir,) = [d for d in uuid_dir.iterdir() if d.is_dir()]
+    for task_dir in sorted(tasks_dir.iterdir()):
+        if not task_dir.is_dir():
+            continue
         tasks.append(
             HarborTask(
                 task_name=task_dir.name,
@@ -117,10 +127,7 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
     async def make_envs(self) -> Sequence[Env]:
         self._sandboxes = []
 
-        # Build Modal image from the task's Dockerfile
         env_dir = self.task.task_dir / "environment"
-        dockerfile_path = env_dir / "Dockerfile"
-        image = modal.Image.from_dockerfile(path=str(dockerfile_path), context_dir=str(env_dir))
 
         # Create renderer (stateless, shared across envs)
         tokenizer = tokenizer_utils.get_tokenizer(self.model_name)
@@ -133,7 +140,7 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
 
         envs = []
         for _ in range(self.group_size):
-            sandbox = await self.sandbox_factory(image, self.sandbox_timeout)
+            sandbox = await self.sandbox_factory(env_dir, self.sandbox_timeout)
             self._sandboxes.append(sandbox)
 
             bash_tool = HarborBashTool(sandbox, command_timeout=self.command_timeout)

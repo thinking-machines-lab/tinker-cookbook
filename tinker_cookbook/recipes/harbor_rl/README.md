@@ -68,14 +68,20 @@ class SandboxInterface(Protocol):
 
 ### SandboxFactory and injection
 
-`harbor_env.py` defines a factory type and default:
+`harbor_env.py` defines a backend-agnostic factory type and a default Modal implementation:
 
 ```python
-SandboxFactory = Callable[[modal.Image, int], Awaitable[SandboxInterface]]
+SandboxFactory = Callable[[Path, int], Awaitable[SandboxInterface]]
 
-async def default_sandbox_factory(image: modal.Image, timeout: int) -> SandboxInterface:
+async def default_sandbox_factory(env_dir: Path, timeout: int) -> SandboxInterface:
+    """Create a Modal sandbox from a task environment directory."""
+    import modal
+    dockerfile_path = env_dir / "Dockerfile"
+    image = modal.Image.from_dockerfile(path=str(dockerfile_path), context_dir=str(env_dir))
     return await ModalSandbox.create(image=image, timeout=timeout)
 ```
+
+The first argument is the task's `environment/` directory (containing a Dockerfile and build context). Each backend converts this to its own image format internally (e.g. Modal builds a `modal.Image`).
 
 `cli_main()` accepts an optional `sandbox_factory` parameter. When `None`, it falls back to `default_sandbox_factory` (Modal). The factory flows through: `cli_main` -> `HarborDatasetBuilder` -> `HarborEnvGroupBuilder.make_envs()`.
 
@@ -84,7 +90,7 @@ async def default_sandbox_factory(image: modal.Image, timeout: int) -> SandboxIn
 First, download the Terminal-Bench tasks:
 
 ```bash
-uvx harbor datasets download terminal-bench@2.0
+uvx harbor datasets download terminal-bench@2.0 -o ~/.cache/harbor/tasks/terminal-bench-2.0/
 ```
 
 Then launch training:
