@@ -4,26 +4,10 @@ __generated_with = "0.21.1"
 app = marimo.App()
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     import marimo as mo
 
-    return (mo,)
-
-
-@app.cell
-def _():
-    import asyncio
-    import time
-
-    import matplotlib.pyplot as plt
-    import numpy as np
-
-    return asyncio, np, plt, time
-
-
-@app.cell(hide_code=True)
-def _(mo):
     mo.md(r"""
     # Tutorial 08: Why RL? From Rejection Sampling to GRPO
 
@@ -36,8 +20,8 @@ def _(mo):
     But on harder tasks, RFT hits a ceiling. **GRPO** (Group Relative Policy Optimization)
     breaks through that ceiling by learning from *both* correct and incorrect solutions.
 
-    This tutorial runs both methods head-to-head on GSM8K math problems, then shows
-    what happens on harder tasks (Hendrycks MATH).
+    This tutorial runs both methods head-to-head on GSM8K math problems and compares
+    the results.
 
     **What you'll learn:**
 
@@ -46,7 +30,7 @@ def _(mo):
     3. Why RFT plateaus and GRPO doesn't
     4. When to use which method
     """)
-    return
+    return (mo,)
 
 
 @app.cell(hide_code=True)
@@ -71,7 +55,7 @@ def _(mo):
 
 
 # ==============================================================================
-# Setup: model, data, grading
+# Setup
 # ==============================================================================
 
 
@@ -88,11 +72,14 @@ def _(mo):
 
 @app.cell
 def _():
+    import asyncio
     import re
+    import time
     import warnings
 
     warnings.filterwarnings("ignore", message="IProgress not found")
 
+    import matplotlib.pyplot as plt
     import tinker
     import torch
     from tinker import TensorData
@@ -103,11 +90,14 @@ def _():
 
     return (
         TensorData,
+        asyncio,
         conversation_to_datum,
         TrainOnWhat,
         get_renderer,
         get_text_content,
+        plt,
         re,
+        time,
         tinker,
         torch,
     )
@@ -141,7 +131,6 @@ def _(re):
         ground_truth = ground_truth.replace(",", "").strip()
         return 1.0 if answer == ground_truth else 0.0
 
-    # Minimal prompt to teach the model the expected answer format
     question_suffix = " Provide a step-by-step solution ending with \\boxed{answer}."
 
     print(f"Loaded {len(train_data)} train / {len(test_data)} test GSM8K problems")
@@ -160,16 +149,13 @@ def _(mo):
     mo.md(r"""
     ## Training configuration
 
-    We use the same hyperparameters as the full experiments in `recipes/math_rft/`
-    so the results are directly comparable. Both methods use the same model, data,
-    and group size.
+    Both methods use the same model, data, and group size for a fair comparison.
     """)
     return
 
 
 @app.cell
 def _():
-    # Shared hyperparameters -- matched to the full experiments
     N_STEPS = 30          # training steps per method
     BATCH_SIZE = 32       # problems per step (groups_per_batch)
     GROUP_SIZE = 16       # completions per problem
@@ -196,7 +182,6 @@ def _(mo):
     2. Grade them -- keep only correct ones
     3. Run standard SFT (cross-entropy) on the correct solutions
     4. Evaluate on the test set periodically
-    5. Repeat
 
     No advantages, no importance weights, no negative signal.
     Just **SFT on whatever the model gets right**.
@@ -206,7 +191,6 @@ def _(mo):
 
 @app.cell
 def _(
-    TensorData,
     TrainOnWhat,
     asyncio,
     conversation_to_datum,
@@ -218,7 +202,6 @@ def _(
     test_data,
     time,
     tinker,
-    torch,
     train_data,
 ):
     async def run_rft(
@@ -305,7 +288,7 @@ def _(
                 if problem_correct > 0:
                     n_solved += 1
 
-            # SFT step
+            # SFT step on correct solutions
             if correct_datums:
                 fb = await tc.forward_backward_async(correct_datums, loss_fn="cross_entropy")
                 op = await tc.optim_step_async(adam)
@@ -363,7 +346,7 @@ async def _(
 
 
 # ==============================================================================
-# Part 2: Run GRPO
+# Part 2: GRPO
 # ==============================================================================
 
 
@@ -427,7 +410,7 @@ async def _(BASE_MODEL, BATCH_SIZE, EVAL_EVERY, GROUP_SIZE, MAX_TOKENS, N_STEPS)
 
 
 # ==============================================================================
-# Part 3: Visualize the comparison
+# Results
 # ==============================================================================
 
 
@@ -509,123 +492,19 @@ def _(grpo_metrics, plt, rft_metrics):
 
 
 # ==============================================================================
-# Part 4: The deeper story -- MATH results
+# Analysis
 # ==============================================================================
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## The deeper story: what happens on harder tasks?
-
-    GSM8K is relatively easy -- Qwen3-8B solves ~60% at baseline. The real
-    difference between RFT and GRPO shows up on **harder tasks** where the model
-    starts with lower accuracy.
-
-    We ran the same comparison on [Hendrycks MATH](https://arxiv.org/abs/2103.03874)
-    (12K training problems, MATH-500 test set, 5 difficulty levels). Here are the
-    results from 40 training steps each:
-    """)
-    return
-
-
-@app.cell
-def _():
-    # Pre-computed results from full MATH experiments (Qwen3-8B, K=16, 40 steps)
-    math_rft_steps = [0, 5, 10, 15, 20, 25, 30, 35, 40]
-    math_rft_overall = [0.422, 0.788, 0.786, 0.780, 0.782, 0.796, 0.798, 0.796, 0.788]
-    math_rft_by_level = {
-        "L1": [0.814, 0.930, 0.977, 0.930, 0.930, 0.953, 0.907, 0.953, 0.930],
-        "L2": [0.722, 0.911, 0.867, 0.867, 0.856, 0.867, 0.867, 0.889, 0.922],
-        "L3": [0.476, 0.876, 0.857, 0.857, 0.857, 0.895, 0.895, 0.895, 0.886],
-        "L4": [0.328, 0.766, 0.797, 0.805, 0.797, 0.812, 0.797, 0.805, 0.758],
-        "L5": [0.142, 0.612, 0.604, 0.590, 0.612, 0.604, 0.642, 0.597, 0.604],
-    }
-    math_grpo_steps = [0, 5, 10, 15, 20, 25, 30, 35]
-    math_grpo_overall = [0.359, 0.469, 0.673, 0.775, 0.823, 0.816, 0.841, 0.851]
-
-    return math_grpo_overall, math_grpo_steps, math_rft_by_level, math_rft_overall, math_rft_steps
-
-
-@app.cell
-def _(math_grpo_overall, math_grpo_steps, math_rft_overall, math_rft_steps, plt):
-    fig_math, ax_math = plt.subplots(figsize=(9, 5))
-
-    ax_math.plot(math_rft_steps, [x * 100 for x in math_rft_overall], "o-", color="#2196F3",
-                 linewidth=2.5, markersize=7, label="RFT (greedy eval)")
-    ax_math.plot(math_grpo_steps, [x * 100 for x in math_grpo_overall], "s-", color="#FF5722",
-                 linewidth=2.5, markersize=7, label="GRPO (T=1.0 eval)")
-
-    ax_math.axvline(x=15, color="gray", linestyle="--", alpha=0.5)
-    ax_math.annotate("crossover", xy=(15, 78), fontsize=9, color="gray", ha="center")
-    ax_math.annotate("78.8%", xy=(5, 78.8), xytext=(7, 83), fontsize=9, color="#2196F3",
-                     arrowprops=dict(arrowstyle="->", color="#2196F3", lw=1.2))
-    ax_math.annotate("85.1%", xy=(35, 85.1), xytext=(30, 89), fontsize=9, color="#FF5722",
-                     arrowprops=dict(arrowstyle="->", color="#FF5722", lw=1.2))
-
-    ax_math.set_xlabel("Training step", fontsize=12)
-    ax_math.set_ylabel("MATH-500 accuracy (%)", fontsize=12)
-    ax_math.set_title("RFT vs GRPO on Hendrycks MATH (Qwen3-8B)", fontsize=14, fontweight="bold")
-    ax_math.legend(fontsize=11, loc="lower right")
-    ax_math.grid(True, alpha=0.3)
-    ax_math.set_ylim(30, 92)
-    ax_math.set_xlim(-1, 42)
-    plt.tight_layout()
-    fig_math
-    return (fig_math,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    **On MATH, the pattern is dramatic:**
-
-    - **RFT** jumps to 78.8% in 5 steps, then **flatlines for 35 more steps**
-    - **GRPO** starts slower but keeps climbing to 85.1% at step 35 -- still improving
-    - The **crossover** happens at step 15
-
-    The per-difficulty breakdown reveals *where* RFT fails:
-    """)
-    return
-
-
-@app.cell
-def _(math_rft_by_level, math_rft_steps, plt):
-    _colors = {
-        "L1": "#4CAF50", "L2": "#8BC34A", "L3": "#FFC107",
-        "L4": "#FF9800", "L5": "#F44336",
-    }
-    fig_levels, ax_levels = plt.subplots(figsize=(9, 5))
-    for _level, _accs in math_rft_by_level.items():
-        ax_levels.plot(math_rft_steps, [x * 100 for x in _accs], "o-",
-                       color=_colors[_level], linewidth=2, markersize=5,
-                       label=f"{_level} ({_accs[0]*100:.0f}% -> {_accs[-1]*100:.0f}%)")
-
-    ax_levels.set_xlabel("Training step", fontsize=12)
-    ax_levels.set_ylabel("Accuracy (%)", fontsize=12)
-    ax_levels.set_title("RFT on MATH: accuracy by difficulty level", fontsize=14, fontweight="bold")
-    ax_levels.legend(fontsize=10, loc="right")
-    ax_levels.grid(True, alpha=0.3)
-    ax_levels.set_ylim(0, 102)
-    plt.tight_layout()
-    fig_levels
-    return (fig_levels,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    **L5 (hardest problems) is stuck at ~60%** while L1-L3 saturate at 90%+.
-
-    ---
-
     ## Why RFT plateaus
 
-    The plateau is NOT because the model can't find correct solutions -- by step 4,
-    it solves 85-100% of training problems. The real causes:
+    RFT's training signal degrades in three ways:
 
-    1. **Redundant gradients:** Correct solutions become increasingly similar.
-       SFT on near-identical outputs produces diminishing updates.
+    1. **Redundant gradients:** As the model improves, its correct solutions become
+       increasingly similar. SFT on near-identical outputs produces diminishing updates.
 
     2. **No negative signal:** RFT throws away wrong solutions. If the model
        makes systematic errors, RFT has no mechanism to correct them.
@@ -666,7 +545,7 @@ def _(mo):
 
     ## Next steps
 
-    - **Full MATH experiments:** `python -m tinker_cookbook.recipes.math_rft.train env=math`
+    - **Harder tasks:** Run on Hendrycks MATH with `python -m tinker_cookbook.recipes.math_rft.train env=math` to see the RFT plateau more dramatically
     - **GRPO recipe:** `python -m tinker_cookbook.recipes.math_rl.train env=math`
     - **RL hyperparameters:** `tutorials/402_rl_hyperparams.py`
     - **Research notes:** `tinker_cookbook/recipes/math_rft/NOTES.md`
