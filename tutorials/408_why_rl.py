@@ -11,6 +11,14 @@ def _():
     return (mo,)
 
 
+@app.cell
+def _():
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    return np, plt
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -235,9 +243,7 @@ def _(mo):
 
 
 @app.cell
-def _(grpo_overall, grpo_steps, rft_overall, rft_steps):
-    import matplotlib.pyplot as plt
-
+def _(grpo_overall, grpo_steps, plt, rft_overall, rft_steps):
     fig1, ax1 = plt.subplots(figsize=(9, 5))
 
     ax1.plot(rft_steps, [x * 100 for x in rft_overall], "o-", color="#2196F3",
@@ -299,9 +305,7 @@ def _(mo):
 
 
 @app.cell
-def _(rft_by_level, rft_steps):
-    import matplotlib.pyplot as plt
-
+def _(plt, rft_by_level, rft_steps):
     colors = {"L1": "#4CAF50", "L2": "#8BC34A", "L3": "#FFC107", "L4": "#FF9800", "L5": "#F44336"}
 
     fig2, ax2 = plt.subplots(figsize=(9, 5))
@@ -357,9 +361,7 @@ def _(mo):
 
 
 @app.cell
-def _(rft_sample_acc, rft_solve_rate, rft_train_steps):
-    import matplotlib.pyplot as plt
-
+def _(plt, rft_sample_acc, rft_solve_rate, rft_train_steps):
     fig3, (ax3a, ax3b) = plt.subplots(1, 2, figsize=(12, 4.5))
 
     ax3a.plot(rft_train_steps, [x * 100 for x in rft_solve_rate], "o-",
@@ -468,16 +470,13 @@ def _(mo):
 
 
 @app.cell
-def _(grpo_overall, grpo_steps, grpo_train_reward, grpo_train_steps):
-    import matplotlib.pyplot as plt
-
+def _(grpo_overall, grpo_steps, grpo_train_reward, grpo_train_steps, np, plt):
     fig4, (ax4a, ax4b) = plt.subplots(1, 2, figsize=(12, 4.5))
 
     # Training reward
     ax4a.plot(grpo_train_steps, [x * 100 for x in grpo_train_reward], "o-",
               color="#FF5722", linewidth=1, markersize=3, alpha=0.7)
     # Add trend line
-    import numpy as np
     z = np.polyfit(grpo_train_steps, grpo_train_reward, 2)
     p = np.poly1d(z)
     smooth_x = np.linspace(0, 39, 100)
@@ -540,9 +539,7 @@ def _():
 
 
 @app.cell
-def _(hybrid_grpo_steps, hybrid_test, pure_grpo_steps, pure_grpo_test):
-    import matplotlib.pyplot as plt
-
+def _(hybrid_grpo_steps, hybrid_test, plt, pure_grpo_steps, pure_grpo_test):
     fig5, ax5 = plt.subplots(figsize=(9, 5))
 
     ax5.plot(pure_grpo_steps, [x * 100 for x in pure_grpo_test], "s-",
