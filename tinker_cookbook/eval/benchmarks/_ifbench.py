@@ -154,9 +154,7 @@ class IFBenchBenchmarkBuilder(BenchmarkBuilder):
             if not prompt:
                 continue
 
-            kwargs_list = parse_kwargs(raw_kwargs)
-            while len(kwargs_list) < len(instruction_ids):
-                kwargs_list.append({})
+            kwargs_list = parse_kwargs(raw_kwargs, instruction_ids)
 
             example_id = make_example_id("ifbench", prompt)
             envs.append(

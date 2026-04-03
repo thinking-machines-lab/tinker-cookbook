@@ -133,15 +133,19 @@ _save_locks: dict[str, asyncio.Lock] = {}
 
 def _get_save_lock(key: str) -> asyncio.Lock:
     """Get or create a per-file lock. Supports parallel benchmarks and checkpoints."""
-    if key not in _save_locks:
-        _save_locks[key] = asyncio.Lock()
-    return _save_locks[key]
+    return _save_locks.setdefault(key, asyncio.Lock())
+
+
+_created_dirs: set[str] = set()
 
 
 async def _save_trajectory(save_dir: str, benchmark_name: str, traj: StoredTrajectory) -> None:
     """Append one trajectory to the JSONL file (per-file lock for parallel safety)."""
     dir_path = Path(save_dir) / benchmark_name
-    dir_path.mkdir(parents=True, exist_ok=True)
+    dir_key = str(dir_path)
+    if dir_key not in _created_dirs:
+        dir_path.mkdir(parents=True, exist_ok=True)
+        _created_dirs.add(dir_key)
     filepath = str(dir_path / "trajectories.jsonl")
     async with _get_save_lock(filepath):
         with open(filepath, "a") as f:

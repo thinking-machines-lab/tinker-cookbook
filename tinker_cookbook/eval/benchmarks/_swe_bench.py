@@ -24,6 +24,7 @@ from typing import Annotated, Any, cast
 from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
+    SandboxMixin,
     get_sandbox_factory,
     limit_dataset,
     load_benchmark_dataset,
@@ -162,24 +163,18 @@ class _SWEBenchReward:
         if not self._fail_to_pass:
             return 0.0, {"no_tests": 1.0}
 
-        passed_tests: list[str] = []
-        failed_tests: list[str] = []
+        # Run all tests in a single pytest invocation for efficiency
+        test_args = " ".join(shlex.quote(t) for t in self._fail_to_pass)
+        try:
+            result = await self._sandbox.run_command(
+                f"cd /workspace/repo && python -m pytest {test_args} --tb=short 2>&1",
+                timeout=120,
+            )
+            all_passed = result.exit_code == 0
+        except Exception as e:
+            logger.warning(f"swe_bench test error: {e}")
+            all_passed = False
 
-        for test_id in self._fail_to_pass:
-            try:
-                result = await self._sandbox.run_command(
-                    f"cd /workspace/repo && python -m pytest {shlex.quote(test_id)} -x --tb=short 2>&1",
-                    timeout=120,
-                )
-                if result.exit_code == 0:
-                    passed_tests.append(test_id)
-                else:
-                    failed_tests.append(test_id)
-            except Exception as e:
-                failed_tests.append(test_id)
-                logger.warning(f"swe_bench test error for {test_id}: {e}")
-
-        all_passed = len(failed_tests) == 0
         num_turns = sum(1 for msg in history if msg.get("role") == "assistant")
 
         return (
@@ -187,7 +182,6 @@ class _SWEBenchReward:
             {
                 "correct": float(all_passed),
                 "num_turns": float(num_turns),
-                "num_tests_passed": float(len(passed_tests)),
                 "num_tests_total": float(len(self._fail_to_pass)),
             },
         )
@@ -198,7 +192,7 @@ class _SWEBenchReward:
 # ---------------------------------------------------------------------------
 
 
-class _SWEBenchEnvFactory(Env):
+class _SWEBenchEnvFactory(SandboxMixin, Env):
     """Wrapper that creates sandbox, clones repo, and delegates to EnvFromMessageEnv."""
 
     def __init__(
@@ -233,20 +227,11 @@ class _SWEBenchEnvFactory(Env):
         self.max_generation_tokens = max_generation_tokens
 
         self._inner: EnvFromMessageEnv | None = None
-        self._sandbox: SandboxInterface | None = None
-
-    async def cleanup(self) -> None:
-        """Clean up sandbox resources."""
-        if self._sandbox is not None:
-            try:
-                await self._sandbox.cleanup()
-            except Exception:
-                logger.debug("Sandbox cleanup failed", exc_info=True)
 
     async def initial_observation(self):
         # Create sandbox
-        self._sandbox = await self.sandbox_factory()
-        assert self._sandbox is not None
+        self.sandbox = await self.sandbox_factory()
+        assert self.sandbox is not None
 
         # Clone and checkout
         try:
@@ -258,7 +243,7 @@ class _SWEBenchEnvFactory(Env):
                 f"cd /workspace/repo && git checkout {safe_commit}",
             ]
             for cmd in setup_cmds:
-                result = await self._sandbox.run_command(cmd, timeout=300)
+                result = await self.sandbox.run_command(cmd, timeout=300)
                 if result.exit_code != 0:
                     raise RuntimeError(
                         f"swe_bench setup failed (exit {result.exit_code}): "
@@ -271,13 +256,13 @@ class _SWEBenchEnvFactory(Env):
         # Apply test patch
         if self.test_patch.strip():
             try:
-                await self._sandbox.write_file("/workspace/test_patch.diff", self.test_patch)
-                result = await self._sandbox.run_command(
+                await self.sandbox.write_file("/workspace/test_patch.diff", self.test_patch)
+                result = await self.sandbox.run_command(
                     "cd /workspace/repo && git apply /workspace/test_patch.diff",
                     timeout=60,
                 )
                 if result.exit_code != 0:
-                    await self._sandbox.run_command(
+                    await self.sandbox.run_command(
                         "cd /workspace/repo && git apply --3way /workspace/test_patch.diff",
                         timeout=60,
                     )
@@ -285,8 +270,8 @@ class _SWEBenchEnvFactory(Env):
                 logger.warning(f"swe_bench: failed to apply test patch: {e}")
 
         # Create tool and reward
-        bash_tool = _SWEBashTool(self._sandbox)
-        reward_fn = _SWEBenchReward(self._sandbox, self.fail_to_pass, self.instance_id)
+        bash_tool = _SWEBashTool(self.sandbox)
+        reward_fn = _SWEBenchReward(self.sandbox, self.fail_to_pass, self.instance_id)
 
         # Build initial messages
         system_content = self.system_prompt or _SYSTEM_PROMPT

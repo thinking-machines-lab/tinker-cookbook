@@ -29,6 +29,7 @@ import yaml
 from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
+    SandboxMixin,
     get_sandbox_factory,
     limit_dataset,
     load_benchmark_dataset,
@@ -276,7 +277,7 @@ class TerminalBenchBenchmarkBuilder(BenchmarkBuilder):
         return envs
 
 
-class _TerminalBenchEnvFactory(Env):
+class _TerminalBenchEnvFactory(SandboxMixin, Env):
     """Wrapper that creates the sandbox and MessageEnv on first observation.
 
     We can't create the sandbox in ``make_envs`` (it's async and expensive).
@@ -307,23 +308,14 @@ class _TerminalBenchEnvFactory(Env):
         self.max_generation_tokens = max_generation_tokens
 
         self._inner: EnvFromMessageEnv | None = None
-        self._sandbox: SandboxInterface | None = None
-
-    async def cleanup(self) -> None:
-        """Clean up sandbox resources."""
-        if self._sandbox is not None:
-            try:
-                await self._sandbox.cleanup()
-            except Exception:
-                logger.debug("Sandbox cleanup failed", exc_info=True)
 
     async def initial_observation(self):
         # Create sandbox
-        self._sandbox = await self.sandbox_factory()
-        assert self._sandbox is not None
+        self.sandbox = await self.sandbox_factory()
+        assert self.sandbox is not None
 
         # Create /app working directory and /app/tests for test scripts
-        await self._sandbox.run_command("mkdir -p /app/tests", timeout=10)
+        await self.sandbox.run_command("mkdir -p /app/tests", timeout=10)
 
         # Write setup files to /app (matching the Dockerfile WORKDIR)
         for filepath, content in self.setup_files.items():
@@ -332,20 +324,20 @@ class _TerminalBenchEnvFactory(Env):
                 # Ensure parent directory exists
                 parent = "/".join(dest.split("/")[:-1])
                 if parent:
-                    await self._sandbox.run_command(f"mkdir -p {parent}", timeout=10)
-                await self._sandbox.write_file(dest, content, executable=filepath.endswith(".sh"))
+                    await self.sandbox.run_command(f"mkdir -p {parent}", timeout=10)
+                await self.sandbox.write_file(dest, content, executable=filepath.endswith(".sh"))
             except Exception as e:
                 logger.warning(f"Failed to write setup file {filepath}: {e}")
 
         # Write test script to /app
         if self.test_script:
-            await self._sandbox.write_file(
+            await self.sandbox.write_file(
                 "/app/run_tests.sh", self.test_script, executable=True
             )
 
         # Create tool and reward
-        bash_tool = _BashTool(self._sandbox)
-        reward_fn = _TerminalBenchReward(self._sandbox, self.test_script)
+        bash_tool = _BashTool(self.sandbox)
+        reward_fn = _TerminalBenchReward(self.sandbox, self.test_script)
 
         # Build initial messages with tool specs in the renderer's native format
         system_content = self.system_prompt or _SYSTEM_PROMPT
