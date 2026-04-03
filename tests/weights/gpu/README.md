@@ -31,6 +31,7 @@ HF_HUB_CACHE=~/huggingface/hub pytest tests/weights/gpu/ -v --ignore=tests/weigh
 | test_kimi.py | Kimi-K2 | x | x | | | | | x | |
 | test_gpt_oss.py | GPT-OSS-20B | x | x | | | x | x | | |
 | test_nemotron.py | Nemotron-30B | x | x | | | | | | |
+| test_qwen3_vl.py | Qwen3-VL-30B-A3B | x | x | x | | | | | |
 
 ## Adding a new model
 
