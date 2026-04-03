@@ -160,20 +160,20 @@ def _(mo):
     from peft import PeftModel
     from transformers import AutoModelForCausalLM
 
-    base = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3-8B")
+    base = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3.5-4B")
     model = PeftModel.from_pretrained(base, "./peft_adapter")
     ```
 
     **With vLLM (multi-adapter serving):**
     ```bash
-    vllm serve Qwen/Qwen3-8B \
+    vllm serve Qwen/Qwen3.5-4B \
         --lora-modules my_adapter=./peft_adapter
     ```
 
     **With SGLang:**
     ```bash
     python -m sglang.launch_server \
-        --model Qwen/Qwen3-8B \
+        --model Qwen/Qwen3.5-4B \
         --lora-paths my_adapter=./peft_adapter
     ```
     """)
