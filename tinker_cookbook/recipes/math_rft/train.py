@@ -50,7 +50,7 @@ logging.getLogger("httpx").setLevel(logging.WARN)
 @chz.chz
 class Config:
     # Model
-    model_name: str = "Qwen/Qwen3-1.7B"
+    model_name: str = "Qwen/Qwen3-8B"
     lora_rank: int = 32
     renderer_name: str | None = None
     load_checkpoint_path: str | None = None
@@ -462,10 +462,9 @@ async def main(config: Config):
     logger.info("RFT training completed")
 
 
-def cli_main():
-    config = chz.make_from_argv(Config)
+def cli_main(config: Config):
     asyncio.run(main(config))
 
 
 if __name__ == "__main__":
-    cli_main()
+    chz.nested_entrypoint(cli_main)
