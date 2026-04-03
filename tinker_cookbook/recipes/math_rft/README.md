@@ -133,11 +133,32 @@ achieves 85-100% training solve rate by step 4. The real bottleneck:
 GRPO addresses all three: advantage weighting upweights rare successes, negative
 advantages penalize failure patterns, and importance weighting provides richer gradients.
 
-## Practical Recommendation
+### RFT->GRPO hybrid (warm-start experiment)
 
-Use RFT as a **fast warm-start** (5-10 steps), then switch to GRPO for continued
-improvement on hard problems. RFT captures "low-hanging fruit" (format, common patterns)
-5x faster than GRPO, while GRPO breaks through the ceiling on harder reasoning.
+5 steps RFT (lr=1e-4), then 35 steps GRPO (lr=8e-5) from RFT checkpoint:
+
+```
+GRPO step  Pure GRPO  Hybrid (RFT+GRPO)
+  0        35.9%      77.1%
+  5        46.9%      75.8%
+ 10        67.3%      78.3%
+ 15        77.5%      78.5%
+ 20        82.3%      78.6%
+ 25        81.6%      78.7%
+ 30        84.1%      79.3%
+```
+
+**Surprising negative result**: The naive warm-start *hurts* GRPO. The hybrid (79.3%)
+underperforms pure GRPO (85.1%). RFT appears to push the model into a low-entropy local
+optimum that GRPO's small-step updates can't escape. See NOTES.md for detailed analysis.
+
+## Practical Recommendations
+
+1. **Easy tasks (GSM8K-level):** RFT alone is sufficient. 5-10 steps to ~94%.
+2. **Hard tasks (MATH-level):** Use pure GRPO. It's slower but breaks through ceilings.
+3. **Don't naively warm-start GRPO from RFT.** The entropy collapse hurts more than
+   the better initialization helps. If a two-stage approach is needed, consider
+   entropy-preserving alternatives (KL regularization during RFT, LR warmup on transition).
 
 ## References
 

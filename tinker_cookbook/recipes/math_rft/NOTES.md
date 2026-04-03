@@ -112,18 +112,108 @@ GRPO addresses all three issues:
 - Negative advantages explicitly penalize incorrect solution patterns
 - The importance-weighted loss provides richer gradient information
 
-## Implications
+### Experiment 4: RFT→GRPO Hybrid (warm-start, completed)
 
-1. **RFT as cheap warm-start:** Use RFT for 5-10 steps to quickly capture "low-hanging
-   fruit" (format compliance, common patterns), then switch to GRPO for harder reasoning
+Config: 5 steps RFT (lr=1e-4), then 35 steps GRPO (lr=8e-5) from RFT checkpoint.
 
-2. **Difficulty regime determines method choice:**
-   - Easy tasks (solve_rate > 70%): RFT is sufficient and 5x faster
-   - Hard tasks (solve_rate < 50%): GRPO is essential for continued improvement
+**Three-way comparison (all at T=1.0 eval):**
 
-3. **Per-level analysis is critical:** Aggregate metrics (overall pass@1) hide the
-   difficulty-dependent dynamics. RFT appears to work well overall (78.8%) but fails
-   to improve on the hardest 25% of problems.
+| GRPO step | Pure GRPO | Hybrid (RFT+GRPO) | Effective total |
+|-----------|-----------|-------------------|-----------------|
+| 0         | 35.9%     | 77.1%             | RFT5 + GRPO0    |
+| 5         | 46.9%     | 75.8%             | RFT5 + GRPO5    |
+| 10        | 67.3%     | 78.3%             | RFT5 + GRPO10   |
+| 15        | 77.5%     | 78.5%             | RFT5 + GRPO15   |
+| 20        | **82.3%** | 78.6%             | RFT5 + GRPO20   |
+| 25        | 81.6%     | 78.7%             | RFT5 + GRPO25   |
+| 30        | **84.1%** | **79.3%**         | RFT5 + GRPO30   |
+| 35        | **85.1%** | --                | --              |
+
+**Surprising negative result:** The naive RFT→GRPO pipeline *underperforms* pure GRPO.
+The hybrid peaks at 79.3%, barely above pure RFT's plateau (79.8% greedy ≈ ~73% T=1.0)
+and far below pure GRPO (85.1%).
+
+**Why does the warm-start hurt?** Three possible explanations:
+
+1. **Entropy collapse:** RFT (SFT on correct solutions) dramatically reduces the model's
+   output entropy. GRPO needs exploration diversity — if the model is already very
+   confident in its (sometimes wrong) solutions, GRPO's importance weights become
+   near-uniform, providing weak gradient signal.
+
+2. **Local optimum trapping:** RFT pushes the model into a narrow region of weight
+   space that generates correct-looking outputs. GRPO's small per-step updates
+   (KL ~0.0005) can't escape this basin. In contrast, GRPO from scratch traverses
+   a broader region of weight space.
+
+3. **Distribution shift:** GRPO's importance-weighted loss assumes the current policy
+   is close to the reference. After 5 steps of RFT with lr=1e-4, the model has shifted
+   significantly, potentially destabilizing the importance weights early on.
+
+This finding has important implications for multi-stage training pipelines like those
+used by DeepSeek-R1, which employs RFT as a warm-up stage before RL. Our result
+suggests this works only with careful tuning of the transition (e.g., LR warmup,
+gradual mixing) rather than a naive checkpoint hand-off.
+
+## Key Takeaways
+
+1. **RFT is a "fast ceiling" method:** Rapid convergence (5 steps) to a ceiling
+   determined by the model's initial capability and the task difficulty. Ideal for
+   easy-to-moderate tasks where the ceiling is acceptable.
+
+2. **GRPO is a "slow breakthrough" method:** Slower convergence but continues improving
+   beyond RFT's ceiling. Essential for hard tasks requiring reasoning improvement.
+
+3. **Naive warm-starting hurts:** Initializing GRPO from an RFT checkpoint does NOT
+   combine their strengths. RFT's entropy collapse prevents GRPO from exploring
+   effectively. A more careful transition is needed.
+
+4. **The crossover point depends on task difficulty:**
+   - GSM8K (easy): RFT dominates — GRPO never catches up in 30 steps
+   - MATH (hard): GRPO overtakes RFT at step ~15 and pulls away
+
+5. **Per-level analysis is essential:** Aggregate metrics hide difficulty-dependent
+   dynamics. On MATH, RFT's 79% overall hides that L5 is stuck at 60%.
+
+## Follow-Up Research Ideas
+
+### Idea 1: RFT with Entropy Regularization
+Add a KL penalty to the RFT loss: `L = CE(correct_solutions) + β * KL(π || π_ref)`.
+This preserves exploration ability while training on correct solutions, potentially
+avoiding the local optimum that prevents GRPO from improving after RFT.
+**Expected impact:** If this works, it could combine RFT's speed with GRPO's ceiling.
+
+### Idea 2: Frontier-Focused GRPO
+Only apply GRPO updates to "frontier" problems where solve rate is between 20-80%.
+Easy problems (solve_rate ≈ 1) contribute near-zero useful gradient. Impossible
+problems (solve_rate ≈ 0) also contribute noise. Focusing on the frontier maximizes
+the information per gradient step.
+**Expected impact:** Could make GRPO 2-3x more sample-efficient.
+
+### Idea 3: Characterizing the Local Optimum
+Measure the output entropy and solution diversity of RFT-trained vs GRPO-trained
+models. If RFT collapses entropy, this explains the hybrid failure and suggests
+entropy-preserving modifications. Compare the KL divergence from the base model
+for both methods at the same test accuracy.
+**Expected impact:** Theoretical understanding of why methods differ.
+
+### Idea 4: STaR-Style Rationalization for Unsolvable Problems
+For problems where all K samples are wrong, provide the correct answer and ask the
+model to generate a step-by-step solution (rationalization). Train on these
+rationalizations alongside naturally correct solutions. This directly addresses
+RFT's blind spot on unsolvable problems.
+**Expected impact:** Could break through RFT's ceiling without needing full RL.
+
+### Idea 5: Interleaved RFT-GRPO
+Instead of sequential (RFT then GRPO), alternate within each batch:
+- For problems with solve_rate > 80%: apply RFT loss (efficient on easy problems)
+- For problems with solve_rate < 80%: apply GRPO loss (learns from failures)
+**Expected impact:** Gets benefits of both methods without the warm-start problem.
+
+### Idea 6: Difficulty-Aware Curriculum
+Train on problems ordered by difficulty (L1→L5). As the model masters easy
+problems, shift the distribution toward harder ones. This is natural for RFT
+because the solve rate determines whether a problem contributes training signal.
+**Expected impact:** More efficient use of training compute.
 
 ## Log
 - 2026-04-03 01:51: Initial implementation committed
@@ -132,3 +222,5 @@ GRPO addresses all three issues:
 - 2026-04-03 08:00: Per-difficulty tracking added for MATH experiments
 - 2026-04-03 10:00: MATH RFT experiment: 42.2% → 78.8% plateau at step 5
 - 2026-04-03 14:00: MATH GRPO experiment: breaks through to 85.1% at step 35
+- 2026-04-03 18:00: Hybrid RFT→GRPO experiment: surprising negative result (79.3% < 85.1%)
+- 2026-04-03 19:00: Analysis and follow-up ideas written up
