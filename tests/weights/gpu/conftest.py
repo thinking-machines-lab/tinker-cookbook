@@ -90,7 +90,7 @@ def vllm_generate(model_name: str, peft_path: Path, *, trust_remote_code: bool =
         max_loras=1,
         max_model_len=256,
         enforce_eager=True,
-        gpu_memory_utilization=0.4,
+        gpu_memory_utilization=0.9,
         trust_remote_code=trust_remote_code,
     )
     params = SamplingParams(max_tokens=20, temperature=0.0)

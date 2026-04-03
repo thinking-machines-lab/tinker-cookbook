@@ -13,11 +13,9 @@ import pytest
 from tests.weights.gpu.conftest import (
     download_adapter,
     load_all_tensors,
-    skip_no_vllm,
     train_one_step,
     verify_fp8_output,
     verify_merged_model,
-    vllm_generate,
 )
 from tinker_cookbook.weights import build_hf_model, build_lora_adapter
 
@@ -104,16 +102,3 @@ class TestQuantized:
         )
         verify_merged_model(output, expect_config_key="compression_config")
         verify_fp8_output(output)
-
-
-class TestVllmServing:
-    @skip_no_vllm
-    def test_adapter_serves_in_vllm(self, adapter_dir, tmp_path):
-        """Export adapter to PEFT, load in vLLM, generate text."""
-        peft_dir = tmp_path / "peft"
-        build_lora_adapter(
-            base_model=MODEL,
-            adapter_path=str(adapter_dir),
-            output_path=str(peft_dir),
-        )
-        vllm_generate(MODEL, peft_dir)

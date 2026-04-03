@@ -36,15 +36,17 @@ def adapter_dir(tmp_path_factory):
 
 
 class TestMerge:
-    def test_shard_merge(self, adapter_dir, tmp_path):
+    @pytest.mark.parametrize("device", ["cpu", "cuda"])
+    def test_shard_merge(self, adapter_dir, tmp_path, device):
         """Shard merge with VL prefix + INT4 packed expert weights."""
-        output = tmp_path / "merged"
+        output = tmp_path / f"merged_{device}"
         build_hf_model(
             base_model=MODEL,
             adapter_path=str(adapter_dir),
             output_path=str(output),
             merge_strategy="shard",
             trust_remote_code=True,
+            device=device,
         )
         verify_merged_model(output)
 
