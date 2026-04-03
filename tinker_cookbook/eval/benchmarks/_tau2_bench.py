@@ -4,27 +4,38 @@
 
 1. **Tool definitions**: Downloads domain-specific tool schemas from the
    tau2-bench GitHub repo and converts them to OpenAI function-calling format.
-   The model receives proper tool specs to make structured calls.
+   The model receives proper tool specs as text in the system prompt.
 
-2. **Tool backend**: Uses a simplified simulated DB backend that matches
+2. **Tool call parsing**: Model tool calls are extracted from freeform text
+   via JSON block detection (``_extract_tool_calls``). Models that use native
+   tool-calling syntax (e.g. ``<tool_call>`` tags in Qwen) may not be parsed
+   correctly. Migrating to ``MessageEnv`` + ``EnvFromMessageEnv`` would fix
+   this by using the renderer's native tool-call parsing.
+
+3. **Tool backend**: Uses a simplified simulated DB backend that matches
    tools against collections by name/argument heuristics. May not exactly
    replicate the official Python tool implementations.
 
-3. **User simulation**: Requires an LLM to simulate the customer. Quality
-   depends heavily on the simulator model.
+4. **User simulation**: Requires a **separate** LLM to simulate the customer.
+   Using the same model as both agent and simulator causes role confusion —
+   the agent may start generating customer responses. The official benchmark
+   uses GPT-4.1 as the simulator. Set ``config.judge_sampling_client`` to a
+   different model than the one being evaluated.
 
-4. **NL grading**: The official benchmark uses ``nl_assertions`` (natural
+5. **NL grading**: The official benchmark uses ``nl_assertions`` (natural
    language checks like "Agent should refuse the cancellation") which require
    an LLM judge. Our implementation only checks action-based criteria.
 
-5. **DB state grading**: The official benchmark checks final DB state against
+6. **DB state grading**: The official benchmark checks final DB state against
    expected state (``db_check``). Not yet implemented.
 
-6. **Architecture**: Should be migrated to ``MessageEnv`` + ``EnvFromMessageEnv``
-   pattern (like terminal_bench and swe_bench) for proper renderer integration.
+7. **Architecture**: Should be migrated to ``MessageEnv`` + ``EnvFromMessageEnv``
+   pattern (like terminal_bench and swe_bench) for proper renderer integration
+   and native tool-call support.
 
 Metric: Task completion rate (action matching).
-Requires ``config.judge_sampling_client`` for the user simulator.
+Requires ``config.judge_sampling_client`` for the user simulator (use a
+separate model from the one being evaluated).
 """
 
 from __future__ import annotations
