@@ -91,28 +91,61 @@ class KLReferenceConfig:
 async def gather_with_progress(
     coroutines: Iterable[Coroutine[Any, Any, T]],
     desc: str,
-) -> list[T]:
+    min_completions: int | float = 1.0,
+) -> list[T | None]:
     """Run coroutines concurrently with a progress bar that updates as each completes.
 
-    This preserves the order of results (like asyncio.gather) while providing
-    real-time progress feedback as individual coroutines complete.
+    When ``min_completions < 1.0`` (or an int less than total), the function
+    proceeds as soon as the threshold is met, cancelling remaining in-flight
+    coroutines. This avoids waiting for slow tail groups that generate very
+    long sequences.
 
     Args:
         coroutines (Iterable[Coroutine[Any, Any, T]]): Coroutines to run concurrently.
         desc (str): Description label for the tqdm progress bar.
+        min_completions (int | float): Minimum completions before proceeding.
+            If float, treated as fraction of total (e.g., 0.9 = 90%).
+            If int, absolute count. Default 1.0 = wait for all.
 
     Returns:
-        list[T]: Results from each coroutine, in the same order as the input.
+        list[T | None]: Results from each coroutine in input order.
+            ``None`` for cancelled/incomplete coroutines.
     """
     coroutine_list = list(coroutines)
     total = len(coroutine_list)
+
+    # Resolve min_completions to an absolute count
+    if isinstance(min_completions, float):
+        if min_completions >= 1.0:
+            min_count = total
+        else:
+            min_count = max(1, int(min_completions * total))
+    else:
+        min_count = min(min_completions, total)
+
     pbar = tqdm(total=total, desc=desc)
     completed = 0
     t0 = time.monotonic()
+    cutoff_event = asyncio.Event()
+    results: list[T | None] = [None] * total
 
-    async def track(idx: int, coro: Coroutine[Any, Any, T]) -> T:
+    async def track(idx: int, coro: Coroutine[Any, Any, T]) -> None:
         nonlocal completed
-        result = await coro
+        try:
+            result = await coro
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            # Let exceptions propagate in wait-for-all mode.
+            # In early-cutoff mode, count as completed (the downstream
+            # None-filtering handles failed groups).
+            if min_count >= total:
+                raise
+            completed += 1
+            if completed >= min_count:
+                cutoff_event.set()
+            return
+        results[idx] = result
         completed += 1
         elapsed = time.monotonic() - t0
         pbar.update(1)
@@ -121,14 +154,15 @@ async def gather_with_progress(
                 "%s: %d/%d groups done (%.0fs elapsed, %.1fs/group avg)",
                 desc, completed, total, elapsed, elapsed / completed,
             )
-        return result
+        if completed >= min_count:
+            cutoff_event.set()
 
     # Stale detection: log warning if no progress for 5 minutes
     async def stale_watchdog() -> None:
         last_completed = 0
-        while completed < total:
+        while completed < min_count:
             await asyncio.sleep(300)  # 5 min
-            if completed == last_completed and completed < total:
+            if completed == last_completed and completed < min_count:
                 elapsed = time.monotonic() - t0
                 logger.warning(
                     "%s: STALE — no progress in 5 min (%d/%d done, %.0fs elapsed)",
@@ -136,9 +170,29 @@ async def gather_with_progress(
                 )
             last_completed = completed
 
+    tasks = [asyncio.create_task(track(i, coro)) for i, coro in enumerate(coroutine_list)]
     watchdog = asyncio.create_task(stale_watchdog())
+
     try:
-        results = await asyncio.gather(*[track(i, coro) for i, coro in enumerate(coroutine_list)])
+        if min_count >= total:
+            # Wait for all (original behavior)
+            await asyncio.gather(*tasks)
+        else:
+            # Wait until min_count completions, then cancel the rest
+            await cutoff_event.wait()
+            elapsed = time.monotonic() - t0
+            remaining = total - completed
+            if remaining > 0:
+                logger.info(
+                    "%s: min_groups_per_batch reached (%d/%d done, %.0fs elapsed). "
+                    "Cancelling %d remaining groups.",
+                    desc, completed, total, elapsed, remaining,
+                )
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                # Wait for cancellations to propagate
+                await asyncio.gather(*tasks, return_exceptions=True)
     finally:
         watchdog.cancel()
         pbar.close()
@@ -515,6 +569,12 @@ class Config:
     # True: retry failed trajectories with default budget (RetryOnFailure(max_retries=3)).
     # RolloutStrategy instance: custom strategy (e.g. RetryOnFailure(max_retries=5)).
     rollout_error_tolerance: bool | RolloutStrategy = False
+    # Minimum groups per batch before proceeding to training. Once this many
+    # groups complete, remaining in-flight groups are cancelled. Avoids waiting
+    # for slow tail groups that generate very long sequences.
+    # 1.0 (default): wait for all groups. 0.9: proceed after 90% complete.
+    # Can also be an int for an absolute count (e.g., 56 out of 64).
+    min_groups_per_batch: int | float = 1.0
     # Emit async trace events for debugging/profiling.
     enable_trace: bool = False
     # Save a Gantt chart HTML every N iterations (0 = disabled). Requires plotly.
@@ -1766,12 +1826,14 @@ async def do_sync_training(
                             for i, builder in enumerate(env_group_builders_P)
                         ),
                         desc=f"Sampling batch {i_batch}",
+                        min_completions=config.min_groups_per_batch,
                     )
 
-            # Ingest error info from results
+            # Ingest error info from results (skip None from cancelled groups)
             if error_counter is not None:
                 for result in results_P:
-                    error_counter.ingest(result)
+                    if result is not None:
+                        error_counter.ingest(result)
 
             # Filter out None results (from errored or fully-failed groups)
             successful = [

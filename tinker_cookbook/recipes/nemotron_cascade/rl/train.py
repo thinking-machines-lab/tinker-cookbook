@@ -92,6 +92,16 @@ class CLIConfig:
     max_steps_off_policy: int | None = None
     stream_minibatch_config: StreamMinibatchConfig | None = None
 
+    # Rollout error tolerance. False (default) = crash on any error.
+    # True = retry failed/timed-out trajectories (RetryOnFailure).
+    rollout_error_tolerance: bool = False
+    # Per-rollout timeout in seconds (0 = disabled). Only used when
+    # rollout_error_tolerance=True.
+    per_rollout_timeout: float = 0
+    # Minimum groups per batch before proceeding to training (0.9 = 90%).
+    # Once this many groups complete, remaining slow groups are cancelled.
+    min_groups_per_batch: float = 1.0
+
     # Model context window size. Dynamically caps max_tokens per-request.
     # Needed for Cascade SWE prompts (~24K tokens) where prompt + max_tokens
     # can exceed the model's 65K context limit.
@@ -297,6 +307,15 @@ async def cli_main(cli_config: CLIConfig):
         loss_fn_config=cli_config.loss_fn_config,
         max_steps=cli_config.max_steps,
         context_window=cli_config.context_window,
+        rollout_error_tolerance=(
+            RetryOnFailure(
+                max_retries=3,
+                per_rollout_timeout=cli_config.per_rollout_timeout,
+            )
+            if cli_config.rollout_error_tolerance
+            else False
+        ),
+        min_groups_per_batch=cli_config.min_groups_per_batch,
     )
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
