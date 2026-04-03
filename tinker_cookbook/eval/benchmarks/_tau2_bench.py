@@ -1,40 +1,24 @@
 """tau2-Bench benchmark — multi-turn customer service agent evaluation.
 
-**Status: Experimental** — functional but needs further validation:
+**Status: Experimental** — functional, iterating towards matching public scores.
 
-1. **Tool definitions**: Downloads domain-specific tool schemas from the
-   tau2-bench GitHub repo and converts them to OpenAI function-calling format.
-   The model receives proper tool specs as text in the system prompt.
+Architecture: Uses ``MessageEnv`` + ``EnvFromMessageEnv`` pattern for native
+tool-call parsing via the renderer. The model interacts with a simulated
+customer and calls tools against a backend database.
 
-2. **Tool call parsing**: Model tool calls are extracted from freeform text
-   via JSON block detection (``_extract_tool_calls``). Models that use native
-   tool-calling syntax (e.g. ``<tool_call>`` tags in Qwen) may not be parsed
-   correctly. Migrating to ``MessageEnv`` + ``EnvFromMessageEnv`` would fix
-   this by using the renderer's native tool-call parsing.
+Each turn:
+1. Model response parsed by renderer for tool calls (native format)
+2. If tool calls → execute against backend DB → return tool results
+3. If no tool calls (text to customer) → simulate customer response → continue
+4. Episode ends when model stops or max turns reached
 
-3. **Tool backend**: Uses a simplified simulated DB backend that matches
-   tools against collections by name/argument heuristics. May not exactly
-   replicate the official Python tool implementations.
-
-4. **User simulation**: Requires a **separate** LLM to simulate the customer.
-   Using the same model as both agent and simulator causes role confusion —
-   the agent may start generating customer responses. The official benchmark
-   uses GPT-4.1 as the simulator. Set ``config.judge_sampling_client`` to a
-   different model than the one being evaluated.
-
-5. **NL grading**: The official benchmark uses ``nl_assertions`` (natural
-   language checks like "Agent should refuse the cancellation") which require
-   an LLM judge. Our implementation only checks action-based criteria.
-
-6. **DB state grading**: The official benchmark checks final DB state against
-   expected state (``db_check``). Not yet implemented.
-
-7. **Architecture**: Should be migrated to ``MessageEnv`` + ``EnvFromMessageEnv``
-   pattern (like terminal_bench and swe_bench) for proper renderer integration
-   and native tool-call support.
+Known limitations:
+- Tool backend uses heuristic DB matching, not official Python implementations
+- NL assertion grading (``nl_assertions``) not implemented
+- DB state grading (``db_check``) not implemented
 
 Metric: Task completion rate (action matching).
-Requires ``config.judge_sampling_client`` for the user simulator (use a
+Requires ``config.judge_sampling_client`` for the user simulator (ideally a
 separate model from the one being evaluated).
 """
 
@@ -43,12 +27,10 @@ from __future__ import annotations
 import copy
 import json
 import logging
-import re
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-
-import tinker
 
 from tinker_cookbook.completers import TinkerMessageCompleter
 from tinker_cookbook.eval.benchmarks._common import (
@@ -56,8 +38,17 @@ from tinker_cookbook.eval.benchmarks._common import (
 )
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
 from tinker_cookbook.renderers import Message
-from tinker_cookbook.renderers.base import Renderer
-from tinker_cookbook.rl.types import Env, StepResult
+from tinker_cookbook.renderers.base import (
+    Renderer,
+    ToolCall,
+    ToolSpec,
+    format_content_as_string,
+    get_text_content,
+)
+from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
+from tinker_cookbook.rl.types import Env
+from tinker_cookbook.tool_use.tools import simple_tool_result
+from tinker_cookbook.tool_use.types import ToolInput, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -67,11 +58,15 @@ MAX_TURNS = 30
 _TAU2_REPO = "https://raw.githubusercontent.com/sierra-research/tau2-bench/main"
 _TAU2_CACHE = Path.home() / ".cache" / "tau2_bench"
 
-
 _TAU2_TOOLS_URL = (
     "https://raw.githubusercontent.com/sierra-research/tau2-bench/main"
     "/web/leaderboard/public/task-data/tools-data.json"
 )
+
+
+# ---------------------------------------------------------------------------
+# Data loading
+# ---------------------------------------------------------------------------
 
 
 def _convert_tau2_tools_to_openai(tau2_tools: list[dict]) -> list[dict]:
@@ -116,7 +111,7 @@ def _load_tau2_data(domain: str = "airline") -> tuple[list[dict], str, dict, lis
     """Load tau2-bench data from GitHub repo (cached locally).
 
     Returns:
-        Tuple of (tasks, policy_text, db_dict, tool_definitions).
+        Tuple of (tasks, policy_text, db_dict, tool_definitions_openai).
     """
     import urllib.request
 
@@ -219,10 +214,6 @@ class ToolBackend:
         except Exception as e:
             return json.dumps({"error": f"Tool execution failed: {e}"})
 
-    # ------------------------------------------------------------------
-    # Core dispatch — schema-driven, no prefix heuristics
-    # ------------------------------------------------------------------
-
     def _execute_tool(self, tool_name: str, args: dict) -> Any:
         """Execute a single tool against the DB using schema info."""
         schema = self._tools_by_name[tool_name]
@@ -231,15 +222,10 @@ class ToolBackend:
         id_args = self._identify_id_args(param_props, args)
         value_args = {k: v for k, v in args.items() if k not in id_args}
 
-        # Try to find a matching DB collection for this tool.
         collection_name, collection = self._find_collection(tool_name, args)
         if collection is None:
-            # No DB collection maps to this tool — return generic success
-            # with the arguments echoed back (grading checks call names/args).
             return {"status": "success", "tool": tool_name, "arguments": args}
 
-        # Decide read vs write based on whether there are non-ID value args
-        # that would mutate a record.  Pure-ID calls are lookups.
         is_write = bool(value_args) and self._schema_looks_like_write(
             tool_name, param_props, value_args
         )
@@ -249,23 +235,14 @@ class ToolBackend:
         else:
             return self._handle_read(collection, args)
 
-    # ------------------------------------------------------------------
-    # Schema analysis helpers
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _identify_id_args(param_props: dict, args: dict) -> dict[str, Any]:
-        """Pick out arguments that look like identifiers (for record lookup).
-
-        Uses the schema ``description`` and well-known naming conventions
-        (``*_id``, ``id``, ``*_number``, ``email``).
-        """
+        """Pick out arguments that look like identifiers (for record lookup)."""
         id_keys: dict[str, Any] = {}
         for key, val in args.items():
             prop = param_props.get(key, {})
             desc = str(prop.get("description", "")).lower()
             key_lower = key.lower()
-            # Heuristic: key name or description indicates an identifier
             if (
                 key_lower.endswith("_id")
                 or key_lower == "id"
@@ -281,56 +258,32 @@ class ToolBackend:
 
     @staticmethod
     def _schema_looks_like_write(tool_name: str, param_props: dict, value_args: dict) -> bool:
-        """Decide if a tool call is a write (mutation) based on schema cues.
-
-        Checks the parameter descriptions for mutation language and whether
-        the value args go beyond pure lookup filters.
-        """
-        # Check value-arg descriptions for mutation language
+        """Decide if a tool call is a write (mutation) based on schema cues."""
         mutation_words = {
-            "update",
-            "set",
-            "change",
-            "modify",
-            "new",
-            "replace",
-            "cancel",
-            "create",
-            "delete",
-            "remove",
-            "add",
+            "update", "set", "change", "modify", "new", "replace",
+            "cancel", "create", "delete", "remove", "add",
         }
         for key in value_args:
             prop = param_props.get(key, {})
             desc = str(prop.get("description", "")).lower()
             if any(w in desc for w in mutation_words):
                 return True
-            # "new_*" parameter names strongly suggest writes
             if key.lower().startswith("new_"):
                 return True
         return False
 
     def _find_collection(self, tool_name: str, args: dict) -> tuple[str, Any]:
-        """Find the best-matching DB collection for a tool.
-
-        Strategy:
-        1. Check if any argument value directly matches a key in a dict collection.
-        2. Check if the tool name overlaps with a collection name.
-        Returns (collection_name, collection) or ("", None).
-        """
+        """Find the best-matching DB collection for a tool."""
         if not self.db:
             return "", None
 
-        # Strategy 1: Check if an arg value is a key in a dict collection
         for coll_name, coll in self.db.items():
             if isinstance(coll, dict):
                 for val in args.values():
                     if str(val) in coll:
                         return coll_name, coll
 
-        # Strategy 2: Fuzzy match tool name to collection name
         tool_lower = tool_name.lower()
-        # Tokenize the tool name (split on _ and lowercase)
         tool_tokens = set(tool_lower.split("_"))
         best_name, best_coll, best_score = "", None, 0
         for coll_name, coll in self.db.items():
@@ -338,12 +291,9 @@ class ToolBackend:
                 continue
             coll_lower = coll_name.lower()
             coll_tokens = set(coll_lower.split("_"))
-            # Score by token overlap
             overlap = len(tool_tokens & coll_tokens)
-            # Also check substring containment
             if coll_lower in tool_lower or tool_lower in coll_lower:
                 overlap += 2
-            # Singular/plural: "reservation" in "reservations"
             for ct in coll_tokens:
                 for tt in tool_tokens:
                     if (ct.startswith(tt) or tt.startswith(ct)) and abs(len(ct) - len(tt)) <= 1:
@@ -355,19 +305,13 @@ class ToolBackend:
 
         return "", None
 
-    # ------------------------------------------------------------------
-    # Read / Write handlers
-    # ------------------------------------------------------------------
-
     def _handle_read(self, collection: list | dict, args: dict) -> Any:
         """Query a collection using arguments as filters."""
         if isinstance(collection, dict):
-            # Try direct key lookup with any argument value
             for val in args.values():
                 key = str(val)
                 if key in collection:
                     return collection[key]
-            # Return all entries matching filter
             results = []
             for _entry_key, entry in collection.items():
                 if isinstance(entry, dict) and self._matches(entry, args):
@@ -393,13 +337,11 @@ class ToolBackend:
     ) -> Any:
         """Mutate a record in the collection, looked up by id_args."""
         if isinstance(collection, dict):
-            # Find record by ID arg value as dict key
             for val in id_args.values():
                 key = str(val)
                 if key in collection and isinstance(collection[key], dict):
                     collection[key].update(value_args)
                     return {"status": "success", "updated": collection[key]}
-            # Fallback: find by matching and update
             for _entry_key, entry in collection.items():
                 if isinstance(entry, dict) and self._matches(entry, id_args):
                     entry.update(value_args)
@@ -411,7 +353,6 @@ class ToolBackend:
                     record.update(value_args)
                     return {"status": "success", "updated": record}
 
-        # No matching record — still report success for grading purposes
         return {
             "status": "success",
             "tool": f"write to {collection_name}",
@@ -436,120 +377,142 @@ class ToolBackend:
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Tool wrappers — bridge ToolBackend to the cookbook Tool protocol
 # ---------------------------------------------------------------------------
 
 
-def _format_tool_definitions(tool_definitions: list[dict]) -> str:
-    """Format tool definitions as human-readable function signatures.
+class _Tau2Tool:
+    """Wraps a single tau2 tool definition + backend into the Tool protocol."""
 
-    Converts OpenAI function-calling style schemas into clear descriptions
-    that help the model understand each tool's name, purpose, and parameters.
+    def __init__(self, openai_spec: dict, backend: ToolBackend) -> None:
+        fn = openai_spec.get("function", openai_spec)
+        self._name = fn["name"]
+        self._description = fn.get("description", "")
+        self._parameters_schema = fn.get("parameters", {})
+        self._backend = backend
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def description(self) -> str:
+        return self._description
+
+    @property
+    def parameters_schema(self) -> dict[str, Any]:
+        return self._parameters_schema
+
+    def to_spec(self) -> ToolSpec:
+        return ToolSpec(  # type: ignore[misc]
+            name=self._name,
+            description=self._description,
+            parameters_schema=self._parameters_schema,
+        )
+
+    async def run(self, input: ToolInput) -> ToolResult:
+        result_str = self._backend.execute(self._name, input.arguments)
+        return simple_tool_result(
+            result_str,
+            call_id=input.call_id or "",
+            name=self._name,
+        )
+
+
+# ---------------------------------------------------------------------------
+# User simulator
+# ---------------------------------------------------------------------------
+
+
+class _FallbackCompleter:
+    """Simple fallback completer that returns synthetic user responses."""
+
+    async def __call__(self, messages: list[Message]) -> dict:
+        return {"content": "I see, thank you. Is there anything else you need from me?"}
+
+
+async def _simulate_user(
+    user_completer: TinkerMessageCompleter | _FallbackCompleter,
+    user_scenario: dict,
+    history: list[Message],
+    is_opening: bool = False,
+) -> str:
+    """Generate a simulated customer message.
+
+    Args:
+        user_completer: LLM completer for user simulation.
+        user_scenario: Scenario dict from the task.
+        history: Conversation history so far (agent perspective).
+        is_opening: If True, generate the opening customer message.
     """
-    lines: list[str] = []
-    for tool in tool_definitions:
-        fn = tool.get("function", tool)
-        name = fn.get("name", "unknown")
-        desc = fn.get("description", "")
-        params = fn.get("parameters", {})
-        props = params.get("properties", {})
-        required = set(params.get("required", []))
+    scenario_text = json.dumps(user_scenario, indent=2)[:3000]
 
-        # Build parameter list
-        param_parts: list[str] = []
-        for pname, pschema in props.items():
-            ptype = pschema.get("type", "any")
-            pdesc = pschema.get("description", "")
-            req_marker = " (required)" if pname in required else " (optional)"
-            enum_vals = pschema.get("enum")
-            enum_str = f", enum: {enum_vals}" if enum_vals else ""
-            param_parts.append(
-                f"    - {pname}: {ptype}{req_marker}{enum_str}" + (f" — {pdesc}" if pdesc else "")
-            )
+    if is_opening:
+        prompt_messages: list[Message] = [
+            {
+                "role": "system",
+                "content": (
+                    "You are simulating a customer calling for support. "
+                    "Follow the scenario below exactly. Stay in character. "
+                    "State your problem or request naturally as a customer would."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Scenario:\n{scenario_text}\n\nGenerate your opening message as the customer.",
+            },
+        ]
+    else:
+        prompt_messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are simulating a customer in a support conversation. "
+                    f"Follow this scenario:\n{scenario_text}\n\n"
+                    "Respond naturally as the customer. If the agent has resolved "
+                    "your issue, say goodbye and end with USER_STOP. "
+                    "If the agent asks for information, provide it from your scenario. "
+                    "If you don't have the information, say you don't know."
+                ),
+            },
+        ]
+        # Add conversation history (condensed, last 10 messages).
+        for msg in history[-10:]:
+            role = msg["role"]
+            content = format_content_as_string(msg.get("content", ""))[:500]
+            if role == "system":
+                continue
+            elif role == "assistant":
+                # Agent's message → what the customer sees
+                prompt_messages.append({"role": "user", "content": content})
+            elif role == "user" and not content.startswith("[Tool"):
+                # Customer's prior reply
+                prompt_messages.append({"role": "assistant", "content": content})
 
-        lines.append(f"### {name}")
-        if desc:
-            lines.append(desc)
-        if param_parts:
-            lines.append("  Parameters:")
-            lines.extend(param_parts)
-        lines.append("")
+        prompt_messages.append(
+            {"role": "user", "content": "Continue as the customer. What do you say next?"}
+        )
 
-    return "\n".join(lines)
-
-
-def _extract_tool_calls(text: str) -> list[dict]:
-    """Extract tool calls from model response text.
-
-    Handles multiple formats:
-    - JSON with "name"/"arguments" or "action"/"arguments"
-    - Function call syntax: tool_name(arg1=val1, ...)
-    """
-    calls = []
-
-    # Try JSON blocks first
-    for match in re.finditer(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL):
-        try:
-            parsed = json.loads(match.group(1).strip())
-            if isinstance(parsed, dict) and ("name" in parsed or "action" in parsed):
-                calls.append(
-                    {
-                        "name": parsed.get("name", parsed.get("action", "")),
-                        "arguments": parsed.get("arguments", parsed.get("parameters", {})),
-                    }
-                )
-        except json.JSONDecodeError:
-            pass
-
-    if calls:
-        return calls
-
-    # Try inline JSON objects
-    for match in re.finditer(r"\{", text):
-        start = match.start()
-        depth = 0
-        for i in range(start, len(text)):
-            if text[i] == "{":
-                depth += 1
-            elif text[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    candidate = text[start : i + 1]
-                    if '"name"' in candidate or '"action"' in candidate:
-                        try:
-                            parsed = json.loads(candidate)
-                            calls.append(
-                                {
-                                    "name": parsed.get("name", parsed.get("action", "")),
-                                    "arguments": parsed.get(
-                                        "arguments", parsed.get("parameters", {})
-                                    ),
-                                }
-                            )
-                        except json.JSONDecodeError:
-                            pass
-                    break
-
-    return calls
+    try:
+        response = await user_completer(prompt_messages)
+        return str(response.get("content", "I see, thank you."))
+    except Exception as e:
+        logger.warning(f"User simulator failed: {e}")
+        if is_opening:
+            instructions = user_scenario.get("instructions", user_scenario)
+            if isinstance(instructions, dict):
+                task_instructions = instructions.get("task_instructions", "")
+                reason = instructions.get("reason_for_call", "")
+            else:
+                task_instructions = str(instructions)
+                reason = ""
+            return f"Hi, {reason} {task_instructions}".strip() or "Hi, I need help with my account."
+        return "I see, thank you. Is there anything else you need from me?"
 
 
-def _is_stop_signal(text: str) -> bool:
-    """Check if the model's response signals conversation end.
-
-    Uses explicit stop tokens and end-of-conversation regex patterns
-    to avoid false triggers on mid-sentence phrases.
-    """
-    lower = text.lower().strip()
-    # Explicit stop tokens (instructed in system prompt)
-    if "agent_stop" in lower or "conversation_complete" in lower:
-        return True
-    # End-of-conversation patterns — only match at sentence boundaries
-    stop_patterns = [
-        r"(?:^|\.\s+)is there anything else i can (?:help|assist)\b.*\??\s*$",
-        r"(?:^|\.\s+)(?:have a (?:great|nice|good) day|thank you for (?:calling|contacting))\b.*$",
-        r"\bgoodbye\b\s*[.!]?\s*$",
-    ]
-    return any(re.search(p, lower, re.MULTILINE) for p in stop_patterns)
+# ---------------------------------------------------------------------------
+# Grading
+# ---------------------------------------------------------------------------
 
 
 def _check_actions(predicted_calls: list[dict], expected_actions: list[dict]) -> tuple[float, dict]:
@@ -561,7 +524,6 @@ def _check_actions(predicted_calls: list[dict], expected_actions: list[dict]) ->
     if not expected_actions:
         return 1.0, {"actions_matched": 0, "actions_expected": 0}
 
-    # Track which predicted calls have been consumed (support duplicate tool names)
     consumed: set[int] = set()
     matched = 0
 
@@ -575,7 +537,6 @@ def _check_actions(predicted_calls: list[dict], expected_actions: list[dict]) ->
             pred_name = str(pred.get("name", "")).lower()
             if pred_name != exp_name:
                 continue
-            # Check arguments match
             pred_args = pred.get("arguments", {})
             if isinstance(exp_args, dict) and isinstance(pred_args, dict):
                 args_match = all(
@@ -599,38 +560,152 @@ def _check_actions(predicted_calls: list[dict], expected_actions: list[dict]) ->
 
 
 # ---------------------------------------------------------------------------
-# Fallback completer when no judge sampling client is provided
+# MessageEnv — handles tool calls + user simulation
 # ---------------------------------------------------------------------------
 
 
-class _FallbackCompleter:
-    """Simple fallback completer that returns synthetic user responses.
+@dataclass
+class Tau2MessageEnv(MessageEnv):
+    """Message-level env for tau2-bench.
 
-    Used when ``config.judge_sampling_client`` is ``None`` so that the
-    benchmark can still run (with degraded user simulation quality).
+    Handles the three-way interaction: model ↔ tools + model ↔ customer.
+
+    On each step:
+    - If the model made tool calls → execute them, return tool results
+    - If no tool calls → simulate customer response, return it
+    - Episode ends when model stops calling tools AND conversation ends,
+      or max_turns is reached
     """
 
-    async def __call__(self, messages: list[Message]) -> dict:
-        return {"content": "I see, thank you. Is there anything else you need from me?"}
+    tools: list[_Tau2Tool]
+    initial_messages: list[Message]
+    max_turns: int
+    backend: ToolBackend
+    expected_actions: list[dict]
+    user_completer: TinkerMessageCompleter | _FallbackCompleter
+    user_scenario: dict
+    example_id: str
+
+    history: list[Message] = field(default_factory=list)
+    _turn_count: int = 0
+    _tool_dict: dict[str, _Tau2Tool] = field(default_factory=dict, init=False)
+
+    def __post_init__(self) -> None:
+        self._tool_dict = {t.name: t for t in self.tools}
+
+    async def initial_observation(self) -> list[Message]:
+        if not self.history:
+            self.history = list(self.initial_messages)
+        return self.history
+
+    async def step(self, message: Message) -> MessageStepResult:
+        self._turn_count += 1
+        logs: dict[str, Any] = {}
+
+        self.history.append(message)
+
+        # Extract tool calls from the parsed message (native format via renderer)
+        tool_calls: list[ToolCall] = list(message.get("tool_calls") or [])
+
+        if tool_calls:
+            # Execute each tool call against the backend
+            for tc in tool_calls:
+                args = tc.function.arguments
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except json.JSONDecodeError:
+                        args = {}
+                result = await self._tool_dict[tc.function.name].run(
+                    ToolInput(arguments=args, call_id=tc.id)
+                )
+                for msg in result.messages:
+                    self.history.append(msg)
+
+            # After tool calls, continue (model gets tool results)
+            if self._turn_count >= self.max_turns:
+                return self._finalize(message, logs)
+            return MessageStepResult(
+                reward=0.0,
+                episode_done=False,
+                next_messages=self.history,
+                metrics={"turn": float(self._turn_count)},
+                logs=logs,
+            )
+
+        # No tool calls — this is a message to the customer
+        assistant_text = get_text_content(message)
+
+        # Check if agent signals end
+        if self._is_agent_done(assistant_text) or self._turn_count >= self.max_turns:
+            return self._finalize(message, logs)
+
+        # Simulate customer response
+        user_response = await _simulate_user(
+            self.user_completer, self.user_scenario, self.history,
+        )
+        self.history.append({"role": "user", "content": user_response})
+
+        # Check if customer signals end
+        if "user_stop" in user_response.lower():
+            return self._finalize(message, logs)
+
+        return MessageStepResult(
+            reward=0.0,
+            episode_done=False,
+            next_messages=self.history,
+            metrics={"turn": float(self._turn_count)},
+            logs=logs,
+        )
+
+    @staticmethod
+    def _is_agent_done(text: str) -> bool:
+        """Check if the agent signals conversation end."""
+        lower = text.lower().strip()
+        if "agent_stop" in lower or "conversation_complete" in lower:
+            return True
+        # Only trigger on very clear end signals to avoid premature termination
+        return lower.endswith("goodbye.") or lower.endswith("goodbye!")
+
+    def _finalize(self, last_message: Message, logs: dict) -> MessageStepResult:
+        """Grade the completed conversation and return final result."""
+        all_predicted_calls = self.backend.call_log
+        score, action_metrics = _check_actions(all_predicted_calls, self.expected_actions)
+
+        logs["example_id"] = self.example_id
+        logs["num_turns"] = self._turn_count
+        logs["predicted_actions"] = json.dumps(all_predicted_calls)[:500]
+        logs["expected_actions"] = json.dumps(self.expected_actions)[:500]
+
+        return MessageStepResult(
+            reward=score,
+            episode_done=True,
+            next_messages=self.history,
+            metrics={
+                "correct": float(score >= 1.0),
+                "action_score": score,
+                **{k: float(v) for k, v in action_metrics.items()},
+                "num_turns": float(self._turn_count),
+            },
+            logs=logs,
+        )
 
 
 # ---------------------------------------------------------------------------
-# Env
+# Env factory — creates sandbox-free env with MessageEnv pattern
 # ---------------------------------------------------------------------------
 
 
-class Tau2BenchEnv(Env):
-    """Multi-turn env for one tau2-Bench task.
+class _Tau2BenchEnvFactory(Env):
+    """Wrapper that sets up the MessageEnv on first observation.
 
-    The model acts as a customer service agent. On each turn:
-    1. Parse the model's response for tool calls or user-facing text
-    2. If tool call → execute against backend DB → return tool result
-    3. If text → send to user simulator → return user's response
-    4. Track all tool calls for grading at termination
+    Creates the tool backend, user simulator, and initial messages,
+    then delegates to EnvFromMessageEnv for native tool-call handling.
     """
 
     def __init__(
         self,
+        *,
         system_prompt: str,
         tool_definitions: list[dict],
         user_scenario: dict,
@@ -638,187 +713,67 @@ class Tau2BenchEnv(Env):
         db: dict[str, Any],
         user_completer: TinkerMessageCompleter | _FallbackCompleter,
         renderer: Renderer,
-        example_id: str = "",
+        example_id: str,
+        max_trajectory_tokens: int | None = None,
+        max_generation_tokens: int | None = None,
     ):
         self.system_prompt = system_prompt
         self.tool_definitions = tool_definitions
         self.user_scenario = user_scenario
         self.expected_actions = expected_actions
-        self.renderer = renderer
+        self.db = db
         self.user_completer = user_completer
+        self.renderer = renderer
         self.example_id = example_id
+        self.max_trajectory_tokens = max_trajectory_tokens
+        self.max_generation_tokens = max_generation_tokens
 
-        # Runtime state
-        self.backend = ToolBackend(db, tool_definitions)
-        self.messages: list[Message] = []
-        self.turn_count = 0
+        self._inner: EnvFromMessageEnv | None = None
 
     async def initial_observation(self):
-        # System prompt with policy and tools
-        tools_text = _format_tool_definitions(self.tool_definitions)
-        system_content = (
-            f"{self.system_prompt}\n\n"
-            f"## Available Tools\n"
-            f"You can call tools by responding with a JSON block:\n"
-            f'```json\n{{"name": "<tool_name>", "arguments": {{...}}}}\n```\n\n'
-            f"{tools_text}\n\n"
-            f"When the conversation is complete, end your message with AGENT_STOP."
+        # Create backend and tool wrappers
+        backend = ToolBackend(self.db, self.tool_definitions)
+        tools = [_Tau2Tool(spec, backend) for spec in self.tool_definitions]
+        tool_specs = [t.to_spec() for t in tools]
+
+        # Generate initial user message (customer opening)
+        initial_user_msg = await _simulate_user(
+            self.user_completer, self.user_scenario, [], is_opening=True,
         )
-        self.messages = [{"role": "system", "content": system_content}]
 
-        # Generate initial user message from scenario
-        initial_user_msg = await self._simulate_user_opening()
-        self.messages.append({"role": "user", "content": initial_user_msg})
+        # Build initial messages with tool specs in renderer's native format
+        initial_messages = self.renderer.create_conversation_prefix_with_tools(
+            tools=tool_specs, system_prompt=self.system_prompt,
+        )
+        initial_messages.append({"role": "user", "content": initial_user_msg})
 
-        model_input = self.renderer.build_generation_prompt(self.messages)
-        stop = self.renderer.get_stop_sequences()
-        return model_input, stop
+        # Create MessageEnv
+        msg_env = Tau2MessageEnv(
+            tools=tools,
+            initial_messages=initial_messages,
+            max_turns=MAX_TURNS,
+            backend=backend,
+            expected_actions=self.expected_actions,
+            user_completer=self.user_completer,
+            user_scenario=self.user_scenario,
+            example_id=self.example_id,
+        )
+
+        self._inner = EnvFromMessageEnv(
+            renderer=self.renderer,
+            message_env=msg_env,
+            failed_parse_reward=0.0,
+            terminate_on_parse_error=False,
+            max_trajectory_tokens=self.max_trajectory_tokens,
+            max_generation_tokens=self.max_generation_tokens,
+            context_overflow_reward=0.0,
+        )
+
+        return await self._inner.initial_observation()
 
     async def step(self, action, *, extra=None):
-        self.turn_count += 1
-        # Use raw decode — tau2 needs tool calls which decode_response strips
-        response_text = str(self.renderer.tokenizer.decode(action))
-
-        # Append assistant message
-        self.messages.append({"role": "assistant", "content": response_text})
-
-        # Check for tool calls
-        tool_calls = _extract_tool_calls(response_text)
-
-        if tool_calls:
-            # Execute tools and append results
-            tool_results = []
-            for call in tool_calls:
-                result = self.backend.execute(call["name"], call.get("arguments", {}))
-                tool_results.append(f"Tool `{call['name']}` returned:\n{result}")
-
-            tool_response = "\n\n".join(tool_results)
-            self.messages.append({"role": "user", "content": f"[Tool Results]\n{tool_response}"})
-
-        # Check termination
-        if _is_stop_signal(response_text) or self.turn_count >= MAX_TURNS:
-            return self._finalize(response_text)
-
-        # If no tool calls, this is a message to the user — simulate user response
-        if not tool_calls:
-            user_response = await self._simulate_user_response()
-            self.messages.append({"role": "user", "content": user_response})
-
-            # Check if user signals end
-            if "user_stop" in user_response.lower() or "goodbye" in user_response.lower():
-                return self._finalize(response_text)
-
-        # Continue conversation
-        model_input = self.renderer.build_generation_prompt(self.messages)
-        stop = self.renderer.get_stop_sequences()
-        return StepResult(
-            reward=0.0,
-            episode_done=False,
-            next_observation=model_input,
-            next_stop_condition=stop,
-            metrics={"turn": self.turn_count},
-            logs={},
-        )
-
-    def _finalize(self, last_response: str) -> StepResult:
-        """Grade the completed conversation and return final StepResult."""
-        all_predicted_calls = self.backend.call_log
-        score, action_metrics = _check_actions(all_predicted_calls, self.expected_actions)
-
-        return StepResult(
-            reward=score,
-            episode_done=True,
-            next_observation=tinker.ModelInput.empty(),
-            next_stop_condition=[],
-            metrics={
-                "correct": float(score >= 1.0),
-                "action_score": score,
-                **{k: float(v) for k, v in action_metrics.items()},
-                "num_turns": self.turn_count,
-            },
-            logs={
-                "example_id": self.example_id,
-                "num_turns": self.turn_count,
-                "predicted_actions": json.dumps(all_predicted_calls)[:500],
-                "expected_actions": json.dumps(self.expected_actions)[:500],
-                "last_response": last_response[:300],
-            },
-        )
-
-    async def _simulate_user_opening(self) -> str:
-        """Generate the initial user message from the scenario."""
-        scenario_text = json.dumps(self.user_scenario, indent=2)[:3000]
-        prompt_messages: list[Message] = [
-            {
-                "role": "system",
-                "content": (
-                    "You are simulating a customer calling for support. "
-                    "Follow the scenario below exactly. Stay in character. "
-                    "State your problem or request naturally as a customer would."
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"Scenario:\n{scenario_text}\n\nGenerate your opening message as the customer.",
-            },
-        ]
-        try:
-            response = await self.user_completer(prompt_messages)
-            return str(response.get("content", "Hi, I need help with my account."))
-        except Exception as e:
-            logger.warning(f"User simulator failed for opening: {e}")
-            # Fallback: construct from scenario (may be nested under "instructions")
-            instructions = self.user_scenario.get("instructions", self.user_scenario)
-            if isinstance(instructions, dict):
-                task_instructions = instructions.get("task_instructions", "")
-                reason = instructions.get("reason_for_call", "")
-            else:
-                task_instructions = str(instructions)
-                reason = ""
-            return f"Hi, {reason} {task_instructions}".strip() or "Hi, I need help with my account."
-
-    async def _simulate_user_response(self) -> str:
-        """Generate a user response based on the conversation and scenario."""
-        scenario_text = json.dumps(self.user_scenario, indent=2)[:2000]
-        sim_messages: list[Message] = [
-            {
-                "role": "system",
-                "content": (
-                    "You are simulating a customer in a support conversation. "
-                    f"Follow this scenario:\n{scenario_text}\n\n"
-                    "Respond naturally as the customer. If the agent has resolved "
-                    "your issue, say goodbye and end with USER_STOP. "
-                    "If the agent asks for information, provide it from your scenario. "
-                    "If you don't have the information, say you don't know."
-                ),
-            },
-        ]
-        # Add conversation history (condensed).
-        # The simulator plays the customer, so:
-        # - Agent (assistant in main convo) → shown as "user" to simulator (what customer sees)
-        # - Customer (user in main convo) → shown as "assistant" to simulator (its own prior replies)
-        for msg in self.messages[-10:]:
-            role = msg["role"]
-            content = msg.get("content", "")[:500]
-            if role == "system":
-                continue
-            elif role == "assistant":
-                # Agent's message → what the customer sees → user role for simulator
-                sim_messages.append({"role": "user", "content": content})
-            elif role == "user" and not str(content).startswith("[Tool"):
-                # Customer's prior reply → simulator's own output → assistant role
-                sim_messages.append({"role": "assistant", "content": content})
-
-        sim_messages.append(
-            {"role": "user", "content": "Continue as the customer. What do you say next?"}
-        )
-
-        try:
-            response = await self.user_completer(sim_messages)
-            return str(response.get("content", "I see, thank you."))
-        except Exception as e:
-            logger.warning(f"User simulator failed: {e}")
-            return "I see, thank you. Is there anything else you need from me?"
+        assert self._inner is not None
+        return await self._inner.step(action, extra=extra)
 
 
 # ---------------------------------------------------------------------------
@@ -830,8 +785,9 @@ class Tau2BenchBenchmarkBuilder(BenchmarkBuilder):
     """tau2-Bench: multi-turn customer service agent evaluation.
 
     The model acts as a customer service agent, interacting with simulated
-    customers and calling tools against a backend database. Graded on whether
-    all required actions were taken correctly.
+    customers and calling tools against a backend database. Uses the
+    ``MessageEnv`` / ``EnvFromMessageEnv`` pattern for native tool-call
+    parsing via the renderer.
 
     Requires ``config.judge_sampling_client`` for the user simulator.
     """
@@ -847,7 +803,7 @@ class Tau2BenchBenchmarkBuilder(BenchmarkBuilder):
             logger.warning("Could not load tau2-bench data.")
             return []
         if not tool_definitions:
-            logger.warning("tau2_bench: no tool definitions loaded — model won't be able to call tools.")
+            logger.warning("tau2_bench: no tool definitions loaded.")
         if config.max_examples is not None:
             tasks = tasks[: config.max_examples]
 
@@ -879,7 +835,6 @@ class Tau2BenchBenchmarkBuilder(BenchmarkBuilder):
                 eval_criteria.get("actions", []) if isinstance(eval_criteria, dict) else []
             )
 
-            # Use the domain policy as the system prompt
             task_system_prompt = config.system_prompt or policy[:8000]
 
             example_id = (
@@ -889,7 +844,7 @@ class Tau2BenchBenchmarkBuilder(BenchmarkBuilder):
             )
 
             envs.append(
-                Tau2BenchEnv(
+                _Tau2BenchEnvFactory(
                     system_prompt=task_system_prompt,
                     tool_definitions=tool_definitions,
                     user_scenario=user_scenario,
@@ -898,6 +853,8 @@ class Tau2BenchBenchmarkBuilder(BenchmarkBuilder):
                     user_completer=user_completer,
                     renderer=renderer,
                     example_id=example_id,
+                    max_trajectory_tokens=config.max_trajectory_tokens,
+                    max_generation_tokens=config.max_generation_tokens,
                 )
             )
 

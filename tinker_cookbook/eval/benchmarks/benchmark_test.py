@@ -230,14 +230,20 @@ class TestMCQExtraction:
         gen_wrong = {"name": "get_weather", "arguments": {"city": "Paris"}}
         assert not _match_function_call(gen_wrong, exp)
 
-    def test_tau2_bench_action_extraction(self):
-        from tinker_cookbook.eval.benchmarks._tau2_bench import _extract_tool_calls
+    def test_tau2_bench_action_matching(self):
+        from tinker_cookbook.eval.benchmarks._tau2_bench import _check_actions
 
-        text = '```json\n{"name": "refund", "arguments": {"order_id": "123"}}\n```'
-        results = _extract_tool_calls(text)
-        assert len(results) == 1
-        assert results[0]["name"] == "refund"
-        assert results[0]["arguments"]["order_id"] == "123"
+        predicted = [
+            {"name": "get_user_details", "arguments": {"user_id": "alice_123"}},
+            {"name": "get_reservation_details", "arguments": {"reservation_id": "ABC"}},
+        ]
+        expected = [
+            {"name": "get_user_details", "arguments": {"user_id": "alice_123"}},
+            {"name": "get_reservation_details", "arguments": {"reservation_id": "ABC"}},
+        ]
+        score, metrics = _check_actions(predicted, expected)
+        assert score == 1.0
+        assert metrics["actions_matched"] == 2
 
 
 class TestGradingConsistency:
