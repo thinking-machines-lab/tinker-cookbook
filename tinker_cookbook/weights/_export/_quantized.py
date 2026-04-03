@@ -280,8 +280,14 @@ def _weight_scale_key(weight_key: str) -> str:
 
     Uses ``.weight_scale`` (compressed-tensors convention), NOT
     ``.weight_scale_inv`` (DeepSeek native convention).
+
+    Handles both per-expert keys (``experts.0.down_proj.weight`` →
+    ``experts.0.down_proj.weight_scale``) and fused 3D keys
+    (``experts.down_proj`` → ``experts.down_proj.weight_scale``).
     """
-    return weight_key.removesuffix(".weight") + ".weight_scale"
+    if weight_key.endswith(".weight"):
+        return weight_key.removesuffix(".weight") + ".weight_scale"
+    return weight_key + ".weight_scale"
 
 
 def _build_vllm_quantization_config(output_weight_map: dict[str, str]) -> dict:
@@ -516,22 +522,62 @@ class FP8BlockFormat:
         tensor: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
         """Quantize routed expert weights to FP8, pass through everything else."""
-        if _is_routed_expert_weight(key) and key.endswith(".weight"):
-            # Move to compute device for quantization
-            if self._device.type != "cpu":
-                compute_tensor = tensor.to(self._device)
-            else:
-                compute_tensor = tensor
+        if not _is_routed_expert_weight(key):
+            return {key: tensor}
 
-            fp8_tensor, scale = quantize_blockwise(compute_tensor)
-
-            # Move back to CPU for writing
-            if self._device.type != "cpu":
-                fp8_tensor = fp8_tensor.cpu()
-                scale = scale.cpu()
-
-            return {key: fp8_tensor, _weight_scale_key(key): scale}
+        if tensor.ndim == 2:
+            return self._quantize_2d(key, tensor)
+        elif tensor.ndim == 3:
+            return self._quantize_fused_3d(key, tensor)
         return {key: tensor}
+
+    def _quantize_2d(
+        self, key: str, tensor: torch.Tensor
+    ) -> dict[str, torch.Tensor]:
+        """Quantize a per-expert 2D weight tensor to FP8."""
+        if self._device.type != "cpu":
+            compute_tensor = tensor.to(self._device)
+        else:
+            compute_tensor = tensor
+
+        fp8_tensor, scale = quantize_blockwise(compute_tensor)
+
+        if self._device.type != "cpu":
+            fp8_tensor = fp8_tensor.cpu()
+            scale = scale.cpu()
+
+        return {key: fp8_tensor, _weight_scale_key(key): scale}
+
+    def _quantize_fused_3d(
+        self, key: str, tensor: torch.Tensor
+    ) -> dict[str, torch.Tensor]:
+        """Quantize a fused 3D expert tensor [num_experts, out, in] to FP8.
+
+        Quantizes each expert slice independently, producing per-expert
+        block scales stacked into a 3D scale tensor.
+        """
+        num_experts = tensor.shape[0]
+        fp8_slices = []
+        scale_slices = []
+
+        for i in range(num_experts):
+            expert_slice = tensor[i]
+            if self._device.type != "cpu":
+                expert_slice = expert_slice.to(self._device)
+
+            fp8_slice, scale_slice = quantize_blockwise(expert_slice)
+
+            if self._device.type != "cpu":
+                fp8_slice = fp8_slice.cpu()
+                scale_slice = scale_slice.cpu()
+
+            fp8_slices.append(fp8_slice)
+            scale_slices.append(scale_slice)
+
+        fp8_tensor = torch.stack(fp8_slices)
+        scale_tensor = torch.stack(scale_slices)
+
+        return {key: fp8_tensor, _weight_scale_key(key): scale_tensor}
 
     def finalize_config(
         self,
