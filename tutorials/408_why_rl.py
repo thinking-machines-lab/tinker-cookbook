@@ -4,10 +4,15 @@ __generated_with = "0.21.1"
 app = marimo.App()
 
 
-@app.cell(hide_code=True)
+@app.cell
 def _():
     import marimo as mo
 
+    return (mo,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
     mo.md(r"""
     # Tutorial 08: Why RL? From Rejection Sampling to GRPO
 
@@ -30,7 +35,7 @@ def _():
     3. Why RFT plateaus and GRPO doesn't
     4. When to use which method
     """)
-    return (mo,)
+    return
 
 
 @app.cell(hide_code=True)
