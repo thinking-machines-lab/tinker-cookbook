@@ -384,11 +384,12 @@ def extract_gsm8k_answer(text: str) -> str:
     if bold_numbers:
         return bold_numbers[-1].replace(",", "").rstrip(".")
 
-    # Last number in entire text (fallback)
+    # Last number in entire text (fallback — may match mid-reasoning numbers)
     numbers = re.findall(r"[-]?\d+[,\d]*\.?\d*", text)
     if numbers:
         return numbers[-1].replace(",", "")
 
+    logger.debug("extract_gsm8k_answer: no number found in response (len=%d)", len(text))
     return ""
 
 
