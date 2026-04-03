@@ -60,18 +60,18 @@ results = await run_benchmarks(
 
 | Benchmark | Type | Grading | Status |
 |-----------|------|---------|--------|
+| arena_hard | Single-turn | LLM-as-judge | Works with self-judge, needs cross-model judge |
 | longbench | Single-turn | Programmatic | Limited by 65K context window |
-| livecodebench | Single-turn | Code execution (Modal) | Score gap vs public (23% vs 75%) |
+| livecodebench | Single-turn | Code execution (Modal) | Score gap vs public |
 | ifbench | Single-turn | IF constraints | Verifier doesn't cover IFBench instruction types |
 | bfcl | Single-turn | Function call AST | Ground truth format mismatch |
-| terminal_bench | Multi-turn | Sandbox + tests (Modal) | Multi-turn works, test grading needs work |
-| swe_bench | Multi-turn | Sandbox + pytest (Modal) | Not yet tested end-to-end |
-| tau2_bench | Multi-turn | Tool dispatch + user sim | Needs ``judge_sampling_client`` |
+| terminal_bench | Multi-turn | Sandbox + tests (Modal) | 36% on Qwen3.5-35B-A3B (112 examples) |
+| swe_bench | Multi-turn | Sandbox + pytest (Modal) | Framework works, limited testing |
+| tau2_bench | Multi-turn | Tool dispatch + user sim | 30% (needs separate user simulator model) |
 
 **Prerequisites:**
 
 - **HF auth (gated)**: Set `HF_TOKEN` or run `huggingface-cli login`.
-- **Modal**: Install with `pip install 'tinker-cookbook[modal]'` and authenticate with `modal token new`.
 - **Modal**: Benchmarks that execute code in a sandbox require Modal. Install with `pip install 'tinker-cookbook[modal]'` and authenticate with `modal token new`.
 - **`judge_sampling_client`**: Benchmarks using LLM-as-judge or user simulation require a separate Tinker sampling client for the judge model. Pass via `BenchmarkConfig(judge_sampling_client=..., judge_renderer=...)`.
 
@@ -117,35 +117,41 @@ evaluator_builders = [
 ### Add a new benchmark
 
 1. Create `tinker_cookbook/eval/benchmarks/my_benchmark.py`
-2. Implement an `Env` subclass (same as RL envs):
+2. Implement a `MessageEnv` (recommended) — the renderer handles thinking-token stripping and prompt building automatically:
 
 ```python
-from tinker_cookbook.rl.types import Env, StepResult
+from tinker_cookbook.eval.benchmarks._common import build_messages, make_example_id
+from tinker_cookbook.renderers import get_text_content
+from tinker_cookbook.renderers.base import Message
+from tinker_cookbook.rl.message_env import MessageEnv, MessageStepResult
 
-class MyEnv(Env):
-    async def initial_observation(self):
-        model_input = self.renderer.build_generation_prompt(messages)
-        stop = self.renderer.get_stop_sequences()
-        return model_input, stop
+class MyMessageEnv(MessageEnv):
+    def __init__(self, question: str, expected: str, example_id: str = ""):
+        self.question = question
+        self.expected = expected
+        self.example_id = example_id
 
-    async def step(self, action, *, extra=None):
-        response = self.renderer.tokenizer.decode(action)
-        correct = grade(response, self.expected)
-        return StepResult(
+    async def initial_observation(self) -> list[Message]:
+        return build_messages(self.question)
+
+    async def step(self, message: Message) -> MessageStepResult:
+        response = get_text_content(message)  # thinking already stripped
+        correct = self.expected in response
+        return MessageStepResult(
             reward=1.0 if correct else 0.0,
             episode_done=True,
-            next_observation=tinker.ModelInput.empty(),
-            next_stop_condition=[],
+            next_messages=[],
             metrics={"correct": float(correct)},
             logs={"example_id": self.example_id, "expected": self.expected},
         )
 ```
 
-3. Implement a `BenchmarkBuilder`:
+3. Implement a `BenchmarkBuilder` that creates envs and wraps them with `EnvFromMessageEnv`:
 
 ```python
 from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
 from tinker_cookbook.eval.benchmarks import register
+from tinker_cookbook.rl.message_env import EnvFromMessageEnv
 
 class MyBenchmarkBuilder(BenchmarkBuilder):
     name = "my_benchmark"
@@ -154,17 +160,27 @@ class MyBenchmarkBuilder(BenchmarkBuilder):
         ds = load_dataset("my/dataset", split="test")
         if config.max_examples is not None:
             ds = ds.select(range(min(config.max_examples, len(ds))))
-        return [MyEnv(row, renderer) for row in ds]
+        envs = []
+        for row in ds:
+            msg_env = MyMessageEnv(row["question"], row["answer"])
+            envs.append(EnvFromMessageEnv(
+                renderer=renderer,
+                message_env=msg_env,
+                failed_parse_reward=0.0,
+                context_overflow_reward=0.0,
+            ))
+        return envs
 
 register(MyBenchmarkBuilder())
 ```
 
 Key points:
+- Use `MessageEnv` + `EnvFromMessageEnv` for automatic thinking-token stripping and context overflow handling
 - `Env` objects are single-use (no reset)
 - Set `multi_turn = True` on the builder for agent/sandbox benchmarks (uses lower concurrency)
 - Include a stable `example_id` in `logs` for cross-run comparison (e.g., hash of the question)
 - The runner handles concurrency, timeouts, resumability, and JSONL storage automatically
-- For sandbox-based benchmarks, define an async `cleanup()` method on your Env. The runner calls it on timeout or error to prevent resource leaks.
+- For sandbox-based benchmarks, use the `SandboxMixin` from `_common.py` for cleanup. The runner calls `cleanup()` on timeout or error to prevent resource leaks.
 
 ## 3. EvalStore — Cross-Checkpoint Comparison
 
@@ -234,21 +250,22 @@ eval_store/
 
 ## Verification
 
-We verified the benchmark framework against published scores by running **Qwen3.5-35B-A3B** and comparing with the [official model card](https://huggingface.co/Qwen/Qwen3.5-35B-A3B):
+Full-dataset reproduction on **Qwen3.5-35B-A3B** (all stable benchmarks):
 
-| Benchmark | Our Score | Public Score | Settings | Match? |
-|-----------|----------|-------------|----------|--------|
-| AIME 2026 (pass@4) | **93.3%** | **93.33%** | 64K tokens, 4 samples, 1800s timeout | **Exact match** |
-| AIME 2026 (pass@1) | 85.0% | — | 64K tokens, 1 sample | — |
-| LongBench v2 | 63.6%* | 59.0% | *on examples fitting 65K context | Consistent** |
-| GSM8K | 76.6% | — | 32K tokens, 600s timeout | Not reported |
-| MATH-500 | 80.8% | — | 32K tokens, 600s timeout | Not reported |
+| Benchmark | Score | Score (excl. overflow) | Public | Settings |
+|-----------|-------|----------------------|--------|----------|
+| GSM8K | 86.5% | **95.6%** | ~91.8% | system_prompt=\boxed{}, 32K tokens |
+| MATH-500 | 87.2% | **96.2%** | — | system_prompt=\boxed{}, 32K tokens |
+| MMLU-Redux | **93.5%** | 93.5% | 93.3% | 32K tokens |
+| GPQA | 76.3% | 91.5% | 84.2% | 32K tokens |
+| IFEval | 86.3% | **93.6%** | 91.9% | 32K tokens |
+| MBPP | 85.6% | 88.4% | — | Modal sandbox |
+| AIME 2025 (pass@4) | **90.0%** | — | — | system_prompt=\boxed{}, 32K tokens |
+| AIME 2026 (pass@4) | **90.0%** | — | 93.33% | system_prompt=\boxed{}, 32K tokens |
 
-\* LongBench: 78% of examples exceed our 65K context window. On the 110 examples that fit, accuracy is 63.6% — above the public 59.0% which includes harder long-context examples evaluated with 256K context.
+"Excl. overflow" = accuracy on examples where the thinking model's reasoning chain fit within context. Context overflow examples are scored as failures (reward=0). The Qwen3.5-35B thinking model solves nearly every problem it can fit in context.
 
-\*\* The public LongBench score includes all examples with a 256K context window. Our higher accuracy on the subset that fits in 65K is expected since shorter examples tend to be easier.
-
-**Key finding:** When evaluation settings match the reference (MathArena protocol: 64K tokens, 4 samples), our framework reproduces published scores exactly. Discrepancies in other benchmarks are explained by setup differences (context window, timeout, number of samples), not framework bugs.
+**Key finding:** The `system_prompt` hook is critical for thinking models — GSM8K improved from 84.7% to 95.6% by instructing the model to use `\boxed{}`. Per-model config presets (a planned feature) will capture these settings.
 
 ## Testing
 
