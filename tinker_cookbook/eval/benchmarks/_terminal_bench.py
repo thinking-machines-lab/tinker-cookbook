@@ -65,7 +65,7 @@ For each response:
 
 ## Important Rules
 
-- Your working directory is /workspace
+- Your working directory is /app
 - You can install packages, create files, run scripts
 - Use non-interactive commands only (no vi, nano, etc.)
 - Use sed, awk, or python for file editing
@@ -98,7 +98,7 @@ class _BashTool:
         self.commands_executed.append(command)
         wrapped = f"PAGER=cat MANPAGER=cat {command}"
         result = await self._sandbox.run_command(
-            wrapped, workdir="/workspace", timeout=60, max_output_bytes=16000
+            wrapped, workdir="/app", timeout=60, max_output_bytes=16000
         )
         stdout = result.stdout
         if len(stdout) > 10000:
@@ -134,7 +134,7 @@ class _TerminalBenchReward:
 
         try:
             result = await self._sandbox.run_command(
-                "cd /workspace && bash run_tests.sh 2>&1",
+                "cd /app && TEST_DIR=/app/tests bash run_tests.sh 2>&1",
                 timeout=120,
             )
             passed = result.exit_code == 0
@@ -321,18 +321,25 @@ class _TerminalBenchEnvFactory(Env):
         # Create sandbox
         self._sandbox = await self.sandbox_factory()
 
-        # Write setup files
+        # Create /app working directory and /app/tests for test scripts
+        await self._sandbox.run_command("mkdir -p /app/tests", timeout=10)
+
+        # Write setup files to /app (matching the Dockerfile WORKDIR)
         for filepath, content in self.setup_files.items():
             try:
-                dest = f"/workspace/{filepath}"
+                dest = f"/app/{filepath}"
+                # Ensure parent directory exists
+                parent = "/".join(dest.split("/")[:-1])
+                if parent:
+                    await self._sandbox.run_command(f"mkdir -p {parent}", timeout=10)
                 await self._sandbox.write_file(dest, content, executable=filepath.endswith(".sh"))
             except Exception as e:
                 logger.warning(f"Failed to write setup file {filepath}: {e}")
 
-        # Write test script
+        # Write test script to /app
         if self.test_script:
             await self._sandbox.write_file(
-                "/workspace/run_tests.sh", self.test_script, executable=True
+                "/app/run_tests.sh", self.test_script, executable=True
             )
 
         # Create tool and reward
