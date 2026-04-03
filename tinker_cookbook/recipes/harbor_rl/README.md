@@ -81,7 +81,7 @@ async def default_sandbox_factory(env_dir: Path, timeout: int) -> SandboxInterfa
     return await ModalSandbox.create(image=image, timeout=timeout)
 ```
 
-The first argument is the task's `environment/` directory (containing a Dockerfile and build context). Each backend converts this to its own image format internally (e.g. Modal builds a `modal.Image`, Fishbowl hashes the Dockerfile to an OCI URL).
+The first argument is the task's `environment/` directory (containing a Dockerfile and build context). Each backend converts this to its own image format internally (e.g. Modal builds a `modal.Image`).
 
 `cli_main()` accepts an optional `sandbox_factory` parameter. When `None`, it falls back to `default_sandbox_factory` (Modal). The factory flows through: `cli_main` -> `HarborDatasetBuilder` -> `HarborEnvGroupBuilder.make_envs()`.
 
