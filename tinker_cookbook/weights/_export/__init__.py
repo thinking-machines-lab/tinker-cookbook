@@ -223,6 +223,9 @@ def build_hf_model(
 
         from tinker_cookbook.weights._export._shard import build_sharded
 
+        resolved_device = (
+            device if device is not None else ("cuda" if torch.cuda.is_available() else "cpu")
+        )
         model_dir = resolve_model_dir(base_model)
         build_sharded(
             base_model=base_model,
@@ -231,6 +234,7 @@ def build_hf_model(
             trust_remote_code=resolved_trust,
             model_dir=model_dir,
             config_dict=config_dict,
+            device=resolved_device,
         )
 
 
