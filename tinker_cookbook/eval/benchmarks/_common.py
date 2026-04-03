@@ -402,10 +402,12 @@ def check_gsm8k(response: str, expected: str) -> bool:
         exact match for non-numeric strings).
     """
     extracted = extract_gsm8k_answer(response)
+    # Strip commas from expected (GSM8K answers may contain "2,125" style formatting)
+    expected_clean = expected.replace(",", "")
     try:
-        return abs(float(extracted) - float(expected)) < 1e-5
+        return abs(float(extracted) - float(expected_clean)) < 1e-5
     except (ValueError, TypeError):
-        return extracted.strip() == expected.strip()
+        return extracted.strip() == expected_clean.strip()
 
 
 # ---------------------------------------------------------------------------
