@@ -102,9 +102,7 @@ class TestIsRoutedExpertWeight:
 
     def test_fused_expert_matched(self):
         # Qwen3-VL fused 3D expert keys (no .weight suffix, no per-expert index)
-        assert _is_routed_expert_weight(
-            "model.language_model.layers.0.mlp.experts.gate_up_proj"
-        )
+        assert _is_routed_expert_weight("model.language_model.layers.0.mlp.experts.gate_up_proj")
         assert _is_routed_expert_weight("model.language_model.layers.0.mlp.experts.down_proj")
 
     def test_shared_expert_rejected(self):
@@ -481,7 +479,7 @@ class TestPostMergeTransform:
     """
 
     @pytest.fixture()
-    def fmt(self, tmp_path: Path) -> "FP8BlockFormat":
+    def fmt(self, tmp_path: Path):
         from tinker_cookbook.weights._export._quantized import FP8BlockFormat
 
         # Non-native-FP8 config so pre_merge_transform is a no-op

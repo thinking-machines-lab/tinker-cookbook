@@ -531,9 +531,7 @@ class FP8BlockFormat:
             return self._quantize_fused_3d(key, tensor)
         return {key: tensor}
 
-    def _quantize_2d(
-        self, key: str, tensor: torch.Tensor
-    ) -> dict[str, torch.Tensor]:
+    def _quantize_2d(self, key: str, tensor: torch.Tensor) -> dict[str, torch.Tensor]:
         """Quantize a per-expert 2D weight tensor to FP8."""
         if self._device.type != "cpu":
             compute_tensor = tensor.to(self._device)
@@ -548,9 +546,7 @@ class FP8BlockFormat:
 
         return {key: fp8_tensor, _weight_scale_key(key): scale}
 
-    def _quantize_fused_3d(
-        self, key: str, tensor: torch.Tensor
-    ) -> dict[str, torch.Tensor]:
+    def _quantize_fused_3d(self, key: str, tensor: torch.Tensor) -> dict[str, torch.Tensor]:
         """Quantize a fused 3D expert tensor [num_experts, out, in] to FP8.
 
         Quantizes each expert slice independently, producing per-expert
