@@ -131,7 +131,7 @@ class MMLUReduxMessageEnv(MessageEnv):
             reward=1.0 if correct else 0.0,
             episode_done=True,
             next_messages=[],
-            metrics={"correct": float(correct), "subject": self.subject},
+            metrics={"correct": float(correct)},
             logs={
                 "example_id": self.example_id,
                 "input": self.prompt[:200],

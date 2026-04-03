@@ -320,6 +320,7 @@ class _TerminalBenchEnvFactory(Env):
     async def initial_observation(self):
         # Create sandbox
         self._sandbox = await self.sandbox_factory()
+        assert self._sandbox is not None
 
         # Create /app working directory and /app/tests for test scripts
         await self._sandbox.run_command("mkdir -p /app/tests", timeout=10)

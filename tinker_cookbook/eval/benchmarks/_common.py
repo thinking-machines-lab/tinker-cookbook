@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 
 from datasets import Dataset
 
+from tinker_cookbook.renderers.base import Message
+
 if TYPE_CHECKING:
     from tinker_cookbook.sandbox.sandbox_interface import SandboxInterface
 
@@ -25,7 +27,7 @@ logger = logging.getLogger(__name__)
 def build_messages(
     user_content: str,
     system_prompt: str | None = None,
-) -> list[dict]:
+) -> list[Message]:
     """Build a message list, optionally prepending a system prompt.
 
     Args:
@@ -35,7 +37,7 @@ def build_messages(
     Returns:
         List of message dicts ready for ``renderer.build_generation_prompt``.
     """
-    messages: list[dict] = []
+    messages: list[Message] = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": user_content})

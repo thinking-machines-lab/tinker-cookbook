@@ -246,6 +246,7 @@ class _SWEBenchEnvFactory(Env):
     async def initial_observation(self):
         # Create sandbox
         self._sandbox = await self.sandbox_factory()
+        assert self._sandbox is not None
 
         # Clone and checkout
         try:
