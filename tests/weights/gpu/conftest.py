@@ -216,11 +216,7 @@ def verify_fp8_output(output_path: Path) -> None:
     tensors = load_all_tensors(output_path)
 
     expert_weights = [
-        k
-        for k in tensors
-        if ".experts." in k
-        and ".shared_experts." not in k
-        and not k.endswith(".weight_scale")
+        k for k in tensors if ".experts." in k and ".shared_experts." not in k and not k.endswith(".weight_scale")
     ]
     assert len(expert_weights) > 0, "No routed expert weights found"
 
@@ -235,11 +231,7 @@ def verify_fp8_output(output_path: Path) -> None:
         assert scale_key in tensors, f"Missing scale for {key}"
         assert tensors[scale_key].dtype == torch.float32
 
-    dense_weights = [
-        k
-        for k in tensors
-        if k.endswith(".weight") and ".experts." not in k
-    ]
+    dense_weights = [k for k in tensors if k.endswith(".weight") and ".experts." not in k]
     for key in dense_weights:
         assert tensors[key].dtype != torch.float8_e4m3fn, f"Dense weight {key} should not be FP8"
 
