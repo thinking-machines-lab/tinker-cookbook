@@ -216,7 +216,9 @@ def verify_fp8_output(output_path: Path) -> None:
     tensors = load_all_tensors(output_path)
 
     expert_weights = [
-        k for k in tensors if ".experts." in k and ".shared_experts." not in k and not k.endswith(".weight_scale")
+        k
+        for k in tensors
+        if ".experts." in k and ".shared_experts." not in k and not k.endswith(".weight_scale")
     ]
     assert len(expert_weights) > 0, "No routed expert weights found"
 
