@@ -1,27 +1,28 @@
-"""Launch parallel RL training runs with different loss functions.
+"""Run RL training sequentially with different loss functions.
 
 Compares Tinker's built-in RL loss functions (importance_sampling, ppo, cispo, dro)
-on the same task. Uses xmux to launch all runs in parallel tmux panes.
+on the same task by running each one after the other.
 
 Usage:
-    # Quick comparison on arithmetic (< 5 min)
+    # Quick comparison on arithmetic
     python -m tinker_cookbook.recipes.loss_fn_comparison.sweep
 
     # Comparison on GSM8K (slower, more realistic)
     python -m tinker_cookbook.recipes.loss_fn_comparison.sweep env=gsm8k model_name="Qwen/Qwen3-8B" max_tokens=512
 
-    # Dry run (show commands without executing)
-    python -m tinker_cookbook.recipes.loss_fn_comparison.sweep --dry-run
+    # Run only a subset of loss functions
+    python -m tinker_cookbook.recipes.loss_fn_comparison.sweep loss_fns=ppo,cispo
 """
 
 import asyncio
-import sys
+import logging
 from typing import Any
 
 import chz
 
 from tinker_cookbook.recipes.math_rl.train import CLIConfig, cli_main
-from tinker_cookbook.xmux import JobSpec, SwarmConfig, launch_swarm
+
+logger = logging.getLogger(__name__)
 
 # Loss functions to compare, with their recommended configs.
 LOSS_FN_CONFIGS: dict[str, dict[str, Any] | None] = {
@@ -54,7 +55,9 @@ class SweepConfig:
     seed: int = 0
 
 
-def _build_cli_config(sweep: SweepConfig, loss_fn: str, loss_fn_config: dict[str, Any] | None) -> CLIConfig:
+def _build_cli_config(
+    sweep: SweepConfig, loss_fn: str, loss_fn_config: dict[str, Any] | None
+) -> CLIConfig:
     return CLIConfig(
         model_name=sweep.model_name,
         env=sweep.env,
@@ -73,11 +76,7 @@ def _build_cli_config(sweep: SweepConfig, loss_fn: str, loss_fn_config: dict[str
     )
 
 
-def _main_fn(cli_config: CLIConfig) -> None:
-    asyncio.run(cli_main(cli_config))
-
-
-def run_sweep(sweep: SweepConfig, dry_run: bool = False) -> None:
+async def run_sweep(sweep: SweepConfig) -> None:
     # Parse which loss functions to run
     if sweep.loss_fns == "all":
         selected = list(LOSS_FN_CONFIGS.keys())
@@ -90,28 +89,19 @@ def run_sweep(sweep: SweepConfig, dry_run: bool = False) -> None:
                     f"Choose from: {list(LOSS_FN_CONFIGS.keys())}"
                 )
 
-    job_specs = []
-    for loss_fn in selected:
+    for i, loss_fn in enumerate(selected):
+        logger.info(f"[{i + 1}/{len(selected)}] Training with loss_fn={loss_fn}")
         cli_config = _build_cli_config(sweep, loss_fn, LOSS_FN_CONFIGS[loss_fn])
-        job_specs.append(
-            JobSpec(
-                main_fn=_main_fn,
-                log_relpath=f"loss_fn_comparison/{sweep.env}/{loss_fn}",
-                entrypoint_config=cli_config,
-            )
-        )
+        await cli_main(cli_config)
+        logger.info(f"[{i + 1}/{len(selected)}] Finished loss_fn={loss_fn}")
 
-    config = SwarmConfig(
-        sweep_name=f"loss-fn-cmp-{sweep.env}",
-        dry_run=dry_run,
+    logger.info(
+        f"All {len(selected)} runs complete. "
+        f"Use analyze.py to compare results, or check metrics.jsonl in each log directory."
     )
-    launch_swarm(job_specs, config)
 
 
 if __name__ == "__main__":
-    dry_run = "--dry-run" in sys.argv
-    argv = [a for a in sys.argv[1:] if a != "--dry-run"]
-    # Re-inject cleaned argv so chz.entrypoint sees only config args
-    sys.argv = [sys.argv[0]] + argv
+    logging.basicConfig(level=logging.INFO)
     sweep_config = chz.entrypoint(SweepConfig)
-    run_sweep(sweep_config, dry_run=dry_run)
+    asyncio.run(run_sweep(sweep_config))

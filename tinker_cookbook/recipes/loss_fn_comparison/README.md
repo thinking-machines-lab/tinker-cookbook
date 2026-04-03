@@ -77,10 +77,10 @@ python -m tinker_cookbook.recipes.math_rl.train loss_fn=dro
 python -m tinker_cookbook.recipes.math_rl.train loss_fn=ppo 'loss_fn_config={"clip_low_threshold": 0.9, "clip_high_threshold": 1.1}'
 ```
 
-### Run all four in parallel (xmux sweep)
+### Run all four sequentially
 
 ```bash
-# Quick comparison on arithmetic (~5 min)
+# Quick comparison on arithmetic
 python -m tinker_cookbook.recipes.loss_fn_comparison.sweep
 
 # On GSM8K with a larger model
@@ -93,8 +93,8 @@ python -m tinker_cookbook.recipes.loss_fn_comparison.sweep \
     learning_rate=2e-5 \
     max_steps=100
 
-# Dry run (see commands without executing)
-python -m tinker_cookbook.recipes.loss_fn_comparison.sweep --dry-run
+# Run only a subset
+python -m tinker_cookbook.recipes.loss_fn_comparison.sweep loss_fns=ppo,cispo
 ```
 
 ### Analyze results
