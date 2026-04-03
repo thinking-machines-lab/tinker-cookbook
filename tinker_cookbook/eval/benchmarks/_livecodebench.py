@@ -146,6 +146,7 @@ class LiveCodeBenchBenchmarkBuilder(BenchmarkBuilder):
     """LiveCodeBench: competitive programming with execution-based Pass@1."""
 
     name = "livecodebench"
+    experimental = True
     requires_sandbox = True
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:

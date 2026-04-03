@@ -148,6 +148,7 @@ class ArenaHardBenchmarkBuilder(BenchmarkBuilder):
     """Arena-Hard-Auto: challenging open-ended questions judged by LLM (500 questions)."""
 
     name = "arena_hard"
+    experimental = True
     requires_judge = True
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:

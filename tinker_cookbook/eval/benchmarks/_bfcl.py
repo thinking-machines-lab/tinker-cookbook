@@ -161,6 +161,7 @@ class BFCLBenchmarkBuilder(BenchmarkBuilder):
     """BFCL: Berkeley Function Calling Leaderboard (simple subset, AST match)."""
 
     name = "bfcl"
+    experimental = True
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
         repo = "gorilla-llm/Berkeley-Function-Calling-Leaderboard"

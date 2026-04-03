@@ -377,6 +377,13 @@ async def run_benchmark(
     # Validate requirements before doing any work
     _validate_requirements(benchmark, config)
 
+    if benchmark.experimental:
+        logger.warning(
+            f"Benchmark '{benchmark.name}' is experimental and may not match "
+            f"published scores. See the benchmark module docstring for known "
+            f"limitations and status."
+        )
+
     t0 = time.monotonic()
     num_samples = config.num_samples
 

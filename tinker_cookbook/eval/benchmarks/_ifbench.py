@@ -135,6 +135,7 @@ class IFBenchBenchmarkBuilder(BenchmarkBuilder):
     """IFBench: instruction following with 58 diverse constraint types (300 examples)."""
 
     name = "ifbench"
+    experimental = True
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
         try:

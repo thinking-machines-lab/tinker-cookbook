@@ -307,6 +307,10 @@ class BenchmarkBuilder(ABC):
     - Multi-turn agent (terminal_bench, tau2): 600-1800s
     """
 
+    experimental: bool = False
+    """If True, the runner logs a warning that this benchmark is experimental
+    and may not match published scores."""
+
     # Requirements — validated by the runner before calling make_envs().
     requires_sandbox: bool = False
     """If True, this benchmark executes code in a sandbox. The runner

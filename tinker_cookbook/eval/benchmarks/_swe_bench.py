@@ -340,6 +340,7 @@ class SWEBenchBenchmarkBuilder(BenchmarkBuilder):
     """
 
     name = "swe_bench"
+    experimental = True
     requires_sandbox = True
     multi_turn = True
     recommended_timeout = 1800

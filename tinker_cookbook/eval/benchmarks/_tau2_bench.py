@@ -806,6 +806,7 @@ class Tau2BenchBenchmarkBuilder(BenchmarkBuilder):
     """
 
     name = "tau2_bench"
+    experimental = True
     requires_judge = True
     multi_turn = True
     recommended_timeout = 600

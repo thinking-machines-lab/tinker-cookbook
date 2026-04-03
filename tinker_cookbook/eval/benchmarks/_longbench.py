@@ -112,6 +112,7 @@ class LongBenchBenchmarkBuilder(BenchmarkBuilder):
     """LongBench: long-context comprehension across multiple subtasks."""
 
     name = "longbench"
+    experimental = True
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
         ds = _load_longbench()
