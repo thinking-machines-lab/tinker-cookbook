@@ -64,14 +64,14 @@ CUDA_VISIBLE_DEVICES=1 HF_HUB_CACHE=~/huggingface/hub pytest tests/weights/gpu/t
 
 | File | Model | Type | Merge CPU | Merge GPU | Adapter | FP8 CPU | FP8 GPU | MXFP4 | MXFP4 GPU | INT4 CPU | INT4 GPU | CPU/GPU equiv |
 |------|-------|------|:---------:|:---------:|:-------:|:-------:|:-------:|:-----:|:---------:|:--------:|:--------:|:-------------:|
-| test_qwen3.py | Qwen3-4B | Dense | x | | x | | | | | | | |
-| test_qwen3_5.py | Qwen3.5-35B-A3B | MoE | x | | x | x | x | | | | | |
-| test_qwen3_vl.py | Qwen3-VL-30B-A3B | VL MoE | x | x | x | x | | | | | | |
-| test_deepseek.py | DeepSeek-V3.1 | FP8 MoE | | | | x | x | | | | | x |
-| test_kimi.py | Kimi-K2 | INT4 MoE | x | x | x | | | | | x | x | |
-| test_kimi_k25.py | Kimi-K2.5 | VL+INT4 MoE | x | x | x | | | | | x | x | |
-| test_gpt_oss.py | GPT-OSS-20B | MXFP4 MoE | x | | x | | | x | x | | | |
-| test_nemotron.py | Nemotron-30B | Mamba+MoE | x | x | x | | | | | | | |
+| test_qwen3.py | Qwen3-4B | Dense | ✅ | | ✅ | | | | | | | |
+| test_qwen3_5.py | Qwen3.5-35B-A3B | MoE | ✅ | | ✅ | ✅ | ✅ | | | | | |
+| test_qwen3_vl.py | Qwen3-VL-30B-A3B | VL MoE | ✅ | ✅ | ✅ | ✅ | | | | | | |
+| test_deepseek.py | DeepSeek-V3.1 | FP8 MoE | | | | ✅ | ✅ | | | | | ✅ |
+| test_kimi.py | Kimi-K2 | INT4 MoE | ✅ | ✅ | ✅ | | | | | ✅ | ✅ | |
+| test_kimi_k25.py | Kimi-K2.5 | VL+INT4 MoE | ✅ | ✅ | ✅ | | | | | ✅ | ✅ | |
+| test_gpt_oss.py | GPT-OSS-20B | MXFP4 MoE | ✅ | | ✅ | | | ✅ | ✅ | | | |
+| test_nemotron.py | Nemotron-30B | Mamba+MoE | ✅ | ✅ | ✅ | | | | | | | |
 
 ### Tinker model lineup coverage
 
