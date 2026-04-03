@@ -140,15 +140,29 @@ def _load_dataset(
         for row in train_ds:
             try:
                 answer = extract_boxed(row["solution"])
-                train_data.append({"problem": row["problem"], "answer": answer})
+                # Train set uses "type" and "Level N" format
+                level_str = row.get("level", "")
+                level = level_str.replace("Level ", "") if level_str else ""
+                train_data.append({
+                    "problem": row["problem"],
+                    "answer": answer,
+                    "level": level,
+                    "category": row.get("type", ""),
+                })
             except ValueError:
                 continue
         test_ds = _get_hendrycks_math_test()
         test_data = []
         for row in test_ds:
             try:
-                answer = extract_boxed(row["solution"])
-                test_data.append({"problem": row["problem"], "answer": answer})
+                # MATH-500 test set has "answer" directly and uses "subject"/"level" (no "Level " prefix)
+                answer = row.get("answer") or extract_boxed(row["solution"])
+                test_data.append({
+                    "problem": row["problem"],
+                    "answer": answer,
+                    "level": row.get("level", ""),
+                    "category": row.get("subject", row.get("type", "")),
+                })
             except ValueError:
                 continue
         return train_data, test_data
@@ -187,6 +201,7 @@ async def evaluate_pass_at_1(
         )
         return result, prob["answer"]
 
+    # Keep problems list aligned with results for per-level tracking
     results = await asyncio.gather(*[sample_one(p) for p in problems])
 
     # Grade results
@@ -194,10 +209,18 @@ async def evaluate_pass_at_1(
     n_format = 0
     n_total = len(results)
 
-    for result, answer in results:
+    # Per-level tracking
+    level_totals: dict[str, int] = {}
+    level_correct: dict[str, int] = {}
+
+    for i, (result, answer) in enumerate(results):
         tokens = result.sequences[0].tokens
         parsed_message, _parse_ok = renderer.parse_response(tokens)
         content = renderers.get_text_content(parsed_message)
+
+        level = problems[i].get("level", "")
+        if level:
+            level_totals[level] = level_totals.get(level, 0) + 1
 
         try:
             _ = extract_boxed(content)
@@ -207,12 +230,21 @@ async def evaluate_pass_at_1(
 
         if _grade_response(content, answer):
             n_correct += 1
+            if level:
+                level_correct[level] = level_correct.get(level, 0) + 1
 
-    return {
+    eval_metrics: dict[str, float] = {
         "test/correct": n_correct / n_total,
         "test/format": n_format / n_total,
         "test/n_problems": float(n_total),
     }
+
+    for level in sorted(level_totals.keys()):
+        total = level_totals[level]
+        correct = level_correct.get(level, 0)
+        eval_metrics[f"test/correct_L{level}"] = correct / total if total else 0
+
+    return eval_metrics
 
 
 async def main(config: Config):
@@ -328,8 +360,16 @@ async def main(config: Config):
         n_correct_samples = 0
         n_problems_solved = 0
 
+        # Per-level tracking (for MATH dataset)
+        level_totals: dict[str, int] = {}
+        level_solved: dict[str, int] = {}
+
         for result, prob in sample_results:
             problem_correct_count = 0
+            level = prob.get("level", "")
+
+            if level:
+                level_totals[level] = level_totals.get(level, 0) + 1
 
             for seq in result.sequences:
                 n_total_samples += 1
@@ -366,6 +406,8 @@ async def main(config: Config):
 
             if problem_correct_count > 0:
                 n_problems_solved += 1
+                if level:
+                    level_solved[level] = level_solved.get(level, 0) + 1
 
         solve_rate = n_problems_solved / len(batch_problems) if batch_problems else 0
         sample_accuracy = n_correct_samples / n_total_samples if n_total_samples else 0
@@ -381,11 +423,24 @@ async def main(config: Config):
             }
         )
 
+        # Per-level solve rates
+        for level in sorted(level_totals.keys()):
+            total = level_totals[level]
+            solved = level_solved.get(level, 0)
+            metrics[f"train/solve_rate_L{level}"] = solved / total if total else 0
+            metrics[f"train/n_problems_L{level}"] = total
+
         logger.info(
             f"Batch {batch_idx}: {n_correct_samples}/{n_total_samples} correct "
             f"({sample_accuracy:.1%}), {n_problems_solved}/{len(batch_problems)} "
             f"problems solved ({solve_rate:.1%}), {len(correct_datums)} SFT datums"
         )
+        if level_totals:
+            level_summary = ", ".join(
+                f"L{l}={level_solved.get(l, 0)}/{level_totals[l]}"
+                for l in sorted(level_totals.keys())
+            )
+            logger.info(f"  Per-level solve rates: {level_summary}")
 
         # ---- Phase 3: Fine-tune on correct solutions ----
         if correct_datums:
