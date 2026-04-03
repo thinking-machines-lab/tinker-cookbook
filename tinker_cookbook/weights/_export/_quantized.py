@@ -526,54 +526,45 @@ class FP8BlockFormat:
             return {key: tensor}
 
         if tensor.ndim == 2:
-            return self._quantize_2d(key, tensor)
+            return self._quantize_expert(key, tensor)
         elif tensor.ndim == 3:
-            return self._quantize_fused_3d(key, tensor)
+            return self._quantize_fused_experts(key, tensor)
         return {key: tensor}
 
-    def _quantize_2d(self, key: str, tensor: torch.Tensor) -> dict[str, torch.Tensor]:
-        """Quantize a per-expert 2D weight tensor to FP8."""
+    def _to_device(self, tensor: torch.Tensor) -> torch.Tensor:
         if self._device.type != "cpu":
-            compute_tensor = tensor.to(self._device)
-        else:
-            compute_tensor = tensor
+            return tensor.to(self._device)
+        return tensor
 
-        fp8_tensor, scale = quantize_blockwise(compute_tensor)
-
+    def _to_cpu(self, tensor: torch.Tensor) -> torch.Tensor:
         if self._device.type != "cpu":
-            fp8_tensor = fp8_tensor.cpu()
-            scale = scale.cpu()
+            return tensor.cpu()
+        return tensor
 
-        return {key: fp8_tensor, _weight_scale_key(key): scale}
+    def _quantize_expert(self, key: str, tensor: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Quantize a 2D expert weight tensor to FP8."""
+        fp8_tensor, scale = quantize_blockwise(self._to_device(tensor))
+        return {key: self._to_cpu(fp8_tensor), _weight_scale_key(key): self._to_cpu(scale)}
 
-    def _quantize_fused_3d(self, key: str, tensor: torch.Tensor) -> dict[str, torch.Tensor]:
+    def _quantize_fused_experts(self, key: str, tensor: torch.Tensor) -> dict[str, torch.Tensor]:
         """Quantize a fused 3D expert tensor [num_experts, out, in] to FP8.
 
-        Quantizes each expert slice independently, producing per-expert
-        block scales stacked into a 3D scale tensor.
+        Moves the entire tensor to the compute device once, quantizes each
+        expert slice independently, then moves results back.
         """
-        num_experts = tensor.shape[0]
+        tensor = self._to_device(tensor)
+
         fp8_slices = []
         scale_slices = []
-
-        for i in range(num_experts):
-            expert_slice = tensor[i]
-            if self._device.type != "cpu":
-                expert_slice = expert_slice.to(self._device)
-
-            fp8_slice, scale_slice = quantize_blockwise(expert_slice)
-
-            if self._device.type != "cpu":
-                fp8_slice = fp8_slice.cpu()
-                scale_slice = scale_slice.cpu()
-
+        for i in range(tensor.shape[0]):
+            fp8_slice, scale_slice = quantize_blockwise(tensor[i])
             fp8_slices.append(fp8_slice)
             scale_slices.append(scale_slice)
 
-        fp8_tensor = torch.stack(fp8_slices)
-        scale_tensor = torch.stack(scale_slices)
-
-        return {key: fp8_tensor, _weight_scale_key(key): scale_tensor}
+        return {
+            key: self._to_cpu(torch.stack(fp8_slices)),
+            _weight_scale_key(key): self._to_cpu(torch.stack(scale_slices)),
+        }
 
     def finalize_config(
         self,

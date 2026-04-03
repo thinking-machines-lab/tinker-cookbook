@@ -39,6 +39,7 @@ from tinker_cookbook.supervised.data import (
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.weights import download
+from tinker_cookbook.weights._export._quantized import _weight_scale_key
 
 # ---------------------------------------------------------------------------
 # Directory-level skip: no GPU → skip all tests here
@@ -226,10 +227,7 @@ def verify_fp8_output(output_path: Path) -> None:
         assert tensors[key].dtype == torch.float8_e4m3fn, (
             f"Expected FP8 for routed expert {key}, got {tensors[key].dtype}"
         )
-        if key.endswith(".weight"):
-            scale_key = key.removesuffix(".weight") + ".weight_scale"
-        else:
-            scale_key = key + ".weight_scale"
+        scale_key = _weight_scale_key(key)
         assert scale_key in tensors, f"Missing scale for {key}"
         assert tensors[scale_key].dtype == torch.float32
 
