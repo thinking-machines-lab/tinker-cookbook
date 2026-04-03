@@ -72,7 +72,7 @@ def _build_cli_config(
         wandb_project=sweep.wandb_project,
         wandb_name=f"loss-cmp-{loss_fn}" if sweep.wandb_project else None,
         seed=sweep.seed,
-        behavior_if_log_dir_exists="overwrite",
+        behavior_if_log_dir_exists="delete",
     )
 
 

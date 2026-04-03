@@ -47,10 +47,10 @@ Default clip range: `[0.8, 1.2]`. Configurable via `loss_fn_config`.
 Adds a quadratic KL penalty that makes the policy conservative about deviating too far from the sampling policy:
 
 ```
-L = -log p_θ(x) * A(x) + 0.5 * β * (log(p_θ/q))²
+L = -(log p_θ(x) * A(x) - 0.5 * β * (log(p_θ(x)/q(x)))²)
 ```
 
-Configurable via `loss_fn_config={"beta": 0.05}`.
+The quadratic term penalizes large divergence between the training and sampling policies. Configurable via `loss_fn_config={"beta": 0.05}`.
 
 **When to use:** Off-policy or offline RL settings, or when you want robust updates that are less sensitive to distribution shift. Particularly relevant when training on stale rollout data or when mixing data from multiple sources.
 
