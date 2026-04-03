@@ -21,7 +21,7 @@ def _(mo):
     In this tutorial you will:
 
     1. Prepare simple training data
-    2. Run `forward_backward` with `cross_entropy`, `importance_sampling`, `ppo`, and `cispo`
+    2. Run `forward_backward` with `cross_entropy`, `importance_sampling`, `ppo`, `cispo`, and `dro`
     3. Write a custom loss with `forward_backward_custom`
     4. Compare loss values and understand when to use each
     """)
@@ -78,6 +78,7 @@ def _(mo):
     | `importance_sampling` | `target_tokens`, `logprobs`, `advantages` |
     | `ppo` | `target_tokens`, `logprobs`, `advantages` |
     | `cispo` | `target_tokens`, `logprobs`, `advantages` |
+    | `dro` | `target_tokens`, `logprobs`, `advantages` |
 
     We will create one SFT datum and one RL datum (reused across the RL losses).
     """)
@@ -108,7 +109,7 @@ def _(TensorData, tinker, tokenizer, torch):
         },
     )
 
-    # -- RL datum (for importance_sampling, ppo, cispo) --
+    # -- RL datum (for importance_sampling, ppo, cispo, dro) --
     # Simulate a sampled completion with fake logprobs and advantages
     model_input_rl = tinker.ModelInput.from_ints(all_ids[:-1])
     rl_target_tokens = all_ids[1:]
@@ -164,7 +165,12 @@ async def _(rl_datum, sft_datum, training_client):
     cispo_future = await training_client.forward_backward_async([rl_datum], loss_fn="cispo")
     cispo_result = await cispo_future.result_async()
     print(f"cispo              loss:sum = {cispo_result.metrics['loss:sum']:.4f}")
-    return ce_result, cispo_result, is_result, ppo_result
+
+    # DRO (distributionally robust optimization)
+    dro_future = await training_client.forward_backward_async([rl_datum], loss_fn="dro")
+    dro_result = await dro_future.result_async()
+    print(f"dro                loss:sum = {dro_result.metrics['loss:sum']:.4f}")
+    return ce_result, cispo_result, dro_result, is_result, ppo_result
 
 
 @app.cell(hide_code=True)
@@ -288,10 +294,13 @@ def _(mo):
     | `cross_entropy` | Supervised fine-tuning (SFT), distillation | Standard NLL; trains on known-good outputs |
     | `importance_sampling` | RL with on-policy or near-on-policy data | Corrects for sampler/learner mismatch; unbounded ratio |
     | `ppo` | RL with multiple gradient steps per rollout | Clips the IS ratio to prevent large updates |
-    | `cispo` | RL; alternative to PPO | Clips the ratio but applies it as a weight on log-prob; sometimes more stable |
+    | `cispo` | RL; alternative to PPO | Clips the ratio but applies it as a weight on log-prob; preserves gradients for rare tokens |
+    | `dro` | Off-policy/offline RL | Quadratic KL penalty; robust to distribution shift between sampler and learner |
     | `forward_backward_custom` | DPO, custom regularizers, research losses | Full flexibility; 1.5x FLOPs due to extra forward pass |
 
-    **Rule of thumb:** Start with `cross_entropy` for SFT and `importance_sampling` for RL. Switch to `ppo` or `cispo` if you see training instability from large policy updates. Use `forward_backward_custom` for anything that does not fit the built-in losses.
+    **Rule of thumb:** Start with `cross_entropy` for SFT and `importance_sampling` for RL. Switch to `ppo` or `cispo` if you see training instability from large policy updates. Use `dro` for off-policy settings or when mixing data from multiple sources. Use `forward_backward_custom` for anything that does not fit the built-in losses.
+
+    For a hands-on comparison, see the [loss function comparison recipe](https://github.com/thinking-machines-lab/tinker-cookbook/tree/main/tinker_cookbook/recipes/loss_fn_comparison).
     """)
     return
 
