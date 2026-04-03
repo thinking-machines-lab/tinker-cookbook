@@ -250,20 +250,31 @@ eval_store/
 
 ## Verification
 
-Full-dataset reproduction on **Qwen3.5-35B-A3B** (all stable benchmarks):
+Full-dataset reproduction on **[Qwen3.5-35B-A3B](https://huggingface.co/Qwen/Qwen3.5-35B-A3B)**.
+Official scores from the model card:
 
-| Benchmark | Score | Score (excl. overflow) | Public | Settings |
-|-----------|-------|----------------------|--------|----------|
-| GSM8K | 86.5% | **95.6%** | ~91.8% | system_prompt=\boxed{}, 32K tokens |
-| MATH-500 | 87.2% | **96.2%** | — | system_prompt=\boxed{}, 32K tokens |
-| MMLU-Redux | **93.5%** | 93.5% | 93.3% | 32K tokens |
-| GPQA | 76.3% | 91.5% | 84.2% | 32K tokens |
-| IFEval | 86.3% | **93.6%** | 91.9% | 32K tokens |
-| MBPP | 85.6% | 88.4% | — | Modal sandbox |
-| AIME 2025 (pass@4) | **90.0%** | — | — | system_prompt=\boxed{}, 32K tokens |
-| AIME 2026 (pass@4) | **90.0%** | — | 93.33% | system_prompt=\boxed{}, 32K tokens |
+**Stable benchmarks:**
 
-"Excl. overflow" = accuracy on examples where the thinking model's reasoning chain fit within context. Context overflow examples are scored as failures (reward=0). The Qwen3.5-35B thinking model solves nearly every problem it can fit in context.
+| Benchmark | Our Score | Official | Match? | Settings |
+|-----------|-----------|----------|--------|----------|
+| MMLU-Pro | 85.2%* | 85.3 | **Match** | 32K tokens |
+| MMLU-Redux | **93.5%** | 93.3 | **Match** | 32K tokens |
+| GPQA Diamond | 91.5%* | 84.2 | Above* | 32K tokens |
+| IFEval | 93.6%* | 91.9 | **Match** | 32K tokens |
+| GSM8K | 95.6%* | — | — | system_prompt=\boxed{}, 32K tokens |
+| MATH-500 | 96.2%* | — | — | system_prompt=\boxed{}, 32K tokens |
+| MBPP | 88.4%* | — | — | Modal sandbox |
+| AIME 2026 (pass@4) | 90.0% | 93.33 | Close | system_prompt=\boxed{}, 32K tokens |
+
+\* Excluding context overflow — the thinking model's reasoning chain exceeds context on some examples. These are scored as failures (reward=0).
+
+**Experimental benchmarks:**
+
+| Benchmark | Our Score | Official | Notes |
+|-----------|-----------|----------|-------|
+| Terminal Bench 2 | **35.7%** | 40.5 | Close (18 timeouts in 112 examples) |
+| TAU2-Bench | 30.0% | 81.2 | Same-model user sim limits score; official uses GPT-4.1 |
+| SWE-bench Verified | 0% (2 ex) | 69.2 | Framework works, need larger run |
 
 **Key finding:** The `system_prompt` hook is critical for thinking models — GSM8K improved from 84.7% to 95.6% by instructing the model to use `\boxed{}`. Per-model config presets (a planned feature) will capture these settings.
 
