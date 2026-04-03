@@ -290,7 +290,8 @@ class _SWEBenchEnvFactory(SandboxMixin, Env):
         # Build initial messages with tool specs in the renderer's native format
         tool_specs = [bash_tool.bash.to_spec()]
         initial_messages = self.renderer.create_conversation_prefix_with_tools(
-            tools=tool_specs, system_prompt=system_content,
+            tools=tool_specs,
+            system_prompt=system_content,
         )
         initial_messages.append({"role": "user", "content": user_prompt})
 

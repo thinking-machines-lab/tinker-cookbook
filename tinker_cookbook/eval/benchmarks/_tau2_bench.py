@@ -153,9 +153,7 @@ def _load_tau2_data(domain: str = "airline") -> tuple[list[dict], str, dict, lis
     domain_tools_raw = all_tools_data.get(domain, {}).get("tools", [])
     tool_definitions = _convert_tau2_tools_to_openai(domain_tools_raw)
 
-    logger.info(
-        f"Loaded tau2-bench {domain}: {len(tasks)} tasks, {len(tool_definitions)} tools"
-    )
+    logger.info(f"Loaded tau2-bench {domain}: {len(tasks)} tasks, {len(tool_definitions)} tools")
     return tasks, policy, db, tool_definitions
 
 
@@ -260,8 +258,17 @@ class ToolBackend:
     def _schema_looks_like_write(tool_name: str, param_props: dict, value_args: dict) -> bool:
         """Decide if a tool call is a write (mutation) based on schema cues."""
         mutation_words = {
-            "update", "set", "change", "modify", "new", "replace",
-            "cancel", "create", "delete", "remove", "add",
+            "update",
+            "set",
+            "change",
+            "modify",
+            "new",
+            "replace",
+            "cancel",
+            "create",
+            "delete",
+            "remove",
+            "add",
         }
         for key in value_args:
             prop = param_props.get(key, {})
@@ -642,7 +649,9 @@ class Tau2MessageEnv(MessageEnv):
 
         # Simulate customer response
         user_response = await _simulate_user(
-            self.user_completer, self.user_scenario, self.history,
+            self.user_completer,
+            self.user_scenario,
+            self.history,
         )
         self.history.append({"role": "user", "content": user_response})
 
@@ -738,12 +747,16 @@ class _Tau2BenchEnvFactory(Env):
 
         # Generate initial user message (customer opening)
         initial_user_msg = await _simulate_user(
-            self.user_completer, self.user_scenario, [], is_opening=True,
+            self.user_completer,
+            self.user_scenario,
+            [],
+            is_opening=True,
         )
 
         # Build initial messages with tool specs in renderer's native format
         initial_messages = self.renderer.create_conversation_prefix_with_tools(
-            tools=tool_specs, system_prompt=self.system_prompt,
+            tools=tool_specs,
+            system_prompt=self.system_prompt,
         )
         initial_messages.append({"role": "user", "content": initial_user_msg})
 

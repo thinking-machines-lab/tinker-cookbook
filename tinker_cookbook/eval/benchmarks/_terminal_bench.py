@@ -331,9 +331,7 @@ class _TerminalBenchEnvFactory(SandboxMixin, Env):
 
         # Write test script to /app
         if self.test_script:
-            await self.sandbox.write_file(
-                "/app/run_tests.sh", self.test_script, executable=True
-            )
+            await self.sandbox.write_file("/app/run_tests.sh", self.test_script, executable=True)
 
         # Create tool and reward
         bash_tool = _BashTool(self.sandbox)
@@ -343,7 +341,8 @@ class _TerminalBenchEnvFactory(SandboxMixin, Env):
         system_content = self.system_prompt or _SYSTEM_PROMPT
         tool_specs = [bash_tool.bash.to_spec()]
         initial_messages = self.renderer.create_conversation_prefix_with_tools(
-            tools=tool_specs, system_prompt=system_content,
+            tools=tool_specs,
+            system_prompt=system_content,
         )
         initial_messages.append({"role": "user", "content": f"## Task\n{self.task_description}"})
 
