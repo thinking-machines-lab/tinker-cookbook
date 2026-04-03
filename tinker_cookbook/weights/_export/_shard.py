@@ -28,6 +28,7 @@ def build_sharded(
     trust_remote_code: bool,
     model_dir: Path,
     config_dict: dict,
+    device: str = "cpu",
 ) -> None:
     """Merge by processing one safetensors shard at a time.
 
@@ -38,8 +39,9 @@ def build_sharded(
         trust_remote_code: Whether to trust remote code for HF loading.
         model_dir: Resolved local directory containing model files.
         config_dict: Parsed config.json dict (loaded by dispatcher).
+        device: Device for quantization math ("cpu", "cuda", etc.).
     """
-    shard_hooks = _build_shard_hooks(config_dict)
+    shard_hooks = _build_shard_hooks(config_dict, device=device)
 
     run_shard_merge(
         base_model=base_model,
@@ -59,13 +61,17 @@ def build_sharded(
 
 def _build_shard_hooks(
     config_dict: dict,
+    device: str = "cpu",
 ) -> ShardHooks | None:
     """Build shard hooks based on the model's quantization config.
 
-    Uses the explicit ``format: pack-quantized`` field from the model's
-    ``quantization_config`` to detect compressed-tensors INT4 format
-    (Kimi K2, K2.5).  Other quantized formats (Nemotron NVFP4, DeepSeek
-    native FP8) are NOT matched — they use different weight conventions.
+    Detection is config-driven via ``quantization_config``:
+
+    - ``format: pack-quantized`` → INT4 packed (Kimi K2, K2.5)
+    - ``quant_method: mxfp4 | mxfp8`` → MX block format (GPT-OSS)
+
+    Other quantized formats (DeepSeek native FP8) are NOT matched —
+    they use the ``QuantizationFormat`` protocol path instead.
     """
     from tinker_cookbook.weights._merge_utils import is_pack_quantized
 
@@ -73,4 +79,12 @@ def _build_shard_hooks(
         from tinker_cookbook.weights._export._shard_packed_int4 import PackedInt4ShardHooks
 
         return PackedInt4ShardHooks(config_dict)
+
+    qc = config_dict.get("quantization_config", {})
+    method = qc.get("quant_method", "") if isinstance(qc, dict) else ""
+    if method in ("mxfp4", "mxfp8"):
+        from tinker_cookbook.weights._export._shard_mx_block import MXBlockShardHooks
+
+        return MXBlockShardHooks(config_dict, device=device)
+
     return None
