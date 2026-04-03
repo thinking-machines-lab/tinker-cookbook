@@ -107,6 +107,7 @@ class GSM8KBenchmarkBuilder(BenchmarkBuilder):
                     renderer=renderer,
                     message_env=msg_env,
                     failed_parse_reward=0.0,
+                    context_overflow_reward=0.0,
                 )
             )
         return envs
