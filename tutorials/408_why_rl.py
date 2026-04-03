@@ -33,10 +33,13 @@ def _(mo):
     But on harder tasks, RFT hits a ceiling. **GRPO** (Group Relative Policy Optimization)
     breaks through that ceiling by learning from *both* correct and incorrect solutions.
 
-    This tutorial walks through:
+    This tutorial runs both methods head-to-head on GSM8K math problems, then shows
+    what happens on harder tasks (Hendrycks MATH).
 
-    1. How RFT and GRPO work — with code
-    2. A head-to-head comparison on math reasoning (MATH-500)
+    **What you'll learn:**
+
+    1. How RFT and GRPO work -- with runnable code
+    2. A live head-to-head comparison on GSM8K
     3. Why RFT plateaus and GRPO doesn't
     4. When to use which method
     """)
@@ -59,577 +62,718 @@ def _(mo):
     | **Intuition** | "Do more of this" | "Do more of this, less of that" |
 
     RFT is just SFT on the model's own correct outputs. GRPO is RL that learns from
-    the full distribution of outputs — correct and incorrect.
+    the full distribution of outputs -- correct and incorrect.
     """)
     return
+
+
+# ==============================================================================
+# Setup: model, data, grading
+# ==============================================================================
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## RFT in code
+    ## Setup
 
-    The RFT training loop is simple. Here is the core logic (simplified from
-    `tinker_cookbook/recipes/math_rft/train.py`):
-
-    ```python
-    for batch in problems:
-        # 1. Sample K solutions per problem
-        sampling_client = await training_client.save_weights_and_get_sampling_client_async()
-        results = await asyncio.gather(*[
-            sampling_client.sample_async(prompt, num_samples=K, sampling_params=params)
-            for prompt in batch
-        ])
-
-        # 2. Grade and keep only correct solutions
-        correct_datums = []
-        for result, answer in zip(results, answers):
-            for seq in result.sequences:
-                response = renderer.parse_response(seq.tokens)
-                if is_correct(response, answer):
-                    datum = conversation_to_datum(prompt + response, renderer)
-                    correct_datums.append(datum)
-
-        # 3. Standard SFT step on correct solutions
-        await training_client.forward_backward_async(correct_datums, loss_fn="cross_entropy")
-        await training_client.optim_step_async(adam_params)
-    ```
-
-    That's it. No advantages, no importance weights, no negative signal. Just SFT on
-    whatever the model gets right.
+    We use **Qwen3-8B** on **GSM8K** (grade school math). Each problem has a numeric
+    answer that we can verify automatically -- a perfect setting for both RFT and GRPO.
     """)
     return
 
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## GRPO in code
-
-    GRPO uses all solutions — correct and incorrect — weighted by group-relative advantages.
-    Here is the core logic (simplified from `tutorials/104_first_rl.py`):
-
-    ```python
-    for batch in problems:
-        # 1. Sample K solutions per problem (same as RFT)
-        sampling_client = await training_client.save_weights_and_get_sampling_client_async()
-        results = await asyncio.gather(...)
-
-        # 2. Grade ALL solutions and compute group-relative advantages
-        datums = []
-        for result, answer in zip(results, answers):
-            rewards = [grade(seq, answer) for seq in result.sequences]
-            mean_reward = sum(rewards) / len(rewards)
-            advantages = [r - mean_reward for r in rewards]  # <-- the key difference
-
-            if all(a == 0 for a in advantages):
-                continue  # skip degenerate groups
-
-            for seq, advantage, logprobs in zip(result.sequences, advantages, ...):
-                datum = build_rl_datum(prompt, seq, logprobs, advantage)
-                datums.append(datum)
-
-        # 3. RL step with importance-weighted loss
-        await training_client.forward_backward_async(datums, loss_fn="importance_sampling")
-        await training_client.optim_step_async(adam_params)
-    ```
-
-    The key line is `advantages = [r - mean_reward for r in rewards]`. Correct solutions
-    get positive advantages (reward 1.0 - mean), wrong solutions get negative advantages
-    (reward 0.0 - mean). The model learns to do more of the good and less of the bad.
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## The experiment
-
-    We trained Qwen3-8B on the [Hendrycks MATH](https://arxiv.org/abs/2103.03874) dataset
-    using both methods. MATH has 12,000 training problems and a held-out test set
-    ([MATH-500](https://huggingface.co/datasets/HuggingFaceH4/MATH-500)) with
-    problems at 5 difficulty levels.
-
-    **Setup:**
-    - Model: `Qwen/Qwen3-8B` (base model, no instruction tuning)
-    - Group size K = 16 (solutions sampled per problem)
-    - 32 problems per batch, 40 training steps
-    - RFT: learning rate 1e-4 (cross-entropy allows higher LR)
-    - GRPO: learning rate 8e-5 (importance-weighted loss needs lower LR)
-    - LoRA rank 32, max generation length 2048 tokens
-
-    Both methods see the same number of problems and sample the same number of solutions.
-    The only difference is the training algorithm.
-    """)
-    return
-
-
-# ---- Pre-computed experimental data ----
 
 @app.cell
 def _():
-    # RFT results on MATH-500 (greedy eval, Qwen3-8B, K=16, lr=1e-4)
-    rft_steps = [0, 5, 10, 15, 20, 25, 30, 35, 40]
-    rft_overall = [0.422, 0.788, 0.786, 0.780, 0.782, 0.796, 0.798, 0.796, 0.788]
-    rft_by_level = {
+    import re
+    import warnings
+
+    warnings.filterwarnings("ignore", message="IProgress not found")
+
+    import tinker
+    import torch
+    from tinker import TensorData
+
+    from tinker_cookbook.renderers import get_renderer, get_text_content
+    from tinker_cookbook.renderers.base import TrainOnWhat
+    from tinker_cookbook.supervised.data import conversation_to_datum
+
+    return (
+        TensorData,
+        conversation_to_datum,
+        TrainOnWhat,
+        get_renderer,
+        get_text_content,
+        re,
+        tinker,
+        torch,
+    )
+
+
+@app.cell
+def _(re):
+    import datasets
+
+    _dataset = datasets.load_dataset("openai/gsm8k", "main")
+    train_data = _dataset["train"]
+    test_data = _dataset["test"]
+
+    def extract_gsm8k_answer(text: str) -> str:
+        match = re.search(r"####\s*(.+)", text)
+        if match:
+            return match.group(1).replace(",", "").strip()
+        raise ValueError("No #### answer found")
+
+    def extract_boxed(text: str) -> str | None:
+        match = re.findall(r"\\boxed\{([^}]+)\}", text)
+        if match:
+            return match[-1].strip()
+        return None
+
+    def grade_answer(response: str, ground_truth: str) -> float:
+        answer = extract_boxed(response)
+        if answer is None:
+            return 0.0
+        answer = answer.replace(",", "").strip()
+        ground_truth = ground_truth.replace(",", "").strip()
+        return 1.0 if answer == ground_truth else 0.0
+
+    question_suffix = " Provide a numerical answer without units, written inside \\boxed{}."
+    fewshot_prefix = [
+        {"role": "user", "content": "How many r's are in strawberry?" + question_suffix},
+        {
+            "role": "assistant",
+            "content": (
+                "Let's count: s-t-r-a-w-b-e-r-r-y. "
+                "Positions 3, 8, 9. \\boxed{3}"
+            ),
+        },
+    ]
+
+    print(f"Loaded {len(train_data)} train / {len(test_data)} test GSM8K problems")
+    return (
+        extract_boxed,
+        extract_gsm8k_answer,
+        fewshot_prefix,
+        grade_answer,
+        question_suffix,
+        test_data,
+        train_data,
+    )
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Training configuration
+
+    We use the same hyperparameters as the full experiments in `recipes/math_rft/`
+    so the results are directly comparable. Both methods use the same model, data,
+    and group size.
+    """)
+    return
+
+
+@app.cell
+def _():
+    # Shared hyperparameters -- matched to the full experiments
+    N_STEPS = 30          # training steps per method
+    BATCH_SIZE = 32       # problems per step (groups_per_batch)
+    GROUP_SIZE = 16       # completions per problem
+    MAX_TOKENS = 1024     # max generation tokens
+    BASE_MODEL = "Qwen/Qwen3-8B"
+    EVAL_EVERY = 5        # evaluate on test set every N steps
+    N_EVAL_PROBLEMS = 200 # test problems for evaluation
+
+    return BASE_MODEL, BATCH_SIZE, EVAL_EVERY, GROUP_SIZE, MAX_TOKENS, N_EVAL_PROBLEMS, N_STEPS
+
+
+# ==============================================================================
+# Part 1: RFT training loop
+# ==============================================================================
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Part 1: RFT (Rejection Sampling Fine-Tuning)
+
+    The RFT loop:
+    1. Sample K solutions per problem
+    2. Grade them -- keep only correct ones
+    3. Run standard SFT (cross-entropy) on the correct solutions
+    4. Evaluate on the test set periodically
+
+    No advantages, no importance weights, no negative signal.
+    Just **SFT on whatever the model gets right**.
+    """)
+    return
+
+
+@app.cell
+async def _(
+    BASE_MODEL,
+    BATCH_SIZE,
+    EVAL_EVERY,
+    GROUP_SIZE,
+    MAX_TOKENS,
+    N_EVAL_PROBLEMS,
+    N_STEPS,
+    TrainOnWhat,
+    conversation_to_datum,
+    extract_gsm8k_answer,
+    fewshot_prefix,
+    get_renderer,
+    get_text_content,
+    grade_answer,
+    question_suffix,
+    test_data,
+    tinker,
+    train_data,
+):
+    import asyncio as _asyncio
+    import time as _time
+
+    async def _run_rft():
+        # --- Setup ---
+        service = tinker.ServiceClient()
+        tc = await service.create_lora_training_client_async(base_model=BASE_MODEL, rank=32)
+        tok = tc.get_tokenizer()
+        rdr = get_renderer("qwen3", tok)
+        adam = tinker.AdamParams(learning_rate=1e-4, beta1=0.9, beta2=0.95)
+        samp_params = tinker.SamplingParams(
+            max_tokens=MAX_TOKENS, temperature=1.0, stop=rdr.get_stop_sequences()
+        )
+
+        async def _evaluate(training_client):
+            sc = await training_client.save_weights_and_get_sampling_client_async()
+            ep = tinker.SamplingParams(
+                max_tokens=MAX_TOKENS, temperature=0.0, stop=rdr.get_stop_sequences()
+            )
+            async def _one(row):
+                convo = [*fewshot_prefix, {"role": "user", "content": row["question"] + question_suffix}]
+                r = await sc.sample_async(
+                    prompt=rdr.build_generation_prompt(convo), num_samples=1, sampling_params=ep
+                )
+                msg, _ = rdr.parse_response(r.sequences[0].tokens)
+                return grade_answer(get_text_content(msg), extract_gsm8k_answer(row["answer"]))
+            problems = test_data.select(range(min(N_EVAL_PROBLEMS, len(test_data))))
+            scores = await _asyncio.gather(*[_one(row) for row in problems])
+            return sum(scores) / len(scores)
+
+        # --- Training loop ---
+        metrics = []
+        t0 = _time.time()
+
+        for step in range(N_STEPS):
+            t_step = _time.time()
+            batch_start = step * BATCH_SIZE
+            batch_rows = train_data.select(range(batch_start, batch_start + BATCH_SIZE))
+
+            sampling_client = await tc.save_weights_and_get_sampling_client_async()
+
+            async def _sample(question):
+                convo = [*fewshot_prefix, {"role": "user", "content": question + question_suffix}]
+                prompt = rdr.build_generation_prompt(convo)
+                result = await sampling_client.sample_async(
+                    prompt=prompt, num_samples=GROUP_SIZE, sampling_params=samp_params
+                )
+                return result, convo
+
+            results = await _asyncio.gather(*[_sample(q) for q in batch_rows["question"]])
+
+            correct_datums = []
+            n_correct = 0
+            n_total = 0
+            n_solved = 0
+
+            for (sample_result, convo), answer_text in zip(results, batch_rows["answer"]):
+                ground_truth = extract_gsm8k_answer(answer_text)
+                problem_correct = 0
+                for seq in sample_result.sequences:
+                    n_total += 1
+                    parsed_msg, _ = rdr.parse_response(seq.tokens)
+                    content = get_text_content(parsed_msg)
+                    if grade_answer(content, ground_truth) == 1.0:
+                        n_correct += 1
+                        problem_correct += 1
+                        full_convo = convo + [{"role": "assistant", "content": content}]
+                        datum = conversation_to_datum(
+                            full_convo, rdr, max_length=2048,
+                            train_on_what=TrainOnWhat.LAST_ASSISTANT_MESSAGE,
+                        )
+                        correct_datums.append(datum)
+                if problem_correct > 0:
+                    n_solved += 1
+
+            if correct_datums:
+                fb = await tc.forward_backward_async(correct_datums, loss_fn="cross_entropy")
+                op = await tc.optim_step_async(adam)
+                await fb.result_async()
+                await op.result_async()
+
+            sample_acc = n_correct / n_total if n_total else 0
+            elapsed = _time.time() - t0
+            step_time = _time.time() - t_step
+            remaining = step_time * (N_STEPS - step - 1)
+
+            entry = {"step": step, "sample_accuracy": sample_acc, "solve_rate": n_solved / BATCH_SIZE}
+
+            if step % EVAL_EVERY == 0:
+                test_acc = await _evaluate(tc)
+                entry["test_accuracy"] = test_acc
+                print(
+                    f"RFT step {step:2d} | sample_acc: {sample_acc:.0%} | "
+                    f"test: {test_acc:.1%} | "
+                    f"{elapsed:.0f}s elapsed, ~{remaining/60:.0f}min remaining"
+                )
+            else:
+                print(
+                    f"RFT step {step:2d} | sample_acc: {sample_acc:.0%} | "
+                    f"solved: {n_solved}/{BATCH_SIZE} | "
+                    f"{elapsed:.0f}s elapsed, ~{remaining/60:.0f}min remaining"
+                )
+
+            metrics.append(entry)
+
+        # Final eval
+        final_acc = await _evaluate(tc)
+        metrics.append({"step": N_STEPS, "test_accuracy": final_acc})
+        print(f"\nRFT done! Final test accuracy: {final_acc:.1%} ({_time.time()-t0:.0f}s total)")
+        return metrics, tc, rdr
+
+    rft_metrics, tc_rft, renderer_rft = await _run_rft()
+    return renderer_rft, rft_metrics, tc_rft
+
+
+# ==============================================================================
+# Part 2: GRPO training loop
+# ==============================================================================
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Part 2: GRPO (Group Relative Policy Optimization)
+
+    GRPO uses **all** solutions -- correct and incorrect -- weighted by
+    group-relative advantages:
+
+    ```
+    advantage = reward - mean(rewards_in_group)
+    ```
+
+    Correct solutions get positive advantage, wrong ones get negative advantage.
+    The model learns to do more of the good **and less of the bad**.
+    """)
+    return
+
+
+@app.cell
+async def _(
+    BASE_MODEL,
+    BATCH_SIZE,
+    EVAL_EVERY,
+    GROUP_SIZE,
+    MAX_TOKENS,
+    N_EVAL_PROBLEMS,
+    N_STEPS,
+    TensorData,
+    extract_gsm8k_answer,
+    fewshot_prefix,
+    get_renderer,
+    get_text_content,
+    grade_answer,
+    question_suffix,
+    test_data,
+    tinker,
+    torch,
+    train_data,
+):
+    import asyncio as _asyncio
+    import time as _time
+
+    async def _run_grpo():
+        # --- Setup ---
+        service = tinker.ServiceClient()
+        tc = await service.create_lora_training_client_async(base_model=BASE_MODEL, rank=32)
+        tok = tc.get_tokenizer()
+        rdr = get_renderer("qwen3", tok)
+        adam = tinker.AdamParams(learning_rate=2e-5, beta1=0.9, beta2=0.95)
+        samp_params = tinker.SamplingParams(
+            max_tokens=MAX_TOKENS, temperature=1.0, stop=rdr.get_stop_sequences()
+        )
+
+        async def _evaluate(training_client):
+            sc = await training_client.save_weights_and_get_sampling_client_async()
+            ep = tinker.SamplingParams(
+                max_tokens=MAX_TOKENS, temperature=0.0, stop=rdr.get_stop_sequences()
+            )
+            async def _one(row):
+                convo = [*fewshot_prefix, {"role": "user", "content": row["question"] + question_suffix}]
+                r = await sc.sample_async(
+                    prompt=rdr.build_generation_prompt(convo), num_samples=1, sampling_params=ep
+                )
+                msg, _ = rdr.parse_response(r.sequences[0].tokens)
+                return grade_answer(get_text_content(msg), extract_gsm8k_answer(row["answer"]))
+            problems = test_data.select(range(min(N_EVAL_PROBLEMS, len(test_data))))
+            scores = await _asyncio.gather(*[_one(row) for row in problems])
+            return sum(scores) / len(scores)
+
+        # --- Training loop ---
+        metrics = []
+        t0 = _time.time()
+
+        for step in range(N_STEPS):
+            t_step = _time.time()
+            batch_start = step * BATCH_SIZE
+            batch_rows = train_data.select(range(batch_start, batch_start + BATCH_SIZE))
+
+            sampling_client = await tc.save_weights_and_get_sampling_client_async()
+
+            prompts = []
+            coros = []
+            for question in batch_rows["question"]:
+                convo = [*fewshot_prefix, {"role": "user", "content": question + question_suffix}]
+                prompt = rdr.build_generation_prompt(convo)
+                coros.append(
+                    sampling_client.sample_async(
+                        prompt=prompt, num_samples=GROUP_SIZE, sampling_params=samp_params
+                    )
+                )
+                prompts.append(prompt)
+
+            sample_results = await _asyncio.gather(*coros)
+
+            datums = []
+            rewards_all = []
+            n_degenerate = 0
+
+            for sample_result, prompt, answer_text in zip(
+                sample_results, prompts, batch_rows["answer"]
+            ):
+                ground_truth = extract_gsm8k_answer(answer_text)
+                rewards_G = []
+                tokens_G = []
+                logprobs_G = []
+
+                for seq in sample_result.sequences:
+                    tokens_G.append(seq.tokens)
+                    logprobs_G.append(seq.logprobs)
+                    parsed_msg, _ = rdr.parse_response(seq.tokens)
+                    content = get_text_content(parsed_msg)
+                    reward = grade_answer(content, ground_truth)
+                    rewards_G.append(reward)
+
+                mean_reward = sum(rewards_G) / len(rewards_G)
+                advantages_G = [r - mean_reward for r in rewards_G]
+                rewards_all.append(mean_reward)
+
+                if all(a == 0.0 for a in advantages_G):
+                    n_degenerate += 1
+                    continue
+
+                ob_len = prompt.length - 1
+                for tokens, logprobs, advantage in zip(tokens_G, logprobs_G, advantages_G):
+                    model_input = prompt.append(tinker.EncodedTextChunk(tokens=tokens[:-1]))
+                    target_tokens = [0] * ob_len + tokens
+                    padded_logprobs = [0.0] * ob_len + logprobs
+                    padded_advantages = [0.0] * ob_len + [advantage] * (model_input.length - ob_len)
+                    datum = tinker.Datum(
+                        model_input=model_input,
+                        loss_fn_inputs={
+                            "target_tokens": TensorData.from_torch(torch.tensor(target_tokens)),
+                            "logprobs": TensorData.from_torch(torch.tensor(padded_logprobs)),
+                            "advantages": TensorData.from_torch(torch.tensor(padded_advantages)),
+                        },
+                    )
+                    datums.append(datum)
+
+            if datums:
+                fb = await tc.forward_backward_async(datums, loss_fn="importance_sampling")
+                op = await tc.optim_step_async(adam)
+                await fb.result_async()
+                await op.result_async()
+
+            mean_reward = sum(rewards_all) / len(rewards_all) if rewards_all else 0
+            elapsed = _time.time() - t0
+            step_time = _time.time() - t_step
+            remaining = step_time * (N_STEPS - step - 1)
+
+            entry = {"step": step, "reward": mean_reward, "n_degenerate": n_degenerate}
+
+            if step % EVAL_EVERY == 0:
+                test_acc = await _evaluate(tc)
+                entry["test_accuracy"] = test_acc
+                print(
+                    f"GRPO step {step:2d} | reward: {mean_reward:.3f} | "
+                    f"test: {test_acc:.1%} | "
+                    f"{elapsed:.0f}s elapsed, ~{remaining/60:.0f}min remaining"
+                )
+            else:
+                print(
+                    f"GRPO step {step:2d} | reward: {mean_reward:.3f} | "
+                    f"degen: {n_degenerate}/{BATCH_SIZE} | "
+                    f"{elapsed:.0f}s elapsed, ~{remaining/60:.0f}min remaining"
+                )
+
+            metrics.append(entry)
+
+        # Final eval
+        final_acc = await _evaluate(tc)
+        metrics.append({"step": N_STEPS, "test_accuracy": final_acc})
+        print(f"\nGRPO done! Final test accuracy: {final_acc:.1%} ({_time.time()-t0:.0f}s total)")
+        return metrics, tc, rdr
+
+    grpo_metrics, tc_grpo, renderer_grpo = await _run_grpo()
+    return grpo_metrics, renderer_grpo, tc_grpo
+
+
+# ==============================================================================
+# Part 3: Visualize the comparison
+# ==============================================================================
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Results: Learning curves
+
+    Let's compare how each method's test accuracy evolves over training.
+    Both models are evaluated with greedy decoding on 200 GSM8K test problems.
+    """)
+    return
+
+
+@app.cell
+def _(grpo_metrics, plt, rft_metrics):
+    # Extract eval points (steps where test_accuracy was measured)
+    _rft_eval = [(m["step"], m["test_accuracy"] * 100) for m in rft_metrics if "test_accuracy" in m]
+    _grpo_eval = [(m["step"], m["test_accuracy"] * 100) for m in grpo_metrics if "test_accuracy" in m]
+
+    _rft_x, _rft_y = zip(*_rft_eval) if _rft_eval else ([], [])
+    _grpo_x, _grpo_y = zip(*_grpo_eval) if _grpo_eval else ([], [])
+
+    fig_curves, ax_curves = plt.subplots(figsize=(9, 5))
+    ax_curves.plot(_rft_x, _rft_y, "o-", color="#2196F3", linewidth=2.5,
+                   markersize=7, label="RFT (lr=1e-4)")
+    ax_curves.plot(_grpo_x, _grpo_y, "s-", color="#FF5722", linewidth=2.5,
+                   markersize=7, label="GRPO (lr=2e-5)")
+
+    ax_curves.set_xlabel("Training step", fontsize=12)
+    ax_curves.set_ylabel("GSM8K test accuracy (%)", fontsize=12)
+    ax_curves.set_title("RFT vs GRPO: test accuracy over training", fontsize=14, fontweight="bold")
+    ax_curves.legend(fontsize=11, loc="lower right")
+    ax_curves.grid(True, alpha=0.3)
+    ax_curves.set_ylim(0, 100)
+    plt.tight_layout()
+    fig_curves
+    return (fig_curves,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Results: Training signal
+
+    Compare how the training signal looks for each method:
+    - **RFT**: fraction of sampled solutions that are correct (sample accuracy)
+    - **GRPO**: mean reward per batch (fraction correct at T=1.0)
+    """)
+    return
+
+
+@app.cell
+def _(grpo_metrics, plt, rft_metrics):
+    fig_train, (ax_ta, ax_tb) = plt.subplots(1, 2, figsize=(12, 4.5))
+
+    _rft_sa = [(m["step"], m["sample_accuracy"] * 100) for m in rft_metrics if "sample_accuracy" in m]
+    if _rft_sa:
+        _xs, _ys = zip(*_rft_sa)
+        ax_ta.plot(_xs, _ys, "o-", color="#2196F3", linewidth=1.5, markersize=3)
+    ax_ta.set_xlabel("Training step")
+    ax_ta.set_ylabel("Sample accuracy (%)")
+    ax_ta.set_title("RFT: correct samples / total samples", fontweight="bold")
+    ax_ta.grid(True, alpha=0.3)
+    ax_ta.set_ylim(0, 105)
+
+    _grpo_r = [(m["step"], m["reward"] * 100) for m in grpo_metrics if "reward" in m]
+    if _grpo_r:
+        _xs2, _ys2 = zip(*_grpo_r)
+        ax_tb.plot(_xs2, _ys2, "s-", color="#FF5722", linewidth=1.5, markersize=3)
+    ax_tb.set_xlabel("Training step")
+    ax_tb.set_ylabel("Mean reward (%)")
+    ax_tb.set_title("GRPO: mean batch reward", fontweight="bold")
+    ax_tb.grid(True, alpha=0.3)
+    ax_tb.set_ylim(0, 105)
+
+    plt.tight_layout()
+    fig_train
+    return (fig_train,)
+
+
+# ==============================================================================
+# Part 4: The deeper story -- MATH results
+# ==============================================================================
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## The deeper story: what happens on harder tasks?
+
+    GSM8K is relatively easy -- Qwen3-8B solves ~60% at baseline. The real
+    difference between RFT and GRPO shows up on **harder tasks** where the model
+    starts with lower accuracy.
+
+    We ran the same comparison on [Hendrycks MATH](https://arxiv.org/abs/2103.03874)
+    (12K training problems, MATH-500 test set, 5 difficulty levels). Here are the
+    results from 40 training steps each:
+    """)
+    return
+
+
+@app.cell
+def _():
+    # Pre-computed results from full MATH experiments (Qwen3-8B, K=16, 40 steps)
+    math_rft_steps = [0, 5, 10, 15, 20, 25, 30, 35, 40]
+    math_rft_overall = [0.422, 0.788, 0.786, 0.780, 0.782, 0.796, 0.798, 0.796, 0.788]
+    math_rft_by_level = {
         "L1": [0.814, 0.930, 0.977, 0.930, 0.930, 0.953, 0.907, 0.953, 0.930],
         "L2": [0.722, 0.911, 0.867, 0.867, 0.856, 0.867, 0.867, 0.889, 0.922],
         "L3": [0.476, 0.876, 0.857, 0.857, 0.857, 0.895, 0.895, 0.895, 0.886],
         "L4": [0.328, 0.766, 0.797, 0.805, 0.797, 0.812, 0.797, 0.805, 0.758],
         "L5": [0.142, 0.612, 0.604, 0.590, 0.612, 0.604, 0.642, 0.597, 0.604],
     }
+    math_grpo_steps = [0, 5, 10, 15, 20, 25, 30, 35]
+    math_grpo_overall = [0.359, 0.469, 0.673, 0.775, 0.823, 0.816, 0.841, 0.851]
 
-    # GRPO results on MATH-500 (T=1.0 eval, Qwen3-8B, K=16, lr=8e-5)
-    grpo_steps = [0, 5, 10, 15, 20, 25, 30, 35]
-    grpo_overall = [0.359, 0.469, 0.673, 0.775, 0.823, 0.816, 0.841, 0.851]
-
-    # GRPO training reward trajectory
-    grpo_train_steps = list(range(40))
-    grpo_train_reward = [
-        0.415, 0.274, 0.425, 0.383, 0.433, 0.428, 0.620, 0.567,
-        0.528, 0.719, 0.683, 0.753, 0.697, 0.771, 0.903, 0.845,
-        0.806, 0.636, 0.830, 0.855, 0.741, 0.905, 0.895, 0.793,
-        0.866, 0.825, 0.861, 0.812, 0.845, 0.853, 0.968, 0.750,
-        0.876, 0.783, 0.784, 0.752, 0.809, 0.740, 0.914, 0.876,
-    ]
-
-    # RFT training metrics
-    rft_train_steps = list(range(40))
-    rft_sample_acc = [
-        0.498, 0.340, 0.455, 0.494, 0.770, 0.801, 0.873, 0.768,
-        0.789, 0.787, 0.770, 0.779, 0.787, 0.789, 0.863, 0.852,
-        0.807, 0.648, 0.770, 0.795, 0.740, 0.859, 0.891, 0.736,
-        0.840, 0.801, 0.840, 0.801, 0.770, 0.758, 0.928, 0.674,
-        0.807, 0.758, 0.709, 0.723, 0.725, 0.680, 0.869, 0.795,
-    ]
-    rft_solve_rate = [
-        0.656, 0.562, 0.688, 0.750, 0.938, 0.938, 1.000, 0.844,
-        0.906, 0.875, 0.844, 0.875, 0.938, 0.906, 1.000, 1.000,
-        1.000, 0.844, 0.938, 0.938, 0.938, 0.906, 1.000, 0.906,
-        0.969, 0.938, 0.938, 0.875, 0.969, 0.969, 1.000, 0.906,
-        0.969, 0.906, 0.906, 0.844, 0.875, 0.812, 0.938, 0.969,
-    ]
-
-    return (
-        grpo_overall,
-        grpo_steps,
-        grpo_train_reward,
-        grpo_train_steps,
-        rft_by_level,
-        rft_overall,
-        rft_sample_acc,
-        rft_solve_rate,
-        rft_steps,
-        rft_train_steps,
-    )
+    return math_grpo_overall, math_grpo_steps, math_rft_by_level, math_rft_overall, math_rft_steps
 
 
-# ---- Visualization: Learning curves ----
+@app.cell
+def _(math_grpo_overall, math_grpo_steps, math_rft_overall, math_rft_steps, plt):
+    fig_math, ax_math = plt.subplots(figsize=(9, 5))
+
+    ax_math.plot(math_rft_steps, [x * 100 for x in math_rft_overall], "o-", color="#2196F3",
+                 linewidth=2.5, markersize=7, label="RFT (greedy eval)")
+    ax_math.plot(math_grpo_steps, [x * 100 for x in math_grpo_overall], "s-", color="#FF5722",
+                 linewidth=2.5, markersize=7, label="GRPO (T=1.0 eval)")
+
+    ax_math.axvline(x=15, color="gray", linestyle="--", alpha=0.5)
+    ax_math.annotate("crossover", xy=(15, 78), fontsize=9, color="gray", ha="center")
+    ax_math.annotate("78.8%", xy=(5, 78.8), xytext=(7, 83), fontsize=9, color="#2196F3",
+                     arrowprops=dict(arrowstyle="->", color="#2196F3", lw=1.2))
+    ax_math.annotate("85.1%", xy=(35, 85.1), xytext=(30, 89), fontsize=9, color="#FF5722",
+                     arrowprops=dict(arrowstyle="->", color="#FF5722", lw=1.2))
+
+    ax_math.set_xlabel("Training step", fontsize=12)
+    ax_math.set_ylabel("MATH-500 accuracy (%)", fontsize=12)
+    ax_math.set_title("RFT vs GRPO on Hendrycks MATH (Qwen3-8B)", fontsize=14, fontweight="bold")
+    ax_math.legend(fontsize=11, loc="lower right")
+    ax_math.grid(True, alpha=0.3)
+    ax_math.set_ylim(30, 92)
+    ax_math.set_xlim(-1, 42)
+    plt.tight_layout()
+    fig_math
+    return (fig_math,)
+
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Result 1: Learning curves
+    **On MATH, the pattern is dramatic:**
 
-    Let's compare how accuracy evolves during training.
+    - **RFT** jumps to 78.8% in 5 steps, then **flatlines for 35 more steps**
+    - **GRPO** starts slower but keeps climbing to 85.1% at step 35 -- still improving
+    - The **crossover** happens at step 15
 
-    **Note on eval methods:** RFT is evaluated with greedy decoding (temperature=0),
-    while GRPO is evaluated with temperature=1.0 sampling (standard for RL).
-    Greedy decoding scores ~6-8pp higher, so keep this in mind when comparing the
-    absolute numbers. The *trends* are the important part.
+    The per-difficulty breakdown reveals *where* RFT fails:
     """)
     return
 
 
 @app.cell
-def _(grpo_overall, grpo_steps, plt, rft_overall, rft_steps):
-    fig1, ax1 = plt.subplots(figsize=(9, 5))
+def _(math_rft_by_level, math_rft_steps, plt):
+    _level_colors = {
+        "L1": "#4CAF50", "L2": "#8BC34A", "L3": "#FFC107",
+        "L4": "#FF9800", "L5": "#F44336",
+    }
+    fig_levels, ax_levels = plt.subplots(figsize=(9, 5))
+    for level, accs in math_rft_by_level.items():
+        ax_levels.plot(math_rft_steps, [x * 100 for x in accs], "o-",
+                       color=_level_colors[level], linewidth=2, markersize=5,
+                       label=f"{level} ({accs[0]*100:.0f}% -> {accs[-1]*100:.0f}%)")
 
-    ax1.plot(rft_steps, [x * 100 for x in rft_overall], "o-", color="#2196F3",
-             linewidth=2.5, markersize=7, label="RFT (greedy eval)", zorder=3)
-    ax1.plot(grpo_steps, [x * 100 for x in grpo_overall], "s-", color="#FF5722",
-             linewidth=2.5, markersize=7, label="GRPO (T=1.0 eval)", zorder=3)
-
-    # Annotate the crossover
-    ax1.axvline(x=15, color="gray", linestyle="--", alpha=0.5)
-    ax1.annotate("crossover", xy=(15, 78), fontsize=9, color="gray", ha="center")
-
-    # Annotate key points
-    ax1.annotate("78.8%", xy=(5, 78.8), xytext=(7, 83),
-                 fontsize=9, color="#2196F3",
-                 arrowprops=dict(arrowstyle="->", color="#2196F3", lw=1.2))
-    ax1.annotate("85.1%", xy=(35, 85.1), xytext=(30, 89),
-                 fontsize=9, color="#FF5722",
-                 arrowprops=dict(arrowstyle="->", color="#FF5722", lw=1.2))
-
-    ax1.set_xlabel("Training step", fontsize=12)
-    ax1.set_ylabel("MATH-500 accuracy (%)", fontsize=12)
-    ax1.set_title("RFT vs GRPO on MATH-500 (Qwen3-8B)", fontsize=14, fontweight="bold")
-    ax1.legend(fontsize=11, loc="lower right")
-    ax1.grid(True, alpha=0.3)
-    ax1.set_ylim(30, 92)
-    ax1.set_xlim(-1, 42)
+    ax_levels.set_xlabel("Training step", fontsize=12)
+    ax_levels.set_ylabel("Accuracy (%)", fontsize=12)
+    ax_levels.set_title("RFT on MATH: accuracy by difficulty level", fontsize=14, fontweight="bold")
+    ax_levels.legend(fontsize=10, loc="right")
+    ax_levels.grid(True, alpha=0.3)
+    ax_levels.set_ylim(0, 102)
     plt.tight_layout()
-    fig1
-    return (fig1,)
+    fig_levels
+    return (fig_levels,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    **What this shows:**
+    **L5 (hardest problems) is stuck at ~60%** while L1-L3 saturate at 90%+.
 
-    - **RFT converges in ~5 steps** to 78.8%, then flatlines for 35 more steps.
-      No amount of additional training helps.
-    - **GRPO starts slower** but keeps improving. By step 15 it catches RFT,
-      and by step 35 it reaches 85.1% — and it's still climbing.
-    - The **crossover at step 15** is the key moment: before it, RFT is more efficient.
-      After it, GRPO is the only method still making progress.
+    ---
 
-    RFT gives you a fast ceiling. GRPO gives you a higher ceiling.
-    """)
-    return
-
-
-# ---- Visualization: Per-difficulty breakdown ----
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Result 2: Where does RFT fail?
-
-    MATH problems have 5 difficulty levels. Let's see how RFT performs on each.
-    """)
-    return
-
-
-@app.cell
-def _(plt, rft_by_level, rft_steps):
-    colors = {"L1": "#4CAF50", "L2": "#8BC34A", "L3": "#FFC107", "L4": "#FF9800", "L5": "#F44336"}
-
-    fig2, ax2 = plt.subplots(figsize=(9, 5))
-    for level, accs in rft_by_level.items():
-        ax2.plot(rft_steps, [x * 100 for x in accs], "o-", color=colors[level],
-                 linewidth=2, markersize=5, label=f"{level} ({accs[0]*100:.0f}% -> {accs[-1]*100:.0f}%)")
-
-    ax2.set_xlabel("Training step", fontsize=12)
-    ax2.set_ylabel("Accuracy (%)", fontsize=12)
-    ax2.set_title("RFT accuracy by difficulty level", fontsize=14, fontweight="bold")
-    ax2.legend(fontsize=10, loc="right")
-    ax2.grid(True, alpha=0.3)
-    ax2.set_ylim(0, 102)
-    plt.tight_layout()
-    fig2
-    return (fig2,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    **The difficulty-dependent ceiling:**
-
-    | Level | Baseline | After RFT | Improvement |
-    |-------|----------|-----------|-------------|
-    | L1 (easiest) | 81% | 93% | +12pp |
-    | L2 | 72% | 92% | +20pp |
-    | L3 | 48% | 89% | +41pp |
-    | L4 | 33% | 76% | +43pp |
-    | L5 (hardest) | **14%** | **60%** | +46pp, then **stuck** |
-
-    RFT improves every level dramatically in the first 5 steps. But then:
-    - L1-L3 saturate at 90%+ (good enough)
-    - **L5 is stuck at ~60%** and never improves further, no matter how long you train
-
-    This 60% ceiling on L5 is the core limitation of RFT.
-    """)
-    return
-
-
-# ---- Visualization: Training signal analysis ----
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Result 3: The training signal paradox
-
-    Here's the puzzle: if RFT plateaus because it can't find correct solutions,
-    we'd expect the *training solve rate* (fraction of problems where at least one
-    of K=16 samples is correct) to be low. But look at what actually happens:
-    """)
-    return
-
-
-@app.cell
-def _(plt, rft_sample_acc, rft_solve_rate, rft_train_steps):
-    fig3, (ax3a, ax3b) = plt.subplots(1, 2, figsize=(12, 4.5))
-
-    ax3a.plot(rft_train_steps, [x * 100 for x in rft_solve_rate], "o-",
-              color="#9C27B0", linewidth=1.5, markersize=3, alpha=0.8)
-    ax3a.axhline(y=85, color="gray", linestyle="--", alpha=0.5)
-    ax3a.set_xlabel("Training step")
-    ax3a.set_ylabel("Solve rate (%)")
-    ax3a.set_title("Training solve rate\n(% of problems with >= 1 correct solution)")
-    ax3a.set_ylim(50, 105)
-    ax3a.grid(True, alpha=0.3)
-
-    ax3b.plot(rft_train_steps, [x * 100 for x in rft_sample_acc], "o-",
-              color="#00BCD4", linewidth=1.5, markersize=3, alpha=0.8)
-    ax3b.set_xlabel("Training step")
-    ax3b.set_ylabel("Sample accuracy (%)")
-    ax3b.set_title("Sample accuracy\n(% of all K=16 samples that are correct)")
-    ax3b.set_ylim(30, 100)
-    ax3b.grid(True, alpha=0.3)
-
-    plt.suptitle("RFT training signal over time", fontsize=13, fontweight="bold", y=1.02)
-    plt.tight_layout()
-    fig3
-    return (fig3,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    **The paradox:** By step 4, the model solves 85-100% of training problems
-    (even hard ones!). Sample accuracy stabilizes around 75-85%. RFT has *plenty*
-    of correct solutions to train on.
-
-    **So why does test accuracy plateau?**
-
-    The answer reveals the fundamental limitation of RFT:
-    """)
-    return
-
-
-# ---- Why RFT plateaus ----
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
     ## Why RFT plateaus
 
-    RFT's training signal degrades in three ways:
+    The plateau is NOT because the model can't find correct solutions -- by step 4,
+    it solves 85-100% of training problems. The real causes:
 
-    ### 1. Redundant gradients
-    As the model improves, its correct solutions become increasingly *similar*.
-    Training on near-identical outputs produces diminishing gradient updates —
-    the model is just reinforcing what it already knows.
+    1. **Redundant gradients:** Correct solutions become increasingly similar.
+       SFT on near-identical outputs produces diminishing updates.
 
-    ### 2. No negative signal
-    RFT throws away wrong solutions. It can never say "stop doing this."
-    If the model makes a systematic error on certain problem types (e.g., always
-    mishandling combinatorics), RFT has no mechanism to correct it — it can only
-    wait for a lucky correct sample, and reinforce that.
+    2. **No negative signal:** RFT throws away wrong solutions. If the model
+       makes systematic errors, RFT has no mechanism to correct them.
 
-    ### 3. Easy problem bias
-    In each batch, easy problems (L1-L3) generate many more correct solutions than
-    hard problems (L5). The gradient is dominated by easy-problem signal, even though
-    the model already masters them.
+    3. **Easy problem bias:** Easy problems produce many more correct solutions,
+       dominating the gradient even though the model already masters them.
 
-    > **Think of it this way:** RFT is like a student who only reviews problems they
-    > already solved. They get very fast at those problems, but never learn from
-    > their mistakes on harder ones.
-    """)
-    return
+    > Think of it this way: RFT is like a student who only reviews problems they
+    > already solved. They get fast at those, but never learn from their mistakes.
 
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
     ## How GRPO breaks through
-
-    GRPO addresses each of RFT's limitations:
 
     | RFT limitation | How GRPO fixes it |
     |---|---|
-    | Redundant gradients on easy problems | **Advantage weighting**: rare correct solutions on hard problems get higher advantage |
-    | No negative signal | **Negative advantages**: wrong solutions are actively penalized, pushing the model away from failure modes |
-    | Easy problem bias | **Group-relative centering**: advantages are computed *within* each problem, so hard and easy problems contribute equally |
-
-    The key insight: **GRPO's advantage function is richer than binary correct/incorrect.**
+    | Redundant gradients | **Advantage weighting** gives more credit to rare correct solutions |
+    | No negative signal | **Negative advantages** penalize wrong solutions |
+    | Easy problem bias | **Group-relative centering** normalizes per-problem |
 
     For a problem where the model gets 3/16 solutions right:
-    - RFT: trains on 3 correct solutions with uniform weight
-    - GRPO: trains on all 16 solutions. The 3 correct ones get advantage +0.81,
-      the 13 wrong ones get advantage -0.19. The model learns what worked AND what didn't.
-    """)
-    return
+    - **RFT:** trains on 3 correct solutions with equal weight
+    - **GRPO:** trains on all 16. The 3 correct ones get advantage **+0.81**,
+      the 13 wrong ones get advantage **-0.19**. The model learns what worked AND what didn't.
 
-
-# ---- Visualization: GRPO training reward ----
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## GRPO's training reward trajectory
-
-    Unlike RFT (which shows no progress after step 5), GRPO's training reward
-    keeps climbing throughout training:
-    """)
-    return
-
-
-@app.cell
-def _(grpo_overall, grpo_steps, grpo_train_reward, grpo_train_steps, np, plt):
-    fig4, (ax4a, ax4b) = plt.subplots(1, 2, figsize=(12, 4.5))
-
-    # Training reward
-    ax4a.plot(grpo_train_steps, [x * 100 for x in grpo_train_reward], "o-",
-              color="#FF5722", linewidth=1, markersize=3, alpha=0.7)
-    # Add trend line
-    z = np.polyfit(grpo_train_steps, grpo_train_reward, 2)
-    p = np.poly1d(z)
-    smooth_x = np.linspace(0, 39, 100)
-    ax4a.plot(smooth_x, [x * 100 for x in p(smooth_x)], "--",
-              color="#FF5722", linewidth=2, alpha=0.5, label="Trend")
-    ax4a.set_xlabel("Training step")
-    ax4a.set_ylabel("Training reward (%)")
-    ax4a.set_title("Training batch reward")
-    ax4a.grid(True, alpha=0.3)
-    ax4a.set_ylim(20, 105)
-    ax4a.legend()
-
-    # Test reward
-    ax4b.plot(grpo_steps, [x * 100 for x in grpo_overall], "s-",
-              color="#FF5722", linewidth=2.5, markersize=8)
-    ax4b.set_xlabel("Training step")
-    ax4b.set_ylabel("MATH-500 accuracy (%)")
-    ax4b.set_title("Test accuracy (T=1.0)")
-    ax4b.grid(True, alpha=0.3)
-    ax4b.set_ylim(30, 92)
-
-    # Annotate slope
-    ax4b.annotate("Still climbing\nat step 35",
-                  xy=(35, 85.1), xytext=(25, 72),
-                  fontsize=10, color="#FF5722",
-                  arrowprops=dict(arrowstyle="->", color="#FF5722", lw=1.5))
-
-    plt.suptitle("GRPO training progression", fontsize=13, fontweight="bold", y=1.02)
-    plt.tight_layout()
-    fig4
-    return (fig4,)
-
-
-# ---- The surprise: warm-start hurts ----
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Surprise: warm-starting GRPO from RFT hurts
-
-    A natural idea: use RFT for 5 steps to quickly reach ~79%, then switch to GRPO
-    to break through the ceiling. Best of both worlds, right?
-
-    **Wrong.** We ran this experiment and the result was surprising:
-    """)
-    return
-
-
-@app.cell
-def _():
-    # Hybrid experiment data (5 steps RFT, then 35 steps GRPO)
-    hybrid_grpo_steps = [0, 5, 10, 15, 20, 25, 30]
-    hybrid_test = [0.771, 0.758, 0.783, 0.785, 0.786, 0.787, 0.793]
-
-    # Pure GRPO for comparison
-    pure_grpo_steps = [0, 5, 10, 15, 20, 25, 30, 35]
-    pure_grpo_test = [0.359, 0.469, 0.673, 0.775, 0.823, 0.816, 0.841, 0.851]
-
-    return hybrid_grpo_steps, hybrid_test, pure_grpo_steps, pure_grpo_test
-
-
-@app.cell
-def _(hybrid_grpo_steps, hybrid_test, plt, pure_grpo_steps, pure_grpo_test):
-    fig5, ax5 = plt.subplots(figsize=(9, 5))
-
-    ax5.plot(pure_grpo_steps, [x * 100 for x in pure_grpo_test], "s-",
-             color="#FF5722", linewidth=2.5, markersize=7, label="Pure GRPO (from scratch)")
-    ax5.plot(hybrid_grpo_steps, [x * 100 for x in hybrid_test], "D-",
-             color="#9C27B0", linewidth=2.5, markersize=7, label="RFT(5 steps) -> GRPO")
-
-    # RFT plateau line for reference
-    ax5.axhline(y=78.8, color="#2196F3", linestyle=":", alpha=0.5, label="RFT plateau (~79%)")
-
-    ax5.set_xlabel("GRPO training step (after warm-start)", fontsize=12)
-    ax5.set_ylabel("MATH-500 accuracy (%)", fontsize=12)
-    ax5.set_title("Warm-starting GRPO from RFT checkpoint", fontsize=14, fontweight="bold")
-    ax5.legend(fontsize=11)
-    ax5.grid(True, alpha=0.3)
-    ax5.set_ylim(30, 92)
-    plt.tight_layout()
-    fig5
-    return (fig5,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    **The hybrid (purple) never catches pure GRPO (red).**
-
-    Despite starting at 77.1% (vs GRPO's 35.9%), the warm-started GRPO peaks at only
-    79.3% — barely above RFT's plateau and far below pure GRPO's 85.1%.
-
-    **Why?** RFT collapses the model's output distribution. After 5 steps of SFT
-    on correct solutions, the model becomes very *confident* — it generates similar
-    outputs with high probability. This is fine for SFT, but it kills GRPO's ability
-    to explore. GRPO needs diverse outputs to compute meaningful advantages, and the
-    RFT-trained model doesn't produce them.
-
-    > **Lesson:** RFT and GRPO aren't complementary stages — they're fundamentally
-    > different optimization strategies. Switching from one to the other mid-training
-    > requires careful handling (e.g., KL regularization, entropy bonuses) to preserve
-    > the model's exploration ability.
-    """)
-    return
-
-
-# ---- Practical recommendations ----
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## When to use which method
-
-    The choice depends on your task's difficulty relative to the model's capability:
-
-    | Regime | Baseline accuracy | Recommendation | Why |
-    |--------|------------------|----------------|-----|
-    | Easy | > 60% | **RFT** | Fast convergence, ~5 steps to plateau. GRPO adds complexity without benefit. |
-    | Hard | 20-60% | **GRPO** | RFT will plateau quickly. GRPO breaks through by learning from failures. |
-    | Very hard | < 20% | **GRPO** (with larger K) | Both methods struggle, but GRPO's negative signal still provides gradient. |
-
-    **The practical test:** run RFT for 5-10 steps. If accuracy is still improving,
-    keep going. If it flatlines, switch to GRPO from scratch (not from the RFT checkpoint).
-    """)
-    return
-
-
-# ---- Summary ----
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
     ## Summary
 
     | | RFT | GRPO |
     |---|---|---|
-    | **Speed** | Fast (5 steps to plateau) | Slow (15+ steps) |
-    | **Ceiling** | Limited by task difficulty | Continues improving |
+    | **Speed** | Fast (5 steps to plateau) | Slower (15+ steps) |
+    | **Ceiling** | Limited by task difficulty | Keeps improving |
     | **Signal** | Correct solutions only | Correct + incorrect |
     | **Stability** | Very stable (pure SFT) | Needs LR tuning |
     | **Best for** | Easy tasks, quick wins | Hard tasks, pushing limits |
 
-    **The key insight from this tutorial:** RL isn't just "fancier SFT." It provides
-    a qualitatively different training signal. When SFT runs out of steam (because
-    correct solutions become redundant and mistakes go uncorrected), RL's ability to
-    learn from the full distribution of outputs — both good and bad — is what enables
-    continued improvement.
+    **The key insight:** RL isn't just "fancier SFT." It provides a qualitatively
+    different training signal. When correct solutions become redundant and mistakes
+    go uncorrected, RL's ability to learn from the full distribution of outputs is
+    what enables continued improvement.
 
-    ## Try it yourself
+    ## Next steps
 
-    - **RFT recipe**: `python -m tinker_cookbook.recipes.math_rft.train env=math model_name=Qwen/Qwen3-8B`
-    - **GRPO recipe**: `python -m tinker_cookbook.recipes.math_rl.train env=math model_name=Qwen/Qwen3-8B`
-    - **Tutorial 04**: `tutorials/104_first_rl.py` for a hands-on introduction to GRPO
+    - **Full MATH experiments:** `python -m tinker_cookbook.recipes.math_rft.train env=math`
+    - **GRPO recipe:** `python -m tinker_cookbook.recipes.math_rl.train env=math`
+    - **RL hyperparameters:** `tutorials/402_rl_hyperparams.py`
+    - **Research notes:** `tinker_cookbook/recipes/math_rft/NOTES.md`
     """)
     return
 
