@@ -7,14 +7,12 @@ Model: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B (fused projections, Mamba layers).
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
 from tests.weights.gpu.conftest import (
     LORA_RANK,
     download_adapter,
-    load_all_tensors,
     train_one_step,
     verify_merged_model,
 )
@@ -34,7 +32,6 @@ def adapter_dir(tmp_path_factory):
 
 
 class TestMerge:
-    @pytest.mark.xfail(reason="load_config_dict doesn't forward trust_remote_code to AutoConfig — needs fix")
     def test_shard_merge(self, adapter_dir, tmp_path):
         output = tmp_path / "merged"
         build_hf_model(

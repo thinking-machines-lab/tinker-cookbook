@@ -10,9 +10,6 @@ memory usage is bounded.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 import torch
 
@@ -36,45 +33,31 @@ def adapter_dir(tmp_path_factory):
     return download_adapter(tinker_path, root / "adapter")
 
 
-# ---------------------------------------------------------------------------
-# Quantized merge (FP8 experts)
-# ---------------------------------------------------------------------------
-
-
-def _build_hf_model_with_device(device: str | None = None, **kwargs) -> None:
-    """Call build_hf_model, passing device only if the API supports it."""
-    import inspect
-
-    sig = inspect.signature(build_hf_model)
-    if "device" in sig.parameters and device is not None:
-        kwargs["device"] = device
-    build_hf_model(**kwargs)
-
-
 class TestQuantized:
-    def test_fp8_experts(self, adapter_dir, tmp_path):
-        """FP8 quantized merge — baseline correctness."""
-        output = tmp_path / "merged"
-        _build_hf_model_with_device(
+    def test_fp8_experts_cpu(self, adapter_dir, tmp_path):
+        """FP8 quantized merge on CPU — baseline correctness."""
+        output = tmp_path / "merged_cpu"
+        build_hf_model(
             base_model=MODEL,
             adapter_path=str(adapter_dir),
             output_path=str(output),
             quantize="experts-fp8",
             serving_format="vllm",
+            device="cpu",
         )
         verify_merged_model(output, expect_config_key="compression_config")
         verify_fp8_output(output)
 
     def test_fp8_experts_gpu(self, adapter_dir, tmp_path):
-        """FP8 quantized merge on GPU — verify GPU path works."""
+        """FP8 quantized merge on GPU."""
         output = tmp_path / "merged_gpu"
-        _build_hf_model_with_device(
-            device="cuda",
+        build_hf_model(
             base_model=MODEL,
             adapter_path=str(adapter_dir),
             output_path=str(output),
             quantize="experts-fp8",
             serving_format="vllm",
+            device="cuda",
         )
         verify_merged_model(output, expect_config_key="compression_config")
         verify_fp8_output(output)
@@ -84,21 +67,21 @@ class TestQuantized:
         cpu_out = tmp_path / "cpu"
         gpu_out = tmp_path / "gpu"
 
-        _build_hf_model_with_device(
-            device="cpu",
+        build_hf_model(
             base_model=MODEL,
             adapter_path=str(adapter_dir),
             output_path=str(cpu_out),
             quantize="experts-fp8",
             serving_format="vllm",
+            device="cpu",
         )
-        _build_hf_model_with_device(
-            device="cuda",
+        build_hf_model(
             base_model=MODEL,
             adapter_path=str(adapter_dir),
             output_path=str(gpu_out),
             quantize="experts-fp8",
             serving_format="vllm",
+            device="cuda",
         )
 
         cpu_tensors = load_all_tensors(cpu_out)

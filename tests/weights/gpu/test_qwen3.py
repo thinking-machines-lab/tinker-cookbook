@@ -7,7 +7,6 @@ Model: Qwen/Qwen3-4B-Instruct-2507 (dense transformer, qwen3 renderer).
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 import torch
@@ -50,9 +49,9 @@ class TestMerge:
 
         tensors = load_all_tensors(output)
         weight_keys = [k for k in tensors if k.endswith(".weight")]
-        assert all(
-            tensors[k].dtype in (torch.bfloat16, torch.float32) for k in weight_keys
-        ), "Expected all weights to be BF16/FP32 for dense model"
+        assert all(tensors[k].dtype in (torch.bfloat16, torch.float32) for k in weight_keys), (
+            "Expected all weights to be BF16/FP32 for dense model"
+        )
 
 
 # ---------------------------------------------------------------------------

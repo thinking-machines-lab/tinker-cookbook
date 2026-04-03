@@ -1,15 +1,15 @@
 """GPU e2e tests for GPT-OSS models.
 
-Covers: shard merge, PEFT adapter export.
-Model: openai/gpt-oss-20b (interleaved fused gate_up_proj experts).
+Covers: shard merge (MXFP4 dequant/requant), PEFT adapter export.
+Model: openai/gpt-oss-20b (MXFP4 block-quantized experts, interleaved gate_up_proj).
 """
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
+import torch
 
 from tests.weights.gpu.conftest import (
     LORA_RANK,
@@ -32,20 +32,47 @@ def adapter_dir(tmp_path_factory):
 
 
 class TestMerge:
-    @pytest.mark.xfail(reason="GPT-OSS expert key mapping issue with real adapters — separate experts vs fused gate_up_proj")
     def test_shard_merge(self, adapter_dir, tmp_path):
+        """Shard merge with MXFP4 block-quantized expert weights."""
         output = tmp_path / "merged"
         build_hf_model(
             base_model=MODEL,
             adapter_path=str(adapter_dir),
             output_path=str(output),
             merge_strategy="shard",
+            trust_remote_code=True,
         )
         verify_merged_model(output)
 
         tensors = load_all_tensors(output)
-        expert_keys = [k for k in tensors if ".experts." in k or "gate_up_proj" in k]
-        assert len(expert_keys) > 0, "Expected expert/fused weights in GPT-OSS"
+
+        # Expert weights should remain in MXFP4 blocks format
+        blocks_keys = [k for k in tensors if k.endswith("_blocks")]
+        assert len(blocks_keys) > 0, "Expected MXFP4 _blocks keys in output"
+
+        # Each blocks key should have a matching scales key
+        for key in blocks_keys:
+            scales_key = key.replace("_blocks", "_scales")
+            assert scales_key in tensors, f"Missing scales for {key}"
+            assert tensors[key].dtype == torch.uint8
+            assert tensors[scales_key].dtype == torch.uint8
+
+    def test_shard_merge_gpu(self, adapter_dir, tmp_path):
+        """Shard merge with GPU-accelerated MXFP4 dequant/requant."""
+        output = tmp_path / "merged_gpu"
+        build_hf_model(
+            base_model=MODEL,
+            adapter_path=str(adapter_dir),
+            output_path=str(output),
+            merge_strategy="shard",
+            trust_remote_code=True,
+            device="cuda",
+        )
+        verify_merged_model(output)
+
+        tensors = load_all_tensors(output)
+        blocks_keys = [k for k in tensors if k.endswith("_blocks")]
+        assert len(blocks_keys) > 0, "Expected MXFP4 _blocks keys in output"
 
 
 class TestAdapter:

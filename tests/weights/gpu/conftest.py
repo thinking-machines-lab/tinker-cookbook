@@ -38,7 +38,7 @@ from tinker_cookbook.supervised.data import (
     conversation_to_datum,
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
-from tinker_cookbook.weights import build_hf_model, build_lora_adapter, download
+from tinker_cookbook.weights import download
 
 # ---------------------------------------------------------------------------
 # Directory-level skip: no GPU → skip all tests here
@@ -187,9 +187,7 @@ def verify_fp8_output(output_path: Path) -> None:
 
     dense_weights = [k for k in tensors if k.endswith(".weight") and ".experts." not in k]
     for key in dense_weights:
-        assert tensors[key].dtype != torch.float8_e4m3fn, (
-            f"Dense weight {key} should not be FP8"
-        )
+        assert tensors[key].dtype != torch.float8_e4m3fn, f"Dense weight {key} should not be FP8"
 
     config = json.loads((output_path / "config.json").read_text())
     comp = config["compression_config"]

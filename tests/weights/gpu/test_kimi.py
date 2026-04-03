@@ -11,7 +11,6 @@ merge pipeline must dequantize → apply LoRA → requantize atomically.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 import torch
@@ -42,7 +41,6 @@ def adapter_dir(tmp_path_factory):
 
 
 class TestMerge:
-    @pytest.mark.xfail(reason="load_config_dict doesn't forward trust_remote_code to AutoConfig — needs fix")
     def test_shard_merge(self, adapter_dir, tmp_path):
         """Shard merge with INT4 packed expert weights."""
         output = tmp_path / "merged"
