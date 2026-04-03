@@ -186,13 +186,15 @@ Multi-step updates help DRO (75.9% vs 10.1% at step 40) but IS benefits even mor
 
 ### Why these results make sense
 
-**IS, PPO, CISPO converge to the same final accuracy** because GSM8K is learnable at this scale. The loss function affects the learning trajectory, not the destination.
+**IS, PPO, CISPO converge to the same final accuracy** because GSM8K is learnable at this scale. The loss function affects the learning trajectory, not the destination. This is consistent with published work: [a minimalist approach to LLM reasoning](https://arxiv.org/abs/2504.11343) shows even simple rejection sampling achieves competitive performance with GRPO and PPO, and [Stabilizing RL with LLMs](https://arxiv.org/abs/2512.01374) finds that "once training is stabilized, prolonged optimization consistently yields comparable final performance." Note that on harder benchmarks (MATH-500, AIME), the loss function choice may matter more for final accuracy — [CISPO benchmarks on Qwen2.5-7B](https://arxiv.org/abs/2602.06717) show it achieving higher asymptotic reward than DAPO and GRPO on harder math problems.
 
-**PPO is the most reproducible** (not the fastest) because clipping constrains both the magnitude and direction of each update. This reduces variance across seeds but does not accelerate learning on average.
+**PPO is the most reproducible** (not the fastest) because clipping constrains both the magnitude and direction of each update. This reduces variance across seeds but does not accelerate learning on average. While [Henderson et al. (2018)](https://arxiv.org/abs/1709.06560) established that seed variance is a major problem across all RL methods, our finding that PPO specifically reduces this variance in LLM RL is novel — we are not aware of prior work measuring seed-to-seed variance of PPO vs IS/CISPO in the LLM setting. Caveat: 2 seeds is a limited sample; more seeds would strengthen this claim.
 
-**CISPO maintains higher entropy** because it never zeros out the gradient for any token. In the CISPO gradient, the clipped ratio acts as a scalar weight on `∇ log p_θ` — even tokens with extreme importance ratios contribute. In PPO, the `min` operation completely drops tokens whose ratio exceeds the clip threshold, removing them from the gradient. Over many steps, this causes PPO to concentrate probability faster (lower entropy).
+**CISPO maintains higher entropy** because it never zeros out the gradient for any token. In the CISPO gradient, the clipped ratio acts as a scalar weight on `∇ log p_θ` — even tokens with extreme importance ratios contribute. In PPO, the `min` operation completely drops tokens whose ratio exceeds the clip threshold, removing them from the gradient. Over many steps, this causes PPO to concentrate probability faster (lower entropy). This entropy preservation is directly confirmed by the [MiniMax-M1 paper](https://arxiv.org/abs/2506.13585) which introduced CISPO to address PPO's token-dropout problem. [DAPO](https://arxiv.org/abs/2503.14476) independently identified the same issue and introduced "Clip-Higher" (asymmetric clipping) as a mitigation.
 
-**DRO is too conservative for on-policy learning** because the quadratic penalty `0.5β(log p_θ/q)²` directly resists policy change. To go from 10% to 94% accuracy, the policy must make large distributional shifts that DRO penalizes. With `num_substeps=4`, each rollout batch gets reused for 4 gradient steps — by the 4th step, the data is mildly off-policy, and DRO's conservatism becomes more appropriate.
+**PPO's per-token GPU cost is 2.6x higher.** In published work, PPO's ~2x overhead is typically attributed to the critic (value) network — [ReMax](https://arxiv.org/abs/2310.10505) reports >2x GPU memory for PPO, and [GRPO](https://arxiv.org/abs/2402.03300) saves ~50% by eliminating the critic. Our setup uses Tinker's critic-free PPO (no value network), so the 2.6x overhead comes purely from the loss computation itself (evaluating both clipped and unclipped objectives). This overhead may be implementation-specific to Tinker's server-side loss evaluation.
+
+**DRO is too conservative for on-policy learning** because the quadratic penalty `0.5β(log p_θ/q)²` directly resists policy change. To go from 10% to 94% accuracy, the policy must make large distributional shifts that DRO penalizes. With `num_substeps=4`, each rollout batch gets reused for 4 gradient steps — by the 4th step, the data is mildly off-policy, and DRO's conservatism becomes more appropriate. DRO's design for off-policy robustness is well-established theoretically ([DRO survey](https://arxiv.org/abs/2411.02549)), and [Distributionally Robust RLHF](https://arxiv.org/abs/2503.00539) shows improvements on out-of-distribution data. However, no published work tests DRO as a direct policy gradient loss for on-policy LLM math training — our finding that it fails dramatically in this regime is empirically novel.
 
 ### Arithmetic (Llama-3.2-1B, 50 steps)
 
@@ -207,6 +209,13 @@ On this toy task (single-token addition answers), all four loss functions conver
 | Long chain-of-thought reasoning | `cispo` | Maintains entropy; same GPU cost as IS |
 | Off-policy / stale rollout data | `dro` | Quadratic penalty prevents distributional collapse |
 | Multiple gradient steps per batch | `ppo` or `cispo` | Both handle multi-step updates well |
+
+### Limitations and generalization
+
+- **GSM8K is relatively easy** for 8B+ models. On harder benchmarks (MATH-500, AIME, LiveCodeBench), differences in entropy preservation and gradient coverage may lead to different final accuracy, likely favoring CISPO.
+- **2 seeds** is limited for reproducibility claims. Henderson et al. recommend 5+ seeds.
+- **PPO's 2.6x per-token cost** may be specific to Tinker's server-side implementation. Other frameworks may have different overhead profiles.
+- **DRO's beta default** is undocumented. An extensive beta sweep might find a setting that performs better on on-policy tasks.
 
 ## Configuration reference
 
