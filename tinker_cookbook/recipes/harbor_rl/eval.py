@@ -18,7 +18,6 @@ from datetime import datetime
 from pathlib import Path
 
 import chz
-import modal
 import tinker
 
 from tinker_cookbook import model_info, tokenizer_utils
@@ -85,10 +84,8 @@ async def evaluate_task(
     """
     start = time.monotonic()
     env_dir = task.task_dir / "environment"
-    dockerfile_path = env_dir / "Dockerfile"
-    image = modal.Image.from_dockerfile(path=str(dockerfile_path), context_dir=str(env_dir))
 
-    sandbox = await sandbox_factory(image, config.sandbox_timeout)
+    sandbox = await sandbox_factory(env_dir, config.sandbox_timeout)
     try:
         bash_tool = HarborBashTool(sandbox, command_timeout=config.command_timeout)
         reward_fn = HarborReward(
