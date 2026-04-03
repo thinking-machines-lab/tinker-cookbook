@@ -120,11 +120,18 @@ def _load_completed(save_dir: str, benchmark_name: str) -> dict[int, float]:
         return {}
     results = {}
     with open(path) as f:
-        for line in f:
+        for line_num, line in enumerate(f, 1):
             line = line.strip()
-            if line:
+            if not line:
+                continue
+            try:
                 d = json.loads(line)
                 results[d["idx"]] = d["reward"]
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning(
+                    f"Skipping malformed trajectory line {line_num} in "
+                    f"{benchmark_name}/trajectories.jsonl: {e}"
+                )
     return results
 
 
@@ -569,7 +576,7 @@ async def run_benchmark(
 
         # Reset per-round state
         rewards = [None] * len(sample_envs)
-        metrics_list = [{}] * len(sample_envs)
+        metrics_list = [{} for _ in range(len(sample_envs))]
         num_errors = 0
         num_completed = 0
         completed_rewards = {}  # No resumability in pass@k mode
@@ -736,11 +743,18 @@ def load_trajectories(
 
     trajectories = []
     with open(path) as f:
-        for line in f:
+        for line_num, line in enumerate(f, 1):
             line = line.strip()
             if not line:
                 continue
-            t = StoredTrajectory.from_dict(json.loads(line))
+            try:
+                t = StoredTrajectory.from_dict(json.loads(line))
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning(
+                    f"Skipping malformed trajectory line {line_num} in "
+                    f"{benchmark_name}/trajectories.jsonl: {e}"
+                )
+                continue
             if correct_only and t.reward <= 0:
                 continue
             if incorrect_only and (t.reward > 0 or t.error is not None):
