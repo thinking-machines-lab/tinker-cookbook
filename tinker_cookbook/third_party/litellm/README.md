@@ -9,7 +9,7 @@ If you have an agent or application built on LiteLLM (or frameworks that use it,
 1. **Run your existing code against Tinker** without rewriting it to use the Tinker SDK directly
 2. **Get raw token IDs** from every request, which you can feed into Tinker's training APIs for supervised learning or RL
 
-Tinker also offers an [OpenAI-compatible endpoint](/compatible-apis/openai), which works with LiteLLM out of the box. However, the native `SamplingClient` used by this integration provides better performance.
+Tinker also offers an [OpenAI-compatible endpoint](https://tinker-docs.thinkingmachines.ai/compatible-apis/openai), which works with LiteLLM out of the box. However, the native `SamplingClient` used by this integration provides better performance.
 
 ## Setup
 
