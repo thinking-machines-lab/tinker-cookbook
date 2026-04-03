@@ -68,6 +68,7 @@ class Config:
     # Training
     learning_rate: float = 2e-5
     max_length: int = 2048  # Max token length for SFT datums
+    max_datums_per_problem: int | None = None  # Limit SFT datums per problem (None = all correct)
 
     # Logging and checkpointing
     log_path: str | None = None
@@ -328,7 +329,7 @@ async def main(config: Config):
         n_problems_solved = 0
 
         for result, prob in sample_results:
-            problem_had_correct = False
+            problem_correct_count = 0
 
             for seq in result.sequences:
                 n_total_samples += 1
@@ -337,7 +338,15 @@ async def main(config: Config):
 
                 if _grade_response(content, prob["answer"]):
                     n_correct_samples += 1
-                    problem_had_correct = True
+                    problem_correct_count += 1
+
+                    # Optionally limit datums per problem to avoid
+                    # overweighting easy problems in the SFT batch
+                    if (
+                        config.max_datums_per_problem is not None
+                        and problem_correct_count > config.max_datums_per_problem
+                    ):
+                        continue
 
                     # Create SFT datum from this correct solution
                     conversation = convo_prefix + [
@@ -355,7 +364,7 @@ async def main(config: Config):
                     )
                     correct_datums.append(datum)
 
-            if problem_had_correct:
+            if problem_correct_count > 0:
                 n_problems_solved += 1
 
         solve_rate = n_problems_solved / len(batch_problems) if batch_problems else 0
