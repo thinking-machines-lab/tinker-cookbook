@@ -105,8 +105,16 @@ def build_name_remaps(
     """
     remaps: list[tuple[str, str]] = [
         ("base_model.model.", ""),
-        ("model.unembed_tokens", "lm_head"),
     ]
+    # Map unembed_tokens to lm_head if it exists as a separate parameter,
+    # otherwise to model.embed_tokens (models with tied embeddings).
+    has_lm_head = "lm_head.weight" in model_state_keys or any(
+        k.endswith(".lm_head.weight") for k in model_state_keys
+    )
+    if has_lm_head:
+        remaps.append(("model.unembed_tokens", "lm_head"))
+    else:
+        remaps.append(("model.unembed_tokens", "model.embed_tokens"))
     if profile.has_language_model_prefix:
         remaps.append(("model.", "model.language_model."))
     return remaps
