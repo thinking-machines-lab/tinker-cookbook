@@ -13,10 +13,13 @@ def _():
 
 @app.cell
 def _():
+    import asyncio
+    import time
+
     import matplotlib.pyplot as plt
     import numpy as np
 
-    return np, plt
+    return asyncio, np, plt, time
 
 
 @app.cell(hide_code=True)
@@ -138,23 +141,13 @@ def _(re):
         ground_truth = ground_truth.replace(",", "").strip()
         return 1.0 if answer == ground_truth else 0.0
 
-    question_suffix = " Provide a numerical answer without units, written inside \\boxed{}."
-    fewshot_prefix = [
-        {"role": "user", "content": "How many r's are in strawberry?" + question_suffix},
-        {
-            "role": "assistant",
-            "content": (
-                "Let's count: s-t-r-a-w-b-e-r-r-y. "
-                "Positions 3, 8, 9. \\boxed{3}"
-            ),
-        },
-    ]
+    # Minimal prompt to teach the model the expected answer format
+    question_suffix = " Provide a step-by-step solution ending with \\boxed{answer}."
 
     print(f"Loaded {len(train_data)} train / {len(test_data)} test GSM8K problems")
     return (
         extract_boxed,
         extract_gsm8k_answer,
-        fewshot_prefix,
         grade_answer,
         question_suffix,
         test_data,
@@ -189,123 +182,126 @@ def _():
 
 
 # ==============================================================================
-# Part 1: RFT training loop
+# Training functions
 # ==============================================================================
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Part 1: RFT (Rejection Sampling Fine-Tuning)
+    ## The training loops
 
-    The RFT loop:
-    1. Sample K solutions per problem
-    2. Grade them -- keep only correct ones
-    3. Run standard SFT (cross-entropy) on the correct solutions
-    4. Evaluate on the test set periodically
-
-    No advantages, no importance weights, no negative signal.
-    Just **SFT on whatever the model gets right**.
+    Below we define both training methods. Each function:
+    1. Creates a fresh LoRA model from the same base
+    2. Runs the training loop for `N_STEPS` steps
+    3. Evaluates on the test set every `EVAL_EVERY` steps
+    4. Returns the metrics history
     """)
     return
 
 
 @app.cell
-async def _(
-    BASE_MODEL,
-    BATCH_SIZE,
-    EVAL_EVERY,
-    GROUP_SIZE,
-    MAX_TOKENS,
-    N_EVAL_PROBLEMS,
-    N_STEPS,
+def _(
+    TensorData,
     TrainOnWhat,
+    asyncio,
     conversation_to_datum,
     extract_gsm8k_answer,
-    fewshot_prefix,
     get_renderer,
     get_text_content,
     grade_answer,
     question_suffix,
     test_data,
+    time,
     tinker,
+    torch,
     train_data,
 ):
-    import asyncio as _asyncio
-    import time as _time
+    async def run_rft(
+        base_model: str,
+        n_steps: int,
+        batch_size: int,
+        group_size: int,
+        max_tokens: int,
+        eval_every: int,
+        n_eval_problems: int,
+    ) -> list[dict]:
+        """Train with RFT: sample solutions, keep correct ones, SFT on them."""
 
-    async def _run_rft():
-        # --- Setup ---
         service = tinker.ServiceClient()
-        tc = await service.create_lora_training_client_async(base_model=BASE_MODEL, rank=32)
+        tc = await service.create_lora_training_client_async(base_model=base_model, rank=32)
         tok = tc.get_tokenizer()
         rdr = get_renderer("qwen3", tok)
         adam = tinker.AdamParams(learning_rate=1e-4, beta1=0.9, beta2=0.95)
         samp_params = tinker.SamplingParams(
-            max_tokens=MAX_TOKENS, temperature=1.0, stop=rdr.get_stop_sequences()
+            max_tokens=max_tokens, temperature=1.0, stop=rdr.get_stop_sequences()
         )
 
-        async def _evaluate(training_client):
-            sc = await training_client.save_weights_and_get_sampling_client_async()
+        async def evaluate():
+            sc = await tc.save_weights_and_get_sampling_client_async()
             ep = tinker.SamplingParams(
-                max_tokens=MAX_TOKENS, temperature=0.0, stop=rdr.get_stop_sequences()
+                max_tokens=max_tokens, temperature=0.0, stop=rdr.get_stop_sequences()
             )
-            async def _one(row):
-                convo = [*fewshot_prefix, {"role": "user", "content": row["question"] + question_suffix}]
+
+            async def grade_one(row):
+                convo = [{"role": "user", "content": row["question"] + question_suffix}]
                 r = await sc.sample_async(
                     prompt=rdr.build_generation_prompt(convo), num_samples=1, sampling_params=ep
                 )
                 msg, _ = rdr.parse_response(r.sequences[0].tokens)
                 return grade_answer(get_text_content(msg), extract_gsm8k_answer(row["answer"]))
-            problems = test_data.select(range(min(N_EVAL_PROBLEMS, len(test_data))))
-            scores = await _asyncio.gather(*[_one(row) for row in problems])
+
+            problems = test_data.select(range(min(n_eval_problems, len(test_data))))
+            scores = await asyncio.gather(*[grade_one(row) for row in problems])
             return sum(scores) / len(scores)
 
-        # --- Training loop ---
         metrics = []
-        t0 = _time.time()
+        t0 = time.time()
 
-        for step in range(N_STEPS):
-            t_step = _time.time()
-            batch_start = step * BATCH_SIZE
-            batch_rows = train_data.select(range(batch_start, batch_start + BATCH_SIZE))
+        for step in range(n_steps):
+            t_step = time.time()
+            batch_rows = train_data.select(
+                range(step * batch_size, step * batch_size + batch_size)
+            )
 
-            sampling_client = await tc.save_weights_and_get_sampling_client_async()
+            # Sample K solutions per problem
+            sc = await tc.save_weights_and_get_sampling_client_async()
 
-            async def _sample(question):
-                convo = [*fewshot_prefix, {"role": "user", "content": question + question_suffix}]
+            async def sample_one(question):
+                convo = [{"role": "user", "content": question + question_suffix}]
                 prompt = rdr.build_generation_prompt(convo)
-                result = await sampling_client.sample_async(
-                    prompt=prompt, num_samples=GROUP_SIZE, sampling_params=samp_params
+                result = await sc.sample_async(
+                    prompt=prompt, num_samples=group_size, sampling_params=samp_params
                 )
                 return result, convo
 
-            results = await _asyncio.gather(*[_sample(q) for q in batch_rows["question"]])
+            results = await asyncio.gather(*[sample_one(q) for q in batch_rows["question"]])
 
+            # Grade and keep only correct solutions
             correct_datums = []
             n_correct = 0
             n_total = 0
             n_solved = 0
 
             for (sample_result, convo), answer_text in zip(results, batch_rows["answer"]):
-                ground_truth = extract_gsm8k_answer(answer_text)
+                gt = extract_gsm8k_answer(answer_text)
                 problem_correct = 0
                 for seq in sample_result.sequences:
                     n_total += 1
-                    parsed_msg, _ = rdr.parse_response(seq.tokens)
-                    content = get_text_content(parsed_msg)
-                    if grade_answer(content, ground_truth) == 1.0:
+                    msg, _ = rdr.parse_response(seq.tokens)
+                    content = get_text_content(msg)
+                    if grade_answer(content, gt) == 1.0:
                         n_correct += 1
                         problem_correct += 1
                         full_convo = convo + [{"role": "assistant", "content": content}]
-                        datum = conversation_to_datum(
+                        correct_datums.append(conversation_to_datum(
                             full_convo, rdr, max_length=2048,
                             train_on_what=TrainOnWhat.LAST_ASSISTANT_MESSAGE,
-                        )
-                        correct_datums.append(datum)
+                        ))
                 if problem_correct > 0:
                     n_solved += 1
 
+            # SFT step
             if correct_datums:
                 fb = await tc.forward_backward_async(correct_datums, loss_fn="cross_entropy")
                 op = await tc.optim_step_async(adam)
@@ -313,14 +309,14 @@ async def _(
                 await op.result_async()
 
             sample_acc = n_correct / n_total if n_total else 0
-            elapsed = _time.time() - t0
-            step_time = _time.time() - t_step
-            remaining = step_time * (N_STEPS - step - 1)
+            elapsed = time.time() - t0
+            step_time = time.time() - t_step
+            remaining = step_time * (n_steps - step - 1)
 
-            entry = {"step": step, "sample_accuracy": sample_acc, "solve_rate": n_solved / BATCH_SIZE}
+            entry = {"step": step, "sample_accuracy": sample_acc, "solve_rate": n_solved / batch_size}
 
-            if step % EVAL_EVERY == 0:
-                test_acc = await _evaluate(tc)
+            if step % eval_every == 0:
+                test_acc = await evaluate()
                 entry["test_accuracy"] = test_acc
                 print(
                     f"RFT step {step:2d} | sample_acc: {sample_acc:.0%} | "
@@ -330,24 +326,57 @@ async def _(
             else:
                 print(
                     f"RFT step {step:2d} | sample_acc: {sample_acc:.0%} | "
-                    f"solved: {n_solved}/{BATCH_SIZE} | "
+                    f"solved: {n_solved}/{batch_size} | "
                     f"{elapsed:.0f}s elapsed, ~{remaining/60:.0f}min remaining"
                 )
 
             metrics.append(entry)
 
         # Final eval
-        final_acc = await _evaluate(tc)
-        metrics.append({"step": N_STEPS, "test_accuracy": final_acc})
-        print(f"\nRFT done! Final test accuracy: {final_acc:.1%} ({_time.time()-t0:.0f}s total)")
-        return metrics, tc, rdr
+        final_acc = await evaluate()
+        metrics.append({"step": n_steps, "test_accuracy": final_acc})
+        print(f"\nRFT done! Final test accuracy: {final_acc:.1%} ({time.time()-t0:.0f}s total)")
+        return metrics
 
-    rft_metrics, tc_rft, renderer_rft = await _run_rft()
-    return renderer_rft, rft_metrics, tc_rft
+    return (run_rft,)
 
 
 # ==============================================================================
-# Part 2: GRPO training loop
+# Part 1: Run RFT
+# ==============================================================================
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Part 1: RFT (Rejection Sampling Fine-Tuning)
+
+    The loop: sample K solutions per problem, keep the correct ones, SFT on them.
+    No advantages, no importance weights, no negative signal.
+    Just **SFT on whatever the model gets right**.
+    """)
+    return
+
+
+@app.cell
+async def _(
+    BASE_MODEL, BATCH_SIZE, EVAL_EVERY, GROUP_SIZE, MAX_TOKENS, N_EVAL_PROBLEMS, N_STEPS,
+    run_rft,
+):
+    rft_metrics = await run_rft(
+        base_model=BASE_MODEL,
+        n_steps=N_STEPS,
+        batch_size=BATCH_SIZE,
+        group_size=GROUP_SIZE,
+        max_tokens=MAX_TOKENS,
+        eval_every=EVAL_EVERY,
+        n_eval_problems=N_EVAL_PROBLEMS,
+    )
+    return (rft_metrics,)
+
+
+# ==============================================================================
+# Part 2: Run GRPO
 # ==============================================================================
 
 
@@ -365,168 +394,49 @@ def _(mo):
 
     Correct solutions get positive advantage, wrong ones get negative advantage.
     The model learns to do more of the good **and less of the bad**.
+
+    For the GRPO implementation details, see [Tutorial 04](104_first_rl.py).
+    Here we use the cookbook's production recipe directly:
     """)
     return
 
 
 @app.cell
-async def _(
-    BASE_MODEL,
-    BATCH_SIZE,
-    EVAL_EVERY,
-    GROUP_SIZE,
-    MAX_TOKENS,
-    N_EVAL_PROBLEMS,
-    N_STEPS,
-    TensorData,
-    extract_gsm8k_answer,
-    fewshot_prefix,
-    get_renderer,
-    get_text_content,
-    grade_answer,
-    question_suffix,
-    test_data,
-    tinker,
-    torch,
-    train_data,
-):
-    import asyncio as _asyncio
-    import time as _time
+async def _(BASE_MODEL, BATCH_SIZE, EVAL_EVERY, GROUP_SIZE, MAX_TOKENS, N_STEPS):
+    import json as _json
 
-    async def _run_grpo():
-        # --- Setup ---
-        service = tinker.ServiceClient()
-        tc = await service.create_lora_training_client_async(base_model=BASE_MODEL, rank=32)
-        tok = tc.get_tokenizer()
-        rdr = get_renderer("qwen3", tok)
-        adam = tinker.AdamParams(learning_rate=2e-5, beta1=0.9, beta2=0.95)
-        samp_params = tinker.SamplingParams(
-            max_tokens=MAX_TOKENS, temperature=1.0, stop=rdr.get_stop_sequences()
-        )
+    from tinker_cookbook.recipes.math_rl.train import CLIConfig, cli_main
 
-        async def _evaluate(training_client):
-            sc = await training_client.save_weights_and_get_sampling_client_async()
-            ep = tinker.SamplingParams(
-                max_tokens=MAX_TOKENS, temperature=0.0, stop=rdr.get_stop_sequences()
-            )
-            async def _one(row):
-                convo = [*fewshot_prefix, {"role": "user", "content": row["question"] + question_suffix}]
-                r = await sc.sample_async(
-                    prompt=rdr.build_generation_prompt(convo), num_samples=1, sampling_params=ep
-                )
-                msg, _ = rdr.parse_response(r.sequences[0].tokens)
-                return grade_answer(get_text_content(msg), extract_gsm8k_answer(row["answer"]))
-            problems = test_data.select(range(min(N_EVAL_PROBLEMS, len(test_data))))
-            scores = await _asyncio.gather(*[_one(row) for row in problems])
-            return sum(scores) / len(scores)
+    _grpo_log_path = "/tmp/tinker-examples/tutorial_408_grpo"
 
-        # --- Training loop ---
-        metrics = []
-        t0 = _time.time()
+    await cli_main(CLIConfig(
+        model_name=BASE_MODEL,
+        env="gsm8k",
+        group_size=GROUP_SIZE,
+        groups_per_batch=BATCH_SIZE,
+        learning_rate=2e-5,
+        max_tokens=MAX_TOKENS,
+        lora_rank=32,
+        eval_every=EVAL_EVERY,
+        max_steps=N_STEPS,
+        log_path=_grpo_log_path,
+        behavior_if_log_dir_exists="delete",
+    ))
 
-        for step in range(N_STEPS):
-            t_step = _time.time()
-            batch_start = step * BATCH_SIZE
-            batch_rows = train_data.select(range(batch_start, batch_start + BATCH_SIZE))
+    # Read metrics from the log
+    grpo_metrics = []
+    with open(f"{_grpo_log_path}/metrics.jsonl") as _f:
+        for _line in _f:
+            _m = _json.loads(_line)
+            _entry = {"step": _m.get("step", 0)}
+            if "env/all/reward/total" in _m:
+                _entry["reward"] = _m["env/all/reward/total"]
+            if "test/env/all/reward/total" in _m:
+                _entry["test_accuracy"] = _m["test/env/all/reward/total"]
+            grpo_metrics.append(_entry)
 
-            sampling_client = await tc.save_weights_and_get_sampling_client_async()
-
-            prompts = []
-            coros = []
-            for question in batch_rows["question"]:
-                convo = [*fewshot_prefix, {"role": "user", "content": question + question_suffix}]
-                prompt = rdr.build_generation_prompt(convo)
-                coros.append(
-                    sampling_client.sample_async(
-                        prompt=prompt, num_samples=GROUP_SIZE, sampling_params=samp_params
-                    )
-                )
-                prompts.append(prompt)
-
-            sample_results = await _asyncio.gather(*coros)
-
-            datums = []
-            rewards_all = []
-            n_degenerate = 0
-
-            for sample_result, prompt, answer_text in zip(
-                sample_results, prompts, batch_rows["answer"]
-            ):
-                ground_truth = extract_gsm8k_answer(answer_text)
-                rewards_G = []
-                tokens_G = []
-                logprobs_G = []
-
-                for seq in sample_result.sequences:
-                    tokens_G.append(seq.tokens)
-                    logprobs_G.append(seq.logprobs)
-                    parsed_msg, _ = rdr.parse_response(seq.tokens)
-                    content = get_text_content(parsed_msg)
-                    reward = grade_answer(content, ground_truth)
-                    rewards_G.append(reward)
-
-                mean_reward = sum(rewards_G) / len(rewards_G)
-                advantages_G = [r - mean_reward for r in rewards_G]
-                rewards_all.append(mean_reward)
-
-                if all(a == 0.0 for a in advantages_G):
-                    n_degenerate += 1
-                    continue
-
-                ob_len = prompt.length - 1
-                for tokens, logprobs, advantage in zip(tokens_G, logprobs_G, advantages_G):
-                    model_input = prompt.append(tinker.EncodedTextChunk(tokens=tokens[:-1]))
-                    target_tokens = [0] * ob_len + tokens
-                    padded_logprobs = [0.0] * ob_len + logprobs
-                    padded_advantages = [0.0] * ob_len + [advantage] * (model_input.length - ob_len)
-                    datum = tinker.Datum(
-                        model_input=model_input,
-                        loss_fn_inputs={
-                            "target_tokens": TensorData.from_torch(torch.tensor(target_tokens)),
-                            "logprobs": TensorData.from_torch(torch.tensor(padded_logprobs)),
-                            "advantages": TensorData.from_torch(torch.tensor(padded_advantages)),
-                        },
-                    )
-                    datums.append(datum)
-
-            if datums:
-                fb = await tc.forward_backward_async(datums, loss_fn="importance_sampling")
-                op = await tc.optim_step_async(adam)
-                await fb.result_async()
-                await op.result_async()
-
-            mean_reward = sum(rewards_all) / len(rewards_all) if rewards_all else 0
-            elapsed = _time.time() - t0
-            step_time = _time.time() - t_step
-            remaining = step_time * (N_STEPS - step - 1)
-
-            entry = {"step": step, "reward": mean_reward, "n_degenerate": n_degenerate}
-
-            if step % EVAL_EVERY == 0:
-                test_acc = await _evaluate(tc)
-                entry["test_accuracy"] = test_acc
-                print(
-                    f"GRPO step {step:2d} | reward: {mean_reward:.3f} | "
-                    f"test: {test_acc:.1%} | "
-                    f"{elapsed:.0f}s elapsed, ~{remaining/60:.0f}min remaining"
-                )
-            else:
-                print(
-                    f"GRPO step {step:2d} | reward: {mean_reward:.3f} | "
-                    f"degen: {n_degenerate}/{BATCH_SIZE} | "
-                    f"{elapsed:.0f}s elapsed, ~{remaining/60:.0f}min remaining"
-                )
-
-            metrics.append(entry)
-
-        # Final eval
-        final_acc = await _evaluate(tc)
-        metrics.append({"step": N_STEPS, "test_accuracy": final_acc})
-        print(f"\nGRPO done! Final test accuracy: {final_acc:.1%} ({_time.time()-t0:.0f}s total)")
-        return metrics, tc, rdr
-
-    grpo_metrics, tc_grpo, renderer_grpo = await _run_grpo()
-    return grpo_metrics, renderer_grpo, tc_grpo
+    print(f"GRPO done! Loaded {len(grpo_metrics)} metric entries from {_grpo_log_path}")
+    return (grpo_metrics,)
 
 
 # ==============================================================================
@@ -539,15 +449,14 @@ def _(mo):
     mo.md(r"""
     ## Results: Learning curves
 
-    Let's compare how each method's test accuracy evolves over training.
-    Both models are evaluated with greedy decoding on 200 GSM8K test problems.
+    Both models are evaluated with greedy decoding on 200 GSM8K test problems
+    every 5 training steps.
     """)
     return
 
 
 @app.cell
 def _(grpo_metrics, plt, rft_metrics):
-    # Extract eval points (steps where test_accuracy was measured)
     _rft_eval = [(m["step"], m["test_accuracy"] * 100) for m in rft_metrics if "test_accuracy" in m]
     _grpo_eval = [(m["step"], m["test_accuracy"] * 100) for m in grpo_metrics if "test_accuracy" in m]
 
@@ -585,27 +494,27 @@ def _(mo):
 
 @app.cell
 def _(grpo_metrics, plt, rft_metrics):
-    fig_train, (ax_ta, ax_tb) = plt.subplots(1, 2, figsize=(12, 4.5))
+    fig_train, (_ax_a, _ax_b) = plt.subplots(1, 2, figsize=(12, 4.5))
 
     _rft_sa = [(m["step"], m["sample_accuracy"] * 100) for m in rft_metrics if "sample_accuracy" in m]
     if _rft_sa:
         _xs, _ys = zip(*_rft_sa)
-        ax_ta.plot(_xs, _ys, "o-", color="#2196F3", linewidth=1.5, markersize=3)
-    ax_ta.set_xlabel("Training step")
-    ax_ta.set_ylabel("Sample accuracy (%)")
-    ax_ta.set_title("RFT: correct samples / total samples", fontweight="bold")
-    ax_ta.grid(True, alpha=0.3)
-    ax_ta.set_ylim(0, 105)
+        _ax_a.plot(_xs, _ys, "o-", color="#2196F3", linewidth=1.5, markersize=3)
+    _ax_a.set_xlabel("Training step")
+    _ax_a.set_ylabel("Sample accuracy (%)")
+    _ax_a.set_title("RFT: correct samples / total samples", fontweight="bold")
+    _ax_a.grid(True, alpha=0.3)
+    _ax_a.set_ylim(0, 105)
 
     _grpo_r = [(m["step"], m["reward"] * 100) for m in grpo_metrics if "reward" in m]
     if _grpo_r:
         _xs2, _ys2 = zip(*_grpo_r)
-        ax_tb.plot(_xs2, _ys2, "s-", color="#FF5722", linewidth=1.5, markersize=3)
-    ax_tb.set_xlabel("Training step")
-    ax_tb.set_ylabel("Mean reward (%)")
-    ax_tb.set_title("GRPO: mean batch reward", fontweight="bold")
-    ax_tb.grid(True, alpha=0.3)
-    ax_tb.set_ylim(0, 105)
+        _ax_b.plot(_xs2, _ys2, "s-", color="#FF5722", linewidth=1.5, markersize=3)
+    _ax_b.set_xlabel("Training step")
+    _ax_b.set_ylabel("Mean reward (%)")
+    _ax_b.set_title("GRPO: mean batch reward", fontweight="bold")
+    _ax_b.grid(True, alpha=0.3)
+    _ax_b.set_ylim(0, 105)
 
     plt.tight_layout()
     fig_train
@@ -695,15 +604,15 @@ def _(mo):
 
 @app.cell
 def _(math_rft_by_level, math_rft_steps, plt):
-    _level_colors = {
+    _colors = {
         "L1": "#4CAF50", "L2": "#8BC34A", "L3": "#FFC107",
         "L4": "#FF9800", "L5": "#F44336",
     }
     fig_levels, ax_levels = plt.subplots(figsize=(9, 5))
-    for level, accs in math_rft_by_level.items():
-        ax_levels.plot(math_rft_steps, [x * 100 for x in accs], "o-",
-                       color=_level_colors[level], linewidth=2, markersize=5,
-                       label=f"{level} ({accs[0]*100:.0f}% -> {accs[-1]*100:.0f}%)")
+    for _level, _accs in math_rft_by_level.items():
+        ax_levels.plot(math_rft_steps, [x * 100 for x in _accs], "o-",
+                       color=_colors[_level], linewidth=2, markersize=5,
+                       label=f"{_level} ({_accs[0]*100:.0f}% -> {_accs[-1]*100:.0f}%)")
 
     ax_levels.set_xlabel("Training step", fontsize=12)
     ax_levels.set_ylabel("Accuracy (%)", fontsize=12)
