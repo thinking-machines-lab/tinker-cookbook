@@ -96,8 +96,14 @@ class TestIsDeepseekConfig:
 
 class TestIsRoutedExpertWeight:
     def test_routed_expert_matched(self):
+        # DeepSeek / Qwen3.5 per-expert keys
         assert _is_routed_expert_weight("model.layers.3.mlp.experts.42.gate_proj.weight")
         assert _is_routed_expert_weight("model.layers.0.mlp.experts.0.down_proj.weight")
+
+    def test_fused_expert_matched(self):
+        # Qwen3-VL fused 3D expert keys (no .weight suffix, no per-expert index)
+        assert _is_routed_expert_weight("model.language_model.layers.0.mlp.experts.gate_up_proj")
+        assert _is_routed_expert_weight("model.language_model.layers.0.mlp.experts.down_proj")
 
     def test_shared_expert_rejected(self):
         assert not _is_routed_expert_weight("model.layers.0.mlp.shared_experts.gate_proj.weight")
@@ -456,6 +462,166 @@ class TestOutputShardAssembly:
         cc = config["compression_config"]
         assert cc["quant_method"] == "compressed-tensors"
         assert "quantization_config" not in config
+
+
+# ---------------------------------------------------------------------------
+# post_merge_transform — per-expert vs fused expert keys
+# ---------------------------------------------------------------------------
+
+
+class TestPostMergeTransform:
+    """Test FP8BlockFormat.post_merge_transform across model key formats.
+
+    Covers:
+    - DeepSeek/Qwen3.5 per-expert 2D keys (``experts.0.gate_proj.weight``)
+    - Qwen3-VL fused 3D keys (``experts.gate_up_proj``)
+    - Dense/shared/non-expert keys must pass through unchanged
+    """
+
+    @pytest.fixture()
+    def fmt(self, tmp_path: Path):
+        from tinker_cookbook.weights._export._quantized import FP8BlockFormat
+
+        # Non-native-FP8 config so pre_merge_transform is a no-op
+        config = {"model_type": "qwen2_moe"}
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        return FP8BlockFormat(config, model_dir, serving_format="vllm", device="cpu")
+
+    # -- Per-expert 2D keys (DeepSeek, Qwen3.5) -- existing behavior ---------
+
+    def test_per_expert_2d_quantized(self, fmt):
+        """Per-expert 2D weight → FP8 + scale (DeepSeek / Qwen3.5 format)."""
+        key = "model.layers.0.mlp.experts.0.gate_proj.weight"
+        tensor = torch.randn(256, 128, dtype=torch.bfloat16)
+        result = fmt.post_merge_transform(key, tensor)
+        assert key in result
+        assert result[key].dtype == torch.float8_e4m3fn
+        assert result[key].shape == (256, 128)
+        scale_key = "model.layers.0.mlp.experts.0.gate_proj.weight_scale"
+        assert scale_key in result
+        assert result[scale_key].dtype == torch.float32
+
+    def test_per_expert_2d_vl_prefix_quantized(self, fmt):
+        """Per-expert 2D weight with language_model prefix → FP8 (Qwen3.5)."""
+        key = "model.language_model.layers.0.mlp.experts.42.down_proj.weight"
+        tensor = torch.randn(128, 256, dtype=torch.bfloat16)
+        result = fmt.post_merge_transform(key, tensor)
+        assert result[key].dtype == torch.float8_e4m3fn
+
+    # -- Fused 3D keys (Qwen3-VL) -- new behavior ----------------------------
+
+    def test_fused_3d_quantized(self, fmt):
+        """Fused 3D expert tensor → FP8 + scale (Qwen3-VL format)."""
+        key = "model.language_model.layers.0.mlp.experts.gate_up_proj"
+        # [num_experts, out_features, in_features]
+        tensor = torch.randn(128, 2048, 1536, dtype=torch.bfloat16)
+        result = fmt.post_merge_transform(key, tensor)
+        assert key in result
+        assert result[key].dtype == torch.float8_e4m3fn
+        assert result[key].shape == (128, 2048, 1536)
+        scale_key = "model.language_model.layers.0.mlp.experts.gate_up_proj.weight_scale"
+        assert scale_key in result
+        assert result[scale_key].dtype == torch.float32
+        # Scale should be 3D: [num_experts, ceil(2048/128), ceil(1536/128)]
+        assert result[scale_key].shape == (128, 16, 12)
+
+    def test_fused_3d_down_proj_quantized(self, fmt):
+        """Fused 3D down_proj → FP8 (another Qwen3-VL key)."""
+        key = "model.language_model.layers.0.mlp.experts.down_proj"
+        tensor = torch.randn(128, 768, 2048, dtype=torch.bfloat16)
+        result = fmt.post_merge_transform(key, tensor)
+        assert result[key].dtype == torch.float8_e4m3fn
+        assert result[key].shape == (128, 768, 2048)
+
+    def test_fused_3d_round_trip_quality(self, fmt):
+        """Quantized fused 3D tensor should approximately round-trip."""
+        key = "model.language_model.layers.0.mlp.experts.down_proj"
+        tensor = torch.randn(4, 256, 256, dtype=torch.bfloat16)
+        result = fmt.post_merge_transform(key, tensor)
+        scale_key = key + ".weight_scale"
+        # Dequantize each expert slice and check error
+        for i in range(4):
+            fp8_slice = result[key][i]
+            scale_slice = result[scale_key][i]
+            recovered = dequantize_blockwise(fp8_slice, scale_slice)
+            error = (recovered.float() - tensor[i].float()).abs().max().item()
+            assert error < 1.0, f"Expert {i} round-trip error too large: {error}"
+
+    # -- Pass-through (dense, shared, non-expert) -----------------------------
+
+    def test_dense_weight_passthrough(self, fmt):
+        """Dense weight should pass through unchanged."""
+        key = "model.layers.0.self_attn.q_proj.weight"
+        tensor = torch.randn(256, 128, dtype=torch.bfloat16)
+        result = fmt.post_merge_transform(key, tensor)
+        assert list(result.keys()) == [key]
+        assert result[key] is tensor
+
+    def test_shared_expert_passthrough(self, fmt):
+        """Shared expert weight should pass through unchanged."""
+        key = "model.layers.0.mlp.shared_experts.gate_proj.weight"
+        tensor = torch.randn(256, 128, dtype=torch.bfloat16)
+        result = fmt.post_merge_transform(key, tensor)
+        assert list(result.keys()) == [key]
+        assert result[key] is tensor
+
+    def test_norm_weight_passthrough(self, fmt):
+        """Norm weight should pass through unchanged."""
+        key = "model.layers.0.input_layernorm.weight"
+        tensor = torch.randn(128, dtype=torch.bfloat16)
+        result = fmt.post_merge_transform(key, tensor)
+        assert list(result.keys()) == [key]
+        assert result[key] is tensor
+
+    def test_embed_passthrough(self, fmt):
+        """Embedding weight should pass through unchanged."""
+        key = "model.embed_tokens.weight"
+        tensor = torch.randn(1000, 128, dtype=torch.bfloat16)
+        result = fmt.post_merge_transform(key, tensor)
+        assert list(result.keys()) == [key]
+        assert result[key] is tensor
+
+
+class TestVllmConfigWithFusedExperts:
+    """Verify vLLM config generation handles both per-expert and fused keys."""
+
+    def test_fused_expert_not_in_ignore(self):
+        """Fused expert with weight_scale should NOT be in ignore list."""
+        weight_map = {
+            # Fused expert (Qwen3-VL style)
+            "model.language_model.layers.0.mlp.experts.gate_up_proj": "s.safetensors",
+            "model.language_model.layers.0.mlp.experts.gate_up_proj.weight_scale": "s.safetensors",
+            "model.language_model.layers.0.mlp.experts.down_proj": "s.safetensors",
+            "model.language_model.layers.0.mlp.experts.down_proj.weight_scale": "s.safetensors",
+            # Dense weight
+            "model.language_model.layers.0.self_attn.q_proj.weight": "s.safetensors",
+        }
+        config = _build_vllm_quantization_config(weight_map)
+        ignore = config["ignore"]
+        # Dense should be in ignore
+        assert "model.language_model.layers.0.self_attn.q_proj" in ignore
+        # Fused experts should NOT be in ignore (they have weight_scale)
+        assert "model.language_model.layers.0.mlp.experts.gate_up_proj" not in ignore
+        assert "model.language_model.layers.0.mlp.experts.down_proj" not in ignore
+
+    def test_mixed_per_expert_and_fused(self):
+        """Mixed format (Qwen3.5 has both) should handle both correctly."""
+        weight_map = {
+            # Per-expert (quantized)
+            "model.language_model.layers.0.mlp.experts.0.gate_proj.weight": "s.safetensors",
+            "model.language_model.layers.0.mlp.experts.0.gate_proj.weight_scale": "s.safetensors",
+            # Fused (quantized)
+            "model.language_model.layers.0.mlp.experts.gate_up_proj": "s.safetensors",
+            "model.language_model.layers.0.mlp.experts.gate_up_proj.weight_scale": "s.safetensors",
+            # Dense (not quantized)
+            "model.language_model.layers.0.self_attn.q_proj.weight": "s.safetensors",
+        }
+        config = _build_vllm_quantization_config(weight_map)
+        ignore = config["ignore"]
+        assert "model.language_model.layers.0.self_attn.q_proj" in ignore
+        assert "model.language_model.layers.0.mlp.experts.0.gate_proj" not in ignore
+        assert "model.language_model.layers.0.mlp.experts.gate_up_proj" not in ignore
 
 
 # ---------------------------------------------------------------------------

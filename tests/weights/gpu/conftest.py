@@ -39,6 +39,7 @@ from tinker_cookbook.supervised.data import (
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.weights import download
+from tinker_cookbook.weights._export._quantized import _weight_scale_key
 
 # ---------------------------------------------------------------------------
 # Directory-level skip: no GPU → skip all tests here
@@ -207,13 +208,18 @@ def load_all_tensors(output_path: Path) -> dict[str, torch.Tensor]:
 
 
 def verify_fp8_output(output_path: Path) -> None:
-    """Verify FP8 quantized output: routed experts in FP8, rest in BF16."""
+    """Verify FP8 quantized output: routed experts in FP8, rest in BF16.
+
+    Handles both per-expert 2D keys (``experts.0.gate_proj.weight``) and
+    fused 3D keys (``experts.gate_up_proj``) — the latter have no ``.weight``
+    suffix.
+    """
     tensors = load_all_tensors(output_path)
 
     expert_weights = [
         k
         for k in tensors
-        if ".experts." in k and ".shared_experts." not in k and k.endswith(".weight")
+        if ".experts." in k and ".shared_experts." not in k and not k.endswith(".weight_scale")
     ]
     assert len(expert_weights) > 0, "No routed expert weights found"
 
@@ -221,7 +227,7 @@ def verify_fp8_output(output_path: Path) -> None:
         assert tensors[key].dtype == torch.float8_e4m3fn, (
             f"Expected FP8 for routed expert {key}, got {tensors[key].dtype}"
         )
-        scale_key = key.removesuffix(".weight") + ".weight_scale"
+        scale_key = _weight_scale_key(key)
         assert scale_key in tensors, f"Missing scale for {key}"
         assert tensors[scale_key].dtype == torch.float32
 
