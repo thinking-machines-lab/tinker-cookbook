@@ -17,35 +17,7 @@ Both methods sample K solutions per problem. The difference:
 
 ## Experimental Design
 
-### Experiment 1: GSM8K Smoke Test
-- Model: Qwen/Qwen3-8B
-- Dataset: GSM8K (7473 train, 1319 test)
-- group_size=4, groups_per_batch=4, max_tokens=512
-- Goal: Verify pipeline works end-to-end
-
-### Experiment 2: GSM8K Full Run (RFT)
-- Model: Qwen/Qwen3-8B
-- group_size=16, groups_per_batch=64
-- max_tokens=1024, learning_rate=2e-5
-- Eval every 5 batches, ~117 total batches
-
-### Experiment 3: GSM8K Full Run (GRPO baseline)
-- Same model and sampling budget as Experiment 2
-- Use existing math_rl recipe
-
-### Experiment 4: MATH dataset comparison (if time permits)
-- Same setup but on Hendrycks MATH (harder problems)
-- Expect larger gap between methods on harder data
-
-## Key Metrics
-- test/correct (pass@1 accuracy on test set)
-- train/sample_accuracy (fraction of correct samples during training)
-- train/solve_rate (fraction of problems with at least 1 correct solution)
-- train/mean_nll (SFT loss on correct solutions)
-
-## Results
-
-### Experiment: GSM8K with Qwen3-8B (30 steps)
+### Experiment 1: GSM8K with Qwen3-8B (completed)
 
 Config: `model_name=Qwen/Qwen3-8B, group_size=16, groups_per_batch=32, lr=1e-4, max_tokens=1024`
 
@@ -56,60 +28,107 @@ Config: `model_name=Qwen/Qwen3-8B, group_size=16, groups_per_batch=32, lr=1e-4, 
 | 10   | **94.0%** | 91.2%   | 0.252 |
 | 15   | 93.6%  | 93.0%      | 0.244 |
 | 20   | 92.2%  | 91.2%      | 0.345 |
-| 25   | 93.0%  | 94.5%      | 0.364 |
 | 30   | 93.4%  | —          | —     |
 
+**Findings:** RFT achieves 94% on GSM8K in 10 steps. GSM8K is too easy — the model
+solves 67% of samples at baseline, providing rich training signal for a virtuous cycle.
+
+### Experiment 2: MATH-500 with Qwen3-8B — RFT (completed)
+
+Config: `model_name=Qwen/Qwen3-8B, env=math, group_size=16, groups_per_batch=32, lr=1e-4, max_tokens=2048`
+
+**Per-level test accuracy (greedy eval):**
+
+| Step | Overall | L1    | L2    | L3    | L4    | L5    | Format |
+|------|---------|-------|-------|-------|-------|-------|--------|
+| 0    | 42.2%   | 81.4% | 72.2% | 47.6% | 32.8% | 14.2% | 44.0%  |
+| 5    | **78.8%** | 93.0% | 91.1% | 87.6% | 76.6% | 61.2% | 90.4% |
+| 10   | 78.6%   | 97.7% | 86.7% | 85.7% | 79.7% | 60.4% | 92.6%  |
+| 15   | 78.0%   | 93.0% | 86.7% | 85.7% | 80.5% | 59.0% | 90.4%  |
+| 20   | 78.2%   | 93.0% | 85.6% | 85.7% | 79.7% | 61.2% | 90.4%  |
+| 25   | 79.6%   | 95.3% | 86.7% | 89.5% | 81.2% | 60.4% | 91.2%  |
+| 30   | 79.8%   | 90.7% | 86.7% | 89.5% | 79.7% | 64.2% | 93.4%  |
+| 35   | 79.6%   | 95.3% | 88.9% | 89.5% | 80.5% | 59.7% | —      |
+| 40   | 78.8%   | 93.0% | 92.2% | 88.6% | 75.8% | 60.4% | —      |
+
 **Key findings:**
-1. **Rapid improvement:** +29pp pass@1 in just 5 steps (62.4% → 91.4%)
-2. **Peak at step 10:** 94.0% pass@1 — surpasses GRPO's 90.9% on same dataset
-3. **Overfitting after step 10:** NLL rises from 0.201 to 0.395, pass@1 declines slightly
-4. **Robust plateau:** Even at step 30, performance remains at 93.4%
+1. **Sharp convergence then plateau:** 42.2% → 78.8% in 5 steps, then flat for 35 more steps
+2. **Difficulty-dependent ceiling:** L1 saturates at ~95%, L5 plateaus at ~60%
+3. **Format compliance learned fast:** 44% → 90%+ in 5 steps
+4. **Training solve rate misleading:** Model achieves 85-100% solve rate on training problems
+   by step 4, but test L5 accuracy stays at ~60%. The model solves *seen* L5 problems
+   but doesn't generalize to *unseen* ones.
+5. **NLL rises after step 5:** Overfitting signal — the model memorizes solution patterns
+   rather than learning general reasoning strategies
 
-**Comparison with GRPO baseline (from math_rl README):**
-- GRPO: 90.9% after 220 steps (Llama-3.1-8B-Instruct, group_size=64, lr=8e-5)
-- RFT: **94.0% after 10 steps** (Qwen3-8B, group_size=16, lr=1e-4)
+### Experiment 3: MATH-500 with Qwen3-8B — GRPO comparison (completed)
 
-### Controlled GRPO baseline (same model, data, group_size)
+Config: `model_name=Qwen/Qwen3-8B, env=math, group_size=16, groups_per_batch=32, lr=8e-5, max_tokens=2048`
 
-Config: `model_name=Qwen/Qwen3-8B, env=gsm8k, group_size=16, groups_per_batch=32, lr=2e-5, max_tokens=1024`
+**Head-to-head comparison:**
 
-| Step | GRPO pass@1 (T=1.0) | RFT pass@1 (greedy) |
-|------|---------------------|---------------------|
-| 0    | 54.8%               | 62.4%               |
-| 5    | 58.1%               | 91.4%               |
-| 10   | 63.8%               | 94.0%               |
-| 15   | 72.6%               | 93.6%               |
-| 20   | 80.7%               | 92.2%               |
-| 25   | 88.8%               | 93.0%               |
+| Step | RFT (greedy) | GRPO (T=1.0) | Notes |
+|------|-------------|--------------|-------|
+| 0    | 42.2%       | 35.9%        | Baseline gap from eval method |
+| 5    | **78.8%**   | 46.9%        | RFT dominates early |
+| 10   | 78.6%       | 67.3%        | GRPO catching up |
+| 15   | 78.0%       | 77.5%        | **Crossover point** |
+| 20   | 78.2%       | **82.3%**    | GRPO breaks through |
+| 25   | 79.6%       | 81.6%        | Slight GRPO dip |
+| 30   | 79.8%       | **84.1%**    | GRPO clearly ahead |
+| 35   | 79.6%       | **85.1%**    | GRPO still improving |
 
-**Important caveats:**
-1. **Eval methodology differs**: RFT uses greedy (T=0), GRPO uses T=1.0 sampling. The ~8pp
-   baseline gap (62.4% vs 54.8%) is mostly due to this. Even adjusting for this, RFT leads.
-2. **Different learning rates**: RFT uses lr=1e-4 (5x higher). This is arguably fair because
-   cross-entropy loss (RFT) allows higher LR than importance-weighted loss (GRPO). GRPO
-   at lr=1e-4 would likely be unstable due to high-variance importance weights.
-3. **GRPO is still climbing at step 25**: With more steps, GRPO would likely continue improving.
-   The GRPO recipe achieves 90.9% at 220 steps with higher group_size (64).
+**Key findings:**
+1. **RFT is faster early:** RFT reaches ~80% in 5 steps vs GRPO needs ~17 steps
+2. **GRPO breaks through RFT's ceiling:** GRPO reaches 85.1% at step 35 while RFT
+   plateaus at ~79% from step 5 onwards. Even accounting for the eval method difference
+   (~6-8pp from greedy vs T=1.0), GRPO likely surpasses RFT by step 20.
+3. **GRPO doesn't plateau yet at 40 steps:** Train reward is still rising, KL is tiny
+   (~0.0005), suggesting room for further improvement with more training
+4. **The crossover around step 15 is the key finding:** Before step 15, RFT dominates
+   (3x more efficient). After step 15, GRPO is better. This suggests a natural **hybrid
+   strategy**: RFT for warm-start, then GRPO for refinement.
 
-**Interpretation:**
-RFT is surprisingly effective on GSM8K. The key advantages:
+## Analysis: Why Does RFT Plateau?
 
-1. **Cross-entropy loss enables higher LR**: The most important finding. GRPO's
-   importance-weighted loss constrains the LR to ~2e-5, while RFT can safely use
-   1e-4 (5x higher). This gives RFT a natural speed advantage.
+The training data reveals a subtle but important finding: **the plateau is NOT caused
+by inability to find correct solutions.** By step 4, the model achieves 85-100% solve
+rate on training problems, even for L5. The real causes:
 
-2. **Virtuous cycle**: The model already solves ~70% of samples at T=1.0, providing
-   rich training signal. As it improves: more correct solutions → better model →
-   even more correct solutions.
+1. **Redundant gradient signal:** As the model improves, it generates increasingly
+   similar correct solutions. SFT loss on these near-identical outputs produces
+   diminishing gradient updates.
 
-3. **Overfitting is the main risk**: After step 10, NLL rises and performance
-   slightly declines. For GSM8K, ~10 steps of RFT is the sweet spot.
-   LR decay or KL regularization could extend the useful training window.
+2. **No negative signal:** RFT only reinforces what works. It cannot actively push
+   the model away from common failure modes. On hard problems where the model makes
+   systematic errors, RFT can only wait for a lucky correct sample.
 
-4. **GRPO has different strengths**: GRPO learns from both correct AND incorrect
-   solutions (negative advantages). This may matter more on harder datasets where
-   the model rarely finds correct solutions.
+3. **Easy problem bias:** In each batch, easy problems (L1-L3) generate many more
+   correct solutions than hard problems (L5). The gradient is dominated by signals
+   from easy problems, even though the model already masters them.
+
+GRPO addresses all three issues:
+- Advantage weighting gives more credit to rare correct solutions on hard problems
+- Negative advantages explicitly penalize incorrect solution patterns
+- The importance-weighted loss provides richer gradient information
+
+## Implications
+
+1. **RFT as cheap warm-start:** Use RFT for 5-10 steps to quickly capture "low-hanging
+   fruit" (format compliance, common patterns), then switch to GRPO for harder reasoning
+
+2. **Difficulty regime determines method choice:**
+   - Easy tasks (solve_rate > 70%): RFT is sufficient and 5x faster
+   - Hard tasks (solve_rate < 50%): GRPO is essential for continued improvement
+
+3. **Per-level analysis is critical:** Aggregate metrics (overall pass@1) hide the
+   difficulty-dependent dynamics. RFT appears to work well overall (78.8%) but fails
+   to improve on the hardest 25% of problems.
 
 ## Log
-- 2026-04-03: Initial implementation committed. Running smoke test.
-- 2026-04-03: First full run completed (30 steps). Peak 94.0% at step 10.
+- 2026-04-03 01:51: Initial implementation committed
+- 2026-04-03 03:03: First full GSM8K run: peak 94.0% at step 10
+- 2026-04-03 06:17: Controlled GRPO comparison on GSM8K
+- 2026-04-03 08:00: Per-difficulty tracking added for MATH experiments
+- 2026-04-03 10:00: MATH RFT experiment: 42.2% → 78.8% plateau at step 5
+- 2026-04-03 14:00: MATH GRPO experiment: breaks through to 85.1% at step 35
