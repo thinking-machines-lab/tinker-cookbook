@@ -15,6 +15,7 @@ import json
 import re
 import time
 
+from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.utils import logtree
 from tinker_cookbook.utils.trace import scope_span_sync
 
@@ -108,7 +109,7 @@ def format_reward(
         "json": is_valid_json,
     }
     if check_fn not in checkers:
-        raise ValueError(f"Unknown check_fn: {check_fn!r}. Choose from {list(checkers)}")
+        raise ConfigurationError(f"Unknown check_fn: {check_fn!r}. Choose from {list(checkers)}")
     passed = checkers[check_fn](text)
     return format_coef * (float(passed) - 1.0)
 

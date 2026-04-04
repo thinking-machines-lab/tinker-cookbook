@@ -16,6 +16,8 @@ import re
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+
+from tinker_cookbook.exceptions import ConfigurationError, DataFormatError
 from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
@@ -212,7 +214,7 @@ def extract_boxed(text: str) -> str:
             stack.append(ichar)
         elif text[ichar] == "}":
             if len(stack) == 0:
-                raise ValueError("Unmatched }")
+                raise DataFormatError("Unmatched }")
             last_open_start = stack.pop()
             prefix = text[:last_open_start]
             if prefix.endswith("\\boxed") or prefix.endswith("\\fbox"):
@@ -222,7 +224,7 @@ def extract_boxed(text: str) -> str:
     match = re.search(r"\\boxed\s+([a-zA-Z0-9]+)", text)
     if match:
         return match.group(1)
-    raise ValueError("No boxed strings found")
+    raise DataFormatError("No boxed strings found")
 
 
 # ======================================================================
@@ -487,7 +489,7 @@ def safe_grade(
     elif grader == "math_verify":
         grader_func = grade_answer_math_verify
     else:
-        raise ValueError(f"Invalid grader: {grader}")
+        raise ConfigurationError(f"Invalid grader: {grader}")
     out = run_with_timeout(
         grader_func, args=(given_answer, ground_truth), timeout_seconds=int(math.ceil(timeout))
     )
@@ -514,7 +516,7 @@ def extract_gsm8k_final_answer(text: str) -> str:
     matches = re.findall(r"####\s*(.+)", text)
     if matches:
         return matches[-1].strip()
-    raise ValueError("No GSM8K final answer found")
+    raise DataFormatError("No GSM8K final answer found")
 
 
 def extract_answer_flexible(response: str) -> str | None:

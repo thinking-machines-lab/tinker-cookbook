@@ -14,10 +14,12 @@ from __future__ import annotations
 import re
 import time
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from tinker_cookbook.sandbox import SandboxBackend
 from tinker_cookbook.utils import logtree
+
+if TYPE_CHECKING:
+    from tinker_cookbook.sandbox import SandboxBackend
 from tinker_cookbook.utils.trace import scope_span
 
 

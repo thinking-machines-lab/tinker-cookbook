@@ -17,14 +17,16 @@ import re
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
 
-from tinker_cookbook.completers import MessageCompleter
-
-logger = logging.getLogger(__name__)
 from tinker_cookbook.renderers.base import Message
 from tinker_cookbook.utils import logtree
 from tinker_cookbook.utils.trace import scope_span
+
+if TYPE_CHECKING:
+    from tinker_cookbook.completers import MessageCompleter
+
+logger = logging.getLogger(__name__)
 
 Conversation: TypeAlias = list[Message]
 
