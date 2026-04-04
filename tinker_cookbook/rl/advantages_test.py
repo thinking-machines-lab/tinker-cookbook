@@ -1,7 +1,8 @@
-"""Tests for advantage estimation functions.
+"""Tests for advantage estimation functions and PPO metrics.
 
-Tests cover GRPO, REINFORCE++, and GAE advantage estimators, including
-edge cases like single-trajectory groups and uniform rewards.
+Tests cover GRPO, REINFORCE++, and GAE advantage estimators, PPO-specific
+metrics (clip fraction, approx KL), including edge cases like single-trajectory
+groups and uniform rewards.
 """
 
 import math
@@ -17,6 +18,7 @@ from tinker_cookbook.rl.advantages import (
     compute_grpo_advantages,
     compute_reinforce_pp_advantages,
 )
+from tinker_cookbook.rl.metrics import compute_ppo_metrics
 from tinker_cookbook.rl.types import Trajectory, TrajectoryGroup, Transition
 
 
@@ -215,15 +217,22 @@ class TestGAEAdvantages:
 class TestComputeAdvantagesDispatch:
     def test_dispatch_grpo(self) -> None:
         group = _make_group([1.0, 3.0])
-        result = compute_advantages([group], method=AdvantageMethod.GRPO)
+        advantages_P, stats = compute_advantages([group], method=AdvantageMethod.GRPO)
         expected = compute_grpo_advantages([group])
-        assert torch.allclose(result[0], expected[0])
+        assert torch.allclose(advantages_P[0], expected[0])
+        assert "advantages/mean" in stats
+        assert "advantages/std" in stats
+        assert "advantages/max" in stats
+        assert "advantages/min" in stats
 
     def test_dispatch_reinforce_pp(self) -> None:
         group = _make_group([1.0, 3.0])
-        result = compute_advantages([group], method=AdvantageMethod.REINFORCE_PP, normalize=True)
+        advantages_P, stats = compute_advantages(
+            [group], method=AdvantageMethod.REINFORCE_PP, normalize=True
+        )
         expected = compute_reinforce_pp_advantages([group], normalize=True)
-        assert torch.allclose(result[0], expected[0])
+        assert torch.allclose(advantages_P[0], expected[0])
+        assert "reinforce_pp/baseline_value" in stats
 
     def test_dispatch_gae_without_values_raises(self) -> None:
         group = _make_group([1.0])
@@ -236,16 +245,87 @@ class TestComputeAdvantagesDispatch:
     def test_dispatch_gae_with_values(self) -> None:
         group = _make_group([1.0])
         value_preds = [[[0.5, 0.0]]]
-        result = compute_advantages(
+        advantages_P, stats = compute_advantages(
             [group],
             method=AdvantageMethod.GAE,
             value_predictions_P=value_preds,
         )
         expected = compute_gae_advantages([group], value_preds)
-        assert torch.allclose(result[0], expected[0])
+        assert torch.allclose(advantages_P[0], expected[0])
+        assert "advantages/mean" in stats
 
     def test_default_is_grpo(self) -> None:
         group = _make_group([1.0, 5.0])
-        default = compute_advantages([group])
+        advantages_P, _stats = compute_advantages([group])
         grpo = compute_grpo_advantages([group])
-        assert torch.allclose(default[0], grpo[0])
+        assert torch.allclose(advantages_P[0], grpo[0])
+
+    def test_stats_values_correct(self) -> None:
+        """Verify that advantage stats are numerically correct."""
+        group = _make_group([0.0, 2.0, 4.0])
+        _advantages_P, stats = compute_advantages([group], method=AdvantageMethod.GRPO)
+        # Advantages are [-2, 0, 2], mean=0, std=2, max=2, min=-2
+        assert abs(stats["advantages/mean"] - 0.0) < 1e-5
+        assert abs(stats["advantages/max"] - 2.0) < 1e-5
+        assert abs(stats["advantages/min"] - (-2.0)) < 1e-5
+
+
+# ---------------------------------------------------------------------------
+# PPO metrics tests
+# ---------------------------------------------------------------------------
+
+
+def _make_datum_with_logprobs(
+    logprobs: list[float], mask: list[float]
+) -> tinker.Datum:
+    """Create a minimal Datum with logprobs and mask for PPO metrics testing."""
+    n = len(logprobs)
+    return tinker.Datum(
+        model_input=tinker.ModelInput.from_ints(list(range(n + 1))),
+        loss_fn_inputs={
+            "target_tokens": tinker.TensorData.from_torch(torch.zeros(n, dtype=torch.long)),
+            "logprobs": tinker.TensorData.from_torch(torch.tensor(logprobs)),
+            "advantages": tinker.TensorData.from_torch(torch.zeros(n)),
+            "mask": tinker.TensorData.from_torch(torch.tensor(mask)),
+        },
+    )
+
+
+class TestPPOMetrics:
+    def test_no_clip_when_logprobs_match(self) -> None:
+        """When old and new logprobs are identical, clip fraction should be 0."""
+        datum = _make_datum_with_logprobs([-1.0, -2.0, -3.0], [1.0, 1.0, 1.0])
+        training_logprobs = [torch.tensor([-1.0, -2.0, -3.0])]
+        result = compute_ppo_metrics([datum], training_logprobs, clip_eps=0.2)
+        assert abs(result["ppo/clip_fraction"]) < 1e-6
+        assert abs(result["ppo/approx_kl"]) < 1e-6
+
+    def test_full_clip_when_logprobs_diverge(self) -> None:
+        """When logprobs diverge significantly, all samples should be clipped."""
+        datum = _make_datum_with_logprobs([-1.0, -1.0], [1.0, 1.0])
+        # New logprobs much higher -> ratio >> 1+eps
+        training_logprobs = [torch.tensor([0.0, 0.0])]
+        result = compute_ppo_metrics([datum], training_logprobs, clip_eps=0.2)
+        assert result["ppo/clip_fraction"] > 0.9  # Should be ~1.0
+        # approx_kl = E[log_old - log_new] = E[-1 - 0] = -1
+        # Negative because new policy is higher prob (moved away from old)
+        assert abs(result["ppo/approx_kl"]) > 0.5  # Significant divergence
+
+    def test_mask_respected(self) -> None:
+        """Only action tokens (mask > 0) should contribute to metrics."""
+        datum = _make_datum_with_logprobs([-1.0, -1.0, -1.0], [0.0, 1.0, 0.0])
+        # Only index 1 is unmasked, and logprobs match -> no clip
+        training_logprobs = [torch.tensor([-1.0, -1.0, -1.0])]
+        result = compute_ppo_metrics([datum], training_logprobs, clip_eps=0.2)
+        assert abs(result["ppo/clip_fraction"]) < 1e-6
+
+    def test_approx_kl_sign(self) -> None:
+        """Approx KL should be positive when new policy diverges from old."""
+        datum = _make_datum_with_logprobs([-2.0, -2.0], [1.0, 1.0])
+        # New policy assigns higher logprobs -> log_old - log_new < 0
+        # Wait: approx_kl = E[log_old - log_new] = E[-2 - (-1)] = -1
+        # But KL(old || new) via first-order: negative means new is higher prob
+        training_logprobs = [torch.tensor([-3.0, -3.0])]
+        result = compute_ppo_metrics([datum], training_logprobs, clip_eps=0.2)
+        # log_old - log_new = -2 - (-3) = 1 > 0
+        assert result["ppo/approx_kl"] > 0

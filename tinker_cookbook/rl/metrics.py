@@ -15,6 +15,67 @@ from tinker_cookbook.utils import trace
 from tinker_cookbook.utils.misc_utils import safezip
 
 
+def compute_ppo_metrics(
+    data_D: list[tinker.Datum],
+    training_logprobs_D: list[torch.Tensor],
+    clip_eps: float = 0.2,
+) -> dict[str, float]:
+    """Compute PPO-specific metrics: clip fraction and approximate KL divergence.
+
+    Computes the importance sampling ratio ``exp(log_pi_new - log_pi_old)`` for
+    each action token, then reports what fraction of ratios fell outside the
+    PPO clip range ``[1-clip_eps, 1+clip_eps]`` and the approximate KL divergence
+    ``E[(log_pi_old - log_pi_new)]``.
+
+    These metrics are useful for monitoring PPO training stability regardless
+    of whether the server-side loss function actually clips.
+
+    Args:
+        data_D: Training datums with ``logprobs`` and ``mask`` in ``loss_fn_inputs``.
+        training_logprobs_D: Per-token logprobs from the current training model.
+        clip_eps: PPO clip epsilon used for computing clip fraction. Defaults to 0.2.
+
+    Returns:
+        Dictionary with keys:
+            - ``ppo/clip_fraction``: Fraction of action tokens where the ratio
+              was clipped.
+            - ``ppo/approx_kl``: Approximate KL divergence (first-order).
+    """
+    all_ratios: list[torch.Tensor] = []
+    all_log_diffs: list[torch.Tensor] = []
+
+    for datum, training_logprobs in safezip(data_D, training_logprobs_D):
+        sampling_logprobs = datum.loss_fn_inputs["logprobs"].to_torch()
+        action_mask = datum.loss_fn_inputs["mask"].to_torch() > 0
+
+        sampling_lp = sampling_logprobs[action_mask]
+        training_lp = training_logprobs[action_mask]
+
+        if len(sampling_lp) > 0:
+            log_ratio = training_lp - sampling_lp
+            ratio = torch.exp(log_ratio.clamp(-20.0, 20.0))
+            all_ratios.append(ratio)
+            all_log_diffs.append(-log_ratio)  # KL ~ E[log_old - log_new]
+
+    if not all_ratios:
+        return {"ppo/clip_fraction": 0.0, "ppo/approx_kl": 0.0}
+
+    flat_ratios = torch.cat(all_ratios)
+    flat_log_diffs = torch.cat(all_log_diffs)
+
+    # Clip fraction: how many ratios are outside [1-eps, 1+eps]
+    clipped = (flat_ratios < 1.0 - clip_eps) | (flat_ratios > 1.0 + clip_eps)
+    clip_fraction = clipped.float().mean().item()
+
+    # Approximate KL divergence (first-order estimate)
+    approx_kl = flat_log_diffs.mean().item()
+
+    return {
+        "ppo/clip_fraction": clip_fraction,
+        "ppo/approx_kl": approx_kl,
+    }
+
+
 def compute_kl_sample_train(
     data_D: list[tinker.Datum], training_logprobs_D: list[torch.Tensor]
 ) -> dict[str, float]:

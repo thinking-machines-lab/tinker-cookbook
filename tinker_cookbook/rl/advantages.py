@@ -20,6 +20,7 @@ import numpy as np
 import torch
 
 from tinker_cookbook.rl.types import TrajectoryGroup
+from tinker_cookbook.utils import logtree, trace
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +183,54 @@ def compute_gae_advantages(
     return advantages_P
 
 
+def _log_advantage_stats(
+    advantages_P: list[torch.Tensor],
+    method: AdvantageMethod,
+) -> dict[str, float]:
+    """Compute and log advantage statistics for telemetry.
+
+    Args:
+        advantages_P: Per-group advantage tensors.
+        method: The advantage method used (for logtree display).
+
+    Returns:
+        Dict of advantage metrics suitable for ml_log.
+    """
+    if not advantages_P:
+        return {}
+
+    all_advantages = torch.cat(advantages_P)
+    stats: dict[str, float] = {
+        "advantages/mean": all_advantages.mean().item(),
+        "advantages/std": all_advantages.std().item() if len(all_advantages) > 1 else 0.0,
+        "advantages/max": all_advantages.max().item(),
+        "advantages/min": all_advantages.min().item(),
+    }
+
+    # Add method-specific metrics
+    if method == AdvantageMethod.REINFORCE_PP:
+        # Log the per-group baseline (mean reward) used for subtraction
+        baselines = []
+        for adv_G in advantages_P:
+            # The baseline is implicit in the centering; log the group mean
+            baselines.append(adv_G.mean().item())
+        stats["reinforce_pp/baseline_value"] = float(np.mean(baselines))
+
+    # Logtree display
+    with logtree.scope_header("Advantage Computation"):
+        logtree.table_from_dict({
+            "method": method.value,
+            "num_groups": str(len(advantages_P)),
+            "num_trajectories": str(len(all_advantages)),
+            "advantage_mean": f"{stats['advantages/mean']:.4f}",
+            "advantage_std": f"{stats['advantages/std']:.4f}",
+            "advantage_max": f"{stats['advantages/max']:.4f}",
+            "advantage_min": f"{stats['advantages/min']:.4f}",
+        })
+
+    return stats
+
+
 def compute_advantages(
     trajectory_groups_P: list[TrajectoryGroup],
     *,
@@ -191,7 +240,7 @@ def compute_advantages(
     value_predictions_P: list[list[list[float]]] | None = None,
     gamma: float = 1.0,
     gae_lambda: float = 0.95,
-) -> list[torch.Tensor]:
+) -> tuple[list[torch.Tensor], dict[str, float]]:
     """Compute advantages using the specified method.
 
     This is the main entry point for advantage estimation. It dispatches to
@@ -210,28 +259,34 @@ def compute_advantages(
         gae_lambda: Lambda for GAE bias-variance trade-off. Defaults to 0.95.
 
     Returns:
-        Per-group advantage tensors of shape ``(G,)``.
+        Tuple of (per-group advantage tensors, advantage metrics dict).
 
     Raises:
         ValueError: If ``method`` is GAE but ``value_predictions_P`` is None.
     """
     if method == AdvantageMethod.GRPO:
-        return compute_grpo_advantages(trajectory_groups_P)
+        with trace.scope_span_sync("compute_grpo_advantages"):
+            advantages_P = compute_grpo_advantages(trajectory_groups_P)
     elif method == AdvantageMethod.REINFORCE_PP:
-        return compute_reinforce_pp_advantages(
-            trajectory_groups_P, normalize=normalize, eps=eps
-        )
+        with trace.scope_span_sync("compute_reinforce_pp_advantages"):
+            advantages_P = compute_reinforce_pp_advantages(
+                trajectory_groups_P, normalize=normalize, eps=eps
+            )
     elif method == AdvantageMethod.GAE:
         if value_predictions_P is None:
             raise ValueError(
                 "GAE advantage estimation requires value_predictions_P. "
                 "Provide per-group, per-trajectory, per-timestep value predictions."
             )
-        return compute_gae_advantages(
-            trajectory_groups_P,
-            value_predictions_P,
-            gamma=gamma,
-            lam=gae_lambda,
-        )
+        with trace.scope_span_sync("compute_gae_advantages"):
+            advantages_P = compute_gae_advantages(
+                trajectory_groups_P,
+                value_predictions_P,
+                gamma=gamma,
+                lam=gae_lambda,
+            )
     else:
         raise ValueError(f"Unknown advantage method: {method}")
+
+    stats = _log_advantage_stats(advantages_P, method)
+    return advantages_P, stats

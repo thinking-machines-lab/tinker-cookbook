@@ -37,6 +37,7 @@ from tinker_cookbook.rl.data_processing import (
 from tinker_cookbook.rl.metric_util import RLTestSetEvaluator, compute_trajectory_metrics
 from tinker_cookbook.rl.metrics import (
     compute_kl_sample_train,
+    compute_ppo_metrics,
     compute_post_kl,
     compute_sampling_client_metrics,
     incorporate_kl_penalty,
@@ -1353,11 +1354,12 @@ async def prepare_minibatch(
 
     # Assemble training data
     async with trace.scope_span("assemble_training_data"):
-        advantages_P = compute_advantages_configurable(
+        advantages_P, advantage_stats = compute_advantages_configurable(
             trajectory_groups_P,
             method=advantage_method,
             normalize=advantage_normalize,
         )
+        metrics.update(advantage_stats)
         data_D, _metadata_D = assemble_training_data(trajectory_groups_P, advantages_P)
 
     # Incorporate KL penalty if configured
@@ -1384,6 +1386,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     save_every: int,
     do_compute_post_kl: bool,
     ttl_seconds: int | None = None,
+    ppo_clip_eps: float = 0.2,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """Compute end-of-iteration metrics and return a fresh sampling client.
 
@@ -1405,6 +1408,8 @@ async def compute_full_batch_metrics_and_get_sampling_client(
             against the new sampling client (adds an extra sampling call).
         ttl_seconds (int | None): Time-to-live for periodic checkpoints.
             Defaults to None.
+        ppo_clip_eps (float): PPO clip epsilon for computing clip fraction
+            metrics. Defaults to 0.2.
 
     Returns:
         tuple[tinker.SamplingClient, dict[str, Any]]: A sampling client
@@ -1417,6 +1422,11 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     async with trace.scope_span("compute_kl_sample_train"):
         kl_sample_train_metrics = compute_kl_sample_train(data_D, training_logprobs_D)
         metrics.update(kl_sample_train_metrics)
+
+    # Compute PPO-specific metrics (clip fraction, approx KL)
+    async with trace.scope_span("compute_ppo_metrics"):
+        ppo_metrics = compute_ppo_metrics(data_D, training_logprobs_D, clip_eps=ppo_clip_eps)
+        metrics.update(ppo_metrics)
 
     # Get a sampling client using the new weights
     sampling_client, checkpoint_metrics = await save_checkpoint_and_get_sampling_client(
@@ -1589,6 +1599,7 @@ async def do_train_step_streaming_and_get_sampling_client(
         config.save_every,
         config.compute_post_kl,
         config.ttl_seconds,
+        ppo_clip_eps=config.ppo_clip_eps,
     )
     metrics.update(full_batch_metrics)
     return sampling_client, metrics, all_wrapped_trajectory_groups
@@ -1663,6 +1674,7 @@ async def do_train_step_and_get_sampling_client(
         config.save_every,
         config.compute_post_kl,
         config.ttl_seconds,
+        ppo_clip_eps=config.ppo_clip_eps,
     )
     metrics.update(full_batch_metrics)
 
