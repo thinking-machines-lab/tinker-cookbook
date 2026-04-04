@@ -226,6 +226,7 @@ def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
         )
 
     rewards = traj_group.get_total_rewards()
+    # Always use GRPO for display — this is a logging helper, not the training path.
     advantages_G = compute_grpo_advantages([traj_group])
     data_D, metadata_D = assemble_training_data([traj_group], advantages_G)
 

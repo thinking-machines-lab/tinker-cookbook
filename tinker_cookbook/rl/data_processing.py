@@ -25,7 +25,7 @@ def compute_advantages(trajectory_groups_P: list[TrajectoryGroup]) -> list[torch
 
     This is a convenience wrapper that delegates to
     :func:`~tinker_cookbook.rl.advantages.compute_grpo_advantages`. For
-    alternative advantage estimators (REINFORCE++, GAE), use
+    alternative advantage estimators (e.g. REINFORCE++), use
     :func:`~tinker_cookbook.rl.advantages.compute_advantages` directly.
 
     Args:

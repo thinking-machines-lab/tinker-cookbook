@@ -7,15 +7,12 @@ values that are used to weight the policy gradient.
 Supported estimators:
 - **GRPO**: Group-relative advantages (mean-centered within each group).
 - **REINFORCE++ baseline**: Baseline-subtracted REINFORCE with optional std normalization.
-
-Note: GAE (Generalized Advantage Estimation) will be added when critic/value
-model support is available in the Tinker API.
 """
 
 from __future__ import annotations
 
 import logging
-from enum import Enum
+from enum import StrEnum
 import numpy as np
 import torch
 
@@ -26,7 +23,7 @@ from tinker_cookbook.utils import logtree, trace
 logger = logging.getLogger(__name__)
 
 
-class AdvantageMethod(str, Enum):
+class AdvantageMethod(StrEnum):
     """Supported advantage estimation methods.
 
     Each value corresponds to one of the ``compute_*_advantages`` functions
