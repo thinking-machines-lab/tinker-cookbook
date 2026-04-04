@@ -11,8 +11,15 @@ Both methods sample K solutions per problem. The difference:
 
 ## Key Hypotheses
 1. RFT will be more stable than GRPO (no negative advantages, no importance weighting)
-2. GRPO may converge faster because it learns from incorrect solutions too (what NOT to do)
-3. RFT may plateau earlier because it can only learn from problems the model already solves
+2. GRPO will eventually outperform RFT. With a 0-1 reward, iterative RFT has the same
+   expected gradient as REINFORCE, but with two disadvantages: (a) no baseline subtraction,
+   which increases variance — RFT treats every correct solution equally regardless of how
+   easy the problem is, while GRPO's group-relative advantages naturally downweight easy
+   problems; (b) no importance sampling correction for the numerics mismatch between the
+   sampling policy and the training policy.
+3. RFT may plateau earlier — not because of a fundamental gradient difference, but because
+   the high variance from missing the baseline makes learning on hard problems inefficient.
+   Easy problems dominate the gradient since they produce many more correct samples.
 4. The gap between RFT and GRPO may be larger on harder datasets (MATH vs GSM8K)
 
 ## Experimental Design
@@ -20,6 +27,12 @@ Both methods sample K solutions per problem. The difference:
 ### Experiment 1: GSM8K with Qwen3-8B (completed)
 
 Config: `model_name=Qwen/Qwen3-8B, group_size=16, groups_per_batch=32, lr=1e-4, max_tokens=1024`
+
+Note: Qwen3-8B with thinking enabled (`/think`) scores much higher out of the box.
+These experiments use non-thinking mode (no `<think>` tags) to keep the comparison
+clean — we're measuring how much RFT/GRPO improve a base model, not how good the
+model's native reasoning is. The 62% GSM8K / 43% MATH baselines reflect non-thinking
+performance with a single fewshot example and max_tokens=1024-2048.
 
 | Step | pass@1 | sample_acc | NLL   |
 |------|--------|------------|-------|

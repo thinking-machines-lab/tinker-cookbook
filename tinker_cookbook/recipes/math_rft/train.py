@@ -106,13 +106,19 @@ async def evaluate_pass_at_1(
     question_suffix: str,
     max_tokens: int,
     max_problems: int = 500,
+    temperature: float = 0.0,
 ) -> dict[str, float]:
-    """Evaluate pass@1 on the test set using greedy decoding."""
+    """Evaluate pass@1 on the test set.
+
+    Args:
+        temperature: Sampling temperature for evaluation. Default 0.0 (greedy).
+            For consistency with training, consider matching the training temperature.
+    """
     problems = test_data[:max_problems]
 
     sampling_params = tinker.SamplingParams(
         max_tokens=max_tokens,
-        temperature=0.0,  # Greedy for eval
+        temperature=temperature,
         stop=renderer.get_stop_sequences(),
     )
 
