@@ -13,7 +13,7 @@ import contextlib
 import logging
 import math
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any, TypeVar
@@ -398,7 +398,7 @@ def _split_tuple(expr: str) -> list[str]:
 # ======================================================================
 
 
-def grade_answer(given_answer: str, ground_truth: str) -> bool:
+def grade_answer(given_answer: str | None, ground_truth: str) -> bool:
     """Check if *given_answer* matches *ground_truth* using normalization and sympy.
 
     The answer is considered correct if either:
@@ -451,6 +451,12 @@ def grade_answer_math_verify(given_answer: str, ground_truth: str) -> bool:
     """Check correctness using the ``math_verify`` package.
 
     Requires ``math-verify`` to be installed.
+
+    .. note::
+
+        This function may raise on malformed inputs. For fault-tolerant
+        grading, use :func:`safe_grade` which wraps this with a timeout
+        and exception handling.
     """
     from math_verify import parse, verify
 
@@ -509,19 +515,6 @@ def extract_gsm8k_final_answer(text: str) -> str:
     if matches:
         return matches[-1].strip()
     raise ValueError("No GSM8K final answer found")
-
-
-def _is_numerically_close(a: str, b: str, rel_tol: float = 1e-6, abs_tol: float = 1e-9) -> bool:
-    """Check if two strings represent numerically close floating-point values.
-
-    Handles edge cases like ``"3.14"`` vs ``"3.140000001"`` that arise from
-    floating-point formatting differences.
-    """
-    try:
-        fa, fb = float(a), float(b)
-        return math.isclose(fa, fb, rel_tol=rel_tol, abs_tol=abs_tol)
-    except (ValueError, OverflowError):
-        return False
 
 
 def extract_answer_flexible(response: str) -> str | None:
@@ -623,33 +616,15 @@ def grade_answer_with_trace(
 
 
 def compute_math_reward_metrics(
-    rewards: list[float],
+    rewards: Sequence[float],
     *,
     reward_name: str = "math",
 ) -> dict[str, float]:
     """Compute aggregate metrics for a batch of math reward values.
 
-    Returns a dict with keys:
-
-    - ``reward/{name}/mean``
-    - ``reward/{name}/std``
-    - ``reward/{name}/fraction_correct``
-
-    Args:
-        rewards: Sequence of reward values (typically 0.0 or 1.0).
-        reward_name: Name prefix for the metric keys.
+    Thin wrapper around :func:`~tinker_cookbook.rewards._metrics.compute_reward_metrics`
+    with ``reward_name`` defaulting to ``"math"``.
     """
-    if not rewards:
-        return {}
+    from tinker_cookbook.rewards._metrics import compute_reward_metrics
 
-    n = len(rewards)
-    mean = sum(rewards) / n
-    variance = sum((r - mean) ** 2 for r in rewards) / n
-    std = math.sqrt(variance)
-    fraction_correct = sum(1.0 for r in rewards if r > 0.5) / n
-
-    return {
-        f"reward/{reward_name}/mean": mean,
-        f"reward/{reward_name}/std": std,
-        f"reward/{reward_name}/fraction_correct": fraction_correct,
-    }
+    return compute_reward_metrics(rewards, reward_name)

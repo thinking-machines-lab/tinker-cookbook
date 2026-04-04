@@ -16,6 +16,9 @@ All reward functions have ``*_with_trace`` variants that emit telemetry
 ``compute_*_metrics`` helpers for batch-level aggregation.
 """
 
+# Shared metrics
+from tinker_cookbook.rewards._metrics import compute_reward_metrics
+
 # Math rewards
 from tinker_cookbook.rewards.math_rewards import (
     compute_math_reward_metrics,
@@ -72,6 +75,8 @@ from tinker_cookbook.rewards.composite import (
 )
 
 __all__ = [
+    # shared metrics
+    "compute_reward_metrics",
     # math
     "extract_answer_flexible",
     "extract_boxed",

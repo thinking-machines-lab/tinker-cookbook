@@ -4,16 +4,33 @@ Code grading utilities for RL training.
 Supports two execution backends:
 - sandboxfusion: Local Docker-based sandbox (default)
 - modal: Cloud-based Modal sandbox
+
+.. note::
+
+    ``extract_code_from_model`` is canonically defined in
+    ``tinker_cookbook.rewards.code_rewards`` and re-exported here for
+    backward compatibility.
 """
 
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from tinker_cookbook.recipes.code_rl.lcb_utils import TEST_CODE, TEST_UTIL
+from tinker_cookbook.rewards.code_rewards import (
+    extract_code_from_model,
+)
 from tinker_cookbook.sandbox import SandboxBackend, SandboxFusionClient
+
+# Re-export so existing callers of code_grading.extract_code_from_model
+# continue to work.
+__all__ = [
+    "extract_code_from_model",
+    "postprocess_lcb_sample",
+    "sandbox_check_correctness",
+    "taco_to_lcb_format",
+]
 
 # Global sandbox backend clients (lazily initialized)
 _sandboxfusion_client: SandboxFusionClient | None = None
@@ -39,14 +56,6 @@ def _get_modal_pool():
         image = modal.Image.debian_slim().pip_install("numpy")
         _modal_pool = ModalSandboxPool(image=image)
     return _modal_pool
-
-
-def extract_code_from_model(model_response: str) -> str | None:
-    """Extract the last fenced code block from a model response."""
-    code_blocks = re.findall(r"```(?:\w+)?\n(.*?)```", model_response, re.DOTALL)
-    if not code_blocks:
-        return None
-    return code_blocks[-1].strip()
 
 
 def postprocess_lcb_sample(sample: list[dict[str, Any]]) -> dict[str, str]:

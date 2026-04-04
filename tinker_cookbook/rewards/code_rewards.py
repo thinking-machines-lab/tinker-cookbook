@@ -11,7 +11,6 @@ helpers for logging reward statistics.
 
 from __future__ import annotations
 
-import math
 import re
 import time
 from collections.abc import Sequence
@@ -154,27 +153,9 @@ def compute_code_reward_metrics(
 ) -> dict[str, float]:
     """Compute aggregate metrics for a batch of code reward values.
 
-    Returns a dict with keys:
-
-    - ``reward/{name}/mean``
-    - ``reward/{name}/std``
-    - ``reward/{name}/fraction_correct``
-
-    Args:
-        rewards: Sequence of reward values (typically 0.0 or 1.0).
-        reward_name: Name prefix for the metric keys.
+    Thin wrapper around :func:`~tinker_cookbook.rewards._metrics.compute_reward_metrics`
+    with ``reward_name`` defaulting to ``"code"``.
     """
-    if not rewards:
-        return {}
+    from tinker_cookbook.rewards._metrics import compute_reward_metrics
 
-    n = len(rewards)
-    mean = sum(rewards) / n
-    variance = sum((r - mean) ** 2 for r in rewards) / n
-    std = math.sqrt(variance)
-    fraction_correct = sum(1.0 for r in rewards if r > 0.5) / n
-
-    return {
-        f"reward/{reward_name}/mean": mean,
-        f"reward/{reward_name}/std": std,
-        f"reward/{reward_name}/fraction_correct": fraction_correct,
-    }
+    return compute_reward_metrics(rewards, reward_name)

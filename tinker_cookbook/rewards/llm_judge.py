@@ -12,7 +12,7 @@ helpers for logging reward statistics.
 from __future__ import annotations
 
 import asyncio
-import math
+import logging
 import re
 import time
 from collections.abc import Sequence
@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from tinker_cookbook.completers import MessageCompleter
+
+logger = logging.getLogger(__name__)
 from tinker_cookbook.renderers.base import Message
 from tinker_cookbook.utils import logtree
 from tinker_cookbook.utils.trace import scope_span
@@ -40,7 +42,7 @@ class Rubric:
     """
 
     rubric_str: str
-    extraction_regex: str = r"<score>(.*)</score>"
+    extraction_regex: str = r"<score>(.*?)</score>"
     grader_output_format_instruction: str = (
         "Please output your score between 0 and 1 wrapped in <score> ... </score>"
     )
@@ -108,6 +110,8 @@ async def grade_with_rubric(
     convo: Conversation,
     rubric: Rubric,
     grader_llm: MessageCompleter,
+    *,
+    default_on_error: float = 0.0,
 ) -> tuple[float, str]:
     """Grade a conversation against a single rubric using the judge LLM.
 
@@ -117,12 +121,20 @@ async def grade_with_rubric(
         rubric: The grading criterion.
         grader_llm: An async callable that takes a conversation and
             returns an assistant message.
+        default_on_error: Score returned when the API call fails.
+            Defaults to ``0.0``.
 
     Returns:
-        Tuple of ``(score, grader_response_text)``.
+        Tuple of ``(score, grader_response_text)``.  On API failure the
+        score is *default_on_error* and the response text describes the
+        error.
     """
     grader_prompt = rubric.get_grader_prompt(convo)
-    grader_response = await grader_llm(grader_prompt)
+    try:
+        grader_response = await grader_llm(grader_prompt)
+    except Exception as exc:
+        logger.warning("LLM judge API call failed: %s", exc)
+        return default_on_error, f"[error] {exc}"
     content = grader_response["content"]
     assert isinstance(content, str), "Grader response content must be a string"
     score = rubric.extract_score(content)
@@ -208,27 +220,9 @@ def compute_llm_judge_metrics(
 ) -> dict[str, float]:
     """Compute aggregate metrics for a batch of LLM judge scores.
 
-    Returns a dict with keys:
-
-    - ``reward/{name}/mean``
-    - ``reward/{name}/std``
-    - ``reward/{name}/fraction_correct`` (fraction of scores > 0.5)
-
-    Args:
-        scores: Sequence of score values (typically in [0, 1]).
-        reward_name: Name prefix for the metric keys.
+    Thin wrapper around :func:`~tinker_cookbook.rewards._metrics.compute_reward_metrics`
+    with ``reward_name`` defaulting to ``"llm_judge"``.
     """
-    if not scores:
-        return {}
+    from tinker_cookbook.rewards._metrics import compute_reward_metrics
 
-    n = len(scores)
-    mean = sum(scores) / n
-    variance = sum((s - mean) ** 2 for s in scores) / n
-    std = math.sqrt(variance)
-    fraction_correct = sum(1.0 for s in scores if s > 0.5) / n
-
-    return {
-        f"reward/{reward_name}/mean": mean,
-        f"reward/{reward_name}/std": std,
-        f"reward/{reward_name}/fraction_correct": fraction_correct,
-    }
+    return compute_reward_metrics(scores, reward_name)

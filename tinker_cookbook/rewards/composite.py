@@ -22,14 +22,35 @@ from tinker_cookbook.utils.trace import scope_span_sync
 class WeightedReward:
     """A named reward function with a weight for linear combination.
 
+    ``fn`` is typed as ``Callable[..., float]`` because composites are
+    designed for **already-bound** reward closures.  If your reward
+    function needs extra arguments (e.g. a ground-truth answer), use
+    :func:`functools.partial` to bind them first::
+
+        from functools import partial
+        from tinker_cookbook.rewards.math_rewards import grade_answer
+
+        correctness = WeightedReward(
+            name="math",
+            fn=partial(grade_answer, ground_truth="42"),
+            weight=1.0,
+        )
+
+    .. note::
+
+        Async reward functions cannot be used directly in the synchronous
+        combinators (:func:`weighted_sum`, :func:`reward_min`, etc.).
+        Compose async rewards manually with ``asyncio.gather``.
+
     Attributes:
         name: Human-readable label (used as a key in metrics dicts).
-        fn: Callable that takes text and returns a float reward.
+        fn: Callable that takes text (and any pre-bound args) and returns
+            a float reward.
         weight: Multiplicative weight in the linear combination.
     """
 
     name: str
-    fn: Callable[[str], float]
+    fn: Callable[..., float]
     weight: float = 1.0
 
 

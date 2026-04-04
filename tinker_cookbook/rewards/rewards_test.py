@@ -108,13 +108,11 @@ class TestMathRewards:
 
         assert extract_answer_flexible("no answer here at all") is None
 
-    def test_is_numerically_close(self):
-        from tinker_cookbook.rewards.math_rewards import _is_numerically_close
+    def test_grade_answer_none_type(self):
+        """grade_answer accepts None for given_answer (FIX 8)."""
+        from tinker_cookbook.rewards.math_rewards import grade_answer
 
-        assert _is_numerically_close("3.14", "3.14") is True
-        assert _is_numerically_close("3.14", "3.140000001") is True
-        assert _is_numerically_close("3.14", "3.15") is False
-        assert _is_numerically_close("abc", "3.14") is False
+        assert grade_answer(None, "42") is False
 
 
 class TestMathRewardTelemetry:
@@ -366,3 +364,110 @@ class TestInitImports:
         assert callable(weighted_sum)
         assert Rubric is not None
         assert WeightedReward is not None
+
+    def test_import_compute_reward_metrics(self):
+        from tinker_cookbook.rewards import compute_reward_metrics
+
+        assert callable(compute_reward_metrics)
+
+
+# ======================================================================
+# Shared metrics (_metrics.py)
+# ======================================================================
+
+
+class TestSharedMetrics:
+    def test_compute_reward_metrics(self):
+        from tinker_cookbook.rewards._metrics import compute_reward_metrics
+
+        metrics = compute_reward_metrics([1.0, 0.0, 1.0, 1.0], "test")
+        assert metrics["reward/test/mean"] == 0.75
+        assert metrics["reward/test/fraction_correct"] == 0.75
+        assert metrics["reward/test/std"] > 0
+
+    def test_empty(self):
+        from tinker_cookbook.rewards._metrics import compute_reward_metrics
+
+        assert compute_reward_metrics([], "test") == {}
+
+    def test_delegates_math(self):
+        """compute_math_reward_metrics delegates to shared implementation."""
+        from tinker_cookbook.rewards.math_rewards import compute_math_reward_metrics
+
+        metrics = compute_math_reward_metrics([1.0, 0.0])
+        assert "reward/math/mean" in metrics
+
+    def test_delegates_code(self):
+        """compute_code_reward_metrics delegates to shared implementation."""
+        from tinker_cookbook.rewards.code_rewards import compute_code_reward_metrics
+
+        metrics = compute_code_reward_metrics([1.0, 0.0])
+        assert "reward/code/mean" in metrics
+
+    def test_delegates_llm_judge(self):
+        """compute_llm_judge_metrics delegates to shared implementation."""
+        from tinker_cookbook.rewards.llm_judge import compute_llm_judge_metrics
+
+        metrics = compute_llm_judge_metrics([0.8, 0.2])
+        assert "reward/llm_judge/mean" in metrics
+
+
+# ======================================================================
+# LLM judge error handling
+# ======================================================================
+
+
+class TestLlmJudgeErrorHandling:
+    def test_grade_with_rubric_api_failure(self):
+        """grade_with_rubric returns default_on_error on API failure."""
+        from tinker_cookbook.rewards.llm_judge import Rubric, grade_with_rubric
+
+        rubric = Rubric(rubric_str="test")
+        convo = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi"},
+        ]
+
+        async def failing_llm(_msgs):
+            raise ConnectionError("API down")
+
+        score, text = asyncio.get_event_loop().run_until_complete(
+            grade_with_rubric(convo, rubric, failing_llm)
+        )
+        assert score == 0.0
+        assert "[error]" in text
+
+    def test_grade_with_rubric_custom_default(self):
+        """grade_with_rubric respects custom default_on_error."""
+        from tinker_cookbook.rewards.llm_judge import Rubric, grade_with_rubric
+
+        rubric = Rubric(rubric_str="test")
+        convo = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi"},
+        ]
+
+        async def failing_llm(_msgs):
+            raise RuntimeError("timeout")
+
+        score, _ = asyncio.get_event_loop().run_until_complete(
+            grade_with_rubric(convo, rubric, failing_llm, default_on_error=-1.0)
+        )
+        assert score == -1.0
+
+
+# ======================================================================
+# Rubric extraction regex (non-greedy)
+# ======================================================================
+
+
+class TestRubricNonGreedyRegex:
+    def test_multiple_score_tags(self):
+        """Non-greedy regex extracts first score, not spanning across tags."""
+        from tinker_cookbook.rewards.llm_judge import Rubric
+
+        rubric = Rubric(rubric_str="test")
+        # With greedy .*, this would match "0.3</score> ... <score>0.9"
+        # With non-greedy .*?, it correctly matches "0.3"
+        text = "<score>0.3</score> some text <score>0.9</score>"
+        assert rubric.extract_score(text) == 0.3
