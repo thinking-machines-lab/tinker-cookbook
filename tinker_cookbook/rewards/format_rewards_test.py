@@ -1,7 +1,5 @@
 """Tests for format reward functions."""
 
-import pytest
-
 from tinker_cookbook.rewards.format_rewards import (
     check_has_answer_prefix,
     check_has_boxed,
@@ -10,7 +8,6 @@ from tinker_cookbook.rewards.format_rewards import (
     check_is_valid_json,
     extract_after_prefix,
     extract_xml_content,
-    score_format,
 )
 
 
@@ -97,22 +94,3 @@ class TestExtractAfterPrefix:
         assert extract_after_prefix("Answer: first Answer: second") is None
 
 
-class TestScoreFormat:
-    def test_boxed_pass(self):
-        assert score_format("\\boxed{42}", check_fn="boxed") == 0.0
-
-    def test_boxed_fail(self):
-        assert score_format("no boxed", check_fn="boxed") == pytest.approx(-0.1)
-
-    def test_code_block_pass(self):
-        assert score_format("```python\ncode\n```", check_fn="code_block") == 0.0
-
-    def test_json_pass(self):
-        assert score_format('{"a": 1}', check_fn="json") == 0.0
-
-    def test_custom_coef(self):
-        assert score_format("no boxed", check_fn="boxed", format_coef=0.5) == pytest.approx(-0.5)
-
-    def test_unknown_check_fn(self):
-        with pytest.raises(ValueError, match="Unknown check_fn"):
-            score_format("text", check_fn="unknown")

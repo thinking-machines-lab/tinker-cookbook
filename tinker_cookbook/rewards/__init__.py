@@ -9,7 +9,6 @@ Submodules
 - :mod:`code_rewards` -- code execution rewards via sandbox
 - :mod:`format_rewards` -- format compliance checks (boxed, XML, JSON, code blocks)
 - :mod:`llm_judge` -- LLM-as-judge rubric-based scoring
-- :mod:`composite` -- combinators for building multi-signal rewards
 
 All reward functions have ``*_traced`` variants that emit telemetry
 (Perfetto trace spans, logtree HTML reports, and metric dicts) and
@@ -50,8 +49,6 @@ from tinker_cookbook.rewards.format_rewards import (
     check_is_valid_json,
     extract_after_prefix,
     extract_xml_content,
-    score_format,
-    score_format_traced,
 )
 
 # LLM judge
@@ -61,17 +58,6 @@ from tinker_cookbook.rewards.llm_judge import (
     score_with_rubric,
     score_with_rubric_traced,
     score_with_rubrics,
-)
-
-# Composite rewards
-from tinker_cookbook.rewards.composite import (
-    WeightedReward,
-    combine_max,
-    combine_min,
-    combine_product,
-    combine_threshold,
-    combine_weighted,
-    combine_weighted_traced,
 )
 
 # Deprecated aliases (backward compatibility)
@@ -97,21 +83,11 @@ from tinker_cookbook.rewards.format_rewards import (
     check_has_xml_tag as has_xml_tag,
     check_is_valid_json as is_valid_json,
     extract_xml_content as extract_xml_tag,
-    score_format as format_reward,
-    score_format_traced as format_reward_with_trace,
 )
 from tinker_cookbook.rewards.llm_judge import (
     score_with_rubric as grade_with_rubric,
     score_with_rubric_traced as grade_with_rubric_traced,
     score_with_rubrics as grade_with_rubrics,
-)
-from tinker_cookbook.rewards.composite import (
-    combine_max as reward_max,
-    combine_min as reward_min,
-    combine_product as reward_product,
-    combine_threshold as threshold,
-    combine_weighted as weighted_sum,
-    combine_weighted_traced as weighted_sum_with_trace,
 )
 
 __all__ = [
@@ -141,22 +117,12 @@ __all__ = [
     "check_is_valid_json",
     "extract_after_prefix",
     "extract_xml_content",
-    "score_format",
-    "score_format_traced",
     # llm judge (new names)
     "Rubric",
     "score_with_rubric",
     "score_with_rubric_traced",
     "score_with_rubrics",
     "compute_llm_judge_metrics",
-    # composite (new names)
-    "WeightedReward",
-    "combine_max",
-    "combine_min",
-    "combine_product",
-    "combine_threshold",
-    "combine_weighted",
-    "combine_weighted_traced",
     # Deprecated aliases
     "extract_boxed",
     "extract_gsm8k_final_answer",
@@ -175,15 +141,7 @@ __all__ = [
     "has_xml_tag",
     "is_valid_json",
     "extract_xml_tag",
-    "format_reward",
-    "format_reward_with_trace",
     "grade_with_rubric",
     "grade_with_rubric_traced",
     "grade_with_rubrics",
-    "reward_max",
-    "reward_min",
-    "reward_product",
-    "threshold",
-    "weighted_sum",
-    "weighted_sum_with_trace",
 ]

@@ -1,23 +1,15 @@
-"""Format compliance rewards.
+"""Format compliance checks.
 
 Pure functions for checking whether model outputs conform to expected
 structural formats (boxed answers, XML tags, JSON validity, code blocks,
 ``Answer:`` prefix, etc.).  These can be used as building blocks in
-composite reward functions.
-
-Includes telemetry via ``tinker_cookbook.utils.trace`` (sync spans)
-and ``tinker_cookbook.utils.logtree`` (HTML reports).
+reward functions.
 """
 
 from __future__ import annotations
 
 import json
 import re
-import time
-
-from tinker_cookbook.exceptions import ConfigurationError
-from tinker_cookbook.utils import logtree
-from tinker_cookbook.utils.trace import scope_span_sync
 
 
 def check_has_boxed(text: str) -> bool:
@@ -88,87 +80,6 @@ def extract_after_prefix(text: str, prefix: str = "Answer:") -> str | None:
     return parts[1].strip()
 
 
-def score_format(
-    text: str,
-    check_fn: str = "boxed",
-    format_coef: float = 0.1,
-) -> float:
-    """Compute a format-compliance reward term.
-
-    Returns ``0.0`` when the format check passes (no penalty) and
-    ``-format_coef`` when it fails.
-
-    Args:
-        text: The model response text.
-        check_fn: One of ``"boxed"``, ``"code_block"``, ``"json"``.
-        format_coef: Coefficient for the format penalty.
-    """
-    checkers = {
-        "boxed": check_has_boxed,
-        "code_block": check_has_code_block,
-        "json": check_is_valid_json,
-    }
-    if check_fn not in checkers:
-        raise ConfigurationError(f"Unknown check_fn: {check_fn!r}. Choose from {list(checkers)}")
-    passed = checkers[check_fn](text)
-    return format_coef * (float(passed) - 1.0)
-
-
-# ======================================================================
-# Telemetry-instrumented format reward
-# ======================================================================
-
-
-def score_format_traced(
-    text: str,
-    check_fn: str = "boxed",
-    format_coef: float = 0.1,
-    *,
-    reward_name: str = "format",
-    log_to_logtree: bool = True,
-) -> tuple[float, dict[str, float]]:
-    """Compute a format-compliance reward with tracing and logtree logging.
-
-    Wraps :func:`format_reward` with telemetry:
-
-    - A ``scope_span_sync`` trace span named ``"compute_{reward_name}_reward"``
-    - Logtree table with format check details
-    - Metrics dict with computation time
-
-    Args:
-        text: The model response text.
-        check_fn: One of ``"boxed"``, ``"code_block"``, ``"json"``.
-        format_coef: Coefficient for the format penalty.
-        reward_name: Name for the reward (used in span names and metric keys).
-        log_to_logtree: Whether to emit logtree output.
-
-    Returns:
-        Tuple of ``(reward_value, metrics_dict)``.
-    """
-    t_start = time.perf_counter()
-
-    with scope_span_sync(f"compute_{reward_name}_reward"):
-        reward = score_format(text, check_fn=check_fn, format_coef=format_coef)
-
-    elapsed = time.perf_counter() - t_start
-    passed = reward >= 0.0
-
-    metrics = {
-        f"reward/{reward_name}/computation_time": elapsed,
-    }
-
-    if log_to_logtree:
-        with logtree.scope_header("Reward Computation"):
-            logtree.table_from_dict({
-                "reward_type": f"format_{check_fn}",
-                "format_passed": passed,
-                "reward": reward,
-                "computation_time": f"{elapsed:.4f}s",
-            })
-
-    return reward, metrics
-
-
 # ======================================================================
 # Deprecated aliases (backward compatibility)
 # ======================================================================
@@ -179,5 +90,3 @@ has_xml_tag = check_has_xml_tag
 has_answer_prefix = check_has_answer_prefix
 is_valid_json = check_is_valid_json
 extract_xml_tag = extract_xml_content
-format_reward = score_format
-format_reward_with_trace = score_format_traced

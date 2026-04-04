@@ -7,7 +7,6 @@ variants (trace spans, logtree logging, metrics computation).
 from __future__ import annotations
 
 import asyncio
-import math
 
 import pytest
 
@@ -174,20 +173,6 @@ class TestFormatRewards:
         assert check_has_code_block("```python\nprint('hi')\n```") is True
         assert check_has_code_block("no code") is False
 
-    def test_score_format(self):
-        from tinker_cookbook.rewards.format_rewards import score_format
-
-        assert score_format(r"\boxed{42}", check_fn="boxed") == 0.0
-        assert score_format("no boxed", check_fn="boxed") == -0.1
-
-    def test_score_format_traced(self):
-        from tinker_cookbook.rewards.format_rewards import score_format_traced
-
-        reward, metrics = score_format_traced(
-            r"\boxed{42}", check_fn="boxed", log_to_logtree=False,
-        )
-        assert reward == 0.0
-        assert "reward/format/computation_time" in metrics
 
 
 # ======================================================================
@@ -251,68 +236,6 @@ class TestLlmJudge:
 
 
 # ======================================================================
-# Composite rewards
-# ======================================================================
-
-
-class TestCompositeRewards:
-    def test_combine_weighted(self):
-        from tinker_cookbook.rewards.composite import WeightedReward, combine_weighted
-
-        rewards = [
-            WeightedReward("r1", lambda t: 1.0, weight=0.5),
-            WeightedReward("r2", lambda t: 0.0, weight=0.5),
-        ]
-        total, metrics = combine_weighted("test", rewards)
-        assert total == 0.5
-        assert metrics["r1"] == 1.0
-        assert metrics["r2"] == 0.0
-
-    def test_combine_threshold(self):
-        from tinker_cookbook.rewards.composite import combine_threshold
-
-        fn = combine_threshold(lambda t: 0.7, cutoff=0.5)
-        assert fn("test") == 1.0
-        fn2 = combine_threshold(lambda t: 0.3, cutoff=0.5)
-        assert fn2("test") == 0.0
-
-    def test_combine_min(self):
-        from tinker_cookbook.rewards.composite import combine_min
-
-        result = combine_min("test", [lambda t: 0.3, lambda t: 0.7])
-        assert result == 0.3
-
-    def test_combine_max(self):
-        from tinker_cookbook.rewards.composite import combine_max
-
-        result = combine_max("test", [lambda t: 0.3, lambda t: 0.7])
-        assert result == 0.7
-
-    def test_combine_product(self):
-        from tinker_cookbook.rewards.composite import combine_product
-
-        result = combine_product("test", [lambda t: 0.5, lambda t: 0.4])
-        assert abs(result - 0.2) < 1e-6
-
-    def test_combine_weighted_traced(self):
-        from tinker_cookbook.rewards.composite import (
-            WeightedReward,
-            combine_weighted_traced,
-        )
-
-        rewards = [
-            WeightedReward("correctness", lambda t: 1.0, weight=0.8),
-            WeightedReward("format", lambda t: 0.0, weight=0.2),
-        ]
-        total, metrics = combine_weighted_traced("test", rewards, log_to_logtree=False)
-        assert total == 0.8
-        assert metrics["reward/composite/correctness"] == 1.0
-        assert metrics["reward/composite/format"] == 0.0
-        assert metrics["reward/composite/total"] == 0.8
-        assert "reward/composite/computation_time" in metrics
-
-
-# ======================================================================
 # __init__ imports
 # ======================================================================
 
@@ -328,17 +251,13 @@ class TestInitImports:
             extract_math_answer,
             grade_math_answer_traced,
             score_code_sandbox_traced,
-            score_format_traced,
             score_with_rubric_traced,
-            combine_weighted_traced,
         )
 
         # Just verify they're callable
         assert callable(grade_math_answer_traced)
         assert callable(score_code_sandbox_traced)
         assert callable(score_with_rubric_traced)
-        assert callable(score_format_traced)
-        assert callable(combine_weighted_traced)
         assert callable(compute_math_reward_metrics)
         assert callable(compute_code_reward_metrics)
         assert callable(compute_llm_judge_metrics)
@@ -347,45 +266,33 @@ class TestInitImports:
     def test_import_new_names(self):
         from tinker_cookbook.rewards import (
             Rubric,
-            WeightedReward,
             extract_boxed_answer,
             grade_math_answer,
             grade_math_answer_safe,
-            score_format,
             score_with_rubric,
-            combine_weighted,
         )
 
         assert callable(grade_math_answer)
         assert callable(grade_math_answer_safe)
         assert callable(extract_boxed_answer)
-        assert callable(score_format)
         assert callable(score_with_rubric)
-        assert callable(combine_weighted)
         assert Rubric is not None
-        assert WeightedReward is not None
 
     def test_import_deprecated_aliases(self):
         """Verify backward-compatible aliases are still importable."""
         from tinker_cookbook.rewards import (
             Rubric,
-            WeightedReward,
             extract_boxed,
-            format_reward,
             grade_answer,
             grade_with_rubric,
             safe_grade,
-            weighted_sum,
         )
 
         assert callable(grade_answer)
         assert callable(safe_grade)
         assert callable(extract_boxed)
-        assert callable(format_reward)
         assert callable(grade_with_rubric)
-        assert callable(weighted_sum)
         assert Rubric is not None
-        assert WeightedReward is not None
 
     def test_import_compute_reward_metrics(self):
         from tinker_cookbook.rewards import compute_reward_metrics
