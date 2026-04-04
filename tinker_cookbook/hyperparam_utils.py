@@ -149,6 +149,13 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
 
     See ``tinker_cookbook/recipes/chat_sl/results/sft_sweep.md`` for details.
 
+    .. versionchanged::
+        Previously used a formula-based approach (base LR scaled by
+        model-family exponents and hidden size). Now returns empirical
+        values from a full sweep, which may differ from previous results
+        for the same model. If you need to reproduce earlier behavior,
+        pin your learning rate explicitly.
+
     Args:
         model_name: HuggingFace model identifier.
         is_lora: If True, return the LoRA LR. If False, scale down by 10x
