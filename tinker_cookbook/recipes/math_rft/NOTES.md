@@ -267,3 +267,33 @@ Dataset: DigitalLearningGmbH/MATH-lighteval train (7500), HuggingFaceH4/MATH-500
 
 Successfully replicates previous results with new code. Plateau at ~80% confirmed.
 Key: L5 stuck at 61-67%, while training solve rate reaches 90-100%.
+
+### Experiment 6: GRPO comparison with matched config (completed, 2026-04-04)
+
+Config: `model_name=Qwen/Qwen3-8B, env=math, group_size=16, groups_per_batch=32, lr=8e-5, max_tokens=2048, lora_rank=32, loss_fn=importance_sampling`
+Dataset: EleutherAI/hendrycks_math train (12K, math_rl recipe default), MATH-500 test
+
+**Head-to-head comparison (RFT: greedy eval, GRPO: T=1.0 eval):**
+
+| Step | RFT | GRPO | Gap |
+|------|-----|------|-----|
+| 0 | 42.8% | 43.4% | -0.6pp |
+| 5 | **80.4%** | 55.2% | +25.2pp (RFT dominates early) |
+| 10 | 78.4% | 74.6% | +3.8pp |
+| 15 | 79.0% | **81.4%** | -2.4pp (crossover) |
+| 20 | 79.2% | **84.6%** | -5.4pp |
+| 25 | 79.6% | 84.2% | -4.6pp |
+| 30 | 80.2% | 83.4% | -3.2pp |
+| 35 | 80.4% | **84.4%** | -4.0pp |
+
+**Key findings:**
+1. Baseline parity confirmed: both start at ~43% (MATH-500)
+2. RFT 3x faster early: 80.4% at step 5 vs GRPO's 55.2%
+3. Crossover at step 15: GRPO surpasses RFT
+4. GRPO ceiling ~84-85% vs RFT ceiling ~80% (4-5pp gap)
+5. Both methods show some noise at later steps but the trend is clear
+
+Note: GRPO eval uses T=1.0 (on-policy), RFT eval uses greedy (T=0). The
+~6-8pp greedy advantage from Exp 3 is less pronounced here, suggesting
+model calibration has improved. The clean comparison would use greedy eval
+for both, but GRPO's standard reporting uses on-policy reward.
