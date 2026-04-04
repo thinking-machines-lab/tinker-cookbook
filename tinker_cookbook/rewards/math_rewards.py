@@ -589,15 +589,20 @@ def grade_answer_with_trace(
         1.0 (correct) or 0.0 (incorrect), and ``metrics_dict`` contains
         ``reward/{name}/computation_time``.
     """
-    span_name = f"compute_{reward_name}_reward"
-    t_start = time.perf_counter()
+    import time as _time
 
-    with scope_span_sync(span_name):
+    from tinker_cookbook.utils import logtree as _logtree
+    from tinker_cookbook.utils.trace import scope_span_sync as _scope_span_sync
+
+    span_name = f"compute_{reward_name}_reward"
+    t_start = _time.perf_counter()
+
+    with _scope_span_sync(span_name):
         is_correct = safe_grade(
             given_answer, ground_truth, grader=grader, timeout=timeout
         )
 
-    elapsed = time.perf_counter() - t_start
+    elapsed = _time.perf_counter() - t_start
     reward = 1.0 if is_correct else 0.0
 
     metrics = {
@@ -605,8 +610,8 @@ def grade_answer_with_trace(
     }
 
     if log_to_logtree:
-        with logtree.scope_header("Reward Computation"):
-            logtree.table_from_dict({
+        with _logtree.scope_header("Reward Computation"):
+            _logtree.table_from_dict({
                 "reward_type": f"math_{grader}",
                 "expected": ground_truth,
                 "extracted": given_answer,
@@ -618,7 +623,7 @@ def grade_answer_with_trace(
 
 
 def compute_math_reward_metrics(
-    rewards: Sequence[float],
+    rewards: list[float],
     *,
     reward_name: str = "math",
 ) -> dict[str, float]:
