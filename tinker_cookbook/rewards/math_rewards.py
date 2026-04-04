@@ -237,10 +237,14 @@ TUPLE_CHARS = "()[]"
 
 
 def _sympy_parse(expr: str):
-    _, _, sympy_parser = _require_sympy()
+    sympy_mod, _, sympy_parser = _require_sympy()
     py_expr = expr.replace("^", "**")
+    # Use a restricted namespace to prevent arbitrary code execution via sympy's parser,
+    # matching the approach used in SLIME/DeepScaler.
+    safe_dict = {k: v for k, v in sympy_mod.__dict__.items() if not k.startswith("_")}
     return sympy_parser.parse_expr(
         py_expr,
+        local_dict=safe_dict,
         transformations=(
             sympy_parser.standard_transformations
             + (sympy_parser.implicit_multiplication_application,)
@@ -364,7 +368,10 @@ def _should_allow_eval(expr: str) -> bool:
     for bad_string in BAD_SUBSTRINGS:
         if bad_string in expr:
             return False
-    return all(re.search(bad_regex, expr) is not None for bad_regex in BAD_REGEXES)
+    for bad_regex in BAD_REGEXES:
+        if re.search(bad_regex, expr) is not None:
+            return False
+    return True
 
 
 def _are_equal_under_sympy(ground_truth_normalized: str, given_normalized: str) -> bool:
