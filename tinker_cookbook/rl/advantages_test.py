@@ -1,6 +1,6 @@
 """Tests for advantage estimation functions and PPO metrics.
 
-Tests cover GRPO, REINFORCE++, and GAE advantage estimators, PPO-specific
+Tests cover GRPO and REINFORCE++ advantage estimators, PPO-specific
 metrics (clip fraction, approx KL), including edge cases like single-trajectory
 groups and uniform rewards.
 """
@@ -14,7 +14,6 @@ from tinker_cookbook.completers import TokensWithLogprobs
 from tinker_cookbook.rl.advantages import (
     AdvantageMethod,
     compute_advantages,
-    compute_gae_advantages,
     compute_grpo_advantages,
     compute_reinforce_pp_advantages,
 )
@@ -110,8 +109,11 @@ class TestReinforcePPAdvantages:
         group = _make_group([1.0, 3.0, 5.0])
         advantages = compute_reinforce_pp_advantages([group], normalize=True)
         adv = advantages[0]
-        # Mean=3, std=2, so normalized advantages are (-2/2, 0/2, 2/2) = (-1, 0, 1)
-        assert torch.allclose(adv, torch.tensor([-1.0, 0.0, 1.0]), atol=1e-5)
+        # Mean=3, population std=sqrt(8/3)~=1.6330
+        # Normalized advantages: (-2/1.6330, 0, 2/1.6330) ~ (-1.2247, 0, 1.2247)
+        pop_std = math.sqrt(8.0 / 3.0)
+        expected = torch.tensor([-2.0 / pop_std, 0.0, 2.0 / pop_std])
+        assert torch.allclose(adv, expected, atol=1e-5)
 
     def test_unnormalized_matches_grpo(self) -> None:
         group = _make_group([1.0, 3.0, 5.0])
@@ -142,74 +144,6 @@ class TestReinforcePPAdvantages:
 
 
 # ---------------------------------------------------------------------------
-# GAE tests
-# ---------------------------------------------------------------------------
-
-
-class TestGAEAdvantages:
-    def test_single_step_no_discount(self) -> None:
-        """Single-step episode: GAE = r + gamma*V(s') - V(s)."""
-        group = _make_group([1.0])
-        # V(s0) = 0.5, V(terminal) = 0.0
-        value_preds = [[[0.5, 0.0]]]
-        advantages = compute_gae_advantages([group], value_preds, gamma=1.0, lam=0.95)
-        # delta = 1.0 + 1.0*0.0 - 0.5 = 0.5
-        # GAE = 0.5 (single step)
-        assert torch.allclose(advantages[0], torch.tensor([0.5]), atol=1e-5)
-
-    def test_multi_step_episode(self) -> None:
-        """Two-step episode with gamma=1, lam=1 (Monte Carlo-like)."""
-        traj = _make_trajectory([1.0, 2.0])
-        group = TrajectoryGroup(
-            trajectories_G=[traj],
-            final_rewards_G=[0.0],
-            metrics_G=[{}],
-        )
-        # V(s0)=1.0, V(s1)=1.5, V(terminal)=0.0
-        value_preds = [[[1.0, 1.5, 0.0]]]
-        advantages = compute_gae_advantages([group], value_preds, gamma=1.0, lam=1.0)
-        # delta_0 = 1.0 + 1.0*1.5 - 1.0 = 1.5
-        # delta_1 = 2.0 + 1.0*0.0 - 1.5 = 0.5
-        # GAE_1 = delta_1 = 0.5
-        # GAE_0 = delta_0 + gamma*lam*GAE_1 = 1.5 + 1.0*1.0*0.5 = 2.0
-        # Each transition has 2 action tokens
-        # total_advantage = GAE_0*2 + GAE_1*2 = 4.0 + 1.0 = 5.0
-        # average per token = 5.0 / 4 = 1.25
-        assert torch.allclose(advantages[0], torch.tensor([1.25]), atol=1e-5)
-
-    def test_discount_factor(self) -> None:
-        """Verify gamma < 1 discounts future rewards."""
-        group = _make_group([0.0])  # reward = 0
-        # V(s0) = 0.0, V(terminal) = 0.0
-        value_preds = [[[0.0, 0.0]]]
-        advantages = compute_gae_advantages([group], value_preds, gamma=0.99, lam=0.95)
-        assert torch.allclose(advantages[0], torch.tensor([0.0]), atol=1e-5)
-
-    def test_perfect_value_function(self) -> None:
-        """When V perfectly predicts returns, advantages should be zero."""
-        group = _make_group([1.0])
-        # V(s0) = 1.0 (exact return), V(terminal) = 0.0
-        value_preds = [[[1.0, 0.0]]]
-        advantages = compute_gae_advantages([group], value_preds, gamma=1.0, lam=0.95)
-        assert torch.allclose(advantages[0], torch.tensor([0.0]), atol=1e-5)
-
-    def test_multiple_trajectories_in_group(self) -> None:
-        """GAE handles multiple trajectories within a group."""
-        traj1 = _make_trajectory([1.0])
-        traj2 = _make_trajectory([3.0])
-        group = TrajectoryGroup(
-            trajectories_G=[traj1, traj2],
-            final_rewards_G=[0.0, 0.0],
-            metrics_G=[{}, {}],
-        )
-        value_preds = [[[0.0, 0.0], [1.0, 0.0]]]
-        advantages = compute_gae_advantages([group], value_preds, gamma=1.0, lam=0.95)
-        # traj1: delta = 1.0 + 0 - 0 = 1.0
-        # traj2: delta = 3.0 + 0 - 1.0 = 2.0
-        assert torch.allclose(advantages[0], torch.tensor([1.0, 2.0]), atol=1e-5)
-
-
-# ---------------------------------------------------------------------------
 # Dispatch function tests
 # ---------------------------------------------------------------------------
 
@@ -233,26 +167,8 @@ class TestComputeAdvantagesDispatch:
         expected = compute_reinforce_pp_advantages([group], normalize=True)
         assert torch.allclose(advantages_P[0], expected[0])
         assert "reinforce_pp/baseline_value" in stats
-
-    def test_dispatch_gae_without_values_raises(self) -> None:
-        group = _make_group([1.0])
-        try:
-            compute_advantages([group], method=AdvantageMethod.GAE)
-            assert False, "Should have raised ValueError"
-        except ValueError as e:
-            assert "value_predictions_P" in str(e)
-
-    def test_dispatch_gae_with_values(self) -> None:
-        group = _make_group([1.0])
-        value_preds = [[[0.5, 0.0]]]
-        advantages_P, stats = compute_advantages(
-            [group],
-            method=AdvantageMethod.GAE,
-            value_predictions_P=value_preds,
-        )
-        expected = compute_gae_advantages([group], value_preds)
-        assert torch.allclose(advantages_P[0], expected[0])
-        assert "advantages/mean" in stats
+        # Baseline should be the mean reward (2.0), not the mean advantage (~0)
+        assert abs(stats["reinforce_pp/baseline_value"] - 2.0) < 1e-5
 
     def test_default_is_grpo(self) -> None:
         group = _make_group([1.0, 5.0])

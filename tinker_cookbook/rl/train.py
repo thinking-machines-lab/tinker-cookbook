@@ -31,7 +31,6 @@ from tinker_cookbook.rl.advantages import AdvantageMethod
 from tinker_cookbook.rl.advantages import compute_advantages as compute_advantages_configurable
 from tinker_cookbook.rl.data_processing import (
     assemble_training_data,
-    compute_advantages,
     remove_constant_reward_groups,
 )
 from tinker_cookbook.rl.metric_util import RLTestSetEvaluator, compute_trajectory_metrics
@@ -465,7 +464,7 @@ class Config:
     # -------------------------------------------------------------------------
     # Advantage estimation (advanced)
     # -------------------------------------------------------------------------
-    # Which advantage estimator to use: "grpo", "reinforce_pp", or "gae".
+    # Which advantage estimator to use: "grpo" or "reinforce_pp".
     advantage_method: AdvantageMethod = AdvantageMethod.GRPO
     # For REINFORCE++: normalize advantages by std within each group.
     advantage_normalize: bool = True
@@ -476,10 +475,6 @@ class Config:
     # Clip epsilon for PPO's clipped surrogate objective. Only relevant when
     # loss_fn="ppo". The policy ratio is clipped to [1-clip_eps, 1+clip_eps].
     ppo_clip_eps: float = 0.2
-    # Discount factor for GAE advantage estimation (only used with advantage_method="gae").
-    gae_gamma: float = 1.0
-    # Lambda for GAE bias-variance trade-off (only used with advantage_method="gae").
-    gae_lambda: float = 0.95
 
     # -------------------------------------------------------------------------
     # Loss and optimizer behavior (advanced)
@@ -1387,6 +1382,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     do_compute_post_kl: bool,
     ttl_seconds: int | None = None,
     ppo_clip_eps: float = 0.2,
+    loss_fn: LossFnType = "importance_sampling",
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """Compute end-of-iteration metrics and return a fresh sampling client.
 
@@ -1410,6 +1406,8 @@ async def compute_full_batch_metrics_and_get_sampling_client(
             Defaults to None.
         ppo_clip_eps (float): PPO clip epsilon for computing clip fraction
             metrics. Defaults to 0.2.
+        loss_fn (LossFnType): Loss function identifier. PPO-specific metrics
+            are only computed when this is "ppo". Defaults to "importance_sampling".
 
     Returns:
         tuple[tinker.SamplingClient, dict[str, Any]]: A sampling client
@@ -1423,10 +1421,11 @@ async def compute_full_batch_metrics_and_get_sampling_client(
         kl_sample_train_metrics = compute_kl_sample_train(data_D, training_logprobs_D)
         metrics.update(kl_sample_train_metrics)
 
-    # Compute PPO-specific metrics (clip fraction, approx KL)
-    async with trace.scope_span("compute_ppo_metrics"):
-        ppo_metrics = compute_ppo_metrics(data_D, training_logprobs_D, clip_eps=ppo_clip_eps)
-        metrics.update(ppo_metrics)
+    # Compute PPO-specific metrics (clip fraction, approx KL) only when using PPO loss
+    if loss_fn == "ppo":
+        async with trace.scope_span("compute_ppo_metrics"):
+            ppo_metrics = compute_ppo_metrics(data_D, training_logprobs_D, clip_eps=ppo_clip_eps)
+            metrics.update(ppo_metrics)
 
     # Get a sampling client using the new weights
     sampling_client, checkpoint_metrics = await save_checkpoint_and_get_sampling_client(
@@ -1600,6 +1599,7 @@ async def do_train_step_streaming_and_get_sampling_client(
         config.compute_post_kl,
         config.ttl_seconds,
         ppo_clip_eps=config.ppo_clip_eps,
+        loss_fn=config.loss_fn,
     )
     metrics.update(full_batch_metrics)
     return sampling_client, metrics, all_wrapped_trajectory_groups
@@ -1675,6 +1675,7 @@ async def do_train_step_and_get_sampling_client(
         config.compute_post_kl,
         config.ttl_seconds,
         ppo_clip_eps=config.ppo_clip_eps,
+        loss_fn=config.loss_fn,
     )
     metrics.update(full_batch_metrics)
 
