@@ -177,6 +177,7 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
         "Qwen/Qwen3.5-27B": 3e-04,
         "Qwen/Qwen3.5-4B": 3e-04,
         # DeepSeek
+        "deepseek-ai/DeepSeek-V3.1": 4e-04,
         "deepseek-ai/DeepSeek-V3.1-Base": 4e-04,
         # Llama
         "meta-llama/Llama-3.1-70B": 3e-04,
