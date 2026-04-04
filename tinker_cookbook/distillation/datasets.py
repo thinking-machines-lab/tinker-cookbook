@@ -35,6 +35,10 @@ class TeacherConfig:
 
     base_model: str
     load_checkpoint_path: str | None = None
+    system_prompt: str | None = None
+    """If set, the teacher uses this system prompt for KL computation instead of
+    sharing the student's. None (default) means teacher uses the same prompt as
+    the student. Set to "" for an empty system prompt."""
 
 
 @chz.chz
@@ -90,10 +94,14 @@ class PromptOnlyEnv(ProblemEnv):
         prompt: str,
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None = None,
+        teacher_renderer: renderers.Renderer | None = None,
+        teacher_convo_prefix: list[renderers.Message] | None = None,
     ):
         # Set format_coef to 0 since we don't care about format
         super().__init__(renderer, convo_prefix, format_coef=0.0)
         self.prompt = prompt
+        self.teacher_renderer = teacher_renderer
+        self.teacher_convo_prefix = teacher_convo_prefix
 
     def get_question(self) -> str:
         return self.prompt
@@ -109,6 +117,15 @@ class PromptOnlyEnv(ProblemEnv):
     def get_reference_answer(self) -> str:
         """No reference answer needed for distillation."""
         return ""
+
+    async def teacher_initial_observation(self) -> tinker.ModelInput | None:
+        """Render the initial observation with the teacher's system prompt."""
+        if self.teacher_renderer is None:
+            return None
+        convo = (self.teacher_convo_prefix or []) + [
+            {"role": "user", "content": self.get_question()},
+        ]
+        return self.teacher_renderer.build_generation_prompt(convo)
 
     async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
         """Return zero reward always."""

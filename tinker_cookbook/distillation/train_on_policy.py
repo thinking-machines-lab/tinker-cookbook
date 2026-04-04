@@ -65,12 +65,17 @@ async def incorporate_kl_penalty(
         kl_penalty_coef: Coefficient for KL penalty
         kl_discount_factor: Discount factor for future KL
     """
-    # Note: if your teacher has a different renderer than the student, you may want to modify
-    #       the full_sequence_inputs_D to match the teacher's renderer.
-    full_sequence_inputs_D = [
-        datum.model_input.append_int(cast(int, datum.loss_fn_inputs["target_tokens"].data[-1]))
-        for datum in data_D
-    ]
+    # Build full sequences for teacher logprob computation. If a datum has a
+    # teacher_model_input (from a teacher renderer with a different system prompt),
+    # use it instead of the student's model_input.
+    full_sequence_inputs_D = []
+    for datum in data_D:
+        last_target = cast(int, datum.loss_fn_inputs["target_tokens"].data[-1])
+        teacher_input = datum.loss_fn_inputs.get("teacher_model_input")
+        if teacher_input is not None:
+            full_sequence_inputs_D.append(teacher_input.append_int(last_target))
+        else:
+            full_sequence_inputs_D.append(datum.model_input.append_int(last_target))
     # Compute the teacher's logprobs for each element of the batch
     # Each datum uses its corresponding teacher sampling client
     teacher_logprobs_D = await asyncio.gather(
@@ -84,12 +89,28 @@ async def incorporate_kl_penalty(
     #   - q: teacher_logprobs
     sampled_logprobs_D = [datum.loss_fn_inputs["logprobs"].to_torch() for datum in data_D]
     float_masks = [datum.loss_fn_inputs["mask"].to_torch().float() for datum in data_D]
-    reverse_kl = [
-        (sampled_logprobs - torch.tensor(teacher_logprobs[1:])) * mask
-        for teacher_logprobs, sampled_logprobs, mask in safezip(
-            teacher_logprobs_D, sampled_logprobs_D, float_masks
-        )
-    ]
+    reverse_kl = []
+    for datum, teacher_logprobs, sampled_logprobs, mask in safezip(
+        data_D, teacher_logprobs_D, sampled_logprobs_D, float_masks
+    ):
+        teacher_input = datum.loss_fn_inputs.get("teacher_model_input")
+        if teacher_input is not None:
+            # Teacher has a different prefix — logprobs don't align positionally.
+            # Extract teacher logprobs for generated tokens only (where mask=1).
+            # teacher_logprobs[k] = log p(token[k] | token[0..k-1]).
+            # Generated tokens start at teacher_input.length in the teacher sequence.
+            n_generated = int(mask.sum().item())
+            teacher_prefix_len = teacher_input.length
+            teacher_gen_lp = torch.tensor(
+                teacher_logprobs[teacher_prefix_len : teacher_prefix_len + n_generated]
+            )
+            kl = torch.zeros_like(mask)
+            mask_indices = mask.nonzero(as_tuple=True)[0]
+            student_gen_lp = sampled_logprobs[mask_indices]
+            kl[mask_indices] = student_gen_lp - teacher_gen_lp
+            reverse_kl.append(kl * mask)
+        else:
+            reverse_kl.append((sampled_logprobs - torch.tensor(teacher_logprobs[1:])) * mask)
     # Track per-dataset KL for logging
     # dataset_idx -> (sum of KL, sum of mask)
     per_dataset_kl: dict[int, tuple[float, float]] = {}

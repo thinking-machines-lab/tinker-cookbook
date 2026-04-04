@@ -124,6 +124,8 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.D
 
     class SequenceAccumulator:
         full_sequence: list[FlatObElem] = []
+        teacher_sequence: list[FlatObElem] = []
+        has_teacher: bool = False
         sampled_logprobs: list[float] = []
         advantages: list[float] = []
         mask: list[float] = []
@@ -131,6 +133,8 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.D
         @classmethod
         def clear(cls):
             cls.full_sequence = []
+            cls.teacher_sequence = []
+            cls.has_teacher = False
             cls.sampled_logprobs = []
             cls.advantages = []
             cls.mask = []
@@ -150,14 +154,22 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.D
             == len(advantages_T)
             == len(mask_T)
         )
+        loss_fn_inputs = {
+            "target_tokens": TensorData.from_torch(torch.tensor(target_tokens_T)),
+            "logprobs": TensorData.from_torch(torch.tensor(sampled_logprobs_T)),
+            "advantages": TensorData.from_torch(torch.tensor(advantages_T)),
+            "mask": TensorData.from_torch(torch.tensor(mask_T)),
+        }
+        # Include teacher model input if teacher observations were provided
+        if SequenceAccumulator.has_teacher:
+            teacher_all_tokens = _flat_ob_to_model_input(SequenceAccumulator.teacher_sequence)
+            teacher_input, _ = create_rightshifted_model_input_and_leftshifted_targets(
+                list(teacher_all_tokens.chunks)
+            )
+            loss_fn_inputs["teacher_model_input"] = teacher_input
         return tinker.Datum(
             model_input=input_tokens_T,
-            loss_fn_inputs={
-                "target_tokens": TensorData.from_torch(torch.tensor(target_tokens_T)),
-                "logprobs": TensorData.from_torch(torch.tensor(sampled_logprobs_T)),
-                "advantages": TensorData.from_torch(torch.tensor(advantages_T)),
-                "mask": TensorData.from_torch(torch.tensor(mask_T)),
-            },
+            loss_fn_inputs=loss_fn_inputs,
         )
 
     data: list[tinker.Datum] = []
@@ -183,6 +195,21 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.D
             [0] * delta_ob_len + [traj_advantage] * len(ac_with_logprobs.tokens)
         )
         SequenceAccumulator.mask.extend([0.0] * delta_ob_len + [1.0] * len(ac_with_logprobs.tokens))
+
+        # Track teacher observations in parallel if provided
+        if transition.teacher_ob is not None:
+            SequenceAccumulator.has_teacher = True
+            teacher_ob_flat = _flatten_chunks(transition.teacher_ob.chunks)
+            if len(SequenceAccumulator.teacher_sequence) == 0:
+                teacher_delta = teacher_ob_flat
+            elif _is_prefix(SequenceAccumulator.teacher_sequence, teacher_ob_flat):
+                teacher_delta = teacher_ob_flat[len(SequenceAccumulator.teacher_sequence) :]
+            else:
+                # Teacher sequence broke prefix extension — reset to full observation
+                SequenceAccumulator.teacher_sequence = []
+                teacher_delta = teacher_ob_flat
+            SequenceAccumulator.teacher_sequence.extend(teacher_delta)
+            SequenceAccumulator.teacher_sequence.extend(ac_with_logprobs.tokens)
 
     if SequenceAccumulator.full_sequence:
         data.append(make_datum_from_state())

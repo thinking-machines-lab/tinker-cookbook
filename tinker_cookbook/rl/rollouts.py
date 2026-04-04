@@ -176,6 +176,7 @@ async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
     transitions = []
     async with trace.scope_span("env_initial_observation"):
         ob, stop_condition = await env.initial_observation()
+        teacher_ob = await env.teacher_initial_observation()
     while True:
         async with trace.scope_span("policy_sample"):
             ac_with_logprobs = await policy(ob, stop_condition)
@@ -191,9 +192,11 @@ async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
             episode_done=step_result.episode_done,
             metrics=step_result.metrics,
             logs=step_result.logs,
+            teacher_ob=teacher_ob,
         )
         transitions.append(transition)
         ob = step_result.next_observation
+        teacher_ob = step_result.teacher_observation
         stop_condition = step_result.next_stop_condition
         if step_result.episode_done:
             break

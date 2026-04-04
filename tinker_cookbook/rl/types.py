@@ -65,6 +65,10 @@ class StepResult:
     """Numeric values aggregated and reported in training logs (e.g., timing, counts)."""
     logs: Logs = field(default_factory=dict)
     """Diagnostic info for display/debugging tools (not aggregated like metrics)."""
+    teacher_observation: Observation | None = None
+    """Optional teacher observation: the same conversation rendered with a different
+    system prompt. When set, incorporate_kl_penalty uses this for computing teacher
+    logprobs instead of the student's observation."""
 
 
 @dataclass
@@ -95,6 +99,10 @@ class Transition:
     """Numeric values aggregated and reported in training logs."""
     logs: Logs = field(default_factory=dict)
     """Diagnostic info for display/debugging tools (not aggregated like metrics)."""
+    teacher_ob: Observation | None = None
+    """Optional teacher observation for the same conversation, rendered with a
+    different system prompt. Used by incorporate_kl_penalty to compute teacher
+    logprobs conditioned on the teacher's prompt instead of the student's."""
 
 
 class ActionExtra(TypedDict, total=False):
@@ -166,6 +174,14 @@ class Env(ABC):
                 is done.
         """
         pass
+
+    async def teacher_initial_observation(self) -> Observation | None:
+        """Return the initial observation rendered with the teacher's system prompt.
+
+        Override this in envs that support separate teacher/student system prompts.
+        Returns None by default (teacher uses the same prompt as student).
+        """
+        return None
 
 
 @dataclass(frozen=True)
