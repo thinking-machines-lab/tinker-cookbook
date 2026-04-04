@@ -156,26 +156,6 @@ class TestMathRewardTelemetry:
 
 
 # ======================================================================
-# Format rewards
-# ======================================================================
-
-
-class TestFormatRewards:
-    def test_check_has_boxed(self):
-        from tinker_cookbook.rewards.format_rewards import check_has_boxed
-
-        assert check_has_boxed(r"\boxed{42}") is True
-        assert check_has_boxed("no boxed") is False
-
-    def test_check_has_code_block(self):
-        from tinker_cookbook.rewards.format_rewards import check_has_code_block
-
-        assert check_has_code_block("```python\nprint('hi')\n```") is True
-        assert check_has_code_block("no code") is False
-
-
-
-# ======================================================================
 # Code rewards
 # ======================================================================
 
@@ -208,34 +188,6 @@ class TestCodeRewards:
 
 
 # ======================================================================
-# LLM judge
-# ======================================================================
-
-
-class TestLlmJudge:
-    def test_rubric_extract_score(self):
-        from tinker_cookbook.rewards.llm_judge import Rubric
-
-        rubric = Rubric(rubric_str="test")
-        assert rubric.extract_score("The score is <score>0.8</score>") == 0.8
-        assert rubric.extract_score("no score here") == 0.0
-        assert rubric.extract_score("<score>invalid</score>") == 0.0
-
-    def test_compute_llm_judge_metrics(self):
-        from tinker_cookbook.rewards.llm_judge import compute_llm_judge_metrics
-
-        metrics = compute_llm_judge_metrics([0.8, 0.6, 0.3, 1.0])
-        assert 0.0 < metrics["reward/llm_judge/mean"] < 1.0
-        assert metrics["reward/llm_judge/std"] > 0
-        assert metrics["reward/llm_judge/fraction_correct"] == 0.75
-
-    def test_compute_llm_judge_metrics_empty(self):
-        from tinker_cookbook.rewards.llm_judge import compute_llm_judge_metrics
-
-        assert compute_llm_judge_metrics([]) == {}
-
-
-# ======================================================================
 # __init__ imports
 # ======================================================================
 
@@ -246,53 +198,41 @@ class TestInitImports:
     def test_import_traced_functions(self):
         from tinker_cookbook.rewards import (
             compute_code_reward_metrics,
-            compute_llm_judge_metrics,
             compute_math_reward_metrics,
             extract_math_answer,
             grade_math_answer_traced,
             score_code_sandbox_traced,
-            score_with_rubric_traced,
         )
 
         # Just verify they're callable
         assert callable(grade_math_answer_traced)
         assert callable(score_code_sandbox_traced)
-        assert callable(score_with_rubric_traced)
         assert callable(compute_math_reward_metrics)
         assert callable(compute_code_reward_metrics)
-        assert callable(compute_llm_judge_metrics)
         assert callable(extract_math_answer)
 
     def test_import_new_names(self):
         from tinker_cookbook.rewards import (
-            Rubric,
             extract_boxed_answer,
             grade_math_answer,
             grade_math_answer_safe,
-            score_with_rubric,
         )
 
         assert callable(grade_math_answer)
         assert callable(grade_math_answer_safe)
         assert callable(extract_boxed_answer)
-        assert callable(score_with_rubric)
-        assert Rubric is not None
 
     def test_import_deprecated_aliases(self):
         """Verify backward-compatible aliases are still importable."""
         from tinker_cookbook.rewards import (
-            Rubric,
             extract_boxed,
             grade_answer,
-            grade_with_rubric,
             safe_grade,
         )
 
         assert callable(grade_answer)
         assert callable(safe_grade)
         assert callable(extract_boxed)
-        assert callable(grade_with_rubric)
-        assert Rubric is not None
 
     def test_import_compute_reward_metrics(self):
         from tinker_cookbook.rewards import compute_reward_metrics
@@ -332,71 +272,3 @@ class TestSharedMetrics:
 
         metrics = compute_code_reward_metrics([1.0, 0.0])
         assert "reward/code/mean" in metrics
-
-    def test_delegates_llm_judge(self):
-        """compute_llm_judge_metrics delegates to shared implementation."""
-        from tinker_cookbook.rewards.llm_judge import compute_llm_judge_metrics
-
-        metrics = compute_llm_judge_metrics([0.8, 0.2])
-        assert "reward/llm_judge/mean" in metrics
-
-
-# ======================================================================
-# LLM judge error handling
-# ======================================================================
-
-
-class TestLlmJudgeErrorHandling:
-    def test_score_with_rubric_api_failure(self):
-        """score_with_rubric returns default_on_error on API failure."""
-        from tinker_cookbook.rewards.llm_judge import Rubric, score_with_rubric
-
-        rubric = Rubric(rubric_str="test")
-        convo = [
-            {"role": "user", "content": "Hello"},
-            {"role": "assistant", "content": "Hi"},
-        ]
-
-        async def failing_llm(_msgs):
-            raise ConnectionError("API down")
-
-        score, text = asyncio.run(
-            score_with_rubric(convo, rubric, failing_llm)
-        )
-        assert score == 0.0
-        assert "[error]" in text
-
-    def test_score_with_rubric_custom_default(self):
-        """score_with_rubric respects custom default_on_error."""
-        from tinker_cookbook.rewards.llm_judge import Rubric, score_with_rubric
-
-        rubric = Rubric(rubric_str="test")
-        convo = [
-            {"role": "user", "content": "Hello"},
-            {"role": "assistant", "content": "Hi"},
-        ]
-
-        async def failing_llm(_msgs):
-            raise RuntimeError("timeout")
-
-        score, _ = asyncio.run(
-            score_with_rubric(convo, rubric, failing_llm, default_on_error=-1.0)
-        )
-        assert score == -1.0
-
-
-# ======================================================================
-# Rubric extraction regex (non-greedy)
-# ======================================================================
-
-
-class TestRubricNonGreedyRegex:
-    def test_multiple_score_tags(self):
-        """Non-greedy regex extracts first score, not spanning across tags."""
-        from tinker_cookbook.rewards.llm_judge import Rubric
-
-        rubric = Rubric(rubric_str="test")
-        # With greedy .*, this would match "0.3</score> ... <score>0.9"
-        # With non-greedy .*?, it correctly matches "0.3"
-        text = "<score>0.3</score> some text <score>0.9</score>"
-        assert rubric.extract_score(text) == 0.3
