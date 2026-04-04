@@ -199,7 +199,7 @@ def normalize_answer(answer: str | None) -> str | None:
 # ======================================================================
 
 
-def extract_boxed(text: str) -> str:
+def extract_boxed_answer(text: str) -> str:
     r"""Extract the content of the last ``\boxed{...}`` or ``\fbox{...}`` in *text*.
 
     Handles both ``\boxed`` and ``\fbox`` commands (the latter is used
@@ -407,7 +407,7 @@ def _split_tuple(expr: str) -> list[str]:
 # ======================================================================
 
 
-def grade_answer(given_answer: str | None, ground_truth: str) -> bool:
+def grade_math_answer(given_answer: str | None, ground_truth: str) -> bool:
     """Check if *given_answer* matches *ground_truth* using normalization and sympy.
 
     The answer is considered correct if either:
@@ -456,7 +456,7 @@ def grade_answer(given_answer: str | None, ground_truth: str) -> bool:
     return is_correct
 
 
-def grade_answer_math_verify(given_answer: str, ground_truth: str) -> bool:
+def grade_math_answer_strict(given_answer: str, ground_truth: str) -> bool:
     """Check correctness using the ``math_verify`` package.
 
     Requires ``math-verify`` to be installed.
@@ -477,7 +477,7 @@ def grade_answer_math_verify(given_answer: str, ground_truth: str) -> bool:
     return verify(parse(given_answer), parse(ground_truth))
 
 
-def safe_grade(
+def grade_math_answer_safe(
     given_answer: str,
     ground_truth: str,
     grader: str = "sympy",
@@ -492,9 +492,9 @@ def safe_grade(
         timeout: Maximum seconds to spend grading.
     """
     if grader == "sympy":
-        grader_func = grade_answer
+        grader_func = grade_math_answer
     elif grader == "math_verify":
-        grader_func = grade_answer_math_verify
+        grader_func = grade_math_answer_strict
     else:
         raise ConfigurationError(f"Invalid grader: {grader}")
     out = run_with_timeout(
@@ -506,7 +506,7 @@ def safe_grade(
     return out
 
 
-def extract_gsm8k_final_answer(text: str) -> str:
+def extract_gsm8k_answer(text: str) -> str:
     """Extract the final numeric answer from a GSM8K solution field.
 
     GSM8K places the final answer on a line starting with ``####``.
@@ -526,7 +526,7 @@ def extract_gsm8k_final_answer(text: str) -> str:
     raise DataFormatError("No GSM8K final answer found")
 
 
-def extract_answer_flexible(response: str) -> str | None:
+def extract_math_answer(response: str) -> str | None:
     r"""Extract a math answer from a model response, trying multiple strategies.
 
     Tries, in order:
@@ -538,7 +538,7 @@ def extract_answer_flexible(response: str) -> str | None:
     """
     # 1. Try boxed
     try:
-        return extract_boxed(response)
+        return extract_boxed_answer(response)
     except ValueError:
         pass
 
@@ -549,7 +549,7 @@ def extract_answer_flexible(response: str) -> str | None:
 
     # 3. Try GSM8K style
     try:
-        return extract_gsm8k_final_answer(response)
+        return extract_gsm8k_answer(response)
     except ValueError:
         pass
 
@@ -561,7 +561,7 @@ def extract_answer_flexible(response: str) -> str | None:
 # ======================================================================
 
 
-def grade_answer_with_trace(
+def grade_math_answer_traced(
     given_answer: str,
     ground_truth: str,
     *,
@@ -600,7 +600,7 @@ def grade_answer_with_trace(
     t_start = _time.perf_counter()
 
     with _scope_span_sync(span_name):
-        is_correct = safe_grade(
+        is_correct = grade_math_answer_safe(
             given_answer, ground_truth, grader=grader, timeout=timeout
         )
 
@@ -637,3 +637,16 @@ def compute_math_reward_metrics(
     from tinker_cookbook.rewards._metrics import compute_reward_metrics
 
     return compute_reward_metrics(rewards, reward_name)
+
+
+# ======================================================================
+# Deprecated aliases (backward compatibility)
+# ======================================================================
+
+extract_boxed = extract_boxed_answer
+grade_answer = grade_math_answer
+grade_answer_math_verify = grade_math_answer_strict
+grade_answer_with_trace = grade_math_answer_traced
+safe_grade = grade_math_answer_safe
+extract_answer_flexible = extract_math_answer
+extract_gsm8k_final_answer = extract_gsm8k_answer

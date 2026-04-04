@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 from tinker_cookbook.utils.trace import scope_span
 
 
-def extract_code_from_model(model_response: str) -> str | None:
+def extract_code_block(model_response: str) -> str | None:
     """Extract the last fenced code block from a model response.
 
     Returns ``None`` if no code block is found.
@@ -34,7 +34,7 @@ def extract_code_from_model(model_response: str) -> str | None:
     return code_blocks[-1].strip()
 
 
-async def sandbox_check_correctness(
+async def score_code_sandbox(
     sample: list[dict[str, Any]],
     generation: str,
     timeout: int = 6,
@@ -61,7 +61,7 @@ async def sandbox_check_correctness(
     return await _impl(sample, generation, timeout=timeout, backend=backend)
 
 
-def grade_code_response(
+def grade_code_correctness(
     response_text: str,
 ) -> tuple[str | None, bool]:
     """Extract code from a model response and report whether a code block was found.
@@ -69,7 +69,7 @@ def grade_code_response(
     Returns:
         Tuple of ``(extracted_code_or_none, has_code_block)``.
     """
-    code = extract_code_from_model(response_text)
+    code = extract_code_block(response_text)
     return code, code is not None
 
 
@@ -89,7 +89,7 @@ def taco_to_lcb_format(tests: dict[str, Any]) -> list[dict[str, Any]]:
 # ======================================================================
 
 
-async def sandbox_check_correctness_with_trace(
+async def score_code_sandbox_traced(
     sample: list[dict[str, Any]],
     generation: str,
     *,
@@ -122,7 +122,7 @@ async def sandbox_check_correctness_with_trace(
     t_start = time.perf_counter()
 
     async with scope_span(f"compute_{reward_name}_reward"):
-        all_passed, details = await sandbox_check_correctness(
+        all_passed, details = await score_code_sandbox(
             sample, generation, timeout=timeout, backend=backend,
         )
 
@@ -161,3 +161,13 @@ def compute_code_reward_metrics(
     from tinker_cookbook.rewards._metrics import compute_reward_metrics
 
     return compute_reward_metrics(rewards, reward_name)
+
+
+# ======================================================================
+# Deprecated aliases (backward compatibility)
+# ======================================================================
+
+extract_code_from_model = extract_code_block
+grade_code_response = grade_code_correctness
+sandbox_check_correctness = score_code_sandbox
+sandbox_check_correctness_with_trace = score_code_sandbox_traced

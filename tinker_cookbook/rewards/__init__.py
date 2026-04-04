@@ -11,7 +11,7 @@ Submodules
 - :mod:`llm_judge` -- LLM-as-judge rubric-based scoring
 - :mod:`composite` -- combinators for building multi-signal rewards
 
-All reward functions have ``*_with_trace`` variants that emit telemetry
+All reward functions have ``*_traced`` variants that emit telemetry
 (Perfetto trace spans, logtree HTML reports, and metric dicts) and
 ``compute_*_metrics`` helpers for batch-level aggregation.
 """
@@ -22,95 +22,164 @@ from tinker_cookbook.rewards._metrics import compute_reward_metrics
 # Math rewards
 from tinker_cookbook.rewards.math_rewards import (
     compute_math_reward_metrics,
-    extract_answer_flexible,
-    extract_boxed,
-    extract_gsm8k_final_answer,
-    grade_answer,
-    grade_answer_math_verify,
-    grade_answer_with_trace,
+    extract_boxed_answer,
+    extract_gsm8k_answer,
+    extract_math_answer,
+    grade_math_answer,
+    grade_math_answer_safe,
+    grade_math_answer_strict,
+    grade_math_answer_traced,
     normalize_answer,
-    safe_grade,
 )
 
 # Code rewards
 from tinker_cookbook.rewards.code_rewards import (
     compute_code_reward_metrics,
-    extract_code_from_model,
-    grade_code_response,
-    sandbox_check_correctness,
-    sandbox_check_correctness_with_trace,
+    extract_code_block,
+    grade_code_correctness,
+    score_code_sandbox,
+    score_code_sandbox_traced,
 )
 
 # Format rewards
 from tinker_cookbook.rewards.format_rewards import (
+    check_has_answer_prefix,
+    check_has_boxed,
+    check_has_code_block,
+    check_has_xml_tag,
+    check_is_valid_json,
     extract_after_prefix,
-    extract_xml_tag,
-    format_reward,
-    format_reward_with_trace,
-    has_answer_prefix,
-    has_boxed_answer,
-    has_code_block,
-    has_xml_tag,
-    is_valid_json,
+    extract_xml_content,
+    score_format,
+    score_format_traced,
 )
 
 # LLM judge
 from tinker_cookbook.rewards.llm_judge import (
     Rubric,
     compute_llm_judge_metrics,
-    grade_with_rubric,
-    grade_with_rubric_traced,
-    grade_with_rubrics,
+    score_with_rubric,
+    score_with_rubric_traced,
+    score_with_rubrics,
 )
 
 # Composite rewards
 from tinker_cookbook.rewards.composite import (
     WeightedReward,
-    reward_max,
-    reward_min,
-    reward_product,
-    threshold,
-    weighted_sum,
-    weighted_sum_with_trace,
+    combine_max,
+    combine_min,
+    combine_product,
+    combine_threshold,
+    combine_weighted,
+    combine_weighted_traced,
+)
+
+# Deprecated aliases (backward compatibility)
+from tinker_cookbook.rewards.math_rewards import (
+    extract_boxed_answer as extract_boxed,
+    extract_gsm8k_answer as extract_gsm8k_final_answer,
+    extract_math_answer as extract_answer_flexible,
+    grade_math_answer as grade_answer,
+    grade_math_answer_safe as safe_grade,
+    grade_math_answer_strict as grade_answer_math_verify,
+    grade_math_answer_traced as grade_answer_with_trace,
+)
+from tinker_cookbook.rewards.code_rewards import (
+    extract_code_block as extract_code_from_model,
+    grade_code_correctness as grade_code_response,
+    score_code_sandbox as sandbox_check_correctness,
+    score_code_sandbox_traced as sandbox_check_correctness_with_trace,
+)
+from tinker_cookbook.rewards.format_rewards import (
+    check_has_answer_prefix as has_answer_prefix,
+    check_has_boxed as has_boxed_answer,
+    check_has_code_block as has_code_block,
+    check_has_xml_tag as has_xml_tag,
+    check_is_valid_json as is_valid_json,
+    extract_xml_content as extract_xml_tag,
+    score_format as format_reward,
+    score_format_traced as format_reward_with_trace,
+)
+from tinker_cookbook.rewards.llm_judge import (
+    score_with_rubric as grade_with_rubric,
+    score_with_rubric_traced as grade_with_rubric_traced,
+    score_with_rubrics as grade_with_rubrics,
+)
+from tinker_cookbook.rewards.composite import (
+    combine_max as reward_max,
+    combine_min as reward_min,
+    combine_product as reward_product,
+    combine_threshold as threshold,
+    combine_weighted as weighted_sum,
+    combine_weighted_traced as weighted_sum_with_trace,
 )
 
 __all__ = [
     # shared metrics
     "compute_reward_metrics",
-    # math
-    "extract_answer_flexible",
+    # math (new names)
+    "extract_boxed_answer",
+    "extract_gsm8k_answer",
+    "extract_math_answer",
+    "grade_math_answer",
+    "grade_math_answer_safe",
+    "grade_math_answer_strict",
+    "grade_math_answer_traced",
+    "normalize_answer",
+    "compute_math_reward_metrics",
+    # code (new names)
+    "extract_code_block",
+    "grade_code_correctness",
+    "score_code_sandbox",
+    "score_code_sandbox_traced",
+    "compute_code_reward_metrics",
+    # format (new names)
+    "check_has_answer_prefix",
+    "check_has_boxed",
+    "check_has_code_block",
+    "check_has_xml_tag",
+    "check_is_valid_json",
+    "extract_after_prefix",
+    "extract_xml_content",
+    "score_format",
+    "score_format_traced",
+    # llm judge (new names)
+    "Rubric",
+    "score_with_rubric",
+    "score_with_rubric_traced",
+    "score_with_rubrics",
+    "compute_llm_judge_metrics",
+    # composite (new names)
+    "WeightedReward",
+    "combine_max",
+    "combine_min",
+    "combine_product",
+    "combine_threshold",
+    "combine_weighted",
+    "combine_weighted_traced",
+    # Deprecated aliases
     "extract_boxed",
     "extract_gsm8k_final_answer",
+    "extract_answer_flexible",
     "grade_answer",
+    "safe_grade",
     "grade_answer_math_verify",
     "grade_answer_with_trace",
-    "normalize_answer",
-    "safe_grade",
-    "compute_math_reward_metrics",
-    # code
     "extract_code_from_model",
     "grade_code_response",
     "sandbox_check_correctness",
     "sandbox_check_correctness_with_trace",
-    "compute_code_reward_metrics",
-    # format
-    "extract_after_prefix",
-    "extract_xml_tag",
-    "format_reward",
-    "format_reward_with_trace",
     "has_answer_prefix",
     "has_boxed_answer",
     "has_code_block",
     "has_xml_tag",
     "is_valid_json",
-    # llm judge
-    "Rubric",
+    "extract_xml_tag",
+    "format_reward",
+    "format_reward_with_trace",
     "grade_with_rubric",
     "grade_with_rubric_traced",
     "grade_with_rubrics",
-    "compute_llm_judge_metrics",
-    # composite
-    "WeightedReward",
     "reward_max",
     "reward_min",
     "reward_product",

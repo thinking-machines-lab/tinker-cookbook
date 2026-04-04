@@ -25,111 +25,111 @@ class TestMathRewards:
         assert normalize_answer("\\frac{1}{2}") == "\\frac{1}{2}"
         assert normalize_answer("0.5") == "\\frac{1}{2}"
 
-    def test_extract_boxed_basic(self):
-        from tinker_cookbook.rewards.math_rewards import extract_boxed
+    def test_extract_boxed_answer_basic(self):
+        from tinker_cookbook.rewards.math_rewards import extract_boxed_answer
 
-        assert extract_boxed(r"The answer is \boxed{42}") == "42"
-        assert extract_boxed(r"\boxed{x^2 + 1}") == "x^2 + 1"
+        assert extract_boxed_answer(r"The answer is \boxed{42}") == "42"
+        assert extract_boxed_answer(r"\boxed{x^2 + 1}") == "x^2 + 1"
 
-    def test_extract_boxed_fbox(self):
+    def test_extract_boxed_answer_fbox(self):
         """Verify that \\fbox{...} is also extracted (SLIME compatibility)."""
-        from tinker_cookbook.rewards.math_rewards import extract_boxed
+        from tinker_cookbook.rewards.math_rewards import extract_boxed_answer
 
-        assert extract_boxed(r"The answer is \fbox{42}") == "42"
+        assert extract_boxed_answer(r"The answer is \fbox{42}") == "42"
 
-    def test_extract_boxed_last(self):
-        from tinker_cookbook.rewards.math_rewards import extract_boxed
+    def test_extract_boxed_answer_last(self):
+        from tinker_cookbook.rewards.math_rewards import extract_boxed_answer
 
         text = r"\boxed{1} and \boxed{2}"
-        assert extract_boxed(text) == "2"
+        assert extract_boxed_answer(text) == "2"
 
-    def test_extract_boxed_no_match(self):
-        from tinker_cookbook.rewards.math_rewards import extract_boxed
+    def test_extract_boxed_answer_no_match(self):
+        from tinker_cookbook.rewards.math_rewards import extract_boxed_answer
 
         with pytest.raises(ValueError, match="No boxed"):
-            extract_boxed("no boxed here")
+            extract_boxed_answer("no boxed here")
 
-    def test_grade_answer_identical(self):
-        from tinker_cookbook.rewards.math_rewards import grade_answer
+    def test_grade_math_answer_identical(self):
+        from tinker_cookbook.rewards.math_rewards import grade_math_answer
 
-        assert grade_answer("42", "42") is True
+        assert grade_math_answer("42", "42") is True
 
-    def test_grade_answer_equivalent_fraction(self):
-        from tinker_cookbook.rewards.math_rewards import grade_answer
+    def test_grade_math_answer_equivalent_fraction(self):
+        from tinker_cookbook.rewards.math_rewards import grade_math_answer
 
-        assert grade_answer("0.5", "\\frac{1}{2}") is True
+        assert grade_math_answer("0.5", "\\frac{1}{2}") is True
 
-    def test_grade_answer_wrong(self):
-        from tinker_cookbook.rewards.math_rewards import grade_answer
+    def test_grade_math_answer_wrong(self):
+        from tinker_cookbook.rewards.math_rewards import grade_math_answer
 
-        assert grade_answer("43", "42") is False
+        assert grade_math_answer("43", "42") is False
 
-    def test_grade_answer_none(self):
-        from tinker_cookbook.rewards.math_rewards import grade_answer
+    def test_grade_math_answer_none(self):
+        from tinker_cookbook.rewards.math_rewards import grade_math_answer
 
-        assert grade_answer(None, "42") is False
+        assert grade_math_answer(None, "42") is False
 
-    def test_safe_grade_timeout(self):
-        from tinker_cookbook.rewards.math_rewards import safe_grade
+    def test_grade_math_answer_safe_timeout(self):
+        from tinker_cookbook.rewards.math_rewards import grade_math_answer_safe
 
         # Should not hang; returns True or False within timeout
-        result = safe_grade("42", "42", grader="sympy", timeout=2.0)
+        result = grade_math_answer_safe("42", "42", grader="sympy", timeout=2.0)
         assert result is True
 
-    def test_extract_gsm8k_final_answer(self):
-        from tinker_cookbook.rewards.math_rewards import extract_gsm8k_final_answer
+    def test_extract_gsm8k_answer(self):
+        from tinker_cookbook.rewards.math_rewards import extract_gsm8k_answer
 
         text = "Step 1: 10\nStep 2: 20\n#### 30"
-        assert extract_gsm8k_final_answer(text) == "30"
+        assert extract_gsm8k_answer(text) == "30"
 
-    def test_extract_gsm8k_with_comma(self):
-        from tinker_cookbook.rewards.math_rewards import extract_gsm8k_final_answer
+    def test_extract_gsm8k_answer_with_comma(self):
+        from tinker_cookbook.rewards.math_rewards import extract_gsm8k_answer
 
         text = "#### 1,234"
-        assert extract_gsm8k_final_answer(text) == "1234"
+        assert extract_gsm8k_answer(text) == "1234"
 
-    def test_extract_answer_flexible_boxed(self):
-        from tinker_cookbook.rewards.math_rewards import extract_answer_flexible
+    def test_extract_math_answer_boxed(self):
+        from tinker_cookbook.rewards.math_rewards import extract_math_answer
 
-        assert extract_answer_flexible(r"Thus \boxed{42}") == "42"
+        assert extract_math_answer(r"Thus \boxed{42}") == "42"
 
-    def test_extract_answer_flexible_answer_prefix(self):
-        from tinker_cookbook.rewards.math_rewards import extract_answer_flexible
+    def test_extract_math_answer_answer_prefix(self):
+        from tinker_cookbook.rewards.math_rewards import extract_math_answer
 
-        assert extract_answer_flexible("Answer: 42") == "42"
+        assert extract_math_answer("Answer: 42") == "42"
 
-    def test_extract_answer_flexible_gsm8k(self):
-        from tinker_cookbook.rewards.math_rewards import extract_answer_flexible
+    def test_extract_math_answer_gsm8k(self):
+        from tinker_cookbook.rewards.math_rewards import extract_math_answer
 
-        assert extract_answer_flexible("Steps...\n#### 7") == "7"
+        assert extract_math_answer("Steps...\n#### 7") == "7"
 
-    def test_extract_answer_flexible_none(self):
-        from tinker_cookbook.rewards.math_rewards import extract_answer_flexible
+    def test_extract_math_answer_none(self):
+        from tinker_cookbook.rewards.math_rewards import extract_math_answer
 
-        assert extract_answer_flexible("no answer here at all") is None
+        assert extract_math_answer("no answer here at all") is None
 
-    def test_grade_answer_none_type(self):
-        """grade_answer accepts None for given_answer (FIX 8)."""
-        from tinker_cookbook.rewards.math_rewards import grade_answer
+    def test_grade_math_answer_none_type(self):
+        """grade_math_answer accepts None for given_answer (FIX 8)."""
+        from tinker_cookbook.rewards.math_rewards import grade_math_answer
 
-        assert grade_answer(None, "42") is False
+        assert grade_math_answer(None, "42") is False
 
 
 class TestMathRewardTelemetry:
-    def test_grade_answer_with_trace(self):
-        from tinker_cookbook.rewards.math_rewards import grade_answer_with_trace
+    def test_grade_math_answer_traced(self):
+        from tinker_cookbook.rewards.math_rewards import grade_math_answer_traced
 
-        reward, metrics = grade_answer_with_trace(
+        reward, metrics = grade_math_answer_traced(
             "42", "42", log_to_logtree=False,
         )
         assert reward == 1.0
         assert "reward/math/computation_time" in metrics
         assert metrics["reward/math/computation_time"] >= 0
 
-    def test_grade_answer_with_trace_wrong(self):
-        from tinker_cookbook.rewards.math_rewards import grade_answer_with_trace
+    def test_grade_math_answer_traced_wrong(self):
+        from tinker_cookbook.rewards.math_rewards import grade_math_answer_traced
 
-        reward, metrics = grade_answer_with_trace(
+        reward, metrics = grade_math_answer_traced(
             "43", "42", log_to_logtree=False,
         )
         assert reward == 0.0
@@ -162,28 +162,28 @@ class TestMathRewardTelemetry:
 
 
 class TestFormatRewards:
-    def test_has_boxed_answer(self):
-        from tinker_cookbook.rewards.format_rewards import has_boxed_answer
+    def test_check_has_boxed(self):
+        from tinker_cookbook.rewards.format_rewards import check_has_boxed
 
-        assert has_boxed_answer(r"\boxed{42}") is True
-        assert has_boxed_answer("no boxed") is False
+        assert check_has_boxed(r"\boxed{42}") is True
+        assert check_has_boxed("no boxed") is False
 
-    def test_has_code_block(self):
-        from tinker_cookbook.rewards.format_rewards import has_code_block
+    def test_check_has_code_block(self):
+        from tinker_cookbook.rewards.format_rewards import check_has_code_block
 
-        assert has_code_block("```python\nprint('hi')\n```") is True
-        assert has_code_block("no code") is False
+        assert check_has_code_block("```python\nprint('hi')\n```") is True
+        assert check_has_code_block("no code") is False
 
-    def test_format_reward(self):
-        from tinker_cookbook.rewards.format_rewards import format_reward
+    def test_score_format(self):
+        from tinker_cookbook.rewards.format_rewards import score_format
 
-        assert format_reward(r"\boxed{42}", check_fn="boxed") == 0.0
-        assert format_reward("no boxed", check_fn="boxed") == -0.1
+        assert score_format(r"\boxed{42}", check_fn="boxed") == 0.0
+        assert score_format("no boxed", check_fn="boxed") == -0.1
 
-    def test_format_reward_with_trace(self):
-        from tinker_cookbook.rewards.format_rewards import format_reward_with_trace
+    def test_score_format_traced(self):
+        from tinker_cookbook.rewards.format_rewards import score_format_traced
 
-        reward, metrics = format_reward_with_trace(
+        reward, metrics = score_format_traced(
             r"\boxed{42}", check_fn="boxed", log_to_logtree=False,
         )
         assert reward == 0.0
@@ -196,21 +196,21 @@ class TestFormatRewards:
 
 
 class TestCodeRewards:
-    def test_extract_code_from_model(self):
-        from tinker_cookbook.rewards.code_rewards import extract_code_from_model
+    def test_extract_code_block(self):
+        from tinker_cookbook.rewards.code_rewards import extract_code_block
 
         text = "Here is the code:\n```python\ndef foo(): pass\n```"
-        assert extract_code_from_model(text) == "def foo(): pass"
+        assert extract_code_block(text) == "def foo(): pass"
 
-    def test_extract_code_none(self):
-        from tinker_cookbook.rewards.code_rewards import extract_code_from_model
+    def test_extract_code_block_none(self):
+        from tinker_cookbook.rewards.code_rewards import extract_code_block
 
-        assert extract_code_from_model("no code here") is None
+        assert extract_code_block("no code here") is None
 
-    def test_grade_code_response(self):
-        from tinker_cookbook.rewards.code_rewards import grade_code_response
+    def test_grade_code_correctness(self):
+        from tinker_cookbook.rewards.code_rewards import grade_code_correctness
 
-        code, has_block = grade_code_response("```python\npass\n```")
+        code, has_block = grade_code_correctness("```python\npass\n```")
         assert has_block is True
         assert code == "pass"
 
@@ -256,55 +256,55 @@ class TestLlmJudge:
 
 
 class TestCompositeRewards:
-    def test_weighted_sum(self):
-        from tinker_cookbook.rewards.composite import WeightedReward, weighted_sum
+    def test_combine_weighted(self):
+        from tinker_cookbook.rewards.composite import WeightedReward, combine_weighted
 
         rewards = [
             WeightedReward("r1", lambda t: 1.0, weight=0.5),
             WeightedReward("r2", lambda t: 0.0, weight=0.5),
         ]
-        total, metrics = weighted_sum("test", rewards)
+        total, metrics = combine_weighted("test", rewards)
         assert total == 0.5
         assert metrics["r1"] == 1.0
         assert metrics["r2"] == 0.0
 
-    def test_threshold(self):
-        from tinker_cookbook.rewards.composite import threshold
+    def test_combine_threshold(self):
+        from tinker_cookbook.rewards.composite import combine_threshold
 
-        fn = threshold(lambda t: 0.7, cutoff=0.5)
+        fn = combine_threshold(lambda t: 0.7, cutoff=0.5)
         assert fn("test") == 1.0
-        fn2 = threshold(lambda t: 0.3, cutoff=0.5)
+        fn2 = combine_threshold(lambda t: 0.3, cutoff=0.5)
         assert fn2("test") == 0.0
 
-    def test_reward_min(self):
-        from tinker_cookbook.rewards.composite import reward_min
+    def test_combine_min(self):
+        from tinker_cookbook.rewards.composite import combine_min
 
-        result = reward_min("test", [lambda t: 0.3, lambda t: 0.7])
+        result = combine_min("test", [lambda t: 0.3, lambda t: 0.7])
         assert result == 0.3
 
-    def test_reward_max(self):
-        from tinker_cookbook.rewards.composite import reward_max
+    def test_combine_max(self):
+        from tinker_cookbook.rewards.composite import combine_max
 
-        result = reward_max("test", [lambda t: 0.3, lambda t: 0.7])
+        result = combine_max("test", [lambda t: 0.3, lambda t: 0.7])
         assert result == 0.7
 
-    def test_reward_product(self):
-        from tinker_cookbook.rewards.composite import reward_product
+    def test_combine_product(self):
+        from tinker_cookbook.rewards.composite import combine_product
 
-        result = reward_product("test", [lambda t: 0.5, lambda t: 0.4])
+        result = combine_product("test", [lambda t: 0.5, lambda t: 0.4])
         assert abs(result - 0.2) < 1e-6
 
-    def test_weighted_sum_with_trace(self):
+    def test_combine_weighted_traced(self):
         from tinker_cookbook.rewards.composite import (
             WeightedReward,
-            weighted_sum_with_trace,
+            combine_weighted_traced,
         )
 
         rewards = [
             WeightedReward("correctness", lambda t: 1.0, weight=0.8),
             WeightedReward("format", lambda t: 0.0, weight=0.2),
         ]
-        total, metrics = weighted_sum_with_trace("test", rewards, log_to_logtree=False)
+        total, metrics = combine_weighted_traced("test", rewards, log_to_logtree=False)
         assert total == 0.8
         assert metrics["reward/composite/correctness"] == 1.0
         assert metrics["reward/composite/format"] == 0.0
@@ -325,26 +325,48 @@ class TestInitImports:
             compute_code_reward_metrics,
             compute_llm_judge_metrics,
             compute_math_reward_metrics,
-            extract_answer_flexible,
-            format_reward_with_trace,
-            grade_answer_with_trace,
-            grade_with_rubric_traced,
-            sandbox_check_correctness_with_trace,
-            weighted_sum_with_trace,
+            extract_math_answer,
+            grade_math_answer_traced,
+            score_code_sandbox_traced,
+            score_format_traced,
+            score_with_rubric_traced,
+            combine_weighted_traced,
         )
 
         # Just verify they're callable
-        assert callable(grade_answer_with_trace)
-        assert callable(sandbox_check_correctness_with_trace)
-        assert callable(grade_with_rubric_traced)
-        assert callable(format_reward_with_trace)
-        assert callable(weighted_sum_with_trace)
+        assert callable(grade_math_answer_traced)
+        assert callable(score_code_sandbox_traced)
+        assert callable(score_with_rubric_traced)
+        assert callable(score_format_traced)
+        assert callable(combine_weighted_traced)
         assert callable(compute_math_reward_metrics)
         assert callable(compute_code_reward_metrics)
         assert callable(compute_llm_judge_metrics)
-        assert callable(extract_answer_flexible)
+        assert callable(extract_math_answer)
 
-    def test_import_original_functions(self):
+    def test_import_new_names(self):
+        from tinker_cookbook.rewards import (
+            Rubric,
+            WeightedReward,
+            extract_boxed_answer,
+            grade_math_answer,
+            grade_math_answer_safe,
+            score_format,
+            score_with_rubric,
+            combine_weighted,
+        )
+
+        assert callable(grade_math_answer)
+        assert callable(grade_math_answer_safe)
+        assert callable(extract_boxed_answer)
+        assert callable(score_format)
+        assert callable(score_with_rubric)
+        assert callable(combine_weighted)
+        assert Rubric is not None
+        assert WeightedReward is not None
+
+    def test_import_deprecated_aliases(self):
+        """Verify backward-compatible aliases are still importable."""
         from tinker_cookbook.rewards import (
             Rubric,
             WeightedReward,
@@ -418,9 +440,9 @@ class TestSharedMetrics:
 
 
 class TestLlmJudgeErrorHandling:
-    def test_grade_with_rubric_api_failure(self):
-        """grade_with_rubric returns default_on_error on API failure."""
-        from tinker_cookbook.rewards.llm_judge import Rubric, grade_with_rubric
+    def test_score_with_rubric_api_failure(self):
+        """score_with_rubric returns default_on_error on API failure."""
+        from tinker_cookbook.rewards.llm_judge import Rubric, score_with_rubric
 
         rubric = Rubric(rubric_str="test")
         convo = [
@@ -432,14 +454,14 @@ class TestLlmJudgeErrorHandling:
             raise ConnectionError("API down")
 
         score, text = asyncio.run(
-            grade_with_rubric(convo, rubric, failing_llm)
+            score_with_rubric(convo, rubric, failing_llm)
         )
         assert score == 0.0
         assert "[error]" in text
 
-    def test_grade_with_rubric_custom_default(self):
-        """grade_with_rubric respects custom default_on_error."""
-        from tinker_cookbook.rewards.llm_judge import Rubric, grade_with_rubric
+    def test_score_with_rubric_custom_default(self):
+        """score_with_rubric respects custom default_on_error."""
+        from tinker_cookbook.rewards.llm_judge import Rubric, score_with_rubric
 
         rubric = Rubric(rubric_str="test")
         convo = [
@@ -451,7 +473,7 @@ class TestLlmJudgeErrorHandling:
             raise RuntimeError("timeout")
 
         score, _ = asyncio.run(
-            grade_with_rubric(convo, rubric, failing_llm, default_on_error=-1.0)
+            score_with_rubric(convo, rubric, failing_llm, default_on_error=-1.0)
         )
         assert score == -1.0
 

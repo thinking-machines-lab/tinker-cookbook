@@ -19,13 +19,15 @@ from typing import Any
 
 from tinker_cookbook.recipes.code_rl.lcb_utils import TEST_CODE, TEST_UTIL
 from tinker_cookbook.rewards.code_rewards import (
-    extract_code_from_model,
+    extract_code_block,
 )
 from tinker_cookbook.sandbox import SandboxBackend, SandboxFusionClient
 
-# Re-export so existing callers of code_grading.extract_code_from_model
-# continue to work.
+# Re-export so existing callers continue to work.
+extract_code_from_model = extract_code_block
+
 __all__ = [
+    "extract_code_block",
     "extract_code_from_model",
     "postprocess_lcb_sample",
     "sandbox_check_correctness",

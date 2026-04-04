@@ -25,7 +25,7 @@ from tqdm import tqdm
 
 from tinker_cookbook import checkpoint_utils, model_info, renderers
 from tinker_cookbook.recipes.math_rl.math_env import extract_gsm8k_final_answer
-from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed, grade_answer
+from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed_answer, grade_math_answer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log
 
@@ -49,9 +49,9 @@ class Config:
 
 def get_reward(response: str, answer: str) -> float:
     try:
-        given_answer = extract_boxed(response)
+        given_answer = extract_boxed_answer(response)
         ground_truth = extract_gsm8k_final_answer(answer)
-        return 1.0 if grade_answer(given_answer, ground_truth) else 0.0
+        return 1.0 if grade_math_answer(given_answer, ground_truth) else 0.0
     except ValueError:
         return 0.0
 

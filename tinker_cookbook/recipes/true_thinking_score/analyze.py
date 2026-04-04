@@ -37,7 +37,7 @@ import tinker
 from datasets import Dataset, load_dataset
 
 from tinker_cookbook.recipes.math_rl.math_env import extract_gsm8k_final_answer
-from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed
+from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed_answer
 from tinker_cookbook.recipes.true_thinking_score.tts import (
     generate_cot_and_compute_tts,
 )
@@ -54,7 +54,7 @@ def _load_problems(dataset: str, n_problems: int, seed: int) -> list[dict[str, s
         for row in ds:
             row = cast(dict[str, str], row)
             try:
-                answer = extract_boxed(row["solution"])
+                answer = extract_boxed_answer(row["solution"])
                 problems.append({"question": row["problem"], "answer": answer})
             except ValueError:
                 continue

@@ -108,7 +108,7 @@ class Rubric:
         return 0.0
 
 
-async def grade_with_rubric(
+async def score_with_rubric(
     convo: Conversation,
     rubric: Rubric,
     grader_llm: MessageCompleter,
@@ -143,7 +143,7 @@ async def grade_with_rubric(
     return score, content
 
 
-async def grade_with_rubrics(
+async def score_with_rubrics(
     convo: Conversation,
     rubrics: Sequence[Rubric],
     grader_llm: MessageCompleter,
@@ -154,7 +154,7 @@ async def grade_with_rubrics(
     """
     return list(
         await asyncio.gather(
-            *[grade_with_rubric(convo, rubric, grader_llm) for rubric in rubrics]
+            *[score_with_rubric(convo, rubric, grader_llm) for rubric in rubrics]
         )
     )
 
@@ -164,7 +164,7 @@ async def grade_with_rubrics(
 # ======================================================================
 
 
-async def grade_with_rubric_traced(
+async def score_with_rubric_traced(
     convo: Conversation,
     rubric: Rubric,
     grader_llm: MessageCompleter,
@@ -194,7 +194,7 @@ async def grade_with_rubric_traced(
     t_start = time.perf_counter()
 
     async with scope_span(f"compute_{reward_name}_reward"):
-        score, grader_response = await grade_with_rubric(convo, rubric, grader_llm)
+        score, grader_response = await score_with_rubric(convo, rubric, grader_llm)
 
     elapsed = time.perf_counter() - t_start
 
@@ -228,3 +228,12 @@ def compute_llm_judge_metrics(
     from tinker_cookbook.rewards._metrics import compute_reward_metrics
 
     return compute_reward_metrics(scores, reward_name)
+
+
+# ======================================================================
+# Deprecated aliases (backward compatibility)
+# ======================================================================
+
+grade_with_rubric = score_with_rubric
+grade_with_rubric_traced = score_with_rubric_traced
+grade_with_rubrics = score_with_rubrics

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Annotated, Any
 
 from tinker_cookbook.recipes.code_rl.code_grading import (
-    extract_code_from_model,
+    extract_code_block,
     sandbox_check_correctness,
 )
 from tinker_cookbook.renderers import get_text_content
@@ -99,7 +99,7 @@ class DeepcoderReward:
         content = get_text_content(final_message)
 
         # Extract code from content
-        code = extract_code_from_model(content)
+        code = extract_code_block(content)
         has_code_block = code is not None
 
         # Grade the code by running tests

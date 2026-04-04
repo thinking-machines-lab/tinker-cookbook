@@ -20,23 +20,23 @@ from tinker_cookbook.utils import logtree
 from tinker_cookbook.utils.trace import scope_span_sync
 
 
-def has_boxed_answer(text: str) -> bool:
+def check_has_boxed(text: str) -> bool:
     r"""Return ``True`` if *text* contains at least one ``\boxed{...}`` expression."""
-    from tinker_cookbook.rewards.math_rewards import extract_boxed
+    from tinker_cookbook.rewards.math_rewards import extract_boxed_answer
 
     try:
-        extract_boxed(text)
+        extract_boxed_answer(text)
         return True
     except ValueError:
         return False
 
 
-def has_code_block(text: str) -> bool:
+def check_has_code_block(text: str) -> bool:
     """Return ``True`` if *text* contains a fenced code block (triple backticks)."""
     return bool(re.search(r"```(?:\w+)?\n.*?```", text, re.DOTALL))
 
 
-def has_xml_tag(text: str, tag: str) -> bool:
+def check_has_xml_tag(text: str, tag: str) -> bool:
     """Return ``True`` if *text* contains a matching ``<tag>...</tag>`` pair.
 
     Args:
@@ -47,7 +47,7 @@ def has_xml_tag(text: str, tag: str) -> bool:
     return bool(re.search(pattern, text, re.DOTALL))
 
 
-def extract_xml_tag(text: str, tag: str) -> str | None:
+def extract_xml_content(text: str, tag: str) -> str | None:
     """Extract content between ``<tag>`` and ``</tag>``.
 
     Returns ``None`` if the tag pair is not found.  If multiple matches
@@ -61,7 +61,7 @@ def extract_xml_tag(text: str, tag: str) -> str | None:
     return matches[-1].strip()
 
 
-def is_valid_json(text: str) -> bool:
+def check_is_valid_json(text: str) -> bool:
     """Return ``True`` if *text* is valid JSON."""
     try:
         json.loads(text)
@@ -70,7 +70,7 @@ def is_valid_json(text: str) -> bool:
         return False
 
 
-def has_answer_prefix(text: str, prefix: str = "Answer:") -> bool:
+def check_has_answer_prefix(text: str, prefix: str = "Answer:") -> bool:
     """Return ``True`` if *text* contains *prefix* (e.g. ``Answer:``)."""
     return prefix in text
 
@@ -88,7 +88,7 @@ def extract_after_prefix(text: str, prefix: str = "Answer:") -> str | None:
     return parts[1].strip()
 
 
-def format_reward(
+def score_format(
     text: str,
     check_fn: str = "boxed",
     format_coef: float = 0.1,
@@ -104,9 +104,9 @@ def format_reward(
         format_coef: Coefficient for the format penalty.
     """
     checkers = {
-        "boxed": has_boxed_answer,
-        "code_block": has_code_block,
-        "json": is_valid_json,
+        "boxed": check_has_boxed,
+        "code_block": check_has_code_block,
+        "json": check_is_valid_json,
     }
     if check_fn not in checkers:
         raise ConfigurationError(f"Unknown check_fn: {check_fn!r}. Choose from {list(checkers)}")
@@ -119,7 +119,7 @@ def format_reward(
 # ======================================================================
 
 
-def format_reward_with_trace(
+def score_format_traced(
     text: str,
     check_fn: str = "boxed",
     format_coef: float = 0.1,
@@ -148,7 +148,7 @@ def format_reward_with_trace(
     t_start = time.perf_counter()
 
     with scope_span_sync(f"compute_{reward_name}_reward"):
-        reward = format_reward(text, check_fn=check_fn, format_coef=format_coef)
+        reward = score_format(text, check_fn=check_fn, format_coef=format_coef)
 
     elapsed = time.perf_counter() - t_start
     passed = reward >= 0.0
@@ -167,3 +167,17 @@ def format_reward_with_trace(
             })
 
     return reward, metrics
+
+
+# ======================================================================
+# Deprecated aliases (backward compatibility)
+# ======================================================================
+
+has_boxed_answer = check_has_boxed
+has_code_block = check_has_code_block
+has_xml_tag = check_has_xml_tag
+has_answer_prefix = check_has_answer_prefix
+is_valid_json = check_is_valid_json
+extract_xml_tag = extract_xml_content
+format_reward = score_format
+format_reward_with_trace = score_format_traced

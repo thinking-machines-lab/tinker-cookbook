@@ -54,7 +54,7 @@ class WeightedReward:
     weight: float = 1.0
 
 
-def weighted_sum(text: str, rewards: Sequence[WeightedReward]) -> tuple[float, dict[str, float]]:
+def combine_weighted(text: str, rewards: Sequence[WeightedReward]) -> tuple[float, dict[str, float]]:
     """Compute a weighted sum of reward functions.
 
     Args:
@@ -74,7 +74,7 @@ def weighted_sum(text: str, rewards: Sequence[WeightedReward]) -> tuple[float, d
     return total, metrics
 
 
-def reward_min(text: str, fns: Sequence[Callable[[str], float]]) -> float:
+def combine_min(text: str, fns: Sequence[Callable[[str], float]]) -> float:
     """Return the minimum reward across all functions.
 
     Useful as a "gate" -- all criteria must be met.
@@ -82,7 +82,7 @@ def reward_min(text: str, fns: Sequence[Callable[[str], float]]) -> float:
     return min(fn(text) for fn in fns)
 
 
-def reward_max(text: str, fns: Sequence[Callable[[str], float]]) -> float:
+def combine_max(text: str, fns: Sequence[Callable[[str], float]]) -> float:
     """Return the maximum reward across all functions.
 
     Useful for "any-of" semantics where meeting one criterion suffices.
@@ -90,7 +90,7 @@ def reward_max(text: str, fns: Sequence[Callable[[str], float]]) -> float:
     return max(fn(text) for fn in fns)
 
 
-def reward_product(text: str, fns: Sequence[Callable[[str], float]]) -> float:
+def combine_product(text: str, fns: Sequence[Callable[[str], float]]) -> float:
     """Return the product of all reward values.
 
     Useful when rewards are in [0, 1] and you want an "AND" gate
@@ -102,7 +102,7 @@ def reward_product(text: str, fns: Sequence[Callable[[str], float]]) -> float:
     return result
 
 
-def threshold(fn: Callable[[str], float], cutoff: float) -> Callable[[str], float]:
+def combine_threshold(fn: Callable[[str], float], cutoff: float) -> Callable[[str], float]:
     """Wrap *fn* so it returns 1.0 when the score >= *cutoff*, else 0.0.
 
     Useful for converting a continuous reward into a binary signal.
@@ -119,7 +119,7 @@ def threshold(fn: Callable[[str], float], cutoff: float) -> Callable[[str], floa
 # ======================================================================
 
 
-def weighted_sum_with_trace(
+def combine_weighted_traced(
     text: str,
     rewards: Sequence[WeightedReward],
     *,
@@ -147,7 +147,7 @@ def weighted_sum_with_trace(
     t_start = time.perf_counter()
 
     with scope_span_sync(f"compute_{reward_name}_reward"):
-        total, per_component = weighted_sum(text, rewards)
+        total, per_component = combine_weighted(text, rewards)
 
     elapsed = time.perf_counter() - t_start
 
@@ -169,3 +169,15 @@ def weighted_sum_with_trace(
             logtree.table_from_dict(table_data)
 
     return total, metrics
+
+
+# ======================================================================
+# Deprecated aliases (backward compatibility)
+# ======================================================================
+
+weighted_sum = combine_weighted
+weighted_sum_with_trace = combine_weighted_traced
+reward_min = combine_min
+reward_max = combine_max
+reward_product = combine_product
+threshold = combine_threshold

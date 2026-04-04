@@ -9,9 +9,9 @@ from datasets import Dataset, concatenate_datasets, get_dataset_config_names, lo
 
 from tinker_cookbook import renderers
 from tinker_cookbook.recipes.math_rl.math_grading import (
-    extract_boxed,
-    grade_answer,
-    grade_answer_math_verify,
+    extract_boxed_answer,
+    grade_math_answer,
+    grade_math_answer_strict,
     run_with_timeout_signal,
 )
 from tinker_cookbook.rl.problem_env import ProblemEnv, ProblemGroupBuilder, logger
@@ -44,14 +44,14 @@ class MathEnv(ProblemEnv):
 
     def check_format(self, sample_str: str) -> bool:
         try:
-            _ = extract_boxed(sample_str)
+            _ = extract_boxed_answer(sample_str)
             return True
         except ValueError:
             return False
 
     def check_answer(self, sample_str: str) -> bool:
         try:
-            answer = extract_boxed(sample_str)
+            answer = extract_boxed_answer(sample_str)
         except ValueError:
             return False
         return safe_grade(answer, self.answer, self.grader, self.timeout)
@@ -75,9 +75,9 @@ class MathEnv(ProblemEnv):
 
 def safe_grade(given_answer: str, ground_truth: str, grader: str = "sympy", timeout: float = 1.0):
     if grader == "sympy":
-        grader_func = grade_answer
+        grader_func = grade_math_answer
     elif grader == "math_verify":
-        grader_func = grade_answer_math_verify
+        grader_func = grade_math_answer_strict
     else:
         raise ValueError(f"Invalid grader: {grader}")
     out = run_with_timeout_signal(
@@ -176,7 +176,7 @@ class MathDataset(RLDataset):
         self, x: dict[str, str], group_size: int
     ) -> ProblemGroupBuilder | None:
         try:
-            answer = extract_boxed(x["solution"])
+            answer = extract_boxed_answer(x["solution"])
         except ValueError:  # not sure if this happens
             logger.warning(f"No answer found for {x['solution']}")
             return None
