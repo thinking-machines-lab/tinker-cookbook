@@ -13,7 +13,7 @@ only on correct ones with uniform SFT loss, while GRPO trains on all solutions
 weighted by advantage.
 
 Usage:
-    # MATH dataset (default, uses ~/data/ if available)
+    # MATH dataset (default)
     python -m tinker_cookbook.recipes.math_rft.train \\
         env=math \\
         groups_per_batch=32 \\
@@ -51,7 +51,6 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log
 
 logger = logging.getLogger(__name__)
-logging.getLogger("httpx").setLevel(logging.WARN)
 
 
 @chz.chz
@@ -176,6 +175,8 @@ async def evaluate_pass_at_1(
 
 
 async def main(config: Config):
+    logging.getLogger("httpx").setLevel(logging.WARN)
+
     # Resolve renderer
     renderer_name = (
         await checkpoint_utils.resolve_renderer_name_from_checkpoint_or_default_async(
