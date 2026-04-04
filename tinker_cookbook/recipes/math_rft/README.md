@@ -163,5 +163,8 @@ optimum that GRPO's small-step updates can't escape. See NOTES.md for detailed a
 ## References
 
 - [STaR: Self-Taught Reasoner](https://arxiv.org/abs/2203.14465) - Zelikman et al., 2022
-- [Scaling LLM Test-Time Compute Optimally](https://arxiv.org/abs/2408.03314) - Snell et al., 2024
+- [Yuan et al.: Scaling Mathematical Reasoning with LLMs](https://arxiv.org/abs/2308.01825) - coined RFT, showed distinct reasoning paths matter
+- [ReST-EM: Beyond Human Data](https://arxiv.org/abs/2312.06585) - EM formulation of self-training
+- [DART-Math: Difficulty-Aware Rejection Tuning](https://arxiv.org/abs/2407.13690) - NeurIPS 2024, addresses easy-problem bias
+- [A Minimalist Approach to LLM Reasoning](https://arxiv.org/abs/2504.11343) - GRPO vs RAFT++ comparison, entropy collapse analysis
 - [DeepSeek-R1](https://arxiv.org/abs/2501.12948) - DeepSeek AI, 2025 (uses RFT as part of training pipeline)

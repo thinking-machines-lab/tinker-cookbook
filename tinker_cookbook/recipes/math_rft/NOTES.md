@@ -215,6 +215,26 @@ problems, shift the distribution toward harder ones. This is natural for RFT
 because the solve rate determines whether a problem contributes training signal.
 **Expected impact:** More efficient use of training compute.
 
+## Related Work
+
+Key papers on RFT and its improvements:
+
+| Paper | Key Contribution |
+|-------|-----------------|
+| **STaR** (Zelikman+ 2022) | Original iterative self-improvement loop with rationalization |
+| **Yuan+ (RFT)** (2023) | Coined RFT; showed distinct reasoning paths matter more than count |
+| **ReST-EM** (Singh+ 2023) | EM formulation; 32 samples/problem at T=0.7; most gains in 1-3 iterations |
+| **DART-Math** (Tong+ NeurIPS 2024) | Difficulty-aware rejection tuning — more samples for harder problems |
+| **V-STaR** (Hosseini+ COLM 2024) | DPO-based verifier trained on correct+incorrect solutions |
+| **Minimalist RL** (Xiong+ 2025) | RAFT++ plateaus from entropy collapse; GRPO's advantage is discarding all-incorrect prompts |
+| **AdaSTaR** (Koh+ NeurIPS 2025) | Adaptive curriculum with per-problem statistics; 58.6% FLOP reduction |
+| **RIFT** (2026) | Soft reward weighting instead of binary; uses negative samples |
+
+Our findings align well with the literature:
+- The plateau behavior matches Xiong+ 2025 (entropy collapse → flat performance)
+- Easy-problem bias matches DART-Math (vanilla RFT overweights easy queries)
+- The warm-start failure aligns with entropy collapse theory (low-entropy policy → poor RL exploration)
+
 ## Log
 - 2026-04-03 01:51: Initial implementation committed
 - 2026-04-03 03:03: First full GSM8K run: peak 94.0% at step 10
@@ -224,3 +244,6 @@ because the solve rate determines whether a problem contributes training signal.
 - 2026-04-03 14:00: MATH GRPO experiment: breaks through to 85.1% at step 35
 - 2026-04-03 18:00: Hybrid RFT→GRPO experiment: surprising negative result (79.3% < 85.1%)
 - 2026-04-03 19:00: Analysis and follow-up ideas written up
+- 2026-04-04: Refactored recipe (modular datasets, grading, unit tests)
+- 2026-04-04: Switched to MATH-lighteval train + MATH-500 eval (standard benchmark)
+- 2026-04-04: Running replication experiment with refactored code

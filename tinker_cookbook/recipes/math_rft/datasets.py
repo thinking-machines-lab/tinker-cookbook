@@ -53,29 +53,31 @@ def load_math_problems(
     data_path: str | None = None,
     seed: int = 0,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-    """Load MATH train (12K) and MATH-500 test problems.
+    """Load MATH train (7.5K) and MATH-500 test problems.
+
+    Training data comes from DigitalLearningGmbH/MATH-lighteval train split
+    (7,500 problems across 5 difficulty levels and 7 categories).
+
+    Test data uses HuggingFaceH4/MATH-500, the standard 500-problem evaluation
+    benchmark used by DeepSeek-Math, Open-R1, and other papers.
 
     Args:
-        data_path: If provided, load from local Arrow datasets at
-            {data_path}/math_train and {data_path}/math_test.
-            Otherwise downloads from HuggingFace.
+        data_path: If provided, load train from local Arrow at
+            {data_path}/math_train. Otherwise downloads from HuggingFace.
         seed: Random seed for shuffling training data.
 
     Returns:
         (train_data, test_data) where each is a list of problem dicts.
     """
+    # Load training data
     if data_path:
-        logger.info(f"Loading MATH from local path: {data_path}")
+        logger.info(f"Loading MATH train from local path: {data_path}/math_train")
         train_ds = load_from_disk(f"{data_path}/math_train")
-        test_ds = load_from_disk(f"{data_path}/math_test")
     else:
-        logger.info("Loading MATH from HuggingFace (DigitalLearningGmbH/MATH-lighteval)...")
-        ds = load_dataset("DigitalLearningGmbH/MATH-lighteval")
-        train_ds = ds["train"]  # type: ignore[index]
-        test_ds = ds["test"]  # type: ignore[index]
+        logger.info("Loading MATH train from HuggingFace (DigitalLearningGmbH/MATH-lighteval)...")
+        train_ds = load_dataset("DigitalLearningGmbH/MATH-lighteval", split="train")
 
     assert isinstance(train_ds, Dataset)
-    assert isinstance(test_ds, Dataset)
 
     # Shuffle training data
     rng = random.Random(seed)
@@ -88,13 +90,18 @@ def load_math_problems(
         if parsed:
             train_data.append(parsed)
 
+    # Load MATH-500 test set (the standard eval benchmark)
+    logger.info("Loading MATH-500 test set from HuggingFace (HuggingFaceH4/MATH-500)...")
+    test_ds = load_dataset("HuggingFaceH4/MATH-500", split="test")
+    assert isinstance(test_ds, Dataset)
+
     test_data = []
     for row in test_ds:
         parsed = _parse_math_row(row)
         if parsed:
             test_data.append(parsed)
 
-    logger.info(f"MATH: {len(train_data)} train, {len(test_data)} test problems")
+    logger.info(f"MATH: {len(train_data)} train, {len(test_data)} test (MATH-500) problems")
     return train_data, test_data
 
 
