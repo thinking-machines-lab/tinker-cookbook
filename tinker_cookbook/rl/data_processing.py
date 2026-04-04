@@ -21,7 +21,12 @@ logger = logging.getLogger(__name__)
 
 
 def compute_advantages(trajectory_groups_P: list[TrajectoryGroup]) -> list[torch.Tensor]:
-    """Compute advantages for each trajectory, centered within groups.
+    """Compute advantages for each trajectory, centered within groups (GRPO).
+
+    This is a convenience wrapper that delegates to
+    :func:`~tinker_cookbook.rl.advantages.compute_grpo_advantages`. For
+    alternative advantage estimators (REINFORCE++, GAE), use
+    :func:`~tinker_cookbook.rl.advantages.compute_advantages` directly.
 
     Args:
         trajectory_groups_P (list[TrajectoryGroup]): Groups of trajectories,
@@ -31,15 +36,9 @@ def compute_advantages(trajectory_groups_P: list[TrajectoryGroup]) -> list[torch
         list[torch.Tensor]: Per-group advantage tensors of shape ``(G,)``,
             where ``G`` is the number of trajectories in each group.
     """
-    advantages_P: list[torch.Tensor] = []
+    from tinker_cookbook.rl.advantages import compute_grpo_advantages
 
-    for traj_group in trajectory_groups_P:
-        rewards_G = torch.tensor(traj_group.get_total_rewards())
-        # Center advantages within the group
-        advantages_G = rewards_G - rewards_G.mean()
-        advantages_P.append(advantages_G)
-
-    return advantages_P
+    return compute_grpo_advantages(trajectory_groups_P)
 
 
 FlatObElem = int | tinker.ModelInputChunk

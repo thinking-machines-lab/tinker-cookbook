@@ -1,5 +1,6 @@
 """Reinforcement learning: environment protocol, types, and training loops."""
 
+from tinker_cookbook.rl.advantages import AdvantageMethod
 from tinker_cookbook.rl.interleaved import InterleavedRLDatasetBuilder
 from tinker_cookbook.rl.rollout_strategy import FailFast, RetryOnFailure, RolloutStrategy
 from tinker_cookbook.rl.types import (
@@ -20,6 +21,8 @@ from tinker_cookbook.rl.types import (
 )
 
 __all__ = [
+    # Advantage estimation (advantages.py)
+    "AdvantageMethod",
     # Core protocol and types (types.py)
     "Action",
     "ActionExtra",

@@ -27,6 +27,8 @@ from tinker_cookbook import checkpoint_utils, model_info
 from tinker_cookbook.display import colorize_example
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator, SamplingClientEvaluatorBuilder
 from tinker_cookbook.exceptions import ConfigurationError
+from tinker_cookbook.rl.advantages import AdvantageMethod
+from tinker_cookbook.rl.advantages import compute_advantages as compute_advantages_configurable
 from tinker_cookbook.rl.data_processing import (
     assemble_training_data,
     compute_advantages,
@@ -458,6 +460,25 @@ class Config:
     kl_discount_factor: float = 0.0
     # Required when kl_penalty_coef > 0.
     kl_reference_config: KLReferenceConfig | None = None
+
+    # -------------------------------------------------------------------------
+    # Advantage estimation (advanced)
+    # -------------------------------------------------------------------------
+    # Which advantage estimator to use: "grpo", "reinforce_pp", or "gae".
+    advantage_method: AdvantageMethod = AdvantageMethod.GRPO
+    # For REINFORCE++: normalize advantages by std within each group.
+    advantage_normalize: bool = True
+
+    # -------------------------------------------------------------------------
+    # PPO-specific configuration (advanced)
+    # -------------------------------------------------------------------------
+    # Clip epsilon for PPO's clipped surrogate objective. Only relevant when
+    # loss_fn="ppo". The policy ratio is clipped to [1-clip_eps, 1+clip_eps].
+    ppo_clip_eps: float = 0.2
+    # Discount factor for GAE advantage estimation (only used with advantage_method="gae").
+    gae_gamma: float = 1.0
+    # Lambda for GAE bias-variance trade-off (only used with advantage_method="gae").
+    gae_lambda: float = 0.95
 
     # -------------------------------------------------------------------------
     # Loss and optimizer behavior (advanced)
@@ -1290,6 +1311,8 @@ async def prepare_minibatch(
     kl_reference_client: tinker.SamplingClient | None,
     kl_penalty_coef: float,
     kl_discount_factor: float,
+    advantage_method: AdvantageMethod = AdvantageMethod.GRPO,
+    advantage_normalize: bool = True,
 ) -> tuple[list[tinker.Datum], dict[str, Any]]:
     """Convert trajectory groups into training data with computed advantages.
 
@@ -1309,6 +1332,10 @@ async def prepare_minibatch(
             to 0 to disable.
         kl_discount_factor (float): Position-based discount factor for KL
             penalty terms.
+        advantage_method (AdvantageMethod): Which advantage estimator to use.
+            Defaults to GRPO for backward compatibility.
+        advantage_normalize (bool): For REINFORCE++, whether to normalize
+            advantages by std. Defaults to True.
 
     Returns:
         tuple[list[tinker.Datum], dict[str, Any]]: A list of training datums
@@ -1326,7 +1353,11 @@ async def prepare_minibatch(
 
     # Assemble training data
     async with trace.scope_span("assemble_training_data"):
-        advantages_P = compute_advantages(trajectory_groups_P)
+        advantages_P = compute_advantages_configurable(
+            trajectory_groups_P,
+            method=advantage_method,
+            normalize=advantage_normalize,
+        )
         data_D, _metadata_D = assemble_training_data(trajectory_groups_P, advantages_P)
 
     # Incorporate KL penalty if configured
@@ -1497,6 +1528,8 @@ async def do_train_step_streaming_and_get_sampling_client(
                 kl_reference_client,
                 kl_penalty_coef=config.kl_penalty_coef,
                 kl_discount_factor=config.kl_discount_factor,
+                advantage_method=config.advantage_method,
+                advantage_normalize=config.advantage_normalize,
             )
             metrics.update(prepare_minibatch_metrics)
 
@@ -1605,6 +1638,8 @@ async def do_train_step_and_get_sampling_client(
         kl_reference_client,
         kl_penalty_coef=config.kl_penalty_coef,
         kl_discount_factor=config.kl_discount_factor,
+        advantage_method=config.advantage_method,
+        advantage_normalize=config.advantage_normalize,
     )
     metrics.update(prepare_minibatch_metrics)
 
