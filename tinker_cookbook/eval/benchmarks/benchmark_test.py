@@ -445,3 +445,82 @@ class TestPassAtK:
 
     def test_choose_k_values(self):
         assert _choose_k_values(10) == [1, 5, 10]
+
+    # --- Edge cases for pass@k correctness ---
+
+    def test_pass_at_k_single_n_equals_1(self):
+        """Degenerate case: single sample."""
+        assert _pass_at_k_single(1, 1, 1) == 1.0
+        assert _pass_at_k_single(1, 0, 1) == 0.0
+
+    def test_pass_at_k_single_k_equals_n(self):
+        """When k == n, pass@k == 1.0 iff c >= 1."""
+        assert _pass_at_k_single(5, 1, 5) == 1.0
+        assert _pass_at_k_single(5, 0, 5) == 0.0
+
+    def test_pass_at_k_single_large_k(self):
+        """Codex formula: pass@k with k=10, n=10, c=5."""
+        # C(5, 10) / C(10, 10) — but n-c=5 < k=10, so returns 1.0
+        assert _pass_at_k_single(10, 5, 10) == 1.0
+        # n-c=8 >= k=3, so 1 - C(8,3)/C(10,3) = 1 - 56/120 = 0.5333...
+        result = _pass_at_k_single(10, 2, 3)
+        assert abs(result - (1.0 - 56 / 120)) < 1e-9
+
+    def test_errors_counted_as_incorrect_in_pass_at_k(self):
+        """Errors (reward=0.0) should count as incorrect samples, not be excluded.
+
+        This is the key semantic: an errored sample lowers n's effective
+        correctness rate, making pass@k lower — same as a wrong answer.
+        """
+        # 2 correct, 3 errors (reward=0.0) out of 5 samples
+        per_example = {"a": [1.0, 0.0, 1.0, 0.0, 0.0]}
+        result = _compute_pass_at_k(per_example, [1])
+        # pass@1 = _pass_at_k_single(5, 2, 1) = 0.4
+        assert abs(result[1] - 0.4) < 1e-9
+
+    def test_compute_pass_at_k_empty(self):
+        """Empty input returns empty dict."""
+        assert _compute_pass_at_k({}, [1, 5]) == {}
+
+    def test_compute_pass_at_k_skips_k_greater_than_n(self):
+        """Examples with fewer samples than k are excluded from that k."""
+        per_example = {
+            "a": [1.0, 0.0, 0.0],  # n=3
+            "b": [0.0],  # n=1
+        }
+        result = _compute_pass_at_k(per_example, [1, 3, 5])
+        # k=1: both examples contribute — mean of pass@1(3,1,1)=1/3 and pass@1(1,0,1)=0.0
+        assert abs(result[1] - 1 / 6) < 1e-9
+        # k=3: only "a" contributes — pass@3(3,1,3) = 1.0
+        assert abs(result[3] - 1.0) < 1e-9
+        # k=5: neither has enough samples
+        assert 5 not in result
+
+    def test_compute_pass_at_k_uniform_samples(self):
+        """All examples have the same number of samples — standard case."""
+        per_example = {
+            "a": [1.0, 1.0, 0.0, 0.0],  # c=2, n=4
+            "b": [0.0, 0.0, 0.0, 0.0],  # c=0, n=4
+            "c": [1.0, 1.0, 1.0, 1.0],  # c=4, n=4
+        }
+        result = _compute_pass_at_k(per_example, [1, 4])
+        # pass@1: mean of 0.5, 0.0, 1.0 = 0.5
+        assert abs(result[1] - 0.5) < 1e-9
+        # pass@4: mean of 1.0, 0.0, 1.0 = 2/3
+        assert abs(result[4] - 2 / 3) < 1e-9
+
+    def test_choose_k_values_small(self):
+        """num_samples=1 should return [1]."""
+        assert _choose_k_values(1) == [1]
+
+    def test_choose_k_values_non_standard(self):
+        """num_samples=4 should return [1, 4] (4 is not a standard candidate)."""
+        assert _choose_k_values(4) == [1, 4]
+
+    def test_choose_k_values_large(self):
+        """num_samples=200 should include all standard values plus 200."""
+        assert _choose_k_values(200) == [1, 5, 10, 25, 50, 100, 200]
+
+    def test_choose_k_values_exact_candidate(self):
+        """num_samples matching a standard candidate shouldn't duplicate it."""
+        assert _choose_k_values(50) == [1, 5, 10, 25, 50]
