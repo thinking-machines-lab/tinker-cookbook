@@ -19,6 +19,7 @@ from enum import Enum
 import numpy as np
 import torch
 
+from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.rl.types import TrajectoryGroup
 from tinker_cookbook.utils import logtree, trace
 
@@ -190,7 +191,7 @@ def compute_advantages(
                 trajectory_groups_P, normalize=normalize, eps=eps
             )
     else:
-        raise ValueError(f"Unknown advantage method: {method}")
+        raise ConfigurationError(f"Unknown advantage method: {method}")
 
     stats = _log_advantage_stats(advantages_P, method, trajectory_groups_P)
     return advantages_P, stats

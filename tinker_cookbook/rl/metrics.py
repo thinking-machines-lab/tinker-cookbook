@@ -6,6 +6,7 @@ and computing training metrics.
 """
 
 import asyncio
+import logging
 from typing import Any, cast
 
 import tinker
@@ -13,6 +14,8 @@ import torch
 
 from tinker_cookbook.utils import trace
 from tinker_cookbook.utils.misc_utils import safezip
+
+logger = logging.getLogger(__name__)
 
 
 def compute_ppo_metrics(
