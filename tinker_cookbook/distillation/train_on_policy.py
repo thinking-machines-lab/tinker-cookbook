@@ -53,6 +53,8 @@ async def incorporate_kl_penalty(
     dataset_indices_D: list[int],
     kl_penalty_coef: float,
     kl_discount_factor: float,
+    teacher_prefix_inputs_D: list[tinker.ModelInput | None] | None = None,
+    student_prefix_lens_D: list[int] | None = None,
 ) -> dict[str, float]:
     """
     Compute reverse KL between the student (log p) and the teacher model (log q), computed as
@@ -64,13 +66,37 @@ async def incorporate_kl_penalty(
         dataset_indices_D: List of dataset indices, one per datum
         kl_penalty_coef: Coefficient for KL penalty
         kl_discount_factor: Discount factor for future KL
+        teacher_prefix_inputs_D: Optional per-datum teacher prefix (initial observation).
+            When provided alongside student_prefix_lens_D, the teacher's sequence is
+            reconstructed as teacher_prefix + student_completion for each datum that has
+            a non-None teacher prefix. Datums with None use the student's sequence as-is.
+        student_prefix_lens_D: Length of the student's initial observation per datum.
+            Required when teacher_prefix_inputs_D is provided.
     """
-    # Note: if your teacher has a different renderer than the student, you may want to modify
-    #       the full_sequence_inputs_D to match the teacher's renderer.
-    full_sequence_inputs_D = [
-        datum.model_input.append_int(cast(int, datum.loss_fn_inputs["target_tokens"].data[-1]))
-        for datum in data_D
-    ]
+    # Build teacher sequences, optionally replacing the prefix
+    full_sequence_inputs_D: list[tinker.ModelInput] = []
+    prefix_deltas: list[int] = []
+    for i, datum in enumerate(data_D):
+        student_full_seq = datum.model_input.append_int(
+            cast(int, datum.loss_fn_inputs["target_tokens"].data[-1])
+        )
+        teacher_prefix = (
+            teacher_prefix_inputs_D[i]
+            if teacher_prefix_inputs_D is not None
+            else None
+        )
+        if teacher_prefix is not None and student_prefix_lens_D is not None:
+            # Reconstruct: teacher_prefix + student_completion
+            student_tokens = student_full_seq.to_ints()
+            student_plen = student_prefix_lens_D[i]
+            completion_tokens = student_tokens[student_plen:]
+            teacher_tokens = teacher_prefix.to_ints() + completion_tokens
+            full_sequence_inputs_D.append(tinker.ModelInput.from_ints(teacher_tokens))
+            prefix_deltas.append(len(teacher_prefix.to_ints()) - student_plen)
+        else:
+            full_sequence_inputs_D.append(student_full_seq)
+            prefix_deltas.append(0)
+
     # Compute the teacher's logprobs for each element of the batch
     # Each datum uses its corresponding teacher sampling client
     teacher_logprobs_D = await asyncio.gather(
@@ -84,12 +110,29 @@ async def incorporate_kl_penalty(
     #   - q: teacher_logprobs
     sampled_logprobs_D = [datum.loss_fn_inputs["logprobs"].to_torch() for datum in data_D]
     float_masks = [datum.loss_fn_inputs["mask"].to_torch().float() for datum in data_D]
-    reverse_kl = [
-        (sampled_logprobs - torch.tensor(teacher_logprobs[1:])) * mask
-        for teacher_logprobs, sampled_logprobs, mask in safezip(
-            teacher_logprobs_D, sampled_logprobs_D, float_masks
-        )
-    ]
+    reverse_kl = []
+    for i, (teacher_logprobs, sampled_logprobs, mask) in enumerate(
+        safezip(teacher_logprobs_D, sampled_logprobs_D, float_masks)
+    ):
+        prefix_delta = prefix_deltas[i]
+        if prefix_delta == 0:
+            # Same prefix length — standard alignment
+            reverse_kl.append((sampled_logprobs - torch.tensor(teacher_logprobs[1:])) * mask)
+        else:
+            # Different prefix length — align on generated tokens only.
+            mask_indices = mask.nonzero(as_tuple=True)[0]
+            if len(mask_indices) == 0:
+                reverse_kl.append(torch.zeros_like(mask))
+                continue
+            # mask[k]=1 means the logprob at position k+1 in the student's full_seq.
+            # In the teacher's sequence that position is shifted by prefix_delta.
+            teacher_gen_lp = torch.tensor(
+                [teacher_logprobs[int(idx) + 1 + prefix_delta] for idx in mask_indices]
+            )
+            kl = torch.zeros_like(mask)
+            kl[mask_indices] = sampled_logprobs[mask_indices] - teacher_gen_lp
+            reverse_kl.append(kl * mask)
+
     # Track per-dataset KL for logging
     # dataset_idx -> (sum of KL, sum of mask)
     per_dataset_kl: dict[int, tuple[float, float]] = {}
@@ -211,12 +254,39 @@ async def prepare_minibatch(
             dataset_indices_D = [
                 dataset_indices_P[metadata["group_idx"]] for metadata in metadata_D
             ]
+
+            # Compute teacher prefixes for builders that provide them.
+            # Cache per group since all datums in a group share the same prefix.
+            teacher_prefix_cache: dict[int, tinker.ModelInput | None] = {}
+            teacher_prefix_inputs_D: list[tinker.ModelInput | None] = []
+            student_prefix_lens_D: list[int] = []
+            has_any_teacher_prefix = False
+            for metadata in metadata_D:
+                group_idx = metadata["group_idx"]
+                traj_idx = metadata["traj_idx"]
+                if group_idx not in teacher_prefix_cache:
+                    builder = env_group_builders_P[group_idx]
+                    if hasattr(builder, "compute_teacher_initial_observation"):
+                        teacher_prefix_cache[group_idx] = (
+                            builder.compute_teacher_initial_observation()
+                        )
+                    else:
+                        teacher_prefix_cache[group_idx] = None
+                tp = teacher_prefix_cache[group_idx]
+                teacher_prefix_inputs_D.append(tp)
+                if tp is not None:
+                    has_any_teacher_prefix = True
+                traj = trajectory_groups_P[group_idx].trajectories_G[traj_idx]
+                student_prefix_lens_D.append(traj.transitions[0].ob.length)
+
             kl_penalty_metrics = await incorporate_kl_penalty(
                 data_D,
                 teacher_clients_D,
                 dataset_indices_D,
                 kl_penalty_coef,
                 kl_discount_factor,
+                teacher_prefix_inputs_D=teacher_prefix_inputs_D if has_any_teacher_prefix else None,
+                student_prefix_lens_D=student_prefix_lens_D if has_any_teacher_prefix else None,
             )
         metrics.update(kl_penalty_metrics)
 

@@ -147,11 +147,25 @@ class ProblemEnv(Env):
 
 @dataclass(frozen=True)
 class ProblemGroupBuilder(EnvGroupBuilder):
-    """Builds a group of ProblemEnv instances from a factory callable."""
+    """Builds a group of ProblemEnv instances from a factory callable.
+
+    Attributes:
+        teacher_convo_prefix: Optional conversation prefix for the teacher model.
+            When set, the teacher sees a different prompt prefix than the student
+            during KL computation. The teacher's initial observation is built from
+            ``teacher_convo_prefix + [user_message]`` rendered with
+            ``teacher_renderer``. This is useful for on-policy distillation where
+            the teacher should be conditioned on a different system prompt while
+            keeping the same tool declarations and user message.
+        teacher_renderer: Renderer to use for building the teacher's initial
+            observation. Required when ``teacher_convo_prefix`` is set.
+    """
 
     env_thunk: Callable[[], ProblemEnv]
     num_envs: int
     dataset_name: str = "problems"
+    teacher_convo_prefix: list[renderers.Message] | None = None
+    teacher_renderer: renderers.Renderer | None = None
 
     async def make_envs(self) -> Sequence[Env]:
         """Create ``num_envs`` ProblemEnv instances using the factory callable."""
@@ -162,6 +176,20 @@ class ProblemGroupBuilder(EnvGroupBuilder):
     ) -> list[tuple[float, Metrics]]:
         """Return zero group rewards (all rewards come from per-step scoring)."""
         return [(0.0, {}) for _ in range(len(trajectory_group))]
+
+    def compute_teacher_initial_observation(self) -> Observation | None:
+        """Return the teacher's initial observation, or None to reuse the student's.
+
+        When ``teacher_convo_prefix`` and ``teacher_renderer`` are set, builds
+        the teacher prompt from ``teacher_convo_prefix + [user_message]``.
+        """
+        if self.teacher_convo_prefix is None or self.teacher_renderer is None:
+            return None
+        env = self.env_thunk()
+        convo = list(self.teacher_convo_prefix) + [
+            {"role": "user", "content": env.get_question()},
+        ]
+        return self.teacher_renderer.build_generation_prompt(convo)
 
     def logging_tags(self) -> list[str]:
         return [self.dataset_name]
