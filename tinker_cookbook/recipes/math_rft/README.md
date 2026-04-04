@@ -81,43 +81,47 @@ Config: `group_size=16, groups_per_batch=32, lr=1e-4, max_tokens=1024, lora_rank
 
 ### MATH-500 with Qwen3-8B (per-difficulty breakdown)
 
+Train: DigitalLearningGmbH/MATH-lighteval (7500), Eval: HuggingFaceH4/MATH-500
+
 ```
-Step  Overall  L1     L2     L3     L4     L5     Format
-  0   42.2%   81.4%  72.2%  47.6%  32.8%  14.2%  44.0%
-  5   78.8%   93.0%  91.1%  87.6%  76.6%  61.2%  90.4%
- 10   78.6%   97.7%  86.7%  85.7%  79.7%  60.4%  92.6%
- 20   78.2%   93.0%  85.6%  85.7%  79.7%  61.2%  90.4%
- 40   78.8%   93.0%  92.2%  88.6%  75.8%  60.4%  --
+Step  Overall  L1     L2     L3     L4     L5
+  0   42.8%   88%    68%    49%    36%    13%
+  5   80.4%   93%    92%    89%    80%    62%
+ 10   78.4%   93%    88%    87%    78%    61%
+ 15   79.0%   93%    88%    88%    76%    65%
+ 20   79.2%   91%    92%    87%    78%    62%
+ 30   80.2%   95%    90%    90%    79%    63%
+ 40   80.2%   95%    87%    88%    80%    65%
 ```
 
 Config: `group_size=16, groups_per_batch=32, lr=1e-4, max_tokens=2048, lora_rank=32`
 
 Key observations:
-- **+36.6pp in 5 steps** (42.2% -> 78.8%), then **complete plateau** for 35 more steps
-- L1-L2 saturate at 90%+, but **L5 is stuck at ~60%** -- RFT cannot break through
-- Format compliance jumps 44% -> 90% in 5 steps (easy for SFT to learn)
-- Training solve rate reaches 85-100% even for L5, but test L5 doesn't improve --
+- **+37.6pp in 5 steps** (42.8% -> 80.4%), then **complete plateau** for 35 more steps
+- L1-L2 saturate at 87-95%, but **L5 is stuck at ~63%** -- RFT cannot break through
+- Training solve rate reaches 90-100% even for L5, but test L5 doesn't improve --
   the model solves seen problems but doesn't generalize
 
 ### GRPO comparison on MATH-500 (same model, same group_size)
 
 ```
-Step  RFT (greedy)  GRPO (T=1.0)
-  0   42.2%         35.9%
-  5   78.8%         46.9%        <- RFT dominates early
- 10   78.6%         67.3%
- 15   78.0%         77.5%        <- crossover
- 20   78.2%         82.3%        <- GRPO breaks through
- 25   79.6%         81.6%
- 30   79.8%         84.1%
- 35   79.6%         85.1%        <- GRPO still climbing
+Step  RFT      GRPO
+  0   42.8%    43.4%
+  5   80.4%    55.2%          <- RFT dominates early
+ 10   78.4%    74.6%
+ 15   79.0%    81.4%          <- crossover
+ 20   79.2%    84.6%          <- GRPO breaks through
+ 25   79.6%    84.2%
+ 30   80.2%    83.4%
+ 35   80.4%    84.4%
 ```
 
+RFT eval: greedy (T=0). GRPO eval: on-policy (T=1.0).
 GRPO config: `lr=8e-5, loss_fn=importance_sampling`
 
 The crossover at step 15 reveals when GRPO's richer gradient signal (learning from
 both correct and incorrect solutions) overcomes RFT's faster initial convergence.
-GRPO at step 35 (85.1% at T=1.0) clearly surpasses RFT's ceiling (78.8% at greedy).
+GRPO at step 20 (84.6%) clearly surpasses RFT's ceiling (~80%).
 
 ## Why RFT Plateaus on Hard Tasks
 
@@ -149,7 +153,7 @@ GRPO step  Pure GRPO  Hybrid (RFT+GRPO)
 ```
 
 **Surprising negative result**: The naive warm-start *hurts* GRPO. The hybrid (79.3%)
-underperforms pure GRPO (85.1%). RFT appears to push the model into a low-entropy local
+underperforms pure GRPO (~85%). RFT appears to push the model into a low-entropy local
 optimum that GRPO's small-step updates can't escape. See NOTES.md for detailed analysis.
 
 ## Practical Recommendations
