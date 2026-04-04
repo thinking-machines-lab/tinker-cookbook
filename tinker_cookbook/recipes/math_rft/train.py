@@ -13,30 +13,37 @@ only on correct ones with uniform SFT loss, while GRPO trains on all solutions
 weighted by advantage.
 
 Usage:
+    # MATH dataset (default, uses ~/data/ if available)
     python -m tinker_cookbook.recipes.math_rft.train \\
-        model_name="Qwen/Qwen3-1.7B" \\
+        env=math \\
+        groups_per_batch=32 \\
+        learning_rate=1e-4
+
+    # GSM8K (easier)
+    python -m tinker_cookbook.recipes.math_rft.train \\
         env=gsm8k \\
-        group_size=16 \\
-        groups_per_batch=64 \\
-        learning_rate=2e-5 \\
-        max_tokens=1024
+        groups_per_batch=32
+
+    # Debug run
+    python -m tinker_cookbook.recipes.math_rft.train \\
+        env=gsm8k \\
+        groups_per_batch=4 group_size=4 max_steps=3
 """
 
 import asyncio
 import logging
 import math
 import time
+from datetime import datetime
 from typing import Literal
 
 import chz
 import tinker
 
-from tinker_cookbook import checkpoint_utils, model_info, renderers
-from tinker_cookbook.recipes.math_rl.math_env import (
-    MathEnv,
-    extract_gsm8k_final_answer,
-    safe_grade,
-)
+from tinker_cookbook import checkpoint_utils, cli_utils, renderers
+from tinker_cookbook.recipes.math_rft.datasets import load_gsm8k_problems, load_math_problems
+from tinker_cookbook.recipes.math_rft.grading import grade_response
+from tinker_cookbook.recipes.math_rl.math_env import MathEnv
 from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed
 from tinker_cookbook.supervised.common import compute_mean_nll
 from tinker_cookbook.supervised.data import conversation_to_datum
@@ -56,18 +63,19 @@ class Config:
     load_checkpoint_path: str | None = None
 
     # Dataset
-    env: Literal["gsm8k", "math"] = "gsm8k"
+    env: Literal["gsm8k", "math"] = "math"
+    data_path: str | None = None  # Local data directory (e.g., ~/data)
     seed: int = 0
 
     # Sampling
     group_size: int = 16  # K: number of solutions sampled per problem
-    groups_per_batch: int = 64  # Number of problems per batch
-    max_tokens: int = 1024
+    groups_per_batch: int = 32  # Number of problems per batch
+    max_tokens: int = 2048
     temperature: float = 1.0
 
     # Training
-    learning_rate: float = 2e-5
-    max_length: int = 2048  # Max token length for SFT datums
+    learning_rate: float = 1e-4
+    max_length: int = 3072  # Max token length for SFT datums
     max_datums_per_problem: int | None = None  # Limit SFT datums per problem (None = all correct)
 
     # Logging and checkpointing
@@ -77,17 +85,11 @@ class Config:
     eval_every: int = 5  # Evaluate every N batches
     save_every: int = 20
     ttl_seconds: int | None = 604800  # 7 days
+    behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "resume"
 
     # Infrastructure
     base_url: str | None = None
     max_steps: int | None = None
-
-
-def _default_log_path(config: Config) -> str:
-    if config.log_path:
-        return config.log_path
-    model_short = config.model_name.split("/")[-1]
-    return f"/tmp/tinker-examples/math_rft/{model_short}_{config.env}"
 
 
 def _get_question_suffix(env: str) -> str:
@@ -95,79 +97,6 @@ def _get_question_suffix(env: str) -> str:
         return " Provide a numerical answer without units, written inside \\boxed{}."
     else:
         return " Write your answer in \\boxed{} format."
-
-
-def _grade_response(response_text: str, ground_truth: str) -> bool:
-    """Check if a response contains the correct answer in \\boxed{} format."""
-    try:
-        given_answer = extract_boxed(response_text)
-    except ValueError:
-        return False
-    return safe_grade(given_answer, ground_truth, grader="sympy", timeout=1.0)
-
-
-def _load_dataset(
-    env: str, seed: int
-) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-    """Load train and test problems as lists of {problem, answer} dicts."""
-    if env == "gsm8k":
-        from datasets import load_dataset
-
-        ds = load_dataset("openai/gsm8k", name="main")
-        train_data = []
-        for row in ds["train"].shuffle(seed=seed):
-            try:
-                answer = extract_gsm8k_final_answer(row["answer"])
-                train_data.append({"problem": row["question"], "answer": answer})
-            except ValueError:
-                continue
-        test_data = []
-        for row in ds["test"]:
-            try:
-                answer = extract_gsm8k_final_answer(row["answer"])
-                test_data.append({"problem": row["question"], "answer": answer})
-            except ValueError:
-                continue
-        return train_data, test_data
-    elif env == "math":
-        from tinker_cookbook.recipes.math_rl.math_env import (
-            _get_hendrycks_math_test,
-            _get_hendrycks_math_train,
-        )
-
-        train_ds = _get_hendrycks_math_train().shuffle(seed=seed)
-        train_data = []
-        for row in train_ds:
-            try:
-                answer = extract_boxed(row["solution"])
-                # Train set uses "type" and "Level N" format
-                level_str = row.get("level", "")
-                level = level_str.replace("Level ", "") if level_str else ""
-                train_data.append({
-                    "problem": row["problem"],
-                    "answer": answer,
-                    "level": level,
-                    "category": row.get("type", ""),
-                })
-            except ValueError:
-                continue
-        test_ds = _get_hendrycks_math_test()
-        test_data = []
-        for row in test_ds:
-            try:
-                # MATH-500 test set has "answer" directly and uses "subject"/"level" (no "Level " prefix)
-                answer = row.get("answer") or extract_boxed(row["solution"])
-                test_data.append({
-                    "problem": row["problem"],
-                    "answer": answer,
-                    "level": row.get("level", ""),
-                    "category": row.get("subject", row.get("type", "")),
-                })
-            except ValueError:
-                continue
-        return train_data, test_data
-    else:
-        raise ValueError(f"Unknown env: {env}")
 
 
 async def evaluate_pass_at_1(
@@ -201,7 +130,6 @@ async def evaluate_pass_at_1(
         )
         return result, prob["answer"]
 
-    # Keep problems list aligned with results for per-level tracking
     results = await asyncio.gather(*[sample_one(p) for p in problems])
 
     # Grade results
@@ -228,7 +156,7 @@ async def evaluate_pass_at_1(
         except ValueError:
             pass
 
-        if _grade_response(content, answer):
+        if grade_response(content, answer):
             n_correct += 1
             if level:
                 level_correct[level] = level_correct.get(level, 0) + 1
@@ -248,26 +176,49 @@ async def evaluate_pass_at_1(
 
 
 async def main(config: Config):
-    log_path = _default_log_path(config)
+    # Resolve renderer
+    renderer_name = (
+        await checkpoint_utils.resolve_renderer_name_from_checkpoint_or_default_async(
+            model_name=config.model_name,
+            explicit_renderer_name=config.renderer_name,
+            load_checkpoint_path=config.load_checkpoint_path,
+            base_url=config.base_url,
+        )
+    )
+
+    # Setup log path
+    if config.log_path:
+        log_path = config.log_path
+    else:
+        model_slug = config.model_name.split("/")[-1]
+        timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M")
+        log_path = f"/tmp/tinker-examples/math_rft/{model_slug}_{config.env}_{timestamp}"
+
+    cli_utils.check_log_dir(log_path, behavior_if_exists=config.behavior_if_log_dir_exists)
+
+    wandb_name = config.wandb_name or log_path.split("/")[-1]
     ml_logger = ml_log.setup_logging(
         log_dir=log_path,
         wandb_project=config.wandb_project,
-        wandb_name=config.wandb_name,
+        wandb_name=wandb_name,
         config=config,
         do_configure_logging_module=True,
     )
 
     # Setup model
     tokenizer = get_tokenizer(config.model_name)
-    renderer_name = config.renderer_name or model_info.get_recommended_renderer_name(
-        config.model_name
-    )
     renderer = renderers.get_renderer(renderer_name, tokenizer=tokenizer)
     logger.info(f"Model: {config.model_name}, Renderer: {renderer_name}")
 
     # Load data
-    logger.info(f"Loading {config.env} dataset...")
-    train_data, test_data = _load_dataset(config.env, config.seed)
+    if config.env == "math":
+        train_data, test_data = load_math_problems(
+            data_path=config.data_path, seed=config.seed
+        )
+    elif config.env == "gsm8k":
+        train_data, test_data = load_gsm8k_problems(seed=config.seed)
+    else:
+        raise ValueError(f"Unknown env: {config.env}")
     logger.info(f"Train: {len(train_data)} problems, Test: {len(test_data)} problems")
 
     question_suffix = _get_question_suffix(config.env)
@@ -376,7 +327,7 @@ async def main(config: Config):
                 parsed_message, _parse_ok = renderer.parse_response(seq.tokens)
                 content = renderers.get_text_content(parsed_message)
 
-                if _grade_response(content, prob["answer"]):
+                if grade_response(content, prob["answer"]):
                     n_correct_samples += 1
                     problem_correct_count += 1
 
@@ -437,8 +388,8 @@ async def main(config: Config):
         )
         if level_totals:
             level_summary = ", ".join(
-                f"L{l}={level_solved.get(l, 0)}/{level_totals[l]}"
-                for l in sorted(level_totals.keys())
+                f"L{lv}={level_solved.get(lv, 0)}/{level_totals[lv]}"
+                for lv in sorted(level_totals.keys())
             )
             logger.info(f"  Per-level solve rates: {level_summary}")
 
