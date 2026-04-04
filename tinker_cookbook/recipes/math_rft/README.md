@@ -53,12 +53,13 @@ python -m tinker_cookbook.recipes.math_rft.train \
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `model_name` | `Qwen/Qwen3-8B` | HuggingFace model identifier |
-| `env` | `gsm8k` | Dataset: `gsm8k` or `math` |
+| `env` | `math` | Dataset: `gsm8k` or `math` |
+| `data_path` | None | Local data directory (e.g., `~/data`). Downloads from HF if None |
 | `group_size` | 16 | K: solutions sampled per problem |
-| `groups_per_batch` | 64 | Problems per training batch |
-| `learning_rate` | 2e-5 | Adam learning rate |
-| `max_tokens` | 1024 | Max generation length |
-| `max_length` | 2048 | Max sequence length for SFT datums |
+| `groups_per_batch` | 32 | Problems per training batch |
+| `learning_rate` | 1e-4 | Adam learning rate |
+| `max_tokens` | 2048 | Max generation length |
+| `max_length` | 3072 | Max sequence length for SFT datums |
 | `temperature` | 1.0 | Sampling temperature |
 | `eval_every` | 5 | Evaluate every N batches |
 | `lora_rank` | 32 | LoRA adapter rank |
