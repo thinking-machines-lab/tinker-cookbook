@@ -67,7 +67,7 @@ This opens the notebook in your browser with an interactive editor. Rendered ver
 | 405 | [Multi-Agent RL](405_multi_agent.py) | MessageEnv, self-play, group rewards |
 | 406 | [Prompt Distillation](406_prompt_distillation.py) | Teacher/student, context distillation |
 | 407 | [RLHF Pipeline](407_rlhf_pipeline.py) | 3-stage SFT, preference model, RL |
-| 408 | [Why RL?](408_why_rl.py) | RFT vs GRPO: when SFT plateaus and RL breaks through |
+| 408 | [Why RL?](408_why_rl.ipynb) | RFT vs GRPO: when SFT plateaus and RL breaks through |
 
 ### Deployment (5xx)
 
