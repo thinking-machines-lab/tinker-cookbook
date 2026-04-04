@@ -122,6 +122,10 @@ def _get_hf_tokenizer(model_name: str) -> Tokenizer:
 
     model_name = model_name.split(":")[0]
 
+    # Local directory path — always trust custom tokenizer code bundled alongside.
+    if os.path.isdir(model_name):
+        return AutoTokenizer.from_pretrained(model_name, use_fast=True, trust_remote_code=True)
+
     # Avoid gating of Llama 3 models:
     if model_name.startswith("meta-llama/Llama-3"):
         model_name = "thinkingmachineslabinc/meta-llama-3-instruct-tokenizer"
