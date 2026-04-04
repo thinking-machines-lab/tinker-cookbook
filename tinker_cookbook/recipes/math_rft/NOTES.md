@@ -246,4 +246,24 @@ Our findings align well with the literature:
 - 2026-04-03 19:00: Analysis and follow-up ideas written up
 - 2026-04-04: Refactored recipe (modular datasets, grading, unit tests)
 - 2026-04-04: Switched to MATH-lighteval train + MATH-500 eval (standard benchmark)
-- 2026-04-04: Running replication experiment with refactored code
+- 2026-04-04: Replication with refactored code: 42.8% → 80.4% plateau (matches previous)
+
+### Experiment 5: Replication with refactored code (completed, 2026-04-04)
+
+Config: `model_name=Qwen/Qwen3-8B, env=math, data_path=~/data, group_size=16, groups_per_batch=32, lr=1e-4, max_tokens=2048, lora_rank=32`
+Dataset: DigitalLearningGmbH/MATH-lighteval train (7500), HuggingFaceH4/MATH-500 test (500)
+
+| Step | Overall | L1 | L2 | L3 | L4 | L5 |
+|------|---------|----|----|----|----|-----|
+| 0 | 42.8% | 88% | 68% | 49% | 36% | 13% |
+| 5 | **80.4%** | 93% | 92% | 89% | 80% | 62% |
+| 10 | 78.4% | 93% | 88% | 87% | 78% | 61% |
+| 15 | 79.0% | 93% | 88% | 88% | 76% | 65% |
+| 20 | 79.2% | 91% | 92% | 87% | 78% | 62% |
+| 25 | 79.6% | 95% | 87% | 87% | 80% | 64% |
+| 30 | 80.2% | 95% | 90% | 90% | 79% | 63% |
+| 35 | 80.4% | 95% | 87% | 90% | 77% | 67% |
+| 40 | 80.2% | 95% | 87% | 88% | 80% | 65% |
+
+Successfully replicates previous results with new code. Plateau at ~80% confirmed.
+Key: L5 stuck at 61-67%, while training solve rate reaches 90-100%.
