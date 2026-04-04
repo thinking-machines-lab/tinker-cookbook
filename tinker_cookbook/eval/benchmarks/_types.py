@@ -5,12 +5,70 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypedDict
 
 import tinker
 
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.types import Env
+
+# ---------------------------------------------------------------------------
+# Type aliases — reuse RL conventions where possible
+# ---------------------------------------------------------------------------
+
+Metrics = dict[str, float | int]
+"""Numeric values aggregated across examples (e.g., ``{"correct": 1.0}``).
+Matches :data:`tinker_cookbook.rl.types.Metrics`."""
+
+Logs = dict[str, Any]
+"""Per-example diagnostic data for display/debugging (e.g., expected answer,
+extracted answer, example_id). Not aggregated — preserved per trajectory."""
+
+
+# ---------------------------------------------------------------------------
+# Serialization TypedDicts — define the JSON schema for stored data
+# ---------------------------------------------------------------------------
+
+
+class StoredTurnDict(TypedDict):
+    """JSON schema for a single turn in a stored trajectory."""
+
+    role: str
+    content: str
+    token_count: int
+    metadata: dict[str, Any]
+
+
+class StoredTrajectoryDict(TypedDict, total=False):
+    """JSON schema for a stored trajectory.
+
+    Required fields use ``total=False`` with explicit presence in
+    ``to_dict`` — this allows forward-compatible deserialization where
+    new optional fields can be added without breaking old data.
+    """
+
+    idx: int
+    benchmark: str
+    example_id: str
+    turns: list[StoredTurnDict]
+    reward: float
+    metrics: Metrics
+    logs: Logs
+    error: str | None
+    time_seconds: float
+
+
+class BenchmarkResultDict(TypedDict, total=False):
+    """JSON schema for a saved BenchmarkResult."""
+
+    name: str
+    score: float
+    num_examples: int
+    num_correct: int
+    num_errors: int
+    metrics: Metrics
+    time_seconds: float
+    pass_at_k: dict[str, float]  # JSON keys are strings
 
 
 @dataclass
@@ -122,7 +180,7 @@ class BenchmarkConfig:
         )
     """
 
-    grade_fn: Callable[[str, dict], float] | None = None
+    grade_fn: Callable[[str, Logs], float] | None = None
     """Custom grading function: ``(response, logs) -> reward``.
     If set, overrides the benchmark's built-in grading logic.
     ``response`` is the decoded model output (thinking stripped).
@@ -130,7 +188,7 @@ class BenchmarkConfig:
 
     Example::
 
-        def my_grader(response: str, logs: dict) -> float:
+        def my_grader(response: str, logs: Logs) -> float:
             expected = logs["expected"]
             # Custom extraction logic
             extracted = my_extract(response)
@@ -168,7 +226,7 @@ class StoredTurn:
     """Decoded text content of this turn."""
     token_count: int = 0
     """Number of tokens in this turn."""
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     """Arbitrary per-turn data (timing, tool calls, etc.)."""
 
 
@@ -192,40 +250,40 @@ class StoredTrajectory:
     """Full conversation history (decoded text, not tokens)."""
     reward: float = 0.0
     """Total reward (sum of per-step rewards)."""
-    metrics: dict = field(default_factory=dict)
-    """Per-example metrics from Env.step() (e.g., correct, overlong)."""
-    logs: dict = field(default_factory=dict)
+    metrics: Metrics = field(default_factory=dict)
+    """Per-example metrics from Env.step() (e.g., ``{"correct": 1.0}``)."""
+    logs: Logs = field(default_factory=dict)
     """Per-example logs from Env.step() (e.g., input, expected, extracted)."""
     error: str | None = None
     """Error message if this example failed."""
     time_seconds: float = 0.0
     """Wall time for this example."""
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> StoredTrajectoryDict:
         """Serialize to a JSON-compatible dict."""
-        return {
-            "idx": self.idx,
-            "benchmark": self.benchmark,
-            "example_id": self.example_id,
-            "turns": [
-                {
-                    "role": t.role,
-                    "content": t.content,
-                    "token_count": t.token_count,
-                    "metadata": t.metadata,
-                }
+        return StoredTrajectoryDict(
+            idx=self.idx,
+            benchmark=self.benchmark,
+            example_id=self.example_id,
+            turns=[
+                StoredTurnDict(
+                    role=t.role,
+                    content=t.content,
+                    token_count=t.token_count,
+                    metadata=t.metadata,
+                )
                 for t in self.turns
             ],
-            "reward": self.reward,
-            "metrics": self.metrics,
-            "logs": self.logs,
-            "error": self.error,
-            "time_seconds": self.time_seconds,
-        }
+            reward=self.reward,
+            metrics=self.metrics,
+            logs=self.logs,
+            error=self.error,
+            time_seconds=self.time_seconds,
+        )
 
     @classmethod
-    def from_dict(cls, d: dict) -> StoredTrajectory:
-        """Deserialize from a dict."""
+    def from_dict(cls, d: StoredTrajectoryDict) -> StoredTrajectory:
+        """Deserialize from a dict (e.g., loaded from JSONL)."""
         return cls(
             idx=d["idx"],
             benchmark=d["benchmark"],
@@ -258,7 +316,8 @@ class BenchmarkResult:
     num_examples: int
     num_correct: int
     num_errors: int = 0
-    metrics: dict = field(default_factory=dict)
+    metrics: Metrics = field(default_factory=dict)
+    """Benchmark-specific additional metrics (e.g., per-category scores)."""
     time_seconds: float = 0.0
     pass_at_k: dict[int, float] = field(default_factory=dict)
     """Maps k to pass@k score. Only populated when ``num_samples > 1``.
@@ -339,7 +398,7 @@ class BenchmarkBuilder(ABC):
     def aggregate(
         self,
         rewards: list[float],
-        metrics_list: list[dict],
+        metrics_list: list[Metrics],
     ) -> BenchmarkResult:
         """Aggregate per-example rewards into a BenchmarkResult.
 

@@ -34,6 +34,7 @@ from tinker_cookbook.eval.benchmarks._types import (
     BenchmarkBuilder,
     BenchmarkConfig,
     BenchmarkResult,
+    Metrics,
 )
 from tinker_cookbook.renderers.base import Message, Renderer
 from tinker_cookbook.rl.message_env import EnvFromMessageEnv
@@ -399,7 +400,7 @@ class SWEBenchBenchmarkBuilder(BenchmarkBuilder):
 
         return envs
 
-    def aggregate(self, rewards: list[float], metrics_list: list[dict]) -> BenchmarkResult:
+    def aggregate(self, rewards: list[float], metrics_list: list[Metrics]) -> BenchmarkResult:
         """Aggregate with resolve rate and per-instance metrics."""
         num_correct = sum(1 for r in rewards if r > 0)
         resolve_rate = num_correct / len(rewards) if rewards else 0.0

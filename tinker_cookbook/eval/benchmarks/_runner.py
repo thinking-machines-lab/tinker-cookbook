@@ -26,6 +26,9 @@ from tinker_cookbook.eval.benchmarks._types import (
     BenchmarkBuilder,
     BenchmarkConfig,
     BenchmarkResult,
+    BenchmarkResultDict,
+    Logs,
+    Metrics,
     StoredTrajectory,
     StoredTurn,
 )
@@ -52,8 +55,8 @@ def _trajectory_to_stored(
     """Convert a Trajectory to a StoredTrajectory with decoded text."""
     turns: list[StoredTurn] = []
     total_reward = 0.0
-    all_metrics: dict = {}
-    all_logs: dict = {}
+    all_metrics: Metrics = {}
+    all_logs: Logs = {}
 
     for t in trajectory.transitions:
         total_reward += t.reward
@@ -164,15 +167,15 @@ def _save_result(save_dir: str, result: BenchmarkResult) -> None:
     dir_path = Path(save_dir) / result.name
     dir_path.mkdir(parents=True, exist_ok=True)
     with open(dir_path / "result.json", "w") as f:
-        d = {
-            "name": result.name,
-            "score": result.score,
-            "num_examples": result.num_examples,
-            "num_correct": result.num_correct,
-            "num_errors": result.num_errors,
-            "metrics": result.metrics,
-            "time_seconds": result.time_seconds,
-        }
+        d = BenchmarkResultDict(
+            name=result.name,
+            score=result.score,
+            num_examples=result.num_examples,
+            num_correct=result.num_correct,
+            num_errors=result.num_errors,
+            metrics=result.metrics,
+            time_seconds=result.time_seconds,
+        )
         if result.pass_at_k:
             # JSON keys must be strings; convert int keys for serialization
             d["pass_at_k"] = {str(k): v for k, v in result.pass_at_k.items()}
@@ -421,7 +424,7 @@ async def run_benchmark(
 
     # Per-example results (None = not yet run or errored)
     rewards: list[float | None] = [None] * len(envs)
-    metrics_list: list[dict] = [{} for _ in range(len(envs))]
+    metrics_list: list[Metrics] = [{} for _ in range(len(envs))]
     num_errors = 0
     num_completed = 0
     total_to_run = len(envs) - len(completed_rewards)
@@ -453,13 +456,13 @@ async def run_benchmark(
                 total_reward = sum(t.reward for t in trajectory.transitions)
 
                 # Collect metrics from all transitions
-                step_metrics: dict = {}
+                step_metrics: Metrics = {}
                 for t in trajectory.transitions:
                     step_metrics.update(t.metrics)
 
                 # Apply custom grade_fn override if provided
                 if config.grade_fn is not None:
-                    step_logs: dict = {}
+                    step_logs: Logs = {}
                     for t in trajectory.transitions:
                         step_logs.update(t.logs)
                     # Decode only the last action (assistant response)
@@ -569,7 +572,7 @@ async def run_benchmark(
     # Track per-example rewards keyed by example_id.
     per_example_rewards: dict[str, list[float]] = {}
     all_rewards: list[float] = []
-    all_metrics: list[dict] = []
+    all_metrics: list[Metrics] = []
     total_errors = 0
 
     for sample_idx in range(num_samples):
@@ -708,7 +711,7 @@ def load_result(save_dir: str, benchmark_name: str) -> BenchmarkResult | None:
     if not path.exists():
         return None
     with open(path) as f:
-        d = json.load(f)
+        d: BenchmarkResultDict = json.load(f)
     # Convert pass_at_k string keys back to ints
     if "pass_at_k" in d:
         d["pass_at_k"] = {int(k): v for k, v in d["pass_at_k"].items()}
@@ -823,8 +826,8 @@ def print_trajectory(traj: StoredTrajectory) -> None:
 def regrade_trajectories(
     save_dir: str,
     benchmark_name: str,
-    grade_fn: Callable[[str, dict], float],
-    aggregate_fn: Callable[[list[float], list[dict]], BenchmarkResult] | None = None,
+    grade_fn: Callable[[str, Logs], float],
+    aggregate_fn: Callable[[list[float], list[Metrics]], BenchmarkResult] | None = None,
 ) -> BenchmarkResult:
     """Re-grade existing trajectories with a new grading function.
 
@@ -846,7 +849,7 @@ def regrade_trajectories(
 
     Example::
 
-        def my_grader(response: str, logs: dict) -> float:
+        def my_grader(response: str, logs: Logs) -> float:
             import re
             expected = logs["expected"]
             # Look for \\boxed{answer} first, then last number
@@ -860,12 +863,12 @@ def regrade_trajectories(
     trajectories = load_trajectories(save_dir, benchmark_name)
 
     rewards: list[float] = []
-    metrics_list: list[dict] = []
+    regraded_metrics: list[Metrics] = []
 
     for traj in trajectories:
         if traj.error:
             rewards.append(0.0)
-            metrics_list.append({})
+            regraded_metrics.append({})
             continue
 
         # Get the last assistant response
@@ -873,10 +876,10 @@ def regrade_trajectories(
 
         reward = grade_fn(response, traj.logs)
         rewards.append(reward)
-        metrics_list.append(traj.metrics)
+        regraded_metrics.append(traj.metrics)
 
     if aggregate_fn is not None:
-        return aggregate_fn(rewards, metrics_list)
+        return aggregate_fn(rewards, regraded_metrics)
 
     # Default: simple accuracy
     num_correct = sum(1 for r in rewards if r > 0)

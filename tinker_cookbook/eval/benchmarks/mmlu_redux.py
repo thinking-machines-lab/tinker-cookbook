@@ -28,6 +28,7 @@ from tinker_cookbook.eval.benchmarks._types import (
     BenchmarkBuilder,
     BenchmarkConfig,
     BenchmarkResult,
+    Metrics,
 )
 from tinker_cookbook.renderers import get_text_content
 from tinker_cookbook.renderers.base import Message, Renderer
@@ -189,7 +190,7 @@ class MMLUReduxBenchmarkBuilder(BenchmarkBuilder):
             )
         return envs
 
-    def aggregate(self, rewards: list[float], metrics_list: list[dict]) -> BenchmarkResult:
+    def aggregate(self, rewards: list[float], metrics_list: list[Metrics]) -> BenchmarkResult:
         """Aggregate with per-subject breakdown."""
         num_correct = sum(1 for r in rewards if r > 0)
         accuracy = num_correct / len(rewards) if rewards else 0.0

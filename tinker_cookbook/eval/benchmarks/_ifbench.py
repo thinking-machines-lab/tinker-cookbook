@@ -28,6 +28,7 @@ from tinker_cookbook.eval.benchmarks._types import (
     BenchmarkBuilder,
     BenchmarkConfig,
     BenchmarkResult,
+    Metrics,
 )
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -163,7 +164,7 @@ class IFBenchBenchmarkBuilder(BenchmarkBuilder):
             )
         return envs
 
-    def aggregate(self, rewards: list[float], metrics_list: list[dict]) -> BenchmarkResult:
+    def aggregate(self, rewards: list[float], metrics_list: list[Metrics]) -> BenchmarkResult:
         """Aggregate with both strict and loose accuracy."""
         strict_correct = sum(1 for r in rewards if r > 0)
         strict_acc = strict_correct / len(rewards) if rewards else 0.0

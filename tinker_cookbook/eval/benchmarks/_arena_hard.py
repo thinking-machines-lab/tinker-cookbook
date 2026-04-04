@@ -34,6 +34,7 @@ from tinker_cookbook.eval.benchmarks._types import (
     BenchmarkBuilder,
     BenchmarkConfig,
     BenchmarkResult,
+    Metrics,
 )
 from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.base import Renderer
@@ -187,7 +188,7 @@ class ArenaHardBenchmarkBuilder(BenchmarkBuilder):
             )
         return envs
 
-    def aggregate(self, rewards: list[float], metrics_list: list[dict]) -> BenchmarkResult:
+    def aggregate(self, rewards: list[float], metrics_list: list[Metrics]) -> BenchmarkResult:
         """Aggregate with win rate and average score."""
         num_good = sum(1 for r in rewards if r > 0)
         win_rate = num_good / len(rewards) if rewards else 0.0
