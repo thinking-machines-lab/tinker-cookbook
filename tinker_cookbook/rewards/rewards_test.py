@@ -431,7 +431,7 @@ class TestLlmJudgeErrorHandling:
         async def failing_llm(_msgs):
             raise ConnectionError("API down")
 
-        score, text = asyncio.get_event_loop().run_until_complete(
+        score, text = asyncio.run(
             grade_with_rubric(convo, rubric, failing_llm)
         )
         assert score == 0.0
@@ -450,7 +450,7 @@ class TestLlmJudgeErrorHandling:
         async def failing_llm(_msgs):
             raise RuntimeError("timeout")
 
-        score, _ = asyncio.get_event_loop().run_until_complete(
+        score, _ = asyncio.run(
             grade_with_rubric(convo, rubric, failing_llm, default_on_error=-1.0)
         )
         assert score == -1.0
