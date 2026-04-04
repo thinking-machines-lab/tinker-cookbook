@@ -48,6 +48,17 @@ class TestGrading:
     def test_empty_response(self):
         assert not grade_response("", "42")
 
+    def test_nested_boxed(self):
+        # Model sometimes produces nested \boxed
+        assert grade_response("So \\boxed{\\boxed{7}}.", "7")
+
+    def test_fraction_match(self):
+        assert grade_response("\\boxed{\\frac{1}{2}}", "\\frac{1}{2}")
+
+    def test_negative_number(self):
+        assert grade_response("\\boxed{-5}", "-5")
+        assert not grade_response("\\boxed{5}", "-5")
+
 
 class TestParseMathRow:
     def test_basic_row(self):
