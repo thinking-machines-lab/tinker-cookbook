@@ -3,11 +3,9 @@ Utilities for guessing good hyperparameters for fine-tuning.
 """
 
 import json
-import math
 import struct
 
 import huggingface_hub
-import numpy as np
 
 from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.utils.misc_utils import not_none
@@ -140,6 +138,48 @@ def get_lora_param_count(
     )
 
 
+# Empirical best LoRA learning rates from SFT sweep.
+# See tinker_cookbook/recipes/chat_sl/results/sft_sweep.md for details.
+_LORA_LR: dict[str, float] = {
+    # Qwen3
+    "Qwen/Qwen3-235B-A22B-Instruct-2507": 3e-04,
+    "Qwen/Qwen3-30B-A3B": 1e-03,
+    "Qwen/Qwen3-30B-A3B-Base": 1e-03,
+    "Qwen/Qwen3-30B-A3B-Instruct-2507": 1e-03,
+    "Qwen/Qwen3-32B": 3e-04,
+    "Qwen/Qwen3-4B-Instruct-2507": 1e-03,
+    "Qwen/Qwen3-8B": 1e-03,
+    "Qwen/Qwen3-8B-Base": 1e-03,
+    # Qwen3-VL
+    "Qwen/Qwen3-VL-235B-A22B-Instruct": 3e-04,
+    "Qwen/Qwen3-VL-30B-A3B-Instruct": 1e-03,
+    # Qwen3.5
+    "Qwen/Qwen3.5-397B-A17B": 3e-04,
+    "Qwen/Qwen3.5-35B-A3B": 3e-04,
+    "Qwen/Qwen3.5-27B": 3e-04,
+    "Qwen/Qwen3.5-4B": 3e-04,
+    # DeepSeek
+    "deepseek-ai/DeepSeek-V3.1": 4e-04,
+    "deepseek-ai/DeepSeek-V3.1-Base": 4e-04,
+    # Llama
+    "meta-llama/Llama-3.1-70B": 3e-04,
+    "meta-llama/Llama-3.1-8B": 3e-04,
+    "meta-llama/Llama-3.1-8B-Instruct": 3e-04,
+    "meta-llama/Llama-3.2-1B": 1e-03,
+    "meta-llama/Llama-3.2-3B": 1e-03,
+    "meta-llama/Llama-3.3-70B-Instruct": 3e-04,
+    # Kimi
+    "moonshotai/Kimi-K2-Thinking": 3e-04,
+    "moonshotai/Kimi-K2.5": 3e-04,
+    # NVIDIA Nemotron
+    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": 4e-04,
+    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": 1e-03,
+    # OpenAI
+    "openai/gpt-oss-120b": 3e-04,
+    "openai/gpt-oss-20b": 1e-04,
+}
+
+
 def get_lr(model_name: str, is_lora: bool = True) -> float:
     """Get a recommended learning rate for the given model.
 
@@ -164,46 +204,6 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
     Returns:
         The recommended learning rate.
     """
-    # Empirical best LoRA learning rates from SFT sweep.
-    _LORA_LR: dict[str, float] = {
-        # Qwen3
-        "Qwen/Qwen3-235B-A22B-Instruct-2507": 3e-04,
-        "Qwen/Qwen3-30B-A3B": 1e-03,
-        "Qwen/Qwen3-30B-A3B-Base": 1e-03,
-        "Qwen/Qwen3-30B-A3B-Instruct-2507": 1e-03,
-        "Qwen/Qwen3-32B": 3e-04,
-        "Qwen/Qwen3-4B-Instruct-2507": 1e-03,
-        "Qwen/Qwen3-8B": 1e-03,
-        "Qwen/Qwen3-8B-Base": 1e-03,
-        # Qwen3-VL
-        "Qwen/Qwen3-VL-235B-A22B-Instruct": 3e-04,
-        "Qwen/Qwen3-VL-30B-A3B-Instruct": 1e-03,
-        # Qwen3.5
-        "Qwen/Qwen3.5-397B-A17B": 3e-04,
-        "Qwen/Qwen3.5-35B-A3B": 3e-04,
-        "Qwen/Qwen3.5-27B": 3e-04,
-        "Qwen/Qwen3.5-4B": 3e-04,
-        # DeepSeek
-        "deepseek-ai/DeepSeek-V3.1": 4e-04,
-        "deepseek-ai/DeepSeek-V3.1-Base": 4e-04,
-        # Llama
-        "meta-llama/Llama-3.1-70B": 3e-04,
-        "meta-llama/Llama-3.1-8B": 3e-04,
-        "meta-llama/Llama-3.1-8B-Instruct": 3e-04,
-        "meta-llama/Llama-3.2-1B": 1e-03,
-        "meta-llama/Llama-3.2-3B": 1e-03,
-        "meta-llama/Llama-3.3-70B-Instruct": 3e-04,
-        # Kimi
-        "moonshotai/Kimi-K2-Thinking": 3e-04,
-        "moonshotai/Kimi-K2.5": 3e-04,
-        # NVIDIA Nemotron
-        "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": 4e-04,
-        "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": 1e-03,
-        # OpenAI
-        "openai/gpt-oss-120b": 3e-04,
-        "openai/gpt-oss-20b": 1e-04,
-    }
-
     lora_lr = _LORA_LR.get(model_name)
     if lora_lr is None:
         raise ConfigurationError(
@@ -215,48 +215,3 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
     if is_lora:
         return lora_lr
     return lora_lr / get_lora_lr_over_full_finetune_lr(model_name)
-
-
-def get_full_finetune_param_count(model_name: str) -> float:
-    """Get the total parameter count for a model by reading safetensors headers.
-
-    Args:
-        model_name: HuggingFace model identifier.
-
-    Returns:
-        Total number of parameters as a float.
-    """
-    count = 0
-    for _name, shape in _list_param_shapes_from_safetensors_remote(model_name).items():
-        count += np.prod(shape)
-    return float(count)
-
-
-def get_full_finetune_lr_multiplier(model_name: str) -> float:
-    """Get a model-specific LR multiplier for full fine-tuning, proportional to 1/sqrt(param_count).
-
-    Args:
-        model_name: HuggingFace model identifier.
-
-    Returns:
-        The LR multiplier for full fine-tuning.
-    """
-    return 1.0 / math.sqrt(get_full_finetune_param_count(model_name))
-
-
-def get_lora_lr_multiplier(model_name: str) -> float:
-    """Get a model-specific multiplier for the LR, when training with LoRA.
-
-    Given two models A and B, and learning rate LR_A that's known to be optimal for A,
-    we can guess an optimal learning rate for B as
-    LR_B = LR_A * get_lora_lr_multiplier(B) / get_lora_lr_multiplier(A)
-
-    Args:
-        model_name: HuggingFace model identifier.
-
-    Returns:
-        The LoRA LR multiplier combining full-finetune scaling and LoRA factor.
-    """
-    return get_full_finetune_lr_multiplier(model_name) * get_lora_lr_over_full_finetune_lr(
-        model_name
-    )
