@@ -6,7 +6,7 @@ values that are used to weight the policy gradient.
 
 Supported estimators:
 - **GRPO**: Group-relative advantages (mean-centered within each group).
-- **REINFORCE++**: Baseline-subtracted REINFORCE with optional std normalization.
+- **REINFORCE++ baseline**: Baseline-subtracted REINFORCE with optional std normalization.
 
 Note: GAE (Generalized Advantage Estimation) will be added when critic/value
 model support is available in the Tinker API.
@@ -34,7 +34,7 @@ class AdvantageMethod(str, Enum):
     """
 
     GRPO = "grpo"
-    REINFORCE_PP = "reinforce_pp"
+    REINFORCE_PP_BASELINE = "reinforce_pp_baseline"
 
 
 def compute_grpo_advantages(
@@ -68,16 +68,27 @@ def compute_reinforce_pp_advantages(
     normalize: bool = True,
     eps: float = 1e-8,
 ) -> list[torch.Tensor]:
-    """Compute REINFORCE++ advantages: baseline-subtracted with optional normalization.
+    """Compute REINFORCE++ baseline advantages: per-group mean subtraction with optional std normalization.
+
+    This is the **baseline** variant of REINFORCE++ (called
+    ``reinforce_plus_plus_baseline`` in VERL/SLIME), which subtracts the
+    per-group mean reward as a control variate.
 
     For each group, computes ``A_i = R_i - mean(R)``. When ``normalize=True``
     (the default), the advantages are further divided by ``std(R) + eps``,
-    producing unit-variance advantages that can stabilize training when reward
-    scales vary across groups.
+    producing unit-variance advantages.
 
-    REINFORCE++ is conceptually simpler than GRPO and sometimes works better
-    because the std normalization prevents high-variance groups from
-    dominating the gradient.
+    **Key properties:**
+
+    - **Trajectory-level advantages**: each trajectory gets a single scalar
+      advantage (its total reward minus the group mean), which is broadcast
+      to all action tokens.  This differs from VERL/SLIME's vanilla
+      REINFORCE++ which computes per-token advantages using gamma-discounted
+      returns.
+    - **Per-group normalization**: mean and std are computed within each
+      group independently.  VERL/SLIME's default whitens across the entire
+      DP batch, which requires distributed coordination not available in
+      Tinker's API architecture.
 
     Args:
         trajectory_groups_P: Groups of trajectories.
@@ -128,7 +139,7 @@ def _log_advantage_stats(
     }
 
     # Add method-specific metrics
-    if method == AdvantageMethod.REINFORCE_PP and trajectory_groups_P is not None:
+    if method == AdvantageMethod.REINFORCE_PP_BASELINE and trajectory_groups_P is not None:
         # Log the per-group baseline (mean reward) used for subtraction
         baselines = []
         for traj_group in trajectory_groups_P:
@@ -175,7 +186,7 @@ def compute_advantages(
         Tuple of (per-group advantage tensors, advantage metrics dict).
     """
     # Warn if normalize is explicitly set but method doesn't use it
-    if not normalize and method != AdvantageMethod.REINFORCE_PP:
+    if not normalize and method != AdvantageMethod.REINFORCE_PP_BASELINE:
         logger.warning(
             "advantage_normalize is set to False but advantage_method is '%s'. "
             "The normalize setting only affects REINFORCE++.",
@@ -185,7 +196,7 @@ def compute_advantages(
     if method == AdvantageMethod.GRPO:
         with trace.scope_span_sync("compute_grpo_advantages"):
             advantages_P = compute_grpo_advantages(trajectory_groups_P)
-    elif method == AdvantageMethod.REINFORCE_PP:
+    elif method == AdvantageMethod.REINFORCE_PP_BASELINE:
         with trace.scope_span_sync("compute_reinforce_pp_advantages"):
             advantages_P = compute_reinforce_pp_advantages(
                 trajectory_groups_P, normalize=normalize, eps=eps

@@ -162,7 +162,7 @@ class TestComputeAdvantagesDispatch:
     def test_dispatch_reinforce_pp(self) -> None:
         group = _make_group([1.0, 3.0])
         advantages_P, stats = compute_advantages(
-            [group], method=AdvantageMethod.REINFORCE_PP, normalize=True
+            [group], method=AdvantageMethod.REINFORCE_PP_BASELINE, normalize=True
         )
         expected = compute_reinforce_pp_advantages([group], normalize=True)
         assert torch.allclose(advantages_P[0], expected[0])

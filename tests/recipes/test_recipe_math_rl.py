@@ -59,7 +59,7 @@ def test_math_rl_reinforce_pp():
             "groups_per_batch=8",
             "group_size=4",
             "max_tokens=5",
-            "advantage_method=reinforce_pp",
+            "advantage_method=reinforce_pp_baseline",
             "behavior_if_log_dir_exists=delete",
         ],
     )

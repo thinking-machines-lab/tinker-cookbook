@@ -464,9 +464,9 @@ class Config:
     # -------------------------------------------------------------------------
     # Advantage estimation (advanced)
     # -------------------------------------------------------------------------
-    # Which advantage estimator to use: "grpo" or "reinforce_pp".
+    # Which advantage estimator to use: "grpo" or "reinforce_pp_baseline".
     advantage_method: AdvantageMethod = AdvantageMethod.GRPO
-    # For REINFORCE++: normalize advantages by std within each group.
+    # For REINFORCE++ baseline: normalize advantages by std within each group.
     advantage_normalize: bool = True
 
     # -------------------------------------------------------------------------
@@ -1330,8 +1330,8 @@ async def prepare_minibatch(
             penalty terms.
         advantage_method (AdvantageMethod): Which advantage estimator to use.
             Defaults to GRPO for backward compatibility.
-        advantage_normalize (bool): For REINFORCE++, whether to normalize
-            advantages by std. Defaults to True.
+        advantage_normalize (bool): For REINFORCE++ baseline, whether to
+            normalize advantages by std. Defaults to True.
 
     Returns:
         tuple[list[tinker.Datum], dict[str, Any]]: A list of training datums

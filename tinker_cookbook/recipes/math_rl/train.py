@@ -75,7 +75,7 @@ class CLIConfig:
     max_steps: int | None = None
 
     # Advantage estimation
-    advantage_method: str = "grpo"  # "grpo" or "reinforce_pp"
+    advantage_method: str = "grpo"  # "grpo" or "reinforce_pp_baseline"
     advantage_normalize: bool = True
 
 
