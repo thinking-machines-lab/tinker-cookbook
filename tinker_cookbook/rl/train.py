@@ -31,6 +31,7 @@ from tinker_cookbook.rl.advantages import AdvantageMethod
 from tinker_cookbook.rl.advantages import compute_advantages as compute_advantages_configurable
 from tinker_cookbook.rl.data_processing import (
     assemble_training_data,
+    compute_advantages as compute_grpo_advantages,
     remove_constant_reward_groups,
 )
 from tinker_cookbook.rl.metric_util import RLTestSetEvaluator, compute_trajectory_metrics
@@ -225,7 +226,7 @@ def print_group(traj_group: TrajectoryGroup, tokenizer: Tokenizer):
         )
 
     rewards = traj_group.get_total_rewards()
-    advantages_G = compute_advantages([traj_group])
+    advantages_G = compute_grpo_advantages([traj_group])
     data_D, metadata_D = assemble_training_data([traj_group], advantages_G)
 
     buf = io.StringIO()
