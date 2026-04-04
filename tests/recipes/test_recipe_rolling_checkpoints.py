@@ -38,7 +38,7 @@ def test_rolling_checkpoint_train():
             f"log_path={LOG_PATH}",
             "save_every=2",
             "rolling_save_every=1",
-            "rolling_ttl_seconds=300",
+            "rolling_ttl_seconds=3600",
         ],
         max_steps=4,
     )
@@ -75,7 +75,7 @@ def test_rolling_checkpoint_resume():
             f"log_path={LOG_PATH}",
             "save_every=2",
             "rolling_save_every=1",
-            "rolling_ttl_seconds=300",
+            "rolling_ttl_seconds=3600",
         ],
         max_steps=6,
     )
