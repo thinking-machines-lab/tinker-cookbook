@@ -209,6 +209,40 @@ class TestBenchmarkRegistration:
     def test_livecodebench_registered(self):
         self._check_registered("tinker_cookbook.eval.benchmarks._livecodebench", "livecodebench")
 
+    def test_ceval_registered(self):
+        self._check_registered("tinker_cookbook.eval.benchmarks.ceval", "ceval")
+
+    def test_supergpqa_registered(self):
+        self._check_registered("tinker_cookbook.eval.benchmarks.supergpqa", "supergpqa")
+
+    def test_hmmt_feb_2025_registered(self):
+        self._check_registered("tinker_cookbook.eval.benchmarks.hmmt", "hmmt_feb_2025")
+
+    def test_hmmt_nov_2025_registered(self):
+        self._check_registered("tinker_cookbook.eval.benchmarks.hmmt", "hmmt_nov_2025")
+
+
+class TestHMMTNormalization:
+    """Test the HMMT LaTeX normalization for answer comparison."""
+
+    def test_normalize_basic(self):
+        from tinker_cookbook.eval.benchmarks.hmmt import _normalize_latex
+
+        assert _normalize_latex("  42  ") == "42"
+        assert _normalize_latex("$42$") == "42"
+        assert _normalize_latex("\\frac{1}{2}") == "\\frac{1}{2}"
+
+    def test_normalize_text_wrapper(self):
+        from tinker_cookbook.eval.benchmarks.hmmt import _normalize_latex
+
+        assert _normalize_latex("\\text{yes}") == "yes"
+        assert _normalize_latex("\\mathrm{cm}") == "cm"
+
+    def test_normalize_left_right(self):
+        from tinker_cookbook.eval.benchmarks.hmmt import _normalize_latex
+
+        assert _normalize_latex("\\left(x\\right)") == "(x)"
+
 
 class TestMCQExtraction:
     """Test answer extraction functions from MCQ benchmarks."""
