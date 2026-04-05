@@ -24,6 +24,12 @@ Logs = dict[str, Any]
 """Per-example diagnostic data for display/debugging (e.g., expected answer,
 extracted answer, example_id). Not aggregated — preserved per trajectory."""
 
+METRIC_MAX_TOKENS_REACHED = "max_tokens_reached"
+"""Metric key set by ``EnvFromMessageEnv`` when the model hits ``max_tokens``."""
+
+METRIC_CONTEXT_OVERFLOW = "context_overflow"
+"""Metric key set by ``EnvFromMessageEnv`` when the conversation exceeds context."""
+
 PassAtKScores = dict[int, float]
 """Maps k values to pass@k probabilities.
 

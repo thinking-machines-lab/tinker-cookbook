@@ -23,6 +23,8 @@ import tinker
 
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.eval.benchmarks._types import (
+    METRIC_CONTEXT_OVERFLOW,
+    METRIC_MAX_TOKENS_REACHED,
     BenchmarkBuilder,
     BenchmarkConfig,
     BenchmarkResult,
@@ -305,7 +307,6 @@ def _ensure_registered(name: str) -> None:
     # Try importing the benchmark module by name.
     # Also try the base name (e.g., "aime" for "aime_2026") since a single
     # module may register multiple benchmark variants.
-    import contextlib
     import importlib
 
     candidates = [name]
@@ -560,7 +561,9 @@ async def run_benchmark(
 
         # Count truncations (max_tokens_reached or context_overflow from EnvFromMessageEnv)
         num_truncated = sum(
-            1 for m in valid_metrics if m.get("max_tokens_reached") or m.get("context_overflow")
+            1
+            for m in valid_metrics
+            if m.get(METRIC_MAX_TOKENS_REACHED) or m.get(METRIC_CONTEXT_OVERFLOW)
         )
 
         result = benchmark.aggregate(valid_rewards, valid_metrics)
@@ -632,7 +635,7 @@ async def run_benchmark(
 
     # Count truncations across all samples
     total_truncated = sum(
-        1 for m in all_metrics if m.get("max_tokens_reached") or m.get("context_overflow")
+        1 for m in all_metrics if m.get(METRIC_MAX_TOKENS_REACHED) or m.get(METRIC_CONTEXT_OVERFLOW)
     )
 
     # Aggregate using all rewards (gives overall accuracy across all samples)
