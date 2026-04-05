@@ -258,12 +258,20 @@ class TestHMMTGrading:
     def test_check_math_equal_sympy_fraction(self):
         from tinker_cookbook.eval.benchmarks._hmmt import _check_math_equal
 
+        # These require antlr4-python3-runtime for sympy.parsing.latex
+        try:
+            from sympy.parsing.latex import parse_latex
+
+            parse_latex("1")  # test if it actually works
+        except (ImportError, Exception):
+            pytest.skip("antlr4-python3-runtime not installed")
         assert _check_math_equal("\\frac{1}{2}", "0.5")
         assert _check_math_equal("\\frac{3}{4}", "0.75")
 
     def test_check_math_equal_sympy_expression(self):
         from tinker_cookbook.eval.benchmarks._hmmt import _check_math_equal
 
+        # String-normalized matches work without antlr4
         assert _check_math_equal("\\frac{1}{576}", "\\frac{1}{576}")
         assert _check_math_equal("2\\sqrt{3}", "2\\sqrt{3}")
 

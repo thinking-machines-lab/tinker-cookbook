@@ -93,12 +93,15 @@ def _check_math_equal(extracted: str, expected: str) -> bool:
         pass
 
     # Strategy 3: sympy symbolic comparison
+    # Requires antlr4-python3-runtime for parse_latex; graceful fallback if missing.
     try:
         from sympy import N, simplify
         from sympy.parsing.latex import parse_latex
 
         parsed_ext = parse_latex(ext_norm)
         parsed_exp = parse_latex(exp_norm)
+        if parsed_ext is None or parsed_exp is None:
+            return False
 
         # Try .equals() first (exact symbolic)
         if parsed_ext.equals(parsed_exp):
