@@ -90,7 +90,7 @@ class SuperGPQABenchmarkBuilder(BenchmarkBuilder):
     name = "supergpqa"
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
-        ds = cast(Dataset, load_benchmark_dataset("m-a-p/SuperGPQA"))
+        ds = cast(Dataset, load_benchmark_dataset("m-a-p/SuperGPQA", split="train"))
         ds = limit_dataset(ds, config.max_examples, shuffle_seed=42)
 
         envs: list[Env] = []
