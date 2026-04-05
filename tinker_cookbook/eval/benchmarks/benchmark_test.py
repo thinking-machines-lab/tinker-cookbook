@@ -216,59 +216,59 @@ class TestBenchmarkRegistration:
         self._check_registered("tinker_cookbook.eval.benchmarks.supergpqa", "supergpqa")
 
     def test_hmmt_feb_2025_registered(self):
-        self._check_registered("tinker_cookbook.eval.benchmarks.hmmt", "hmmt_feb_2025")
+        self._check_registered("tinker_cookbook.eval.benchmarks._hmmt", "hmmt_feb_2025")
 
     def test_hmmt_nov_2025_registered(self):
-        self._check_registered("tinker_cookbook.eval.benchmarks.hmmt", "hmmt_nov_2025")
+        self._check_registered("tinker_cookbook.eval.benchmarks._hmmt", "hmmt_nov_2025")
 
 
 class TestHMMTGrading:
     """Test the HMMT LaTeX normalization and sympy-based grading."""
 
     def test_normalize_basic(self):
-        from tinker_cookbook.eval.benchmarks.hmmt import _normalize_latex
+        from tinker_cookbook.eval.benchmarks._hmmt import _normalize_latex
 
         assert _normalize_latex("  42  ") == "42"
         assert _normalize_latex("$42$") == "42"
         assert _normalize_latex("\\frac{1}{2}") == "\\frac{1}{2}"
 
     def test_normalize_text_wrapper(self):
-        from tinker_cookbook.eval.benchmarks.hmmt import _normalize_latex
+        from tinker_cookbook.eval.benchmarks._hmmt import _normalize_latex
 
         assert _normalize_latex("\\text{yes}") == "yes"
         assert _normalize_latex("\\mathrm{cm}") == "cm"
 
     def test_normalize_left_right(self):
-        from tinker_cookbook.eval.benchmarks.hmmt import _normalize_latex
+        from tinker_cookbook.eval.benchmarks._hmmt import _normalize_latex
 
         assert _normalize_latex("\\left(x\\right)") == "(x)"
 
     def test_check_math_equal_string_match(self):
-        from tinker_cookbook.eval.benchmarks.hmmt import _check_math_equal
+        from tinker_cookbook.eval.benchmarks._hmmt import _check_math_equal
 
         assert _check_math_equal("42", "42")
         assert not _check_math_equal("42", "43")
 
     def test_check_math_equal_numeric(self):
-        from tinker_cookbook.eval.benchmarks.hmmt import _check_math_equal
+        from tinker_cookbook.eval.benchmarks._hmmt import _check_math_equal
 
         assert _check_math_equal("0.5", "0.5")
         assert _check_math_equal("103", "103")
 
     def test_check_math_equal_sympy_fraction(self):
-        from tinker_cookbook.eval.benchmarks.hmmt import _check_math_equal
+        from tinker_cookbook.eval.benchmarks._hmmt import _check_math_equal
 
         assert _check_math_equal("\\frac{1}{2}", "0.5")
         assert _check_math_equal("\\frac{3}{4}", "0.75")
 
     def test_check_math_equal_sympy_expression(self):
-        from tinker_cookbook.eval.benchmarks.hmmt import _check_math_equal
+        from tinker_cookbook.eval.benchmarks._hmmt import _check_math_equal
 
         assert _check_math_equal("\\frac{1}{576}", "\\frac{1}{576}")
         assert _check_math_equal("2\\sqrt{3}", "2\\sqrt{3}")
 
     def test_check_math_equal_empty(self):
-        from tinker_cookbook.eval.benchmarks.hmmt import _check_math_equal
+        from tinker_cookbook.eval.benchmarks._hmmt import _check_math_equal
 
         assert not _check_math_equal("", "42")
         assert not _check_math_equal("42", "")
