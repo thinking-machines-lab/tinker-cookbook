@@ -79,7 +79,13 @@ inspect = [
 litellm = [
     "litellm>=1.80.0,!=1.82.7,!=1.82.8",
 ]
+eval = [
+    "tinker_cookbook[math-rl]",
+    "tinker_cookbook[modal]",
+    "antlr4-python3-runtime>=4.11,<4.14",
+]
 all = [
+    "tinker_cookbook[eval]",
     "tinker_cookbook[math-rl]",
     "tinker_cookbook[modal]",
     "tinker_cookbook[multiplayer-rl]",
