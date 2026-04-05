@@ -55,6 +55,7 @@ from tinker_cookbook.eval.benchmarks._types import (
     StoredTrajectory,
     StoredTrajectoryDict,
     StoredTurnDict,
+    TurnRole,
 )
 
 REGISTRY: dict[str, BenchmarkBuilder] = {}
@@ -80,6 +81,7 @@ __all__ = [
     "BenchmarkResultDict",
     "StoredTrajectoryDict",
     "StoredTurnDict",
+    "TurnRole",
     # Registry
     "REGISTRY",
     "register",

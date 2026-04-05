@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 import tinker
 
@@ -30,10 +30,14 @@ extracted answer, example_id). Not aggregated — preserved per trajectory."""
 # ---------------------------------------------------------------------------
 
 
+TurnRole = Literal["user", "assistant", "environment", "grader"]
+"""Valid roles for turns in stored trajectories."""
+
+
 class StoredTurnDict(TypedDict):
     """JSON schema for a single turn in a stored trajectory."""
 
-    role: str
+    role: TurnRole
     content: str
     token_count: int
     metadata: dict[str, Any]
@@ -111,27 +115,31 @@ class BenchmarkConfig:
     and ``reward=0``. They count toward ``num_errors`` in BenchmarkResult,
     not silently dropped."""
 
-    # Context management (multi-turn)
+    # Context management (multi-turn only)
     max_trajectory_tokens: int | None = None
-    """Maximum total tokens in the conversation before terminating the episode.
-    When set, multi-turn benchmarks (terminal_bench, swe_bench) will end the
-    episode gracefully instead of crashing with a context overflow error.
-    Should be set below the model's context window (e.g., 60000 for 65K context)."""
+    """**Multi-turn only.** Maximum total tokens accumulated across all turns
+    before terminating the episode. Prevents context overflow in long agent
+    conversations (terminal_bench, swe_bench). Set below the model's context
+    window (e.g., 60000 for a 65K model). Ignored for single-turn benchmarks."""
 
     max_generation_tokens: int | None = None
-    """Maximum tokens per generation step. Used with ``max_trajectory_tokens``
-    to ensure prompt + generation fits in the context window."""
+    """**Multi-turn only.** Maximum tokens per generation step within a
+    multi-turn episode. Used with ``max_trajectory_tokens`` to dynamically
+    shrink generation limits as the conversation grows. Ignored for
+    single-turn benchmarks (use ``max_tokens`` instead)."""
 
-    # Generation
+    # Generation (single-turn)
     max_tokens: int = 32768
-    """Maximum tokens per model generation. The runner will automatically
-    cap this so that prompt + max_tokens fits the model's context window.
+    """Maximum tokens per model generation for single-turn benchmarks.
     For thinking models that generate long reasoning chains, increase this
-    (MathArena uses 64K for AIME)."""
+    (e.g., 65536 for full context). This is the ``max_tokens`` passed to
+    the sampling API."""
     temperature: float = 0.6
     """Sampling temperature for model generation."""
     context_window: int | None = None
-    """If set, dynamically cap max_tokens per request to fit in context."""
+    """Model's total context window size (e.g., 65536). When set, the runner
+    dynamically caps ``max_tokens`` per request so that prompt + max_tokens
+    fits in the context window. Prevents context overflow errors."""
 
     # Storage
     save_dir: str | None = None
@@ -149,8 +157,9 @@ class BenchmarkConfig:
     """Renderer for the judge model. If None, uses the candidate renderer."""
 
     # Sandbox (for benchmarks that execute code: mbpp, livecodebench, terminal_bench, swe_bench)
-    sandbox_factory: Callable[..., Any] | None = None
+    sandbox_factory: Callable[[], Any] | None = None
     """Async callable returning a :class:`~tinker_cookbook.sandbox.SandboxInterface`.
+    Signature: ``async def factory() -> SandboxInterface``.
     Called once per eval example to create an isolated execution environment.
     When ``None``, defaults to Modal (requires ``pip install 'tinker-cookbook[modal]'``).
 
@@ -214,7 +223,7 @@ class BenchmarkConfig:
 class StoredTurn:
     """A single turn in a stored trajectory — human-readable for visualization."""
 
-    role: str
+    role: TurnRole
     """``"user"``, ``"assistant"``, ``"environment"``, ``"grader"``."""
     content: str
     """Decoded text content of this turn."""
@@ -309,10 +318,11 @@ class BenchmarkResult:
 
     Attributes:
         name: Benchmark name (e.g. ``"gsm8k"``).
-        score: Primary metric normalized to 0–1.
-        num_examples: Total examples evaluated (excluding errors).
+        score: Primary metric normalized to 0–1 (``num_correct / num_examples``).
+        num_examples: Total examples evaluated (including errors, which score as 0).
         num_correct: Examples graded as correct (reward > 0).
-        num_errors: Examples that failed with an error.
+        num_errors: Examples that failed with an error (timeout, crash, etc.).
+            These are included in ``num_examples`` and scored as 0.
         metrics: Benchmark-specific additional metrics.
         time_seconds: Total wall time for the benchmark.
     """

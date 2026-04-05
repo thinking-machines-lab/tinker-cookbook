@@ -31,6 +31,7 @@ from tinker_cookbook.eval.benchmarks._types import (
     Metrics,
     StoredTrajectory,
     StoredTurn,
+    TurnRole,
 )
 from tinker_cookbook.exceptions import BenchmarkNotFoundError, EvalTimeoutError
 from tinker_cookbook.renderers.base import Renderer
@@ -66,7 +67,7 @@ def _trajectory_to_stored(
         if ob_text:
             # First turn's observation is the initial prompt (role=user)
             # Subsequent turns are environment responses
-            role = "user" if len(turns) == 0 else "environment"
+            role: TurnRole = "user" if len(turns) == 0 else "environment"
             turns.append(
                 StoredTurn(
                     role=role,
