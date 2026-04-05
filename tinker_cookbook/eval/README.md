@@ -77,6 +77,7 @@ results = await run_benchmarks(
 
 - **HF auth (gated)**: Set `HF_TOKEN` or run `huggingface-cli login`.
 - **Modal**: Benchmarks that execute code in a sandbox require Modal. Install with `pip install 'tinker-cookbook[modal]'` and authenticate with `modal token new`.
+- **math-rl**: The ``math500`` benchmark requires ``pip install 'tinker-cookbook[math-rl]'`` for ``math-verify`` and ``pylatexenc``. HMMT sympy grading also benefits from ``antlr4-python3-runtime`` (falls back gracefully without it).
 - **`judge_sampling_client`**: Benchmarks using LLM-as-judge or user simulation require a separate Tinker sampling client for the judge model. Pass via `BenchmarkConfig(judge_sampling_client=..., judge_renderer=...)`.
 
 ### Browse results
