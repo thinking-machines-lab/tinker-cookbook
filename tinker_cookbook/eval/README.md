@@ -62,11 +62,11 @@ results = await run_benchmarks(
 |-----------|------|---------|--------|
 | arena_hard | Single-turn | LLM-as-judge | Works with self-judge, needs cross-model judge |
 | longbench | Single-turn | Programmatic | Limited by 65K context window |
-| livecodebench | Single-turn | Code execution (Modal) | Score gap vs public |
+| livecodebench | Single-turn | Code execution (Modal) | 47.4% on Qwen3.5-35B-A3B (needs 1800s timeout) |
 | ifbench | Single-turn | IF constraints | Verifier doesn't cover IFBench instruction types |
 | bfcl | Single-turn | Function call AST | Ground truth format mismatch |
-| terminal_bench | Multi-turn | Sandbox + tests (Modal) | 36% on Qwen3.5-35B-A3B (112 examples) |
-| swe_bench | Multi-turn | Sandbox + pytest (Modal) | Framework works, limited testing |
+| terminal_bench | Multi-turn | Sandbox + tests (Modal) | 27.7% on Qwen3.5-35B-A3B (ctx overflow on 65K model) |
+| swe_bench | Multi-turn | Sandbox + pytest (Modal) | 0% — 65K context too small for multi-turn repo exploration |
 | tau2_bench | Multi-turn | Tool dispatch + user sim | 30% (needs separate user simulator model) |
 
 **Prerequisites:**
@@ -263,18 +263,19 @@ Official scores from the model card:
 | IFEval | 93.6%* | 91.9 | **Match** | 32K tokens |
 | GSM8K | 95.6%* | — | — | system_prompt=\boxed{}, 32K tokens |
 | MATH-500 | 96.2%* | — | — | system_prompt=\boxed{}, 32K tokens |
-| MBPP | 88.4%* | — | — | Modal sandbox |
+| MBPP | 84.4%* | — | — | Modal sandbox |
 | AIME 2026 (pass@4) | 90.0% | 93.33 | Close | system_prompt=\boxed{}, 32K tokens |
 
 \* Excluding context overflow — the thinking model's reasoning chain exceeds context on some examples. These are scored as failures (reward=0).
 
-**Experimental benchmarks:**
+**Experimental benchmarks (Modal sandbox):**
 
 | Benchmark | Our Score | Official | Notes |
 |-----------|-----------|----------|-------|
-| Terminal Bench 2 | **35.7%** | 40.5 | Close (18 timeouts in 112 examples) |
-| TAU2-Bench | 30.0% | 81.2 | Same-model user sim limits score; official uses GPT-4.1 |
-| SWE-bench Verified | 0% (2 ex) | 69.2 | Framework works, need larger run |
+| LiveCodeBench | **47.4%** (175 ex) | — | 1800s timeout needed for thinking model |
+| Terminal Bench 2 | **27.7%** (112 ex) | 40.5 | 24 ctx overflow + 14 timeout on 65K model |
+| SWE-bench Verified | 0% (500 ex) | 69.2 | 65K context too small — all ctx overflow |
+| TAU2-Bench | 30.0% (50 ex) | 81.2 | Same-model user sim limits score; official uses GPT-4.1 |
 
 **Key finding:** The `system_prompt` hook is critical for thinking models — GSM8K improved from 84.7% to 95.6% by instructing the model to use `\boxed{}`. Per-model config presets (a planned feature) will capture these settings.
 
