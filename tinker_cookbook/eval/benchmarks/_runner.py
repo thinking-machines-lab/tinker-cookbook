@@ -562,9 +562,7 @@ async def run_benchmark(
 
         # Count truncations (max_tokens_reached or context_overflow from EnvFromMessageEnv)
         num_truncated = sum(
-            1
-            for m in valid_metrics
-            if m.get("max_tokens_reached") or m.get("context_overflow")
+            1 for m in valid_metrics if m.get("max_tokens_reached") or m.get("context_overflow")
         )
 
         result = benchmark.aggregate(valid_rewards, valid_metrics)
@@ -636,9 +634,7 @@ async def run_benchmark(
 
     # Count truncations across all samples
     total_truncated = sum(
-        1
-        for m in all_metrics
-        if m.get("max_tokens_reached") or m.get("context_overflow")
+        1 for m in all_metrics if m.get("max_tokens_reached") or m.get("context_overflow")
     )
 
     # Aggregate using all rewards (gives overall accuracy across all samples)
