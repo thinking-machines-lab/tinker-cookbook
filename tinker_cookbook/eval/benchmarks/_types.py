@@ -268,10 +268,10 @@ class StoredTrajectory:
     benchmark: str
     """Benchmark name."""
     example_id: str = ""
-    """Stable identifier for this example across runs. Deterministic from the
-    dataset (e.g., question hash, dataset-provided ID). Used for cross-run
-    comparison — the same question always gets the same example_id regardless
-    of which checkpoint is being evaluated. If empty, falls back to ``idx``."""
+    """Stable identifier for this example across runs. Typically a content hash
+    from ``make_example_id(prefix, question_text)`` — deterministic from the
+    dataset, not positional. Used for cross-run comparison, resumability, and
+    pass@k per-example tracking."""
     turns: list[StoredTurn] = field(default_factory=list)
     """Full conversation history (decoded text, not tokens)."""
     reward: float = 0.0
