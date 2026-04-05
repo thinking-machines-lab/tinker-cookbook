@@ -55,11 +55,15 @@ results = await run_benchmarks(
 | gpqa | Single-turn | Programmatic (MCQA) | HF auth (gated) |
 | ifeval | Single-turn | Programmatic (IF constraints) | — |
 | mbpp | Single-turn | Code execution | Modal |
+| ceval | Single-turn | Programmatic (MCQA, Chinese) | — |
+| supergpqa | Single-turn | Programmatic (MCQA, 4-10 options) | — |
 
 **Experimental benchmarks** (``_``-prefixed modules) — functional but need further validation:
 
 | Benchmark | Type | Grading | Status |
 |-----------|------|---------|--------|
+| hmmt_feb_2025 | Single-turn | LaTeX answer (normalized string) | Experimental — no symbolic math comparison |
+| hmmt_nov_2025 | Single-turn | LaTeX answer (normalized string) | Experimental — no symbolic math comparison |
 | arena_hard | Single-turn | LLM-as-judge | Works with self-judge, needs cross-model judge |
 | longbench | Single-turn | Programmatic | Limited by 65K context window |
 | livecodebench | Single-turn | Code execution (Modal) | 47.4% on Qwen3.5-35B-A3B (needs 1800s timeout) |
