@@ -309,9 +309,13 @@ def _ensure_registered(name: str) -> None:
     import importlib
 
     candidates = [name]
-    # Strip trailing _YYYY suffix to find parent module
+    # Strip trailing _YYYY suffix to find parent module (e.g., "aime_2026" -> "aime")
     if len(name) > 5 and name[-4:].isdigit() and name[-5] == "_":
         candidates.append(name[:-5])
+    # Also try first segment as module name (e.g., "hmmt_feb_2025" -> "hmmt")
+    first_segment = name.split("_")[0]
+    if first_segment != name and first_segment not in candidates:
+        candidates.append(first_segment)
 
     for module_name in candidates:
         # Try public module, then _-prefixed (experimental) module
