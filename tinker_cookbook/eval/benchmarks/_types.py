@@ -286,7 +286,15 @@ class StoredTrajectory:
             idx=d["idx"],
             benchmark=d["benchmark"],
             example_id=d.get("example_id", ""),
-            turns=[StoredTurn(**t) for t in d.get("turns", [])],
+            turns=[
+                StoredTurn(
+                    role=t["role"],
+                    content=t["content"],
+                    token_count=t.get("token_count", 0),
+                    metadata=t.get("metadata", {}),
+                )
+                for t in d.get("turns", [])
+            ],
             reward=d.get("reward", 0.0),
             metrics=d.get("metrics", {}),
             logs=d.get("logs", {}),
