@@ -23,12 +23,7 @@ from tinker_cookbook.eval.benchmarks._common import (
     load_benchmark_dataset,
     make_example_id,
 )
-from tinker_cookbook.eval.benchmarks._types import (
-    BenchmarkBuilder,
-    BenchmarkConfig,
-    BenchmarkResult,
-    Metrics,
-)
+from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
 from tinker_cookbook.renderers import get_text_content
 from tinker_cookbook.renderers.base import Message, Renderer
 from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
@@ -70,7 +65,7 @@ class CEvalMessageEnv(MessageEnv):
             reward=1.0 if correct else 0.0,
             episode_done=True,
             next_messages=[],
-            metrics={"correct": float(correct), "subject": self.subject},
+            metrics={"correct": float(correct)},
             logs={
                 "example_id": self.example_id,
                 "input": self.prompt[:200],
@@ -88,23 +83,57 @@ class CEvalMessageEnv(MessageEnv):
 
 # C-Eval has 52 subjects; we load all of them and concatenate.
 _CEVAL_SUBJECTS = [
-    "computer_network", "operating_system", "computer_architecture",
-    "college_programming", "college_physics", "college_chemistry",
-    "advanced_mathematics", "probability_and_statistics", "discrete_mathematics",
-    "electrical_engineer", "metrology_engineer", "high_school_mathematics",
-    "high_school_physics", "high_school_chemistry", "high_school_biology",
-    "middle_school_mathematics", "middle_school_biology", "middle_school_physics",
-    "middle_school_chemistry", "veterinary_medicine", "college_economics",
-    "business_administration", "marxism", "mao_zedong_thought",
-    "education_science", "teacher_qualification", "high_school_politics",
-    "high_school_geography", "middle_school_politics", "middle_school_geography",
-    "modern_chinese_history", "ideological_and_moral_cultivation",
-    "logic", "law", "chinese_language_and_literature", "art_studies",
-    "professional_tour_guide", "legal_professional", "high_school_chinese",
-    "high_school_history", "middle_school_history", "civil_servant",
-    "sports_science", "plant_protection", "basic_medicine", "clinical_medicine",
-    "urban_and_rural_planner", "accountant", "fire_engineer",
-    "environmental_impact_assessment_engineer", "tax_accountant",
+    "computer_network",
+    "operating_system",
+    "computer_architecture",
+    "college_programming",
+    "college_physics",
+    "college_chemistry",
+    "advanced_mathematics",
+    "probability_and_statistics",
+    "discrete_mathematics",
+    "electrical_engineer",
+    "metrology_engineer",
+    "high_school_mathematics",
+    "high_school_physics",
+    "high_school_chemistry",
+    "high_school_biology",
+    "middle_school_mathematics",
+    "middle_school_biology",
+    "middle_school_physics",
+    "middle_school_chemistry",
+    "veterinary_medicine",
+    "college_economics",
+    "business_administration",
+    "marxism",
+    "mao_zedong_thought",
+    "education_science",
+    "teacher_qualification",
+    "high_school_politics",
+    "high_school_geography",
+    "middle_school_politics",
+    "middle_school_geography",
+    "modern_chinese_history",
+    "ideological_and_moral_cultivation",
+    "logic",
+    "law",
+    "chinese_language_and_literature",
+    "art_studies",
+    "professional_tour_guide",
+    "legal_professional",
+    "high_school_chinese",
+    "high_school_history",
+    "middle_school_history",
+    "civil_servant",
+    "sports_science",
+    "plant_protection",
+    "basic_medicine",
+    "clinical_medicine",
+    "urban_and_rural_planner",
+    "accountant",
+    "fire_engineer",
+    "environmental_impact_assessment_engineer",
+    "tax_accountant",
     "physician",
 ]
 
@@ -174,35 +203,8 @@ class CEvalBenchmarkBuilder(BenchmarkBuilder):
             )
         return envs
 
-    def aggregate(
-        self,
-        rewards: list[float],
-        metrics_list: list[Metrics],
-    ) -> BenchmarkResult:
-        """Aggregate with per-subject breakdown."""
-
-        num_correct = sum(1 for r in rewards if r > 0)
-        accuracy = num_correct / len(rewards) if rewards else 0.0
-
-        # Per-subject accuracy
-        subject_scores: dict[str, list[float]] = {}
-        for r, m in zip(rewards, metrics_list):
-            subj = m.get("subject", "unknown")
-            if isinstance(subj, str):
-                subject_scores.setdefault(subj, []).append(r)
-
-        metrics: Metrics = {"ceval/accuracy": accuracy}
-        for subj, scores in sorted(subject_scores.items()):
-            if scores:
-                metrics[f"ceval/{subj}/accuracy"] = sum(1 for s in scores if s > 0) / len(scores)
-
-        return BenchmarkResult(
-            name=self.name,
-            score=accuracy,
-            num_examples=len(rewards),
-            num_correct=num_correct,
-            metrics=metrics,
-        )
+    # Per-subject breakdown is available via load_trajectories() + logs["subject"].
+    # Default aggregate (accuracy) is sufficient for the top-level score.
 
 
 # Auto-register

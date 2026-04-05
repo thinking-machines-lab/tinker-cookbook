@@ -167,14 +167,16 @@ def _save_result(save_dir: str, result: BenchmarkResult) -> None:
     dir_path = Path(save_dir) / result.name
     dir_path.mkdir(parents=True, exist_ok=True)
     with open(dir_path / "result.json", "w") as f:
-        d = BenchmarkResultDict(
-            name=result.name,
-            score=result.score,
-            num_examples=result.num_examples,
-            num_correct=result.num_correct,
-            num_errors=result.num_errors,
-            metrics=result.metrics,
-            time_seconds=result.time_seconds,
+        d: dict = dict(
+            BenchmarkResultDict(
+                name=result.name,
+                score=result.score,
+                num_examples=result.num_examples,
+                num_correct=result.num_correct,
+                num_errors=result.num_errors,
+                metrics=result.metrics,
+                time_seconds=result.time_seconds,
+            )
         )
         if result.pass_at_k:
             # JSON keys must be strings; convert int keys for serialization
@@ -711,7 +713,7 @@ def load_result(save_dir: str, benchmark_name: str) -> BenchmarkResult | None:
     if not path.exists():
         return None
     with open(path) as f:
-        d: BenchmarkResultDict = json.load(f)
+        d = json.load(f)
     # Convert pass_at_k string keys back to ints
     if "pass_at_k" in d:
         d["pass_at_k"] = {int(k): v for k, v in d["pass_at_k"].items()}

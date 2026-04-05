@@ -39,13 +39,8 @@ class StoredTurnDict(TypedDict):
     metadata: dict[str, Any]
 
 
-class StoredTrajectoryDict(TypedDict, total=False):
-    """JSON schema for a stored trajectory.
-
-    Required fields use ``total=False`` with explicit presence in
-    ``to_dict`` — this allows forward-compatible deserialization where
-    new optional fields can be added without breaking old data.
-    """
+class StoredTrajectoryDict(TypedDict):
+    """JSON schema for a stored trajectory (JSONL format)."""
 
     idx: int
     benchmark: str
@@ -58,7 +53,7 @@ class StoredTrajectoryDict(TypedDict, total=False):
     time_seconds: float
 
 
-class BenchmarkResultDict(TypedDict, total=False):
+class BenchmarkResultDict(TypedDict):
     """JSON schema for a saved BenchmarkResult."""
 
     name: str
@@ -68,7 +63,6 @@ class BenchmarkResultDict(TypedDict, total=False):
     num_errors: int
     metrics: Metrics
     time_seconds: float
-    pass_at_k: dict[str, float]  # JSON keys are strings
 
 
 @dataclass
@@ -282,8 +276,12 @@ class StoredTrajectory:
         )
 
     @classmethod
-    def from_dict(cls, d: StoredTrajectoryDict) -> StoredTrajectory:
-        """Deserialize from a dict (e.g., loaded from JSONL)."""
+    def from_dict(cls, d: dict) -> StoredTrajectory:
+        """Deserialize from a dict (e.g., loaded from JSONL).
+
+        Accepts plain dicts for backward compatibility — old data may be
+        missing newer fields like ``example_id``.
+        """
         return cls(
             idx=d["idx"],
             benchmark=d["benchmark"],

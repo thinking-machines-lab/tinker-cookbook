@@ -23,12 +23,7 @@ from tinker_cookbook.eval.benchmarks._common import (
     load_benchmark_dataset,
     make_example_id,
 )
-from tinker_cookbook.eval.benchmarks._types import (
-    BenchmarkBuilder,
-    BenchmarkConfig,
-    BenchmarkResult,
-    Metrics,
-)
+from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
 from tinker_cookbook.renderers import get_text_content
 from tinker_cookbook.renderers.base import Message, Renderer
 from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
@@ -72,7 +67,7 @@ class SuperGPQAMessageEnv(MessageEnv):
             reward=1.0 if correct else 0.0,
             episode_done=True,
             next_messages=[],
-            metrics={"correct": float(correct), "discipline": self.discipline},
+            metrics={"correct": float(correct)},
             logs={
                 "example_id": self.example_id,
                 "input": self.prompt[:200],
@@ -135,37 +130,8 @@ class SuperGPQABenchmarkBuilder(BenchmarkBuilder):
             )
         return envs
 
-    def aggregate(
-        self,
-        rewards: list[float],
-        metrics_list: list[Metrics],
-    ) -> BenchmarkResult:
-        """Aggregate with per-discipline breakdown."""
-
-        num_correct = sum(1 for r in rewards if r > 0)
-        accuracy = num_correct / len(rewards) if rewards else 0.0
-
-        # Per-discipline accuracy
-        disc_scores: dict[str, list[float]] = {}
-        for r, m in zip(rewards, metrics_list):
-            disc = m.get("discipline", "unknown")
-            if isinstance(disc, str):
-                disc_scores.setdefault(disc, []).append(r)
-
-        metrics: Metrics = {"supergpqa/accuracy": accuracy}
-        for disc, scores in sorted(disc_scores.items()):
-            if scores:
-                metrics[f"supergpqa/{disc}/accuracy"] = (
-                    sum(1 for s in scores if s > 0) / len(scores)
-                )
-
-        return BenchmarkResult(
-            name=self.name,
-            score=accuracy,
-            num_examples=len(rewards),
-            num_correct=num_correct,
-            metrics=metrics,
-        )
+    # Per-discipline breakdown is available via load_trajectories() + logs["discipline"].
+    # Default aggregate (accuracy) is sufficient for the top-level score.
 
 
 # Auto-register
