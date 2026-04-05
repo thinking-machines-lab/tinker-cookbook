@@ -120,12 +120,29 @@ def _last_assistant_content(turns: list[StoredTurn]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _load_completed(save_dir: str, benchmark_name: str) -> dict[int, float]:
-    """Load completed trajectory indices and their rewards from disk."""
+class _ResumedExample:
+    """Data restored from a previously completed trajectory for resumability."""
+
+    __slots__ = ("is_error", "metrics", "reward")
+
+    def __init__(self, reward: float, metrics: Metrics, is_error: bool):
+        self.reward = reward
+        self.metrics = metrics
+        self.is_error = is_error
+
+
+def _load_completed(save_dir: str, benchmark_name: str) -> dict[int, _ResumedExample]:
+    """Load completed trajectory indices with rewards and metrics from disk.
+
+    Returns a dict mapping example index to its restored reward, metrics,
+    and error status. The metrics are needed to correctly count truncations
+    (``max_tokens_reached``, ``context_overflow``) on resume. The error
+    flag is needed to correctly count ``num_errors``.
+    """
     path = Path(save_dir) / benchmark_name / "trajectories.jsonl"
     if not path.exists():
         return {}
-    results = {}
+    results: dict[int, _ResumedExample] = {}
     with open(path) as f:
         for line_num, line in enumerate(f, 1):
             line = line.strip()
@@ -133,7 +150,11 @@ def _load_completed(save_dir: str, benchmark_name: str) -> dict[int, float]:
                 continue
             try:
                 d = json.loads(line)
-                results[d["idx"]] = d["reward"]
+                results[d["idx"]] = _ResumedExample(
+                    reward=d.get("reward", 0.0),
+                    metrics=d.get("metrics", {}),
+                    is_error=d.get("error") is not None,
+                )
             except (json.JSONDecodeError, KeyError) as e:
                 logger.warning(
                     f"Skipping malformed trajectory line {line_num} in "
@@ -409,13 +430,13 @@ async def run_benchmark(
 
     # Resume: load completed examples from disk (only for single-sample mode;
     # pass@k mode always runs fresh to get exactly num_samples per example)
-    completed_rewards: dict[int, float] = {}
+    completed: dict[int, _ResumedExample] = {}
     if config.save_dir and num_samples == 1:
-        completed_rewards = _load_completed(config.save_dir, benchmark.name)
-        if completed_rewards:
+        completed = _load_completed(config.save_dir, benchmark.name)
+        if completed:
             logger.info(
-                f"  Resuming: {len(completed_rewards)} already completed, "
-                f"{len(envs) - len(completed_rewards)} remaining"
+                f"  Resuming: {len(completed)} already completed, "
+                f"{len(envs) - len(completed)} remaining"
             )
 
     # Build policy
@@ -434,12 +455,15 @@ async def run_benchmark(
     metrics_list: list[Metrics] = [{} for _ in range(len(envs))]
     num_errors = 0
     num_completed = 0
-    total_to_run = len(envs) - len(completed_rewards)
+    total_to_run = len(envs) - len(completed)
 
-    # Pre-fill from resumed results
-    for idx, reward in completed_rewards.items():
+    # Pre-fill from resumed results (rewards, metrics, and error counts)
+    for idx, ex in completed.items():
         if idx < len(rewards):
-            rewards[idx] = reward
+            rewards[idx] = ex.reward
+            metrics_list[idx] = ex.metrics
+            if ex.is_error:
+                num_errors += 1
 
     tokenizer = renderer.tokenizer
 
@@ -447,7 +471,7 @@ async def run_benchmark(
         nonlocal num_completed, num_errors
 
         # Skip already-completed
-        if idx in completed_rewards:
+        if idx in completed:
             return
 
         async with sem:
@@ -612,7 +636,7 @@ async def run_benchmark(
         metrics_list = [{} for _ in range(len(sample_envs))]
         num_errors = 0
         num_completed = 0
-        completed_rewards = {}  # No resumability in pass@k mode
+        completed = {}  # No resumability in pass@k mode
         total_to_run = len(sample_envs)
 
         await asyncio.gather(*[run_one(i, env) for i, env in enumerate(sample_envs)])
