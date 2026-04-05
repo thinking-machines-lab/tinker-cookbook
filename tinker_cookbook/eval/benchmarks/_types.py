@@ -65,6 +65,7 @@ class BenchmarkResultDict(TypedDict):
     num_examples: int
     num_correct: int
     num_errors: int
+    num_truncated: int
     metrics: Metrics
     time_seconds: float
 
@@ -332,12 +333,35 @@ class BenchmarkResult:
     num_examples: int
     num_correct: int
     num_errors: int = 0
+    num_truncated: int = 0
+    """Examples where the model hit ``max_tokens`` or exceeded the context
+    window before producing an answer. These are scored as 0 (included in
+    ``num_examples``, not in ``num_correct``). Use ``score_excluding_truncated``
+    for accuracy on examples that actually completed."""
     metrics: Metrics = field(default_factory=dict)
     """Benchmark-specific additional metrics (e.g., per-category scores)."""
     time_seconds: float = 0.0
     pass_at_k: dict[int, float] = field(default_factory=dict)
     """Maps k to pass@k score. Only populated when ``num_samples > 1``.
     E.g., ``{1: 0.45, 5: 0.72, 10: 0.85}``."""
+
+    @property
+    def num_completed(self) -> int:
+        """Examples that completed without error or truncation."""
+        return self.num_examples - self.num_errors - self.num_truncated
+
+    @property
+    def score_completed(self) -> float:
+        """Accuracy on completed examples only (excluding errors and truncated).
+
+        Useful for thinking models where many examples hit ``max_tokens``
+        before producing an answer — this shows accuracy on examples where
+        the model actually completed its response.
+
+        Compare ``score`` (includes failures as 0) vs ``score_completed``
+        (only counts examples that ran to completion).
+        """
+        return self.num_correct / self.num_completed if self.num_completed > 0 else 0.0
 
 
 class BenchmarkBuilder(ABC):

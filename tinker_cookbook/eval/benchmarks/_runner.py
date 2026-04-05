@@ -175,6 +175,7 @@ def _save_result(save_dir: str, result: BenchmarkResult) -> None:
                 num_examples=result.num_examples,
                 num_correct=result.num_correct,
                 num_errors=result.num_errors,
+                num_truncated=result.num_truncated,
                 metrics=result.metrics,
                 time_seconds=result.time_seconds,
             )
@@ -559,14 +560,30 @@ async def run_benchmark(
         valid_rewards = [r for r in rewards if r is not None]
         valid_metrics = [m for r, m in zip(rewards, metrics_list) if r is not None]
 
+        # Count truncations (max_tokens_reached or context_overflow from EnvFromMessageEnv)
+        num_truncated = sum(
+            1
+            for m in valid_metrics
+            if m.get("max_tokens_reached") or m.get("context_overflow")
+        )
+
         result = benchmark.aggregate(valid_rewards, valid_metrics)
         result.num_errors = num_errors
+        result.num_truncated = num_truncated
         result.time_seconds = time.monotonic() - t0
 
+        trunc_str = f", {num_truncated} truncated" if num_truncated else ""
+        completed_str = ""
+        if num_truncated or num_errors:
+            completed_str = (
+                f" | completed={result.score_completed:.3f}"
+                f" ({result.num_correct}/{result.num_completed})"
+            )
         logger.info(
             f"  {benchmark.name}: score={result.score:.3f} "
-            f"({result.num_correct}/{result.num_examples}, {num_errors} errors) "
-            f"in {result.time_seconds:.0f}s"
+            f"({result.num_correct}/{result.num_examples}, "
+            f"{num_errors} errors{trunc_str}) "
+            f"in {result.time_seconds:.0f}s{completed_str}"
         )
 
         if config.save_dir:
@@ -617,9 +634,17 @@ async def run_benchmark(
     k_values = _choose_k_values(num_samples)
     pass_at_k = _compute_pass_at_k(per_example_rewards, k_values)
 
+    # Count truncations across all samples
+    total_truncated = sum(
+        1
+        for m in all_metrics
+        if m.get("max_tokens_reached") or m.get("context_overflow")
+    )
+
     # Aggregate using all rewards (gives overall accuracy across all samples)
     result = benchmark.aggregate(all_rewards, all_metrics)
     result.num_errors = total_errors
+    result.num_truncated = total_truncated
     result.time_seconds = time.monotonic() - t0
     result.pass_at_k = pass_at_k
 

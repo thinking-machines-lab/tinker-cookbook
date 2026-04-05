@@ -26,6 +26,29 @@ class TestBenchmarkResult:
         r = BenchmarkResult(name="test", score=0.5, num_examples=10, num_correct=5)
         assert r.metrics == {}
 
+    def test_score_completed(self):
+        # 100 examples: 70 correct, 10 errors, 10 truncated, 10 wrong
+        r = BenchmarkResult(
+            name="test",
+            score=0.7,
+            num_examples=100,
+            num_correct=70,
+            num_errors=10,
+            num_truncated=10,
+        )
+        # 80 completed (100 - 10 errors - 10 truncated), 70 correct
+        assert abs(r.score_completed - 70 / 80) < 1e-9
+
+    def test_score_completed_no_truncation(self):
+        r = BenchmarkResult(name="test", score=0.8, num_examples=100, num_correct=80)
+        assert abs(r.score_completed - 0.8) < 1e-9
+
+    def test_score_completed_all_truncated(self):
+        r = BenchmarkResult(
+            name="test", score=0.0, num_examples=10, num_correct=0, num_truncated=10
+        )
+        assert r.score_completed == 0.0
+
 
 class TestBenchmarkConfig:
     def test_defaults(self):
