@@ -29,6 +29,7 @@ from tinker_cookbook.eval.benchmarks._types import (
     BenchmarkResultDict,
     Logs,
     Metrics,
+    PassAtKScores,
     StoredTrajectory,
     StoredTurn,
     TurnRole,
@@ -168,21 +169,18 @@ def _save_result(save_dir: str, result: BenchmarkResult) -> None:
     dir_path = Path(save_dir) / result.name
     dir_path.mkdir(parents=True, exist_ok=True)
     with open(dir_path / "result.json", "w") as f:
-        d: dict = dict(
-            BenchmarkResultDict(
-                name=result.name,
-                score=result.score,
-                num_examples=result.num_examples,
-                num_correct=result.num_correct,
-                num_errors=result.num_errors,
-                num_truncated=result.num_truncated,
-                metrics=result.metrics,
-                time_seconds=result.time_seconds,
-            )
+        d = BenchmarkResultDict(
+            name=result.name,
+            score=result.score,
+            num_examples=result.num_examples,
+            num_correct=result.num_correct,
+            num_errors=result.num_errors,
+            num_truncated=result.num_truncated,
+            metrics=result.metrics,
+            time_seconds=result.time_seconds,
+            # JSON keys must be strings; int keys converted back in load_result
+            pass_at_k={str(k): v for k, v in result.pass_at_k.items()},
         )
-        if result.pass_at_k:
-            # JSON keys must be strings; convert int keys for serialization
-            d["pass_at_k"] = {str(k): v for k, v in result.pass_at_k.items()}
         json.dump(d, f, indent=2)
 
 
@@ -226,7 +224,7 @@ def _pass_at_k_single(n: int, c: int, k: int) -> float:
 def _compute_pass_at_k(
     per_example_results: dict[str, list[float]],
     k_values: list[int],
-) -> dict[int, float]:
+) -> PassAtKScores:
     """Compute pass@k across all examples for given k values.
 
     Args:
@@ -234,12 +232,12 @@ def _compute_pass_at_k(
         k_values: List of k values to compute (e.g. [1, 5, 10]).
 
     Returns:
-        Dict mapping k to mean pass@k across all examples.
+        :data:`PassAtKScores` mapping k to mean pass@k across all examples.
     """
     if not per_example_results:
         return {}
 
-    result: dict[int, float] = {}
+    result: PassAtKScores = {}
     for k in k_values:
         scores: list[float] = []
         for rewards in per_example_results.values():

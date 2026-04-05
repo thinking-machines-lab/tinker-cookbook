@@ -52,6 +52,7 @@ from tinker_cookbook.eval.benchmarks._types import (
     BenchmarkResultDict,
     Logs,
     Metrics,
+    PassAtKScores,
     StoredTrajectory,
     StoredTrajectoryDict,
     StoredTurnDict,
@@ -77,6 +78,7 @@ __all__ = [
     # Type aliases
     "Logs",
     "Metrics",
+    "PassAtKScores",
     # Serialization TypedDicts
     "BenchmarkResultDict",
     "StoredTrajectoryDict",

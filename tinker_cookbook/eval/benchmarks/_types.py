@@ -24,6 +24,16 @@ Logs = dict[str, Any]
 """Per-example diagnostic data for display/debugging (e.g., expected answer,
 extracted answer, example_id). Not aggregated — preserved per trajectory."""
 
+PassAtKScores = dict[int, float]
+"""Maps k values to pass@k probabilities.
+
+Keys are k values (e.g., 1, 5, 10), values are the unbiased pass@k
+estimate in [0, 1] using the Codex paper formula.
+E.g., ``{1: 0.45, 5: 0.72, 10: 0.85}``.
+
+Only populated when ``BenchmarkConfig.num_samples > 1``.
+"""
+
 
 # ---------------------------------------------------------------------------
 # Serialization TypedDicts — define the JSON schema for stored data
@@ -58,7 +68,12 @@ class StoredTrajectoryDict(TypedDict):
 
 
 class BenchmarkResultDict(TypedDict):
-    """JSON schema for a saved BenchmarkResult."""
+    """JSON schema for a saved BenchmarkResult.
+
+    Note: ``pass_at_k`` uses string keys in JSON (e.g., ``{"1": 0.45}``).
+    The dataclass :class:`BenchmarkResult` uses int keys (e.g., ``{1: 0.45}``).
+    Conversion happens in :func:`_save_result` and :func:`load_result`.
+    """
 
     name: str
     score: float
@@ -68,6 +83,7 @@ class BenchmarkResultDict(TypedDict):
     num_truncated: int
     metrics: Metrics
     time_seconds: float
+    pass_at_k: dict[str, float]  # string keys for JSON; int keys in PassAtKScores
 
 
 @dataclass
@@ -317,49 +333,70 @@ class StoredTrajectory:
 class BenchmarkResult:
     """Aggregated result from running a benchmark.
 
-    Attributes:
-        name: Benchmark name (e.g. ``"gsm8k"``).
-        score: Primary metric normalized to 0–1 (``num_correct / num_examples``).
-        num_examples: Total examples evaluated (including errors, which score as 0).
-        num_correct: Examples graded as correct (reward > 0).
-        num_errors: Examples that failed with an error (timeout, crash, etc.).
-            These are included in ``num_examples`` and scored as 0.
-        metrics: Benchmark-specific additional metrics.
-        time_seconds: Total wall time for the benchmark.
+    Every evaluated example falls into exactly one of four categories::
+
+        num_examples = num_correct + num_wrong + num_truncated + num_errors
+
+    Where ``num_wrong = num_examples - num_correct - num_truncated - num_errors``.
+
+    Two score metrics are provided:
+
+    - ``score``: raw accuracy (``num_correct / num_examples``). Truncated and
+      errored examples are scored as 0, dragging the score down.
+    - ``score_completed``: accuracy on examples that actually completed
+      (``num_correct / num_completed``). Excludes truncated and errored
+      examples from the denominator.
+
+    For thinking models that often hit ``max_tokens``, ``score_completed``
+    is typically the more meaningful comparison against published scores.
+
+    Example::
+
+        result = await run_benchmark("gsm8k", client, renderer, config)
+        print(f"Raw: {result.score:.1%}")                # 81.7%
+        print(f"Completed: {result.score_completed:.1%}") # 95.6%
+        print(f"{result.num_truncated} truncated, {result.num_errors} errors")
     """
 
     name: str
+    """Benchmark name (e.g. ``"gsm8k"``)."""
     score: float
+    """Raw accuracy: ``num_correct / num_examples``. Includes truncated and
+    errored examples as 0 in the denominator."""
     num_examples: int
+    """Total examples evaluated."""
     num_correct: int
+    """Examples graded as correct (reward > 0)."""
     num_errors: int = 0
+    """Examples that failed with an error (timeout, crash). Scored as 0."""
     num_truncated: int = 0
     """Examples where the model hit ``max_tokens`` or exceeded the context
-    window before producing an answer. These are scored as 0 (included in
-    ``num_examples``, not in ``num_correct``). Use ``score_excluding_truncated``
-    for accuracy on examples that actually completed."""
+    window before producing an answer. These are never graded — the episode
+    terminates before the grading function runs. Scored as 0."""
     metrics: Metrics = field(default_factory=dict)
     """Benchmark-specific additional metrics (e.g., per-category scores)."""
     time_seconds: float = 0.0
-    pass_at_k: dict[int, float] = field(default_factory=dict)
-    """Maps k to pass@k score. Only populated when ``num_samples > 1``.
-    E.g., ``{1: 0.45, 5: 0.72, 10: 0.85}``."""
+    """Wall time for the entire benchmark run in seconds."""
+    pass_at_k: PassAtKScores = field(default_factory=dict)
+    """Pass@k scores. Only populated when ``BenchmarkConfig.num_samples > 1``."""
 
     @property
     def num_completed(self) -> int:
-        """Examples that completed without error or truncation."""
+        """Examples that completed without error or truncation.
+
+        Equal to ``num_examples - num_errors - num_truncated``.
+        """
         return self.num_examples - self.num_errors - self.num_truncated
 
     @property
     def score_completed(self) -> float:
-        """Accuracy on completed examples only (excluding errors and truncated).
+        """Accuracy on completed examples only.
 
-        Useful for thinking models where many examples hit ``max_tokens``
-        before producing an answer — this shows accuracy on examples where
-        the model actually completed its response.
+        Excludes errored and truncated examples from both numerator and
+        denominator: ``num_correct / num_completed``.
 
-        Compare ``score`` (includes failures as 0) vs ``score_completed``
-        (only counts examples that ran to completion).
+        This is the metric to compare against published model card scores,
+        which typically don't penalize for context overflow.
         """
         return self.num_correct / self.num_completed if self.num_completed > 0 else 0.0
 
