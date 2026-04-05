@@ -248,10 +248,22 @@ eval_store/
 | `save_dir` | `None` | Directory for saving trajectories/results |
 | `judge_sampling_client` | `None` | Sampling client for LLM-as-judge benchmarks |
 
+## Important: scores are setup-dependent
+
+Benchmark scores are highly sensitive to evaluation settings. Small changes in `max_tokens`, `temperature`, `system_prompt`, or `timeout_seconds` can shift scores by 10–30%. Always document your exact configuration when reporting results.
+
+Common pitfalls with thinking models:
+- **`max_tokens` truncation**: Thinking models generate long reasoning chains that may fill `max_tokens` before producing an answer. For LiveCodeBench v6, 78/91 wrong answers were truncated at 32K tokens — increasing `max_tokens` to 64K would likely recover most of them.
+- **Timeouts**: Thinking models need 1800s+ for code benchmarks. LiveCodeBench went from 20% (600s) to 47.4% (1800s) on Qwen3.5-35B-A3B.
+- **Context overflow**: Multi-turn benchmarks (terminal_bench, swe_bench) can exceed the model's context window as conversations grow. The 65K context window of Qwen3.5-35B-A3B is insufficient for SWE-bench.
+- **System prompt**: GSM8K improved from 84.7% to 95.6% by instructing the model to use `\boxed{}`.
+
+Treat these scores as reference points for a specific configuration, not definitive model capabilities. The framework's primary value is **consistent, reproducible evaluation** — not producing leaderboard numbers.
+
 ## Verification
 
-Full-dataset reproduction on **[Qwen3.5-35B-A3B](https://huggingface.co/Qwen/Qwen3.5-35B-A3B)**.
-Official scores from the model card:
+Reference scores on **[Qwen3.5-35B-A3B](https://huggingface.co/Qwen/Qwen3.5-35B-A3B)** with `max_tokens=32768`, `temperature=0.6`.
+Official scores from the model card (which may use different settings).
 
 **Stable benchmarks:**
 
@@ -263,7 +275,7 @@ Official scores from the model card:
 | IFEval | 93.6%* | 91.9 | **Match** | 32K tokens |
 | GSM8K | 95.6%* | — | — | system_prompt=\boxed{}, 32K tokens |
 | MATH-500 | 96.2%* | — | — | system_prompt=\boxed{}, 32K tokens |
-| MBPP | 84.4%* | — | — | Modal sandbox |
+| MBPP | 84.4%* | — | — | Modal sandbox, 32K tokens |
 | AIME 2026 (pass@4) | 90.0% | 93.33 | Close | system_prompt=\boxed{}, 32K tokens |
 
 \* Excluding context overflow — the thinking model's reasoning chain exceeds context on some examples. These are scored as failures (reward=0).
@@ -272,12 +284,10 @@ Official scores from the model card:
 
 | Benchmark | Our Score | Official | Notes |
 |-----------|-----------|----------|-------|
-| LiveCodeBench | **47.4%** (175 ex) | — | 1800s timeout needed for thinking model |
+| LiveCodeBench v6 | **47.4%** (175 ex) | 74.6 | 78/91 wrong due to 32K truncation; excl. truncated: 86.5% |
 | Terminal Bench 2 | **27.7%** (112 ex) | 40.5 | 24 ctx overflow + 14 timeout on 65K model |
 | SWE-bench Verified | 0% (500 ex) | 69.2 | 65K context too small — all ctx overflow |
 | TAU2-Bench | 30.0% (50 ex) | 81.2 | Same-model user sim limits score; official uses GPT-4.1 |
-
-**Key finding:** The `system_prompt` hook is critical for thinking models — GSM8K improved from 84.7% to 95.6% by instructing the model to use `\boxed{}`. Per-model config presets (a planned feature) will capture these settings.
 
 ## Testing
 
