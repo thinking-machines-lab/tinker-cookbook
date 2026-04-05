@@ -8,10 +8,13 @@ Datasets: ``MathArena/hmmt_feb_2025`` and ``MathArena/hmmt_nov_2025`` on Hugging
 Metric: Accuracy -- fraction of problems where extracted answer matches ground truth.
 Pattern: Single-turn ``MessageEnv`` + programmatic grading.
 
-Note: HMMT answers can be arbitrary LaTeX expressions (fractions, radicals, etc.),
-not just integers like AIME. Grading uses normalized string comparison, which may
-miss equivalent expressions (e.g., ``1/2`` vs ``\\frac{1}{2}``). For precise
-evaluation, consider using a custom ``grade_fn`` with symbolic math comparison.
+Grading uses a 3-strategy approach (following MathArena/eth-sri):
+1. Normalized LaTeX string comparison
+2. Numeric float comparison
+3. Sympy symbolic comparison via ``parse_latex`` (requires ``antlr4-python3-runtime``)
+
+HMMT answers can be arbitrary LaTeX expressions (fractions, radicals, etc.),
+not just integers like AIME.
 """
 
 from __future__ import annotations
@@ -130,7 +133,8 @@ def _check_math_equal(extracted: str, expected: str) -> bool:
 class HMMTMessageEnv(MessageEnv):
     """Single-turn message env for one HMMT problem.
 
-    Grading uses normalized string comparison of the LaTeX answer.
+    Grading uses sympy symbolic comparison when available, falling back
+    to normalized string and numeric comparison.
     """
 
     def __init__(

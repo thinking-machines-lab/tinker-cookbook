@@ -13,13 +13,12 @@ import logging
 from collections.abc import Sequence
 from typing import cast
 
-from datasets import Dataset, concatenate_datasets
+from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
     build_messages,
     extract_mcq_answer,
     format_mcq_choices,
-    limit_dataset,
     load_benchmark_dataset,
     make_example_id,
 )
@@ -144,32 +143,40 @@ class CEvalBenchmarkBuilder(BenchmarkBuilder):
     name = "ceval"
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
-        # Load and concatenate all subjects' val splits
-        datasets: list[Dataset] = []
+        # Load all subjects' val splits and tag each row with its subject
+        rows_with_subject: list[tuple[dict, str]] = []
+        num_subjects = 0
         for subject in _CEVAL_SUBJECTS:
             try:
                 ds = cast(
                     Dataset,
                     load_benchmark_dataset("ceval/ceval-exam", name=subject, split="val"),
                 )
-                # Add subject column for per-subject breakdown
-                ds = ds.map(lambda x: {"_subject": subject})
-                datasets.append(ds)
+                for row in ds:
+                    rows_with_subject.append((dict(row), subject))
+                num_subjects += 1
             except Exception as e:
                 logger.debug(f"Could not load C-Eval subject {subject}: {e}")
                 continue
 
-        if not datasets:
+        if not rows_with_subject:
             logger.warning("Could not load any C-Eval subjects")
             return []
 
-        combined = concatenate_datasets(datasets)
-        logger.info(f"Loaded C-Eval: {len(combined)} questions across {len(datasets)} subjects")
-        combined = limit_dataset(combined, config.max_examples, shuffle_seed=42)
+        logger.info(
+            f"Loaded C-Eval: {len(rows_with_subject)} questions across {num_subjects} subjects"
+        )
+
+        # Apply max_examples limit with deterministic shuffle
+        if config.max_examples is not None and config.max_examples < len(rows_with_subject):
+            import random
+
+            rng = random.Random(42)
+            rng.shuffle(rows_with_subject)
+            rows_with_subject = rows_with_subject[: config.max_examples]
 
         envs: list[Env] = []
-        for row in combined:
-            row = dict(row)
+        for row, subject in rows_with_subject:
             question = row.get("question", "")
             answer = row.get("answer", "")
             if not question or not answer:
@@ -180,7 +187,6 @@ class CEvalBenchmarkBuilder(BenchmarkBuilder):
             if len(choices) < 2:
                 continue
 
-            subject = row.get("_subject", "")
             prompt = (
                 f"{question}\n\n{format_mcq_choices(choices)}\n\n"
                 "Think step by step, then give your final answer as a single letter (A, B, C, or D)."
