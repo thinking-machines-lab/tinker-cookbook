@@ -276,7 +276,7 @@ class StoredTrajectory:
         )
 
     @classmethod
-    def from_dict(cls, d: dict) -> StoredTrajectory:
+    def from_dict(cls, d: StoredTrajectoryDict | dict[str, Any]) -> StoredTrajectory:
         """Deserialize from a dict (e.g., loaded from JSONL).
 
         Accepts plain dicts for backward compatibility — old data may be
