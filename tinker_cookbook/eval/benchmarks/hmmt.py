@@ -50,8 +50,7 @@ def _normalize_latex(s: str) -> str:
     """Normalize a LaTeX answer string for comparison.
 
     Strips whitespace, removes ``$``, ``\\text{}``, ``\\mathrm{}``, and normalizes
-    common LaTeX patterns. This is a best-effort heuristic — symbolic math
-    comparison (e.g., via sympy) would be more precise.
+    common LaTeX patterns.
     """
     s = s.strip()
     # Remove dollar signs
@@ -65,6 +64,59 @@ def _normalize_latex(s: str) -> str:
     # Remove trailing period
     s = s.rstrip(".")
     return s
+
+
+def _check_math_equal(extracted: str, expected: str) -> bool:
+    """Check if two math expressions are equal using sympy.
+
+    Tries multiple strategies:
+    1. Normalized string comparison
+    2. Numeric float comparison
+    3. Sympy symbolic comparison via parse_latex
+
+    Following MathArena's approach (eth-sri/matharena).
+    """
+    # Strategy 1: normalized string match
+    ext_norm = _normalize_latex(extracted)
+    exp_norm = _normalize_latex(expected)
+    if ext_norm == exp_norm:
+        return True
+
+    if not ext_norm or not exp_norm:
+        return False
+
+    # Strategy 2: numeric float comparison
+    try:
+        if abs(float(ext_norm) - float(exp_norm)) < 1e-6:
+            return True
+    except ValueError:
+        pass
+
+    # Strategy 3: sympy symbolic comparison
+    try:
+        from sympy import N, simplify
+        from sympy.parsing.latex import parse_latex
+
+        parsed_ext = parse_latex(ext_norm)
+        parsed_exp = parse_latex(exp_norm)
+
+        # Try .equals() first (exact symbolic)
+        if parsed_ext.equals(parsed_exp):
+            return True
+
+        # Try simplify(a - b) == 0
+        diff = simplify(parsed_ext - parsed_exp)
+        if diff == 0:
+            return True
+
+        # Try numeric evaluation
+        num_diff = abs(complex(N(diff)))
+        if num_diff < 1e-8:
+            return True
+    except Exception:
+        pass
+
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +139,6 @@ class HMMTMessageEnv(MessageEnv):
     ):
         self.problem = problem
         self.expected = expected
-        self.expected_normalized = _normalize_latex(expected)
         self.example_id = example_id
         self.system_prompt = system_prompt
 
@@ -104,17 +155,7 @@ class HMMTMessageEnv(MessageEnv):
         boxed = extract_boxed(response)
         extracted = boxed if boxed else ""
 
-        # Normalize both for comparison
-        extracted_norm = _normalize_latex(extracted)
-        correct = extracted_norm == self.expected_normalized
-
-        # Also try numeric comparison for simple numeric answers
-        if not correct and extracted_norm and self.expected_normalized:
-            try:
-                if abs(float(extracted_norm) - float(self.expected_normalized)) < 1e-6:
-                    correct = True
-            except ValueError:
-                pass
+        correct = _check_math_equal(extracted, self.expected) if extracted else False
 
         return MessageStepResult(
             reward=1.0 if correct else 0.0,
@@ -126,8 +167,6 @@ class HMMTMessageEnv(MessageEnv):
                 "input": self.problem[:200],
                 "expected": self.expected,
                 "extracted": extracted,
-                "expected_normalized": self.expected_normalized,
-                "extracted_normalized": extracted_norm,
                 "output": response[:500],
             },
         )
