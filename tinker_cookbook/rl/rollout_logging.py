@@ -76,10 +76,21 @@ def serialize_rollout_summaries(
     taglist_P: Sequence[list[str]],
     sampling_client_steps_P: Sequence[int | None] | None = None,
 ) -> list[dict[str, Any]]:
-    """Serialize trajectory groups into JSON-safe rollout summary dicts.
+    """Serialize trajectory groups into JSON-safe rollout summary records.
 
-    Returns one dict per trajectory, suitable for writing to JSONL via
+    Returns one record per trajectory, suitable for writing to JSONL via
     ``TrainingRunStore.write_rollouts()`` or ``write_rollout_summaries_jsonl()``.
+
+    Each record contains::
+
+        {
+            "schema_version": 1,
+            "split": str, "iteration": int, "group_idx": int, "traj_idx": int,
+            "tags": list[str], "sampling_client_step": int | None,
+            "total_reward": float, "final_reward": float,
+            "trajectory_metrics": dict, "final_ob_len": int,
+            "steps": [{"step_idx", "ob_len", "ac_len", "reward", "episode_done", "metrics", "logs"}, ...]
+        }
 
     Args:
         split: Dataset split identifier (e.g. ``"train"``, ``"test"``).
@@ -89,7 +100,7 @@ def serialize_rollout_summaries(
         sampling_client_steps_P: Per-group sampling-client step counters, or ``None``.
 
     Returns:
-        List of JSON-serializable dicts, one per trajectory.
+        List of JSON-serializable rollout summary records, one per trajectory.
     """
     records: list[dict[str, Any]] = []
     for group_idx, (trajectory_group, tags) in enumerate(safezip(trajectory_groups_P, taglist_P)):

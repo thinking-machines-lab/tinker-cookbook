@@ -679,6 +679,7 @@ async def do_sync_training_with_stream_minibatch(
         config.save_every,
         start_batch,
         config.ttl_seconds,
+        store=ml_logger.store,
     )
 
     for i_batch in range(start_batch, end_batch):
@@ -1251,6 +1252,7 @@ async def save_checkpoint_and_get_sampling_client(
     save_every: int,
     start_batch: int = 0,
     ttl_seconds: int | None = None,
+    store: TrainingRunStore | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """Save a checkpoint (if due) and return a fresh sampling client.
 
@@ -1285,6 +1287,7 @@ async def save_checkpoint_and_get_sampling_client(
                 loop_state={"batch": i_batch},
                 kind="both",
                 ttl_seconds=ttl_seconds,
+                store=store,
             )
             return training_client.create_sampling_client(path_dict["sampler_path"]), metrics
         else:
@@ -1362,6 +1365,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     save_every: int,
     do_compute_post_kl: bool,
     ttl_seconds: int | None = None,
+    store: TrainingRunStore | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """Compute end-of-iteration metrics and return a fresh sampling client.
 
@@ -1398,7 +1402,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
 
     # Get a sampling client using the new weights
     sampling_client, checkpoint_metrics = await save_checkpoint_and_get_sampling_client(
-        training_client, i_batch, log_path, save_every, ttl_seconds=ttl_seconds
+        training_client, i_batch, log_path, save_every, ttl_seconds=ttl_seconds, store=store
     )
     metrics.update(checkpoint_metrics)
 
@@ -1695,6 +1699,7 @@ async def do_sync_training(
         config.save_every,
         start_batch,
         config.ttl_seconds,
+        store=ml_logger.store,
     )
 
     for i_batch in range(start_batch, end_batch):
