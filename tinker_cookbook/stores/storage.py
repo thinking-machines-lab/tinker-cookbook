@@ -326,7 +326,12 @@ class FsspecStorage:
     first, so ``IncrementalReader`` sees appended data immediately.
 
     Call :meth:`flush` at checkpoints or training end to persist staged
-    data to cloud. The context manager calls ``flush`` on exit.
+    data to cloud. The context manager calls :meth:`close` on exit
+    (which flushes and removes the staging directory).
+
+    **Data safety:** Unflushed staged data lives in a local temp directory.
+    If the process crashes before ``flush()``, unflushed appends are lost.
+    Flush at every checkpoint to minimize data loss on crash.
 
     Pickle-serializable — stores protocol, root, and kwargs. Local staged
     data is NOT included in pickle (each process starts with an empty stage).
@@ -362,7 +367,10 @@ class FsspecStorage:
         return f"{self._root}/{path}" if self._root else path
 
     def _stage_path(self, path: str) -> Path:
-        return self._stage_dir / path
+        resolved = (self._stage_dir / path).resolve()
+        if not resolved.is_relative_to(self._stage_dir.resolve()):
+            raise ValueError(f"Path escapes staging directory: {path}")
+        return resolved
 
     def url(self, path: str = "") -> str:
         """Return a URI like ``s3://bucket/prefix/path``."""
@@ -381,11 +389,11 @@ class FsspecStorage:
         full = self._full(path)
         self._fs.mkdirs(posixpath.dirname(full), exist_ok=True)
         self._fs.pipe_file(full, data)
-        # If this path was staged, update the local copy too
+        # Cloud is now authoritative — remove from staging to avoid
+        # redundant re-upload on flush and stale reads
         if path in self._staged:
-            sp = self._stage_path(path)
-            sp.parent.mkdir(parents=True, exist_ok=True)
-            sp.write_bytes(data)
+            self._stage_path(path).unlink(missing_ok=True)
+            self._staged.discard(path)
 
     def append(self, path: str, data: bytes) -> None:
         """See :meth:`Storage.append`.
@@ -504,9 +512,12 @@ class FsspecStorage:
 
     def __del__(self) -> None:
         # Best-effort cleanup — don't rely on this
-        import shutil
+        try:
+            import shutil
 
-        shutil.rmtree(self._stage_dir, ignore_errors=True)
+            shutil.rmtree(self._stage_dir, ignore_errors=True)
+        except Exception:
+            pass  # Python shutting down — nothing we can do
 
     # --- Async (via to_thread) ---
 
