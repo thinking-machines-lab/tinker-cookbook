@@ -123,7 +123,12 @@ class ModalSandbox:
         return self._sandbox.object_id
 
     async def send_heartbeat(self, timeout: int = 30) -> None:
-        await self._sandbox.exec.aio("true")
+        try:
+            await asyncio.wait_for(self._sandbox.exec.aio("true"), timeout=timeout)
+        except Exception as e:
+            if _is_sandbox_terminated(e):
+                raise SandboxTerminatedError(str(e)) from e
+            raise
 
     async def run_command(
         self,
