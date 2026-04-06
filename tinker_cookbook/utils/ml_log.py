@@ -143,6 +143,11 @@ class Logger(ABC):
         """
         return None
 
+    @property
+    def store(self) -> "TrainingRunStore | None":
+        """The ``TrainingRunStore`` backing this logger, or ``None``."""
+        return None
+
 
 class _PermissiveJSONEncoder(json.JSONEncoder):
     """A JSON encoder that handles non-encodable objects by converting them to their type string."""
@@ -178,8 +183,13 @@ class JsonLogger(Logger):
 
         self.log_dir = Path(log_dir).expanduser()
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.store = store or _TRS(LocalStorage(self.log_dir))
+        self._store = store or _TRS(LocalStorage(self.log_dir))
         self._logged_hparams = False
+
+    @property
+    def store(self) -> "TrainingRunStore":
+        """The ``TrainingRunStore`` backing this logger (always available)."""
+        return self._store
 
     def log_hparams(self, config: Any) -> None:
         """Log hyperparameters to config.json and code diff."""
@@ -187,13 +197,13 @@ class JsonLogger(Logger):
             config_dict = dump_config(config)
             # Use _PermissiveJSONEncoder as safety net for non-serializable values
             sanitized = json.loads(json.dumps(config_dict, cls=_PermissiveJSONEncoder))
-            self.store.write_config(sanitized)
-            self.store.write_code_diff(code_state())
+            self._store.write_config(sanitized)
+            self._store.write_code_diff(code_state())
             self._logged_hparams = True
 
     def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
         """Append metrics to JSONL file."""
-        self.store.write_metrics(metrics, step)
+        self._store.write_metrics(metrics, step)
         logger.info("Wrote metrics to %s/metrics.jsonl", self.log_dir)
 
 

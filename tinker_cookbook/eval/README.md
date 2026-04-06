@@ -210,7 +210,7 @@ Key points:
 Persistent, file-based storage for tracking evaluation across checkpoints. Matches examples by `example_id` to identify regressions and improvements.
 
 ```python
-from tinker_cookbook.eval.store import EvalStore
+from tinker_cookbook.stores.eval_store import EvalStore
 from tinker_cookbook.eval.benchmarks import run_benchmarks, BenchmarkConfig
 
 store = EvalStore("~/experiments/evals")
@@ -227,16 +227,13 @@ await run_benchmarks(
 )
 store.finalize_run(run_id)
 
-# Compare two checkpoints
-comp = store.compare_runs("sft_step500_20260327", "ifrl_step30_20260327", "gsm8k")
-store.print_comparison(comp)
-# === gsm8k: sft_step500 vs ifrl_step30 ===
-#   Score: 0.743 -> 0.781 (delta=+0.038)
-#   Regressions: 3 (correct in A, wrong in B)
-#   Improvements: 18 (wrong in A, correct in B)
+# Query results
+result = store.read_result(run_id, "gsm8k")
+print(f"GSM8K: {result.score:.1%}")
 
-# Dashboard across all runs
-store.print_dashboard()
+# List all runs
+for run in store.list_runs():
+    print(f"{run.run_id}: {run.scores}")
 ```
 
 ### Storage layout
