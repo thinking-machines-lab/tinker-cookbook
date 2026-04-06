@@ -20,7 +20,10 @@ from tinker_cookbook.eval.benchmarks._common import (
     load_benchmark_dataset,
     make_example_id,
 )
-from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
+from tinker_cookbook.eval.benchmarks._types import (
+    BenchmarkBuilder,
+    BenchmarkConfig,
+)
 from tinker_cookbook.renderers import get_text_content
 from tinker_cookbook.renderers.base import Message, Renderer
 from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
@@ -86,6 +89,7 @@ class GSM8KBenchmarkBuilder(BenchmarkBuilder):
     """GSM8K: 1,319 grade-school math word problems."""
 
     name = "gsm8k"
+    recommended_system_prompt = "Put your final answer in \\boxed{}."
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
         ds = load_benchmark_dataset("openai/gsm8k", name="main")

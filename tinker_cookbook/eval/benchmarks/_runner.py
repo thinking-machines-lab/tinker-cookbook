@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import json
 import logging
 import math
@@ -438,6 +439,11 @@ async def run_benchmark(
             f"published scores. See the benchmark module docstring for known "
             f"limitations and status."
         )
+
+    # Apply benchmark's recommended system_prompt if user didn't set one
+    if config.system_prompt is None and benchmark.recommended_system_prompt is not None:
+        config = dataclasses.replace(config, system_prompt=benchmark.recommended_system_prompt)
+        logger.info("  Using benchmark's recommended system_prompt")
 
     t0 = time.monotonic()
     num_samples = config.num_samples
