@@ -550,6 +550,7 @@ async def main(
         config=cfg,
         wandb_name=cfg.wandb_name,
     )
+    store = ml_logger.store
     if cfg.enable_trace:
         current_task = asyncio.current_task()
         if current_task is not None:
@@ -752,7 +753,7 @@ async def main(
 
         # Log timing
         metrics.update(window.get_timing_metrics())
-        window.write_spans_jsonl(log_path / "timing_spans.jsonl", step=i_batch)
+        window.save_timing(i_batch, store=store, log_path=log_path)
         if cfg.span_chart_every > 0 and i_batch % cfg.span_chart_every == 0:
             trace.save_gantt_chart_html(
                 window, i_batch, log_path / f"timing_gantt_{i_batch:06d}.html"
@@ -768,6 +769,7 @@ async def main(
             kind="both",
             loop_state={"batch": num_batches},
             ttl_seconds=None,
+            store=store,
         )
 
     ml_logger.close()

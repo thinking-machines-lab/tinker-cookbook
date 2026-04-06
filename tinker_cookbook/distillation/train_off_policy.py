@@ -343,6 +343,7 @@ async def main(config: Config) -> None:
         config=config,
         wandb_name=config.wandb_name,
     )
+    store = ml_logger.store
     if config.enable_trace:
         trace_events_path = str(Path(config.log_path) / "trace_events.jsonl")
         logger.info(f"Tracing enabled. Events saved to {trace_events_path}")
@@ -461,6 +462,7 @@ async def main(config: Config) -> None:
                 kind="both",
                 loop_state={"batch": i_batch},
                 ttl_seconds=config.ttl_seconds,
+                store=store,
             )
             sampling_client = training_client.create_sampling_client(path_dict["sampler_path"])
         else:
@@ -481,6 +483,7 @@ async def main(config: Config) -> None:
             kind="both",
             loop_state={"batch": total_batches},
             ttl_seconds=None,
+            store=store,
         )
 
     ml_logger.close()
