@@ -20,9 +20,12 @@ so that cloud backends (S3, GCS) work end-to-end for both reads and writes.
 - ``remove_dir()`` — No-op on backends without real directories (S3/GCS).
 - ``url()`` — Returns a human-readable URI (``file:///``, ``s3://``, ``gs://``).
 
-**Migration status:** Read paths (TrainingRunStore, EvalStore, RunRegistry)
-use Storage. Write paths (ml_log, trace, checkpoint_utils, eval runner)
-still use ``Path``/``open()`` directly and need to be ported.
+**Migration status:**
+
+- Done: read paths (TrainingRunStore, EvalStore, RunRegistry)
+- TODO phase 1: ``ml_log.JsonLogger``, ``utils/trace.py``, ``checkpoint_utils``
+- TODO phase 2: cloud backends (``FsspecStorage`` wrapping fsspec)
+- TODO phase 3: eval runner (``_runner.py`` — see docstring there for details)
 """
 
 from __future__ import annotations
