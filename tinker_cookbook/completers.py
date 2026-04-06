@@ -83,6 +83,10 @@ class TinkerTokenCompleter(TokenCompleter):
             the model.
         max_tokens (int): Maximum number of tokens to generate per call.
         temperature (float): Sampling temperature. Default: 1.0.
+        context_window (int | None): Model's total context window size. When
+            set, ``max_tokens`` is dynamically capped per request so that
+            ``prompt_tokens + max_tokens <= context_window``. This prevents
+            "prompt + max_tokens exceeds context window" API errors.
 
     Example::
 
@@ -94,18 +98,28 @@ class TinkerTokenCompleter(TokenCompleter):
     sampling_client: tinker.SamplingClient
     max_tokens: int
     temperature: float = 1.0
+    context_window: int | None = None
 
     async def __call__(
         self, model_input: tinker.ModelInput, stop: StopCondition
     ) -> TokensWithLogprobs:
         """Sample an action from the policy given an observation."""
+        max_tokens = self.max_tokens
+        if self.context_window is not None:
+            max_tokens = min(max_tokens, self.context_window - model_input.length)
+            if max_tokens <= 0:
+                raise ValueError(
+                    f"Prompt length ({model_input.length}) exceeds context window "
+                    f"({self.context_window}). No room for generation."
+                )
+
         # Sample from the model
         sample_result = await self.sampling_client.sample_async(
             prompt=model_input,
             num_samples=1,
             sampling_params=tinker.SamplingParams(
                 stop=stop,
-                max_tokens=self.max_tokens,
+                max_tokens=max_tokens,
                 temperature=self.temperature,
             ),
         )
