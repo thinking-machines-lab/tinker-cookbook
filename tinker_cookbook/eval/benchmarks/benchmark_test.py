@@ -444,51 +444,6 @@ class TestEvalStore:
         meta = store.finalize_run(run_id)
         assert meta.scores["gsm8k"] == 0.85
 
-    def test_compare_runs(self, tmp_path):
-        import json
-
-        from tinker_cookbook.eval.benchmarks._types import StoredTrajectory
-        from tinker_cookbook.stores.eval_store import EvalStore
-
-        store = EvalStore(tmp_path / "eval_store")
-
-        # Create two runs
-        store.create_run(
-            model_name="test", benchmarks=["gsm8k"], run_id="run_a", checkpoint_name="step100"
-        )
-        store.create_run(
-            model_name="test", benchmarks=["gsm8k"], run_id="run_b", checkpoint_name="step200"
-        )
-
-        # Write trajectories with stable example_ids
-        for run_id, rewards in [("run_a", [1.0, 0.0, 1.0]), ("run_b", [1.0, 1.0, 0.0])]:
-            traj_dir = tmp_path / "eval_store" / "runs" / run_id / "gsm8k"
-            traj_dir.mkdir(parents=True)
-            with open(traj_dir / "trajectories.jsonl", "w") as f:
-                for i, r in enumerate(rewards):
-                    t = StoredTrajectory(
-                        idx=i,
-                        benchmark="gsm8k",
-                        example_id=f"q_{i}",
-                        reward=r,
-                        logs={"example_id": f"q_{i}"},
-                    )
-                    f.write(json.dumps(t.to_dict()) + "\n")
-
-            # Write result
-            with open(traj_dir / "result.json", "w") as f:
-                json.dump({"score": sum(rewards) / len(rewards)}, f)
-
-        store.finalize_run("run_a")
-        store.finalize_run("run_b")
-
-        comp = store.compare_runs("run_a", "run_b", "gsm8k")
-        assert comp.num_shared == 3
-        assert len(comp.regressions) == 1  # q_2: A correct, B wrong
-        assert len(comp.improvements) == 1  # q_1: A wrong, B correct
-        assert "q_2" in comp.regressions
-        assert "q_1" in comp.improvements
-
 
 class TestConfigValidation:
     def test_rejects_zero_concurrency(self):

@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from tinker_cookbook.stores.storage import Storage, storage_join
-from tinker_cookbook.stores.training_store import (
-    Status,
-    TrainingRunStore,
-    TrainingType,
-)
+from tinker_cookbook.stores.training_store import TrainingRunStore
 
 _ITERATION_RE = re.compile(r"^iteration_(\d+)$")
+
+Status = Literal["running", "completed", "idle"]
+TrainingType = Literal["rl", "sl", "dpo"]
+_ACTIVE_THRESHOLD_SECONDS = 120
 
 
 class _EvalUnset:
@@ -171,10 +172,45 @@ def _is_run_dir(storage: Storage, prefix: str) -> bool:
     )
 
 
+def _detect_status(store: TrainingRunStore) -> tuple[Status, float | None]:
+    """Infer run status from metrics mtime and checkpoint records."""
+    stat = store.storage.stat(storage_join(store.prefix, "metrics.jsonl"))
+    if stat is None:
+        return "idle", None
+    age = time.time() - stat.mtime
+    if age < _ACTIVE_THRESHOLD_SECONDS:
+        return "running", stat.mtime
+    for ckpt in reversed(store.read_checkpoints()):
+        if ckpt.get("final"):
+            return "completed", stat.mtime
+    return "idle", stat.mtime
+
+
+def _infer_training_type(store: TrainingRunStore) -> TrainingType | None:
+    """Infer training type from config keys."""
+    config = store.read_config()
+    if config is None:
+        return None
+    if "dpo_beta" in config:
+        return "dpo"
+    if "loss_fn" in config:
+        return "rl"
+    if "num_epochs" in config:
+        return "sl"
+    db = config.get("dataset_builder")
+    if isinstance(db, dict):
+        dt = db.get("__type__", "")
+        if "RL" in dt:
+            return "rl"
+        if "Supervised" in dt or "SL" in dt:
+            return "sl"
+    return None
+
+
 def _build_run_info(storage: Storage, run_id: str, prefix: str) -> RunInfo:
     store = TrainingRunStore(storage, prefix)
-    status, last_updated = store.detect_status()
-    training_type = store.infer_training_type()
+    status, last_updated = _detect_status(store)
+    training_type = _infer_training_type(store)
     iteration_count = sum(1 for child in storage.list_dir(prefix) if _ITERATION_RE.match(child))
 
     return RunInfo(

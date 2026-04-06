@@ -66,28 +66,6 @@ class RunMetadata:
         return cls(**{k: v for k, v in d.items() if k in valid_fields})
 
 
-@dataclass
-class RunComparison:
-    """Result of comparing two runs on a specific benchmark.
-
-    Stores example IDs rather than full trajectory objects to avoid
-    holding large amounts of data in memory for big benchmarks.
-    Use ``EvalStore.read_single_trajectory`` to load specific examples.
-    """
-
-    benchmark: str
-    run_a_id: str
-    run_b_id: str
-    score_a: float
-    score_b: float
-    score_delta: float
-    regressions: list[str]
-    """Example IDs where run_a was correct but run_b was wrong."""
-    improvements: list[str]
-    """Example IDs where run_a was wrong but run_b was correct."""
-    num_shared: int
-
-
 class EvalStore:
     """Manages evaluation runs across checkpoints.
 
@@ -346,92 +324,6 @@ class EvalStore:
         self.storage.remove(self._path("runs", run_id, "summary.json"))
         self.storage.remove_dir(self._path("runs", run_id))
 
-    # ── Cross-run comparison ──────────────────────────────────────────
-
-    def compare_runs(self, run_a_id: str, run_b_id: str, benchmark: str) -> RunComparison:
-        """Compare two runs on a specific benchmark.
-
-        Returns example IDs for regressions/improvements rather than full
-        trajectory objects. Use ``read_single_trajectory`` to inspect details.
-        """
-        trajs_a = self.read_trajectories(run_a_id, benchmark)
-        trajs_b = self.read_trajectories(run_b_id, benchmark)
-
-        def _get_id(t: StoredTrajectory) -> str:
-            return t.example_id if t.example_id else str(t.idx)
-
-        index_a = {_get_id(t): t for t in trajs_a}
-        index_b = {_get_id(t): t for t in trajs_b}
-        shared = set(index_a) & set(index_b)
-
-        regressions: list[str] = []
-        improvements: list[str] = []
-        for ex_id in sorted(shared):
-            a, b = index_a[ex_id], index_b[ex_id]
-            if a.reward > 0 and b.reward <= 0:
-                regressions.append(ex_id)
-            elif a.reward <= 0 and b.reward > 0:
-                improvements.append(ex_id)
-
-        meta_a = self.read_run(run_a_id)
-        meta_b = self.read_run(run_b_id)
-
-        return RunComparison(
-            benchmark=benchmark,
-            run_a_id=run_a_id,
-            run_b_id=run_b_id,
-            score_a=meta_a.scores.get(benchmark, 0.0),
-            score_b=meta_b.scores.get(benchmark, 0.0),
-            score_delta=meta_b.scores.get(benchmark, 0.0) - meta_a.scores.get(benchmark, 0.0),
-            regressions=regressions,
-            improvements=improvements,
-            num_shared=len(shared),
-        )
-
-    def scores_table(self) -> list[dict[str, Any]]:
-        """Build a scores table across all runs."""
-        table = []
-        for run in self.list_runs():
-            table.append(
-                {
-                    "run_id": run.run_id,
-                    "model_name": run.model_name,
-                    "checkpoint_name": run.checkpoint_name,
-                    "timestamp": run.timestamp,
-                    "scores": run.scores,
-                }
-            )
-        return table
-
-    def print_dashboard(self) -> None:
-        """Print a summary dashboard to stdout."""
-        runs = self.list_runs()
-        if not runs:
-            print("No evaluation runs found.")
-            return
-        all_benchmarks = sorted({b for r in runs for b in r.scores})
-        header = f"{'Run ID':30s} {'Checkpoint':20s}"
-        for b in all_benchmarks:
-            header += f" {b:>10s}"
-        print(header)
-        print("-" * len(header))
-        for r in runs:
-            row = f"{r.run_id:30s} {(r.checkpoint_name or 'base'):20s}"
-            for b in all_benchmarks:
-                score = r.scores.get(b)
-                row += f" {score:10.3f}" if score is not None else f" {'—':>10s}"
-            print(row)
-
-    def print_comparison(self, comparison: RunComparison) -> None:
-        """Pretty-print a run comparison."""
-        print(f"=== {comparison.benchmark}: {comparison.run_a_id} vs {comparison.run_b_id} ===")
-        print(
-            f"  Score: {comparison.score_a:.3f} -> {comparison.score_b:.3f} (delta={comparison.score_delta:+.3f})"
-        )
-        print(
-            f"  Shared: {comparison.num_shared}, Regressions: {len(comparison.regressions)}, Improvements: {len(comparison.improvements)}"
-        )
-
     # ── Async variants ────────────────────────────────────────────────
 
     async def alist_runs(self) -> list[RunMetadata]:
@@ -444,6 +336,3 @@ class EvalStore:
 
     async def aread_result(self, run_id: str, benchmark: str) -> BenchmarkResult | None:
         return await asyncio.to_thread(self.read_result, run_id, benchmark)
-
-    async def ascores_table(self) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self.scores_table)

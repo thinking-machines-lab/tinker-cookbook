@@ -11,10 +11,9 @@ import asyncio
 import json
 import logging
 import re
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 
 from tinker_cookbook.stores._incremental import IncrementalReader
 from tinker_cookbook.stores.storage import Storage, storage_join
@@ -36,10 +35,6 @@ class _Unset:
 
 
 _UNSET = _Unset()
-
-Status = Literal["running", "completed", "idle"]
-TrainingType = Literal["rl", "sl", "dpo"]
-_ACTIVE_THRESHOLD_SECONDS = 120
 
 
 @dataclass
@@ -219,109 +214,6 @@ class TrainingRunStore:
         reader.read()
         return reader.records
 
-    def read_timing_flat(self) -> list[dict[str, Any]]:
-        """All spans flattened with step annotation."""
-        flat: list[dict[str, Any]] = []
-        for record in self.read_timing():
-            step = record.get("step", 0)
-            if "spans" in record:
-                for span in record["spans"]:
-                    flat.append({"step": step, **span})
-            else:
-                flat.append(record)
-        return flat
-
-    def build_timing_tree(self, step: int) -> dict[str, Any]:
-        """Build hierarchical span tree from time containment."""
-        spans = self._get_spans_for_step(step)
-        if not spans:
-            return {"step": step, "root": None}
-
-        sorted_spans = sorted(spans, key=lambda s: (s.get("wall_start", 0), -s.get("duration", 0)))
-
-        nodes: list[dict[str, Any]] = []
-        for s in sorted_spans:
-            nodes.append(
-                {
-                    "name": s.get("name", "?"),
-                    "duration": s.get("duration", 0),
-                    "wall_start": s.get("wall_start", 0),
-                    "wall_end": s.get("wall_end", 0),
-                    "attributes": s.get("attributes", {}),
-                    "children": [],
-                }
-            )
-
-        EPS = 0.01
-        root_children: list[dict[str, Any]] = []
-        stack: list[dict[str, Any]] = []
-
-        for node in nodes:
-            while stack and stack[-1]["wall_end"] + EPS < node["wall_start"]:
-                stack.pop()
-            if stack and node["wall_end"] <= stack[-1]["wall_end"] + EPS:
-                stack[-1]["children"].append(node)
-            else:
-                while stack and node["wall_end"] > stack[-1]["wall_end"] + EPS:
-                    stack.pop()
-                if stack:
-                    stack[-1]["children"].append(node)
-                else:
-                    root_children.append(node)
-            stack.append(node)
-
-        all_starts = [n["wall_start"] for n in nodes]
-        all_ends = [n["wall_end"] for n in nodes]
-        total = max(all_ends) - min(all_starts) if all_starts else 0
-
-        return {
-            "step": step,
-            "total_duration": total,
-            "root": {
-                "name": "iteration",
-                "duration": total,
-                "wall_start": min(all_starts) if all_starts else 0,
-                "wall_end": max(all_ends) if all_ends else 0,
-                "attributes": {},
-                "children": root_children,
-            },
-        }
-
-    def get_concurrency(self, step: int) -> dict[str, Any]:
-        spans = self._get_spans_for_step(step)
-        if not spans:
-            return {"step": step, "spans": [], "max_concurrency": 0, "timeline": []}
-
-        sorted_spans = sorted(spans, key=lambda s: s.get("wall_start", 0))
-        events: list[tuple[float, int]] = []
-        for s in sorted_spans:
-            ws = s.get("wall_start", 0)
-            we = s.get("wall_end", ws + s.get("duration", 0))
-            events.append((ws, 1))
-            events.append((we, -1))
-        events.sort(key=lambda e: (e[0], e[1]))
-
-        max_c = 0
-        current = 0
-        timeline: list[dict[str, Any]] = []
-        for t, delta in events:
-            current += delta
-            max_c = max(max_c, current)
-            timeline.append({"time": t, "concurrency": current})
-
-        return {"step": step, "spans": sorted_spans, "max_concurrency": max_c, "timeline": timeline}
-
-    def _get_spans_for_step(self, step: int) -> list[dict[str, Any]]:
-        spans: list[dict[str, Any]] = []
-        for record in self.read_timing():
-            if record.get("step") != step:
-                continue
-            if "spans" in record:
-                spans.extend(record["spans"])
-            else:
-                spans.append(record)
-        return spans
-
     # ── Logtree ───────────────────────────────────────────────────────
 
     def read_logtree(self, iteration: int, base_name: str = "train") -> dict[str, Any] | None:
@@ -351,39 +243,6 @@ class TrainingRunStore:
             iterations.append(info)
         iterations.sort(key=lambda x: x.iteration)
         return iterations
-
-    # ── Status detection ──────────────────────────────────────────────
-
-    def detect_status(self) -> tuple[Status, float | None]:
-        stat = self.storage.stat(self._path("metrics.jsonl"))
-        if stat is None:
-            return "idle", None
-        age = time.time() - stat.mtime
-        if age < _ACTIVE_THRESHOLD_SECONDS:
-            return "running", stat.mtime
-        for ckpt in reversed(self._read_jsonl("checkpoints.jsonl")):
-            if ckpt.get("final"):
-                return "completed", stat.mtime
-        return "idle", stat.mtime
-
-    def infer_training_type(self) -> TrainingType | None:
-        config = self.read_config()
-        if config is None:
-            return None
-        if "dpo_beta" in config:
-            return "dpo"
-        if "loss_fn" in config:
-            return "rl"
-        if "num_epochs" in config:
-            return "sl"
-        db = config.get("dataset_builder")
-        if isinstance(db, dict):
-            dt = db.get("__type__", "")
-            if "RL" in dt:
-                return "rl"
-            if "Supervised" in dt or "SL" in dt:
-                return "sl"
-        return None
 
     # ── Writes ────────────────────────────────────────────────────────
 

@@ -181,18 +181,6 @@ class TestTrainingRunStore:
         assert len(timing) == 1
         assert timing[0]["step"] == 0
 
-    def test_read_timing_flat(self, run_dir: Path) -> None:
-        store = TrainingRunStore(LocalStorage(run_dir))
-        flat = store.read_timing_flat()
-        assert len(flat) == 2
-        assert flat[0]["name"] == "sampling"
-
-    def test_build_timing_tree(self, run_dir: Path) -> None:
-        store = TrainingRunStore(LocalStorage(run_dir))
-        tree = store.build_timing_tree(0)
-        assert tree["root"] is not None
-        assert tree["root"]["name"] == "iteration"
-
     def test_read_logtree(self, run_dir: Path) -> None:
         store = TrainingRunStore(LocalStorage(run_dir))
         lt = store.read_logtree(0)
@@ -205,16 +193,6 @@ class TestTrainingRunStore:
         assert len(iters) == 2
         assert iters[0].iteration == 0
         assert iters[0].has_train_rollouts is True
-
-    def test_detect_status(self, run_dir: Path) -> None:
-        store = TrainingRunStore(LocalStorage(run_dir))
-        status, _ = store.detect_status()
-        # Has final checkpoint → completed (if metrics not recently updated)
-        assert status in ("running", "completed", "idle")
-
-    def test_infer_training_type(self, run_dir: Path) -> None:
-        store = TrainingRunStore(LocalStorage(run_dir))
-        assert store.infer_training_type() == "rl"
 
     def test_pickle_serializable(self, run_dir: Path) -> None:
         store = TrainingRunStore(LocalStorage(run_dir))
@@ -353,8 +331,6 @@ class TestTrainingRunStoreWrites:
         logtree = store.read_logtree(0)
         assert logtree is not None
         assert logtree["title"] == "iter0"
-        assert store.detect_status()[0] in ("running", "idle")
-        assert store.infer_training_type() is None  # no loss_fn key
 
 
 class TestRunRegistry:

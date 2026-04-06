@@ -40,9 +40,6 @@ Example — persistent eval with EvalStore::
     result = store.read_result(run_id, "gsm8k")
     wrong = store.read_trajectories(run_id, "gsm8k", incorrect_only=True)
 
-    # Compare checkpoints
-    comp = store.compare_runs(run_a, run_b, "ifeval")
-    store.print_comparison(comp)
 """
 
 from tinker_cookbook.eval.benchmark_evaluator import BenchmarkEvaluator
@@ -64,7 +61,7 @@ from tinker_cookbook.eval.evaluators import (
     SamplingClientEvaluatorBuilder,
     TrainingClientEvaluator,
 )
-from tinker_cookbook.stores.eval_store import EvalStore, RunComparison, RunMetadata
+from tinker_cookbook.stores.eval_store import EvalStore, RunMetadata
 
 __all__ = [
     # Evaluator interfaces (for training loops)
@@ -85,8 +82,7 @@ __all__ = [
     "print_trajectory",
     # Benchmark-to-evaluator bridge
     "BenchmarkEvaluator",
-    # Eval store — persistent storage, querying, and comparison
+    # Eval store — persistent storage and querying
     "EvalStore",
-    "RunComparison",
     "RunMetadata",
 ]
