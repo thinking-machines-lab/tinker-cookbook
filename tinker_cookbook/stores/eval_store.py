@@ -18,7 +18,6 @@ Storage layout::
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import uuid
@@ -140,8 +139,10 @@ class EvalStore:
         for line in data.decode("utf-8", errors="replace").splitlines():
             line = line.strip()
             if line:
-                with contextlib.suppress(json.JSONDecodeError):
+                try:
                     records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    logger.warning("Skipping malformed JSONL line in %s", self._path(*parts))
         return records
 
     # ── Run management ────────────────────────────────────────────────
@@ -287,7 +288,7 @@ class EvalStore:
     def read_single_trajectory(
         self, run_id: str, benchmark: str, idx: int
     ) -> StoredTrajectory | None:
-        """Get a single trajectory by index."""
+        """Get a single trajectory by index (O(n) scan — loads all trajectories)."""
         for t in self.read_trajectories(run_id, benchmark):
             if t.idx == idx:
                 return t

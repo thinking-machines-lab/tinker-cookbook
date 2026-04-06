@@ -111,8 +111,8 @@ class IncrementalReader:
         with self._lock:
             if self._records:
                 return True
-        stat = self._storage.stat(self._path)
-        return stat is not None and stat.size > 0
+            stat = self._storage.stat(self._path)
+            return stat is not None and stat.size > 0
 
     def __getstate__(self) -> dict[str, Any]:
         state = self.__dict__.copy()

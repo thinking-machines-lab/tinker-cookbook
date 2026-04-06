@@ -145,11 +145,7 @@ class TrainingRunStore:
     def read_rollouts(
         self, iteration: int, split: str = "train", label: str | None = None
     ) -> list[dict[str, Any]]:
-        """Read rollout summaries for an iteration.
-
-        Returns raw dicts for now. Typed StoredTrainingTrajectory reads
-        available via ``read_rollouts_typed()``.
-        """
+        """Read rollout summaries for an iteration as raw dicts."""
         if split == "train":
             filename = "train_rollout_summaries.jsonl"
         elif label:

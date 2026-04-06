@@ -2,17 +2,30 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
 from tinker_cookbook.stores.storage import Storage, storage_join
 from tinker_cookbook.stores.training_store import (
-    _ITERATION_RE,
     Status,
     TrainingRunStore,
     TrainingType,
-    _Unset,
 )
+
+_ITERATION_RE = re.compile(r"^iteration_(\d+)$")
+
+
+class _EvalUnset:
+    """Sentinel for eval cache — survives pickle (unlike bare object())."""
+
+    _instance: _EvalUnset | None = None
+
+    def __new__(cls) -> _EvalUnset:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
 
 _DEFAULT_EVAL_PREFIXES: tuple[str, ...] = ("eval", "eval_store", "")
 
@@ -40,7 +53,7 @@ class RunRegistry:
     source storage so stores route to the correct backend.
     """
 
-    _EVAL_UNSET = _Unset()
+    _EVAL_UNSET = _EvalUnset()
 
     def __init__(
         self,
