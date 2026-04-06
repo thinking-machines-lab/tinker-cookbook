@@ -46,7 +46,7 @@ from tinker_cookbook.tool_use.types import ToolResult
 
 logger = logging.getLogger(__name__)
 
-MAX_TURNS = 100
+MAX_TURNS = 200
 """Maximum number of agent turns before forced termination."""
 
 _SYSTEM_PROMPT = """\
@@ -224,6 +224,7 @@ class _SWEBenchEnvFactory(SandboxMixin, Env):
         sandbox_factory: Any,
         renderer: Renderer,
         example_id: str,
+        raw_instance: dict | None = None,
         system_prompt: str | None = None,
         max_trajectory_tokens: int | None = None,
         max_generation_tokens: int | None = None,
@@ -238,32 +239,77 @@ class _SWEBenchEnvFactory(SandboxMixin, Env):
         self.sandbox_factory = sandbox_factory
         self.renderer = renderer
         self.example_id = example_id
+        self.raw_instance = raw_instance
         self.system_prompt = system_prompt
         self.max_trajectory_tokens = max_trajectory_tokens
         self.max_generation_tokens = max_generation_tokens
 
         self._inner: EnvFromMessageEnv | None = None
 
+    def _make_setup_commands(self) -> list[str]:
+        """Generate setup commands using official SWE-bench TestSpec.
+
+        Uses ``swebench.harness.test_spec.make_test_spec`` to get per-instance
+        setup scripts with exact dependency versions. Adapts conda commands to
+        pip for our Modal sandbox (no conda available).
+        """
+        from swebench.harness.test_spec.test_spec import make_test_spec
+
+        if self.raw_instance is None:
+            raise ValueError("raw_instance not available")
+
+        spec = make_test_spec(self.raw_instance)
+        cmds: list[str] = []
+
+        # Repo setup (skip conda-specific commands)
+        for cmd in spec.repo_script_list:
+            # Replace /testbed with /workspace/repo
+            cmd = cmd.replace("/testbed", "/workspace/repo")
+            # Skip conda commands
+            if "conda" in cmd or "miniconda" in cmd:
+                continue
+            cmds.append(cmd)
+
+        # Environment setup — extract pip install commands
+        for cmd in spec.env_script_list:
+            cmd = cmd.replace("/testbed", "/workspace/repo")
+            if "conda" in cmd or "miniconda" in cmd:
+                continue
+            if "pip install" in cmd:
+                cmds.append(cmd)
+
+        return cmds
+
+    def _make_basic_setup_commands(self) -> list[str]:
+        """Fallback setup without swebench package."""
+        repo_url = f"https://github.com/{shlex.quote(self.repo)}.git"
+        safe_commit = shlex.quote(self.base_commit)
+        return [
+            f"git clone --depth=50 {repo_url} /workspace/repo",
+            f"cd /workspace/repo && git fetch --depth=50 origin {safe_commit}",
+            f"cd /workspace/repo && git checkout {safe_commit}",
+            "cd /workspace/repo && pip install -e . 2>&1 | tail -5",
+        ]
+
     async def initial_observation(self):
         # Create sandbox
         self.sandbox = await self.sandbox_factory()
         assert self.sandbox is not None
 
-        # Clone and checkout
+        # Use official SWE-bench test spec for environment setup when available
         try:
-            repo_url = f"https://github.com/{shlex.quote(self.repo)}.git"
-            safe_commit = shlex.quote(self.base_commit)
-            setup_cmds = [
-                f"git clone --depth=50 {repo_url} /workspace/repo",
-                f"cd /workspace/repo && git fetch --depth=50 origin {safe_commit}",
-                f"cd /workspace/repo && git checkout {safe_commit}",
-            ]
+            setup_cmds = self._make_setup_commands()
+        except Exception as e:
+            logger.debug(f"swe_bench: TestSpec unavailable ({e}), using basic setup")
+            setup_cmds = self._make_basic_setup_commands()
+
+        try:
             for cmd in setup_cmds:
                 result = await self.sandbox.run_command(cmd, timeout=300)
                 if result.exit_code != 0:
-                    raise RuntimeError(
-                        f"swe_bench setup failed (exit {result.exit_code}): "
-                        f"{cmd[:100]}  stderr={result.stderr[:300]}"
+                    logger.debug(
+                        f"swe_bench setup cmd failed (exit {result.exit_code}): "
+                        f"{cmd[:80]}  stderr={result.stderr[:200]}"
                     )
         except Exception:
             await self.cleanup()
@@ -407,6 +453,7 @@ class SWEBenchBenchmarkBuilder(BenchmarkBuilder):
                     sandbox_factory=sandbox_factory,
                     renderer=renderer,
                     example_id=example_id,
+                    raw_instance=row,
                     system_prompt=config.system_prompt,
                     max_trajectory_tokens=config.max_trajectory_tokens,
                     max_generation_tokens=config.max_generation_tokens,
