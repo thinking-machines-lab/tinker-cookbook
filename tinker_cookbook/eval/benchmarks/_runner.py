@@ -6,6 +6,13 @@ Key design decisions:
 - Resumability via idx-based deduplication
 - Coroutine-safe saving via asyncio.Lock
 - Multi-turn benchmarks get lower concurrency (agent_concurrency)
+
+Note: File I/O currently uses ``Path``/``open()`` directly rather than the
+``Storage`` protocol from ``tinker_cookbook.stores``. ``EvalStore`` provides
+equivalent Storage-backed write methods (``write_result``, ``append_trajectory``,
+``write_summary``). Migrating this runner to use ``Storage`` would enable
+cloud-backed eval persistence (S3/GCS). See ``stores/storage.py`` for the
+design intent and ``ml_log.JsonLogger`` for the pattern to follow.
 """
 
 from __future__ import annotations
