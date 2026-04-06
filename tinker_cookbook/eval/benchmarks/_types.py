@@ -92,6 +92,55 @@ class BenchmarkResultDict(TypedDict):
     pass_at_k: dict[str, float]  # string keys for JSON; int keys in PassAtKScores
 
 
+# ---------------------------------------------------------------------------
+# Model-specific eval defaults
+# ---------------------------------------------------------------------------
+
+# Maps model ID to recommended max_tokens and timeout_seconds.
+# See https://tinker-docs.thinkingmachines.ai/tinker/models/
+_MODEL_EVAL_DEFAULTS: dict[str, dict[str, int | float]] = {
+    # Qwen3.5 — Hybrid (thinking), 64K context
+    "Qwen/Qwen3.5-397B-A17B": {"max_tokens": 65536, "timeout_seconds": 1800},
+    "Qwen/Qwen3.5-397B-A17B:peft:262144": {"max_tokens": 262144, "timeout_seconds": 1800},
+    "Qwen/Qwen3.5-35B-A3B": {"max_tokens": 65536, "timeout_seconds": 1800},
+    "Qwen/Qwen3.5-27B": {"max_tokens": 65536, "timeout_seconds": 1800},
+    "Qwen/Qwen3.5-4B": {"max_tokens": 65536, "timeout_seconds": 1800},
+    # Qwen3 — Hybrid (thinking), 32K context
+    "Qwen/Qwen3-30B-A3B": {"max_tokens": 32768, "timeout_seconds": 1800},
+    "Qwen/Qwen3-32B": {"max_tokens": 32768, "timeout_seconds": 1800},
+    "Qwen/Qwen3-8B": {"max_tokens": 32768, "timeout_seconds": 1800},
+    # Qwen3 — Instruction (non-thinking), 32K context
+    "Qwen/Qwen3-235B-A22B-Instruct-2507": {"max_tokens": 32768, "timeout_seconds": 300},
+    "Qwen/Qwen3-30B-A3B-Instruct-2507": {"max_tokens": 32768, "timeout_seconds": 300},
+    "Qwen/Qwen3-4B-Instruct-2507": {"max_tokens": 32768, "timeout_seconds": 300},
+    # Nemotron — Hybrid (thinking), 64K context
+    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": {"max_tokens": 65536, "timeout_seconds": 1800},
+    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": {"max_tokens": 65536, "timeout_seconds": 1800},
+    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16:peft:262144": {
+        "max_tokens": 262144,
+        "timeout_seconds": 1800,
+    },
+    # GPT-OSS — Reasoning, 32K context
+    "openai/gpt-oss-120b": {"max_tokens": 32768, "timeout_seconds": 1800},
+    "openai/gpt-oss-120b:peft:131072": {"max_tokens": 131072, "timeout_seconds": 1800},
+    "openai/gpt-oss-20b": {"max_tokens": 32768, "timeout_seconds": 1800},
+    # DeepSeek — Hybrid (thinking), 32K context
+    "deepseek-ai/DeepSeek-V3.1": {"max_tokens": 32768, "timeout_seconds": 1800},
+    # Kimi — Reasoning, 32K context
+    "moonshotai/Kimi-K2-Thinking": {"max_tokens": 32768, "timeout_seconds": 1800},
+    "moonshotai/Kimi-K2.5": {"max_tokens": 32768, "timeout_seconds": 1800},
+    "moonshotai/Kimi-K2.5:peft:131072": {"max_tokens": 131072, "timeout_seconds": 1800},
+    # Llama — Instruction (non-thinking), 32K context
+    "meta-llama/Llama-3.3-70B-Instruct": {"max_tokens": 32768, "timeout_seconds": 300},
+    "meta-llama/Llama-3.1-8B-Instruct": {"max_tokens": 32768, "timeout_seconds": 300},
+    # Llama — Base, 32K context
+    "meta-llama/Llama-3.1-70B": {"max_tokens": 32768, "timeout_seconds": 300},
+    "meta-llama/Llama-3.1-8B": {"max_tokens": 32768, "timeout_seconds": 300},
+    "meta-llama/Llama-3.2-3B": {"max_tokens": 32768, "timeout_seconds": 300},
+    "meta-llama/Llama-3.2-1B": {"max_tokens": 32768, "timeout_seconds": 300},
+}
+
+
 @dataclass
 class BenchmarkConfig:
     """Runtime configuration for benchmark evaluation.
@@ -222,6 +271,43 @@ class BenchmarkConfig:
 
         config = BenchmarkConfig(grade_fn=my_grader)
     """
+
+    @classmethod
+    def for_model(cls, model_name: str, **kwargs) -> BenchmarkConfig:
+        """Create a config with recommended defaults for a specific model.
+
+        Looks up ``max_tokens`` and ``timeout_seconds`` from a built-in
+        table of Tinker-supported models. Any keyword argument overrides
+        the defaults.
+
+        Example::
+
+            config = BenchmarkConfig.for_model(
+                "Qwen/Qwen3.5-35B-A3B",
+                save_dir="evals/my_model",
+            )
+            result = await run_benchmark("gsm8k", client, renderer, config)
+
+        Args:
+            model_name: Model ID (e.g., ``"Qwen/Qwen3.5-35B-A3B"``).
+                See https://tinker-docs.thinkingmachines.ai/tinker/models/
+            **kwargs: Override any :class:`BenchmarkConfig` field.
+
+        Raises:
+            ValueError: If the model is not in the built-in table.
+        """
+        if model_name not in _MODEL_EVAL_DEFAULTS:
+            raise ValueError(
+                f"Unknown model '{model_name}'. "
+                f"Available: {sorted(_MODEL_EVAL_DEFAULTS.keys())}. "
+                f"Use BenchmarkConfig() directly and set max_tokens/timeout_seconds manually."
+            )
+        model_defaults = _MODEL_EVAL_DEFAULTS[model_name]
+        return cls(
+            max_tokens=kwargs.pop("max_tokens", int(model_defaults["max_tokens"])),
+            timeout_seconds=kwargs.pop("timeout_seconds", float(model_defaults["timeout_seconds"])),
+            **kwargs,
+        )
 
     def __post_init__(self) -> None:
         if self.concurrency <= 0:
@@ -448,6 +534,11 @@ class BenchmarkBuilder(ABC):
     - Code execution (mbpp, livecodebench): 300-600s
     - Multi-turn agent (terminal_bench, tau2): 600-1800s
     """
+
+    recommended_system_prompt: str | None = None
+    """System prompt that improves this benchmark's scores. Applied automatically
+    when ``BenchmarkConfig.system_prompt`` is ``None``. For example, math
+    benchmarks set this to instruct the model to use ``\\boxed{}``."""
 
     experimental: bool = False
     """If True, the runner logs a warning that this benchmark is experimental

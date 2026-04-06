@@ -19,7 +19,10 @@ from tinker_cookbook.eval.benchmarks._common import (
     load_benchmark_dataset,
     make_example_id,
 )
-from tinker_cookbook.eval.benchmarks._types import BenchmarkBuilder, BenchmarkConfig
+from tinker_cookbook.eval.benchmarks._types import (
+    BenchmarkBuilder,
+    BenchmarkConfig,
+)
 from tinker_cookbook.renderers import get_text_content
 from tinker_cookbook.renderers.base import Message, Renderer
 from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
@@ -90,6 +93,7 @@ class MATH500BenchmarkBuilder(BenchmarkBuilder):
     """MATH-500: 500 competition math problems from the Hendrycks MATH dataset."""
 
     name = "math500"
+    recommended_system_prompt = "Put your final answer in \\boxed{}."
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
         from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed
