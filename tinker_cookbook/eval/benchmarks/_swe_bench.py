@@ -250,8 +250,9 @@ class _SWEBenchEnvFactory(SandboxMixin, Env):
         """Generate setup commands using official SWE-bench TestSpec.
 
         Uses ``swebench.harness.test_spec.make_test_spec`` to get per-instance
-        setup scripts with exact dependency versions. Adapts conda commands to
-        pip for our Modal sandbox (no conda available).
+        setup scripts with exact dependency versions. Strips conda-specific
+        prefixes (source activate, conda activate) but keeps the actual
+        install commands (pip install, setup.py, cat requirements, etc.).
         """
         from swebench.harness.test_spec.test_spec import make_test_spec
 
@@ -261,22 +262,30 @@ class _SWEBenchEnvFactory(SandboxMixin, Env):
         spec = make_test_spec(self.raw_instance)
         cmds: list[str] = []
 
-        # Repo setup (skip conda-specific commands)
-        for cmd in spec.repo_script_list:
-            # Replace /testbed with /workspace/repo
+        def _adapt_cmd(cmd: str) -> str | None:
+            """Strip conda prefixes, skip pure conda commands, keep the rest."""
+            import re
             cmd = cmd.replace("/testbed", "/workspace/repo")
-            # Skip conda commands
-            if "conda" in cmd or "miniconda" in cmd:
-                continue
-            cmds.append(cmd)
+            # Strip conda/miniconda prefixes from compound commands first
+            cmd = re.sub(r"^source /opt/miniconda3/bin/activate\s*&&\s*", "", cmd.strip())
+            cmd = re.sub(r"^conda activate \S+\s*&&\s*", "", cmd.strip())
+            cmd = re.sub(r"^source /opt/miniconda3/bin/activate\s*$", "", cmd.strip())
+            # Skip pure conda commands (after prefix stripping)
+            if not cmd or cmd.strip().startswith(("conda ", "source /opt/miniconda")):
+                return None
+            return cmd
 
-        # Environment setup — extract pip install commands
+        # Repo setup
+        for cmd in spec.repo_script_list:
+            adapted = _adapt_cmd(cmd)
+            if adapted:
+                cmds.append(adapted)
+
+        # Environment setup
         for cmd in spec.env_script_list:
-            cmd = cmd.replace("/testbed", "/workspace/repo")
-            if "conda" in cmd or "miniconda" in cmd:
-                continue
-            if "pip install" in cmd:
-                cmds.append(cmd)
+            adapted = _adapt_cmd(cmd)
+            if adapted:
+                cmds.append(adapted)
 
         return cmds
 
