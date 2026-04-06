@@ -573,6 +573,7 @@ async def run_single_evaluation(
             eval_metrics = await evaluator(
                 sampling_client,
                 rollout_summary_export=rollout_summary_export,
+                store=store,
             )
         else:
             eval_metrics = await evaluator(sampling_client)
