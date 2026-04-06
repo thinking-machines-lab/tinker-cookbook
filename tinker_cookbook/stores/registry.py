@@ -76,6 +76,7 @@ class RunRegistry:
         return self._storages[0]
 
     def storage_for(self, run_id: str) -> Storage:
+        """Return the storage backend that owns a run (falls back to primary)."""
         return self._run_storage.get(run_id) or self._storages[0]
 
     def refresh(self) -> list[RunInfo]:

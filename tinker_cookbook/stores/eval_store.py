@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from tinker_cookbook.eval.benchmarks._types import BenchmarkResult, StoredTrajectory
 
 
-def _get_eval_types():
+def _get_eval_types() -> tuple[type, type]:
     """Lazy import to break circular: stores.eval_store → eval._types → eval.__init__ → eval.store → stores.eval_store"""
     import tinker_cookbook.eval.benchmarks._types as t
 
@@ -52,14 +52,14 @@ class RunMetadata:
     checkpoint_name: str | None
     benchmarks: list[str]
     timestamp: str
-    config: dict = field(default_factory=dict)
+    config: dict[str, Any] = field(default_factory=dict)
     scores: dict[str, float] = field(default_factory=dict)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict) -> RunMetadata:
+    def from_dict(cls, d: dict[str, Any]) -> RunMetadata:
         import dataclasses
 
         valid_fields = {f.name for f in dataclasses.fields(cls)}
@@ -121,10 +121,10 @@ class EvalStore:
             logger.warning("Failed to read %s: %s", self._path(*parts), e)
             return None
 
-    def _write_json(self, data: dict, *parts: str) -> None:
+    def _write_json(self, data: dict[str, Any], *parts: str) -> None:
         self._storage.write(self._path(*parts), json.dumps(data, indent=2).encode("utf-8"))
 
-    def _append_jsonl(self, record: dict, *parts: str) -> None:
+    def _append_jsonl(self, record: dict[str, Any], *parts: str) -> None:
         self._storage.append(self._path(*parts), (json.dumps(record) + "\n").encode("utf-8"))
 
     def _read_jsonl(self, *parts: str) -> list[dict[str, Any]]:
@@ -298,7 +298,8 @@ class EvalStore:
                 return t
         return None
 
-    def read_summary(self, run_id: str) -> dict | None:
+    def read_summary(self, run_id: str) -> dict[str, Any] | None:
+        """Read the combined summary for a run, or ``None`` if missing."""
         return self._read_json("runs", run_id, "summary.json")
 
     # ── Writes (for eval runner) ──────────────────────────────────────

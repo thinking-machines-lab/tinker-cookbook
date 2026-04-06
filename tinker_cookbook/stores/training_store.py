@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -25,9 +26,9 @@ _ITERATION_RE = re.compile(r"^iteration_(\d+)$")
 class _Unset:
     """Sentinel that survives pickle (unlike bare object())."""
 
-    _instance = None
+    _instance: _Unset | None = None
 
-    def __new__(cls):
+    def __new__(cls) -> _Unset:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -100,7 +101,9 @@ class TrainingRunStore:
                     logger.warning("Skipping malformed line in %s", self._path(*parts))
         return records
 
-    def _read_jsonl_typed(self, from_dict: Any, *parts: str) -> list[Any]:
+    def _read_jsonl_typed(
+        self, from_dict: Callable[[dict[str, Any]], Any], *parts: str
+    ) -> list[Any]:
         """Read JSONL → typed objects. Skips corrupted records."""
         records = []
         for d in self._read_jsonl(*parts):
@@ -194,6 +197,7 @@ class TrainingRunStore:
         return self._timing
 
     def read_timing(self) -> list[dict[str, Any]]:
+        """Read all timing records (incremental — only new data from disk)."""
         reader = self._get_timing()
         reader.read()
         return reader.records
