@@ -7,21 +7,10 @@ Key design decisions:
 - Coroutine-safe saving via asyncio.Lock
 - Multi-turn benchmarks get lower concurrency (agent_concurrency)
 
-**Future plan — Storage migration:**
-
-File I/O currently uses ``Path``/``open()`` directly. The write paths below
-should be migrated to the ``Storage`` protocol (``tinker_cookbook.stores``)
-to enable cloud-backed eval persistence (S3/GCS/Azure):
-
-1. ``_save_trajectory`` → ``EvalStore.write_trajectory``
-2. ``_save_result`` → ``EvalStore.write_result``
-3. ``_save_summary`` → ``EvalStore.write_summary``
-4. ``_load_completed`` → ``EvalStore.read_trajectories`` (for resumability)
-
-``EvalStore`` already provides these methods with Storage-backed I/O.
-The main challenge is threading the ``EvalStore`` instance through the
-runner's async concurrency model (``asyncio.Lock``, ``asyncio.Semaphore``).
-See ``stores/storage.py`` for the protocol contract.
+All file I/O goes through the ``Storage`` protocol (``tinker_cookbook.stores``).
+When ``BenchmarkConfig.save_dir`` is set, a ``Storage`` backend is created
+from the path/URI via ``storage_from_uri``. This enables cloud-backed eval
+persistence (S3/GCS/Azure) with zero code changes — just change the path.
 """
 
 from __future__ import annotations
@@ -29,12 +18,16 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import io
 import json
 import logging
 import math
 import time
 from collections.abc import Callable
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tinker_cookbook.stores.storage import Storage
 
 import tinker
 
@@ -172,35 +165,46 @@ class _ResumedExample:
         self.is_error = is_error
 
 
-def _load_completed(save_dir: str, benchmark_name: str) -> dict[str, _ResumedExample]:
+def _get_storage(save_dir: str) -> Storage:
+    """Create a Storage backend from save_dir (path or URI)."""
+    from tinker_cookbook.stores.storage import storage_from_uri
+
+    return storage_from_uri(save_dir)
+
+
+def _load_completed(storage: Storage, benchmark_name: str) -> dict[str, _ResumedExample]:
     """Load completed trajectories keyed by ``example_id``.
 
     Uses ``example_id`` (content-hash) instead of positional ``idx``,
     making resumability robust to dataset shuffling and ``max_examples``
     changes between runs.
     """
-    path = Path(save_dir) / benchmark_name / "trajectories.jsonl"
-    if not path.exists():
+    traj_path = f"{benchmark_name}/trajectories.jsonl"
+    try:
+        data = storage.read(traj_path)
+    except FileNotFoundError:
         return {}
     results: dict[str, _ResumedExample] = {}
-    with open(path) as f:
-        for line_num, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                d = json.loads(line)
-                eid = d.get("example_id") or str(d["idx"])
-                results[eid] = _ResumedExample(
-                    reward=d.get("reward", 0.0),
-                    metrics=d.get("metrics", {}),
-                    is_error=d.get("error") is not None,
-                )
-            except (json.JSONDecodeError, KeyError) as e:
-                logger.warning(
-                    f"Skipping malformed trajectory line {line_num} in "
-                    f"{benchmark_name}/trajectories.jsonl: {e}"
-                )
+
+    for line_num, raw_line in enumerate(
+        io.TextIOWrapper(io.BytesIO(data), encoding="utf-8", errors="replace"), 1
+    ):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            d = json.loads(line)
+            eid = d.get("example_id") or str(d["idx"])
+            results[eid] = _ResumedExample(
+                reward=d.get("reward", 0.0),
+                metrics=d.get("metrics", {}),
+                is_error=d.get("error") is not None,
+            )
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.warning(
+                f"Skipping malformed trajectory line {line_num} in "
+                f"{benchmark_name}/trajectories.jsonl: {e}"
+            )
     return results
 
 
@@ -212,43 +216,31 @@ def _get_save_lock(key: str) -> asyncio.Lock:
     return _save_locks.setdefault(key, asyncio.Lock())
 
 
-_created_dirs: set[str] = set()
-
-
-async def _save_trajectory(save_dir: str, benchmark_name: str, traj: StoredTrajectory) -> None:
+async def _save_trajectory(storage: Storage, benchmark_name: str, traj: StoredTrajectory) -> None:
     """Append one trajectory to the JSONL file (per-file lock for parallel safety)."""
-    dir_path = Path(save_dir) / benchmark_name
-    dir_key = str(dir_path)
-    if dir_key not in _created_dirs:
-        dir_path.mkdir(parents=True, exist_ok=True)
-        _created_dirs.add(dir_key)
-    filepath = str(dir_path / "trajectories.jsonl")
+    filepath = f"{benchmark_name}/trajectories.jsonl"
     async with _get_save_lock(filepath):
-        with open(filepath, "a") as f:
-            f.write(json.dumps(traj.to_dict()) + "\n")
+        storage.append(filepath, (json.dumps(dict(traj.to_dict())) + "\n").encode("utf-8"))
 
 
-def _save_result(save_dir: str, result: BenchmarkResult) -> None:
+def _save_result(storage: Storage, result: BenchmarkResult) -> None:
     """Save the aggregated result as JSON."""
-    dir_path = Path(save_dir) / result.name
-    dir_path.mkdir(parents=True, exist_ok=True)
-    with open(dir_path / "result.json", "w") as f:
-        d = BenchmarkResultDict(
-            name=result.name,
-            score=result.score,
-            num_examples=result.num_examples,
-            num_correct=result.num_correct,
-            num_errors=result.num_errors,
-            num_truncated=result.num_truncated,
-            metrics=result.metrics,
-            time_seconds=result.time_seconds,
-            # JSON keys must be strings; int keys converted back in load_result
-            pass_at_k={str(k): v for k, v in result.pass_at_k.items()},
-        )
-        json.dump(d, f, indent=2)
+    d = BenchmarkResultDict(
+        name=result.name,
+        score=result.score,
+        num_examples=result.num_examples,
+        num_correct=result.num_correct,
+        num_errors=result.num_errors,
+        num_truncated=result.num_truncated,
+        metrics=result.metrics,
+        time_seconds=result.time_seconds,
+        # JSON keys must be strings; int keys converted back in load_result
+        pass_at_k={str(k): v for k, v in result.pass_at_k.items()},
+    )
+    storage.write(f"{result.name}/result.json", json.dumps(d, indent=2).encode("utf-8"))
 
 
-def _save_summary(save_dir: str, results: dict[str, BenchmarkResult]) -> None:
+def _save_summary(storage: Storage, results: dict[str, BenchmarkResult]) -> None:
     """Save a combined summary across all benchmarks."""
     summary = {}
     for name, r in results.items():
@@ -260,8 +252,7 @@ def _save_summary(save_dir: str, results: dict[str, BenchmarkResult]) -> None:
         if r.pass_at_k:
             entry["pass_at_k"] = {str(k): v for k, v in r.pass_at_k.items()}
         summary[name] = entry
-    with open(Path(save_dir) / "summary.json", "w") as f:
-        json.dump(summary, f, indent=2)
+    storage.write("summary.json", json.dumps(summary, indent=2).encode("utf-8"))
 
 
 # ---------------------------------------------------------------------------
@@ -474,11 +465,14 @@ async def run_benchmark(
     envs = list(benchmark.make_envs(renderer, config))
     logger.info(f"  {len(envs)} examples loaded")
 
+    # Create storage backend from save_dir (supports local paths and cloud URIs)
+    storage: Storage | None = _get_storage(config.save_dir) if config.save_dir else None
+
     # Resume: load completed examples from disk (only for single-sample mode;
     # pass@k mode always runs fresh to get exactly num_samples per example)
     completed: dict[str, _ResumedExample] = {}
-    if config.save_dir and num_samples == 1:
-        completed = _load_completed(config.save_dir, benchmark.name)
+    if storage is not None and num_samples == 1:
+        completed = _load_completed(storage, benchmark.name)
         if completed:
             logger.info(
                 f"  Resuming: {len(completed)} already completed, "
@@ -560,7 +554,7 @@ async def run_benchmark(
                 metrics_list[idx] = step_metrics
 
                 # Save trajectory with decoded text
-                if config.save_dir:
+                if storage is not None:
                     stored = _trajectory_to_stored(
                         idx,
                         trajectory,
@@ -571,7 +565,7 @@ async def run_benchmark(
                     )
                     if config.grade_fn is not None:
                         stored.reward = total_reward
-                    await _save_trajectory(config.save_dir, benchmark.name, stored)
+                    await _save_trajectory(storage, benchmark.name, stored)
 
             except (TimeoutError, EvalTimeoutError):
                 elapsed = time.monotonic() - t_start
@@ -582,9 +576,9 @@ async def run_benchmark(
                 num_errors += 1
                 rewards[idx] = 0.0  # Timeout = scored failure, reward=0
 
-                if config.save_dir:
+                if storage is not None:
                     await _save_trajectory(
-                        config.save_dir,
+                        storage,
                         benchmark.name,
                         StoredTrajectory(
                             idx=idx,
@@ -603,9 +597,9 @@ async def run_benchmark(
                 num_errors += 1
                 rewards[idx] = 0.0  # Error = scored failure, reward=0
 
-                if config.save_dir:
+                if storage is not None:
                     await _save_trajectory(
-                        config.save_dir,
+                        storage,
                         benchmark.name,
                         StoredTrajectory(
                             idx=idx,
@@ -666,8 +660,9 @@ async def run_benchmark(
             f"in {result.time_seconds:.0f}s{completed_str}"
         )
 
-        if config.save_dir:
-            _save_result(config.save_dir, result)
+        if storage is not None:
+            _save_result(storage, result)
+            storage.flush()
 
         return result
 
@@ -734,8 +729,9 @@ async def run_benchmark(
     )
     logger.info(f"  {benchmark.name}: {pass_at_k_str}")
 
-    if config.save_dir:
-        _save_result(config.save_dir, result)
+    if storage is not None:
+        _save_result(storage, result)
+        storage.flush()
 
     return result
 
@@ -779,6 +775,8 @@ async def run_benchmarks(
         for name, result in results.items():
             print(f"{name}: {result.score:.1%}")
     """
+    storage: Storage | None = _get_storage(config.save_dir) if config.save_dir else None
+
     if parallel:
         benchmark_results = await asyncio.gather(
             *[run_benchmark(name, sampling_client, renderer, config) for name in names]
@@ -790,8 +788,9 @@ async def run_benchmarks(
             results[name] = await run_benchmark(name, sampling_client, renderer, config)
 
     # Save combined summary
-    if config.save_dir:
-        _save_summary(config.save_dir, results)
+    if storage is not None:
+        _save_summary(storage, results)
+        storage.flush()
 
     # Log summary table
     logger.info("\n=== Benchmark Summary ===")
@@ -807,21 +806,21 @@ async def run_benchmarks(
 
 
 def load_result(save_dir: str, benchmark_name: str) -> BenchmarkResult | None:
-    """Load a saved BenchmarkResult from disk.
+    """Load a saved BenchmarkResult.
 
     Args:
-        save_dir: Directory passed as ``BenchmarkConfig.save_dir``.
+        save_dir: Path or URI passed as ``BenchmarkConfig.save_dir``.
         benchmark_name: Benchmark name (e.g. ``"gsm8k"``).
 
     Returns:
         BenchmarkResult or None if not found.
     """
-    path = Path(save_dir) / benchmark_name / "result.json"
-    if not path.exists():
+    storage = _get_storage(save_dir)
+    try:
+        data = storage.read(f"{benchmark_name}/result.json")
+    except FileNotFoundError:
         return None
-    with open(path) as f:
-        d = json.load(f)
-    # Convert pass_at_k string keys back to ints
+    d = json.loads(data)
     if "pass_at_k" in d:
         d["pass_at_k"] = {int(k): v for k, v in d["pass_at_k"].items()}
     return BenchmarkResult(**d)
@@ -834,10 +833,10 @@ def load_trajectories(
     incorrect_only: bool = False,
     errors_only: bool = False,
 ) -> list[StoredTrajectory]:
-    """Load stored trajectories from disk with optional filtering.
+    """Load stored trajectories with optional filtering.
 
     Args:
-        save_dir: Directory passed as ``BenchmarkConfig.save_dir``.
+        save_dir: Path or URI passed as ``BenchmarkConfig.save_dir``.
         benchmark_name: Benchmark name (e.g. ``"gsm8k"``).
         correct_only: If True, return only trajectories with reward > 0.
         incorrect_only: If True, return only trajectories with reward == 0 and no error.
@@ -848,39 +847,39 @@ def load_trajectories(
 
     Example::
 
-        # Browse incorrect examples
         wrong = load_trajectories("evals/step500", "gsm8k", incorrect_only=True)
         for t in wrong[:5]:
-            print(f"Q: {t.logs.get('input', t.turns[0].content[:100])}")
             print(f"Expected: {t.logs.get('expected')}")
             print(f"Got: {t.logs.get('extracted')}")
-            print()
     """
-    path = Path(save_dir) / benchmark_name / "trajectories.jsonl"
-    if not path.exists():
+    storage = _get_storage(save_dir)
+    try:
+        data = storage.read(f"{benchmark_name}/trajectories.jsonl")
+    except FileNotFoundError:
         return []
 
     trajectories = []
-    with open(path) as f:
-        for line_num, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                t = StoredTrajectory.from_dict(json.loads(line))
-            except (json.JSONDecodeError, KeyError) as e:
-                logger.warning(
-                    f"Skipping malformed trajectory line {line_num} in "
-                    f"{benchmark_name}/trajectories.jsonl: {e}"
-                )
-                continue
-            if correct_only and t.reward <= 0:
-                continue
-            if incorrect_only and (t.reward > 0 or t.error is not None):
-                continue
-            if errors_only and t.error is None:
-                continue
-            trajectories.append(t)
+    for line_num, raw_line in enumerate(
+        io.TextIOWrapper(io.BytesIO(data), encoding="utf-8", errors="replace"), 1
+    ):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            t = StoredTrajectory.from_dict(json.loads(line))
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.warning(
+                f"Skipping malformed trajectory line {line_num} in "
+                f"{benchmark_name}/trajectories.jsonl: {e}"
+            )
+            continue
+        if correct_only and t.reward <= 0:
+            continue
+        if incorrect_only and (t.reward > 0 or t.error is not None):
+            continue
+        if errors_only and t.error is None:
+            continue
+        trajectories.append(t)
 
     return trajectories
 
@@ -889,7 +888,7 @@ def load_summary(save_dir: str) -> dict[str, dict]:
     """Load the combined summary across all benchmarks.
 
     Args:
-        save_dir: Directory passed as ``BenchmarkConfig.save_dir``.
+        save_dir: Path or URI passed as ``BenchmarkConfig.save_dir``.
 
     Returns:
         Dict mapping benchmark name to score/count info.
@@ -900,11 +899,12 @@ def load_summary(save_dir: str) -> dict[str, dict]:
         for name, info in summary.items():
             print(f"{name}: {info['score']:.1%}")
     """
-    path = Path(save_dir) / "summary.json"
-    if not path.exists():
+    storage = _get_storage(save_dir)
+    try:
+        data = storage.read("summary.json")
+    except FileNotFoundError:
         return {}
-    with open(path) as f:
-        return json.load(f)
+    return json.loads(data)
 
 
 def print_trajectory(traj: StoredTrajectory) -> None:

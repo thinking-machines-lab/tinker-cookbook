@@ -26,7 +26,7 @@ so that cloud backends (S3, GCS) work end-to-end for both reads and writes.
 - Done: write paths (``ml_log.JsonLogger``, ``trace.py``, ``checkpoint_utils``,
   ``rollout_logging``, ``logtree``)
 - Done: cloud backends (``FsspecStorage`` with local staging)
-- TODO: eval runner (``_runner.py`` — see docstring there for details)
+- Done: eval runner (``_runner.py`` — all reads/writes via Storage)
 """
 
 from __future__ import annotations
@@ -126,6 +126,15 @@ class Storage(Protocol):
 
         Cloud backends (S3/GCS) can treat this as a no-op since they
         don't have real directories.
+        """
+        ...
+
+    def flush(self) -> None:
+        """Flush any buffered data to the backend.
+
+        No-op for backends that write directly (e.g. ``LocalStorage``).
+        Cloud backends with local staging upload buffered data on flush.
+        Called automatically by the context manager on exit.
         """
         ...
 
@@ -263,6 +272,10 @@ class LocalStorage:
         full = self._resolve(path)
         with contextlib.suppress(FileNotFoundError, OSError):
             full.rmdir()
+
+    def flush(self) -> None:
+        """See :meth:`Storage.flush`. No-op for local filesystem."""
+        pass
 
     def __enter__(self) -> LocalStorage:
         return self
