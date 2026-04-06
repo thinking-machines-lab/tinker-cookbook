@@ -351,27 +351,25 @@ class FsspecStorage:
 
     def read(self, path: str) -> bytes:
         """See :meth:`Storage.read`."""
-        try:
-            return self._fs.cat_file(self._full(path))
-        except FileNotFoundError:
-            raise
+        return self._fs.cat_file(self._full(path))
 
     def write(self, path: str, data: bytes) -> None:
         """See :meth:`Storage.write`."""
         full = self._full(path)
-        self._fs.mkdirs(self._fs._parent(full), exist_ok=True)
+        self._fs.mkdirs(posixpath.dirname(full), exist_ok=True)
         self._fs.pipe_file(full, data)
 
     def append(self, path: str, data: bytes) -> None:
         """See :meth:`Storage.append`.
 
         Cloud backends (GCS, S3) don't support native append. This implements
-        append as read-modify-write, which is correct for small files
-        (metrics, checkpoints, timing). For high-frequency appends to large
-        files, consider sharding instead.
+        append as read-modify-write. **Not safe for concurrent callers** — two
+        concurrent appends can lose one write. Acceptable for training loops
+        where a single process appends per-step. For concurrent writes,
+        use sharding or a separate file per writer.
         """
         full = self._full(path)
-        self._fs.mkdirs(self._fs._parent(full), exist_ok=True)
+        self._fs.mkdirs(posixpath.dirname(full), exist_ok=True)
         try:
             existing = self._fs.cat_file(full)
         except FileNotFoundError:
@@ -515,7 +513,7 @@ def storage_from_uri(uri: str, **kwargs: Any) -> Storage:
         except ImportError:
             raise ImportError(
                 f"fsspec is required for cloud storage URIs ({uri}). "
-                "Install it with: pip install fsspec"
+                "Install it with: uv pip install fsspec"
             ) from None
         fs, path = fsspec.core.url_to_fs(uri, **kwargs)
         return FsspecStorage(fs, path, **kwargs)
