@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from tinker_cookbook.stores._incremental import IncrementalReader
-from tinker_cookbook.stores.registry import RunRegistry, _discover_runs
+from tinker_cookbook.stores.registry import RunRegistry
 from tinker_cookbook.stores.storage import LocalStorage
 from tinker_cookbook.stores.training_store import TrainingRunStore
 
@@ -19,34 +19,54 @@ def run_dir(tmp_path: Path) -> Path:
     d = tmp_path / "my_run"
     d.mkdir()
 
-    (d / "config.json").write_text(json.dumps({
-        "model_name": "Llama-3.1-8B",
-        "learning_rate": 1e-4,
-        "loss_fn": "importance_sampling",
-        "lora_rank": 32,
-    }, indent=2))
+    (d / "config.json").write_text(
+        json.dumps(
+            {
+                "model_name": "Llama-3.1-8B",
+                "learning_rate": 1e-4,
+                "loss_fn": "importance_sampling",
+                "lora_rank": 32,
+            },
+            indent=2,
+        )
+    )
 
     lines = []
     for step in range(5):
-        lines.append(json.dumps({
-            "step": step,
-            "env/all/reward/total": step * 0.2,
-            "train_mean_nll": 2.5 - step * 0.1,
-        }))
+        lines.append(
+            json.dumps(
+                {
+                    "step": step,
+                    "env/all/reward/total": step * 0.2,
+                    "train_mean_nll": 2.5 - step * 0.1,
+                }
+            )
+        )
     (d / "metrics.jsonl").write_text("\n".join(lines) + "\n")
 
-    (d / "checkpoints.jsonl").write_text(json.dumps({
-        "name": "000004", "batch": 4, "final": True,
-        "state_path": "tinker:///ckpt/final",
-    }) + "\n")
+    (d / "checkpoints.jsonl").write_text(
+        json.dumps(
+            {
+                "name": "000004",
+                "batch": 4,
+                "final": True,
+                "state_path": "tinker:///ckpt/final",
+            }
+        )
+        + "\n"
+    )
 
-    timing = [json.dumps({
-        "step": 0,
-        "spans": [
-            {"name": "sampling", "duration": 1.5, "wall_start": 0.0, "wall_end": 1.5},
-            {"name": "train_step", "duration": 0.5, "wall_start": 1.5, "wall_end": 2.0},
-        ],
-    })]
+    timing = [
+        json.dumps(
+            {
+                "step": 0,
+                "spans": [
+                    {"name": "sampling", "duration": 1.5, "wall_start": 0.0, "wall_end": 1.5},
+                    {"name": "train_step", "duration": 0.5, "wall_start": 1.5, "wall_end": 2.0},
+                ],
+            }
+        )
+    ]
     (d / "timing_spans.jsonl").write_text("\n".join(timing) + "\n")
 
     for iteration in [0, 2]:
@@ -55,19 +75,42 @@ def run_dir(tmp_path: Path) -> Path:
         rollouts = []
         for g in range(2):
             for t in range(2):
-                rollouts.append(json.dumps({
-                    "schema_version": 1, "split": "train", "iteration": iteration,
-                    "group_idx": g, "traj_idx": t, "tags": ["math"],
-                    "total_reward": g * 0.5 + t * 0.1, "final_reward": 0.0,
-                    "trajectory_metrics": {}, "final_ob_len": 100,
-                    "steps": [{"step_idx": 0, "ob_len": 50, "ac_len": 20,
-                               "reward": g * 0.5, "episode_done": True,
-                               "metrics": {"correct": float(g)}, "logs": {}}],
-                }))
+                rollouts.append(
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "split": "train",
+                            "iteration": iteration,
+                            "group_idx": g,
+                            "traj_idx": t,
+                            "tags": ["math"],
+                            "total_reward": g * 0.5 + t * 0.1,
+                            "final_reward": 0.0,
+                            "trajectory_metrics": {},
+                            "final_ob_len": 100,
+                            "steps": [
+                                {
+                                    "step_idx": 0,
+                                    "ob_len": 50,
+                                    "ac_len": 20,
+                                    "reward": g * 0.5,
+                                    "episode_done": True,
+                                    "metrics": {"correct": float(g)},
+                                    "logs": {},
+                                }
+                            ],
+                        }
+                    )
+                )
         (iter_dir / "train_rollout_summaries.jsonl").write_text("\n".join(rollouts) + "\n")
-        (iter_dir / "train_logtree.json").write_text(json.dumps({
-            "title": f"Iteration {iteration}", "root": {"tag": "div", "children": []},
-        }))
+        (iter_dir / "train_logtree.json").write_text(
+            json.dumps(
+                {
+                    "title": f"Iteration {iteration}",
+                    "root": {"tag": "div", "children": []},
+                }
+            )
+        )
 
     return d
 
@@ -199,7 +242,9 @@ class TestRunRegistry:
         registry = RunRegistry([LocalStorage(run_dir)])
         run_id = registry.get_runs()[0].run_id
         store = registry.get_training_store(run_id)
-        assert store.read_config()["model_name"] == "Llama-3.1-8B"
+        config = store.read_config()
+        assert config is not None
+        assert config["model_name"] == "Llama-3.1-8B"
 
     def test_multi_storage(self, tmp_path: Path) -> None:
         # Create two storage roots with different runs
@@ -241,14 +286,19 @@ class TestRunRegistry:
         """Registry finds eval data under a custom prefix."""
         eval_dir = tmp_path / "my_evals" / "runs" / "eval_001"
         eval_dir.mkdir(parents=True)
-        (eval_dir / "metadata.json").write_text(json.dumps({
-            "run_id": "eval_001", "model_name": "test",
-            "checkpoint_path": None, "checkpoint_name": None,
-            "benchmarks": [], "timestamp": "2024-01-01",
-        }))
-        (tmp_path / "my_evals" / "runs.jsonl").write_text(
-            json.dumps({"run_id": "eval_001"}) + "\n"
+        (eval_dir / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "eval_001",
+                    "model_name": "test",
+                    "checkpoint_path": None,
+                    "checkpoint_name": None,
+                    "benchmarks": [],
+                    "timestamp": "2024-01-01",
+                }
+            )
         )
+        (tmp_path / "my_evals" / "runs.jsonl").write_text(json.dumps({"run_id": "eval_001"}) + "\n")
         # Default prefixes won't find it
         registry = RunRegistry([LocalStorage(tmp_path)])
         assert registry.get_eval_store() is None

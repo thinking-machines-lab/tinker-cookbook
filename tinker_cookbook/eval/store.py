@@ -11,6 +11,11 @@ def __getattr__(name: str):
     """Lazy import to break circular dependency chain."""
     if name in ("EvalStore", "RunComparison", "RunMetadata"):
         from tinker_cookbook.stores.eval_store import EvalStore, RunComparison, RunMetadata
-        mapping = {"EvalStore": EvalStore, "RunComparison": RunComparison, "RunMetadata": RunMetadata}
+
+        mapping = {
+            "EvalStore": EvalStore,
+            "RunComparison": RunComparison,
+            "RunMetadata": RunMetadata,
+        }
         return mapping[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

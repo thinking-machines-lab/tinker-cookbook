@@ -99,7 +99,7 @@ class IncrementalReader:
         self._total_read += len(new_records)
 
         if len(self._records) > self._max_records:
-            self._records = self._records[-self._max_records:]
+            self._records = self._records[-self._max_records :]
 
         return new_records
 

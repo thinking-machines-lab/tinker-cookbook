@@ -50,8 +50,7 @@ class TestEvalStoreStorageConstructor:
 
     def test_load_run(self, tmp_path: Path) -> None:
         store = EvalStore(LocalStorage(tmp_path), "eval")
-        run_id = store.create_run("model-a", ["bench1", "bench2"],
-                                  checkpoint_name="step_100")
+        run_id = store.create_run("model-a", ["bench1", "bench2"], checkpoint_name="step_100")
         meta = store.load_run(run_id)
         assert meta.model_name == "model-a"
         assert meta.checkpoint_name == "step_100"
@@ -69,9 +68,12 @@ class TestDeleteRun:
         store = EvalStore(storage, "eval")
         run_id = store.create_run("model", ["gsm8k"])
         # Write some benchmark data
-        storage.write(f"eval/runs/{run_id}/gsm8k/result.json",
-                      json.dumps({"name": "gsm8k", "score": 0.5,
-                                  "num_examples": 10, "num_correct": 5}).encode())
+        storage.write(
+            f"eval/runs/{run_id}/gsm8k/result.json",
+            json.dumps(
+                {"name": "gsm8k", "score": 0.5, "num_examples": 10, "num_correct": 5}
+            ).encode(),
+        )
         storage.write(f"eval/runs/{run_id}/gsm8k/trajectories.jsonl", b"")
         # Verify data exists
         assert len(store.list_runs()) == 1
@@ -82,6 +84,9 @@ class TestDeleteRun:
         assert len(store.list_runs()) == 0
         assert not storage.exists(f"eval/runs/{run_id}/metadata.json")
         assert not storage.exists(f"eval/runs/{run_id}/gsm8k/result.json")
+        # Directories should be cleaned up too
+        assert not (tmp_path / "eval" / "runs" / run_id / "gsm8k").exists()
+        assert not (tmp_path / "eval" / "runs" / run_id).exists()
 
     def test_delete_run_idempotent(self, tmp_path: Path) -> None:
         store = EvalStore(LocalStorage(tmp_path), "eval")
@@ -92,15 +97,27 @@ class TestDeleteRun:
 class TestRunMetadata:
     def test_from_dict_missing_config(self) -> None:
         """from_dict handles missing config field (backward compat)."""
-        d = {"run_id": "r1", "model_name": "m", "checkpoint_path": None,
-             "checkpoint_name": None, "benchmarks": [], "timestamp": "t"}
+        d = {
+            "run_id": "r1",
+            "model_name": "m",
+            "checkpoint_path": None,
+            "checkpoint_name": None,
+            "benchmarks": [],
+            "timestamp": "t",
+        }
         meta = RunMetadata.from_dict(d)
         assert meta.config == {}
 
     def test_from_dict_extra_fields(self) -> None:
         """from_dict ignores unknown fields."""
-        d = {"run_id": "r1", "model_name": "m", "checkpoint_path": None,
-             "checkpoint_name": None, "benchmarks": [], "timestamp": "t",
-             "unknown_field": "ignored"}
+        d = {
+            "run_id": "r1",
+            "model_name": "m",
+            "checkpoint_path": None,
+            "checkpoint_name": None,
+            "benchmarks": [],
+            "timestamp": "t",
+            "unknown_field": "ignored",
+        }
         meta = RunMetadata.from_dict(d)
         assert meta.run_id == "r1"

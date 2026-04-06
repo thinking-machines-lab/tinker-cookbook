@@ -8,10 +8,10 @@ from typing import Any
 from tinker_cookbook.stores.storage import Storage, storage_join
 from tinker_cookbook.stores.training_store import (
     _ITERATION_RE,
-    _Unset,
     Status,
     TrainingRunStore,
     TrainingType,
+    _Unset,
 )
 
 _DEFAULT_EVAL_PREFIXES: tuple[str, ...] = ("eval", "eval_store", "")
@@ -75,7 +75,7 @@ class RunRegistry:
         for storage in self._storages:
             source = ""
             if hasattr(storage, "root"):
-                source = getattr(storage, "root").name
+                source = getattr(storage, "root").name  # noqa: B009
 
             for run in _discover_runs(storage):
                 uid = f"{source}--{run.run_id}" if run.run_id in all_runs else run.run_id
@@ -121,6 +121,7 @@ class RunRegistry:
                 if storage.exists(path):
                     try:
                         from tinker_cookbook.stores.eval_store import EvalStore
+
                         self._eval_store = EvalStore(storage, prefix)
                         return self._eval_store
                     except ImportError:
@@ -162,9 +163,7 @@ def _build_run_info(storage: Storage, run_id: str, prefix: str) -> RunInfo:
     store = TrainingRunStore(storage, prefix)
     status, last_updated = store.detect_status()
     training_type = store.infer_training_type()
-    iteration_count = sum(
-        1 for child in storage.list_dir(prefix) if _ITERATION_RE.match(child)
-    )
+    iteration_count = sum(1 for child in storage.list_dir(prefix) if _ITERATION_RE.match(child))
 
     return RunInfo(
         run_id=run_id,

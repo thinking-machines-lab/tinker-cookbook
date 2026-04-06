@@ -18,21 +18,27 @@ Storage layout::
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tinker_cookbook.stores.storage import Storage, storage_join
+
+if TYPE_CHECKING:
+    from tinker_cookbook.eval.benchmarks._types import BenchmarkResult, StoredTrajectory
 
 
 def _get_eval_types():
     """Lazy import to break circular: stores.eval_store → eval._types → eval.__init__ → eval.store → stores.eval_store"""
     import tinker_cookbook.eval.benchmarks._types as t
+
     return t.BenchmarkResult, t.StoredTrajectory
+
 
 logger = logging.getLogger(__name__)
 
@@ -56,13 +62,19 @@ class RunMetadata:
     @classmethod
     def from_dict(cls, d: dict) -> RunMetadata:
         import dataclasses
+
         valid_fields = {f.name for f in dataclasses.fields(cls)}
         return cls(**{k: v for k, v in d.items() if k in valid_fields})
 
 
 @dataclass
 class RunComparison:
-    """Result of comparing two runs on a specific benchmark."""
+    """Result of comparing two runs on a specific benchmark.
+
+    Stores example IDs rather than full trajectory objects to avoid
+    holding large amounts of data in memory for big benchmarks.
+    Use ``EvalStore.read_single_trajectory`` to load specific examples.
+    """
 
     benchmark: str
     run_a_id: str
@@ -70,8 +82,10 @@ class RunComparison:
     score_a: float
     score_b: float
     score_delta: float
-    regressions: dict[str, tuple[StoredTrajectory, StoredTrajectory]]
-    improvements: dict[str, tuple[StoredTrajectory, StoredTrajectory]]
+    regressions: list[str]
+    """Example IDs where run_a was correct but run_b was wrong."""
+    improvements: list[str]
+    """Example IDs where run_a was wrong but run_b was correct."""
     num_shared: int
 
 
@@ -88,6 +102,7 @@ class EvalStore:
         if isinstance(storage_or_path, (str, Path)):
             # Backward compat: EvalStore("/path/to/eval_store")
             from tinker_cookbook.stores.storage import LocalStorage
+
             self._storage: Storage = LocalStorage(Path(storage_or_path).expanduser())
             self._prefix = prefix
         else:
@@ -125,10 +140,8 @@ class EvalStore:
         for line in data.decode("utf-8", errors="replace").splitlines():
             line = line.strip()
             if line:
-                try:
+                with contextlib.suppress(json.JSONDecodeError):
                     records.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass
         return records
 
     # ── Run management ────────────────────────────────────────────────
@@ -161,8 +174,12 @@ class EvalStore:
 
         self._write_json(metadata.to_dict(), "runs", run_id, "metadata.json")
         self._append_jsonl(
-            {"run_id": run_id, "timestamp": metadata.timestamp,
-             "model": model_name, "checkpoint": checkpoint_name},
+            {
+                "run_id": run_id,
+                "timestamp": metadata.timestamp,
+                "model": model_name,
+                "checkpoint": checkpoint_name,
+            },
             "runs.jsonl",
         )
 
@@ -176,7 +193,7 @@ class EvalStore:
         """
         if not hasattr(self._storage, "root"):
             raise RuntimeError("run_dir() only works with LocalStorage")
-        root = getattr(self._storage, "root")
+        root = getattr(self._storage, "root")  # noqa: B009
         return str(root / self._path("runs", run_id))
 
     def finalize_run(self, run_id: str) -> RunMetadata:
@@ -200,7 +217,7 @@ class EvalStore:
     def list_runs(self) -> list[RunMetadata]:
         """List all evaluation runs, most recent first."""
         runs = []
-        for name in reversed(sorted(self._storage.list_dir(self._path("runs")))):
+        for name in sorted(self._storage.list_dir(self._path("runs")), reverse=True):
             meta = self._read_json("runs", name, "metadata.json")
             if meta:
                 try:
@@ -220,7 +237,8 @@ class EvalStore:
         """List benchmark names that have results for a run."""
         items = self._storage.list_dir(self._path("runs", run_id))
         return sorted(
-            name for name in items
+            name
+            for name in items
             if self._storage.exists(self._path("runs", run_id, name, "result.json"))
         )
 
@@ -289,14 +307,18 @@ class EvalStore:
 
     def append_trajectory(self, run_id: str, benchmark: str, traj: StoredTrajectory) -> None:
         """Append one trajectory to the JSONL file."""
-        self._append_jsonl(traj.to_dict(), "runs", run_id, benchmark, "trajectories.jsonl")
+        self._append_jsonl(dict(traj.to_dict()), "runs", run_id, benchmark, "trajectories.jsonl")
 
     def write_summary(self, run_id: str, results: dict[str, BenchmarkResult]) -> None:
         """Save a combined summary."""
         summary = {}
         for name, result in results.items():
-            summary[name] = {"score": result.score, "num_examples": result.num_examples,
-                             "num_correct": result.num_correct, "num_errors": result.num_errors}
+            summary[name] = {
+                "score": result.score,
+                "num_examples": result.num_examples,
+                "num_correct": result.num_correct,
+                "num_errors": result.num_errors,
+            }
         self._write_json(summary, "runs", run_id, "summary.json")
 
     def delete_run(self, run_id: str) -> None:
@@ -309,13 +331,19 @@ class EvalStore:
         for benchmark in self.list_benchmarks(run_id):
             self._storage.remove(self._path("runs", run_id, benchmark, "result.json"))
             self._storage.remove(self._path("runs", run_id, benchmark, "trajectories.jsonl"))
+            self._storage.remove_dir(self._path("runs", run_id, benchmark))
         self._storage.remove(self._path("runs", run_id, "metadata.json"))
         self._storage.remove(self._path("runs", run_id, "summary.json"))
+        self._storage.remove_dir(self._path("runs", run_id))
 
     # ── Cross-run comparison ──────────────────────────────────────────
 
     def compare_runs(self, run_a_id: str, run_b_id: str, benchmark: str) -> RunComparison:
-        """Compare two runs on a specific benchmark."""
+        """Compare two runs on a specific benchmark.
+
+        Returns example IDs for regressions/improvements rather than full
+        trajectory objects. Use ``read_single_trajectory`` to inspect details.
+        """
         trajs_a = self.read_trajectories(run_a_id, benchmark)
         trajs_b = self.read_trajectories(run_b_id, benchmark)
 
@@ -326,25 +354,27 @@ class EvalStore:
         index_b = {_get_id(t): t for t in trajs_b}
         shared = set(index_a) & set(index_b)
 
-        regressions = {}
-        improvements = {}
-        for ex_id in shared:
+        regressions: list[str] = []
+        improvements: list[str] = []
+        for ex_id in sorted(shared):
             a, b = index_a[ex_id], index_b[ex_id]
             if a.reward > 0 and b.reward <= 0:
-                regressions[ex_id] = (a, b)
+                regressions.append(ex_id)
             elif a.reward <= 0 and b.reward > 0:
-                improvements[ex_id] = (a, b)
+                improvements.append(ex_id)
 
         meta_a = self.load_run(run_a_id)
         meta_b = self.load_run(run_b_id)
 
         return RunComparison(
             benchmark=benchmark,
-            run_a_id=run_a_id, run_b_id=run_b_id,
+            run_a_id=run_a_id,
+            run_b_id=run_b_id,
             score_a=meta_a.scores.get(benchmark, 0.0),
             score_b=meta_b.scores.get(benchmark, 0.0),
             score_delta=meta_b.scores.get(benchmark, 0.0) - meta_a.scores.get(benchmark, 0.0),
-            regressions=regressions, improvements=improvements,
+            regressions=regressions,
+            improvements=improvements,
             num_shared=len(shared),
         )
 
@@ -352,13 +382,15 @@ class EvalStore:
         """Build a scores table across all runs."""
         table = []
         for run in self.list_runs():
-            table.append({
-                "run_id": run.run_id,
-                "model_name": run.model_name,
-                "checkpoint_name": run.checkpoint_name,
-                "timestamp": run.timestamp,
-                "scores": run.scores,
-            })
+            table.append(
+                {
+                    "run_id": run.run_id,
+                    "model_name": run.model_name,
+                    "checkpoint_name": run.checkpoint_name,
+                    "timestamp": run.timestamp,
+                    "scores": run.scores,
+                }
+            )
         return table
 
     def print_dashboard(self) -> None:
@@ -383,8 +415,12 @@ class EvalStore:
     def print_comparison(self, comparison: RunComparison) -> None:
         """Pretty-print a run comparison."""
         print(f"=== {comparison.benchmark}: {comparison.run_a_id} vs {comparison.run_b_id} ===")
-        print(f"  Score: {comparison.score_a:.3f} -> {comparison.score_b:.3f} (delta={comparison.score_delta:+.3f})")
-        print(f"  Shared: {comparison.num_shared}, Regressions: {len(comparison.regressions)}, Improvements: {len(comparison.improvements)}")
+        print(
+            f"  Score: {comparison.score_a:.3f} -> {comparison.score_b:.3f} (delta={comparison.score_delta:+.3f})"
+        )
+        print(
+            f"  Shared: {comparison.num_shared}, Regressions: {len(comparison.regressions)}, Improvements: {len(comparison.improvements)}"
+        )
 
     # ── Async variants ────────────────────────────────────────────────
 

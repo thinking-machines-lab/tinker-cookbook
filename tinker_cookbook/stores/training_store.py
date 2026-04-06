@@ -15,18 +15,23 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from tinker_cookbook.stores._incremental import IncrementalReader
-from tinker_cookbook.stores.storage import Storage, StorageStat, storage_join
+from tinker_cookbook.stores.storage import Storage, storage_join
 
 logger = logging.getLogger(__name__)
 
 _ITERATION_RE = re.compile(r"^iteration_(\d+)$")
+
+
 class _Unset:
     """Sentinel that survives pickle (unlike bare object())."""
+
     _instance = None
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
+
 
 _UNSET = _Unset()
 
@@ -160,24 +165,13 @@ class TrainingRunStore:
         self._rollout_cache[cache_key] = records
         return records
 
-    def read_rollouts_typed(
-        self, iteration: int, split: str = "train", label: str | None = None
-    ) -> list[Any]:
-        """Read rollout summaries as StoredTrainingTrajectory objects."""
-        from tinker_cookbook.types.trajectories import StoredTrainingTrajectory
-
-        raw = self.read_rollouts(iteration, split, label)
-        typed = []
-        for d in raw:
-            try:
-                typed.append(StoredTrainingTrajectory.from_dict(d))
-            except (KeyError, TypeError, ValueError) as e:
-                logger.warning("Skipping corrupted rollout: %s", e)
-        return typed
-
     def read_single_rollout(
-        self, iteration: int, group_idx: int, traj_idx: int,
-        split: str = "train", label: str | None = None
+        self,
+        iteration: int,
+        group_idx: int,
+        traj_idx: int,
+        split: str = "train",
+        label: str | None = None,
     ) -> dict[str, Any] | None:
         for r in self.read_rollouts(iteration, split, label):
             if r.get("group_idx") == group_idx and r.get("traj_idx") == traj_idx:
@@ -193,6 +187,7 @@ class TrainingRunStore:
     def read_checkpoints_typed(self) -> list[Any]:
         """Read checkpoints as CheckpointRecord objects."""
         from tinker_cookbook.checkpoint_utils import CheckpointRecord
+
         return self._read_jsonl_typed(CheckpointRecord.from_dict, "checkpoints.jsonl")
 
     # ── Timing (incremental) ──────────────────────────────────────────
@@ -229,14 +224,16 @@ class TrainingRunStore:
 
         nodes: list[dict[str, Any]] = []
         for s in sorted_spans:
-            nodes.append({
-                "name": s.get("name", "?"),
-                "duration": s.get("duration", 0),
-                "wall_start": s.get("wall_start", 0),
-                "wall_end": s.get("wall_end", 0),
-                "attributes": s.get("attributes", {}),
-                "children": [],
-            })
+            nodes.append(
+                {
+                    "name": s.get("name", "?"),
+                    "duration": s.get("duration", 0),
+                    "wall_start": s.get("wall_start", 0),
+                    "wall_end": s.get("wall_end", 0),
+                    "attributes": s.get("attributes", {}),
+                    "children": [],
+                }
+            )
 
         EPS = 0.01
         root_children: list[dict[str, Any]] = []
@@ -333,7 +330,7 @@ class TrainingRunStore:
                 elif f == "train_logtree.json":
                     info.has_train_logtree = True
                 elif f.startswith("eval_") and f.endswith("_rollout_summaries.jsonl"):
-                    info.eval_labels.append(f[len("eval_"):-len("_rollout_summaries.jsonl")])
+                    info.eval_labels.append(f[len("eval_") : -len("_rollout_summaries.jsonl")])
             iterations.append(info)
         iterations.sort(key=lambda x: x.iteration)
         return iterations
@@ -393,5 +390,7 @@ class TrainingRunStore:
     async def aread_timing(self) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self.read_timing)
 
-    async def aread_logtree(self, iteration: int, base_name: str = "train") -> dict[str, Any] | None:
+    async def aread_logtree(
+        self, iteration: int, base_name: str = "train"
+    ) -> dict[str, Any] | None:
         return await asyncio.to_thread(self.read_logtree, iteration, base_name)

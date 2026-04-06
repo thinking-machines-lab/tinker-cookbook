@@ -14,6 +14,7 @@ still use ``Path``/``open()`` directly.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import posixpath
 from dataclasses import dataclass
@@ -56,8 +57,7 @@ class Storage(Protocol):
         """
         ...
 
-    def exists(self, path: str) -> bool:
-        ...
+    def exists(self, path: str) -> bool: ...
 
     def stat(self, path: str) -> StorageStat | None:
         """Get file size and mtime, or ``None`` if missing."""
@@ -78,11 +78,17 @@ class Storage(Protocol):
         """Delete a file. No error if missing."""
         ...
 
-    def __enter__(self) -> Storage:
+    def remove_dir(self, path: str) -> None:
+        """Remove an empty directory. No error if missing or non-empty.
+
+        Cloud backends (S3/GCS) can treat this as a no-op since they
+        don't have real directories.
+        """
         ...
 
-    def __exit__(self, *exc: object) -> None:
-        ...
+    def __enter__(self) -> Storage: ...
+
+    def __exit__(self, *exc: object) -> None: ...
 
 
 @runtime_checkable
@@ -93,35 +99,27 @@ class AsyncStorage(Protocol):
     wraps sync methods with ``asyncio.to_thread``.
     """
 
-    async def aread(self, path: str) -> bytes:
-        ...
+    async def aread(self, path: str) -> bytes: ...
 
-    async def awrite(self, path: str, data: bytes) -> None:
-        ...
+    async def awrite(self, path: str, data: bytes) -> None: ...
 
-    async def aappend(self, path: str, data: bytes) -> None:
-        ...
+    async def aappend(self, path: str, data: bytes) -> None: ...
 
-    async def aexists(self, path: str) -> bool:
-        ...
+    async def aexists(self, path: str) -> bool: ...
 
-    async def astat(self, path: str) -> StorageStat | None:
-        ...
+    async def astat(self, path: str) -> StorageStat | None: ...
 
-    async def aread_range(self, path: str, offset: int, length: int | None = None) -> bytes:
-        ...
+    async def aread_range(self, path: str, offset: int, length: int | None = None) -> bytes: ...
 
-    async def alist_dir(self, prefix: str) -> list[str]:
-        ...
+    async def alist_dir(self, prefix: str) -> list[str]: ...
 
-    async def aremove(self, path: str) -> None:
-        ...
+    async def aremove(self, path: str) -> None: ...
 
-    async def __aenter__(self) -> AsyncStorage:
-        ...
+    async def aremove_dir(self, path: str) -> None: ...
 
-    async def __aexit__(self, *exc: object) -> None:
-        ...
+    async def __aenter__(self) -> AsyncStorage: ...
+
+    async def __aexit__(self, *exc: object) -> None: ...
 
 
 class LocalStorage:
@@ -185,6 +183,11 @@ class LocalStorage:
         full = self._resolve(path)
         full.unlink(missing_ok=True)
 
+    def remove_dir(self, path: str) -> None:
+        full = self._resolve(path)
+        with contextlib.suppress(FileNotFoundError, OSError):
+            full.rmdir()
+
     def __enter__(self) -> LocalStorage:
         return self
 
@@ -216,6 +219,9 @@ class LocalStorage:
 
     async def aremove(self, path: str) -> None:
         await asyncio.to_thread(self.remove, path)
+
+    async def aremove_dir(self, path: str) -> None:
+        await asyncio.to_thread(self.remove_dir, path)
 
     async def __aenter__(self) -> LocalStorage:
         return self
