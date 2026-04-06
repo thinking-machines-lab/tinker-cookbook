@@ -57,44 +57,48 @@ MAX_TURNS = 200
 # apply_patch helper — GPT-OSS models use this instead of sed/python for edits.
 # Reads a patch from stdin in the *** Begin Patch / *** Update File format.
 _APPLY_PATCH_SCRIPT = r'''#!/usr/bin/env python3
-"""apply_patch: apply a GPT-style patch from stdin."""
-import sys, re
+"""apply_patch: apply a GPT-style patch from stdin.
+
+Compatible with Python 3.5+ (no f-strings) since conda envs may use old Python.
+"""
+import sys, os
 
 def apply_patch(patch_text, workdir="/workspace/repo"):
-    import os
     current_file = None
     old_lines = []
     new_lines = []
     results = []
 
     def flush_hunk():
-        nonlocal old_lines, new_lines, current_file
         if current_file is None or (not old_lines and not new_lines):
-            old_lines, new_lines = [], []
+            del old_lines[:]
+            del new_lines[:]
             return
         fpath = os.path.join(workdir, current_file)
         if not os.path.exists(fpath):
-            # New file
             if new_lines:
-                os.makedirs(os.path.dirname(fpath), exist_ok=True)
+                d = os.path.dirname(fpath)
+                if d and not os.path.exists(d):
+                    os.makedirs(d)
                 with open(fpath, "w") as f:
                     f.write("\n".join(new_lines) + "\n")
-                results.append(f"Created {current_file}")
-            old_lines, new_lines = [], []
+                results.append("Created " + current_file)
+            del old_lines[:]
+            del new_lines[:]
             return
         with open(fpath) as f:
             content = f.read()
-        # Build the old text to find and the new text to replace with
         old_text = "\n".join(old_lines)
         new_text = "\n".join(new_lines)
         if old_text in content:
             content = content.replace(old_text, new_text, 1)
             with open(fpath, "w") as f:
                 f.write(content)
-            results.append(f"Updated {current_file}")
+            results.append("Updated " + current_file)
         else:
-            results.append(f"WARNING: Could not find match in {current_file}")
-        old_lines, new_lines = [], []
+            results.append("WARNING: Could not find match in " + current_file)
+        del old_lines[:]
+        del new_lines[:]
 
     for line in patch_text.split("\n"):
         if line.startswith("*** Begin Patch"):
@@ -115,7 +119,7 @@ def apply_patch(patch_text, workdir="/workspace/repo"):
             fpath = os.path.join(workdir, line.split("*** Delete File:")[-1].strip())
             if os.path.exists(fpath):
                 os.remove(fpath)
-                results.append(f"Deleted {fpath}")
+                results.append("Deleted " + fpath)
             current_file = None
             continue
         if line.startswith("@@"):
@@ -126,7 +130,6 @@ def apply_patch(patch_text, workdir="/workspace/repo"):
         elif line.startswith("+"):
             new_lines.append(line[1:])
         else:
-            # Context line
             old_lines.append(line.lstrip(" "))
             new_lines.append(line.lstrip(" "))
 
