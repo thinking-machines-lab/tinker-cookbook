@@ -325,7 +325,7 @@ class TestTrainingRunStoreWrites:
     def test_write_code_diff(self, tmp_path: Path) -> None:
         store = TrainingRunStore(LocalStorage(tmp_path))
         store.write_code_diff("--- a/file.py\n+++ b/file.py\n")
-        data = store._storage.read(store._path("code.diff"))
+        data = store.storage.read("code.diff")
         assert b"file.py" in data
 
     def test_roundtrip_write_read(self, tmp_path: Path) -> None:

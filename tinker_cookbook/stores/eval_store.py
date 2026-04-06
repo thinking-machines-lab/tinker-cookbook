@@ -102,18 +102,22 @@ class EvalStore:
             # Backward compat: EvalStore("/path/to/eval_store")
             from tinker_cookbook.stores.storage import LocalStorage
 
-            self._storage: Storage = LocalStorage(Path(storage_or_path).expanduser())
-            self._prefix = prefix
+            self.storage: Storage = LocalStorage(Path(storage_or_path).expanduser())
+            self.prefix = prefix
         else:
-            self._storage = storage_or_path
-            self._prefix = prefix
+            self.storage = storage_or_path
+            self.prefix = prefix
+
+    def url(self, path: str = "") -> str:
+        """Return a human-readable URI for a path within this eval store."""
+        return self.storage.url(self._path(path))
 
     def _path(self, *parts: str) -> str:
-        return storage_join(self._prefix, *parts)
+        return storage_join(self.prefix, *parts)
 
     def _read_json(self, *parts: str) -> dict[str, Any] | None:
         try:
-            data = self._storage.read(self._path(*parts))
+            data = self.storage.read(self._path(*parts))
             return json.loads(data)
         except FileNotFoundError:
             return None
@@ -122,14 +126,14 @@ class EvalStore:
             return None
 
     def _write_json(self, data: dict[str, Any], *parts: str) -> None:
-        self._storage.write(self._path(*parts), json.dumps(data, indent=2).encode("utf-8"))
+        self.storage.write(self._path(*parts), json.dumps(data, indent=2).encode("utf-8"))
 
     def _append_jsonl(self, record: dict[str, Any], *parts: str) -> None:
-        self._storage.append(self._path(*parts), (json.dumps(record) + "\n").encode("utf-8"))
+        self.storage.append(self._path(*parts), (json.dumps(record) + "\n").encode("utf-8"))
 
     def _read_jsonl(self, *parts: str) -> list[dict[str, Any]]:
         try:
-            data = self._storage.read(self._path(*parts))
+            data = self.storage.read(self._path(*parts))
         except FileNotFoundError:
             return []
         except OSError as e:
@@ -193,12 +197,12 @@ class EvalStore:
         Only works with LocalStorage (returns a local path string).
         For cloud backends, use ``url()`` on the storage directly.
         """
-        if not hasattr(self._storage, "root"):
+        if not hasattr(self.storage, "root"):
             raise RuntimeError(
                 "run_dir() only works with LocalStorage. "
-                f"Use storage.url() instead: {self._storage.url(self._path('runs', run_id))}"
+                f"Use storage.url() instead: {self.storage.url(self._path('runs', run_id))}"
             )
-        root = getattr(self._storage, "root")  # noqa: B009
+        root = getattr(self.storage, "root")  # noqa: B009
         return str(root / self._path("runs", run_id))
 
     def finalize_run(self, run_id: str) -> RunMetadata:
@@ -222,7 +226,7 @@ class EvalStore:
     def list_runs(self) -> list[RunMetadata]:
         """List all evaluation runs, most recent first."""
         runs = []
-        for name in sorted(self._storage.list_dir(self._path("runs")), reverse=True):
+        for name in sorted(self.storage.list_dir(self._path("runs")), reverse=True):
             meta = self._read_json("runs", name, "metadata.json")
             if meta:
                 try:
@@ -240,11 +244,11 @@ class EvalStore:
 
     def list_benchmarks(self, run_id: str) -> list[str]:
         """List benchmark names that have results for a run."""
-        items = self._storage.list_dir(self._path("runs", run_id))
+        items = self.storage.list_dir(self._path("runs", run_id))
         return sorted(
             name
             for name in items
-            if self._storage.exists(self._path("runs", run_id, name, "result.json"))
+            if self.storage.exists(self._path("runs", run_id, name, "result.json"))
         )
 
     def read_result(self, run_id: str, benchmark: str) -> BenchmarkResult | None:
@@ -335,12 +339,12 @@ class EvalStore:
         checks for ``metadata.json`` existence so deleted runs are excluded.
         """
         for benchmark in self.list_benchmarks(run_id):
-            self._storage.remove(self._path("runs", run_id, benchmark, "result.json"))
-            self._storage.remove(self._path("runs", run_id, benchmark, "trajectories.jsonl"))
-            self._storage.remove_dir(self._path("runs", run_id, benchmark))
-        self._storage.remove(self._path("runs", run_id, "metadata.json"))
-        self._storage.remove(self._path("runs", run_id, "summary.json"))
-        self._storage.remove_dir(self._path("runs", run_id))
+            self.storage.remove(self._path("runs", run_id, benchmark, "result.json"))
+            self.storage.remove(self._path("runs", run_id, benchmark, "trajectories.jsonl"))
+            self.storage.remove_dir(self._path("runs", run_id, benchmark))
+        self.storage.remove(self._path("runs", run_id, "metadata.json"))
+        self.storage.remove(self._path("runs", run_id, "summary.json"))
+        self.storage.remove_dir(self._path("runs", run_id))
 
     # ── Cross-run comparison ──────────────────────────────────────────
 

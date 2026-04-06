@@ -61,16 +61,25 @@ class TrainingRunStore:
     """
 
     def __init__(self, storage: Storage, prefix: str = "") -> None:
-        self._storage = storage
-        self._prefix = prefix
+        self.storage = storage
+        self.prefix = prefix
         # Lazy — created on first access to keep pickle-safe
         self._metrics: IncrementalReader | None = None
         self._timing: IncrementalReader | None = None
         self._config: Any = _UNSET
         self._rollout_cache: dict[str, list[dict[str, Any]]] = {}
 
+    def url(self, path: str = "") -> str:
+        """Return a human-readable URI for a path within this run.
+
+        Useful for logging in distributed workers::
+
+            logger.info("Writing metrics to %s", store.url("metrics.jsonl"))
+        """
+        return self.storage.url(self._path(path))
+
     def _path(self, *parts: str) -> str:
-        return storage_join(self._prefix, *parts)
+        return storage_join(self.prefix, *parts)
 
     @staticmethod
     def _iter_dir(iteration: int) -> str:
@@ -80,7 +89,7 @@ class TrainingRunStore:
 
     def _read_json(self, *parts: str) -> dict[str, Any] | None:
         try:
-            data = self._storage.read(self._path(*parts))
+            data = self.storage.read(self._path(*parts))
             return json.loads(data)
         except FileNotFoundError:
             return None
@@ -90,7 +99,7 @@ class TrainingRunStore:
 
     def _read_jsonl(self, *parts: str) -> list[dict[str, Any]]:
         try:
-            data = self._storage.read(self._path(*parts))
+            data = self.storage.read(self._path(*parts))
         except FileNotFoundError:
             return []
         except OSError as e:
@@ -132,7 +141,7 @@ class TrainingRunStore:
 
     def _get_metrics(self) -> IncrementalReader:
         if self._metrics is None:
-            self._metrics = IncrementalReader(self._storage, self._path("metrics.jsonl"))
+            self._metrics = IncrementalReader(self.storage, self._path("metrics.jsonl"))
         return self._metrics
 
     def read_metrics(self) -> list[dict[str, Any]]:
@@ -201,7 +210,7 @@ class TrainingRunStore:
 
     def _get_timing(self) -> IncrementalReader:
         if self._timing is None:
-            self._timing = IncrementalReader(self._storage, self._path("timing_spans.jsonl"))
+            self._timing = IncrementalReader(self.storage, self._path("timing_spans.jsonl"))
         return self._timing
 
     def read_timing(self) -> list[dict[str, Any]]:
@@ -319,20 +328,20 @@ class TrainingRunStore:
         return self._read_json(self._iter_dir(iteration), f"{base_name}_logtree.json")
 
     def list_logtrees(self, iteration: int) -> list[str]:
-        items = self._storage.list_dir(self._path(self._iter_dir(iteration)))
+        items = self.storage.list_dir(self._path(self._iter_dir(iteration)))
         return sorted(n[: -len("_logtree.json")] for n in items if n.endswith("_logtree.json"))
 
     # ── Iterations ────────────────────────────────────────────────────
 
     def list_iterations(self) -> list[IterationInfo]:
         iterations: list[IterationInfo] = []
-        for child in self._storage.list_dir(self._path()):
+        for child in self.storage.list_dir(self._path()):
             match = _ITERATION_RE.match(child)
             if not match:
                 continue
             info = IterationInfo(iteration=int(match.group(1)))
             iter_prefix = self._path(child)
-            for f in self._storage.list_dir(iter_prefix):
+            for f in self.storage.list_dir(iter_prefix):
                 if f == "train_rollout_summaries.jsonl":
                     info.has_train_rollouts = True
                 elif f == "train_logtree.json":
@@ -346,7 +355,7 @@ class TrainingRunStore:
     # ── Status detection ──────────────────────────────────────────────
 
     def detect_status(self) -> tuple[Status, float | None]:
-        stat = self._storage.stat(self._path("metrics.jsonl"))
+        stat = self.storage.stat(self._path("metrics.jsonl"))
         if stat is None:
             return "idle", None
         age = time.time() - stat.mtime
@@ -379,10 +388,10 @@ class TrainingRunStore:
     # ── Writes ────────────────────────────────────────────────────────
 
     def _write_json(self, data: dict[str, Any], *parts: str) -> None:
-        self._storage.write(self._path(*parts), json.dumps(data, indent=2).encode("utf-8"))
+        self.storage.write(self._path(*parts), json.dumps(data, indent=2).encode("utf-8"))
 
     def _append_jsonl(self, record: dict[str, Any], *parts: str) -> None:
-        self._storage.append(self._path(*parts), (json.dumps(record) + "\n").encode("utf-8"))
+        self.storage.append(self._path(*parts), (json.dumps(record) + "\n").encode("utf-8"))
 
     def write_config(self, config: dict[str, Any]) -> None:
         """Write config.json (overwrites if exists, updates cache)."""
@@ -435,7 +444,7 @@ class TrainingRunStore:
         filename = self._rollout_filename(base_name)
         lines = [json.dumps(r) for r in records]
         data = ("\n".join(lines) + "\n").encode("utf-8") if lines else b""
-        self._storage.write(self._path(self._iter_dir(iteration), filename), data)
+        self.storage.write(self._path(self._iter_dir(iteration), filename), data)
 
         # Invalidate read cache
         cache_key = f"{iteration}/{filename}"
@@ -447,7 +456,7 @@ class TrainingRunStore:
 
     def write_code_diff(self, diff: str) -> None:
         """Write code.diff (overwrites)."""
-        self._storage.write(self._path("code.diff"), diff.encode("utf-8"))
+        self.storage.write(self._path("code.diff"), diff.encode("utf-8"))
 
     # ── Async variants ────────────────────────────────────────────────
 
