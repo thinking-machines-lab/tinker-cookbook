@@ -56,10 +56,12 @@ class RunMetadata:
     scores: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-compatible dict."""
         return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> RunMetadata:
+        """Deserialize from a dict, ignoring unknown fields for forward compatibility."""
         import dataclasses
 
         valid_fields = {f.name for f in dataclasses.fields(cls)}
@@ -327,12 +329,15 @@ class EvalStore:
     # ── Async variants ────────────────────────────────────────────────
 
     async def alist_runs(self) -> list[RunMetadata]:
+        """Async version of :meth:`list_runs`."""
         return await asyncio.to_thread(self.list_runs)
 
     async def aread_trajectories(
         self, run_id: str, benchmark: str, **kw: Any
     ) -> list[StoredTrajectory]:
+        """Async version of :meth:`read_trajectories`."""
         return await asyncio.to_thread(self.read_trajectories, run_id, benchmark, **kw)
 
     async def aread_result(self, run_id: str, benchmark: str) -> BenchmarkResult | None:
+        """Async version of :meth:`read_result`."""
         return await asyncio.to_thread(self.read_result, run_id, benchmark)

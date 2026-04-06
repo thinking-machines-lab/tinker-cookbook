@@ -46,6 +46,7 @@ class IncrementalReader:
 
     @property
     def records(self) -> list[dict[str, Any]]:
+        """All buffered records (copy). Bounded by ``max_records``."""
         with self._lock:
             return list(self._records)
 
@@ -109,6 +110,7 @@ class IncrementalReader:
         return await asyncio.to_thread(self.read)
 
     def has_data(self) -> bool:
+        """Return ``True`` if records exist in memory or on disk."""
         with self._lock:
             if self._records:
                 return True

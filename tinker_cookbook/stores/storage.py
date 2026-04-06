@@ -92,7 +92,9 @@ class Storage(Protocol):
         """
         ...
 
-    def exists(self, path: str) -> bool: ...
+    def exists(self, path: str) -> bool:
+        """Return ``True`` if the file exists."""
+        ...
 
     def stat(self, path: str) -> StorageStat | None:
         """Get file size and mtime, or ``None`` if missing."""
@@ -139,23 +141,41 @@ class AsyncStorage(Protocol):
     wraps sync methods with ``asyncio.to_thread``.
     """
 
-    async def aread(self, path: str) -> bytes: ...
+    async def aread(self, path: str) -> bytes:
+        """Async version of :meth:`Storage.read`."""
+        ...
 
-    async def awrite(self, path: str, data: bytes) -> None: ...
+    async def awrite(self, path: str, data: bytes) -> None:
+        """Async version of :meth:`Storage.write`."""
+        ...
 
-    async def aappend(self, path: str, data: bytes) -> None: ...
+    async def aappend(self, path: str, data: bytes) -> None:
+        """Async version of :meth:`Storage.append`."""
+        ...
 
-    async def aexists(self, path: str) -> bool: ...
+    async def aexists(self, path: str) -> bool:
+        """Async version of :meth:`Storage.exists`."""
+        ...
 
-    async def astat(self, path: str) -> StorageStat | None: ...
+    async def astat(self, path: str) -> StorageStat | None:
+        """Async version of :meth:`Storage.stat`."""
+        ...
 
-    async def aread_range(self, path: str, offset: int, length: int | None = None) -> bytes: ...
+    async def aread_range(self, path: str, offset: int, length: int | None = None) -> bytes:
+        """Async version of :meth:`Storage.read_range`."""
+        ...
 
-    async def alist_dir(self, prefix: str) -> list[str]: ...
+    async def alist_dir(self, prefix: str) -> list[str]:
+        """Async version of :meth:`Storage.list_dir`."""
+        ...
 
-    async def aremove(self, path: str) -> None: ...
+    async def aremove(self, path: str) -> None:
+        """Async version of :meth:`Storage.remove`."""
+        ...
 
-    async def aremove_dir(self, path: str) -> None: ...
+    async def aremove_dir(self, path: str) -> None:
+        """Async version of :meth:`Storage.remove_dir`."""
+        ...
 
     async def __aenter__(self) -> AsyncStorage: ...
 
@@ -174,9 +194,11 @@ class LocalStorage:
 
     @property
     def root(self) -> Path:
+        """The resolved local directory root."""
         return self._root
 
     def url(self, path: str = "") -> str:
+        """Return a ``file:///`` URI for the given path."""
         resolved = self._root / path if path else self._root
         return resolved.as_uri()
 
@@ -186,26 +208,31 @@ class LocalStorage:
             raise ValueError(f"Path escapes storage root: {path}")
         return resolved
 
-    # --- Sync (Storage protocol) ---
+    # --- Sync (Storage protocol) --- see Storage for full docstrings
 
     def read(self, path: str) -> bytes:
+        """See :meth:`Storage.read`."""
         return self._resolve(path).read_bytes()
 
     def write(self, path: str, data: bytes) -> None:
+        """See :meth:`Storage.write`."""
         full = self._resolve(path)
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_bytes(data)
 
     def append(self, path: str, data: bytes) -> None:
+        """See :meth:`Storage.append`."""
         full = self._resolve(path)
         full.parent.mkdir(parents=True, exist_ok=True)
         with open(full, "ab") as f:
             f.write(data)
 
     def exists(self, path: str) -> bool:
+        """See :meth:`Storage.exists`."""
         return self._resolve(path).exists()
 
     def stat(self, path: str) -> StorageStat | None:
+        """See :meth:`Storage.stat`."""
         try:
             st = self._resolve(path).stat()
             return StorageStat(size=st.st_size, mtime=st.st_mtime)
@@ -213,21 +240,25 @@ class LocalStorage:
             return None
 
     def read_range(self, path: str, offset: int, length: int | None = None) -> bytes:
+        """See :meth:`Storage.read_range`."""
         with open(self._resolve(path), "rb") as f:
             f.seek(offset)
             return f.read(length) if length is not None else f.read()
 
     def list_dir(self, prefix: str) -> list[str]:
+        """See :meth:`Storage.list_dir`. Returns sorted names."""
         full = self._resolve(prefix)
         if not full.is_dir():
             return []
         return sorted(child.name for child in full.iterdir())
 
     def remove(self, path: str) -> None:
+        """See :meth:`Storage.remove`."""
         full = self._resolve(path)
         full.unlink(missing_ok=True)
 
     def remove_dir(self, path: str) -> None:
+        """See :meth:`Storage.remove_dir`."""
         full = self._resolve(path)
         with contextlib.suppress(FileNotFoundError, OSError):
             full.rmdir()
@@ -241,30 +272,39 @@ class LocalStorage:
     # --- Async (AsyncStorage protocol, via to_thread) ---
 
     async def aread(self, path: str) -> bytes:
+        """Async version of :meth:`read`."""
         return await asyncio.to_thread(self.read, path)
 
     async def awrite(self, path: str, data: bytes) -> None:
+        """Async version of :meth:`write`."""
         await asyncio.to_thread(self.write, path, data)
 
     async def aappend(self, path: str, data: bytes) -> None:
+        """Async version of :meth:`append`."""
         await asyncio.to_thread(self.append, path, data)
 
     async def aexists(self, path: str) -> bool:
+        """Async version of :meth:`exists`."""
         return await asyncio.to_thread(self.exists, path)
 
     async def astat(self, path: str) -> StorageStat | None:
+        """Async version of :meth:`stat`."""
         return await asyncio.to_thread(self.stat, path)
 
     async def aread_range(self, path: str, offset: int, length: int | None = None) -> bytes:
+        """Async version of :meth:`read_range`."""
         return await asyncio.to_thread(self.read_range, path, offset, length)
 
     async def alist_dir(self, prefix: str) -> list[str]:
+        """Async version of :meth:`list_dir`."""
         return await asyncio.to_thread(self.list_dir, prefix)
 
     async def aremove(self, path: str) -> None:
+        """Async version of :meth:`remove`."""
         await asyncio.to_thread(self.remove, path)
 
     async def aremove_dir(self, path: str) -> None:
+        """Async version of :meth:`remove_dir`."""
         await asyncio.to_thread(self.remove_dir, path)
 
     async def __aenter__(self) -> LocalStorage:

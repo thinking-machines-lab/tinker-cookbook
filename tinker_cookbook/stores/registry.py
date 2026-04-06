@@ -70,10 +70,12 @@ class RunRegistry:
 
     @property
     def storage_count(self) -> int:
+        """Number of storage backends registered."""
         return len(self._storages)
 
     @property
     def primary_storage(self) -> Storage:
+        """The first (default) storage backend."""
         return self._storages[0]
 
     def storage_for(self, run_id: str) -> Storage:
@@ -99,12 +101,14 @@ class RunRegistry:
         return list(all_runs.values())
 
     def get_runs(self) -> list[RunInfo]:
+        """Return all discovered runs (lazy — calls :meth:`refresh` on first access)."""
         if self._runs is None:
             self.refresh()
         assert self._runs is not None
         return list(self._runs.values())
 
     def get_run(self, run_id: str) -> RunInfo | None:
+        """Look up a single run by ID, or ``None`` if not found."""
         if self._runs is None:
             self.refresh()
         assert self._runs is not None

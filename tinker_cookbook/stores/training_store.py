@@ -184,6 +184,7 @@ class TrainingRunStore:
         traj_idx: int,
         base_name: str = "train",
     ) -> dict[str, Any] | None:
+        """Find one rollout by group and trajectory index, or ``None``."""
         for r in self.read_rollouts(iteration, base_name):
             if r.get("group_idx") == group_idx and r.get("traj_idx") == traj_idx:
                 return r
@@ -217,15 +218,18 @@ class TrainingRunStore:
     # ── Logtree ───────────────────────────────────────────────────────
 
     def read_logtree(self, iteration: int, base_name: str = "train") -> dict[str, Any] | None:
+        """Read a logtree JSON file for an iteration, or ``None`` if missing."""
         return self._read_json(self._iter_dir(iteration), f"{base_name}_logtree.json")
 
     def list_logtrees(self, iteration: int) -> list[str]:
+        """List logtree base names for an iteration (e.g. ``["train", "eval_gsm8k"]``)."""
         items = self.storage.list_dir(self._path(self._iter_dir(iteration)))
         return sorted(n[: -len("_logtree.json")] for n in items if n.endswith("_logtree.json"))
 
     # ── Iterations ────────────────────────────────────────────────────
 
     def list_iterations(self) -> list[IterationInfo]:
+        """List all iteration directories with metadata about their contents."""
         iterations: list[IterationInfo] = []
         for child in self.storage.list_dir(self._path()):
             match = _ITERATION_RE.match(child)
@@ -320,32 +324,41 @@ class TrainingRunStore:
     # ── Async variants ────────────────────────────────────────────────
 
     async def aread_config(self) -> dict[str, Any] | None:
+        """Async version of :meth:`read_config`."""
         return await asyncio.to_thread(self.read_config)
 
     async def aread_metrics(self) -> list[dict[str, Any]]:
+        """Async version of :meth:`read_metrics`."""
         return await asyncio.to_thread(self.read_metrics)
 
     async def aread_new_metrics(self) -> list[dict[str, Any]]:
+        """Async version of :meth:`read_new_metrics`."""
         return await asyncio.to_thread(self.read_new_metrics)
 
     async def aread_rollouts(
         self, iteration: int, base_name: str = "train"
     ) -> list[dict[str, Any]]:
+        """Async version of :meth:`read_rollouts`."""
         return await asyncio.to_thread(self.read_rollouts, iteration, base_name)
 
     async def aread_checkpoints(self) -> list[dict[str, Any]]:
+        """Async version of :meth:`read_checkpoints`."""
         return await asyncio.to_thread(self.read_checkpoints)
 
     async def aread_timing(self) -> list[dict[str, Any]]:
+        """Async version of :meth:`read_timing`."""
         return await asyncio.to_thread(self.read_timing)
 
     async def aread_logtree(
         self, iteration: int, base_name: str = "train"
     ) -> dict[str, Any] | None:
+        """Async version of :meth:`read_logtree`."""
         return await asyncio.to_thread(self.read_logtree, iteration, base_name)
 
     async def awrite_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
+        """Async version of :meth:`write_metrics`."""
         await asyncio.to_thread(self.write_metrics, metrics, step)
 
     async def awrite_checkpoint(self, record: dict[str, Any]) -> None:
+        """Async version of :meth:`write_checkpoint`."""
         await asyncio.to_thread(self.write_checkpoint, record)
