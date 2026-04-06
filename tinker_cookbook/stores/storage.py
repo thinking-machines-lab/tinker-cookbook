@@ -318,70 +318,110 @@ class FsspecStorage:
     """Storage backend wrapping any ``fsspec.AbstractFileSystem``.
 
     Supports S3 (via ``s3fs``), GCS (via ``gcsfs``), Azure (via ``adlfs``),
-    and any other filesystem that fsspec supports. Pickle-serializable —
-    stores the protocol, root path, and constructor kwargs (not the fs object).
+    and any other filesystem that fsspec supports.
+
+    **Append strategy:** Cloud backends don't support native append. This
+    class stages append-only files locally using POSIX atomic writes, then
+    uploads them to cloud on :meth:`flush`. Reads check the local stage
+    first, so ``IncrementalReader`` sees appended data immediately.
+
+    Call :meth:`flush` at checkpoints or training end to persist staged
+    data to cloud. The context manager calls ``flush`` on exit.
+
+    Pickle-serializable — stores protocol, root, and kwargs. Local staged
+    data is NOT included in pickle (each process starts with an empty stage).
 
     Examples::
 
-        import fsspec
-        fs = fsspec.filesystem("s3", anon=False)
-        storage = FsspecStorage(fs, "my-bucket/experiments/run1")
-
-        # Or via storage_from_uri:
         storage = storage_from_uri("s3://my-bucket/experiments/run1")
+
+        # Appends are staged locally (fast, atomic)
+        storage.append("metrics.jsonl", b'{...}\\n')
+
+        # Reads see staged data immediately
+        data = storage.read("metrics.jsonl")
+
+        # Upload staged files to cloud
+        storage.flush()
     """
 
     def __init__(self, fs: Any, root: str = "", **fs_kwargs: Any) -> None:
+        import tempfile
+
         self._fs = fs
         self._root = root.rstrip("/")
         self._protocol = fs.protocol if isinstance(fs.protocol, str) else fs.protocol[0]
         self._fs_kwargs = fs_kwargs
+        # Local staging for append-only files
+        self._stage_dir = Path(tempfile.mkdtemp(prefix="fsspec_stage_"))
+        self._staged: set[str] = set()
 
     def _full(self, path: str) -> str:
         if not path:
             return self._root
         return f"{self._root}/{path}" if self._root else path
 
+    def _stage_path(self, path: str) -> Path:
+        return self._stage_dir / path
+
     def url(self, path: str = "") -> str:
         """Return a URI like ``s3://bucket/prefix/path``."""
-        full = self._full(path)
-        return f"{self._protocol}://{full}"
+        return f"{self._protocol}://{self._full(path)}"
 
     # --- Sync (Storage protocol) ---
 
     def read(self, path: str) -> bytes:
-        """See :meth:`Storage.read`."""
+        """See :meth:`Storage.read`. Reads from local stage if available."""
+        if path in self._staged:
+            return self._stage_path(path).read_bytes()
         return self._fs.cat_file(self._full(path))
 
     def write(self, path: str, data: bytes) -> None:
-        """See :meth:`Storage.write`."""
+        """See :meth:`Storage.write`. Writes directly to cloud."""
         full = self._full(path)
         self._fs.mkdirs(posixpath.dirname(full), exist_ok=True)
         self._fs.pipe_file(full, data)
+        # If this path was staged, update the local copy too
+        if path in self._staged:
+            sp = self._stage_path(path)
+            sp.parent.mkdir(parents=True, exist_ok=True)
+            sp.write_bytes(data)
 
     def append(self, path: str, data: bytes) -> None:
         """See :meth:`Storage.append`.
 
-        Cloud backends (GCS, S3) don't support native append. This implements
-        append as read-modify-write. **Not safe for concurrent callers** — two
-        concurrent appends can lose one write. Acceptable for training loops
-        where a single process appends per-step. For concurrent writes,
-        use sharding or a separate file per writer.
+        Stages appends locally using POSIX atomic writes. The first append
+        for a given path pulls existing content from cloud (if any), then
+        all subsequent appends are local. Call :meth:`flush` to upload
+        staged data to cloud.
         """
-        full = self._full(path)
-        self._fs.mkdirs(posixpath.dirname(full), exist_ok=True)
-        try:
-            existing = self._fs.cat_file(full)
-        except FileNotFoundError:
-            existing = b""
-        self._fs.pipe_file(full, existing + data)
+        if path not in self._staged:
+            # First append: pull existing content from cloud
+            sp = self._stage_path(path)
+            sp.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                existing = self._fs.cat_file(self._full(path))
+                sp.write_bytes(existing)
+            except FileNotFoundError:
+                pass  # File doesn't exist yet — will be created by append
+            self._staged.add(path)
+        with open(self._stage_path(path), "ab") as f:
+            f.write(data)
 
     def exists(self, path: str) -> bool:
         """See :meth:`Storage.exists`."""
+        if path in self._staged:
+            return self._stage_path(path).exists()
         return self._fs.exists(self._full(path))
 
     def stat(self, path: str) -> StorageStat | None:
         """See :meth:`Storage.stat`."""
+        if path in self._staged:
+            sp = self._stage_path(path)
+            if not sp.exists():
+                return None
+            st = sp.stat()
+            return StorageStat(size=st.st_size, mtime=st.st_mtime)
         try:
             info = self._fs.info(self._full(path))
             return StorageStat(
@@ -393,10 +433,13 @@ class FsspecStorage:
 
     def read_range(self, path: str, offset: int, length: int | None = None) -> bytes:
         """See :meth:`Storage.read_range`."""
+        if path in self._staged:
+            with open(self._stage_path(path), "rb") as f:
+                f.seek(offset)
+                return f.read(length) if length is not None else f.read()
         full = self._full(path)
         if length is not None:
             return self._fs.read_block(full, offset, length)
-        # read_block with no length: read to end
         with self._fs.open(full, "rb") as f:
             f.seek(offset)
             return f.read()
@@ -407,27 +450,49 @@ class FsspecStorage:
         try:
             entries = self._fs.ls(full, detail=False)
         except FileNotFoundError:
-            return []
-        # ls returns full paths — strip to names
-        return sorted(
+            entries = []
+        cloud_names = {
             e.split("/")[-1] for e in entries if e != full and e.rstrip("/") != full.rstrip("/")
-        )
+        }
+        # Merge with staged files at this prefix level
+        stage_prefix = self._stage_dir / prefix if prefix else self._stage_dir
+        if stage_prefix.is_dir():
+            cloud_names.update(child.name for child in stage_prefix.iterdir())
+        return sorted(cloud_names)
 
     def remove(self, path: str) -> None:
         """See :meth:`Storage.remove`."""
         with contextlib.suppress(FileNotFoundError):
             self._fs.rm_file(self._full(path))
+        # Also remove from stage
+        if path in self._staged:
+            self._stage_path(path).unlink(missing_ok=True)
+            self._staged.discard(path)
 
     def remove_dir(self, path: str) -> None:
         """See :meth:`Storage.remove_dir`."""
         with contextlib.suppress(FileNotFoundError, OSError):
             self._fs.rmdir(self._full(path))
 
+    def flush(self) -> None:
+        """Upload all locally staged files to cloud.
+
+        Call this at checkpoints or training end. The context manager
+        calls this automatically on exit.
+        """
+        for path in list(self._staged):
+            sp = self._stage_path(path)
+            if sp.exists():
+                data = sp.read_bytes()
+                full = self._full(path)
+                self._fs.mkdirs(posixpath.dirname(full), exist_ok=True)
+                self._fs.pipe_file(full, data)
+
     def __enter__(self) -> FsspecStorage:
         return self
 
     def __exit__(self, *exc: object) -> None:
-        pass
+        self.flush()
 
     # --- Async (via to_thread) ---
 
@@ -471,20 +536,25 @@ class FsspecStorage:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        pass
+        await asyncio.to_thread(self.flush)
 
     # --- Pickle support ---
 
     def __getstate__(self) -> dict[str, Any]:
+        # Staged data is NOT pickled — each process starts with empty stage
         return {"protocol": self._protocol, "root": self._root, "fs_kwargs": self._fs_kwargs}
 
     def __setstate__(self, state: dict[str, Any]) -> None:
+        import tempfile
+
         import fsspec
 
         self._protocol = state["protocol"]
         self._root = state["root"]
         self._fs_kwargs = state["fs_kwargs"]
         self._fs = fsspec.filesystem(self._protocol, **self._fs_kwargs)
+        self._stage_dir = Path(tempfile.mkdtemp(prefix="fsspec_stage_"))
+        self._staged = set()
 
 
 def storage_from_uri(uri: str, **kwargs: Any) -> Storage:
