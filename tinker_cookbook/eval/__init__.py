@@ -12,7 +12,7 @@ Three layers:
    and aggregation. Use :class:`BenchmarkEvaluator` to bridge benchmarks into
    the training evaluator interface.
 
-3. **EvalStore** (:class:`tinker_cookbook.eval.store.EvalStore`):
+3. **EvalStore** (:class:`tinker_cookbook.stores.eval_store.EvalStore`):
    Persistent storage for evaluation runs. Tracks metadata, scores, and
    trajectories across checkpoints. Supports cross-run comparison to identify
    regressions and improvements.
@@ -64,7 +64,7 @@ from tinker_cookbook.eval.evaluators import (
     SamplingClientEvaluatorBuilder,
     TrainingClientEvaluator,
 )
-from tinker_cookbook.eval.store import EvalStore, RunComparison, RunMetadata
+from tinker_cookbook.stores.eval_store import EvalStore, RunComparison, RunMetadata
 
 __all__ = [
     # Evaluator interfaces (for training loops)

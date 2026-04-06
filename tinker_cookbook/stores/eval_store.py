@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 
 def _get_eval_types() -> tuple[type, type]:
-    """Lazy import to break circular: stores.eval_store → eval._types → eval.__init__ → eval.store → stores.eval_store"""
+    """Lazy import to break circular: stores.eval_store → eval._types → eval.__init__ → stores.eval_store."""
     import tinker_cookbook.eval.benchmarks._types as t
 
     return t.BenchmarkResult, t.StoredTrajectory

@@ -396,7 +396,7 @@ class TestGradingConsistency:
 
 class TestEvalStore:
     def test_create_and_list_runs(self, tmp_path):
-        from tinker_cookbook.eval.store import EvalStore
+        from tinker_cookbook.stores.eval_store import EvalStore
 
         store = EvalStore(tmp_path / "eval_store")
         run_id = store.create_run(
@@ -412,7 +412,7 @@ class TestEvalStore:
         assert runs[0].benchmarks == ["gsm8k", "mmlu_pro"]
 
     def test_run_dir(self, tmp_path):
-        from tinker_cookbook.eval.store import EvalStore
+        from tinker_cookbook.stores.eval_store import EvalStore
 
         store = EvalStore(tmp_path / "eval_store")
         run_id = store.create_run(
@@ -426,7 +426,7 @@ class TestEvalStore:
     def test_finalize_run(self, tmp_path):
         import json
 
-        from tinker_cookbook.eval.store import EvalStore
+        from tinker_cookbook.stores.eval_store import EvalStore
 
         store = EvalStore(tmp_path / "eval_store")
         run_id = store.create_run(
@@ -448,7 +448,7 @@ class TestEvalStore:
         import json
 
         from tinker_cookbook.eval.benchmarks._types import StoredTrajectory
-        from tinker_cookbook.eval.store import EvalStore
+        from tinker_cookbook.stores.eval_store import EvalStore
 
         store = EvalStore(tmp_path / "eval_store")
 
