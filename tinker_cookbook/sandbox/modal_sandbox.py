@@ -122,7 +122,7 @@ class ModalSandbox:
     def sandbox_id(self) -> str:
         return self._sandbox.object_id
 
-    async def send_heartbeat(self) -> None:
+    async def send_heartbeat(self, timeout: int = 30) -> None:
         await self._sandbox.exec.aio("true")
 
     async def run_command(

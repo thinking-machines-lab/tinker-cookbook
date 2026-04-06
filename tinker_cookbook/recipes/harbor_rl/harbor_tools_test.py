@@ -32,7 +32,7 @@ class FakeSandbox:
     def set_command_result(self, command: str, result: SandboxResult) -> None:
         self._command_results[command] = result
 
-    async def send_heartbeat(self) -> None:
+    async def send_heartbeat(self, timeout: int = 30) -> None:
         pass
 
     async def run_command(
