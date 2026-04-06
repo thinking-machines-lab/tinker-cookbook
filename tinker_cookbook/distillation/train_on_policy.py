@@ -354,7 +354,7 @@ async def do_sync_training(
 
         # Log timing metrics from trace_iteration window
         metrics.update(window.get_timing_metrics())
-        window.write_spans_jsonl(log_path / "timing_spans.jsonl", step=i_batch)
+        window.save_timing(i_batch, store=ml_logger.store, log_path=log_path)
         if config.span_chart_every > 0 and i_batch % config.span_chart_every == 0:
             iter_dir = iteration_dir(log_path, i_batch)
             if iter_dir is not None:
@@ -384,6 +384,7 @@ async def main(
         config=config,
         wandb_name=config.wandb_name,
     )
+    store = ml_logger.store
     if config.enable_trace:
         # Get and rename the current (main) task
         current_task = asyncio.current_task()
@@ -510,6 +511,7 @@ async def main(
             kind="both",
             loop_state={"batch": num_batches},
             ttl_seconds=None,
+            store=store,
         )
     else:
         logger.info("Training was already complete; nothing to do")
