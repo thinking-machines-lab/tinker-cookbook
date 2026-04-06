@@ -344,5 +344,7 @@ class TestFsspecStorage:
         store = TrainingRunStore(s)
         store.write_config({"model": "test"})
         store.write_metrics({"loss": 1.0}, step=0)
-        assert store.read_config()["model"] == "test"
+        config = store.read_config()
+        assert config is not None
+        assert config["model"] == "test"
         assert len(store.read_metrics()) == 1
