@@ -23,9 +23,10 @@ so that cloud backends (S3, GCS) work end-to-end for both reads and writes.
 **Migration status:**
 
 - Done: read paths (TrainingRunStore, EvalStore, RunRegistry)
-- TODO phase 1: ``ml_log.JsonLogger``, ``utils/trace.py``, ``checkpoint_utils``
-- TODO phase 2: cloud backends (``FsspecStorage`` wrapping fsspec)
-- TODO phase 3: eval runner (``_runner.py`` — see docstring there for details)
+- Done: write paths (``ml_log.JsonLogger``, ``trace.py``, ``checkpoint_utils``,
+  ``rollout_logging``, ``logtree``)
+- Done: cloud backends (``FsspecStorage`` with local staging)
+- TODO: eval runner (``_runner.py`` — see docstring there for details)
 """
 
 from __future__ import annotations
