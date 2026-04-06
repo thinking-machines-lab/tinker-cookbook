@@ -204,9 +204,10 @@ class TestBenchmarkRegistration:
     def test_ifeval_registered(self):
         self._check_registered("tinker_cookbook.eval.benchmarks.ifeval", "ifeval")
 
-    # Experimental benchmarks (_-prefixed modules)
     def test_ifbench_registered(self):
-        self._check_registered("tinker_cookbook.eval.benchmarks._ifbench", "ifbench")
+        self._check_registered("tinker_cookbook.eval.benchmarks.ifbench", "ifbench")
+
+    # Experimental benchmarks (_-prefixed modules)
 
     def test_bfcl_registered(self):
         self._check_registered("tinker_cookbook.eval.benchmarks._bfcl", "bfcl")
