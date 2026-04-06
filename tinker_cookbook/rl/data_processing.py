@@ -92,7 +92,9 @@ def _flatten_chunks(chunks: list[tinker.ModelInputChunk]) -> FlatOb:
     return out
 
 
-def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.Datum]:
+def trajectory_to_data(
+    traj: Trajectory, traj_advantage: float
+) -> tuple[list[tinker.Datum], list[int]]:
     """Return one or more Datum objects corresponding to the trajectory.
 
     If the sequence grows by appending, i.e., each successive observation contains
@@ -118,8 +120,8 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.D
             tokens in this trajectory.
 
     Returns:
-        list[tinker.Datum]: One or more training datums, each containing
-            model input, targets, sampled log-probs, advantages, and masks.
+        A tuple of (datums, initial_prompt_lens) where initial_prompt_lens[i]
+        is the token length of the first observation that started datum i.
     """
 
     class SequenceAccumulator:
@@ -161,18 +163,23 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.D
         )
 
     data: list[tinker.Datum] = []
+    initial_prompt_lens: list[int] = []
+    current_prompt_len = 0
     for transition in traj.transitions:
         ob = transition.ob
         ob_flat = _flatten_chunks(ob.chunks)
         ac_with_logprobs = transition.ac
         if len(SequenceAccumulator.full_sequence) == 0:
             delta_ob_flat = ob_flat
+            current_prompt_len = _flat_ob_token_len(ob_flat)
         elif _is_prefix(SequenceAccumulator.full_sequence, ob_flat):
             delta_ob_flat = ob_flat[len(SequenceAccumulator.full_sequence) :]
         else:
             data.append(make_datum_from_state())
+            initial_prompt_lens.append(current_prompt_len)
             SequenceAccumulator.clear()
             delta_ob_flat = ob_flat
+            current_prompt_len = _flat_ob_token_len(ob_flat)
         delta_ob_len = _flat_ob_token_len(delta_ob_flat)
         SequenceAccumulator.full_sequence.extend(delta_ob_flat)
         SequenceAccumulator.full_sequence.extend(ac_with_logprobs.tokens)
@@ -186,8 +193,9 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.D
 
     if SequenceAccumulator.full_sequence:
         data.append(make_datum_from_state())
+        initial_prompt_lens.append(current_prompt_len)
 
-    return data
+    return data, initial_prompt_lens
 
 
 def assemble_training_data(
@@ -217,9 +225,14 @@ def assemble_training_data(
             safezip(traj_group.trajectories_G, advantages_G)
         ):
             # Build the full sequence from the trajectory
-            new_data = trajectory_to_data(traj, float(traj_advantage))
+            new_data, prompt_lens = trajectory_to_data(traj, float(traj_advantage))
             data_D.extend(new_data)
-            metadata_D.extend([{"group_idx": i_group, "traj_idx": i_traj} for _ in new_data])
+            metadata_D.extend(
+                [
+                    {"group_idx": i_group, "traj_idx": i_traj, "prompt_len": plen}
+                    for plen in prompt_lens
+                ]
+            )
 
     return data_D, metadata_D
 

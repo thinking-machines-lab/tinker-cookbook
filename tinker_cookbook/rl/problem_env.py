@@ -95,12 +95,16 @@ class ProblemEnv(Env):
         """Return the reference answer for logging purposes."""
         pass
 
-    async def initial_observation(self) -> tuple[Observation, StopCondition]:
-        """Build the initial prompt from the conversation prefix and question."""
+    def _build_prompt(self) -> Observation:
+        """Render the conversation prefix and question into a model input."""
         convo = self.convo_prefix + [
             {"role": "user", "content": self.get_question()},
         ]
-        return self.renderer.build_generation_prompt(convo), self.stop_condition
+        return self.renderer.build_generation_prompt(convo)
+
+    async def initial_observation(self) -> tuple[Observation, StopCondition]:
+        """Build the initial prompt from the conversation prefix and question."""
+        return self._build_prompt(), self.stop_condition
 
     async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
         """Score the model's response for correctness and format compliance.
@@ -162,6 +166,21 @@ class ProblemGroupBuilder(EnvGroupBuilder):
     ) -> list[tuple[float, Metrics]]:
         """Return zero group rewards (all rewards come from per-step scoring)."""
         return [(0.0, {}) for _ in range(len(trajectory_group))]
+
+    def compute_teacher_initial_observation(self) -> tinker.ModelInput:
+        """Return the teacher's initial observation.
+
+        Delegates to the env's ``teacher_prefix_fn``.
+        Falls back to ``_build_prompt`` for envs without one.
+
+        Note: this creates a fresh env via ``env_thunk()``. The thunk must be
+        deterministic (same prompt, convo_prefix, etc. on every call) for the
+        teacher observation to match the student's rollout.
+        """
+        env = self.env_thunk()
+        if hasattr(env, "teacher_prefix_fn") and env.teacher_prefix_fn is not None:
+            return env.teacher_prefix_fn(env)
+        return env._build_prompt()
 
     def logging_tags(self) -> list[str]:
         return [self.dataset_name]

@@ -108,6 +108,7 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
         context_overflow_reward: float = -0.1,
         sandbox_factory: SandboxFactory | None = None,
         reward_fn: RewardFn | None = None,
+        teacher_prefix_fn: "Callable[[HarborEnvGroupBuilder], tinker.ModelInput] | None" = None,  # None = same as student
     ):
         self.task = task
         self.model_name = model_name
@@ -122,19 +123,29 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
         self.context_overflow_reward = context_overflow_reward
         self.sandbox_factory = sandbox_factory or default_sandbox_factory
         self.reward_fn = reward_fn
+        self.teacher_prefix_fn = teacher_prefix_fn
         self._sandboxes: list[SandboxInterface] = []
+
+    def _create_renderer(self) -> Renderer:
+        tokenizer = tokenizer_utils.get_tokenizer(self.model_name)
+        renderer_name = self.renderer_name or model_info.get_recommended_renderer_name(
+            self.model_name
+        )
+        return get_renderer(renderer_name, tokenizer)
+
+    def _build_prompt(self) -> "tinker.ModelInput":
+        """Build the initial observation for this task (same as student)."""
+        import tinker
+
+        renderer = self._create_renderer()
+        convo = _initial_messages(self.task, renderer, HarborBashTool(sandbox=None))  # type: ignore[arg-type]
+        return renderer.build_generation_prompt(convo)
 
     async def make_envs(self) -> Sequence[Env]:
         self._sandboxes = []
 
         env_dir = self.task.task_dir / "environment"
-
-        # Create renderer (stateless, shared across envs)
-        tokenizer = tokenizer_utils.get_tokenizer(self.model_name)
-        renderer_name = self.renderer_name or model_info.get_recommended_renderer_name(
-            self.model_name
-        )
-        renderer = get_renderer(renderer_name, tokenizer)
+        renderer = self._create_renderer()
 
         tests_dir = self.task.task_dir / "tests"
 
@@ -162,6 +173,15 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
                 )
             )
         return envs
+
+    def compute_teacher_initial_observation(self) -> "tinker.ModelInput":
+        """Build the teacher's initial observation.
+
+        Uses ``teacher_prefix_fn`` if set, otherwise same as student.
+        """
+        if self.teacher_prefix_fn is not None:
+            return self.teacher_prefix_fn(self)
+        return self._build_prompt()
 
     async def cleanup(self) -> None:
         for sandbox in self._sandboxes:

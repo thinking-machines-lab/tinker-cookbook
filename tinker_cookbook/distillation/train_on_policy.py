@@ -53,6 +53,8 @@ async def incorporate_kl_penalty(
     dataset_indices_D: list[int],
     kl_penalty_coef: float,
     kl_discount_factor: float,
+    teacher_observations_D: list[tinker.ModelInput | None] | None = None,
+    student_prompt_lens_D: list[int] | None = None,
 ) -> dict[str, float]:
     """
     Compute reverse KL between the student (log p) and the teacher model (log q), computed as
@@ -64,13 +66,48 @@ async def incorporate_kl_penalty(
         dataset_indices_D: List of dataset indices, one per datum
         kl_penalty_coef: Coefficient for KL penalty
         kl_discount_factor: Discount factor for future KL
+        teacher_observations_D: Per-datum teacher initial observations. Each
+            teacher sequence is reconstructed as
+            ``teacher_observation + completion_tokens`` (everything after the
+            student's initial prompt). Entries may be None for datums where
+            teacher reconstruction is not applicable (e.g. non-initial datums
+            from split trajectories); those use the student's sequence as-is.
+        student_prompt_lens_D: Per-datum length of the student's initial prompt
+            (first observation). Used to split the student sequence into prompt
+            vs completion when reconstructing teacher sequences.
     """
-    # Note: if your teacher has a different renderer than the student, you may want to modify
-    #       the full_sequence_inputs_D to match the teacher's renderer.
-    full_sequence_inputs_D = [
-        datum.model_input.append_int(cast(int, datum.loss_fn_inputs["target_tokens"].data[-1]))
-        for datum in data_D
-    ]
+    # Build teacher sequences
+    full_sequence_inputs_D: list[tinker.ModelInput] = []
+    prefix_deltas: list[int] = []
+    for i, datum in enumerate(data_D):
+        student_full_seq = datum.model_input.append_int(
+            cast(int, datum.loss_fn_inputs["target_tokens"].data[-1])
+        )
+        teacher_obs = (
+            teacher_observations_D[i]
+            if teacher_observations_D is not None and student_prompt_lens_D is not None
+            else None
+        )
+        if teacher_obs is None:
+            full_sequence_inputs_D.append(student_full_seq)
+            prefix_deltas.append(0)
+        else:
+            # Reconstruct: teacher_prefix + completion_tokens
+            student_prompt_len = student_prompt_lens_D[i]
+            student_tokens = student_full_seq.to_ints()
+            completion_tokens = student_tokens[student_prompt_len:]
+            teacher_prefix_tokens = teacher_obs.to_ints()
+            teacher_tokens = teacher_prefix_tokens + list(completion_tokens)
+            if len(teacher_tokens) > len(student_tokens) + 1024:
+                logger.warning(
+                    "Teacher sequence (%d tokens) much longer than student (%d tokens), "
+                    "may exceed context window",
+                    len(teacher_tokens),
+                    len(student_tokens),
+                )
+            full_sequence_inputs_D.append(tinker.ModelInput.from_ints(teacher_tokens))
+            prefix_deltas.append(len(teacher_prefix_tokens) - student_prompt_len)
+
     # Compute the teacher's logprobs for each element of the batch
     # Each datum uses its corresponding teacher sampling client
     teacher_logprobs_D = await asyncio.gather(
@@ -80,16 +117,50 @@ async def incorporate_kl_penalty(
         ]
     )
     # The reverse KL is computed as KL[p||q] = log p - log q, where
-    #   - p: sampled_logprobs
+    #   - p: sampled_logprobs (student)
     #   - q: teacher_logprobs
+    # When teacher and student have different prefix lengths, generated token
+    # positions in the teacher sequence are shifted by prefix_delta.
     sampled_logprobs_D = [datum.loss_fn_inputs["logprobs"].to_torch() for datum in data_D]
     float_masks = [datum.loss_fn_inputs["mask"].to_torch().float() for datum in data_D]
-    reverse_kl = [
-        (sampled_logprobs - torch.tensor(teacher_logprobs[1:])) * mask
-        for teacher_logprobs, sampled_logprobs, mask in safezip(
-            teacher_logprobs_D, sampled_logprobs_D, float_masks
-        )
-    ]
+    reverse_kl = []
+    for i, (teacher_logprobs, sampled_logprobs, mask) in enumerate(
+        safezip(teacher_logprobs_D, sampled_logprobs_D, float_masks)
+    ):
+        delta = prefix_deltas[i]
+        if delta == 0:
+            # Same prefix length — standard alignment
+            reverse_kl.append((sampled_logprobs - torch.tensor(teacher_logprobs[1:])) * mask)
+        else:
+            # Different prefix — shift generated positions by prefix_delta.
+            # mask[k]=1 means logprob at student position k+1, which is at
+            # teacher position k+1+delta.
+            gen_indices = mask.nonzero(as_tuple=True)[0]
+            if len(gen_indices) == 0:
+                reverse_kl.append(torch.zeros_like(mask))
+                continue
+            teacher_indices = [int(idx) + 1 + delta for idx in gen_indices]
+            # Validate bounds: all teacher indices must be non-negative and
+            # within the teacher logprobs array.
+            if teacher_indices[0] < 0 or teacher_indices[-1] >= len(teacher_logprobs):
+                logger.error(
+                    "Teacher logprob index out of bounds: indices [%d, %d], "
+                    "teacher_logprobs length %d, delta %d. Falling back to zero KL.",
+                    teacher_indices[0],
+                    teacher_indices[-1],
+                    len(teacher_logprobs),
+                    delta,
+                )
+                reverse_kl.append(torch.zeros_like(mask))
+                continue
+            teacher_gen_lp = torch.tensor(
+                [teacher_logprobs[ti] for ti in teacher_indices]
+            )
+            student_gen_lp = sampled_logprobs[gen_indices]
+            kl = torch.zeros_like(mask)
+            kl[gen_indices] = student_gen_lp - teacher_gen_lp
+            reverse_kl.append(kl * mask)
+
     # Track per-dataset KL for logging
     # dataset_idx -> (sum of KL, sum of mask)
     per_dataset_kl: dict[int, tuple[float, float]] = {}
@@ -211,12 +282,52 @@ async def prepare_minibatch(
             dataset_indices_D = [
                 dataset_indices_P[metadata["group_idx"]] for metadata in metadata_D
             ]
+            # Compute teacher observations and student prompt lengths
+            # when builders support it.
+            teacher_observations_D: list[tinker.ModelInput | None] | None = None
+            student_prompt_lens_D: list[int] | None = None
+            if all(
+                hasattr(b, "compute_teacher_initial_observation")
+                for b in env_group_builders_P
+            ):
+                # Cache teacher observation and initial prompt length per group.
+                teacher_obs_cache: dict[int, tinker.ModelInput] = {}
+                initial_prompt_len_cache: dict[int, int] = {}
+                teacher_observations_D = []
+                student_prompt_lens_D = []
+                for metadata in metadata_D:
+                    group_idx = metadata["group_idx"]
+                    if group_idx not in teacher_obs_cache:
+                        teacher_obs_cache[group_idx] = (
+                            env_group_builders_P[group_idx]
+                            .compute_teacher_initial_observation()
+                        )
+                        # Record the initial prompt length for this group so we
+                        # can detect split-trajectory datums (where prompt_len
+                        # differs from the initial observation).
+                        traj = trajectory_groups_P[group_idx].trajectories_G[
+                            metadata["traj_idx"]
+                        ]
+                        initial_prompt_len_cache[group_idx] = (
+                            traj.transitions[0].ob.length
+                        )
+                    # Only apply teacher observation for datums whose prompt
+                    # matches the initial observation. Non-initial datums from
+                    # split trajectories use the student's sequence as-is.
+                    if metadata["prompt_len"] == initial_prompt_len_cache.get(group_idx):
+                        teacher_observations_D.append(teacher_obs_cache[group_idx])
+                    else:
+                        teacher_observations_D.append(None)
+                    student_prompt_lens_D.append(metadata["prompt_len"])
+
             kl_penalty_metrics = await incorporate_kl_penalty(
                 data_D,
                 teacher_clients_D,
                 dataset_indices_D,
                 kl_penalty_coef,
                 kl_discount_factor,
+                teacher_observations_D=teacher_observations_D,
+                student_prompt_lens_D=student_prompt_lens_D,
             )
         metrics.update(kl_penalty_metrics)
 

@@ -7,7 +7,7 @@ a teacher model. The environment provides no correctness or format rewards.
 """
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
 from typing import Literal
 
@@ -83,17 +83,27 @@ class CompositeDataset:
 
 
 class PromptOnlyEnv(ProblemEnv):
-    """Environment that only provides prompts with no rewards."""
+    """Environment that only provides prompts with no rewards.
+
+    Attributes:
+        teacher_prefix_fn: Optional callable that builds the teacher's initial
+            observation. Receives this env as its argument (giving access to
+            ``renderer``, ``convo_prefix``, ``prompt``, etc.) and returns a
+            ``tinker.ModelInput``. When None (default), the teacher uses the
+            same observation as the student.
+    """
 
     def __init__(
         self,
         prompt: str,
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None = None,
+        teacher_prefix_fn: "Callable[[PromptOnlyEnv], tinker.ModelInput] | None" = None,
     ):
         # Set format_coef to 0 since we don't care about format
         super().__init__(renderer, convo_prefix, format_coef=0.0)
         self.prompt = prompt
+        self.teacher_prefix_fn = teacher_prefix_fn
 
     def get_question(self) -> str:
         return self.prompt
