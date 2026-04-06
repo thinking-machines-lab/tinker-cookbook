@@ -37,46 +37,57 @@ from tinker_cookbook.rl.types import Env, StepResult
 logger = logging.getLogger(__name__)
 
 
+try:
+    from instructions_registry import (  # pyright: ignore[reportMissingImports]
+        INSTRUCTION_DICT as _IFBENCH_CHECKERS,
+    )
+except ImportError:
+    _IFBENCH_CHECKERS = None
+
+
 def _verify_constraints(
     response: str,
     instruction_ids: list[str],
     kwargs_list: list[dict],
+    prompt: str = "",
 ) -> tuple[float, bool]:
-    """Verify constraints using the IFEval verifier, falling back to basic heuristics."""
-    try:
-        from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_all_instructions
+    """Verify IFBench constraints using the official IFBench checkers.
 
-        fraction, _ = verify_all_instructions(response, instruction_ids, kwargs_list)
-        return fraction, fraction == 1.0
-    except ImportError:
-        pass
+    Requires the ``ifbench`` package::
 
-    # Fallback: basic heuristic verification
-    satisfied = 0
+        uv pip install 'ifbench @ git+https://github.com/allenai/IFBench.git'
+
+    Raises:
+        ImportError: If the ``ifbench`` package is not installed.
+    """
+    if _IFBENCH_CHECKERS is None:
+        raise ImportError(
+            "IFBench requires the official checker library. Install it with:\n"
+            "  uv pip install 'ifbench @ git+https://github.com/allenai/IFBench.git'"
+        )
+
+    results = []
     for iid, kw in zip(instruction_ids, kwargs_list):
-        iid_lower = iid.lower()
+        if iid not in _IFBENCH_CHECKERS:
+            results.append(False)
+            continue
+        checker = _IFBENCH_CHECKERS[iid](iid)
+        # Filter None values from kwargs
+        clean_kw = {k: v for k, v in kw.items() if v is not None}
+        checker.build_description(**clean_kw)
+        # Some checkers need the prompt for context
+        args = checker.get_instruction_args()
+        if args and "prompt" in args:
+            checker.build_description(prompt=prompt)
         try:
-            if "word_count" in iid_lower or "min_words" in iid_lower:
-                min_w = kw.get("min_words", 0)
-                max_w = kw.get("max_words", float("inf"))
-                word_count = len(response.split())
-                if min_w <= word_count <= max_w:
-                    satisfied += 1
-            elif "keyword" in iid_lower:
-                keyword = kw.get("keyword", "")
-                if keyword and keyword.lower() in response.lower():
-                    satisfied += 1
-            elif "sentences" in iid_lower or "num_sentences" in iid_lower:
-                n = kw.get("n", kw.get("N", 0))
-                sentence_count = response.count(".") + response.count("!") + response.count("?")
-                if sentence_count >= n:
-                    satisfied += 1
+            results.append(bool(checker.check_following(response)))
         except Exception:
-            pass
+            results.append(False)
 
-    total = len(instruction_ids) if instruction_ids else 1
-    fraction = satisfied / total
-    return fraction, fraction == 1.0
+    if not results:
+        return 0.0, False
+    fraction = sum(results) / len(results)
+    return fraction, all(results)
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +121,7 @@ class IFBenchEnv(Env):
     async def step(self, action, *, extra=None):
         response = decode_response(action, self.renderer)
         fraction, all_satisfied = _verify_constraints(
-            response, self.instruction_ids, self.kwargs_list
+            response, self.instruction_ids, self.kwargs_list, prompt=self.prompt
         )
         return StepResult(
             reward=1.0 if all_satisfied else 0.0,
@@ -136,7 +147,6 @@ class IFBenchBenchmarkBuilder(BenchmarkBuilder):
     """IFBench: instruction following with 58 diverse constraint types (300 examples)."""
 
     name = "ifbench"
-    experimental = True
 
     def make_envs(self, renderer: Renderer, config: BenchmarkConfig) -> Sequence[Env]:
         try:
