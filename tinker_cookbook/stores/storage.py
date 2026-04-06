@@ -129,6 +129,15 @@ class Storage(Protocol):
         """
         ...
 
+    def flush(self) -> None:
+        """Flush any buffered data to the backend.
+
+        No-op for backends that write directly (e.g. ``LocalStorage``).
+        Cloud backends with local staging upload buffered data on flush.
+        Called automatically by the context manager on exit.
+        """
+        ...
+
     def __enter__(self) -> Storage: ...
 
     def __exit__(self, *exc: object) -> None: ...
@@ -263,6 +272,10 @@ class LocalStorage:
         full = self._resolve(path)
         with contextlib.suppress(FileNotFoundError, OSError):
             full.rmdir()
+
+    def flush(self) -> None:
+        """See :meth:`Storage.flush`. No-op for local filesystem."""
+        pass
 
     def __enter__(self) -> LocalStorage:
         return self
