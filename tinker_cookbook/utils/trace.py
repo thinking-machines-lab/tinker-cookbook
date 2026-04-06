@@ -293,20 +293,15 @@ class IterationWindow:
         with open(path, "a") as f:
             f.write(line + "\n")
 
-    def save_timing(
-        self, step: int, *, store: Any = None, log_path: str | Path | None = None
-    ) -> None:
-        """Write timing spans via store (preferred) or fallback to direct file I/O.
+    def save_timing(self, step: int, *, store: Any) -> None:
+        """Write timing spans to ``timing_spans.jsonl`` via the store.
 
         Args:
             step: Training step number.
-            store: A ``TrainingRunStore`` with ``write_timing_spans()``, or ``None``.
-            log_path: Fallback directory for ``timing_spans.jsonl`` (used when store is None).
+            store: A ``TrainingRunStore`` with ``write_timing_spans()``, or ``None`` to skip.
         """
         if store is not None:
             store.write_timing_spans(step, self.get_span_dicts())
-        elif log_path is not None:
-            self.write_spans_jsonl(Path(log_path) / "timing_spans.jsonl", step=step)
 
 
 # Context variable to track the current iteration window

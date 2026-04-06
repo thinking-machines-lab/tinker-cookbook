@@ -46,7 +46,6 @@ from tinker_cookbook.rl.rollout_logging import (
     RolloutSummaryExportConfig,
     RolloutSummaryGroup,
     rollout_summaries_jsonl_path,
-    write_rollout_summaries_jsonl_from_groups,
 )
 from tinker_cookbook.rl.rollout_strategy import (
     RolloutStrategy,
@@ -140,35 +139,21 @@ def _sanitize_filename_component(text: str) -> str:
 def _maybe_export_rollout_summary_jsonl(
     *,
     config: Config,
-    output_dir: Path | None,
     base_name: str,
     split: str,
     iteration: int,
     groups_P: Sequence[RolloutSummaryGroup],
-    store: TrainingRunStore | None = None,
+    store: TrainingRunStore | None,
 ) -> None:
-    """
-    Write per-trajectory rollout summaries for one train/eval pass when enabled.
-
-    Uses ``store.write_rollouts()`` when a store is provided, falling back to
-    direct file I/O otherwise.
-    """
-    if not config.rollout_json_export:
+    """Write per-trajectory rollout summaries via the store when enabled."""
+    if not config.rollout_json_export or store is None:
         return
-    if store is not None:
-        from tinker_cookbook.rl.rollout_logging import serialize_rollout_summaries_from_groups
+    from tinker_cookbook.rl.rollout_logging import serialize_rollout_summaries_from_groups
 
-        records = serialize_rollout_summaries_from_groups(
-            split=split, iteration=iteration, groups_P=groups_P
-        )
-        store.write_rollouts(iteration, records, base_name=base_name)
-    elif output_dir is not None:
-        write_rollout_summaries_jsonl_from_groups(
-            rollout_summaries_jsonl_path(output_dir, base_name),
-            split=split,
-            iteration=iteration,
-            groups_P=groups_P,
-        )
+    records = serialize_rollout_summaries_from_groups(
+        split=split, iteration=iteration, groups_P=groups_P
+    )
+    store.write_rollouts(iteration, records, base_name=base_name)
 
 
 _LOGTREE_EXPLANATION = (
@@ -185,13 +170,13 @@ def _get_logtree_scope(
     num_groups_to_log: int,
     f_name: str,
     scope_name: str,
-    iteration: int | None = None,
-    store: TrainingRunStore | None = None,
+    iteration: int,
+    store: TrainingRunStore | None,
 ) -> Iterator[None]:
     """Context manager that logs rollout data to HTML and JSON via logtree.
 
-    Creates ``output_dir/f_name.html`` (always via direct I/O) and
-    ``output_dir/f_name_logtree.json`` (via store when available).
+    Creates ``output_dir/f_name.html`` (direct I/O — visualization artifact)
+    and writes the logtree JSON via ``store.write_logtree()`` when store is available.
     """
     if output_dir is None or num_groups_to_log <= 0:
         yield
@@ -205,12 +190,8 @@ def _get_logtree_scope(
             logtree.log_text(_LOGTREE_EXPLANATION)
             yield
     finally:
-        if logtree_trace is not None:
-            if store is not None and iteration is not None:
-                store.write_logtree(iteration, logtree_trace.to_dict(), base_name=f_name)
-            else:
-                logtree_json_path = str(output_dir / f"{f_name}_logtree.json")
-                logtree.write_trace_json(logtree_trace, logtree_json_path)
+        if logtree_trace is not None and store is not None:
+            store.write_logtree(iteration, logtree_trace.to_dict(), base_name=f_name)
 
 
 def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]:
@@ -795,7 +776,6 @@ async def do_sync_training_with_stream_minibatch(
 
             _maybe_export_rollout_summary_jsonl(
                 config=config,
-                output_dir=iter_dir,
                 base_name="train",
                 split="train",
                 iteration=i_batch,
@@ -819,7 +799,7 @@ async def do_sync_training_with_stream_minibatch(
         if error_counter is not None:
             metrics.update(error_counter.get_metrics())
         metrics.update(window.get_timing_metrics())
-        window.save_timing(i_batch, store=ml_logger.store, log_path=config.log_path)
+        window.save_timing(i_batch, store=ml_logger.store)
         if (
             config.span_chart_every > 0
             and i_batch % config.span_chart_every == 0
@@ -1125,7 +1105,6 @@ async def do_async_training(
                 iter_dir = iteration_dir(config.log_path, i_batch)
                 _maybe_export_rollout_summary_jsonl(
                     config=config,
-                    output_dir=iter_dir,
                     base_name="train",
                     split="train",
                     iteration=i_batch,
@@ -1182,7 +1161,6 @@ async def do_async_training(
                 iter_dir = iteration_dir(config.log_path, i_batch)
                 _maybe_export_rollout_summary_jsonl(
                     config=config,
-                    output_dir=iter_dir,
                     base_name="train",
                     split="train",
                     iteration=i_batch,
@@ -1210,7 +1188,7 @@ async def do_async_training(
             if error_counter is not None:
                 metrics.update(error_counter.get_metrics())
             metrics.update(window.get_timing_metrics())
-            window.save_timing(i_batch, store=ml_logger.store, log_path=config.log_path)
+            window.save_timing(i_batch, store=ml_logger.store)
             if config.span_chart_every > 0 and i_batch % config.span_chart_every == 0:
                 iter_dir = iteration_dir(config.log_path, i_batch)
                 if iter_dir is not None:
@@ -1784,7 +1762,6 @@ async def do_sync_training(
 
                 _maybe_export_rollout_summary_jsonl(
                     config=config,
-                    output_dir=iter_dir,
                     base_name="train",
                     split="train",
                     iteration=i_batch,
@@ -1826,7 +1803,7 @@ async def do_sync_training(
         metrics.update(window.get_timing_metrics())
         if error_counter is not None:
             metrics.update(error_counter.get_metrics())
-        window.save_timing(i_batch, store=ml_logger.store, log_path=config.log_path)
+        window.save_timing(i_batch, store=ml_logger.store)
         if (
             config.span_chart_every > 0
             and i_batch % config.span_chart_every == 0

@@ -464,7 +464,7 @@ async def main(config: Config):
         """Finish a batch, merge timing metrics, and log."""
         await finish_batch(submitted)
         submitted.metrics.update(window.get_timing_metrics())
-        window.save_timing(submitted.step, store=store, log_path=log_path)
+        window.save_timing(submitted.step, store=store)
         if config.span_chart_every > 0 and submitted.step % config.span_chart_every == 0:
             iter_dir = iteration_dir(log_path, submitted.step)
             if iter_dir is not None:

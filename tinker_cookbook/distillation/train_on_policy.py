@@ -354,7 +354,7 @@ async def do_sync_training(
 
         # Log timing metrics from trace_iteration window
         metrics.update(window.get_timing_metrics())
-        window.save_timing(i_batch, store=ml_logger.store, log_path=log_path)
+        window.save_timing(i_batch, store=ml_logger.store)
         if config.span_chart_every > 0 and i_batch % config.span_chart_every == 0:
             iter_dir = iteration_dir(log_path, i_batch)
             if iter_dir is not None:
