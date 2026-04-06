@@ -1,7 +1,8 @@
-"""Typed read access to a single training run's data.
+"""Typed data access for a single training run.
 
-Replaces the 5 separate reader classes (MetricsReader, ConfigReader,
-RolloutReader, LogtreeReader, TimingReader) with one coherent store.
+Provides both read and write methods for all training artifacts:
+metrics, config, timing spans, checkpoints, rollouts, and logtrees.
+All I/O goes through the ``Storage`` protocol.
 """
 
 from __future__ import annotations
@@ -52,10 +53,11 @@ class IterationInfo:
 
 
 class TrainingRunStore:
-    """Typed read access to one training run's data.
+    """Typed read/write access to one training run's data.
 
-    Pickle-serializable when freshly constructed (lazy reader init).
-    All typed reads return dataclass objects, not raw dicts.
+    All file I/O goes through the ``Storage`` protocol — no direct
+    ``Path``/``open()`` usage. Pickle-serializable when freshly
+    constructed (lazy reader init).
     """
 
     def __init__(self, storage: Storage, prefix: str = "") -> None:
@@ -69,6 +71,10 @@ class TrainingRunStore:
 
     def _path(self, *parts: str) -> str:
         return storage_join(self._prefix, *parts)
+
+    @staticmethod
+    def _iter_dir(iteration: int) -> str:
+        return f"iteration_{iteration:06d}"
 
     # ── JSON/JSONL helpers ────────────────────────────────────────────
 
@@ -145,22 +151,24 @@ class TrainingRunStore:
 
     # ── Rollouts (typed, cached) ──────────────────────────────────────
 
+    @staticmethod
+    def _rollout_filename(split: str, label: str | None) -> str:
+        if split == "train":
+            return "train_rollout_summaries.jsonl"
+        if label:
+            return f"eval_{label}_rollout_summaries.jsonl"
+        return f"{split}_rollout_summaries.jsonl"
+
     def read_rollouts(
         self, iteration: int, split: str = "train", label: str | None = None
     ) -> list[dict[str, Any]]:
         """Read rollout summaries for an iteration as raw dicts."""
-        if split == "train":
-            filename = "train_rollout_summaries.jsonl"
-        elif label:
-            filename = f"eval_{label}_rollout_summaries.jsonl"
-        else:
-            filename = f"{split}_rollout_summaries.jsonl"
-
+        filename = self._rollout_filename(split, label)
         cache_key = f"{iteration}/{filename}"
         if cache_key in self._rollout_cache:
             return self._rollout_cache[cache_key]
 
-        records = self._read_jsonl(f"iteration_{iteration:06d}", filename)
+        records = self._read_jsonl(self._iter_dir(iteration), filename)
         self._rollout_cache[cache_key] = records
         return records
 
@@ -308,10 +316,10 @@ class TrainingRunStore:
     # ── Logtree ───────────────────────────────────────────────────────
 
     def read_logtree(self, iteration: int, base_name: str = "train") -> dict[str, Any] | None:
-        return self._read_json(f"iteration_{iteration:06d}", f"{base_name}_logtree.json")
+        return self._read_json(self._iter_dir(iteration), f"{base_name}_logtree.json")
 
     def list_logtrees(self, iteration: int) -> list[str]:
-        items = self._storage.list_dir(self._path(f"iteration_{iteration:06d}"))
+        items = self._storage.list_dir(self._path(self._iter_dir(iteration)))
         return sorted(n[: -len("_logtree.json")] for n in items if n.endswith("_logtree.json"))
 
     # ── Iterations ────────────────────────────────────────────────────
@@ -421,16 +429,10 @@ class TrainingRunStore:
         Each record is a self-contained JSON object describing one
         trajectory. Invalidates the read cache for this iteration.
         """
-        if split == "train":
-            filename = "train_rollout_summaries.jsonl"
-        elif label:
-            filename = f"eval_{label}_rollout_summaries.jsonl"
-        else:
-            filename = f"{split}_rollout_summaries.jsonl"
-
+        filename = self._rollout_filename(split, label)
         lines = [json.dumps(r) for r in records]
         data = ("\n".join(lines) + "\n").encode("utf-8") if lines else b""
-        self._storage.write(self._path(f"iteration_{iteration:06d}", filename), data)
+        self._storage.write(self._path(self._iter_dir(iteration), filename), data)
 
         # Invalidate read cache
         cache_key = f"{iteration}/{filename}"
@@ -438,7 +440,7 @@ class TrainingRunStore:
 
     def write_logtree(self, iteration: int, data: dict[str, Any], base_name: str = "train") -> None:
         """Write a logtree JSON file for an iteration (overwrites)."""
-        self._write_json(data, f"iteration_{iteration:06d}", f"{base_name}_logtree.json")
+        self._write_json(data, self._iter_dir(iteration), f"{base_name}_logtree.json")
 
     def write_code_diff(self, diff: str) -> None:
         """Write code.diff (overwrites)."""
