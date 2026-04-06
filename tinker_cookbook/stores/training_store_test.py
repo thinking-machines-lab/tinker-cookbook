@@ -343,12 +343,16 @@ class TestTrainingRunStoreWrites:
         store.write_logtree(0, {"title": "iter0", "root": {}})
         store.write_code_diff("diff content")
 
-        assert store.read_config()["model"] == "llama"
+        config = store.read_config()
+        assert config is not None
+        assert config["model"] == "llama"
         assert len(store.read_metrics()) == 2
         assert len(store.read_timing()) == 1
         assert len(store.read_checkpoints()) == 1
         assert len(store.read_rollouts(0)) == 1
-        assert store.read_logtree(0)["title"] == "iter0"
+        logtree = store.read_logtree(0)
+        assert logtree is not None
+        assert logtree["title"] == "iter0"
         assert store.detect_status()[0] in ("running", "idle")
         assert store.infer_training_type() is None  # no loss_fn key
 
