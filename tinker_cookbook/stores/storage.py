@@ -488,11 +488,25 @@ class FsspecStorage:
                 self._fs.mkdirs(posixpath.dirname(full), exist_ok=True)
                 self._fs.pipe_file(full, data)
 
+    def close(self) -> None:
+        """Flush staged data and clean up the local staging directory."""
+        self.flush()
+        import shutil
+
+        shutil.rmtree(self._stage_dir, ignore_errors=True)
+        self._staged.clear()
+
     def __enter__(self) -> FsspecStorage:
         return self
 
     def __exit__(self, *exc: object) -> None:
-        self.flush()
+        self.close()
+
+    def __del__(self) -> None:
+        # Best-effort cleanup — don't rely on this
+        import shutil
+
+        shutil.rmtree(self._stage_dir, ignore_errors=True)
 
     # --- Async (via to_thread) ---
 
@@ -536,7 +550,7 @@ class FsspecStorage:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        await asyncio.to_thread(self.flush)
+        await asyncio.to_thread(self.close)
 
     # --- Pickle support ---
 
