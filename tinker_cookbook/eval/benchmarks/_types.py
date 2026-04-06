@@ -96,48 +96,119 @@ class BenchmarkResultDict(TypedDict):
 # Model-specific eval defaults
 # ---------------------------------------------------------------------------
 
-# Maps model ID to recommended max_tokens and timeout_seconds.
+# Maps model ID to recommended eval config defaults.
+# max_tokens is set to the full context window — the runner dynamically caps
+# per request via context_window so prompt + max_tokens never exceeds it.
 # See https://tinker-docs.thinkingmachines.ai/tinker/models/
 _MODEL_EVAL_DEFAULTS: dict[str, dict[str, int | float]] = {
     # Qwen3.5 — Hybrid (thinking), 64K context
-    "Qwen/Qwen3.5-397B-A17B": {"max_tokens": 65536, "timeout_seconds": 1800},
-    "Qwen/Qwen3.5-397B-A17B:peft:262144": {"max_tokens": 262144, "timeout_seconds": 1800},
-    "Qwen/Qwen3.5-35B-A3B": {"max_tokens": 65536, "timeout_seconds": 1800},
-    "Qwen/Qwen3.5-27B": {"max_tokens": 65536, "timeout_seconds": 1800},
-    "Qwen/Qwen3.5-4B": {"max_tokens": 65536, "timeout_seconds": 1800},
+    "Qwen/Qwen3.5-397B-A17B": {
+        "max_tokens": 65536,
+        "context_window": 65536,
+        "timeout_seconds": 1800,
+    },
+    "Qwen/Qwen3.5-397B-A17B:peft:262144": {
+        "max_tokens": 262144,
+        "context_window": 262144,
+        "timeout_seconds": 1800,
+    },
+    "Qwen/Qwen3.5-35B-A3B": {"max_tokens": 65536, "context_window": 65536, "timeout_seconds": 1800},
+    "Qwen/Qwen3.5-27B": {"max_tokens": 65536, "context_window": 65536, "timeout_seconds": 1800},
+    "Qwen/Qwen3.5-4B": {"max_tokens": 65536, "context_window": 65536, "timeout_seconds": 1800},
     # Qwen3 — Hybrid (thinking), 32K context
-    "Qwen/Qwen3-30B-A3B": {"max_tokens": 32768, "timeout_seconds": 1800},
-    "Qwen/Qwen3-32B": {"max_tokens": 32768, "timeout_seconds": 1800},
-    "Qwen/Qwen3-8B": {"max_tokens": 32768, "timeout_seconds": 1800},
+    "Qwen/Qwen3-30B-A3B": {"max_tokens": 32768, "context_window": 32768, "timeout_seconds": 1800},
+    "Qwen/Qwen3-32B": {"max_tokens": 32768, "context_window": 32768, "timeout_seconds": 1800},
+    "Qwen/Qwen3-8B": {"max_tokens": 32768, "context_window": 32768, "timeout_seconds": 1800},
     # Qwen3 — Instruction (non-thinking), 32K context
-    "Qwen/Qwen3-235B-A22B-Instruct-2507": {"max_tokens": 32768, "timeout_seconds": 300},
-    "Qwen/Qwen3-30B-A3B-Instruct-2507": {"max_tokens": 32768, "timeout_seconds": 300},
-    "Qwen/Qwen3-4B-Instruct-2507": {"max_tokens": 32768, "timeout_seconds": 300},
+    "Qwen/Qwen3-235B-A22B-Instruct-2507": {
+        "max_tokens": 32768,
+        "context_window": 32768,
+        "timeout_seconds": 300,
+    },
+    "Qwen/Qwen3-30B-A3B-Instruct-2507": {
+        "max_tokens": 32768,
+        "context_window": 32768,
+        "timeout_seconds": 300,
+    },
+    "Qwen/Qwen3-4B-Instruct-2507": {
+        "max_tokens": 32768,
+        "context_window": 32768,
+        "timeout_seconds": 300,
+    },
     # Nemotron — Hybrid (thinking), 64K context
-    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": {"max_tokens": 65536, "timeout_seconds": 1800},
-    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": {"max_tokens": 65536, "timeout_seconds": 1800},
+    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": {
+        "max_tokens": 65536,
+        "context_window": 65536,
+        "timeout_seconds": 1800,
+    },
+    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": {
+        "max_tokens": 65536,
+        "context_window": 65536,
+        "timeout_seconds": 1800,
+    },
     "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16:peft:262144": {
         "max_tokens": 262144,
+        "context_window": 262144,
         "timeout_seconds": 1800,
     },
     # GPT-OSS — Reasoning, 32K context
-    "openai/gpt-oss-120b": {"max_tokens": 32768, "timeout_seconds": 1800},
-    "openai/gpt-oss-120b:peft:131072": {"max_tokens": 131072, "timeout_seconds": 1800},
-    "openai/gpt-oss-20b": {"max_tokens": 32768, "timeout_seconds": 1800},
+    "openai/gpt-oss-120b": {"max_tokens": 32768, "context_window": 32768, "timeout_seconds": 1800},
+    "openai/gpt-oss-120b:peft:131072": {
+        "max_tokens": 131072,
+        "context_window": 131072,
+        "timeout_seconds": 1800,
+    },
+    "openai/gpt-oss-20b": {"max_tokens": 32768, "context_window": 32768, "timeout_seconds": 1800},
     # DeepSeek — Hybrid (thinking), 32K context
-    "deepseek-ai/DeepSeek-V3.1": {"max_tokens": 32768, "timeout_seconds": 1800},
+    "deepseek-ai/DeepSeek-V3.1": {
+        "max_tokens": 32768,
+        "context_window": 32768,
+        "timeout_seconds": 1800,
+    },
     # Kimi — Reasoning, 32K context
-    "moonshotai/Kimi-K2-Thinking": {"max_tokens": 32768, "timeout_seconds": 1800},
-    "moonshotai/Kimi-K2.5": {"max_tokens": 32768, "timeout_seconds": 1800},
-    "moonshotai/Kimi-K2.5:peft:131072": {"max_tokens": 131072, "timeout_seconds": 1800},
+    "moonshotai/Kimi-K2-Thinking": {
+        "max_tokens": 32768,
+        "context_window": 32768,
+        "timeout_seconds": 1800,
+    },
+    "moonshotai/Kimi-K2.5": {"max_tokens": 32768, "context_window": 32768, "timeout_seconds": 1800},
+    "moonshotai/Kimi-K2.5:peft:131072": {
+        "max_tokens": 131072,
+        "context_window": 131072,
+        "timeout_seconds": 1800,
+    },
     # Llama — Instruction (non-thinking), 32K context
-    "meta-llama/Llama-3.3-70B-Instruct": {"max_tokens": 32768, "timeout_seconds": 300},
-    "meta-llama/Llama-3.1-8B-Instruct": {"max_tokens": 32768, "timeout_seconds": 300},
+    "meta-llama/Llama-3.3-70B-Instruct": {
+        "max_tokens": 32768,
+        "context_window": 32768,
+        "timeout_seconds": 300,
+    },
+    "meta-llama/Llama-3.1-8B-Instruct": {
+        "max_tokens": 32768,
+        "context_window": 32768,
+        "timeout_seconds": 300,
+    },
     # Llama — Base, 32K context
-    "meta-llama/Llama-3.1-70B": {"max_tokens": 32768, "timeout_seconds": 300},
-    "meta-llama/Llama-3.1-8B": {"max_tokens": 32768, "timeout_seconds": 300},
-    "meta-llama/Llama-3.2-3B": {"max_tokens": 32768, "timeout_seconds": 300},
-    "meta-llama/Llama-3.2-1B": {"max_tokens": 32768, "timeout_seconds": 300},
+    "meta-llama/Llama-3.1-70B": {
+        "max_tokens": 32768,
+        "context_window": 32768,
+        "timeout_seconds": 300,
+    },
+    "meta-llama/Llama-3.1-8B": {
+        "max_tokens": 32768,
+        "context_window": 32768,
+        "timeout_seconds": 300,
+    },
+    "meta-llama/Llama-3.2-3B": {
+        "max_tokens": 32768,
+        "context_window": 32768,
+        "timeout_seconds": 300,
+    },
+    "meta-llama/Llama-3.2-1B": {
+        "max_tokens": 32768,
+        "context_window": 32768,
+        "timeout_seconds": 300,
+    },
 }
 
 
@@ -306,6 +377,9 @@ class BenchmarkConfig:
         return cls(
             max_tokens=kwargs.pop("max_tokens", int(model_defaults["max_tokens"])),
             timeout_seconds=kwargs.pop("timeout_seconds", float(model_defaults["timeout_seconds"])),
+            context_window=kwargs.pop(
+                "context_window", int(model_defaults.get("context_window", 0)) or None
+            ),
             **kwargs,
         )
 
