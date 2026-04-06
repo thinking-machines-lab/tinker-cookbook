@@ -293,7 +293,9 @@ class IterationWindow:
         with open(path, "a") as f:
             f.write(line + "\n")
 
-    def save_timing(self, step: int, *, store: Any = None, log_path: str | Path | None = None) -> None:
+    def save_timing(
+        self, step: int, *, store: Any = None, log_path: str | Path | None = None
+    ) -> None:
         """Write timing spans via store (preferred) or fallback to direct file I/O.
 
         Args:
