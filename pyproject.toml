@@ -58,6 +58,13 @@ vector-search = [
     "google-genai>=1.0.0",
     "huggingface_hub>=0.20.0",
 ]
+cloud = [
+    "fsspec>=2023.1.0",
+    # Install backend-specific packages separately:
+    # GCS: uv pip install gcsfs
+    # S3:  uv pip install s3fs
+    # Azure: uv pip install adlfs
+]
 wandb = [
     "wandb>=0.16.0",
     "plotly>=5.0.0",

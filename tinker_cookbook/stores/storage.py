@@ -597,7 +597,7 @@ def storage_from_uri(uri: str, **kwargs: Any) -> Storage:
         except ImportError:
             raise ImportError(
                 f"fsspec is required for cloud storage URIs ({uri}). "
-                "Install it with: uv pip install fsspec"
+                "Install it with: uv pip install 'tinker-cookbook[cloud]'"
             ) from None
         fs, path = fsspec.core.url_to_fs(uri, **kwargs)
         return FsspecStorage(fs, path, **kwargs)
