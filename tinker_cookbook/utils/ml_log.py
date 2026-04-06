@@ -194,7 +194,7 @@ class JsonLogger(Logger):
     def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
         """Append metrics to JSONL file."""
         self.store.write_metrics(metrics, step)
-        logger.info("Wrote metrics to %s", self.store._storage.url("metrics.jsonl"))
+        logger.info("Wrote metrics to %s/metrics.jsonl", self.log_dir)
 
 
 class PrettyPrintLogger(Logger):
