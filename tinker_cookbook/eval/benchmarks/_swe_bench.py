@@ -25,7 +25,6 @@ from datasets import Dataset
 
 from tinker_cookbook.eval.benchmarks._common import (
     SandboxMixin,
-    get_sandbox_factory,
     limit_dataset,
     load_benchmark_dataset,
     make_example_id,
@@ -131,8 +130,13 @@ class _SWEBashTool:
         command: Annotated[str, "The bash command to execute."],
     ) -> ToolResult:
         """Execute a bash command in the repository sandbox."""
-        # Wrap command with env vars to prevent interactive pagers
-        wrapped = f"PAGER=cat MANPAGER=cat PIP_PROGRESS_BAR=off TQDM_DISABLE=1 {command}"
+        # Activate conda env and set env vars to prevent interactive pagers.
+        # The setup script creates a 'testbed' conda env with the correct
+        # Python version and dependencies for this instance.
+        wrapped = (
+            "source /opt/miniconda3/bin/activate && conda activate testbed && "
+            f"PAGER=cat MANPAGER=cat PIP_PROGRESS_BAR=off TQDM_DISABLE=1 {command}"
+        )
         result = await self._sandbox.run_command(
             wrapped, workdir="/workspace/repo", timeout=120, max_output_bytes=16000
         )
@@ -183,6 +187,7 @@ class _SWEBenchReward:
         test_args = " ".join(shlex.quote(t) for t in self._fail_to_pass)
         try:
             result = await self._sandbox.run_command(
+                "source /opt/miniconda3/bin/activate && conda activate testbed && "
                 f"cd /workspace/repo && python -m pytest {test_args} --tb=short 2>&1",
                 timeout=120,
             )
@@ -250,9 +255,9 @@ class _SWEBenchEnvFactory(SandboxMixin, Env):
         """Generate setup commands using official SWE-bench TestSpec.
 
         Uses ``swebench.harness.test_spec.make_test_spec`` to get per-instance
-        setup scripts with exact dependency versions. Strips conda-specific
-        prefixes (source activate, conda activate) but keeps the actual
-        install commands (pip install, setup.py, cat requirements, etc.).
+        setup scripts with exact dependency versions.  The sandbox image has
+        miniconda pre-installed, so commands are used verbatim — only
+        ``/testbed`` is replaced with ``/workspace/repo``.
         """
         from swebench.harness.test_spec.test_spec import make_test_spec
 
@@ -260,32 +265,14 @@ class _SWEBenchEnvFactory(SandboxMixin, Env):
             raise ValueError("raw_instance not available")
 
         spec = make_test_spec(self.raw_instance)
+
+        # env_script_list first (creates conda env + installs deps),
+        # then repo_script_list (clones repo, checks out commit, installs project).
         cmds: list[str] = []
-
-        def _adapt_cmd(cmd: str) -> str | None:
-            """Strip conda prefixes, skip pure conda commands, keep the rest."""
-            import re
-            cmd = cmd.replace("/testbed", "/workspace/repo")
-            # Strip conda/miniconda prefixes from compound commands first
-            cmd = re.sub(r"^source /opt/miniconda3/bin/activate\s*&&\s*", "", cmd.strip())
-            cmd = re.sub(r"^conda activate \S+\s*&&\s*", "", cmd.strip())
-            cmd = re.sub(r"^source /opt/miniconda3/bin/activate\s*$", "", cmd.strip())
-            # Skip pure conda commands (after prefix stripping)
-            if not cmd or cmd.strip().startswith(("conda ", "source /opt/miniconda")):
-                return None
-            return cmd
-
-        # Repo setup
-        for cmd in spec.repo_script_list:
-            adapted = _adapt_cmd(cmd)
-            if adapted:
-                cmds.append(adapted)
-
-        # Environment setup
         for cmd in spec.env_script_list:
-            adapted = _adapt_cmd(cmd)
-            if adapted:
-                cmds.append(adapted)
+            cmds.append(cmd.replace("/testbed", "/workspace/repo"))
+        for cmd in spec.repo_script_list:
+            cmds.append(cmd.replace("/testbed", "/workspace/repo"))
 
         return cmds
 
@@ -312,19 +299,24 @@ class _SWEBenchEnvFactory(SandboxMixin, Env):
             logger.debug(f"swe_bench: TestSpec unavailable ({e}), using basic setup")
             setup_cmds = self._make_basic_setup_commands()
 
+        # Run all setup commands as a single script so conda env persists
+        # across commands (each run_command is a separate shell invocation).
+        setup_script = "#!/bin/bash\nset -e\n" + "\n".join(setup_cmds)
         try:
-            for cmd in setup_cmds:
-                result = await self.sandbox.run_command(cmd, timeout=300)
-                if result.exit_code != 0:
-                    logger.debug(
-                        f"swe_bench setup cmd failed (exit {result.exit_code}): "
-                        f"{cmd[:80]}  stderr={result.stderr[:200]}"
-                    )
+            await self.sandbox.write_file("/workspace/setup.sh", setup_script)
+            result = await self.sandbox.run_command(
+                "bash /workspace/setup.sh", timeout=600
+            )
+            if result.exit_code != 0:
+                logger.warning(
+                    f"swe_bench setup failed (exit {result.exit_code}) for "
+                    f"{self.instance_id}: stderr={result.stderr[:500]}"
+                )
         except Exception:
             await self.cleanup()
             raise
 
-        # Apply test patch
+        # Apply test patch (run inside conda env)
         if self.test_patch.strip():
             try:
                 await self.sandbox.write_file("/workspace/test_patch.diff", self.test_patch)
@@ -396,6 +388,56 @@ class _SWEBenchEnvFactory(SandboxMixin, Env):
 
 
 # ---------------------------------------------------------------------------
+# Sandbox factory — miniconda image for faithful SWE-bench setup
+# ---------------------------------------------------------------------------
+
+
+def _get_swebench_sandbox_factory(config: BenchmarkConfig) -> object:
+    """Create a sandbox factory with miniconda pre-installed.
+
+    The official SWE-bench harness relies on conda for per-instance Python
+    version management and dependency isolation.  We bake miniconda into the
+    Modal image so the TestSpec commands run verbatim.
+    """
+    if config.sandbox_factory is not None:
+        return config.sandbox_factory
+
+    try:
+        import modal
+
+        from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
+
+        image = (
+            modal.Image.debian_slim()
+            .apt_install("git", "wget", "build-essential", "libffi-dev", "libssl-dev")
+            .run_commands(
+                # Install miniconda (matches official SWE-bench base image)
+                "wget -q https://repo.anaconda.com/miniconda/Miniconda3-py311_23.11.0-2-Linux-x86_64.sh"
+                " -O /root/miniconda.sh",
+                "bash /root/miniconda.sh -b -p /opt/miniconda3",
+                "rm /root/miniconda.sh",
+                "/opt/miniconda3/bin/conda init bash",
+                # Make conda available in non-interactive shells
+                'echo ". /opt/miniconda3/etc/profile.d/conda.sh" >> /root/.bashrc',
+            )
+        )
+
+        async def _modal_factory():
+            return await ModalSandbox.create(image=image, timeout=1800)
+
+        return _modal_factory
+    except ImportError:
+
+        async def _missing_factory():
+            raise RuntimeError(
+                "SWE-bench requires Modal for sandbox execution.\n"
+                "Install with: uv pip install 'tinker-cookbook[eval-swe-bench]'"
+            )
+
+        return _missing_factory
+
+
+# ---------------------------------------------------------------------------
 # Benchmark builder
 # ---------------------------------------------------------------------------
 
@@ -420,9 +462,7 @@ class SWEBenchBenchmarkBuilder(BenchmarkBuilder):
         ds = cast(Dataset, load_benchmark_dataset("princeton-nlp/SWE-bench_Verified"))
         ds = limit_dataset(ds, config.max_examples)
 
-        sandbox_factory = get_sandbox_factory(
-            config, packages=["git", "python3", "python3-pip", "python3-venv"]
-        )
+        sandbox_factory = _get_swebench_sandbox_factory(config)
 
         envs: list[Env] = []
         for row in ds:
