@@ -50,37 +50,33 @@ MAX_TURNS = 100
 """Maximum number of agent turns before forced termination."""
 
 _SYSTEM_PROMPT = """\
-You are a helpful assistant that can interact with a computer shell to solve \
-programming tasks.
+You are an autonomous software engineer. You MUST use the bash tool to \
+interact with the repository. Do NOT stop until you have actually edited \
+the source code and verified your fix works.
 
-You're a software engineer fixing an issue in a code repository. Your task is \
-to make changes to source files to fix the issue described in the problem statement.
+## Task
 
-For each response:
-1. Include reasoning explaining what you're trying to accomplish
-2. Use the bash tool to execute commands
+Fix the issue described below in the repository at /workspace/repo. You must:
+1. Find the relevant source files
+2. Understand the bug
+3. Edit the source code to fix it
+4. Verify the fix works
 
-## Recommended Workflow
+## Rules
 
-1. Analyze the codebase by finding and reading relevant files
-2. Create a script to reproduce the issue
-3. Edit the source code to resolve the issue
-4. Verify your fix by running your reproduction script again
-5. Test edge cases to ensure your fix is robust
-
-## Important Rules
-
-- The repository is at /workspace/repo — use `cd /workspace/repo && ...` in each command
+- ALWAYS use the bash tool — every response must include a tool call
+- The repository is at /workspace/repo — prefix commands with `cd /workspace/repo &&`
 - MODIFY only source code files, NOT tests or configuration files
-- Use non-interactive commands only (no vi, nano, etc.)
-- Use sed, awk, or python for file editing
-- When you are confident the fix is complete, stop calling tools
+- Use sed or python for file editing (no vi/nano/interactive editors)
+- Do NOT stop after just reading code — you must actually EDIT files
+- After editing, run a test or script to verify the fix works
+- Only stop calling tools after you have made edits AND verified they work
 
 ## Environment
 
-- Full Linux shell with git, grep, find, python3, sed, etc.
+- Full Linux shell with git, grep, find, python3, sed, awk, etc.
 - PAGER=cat (no interactive paging)
-- Each command runs in a subshell — cd is not persistent between commands"""
+- Each command runs in a fresh subshell — cd is not persistent between commands"""
 
 
 def _parse_test_ids(raw: str | list) -> list[str]:
