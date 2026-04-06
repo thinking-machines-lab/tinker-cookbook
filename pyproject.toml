@@ -58,6 +58,12 @@ vector-search = [
     "google-genai>=1.0.0",
     "huggingface_hub>=0.20.0",
 ]
+cloud = [
+    "fsspec>=2023.1.0",
+    "gcsfs>=2023.1.0",
+    "s3fs>=2023.1.0",
+    "adlfs>=2023.1.0",
+]
 wandb = [
     "wandb>=0.16.0",
     "plotly>=5.0.0",

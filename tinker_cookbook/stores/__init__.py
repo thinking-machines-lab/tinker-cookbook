@@ -14,6 +14,7 @@ from tinker_cookbook.stores._incremental import IncrementalReader
 from tinker_cookbook.stores.registry import RunInfo, RunRegistry
 from tinker_cookbook.stores.storage import (
     AsyncStorage,
+    FsspecStorage,
     LocalStorage,
     Storage,
     StorageStat,
@@ -24,6 +25,7 @@ from tinker_cookbook.stores.training_store import TrainingRunStore
 
 __all__ = [
     "AsyncStorage",
+    "FsspecStorage",
     "IncrementalReader",
     "LocalStorage",
     "RunInfo",
