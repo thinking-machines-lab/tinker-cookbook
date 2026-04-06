@@ -309,6 +309,7 @@ def do_update(
                     kind="both",
                     loop_state={"epoch": epoch_idx, "batch": batch_idx},
                     ttl_seconds=config.ttl_seconds,
+                    store=ml_logger.store,
                 )
             if "state_path" in save_result:
                 metrics["state_path"] = save_result["state_path"]
@@ -445,7 +446,7 @@ def do_update(
 
     # Log timing metrics from trace_iteration window
     metrics.update(window.get_timing_metrics())
-    window.write_spans_jsonl(Path(log_path) / "timing_spans.jsonl", step=step)
+    window.save_timing(step, store=ml_logger.store, log_path=log_path)
     if config.span_chart_every > 0 and step % config.span_chart_every == 0:
         iter_dir = iteration_dir(log_path, step)
         if iter_dir is not None:
@@ -481,6 +482,7 @@ def main(config: Config):
         config=config,
         do_configure_logging_module=True,
     )
+    store = ml_logger.store
     if config.enable_trace:
         trace_events_path = str(Path(config.log_path) / "trace_events.jsonl")
         logger.info(f"Tracing is enabled. Trace events will be saved to {trace_events_path}")
@@ -503,6 +505,7 @@ def main(config: Config):
         rolling_save_every=config.rolling_save_every,
         save_every=config.save_every,
         rolling_ttl_seconds=config.rolling_ttl_seconds,
+        store=store,
     )
     tokenizer = get_tokenizer(config.model_name)
 
@@ -562,6 +565,7 @@ def main(config: Config):
             kind="both",
             loop_state={"epoch": config.num_epochs, "batch": 0},
             ttl_seconds=None,
+            store=store,
         )
     else:
         logger.info("Training was already complete; nothing to do")

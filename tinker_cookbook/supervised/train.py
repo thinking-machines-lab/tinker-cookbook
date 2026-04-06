@@ -271,6 +271,7 @@ async def main(config: Config):
         config=config,
         do_configure_logging_module=True,
     )
+    store = ml_logger.store
     if config.enable_trace:
         # Get and rename the current (main) task
         current_task = asyncio.current_task()
@@ -325,6 +326,7 @@ async def main(config: Config):
         rolling_save_every=config.rolling_save_every,
         save_every=config.save_every,
         rolling_ttl_seconds=config.rolling_ttl_seconds,
+        store=store,
     )
 
     dataset, maybe_test_dataset = config.dataset_builder()
@@ -421,6 +423,7 @@ async def main(config: Config):
                     loop_state={"epoch": submitted.epoch_idx, "batch": submitted.batch_idx},
                     kind="both",
                     ttl_seconds=config.ttl_seconds,
+                    store=store,
                 )
 
         await rolling_mgr.maybe_save_async(
@@ -461,7 +464,7 @@ async def main(config: Config):
         """Finish a batch, merge timing metrics, and log."""
         await finish_batch(submitted)
         submitted.metrics.update(window.get_timing_metrics())
-        window.write_spans_jsonl(log_path / "timing_spans.jsonl", step=submitted.step)
+        window.save_timing(submitted.step, store=store, log_path=log_path)
         if config.span_chart_every > 0 and submitted.step % config.span_chart_every == 0:
             iter_dir = iteration_dir(log_path, submitted.step)
             if iter_dir is not None:
@@ -503,6 +506,7 @@ async def main(config: Config):
             kind="both",
             loop_state={"epoch": config.num_epochs, "batch": 0},
             ttl_seconds=None,
+            store=store,
         )
     else:
         logger.info("Training was already complete; nothing to do")

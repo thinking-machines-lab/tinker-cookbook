@@ -4,7 +4,10 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from tinker_cookbook.stores.training_store import TrainingRunStore
 
 import tinker
 
@@ -432,6 +435,7 @@ async def save_checkpoint_async(
     loop_state: dict[str, Any],
     kind: Literal["state", "sampler", "both"] = "state",
     ttl_seconds: int | None = None,
+    store: "TrainingRunStore | None" = None,
 ) -> dict[str, str]:
     """Save model checkpoint and append a record to ``checkpoints.jsonl``.
 
@@ -443,6 +447,7 @@ async def save_checkpoint_async(
             ``epoch``, ``final``, and any additional user metadata.
         kind: Which checkpoint types to save.
         ttl_seconds: Server-side retention. ``None`` keeps the checkpoint indefinitely.
+        store: If provided, write the checkpoint record via Storage protocol.
 
     Returns:
         Dict mapping ``"state_path"`` and/or ``"sampler_path"`` to tinker:// paths.
@@ -461,8 +466,11 @@ async def save_checkpoint_async(
     logger.info(f"Saved checkpoints: {paths}")
 
     record = CheckpointRecord.from_dict({"name": name, **loop_state, **paths})
-    with open(Path(log_path) / "checkpoints.jsonl", "a") as f:
-        f.write(json.dumps(record.to_dict()) + "\n")
+    if store is not None:
+        store.write_checkpoint(record.to_dict())
+    else:
+        with open(Path(log_path) / "checkpoints.jsonl", "a") as f:
+            f.write(json.dumps(record.to_dict()) + "\n")
 
     return paths
 
@@ -475,6 +483,7 @@ def save_checkpoint(
     loop_state: dict[str, Any],
     kind: Literal["state", "sampler", "both"] = "state",
     ttl_seconds: int | None = None,
+    store: "TrainingRunStore | None" = None,
 ) -> dict[str, str]:
     """Save model checkpoint (synchronous wrapper around save_checkpoint_async).
 
@@ -485,18 +494,10 @@ def save_checkpoint(
         loop_state: Training loop state dict (may include ``batch``, ``epoch``, etc.).
         kind: Which checkpoint types to save (``"state"``, ``"sampler"``, or ``"both"``).
         ttl_seconds: Server-side retention. ``None`` keeps the checkpoint indefinitely.
+        store: If provided, write the checkpoint record via Storage protocol.
 
     Returns:
         Dict mapping ``"state_path"`` and/or ``"sampler_path"`` to tinker:// paths.
-
-    Example::
-
-        save_checkpoint(
-            training_client=training_client,
-            name="step-100",
-            log_path="./logs",
-            loop_state={"epoch": 0, "batch": 100},
-        )
     """
     return asyncio.run(
         save_checkpoint_async(
@@ -506,6 +507,7 @@ def save_checkpoint(
             kind=kind,
             loop_state=loop_state,
             ttl_seconds=ttl_seconds,
+            store=store,
         )
     )
 
@@ -542,6 +544,7 @@ class RollingCheckpointManager:
         rolling_save_every: int,
         save_every: int = 0,
         rolling_ttl_seconds: int = 7200,
+        store: "TrainingRunStore | None" = None,
     ) -> None:
         self._training_client = training_client
         self._service_client = service_client
@@ -549,6 +552,7 @@ class RollingCheckpointManager:
         self._rolling_save_every = rolling_save_every
         self._save_every = save_every
         self._rolling_ttl_seconds = rolling_ttl_seconds
+        self._store = store
 
         self._pending_task: asyncio.Task[None] | None = None
         self._prev_state_path: str | None = None
@@ -610,6 +614,7 @@ class RollingCheckpointManager:
             loop_state={**loop_state, "rolling": True},
             kind="state",
             ttl_seconds=self._rolling_ttl_seconds,
+            store=self._store,
         )
         new_state_path = paths.get("state_path")
 
