@@ -1,7 +1,7 @@
 """EvalStore — manages evaluation runs across checkpoints.
 
-Refactored from ``eval/store.py`` to use the Storage protocol.
-Supports local and cloud backends.
+All file I/O goes through the ``Storage`` protocol, supporting
+local and cloud backends.
 
 Storage layout::
 

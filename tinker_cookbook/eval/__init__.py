@@ -37,8 +37,8 @@ Example — persistent eval with EvalStore::
     store.finalize_run(run_id)
 
     # Query results
-    result = store.get_result(run_id, "gsm8k")
-    wrong = store.get_trajectories(run_id, "gsm8k", incorrect_only=True)
+    result = store.read_result(run_id, "gsm8k")
+    wrong = store.read_trajectories(run_id, "gsm8k", incorrect_only=True)
 
     # Compare checkpoints
     comp = store.compare_runs(run_a, run_b, "ifeval")
