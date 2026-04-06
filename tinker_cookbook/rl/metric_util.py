@@ -2,6 +2,10 @@ import asyncio
 import itertools
 import logging
 from collections import defaultdict
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tinker_cookbook.stores.training_store import TrainingRunStore
 
 import numpy as np
 import tinker
@@ -11,7 +15,7 @@ from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
 from tinker_cookbook.exceptions import AllTrajectoriesFailedError
 from tinker_cookbook.rl.rollout_logging import (
     RolloutSummaryExportConfig,
-    write_rollout_summaries_jsonl,
+    serialize_rollout_summaries,
 )
 from tinker_cookbook.rl.rollout_strategy import RolloutStrategy
 from tinker_cookbook.rl.rollouts import (
@@ -183,6 +187,7 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         policy: TokenCompleter,
         *,
         rollout_summary_export: RolloutSummaryExportConfig | None = None,
+        store: "TrainingRunStore | None" = None,
     ) -> dict[str, float]:
         """Run evaluation rollouts using a :class:`TokenCompleter` policy.
 
@@ -225,13 +230,14 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
                 for group_idx, builder in enumerate(self.env_group_builders_P)
             ]
         )
-        return self._collect_eval_metrics(results, rollout_summary_export)
+        return self._collect_eval_metrics(results, rollout_summary_export, store=store)
 
     async def __call__(
         self,
         sampling_client: tinker.SamplingClient,
         *,
         rollout_summary_export: RolloutSummaryExportConfig | None = None,
+        store: "TrainingRunStore | None" = None,
     ) -> dict[str, float]:
         """Evaluate the current policy checkpoint via a sampling client.
 
@@ -252,13 +258,14 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         if get_rollout_executor() is not None:
             # Use the executor-aware dispatch path so rollouts are offloaded
             return await self._eval_with_executor(
-                sampling_client, rollout_summary_export=rollout_summary_export
+                sampling_client, rollout_summary_export=rollout_summary_export, store=store
             )
 
         policy = TinkerTokenCompleter(sampling_client, max_tokens=self.max_tokens)
         return await self.eval_token_completer(
             policy,
             rollout_summary_export=rollout_summary_export,
+            store=store,
         )
 
     async def _eval_with_executor(
@@ -266,6 +273,7 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         sampling_client: tinker.SamplingClient,
         *,
         rollout_summary_export: RolloutSummaryExportConfig | None = None,
+        store: "TrainingRunStore | None" = None,
     ) -> dict[str, float]:
         """Run evaluation with rollouts dispatched via the rollout executor."""
         results = await asyncio.gather(
@@ -282,12 +290,14 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
                 for i, builder in enumerate(self.env_group_builders_P)
             ]
         )
-        return self._collect_eval_metrics(results, rollout_summary_export)
+        return self._collect_eval_metrics(results, rollout_summary_export, store=store)
 
     def _collect_eval_metrics(
         self,
         results: list[TrajectoryGroup | None],
         rollout_summary_export: RolloutSummaryExportConfig | None,
+        *,
+        store: "TrainingRunStore | None" = None,
     ) -> dict[str, float]:
         """Shared logic for collecting metrics from eval rollout results."""
         error_counter = RolloutErrorCounter()
@@ -300,19 +310,23 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
             for builder, r in zip(self.env_group_builders_P, results)
             if r is not None
         ]
-        if rollout_summary_export is not None:
+        if rollout_summary_export is not None and store is not None:
             sampling_client_steps_P = (
                 [rollout_summary_export.sampling_client_step] * len(trajectory_groups_P)
                 if rollout_summary_export.sampling_client_step is not None
                 else None
             )
-            write_rollout_summaries_jsonl(
-                rollout_summary_export.path,
+            records = serialize_rollout_summaries(
                 split=rollout_summary_export.split,
                 iteration=rollout_summary_export.iteration,
                 trajectory_groups_P=trajectory_groups_P,
                 taglist_P=taglist_P,
                 sampling_client_steps_P=sampling_client_steps_P,
+            )
+            store.write_rollouts(
+                rollout_summary_export.iteration,
+                records,
+                base_name=rollout_summary_export.base_name,
             )
         metrics = compute_trajectory_metrics(trajectory_groups_P, taglist_P)
         metrics.update(error_counter.get_metrics())

@@ -446,7 +446,7 @@ def do_update(
 
     # Log timing metrics from trace_iteration window
     metrics.update(window.get_timing_metrics())
-    window.save_timing(step, store=ml_logger.store, log_path=log_path)
+    window.save_timing(step, store=ml_logger.store)
     if config.span_chart_every > 0 and step % config.span_chart_every == 0:
         iter_dir = iteration_dir(log_path, step)
         if iter_dir is not None:

@@ -617,7 +617,7 @@ async def main(
 
     # Initial sampling client for student
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        training_client, start_batch, cfg.log_path, cfg.save_every
+        training_client, start_batch, cfg.log_path, cfg.save_every, store=store
     )
 
     log_path = Path(cfg.log_path)
@@ -738,7 +738,7 @@ async def main(
 
             # Refresh sampling client
             sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-                training_client, i_batch + 1, cfg.log_path, cfg.save_every
+                training_client, i_batch + 1, cfg.log_path, cfg.save_every, store=store
             )
 
             # Optional teacher hard-sync
@@ -753,7 +753,7 @@ async def main(
 
         # Log timing
         metrics.update(window.get_timing_metrics())
-        window.save_timing(i_batch, store=store, log_path=log_path)
+        window.save_timing(i_batch, store=store)
         if cfg.span_chart_every > 0 and i_batch % cfg.span_chart_every == 0:
             trace.save_gantt_chart_html(
                 window, i_batch, log_path / f"timing_gantt_{i_batch:06d}.html"

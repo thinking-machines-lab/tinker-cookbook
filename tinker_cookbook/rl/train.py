@@ -14,7 +14,10 @@ from concurrent.futures import Executor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
+
+if TYPE_CHECKING:
+    from tinker_cookbook.stores.training_store import TrainingRunStore
 
 import chz
 import numpy as np
@@ -42,8 +45,6 @@ from tinker_cookbook.rl.metrics import (
 from tinker_cookbook.rl.rollout_logging import (
     RolloutSummaryExportConfig,
     RolloutSummaryGroup,
-    rollout_summaries_jsonl_path,
-    write_rollout_summaries_jsonl_from_groups,
 )
 from tinker_cookbook.rl.rollout_strategy import (
     RolloutStrategy,
@@ -137,27 +138,21 @@ def _sanitize_filename_component(text: str) -> str:
 def _maybe_export_rollout_summary_jsonl(
     *,
     config: Config,
-    output_dir: Path | None,
     base_name: str,
     split: str,
     iteration: int,
     groups_P: Sequence[RolloutSummaryGroup],
+    store: TrainingRunStore | None,
 ) -> None:
-    """
-    Write per-trajectory rollout summaries for one train/eval pass when enabled.
-
-    This is a thin policy gate around rollout_logging utilities:
-    - path naming (`<base_name>_rollout_summaries.jsonl` inside the iteration dir)
-    - on/off switch (`config.rollout_json_export`)
-    """
-    if not config.rollout_json_export or output_dir is None:
+    """Write per-trajectory rollout summaries via the store when enabled."""
+    if not config.rollout_json_export or store is None:
         return
-    write_rollout_summaries_jsonl_from_groups(
-        rollout_summaries_jsonl_path(output_dir, base_name),
-        split=split,
-        iteration=iteration,
-        groups_P=groups_P,
+    from tinker_cookbook.rl.rollout_logging import serialize_rollout_summaries_from_groups
+
+    records = serialize_rollout_summaries_from_groups(
+        split=split, iteration=iteration, groups_P=groups_P
     )
+    store.write_rollouts(iteration, records, base_name=base_name)
 
 
 _LOGTREE_EXPLANATION = (
@@ -170,12 +165,17 @@ _LOGTREE_EXPLANATION = (
 
 @contextmanager
 def _get_logtree_scope(
-    output_dir: Path | None, num_groups_to_log: int, f_name: str, scope_name: str
+    output_dir: Path | None,
+    num_groups_to_log: int,
+    f_name: str,
+    scope_name: str,
+    iteration: int,
+    store: TrainingRunStore | None,
 ) -> Iterator[None]:
-    """
-    Creates a context manager; all log inside this context will be logged under the section `scope_name`.
-    It will create files with the paths output_dir/f_name.html and output_dir/f_name_logtree.json.
-    If num_groups_to_log is 0, it will disable logging (but note that this function does not actually implement the logic for logging itself!)
+    """Context manager that logs rollout data to HTML and JSON via logtree.
+
+    Creates ``output_dir/f_name.html`` (direct I/O — visualization artifact)
+    and writes the logtree JSON via ``store.write_logtree()`` when store is available.
     """
     if output_dir is None or num_groups_to_log <= 0:
         yield
@@ -183,15 +183,14 @@ def _get_logtree_scope(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     logtree_path = str(output_dir / f"{f_name}.html")
-    logtree_json_path = str(output_dir / f"{f_name}_logtree.json")
     logtree_trace = None
     try:
         with logtree.init_trace(scope_name, path=logtree_path) as logtree_trace:
             logtree.log_text(_LOGTREE_EXPLANATION)
             yield
     finally:
-        if logtree_trace is not None:
-            logtree.write_trace_json(logtree_trace, logtree_json_path)
+        if logtree_trace is not None and store is not None:
+            store.write_logtree(iteration, logtree_trace.to_dict(), base_name=f_name)
 
 
 def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]:
@@ -529,6 +528,7 @@ async def run_single_evaluation(
     i_batch: int,
     sampling_client: tinker.SamplingClient,
     evaluator_label: str,
+    store: TrainingRunStore | None = None,
 ) -> dict[str, Any]:
     """Run a single evaluator and return its metrics.
 
@@ -555,13 +555,15 @@ async def run_single_evaluation(
         num_groups_to_log=config.num_groups_to_log,
         f_name=eval_base_name,
         scope_name=f"Running evaluation {ev_name} {i_batch}",
+        iteration=i_batch,
+        store=store,
     ):
         if isinstance(evaluator, RLTestSetEvaluator):
             rollout_summary_export = (
                 RolloutSummaryExportConfig(
-                    path=rollout_summaries_jsonl_path(iter_dir, eval_base_name),
                     split=f"eval/{evaluator_label}",
                     iteration=i_batch,
+                    base_name=eval_base_name,
                     sampling_client_step=i_batch,
                 )
                 if config.rollout_json_export and iter_dir is not None
@@ -570,6 +572,7 @@ async def run_single_evaluation(
             eval_metrics = await evaluator(
                 sampling_client,
                 rollout_summary_export=rollout_summary_export,
+                store=store,
             )
         else:
             eval_metrics = await evaluator(sampling_client)
@@ -582,6 +585,7 @@ async def run_evaluations_parallel(
     sampling_client: tinker.SamplingClient,
     config: Config,
     i_batch: int,
+    store: TrainingRunStore | None = None,
 ) -> dict[str, Any]:
     """Run all evaluators in parallel and return aggregated metrics.
 
@@ -605,7 +609,9 @@ async def run_evaluations_parallel(
         ev_name = _get_evaluator_name(evaluator)
         evaluator_label = _sanitize_filename_component(ev_name or str(i))
         task = asyncio.create_task(
-            run_single_evaluation(evaluator, config, i_batch, sampling_client, evaluator_label),
+            run_single_evaluation(
+                evaluator, config, i_batch, sampling_client, evaluator_label, store=store
+            ),
             name=f"eval_{evaluator_label}_iteration_{i_batch:06d}",
         )
         tasks.append(task)
@@ -673,6 +679,7 @@ async def do_sync_training_with_stream_minibatch(
         config.save_every,
         start_batch,
         config.ttl_seconds,
+        store=ml_logger.store,
     )
 
     for i_batch in range(start_batch, end_batch):
@@ -689,7 +696,7 @@ async def do_sync_training_with_stream_minibatch(
             ) or i_batch == end_batch - 1:
                 async with trace.scope_span("run_evals"):
                     eval_metrics = await run_evaluations_parallel(
-                        evaluators, sampling_client, config, i_batch
+                        evaluators, sampling_client, config, i_batch, store=ml_logger.store
                     )
                     metrics.update(eval_metrics)
 
@@ -699,6 +706,8 @@ async def do_sync_training_with_stream_minibatch(
                 config.num_groups_to_log,
                 "train",
                 f"RL Iteration {i_batch}",
+                iteration=i_batch,
+                store=ml_logger.store,
             ):
                 # Samplers will produce trajectory groups asynchronously,
                 # and the trainer will consume them as soon as they are ready
@@ -770,7 +779,6 @@ async def do_sync_training_with_stream_minibatch(
 
             _maybe_export_rollout_summary_jsonl(
                 config=config,
-                output_dir=iter_dir,
                 base_name="train",
                 split="train",
                 iteration=i_batch,
@@ -782,6 +790,7 @@ async def do_sync_training_with_stream_minibatch(
                     )
                     for group in full_batch_wrapped_trajectory_groups
                 ],
+                store=ml_logger.store,
             )
 
         # Rolling checkpoint (fire-and-forget, overlaps with next iteration)
@@ -793,7 +802,7 @@ async def do_sync_training_with_stream_minibatch(
         if error_counter is not None:
             metrics.update(error_counter.get_metrics())
         metrics.update(window.get_timing_metrics())
-        window.save_timing(i_batch, store=ml_logger.store, log_path=config.log_path)
+        window.save_timing(i_batch, store=ml_logger.store)
         if (
             config.span_chart_every > 0
             and i_batch % config.span_chart_every == 0
@@ -1099,7 +1108,6 @@ async def do_async_training(
                 iter_dir = iteration_dir(config.log_path, i_batch)
                 _maybe_export_rollout_summary_jsonl(
                     config=config,
-                    output_dir=iter_dir,
                     base_name="train",
                     split="train",
                     iteration=i_batch,
@@ -1111,6 +1119,7 @@ async def do_async_training(
                         )
                         for group in full_batch_wrapped_trajectory_groups
                     ],
+                    store=ml_logger.store,
                 )
             else:
                 wrapped_trajectory_group = await trajectory_groups_queue.get()
@@ -1155,7 +1164,6 @@ async def do_async_training(
                 iter_dir = iteration_dir(config.log_path, i_batch)
                 _maybe_export_rollout_summary_jsonl(
                     config=config,
-                    output_dir=iter_dir,
                     base_name="train",
                     split="train",
                     iteration=i_batch,
@@ -1167,6 +1175,7 @@ async def do_async_training(
                         )
                         for group in wrapped_trajectory_groups
                     ],
+                    store=ml_logger.store,
                 )
             sampling_client_step = i_batch + 1
             sampling_client_updated_event.set()
@@ -1182,7 +1191,7 @@ async def do_async_training(
             if error_counter is not None:
                 metrics.update(error_counter.get_metrics())
             metrics.update(window.get_timing_metrics())
-            window.save_timing(i_batch, store=ml_logger.store, log_path=config.log_path)
+            window.save_timing(i_batch, store=ml_logger.store)
             if config.span_chart_every > 0 and i_batch % config.span_chart_every == 0:
                 iter_dir = iteration_dir(config.log_path, i_batch)
                 if iter_dir is not None:
@@ -1243,6 +1252,7 @@ async def save_checkpoint_and_get_sampling_client(
     save_every: int,
     start_batch: int = 0,
     ttl_seconds: int | None = None,
+    store: TrainingRunStore | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """Save a checkpoint (if due) and return a fresh sampling client.
 
@@ -1277,6 +1287,7 @@ async def save_checkpoint_and_get_sampling_client(
                 loop_state={"batch": i_batch},
                 kind="both",
                 ttl_seconds=ttl_seconds,
+                store=store,
             )
             return training_client.create_sampling_client(path_dict["sampler_path"]), metrics
         else:
@@ -1354,6 +1365,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     save_every: int,
     do_compute_post_kl: bool,
     ttl_seconds: int | None = None,
+    store: TrainingRunStore | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """Compute end-of-iteration metrics and return a fresh sampling client.
 
@@ -1390,7 +1402,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
 
     # Get a sampling client using the new weights
     sampling_client, checkpoint_metrics = await save_checkpoint_and_get_sampling_client(
-        training_client, i_batch, log_path, save_every, ttl_seconds=ttl_seconds
+        training_client, i_batch, log_path, save_every, ttl_seconds=ttl_seconds, store=store
     )
     metrics.update(checkpoint_metrics)
 
@@ -1687,6 +1699,7 @@ async def do_sync_training(
         config.save_every,
         start_batch,
         config.ttl_seconds,
+        store=ml_logger.store,
     )
 
     for i_batch in range(start_batch, end_batch):
@@ -1700,7 +1713,7 @@ async def do_sync_training(
             # Run evaluations
             if config.eval_every > 0 and i_batch % config.eval_every == 0:
                 eval_metrics = await run_evaluations_parallel(
-                    evaluators, sampling_client, config, i_batch
+                    evaluators, sampling_client, config, i_batch, store=ml_logger.store
                 )
                 metrics.update(eval_metrics)
 
@@ -1715,6 +1728,8 @@ async def do_sync_training(
                     num_groups_to_log=config.num_groups_to_log,
                     f_name="train",
                     scope_name=f"RL Iteration {i_batch}",
+                    iteration=i_batch,
+                    store=ml_logger.store,
                 ):
                     # Note: do_remove_constant_reward_groups=False here because we remove
                     # constant reward groups after all rollouts are collected (below)
@@ -1754,7 +1769,6 @@ async def do_sync_training(
 
                 _maybe_export_rollout_summary_jsonl(
                     config=config,
-                    output_dir=iter_dir,
                     base_name="train",
                     split="train",
                     iteration=i_batch,
@@ -1768,6 +1782,7 @@ async def do_sync_training(
                             env_group_builders_P, trajectory_groups_P
                         )
                     ],
+                    store=ml_logger.store,
                 )
 
                 if config.remove_constant_reward_groups:
@@ -1795,7 +1810,7 @@ async def do_sync_training(
         metrics.update(window.get_timing_metrics())
         if error_counter is not None:
             metrics.update(error_counter.get_metrics())
-        window.save_timing(i_batch, store=ml_logger.store, log_path=config.log_path)
+        window.save_timing(i_batch, store=ml_logger.store)
         if (
             config.span_chart_every > 0
             and i_batch % config.span_chart_every == 0
