@@ -17,6 +17,7 @@ from tinker_cookbook.stores.storage import (
     LocalStorage,
     Storage,
     StorageStat,
+    storage_from_uri,
     storage_join,
 )
 from tinker_cookbook.stores.training_store import TrainingRunStore
@@ -30,5 +31,6 @@ __all__ = [
     "Storage",
     "StorageStat",
     "TrainingRunStore",
+    "storage_from_uri",
     "storage_join",
 ]

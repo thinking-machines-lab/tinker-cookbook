@@ -190,10 +190,14 @@ class EvalStore:
     def run_dir(self, run_id: str) -> str:
         """Return filesystem path for backward compat with BenchmarkConfig.save_dir.
 
-        Only works with LocalStorage. Raises for cloud backends.
+        Only works with LocalStorage (returns a local path string).
+        For cloud backends, use ``url()`` on the storage directly.
         """
         if not hasattr(self._storage, "root"):
-            raise RuntimeError("run_dir() only works with LocalStorage")
+            raise RuntimeError(
+                "run_dir() only works with LocalStorage. "
+                f"Use storage.url() instead: {self._storage.url(self._path('runs', run_id))}"
+            )
         root = getattr(self._storage, "root")  # noqa: B009
         return str(root / self._path("runs", run_id))
 

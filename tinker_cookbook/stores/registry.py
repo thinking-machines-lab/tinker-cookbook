@@ -86,9 +86,7 @@ class RunRegistry:
         self._eval_store = RunRegistry._EVAL_UNSET
 
         for storage in self._storages:
-            source = ""
-            if hasattr(storage, "root"):
-                source = getattr(storage, "root").name  # noqa: B009
+            source = storage.url().rstrip("/").rsplit("/", 1)[-1]
 
             for run in _discover_runs(storage):
                 uid = f"{source}--{run.run_id}" if run.run_id in all_runs else run.run_id

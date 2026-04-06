@@ -5,10 +5,24 @@ is the extension point for adding S3, GCS, or other backends.
 
 Design intent: ALL file I/O in tinker-cookbook should go through ``Storage``
 so that cloud backends (S3, GCS) work end-to-end for both reads and writes.
-``ml_log.JsonLogger`` already accepts an optional ``Storage`` parameter —
-this is the pattern to follow. Some write paths (timing spans, checkpoints,
-rollout summaries, logtree, eval runner) have not yet been migrated and
-still use ``Path``/``open()`` directly.
+
+**Cloud backend contract:**
+
+- ``append()`` — Must be supported by all backends. Cloud backends may
+  implement this via read-modify-write, append blobs (Azure), or sharding.
+  Callers should keep individual appends small (< 4KB) and tolerate
+  last-append loss on crash.
+- ``list_dir()`` — For flat key-spaces (S3/GCS), list objects sharing a
+  prefix up to the next ``/`` delimiter. Return names only (not full keys).
+- ``stat()`` — Maps to HEAD requests on cloud. ``mtime`` may have
+  second-level granularity on some backends.
+- ``read_range()`` — Maps to Range GET on cloud.
+- ``remove_dir()`` — No-op on backends without real directories (S3/GCS).
+- ``url()`` — Returns a human-readable URI (``file:///``, ``s3://``, ``gs://``).
+
+**Migration status:** Read paths (TrainingRunStore, EvalStore, RunRegistry)
+use Storage. Write paths (ml_log, trace, checkpoint_utils, eval runner)
+still use ``Path``/``open()`` directly and need to be ported.
 """
 
 from __future__ import annotations
@@ -38,7 +52,22 @@ class Storage(Protocol):
 
     All paths are relative strings (e.g., ``"runs/001/metrics.jsonl"``).
     The backend resolves them against its root.
+
+    Implementations must be **pickle-serializable** (for Ray/multiprocessing)
+    — store only config (bucket, prefix, credentials path), not connections.
     """
+
+    def url(self, path: str = "") -> str:
+        """Return a human-readable URI for a path.
+
+        Examples::
+
+            LocalStorage("/data").url("metrics.jsonl")  # "file:///data/metrics.jsonl"
+            S3Storage("bucket", "pfx").url("metrics.jsonl")  # "s3://bucket/pfx/metrics.jsonl"
+
+        Used for logging, display, and interop with tools that accept URIs.
+        """
+        ...
 
     def read(self, path: str) -> bytes:
         """Read entire file. Raises ``FileNotFoundError`` if missing."""
@@ -49,11 +78,14 @@ class Storage(Protocol):
         ...
 
     def append(self, path: str, data: bytes) -> None:
-        """Append data to file, creating if needed.
+        """Append data to a file, creating if needed.
 
-        Atomic for writes < PIPE_BUF (~4KB) on POSIX.
-        Cloud backends may raise ``NotImplementedError`` — stores
-        handle the shard pattern at a higher level.
+        All backends must support this. Callers should keep individual
+        appends small (< 4KB for POSIX atomicity). Cloud backends may
+        implement via read-modify-write, append blobs (Azure), or
+        internal buffering — the choice is transparent to callers.
+
+        On crash, the last append may be lost. Callers must tolerate this.
         """
         ...
 
@@ -67,11 +99,16 @@ class Storage(Protocol):
         """Read bytes from offset. If length is None, read to end.
 
         Raises ``FileNotFoundError`` if missing.
+        Maps to Range GET on cloud backends.
         """
         ...
 
     def list_dir(self, prefix: str) -> list[str]:
-        """List immediate children under prefix. Returns names only."""
+        """List immediate children under prefix. Returns names only.
+
+        For flat key-spaces (S3/GCS), this lists keys sharing the prefix
+        up to the next ``/`` delimiter.
+        """
         ...
 
     def remove(self, path: str) -> None:
@@ -135,6 +172,10 @@ class LocalStorage:
     @property
     def root(self) -> Path:
         return self._root
+
+    def url(self, path: str = "") -> str:
+        resolved = self._root / path if path else self._root
+        return resolved.as_uri()
 
     def _resolve(self, path: str) -> Path:
         resolved = (self._root / path).resolve()
@@ -228,6 +269,37 @@ class LocalStorage:
 
     async def __aexit__(self, *exc: object) -> None:
         pass
+
+
+def storage_from_uri(uri: str) -> Storage:
+    """Create a Storage backend from a URI string.
+
+    Supported schemes::
+
+        /path/to/dir          → LocalStorage("/path/to/dir")
+        file:///path/to/dir   → LocalStorage("/path/to/dir")
+        s3://bucket/prefix    → raises (not yet implemented)
+        gs://bucket/prefix    → raises (not yet implemented)
+
+    This is the recommended way to create a Storage from user config
+    (e.g., ``log_path`` in training scripts).
+    """
+    if uri.startswith("file://"):
+        return LocalStorage(uri[len("file://") :])
+    if uri.startswith("s3://"):
+        raise NotImplementedError(
+            "S3 storage not yet implemented. Install a cloud storage extra when available."
+        )
+    if uri.startswith("gs://"):
+        raise NotImplementedError(
+            "GCS storage not yet implemented. Install a cloud storage extra when available."
+        )
+    if uri.startswith("az://") or uri.startswith("abfs://"):
+        raise NotImplementedError(
+            "Azure Blob storage not yet implemented. Install a cloud storage extra when available."
+        )
+    # Default: treat as local path
+    return LocalStorage(uri)
 
 
 def storage_join(*parts: str) -> str:

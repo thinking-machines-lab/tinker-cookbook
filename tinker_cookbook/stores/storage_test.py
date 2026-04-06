@@ -10,6 +10,7 @@ from tinker_cookbook.stores.storage import (
     AsyncStorage,
     LocalStorage,
     Storage,
+    storage_from_uri,
     storage_join,
 )
 
@@ -200,3 +201,46 @@ class TestStorageJoin:
 
     def test_double_dot(self) -> None:
         assert storage_join("a/b", "../c") == "a/c"
+
+
+class TestUrl:
+    def test_local_url_root(self, tmp_path: Path) -> None:
+        s = LocalStorage(tmp_path)
+        assert s.url() == tmp_path.as_uri()
+
+    def test_local_url_path(self, tmp_path: Path) -> None:
+        s = LocalStorage(tmp_path)
+        url = s.url("metrics.jsonl")
+        assert url.startswith("file:///")
+        assert url.endswith("/metrics.jsonl")
+
+    def test_local_url_nested(self, tmp_path: Path) -> None:
+        s = LocalStorage(tmp_path)
+        url = s.url("runs/001/result.json")
+        assert "runs/001/result.json" in url
+
+
+class TestStorageFromUri:
+    def test_local_path(self, tmp_path: Path) -> None:
+        s = storage_from_uri(str(tmp_path))
+        assert isinstance(s, LocalStorage)
+        s.write("test.txt", b"ok")
+        assert s.read("test.txt") == b"ok"
+
+    def test_file_uri(self, tmp_path: Path) -> None:
+        s = storage_from_uri(f"file://{tmp_path}")
+        assert isinstance(s, LocalStorage)
+        s.write("test.txt", b"ok")
+        assert s.read("test.txt") == b"ok"
+
+    def test_s3_not_implemented(self) -> None:
+        with pytest.raises(NotImplementedError, match="S3"):
+            storage_from_uri("s3://bucket/prefix")
+
+    def test_gs_not_implemented(self) -> None:
+        with pytest.raises(NotImplementedError, match="GCS"):
+            storage_from_uri("gs://bucket/prefix")
+
+    def test_azure_not_implemented(self) -> None:
+        with pytest.raises(NotImplementedError, match="Azure"):
+            storage_from_uri("az://container/prefix")
