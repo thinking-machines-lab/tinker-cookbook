@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import io
 import json
 import logging
 import math
@@ -184,8 +185,11 @@ def _load_completed(storage: Storage, benchmark_name: str) -> dict[str, _Resumed
     except FileNotFoundError:
         return {}
     results: dict[str, _ResumedExample] = {}
-    for line_num, line in enumerate(data.decode("utf-8", errors="replace").splitlines(), 1):
-        line = line.strip()
+
+    for line_num, raw_line in enumerate(
+        io.TextIOWrapper(io.BytesIO(data), encoding="utf-8", errors="replace"), 1
+    ):
+        line = raw_line.strip()
         if not line:
             continue
         try:
@@ -855,8 +859,10 @@ def load_trajectories(
         return []
 
     trajectories = []
-    for line_num, line in enumerate(data.decode("utf-8", errors="replace").splitlines(), 1):
-        line = line.strip()
+    for line_num, raw_line in enumerate(
+        io.TextIOWrapper(io.BytesIO(data), encoding="utf-8", errors="replace"), 1
+    ):
+        line = raw_line.strip()
         if not line:
             continue
         try:
