@@ -36,7 +36,7 @@ class SandboxInterface(Protocol):
         """Identifier for the sandbox instance (e.g. Modal object_id)."""
         ...
 
-    async def send_heartbeat(self) -> None:
+    async def send_heartbeat(self, timeout: int = 30) -> None:
         """Send a heartbeat to keep the sandbox alive.
 
         If the sandbox server does not support heartbeat, this method can be a no-op.
@@ -100,8 +100,8 @@ class SandboxResource:
     def __init__(self, sandbox: SandboxInterface):
         self.sandbox: SandboxInterface = sandbox
 
-    async def send_heartbeat(self) -> None:
-        await self.sandbox.send_heartbeat()
+    async def send_heartbeat(self, timeout: int = 30) -> None:
+        await self.sandbox.send_heartbeat(timeout=timeout)
 
     async def cleanup(self) -> None:
         await self.sandbox.cleanup()
