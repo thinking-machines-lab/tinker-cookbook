@@ -36,7 +36,7 @@ import logging
 import posixpath
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -314,33 +314,211 @@ class LocalStorage:
         pass
 
 
-def storage_from_uri(uri: str) -> Storage:
+class FsspecStorage:
+    """Storage backend wrapping any ``fsspec.AbstractFileSystem``.
+
+    Supports S3 (via ``s3fs``), GCS (via ``gcsfs``), Azure (via ``adlfs``),
+    and any other filesystem that fsspec supports. Pickle-serializable —
+    stores the protocol, root path, and constructor kwargs (not the fs object).
+
+    Examples::
+
+        import fsspec
+        fs = fsspec.filesystem("s3", anon=False)
+        storage = FsspecStorage(fs, "my-bucket/experiments/run1")
+
+        # Or via storage_from_uri:
+        storage = storage_from_uri("s3://my-bucket/experiments/run1")
+    """
+
+    def __init__(self, fs: Any, root: str = "", **fs_kwargs: Any) -> None:
+        self._fs = fs
+        self._root = root.rstrip("/")
+        self._protocol = fs.protocol if isinstance(fs.protocol, str) else fs.protocol[0]
+        self._fs_kwargs = fs_kwargs
+
+    def _full(self, path: str) -> str:
+        if not path:
+            return self._root
+        return f"{self._root}/{path}" if self._root else path
+
+    def url(self, path: str = "") -> str:
+        """Return a URI like ``s3://bucket/prefix/path``."""
+        full = self._full(path)
+        return f"{self._protocol}://{full}"
+
+    # --- Sync (Storage protocol) ---
+
+    def read(self, path: str) -> bytes:
+        """See :meth:`Storage.read`."""
+        try:
+            return self._fs.cat_file(self._full(path))
+        except FileNotFoundError:
+            raise
+
+    def write(self, path: str, data: bytes) -> None:
+        """See :meth:`Storage.write`."""
+        full = self._full(path)
+        self._fs.mkdirs(self._fs._parent(full), exist_ok=True)
+        self._fs.pipe_file(full, data)
+
+    def append(self, path: str, data: bytes) -> None:
+        """See :meth:`Storage.append`.
+
+        Cloud backends (GCS, S3) don't support native append. This implements
+        append as read-modify-write, which is correct for small files
+        (metrics, checkpoints, timing). For high-frequency appends to large
+        files, consider sharding instead.
+        """
+        full = self._full(path)
+        self._fs.mkdirs(self._fs._parent(full), exist_ok=True)
+        try:
+            existing = self._fs.cat_file(full)
+        except FileNotFoundError:
+            existing = b""
+        self._fs.pipe_file(full, existing + data)
+
+    def exists(self, path: str) -> bool:
+        """See :meth:`Storage.exists`."""
+        return self._fs.exists(self._full(path))
+
+    def stat(self, path: str) -> StorageStat | None:
+        """See :meth:`Storage.stat`."""
+        try:
+            info = self._fs.info(self._full(path))
+            return StorageStat(
+                size=info.get("size", 0),
+                mtime=info.get("mtime", 0.0) or info.get("LastModified", 0.0) or 0.0,
+            )
+        except FileNotFoundError:
+            return None
+
+    def read_range(self, path: str, offset: int, length: int | None = None) -> bytes:
+        """See :meth:`Storage.read_range`."""
+        full = self._full(path)
+        if length is not None:
+            return self._fs.read_block(full, offset, length)
+        # read_block with no length: read to end
+        with self._fs.open(full, "rb") as f:
+            f.seek(offset)
+            return f.read()
+
+    def list_dir(self, prefix: str) -> list[str]:
+        """See :meth:`Storage.list_dir`. Returns immediate children names only."""
+        full = self._full(prefix)
+        try:
+            entries = self._fs.ls(full, detail=False)
+        except FileNotFoundError:
+            return []
+        # ls returns full paths — strip to names
+        return sorted(
+            e.split("/")[-1] for e in entries if e != full and e.rstrip("/") != full.rstrip("/")
+        )
+
+    def remove(self, path: str) -> None:
+        """See :meth:`Storage.remove`."""
+        with contextlib.suppress(FileNotFoundError):
+            self._fs.rm_file(self._full(path))
+
+    def remove_dir(self, path: str) -> None:
+        """See :meth:`Storage.remove_dir`."""
+        with contextlib.suppress(FileNotFoundError, OSError):
+            self._fs.rmdir(self._full(path))
+
+    def __enter__(self) -> FsspecStorage:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        pass
+
+    # --- Async (via to_thread) ---
+
+    async def aread(self, path: str) -> bytes:
+        """Async version of :meth:`read`."""
+        return await asyncio.to_thread(self.read, path)
+
+    async def awrite(self, path: str, data: bytes) -> None:
+        """Async version of :meth:`write`."""
+        await asyncio.to_thread(self.write, path, data)
+
+    async def aappend(self, path: str, data: bytes) -> None:
+        """Async version of :meth:`append`."""
+        await asyncio.to_thread(self.append, path, data)
+
+    async def aexists(self, path: str) -> bool:
+        """Async version of :meth:`exists`."""
+        return await asyncio.to_thread(self.exists, path)
+
+    async def astat(self, path: str) -> StorageStat | None:
+        """Async version of :meth:`stat`."""
+        return await asyncio.to_thread(self.stat, path)
+
+    async def aread_range(self, path: str, offset: int, length: int | None = None) -> bytes:
+        """Async version of :meth:`read_range`."""
+        return await asyncio.to_thread(self.read_range, path, offset, length)
+
+    async def alist_dir(self, prefix: str) -> list[str]:
+        """Async version of :meth:`list_dir`."""
+        return await asyncio.to_thread(self.list_dir, prefix)
+
+    async def aremove(self, path: str) -> None:
+        """Async version of :meth:`remove`."""
+        await asyncio.to_thread(self.remove, path)
+
+    async def aremove_dir(self, path: str) -> None:
+        """Async version of :meth:`remove_dir`."""
+        await asyncio.to_thread(self.remove_dir, path)
+
+    async def __aenter__(self) -> FsspecStorage:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        pass
+
+    # --- Pickle support ---
+
+    def __getstate__(self) -> dict[str, Any]:
+        return {"protocol": self._protocol, "root": self._root, "fs_kwargs": self._fs_kwargs}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        import fsspec
+
+        self._protocol = state["protocol"]
+        self._root = state["root"]
+        self._fs_kwargs = state["fs_kwargs"]
+        self._fs = fsspec.filesystem(self._protocol, **self._fs_kwargs)
+
+
+def storage_from_uri(uri: str, **kwargs: Any) -> Storage:
     """Create a Storage backend from a URI string.
 
     Supported schemes::
 
         /path/to/dir          → LocalStorage("/path/to/dir")
         file:///path/to/dir   → LocalStorage("/path/to/dir")
-        s3://bucket/prefix    → raises (not yet implemented)
-        gs://bucket/prefix    → raises (not yet implemented)
+        s3://bucket/prefix    → FsspecStorage (requires s3fs)
+        gs://bucket/prefix    → FsspecStorage (requires gcsfs)
+        az://container/prefix → FsspecStorage (requires adlfs)
+
+    Extra keyword arguments are passed to the fsspec filesystem constructor
+    (e.g., ``anon=True`` for public S3 buckets).
 
     This is the recommended way to create a Storage from user config
     (e.g., ``log_path`` in training scripts).
     """
     if uri.startswith("file://"):
         return LocalStorage(uri[len("file://") :])
-    if uri.startswith("s3://"):
-        raise NotImplementedError(
-            "S3 storage not yet implemented. Install a cloud storage extra when available."
-        )
-    if uri.startswith("gs://"):
-        raise NotImplementedError(
-            "GCS storage not yet implemented. Install a cloud storage extra when available."
-        )
-    if uri.startswith("az://") or uri.startswith("abfs://"):
-        raise NotImplementedError(
-            "Azure Blob storage not yet implemented. Install a cloud storage extra when available."
-        )
+    if "://" in uri:
+        # Cloud URI — delegate to fsspec
+        try:
+            import fsspec
+        except ImportError:
+            raise ImportError(
+                f"fsspec is required for cloud storage URIs ({uri}). "
+                "Install it with: pip install fsspec"
+            ) from None
+        fs, path = fsspec.core.url_to_fs(uri, **kwargs)
+        return FsspecStorage(fs, path, **kwargs)
     # Default: treat as local path
     return LocalStorage(uri)
 
