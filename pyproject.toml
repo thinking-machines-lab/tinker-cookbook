@@ -60,10 +60,8 @@ vector-search = [
 ]
 cloud = [
     "fsspec>=2023.1.0",
-    # Install backend-specific packages separately:
-    # GCS: uv pip install gcsfs
-    # S3:  uv pip install s3fs
-    # Azure: uv pip install adlfs
+    "gcsfs>=2023.1.0",
+    "s3fs>=2023.1.0",
 ]
 wandb = [
     "wandb>=0.16.0",
