@@ -200,6 +200,7 @@ class _SWEBenchReward:
             TESTS_TIMEOUT,
         )
         from swebench.harness.log_parsers import MAP_REPO_TO_PARSER
+        from swebench.harness.test_spec.test_spec import make_test_spec
 
         num_turns = sum(1 for msg in history if msg.get("role") == "assistant")
 
@@ -231,6 +232,8 @@ class _SWEBenchReward:
             logger.warning(f"swe_bench: no parser for repo {repo}")
             return 0.0, {"correct": 0.0, "num_turns": float(num_turns), "no_parser": 1.0}
 
+        spec = make_test_spec(self._raw_instance)
+
         # Extract test output between markers
         start_marker = ">>>>> Start Test Output"
         end_marker = ">>>>> End Test Output"
@@ -240,7 +243,7 @@ class _SWEBenchReward:
             # Fallback: parse entire output
             test_section = test_output
 
-        eval_status = dict(parser(test_section))
+        eval_status = dict(parser(test_section, spec))
 
         # Grade using official logic
         fail_to_pass = _parse_test_ids(
