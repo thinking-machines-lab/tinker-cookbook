@@ -368,6 +368,82 @@ class TrainingRunStore:
                 return "sl"
         return None
 
+    # ── Writes ────────────────────────────────────────────────────────
+
+    def _write_json(self, data: dict[str, Any], *parts: str) -> None:
+        self._storage.write(self._path(*parts), json.dumps(data, indent=2).encode("utf-8"))
+
+    def _append_jsonl(self, record: dict[str, Any], *parts: str) -> None:
+        self._storage.append(self._path(*parts), (json.dumps(record) + "\n").encode("utf-8"))
+
+    def write_config(self, config: dict[str, Any]) -> None:
+        """Write config.json (overwrites if exists, updates cache)."""
+        self._write_json(config, "config.json")
+        self._config = config
+
+    def write_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
+        """Append one metrics record to metrics.jsonl.
+
+        The record is ``{"step": step, ...metrics}`` if step is given,
+        otherwise just the metrics dict.
+        """
+        record: dict[str, Any] = {"step": step} if step is not None else {}
+        record.update(metrics)
+        self._append_jsonl(record, "metrics.jsonl")
+
+    def write_timing_spans(self, step: int, spans: list[dict[str, Any]]) -> None:
+        """Append one timing record to timing_spans.jsonl.
+
+        Each span dict should have keys: ``name``, ``duration``,
+        ``wall_start``, ``wall_end``.
+        """
+        if not spans:
+            return
+        self._append_jsonl({"step": step, "spans": spans}, "timing_spans.jsonl")
+
+    def write_checkpoint(self, record: dict[str, Any]) -> None:
+        """Append one checkpoint record to checkpoints.jsonl.
+
+        Accepts a raw dict (e.g. from ``CheckpointRecord.to_dict()``).
+        Must contain at least a ``"name"`` key.
+        """
+        self._append_jsonl(record, "checkpoints.jsonl")
+
+    def write_rollouts(
+        self,
+        iteration: int,
+        records: list[dict[str, Any]],
+        split: str = "train",
+        label: str | None = None,
+    ) -> None:
+        """Write rollout summaries for an iteration (overwrites).
+
+        Each record is a self-contained JSON object describing one
+        trajectory. Invalidates the read cache for this iteration.
+        """
+        if split == "train":
+            filename = "train_rollout_summaries.jsonl"
+        elif label:
+            filename = f"eval_{label}_rollout_summaries.jsonl"
+        else:
+            filename = f"{split}_rollout_summaries.jsonl"
+
+        lines = [json.dumps(r) for r in records]
+        data = ("\n".join(lines) + "\n").encode("utf-8") if lines else b""
+        self._storage.write(self._path(f"iteration_{iteration:06d}", filename), data)
+
+        # Invalidate read cache
+        cache_key = f"{iteration}/{filename}"
+        self._rollout_cache.pop(cache_key, None)
+
+    def write_logtree(self, iteration: int, data: dict[str, Any], base_name: str = "train") -> None:
+        """Write a logtree JSON file for an iteration (overwrites)."""
+        self._write_json(data, f"iteration_{iteration:06d}", f"{base_name}_logtree.json")
+
+    def write_code_diff(self, diff: str) -> None:
+        """Write code.diff (overwrites)."""
+        self._storage.write(self._path("code.diff"), diff.encode("utf-8"))
+
     # ── Async variants ────────────────────────────────────────────────
 
     async def aread_config(self) -> dict[str, Any] | None:
@@ -394,3 +470,9 @@ class TrainingRunStore:
         self, iteration: int, base_name: str = "train"
     ) -> dict[str, Any] | None:
         return await asyncio.to_thread(self.read_logtree, iteration, base_name)
+
+    async def awrite_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
+        await asyncio.to_thread(self.write_metrics, metrics, step)
+
+    async def awrite_checkpoint(self, record: dict[str, Any]) -> None:
+        await asyncio.to_thread(self.write_checkpoint, record)

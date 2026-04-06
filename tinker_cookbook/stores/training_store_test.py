@@ -229,6 +229,130 @@ class TestTrainingRunStore:
         assert store.read_metrics() == []
 
 
+class TestTrainingRunStoreWrites:
+    """Tests for TrainingRunStore write methods."""
+
+    def test_write_config(self, tmp_path: Path) -> None:
+        store = TrainingRunStore(LocalStorage(tmp_path))
+        store.write_config({"model_name": "test-model", "lr": 1e-4})
+        config = store.read_config()
+        assert config is not None
+        assert config["model_name"] == "test-model"
+
+    def test_write_config_updates_cache(self, tmp_path: Path) -> None:
+        store = TrainingRunStore(LocalStorage(tmp_path))
+        store.write_config({"v": 1})
+        assert store.read_config() == {"v": 1}
+        store.write_config({"v": 2})
+        assert store.read_config() == {"v": 2}
+
+    def test_write_metrics(self, tmp_path: Path) -> None:
+        store = TrainingRunStore(LocalStorage(tmp_path))
+        store.write_metrics({"loss": 2.5, "reward": 0.1}, step=0)
+        store.write_metrics({"loss": 2.0, "reward": 0.3}, step=1)
+        metrics = store.read_metrics()
+        assert len(metrics) == 2
+        assert metrics[0]["step"] == 0
+        assert metrics[1]["loss"] == 2.0
+
+    def test_write_metrics_no_step(self, tmp_path: Path) -> None:
+        store = TrainingRunStore(LocalStorage(tmp_path))
+        store.write_metrics({"lr": 1e-4})
+        metrics = store.read_metrics()
+        assert len(metrics) == 1
+        assert "step" not in metrics[0]
+        assert metrics[0]["lr"] == 1e-4
+
+    def test_write_timing_spans(self, tmp_path: Path) -> None:
+        store = TrainingRunStore(LocalStorage(tmp_path))
+        spans = [
+            {"name": "sampling", "duration": 1.0, "wall_start": 0.0, "wall_end": 1.0},
+            {"name": "train", "duration": 0.5, "wall_start": 1.0, "wall_end": 1.5},
+        ]
+        store.write_timing_spans(step=0, spans=spans)
+        timing = store.read_timing()
+        assert len(timing) == 1
+        assert timing[0]["step"] == 0
+        assert len(timing[0]["spans"]) == 2
+
+    def test_write_timing_spans_empty(self, tmp_path: Path) -> None:
+        store = TrainingRunStore(LocalStorage(tmp_path))
+        store.write_timing_spans(step=0, spans=[])
+        # Empty spans should not write anything
+        assert store.read_timing() == []
+
+    def test_write_checkpoint(self, tmp_path: Path) -> None:
+        store = TrainingRunStore(LocalStorage(tmp_path))
+        store.write_checkpoint({"name": "ckpt_0", "batch": 10, "state_path": "tinker:///ckpt/0"})
+        store.write_checkpoint({"name": "ckpt_final", "batch": 100, "final": True})
+        ckpts = store.read_checkpoints()
+        assert len(ckpts) == 2
+        assert ckpts[0]["name"] == "ckpt_0"
+        assert ckpts[1]["final"] is True
+
+    def test_write_rollouts(self, tmp_path: Path) -> None:
+        store = TrainingRunStore(LocalStorage(tmp_path))
+        records = [
+            {"group_idx": 0, "traj_idx": 0, "total_reward": 1.0},
+            {"group_idx": 0, "traj_idx": 1, "total_reward": 0.5},
+        ]
+        store.write_rollouts(iteration=0, records=records)
+        read = store.read_rollouts(0)
+        assert len(read) == 2
+        assert read[0]["total_reward"] == 1.0
+
+    def test_write_rollouts_invalidates_cache(self, tmp_path: Path) -> None:
+        store = TrainingRunStore(LocalStorage(tmp_path))
+        store.write_rollouts(0, [{"v": 1}])
+        assert store.read_rollouts(0)[0]["v"] == 1
+        store.write_rollouts(0, [{"v": 2}])
+        assert store.read_rollouts(0)[0]["v"] == 2
+
+    def test_write_rollouts_eval(self, tmp_path: Path) -> None:
+        store = TrainingRunStore(LocalStorage(tmp_path))
+        store.write_rollouts(0, [{"score": 0.8}], split="eval", label="gsm8k")
+        read = store.read_rollouts(0, split="eval", label="gsm8k")
+        assert len(read) == 1
+
+    def test_write_logtree(self, tmp_path: Path) -> None:
+        store = TrainingRunStore(LocalStorage(tmp_path))
+        tree = {"title": "Step 0", "root": {"tag": "div", "children": []}}
+        store.write_logtree(iteration=0, data=tree)
+        read = store.read_logtree(0)
+        assert read is not None
+        assert read["title"] == "Step 0"
+
+    def test_write_code_diff(self, tmp_path: Path) -> None:
+        store = TrainingRunStore(LocalStorage(tmp_path))
+        store.write_code_diff("--- a/file.py\n+++ b/file.py\n")
+        data = store._storage.read(store._path("code.diff"))
+        assert b"file.py" in data
+
+    def test_roundtrip_write_read(self, tmp_path: Path) -> None:
+        """Full roundtrip: write all data types, then read them back."""
+        store = TrainingRunStore(LocalStorage(tmp_path))
+
+        store.write_config({"model": "llama", "lr": 1e-5})
+        store.write_metrics({"loss": 3.0}, step=0)
+        store.write_metrics({"loss": 2.5}, step=1)
+        store.write_timing_spans(
+            0, [{"name": "sample", "duration": 1.0, "wall_start": 0, "wall_end": 1}]
+        )
+        store.write_checkpoint({"name": "000001", "batch": 1})
+        store.write_rollouts(0, [{"group_idx": 0, "traj_idx": 0, "reward": 1.0}])
+        store.write_logtree(0, {"title": "iter0", "root": {}})
+        store.write_code_diff("diff content")
+
+        assert store.read_config()["model"] == "llama"
+        assert len(store.read_metrics()) == 2
+        assert len(store.read_timing()) == 1
+        assert len(store.read_checkpoints()) == 1
+        assert len(store.read_rollouts(0)) == 1
+        assert store.read_logtree(0)["title"] == "iter0"
+        assert store.detect_status()[0] in ("running", "idle")
+        assert store.infer_training_type() is None  # no loss_fn key
+
+
 class TestRunRegistry:
     def test_discover_single_run(self, run_dir: Path) -> None:
         registry = RunRegistry([LocalStorage(run_dir)])

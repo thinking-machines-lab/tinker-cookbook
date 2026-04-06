@@ -10,7 +10,10 @@ from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from tinker_cookbook.stores.training_store import TrainingRunStore
 
 import chz
 from rich.console import Console
@@ -160,36 +163,38 @@ class JsonLogger(Logger):
     :meth:`log_metrics` calls append one JSON object per line to
     ``metrics.jsonl``.
 
+    All file I/O goes through a :class:`~tinker_cookbook.stores.TrainingRunStore`,
+    enabling cloud storage backends.
+
     Args:
         log_dir (str | Path): Directory for output files (created if missing).
+        store (TrainingRunStore | None): Optional pre-configured store.
+            If ``None`` (default), a ``LocalStorage``-backed store is created.
     """
 
-    def __init__(self, log_dir: str | Path):
+    def __init__(self, log_dir: str | Path, store: "TrainingRunStore | None" = None) -> None:
+        from tinker_cookbook.stores.storage import LocalStorage
+        from tinker_cookbook.stores.training_store import TrainingRunStore as _TRS
+
         self.log_dir = Path(log_dir).expanduser()
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.metrics_file = self.log_dir / "metrics.jsonl"
+        self.store = store or _TRS(LocalStorage(self.log_dir))
         self._logged_hparams = False
 
     def log_hparams(self, config: Any) -> None:
-        """Log hyperparameters to a separate config.json file."""
+        """Log hyperparameters to config.json and code diff."""
         if not self._logged_hparams:
             config_dict = dump_config(config)
-            config_file = self.log_dir / "config.json"
-            with open(config_file, "w") as f:
-                json.dump(config_dict, f, indent=2, cls=_PermissiveJSONEncoder)
-            diff_file = code_state()
-            with open(self.log_dir / "code.diff", "w") as f:
-                f.write(diff_file)
+            # Use _PermissiveJSONEncoder as safety net for non-serializable values
+            sanitized = json.loads(json.dumps(config_dict, cls=_PermissiveJSONEncoder))
+            self.store.write_config(sanitized)
+            self.store.write_code_diff(code_state())
             self._logged_hparams = True
 
     def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
         """Append metrics to JSONL file."""
-        log_entry = {"step": step} if step is not None else {}
-        log_entry.update(metrics)
-
-        with open(self.metrics_file, "a") as f:
-            f.write(json.dumps(log_entry) + "\n")
-            logger.info("Wrote metrics to %s", self.metrics_file)
+        self.store.write_metrics(metrics, step)
+        logger.info("Wrote metrics to %s", self.store._storage.url("metrics.jsonl"))
 
 
 class PrettyPrintLogger(Logger):
@@ -493,6 +498,14 @@ class MultiplexLogger(Logger):
         for logger in self.loggers:
             if url := logger.get_logger_url():
                 return url
+        return None
+
+    @property
+    def store(self) -> "TrainingRunStore | None":
+        """Return the TrainingRunStore from the JsonLogger child, if any."""
+        for lg in self.loggers:
+            if isinstance(lg, JsonLogger):
+                return lg.store
         return None
 
 
