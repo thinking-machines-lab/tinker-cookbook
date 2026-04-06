@@ -498,6 +498,15 @@ def save_checkpoint(
 
     Returns:
         Dict mapping ``"state_path"`` and/or ``"sampler_path"`` to tinker:// paths.
+
+    Example::
+
+        save_checkpoint(
+            training_client=training_client,
+            name="step-100",
+            log_path="./logs",
+            loop_state={"epoch": 0, "batch": 100},
+        )
     """
     return asyncio.run(
         save_checkpoint_async(
