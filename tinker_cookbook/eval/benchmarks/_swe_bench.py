@@ -208,9 +208,13 @@ class _SWEBenchReward:
             # Write and run the official eval script
             await self._sandbox.write_file("/workspace/eval.sh", self._eval_script)
             result = await self._sandbox.run_command(
-                "bash /workspace/eval.sh", timeout=300, max_output_bytes=512_000
+                "bash /workspace/eval.sh 2>&1", timeout=300, max_output_bytes=512_000
             )
-            test_output = result.stdout + "\n" + result.stderr
+            test_output = result.stdout
+            logger.debug(
+                f"swe_bench eval {self._instance_id}: exit={result.exit_code} "
+                f"stdout={len(result.stdout)}B stderr={len(result.stderr)}B"
+            )
         except Exception as e:
             logger.warning(f"swe_bench eval error for {self._instance_id}: {e}")
             return 0.0, {"correct": 0.0, "num_turns": float(num_turns), "eval_error": 1.0}
@@ -244,6 +248,13 @@ class _SWEBenchReward:
             test_section = test_output
 
         eval_status = dict(parser(test_section, spec))
+        logger.info(
+            f"swe_bench eval {self._instance_id}: "
+            f"markers={'yes' if start_marker in test_output else 'no'}, "
+            f"parsed={len(eval_status)} tests, "
+            f"section_len={len(test_section)}, "
+            f"section_preview={test_section[:300]!r}"
+        )
 
         # Grade using official logic
         fail_to_pass = _parse_test_ids(
