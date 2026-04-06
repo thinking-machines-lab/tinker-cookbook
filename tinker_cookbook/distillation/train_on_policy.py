@@ -293,7 +293,7 @@ async def do_sync_training(
 
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        training_client, start_batch, config.log_path, config.save_every
+        training_client, start_batch, config.log_path, config.save_every, store=ml_logger.store
     )
 
     log_path = Path(config.log_path)
