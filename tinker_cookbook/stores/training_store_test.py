@@ -310,8 +310,8 @@ class TestTrainingRunStoreWrites:
 
     def test_write_rollouts_eval(self, tmp_path: Path) -> None:
         store = TrainingRunStore(LocalStorage(tmp_path))
-        store.write_rollouts(0, [{"score": 0.8}], split="eval", label="gsm8k")
-        read = store.read_rollouts(0, split="eval", label="gsm8k")
+        store.write_rollouts(0, [{"score": 0.8}], base_name="eval_gsm8k")
+        read = store.read_rollouts(0, base_name="eval_gsm8k")
         assert len(read) == 1
 
     def test_write_logtree(self, tmp_path: Path) -> None:

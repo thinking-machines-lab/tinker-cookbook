@@ -231,7 +231,7 @@ class EvalStore:
                     logger.warning("Skipping run %s: %s", name, e)
         return runs
 
-    def load_run(self, run_id: str) -> RunMetadata:
+    def read_run(self, run_id: str) -> RunMetadata:
         """Load metadata for a specific run. Raises FileNotFoundError if missing."""
         meta = self._read_json("runs", run_id, "metadata.json")
         if meta is None:
@@ -311,7 +311,7 @@ class EvalStore:
             d["pass_at_k"] = {str(k): v for k, v in d["pass_at_k"].items()}
         self._write_json(d, "runs", run_id, result.name, "result.json")
 
-    def append_trajectory(self, run_id: str, benchmark: str, traj: StoredTrajectory) -> None:
+    def write_trajectory(self, run_id: str, benchmark: str, traj: StoredTrajectory) -> None:
         """Append one trajectory to the JSONL file."""
         self._append_jsonl(dict(traj.to_dict()), "runs", run_id, benchmark, "trajectories.jsonl")
 
@@ -369,8 +369,8 @@ class EvalStore:
             elif a.reward <= 0 and b.reward > 0:
                 improvements.append(ex_id)
 
-        meta_a = self.load_run(run_a_id)
-        meta_b = self.load_run(run_b_id)
+        meta_a = self.read_run(run_a_id)
+        meta_b = self.read_run(run_b_id)
 
         return RunComparison(
             benchmark=benchmark,

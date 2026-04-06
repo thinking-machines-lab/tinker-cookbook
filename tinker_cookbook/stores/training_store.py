@@ -152,18 +152,19 @@ class TrainingRunStore:
     # ── Rollouts (typed, cached) ──────────────────────────────────────
 
     @staticmethod
-    def _rollout_filename(split: str, label: str | None) -> str:
-        if split == "train":
-            return "train_rollout_summaries.jsonl"
-        if label:
-            return f"eval_{label}_rollout_summaries.jsonl"
-        return f"{split}_rollout_summaries.jsonl"
+    def _rollout_filename(base_name: str) -> str:
+        return f"{base_name}_rollout_summaries.jsonl"
 
-    def read_rollouts(
-        self, iteration: int, split: str = "train", label: str | None = None
-    ) -> list[dict[str, Any]]:
-        """Read rollout summaries for an iteration as raw dicts."""
-        filename = self._rollout_filename(split, label)
+    def read_rollouts(self, iteration: int, base_name: str = "train") -> list[dict[str, Any]]:
+        """Read rollout summaries for an iteration as raw dicts.
+
+        Args:
+            iteration: Training iteration number.
+            base_name: Prefix for the JSONL file (e.g. ``"train"``,
+                ``"eval_gsm8k"``). Matches the naming used by
+                ``rollout_summaries_jsonl_path()`` in RL training.
+        """
+        filename = self._rollout_filename(base_name)
         cache_key = f"{iteration}/{filename}"
         if cache_key in self._rollout_cache:
             return self._rollout_cache[cache_key]
@@ -177,10 +178,9 @@ class TrainingRunStore:
         iteration: int,
         group_idx: int,
         traj_idx: int,
-        split: str = "train",
-        label: str | None = None,
+        base_name: str = "train",
     ) -> dict[str, Any] | None:
-        for r in self.read_rollouts(iteration, split, label):
+        for r in self.read_rollouts(iteration, base_name):
             if r.get("group_idx") == group_idx and r.get("traj_idx") == traj_idx:
                 return r
         return None
@@ -191,8 +191,8 @@ class TrainingRunStore:
         """Read checkpoints.jsonl."""
         return self._read_jsonl("checkpoints.jsonl")
 
-    def read_checkpoints_typed(self) -> list[Any]:
-        """Read checkpoints as CheckpointRecord objects."""
+    def read_checkpoint_records(self) -> list[Any]:
+        """Read checkpoints.jsonl as ``CheckpointRecord`` objects."""
         from tinker_cookbook.checkpoint_utils import CheckpointRecord
 
         return self._read_jsonl_typed(CheckpointRecord.from_dict, "checkpoints.jsonl")
@@ -421,15 +421,18 @@ class TrainingRunStore:
         self,
         iteration: int,
         records: list[dict[str, Any]],
-        split: str = "train",
-        label: str | None = None,
+        base_name: str = "train",
     ) -> None:
         """Write rollout summaries for an iteration (overwrites).
 
-        Each record is a self-contained JSON object describing one
-        trajectory. Invalidates the read cache for this iteration.
+        Args:
+            iteration: Training iteration number.
+            records: List of trajectory dicts to write.
+            base_name: Prefix for the JSONL file (e.g. ``"train"``,
+                ``"eval_gsm8k"``). Must match the ``base_name`` used
+                in ``read_rollouts()``.
         """
-        filename = self._rollout_filename(split, label)
+        filename = self._rollout_filename(base_name)
         lines = [json.dumps(r) for r in records]
         data = ("\n".join(lines) + "\n").encode("utf-8") if lines else b""
         self._storage.write(self._path(self._iter_dir(iteration), filename), data)
@@ -458,9 +461,9 @@ class TrainingRunStore:
         return await asyncio.to_thread(self.read_new_metrics)
 
     async def aread_rollouts(
-        self, iteration: int, split: str = "train", label: str | None = None
+        self, iteration: int, base_name: str = "train"
     ) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self.read_rollouts, iteration, split, label)
+        return await asyncio.to_thread(self.read_rollouts, iteration, base_name)
 
     async def aread_checkpoints(self) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self.read_checkpoints)

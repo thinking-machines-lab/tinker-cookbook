@@ -48,18 +48,18 @@ class TestEvalStoreStorageConstructor:
         assert "eval/runs" in rd
         assert run_id in rd
 
-    def test_load_run(self, tmp_path: Path) -> None:
+    def test_read_run(self, tmp_path: Path) -> None:
         store = EvalStore(LocalStorage(tmp_path), "eval")
         run_id = store.create_run("model-a", ["bench1", "bench2"], checkpoint_name="step_100")
-        meta = store.load_run(run_id)
+        meta = store.read_run(run_id)
         assert meta.model_name == "model-a"
         assert meta.checkpoint_name == "step_100"
         assert meta.benchmarks == ["bench1", "bench2"]
 
-    def test_load_run_missing(self, tmp_path: Path) -> None:
+    def test_read_run_missing(self, tmp_path: Path) -> None:
         store = EvalStore(LocalStorage(tmp_path), "eval")
         with pytest.raises(FileNotFoundError):
-            store.load_run("nonexistent")
+            store.read_run("nonexistent")
 
 
 class TestDeleteRun:
