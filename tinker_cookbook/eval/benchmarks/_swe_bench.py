@@ -248,12 +248,9 @@ class _SWEBenchReward:
             test_section = test_output
 
         eval_status = dict(parser(test_section, spec))
-        logger.info(
+        logger.debug(
             f"swe_bench eval {self._instance_id}: "
-            f"markers={'yes' if start_marker in test_output else 'no'}, "
-            f"parsed={len(eval_status)} tests, "
-            f"section_len={len(test_section)}, "
-            f"section_preview={test_section[:300]!r}"
+            f"parsed={len(eval_status)} tests from {len(test_section)}B output"
         )
 
         # Grade using official logic
