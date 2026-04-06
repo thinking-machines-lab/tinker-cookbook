@@ -2,15 +2,21 @@
 
 Dataset: ``princeton-nlp/SWE-bench_Verified`` on HuggingFace (500 problems).
 Metric: Fraction of problems where all ``fail_to_pass`` tests pass after the
-model's edits.
-Pattern: Multi-turn ``MessageEnv`` + sandbox Tool + pytest grading.
+model's edits (using the official SWE-bench eval harness).
+Pattern: Multi-turn ``MessageEnv`` + sandbox Tool + official eval grading.
 
 Uses the cookbook's ``MessageEnv`` / ``EnvFromMessageEnv`` pattern so that
 the renderer handles thinking-token stripping and prompt construction
 automatically. The model interacts with the repository via a ``bash`` tool.
 
+Grading uses the official ``swebench`` eval scripts which include:
+- Per-repo test runners (Django's ``runtests.py``, sympy's ``bin/test``, etc.)
+- Re-install after model edits (for C extensions, setup.py changes)
+- Test patch application at grading time (not during agent interaction)
+- Per-repo log parsers for test result extraction
+
 Requires a sandbox backend (Modal) for command execution. The sandbox image
-must include git, python3, and pip.
+has miniconda pre-installed to match the official SWE-bench base environment.
 """
 
 from __future__ import annotations
@@ -161,49 +167,104 @@ class _SWEBashTool:
 
 
 # ---------------------------------------------------------------------------
-# Reward function — runs fail_to_pass tests
+# Reward function — uses official SWE-bench eval script and grading
 # ---------------------------------------------------------------------------
 
 
 class _SWEBenchReward:
-    """Reward function that runs fail_to_pass tests via pytest."""
+    """Reward function using the official SWE-bench eval harness.
+
+    Runs the per-instance eval script (which includes the correct test runner,
+    re-install step, and test patch application) and parses results with the
+    official log parsers.
+    """
 
     def __init__(
         self,
         sandbox: SandboxInterface,
-        fail_to_pass: list[str],
+        eval_script: str,
+        raw_instance: dict,
         instance_id: str,
     ) -> None:
         self._sandbox = sandbox
-        self._fail_to_pass = fail_to_pass
+        self._eval_script = eval_script
+        self._raw_instance = raw_instance
         self._instance_id = instance_id
 
     async def __call__(self, history: list[Message]) -> tuple[float, dict[str, float]]:
-        """Grade by running fail_to_pass tests. All must pass for reward=1."""
-        if not self._fail_to_pass:
-            return 0.0, {"no_tests": 1.0}
-
-        # Run all tests in a single pytest invocation for efficiency
-        test_args = " ".join(shlex.quote(t) for t in self._fail_to_pass)
-        try:
-            result = await self._sandbox.run_command(
-                "source /opt/miniconda3/bin/activate && conda activate testbed && "
-                f"cd /workspace/repo && python -m pytest {test_args} --tb=short 2>&1",
-                timeout=120,
-            )
-            all_passed = result.exit_code == 0
-        except Exception as e:
-            logger.warning(f"swe_bench test error: {e}")
-            all_passed = False
+        """Grade by running the official eval script and parsing results."""
+        from swebench.harness.constants import (
+            APPLY_PATCH_FAIL,
+            RESET_FAILED,
+            TESTS_ERROR,
+            TESTS_TIMEOUT,
+        )
+        from swebench.harness.log_parsers import MAP_REPO_TO_PARSER
 
         num_turns = sum(1 for msg in history if msg.get("role") == "assistant")
 
+        try:
+            # Write and run the official eval script
+            await self._sandbox.write_file("/workspace/eval.sh", self._eval_script)
+            result = await self._sandbox.run_command(
+                "bash /workspace/eval.sh", timeout=300, max_output_bytes=512_000
+            )
+            test_output = result.stdout + "\n" + result.stderr
+        except Exception as e:
+            logger.warning(f"swe_bench eval error for {self._instance_id}: {e}")
+            return 0.0, {"correct": 0.0, "num_turns": float(num_turns), "eval_error": 1.0}
+
+        # Check for error markers
+        for marker in [APPLY_PATCH_FAIL, RESET_FAILED, TESTS_ERROR, TESTS_TIMEOUT]:
+            if marker in test_output:
+                logger.debug(f"swe_bench {self._instance_id}: eval marker {marker}")
+                return 0.0, {
+                    "correct": 0.0,
+                    "num_turns": float(num_turns),
+                    "eval_marker": 1.0,
+                }
+
+        # Parse test results with the official per-repo log parser
+        repo = self._raw_instance.get("repo", "")
+        parser = MAP_REPO_TO_PARSER.get(repo)
+        if parser is None:
+            logger.warning(f"swe_bench: no parser for repo {repo}")
+            return 0.0, {"correct": 0.0, "num_turns": float(num_turns), "no_parser": 1.0}
+
+        # Extract test output between markers
+        start_marker = ">>>>> Start Test Output"
+        end_marker = ">>>>> End Test Output"
+        if start_marker in test_output and end_marker in test_output:
+            test_section = test_output.split(start_marker)[1].split(end_marker)[0]
+        else:
+            # Fallback: parse entire output
+            test_section = test_output
+
+        eval_status = dict(parser(test_section))
+
+        # Grade using official logic
+        fail_to_pass = _parse_test_ids(
+            self._raw_instance.get("fail_to_pass", self._raw_instance.get("FAIL_TO_PASS", "[]"))
+        )
+        pass_to_pass = _parse_test_ids(
+            self._raw_instance.get("pass_to_pass", self._raw_instance.get("PASS_TO_PASS", "[]"))
+        )
+
+        # Check fail_to_pass: all must now pass
+        f2p_passed = all(eval_status.get(t) in ("PASSED", "XFAIL") for t in fail_to_pass)
+        # Check pass_to_pass: all must still pass
+        p2p_passed = all(eval_status.get(t) in ("PASSED", "XFAIL") for t in pass_to_pass)
+        resolved = f2p_passed and p2p_passed and len(fail_to_pass) > 0
+
         return (
-            1.0 if all_passed else 0.0,
+            1.0 if resolved else 0.0,
             {
-                "correct": float(all_passed),
+                "correct": float(resolved),
                 "num_turns": float(num_turns),
-                "num_tests_total": float(len(self._fail_to_pass)),
+                "f2p_total": float(len(fail_to_pass)),
+                "f2p_passed": float(sum(1 for t in fail_to_pass if eval_status.get(t) in ("PASSED", "XFAIL"))),
+                "p2p_total": float(len(pass_to_pass)),
+                "p2p_passed": float(sum(1 for t in pass_to_pass if eval_status.get(t) in ("PASSED", "XFAIL"))),
             },
         )
 
@@ -251,13 +312,16 @@ class _SWEBenchEnvFactory(SandboxMixin, Env):
 
         self._inner: EnvFromMessageEnv | None = None
 
-    def _make_setup_commands(self) -> list[str]:
-        """Generate setup commands using official SWE-bench TestSpec.
+    def _make_setup_and_eval(self) -> tuple[list[str], str]:
+        """Generate setup commands and eval script using official SWE-bench TestSpec.
 
         Uses ``swebench.harness.test_spec.make_test_spec`` to get per-instance
-        setup scripts with exact dependency versions.  The sandbox image has
-        miniconda pre-installed, so commands are used verbatim — only
-        ``/testbed`` is replaced with ``/workspace/repo``.
+        setup scripts and eval scripts with exact dependency versions and the
+        correct per-repo test runner.
+
+        Returns:
+            Tuple of (setup_commands, eval_script). The eval script includes
+            re-install, test patch application, and the correct test runner.
         """
         from swebench.harness.test_spec.test_spec import make_test_spec
 
@@ -274,7 +338,11 @@ class _SWEBenchEnvFactory(SandboxMixin, Env):
         for cmd in spec.repo_script_list:
             cmds.append(cmd.replace("/testbed", "/workspace/repo"))
 
-        return cmds
+        # The eval script handles: re-install, test patch application,
+        # running the correct per-repo test runner, and result markers.
+        eval_script = spec.eval_script.replace("/testbed", "/workspace/repo")
+
+        return cmds, eval_script
 
     def _make_basic_setup_commands(self) -> list[str]:
         """Fallback setup without swebench package."""
@@ -292,9 +360,12 @@ class _SWEBenchEnvFactory(SandboxMixin, Env):
         self.sandbox = await self.sandbox_factory()
         assert self.sandbox is not None
 
-        # Use official SWE-bench test spec for environment setup when available
+        # Use official SWE-bench test spec for environment setup when available.
+        # The eval_script is stored for grading — it handles re-install, test
+        # patch application, and running the correct per-repo test runner.
+        eval_script: str | None = None
         try:
-            setup_cmds = self._make_setup_commands()
+            setup_cmds, eval_script = self._make_setup_and_eval()
         except Exception as e:
             logger.debug(f"swe_bench: TestSpec unavailable ({e}), using basic setup")
             setup_cmds = self._make_basic_setup_commands()
@@ -316,25 +387,15 @@ class _SWEBenchEnvFactory(SandboxMixin, Env):
             await self.cleanup()
             raise
 
-        # Apply test patch (run inside conda env)
-        if self.test_patch.strip():
-            try:
-                await self.sandbox.write_file("/workspace/test_patch.diff", self.test_patch)
-                result = await self.sandbox.run_command(
-                    "cd /workspace/repo && git apply /workspace/test_patch.diff",
-                    timeout=60,
-                )
-                if result.exit_code != 0:
-                    await self.sandbox.run_command(
-                        "cd /workspace/repo && git apply --3way /workspace/test_patch.diff",
-                        timeout=60,
-                    )
-            except Exception as e:
-                logger.warning(f"swe_bench: failed to apply test patch: {e}")
+        # NOTE: Test patch is NOT applied here. The official eval script
+        # applies it at grading time, after the model is done editing.
+        # This prevents the model from accidentally modifying test files.
 
         # Create tool and reward
         bash_tool = _SWEBashTool(self.sandbox)
-        reward_fn = _SWEBenchReward(self.sandbox, self.fail_to_pass, self.instance_id)
+        reward_fn = _SWEBenchReward(
+            self.sandbox, eval_script or "", self.raw_instance or {}, self.instance_id
+        )
 
         # Build initial messages
         system_content = self.system_prompt or _SYSTEM_PROMPT
