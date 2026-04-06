@@ -45,7 +45,6 @@ from tinker_cookbook.rl.metrics import (
 from tinker_cookbook.rl.rollout_logging import (
     RolloutSummaryExportConfig,
     RolloutSummaryGroup,
-    rollout_summaries_jsonl_path,
 )
 from tinker_cookbook.rl.rollout_strategy import (
     RolloutStrategy,
@@ -562,9 +561,9 @@ async def run_single_evaluation(
         if isinstance(evaluator, RLTestSetEvaluator):
             rollout_summary_export = (
                 RolloutSummaryExportConfig(
-                    path=rollout_summaries_jsonl_path(iter_dir, eval_base_name),
                     split=f"eval/{evaluator_label}",
                     iteration=i_batch,
+                    base_name=eval_base_name,
                     sampling_client_step=i_batch,
                 )
                 if config.rollout_json_export and iter_dir is not None

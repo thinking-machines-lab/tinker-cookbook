@@ -2,7 +2,10 @@ import asyncio
 import itertools
 import logging
 from collections import defaultdict
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tinker_cookbook.stores.training_store import TrainingRunStore
 
 import numpy as np
 import tinker
@@ -184,7 +187,7 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         policy: TokenCompleter,
         *,
         rollout_summary_export: RolloutSummaryExportConfig | None = None,
-        store: Any = None,
+        store: "TrainingRunStore | None" = None,
     ) -> dict[str, float]:
         """Run evaluation rollouts using a :class:`TokenCompleter` policy.
 
@@ -234,7 +237,7 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         sampling_client: tinker.SamplingClient,
         *,
         rollout_summary_export: RolloutSummaryExportConfig | None = None,
-        store: Any = None,
+        store: "TrainingRunStore | None" = None,
     ) -> dict[str, float]:
         """Evaluate the current policy checkpoint via a sampling client.
 
@@ -270,7 +273,7 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         sampling_client: tinker.SamplingClient,
         *,
         rollout_summary_export: RolloutSummaryExportConfig | None = None,
-        store: Any = None,
+        store: "TrainingRunStore | None" = None,
     ) -> dict[str, float]:
         """Run evaluation with rollouts dispatched via the rollout executor."""
         results = await asyncio.gather(
@@ -294,7 +297,7 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         results: list[TrajectoryGroup | None],
         rollout_summary_export: RolloutSummaryExportConfig | None,
         *,
-        store: Any = None,
+        store: "TrainingRunStore | None" = None,
     ) -> dict[str, float]:
         """Shared logic for collecting metrics from eval rollout results."""
         error_counter = RolloutErrorCounter()
@@ -320,9 +323,11 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
                 taglist_P=taglist_P,
                 sampling_client_steps_P=sampling_client_steps_P,
             )
-            # Derive base_name from split (e.g. "eval/gsm8k" → "eval_gsm8k")
-            base_name = rollout_summary_export.split.replace("/", "_")
-            store.write_rollouts(rollout_summary_export.iteration, records, base_name=base_name)
+            store.write_rollouts(
+                rollout_summary_export.iteration,
+                records,
+                base_name=rollout_summary_export.base_name,
+            )
         metrics = compute_trajectory_metrics(trajectory_groups_P, taglist_P)
         metrics.update(error_counter.get_metrics())
         metrics = {f"{self.name}/{k}": v for k, v in metrics.items()}

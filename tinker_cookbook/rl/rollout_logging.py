@@ -15,23 +15,20 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class RolloutSummaryExportConfig:
-    """Location and metadata for one rollout-summary JSONL export.
-
-    Groups the filesystem path, dataset split name, training iteration, and
-    optional sampling-client step into a single configuration object that is
-    passed to rollout-summary writers.
+    """Metadata for one rollout-summary JSONL export.
 
     Attributes:
-        path (Path): Destination path for the JSONL file.
-        split (str): Dataset split name (e.g. ``"train"``, ``"test"``).
-        iteration (int): Training iteration / batch index.
-        sampling_client_step (int | None): Step counter of the sampling client
+        split: Dataset split name (e.g. ``"train"``, ``"eval/gsm8k"``).
+        iteration: Training iteration / batch index.
+        base_name: Prefix for the JSONL file (e.g. ``"train"``, ``"eval_gsm8k"``).
+            Used by ``TrainingRunStore.write_rollouts()``.
+        sampling_client_step: Step counter of the sampling client
             used to generate the rollouts, or ``None`` if not applicable.
     """
 
-    path: Path
     split: str
     iteration: int
+    base_name: str
     sampling_client_step: int | None = None
 
 

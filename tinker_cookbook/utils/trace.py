@@ -17,7 +17,10 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from io import TextIOWrapper
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from tinker_cookbook.stores.training_store import TrainingRunStore
 
 logger = logging.getLogger(__name__)
 
@@ -293,12 +296,12 @@ class IterationWindow:
         with open(path, "a") as f:
             f.write(line + "\n")
 
-    def save_timing(self, step: int, *, store: Any) -> None:
+    def save_timing(self, step: int, *, store: "TrainingRunStore | None") -> None:
         """Write timing spans to ``timing_spans.jsonl`` via the store.
 
         Args:
             step: Training step number.
-            store: A ``TrainingRunStore`` with ``write_timing_spans()``, or ``None`` to skip.
+            store: A ``TrainingRunStore``, or ``None`` to skip.
         """
         if store is not None:
             store.write_timing_spans(step, self.get_span_dicts())
