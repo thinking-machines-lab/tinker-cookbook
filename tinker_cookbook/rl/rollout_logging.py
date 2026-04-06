@@ -188,6 +188,26 @@ def rollout_summaries_jsonl_path(iteration_dir: Path, base_name: str) -> Path:
     return iteration_dir / f"{base_name}_rollout_summaries.jsonl"
 
 
+def serialize_rollout_summaries_from_groups(
+    *,
+    split: str,
+    iteration: int,
+    groups_P: Sequence[RolloutSummaryGroup],
+) -> list[dict[str, Any]]:
+    """Serialize pre-grouped rollout summaries into JSON-safe dicts.
+
+    Convenience wrapper around :func:`serialize_rollout_summaries` that accepts
+    :class:`RolloutSummaryGroup` objects.
+    """
+    return serialize_rollout_summaries(
+        split=split,
+        iteration=iteration,
+        trajectory_groups_P=[group.trajectory_group for group in groups_P],
+        taglist_P=[group.tags for group in groups_P],
+        sampling_client_steps_P=[group.sampling_client_step for group in groups_P],
+    )
+
+
 def write_rollout_summaries_jsonl_from_groups(
     path: Path,
     *,

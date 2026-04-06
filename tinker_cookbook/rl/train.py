@@ -153,20 +153,16 @@ def _maybe_export_rollout_summary_jsonl(
     Uses ``store.write_rollouts()`` when a store is provided, falling back to
     direct file I/O otherwise.
     """
-    if not config.rollout_json_export or output_dir is None:
+    if not config.rollout_json_export:
         return
     if store is not None:
-        from tinker_cookbook.rl.rollout_logging import serialize_rollout_summaries
+        from tinker_cookbook.rl.rollout_logging import serialize_rollout_summaries_from_groups
 
-        records = serialize_rollout_summaries(
-            split=split,
-            iteration=iteration,
-            trajectory_groups_P=[g.trajectory_group for g in groups_P],
-            taglist_P=[g.tags for g in groups_P],
-            sampling_client_steps_P=[g.sampling_client_step for g in groups_P],
+        records = serialize_rollout_summaries_from_groups(
+            split=split, iteration=iteration, groups_P=groups_P
         )
         store.write_rollouts(iteration, records, base_name=base_name)
-    else:
+    elif output_dir is not None:
         write_rollout_summaries_jsonl_from_groups(
             rollout_summaries_jsonl_path(output_dir, base_name),
             split=split,
