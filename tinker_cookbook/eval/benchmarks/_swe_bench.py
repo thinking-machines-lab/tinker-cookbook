@@ -54,6 +54,93 @@ logger = logging.getLogger(__name__)
 MAX_TURNS = 200
 """Maximum number of agent turns before forced termination."""
 
+# apply_patch helper — GPT-OSS models use this instead of sed/python for edits.
+# Reads a patch from stdin in the *** Begin Patch / *** Update File format.
+_APPLY_PATCH_SCRIPT = r'''#!/usr/bin/env python3
+"""apply_patch: apply a GPT-style patch from stdin."""
+import sys, re
+
+def apply_patch(patch_text, workdir="/workspace/repo"):
+    import os
+    current_file = None
+    old_lines = []
+    new_lines = []
+    results = []
+
+    def flush_hunk():
+        nonlocal old_lines, new_lines, current_file
+        if current_file is None or (not old_lines and not new_lines):
+            old_lines, new_lines = [], []
+            return
+        fpath = os.path.join(workdir, current_file)
+        if not os.path.exists(fpath):
+            # New file
+            if new_lines:
+                os.makedirs(os.path.dirname(fpath), exist_ok=True)
+                with open(fpath, "w") as f:
+                    f.write("\n".join(new_lines) + "\n")
+                results.append(f"Created {current_file}")
+            old_lines, new_lines = [], []
+            return
+        with open(fpath) as f:
+            content = f.read()
+        # Build the old text to find and the new text to replace with
+        old_text = "\n".join(old_lines)
+        new_text = "\n".join(new_lines)
+        if old_text in content:
+            content = content.replace(old_text, new_text, 1)
+            with open(fpath, "w") as f:
+                f.write(content)
+            results.append(f"Updated {current_file}")
+        else:
+            results.append(f"WARNING: Could not find match in {current_file}")
+        old_lines, new_lines = [], []
+
+    for line in patch_text.split("\n"):
+        if line.startswith("*** Begin Patch"):
+            continue
+        if line.startswith("*** End Patch"):
+            flush_hunk()
+            continue
+        if line.startswith("*** Update File:"):
+            flush_hunk()
+            current_file = line.split("*** Update File:")[-1].strip()
+            continue
+        if line.startswith("*** Add File:"):
+            flush_hunk()
+            current_file = line.split("*** Add File:")[-1].strip()
+            continue
+        if line.startswith("*** Delete File:"):
+            flush_hunk()
+            fpath = os.path.join(workdir, line.split("*** Delete File:")[-1].strip())
+            if os.path.exists(fpath):
+                os.remove(fpath)
+                results.append(f"Deleted {fpath}")
+            current_file = None
+            continue
+        if line.startswith("@@"):
+            flush_hunk()
+            continue
+        if line.startswith("-"):
+            old_lines.append(line[1:])
+        elif line.startswith("+"):
+            new_lines.append(line[1:])
+        else:
+            # Context line
+            old_lines.append(line.lstrip(" "))
+            new_lines.append(line.lstrip(" "))
+
+    flush_hunk()
+    return results
+
+patch_text = sys.stdin.read()
+results = apply_patch(patch_text)
+for r in results:
+    print(r)
+if any("WARNING" in r for r in results):
+    sys.exit(1)
+'''
+
 _SYSTEM_PROMPT = """\
 You are an autonomous software engineer. Your task is to fix a bug in a code \
 repository by editing source files.
@@ -397,6 +484,12 @@ class _SWEBenchEnvFactory(SandboxMixin, Env):
         except Exception:
             await self.cleanup()
             raise
+
+        # Install apply_patch helper script. GPT-OSS models are trained to
+        # use `apply_patch` for file editing — without it, 58% of edit attempts
+        # silently fail because the command doesn't exist in bash.
+        await self.sandbox.write_file("/usr/local/bin/apply_patch", _APPLY_PATCH_SCRIPT)
+        await self.sandbox.run_command("chmod +x /usr/local/bin/apply_patch")
 
         # NOTE: Test patch is NOT applied here. The official eval script
         # applies it at grading time, after the model is done editing.
