@@ -312,6 +312,56 @@ Official scores from the model card (which may use different settings).
 | SWE-bench Verified | 0% (500 ex) | 69.2 | 65K context too small — all ctx overflow |
 | TAU2-Bench | 30.0% (50 ex) | 81.2 | Same-model user sim limits score; official uses GPT-4.1 |
 
+## Verified scores
+
+Reference scores using ``BenchmarkConfig.for_model()`` with recommended settings.
+
+### GPT-OSS-120B (128K context)
+
+Model: ``openai/gpt-oss-120b:peft:131072``. Renderer: ``gpt_oss_high_reasoning``.
+Official scores from the [GPT-OSS technical report](https://arxiv.org/abs/2508.10925).
+
+| Benchmark | Raw | Completed | Official | Match? |
+|-----------|-----|-----------|----------|--------|
+| GPQA Diamond | **80.8%** | **80.8%** | 80.1% | **Match** |
+| MMLU-Pro | **80.6%** | **80.6%** | 90.0% (MMLU, different) | Different benchmark |
+| GSM8K | **95.9%** | **95.9%** | — | — |
+| MATH-500 | **95.4%** | **95.4%** | — | — |
+| IFEval | **91.7%** | **91.7%** | — | — |
+| AIME 2025 | **76.7%** | **76.7%** | 92.5% (with tools) | No tools in our eval |
+| Terminal Bench | **28.6%** | **28.6%** | — | Not in paper |
+| SWE-bench Verified | 2.2% | 2.3% | 62.4% | Agent scaffold gap (see below) |
+
+Zero truncation across all benchmarks — 128K context is sufficient for all prompts.
+Raw and Completed scores are identical (no ``max_tokens`` truncation issues).
+
+**SWE-bench gap:** The official eval uses a specialized agent scaffold with file editing tools.
+Our harness provides only a bash tool — the model reads code but rarely generates ``sed``
+edits. Improving the tool scaffold (e.g., adding a ``str_replace_editor``) is expected to
+close most of this gap. See [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent)
+for a reference bash-only implementation that achieves 74%+ with frontier models.
+
+### Qwen3.5-35B-A3B (64K context)
+
+Model: ``Qwen/Qwen3.5-35B-A3B``. Renderer: ``qwen3_5``.
+Official scores from the [Qwen3.5-35B-A3B model card](https://huggingface.co/Qwen/Qwen3.5-35B-A3B).
+
+| Benchmark | Raw | Completed | Official | Match? |
+|-----------|-----|-----------|----------|--------|
+| MMLU-Redux | 89.2% | **93.8%** | 93.3 | **Match** |
+| GPQA Diamond | 72.2% | **94.1%** | 84.2 | Above |
+| IFEval | 83.0% | **93.0%** | 91.9 | **Match** |
+| C-Eval | **89.2%** | 90.1% | 90.2 | **Match** |
+| SuperGPQA | ~59% | ~67% | 63.4 | **Match** |
+| MATH-500 | 88.8% | **97.6%** | — | — |
+| GSM8K | 81.7% | 88.0% | — | — |
+| MBPP | 84.4% | 87.1% | — | — |
+| IFBench | **67.3%** | — | 70.2 | **Match** |
+| AIME 2026 pass@4 | — | **96.7%** | 93.33 | **Above** |
+
+"Completed" excludes truncated examples (model hit ``max_tokens`` before answering).
+For thinking models, ``score_completed`` is the right comparison against published scores.
+
 ## Testing
 
 ```bash

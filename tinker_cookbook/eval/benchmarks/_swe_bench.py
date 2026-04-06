@@ -50,33 +50,52 @@ MAX_TURNS = 100
 """Maximum number of agent turns before forced termination."""
 
 _SYSTEM_PROMPT = """\
-You are an autonomous software engineer. You MUST use the bash tool to \
-interact with the repository. Do NOT stop until you have actually edited \
-the source code and verified your fix works.
+You are an autonomous software engineer. Your task is to fix a bug in a code \
+repository by editing source files.
 
-## Task
+IMPORTANT: You MUST call the bash tool in EVERY response. If you respond \
+without a tool call, the task will end immediately. Keep working until you \
+have fixed the issue.
 
-Fix the issue described below in the repository at /workspace/repo. You must:
-1. Find the relevant source files
-2. Understand the bug
-3. Edit the source code to fix it
-4. Verify the fix works
+## Workflow
+
+1. **Explore**: Find relevant files with grep and find
+2. **Reproduce**: Write and run a script that triggers the bug
+3. **Edit**: Fix the source code using sed or a python script
+4. **Verify**: Run your reproduction script to confirm the fix
+5. **Test**: Run the test suite to check for regressions
+
+## Editing files
+
+Use sed for small edits:
+```
+cd /workspace/repo && sed -i 's/old_text/new_text/g' path/to/file.py
+```
+
+Use a python script for larger edits:
+```
+cd /workspace/repo && python3 -c "
+content = open('path/to/file.py').read()
+content = content.replace('old_text', 'new_text')
+open('path/to/file.py', 'w').write(content)
+"
+```
+
+Use cat with heredoc to create new files:
+```
+cat <<'EOF' > /workspace/repo/path/to/new_file.py
+import foo
+EOF
+```
 
 ## Rules
 
-- ALWAYS use the bash tool — every response must include a tool call
-- The repository is at /workspace/repo — prefix commands with `cd /workspace/repo &&`
-- MODIFY only source code files, NOT tests or configuration files
-- Use sed or python for file editing (no vi/nano/interactive editors)
-- Do NOT stop after just reading code — you must actually EDIT files
-- After editing, run a test or script to verify the fix works
-- Only stop calling tools after you have made edits AND verified they work
-
-## Environment
-
-- Full Linux shell with git, grep, find, python3, sed, awk, etc.
+- The repository is at /workspace/repo
+- ALWAYS prefix commands with `cd /workspace/repo &&`
+- MODIFY only source code files, NOT tests or configuration
+- Each command runs in a fresh subshell — cd is not persistent
 - PAGER=cat (no interactive paging)
-- Each command runs in a fresh subshell — cd is not persistent between commands"""
+- Do NOT use interactive editors (vi, nano, etc.)"""
 
 
 def _parse_test_ids(raw: str | list) -> list[str]:
