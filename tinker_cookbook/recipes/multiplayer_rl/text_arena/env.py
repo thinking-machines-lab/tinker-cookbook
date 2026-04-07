@@ -428,7 +428,7 @@ class TwoPlayerTextArenaDatasetBuilder(RLDatasetBuilder):
     def _construct_opponent_policy(self, renderer: Renderer) -> MessageCompleter:
         return make_opponent(self.test_opponent, self.model_name, renderer, self.base_url)
 
-    async def __call__(self) -> tuple[TwoPlayerTextArenaDataset, TwoPlayerTextArenaDataset | None]:
+    async def __call__(self) -> tuple[TwoPlayerTextArenaDataset, TwoPlayerTextArenaDataset]:
         """Build the dataset for training and testing."""
         renderer = get_renderer(self.renderer_name, get_tokenizer(self.model_name))
 

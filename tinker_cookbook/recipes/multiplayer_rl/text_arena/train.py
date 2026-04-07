@@ -16,6 +16,7 @@ class CLIConfig:
     model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
     renderer_name: str | None = None
     game_name: str = "TicTacToe-v0"
+    test_opponent: OpponentType = "base_model"
     batch_size: int = 512
     num_train_datapoints: int = 40960
     num_test_datapoints: int = 128
@@ -23,7 +24,6 @@ class CLIConfig:
     max_tokens: int = 64
     eval_every: int = 5
     save_every: int = 20
-    test_opponent: OpponentType = "base_model"
     wandb_project: str | None = None
     wandb_name: str | None = None
     log_path: str | None = None

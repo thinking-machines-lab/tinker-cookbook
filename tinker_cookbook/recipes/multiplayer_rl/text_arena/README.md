@@ -155,7 +155,7 @@ The recipe supports different opponent types for evaluation:
 - **`optimal`**: Perfect minimax player. Optimal vs optimal always draws, so a model that consistently draws has learned perfect play. No API calls needed.
 - **`base_model`** (default for training eval): The trained model plays against the untrained base model. Measures improvement relative to the starting weights. Requires a second Tinker sampling session.
 
-### Extension
+### Extensions
 
 Multi-agent training is a very active research direction with many different algorithm choices, e.g., debate [2], prover-verifier games [3], etc.
 We hope Tinker can support the broader research community to explore these opportunities!
