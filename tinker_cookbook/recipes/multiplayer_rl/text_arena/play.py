@@ -1,7 +1,4 @@
-"""Interactive play against a trained tic-tac-toe policy.
-
-After training, use this script to play against the trained model interactively
-or watch the model play against a random opponent.
+"""Interactive play and evaluation for trained tic-tac-toe policies.
 
 Usage:
 
@@ -13,9 +10,15 @@ Usage:
     python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.play \
         checkpoint_path=<path_to_checkpoint> human_player_id=1
 
-    # Watch the model play against a random opponent:
+    # Evaluate against different opponents (20 games each):
     python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.play \
-        checkpoint_path=<path_to_checkpoint> mode=model_vs_random
+        checkpoint_path=<path> mode=eval opponent=random num_games=20
+
+    python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.play \
+        checkpoint_path=<path> mode=eval opponent=optimal num_games=20
+
+    python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.play \
+        checkpoint_path=<path> mode=eval opponent=base_model num_games=20
 """
 
 import asyncio
@@ -26,8 +29,14 @@ import tinker
 from termcolor import colored
 
 from tinker_cookbook import model_info
-from tinker_cookbook.completers import TinkerTokenCompleter
+from tinker_cookbook.completers import (
+    MessageCompleter,
+    TinkerMessageCompleter,
+    TinkerTokenCompleter,
+)
 from tinker_cookbook.recipes.multiplayer_rl.text_arena.env import (
+    STOP_CONDITION,
+    OptimalOpponent,
     RandomOpponent,
     TwoPlayerEnvGroupBuilder,
 )
@@ -35,6 +44,28 @@ from tinker_cookbook.renderers import Renderer, get_renderer
 from tinker_cookbook.rl.play_w_env import ManualPolicy, print_trajectory_summary
 from tinker_cookbook.rl.rollouts import do_single_rollout
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+
+def _make_opponent(
+    opponent: str,
+    model_name: str,
+    renderer: Renderer,
+) -> MessageCompleter:
+    """Construct an opponent policy by name."""
+    if opponent == "random":
+        return RandomOpponent()
+    if opponent == "optimal":
+        return OptimalOpponent()
+    if opponent == "base_model":
+        svc = tinker.ServiceClient()
+        sc = svc.create_sampling_client(base_model=model_name)
+        return TinkerMessageCompleter(
+            sampling_client=sc,
+            renderer=renderer,
+            max_tokens=64,
+            stop_condition=STOP_CONDITION,
+        )
+    raise ValueError(f"Unknown opponent: {opponent}. Use 'random', 'optimal', or 'base_model'")
 
 
 async def play_game(
@@ -72,13 +103,15 @@ async def play_game(
     print_trajectory_summary(human_traj)
 
 
-async def watch_model_vs_random(
+async def eval_model(
     renderer: Renderer,
     model_token_completer: TinkerTokenCompleter,
+    opponent_policy: MessageCompleter,
+    opponent_name: str,
     game_name: str,
-    num_games: int = 5,
+    num_games: int = 20,
 ) -> None:
-    """Watch the trained model play against a random opponent."""
+    """Evaluate the trained model against a given opponent."""
     wins, losses, draws = 0, 0, 0
 
     for game_idx in range(num_games):
@@ -89,7 +122,7 @@ async def watch_model_vs_random(
             renderer=renderer,
             num_envs=2,
             self_play=False,
-            opponent_policy=RandomOpponent(),
+            opponent_policy=opponent_policy,
         )
         envs = await builder.make_envs()
         model_env = envs[0]  # Model plays as Player 0
@@ -108,7 +141,7 @@ async def watch_model_vs_random(
             draws += 1
         print(f"  Result: {result} (reward={total_reward:.1f})")
 
-    print(colored(f"\n{'=' * 40} Summary {'=' * 40}", "cyan", attrs=["bold"]))
+    print(colored(f"\n{'=' * 40} Summary (vs {opponent_name}) {'=' * 40}", "cyan", attrs=["bold"]))
     print(f"  Wins: {wins}/{num_games}, Draws: {draws}/{num_games}, Losses: {losses}/{num_games}")
 
 
@@ -118,9 +151,10 @@ class PlayConfig:
     model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
     renderer_name: str | None = None
     game_name: str = "TicTacToe-v0"
-    mode: Literal["human_vs_model", "model_vs_random"] = "human_vs_model"
+    mode: Literal["human_vs_model", "eval"] = "human_vs_model"
+    opponent: Literal["random", "optimal", "base_model"] = "random"
     human_player_id: int = 0  # 0 = go first, 1 = go second
-    num_games: int = 5  # for model_vs_random mode
+    num_games: int = 20
 
 
 async def main(config: PlayConfig) -> None:
@@ -133,8 +167,6 @@ async def main(config: PlayConfig) -> None:
     sampling_client = service_client.create_sampling_client(
         model_path=config.checkpoint_path,
     )
-    # Use TinkerTokenCompleter directly — avoids decode/re-encode round-trip
-    # that _MessageCompleterAdapter would cause (double chat-template wrapping)
     model_token_completer = TinkerTokenCompleter(
         sampling_client=sampling_client,
         max_tokens=64,
@@ -148,9 +180,15 @@ async def main(config: PlayConfig) -> None:
             again = input(colored("\nPlay again? [y/n]: ", "cyan")).strip().lower()
             if again != "y":
                 break
-    elif config.mode == "model_vs_random":
-        await watch_model_vs_random(
-            renderer, model_token_completer, config.game_name, config.num_games
+    elif config.mode == "eval":
+        opponent_policy = _make_opponent(config.opponent, config.model_name, renderer)
+        await eval_model(
+            renderer,
+            model_token_completer,
+            opponent_policy,
+            config.opponent,
+            config.game_name,
+            config.num_games,
         )
 
 

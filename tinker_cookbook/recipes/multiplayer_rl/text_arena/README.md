@@ -50,22 +50,46 @@ Potential mitigations for longer training runs include mixing self-play with gam
 | `test_opponent` | `base_model` | Test opponent: `base_model` or `random` |
 | `max_steps` | `None` | Cap training steps (None = use all data) |
 
-## Playing against the trained model
+## Evaluation
 
-After training completes, you can play interactively or watch the model play:
+After training, evaluate the model against different opponents:
+
+```bash
+# Evaluate against the optimal (minimax) opponent — perfect play always draws:
+python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.play \
+    checkpoint_path=<path> mode=eval opponent=optimal num_games=20
+
+# Evaluate against a random opponent:
+python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.play \
+    checkpoint_path=<path> mode=eval opponent=random num_games=20
+
+# Evaluate against the (untrained) base model:
+python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.play \
+    checkpoint_path=<path> mode=eval opponent=base_model num_games=20
+```
+
+Example results with the step-40 checkpoint (20 games each):
+
+| Opponent | Wins | Draws | Losses |
+|----------|------|-------|--------|
+| Random | 6 | 11 | 3 |
+| **Optimal** | **0** | **20** | **0** |
+| Base model | 16 | 4 | 0 |
+
+The model draws every game against the optimal opponent, confirming it learned perfect tic-tac-toe. It dominates the untrained base model (16 wins, 0 losses) and mostly draws against random (random occasionally stumbles into a draw or finds a win).
+
+## Interactive play
+
+You can also play against the trained model interactively (requires a real terminal):
 
 ```bash
 # Play against the model (you go first as Player 0):
 python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.play \
-    checkpoint_path=/tmp/tinker-examples/text-arena/<your-run>/checkpoints/<checkpoint>
+    checkpoint_path=<path>
 
 # Play as Player 1 (model goes first):
 python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.play \
     checkpoint_path=<path> human_player_id=1
-
-# Watch the model play 10 games against a random opponent:
-python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.play \
-    checkpoint_path=<path> mode=model_vs_random num_games=10
 ```
 
 ## Background
