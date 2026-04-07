@@ -210,6 +210,49 @@
         "Provides a concrete fix pattern (semaphore-based concurrency limiting)",
         "Does NOT blame the evaluation code logic — the pattern is correct, just needs throttling"
       ]
+    },
+    {
+      "id": 16,
+      "prompt": "I'm implementing PPO for Qwen 3.5 35B using the sampling client to collect rollouts and the training client for update steps. I'm noticing the logprobs from sampling_client.sample_async (via sequence.logprobs) don't match what I get from training_client.forward_async. The importance sampling ratios are way off and training is unstable. Is there something wrong with how I'm getting logprobs?",
+      "expected_output": "Explain the three logprob sources (decode, prefill, training), why they differ, and recommend using compute_logprobs_async or forward_async for PPO",
+      "files": [],
+      "expectations": [
+        "Explains that sequence.logprobs come from the decode phase (autoregressive, token-by-token)",
+        "Explains that training_client.forward_async uses the training engine with different kernels",
+        "Identifies this as expected behavior — inference vs training logprobs differ due to different CUDA kernels and batch invariance",
+        "Recommends using sampling_client.compute_logprobs_async or training_client.forward_async logprobs instead of decode-phase logprobs for PPO",
+        "Explains WHY: PPO isn't strict importance sampling, and prefill/training logprobs are more consistent with the training update",
+        "Suggests measuring the KL/MSE between logprob sources to quantify the mismatch",
+        "Does NOT say the logprob mismatch is a bug — frames it as a known property of inference vs training"
+      ]
+    },
+    {
+      "id": 17,
+      "prompt": "I tried using sampling_client.compute_logprobs to get more consistent logprobs for my PPO implementation, but even calling compute_logprobs twice on the same prompt gives slightly different results. Is this a bug?",
+      "expected_output": "Explain floating-point non-determinism in GPU kernels and its practical implications",
+      "files": [],
+      "expectations": [
+        "Explains this is expected — GPU floating-point non-determinism means repeated calls can produce slightly different logprobs",
+        "Notes that this is a general phenomenon of GPU computation, not specific to Tinker",
+        "Clarifies that compute_logprobs uses prefill (not decode), which is closer to training but still not exact",
+        "Puts the magnitude in context — the variation from non-determinism is typically much smaller than the decode-vs-prefill gap",
+        "Does NOT suggest this is a bug or that the user is doing something wrong",
+        "Suggests measuring the KL to understand the scale of variation in their specific setup"
+      ]
+    },
+    {
+      "id": 18,
+      "prompt": "My GRPO training works great but when I switch to PPO with the same setup, training becomes very unstable with loss spikes. I'm using the logprobs from the sampling response (sequence.logprobs) to compute the importance sampling ratio. What am I doing wrong?",
+      "expected_output": "Diagnose as decode-phase logprob instability and recommend switching logprob source",
+      "files": [],
+      "expectations": [
+        "Identifies the root cause: using decode-phase logprobs (sequence.logprobs) for the IS ratio",
+        "Explains why GRPO works but PPO doesn't — GRPO normalizes advantages within groups and doesn't use a logprob baseline for IS ratios",
+        "Recommends switching to compute_logprobs_async or forward_async logprobs for PPO",
+        "Provides a concrete approach: recompute logprobs with compute_logprobs_async on the full sequence (prompt + generated tokens) before building the ratio",
+        "Warns about stale sampling clients — need to create a new sampling client after saving weights",
+        "Does NOT suggest the issue is with hyperparameters or reward function — the logprob source is the problem"
+      ]
     }
   ]
 }

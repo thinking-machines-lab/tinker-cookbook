@@ -1,16 +1,17 @@
 ---
 name: debug
-description: Diagnose training issues with Tinker — slow steps, hanging sessions, output mismatches, error messages, renderer problems, and deployment issues. Use this skill whenever a user reports that training is slow, steps take too long, sessions are hanging, model outputs differ between Tinker and external engines (vLLM, SGLang), they get a confusing error message, training quality is poor (high KL, bad outputs), or they suspect something is wrong. Also trigger when users ask "is this a Tinker issue or my issue?", "is Tinker down?", report unexpected wait times, see output quality regressions, get opaque errors, or want to profile/debug their training or deployment pipeline. This skill walks through systematic triage to determine root cause.
+description: Diagnose training issues with Tinker — slow steps, hanging sessions, output mismatches, error messages, renderer problems, logprob discrepancies, and deployment issues. Use this skill whenever a user reports that training is slow, steps take too long, sessions are hanging, model outputs differ between Tinker and external engines (vLLM, SGLang), they get a confusing error message, training quality is poor (high KL, bad outputs), PPO or importance-sampling training is unstable, logprobs don't match between sampling and training clients, or they suspect something is wrong. Also trigger when users ask "is this a Tinker issue or my issue?", "is Tinker down?", report unexpected wait times, see output quality regressions, get opaque errors, see logprob mismatches, or want to profile/debug their training or deployment pipeline. This skill walks through systematic triage to determine root cause.
 ---
 
 # Tinker Debug
 
-Systematic triage for training and deployment issues. Five triage paths:
+Systematic triage for training and deployment issues. Six triage paths:
 1. **Performance issues** — slow steps, hanging sessions, throughput problems
 2. **Output correctness issues** — mismatches between Tinker sampling and external inference engines
 3. **Service availability** — "is Tinker down?" quick diagnostics
 4. **Renderer issues** — wrong tokens, training quality degradation, prompt mismatches
-5. **Error message decoder** — mapping opaque errors to root causes
+5. **Logprob mismatch issues** — inconsistent logprobs between sampling and training, PPO instability
+6. **Error message decoder** — mapping opaque errors to root causes
 
 Identify which category the user's problem falls into, then follow the appropriate triage.
 
@@ -528,6 +529,84 @@ For the full renderer reference (all models, formats, edge cases), read `referen
 
 ---
 
+## Logprob mismatch triage
+
+Users doing PPO or other importance-sampling-based algorithms with separate sampling and training clients often see mismatched logprobs for the same tokens. This is expected behavior caused by fundamental differences between how inference and training compute logprobs, but the choice of which logprobs to use has a major impact on training stability.
+
+### Why logprobs differ across the three sources
+
+Tinker provides three ways to get logprobs, and they use different compute paths:
+
+| Source | Compute path | SDK API |
+|--------|-------------|---------|
+| **Decode-phase logprobs** | Autoregressive decoding (token-by-token) | `sample_result.sequences[0].logprobs` via `sampling_client.sample[_async]()` |
+| **Prefill logprobs** | Single forward pass over full sequence (prefill kernel) | `sampling_client.compute_logprobs[_async](prompt)` → `list[float \| None]` |
+| **Training logprobs** | Training engine forward pass | `training_client.forward[_async](data, loss_fn)` → `result.loss_fn_outputs[i]["logprobs"]` |
+
+These differ because:
+
+1. **Decode vs prefill**: During decoding, each token's logprob is computed with only the preceding tokens in the KV cache. Prefill computes all logprobs in a single pass over the full sequence. Different CUDA kernels are used, and batch composition affects results due to batch-invariance properties of the attention implementation.
+
+2. **Sampling engine vs training engine**: Even prefill logprobs from the sampling engine won't exactly match the training engine. Different kernels, different numerical paths, different batch handling. This is a general phenomenon of inference vs training — not a bug.
+
+3. **Non-determinism within a single engine**: Even calling `sampling_client.compute_logprobs` twice on the same prompt can show noticeable KL divergence. This is inherent to the floating-point non-determinism in GPU kernels.
+
+### Which logprobs to use for PPO / importance sampling
+
+This is the critical practical question. The answer depends on the algorithm:
+
+**For strict importance sampling**, use `sample_result.sequences[0].logprobs` (decode-phase). These are the actual probabilities under which the tokens were sampled, so the importance sampling ratio is mathematically correct.
+
+**For PPO**, decode-phase logprobs typically lead to instability. PPO isn't exactly importance sampling — it uses the ratio as a surrogate objective with clipping. In practice, using logprobs from `sampling_client.compute_logprobs[_async]()` or `training_client.forward[_async]()` produces more stable training. The prefill/training logprobs are more consistent with each other and with the logprobs the model sees during the training update, which makes the clipped surrogate objective better-behaved.
+
+**The cookbook's built-in RL training** (`tinker_cookbook/rl/train.py`) stores the decode-phase logprobs in `datum.loss_fn_inputs["logprobs"]` and computes KL metrics via `compute_kl_sample_train()` in `tinker_cookbook/rl/metrics.py`. If you're building a custom PPO loop and seeing instability, consider recomputing logprobs with `compute_logprobs_async` before constructing the ratio.
+
+### Diagnosing the mismatch magnitude
+
+Before choosing a logprob source, measure how large the discrepancy is in your setup. The magnitude depends on model size, sequence length, and batch composition.
+
+```python
+import asyncio
+import numpy as np
+
+# 1. Sample a response and get decode-phase logprobs
+sample_result = await sampling_client.sample_async(
+    prompt=model_input,
+    num_samples=1,
+    sampling_params=tinker.SamplingParams(max_tokens=256, temperature=1.0),
+)
+seq = sample_result.sequences[0]
+decode_logprobs = seq.logprobs  # from autoregressive decoding
+
+# 2. Recompute with prefill on the full sequence (prompt + generated tokens)
+full_sequence = model_input.concat(tinker.ModelInput.from_ints(seq.tokens))
+prefill_logprobs = await sampling_client.compute_logprobs_async(full_sequence)
+# Slice to get only the generated token positions
+prefill_logprobs_generated = prefill_logprobs[model_input.length:]
+
+# 3. Compare
+decode_arr = np.array(decode_logprobs)
+prefill_arr = np.array([lp for lp in prefill_logprobs_generated if lp is not None])
+diff = decode_arr[:len(prefill_arr)] - prefill_arr
+print(f"Mean absolute diff (decode vs prefill): {np.abs(diff).mean():.6f}")
+print(f"MSE: {(diff ** 2).mean():.6f}")
+print(f"KL (decode - prefill): {diff.mean():.6f}")
+```
+
+**What to expect:**
+- Decode vs prefill: Noticeable differences, especially for longer sequences
+- Prefill vs training: Smaller differences, but still non-zero
+- If KL is large (>0.1), strongly prefer prefill or training logprobs for PPO
+
+### When to suspect logprob issues
+
+- PPO training is unstable (loss spikes, reward oscillation) despite reasonable hyperparameters
+- Importance sampling ratios are far from 1.0 even at the start of training (before any policy updates)
+- KL penalty metrics are large at step 0
+- Training works fine with GRPO (which doesn't need a logprob baseline) but fails with PPO
+
+---
+
 ## Error message decoder
 
 Tinker errors can be opaque. This section maps common error messages to root causes and fixes.
@@ -609,6 +688,15 @@ Training quality is poor (high KL, bad outputs)
 │  └─ Tokens differ → Wrong renderer or renderer bug
 ├─ Tool calling broken? → Check renderer tool format matches model family
 └─ Thinking blocks wrong? → Use correct _disable_thinking variant
+
+PPO / importance sampling unstable
+├─ IS ratios far from 1.0 at step 0? → Logprob source mismatch
+│  ├─ Using decode-phase logprobs (seq.logprobs)? → Switch to compute_logprobs_async or forward_async
+│  └─ Already using prefill/training logprobs? → Check magnitude of decode-vs-prefill diff
+├─ Training spikes / reward oscillation? → Measure KL between logprob sources
+│  └─ KL > 0.1 → Logprob mismatch is significant, use prefill or training logprobs
+├─ Works with GRPO but fails with PPO? → Likely logprob baseline issue
+└─ Gradual instability after initial stability? → Check if sampling client is stale (needs refresh after weight save)
 ```
 
 ## Common resolutions
@@ -634,6 +722,9 @@ Training quality is poor (high KL, bad outputs)
 | `Expected X tokens, got Y from image` | `transformers` version bug in VLM processor | Upgrade to `transformers>=5.0` |
 | `max() iterable argument is empty` | Empty token list in datum | Validate all datums have non-empty chunks |
 | Operations work but sporadically fail/hang | Service under load or transient issues | Add retry logic; gather session IDs for reports |
+| PPO training unstable / loss spikes | Using decode-phase logprobs for IS ratio | Switch to `compute_logprobs_async` or `forward_async` logprobs |
+| IS ratios far from 1.0 at step 0 | Decode vs prefill logprob mismatch | Measure KL between sources; use prefill logprobs |
+| Works with GRPO but fails with PPO | Logprob baseline issue (GRPO doesn't need one) | Use `compute_logprobs_async` for PPO logprob baseline |
 
 ## Code references
 
