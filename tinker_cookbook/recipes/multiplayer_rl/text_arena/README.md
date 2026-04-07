@@ -31,9 +31,20 @@ The key metric to watch is `test/env/all/reward/total`, which measures how well 
 
 **Why is a self-play reward of 0 good?** In tic-tac-toe, optimal play by both sides always results in a draw. The self-play training reward converging to 0 means both the "Player 0" and "Player 1" copies of the model have learned to play without making mistakes -- neither side can win. The test reward (vs the untrained base model) rises from negative to positive, meaning the trained model dominates the base model.
 
-### Self-play collapse
+### Self-play dynamics over 256 steps
 
-With the original 256-step setting, pure self-play can collapse around step 80-100: the self-play reward suddenly drops from ~0.0 to -1.0, meaning one player wins every game. This happens because a small asymmetry gets amplified -- if one side becomes slightly stronger, the training update reinforces that advantage, creating a feedback loop that destabilizes within a few steps. The default of 80 steps avoids this collapse.
+Running for the full 256 steps reveals interesting training dynamics:
+
+| Phase | Steps | Self-play reward | Test reward | Description |
+|-------|-------|-----------------|-------------|-------------|
+| Learning | 0-5 | -0.4 → 0.0 | -0.4 → +0.3 | Model learns basic play |
+| Plateau | 5-75 | ~0.0 | +0.3 to +0.7 | Stable, strong play |
+| Collapse | 80-110 | **-1.0** | +0.4 → -0.1 | One side wins every game |
+| Recovery | 115-130 | 0.0 | -0.2 → +0.6 | Self-play stabilizes again |
+
+The **collapse** at step 80 happens because a small asymmetry gets amplified — if one side becomes slightly stronger, the training update reinforces that advantage, creating a feedback loop that destabilizes within a few steps. This is a known challenge with self-play RL.
+
+The model **recovers** on its own around step 115, but the instability wastes training compute. The default of 80 steps avoids this region while capturing the performance plateau.
 
 Potential mitigations for longer training runs include mixing self-play with games against a fixed opponent (random or base model) in each batch, or periodically freezing a copy of the weights to play against.
 
@@ -47,7 +58,7 @@ Potential mitigations for longer training runs include mixing self-play with gam
 | `learning_rate` | `3e-5` | Adam learning rate |
 | `eval_every` | `5` | Evaluate every N steps |
 | `save_every` | `20` | Checkpoint every N steps |
-| `test_opponent` | `base_model` | Test opponent: `base_model` or `random` |
+| `test_opponent` | `base_model` | Test opponent: `base_model`, `random`, or `optimal` |
 | `max_steps` | `None` | Cap training steps (None = use all data) |
 
 ## Evaluation
@@ -68,15 +79,14 @@ python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.play \
     checkpoint_path=<path> mode=eval opponent=base_model num_games=20
 ```
 
-Example results with the step-40 checkpoint (20 games each):
+Results before and after training (20 games each, model plays as Player 0):
 
-| Opponent | Wins | Draws | Losses |
-|----------|------|-------|--------|
-| Random | 6 | 11 | 3 |
-| **Optimal** | **0** | **20** | **0** |
-| Base model | 16 | 4 | 0 |
+| Opponent | Base model (step 0) | Trained (step 40) |
+|----------|---------------------|-------------------|
+| vs Random | 4W / 10D / 6L | 6W / 11D / 3L |
+| vs Optimal (minimax) | 0W / 0D / **20L** | 0W / **20D** / 0L |
 
-The model draws every game against the optimal opponent, confirming it learned perfect tic-tac-toe. It dominates the untrained base model (16 wins, 0 losses) and mostly draws against random (random occasionally stumbles into a draw or finds a win).
+The untrained base model loses every game against the optimal minimax opponent and frequently loses to random. After 40 steps of self-play training, the model draws every game against optimal — confirming it learned perfect tic-tac-toe. The improvement is most dramatic against optimal: from 0% survival to 100% draws.
 
 ## Interactive play
 
@@ -140,8 +150,9 @@ As a result, in the `Environment.step` function, we can:
 
 The recipe supports different opponent types for evaluation:
 
-- **`base_model`** (default): The trained model plays against the untrained base model. This measures how much the model has improved relative to its starting point.
-- **`random`**: The trained model plays against an opponent that picks a random legal move each turn. A well-trained model should win almost every game. This is cheaper since it doesn't require a second Tinker sampling session.
+- **`random`**: Picks a random legal move each turn. A well-trained model should rarely lose. No API calls needed.
+- **`optimal`**: Perfect minimax player. Optimal vs optimal always draws, so a model that consistently draws has learned perfect play. No API calls needed.
+- **`base_model`** (default for training eval): The trained model plays against the untrained base model. Measures improvement relative to the starting weights. Requires a second Tinker sampling session.
 
 ### Extension
 
