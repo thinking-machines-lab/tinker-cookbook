@@ -23,12 +23,19 @@ The key metric to watch is `test/env/all/reward/total`, which measures how well 
 
 | Step | Train reward (self-play) | Test reward (vs base model) |
 |------|--------------------------|-----------------------------|
-| 0    | ~ -0.4                   | ~ -0.3                      |
-| 5    | ~ 0.0                    | ~ +0.2                      |
-| 10   | ~ 0.0                    | ~ +0.05                     |
-| 20+  | ~ 0.0                    | ~ 0.0                       |
+| 0    | ~ -0.4                   | ~ -0.4                      |
+| 5    | ~ 0.0                    | ~ +0.3                      |
+| 20   | ~ 0.0                    | ~ +0.2                      |
+| 40   | ~ 0.0                    | ~ +0.5 to +0.7              |
+| 60   | ~ 0.0                    | ~ +0.4 to +0.6              |
 
-**Why is a reward of 0 good?** In tic-tac-toe, optimal play by both sides always results in a draw. The self-play training reward converging to 0 means both the "Player 0" and "Player 1" copies of the model have learned to play without making mistakes -- neither side can win. The test reward starts negative (the untrained model loses to the base model) and rises above 0 (the trained model beats the base model) before settling near 0 as the base model's play is also roughly at the draw-level.
+**Why is a self-play reward of 0 good?** In tic-tac-toe, optimal play by both sides always results in a draw. The self-play training reward converging to 0 means both the "Player 0" and "Player 1" copies of the model have learned to play without making mistakes -- neither side can win. The test reward (vs the untrained base model) rises from negative to positive, meaning the trained model dominates the base model.
+
+### Self-play collapse
+
+With the original 256-step setting, pure self-play can collapse around step 80-100: the self-play reward suddenly drops from ~0.0 to -1.0, meaning one player wins every game. This happens because a small asymmetry gets amplified -- if one side becomes slightly stronger, the training update reinforces that advantage, creating a feedback loop that destabilizes within a few steps. The default of 80 steps avoids this collapse.
+
+Potential mitigations for longer training runs include mixing self-play with games against a fixed opponent (random or base model) in each batch, or periodically freezing a copy of the weights to play against.
 
 ### CLI options
 
