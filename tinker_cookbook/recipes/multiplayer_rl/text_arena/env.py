@@ -37,6 +37,8 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 STOP_CONDITION = ["]\n"]
 ILLEGAL_MOVE_REWARD = -2.0
 
+OpponentType = Literal["base_model", "random", "optimal"]
+
 
 def _parse_available_moves(observation: str) -> list[str]:
     """Parse available moves from a TextArena observation string."""
@@ -148,22 +150,44 @@ class OptimalOpponent(MessageCompleter):
                 board[i] = str(i)
             return best
 
+    _WIN_LINES = [
+        (0, 1, 2),
+        (3, 4, 5),
+        (6, 7, 8),  # rows
+        (0, 3, 6),
+        (1, 4, 7),
+        (2, 5, 8),  # cols
+        (0, 4, 8),
+        (2, 4, 6),  # diagonals
+    ]
+
     @staticmethod
     def _check_winner(board: list[str]) -> str | None:
-        lines = [
-            (0, 1, 2),
-            (3, 4, 5),
-            (6, 7, 8),  # rows
-            (0, 3, 6),
-            (1, 4, 7),
-            (2, 5, 8),  # cols
-            (0, 4, 8),
-            (2, 4, 6),  # diagonals
-        ]
-        for a, b, c in lines:
+        for a, b, c in OptimalOpponent._WIN_LINES:
             if board[a] == board[b] == board[c] and board[a] in ("O", "X"):
                 return board[a]
         return None
+
+
+def make_opponent(
+    opponent_type: OpponentType,
+    model_name: str,
+    renderer: Renderer,
+    base_url: str | None = None,
+) -> MessageCompleter:
+    """Construct an opponent policy by type name."""
+    if opponent_type == "random":
+        return RandomOpponent()
+    if opponent_type == "optimal":
+        return OptimalOpponent()
+    service_client = tinker.ServiceClient(base_url=base_url)
+    sampling_client = service_client.create_sampling_client(base_model=model_name)
+    return TinkerMessageCompleter(
+        sampling_client=sampling_client,
+        renderer=renderer,
+        max_tokens=64,
+        stop_condition=STOP_CONDITION,
+    )
 
 
 class TwoPlayerCoordinator:
@@ -335,7 +359,7 @@ class TwoPlayerEnvGroupBuilder(EnvGroupBuilder):
             raise ValueError("this env requires an even number of environments (players)")
 
         def _construct_coordinator() -> TwoPlayerCoordinator:
-            """During training, the coordinator performs necessary blocking/synchronization, so that the policys can take turns to make moves on the shared environment, across different Environment objects"""
+            """Constructs a coordinator that synchronizes two policies taking turns on a shared environment."""
             shared_env = ta.make(env_id=self.game_name)
             shared_env.reset(num_players=self.num_players)
             return TwoPlayerCoordinator(shared_env=shared_env)
@@ -394,28 +418,10 @@ class TwoPlayerTextArenaDatasetBuilder(RLDatasetBuilder):
     model_name: str
     game_name: str
     renderer_name: str
-    test_opponent: Literal["base_model", "random", "optimal"] = "base_model"
+    test_opponent: OpponentType = "base_model"
 
     def _construct_opponent_policy(self, renderer: Renderer) -> MessageCompleter:
-        """Construct the opponent policy for testing.
-
-        Returns:
-            A MessageCompleter — either a TinkerMessageCompleter (base model)
-            or a RandomOpponent depending on self.test_opponent.
-        """
-        if self.test_opponent == "random":
-            return RandomOpponent()
-        if self.test_opponent == "optimal":
-            return OptimalOpponent()
-        # Default: play against the base model
-        service_client = tinker.ServiceClient(base_url=self.base_url)
-        sampling_client = service_client.create_sampling_client(base_model=self.model_name)
-        return TinkerMessageCompleter(
-            sampling_client=sampling_client,
-            renderer=renderer,
-            max_tokens=64,
-            stop_condition=STOP_CONDITION,
-        )
+        return make_opponent(self.test_opponent, self.model_name, renderer, self.base_url)
 
     async def __call__(self) -> tuple[TwoPlayerTextArenaDataset, TwoPlayerTextArenaDataset | None]:
         """Build the dataset for training and testing."""
