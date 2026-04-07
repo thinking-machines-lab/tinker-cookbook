@@ -119,11 +119,11 @@ class RLTestSetBenchmarkBuilder(BenchmarkBuilder):
 
     def __init__(
         self,
-        env_group_builders: list[EnvGroupBuilder],
+        env_group_builders: Sequence[EnvGroupBuilder],
         name: str = "rl_test",
     ) -> None:
         self.name = name
-        self._builders = env_group_builders
+        self._builders = list(env_group_builders)
         self._tags_per_builder = [b.logging_tags() for b in env_group_builders]
 
     def make_envs(

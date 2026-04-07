@@ -43,10 +43,6 @@ Example — persistent eval with EvalStore::
 """
 
 from tinker_cookbook.eval.benchmark_evaluator import BenchmarkEvaluator
-from tinker_cookbook.eval.rl_benchmark import (
-    RLTestSetBenchmarkBuilder,
-    RLTestSetBenchmarkEvaluator,
-)
 from tinker_cookbook.eval.benchmarks import (
     REGISTRY,
     BenchmarkBuilder,
@@ -64,6 +60,10 @@ from tinker_cookbook.eval.evaluators import (
     SamplingClientEvaluator,
     SamplingClientEvaluatorBuilder,
     TrainingClientEvaluator,
+)
+from tinker_cookbook.eval.rl_benchmark import (
+    RLTestSetBenchmarkBuilder,
+    RLTestSetBenchmarkEvaluator,
 )
 from tinker_cookbook.stores.eval_store import EvalStore, RunMetadata
 
