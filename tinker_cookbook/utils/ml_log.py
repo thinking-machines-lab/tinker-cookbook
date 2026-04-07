@@ -178,12 +178,12 @@ class JsonLogger(Logger):
     """
 
     def __init__(self, log_dir: str | Path, store: "TrainingRunStore | None" = None) -> None:
-        from tinker_cookbook.stores.storage import LocalStorage
+        from tinker_cookbook.stores.storage import storage_from_uri
         from tinker_cookbook.stores.training_store import TrainingRunStore as _TRS
 
         self.log_dir = Path(log_dir).expanduser()
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self._store = store or _TRS(LocalStorage(self.log_dir))
+        self._store = store or _TRS(storage_from_uri(str(log_dir)))
         self._logged_hparams = False
 
     @property
