@@ -11,6 +11,7 @@ import numpy as np
 import tinker
 
 from tinker_cookbook.completers import TinkerTokenCompleter, TokenCompleter
+from tinker_cookbook.eval.benchmarks._types import BenchmarkResult
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
 from tinker_cookbook.exceptions import AllTrajectoriesFailedError
 from tinker_cookbook.rl.rollout_logging import (
@@ -181,6 +182,8 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         self.name = name
         self.num_groups_to_log = num_groups_to_log
         self.strategy = strategy
+        self.last_result: BenchmarkResult | None = None
+        """Most recent :class:`BenchmarkResult`, populated after each evaluation."""
 
     async def eval_token_completer(
         self,
@@ -299,7 +302,11 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         *,
         store: "TrainingRunStore | None" = None,
     ) -> dict[str, float]:
-        """Shared logic for collecting metrics from eval rollout results."""
+        """Shared logic for collecting metrics from eval rollout results.
+
+        Also builds a :class:`BenchmarkResult` stored in :attr:`last_result`
+        for callers that want typed, structured access to the evaluation outcome.
+        """
         error_counter = RolloutErrorCounter()
         for result in results:
             error_counter.ingest(result)
@@ -328,7 +335,29 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
                 records,
                 base_name=rollout_summary_export.base_name,
             )
-        metrics = compute_trajectory_metrics(trajectory_groups_P, taglist_P)
+        num_errors = sum(1 for r in results if r is None)
+        if trajectory_groups_P:
+            metrics = compute_trajectory_metrics(trajectory_groups_P, taglist_P)
+        else:
+            metrics = {}
         metrics.update(error_counter.get_metrics())
+
+        # Build typed BenchmarkResult from the same data.
+        # Count at the group level (one group = one test problem) so that
+        # num_examples matches len(env_group_builders_P) regardless of
+        # group_size.  Errors count in the denominator (scored as 0).
+        num_groups_correct = sum(
+            1 for tg in trajectory_groups_P if any(r > 0 for r in tg.get_total_rewards())
+        )
+        total_groups = len(results)
+        self.last_result = BenchmarkResult(
+            name=self.name,
+            score=num_groups_correct / total_groups if total_groups > 0 else 0.0,
+            num_examples=total_groups,
+            num_correct=num_groups_correct,
+            num_errors=num_errors,
+            metrics=dict(metrics),
+        )
+
         metrics = {f"{self.name}/{k}": v for k, v in metrics.items()}
         return metrics
