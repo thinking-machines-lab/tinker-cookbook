@@ -100,6 +100,9 @@ class TestLastResult:
         assert result.num_examples == 2
         assert result.num_correct == 1
         assert result.num_errors == 1
+        # score treats errors as incorrect (consistent with benchmark runner)
+        assert result.score == 0.5
+        # score_completed excludes errors from denominator
         assert result.score_completed == 1.0
 
     def test_last_result_all_errors(self):
