@@ -677,7 +677,12 @@ async def run_benchmark(
             if m.get(METRIC_MAX_TOKENS_REACHED) or m.get(METRIC_CONTEXT_OVERFLOW)
         )
 
-        result = benchmark.aggregate(valid_rewards, valid_metrics)
+        # Strip internal _eval_* keys before passing to aggregate() —
+        # they're for the runner's own summary stats, not for user code.
+        clean_metrics = [
+            {k: v for k, v in m.items() if not k.startswith("_eval_")} for m in valid_metrics
+        ]
+        result = benchmark.aggregate(valid_rewards, clean_metrics)
         result.num_errors = num_errors
         result.num_truncated = num_truncated
         result.time_seconds = time.monotonic() - t0
@@ -753,8 +758,11 @@ async def run_benchmark(
         1 for m in all_metrics if m.get(METRIC_MAX_TOKENS_REACHED) or m.get(METRIC_CONTEXT_OVERFLOW)
     )
 
-    # Aggregate using all rewards (gives overall accuracy across all samples)
-    result = benchmark.aggregate(all_rewards, all_metrics)
+    # Strip internal _eval_* keys before passing to aggregate()
+    clean_metrics = [
+        {k: v for k, v in m.items() if not k.startswith("_eval_")} for m in all_metrics
+    ]
+    result = benchmark.aggregate(all_rewards, clean_metrics)
     result.num_errors = total_errors
     result.num_truncated = total_truncated
     result.time_seconds = time.monotonic() - t0
