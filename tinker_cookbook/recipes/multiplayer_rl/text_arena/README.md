@@ -9,13 +9,61 @@ uv pip install 'tinker-cookbook[multiplayer-rl] @ git+https://github.com/thinkin
 Many research studies involve training several different language model agents jointly. We cover one simple example, where the language model learns to play tic-tac-toe with itself.
 We show how to coordinate the steps of two *Environment* objects such that both the winning and the losing trajectory will be used to fine-tune the weights.
 
+## Training
+
 ```bash
 python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.train
 ```
 
-The `test/env/all/reward/total` should increase from ~ -1.0 to >=0 in 40 steps.
+With the default settings (batch size 512, ~20k datapoints = 40 steps), training takes roughly 1 hour.
 
-### Background
+### Expected results
+
+The key metric to watch is `test/env/all/reward/total`, which measures how well the trained policy performs against the (untrained) base model.
+
+| Step | Train reward (self-play) | Test reward (vs base model) |
+|------|--------------------------|-----------------------------|
+| 0    | ~ -0.4                   | ~ -0.3                      |
+| 5    | ~ 0.0                    | ~ +0.2                      |
+| 10   | ~ 0.0                    | ~ +0.05                     |
+| 20+  | ~ 0.0                    | ~ 0.0                       |
+
+**Why is a reward of 0 good?** In tic-tac-toe, optimal play by both sides always results in a draw. The self-play training reward converging to 0 means both the "Player 0" and "Player 1" copies of the model have learned to play without making mistakes -- neither side can win. The test reward starts negative (the untrained model loses to the base model) and rises above 0 (the trained model beats the base model) before settling near 0 as the base model's play is also roughly at the draw-level.
+
+### CLI options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `model_name` | `Qwen/Qwen3-4B-Instruct-2507` | Base model to train |
+| `batch_size` | `512` | Trajectories per training step |
+| `num_train_datapoints` | `20480` | Total training trajectories (~40 steps) |
+| `learning_rate` | `3e-5` | Adam learning rate |
+| `eval_every` | `5` | Evaluate every N steps |
+| `save_every` | `20` | Checkpoint every N steps |
+| `test_opponent` | `base_model` | Test opponent: `base_model` or `random` |
+| `max_steps` | `None` | Cap training steps (None = use all data) |
+
+## Playing against the trained model
+
+After training completes, you can play interactively or watch the model play:
+
+```bash
+# Play against the model (you go first as Player 0):
+python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.play \
+    checkpoint_path=/tmp/tinker-examples/text-arena/<your-run>/checkpoints/<checkpoint>
+
+# Play as Player 1 (model goes first):
+python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.play \
+    checkpoint_path=<path> human_player_id=1
+
+# Watch the model play 10 games against a random opponent:
+python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.play \
+    checkpoint_path=<path> mode=model_vs_random num_games=10
+```
+
+## Background
+
+### TextArena
 
 The TextArena [1] already implements an environment object where two players can specify which position to play using ``[0], [1], [2] ...`` in tic-tac-toe and compute how the board changes, the observation (prompt) for each language model player, and the final reward.
 
@@ -57,12 +105,17 @@ As a result, in the `Environment.step` function, we can:
 - determine when to start the next move, since `TwoPlayerCoordinator` informs us when the opponent has finished.
 - compute the next observation, since `TwoPlayerCoordinator` passes the move from the opponent.
 
+### Opponent modes
+
+The recipe supports different opponent types for evaluation:
+
+- **`base_model`** (default): The trained model plays against the untrained base model. This measures how much the model has improved relative to its starting point.
+- **`random`**: The trained model plays against an opponent that picks a random legal move each turn. A well-trained model should win almost every game. This is cheaper since it doesn't require a second Tinker sampling session.
+
 ### Extension
 
 Multi-agent training is a very active research direction with many different algorithm choices, e.g., debate [2], prover-verifier games [3], etc.
 We hope Tinker can support the broader research community to explore these opportunities!
-
-
 
 ### References
 

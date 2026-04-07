@@ -1,9 +1,11 @@
 """TextArena TicTacToe environment for tinker RL."""
 
 import asyncio
+import random
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 import chz
 import tinker
@@ -18,7 +20,7 @@ except ImportError:
         "git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'"
     ) from None
 
-from tinker_cookbook.completers import StopCondition, TinkerMessageCompleter
+from tinker_cookbook.completers import MessageCompleter, StopCondition, TinkerMessageCompleter
 from tinker_cookbook.renderers import Message, Renderer, get_renderer, get_text_content
 from tinker_cookbook.rl.types import (
     Action,
@@ -34,6 +36,32 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 STOP_CONDITION = ["]\n"]
 ILLEGAL_MOVE_REWARD = -2.0
+
+
+class RandomOpponent(MessageCompleter):
+    """Opponent that picks a random legal move from the TextArena observation.
+
+    Parses the "Available Moves" line from the observation text and selects
+    one uniformly at random. This is useful for cheap evaluation: a trained
+    policy should consistently beat a random player.
+
+    Example observation snippet::
+
+        Available Moves: '[0]', '[1]', '[4]', '[6]'
+
+    The opponent would reply with e.g. ``[4]`` chosen at random.
+    """
+
+    async def __call__(self, messages: list[Message]) -> Message:
+        observation = messages[-1]["content"]
+        assert isinstance(observation, str)
+        moves = re.findall(r"'(\[\d+\])'", observation)
+        if not moves:
+            # Fallback: if we can't parse moves, just output [0]
+            move = "[0]"
+        else:
+            move = random.choice(moves)
+        return {"role": "assistant", "content": move}
 
 
 class TwoPlayerCoordinator:
@@ -102,7 +130,7 @@ class TwoPlayerEnv(Env):
     coordinator: TwoPlayerCoordinator
     self_play: bool
     renderer: Renderer
-    opponent_policy: TinkerMessageCompleter | None
+    opponent_policy: MessageCompleter | None
 
     def __post_init__(self):
         assert self.self_play == (self.opponent_policy is None), (
@@ -197,7 +225,7 @@ class TwoPlayerEnvGroupBuilder(EnvGroupBuilder):
     num_envs: int
     self_play: bool
     num_players: ClassVar[int] = 2
-    opponent_policy: TinkerMessageCompleter | None = None
+    opponent_policy: MessageCompleter | None = None
 
     async def make_envs(self) -> Sequence[Env]:
         """Create a group of environments sharing the same TextArena game."""
@@ -264,9 +292,18 @@ class TwoPlayerTextArenaDatasetBuilder(RLDatasetBuilder):
     model_name: str
     game_name: str
     renderer_name: str
+    test_opponent: Literal["base_model", "random"] = "base_model"
 
-    def _construct_opponent_policy(self, renderer: Renderer) -> TinkerMessageCompleter:
-        """Play against a fixed policy during testing."""
+    def _construct_opponent_policy(self, renderer: Renderer) -> MessageCompleter:
+        """Construct the opponent policy for testing.
+
+        Returns:
+            A MessageCompleter — either a TinkerMessageCompleter (base model)
+            or a RandomOpponent depending on self.test_opponent.
+        """
+        if self.test_opponent == "random":
+            return RandomOpponent()
+        # Default: play against the base model
         service_client = tinker.ServiceClient(base_url=self.base_url)
         sampling_client = service_client.create_sampling_client(base_model=self.model_name)
         return TinkerMessageCompleter(
@@ -293,7 +330,7 @@ class TwoPlayerTextArenaDatasetBuilder(RLDatasetBuilder):
             num_datapoints=self.num_train_datapoints,
         )
 
-        # The testing dataset plays against a fixed policy, constructed by self._opponent_policy
+        # The testing dataset plays against a fixed policy
         test_builder = TwoPlayerEnvGroupBuilder(
             game_name=self.game_name,
             renderer=renderer,

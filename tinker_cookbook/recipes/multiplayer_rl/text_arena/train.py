@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime
+from typing import Literal
 
 import chz
 
@@ -14,12 +15,13 @@ class CLIConfig:
     renderer_name: str | None = None
     game_name: str = "TicTacToe-v0"
     batch_size: int = 512
-    num_train_datapoints: int = 131072
+    num_train_datapoints: int = 20480
     num_test_datapoints: int = 128
     learning_rate: float = 3e-5
     max_tokens: int = 64
     eval_every: int = 5
     save_every: int = 20
+    test_opponent: Literal["base_model", "random"] = "base_model"
     wandb_project: str | None = None
     wandb_name: str | None = None
     log_path: str | None = None
@@ -53,6 +55,7 @@ def build_config(cli_config: CLIConfig) -> train.Config:
         num_train_datapoints=cli_config.num_train_datapoints,
         num_test_datapoints=cli_config.num_test_datapoints,
         renderer_name=renderer_name,
+        test_opponent=cli_config.test_opponent,
     )
 
     return train.Config(
@@ -63,6 +66,7 @@ def build_config(cli_config: CLIConfig) -> train.Config:
         learning_rate=cli_config.learning_rate,
         max_tokens=cli_config.max_tokens,
         eval_every=cli_config.eval_every,
+        save_every=cli_config.save_every,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
         max_steps=cli_config.max_steps,
