@@ -347,34 +347,6 @@ def _validate_requirements(benchmark: BenchmarkBuilder, config: BenchmarkConfig)
 
 
 # ---------------------------------------------------------------------------
-# Token / turn summary helpers
-# ---------------------------------------------------------------------------
-
-
-def _compute_token_turn_summary(metrics_list: list[Metrics]) -> dict[str, float | int]:
-    """Compute aggregate token and turn stats from per-example metrics.
-
-    Reads ``_eval_turns``, ``_eval_ac_tokens``, ``_eval_ob_tokens`` injected
-    by the runner's ``run_one`` and returns summary stats.  These are added
-    to ``BenchmarkResult.metrics`` via ``setdefault`` so that custom
-    ``aggregate()`` implementations can override them.
-    """
-    total_ac = sum(m.get("_eval_ac_tokens", 0) for m in metrics_list)
-    total_ob = sum(m.get("_eval_ob_tokens", 0) for m in metrics_list)
-    total_turns = sum(m.get("_eval_turns", 0) for m in metrics_list)
-    out: dict[str, float | int] = {
-        "total_ac_tokens": total_ac,
-        "total_ob_tokens": total_ob,
-        "total_turns": total_turns,
-        "turns_per_episode": total_turns / len(metrics_list) if metrics_list else 0,
-    }
-    if total_turns > 0:
-        out["ac_tokens_per_turn"] = total_ac / total_turns
-        out["ob_tokens_per_turn"] = total_ob / total_turns
-    return out
-
-
-# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -560,18 +532,10 @@ async def run_benchmark(
 
                 total_reward = sum(t.reward for t in trajectory.transitions)
 
-                # Collect metrics and token counts from all transitions
+                # Collect metrics from all transitions
                 step_metrics: Metrics = {}
-                total_ac_tokens = 0
-                total_ob_tokens = 0
                 for t in trajectory.transitions:
                     step_metrics.update(t.metrics)
-                    total_ac_tokens += len(t.ac.tokens)
-                    total_ob_tokens += t.ob.length
-                # Use _eval_ prefix to avoid colliding with env-emitted metrics
-                step_metrics["_eval_turns"] = len(trajectory.transitions)
-                step_metrics["_eval_ac_tokens"] = total_ac_tokens
-                step_metrics["_eval_ob_tokens"] = total_ob_tokens
 
                 # Apply custom grade_fn override if provided
                 if config.grade_fn is not None:
@@ -682,11 +646,6 @@ async def run_benchmark(
         result.num_truncated = num_truncated
         result.time_seconds = time.monotonic() - t0
 
-        # Add token/turn summary stats (setdefault lets aggregate() override)
-        if valid_metrics:
-            for k, v in _compute_token_turn_summary(valid_metrics).items():
-                result.metrics.setdefault(k, v)
-
         trunc_str = f", {num_truncated} truncated" if num_truncated else ""
         completed_str = ""
         if num_truncated or num_errors:
@@ -760,11 +719,6 @@ async def run_benchmark(
     result.num_truncated = total_truncated
     result.time_seconds = time.monotonic() - t0
     result.pass_at_k = pass_at_k
-
-    # Add token/turn summary stats
-    if all_metrics:
-        for k, v in _compute_token_turn_summary(all_metrics).items():
-            result.metrics.setdefault(k, v)
 
     # Log pass@k results
     pass_at_k_str = ", ".join(f"pass@{k}={v:.3f}" for k, v in sorted(pass_at_k.items()))

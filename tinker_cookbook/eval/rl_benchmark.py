@@ -30,7 +30,7 @@ from collections.abc import Sequence
 import tinker
 
 from tinker_cookbook.completers import StopCondition
-from tinker_cookbook.eval.benchmarks._runner import _compute_token_turn_summary, run_benchmark
+from tinker_cookbook.eval.benchmarks._runner import run_benchmark
 from tinker_cookbook.eval.benchmarks._types import (
     BenchmarkBuilder,
     BenchmarkConfig,
@@ -171,11 +171,6 @@ class RLTestSetBenchmarkBuilder(BenchmarkBuilder):
         if metrics_list:
             means = dict_mean(metrics_list)
             for k, v in means.items():
-                agg[f"env/all/{k}"] = v
-
-            # Add per-turn token rates under env/all/ prefix for backward compat
-            # with RLTestSetEvaluator's ac_tokens_per_turn / ob_tokens_per_turn.
-            for k, v in _compute_token_turn_summary(metrics_list).items():
                 agg[f"env/all/{k}"] = v
 
         # Per-tag aggregation using positional alignment with self._tags_per_builder
