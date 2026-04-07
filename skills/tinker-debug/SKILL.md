@@ -579,7 +579,7 @@ seq = sample_result.sequences[0]
 decode_logprobs = seq.logprobs  # from autoregressive decoding
 
 # 2. Recompute with prefill on the full sequence (prompt + generated tokens)
-full_sequence = model_input.concat(tinker.ModelInput.from_ints(seq.tokens))
+full_sequence = tinker.ModelInput.from_ints(model_input.to_ints() + seq.tokens)
 prefill_logprobs = await sampling_client.compute_logprobs_async(full_sequence)
 # Slice to get only the generated token positions
 prefill_logprobs_generated = prefill_logprobs[model_input.length:]
