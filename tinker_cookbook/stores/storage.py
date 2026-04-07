@@ -199,8 +199,10 @@ class LocalStorage:
     Pickle-serializable (stores only a ``Path``).
     """
 
-    def __init__(self, root: str | Path) -> None:
-        self._root = Path(root).resolve()
+    def __init__(self, root: str | Path, *, mkdir: bool = True) -> None:
+        self._root = Path(root).expanduser().resolve()
+        if mkdir:
+            self._root.mkdir(parents=True, exist_ok=True)
 
     @property
     def root(self) -> Path:
