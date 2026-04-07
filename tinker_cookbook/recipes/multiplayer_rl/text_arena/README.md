@@ -15,7 +15,7 @@ We show how to coordinate the steps of two *Environment* objects such that both 
 python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.train
 ```
 
-With the default settings (batch size 512, ~20k datapoints = 40 steps), training takes roughly 1 hour.
+With the default settings (batch size 512, ~40k datapoints = 80 steps), training takes roughly 1-2 hours.
 
 ### Expected results
 
@@ -36,7 +36,7 @@ The key metric to watch is `test/env/all/reward/total`, which measures how well 
 |--------|---------|-------------|
 | `model_name` | `Qwen/Qwen3-4B-Instruct-2507` | Base model to train |
 | `batch_size` | `512` | Trajectories per training step |
-| `num_train_datapoints` | `20480` | Total training trajectories (~40 steps) |
+| `num_train_datapoints` | `40960` | Total training trajectories (~80 steps) |
 | `learning_rate` | `3e-5` | Adam learning rate |
 | `eval_every` | `5` | Evaluate every N steps |
 | `save_every` | `20` | Checkpoint every N steps |

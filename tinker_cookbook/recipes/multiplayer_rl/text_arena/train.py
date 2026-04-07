@@ -15,7 +15,7 @@ class CLIConfig:
     renderer_name: str | None = None
     game_name: str = "TicTacToe-v0"
     batch_size: int = 512
-    num_train_datapoints: int = 20480
+    num_train_datapoints: int = 40960
     num_test_datapoints: int = 128
     learning_rate: float = 3e-5
     max_tokens: int = 64
