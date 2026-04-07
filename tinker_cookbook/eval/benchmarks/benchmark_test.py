@@ -5,6 +5,7 @@ import pytest
 from tinker_cookbook.eval.benchmarks._runner import (
     _choose_k_values,
     _compute_pass_at_k,
+    _compute_token_turn_summary,
     _pass_at_k_single,
 )
 from tinker_cookbook.eval.benchmarks._types import (
@@ -575,3 +576,46 @@ class TestPassAtK:
     def test_choose_k_values_exact_candidate(self):
         """num_samples matching a standard candidate shouldn't duplicate it."""
         assert _choose_k_values(50) == [1, 5, 10, 25, 50]
+
+
+class TestTokenTurnSummary:
+    """Tests for _compute_token_turn_summary."""
+
+    def test_basic(self):
+        result = _compute_token_turn_summary(
+            [
+                {"_eval_turns": 2, "_eval_ac_tokens": 100, "_eval_ob_tokens": 50},
+                {"_eval_turns": 3, "_eval_ac_tokens": 150, "_eval_ob_tokens": 75},
+            ]
+        )
+        assert result["total_ac_tokens"] == 250
+        assert result["total_ob_tokens"] == 125
+        assert result["total_turns"] == 5
+        assert result["turns_per_episode"] == 2.5
+        assert result["ac_tokens_per_turn"] == 50.0
+        assert result["ob_tokens_per_turn"] == 25.0
+
+    def test_empty_list(self):
+        result = _compute_token_turn_summary([])
+        assert result["total_turns"] == 0
+        assert result["turns_per_episode"] == 0
+        assert "ac_tokens_per_turn" not in result
+
+    def test_missing_keys_default_to_zero(self):
+        result = _compute_token_turn_summary(
+            [
+                {"some_other_metric": 1.0},
+                {"_eval_turns": 1, "_eval_ac_tokens": 10, "_eval_ob_tokens": 5},
+            ]
+        )
+        assert result["total_ac_tokens"] == 10
+        assert result["total_turns"] == 1
+
+    def test_zero_turns(self):
+        result = _compute_token_turn_summary(
+            [
+                {"_eval_turns": 0, "_eval_ac_tokens": 0, "_eval_ob_tokens": 0},
+            ]
+        )
+        assert result["total_turns"] == 0
+        assert "ac_tokens_per_turn" not in result
