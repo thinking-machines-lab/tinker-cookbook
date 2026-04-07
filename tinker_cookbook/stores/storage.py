@@ -514,7 +514,9 @@ class FsspecStorage:
         """Upload all locally staged files to cloud.
 
         Call this at checkpoints or training end. The context manager
-        calls this automatically on exit.
+        calls this automatically on exit.  Staged files are removed after
+        upload so that subsequent appends pull fresh data from cloud,
+        avoiding re-uploading the entire file on every flush cycle.
         """
         for path in list(self._staged):
             sp = self._stage_path(path)
@@ -523,6 +525,8 @@ class FsspecStorage:
                 full = self._full(path)
                 self._fs.mkdirs(posixpath.dirname(full), exist_ok=True)
                 self._fs.pipe_file(full, data)
+                sp.unlink()
+                self._staged.discard(path)
 
     def close(self) -> None:
         """Flush staged data and clean up the local staging directory."""
