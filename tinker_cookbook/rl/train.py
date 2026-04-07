@@ -122,11 +122,8 @@ async def gather_with_progress(
 
 
 def _get_evaluator_name(evaluator: SamplingClientEvaluator) -> str:
-    return (
-        evaluator.name
-        if isinstance(evaluator, RLTestSetEvaluator) and evaluator.name is not None
-        else ""
-    )
+    name = getattr(evaluator, "_name", None) or getattr(evaluator, "name", None)
+    return name if isinstance(name, str) else ""
 
 
 def _sanitize_filename_component(text: str) -> str:
@@ -1957,13 +1954,32 @@ async def main(
 
     evaluators = [evaluator() for evaluator in config.evaluator_builders]
     if maybe_test_dataset is not None:
-        evaluators.append(
-            RLTestSetEvaluator(
-                maybe_test_dataset,
-                max_tokens=config.max_tokens,
-                strategy=strategy,
+        if config.renderer_name is not None:
+            from tinker_cookbook.eval.rl_benchmark import RLTestSetBenchmarkEvaluator
+            from tinker_cookbook.renderers import get_renderer
+
+            eval_renderer = get_renderer(config.renderer_name, tokenizer)
+            eval_save_dir = (
+                str(Path(config.log_path) / "eval_benchmarks") if config.log_path else None
             )
-        )
+            evaluators.append(
+                RLTestSetBenchmarkEvaluator(
+                    maybe_test_dataset,
+                    max_tokens=config.max_tokens,
+                    renderer=eval_renderer,
+                    name="test",
+                    save_dir=eval_save_dir,
+                )
+            )
+        else:
+            # Fallback: renderer_name not set, use legacy evaluator
+            evaluators.append(
+                RLTestSetEvaluator(
+                    maybe_test_dataset,
+                    max_tokens=config.max_tokens,
+                    strategy=strategy,
+                )
+            )
 
     num_batches = len(dataset)
     end_batch = min(config.max_steps, num_batches) if config.max_steps is not None else num_batches
