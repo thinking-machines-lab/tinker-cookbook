@@ -36,10 +36,22 @@ import contextlib
 import logging
 import posixpath
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
+
+
+def _to_float_mtime(value: float | datetime) -> float:
+    """Convert an mtime value to a float (seconds since epoch).
+
+    Cloud backends (e.g. GCS) return ``datetime`` objects for mtime/LastModified
+    instead of numeric timestamps.
+    """
+    if isinstance(value, (int, float)):
+        return float(value)
+    return value.timestamp()
 
 
 @dataclass(frozen=True)
@@ -448,7 +460,7 @@ class FsspecStorage:
             info = self._fs.info(self._full(path))
             return StorageStat(
                 size=info.get("size", 0),
-                mtime=info.get("mtime", 0.0) or info.get("LastModified", 0.0) or 0.0,
+                mtime=_to_float_mtime(info.get("mtime") or info.get("LastModified") or 0.0),
             )
         except FileNotFoundError:
             return None
