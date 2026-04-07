@@ -590,19 +590,31 @@ class GptOssRenderer(Renderer):
             recipient = msg["recipient"]
             if recipient and recipient.startswith("functions."):
                 tool_name = recipient.split("functions.", 1)[1]
+                args = msg_content.strip()
+                # Try to parse JSON, with repair for common model errors
+                parsed = None
                 try:
-                    json.loads(msg_content)
+                    parsed = json.loads(args)
+                except json.JSONDecodeError:
+                    # Common error: trailing "]}" instead of "}" (75% of bad JSONs)
+                    if args.endswith("]}"):
+                        try:
+                            parsed = json.loads(args[:-2] + "}")
+                            args = args[:-2] + "}"
+                        except json.JSONDecodeError:
+                            pass
+                if parsed is not None:
                     tool_calls.append(
                         ToolCall(
                             function=ToolCall.FunctionBody(
-                                name=tool_name, arguments=msg_content.strip()
+                                name=tool_name, arguments=args
                             ),
                             id=None,  # Harmony format doesn't include tool call IDs
                         )
                     )
-                except json.JSONDecodeError as e:
+                else:
                     unparsed.append(
-                        UnparsedToolCall(raw_text=msg_raw_text, error=f"Invalid JSON: {e}")
+                        UnparsedToolCall(raw_text=msg_raw_text, error=f"Invalid JSON: {args[:100]}")
                     )
                 continue
 
