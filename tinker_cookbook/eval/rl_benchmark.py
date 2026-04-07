@@ -149,15 +149,18 @@ class RLTestSetBenchmarkBuilder(BenchmarkBuilder):
 
         Computes standard accuracy plus RL-style metrics:
 
-        - ``reward/total``: mean reward across all examples
-        - Per-example metric means (``correct``, ``format``, etc.)
+        - ``env/all/reward/total``: mean reward across all examples
+        - Per-example metric means under ``env/all/`` (``correct``, ``format``, etc.)
         - Per-tag breakdowns (``env/{tag}/reward/total``, etc.) when tags exist
 
-        Index alignment: the benchmark runner processes envs in order and
-        ``valid_rewards`` excludes only unrun (``None``) examples.  Since we
-        don't use resumability, ``len(rewards) == len(self._builders)`` and
-        positional indices align with ``self._tags_per_builder``.
+        Per-tag aggregation relies on positional alignment between
+        ``rewards[i]`` and ``self._tags_per_builder[i]``.  This is safe
+        because the evaluator does not set ``save_dir`` with resumability
+        that could reorder examples.
         """
+        assert len(rewards) == len(metrics_list), (
+            f"rewards ({len(rewards)}) and metrics_list ({len(metrics_list)}) must have same length"
+        )
         num_correct = sum(1 for r in rewards if r > 0)
         score = num_correct / len(rewards) if rewards else 0.0
 

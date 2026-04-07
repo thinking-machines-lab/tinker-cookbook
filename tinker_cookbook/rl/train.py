@@ -1959,16 +1959,12 @@ async def main(
             from tinker_cookbook.renderers import get_renderer
 
             eval_renderer = get_renderer(config.renderer_name, tokenizer)
-            eval_save_dir = (
-                str(Path(config.log_path) / "eval_benchmarks") if config.log_path else None
-            )
             evaluators.append(
                 RLTestSetBenchmarkEvaluator(
                     maybe_test_dataset,
                     max_tokens=config.max_tokens,
                     renderer=eval_renderer,
                     name="test",
-                    save_dir=eval_save_dir,
                 )
             )
         else:

@@ -148,6 +148,21 @@ class TestLazyEnv:
         with pytest.raises(AssertionError):
             asyncio.get_event_loop().run_until_complete(lazy.step([1]))
 
+    def test_cleanup_before_init(self):
+        """cleanup() is safe even if initial_observation() was never called."""
+        builder = _StubGroupBuilder(reward=1.0)
+        lazy = _LazyEnv(builder, builder_idx=0)
+        # Should not raise — inner is None, builder.cleanup() is a no-op
+        asyncio.get_event_loop().run_until_complete(lazy.cleanup())
+
+    def test_cleanup_after_init(self):
+        """cleanup() delegates to builder after init."""
+        builder = _StubGroupBuilder(reward=1.0)
+        lazy = _LazyEnv(builder, builder_idx=0)
+        asyncio.get_event_loop().run_until_complete(lazy.initial_observation())
+        # Should not raise
+        asyncio.get_event_loop().run_until_complete(lazy.cleanup())
+
 
 class TestRLTestSetBenchmarkBuilder:
     def test_make_envs_returns_lazy_envs(self):
