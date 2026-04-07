@@ -300,7 +300,7 @@ class _SWEBenchReward:
             result = await self._sandbox.run_command(
                 "bash /workspace/eval.sh 2>&1", timeout=300, max_output_bytes=512_000
             )
-            test_output = result.stdout
+            test_output = result.stdout + "\n" + result.stderr
             logger.debug(
                 f"swe_bench eval {self._instance_id}: exit={result.exit_code} "
                 f"stdout={len(result.stdout)}B stderr={len(result.stderr)}B"
