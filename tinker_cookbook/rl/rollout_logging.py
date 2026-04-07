@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from tinker_cookbook.rl.types import TrajectoryGroup
+from tinker_cookbook.utils.deprecation import deprecated
 from tinker_cookbook.utils.misc_utils import safezip
 
 logger = logging.getLogger(__name__)
@@ -145,6 +146,10 @@ def serialize_rollout_summaries(
     return records
 
 
+@deprecated(
+    message="Use serialize_rollout_summaries() + store.write_rollouts() instead.",
+    removal_version="0.4.0",
+)
 def write_rollout_summaries_jsonl(
     path: str | Path,
     *,

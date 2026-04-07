@@ -53,7 +53,8 @@ class IncrementalReader:
     @property
     def total_read(self) -> int:
         """Total number of records read since creation (not bounded by max_records)."""
-        return self._total_read
+        with self._lock:
+            return self._total_read
 
     @property
     def known_keys(self) -> set[str]:
