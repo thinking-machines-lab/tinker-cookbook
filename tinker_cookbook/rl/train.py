@@ -768,6 +768,7 @@ async def do_sync_training_with_stream_minibatch(
                     training_client,
                     kl_reference_client,
                     tokenizer,
+                    store=ml_logger.store,
                 )
                 # _Shutdown cannot appear in the sync path's local queue
                 assert streaming_result is not None, "Unexpected shutdown in sync streaming path"
@@ -1096,6 +1097,7 @@ async def do_async_training(
                         kl_reference_client,
                         tokenizer,
                         filter_stale_trajectory_group,
+                        store=ml_logger.store,
                     )
                 if streaming_result is None:
                     logger.info("[training_loop] Received shutdown signal from streaming")
@@ -1160,6 +1162,7 @@ async def do_async_training(
                         tokenizer,
                         [g.env_group_builder for g in wrapped_trajectory_groups],
                         [g.trajectory_group for g in wrapped_trajectory_groups],
+                        store=ml_logger.store,
                     )
                 iter_dir = iteration_dir(config.log_path, i_batch)
                 _maybe_export_rollout_summary_jsonl(
@@ -1424,6 +1427,7 @@ async def do_train_step_streaming_and_get_sampling_client(
     kl_reference_client: tinker.SamplingClient | None,
     tokenizer: Tokenizer,
     trajectory_group_filter: Callable[[WrappedTrajectoryGroup | None], bool] = lambda _: True,
+    store: TrainingRunStore | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any], list[WrappedTrajectoryGroup]] | None:
     """Consume trajectory groups from a queue and train as minibatches become ready.
 
@@ -1569,6 +1573,7 @@ async def do_train_step_streaming_and_get_sampling_client(
         config.save_every,
         config.compute_post_kl,
         config.ttl_seconds,
+        store=store,
     )
     metrics.update(full_batch_metrics)
     return sampling_client, metrics, all_wrapped_trajectory_groups
@@ -1583,6 +1588,7 @@ async def do_train_step_and_get_sampling_client(
     tokenizer: Tokenizer,
     env_group_builders_P: Sequence[EnvGroupBuilder],
     trajectory_groups_P: list[TrajectoryGroup],
+    store: TrainingRunStore | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """Prepare a minibatch, run one training step, and return updated weights.
 
@@ -1641,6 +1647,7 @@ async def do_train_step_and_get_sampling_client(
         config.save_every,
         config.compute_post_kl,
         config.ttl_seconds,
+        store=store,
     )
     metrics.update(full_batch_metrics)
 
@@ -1797,6 +1804,7 @@ async def do_sync_training(
                     tokenizer,
                     env_group_builders_P,
                     trajectory_groups_P,
+                    store=ml_logger.store,
                 )
 
                 metrics.update(train_step_metrics)

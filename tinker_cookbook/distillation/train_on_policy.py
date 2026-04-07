@@ -3,11 +3,16 @@ Implements on-policy distillation. For more details, see:
 https://thinkingmachines.ai/blog/on-policy-distillation
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from tinker_cookbook.stores.training_store import TrainingRunStore
 
 import chz
 import tinker
@@ -234,6 +239,7 @@ async def do_train_step_and_get_sampling_client(
     trajectory_groups_P: list[TrajectoryGroup],
     dataset_indices_P: list[int],
     teacher_clients: list[tinker.SamplingClient],
+    store: TrainingRunStore | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     trace.update_scope_context({"step": i_batch})
 
@@ -269,6 +275,7 @@ async def do_train_step_and_get_sampling_client(
         config.log_path,
         config.save_every,
         config.compute_post_kl,
+        store=store,
     )
     metrics.update(full_batch_metrics)
 
@@ -348,6 +355,7 @@ async def do_sync_training(
                 trajectory_groups_P,
                 dataset_indices_P,
                 teacher_clients,
+                store=ml_logger.store,
             )
 
             metrics.update(train_step_metrics)
