@@ -40,13 +40,14 @@ Running for the full 256 steps reveals interesting training dynamics:
 | Learning | 0-5 | -0.4 → 0.0 | -0.4 → +0.3 | Model learns basic play |
 | Plateau | 5-75 | ~0.0 | +0.3 to +0.7 | Stable, strong play |
 | Collapse | 80-110 | **-1.0** | +0.4 → -0.1 | One side wins every game |
-| Recovery | 115-130 | 0.0 | -0.2 → +0.6 | Self-play stabilizes again |
+| Recovery | 115-130 | 0.0 | -0.2 → +0.6 | Brief recovery |
+| Degradation | 135-256 | 0.0 | -0.1 to -0.25 | Degenerate equilibrium |
 
-The **collapse** at step 80 happens because a small asymmetry gets amplified — if one side becomes slightly stronger, the training update reinforces that advantage, creating a feedback loop that destabilizes within a few steps. This is a known challenge with self-play RL.
+The **collapse** at step 80 happens because a small asymmetry gets amplified — if one side becomes slightly stronger, the training update reinforces that advantage, creating a feedback loop that destabilizes within a few steps.
 
-The model **recovers** on its own around step 115, but the instability wastes training compute. The default of 80 steps avoids this region while capturing the performance plateau.
+The model **recovers** around step 115, but then settles into a **degenerate equilibrium**: both sides draw in self-play (reward ≈ 0), but the strategy is actually worse than the base model (test reward goes negative). The collapse breaks the learned strategy, and the recovery converges to a different, weaker fixed point. This is a known challenge with self-play RL.
 
-Potential mitigations for longer training runs include mixing self-play with games against a fixed opponent (random or base model) in each batch, or periodically freezing a copy of the weights to play against.
+The default of 80 steps avoids the collapse while capturing the performance plateau. Potential mitigations for longer training runs include mixing self-play with games against a fixed opponent (random or base model) in each batch, or periodically freezing a copy of the weights to play against.
 
 ### CLI options
 
