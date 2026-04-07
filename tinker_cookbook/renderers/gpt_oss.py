@@ -141,6 +141,32 @@ def _format_tool_definition(tool: ToolSpec) -> str:
     return "\n".join(lines)
 
 
+def _try_repair_json(args: str) -> tuple[dict | None, str]:
+    """Try to repair common JSON errors in tool call arguments.
+
+    Returns (parsed_dict, repaired_args) on success, or (None, original_args) on failure.
+
+    Known model error patterns:
+    1. Trailing ``"]}`` instead of ``"}`` — extra ``]`` before close brace
+    2. Extra fields with array bracket: ``"cmd"], "timeout": N}`` — model adds
+       unsupported parameters with stray ``]``
+    """
+    repairs = [
+        # Pattern 1: "...]}" → "...}"
+        lambda s: s[:-2] + "}" if s.endswith("]}") else None,
+        # Pattern 2: "..."], "timeout": N}" → "..."}" — strip from "], onwards
+        lambda s: re.sub(r'"\],\s*"timeout"\s*:\s*\d+\s*\}', '"}', s) if '"], "timeout"' in s else None,
+    ]
+    for repair in repairs:
+        fixed = repair(args)
+        if fixed is not None and fixed != args:
+            try:
+                return json.loads(fixed), fixed
+            except json.JSONDecodeError:
+                pass
+    return None, args
+
+
 class GptOssRenderer(Renderer):
     """
     Renderer for OpenAI's open source models using the Harmony format.
@@ -596,13 +622,7 @@ class GptOssRenderer(Renderer):
                 try:
                     parsed = json.loads(args)
                 except json.JSONDecodeError:
-                    # Common error: trailing "]}" instead of "}" (75% of bad JSONs)
-                    if args.endswith("]}"):
-                        try:
-                            parsed = json.loads(args[:-2] + "}")
-                            args = args[:-2] + "}"
-                        except json.JSONDecodeError:
-                            pass
+                    parsed, args = _try_repair_json(args)
                 if parsed is not None:
                     tool_calls.append(
                         ToolCall(
