@@ -132,3 +132,21 @@ class TestLastResult:
         assert isinstance(result, BenchmarkResult)
         for key in result.metrics:
             assert f"test/{key}" in flat_metrics, f"Missing test/{key} in flat metrics"
+
+    def test_last_result_counts_groups_not_trajectories(self):
+        """num_examples counts groups (test problems), not individual trajectories."""
+        builders: list[EnvGroupBuilder] = [_FakeBuilder(), _FakeBuilder()]
+        evaluator = _make_evaluator("test", builders)
+
+        # Group with 2 trajectories: one correct, one not.
+        # The group counts as "correct" because at least one trajectory succeeded.
+        results: list[TrajectoryGroup | None] = [
+            _make_trajectory_group([1.0, 0.0]),  # group_size=2, mixed
+            _make_trajectory_group([0.0, 0.0]),  # group_size=2, all wrong
+        ]
+        evaluator._collect_eval_metrics(results, rollout_summary_export=None)
+
+        result = evaluator.last_result
+        assert isinstance(result, BenchmarkResult)
+        assert result.num_examples == 2  # 2 groups, not 4 trajectories
+        assert result.num_correct == 1  # first group has reward > 0

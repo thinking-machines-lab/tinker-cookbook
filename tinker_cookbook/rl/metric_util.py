@@ -343,16 +343,18 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         metrics.update(error_counter.get_metrics())
 
         # Build typed BenchmarkResult from the same data.
-        # Score treats errors as incorrect (reward=0) to match the benchmark
-        # runner's convention where errors count in the denominator.
-        all_rewards = [reward for tg in trajectory_groups_P for reward in tg.get_total_rewards()]
-        num_correct = sum(1 for r in all_rewards if r > 0)
-        total = len(all_rewards) + num_errors
+        # Count at the group level (one group = one test problem) so that
+        # num_examples matches len(env_group_builders_P) regardless of
+        # group_size.  Errors count in the denominator (scored as 0).
+        num_groups_correct = sum(
+            1 for tg in trajectory_groups_P if any(r > 0 for r in tg.get_total_rewards())
+        )
+        total_groups = len(results)
         self.last_result = BenchmarkResult(
             name=self.name,
-            score=num_correct / total if total > 0 else 0.0,
-            num_examples=total,
-            num_correct=num_correct,
+            score=num_groups_correct / total_groups if total_groups > 0 else 0.0,
+            num_examples=total_groups,
+            num_correct=num_groups_correct,
             num_errors=num_errors,
             metrics=dict(metrics),
         )
