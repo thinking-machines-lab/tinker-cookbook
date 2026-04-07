@@ -34,8 +34,17 @@ class AgentToolMessageEnv(MessageEnv):
     max_turns: int
     reward_fn: RewardFn
     history: list[Message] = field(default_factory=list)
+    max_no_tool_retries: int = 0
+    """Number of times to retry when the model responds without a tool call.
+
+    When > 0, a nudge message is appended asking the model to continue, instead
+    of terminating the episode. Set to 3-5 for agents that should persist through
+    formatting errors. Default 0 preserves the original behavior (terminate
+    immediately on no tool call).
+    """
 
     _turn_count: int = 0
+    _consecutive_no_tool: int = field(default=0, init=False)
     _tool_dict: dict[str, Tool] = field(default_factory=dict, init=False)
     _should_stop: bool = field(default=False, init=False)
 
@@ -96,6 +105,7 @@ class AgentToolMessageEnv(MessageEnv):
         # Extract and execute tool calls if present
         tool_calls: list[ToolCall] = list(message.get("tool_calls") or [])
         if tool_calls:
+            self._consecutive_no_tool = 0
             for i, tc in enumerate(tool_calls):
                 logs[f"tool_call_{i}"] = f"{tc.function.name}({tc.function.arguments})"
 
@@ -107,6 +117,30 @@ class AgentToolMessageEnv(MessageEnv):
         # Determine if episode is done
         no_tool_calls = len(tool_calls) == 0
         max_turns_reached = self._turn_count >= self.max_turns
+
+        # When no tool calls: retry with a nudge if retries remain,
+        # otherwise terminate. This mirrors mini-swe-agent's behavior
+        # of sending format error feedback instead of killing the episode.
+        if no_tool_calls and self.max_no_tool_retries > 0:
+            self._consecutive_no_tool += 1
+            if self._consecutive_no_tool <= self.max_no_tool_retries and not max_turns_reached:
+                nudge: Message = {
+                    "role": "user",
+                    "content": (
+                        "You must call the bash tool in every response. "
+                        "Please continue working on the task."
+                    ),
+                }
+                self.history.append(nudge)
+                metrics["no_tool_retry"] = float(self._consecutive_no_tool)
+                return MessageStepResult(
+                    reward=0.0,
+                    episode_done=False,
+                    next_messages=self.history,
+                    metrics=metrics,
+                    logs=logs,
+                )
+
         done = no_tool_calls or max_turns_reached or self._should_stop
 
         if max_turns_reached and not no_tool_calls:
@@ -135,6 +169,7 @@ def build_agent_tool_env(
     reward_fn: RewardFn,
     *,
     max_turns: int = 5,
+    max_no_tool_retries: int = 0,
     failed_parse_reward: float = -0.1,
     max_trajectory_tokens: int | None = None,
     max_generation_tokens: int | None = None,
@@ -149,6 +184,9 @@ def build_agent_tool_env(
         reward_fn: Function that grades a completed episode. Takes the full message
             history and returns (reward, metrics). Called once at episode end.
         max_turns: Maximum turns before episode ends.
+        max_no_tool_retries: Number of consecutive no-tool-call responses before
+            terminating. When > 0, a nudge message is sent asking the model to
+            continue, mirroring mini-swe-agent's error recovery behavior.
         failed_parse_reward: Reward when model output fails to parse.
         max_trajectory_tokens: Maximum tokens in trajectory before terminating episode.
         max_generation_tokens: Maximum tokens per generation. When set, the episode
@@ -165,6 +203,7 @@ def build_agent_tool_env(
         initial_messages=initial_messages,
         max_turns=max_turns,
         reward_fn=reward_fn,
+        max_no_tool_retries=max_no_tool_retries,
     )
     return EnvFromMessageEnv(
         renderer=renderer,

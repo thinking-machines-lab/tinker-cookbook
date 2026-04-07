@@ -539,6 +539,7 @@ class _SWEBenchEnvFactory(SandboxMixin, Env):
             initial_messages=initial_messages,
             max_turns=MAX_TURNS,
             reward_fn=reward_fn,
+            max_no_tool_retries=3,
         )
         self._inner = EnvFromMessageEnv(
             renderer=self.renderer,
