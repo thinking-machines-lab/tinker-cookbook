@@ -102,6 +102,27 @@ class AgentToolMessageEnv(MessageEnv):
         if assistant_text:
             logs["assistant_content"] = assistant_text
 
+        # If the renderer parsed the response but found unparseable tool calls,
+        # send the error back to the model so it can fix the JSON.
+        unparsed = message.get("unparsed_tool_calls") or []
+        if unparsed and not message.get("tool_calls"):
+            error_msg = unparsed[0].error if hasattr(unparsed[0], "error") else str(unparsed[0])
+            error_feedback: Message = {
+                "role": "user",
+                "content": f"Your tool call could not be parsed: {error_msg}. "
+                "Please try again with valid JSON arguments.",
+            }
+            self.history.append(error_feedback)
+            self._turn_count += 1  # count as a turn to prevent infinite loops
+            metrics["unparsed_tool_retry"] = 1.0
+            return MessageStepResult(
+                reward=0.0,
+                episode_done=self._turn_count >= self.max_turns,
+                next_messages=self.history,
+                metrics=metrics,
+                logs=logs,
+            )
+
         # Extract and execute tool calls if present
         tool_calls: list[ToolCall] = list(message.get("tool_calls") or [])
         if tool_calls:
