@@ -1211,7 +1211,7 @@ async def do_async_training(
 
     @trace.scope
     async def evaluation_loop():
-        """Runs evals periodically"""
+        """Runs evals periodically, matching the sync training eval pipeline."""
         if len(evaluators) == 0 or config.eval_every == 0:
             return
 
@@ -1226,10 +1226,14 @@ async def do_async_training(
             if config.eval_every > 0 and sampling_client_eval_step % config.eval_every == 0:
                 metrics: dict[str, Any] = {}
                 with trace.trace_iteration(step=sampling_client_eval_step) as window:
-                    async with trace.scope_span("run_evals"):
-                        for evaluator in evaluators:
-                            eval_metrics = await evaluator(sampling_client_eval)
-                            metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+                    eval_metrics = await run_evaluations_parallel(
+                        evaluators,
+                        sampling_client_eval,
+                        config,
+                        sampling_client_eval_step,
+                        store=ml_logger.store,
+                    )
+                    metrics.update(eval_metrics)
                 metrics.update(window.get_timing_metrics())
                 ml_logger.log_metrics(metrics, step=sampling_client_eval_step)
         logger.info("[evaluation_loop] Terminated")
