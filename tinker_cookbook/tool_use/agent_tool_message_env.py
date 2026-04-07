@@ -113,7 +113,7 @@ class AgentToolMessageEnv(MessageEnv):
                 "Please try again with valid JSON arguments.",
             }
             self.history.append(error_feedback)
-            self._turn_count += 1  # count as a turn to prevent infinite loops
+            # _turn_count already incremented at the top of step()
             metrics["unparsed_tool_retry"] = 1.0
             return MessageStepResult(
                 reward=0.0,
