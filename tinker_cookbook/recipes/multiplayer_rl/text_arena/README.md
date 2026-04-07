@@ -85,6 +85,7 @@ Results before and after training (20 games each, model plays as Player 0):
 |----------|---------------------|-------------------|
 | vs Random | 4W / 10D / 6L | 6W / 11D / 3L |
 | vs Optimal (minimax) | 0W / 0D / **20L** | 0W / **20D** / 0L |
+| vs Base model | — | 16W / 4D / 0L |
 
 The untrained base model loses every game against the optimal minimax opponent and frequently loses to random. After 40 steps of self-play training, the model draws every game against optimal — confirming it learned perfect tic-tac-toe. The improvement is most dramatic against optimal: from 0% survival to 100% draws.
 

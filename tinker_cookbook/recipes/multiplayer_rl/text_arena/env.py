@@ -1,4 +1,4 @@
-"""TextArena TicTacToe environment for tinker RL."""
+"""TextArena TicTacToe environment, opponents, and dataset builders for tinker RL."""
 
 import asyncio
 import random
@@ -175,7 +175,12 @@ def make_opponent(
     renderer: Renderer,
     base_url: str | None = None,
 ) -> MessageCompleter:
-    """Construct an opponent policy by type name."""
+    """Construct an opponent policy by type name.
+
+    - ``"random"``: picks a random legal move (no API calls).
+    - ``"optimal"``: perfect minimax player (no API calls).
+    - ``"base_model"``: samples from the untrained base model via Tinker.
+    """
     if opponent_type == "random":
         return RandomOpponent()
     if opponent_type == "optimal":
