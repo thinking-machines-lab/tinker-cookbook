@@ -21,7 +21,7 @@ class CLIConfig:
     max_tokens: int = 64
     eval_every: int = 5
     save_every: int = 20
-    test_opponent: Literal["base_model", "random"] = "base_model"
+    test_opponent: Literal["base_model", "random", "optimal"] = "base_model"
     wandb_project: str | None = None
     wandb_name: str | None = None
     log_path: str | None = None
