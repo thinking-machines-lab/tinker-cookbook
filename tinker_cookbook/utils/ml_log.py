@@ -181,9 +181,8 @@ class JsonLogger(Logger):
         from tinker_cookbook.stores.storage import storage_from_uri
         from tinker_cookbook.stores.training_store import TrainingRunStore as _TRS
 
-        self.log_dir = Path(log_dir).expanduser()
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-        self._store = store or _TRS(storage_from_uri(str(log_dir)))
+        self.log_dir = str(log_dir)
+        self._store = store or _TRS(storage_from_uri(self.log_dir))
         self._logged_hparams = False
 
     @property
@@ -539,15 +538,16 @@ def setup_logging(
     Returns:
         MultiplexLogger that combines all enabled loggers
     """
-    # Create log directory
-    log_dir_path = Path(log_dir).expanduser()
-    log_dir_path.mkdir(parents=True, exist_ok=True)
+    # Cloud URIs (s3://, gs://, az://) go through FsspecStorage; file:// and
+    # bare paths are local.  Third-party loggers need a local directory.
+    is_cloud = "://" in log_dir and not log_dir.startswith("file://")
+    local_log_dir: str | None = None if is_cloud else str(Path(log_dir).expanduser())
 
     # Initialize loggers
     loggers = []
 
-    # Always add JSON logger
-    loggers.append(JsonLogger(log_dir_path))
+    # Always add JSON logger (handles both local and cloud paths via Storage)
+    loggers.append(JsonLogger(log_dir))
 
     # Always add pretty print logger
     loggers.append(PrettyPrintLogger())
@@ -563,7 +563,7 @@ def setup_logging(
                 WandbLogger(
                     project=wandb_project,
                     config=config,
-                    log_dir=log_dir_path,
+                    log_dir=local_log_dir,
                     wandb_name=wandb_name,
                 )
             )
@@ -586,7 +586,7 @@ def setup_logging(
                 NeptuneLogger(
                     project=wandb_project,
                     config=config,
-                    log_dir=log_dir_path,
+                    log_dir=local_log_dir,
                     neptune_name=wandb_name,
                 )
             )
@@ -596,7 +596,7 @@ def setup_logging(
             TrackioLogger(
                 project=wandb_project,
                 config=config,
-                log_dir=log_dir_path,
+                log_dir=local_log_dir,
                 trackio_name=wandb_name,
             )
         )
@@ -609,10 +609,10 @@ def setup_logging(
     if config is not None:
         ml_logger.log_hparams(config)
 
-    if do_configure_logging_module:
-        configure_logging_module(str(log_dir_path / "logs.log"))
+    if do_configure_logging_module and local_log_dir is not None:
+        configure_logging_module(str(Path(local_log_dir) / "logs.log"))
 
-    logger.info(f"Logging to: {log_dir_path}")
+    logger.info(f"Logging to: {log_dir}")
     return ml_logger
 
 
