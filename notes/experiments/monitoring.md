@@ -75,4 +75,16 @@ Notes:
 - Accuracy differences likely due to different random training batches
 - FIPO generates 30-50% longer responses consistently
 - Influence weights stable: ~0.985±0.165
-- Real comparison will be at step 10 eval checkpoint (same test set)
+- DeepMath doesn't have a test split — no eval checkpoint available
+
+## 2026-04-08 08:30 UTC — Steps 0-10 Analysis
+
+FIPO (11 steps), GRPO (12 steps). Key findings:
+
+1. **FIPO generates 30-60% longer responses**: avg ~11k tokens vs ~8k for GRPO
+   - This matches the paper's main finding of extending reasoning chains
+2. **More accuracy variance with FIPO**: 43.8%-87.5% vs 78.9%-98.4% for GRPO
+   - Likely due to different random batches + longer exploration
+3. **KL divergence very small** for both (~0.0006) — stable training
+4. **Influence weights stable**: mean ~0.986, std ~0.165, future_kl_abs ~0.13
+5. **No test eval** available — DeepMath doesn't return a test split
