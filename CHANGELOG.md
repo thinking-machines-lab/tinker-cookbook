@@ -13,22 +13,57 @@ Each entry includes:
 
 ---
 
-## v0.3.0 (2026-04-08)
-
-### Highlights
-
-- **Benchmark evaluation framework** — 21 benchmarks (12 stable, 9 experimental) with concurrency, resumability, trajectory storage, and pass@k support. Verified scores on Qwen3.5-35B-A3B and GPT-OSS-120B.
-- **Cloud storage** — S3, GCS, and Azure backends via `FsspecStorage`. Training logs, checkpoints, rollout summaries, and eval results can now be written to cloud URIs.
-- **Stores module** — Typed `TrainingRunStore` and `EvalStore` for structured access to training runs, with a `RunRegistry` for cross-run comparison.
-
-### New features
-
-### [cookbook] Benchmark evaluation framework with 21 benchmarks ([#569](https://github.com/thinking-machines-lab/tinker-cookbook/pull/569))
-**Date:** 2026-04-05
-**Type:** new
+### [cookbook] Fix grading bugs in IFEval, MATH-500, and GPQA benchmarks ([#643](https://github.com/thinking-machines-lab/tinker-cookbook/pull/643))
+**Date:** 2026-04-08
+**Type:** fix
 **Tags:** eval
 
-Full benchmark framework reusing the RL `Env` abstraction. Includes GSM8K, MATH-500, MMLU-Pro, MMLU-Redux, GPQA, IFEval, MBPP, C-Eval, SuperGPQA, IFBench, AIME 2025/2026, plus experimental benchmarks (LiveCodeBench, Terminal Bench, SWE-bench, Arena Hard, LongBench, TAU2-Bench, HMMT, BFCL). Single-turn and multi-turn, with programmatic and sandbox grading.
+Fixes IFEval `letter_frequency` constraint using wrong kwargs key (always passed), `should_allow_eval` inverted regex check in math grading (blocked safe expressions from sympy), and GPQA silent fallback to answer "A" when correct_answer doesn't match choices. IFEval +3.9pp, MATH-500 +3.2pp on Qwen3.5-35B-A3B.
+
+---
+
+### [cookbook] Guard against edge-case crashes in RL, preference, and xmux ([#644](https://github.com/thinking-machines-lab/tinker-cookbook/pull/644))
+**Date:** 2026-04-08
+**Type:** fix
+**Tags:** rl, preference, xmux
+
+Adds defensive guards for division-by-zero in pairwise preference rewards (`group_size=1`), empty nonzero tensor in preference types, `max()`/`min()` on empty list in sampling metrics, `total_steps=0` in LR scheduling, model names without `org/` prefix, and empty jobs list in xmux control panel.
+
+---
+
+### [cookbook] Parallel evaluation in async training loop ([#630](https://github.com/thinking-machines-lab/tinker-cookbook/pull/630))
+**Date:** 2026-04-07
+**Type:** improvement
+**Tags:** rl, eval
+
+Training evaluation loop now runs evaluators in parallel via `run_evaluations_parallel`, reducing eval overhead in RL and distillation training.
+
+---
+
+### [cookbook] Public API exports for distillation and eval exceptions ([#639](https://github.com/thinking-machines-lab/tinker-cookbook/pull/639))
+**Date:** 2026-04-07
+**Type:** improvement
+**Tags:** distillation, eval
+
+Distillation module and eval exceptions are now importable from the top-level package.
+
+---
+
+### [cookbook] Remove v0.3.0-deprecated parameters ([#635](https://github.com/thinking-machines-lab/tinker-cookbook/pull/635))
+**Date:** 2026-04-07
+**Type:** improvement
+**Tags:** rl
+
+Removes deprecated parameters that were marked for removal in v0.3.0, including old metric names and legacy function signatures.
+
+---
+
+### [cookbook] Fix DPO training crash with odd batch size ([#637](https://github.com/thinking-machines-lab/tinker-cookbook/pull/637))
+**Date:** 2026-04-07
+**Type:** fix
+**Tags:** preference
+
+Fixes crash when DPO batch has odd number of datums after filtering invalid rows.
 
 ---
 
@@ -47,6 +82,69 @@ Full benchmark framework reusing the RL `Env` abstraction. Includes GSM8K, MATH-
 **Tags:** stores
 
 New `stores/` module with `TrainingRunStore` (typed access to checkpoints, metrics, rollouts) and `RunRegistry` for discovering and comparing runs across multiple storage backends.
+
+---
+
+### [cookbook] Dynamic max_tokens capping via context_window ([#618](https://github.com/thinking-machines-lab/tinker-cookbook/pull/618))
+**Date:** 2026-04-06
+**Type:** improvement
+**Tags:** eval
+
+Benchmark runner now caps `max_tokens` to the model's `context_window`, preventing wasted generation budget on shorter-context models.
+
+---
+
+### [cookbook] Thread TrainingRunStore through all training loops ([#620](https://github.com/thinking-machines-lab/tinker-cookbook/pull/620), [#621](https://github.com/thinking-machines-lab/tinker-cookbook/pull/621), [#627](https://github.com/thinking-machines-lab/tinker-cookbook/pull/627))
+**Date:** 2026-04-06
+**Type:** improvement
+**Tags:** rl, distillation, stores
+
+All training loops (SL, RL, on-policy distillation, SDFT) now accept an optional `TrainingRunStore` for structured checkpoint and timing persistence.
+
+---
+
+### [cookbook] Cloud URI support for logging ([#625](https://github.com/thinking-machines-lab/tinker-cookbook/pull/625), [#628](https://github.com/thinking-machines-lab/tinker-cookbook/pull/628))
+**Date:** 2026-04-06
+**Type:** improvement
+**Tags:** logging, stores
+
+`JsonLogger` and `setup_logging` now accept cloud URIs as `log_dir`, writing metrics and configs directly to S3/GCS/Azure.
+
+---
+
+### [cookbook] Fix IncrementalReader locking and FsspecStorage flush re-upload ([#629](https://github.com/thinking-machines-lab/tinker-cookbook/pull/629))
+**Date:** 2026-04-06
+**Type:** fix
+**Tags:** stores
+
+Fixes thread-safety in `IncrementalReader` and a bug where `FsspecStorage.flush()` re-uploaded stale data.
+
+---
+
+### [cookbook] Benchmark evaluation framework with 21 benchmarks ([#569](https://github.com/thinking-machines-lab/tinker-cookbook/pull/569))
+**Date:** 2026-04-05
+**Type:** new
+**Tags:** eval
+
+Full benchmark framework reusing the RL `Env` abstraction. Includes GSM8K, MATH-500, MMLU-Pro, MMLU-Redux, GPQA, IFEval, MBPP, C-Eval, SuperGPQA, IFBench, AIME 2025/2026, plus experimental benchmarks (LiveCodeBench, Terminal Bench, SWE-bench, Arena Hard, LongBench, TAU2-Bench, HMMT, BFCL). Single-turn and multi-turn, with programmatic and sandbox grading.
+
+---
+
+### [cookbook] Generalize SandboxFactory for non-Modal backends ([#588](https://github.com/thinking-machines-lab/tinker-cookbook/pull/588))
+**Date:** 2026-04-03
+**Type:** new
+**Tags:** sandbox
+
+`SandboxFactory` now supports pluggable backends beyond Modal, enabling custom sandbox implementations for code execution benchmarks.
+
+---
+
+### [cookbook] Fix FP8 expert quantization for fused 3D expert tensors ([#597](https://github.com/thinking-machines-lab/tinker-cookbook/pull/597))
+**Date:** 2026-04-03
+**Type:** fix
+**Tags:** weights
+
+Fixes FP8 quantization producing wrong shapes for fused 3D expert tensors (e.g., gate+up projections).
 
 ---
 
@@ -77,109 +175,6 @@ Adds MXFP4 block-scaled format for shard-by-shard LoRA merge, enabling weight ex
 
 ---
 
-### [cookbook] Generalize SandboxFactory for non-Modal backends ([#588](https://github.com/thinking-machines-lab/tinker-cookbook/pull/588))
-**Date:** 2026-04-03
-**Type:** new
-**Tags:** sandbox
-
-`SandboxFactory` now supports pluggable backends beyond Modal, enabling custom sandbox implementations for code execution benchmarks.
-
----
-
-### Improvements
-
-### [cookbook] Dynamic max_tokens capping via context_window ([#618](https://github.com/thinking-machines-lab/tinker-cookbook/pull/618))
-**Date:** 2026-04-06
-**Type:** improvement
-**Tags:** eval
-
-Benchmark runner now caps `max_tokens` to the model's `context_window`, preventing wasted generation budget on shorter-context models.
-
----
-
-### [cookbook] Parallel evaluation in async training loop ([#630](https://github.com/thinking-machines-lab/tinker-cookbook/pull/630))
-**Date:** 2026-04-07
-**Type:** improvement
-**Tags:** rl, eval
-
-Training evaluation loop now runs evaluators in parallel via `run_evaluations_parallel`, reducing eval overhead in RL and distillation training.
-
----
-
-### [cookbook] Thread TrainingRunStore through all training loops ([#620](https://github.com/thinking-machines-lab/tinker-cookbook/pull/620), [#621](https://github.com/thinking-machines-lab/tinker-cookbook/pull/621), [#627](https://github.com/thinking-machines-lab/tinker-cookbook/pull/627))
-**Date:** 2026-04-06
-**Type:** improvement
-**Tags:** rl, distillation, stores
-
-All training loops (SL, RL, on-policy distillation, SDFT) now accept an optional `TrainingRunStore` for structured checkpoint and timing persistence.
-
----
-
-### [cookbook] Cloud URI support for logging ([#625](https://github.com/thinking-machines-lab/tinker-cookbook/pull/625), [#628](https://github.com/thinking-machines-lab/tinker-cookbook/pull/628))
-**Date:** 2026-04-06
-**Type:** improvement
-**Tags:** logging, stores
-
-`JsonLogger` and `setup_logging` now accept cloud URIs as `log_dir`, writing metrics and configs directly to S3/GCS/Azure.
-
----
-
-### [cookbook] Public API exports for distillation and eval exceptions ([#639](https://github.com/thinking-machines-lab/tinker-cookbook/pull/639))
-**Date:** 2026-04-07
-**Type:** improvement
-**Tags:** distillation, eval
-
-Distillation module and eval exceptions are now importable from the top-level package.
-
----
-
-### [cookbook] Remove v0.3.0-deprecated parameters ([#635](https://github.com/thinking-machines-lab/tinker-cookbook/pull/635))
-**Date:** 2026-04-07
-**Type:** improvement
-**Tags:** rl
-
-Removes deprecated parameters that were marked for removal in v0.3.0, including old metric names and legacy function signatures.
-
----
-
-### Fixes
-
-### [cookbook] Fix grading bugs in IFEval, MATH-500, and GPQA benchmarks ([#643](https://github.com/thinking-machines-lab/tinker-cookbook/pull/643))
-**Date:** 2026-04-08
-**Type:** fix
-**Tags:** eval
-
-Fixes IFEval `letter_frequency` constraint using wrong kwargs key (always passed), `should_allow_eval` inverted regex check in math grading (blocked safe expressions from sympy), and GPQA silent fallback to answer "A" when correct_answer doesn't match choices. IFEval +3.9pp, MATH-500 +3.2pp on Qwen3.5-35B-A3B.
-
----
-
-### [cookbook] Guard against edge-case crashes in RL, preference, and xmux ([#644](https://github.com/thinking-machines-lab/tinker-cookbook/pull/644))
-**Date:** 2026-04-08
-**Type:** fix
-**Tags:** rl, preference, xmux
-
-Adds defensive guards for division-by-zero in pairwise preference rewards (`group_size=1`), empty nonzero tensor in preference types, `max()`/`min()` on empty list in sampling metrics, `total_steps=0` in LR scheduling, model names without `org/` prefix, and empty jobs list in xmux control panel.
-
----
-
-### [cookbook] Fix DPO training crash with odd batch size ([#637](https://github.com/thinking-machines-lab/tinker-cookbook/pull/637))
-**Date:** 2026-04-07
-**Type:** fix
-**Tags:** preference
-
-Fixes crash when DPO batch has odd number of datums after filtering invalid rows.
-
----
-
-### [cookbook] Fix FP8 expert quantization for fused 3D expert tensors ([#597](https://github.com/thinking-machines-lab/tinker-cookbook/pull/597))
-**Date:** 2026-04-03
-**Type:** fix
-**Tags:** weights
-
-Fixes FP8 quantization producing wrong shapes for fused 3D expert tensors (e.g., gate+up projections).
-
----
-
 ### [cookbook] Fix unembed_tokens merge for models with tied embeddings ([#593](https://github.com/thinking-machines-lab/tinker-cookbook/pull/593))
 **Date:** 2026-04-02
 **Type:** fix
@@ -195,15 +190,6 @@ Fixes LoRA merge producing incorrect output embeddings for models that share inp
 **Tags:** weights
 
 Fixes weight merge failing for models requiring `trust_remote_code` (e.g., Kimi K2.5).
-
----
-
-### [cookbook] Fix IncrementalReader locking and FsspecStorage flush re-upload ([#629](https://github.com/thinking-machines-lab/tinker-cookbook/pull/629))
-**Date:** 2026-04-06
-**Type:** fix
-**Tags:** stores
-
-Fixes thread-safety in `IncrementalReader` and a bug where `FsspecStorage.flush()` re-uploaded stale data.
 
 ---
 
