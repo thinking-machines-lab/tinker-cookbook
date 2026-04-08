@@ -717,8 +717,9 @@ async def do_sync_training_with_stream_minibatch(
 
                 @trace.scope
                 async def trajectory_group_worker_task(
-                    builder: EnvGroupBuilder, enable_logging: bool
+                    builder: EnvGroupBuilder, enable_logging: bool, group_idx: int = 0
                 ) -> None:
+                    trace.update_scope_context({"group_idx": group_idx})
                     worker_metrics: dict[str, Any] = {}
                     t_start = time.time()
                     async with trace.scope_span("trajectory_group_worker"):
@@ -754,7 +755,7 @@ async def do_sync_training_with_stream_minibatch(
                 for i, builder in enumerate(env_group_builders_P):
                     asyncio.create_task(
                         trajectory_group_worker_task(
-                            builder, enable_logging=i < config.num_groups_to_log
+                            builder, enable_logging=i < config.num_groups_to_log, group_idx=i
                         ),
                         name=f"trajectory_group_worker_task_{i}",
                     )
@@ -976,8 +977,10 @@ async def do_async_training(
         logger.info("[dataloader_loop] Terminated")
 
     @trace.scope
-    async def trajectory_group_worker_loop():
+    async def trajectory_group_worker_loop(worker_idx: int = 0):
         """Generates trajectories for a single env builder"""
+        trace.update_scope_context({"worker_idx": worker_idx})
+        group_counter = 0
         while True:
             env_group_builder = await env_group_builders_queue.get()
             if isinstance(env_group_builder, _Shutdown):
@@ -987,6 +990,7 @@ async def do_async_training(
             # Save a reference to the sampling client step in case it changes
             # while we're running the rollout
             sampling_client_step_copy = sampling_client_step
+            trace.update_scope_context({"group_idx": group_counter})
             worker_metrics: dict[str, Any] = {}
             t_start = time.time()
             async with trace.scope_span("trajectory_group_worker"):
@@ -999,6 +1003,7 @@ async def do_async_training(
                     strategy=strategy,
                 )
             worker_metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
+            group_counter += 1
             # Ingest error info (safe: same event loop thread)
             if error_counter is not None:
                 error_counter.ingest(trajectory_group)
@@ -1241,7 +1246,7 @@ async def do_async_training(
         asyncio.create_task(dataloader_loop(), name="dataloader_loop"),
         *[
             asyncio.create_task(
-                trajectory_group_worker_loop(), name=f"trajectory_group_worker_loop_{i}"
+                trajectory_group_worker_loop(worker_idx=i), name=f"trajectory_group_worker_loop_{i}"
             )
             for i in range(config.async_config.groups_per_batch)
         ],
@@ -1743,17 +1748,24 @@ async def do_sync_training(
                 ):
                     # Note: do_remove_constant_reward_groups=False here because we remove
                     # constant reward groups after all rollouts are collected (below)
+                    @trace.scope
+                    async def group_rollout(
+                        builder: EnvGroupBuilder, group_idx: int, enable_logging: bool
+                    ) -> TrajectoryGroup | None:
+                        trace.update_scope_context({"group_idx": group_idx})
+                        return await do_group_rollout_and_filter_constant_reward(
+                            sampling_client,
+                            builder,
+                            max_tokens=config.max_tokens,
+                            temperature=config.temperature,
+                            do_remove_constant_reward_groups=False,
+                            enable_logging=enable_logging,
+                            strategy=strategy,
+                        )
+
                     results_P = await gather_with_progress(
                         (
-                            do_group_rollout_and_filter_constant_reward(
-                                sampling_client,
-                                builder,
-                                max_tokens=config.max_tokens,
-                                temperature=config.temperature,
-                                do_remove_constant_reward_groups=False,
-                                enable_logging=i < config.num_groups_to_log,
-                                strategy=strategy,
-                            )
+                            group_rollout(builder, i, i < config.num_groups_to_log)
                             for i, builder in enumerate(env_group_builders_P)
                         ),
                         desc=f"Sampling batch {i_batch}",

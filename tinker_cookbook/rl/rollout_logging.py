@@ -125,10 +125,29 @@ def serialize_rollout_summaries(
                     }
                 )
 
+            # Determine trajectory status and stop reason
+            last_transition = trajectory.transitions[-1] if trajectory.transitions else None
+            stop_reason = getattr(last_transition.ac, "stop_reason", None) if last_transition else None
+
+            # Check for errors matching this trajectory index
+            traj_error = None
+            for err in trajectory_group.rollout_errors:
+                # RolloutError doesn't carry traj_idx, so we can only report
+                # group-level errors. If there are errors, mark all trajectories.
+                traj_error = err
+                break
+
+            if traj_error is not None:
+                status = "error"
+            elif stop_reason == "length":
+                status = "timeout"
+            else:
+                status = "ok"
+
             records.append(
                 _json_safe(
                     {
-                        "schema_version": 1,
+                        "schema_version": 2,
                         "split": split,
                         "iteration": iteration,
                         "group_idx": group_idx,
@@ -140,6 +159,10 @@ def serialize_rollout_summaries(
                         "trajectory_metrics": trajectory_group.metrics_G[traj_idx],
                         "steps": steps,
                         "final_ob_len": trajectory.final_ob.length,
+                        "status": status,
+                        "error_type": traj_error.error_type if traj_error else None,
+                        "error_message": traj_error.error_message if traj_error else None,
+                        "stop_reason": stop_reason,
                     }
                 )
             )
