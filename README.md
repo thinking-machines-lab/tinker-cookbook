@@ -78,7 +78,7 @@ We also include more complete examples in the [`tinker_cookbook/recipes/`](tinke
 - **[Tool use](tinker_cookbook/recipes/search_tool/)**: RL for retrieval-augmented generation (Search-R1 replication).
 - **[Multi-agent](tinker_cookbook/recipes/multiplayer_rl/)**: multi-agent RL with self-play and cross-play.
 
-The [recipes README](tinker_cookbook/recipes/README.md) covers all 14 recipes, including Harbor RL, rubric-based grading, VLM classification, and SDFT. Each recipe includes a `README.md` with implementation details, launch commands, and expected results.
+The [recipes README](tinker_cookbook/recipes/README.md) covers all available recipes, including Harbor RL, rubric-based grading, VLM classification, and SDFT. Each recipe includes a `README.md` with implementation details, launch commands, and expected results.
 
 ### Evaluation (experimental)
 
