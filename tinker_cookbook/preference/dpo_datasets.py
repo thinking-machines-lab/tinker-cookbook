@@ -1,5 +1,9 @@
+import logging
+
 import chz
 import tinker
+
+logger = logging.getLogger(__name__)
 
 from tinker_cookbook.preference.preference_datasets import (
     ComparisonDatasetBuilder,
@@ -91,6 +95,10 @@ class DPODatasetBuilderFromComparisons(ChatDatasetBuilder):
         def example_to_data(example: dict[str, str]) -> list[tinker.Datum]:
             labeled_comparison = self.comparison_builder.example_to_labeled_comparison(example)
             if labeled_comparison is None:
+                logger.warning(
+                    "Skipping invalid row: example_to_labeled_comparison returned None. "
+                    "This may cause an odd number of datums in a batch."
+                )
                 return []
             return comparison_to_datum(labeled_comparison)
 
