@@ -149,8 +149,14 @@ if any("WARNING" in r for r in results):
     sys.exit(1)
 '''
 
-_SYSTEM_PROMPT = "You are a helpful assistant that can interact with a computer shell to solve programming tasks."
+_SYSTEM_PROMPT = (
+    "You are a helpful assistant that can interact with a computer shell "
+    "to solve programming tasks."
+)
 
+# Instance template adapted from mini-swe-agent's swebench.yaml.
+# Uses their exact format (XML tags, THOUGHT+tool pattern, submission flow)
+# with /testbed replaced by /workspace/repo.
 _INSTANCE_TEMPLATE = """\
 <pr_description>
 Consider the following PR description:
@@ -162,22 +168,22 @@ Consider the following PR description:
 
 ## Overview
 
-You're a software engineer interacting continuously with a computer by \
-submitting commands. You'll be helping implement necessary changes to meet \
-requirements in the PR description.
-
-Your task is specifically to make changes to non-test files in the repository \
-at /workspace/repo in order to fix the issue described in the PR description \
-in a way that is general and consistent with the codebase.
-
-<IMPORTANT>This is an interactive process where you will think and issue AT \
-LEAST ONE command, see the result, then think and issue your next \
-command(s).</IMPORTANT>
+You're a software engineer interacting continuously with a computer by submitting commands.
+You'll be helping implement necessary changes to meet requirements in the PR description.
+Your task is specifically to make changes to non-test files in /workspace/repo in order to \
+fix the issue described in the PR description in a way that is general and consistent with the codebase.
+<IMPORTANT>This is an interactive process where you will think and issue AT LEAST ONE command, \
+see the result, then think and issue your next command(s).</IMPORTANT>
 
 For each response:
-1. Include a THOUGHT section explaining your reasoning and what you're trying \
-to accomplish
+
+1. Include a THOUGHT section explaining your reasoning and what you're trying to accomplish
 2. Provide one or more bash tool calls to execute
+
+## Important Boundaries
+
+- MODIFY: Regular source code files in /workspace/repo
+- DO NOT MODIFY: Tests, configuration files (pyproject.toml, setup.cfg, etc.)
 
 ## Recommended Workflow
 
@@ -187,45 +193,46 @@ to accomplish
 4. Verify your fix works by running your script again
 5. Test edge cases to ensure your fix is robust
 
-## Editing files
-
-Use `apply_patch` for edits (preferred):
-```
-cd /workspace/repo && apply_patch <<'PATCH'
-*** Begin Patch
-*** Update File: path/to/file.py
-@@
--    old_line_1
--    old_line_2
-+    new_line_1
-+    new_line_2
-*** End Patch
-PATCH
-```
-
-Or use sed for simple changes:
-```
-cd /workspace/repo && sed -i 's/old_text/new_text/g' path/to/file.py
-```
-
 ## Command Execution Rules
+
+You are operating in an environment where
 
 1. You issue at least one command
 2. The system executes the command(s) in a subshell
 3. You see the result(s)
 4. You write your next command(s)
 
-<CRITICAL>
-- Your response MUST include AT LEAST ONE bash tool call.
-- Directory or environment variable changes are not persistent. Every action \
-is executed in a new subshell.
-- Prefix commands with `cd /workspace/repo &&` to ensure correct directory.
-- MODIFY: Regular source code files in /workspace/repo
-- DO NOT MODIFY: Tests, configuration files (pyproject.toml, setup.cfg, etc.)
-- Do NOT use interactive editors (vi, nano, etc.)
-- You can use bash commands or invoke any tool that is available in the \
-environment
-</CRITICAL>
+Each response should include:
+
+1. **Reasoning text** where you explain your analysis and plan
+2. At least one tool call with your command
+
+**CRITICAL REQUIREMENTS:**
+
+- Your response SHOULD include reasoning text explaining what you're doing
+- Your response MUST include AT LEAST ONE bash tool call. You can make MULTIPLE tool calls \
+in a single response when the commands are independent (e.g., searching multiple files, \
+reading different parts of the codebase).
+- Directory or environment variable changes are not persistent. Every action is executed in \
+a new subshell.
+- However, you can prefix any action with `cd /workspace/repo && ...`
+
+Example of a CORRECT response:
+<example_response>
+I need to understand the relevant code. Let me find relevant files and check the project structure.
+
+[Makes multiple bash tool calls: {{"command": "cd /workspace/repo && ls -la"}}, \
+{{"command": "cd /workspace/repo && find . -name '*.py' | grep -i relevant"}}, \
+{{"command": "cd /workspace/repo && cat README.md | head -50"}}]
+</example_response>
+
+## Environment Details
+
+- You have a full Linux shell environment
+- Always use non-interactive flags (-y, -f) for commands
+- Avoid interactive tools like vi, nano, or any that require user input
+- You can use bash commands or invoke any tool that is available in the environment
+- The `apply_patch` command is available for editing files
 </instructions>"""
 
 
