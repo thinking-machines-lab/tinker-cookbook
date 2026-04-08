@@ -171,6 +171,32 @@ class TestDistillation:
 
         assert callable(load_tulu3_prompts)
 
+    def test_distillation_package_exports(self):
+        import tinker_cookbook.distillation as dist
+
+        # Submodules
+        assert hasattr(dist, "train_on_policy")
+        assert hasattr(dist, "train_off_policy")
+        assert hasattr(dist, "sdft")
+
+        # Each submodule has Config and main
+        assert hasattr(dist.train_on_policy, "Config")
+        assert hasattr(dist.train_on_policy, "main")
+        assert hasattr(dist.train_off_policy, "Config")
+        assert hasattr(dist.train_off_policy, "main")
+        assert hasattr(dist.sdft, "Config")
+        assert hasattr(dist.sdft, "main")
+
+    def test_distillation_all_complete(self):
+        import tinker_cookbook.distillation as dist
+
+        expected = {
+            "train_on_policy",
+            "train_off_policy",
+            "sdft",
+        }
+        assert set(dist.__all__) == expected
+
 
 # ---------------------------------------------------------------------------
 # preference.types (used by rl_cli)
