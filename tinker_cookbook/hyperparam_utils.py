@@ -3,12 +3,9 @@ Utilities for guessing good hyperparameters for fine-tuning.
 """
 
 import json
-import math
 import struct
 
 import huggingface_hub
-import numpy as np
-from transformers import AutoConfig
 
 from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.utils.misc_utils import not_none
@@ -76,69 +73,6 @@ def get_lora_lr_over_full_finetune_lr(model_name: str, lora_alpha: int = 32) -> 
     return 10.0
 
 
-def _get_hidden_size(model_name: str) -> int:
-    # Known hidden sizes for models in the lineup. This avoids network lookups and
-    # works around gated repos (Llama) and configs that nest hidden_size under
-    # text_config (Qwen3-VL, Qwen3.5, Kimi-K2.5).
-    _KNOWN_HIDDEN_SIZES: dict[str, int] = {
-        # Llama-3 (gated — cannot fetch config without HF_TOKEN)
-        "meta-llama/Llama-3.2-1B": 2048,
-        "meta-llama/Llama-3.2-1B-Instruct": 2048,
-        "meta-llama/Llama-3.2-3B": 3072,
-        "meta-llama/Llama-3.2-3B-Instruct": 3072,
-        "meta-llama/Llama-3.1-8B": 4096,
-        "meta-llama/Llama-3.1-8B-Instruct": 4096,
-        "meta-llama/Llama-3.1-70B": 8192,
-        "meta-llama/Llama-3.3-70B-Instruct": 8192,
-        # DeepSeek
-        "deepseek-ai/DeepSeek-V3.1": 7168,
-        "deepseek-ai/DeepSeek-V3.1-Base": 7168,
-        # Kimi
-        "moonshotai/Kimi-K2-Thinking": 7168,
-        "moonshotai/Kimi-K2.5": 7168,
-        # Qwen3 (text-only)
-        "Qwen/Qwen3-235B-A22B-Instruct-2507": 4096,
-        "Qwen/Qwen3-30B-A3B-Instruct-2507": 2048,
-        "Qwen/Qwen3-30B-A3B": 2048,
-        "Qwen/Qwen3-30B-A3B-Base": 2048,
-        "Qwen/Qwen3-32B": 5120,
-        "Qwen/Qwen3-8B": 4096,
-        "Qwen/Qwen3-8B-Base": 4096,
-        "Qwen/Qwen3-4B-Instruct-2507": 2560,
-        # Qwen3-VL (config nests hidden_size under text_config)
-        "Qwen/Qwen3-VL-235B-A22B-Instruct": 4096,
-        "Qwen/Qwen3-VL-30B-A3B-Instruct": 2048,
-        # Qwen3.5 (config nests hidden_size under text_config)
-        "Qwen/Qwen3.5-397B-A17B": 4096,
-        "Qwen/Qwen3.5-35B-A3B": 2048,
-        "Qwen/Qwen3.5-27B": 5120,
-        "Qwen/Qwen3.5-4B": 2560,
-        # OpenAI
-        "openai/gpt-oss-120b": 2880,
-        "openai/gpt-oss-20b": 2880,
-        # NVIDIA Nemotron
-        "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": 4096,
-        "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": 2688,
-    }
-
-    if model_name in _KNOWN_HIDDEN_SIZES:
-        return _KNOWN_HIDDEN_SIZES[model_name]
-
-    # Fallback: fetch from HuggingFace config. Some configs (e.g. VL, MoE) nest
-    # hidden_size under text_config rather than at the top level.
-    config = AutoConfig.from_pretrained(model_name)
-    hidden_size = getattr(config, "hidden_size", None)
-    if hidden_size is None and hasattr(config, "text_config"):
-        hidden_size = getattr(config.text_config, "hidden_size", None)
-    if hidden_size is None:
-        raise ValueError(
-            f"Could not determine hidden_size for {model_name}. "
-            f"Config type: {type(config).__name__}. "
-            f"Please add this model to _KNOWN_HIDDEN_SIZES in hyperparam_utils.py."
-        )
-    return hidden_size
-
-
 def get_lora_param_count(
     model_name: str,
     lora_rank: int = 32,
@@ -203,88 +137,80 @@ def get_lora_param_count(
     )
 
 
+# Empirical best LoRA learning rates from SFT sweep.
+# See tinker_cookbook/recipes/chat_sl/results/sft_sweep.md for details.
+_LORA_LR: dict[str, float] = {
+    # Qwen3
+    "Qwen/Qwen3-235B-A22B-Instruct-2507": 3e-04,
+    "Qwen/Qwen3-30B-A3B": 1e-03,
+    "Qwen/Qwen3-30B-A3B-Base": 1e-03,
+    "Qwen/Qwen3-30B-A3B-Instruct-2507": 1e-03,
+    "Qwen/Qwen3-32B": 3e-04,
+    "Qwen/Qwen3-4B-Instruct-2507": 1e-03,
+    "Qwen/Qwen3-8B": 1e-03,
+    "Qwen/Qwen3-8B-Base": 1e-03,
+    # Qwen3-VL
+    "Qwen/Qwen3-VL-235B-A22B-Instruct": 3e-04,
+    "Qwen/Qwen3-VL-30B-A3B-Instruct": 1e-03,
+    # Qwen3.5
+    "Qwen/Qwen3.5-397B-A17B": 3e-04,
+    "Qwen/Qwen3.5-35B-A3B": 3e-04,
+    "Qwen/Qwen3.5-27B": 3e-04,
+    "Qwen/Qwen3.5-4B": 3e-04,
+    # DeepSeek
+    "deepseek-ai/DeepSeek-V3.1": 4e-04,
+    "deepseek-ai/DeepSeek-V3.1-Base": 4e-04,
+    # Llama
+    "meta-llama/Llama-3.1-70B": 3e-04,
+    "meta-llama/Llama-3.1-8B": 3e-04,
+    "meta-llama/Llama-3.1-8B-Instruct": 3e-04,
+    "meta-llama/Llama-3.2-1B": 1e-03,
+    "meta-llama/Llama-3.2-3B": 1e-03,
+    "meta-llama/Llama-3.3-70B-Instruct": 3e-04,
+    # Kimi
+    "moonshotai/Kimi-K2-Thinking": 3e-04,
+    "moonshotai/Kimi-K2.5": 3e-04,
+    # NVIDIA Nemotron
+    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": 4e-04,
+    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": 1e-03,
+    # OpenAI
+    "openai/gpt-oss-120b": 3e-04,
+    "openai/gpt-oss-20b": 1e-04,
+}
+
+
 def get_lr(model_name: str, is_lora: bool = True) -> float:
     """Get a recommended learning rate for the given model.
 
-    Applies model-family-specific scaling based on hidden size. Only Llama and
-    Qwen families have calibrated formulas; other models raise NotImplementedError.
+    Returns empirically-determined optimal LoRA learning rates from a
+    comprehensive SFT sweep across all Tinker models (tulu3 dataset,
+    batch_size=128, 780 steps). For full fine-tuning, divides by 10x.
+
+    See ``tinker_cookbook/recipes/chat_sl/results/sft_sweep.md`` for details.
+
+    .. versionchanged::
+        Previously used a formula-based approach (base LR scaled by
+        model-family exponents and hidden size). Now returns empirical
+        values from a full sweep, which may differ from previous results
+        for the same model. If you need to reproduce earlier behavior,
+        pin your learning rate explicitly.
 
     Args:
         model_name: HuggingFace model identifier.
-        is_lora: If True, scale the base LR by the LoRA multiplier (10x).
+        is_lora: If True, return the LoRA LR. If False, scale down by 10x
+            for full fine-tuning.
 
     Returns:
         The recommended learning rate.
     """
-    base_lr = 5e-05
-    lora_multiplier = 10.0
-
-    lr = base_lr * lora_multiplier if is_lora else base_lr
-    if "llama" in model_name.lower():
-        exponent_model = 0.781
-    elif "qwen" in model_name.lower():
-        exponent_model = 0.0775
-    elif model_name in (
-        "deepseek-ai/DeepSeek-V3.1",
-        "deepseek-ai/DeepSeek-V3.1-Base",
-        "openai/gpt-oss-20b",
-        "openai/gpt-oss-120b",
-        "moonshotai/Kimi-K2-Thinking",
-        "moonshotai/Kimi-K2.5",
-        "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
-        "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",
-    ):
-        raise NotImplementedError(
-            f"Learning rate formula for {model_name} is not yet calibrated. "
-            "Please specify a learning rate manually."
+    lora_lr = _LORA_LR.get(model_name)
+    if lora_lr is None:
+        raise ConfigurationError(
+            f"No calibrated learning rate for {model_name}. "
+            f"Known models: {sorted(_LORA_LR.keys())}. "
+            "Please specify a learning rate manually or run a sweep."
         )
-    else:
-        raise ConfigurationError(f"Unknown model: {model_name}")
-    # TODO: sweep to determine LR multipliers for other models
-    lr = lr * (2000 / _get_hidden_size(model_name)) ** exponent_model
-    return lr
 
-
-def get_full_finetune_param_count(model_name: str) -> float:
-    """Get the total parameter count for a model by reading safetensors headers.
-
-    Args:
-        model_name: HuggingFace model identifier.
-
-    Returns:
-        Total number of parameters as a float.
-    """
-    count = 0
-    for _name, shape in _list_param_shapes_from_safetensors_remote(model_name).items():
-        count += np.prod(shape)
-    return float(count)
-
-
-def get_full_finetune_lr_multiplier(model_name: str) -> float:
-    """Get a model-specific LR multiplier for full fine-tuning, proportional to 1/sqrt(param_count).
-
-    Args:
-        model_name: HuggingFace model identifier.
-
-    Returns:
-        The LR multiplier for full fine-tuning.
-    """
-    return 1.0 / math.sqrt(get_full_finetune_param_count(model_name))
-
-
-def get_lora_lr_multiplier(model_name: str) -> float:
-    """Get a model-specific multiplier for the LR, when training with LoRA.
-
-    Given two models A and B, and learning rate LR_A that's known to be optimal for A,
-    we can guess an optimal learning rate for B as
-    LR_B = LR_A * get_lora_lr_multiplier(B) / get_lora_lr_multiplier(A)
-
-    Args:
-        model_name: HuggingFace model identifier.
-
-    Returns:
-        The LoRA LR multiplier combining full-finetune scaling and LoRA factor.
-    """
-    return get_full_finetune_lr_multiplier(model_name) * get_lora_lr_over_full_finetune_lr(
-        model_name
-    )
+    if is_lora:
+        return lora_lr
+    return lora_lr / get_lora_lr_over_full_finetune_lr(model_name)
