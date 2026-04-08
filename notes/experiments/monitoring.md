@@ -354,6 +354,211 @@ AIME 2025 baseline running separately (concurrency=1, 30 problems).
 Confirmed base model CAN solve AIME problems (1/3 in quick test).
 Previous 0% was parse failures, not model inability.
 
+## 2026-04-08 17:32 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 17: correct=14.8%, tokens=1074, infl_std=0.230
+- GRPO step 22: correct=13.1%, tokens=1234
+AIME 2025 baseline confirmed: 1/30 (3.3%) on Qwen3-30B-A3B-Base.
+Fixed eval: example_id propagation + grade_fn with concurrency=30.
+GRPO approaching step 30 (60% done).
+
+## 2026-04-08 17:42 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 18: correct=13.1%, tokens=1153
+- GRPO step 22: correct=13.1%, tokens=1234
+Accuracy converging this step — both at 13.1%. GRPO ~44%, FIPO ~36% done.
+
+## 2026-04-08 18:02 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 19: correct=20.7% (new high!), tokens=941
+- GRPO step 24: correct=14.5%, tokens=1398
+FIPO hit 20.7% — highest train accuracy yet. ~48% done for GRPO.
+Note: train accuracy not directly comparable (different batches despite same seed).
+
+## 2026-04-08 18:12 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO: in batch 20 rollouts (step 20 AIME eval done, waiting for metrics)
+- GRPO step 26: correct=14.5%, tokens=1034
+GRPO ~52% done. FIPO step 20 metrics (with AIME) imminent.
+
+## 2026-04-08 18:22 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 20: correct=12.5%, tokens=917, AIME=0.0% (parse failures), infl_std=0.263
+- GRPO step 26: correct=14.5%, tokens=1034, AIME@20=0.0% (parse failures)
+In-training AIME eval still broken (grade_fn fix not wired into training loop).
+Standalone eval confirmed 3.3% baseline. ~52% GRPO, ~40% FIPO done.
+
+## 2026-04-08 18:32 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 21: correct=17.9%, tokens=1084
+- GRPO step 28: correct=10.9%, tokens=1135
+GRPO ~56% done, FIPO ~42% done.
+
+## 2026-04-08 18:42 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 23: correct=18.8%, tokens=1006
+- GRPO step 29: correct=10.0%, tokens=1114
+GRPO about to hit step 30 (AIME eval). GRPO ~58%, FIPO ~46% done.
+
+## 2026-04-08 18:52 UTC — 10min check
+
+Both alive, zero tracebacks. No progress since last check (both in slow steps).
+- FIPO still step 23, GRPO still step 29 (likely in step 30 AIME eval).
+
+## 2026-04-08 19:02 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 24: correct=13.4%, tokens=1001, infl_std=0.242
+- GRPO step 30: correct=16.6%, tokens=1429
+GRPO 60% done, FIPO 48% done.
+
+## 2026-04-08 19:12 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 26: correct=17.4%, tokens=955
+- GRPO step 32: correct=14.3%, tokens=1283
+GRPO 64% done, FIPO 52% done.
+
+## 2026-04-08 19:22 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 26: correct=17.4%, tokens=955 (no change — in slow step)
+- GRPO step 33: correct=11.3%, tokens=1281
+GRPO 66% done, FIPO 52% done.
+
+## 2026-04-08 19:32 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 28: correct=15.9%, tokens=978, infl_std=0.246
+- GRPO step 35: correct=15.6%, tokens=1066
+Very close this check. GRPO 70% done, FIPO 56% done.
+
+## 2026-04-08 19:42 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 29: correct=20.2%, tokens=917, infl_std=0.244
+- GRPO step 37: correct=13.3%, tokens=1104
+FIPO back to ~20%. GRPO 74% done, FIPO 58% done.
+
+## 2026-04-08 19:52 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 30: correct=**22.8%** (new high!), tokens=1088, infl_std=0.245
+- GRPO step 38: correct=**21.1%** (new high!), tokens=1248
+Both hit new highs this batch. GRPO 76% done, FIPO 60% done.
+
+## 2026-04-08 20:02 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 31: correct=19.8%, tokens=1138
+- GRPO step 39: correct=11.3%, tokens=1302
+GRPO 78% done, FIPO 62% done. GRPO approaching step 40 (AIME eval).
+
+## 2026-04-08 20:12 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 32: correct=**24.7%** (new high!), tokens=975
+- GRPO step 40: correct=13.5%, tokens=1202, AIME=0.0% (parse failures)
+GRPO 80% done, FIPO 64% done. FIPO train accuracy trending up.
+
+## 2026-04-08 20:22 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 34: correct=24.7%, tokens=1181
+- GRPO step 42: correct=19.3%, tokens=1417
+Both trending up. GRPO 84% done, FIPO 68% done.
+
+## 2026-04-08 20:32 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 35: correct=22.2%, tokens=1162
+- GRPO step 43: correct=19.7%, tokens=1122
+Both sustaining higher accuracy in the second half. GRPO 86%, FIPO 70% done.
+
+## 2026-04-08 20:42 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 36: correct=17.4%, tokens=1127
+- GRPO step 44: correct=17.0%, tokens=1398
+GRPO 88% done, FIPO 72% done. GRPO should finish within ~30min.
+
+## 2026-04-08 20:52 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 37: correct=13.5%, tokens=1162
+- GRPO step 46: correct=15.0%, tokens=1325
+GRPO 92% done (4 steps left), FIPO 74% done.
+
+## 2026-04-08 21:02 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 38: correct=18.3%, tokens=1040
+- GRPO step 47: correct=19.9%, tokens=1481
+GRPO 94% done (3 steps left!), FIPO 76% done.
+
+## 2026-04-08 21:12 UTC — *** GRPO FINISHED ***
+
+GRPO completed 50 steps. FIPO at step 39 (78% done).
+
+GRPO final: train_correct=13.5% overall (11.5% 1st half → 15.5% 2nd half)
+FIPO so far: train_correct=17.3% overall (16.2% 1st half → 18.3% 2nd half)
+
+Both show learning (second half > first half).
+FIPO ~10 steps remaining.
+
+## 2026-04-08 21:22 UTC — 10min check
+
+FIPO step 40: correct=17.0%, tokens=1212, AIME=0.0% (parse failures).
+1 process (FIPO only, GRPO done). Zero tracebacks. ~10 steps left.
+
+## 2026-04-08 21:32 UTC — 10min check
+
+FIPO step 41: correct=16.3%, tokens=1070. 1 process, zero tracebacks. ~9 steps left.
+
+## 2026-04-08 21:42 UTC — 10min check
+
+FIPO step 42: correct=**26.8%** (new all-time high!), tokens=1132.
+In batch 43. 1 process, zero tracebacks. ~7 steps left.
+
+## 2026-04-08 21:52 UTC — 10min check
+
+FIPO step 44: correct=18.5%, tokens=1224. 45/50 steps logged. 1 process, zero tracebacks.
+~5 steps left — should finish within ~30min.
+
+## 2026-04-08 22:02 UTC — 10min check
+
+FIPO step 45: correct=19.3%, tokens=1092. 46/50 logged. 1 process, zero tracebacks.
+~4 steps left.
+
+## 2026-04-08 22:12 UTC — 10min check
+
+FIPO step 46: correct=23.3%, tokens=1227. 47/50 logged. 1 process, zero tracebacks.
+~3 steps left — finishing soon.
+
+## 2026-04-08 22:22 UTC — 10min check
+
+FIPO step 47: correct=19.6%, tokens=1129. 48/50 logged. 1 process, zero tracebacks.
+~2 steps left.
+
+## 2026-04-08 22:32 UTC — 10min check
+
+FIPO step 48: correct=**28.3%** (highest single step ever!), tokens=1074.
+49/50 logged. 1 process, zero tracebacks. Last step running.
+
+## 2026-04-08 22:42 UTC — *** BOTH EXPERIMENTS COMPLETE ***
+
+FIPO finished at step 49. Final results written to 02_30b_base_dapo_fipo_vs_grpo.md.
+
+FIPO: train_correct=18.2% (1st_half=16.1%, 2nd_half=20.2%), best=28.3%
+GRPO: train_correct=13.5% (1st_half=11.5%, 2nd_half=15.5%), best=21.1%
+
 ## 2026-04-08 11:19 UTC — Steps 32-34, Cron Check
 
 Both alive, zero tracebacks.
