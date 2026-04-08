@@ -406,11 +406,82 @@ class Gsm8kDatasetBuilder(RLDatasetBuilder):
         return (datasets[0], datasets[1])
 
 
+class DAPODataset(MathDataset):
+    """DAPO-Math-17K dataset (BytedTsinghua-SIA/DAPO-Math-17k).
+
+    The official training dataset from the DAPO/FIPO papers. Contains ~17K
+    unique competition math problems from AoPS with integer answers.
+    """
+
+    def __init__(
+        self,
+        batch_size: int,
+        group_size: int,
+        renderer: renderers.Renderer,
+        convo_prefix: list[renderers.Message] | None = None,
+        seed: int = 0,
+    ):
+        # Load and deduplicate by prompt content
+        full_ds = load_dataset("BytedTsinghua-SIA/DAPO-Math-17k", split="train")
+        # Deduplicate: keep first occurrence of each unique prompt
+        seen: set[str] = set()
+        keep_indices: list[int] = []
+        for i in range(len(full_ds)):
+            prompt_str = str(full_ds[i]["prompt"])
+            if prompt_str not in seen:
+                seen.add(prompt_str)
+                keep_indices.append(i)
+        self.ds = full_ds.select(keep_indices).shuffle(seed=seed)
+        self.batch_size = batch_size
+        self.group_size = group_size
+        self.renderer = renderer
+        self.convo_prefix = convo_prefix
+
+    def _make_env_group_builder(
+        self, x: dict, group_size: int
+    ) -> ProblemGroupBuilder | None:
+        # DAPO-17K has chat-format prompts and ground truth in reward_model
+        prompt_messages = x.get("prompt", [])
+        if not prompt_messages:
+            return None
+        # Extract the problem text from the chat message
+        problem = prompt_messages[0].get("content", "") if prompt_messages else ""
+        answer = x.get("reward_model", {}).get("ground_truth", "")
+        if not (problem and answer):
+            return None
+        return ProblemGroupBuilder(
+            env_thunk=partial(
+                MathEnv, problem, answer, self.renderer, grader="math_verify"
+            ),
+            num_envs=group_size,
+            dataset_name="dapo",
+        )
+
+
+@chz.chz
+class DAPODatasetBuilder(RLDatasetBuilder):
+    batch_size: int
+    model_name_for_tokenizer: str
+    renderer_name: str
+    group_size: int
+    seed: int = 0
+
+    async def __call__(self) -> tuple[DAPODataset, None]:
+        tokenizer = get_tokenizer(self.model_name_for_tokenizer)
+        return DAPODataset(
+            batch_size=self.batch_size,
+            group_size=self.group_size,
+            renderer=renderers.get_renderer(self.renderer_name, tokenizer=tokenizer),
+            seed=self.seed,
+        ), None
+
+
 # Populate the dataset builder map after all classes are defined
 DATASET_BUILDER_MAP = {
     "math": MathDatasetBuilder,
     "polaris": PolarisDatasetBuilder,
     "deepmath": DeepMathDatasetBuilder,
+    "dapo": DAPODatasetBuilder,
     "gsm8k": Gsm8kDatasetBuilder,
 }
 

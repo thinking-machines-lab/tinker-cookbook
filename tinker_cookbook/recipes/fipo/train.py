@@ -103,7 +103,7 @@ class CLIConfig:
     load_checkpoint_path: str | None = None
 
     # Environment configuration
-    env: str = "math"  # Options: arithmetic, math, polaris, deepmath, gsm8k
+    env: str = "dapo"  # Options: arithmetic, math, polaris, deepmath, dapo, gsm8k
     seed: int = 0
 
     # Training hyperparameters
@@ -156,7 +156,7 @@ def get_dataset_builder(
             include_fewshot=True,
             group_size=group_size,
         )
-    elif env in ["math", "polaris", "deepmath", "gsm8k"]:
+    elif env in ["math", "polaris", "deepmath", "dapo", "gsm8k"]:
         return math_env.get_math_dataset_builder(
             dataset_name=env,
             batch_size=batch_size,
