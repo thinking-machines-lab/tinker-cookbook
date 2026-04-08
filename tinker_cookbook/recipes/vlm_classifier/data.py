@@ -76,9 +76,9 @@ class ClassifierDataset(SupervisedDataset):
             name=self.config.renderer_name, tokenizer=tokenizer, image_processor=image_processor
         )
 
-        from tinker_cookbook.utils.dataset_loading import load_dataset as _load_dataset
+        from tinker_cookbook.utils import dataset_loading
 
-        dataset = _load_dataset(self.config.dataset)
+        dataset = dataset_loading.load_dataset(self.config.dataset)
         dataset = cast(datasets.DatasetDict, dataset)
         self.dataset = dataset[self.config.dataset_split]
 

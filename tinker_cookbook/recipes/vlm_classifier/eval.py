@@ -79,7 +79,9 @@ class ClassifierEvaluator(SamplingClientEvaluator):
             name=self.config.renderer_name, tokenizer=tokenizer, image_processor=image_processor
         )
 
-        dataset = datasets.load_dataset(self.config.dataset)
+        from tinker_cookbook.utils import dataset_loading
+
+        dataset = dataset_loading.load_dataset(self.config.dataset)
         dataset = cast(datasets.DatasetDict, dataset)
         self.dataset = dataset[self.config.dataset_split]
 

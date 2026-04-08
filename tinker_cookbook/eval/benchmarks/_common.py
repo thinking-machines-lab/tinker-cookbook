@@ -163,7 +163,7 @@ def load_benchmark_dataset(
         PermissionError: If the dataset is gated and requires authentication.
         RuntimeError: If the dataset cannot be loaded for other reasons.
     """
-    from tinker_cookbook.utils.dataset_loading import load_dataset as _load_dataset
+    from tinker_cookbook.utils import dataset_loading
 
     resolved_trust = _resolve_trust_remote_code(trust_remote_code)
 
@@ -174,7 +174,7 @@ def load_benchmark_dataset(
         kwargs["trust_remote_code"] = True
 
     try:
-        ds = _load_dataset(path, **kwargs)
+        ds = dataset_loading.load_dataset(path, **kwargs)
     except Exception as e:
         err_str = str(e).lower()
         # Gated dataset — needs HF auth + terms acceptance

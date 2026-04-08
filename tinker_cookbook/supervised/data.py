@@ -368,10 +368,10 @@ class InterleavedChatDatasetBuilder(ChatDatasetBuilder):
 
         hf_datasets: list[datasets.Dataset] = []
 
-        from tinker_cookbook.utils.dataset_loading import load_dataset as _load_dataset
+        from tinker_cookbook.utils import dataset_loading
 
         for source in self.sources:
-            ds = _load_dataset(source.path, name=source.name, split=source.split)
+            ds = dataset_loading.load_dataset(source.path, name=source.name, split=source.split)
             if not isinstance(ds, datasets.Dataset):
                 raise TypeError(
                     f"Expected a Dataset but got {type(ds).__name__}. "
