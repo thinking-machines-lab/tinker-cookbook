@@ -466,14 +466,23 @@ class DAPODatasetBuilder(RLDatasetBuilder):
     group_size: int
     seed: int = 0
 
-    async def __call__(self) -> tuple[DAPODataset, None]:
+    async def __call__(self) -> tuple[DAPODataset, MathDataset]:
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
-        return DAPODataset(
+        renderer = renderers.get_renderer(self.renderer_name, tokenizer=tokenizer)
+        train_ds = DAPODataset(
             batch_size=self.batch_size,
             group_size=self.group_size,
-            renderer=renderers.get_renderer(self.renderer_name, tokenizer=tokenizer),
+            renderer=renderer,
             seed=self.seed,
-        ), None
+        )
+        # Use MATH-500 as the eval set (standard benchmark)
+        test_ds = MathDataset(
+            batch_size=self.batch_size,
+            group_size=1,
+            renderer=renderer,
+            split="test",
+        )
+        return train_ds, test_ds
 
 
 # Populate the dataset builder map after all classes are defined

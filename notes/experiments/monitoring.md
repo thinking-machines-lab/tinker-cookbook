@@ -140,6 +140,26 @@ Both alive, zero tracebacks.
 Interesting: this step FIPO tokens/ep dropped to ~7.6k (closer to GRPO).
 Gap closing — may be batch-dependent variance.
 
+## 2026-04-08 12:19 UTC — All experiments check
+
+All 4 alive, zero tracebacks.
+
+**8B-DeepMath** (nearing completion):
+- FIPO step 41: correct=60.4%, tokens/ep=11362, infl=0.988±0.161
+- GRPO step 43: correct=86.7%, tokens/ep=9082
+
+**8B-Base-DAPO** (just started, paper-matching setup):
+- FIPO step 0: correct=0.0%, tokens/ep=1633, infl=0.981±0.094
+- GRPO step 1: correct=0.0%, tokens/ep=1470
+- Base model starts at 0% — expected. 8 substeps per iteration now active.
+
+## 2026-04-08 12:32 UTC — 10min check
+
+8B-DeepMath: FIPO step 44, GRPO step 47 (nearly done).
+8B-Base-DAPO: both step 5, still 0% correct. FIPO tokens DROPPING (873, was 1633).
+**FLAG**: Base model can't solve DAPO-17K → zero advantages → no learning signal.
+Need model with existing math capability, or easier dataset.
+
 ## 2026-04-08 11:19 UTC — Steps 32-34, Cron Check
 
 Both alive, zero tracebacks.
