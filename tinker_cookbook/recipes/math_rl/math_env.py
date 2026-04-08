@@ -458,6 +458,50 @@ class DAPODataset(MathDataset):
         )
 
 
+class AIMEDataset(RLDataset):
+    """AIME 2024 dataset (HuggingFaceH4/aime_2024) for evaluation.
+
+    30 hard competition math problems with integer answers — the paper's
+    primary evaluation benchmark.
+    """
+
+    def __init__(
+        self,
+        batch_size: int,
+        renderer: renderers.Renderer,
+    ):
+        self.ds = load_dataset("HuggingFaceH4/aime_2024", split="train")
+        self.batch_size = batch_size
+        self.renderer = renderer
+
+    def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
+        batch_start = index * self.batch_size
+        batch_end = min((index + 1) * self.batch_size, len(self.ds))
+        assert batch_start < batch_end
+        return [
+            builder
+            for row in self.ds.select(range(batch_start, batch_end))
+            if (builder := self._make_env_group_builder(row)) is not None
+        ]
+
+    def __len__(self) -> int:
+        return math.ceil(len(self.ds) / self.batch_size)
+
+    def _make_env_group_builder(self, x: dict) -> ProblemGroupBuilder | None:
+        problem = x.get("problem", "")
+        answer = str(x.get("answer", ""))
+        if not (problem and answer):
+            return None
+        return ProblemGroupBuilder(
+            env_thunk=partial(
+                MathEnv, problem + MathEnv.question_suffix(), answer, self.renderer,
+                grader="math_verify",
+            ),
+            num_envs=1,  # group_size=1 for eval
+            dataset_name="aime2024",
+        )
+
+
 @chz.chz
 class DAPODatasetBuilder(RLDatasetBuilder):
     batch_size: int
@@ -466,7 +510,7 @@ class DAPODatasetBuilder(RLDatasetBuilder):
     group_size: int
     seed: int = 0
 
-    async def __call__(self) -> tuple[DAPODataset, MathDataset]:
+    async def __call__(self) -> tuple[DAPODataset, AIMEDataset]:
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
         renderer = renderers.get_renderer(self.renderer_name, tokenizer=tokenizer)
         train_ds = DAPODataset(
@@ -475,12 +519,10 @@ class DAPODatasetBuilder(RLDatasetBuilder):
             renderer=renderer,
             seed=self.seed,
         )
-        # Use MATH-500 as the eval set (standard benchmark)
-        test_ds = MathDataset(
-            batch_size=self.batch_size,
-            group_size=1,
+        # Use AIME 2024 as the eval set (the paper's primary benchmark)
+        test_ds = AIMEDataset(
+            batch_size=30,  # All 30 problems in one batch
             renderer=renderer,
-            split="test",
         )
         return train_ds, test_ds
 

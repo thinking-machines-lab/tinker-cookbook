@@ -160,6 +160,30 @@ All 4 alive, zero tracebacks.
 **FLAG**: Base model can't solve DAPO-17K → zero advantages → no learning signal.
 Need model with existing math capability, or easier dataset.
 
+## 2026-04-08 12:42 UTC — 10min check
+
+8B-DeepMath: FIPO step 46, GRPO step 48 (almost done).
+30B-Base-DAPO: both initializing (loading DAPO-17K + 30B model). No metrics yet.
+All 4 processes alive, zero tracebacks.
+
+## 2026-04-08 12:52 UTC — 10min check
+
+3 processes (GRPO-8B-DeepMath at step 49, about to finish).
+30B-Base-DAPO: still in first rollout (81% for FIPO). 30B + 512 trajectories + 20k tokens = slow.
+FIPO-8B step 47, GRPO-8B step 49. Zero tracebacks.
+
+## 2026-04-08 13:02 UTC — 10min check *** FIRST 30B EVAL ***
+
+8B-DeepMath: both at step 49, GRPO finished. 2 processes running.
+
+**30B-Base-DAPO step 0 (baseline, before any training):**
+- FIPO: train=0.0%, **EVAL=70.0%**, tokens=803
+- GRPO: train=0.0%, **EVAL=69.2%**, tokens=1297
+
+30B-A3B-Base has real math capability (70% MATH-500). Train is 0% because
+DAPO-17K competition math is much harder. Now watching for eval improvement
+at step 10.
+
 ## 2026-04-08 11:19 UTC — Steps 32-34, Cron Check
 
 Both alive, zero tracebacks.
