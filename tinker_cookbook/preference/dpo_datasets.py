@@ -3,8 +3,6 @@ import logging
 import chz
 import tinker
 
-logger = logging.getLogger(__name__)
-
 from tinker_cookbook.preference.preference_datasets import (
     ComparisonDatasetBuilder,
 )
@@ -14,6 +12,8 @@ from tinker_cookbook.preference.types import (
 from tinker_cookbook.supervised.common import datum_from_model_input_weights
 from tinker_cookbook.supervised.data import SupervisedDatasetFromHFDataset
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDataset
+
+logger = logging.getLogger(__name__)
 
 
 @chz.chz
