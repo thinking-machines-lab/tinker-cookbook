@@ -19,6 +19,15 @@ from tinker_cookbook.rl.types import EnvGroupBuilder, RLDataset, RLDatasetBuilde
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 
+def _extract_answer_line(text: str) -> str | None:
+    """Extract answer from 'Answer: $VALUE' format used by DAPO-17K."""
+    for line in reversed(text.strip().split("\n")):
+        line = line.strip()
+        if line.lower().startswith("answer:"):
+            return line[len("answer:"):].strip().strip("$").strip()
+    return None
+
+
 class MathEnv(ProblemEnv):
     def __init__(
         self,
@@ -28,31 +37,40 @@ class MathEnv(ProblemEnv):
         convo_prefix: list[renderers.Message] | None = None,
         grader: Literal["sympy", "math_verify"] = "sympy",
         timeout: float = 1.0,
+        answer_format: Literal["boxed", "answer_line"] = "boxed",
     ):
         super().__init__(renderer, convo_prefix)
         self.problem = problem
         self.answer = answer
         self.grader = grader
         self.timeout = timeout
+        self.answer_format = answer_format
 
     @classmethod
     def question_suffix(cls) -> str:
         return " Write your answer in \\boxed{} format."
 
     def get_question(self) -> str:
+        if self.answer_format == "answer_line":
+            # DAPO prompts already contain instructions; don't append boxed suffix
+            return self.problem
         return self.problem + self.question_suffix()
 
-    def check_format(self, sample_str: str) -> bool:
+    def _extract_answer(self, sample_str: str) -> str | None:
+        """Extract answer from model response based on answer_format."""
+        if self.answer_format == "answer_line":
+            return _extract_answer_line(sample_str)
         try:
-            _ = extract_boxed(sample_str)
-            return True
+            return extract_boxed(sample_str)
         except ValueError:
-            return False
+            return None
+
+    def check_format(self, sample_str: str) -> bool:
+        return self._extract_answer(sample_str) is not None
 
     def check_answer(self, sample_str: str) -> bool:
-        try:
-            answer = extract_boxed(sample_str)
-        except ValueError:
+        answer = self._extract_answer(sample_str)
+        if answer is None:
             return False
         return safe_grade(answer, self.answer, self.grader, self.timeout)
 
@@ -451,7 +469,8 @@ class DAPODataset(MathDataset):
             return None
         return ProblemGroupBuilder(
             env_thunk=partial(
-                MathEnv, problem, answer, self.renderer, grader="math_verify"
+                MathEnv, problem, answer, self.renderer,
+                grader="sympy", answer_format="answer_line",
             ),
             num_envs=group_size,
             dataset_name="dapo",

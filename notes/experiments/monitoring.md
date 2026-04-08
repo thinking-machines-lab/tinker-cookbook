@@ -184,6 +184,41 @@ FIPO-8B step 47, GRPO-8B step 49. Zero tracebacks.
 DAPO-17K competition math is much harder. Now watching for eval improvement
 at step 10.
 
+## 2026-04-08 13:22 UTC — 10min check
+
+Restarted 30B with AIME 2024 eval (was using MATH-500 which was too easy).
+Both 30B processes alive, zero tracebacks. Still in first batch (AIME eval + 512 rollouts at 20k tokens).
+Grading logs show model producing answers — saw "540 against 540" (correct match).
+
+## 2026-04-08 13:32 UTC — 10min check
+
+Both 30B alive, zero tracebacks. First batch rollouts at 94% (FIPO) and 94% (GRPO).
+~45s per group for 30B. First metrics with AIME eval imminent.
+
+## 2026-04-08 13:42 UTC — 10min check *** 30B FIRST METRICS ***
+
+**AIME 2024 baseline: 0.0% for both FIPO and GRPO.**
+Train correct: 0.0% on DAPO-17K.
+FIPO tokens collapsing: 1378→737 (same failure as 8B-Base).
+
+**Problem**: Qwen3-30B-A3B-Base has only 3B active params (MoE).
+Not enough math capability for AIME or DAPO-17K competition math.
+Need a dense model or an instruct model with existing math ability.
+
+## 2026-04-08 13:52 UTC — 10min check
+
+30B-Base: FIPO step 2, GRPO step 1. Both still 0% correct. FIPO tokens collapsed to ~800.
+**Experiment is unproductive** — no learning signal possible with 0% accuracy.
+Should kill and switch to a capable model (Qwen3-32B or Qwen3-8B instruct).
+
+## 2026-04-08 14:02 UTC — Killed 30B-Base, launched Qwen3-32B
+
+30B-A3B-Base stuck at 0% (3B active params too weak). Killed.
+Launched Qwen3-32B (dense, math-capable) with:
+- Train: DAPO-17K, Eval: AIME 2024
+- G=16, 32 groups/batch, 8 substeps, 20480 max tokens
+- FIPO PID 2512995, GRPO PID 2512997
+
 ## 2026-04-08 11:19 UTC — Steps 32-34, Cron Check
 
 Both alive, zero tracebacks.
