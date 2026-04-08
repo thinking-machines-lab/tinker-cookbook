@@ -15,10 +15,6 @@ from tinker_cookbook.recipes.math_rl.math_grading import (
     split_tuple,
 )
 
-# ======================================================================
-# extract_boxed
-# ======================================================================
-
 
 class TestExtractBoxed:
     def test_simple(self):
@@ -47,11 +43,6 @@ class TestExtractBoxed:
         assert extract_boxed("\\boxed{\\sqrt{\\frac{3}{4}}}") == "\\sqrt{\\frac{3}{4}}"
 
 
-# ======================================================================
-# extract_gsm8k_final_answer
-# ======================================================================
-
-
 class TestExtractGsm8kFinalAnswer:
     def test_standard_format(self):
         text = "Some reasoning.\n#### 42"
@@ -76,11 +67,6 @@ class TestExtractGsm8kFinalAnswer:
     def test_inline_format(self):
         text = "The total is #### 99 dollars."
         assert extract_gsm8k_final_answer(text) == "99 dollars."
-
-
-# ======================================================================
-# normalize_answer
-# ======================================================================
 
 
 class TestNormalizeAnswer:
@@ -111,11 +97,6 @@ class TestNormalizeAnswer:
         assert "%" not in result
 
 
-# ======================================================================
-# grade_answer
-# ======================================================================
-
-
 class TestGradeAnswer:
     def test_exact_match(self):
         assert grade_answer("42", "42") is True
@@ -125,9 +106,6 @@ class TestGradeAnswer:
 
     def test_wrong_answer(self):
         assert grade_answer("43", "42") is False
-
-    def test_equivalent_fraction(self):
-        assert grade_answer("\\frac{1}{2}", "0.5") is True
 
     def test_latex_fraction_vs_decimal(self):
         # The grader normalizes \frac{1}{2} and 0.5 as equivalent (special case)
@@ -142,7 +120,7 @@ class TestGradeAnswer:
 
     def test_sympy_equivalence(self):
         # Sympy-based equivalence only applies when both sides are non-integer
-        assert grade_answer("\\frac{2}{4}", "\\frac{1}{2}") is False  # fractions must match exactly
+        assert grade_answer("\\frac{2}{4}", "\\frac{1}{2}") is False
 
     def test_tuple_matching(self):
         assert grade_answer("(1, 2)", "(1, 2)") is True
@@ -150,11 +128,6 @@ class TestGradeAnswer:
 
     def test_with_text_wrapper(self):
         assert grade_answer("\\text{yes}", "yes") is True
-
-
-# ======================================================================
-# split_tuple
-# ======================================================================
 
 
 class TestSplitTuple:
