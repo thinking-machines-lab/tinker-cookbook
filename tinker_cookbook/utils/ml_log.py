@@ -445,9 +445,12 @@ class TrackioLogger(Logger):
         )
 
     def log_hparams(self, config: Any) -> None:
-        """Log hyperparameters to trackio."""
-        if self.run and trackio is not None:
-            pass
+        """Log hyperparameters to trackio.
+
+        Trackio receives its config at ``init()`` time; there is no post-init
+        config update API.  This method is a no-op because the config was
+        already forwarded during ``__init__``.
+        """
 
     def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
         """Log metrics to trackio."""

@@ -26,7 +26,6 @@ from tinker_cookbook.distillation.datasets import (
     DistillationDatasetConfig,
 )
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator, SamplingClientEvaluatorBuilder
-from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.rl.data_processing import (
     assemble_training_data,
     compute_advantages,
@@ -45,7 +44,6 @@ from tinker_cookbook.rl.types import (
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import ml_log, trace
-from tinker_cookbook.utils.deprecation import warn_deprecated
 from tinker_cookbook.utils.misc_utils import iteration_dir, safezip
 
 logger = logging.getLogger(__name__)
@@ -169,8 +167,6 @@ class Config:
 
     # Maximum number of training steps. If None, train on the full dataset.
     max_steps: int | None = None
-    # Deprecated alias for max_steps. Use max_steps instead.
-    max_step: int | None = None
 
 
 @trace.scope
@@ -373,18 +369,9 @@ async def do_sync_training(
 
 @trace.scope
 async def main(
-    config: Config | None = None,
-    *,
-    cfg: Config | None = None,
+    config: Config,
 ):
     """Main training loop for on-policy distillation."""
-    if cfg is not None:
-        warn_deprecated("cfg", removal_version="0.3.0", message="Use 'config' instead.")
-        if config is not None:
-            raise ConfigurationError("Cannot pass both 'config' and 'cfg'. Use 'config'.")
-        config = cfg
-    if config is None:
-        raise ConfigurationError("'config' is required.")
 
     ml_logger = ml_log.setup_logging(
         log_dir=config.log_path,
@@ -483,15 +470,8 @@ async def main(
     # Wrap datasets in CompositeDataset
     composite_dataset = CompositeDataset(datasets, groups_per_batch_list)
     num_batches = len(composite_dataset)
-    # Resolve max_steps from either max_steps or deprecated max_step
-    effective_max_steps = config.max_steps
-    if config.max_step is not None:
-        if config.max_steps is not None:
-            raise ConfigurationError("Cannot specify both max_steps and max_step. Use max_steps.")
-        warn_deprecated("max_step", removal_version="0.3.0", message="Use 'max_steps' instead.")
-        effective_max_steps = config.max_step
     num_batches = (
-        min(effective_max_steps, num_batches) if effective_max_steps is not None else num_batches
+        min(config.max_steps, num_batches) if config.max_steps is not None else num_batches
     )
     logger.info(f"Will train on {num_batches} batches (dataset has {num_batches})")
 
