@@ -342,7 +342,19 @@ def do_update(
         with trace.scope_span_sync("get_batch"):
             data = dataset.get_batch(batch_idx)
 
-        # Split data into chosen and rejected pairs
+        # Split data into chosen and rejected pairs.
+        # Each valid comparison produces exactly 2 datums (chosen, rejected), but
+        # invalid rows produce 0.  If some rows were skipped the total can be odd,
+        # leaving an unpaired chosen datum at the end.  Drop it to keep pairs aligned.
+        if len(data) % 2 != 0:
+            logger.warning(
+                "Batch has an odd number of datums (%d). Dropping the last unpaired "
+                "datum to keep chosen/rejected pairs aligned. This typically means some "
+                "rows in the dataset were invalid and produced 0 datums.",
+                len(data),
+            )
+            data = data[:-1]
+
         chosen_data = [datum for i, datum in enumerate(data) if i % 2 == 0]
         rejected_data = [datum for i, datum in enumerate(data) if i % 2 == 1]
 
