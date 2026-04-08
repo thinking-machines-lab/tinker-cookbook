@@ -149,21 +149,43 @@ if any("WARNING" in r for r in results):
     sys.exit(1)
 '''
 
-_SYSTEM_PROMPT = """\
-You are an autonomous software engineer. Your task is to fix a bug in a code \
-repository by editing source files.
+_SYSTEM_PROMPT = "You are a helpful assistant that can interact with a computer shell to solve programming tasks."
 
-IMPORTANT: You MUST call the bash tool in EVERY response. If you respond \
-without a tool call, the task will end immediately. Keep working until you \
-have fixed the issue.
+_INSTANCE_TEMPLATE = """\
+<pr_description>
+Consider the following PR description:
+{problem_statement}
+</pr_description>
 
-## Workflow
+<instructions>
+# Task Instructions
 
-1. **Explore**: Find relevant files with grep and find
-2. **Reproduce**: Write and run a script that triggers the bug
-3. **Edit**: Fix the source code using `apply_patch` or sed
-4. **Verify**: Run your reproduction script to confirm the fix
-5. **Test**: Run the test suite to check for regressions
+## Overview
+
+You're a software engineer interacting continuously with a computer by \
+submitting commands. You'll be helping implement necessary changes to meet \
+requirements in the PR description.
+
+Your task is specifically to make changes to non-test files in the repository \
+at /workspace/repo in order to fix the issue described in the PR description \
+in a way that is general and consistent with the codebase.
+
+<IMPORTANT>This is an interactive process where you will think and issue AT \
+LEAST ONE command, see the result, then think and issue your next \
+command(s).</IMPORTANT>
+
+For each response:
+1. Include a THOUGHT section explaining your reasoning and what you're trying \
+to accomplish
+2. Provide one or more bash tool calls to execute
+
+## Recommended Workflow
+
+1. Analyze the codebase by finding and reading relevant files
+2. Create a script to reproduce the issue
+3. Edit the source code to resolve the issue
+4. Verify your fix works by running your script again
+5. Test edge cases to ensure your fix is robust
 
 ## Editing files
 
@@ -181,28 +203,30 @@ cd /workspace/repo && apply_patch <<'PATCH'
 PATCH
 ```
 
-Use sed for small edits:
+Or use sed for simple changes:
 ```
 cd /workspace/repo && sed -i 's/old_text/new_text/g' path/to/file.py
 ```
 
-Use a python script for larger edits:
-```
-cd /workspace/repo && python3 -c "
-content = open('path/to/file.py').read()
-content = content.replace('old_text', 'new_text')
-open('path/to/file.py', 'w').write(content)
-"
-```
+## Command Execution Rules
 
-## Rules
+1. You issue at least one command
+2. The system executes the command(s) in a subshell
+3. You see the result(s)
+4. You write your next command(s)
 
-- The repository is at /workspace/repo
-- ALWAYS prefix commands with `cd /workspace/repo &&`
-- MODIFY only source code files, NOT tests or configuration
-- Each command runs in a fresh subshell — cd is not persistent
-- PAGER=cat (no interactive paging)
-- Do NOT use interactive editors (vi, nano, etc.)"""
+<CRITICAL>
+- Your response MUST include AT LEAST ONE bash tool call.
+- Directory or environment variable changes are not persistent. Every action \
+is executed in a new subshell.
+- Prefix commands with `cd /workspace/repo &&` to ensure correct directory.
+- MODIFY: Regular source code files in /workspace/repo
+- DO NOT MODIFY: Tests, configuration files (pyproject.toml, setup.cfg, etc.)
+- Do NOT use interactive editors (vi, nano, etc.)
+- You can use bash commands or invoke any tool that is available in the \
+environment
+</CRITICAL>
+</instructions>"""
 
 
 def _parse_test_ids(raw: str | list) -> list[str]:
@@ -523,18 +547,14 @@ class _SWEBenchEnvFactory(SandboxMixin, Env):
             self.sandbox, eval_script or "", self.raw_instance or {}, self.instance_id
         )
 
-        # Build initial messages
+        # Build initial messages using mini-swe-agent style template
         system_content = self.system_prompt or _SYSTEM_PROMPT
         hints_section = ""
         if self.hints_text.strip():
             hints_section = f"\n\n## Hints\n{self.hints_text[:2000]}"
 
-        user_prompt = (
-            f"## Repository: {self.repo}\n\n"
-            f"## Problem Statement\n{self.problem_statement}"
-            f"{hints_section}\n\n"
-            f"The repository is checked out at `/workspace/repo`. "
-            f"Explore the codebase, find and fix the issue."
+        user_prompt = _INSTANCE_TEMPLATE.format(
+            problem_statement=self.problem_statement + hints_section,
         )
 
         # Build initial messages with tool specs in the renderer's native format
