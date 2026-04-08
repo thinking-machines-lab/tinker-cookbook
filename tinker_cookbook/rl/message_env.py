@@ -134,6 +134,7 @@ class EnvFromMessageEnv(types.Env):
                 next_observation=tinker.ModelInput.empty(),
                 next_stop_condition=self._base_stop_condition,
                 metrics={"parse_error": 1.0},
+                logs={"example_id": self.example_id} if self.example_id else {},
             )
 
         msg_step = await self.message_env.step(assistant_message)

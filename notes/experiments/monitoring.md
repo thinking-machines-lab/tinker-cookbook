@@ -219,6 +219,141 @@ Launched Qwen3-32B (dense, math-capable) with:
 - G=16, 32 groups/batch, 8 substeps, 20480 max tokens
 - FIPO PID 2512995, GRPO PID 2512997
 
+## 2026-04-08 14:22 UTC — Fixed grading bug, relaunched 30B-Base
+
+**Root cause of 0% correct**: MathEnv used extract_boxed() but DAPO prompts
+use "Answer: $Answer" format. Added answer_format="answer_line" extractor.
+Relaunched 30B-A3B-Base with sympy grader + correct answer extraction.
+FIPO PID 2517511, GRPO PID 2517513. Still in first eval+rollout.
+
+## 2026-04-08 14:32 UTC — 10min check
+
+Both 30B-Base alive, zero tracebacks. In batch 0 rollouts:
+FIPO 66% (21/32 groups), GRPO 94% (30/32). First metrics imminent.
+
+## 2026-04-08 14:42 UTC — *** FIRST REAL RESULTS (fixed grading) ***
+
+Grading fix confirmed working — non-zero accuracy on DAPO-17K!
+
+**FIPO step 0**: train=12.8%, AIME=0.0%, tokens=995, infl=1.000±**0.233**
+**GRPO step 0**: train=9.0%, AIME=0.0%, tokens=1151
+**GRPO step 1**: train=12.3%, tokens=1253
+
+Model solving ~10% of DAPO-17K → gradient signal exists.
+AIME=0% expected for base model (paper's 32B gets ~50% after full training).
+FIPO infl_std=0.233 — much higher than 8B runs (0.17), 8 substeps working.
+
+## 2026-04-08 14:52 UTC — 10min check
+
+Both alive, zero tracebacks. Accuracy trending up:
+- FIPO: 12.8%→15.1% (step 0→1)
+- GRPO: 9.0%→12.3%→13.5% (step 0→1→2)
+Tokens stable ~1000-1250. Learning signal confirmed.
+
+## 2026-04-08 15:02 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO: step 2, correct=15.3% (↑ from 12.8%), tokens=1225 (↑ from 995)
+- GRPO: step 3, correct=10.4% (fluctuating), tokens=1189
+FIPO showing steady improvement in both accuracy and token length.
+GRPO more volatile. ~6% complete.
+
+## 2026-04-08 15:12 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO: step 3, correct=15.2%, tokens=1121, infl_std=0.253 (growing)
+- GRPO: step 5, correct=10.4% (volatile, range 9-14.5%), tokens=1082
+FIPO ~2x slower per step (forward_backward_custom overhead).
+FIPO accuracy more stable; GRPO fluctuating.
+
+## 2026-04-08 15:22 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 5: correct=15.2%, tokens=1014, infl_std=0.246
+- GRPO step 7: correct=12.1%, tokens=975
+Both accuracy ~12-15%, plateaued. Tokens ~1000. GRPO step 10 (AIME eval) approaching.
+
+## 2026-04-08 15:32 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 6: correct=15.1%, tokens=1102, infl_std=0.247
+- GRPO step 8: correct=6.8%, tokens=1333
+GRPO dipped to 6.8% this batch. FIPO more stable at ~15%.
+GRPO 2 steps from AIME eval.
+
+## 2026-04-08 15:42 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 7: correct=**16.7%** (new high!), tokens=1023, infl_std=0.219
+- GRPO step 9: correct=10.4%, tokens=1144
+FIPO consistently outperforming GRPO on train accuracy (~15-17% vs ~7-14%).
+GRPO one step from AIME eval.
+
+## 2026-04-08 15:52 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 9: correct=19.9%, tokens=925, kl=0.00170
+- GRPO step 10: correct=13.9%, tokens=1086, **AIME=0.0%**
+GRPO AIME eval at step 10 = 0%. FIPO approaching step 10 for its AIME eval.
+Train accuracy gap: FIPO ~20% vs GRPO ~14%.
+
+## 2026-04-08 16:02 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO: in batch 10 rollouts (step 9 metrics last written, step 10 AIME eval done)
+- GRPO step 11: correct=14.1%, tokens=1047
+FIPO step 10 metrics (with AIME eval) should appear soon.
+
+## 2026-04-08 16:12 UTC — 10min check *** FIPO AIME step 10 ***
+
+Both alive, zero tracebacks.
+- FIPO step 10: train=18.0%, **AIME=0.0%**, tokens=1109
+- GRPO step 13: train=12.9%, tokens=1325
+Both AIME=0% at step 10. Model too small for AIME (3B active params).
+Train accuracy gap persists: FIPO ~18% vs GRPO ~13%.
+Next AIME eval at step 20.
+
+## 2026-04-08 16:22 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 11: correct=19.0%, tokens=1143
+- GRPO step 14: correct=6.8%, tokens=1171
+Train accuracy gap widening: FIPO ~19% vs GRPO ~7% this step.
+Note: AIME eval via benchmark suite returns 0% due to parse failures — base model
+doesn't produce chat-formatted output, so EnvFromMessageEnv.parse_response fails.
+The RL training loop handles raw tokens differently and works fine.
+Train accuracy on DAPO-17K is the reliable signal for base models.
+
+## 2026-04-08 16:42 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 12: correct=17.3%, tokens=994
+- GRPO step 16: correct=14.6%, tokens=1130
+FIPO still higher train accuracy. GRPO ~4 steps ahead (2x speed difference).
+
+## 2026-04-08 16:52 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 13: correct=17.1%, tokens=1212
+- GRPO step 17: correct=11.1%, tokens=1030
+Consistent pattern: FIPO ~17% vs GRPO ~11% train accuracy.
+
+## 2026-04-08 17:02 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 14: correct=16.5%, tokens=1166, infl_std=0.230
+- GRPO step 18: correct=10.7%, tokens=1140
+Pattern holds. ~36% complete for GRPO, ~28% for FIPO.
+
+## 2026-04-08 17:12 UTC — 10min check
+
+Both alive, zero tracebacks.
+- FIPO step 15: correct=15.4%, tokens=883
+- GRPO step 20: correct=5.5%, tokens=909 (GRPO dipped low this batch)
+AIME 2025 baseline running separately (concurrency=1, 30 problems).
+Confirmed base model CAN solve AIME problems (1/3 in quick test).
+Previous 0% was parse failures, not model inability.
+
 ## 2026-04-08 11:19 UTC — Steps 32-34, Cron Check
 
 Both alive, zero tracebacks.
