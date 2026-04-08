@@ -52,26 +52,23 @@ export function TimingPanel({ runId, jumpToStep }: Props) {
       row[s.name] = (row[s.name] || 0) + s.duration;
     }
     return Array.from(map.values()).sort((a, b) => (a.step as number) - (b.step as number));
-  }, [spans]);
+  }, [filteredSpans]);
 
   // Per-step wall-clock duration (from first span start to last span end)
   const wallDurations = useMemo(() => {
-    const map = new Map<number, { step: number; wall: number; sum: number }>();
-    for (const s of filteredSpans) {
+    const map = new Map<number, { step: number; wall: number; sum: number; minW: number; maxW: number }>();
+    for (const s of spans) {
       const existing = map.get(s.step);
       if (!existing) {
-        map.set(s.step, { step: s.step, wall: s.wall_end - s.wall_start, sum: s.duration });
+        map.set(s.step, { step: s.step, wall: 0, sum: s.duration, minW: s.wall_start, maxW: s.wall_end });
       } else {
-        existing.wall = Math.max(existing.wall, s.wall_end) - Math.min(0, s.wall_start);
         existing.sum += s.duration;
+        existing.minW = Math.min(existing.minW, s.wall_start);
+        existing.maxW = Math.max(existing.maxW, s.wall_end);
       }
     }
-    // Recalculate wall properly
-    for (const step of map.keys()) {
-      const stepSpans = spans.filter((s) => s.step === step);
-      const minW = Math.min(...stepSpans.map((s) => s.wall_start));
-      const maxW = Math.max(...stepSpans.map((s) => s.wall_end));
-      map.get(step)!.wall = maxW - minW;
+    for (const entry of map.values()) {
+      entry.wall = entry.maxW - entry.minW;
     }
     return Array.from(map.values()).sort((a, b) => a.step - b.step);
   }, [spans]);

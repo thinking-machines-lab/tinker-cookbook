@@ -5,23 +5,29 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import uuid
+from collections import OrderedDict
 from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from tinker_cookbook.stores import RunRegistry
 
 logger = logging.getLogger(__name__)
 
-_client_cache: dict[str, Any] = {}
+_MAX_CACHED_CLIENTS = 3
+_client_cache: OrderedDict[str, Any] = OrderedDict()
 
 
 def has_api_key() -> bool:
     return bool(os.environ.get("TINKER_API_KEY"))
+
+
+_SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 class ChatRequest(BaseModel):
@@ -30,6 +36,13 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     temperature: float = 0.7
     max_tokens: int = 1024
+
+    @field_validator("session_id")
+    @classmethod
+    def validate_session_id(cls, v: str | None) -> str | None:
+        if v is not None and not _SESSION_ID_RE.match(v):
+            raise ValueError("session_id must be alphanumeric, hyphens, or underscores")
+        return v
 
 
 class ChatSession(BaseModel):
@@ -69,7 +82,10 @@ def create_router(registry: RunRegistry) -> APIRouter:
         path = _sessions_path(run_id)
         try:
             files = storage.list_dir(path)
+        except FileNotFoundError:
+            return []
         except Exception:
+            logger.debug("Failed to list chat sessions for %s", run_id, exc_info=True)
             return []
         sessions = []
         for f in sorted(files, reverse=True):
@@ -85,7 +101,8 @@ def create_router(registry: RunRegistry) -> APIRouter:
                     "created_at": s.get("created_at", ""),
                     "message_count": len(s.get("messages", [])),
                 })
-            except Exception:
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.debug("Skipping malformed session file %s: %s", f, e)
                 continue
         return sessions
 
@@ -144,7 +161,9 @@ def create_router(registry: RunRegistry) -> APIRouter:
                 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
                 cache_key = f"{run_id}:{body.checkpoint_name}"
-                if cache_key not in _client_cache:
+                if cache_key in _client_cache:
+                    _client_cache.move_to_end(cache_key)
+                else:
                     yield f"data: {json.dumps({'status': 'Loading model and checkpoint...'})}\n\n"
                     tokenizer = get_tokenizer(model_name)
                     renderer_name = config.get("renderer_name") or get_recommended_renderer_name(model_name)
@@ -157,6 +176,9 @@ def create_router(registry: RunRegistry) -> APIRouter:
                     await load_future
                     sc = await tc.create_sampling_client_async(sampler_path)
                     _client_cache[cache_key] = (renderer, sc)
+                    # Evict oldest entry if cache exceeds limit
+                    while len(_client_cache) > _MAX_CACHED_CLIENTS:
+                        _client_cache.popitem(last=False)
 
                 renderer, sc = _client_cache[cache_key]
 

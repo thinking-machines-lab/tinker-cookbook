@@ -165,7 +165,6 @@ export function RunDetailPage() {
         {speed && <StatCard label="Step Time" value={speed.value !== null ? `${speed.value.toFixed(1)}s` : '-'} trend={speed.trend} spark={speed.sparkData} color="var(--purple)" invertTrend />}
       </div>
 
-      {/* 4 tabs */}
       <div className="tabs">
         {tabs.map(({ id, label, disabled }) => (
           <button

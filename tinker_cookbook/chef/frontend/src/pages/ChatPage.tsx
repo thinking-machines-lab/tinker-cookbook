@@ -37,7 +37,7 @@ export function ChatPage() {
   useEffect(() => {
     if (!runId) return;
     fetch(`/api/runs/${runId}/chat-sessions`).then((r) => r.json()).then(setSessions).catch(() => setSessions([]));
-  }, [runId, sessionId]);
+  }, [runId]);
 
   useEffect(() => {
     if (!runId || !sessionId) return;
@@ -120,14 +120,12 @@ export function ChatPage() {
 
   return (
     <div>
-      {/* Standard breadcrumb */}
       <div className="breadcrumb">
         <Link to="/">Dashboard</Link><span>/</span>
         <Link to={`/runs/${runId}?tab=checkpoints`}>{runId}</Link><span>/</span>
         <span>Chat · {checkpoint}</span>
       </div>
 
-      {/* Settings row */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
         <span style={{ flex: 1 }} />
         <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.6875rem', color: 'var(--text-muted)' }}>
@@ -146,9 +144,8 @@ export function ChatPage() {
         </label>
       </div>
 
-      {/* Chat card with sidebar — fixed height */}
       <div className="card" style={{ padding: 0, display: 'flex', height: 'calc(100vh - 200px)', minHeight: '350px' }}>
-        {/* Session sidebar */}
+
         <div style={{
           width: '180px', flexShrink: 0, borderRight: '1px solid var(--border)',
           display: 'flex', flexDirection: 'column', background: 'var(--bg-elevated)',
@@ -194,9 +191,9 @@ export function ChatPage() {
           </div>
         </div>
 
-        {/* Chat area */}
+
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-        {/* Messages */}
+
         <div style={{ flex: 1, overflow: 'auto', padding: '1rem' }}>
           {messages.length === 0 && (
             <div className="empty-state" style={{ marginTop: '2rem' }}>
@@ -237,7 +234,7 @@ export function ChatPage() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input bar */}
+
         <div style={{ borderTop: '1px solid var(--border)', padding: '0.625rem 1rem', display: 'flex', gap: '0.5rem', alignItems: 'center', background: 'var(--bg-surface)' }}>
           <input
             type="text" value={input}
@@ -276,10 +273,9 @@ export function ChatPage() {
             </button>
           )}
         </div>
-        </div>{/* end chat area */}
-      </div>{/* end card */}
+        </div>
+      </div>
 
-      {/* JSON export modal */}
       {showJson && (
         <div style={{
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000,
