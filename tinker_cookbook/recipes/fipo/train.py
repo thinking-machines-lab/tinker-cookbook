@@ -5,10 +5,10 @@ Reproduces the FIPO algorithm (arXiv:2603.19835) using the Tinker API.
 FIPO modifies GRPO/PPO by reweighting per-token advantages with future-KL
 influence weights, enabling deeper reasoning chains.
 
-Implementation: after rollout collection and standard advantage computation,
-we snapshot the current training weights to a sampling client, compute
-per-token logprobs, derive future-KL influence weights, reweight advantages
-in-place, then use the built-in `ppo` loss for the actual training step.
+Implementation: uses forward_backward_custom with a closure that captures
+RL-specific fields (sampling logprobs, advantages, mask). The closure
+receives training logprobs from the forward pass and computes the full FIPO
+loss (future-KL reweighted PPO) in a single forward-backward pass.
 
 Usage:
     python -m tinker_cookbook.recipes.fipo.train \\
@@ -36,6 +36,7 @@ from typing import Any
 
 import chz
 import tinker
+import torch
 
 from tinker_cookbook import checkpoint_utils, cli_utils, model_info
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
@@ -45,7 +46,7 @@ from tinker_cookbook.rl.data_processing import (
     compute_advantages,
     remove_constant_reward_groups,
 )
-from tinker_cookbook.rl.fipo import apply_fipo_reweighting
+from tinker_cookbook.rl.fipo import make_fipo_loss_fn, prepare_custom_datums
 from tinker_cookbook.rl.metric_util import RLTestSetEvaluator, compute_trajectory_metrics
 from tinker_cookbook.rl.metrics import compute_kl_sample_train
 from tinker_cookbook.rl.rollout_logging import RolloutSummaryGroup
@@ -55,17 +56,15 @@ from tinker_cookbook.rl.train import (
     Config as RLConfig,
     _get_logtree_scope,
     _maybe_export_rollout_summary_jsonl,
-    _remove_mask,
-    _training_logprobs_from_fwd_bwd,
     gather_with_progress,
     print_group,
     run_evaluations_parallel,
     save_checkpoint_and_get_sampling_client,
-    train_step,
 )
 from tinker_cookbook.rl.types import RLDatasetBuilder, TrajectoryGroup
+from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import ml_log, trace
-from tinker_cookbook.utils.misc_utils import iteration_dir, safezip
+from tinker_cookbook.utils.misc_utils import iteration_dir, safezip, split_list
 
 logger = logging.getLogger(__name__)
 
@@ -76,11 +75,13 @@ class FIPOConfig:
 
     # Future-KL decay half-life in tokens (τ). Paper uses 32 for 32B, code default 128.
     decay_half_life: float = 32.0
+    # PPO clip range ε for policy ratio clipping
+    clip_epsilon: float = 0.2
     # Dual-clip threshold c for participation mask
     dual_clip_threshold: float = 10.0
     # Influence weight clipping bounds [1 - clip_low, 1 + clip_high]
     # Paper uses [1.0, 1.2] for 32B, [0.8, 1.2] for 7B
-    influence_clip_low: float = 1.0
+    influence_clip_low: float = 0.8
     influence_clip_high: float = 1.2
     # Safety threshold: cap influence weights for negative-advantage high-IS-ratio tokens
     safety_threshold: float = 4.0
@@ -107,12 +108,11 @@ class CLIConfig:
     max_tokens: int = 4096
     temperature: float = 1.0
 
-    # PPO clip ratio config for the built-in ppo loss
-    ppo_clip_low: float = 0.8   # ratio clipped to [1 - clip_low, ...]
-    ppo_clip_high: float = 1.28  # ratio clipped to [..., 1 + clip_high - 1]
-
     # FIPO-specific hyperparameters
     fipo: FIPOConfig = chz.field(default_factory=FIPOConfig)
+
+    # Number of substeps per batch (gradient accumulation)
+    num_substeps: int = 1
 
     # Logging
     log_path: str | None = None
@@ -126,7 +126,6 @@ class CLIConfig:
 
     # Limits
     max_steps: int | None = None
-    num_substeps: int = 1
 
     # Service
     base_url: str | None = None
@@ -166,7 +165,7 @@ def get_dataset_builder(
 
 
 def _make_rl_config_for_infra(cli_config: CLIConfig, dataset_builder: RLDatasetBuilder, log_path: str) -> RLConfig:
-    """Create an RLConfig for infrastructure functions that need it (eval, logging)."""
+    """Create an RLConfig for infrastructure functions that need it."""
     return RLConfig(
         learning_rate=cli_config.learning_rate,
         dataset_builder=dataset_builder,
@@ -177,8 +176,79 @@ def _make_rl_config_for_infra(cli_config: CLIConfig, dataset_builder: RLDatasetB
         save_every=cli_config.save_every,
         num_groups_to_log=cli_config.num_groups_to_log,
         rollout_json_export=True,
-        loss_fn="ppo",
     )
+
+
+async def fipo_train_step(
+    rl_data_D: list[tinker.Datum],
+    training_client: tinker.TrainingClient,
+    learning_rate: float,
+    fipo_config: FIPOConfig,
+    num_substeps: int = 1,
+    metrics: dict[str, Any] | None = None,
+) -> list[torch.Tensor]:
+    """Run one FIPO training step using forward_backward_custom.
+
+    Creates a closure-based loss function that captures RL fields (sampling
+    logprobs, advantages, mask) and receives training logprobs from the
+    forward pass. Computes future-KL influence weights and PPO-clipped loss.
+
+    Args:
+        rl_data_D: Original RL datums with full loss_fn_inputs.
+        training_client: Tinker training client.
+        learning_rate: Learning rate for Adam optimizer.
+        fipo_config: FIPO hyperparameters.
+        num_substeps: Number of gradient accumulation substeps.
+        metrics: Dict to merge optimizer metrics into (in-place).
+
+    Returns:
+        Per-datum training logprobs from the forward pass.
+    """
+    if not rl_data_D:
+        return []
+
+    adam_params = tinker.AdamParams(learning_rate=learning_rate, beta1=0.9, beta2=0.95, eps=1e-8)
+
+    # Split into substep batches
+    batches_rl = split_list(rl_data_D, min(num_substeps, len(rl_data_D)))
+    training_logprobs_D: list[torch.Tensor] = []
+
+    for batch_rl in batches_rl:
+        # Create FIPO loss closure capturing RL fields
+        loss_fn = make_fipo_loss_fn(
+            rl_data_D=batch_rl,
+            clip_epsilon=fipo_config.clip_epsilon,
+            decay_half_life=fipo_config.decay_half_life,
+            dual_clip_threshold=fipo_config.dual_clip_threshold,
+            influence_clip_low=fipo_config.influence_clip_low,
+            influence_clip_high=fipo_config.influence_clip_high,
+            safety_threshold=fipo_config.safety_threshold,
+        )
+
+        # Create stripped datums for forward_backward_custom
+        custom_datums = prepare_custom_datums(batch_rl)
+
+        # Forward-backward with custom FIPO loss
+        fwd_bwd_future = await training_client.forward_backward_custom_async(
+            custom_datums,
+            loss_fn,
+        )
+        fwd_bwd_result = await fwd_bwd_future.result_async()
+
+        if metrics is not None:
+            metrics.update(fwd_bwd_result.metrics)
+
+        # Extract training logprobs
+        for output in fwd_bwd_result.loss_fn_outputs:
+            training_logprobs_D.append(output["logprobs"].to_torch())
+
+        # Optimizer step
+        optim_future = await training_client.optim_step_async(adam_params)
+        optim_result = await optim_future.result_async()
+        if metrics is not None and optim_result.metrics:
+            metrics.update(optim_result.metrics)
+
+    return training_logprobs_D
 
 
 async def fipo_main(cli_config: CLIConfig):
@@ -279,13 +349,8 @@ async def fipo_main(cli_config: CLIConfig):
     end_batch = min(cli_config.max_steps, num_batches) if cli_config.max_steps else num_batches
     logger.info(f"FIPO training: {end_batch} batches, model={cli_config.model_name}")
     logger.info(f"FIPO config: decay_half_life={cli_config.fipo.decay_half_life}, "
-                f"clip=[{cli_config.fipo.influence_clip_low}, {cli_config.fipo.influence_clip_high}]")
-
-    # PPO loss config
-    loss_fn_config = {
-        "clip_low_threshold": cli_config.ppo_clip_low,
-        "clip_high_threshold": cli_config.ppo_clip_high,
-    }
+                f"clip=[{cli_config.fipo.influence_clip_low}, {cli_config.fipo.influence_clip_high}], "
+                f"ppo_clip={cli_config.fipo.clip_epsilon}")
 
     # Initial checkpoint and sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
@@ -380,7 +445,7 @@ async def fipo_main(cli_config: CLIConfig):
             if cli_config.remove_constant_reward_groups:
                 trajectory_groups_P = remove_constant_reward_groups(trajectory_groups_P)
 
-            # Prepare training data (standard advantage computation)
+            # Prepare training data
             taglist_P = [b.logging_tags() for b in env_group_builders_P]
             metrics.update(compute_trajectory_metrics(trajectory_groups_P, taglist_P))
             for tg in trajectory_groups_P[:2]:
@@ -389,31 +454,16 @@ async def fipo_main(cli_config: CLIConfig):
             advantages_P = compute_advantages(trajectory_groups_P)
             data_D, _metadata_D = assemble_training_data(trajectory_groups_P, advantages_P)
 
-            # ---- FIPO: reweight advantages using future-KL ----
-            # Use the current sampling_client (which has the current training weights)
-            # to compute logprobs and derive influence weights.
-            async with trace.scope_span("fipo_reweighting"):
-                fipo_metrics = await apply_fipo_reweighting(
-                    data_D=data_D,
-                    sampling_client=sampling_client,
-                    decay_half_life=cli_config.fipo.decay_half_life,
-                    dual_clip_threshold=cli_config.fipo.dual_clip_threshold,
-                    influence_clip_low=cli_config.fipo.influence_clip_low,
-                    influence_clip_high=cli_config.fipo.influence_clip_high,
-                    safety_threshold=cli_config.fipo.safety_threshold,
+            # FIPO training step (forward_backward_custom with closure)
+            async with trace.scope_span("fipo_train_step"):
+                training_logprobs_D = await fipo_train_step(
+                    rl_data_D=data_D,
+                    training_client=training_client,
+                    learning_rate=cli_config.learning_rate,
+                    fipo_config=cli_config.fipo,
+                    num_substeps=cli_config.num_substeps,
+                    metrics=metrics,
                 )
-            metrics.update(fipo_metrics)
-
-            # Standard training step with PPO loss (advantages already reweighted)
-            training_logprobs_D = await train_step(
-                data_D=data_D,
-                training_client=training_client,
-                learning_rate=cli_config.learning_rate,
-                num_substeps=cli_config.num_substeps,
-                loss_fn="ppo",
-                loss_fn_config=loss_fn_config,
-                metrics=metrics,
-            )
 
             # Post-step metrics and checkpoint
             if training_logprobs_D:

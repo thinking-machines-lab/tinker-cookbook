@@ -10,19 +10,15 @@ to all tokens, compute per-token influence weights based on discounted
 future KL divergence between the current and old policy. Tokens that lead
 to large downstream policy shifts get higher/lower influence weights.
 
-Usage: after assemble_training_data() produces data_D, call
-apply_fipo_reweighting() to modify advantages in-place, then use
-the standard `ppo` loss function for training.
+Uses forward_backward_custom with a closure that captures RL-specific fields
+(sampling logprobs, advantages, mask) externally, since forward_backward_custom
+only accepts target_tokens + weights in the datum format.
 """
 
-import asyncio
 import logging
-from typing import cast
 
 import tinker
 import torch
-
-from tinker_cookbook.utils.misc_utils import safezip
 
 logger = logging.getLogger(__name__)
 
@@ -121,102 +117,142 @@ def compute_influence_weights(
     return influence
 
 
-async def apply_fipo_reweighting(
-    data_D: list[tinker.Datum],
-    sampling_client: tinker.SamplingClient,
+def make_fipo_loss_fn(
+    rl_data_D: list[tinker.Datum],
+    clip_epsilon: float = 0.2,
     decay_half_life: float = 32.0,
     dual_clip_threshold: float = 10.0,
     influence_clip_low: float = 1.0,
     influence_clip_high: float = 1.2,
     safety_threshold: float = 4.0,
-) -> dict[str, float]:
-    """Apply FIPO advantage reweighting to training data in-place.
+):
+    """Create a FIPO loss closure for forward_backward_custom.
 
-    Computes current policy logprobs via the sampling client, calculates
-    future-KL influence weights, and multiplies advantages by these weights.
+    The closure captures the RL-specific fields (sampling logprobs, advantages,
+    mask) from the original RL datums, since forward_backward_custom only
+    supports target_tokens + weights in the datum format.
 
-    This should be called after assemble_training_data() and before
-    the training step (forward_backward with ppo loss).
+    The returned loss function receives training logprobs from the forward pass
+    and computes the full FIPO loss: PPO-clipped policy gradient with
+    future-KL-reweighted advantages.
 
     Args:
-        data_D: Training datums with "logprobs", "advantages", "mask",
-            and "target_tokens" in loss_fn_inputs. Modified in-place.
-        sampling_client: Sampling client with current training weights.
+        rl_data_D: Original RL datums containing "logprobs", "advantages",
+            and "mask" in loss_fn_inputs.
+        clip_epsilon: PPO clip range. Default 0.2.
         decay_half_life: τ for future-KL decay. Default 32.
         dual_clip_threshold: c for participation mask. Default 10.0.
-        influence_clip_low: Lower bound for influence clipping. Default 1.0.
-        influence_clip_high: Upper bound for influence clipping. Default 1.2.
+        influence_clip_low: ε_low for influence clipping. Default 1.0.
+        influence_clip_high: ε_high for influence clipping. Default 1.2.
         safety_threshold: Safety threshold for negative samples. Default 4.0.
 
     Returns:
-        Dict of FIPO metrics (influence weight stats, future-KL stats).
+        Loss function compatible with forward_backward_custom.
     """
-    # Reconstruct full sequences and compute current logprobs
-    full_sequence_inputs_D = [
-        datum.model_input.append_int(cast(int, datum.loss_fn_inputs["target_tokens"].data[-1]))
-        for datum in data_D
-    ]
-    current_logprobs_D = await asyncio.gather(
-        *[
-            sampling_client.compute_logprobs_async(seq)
-            for seq in full_sequence_inputs_D
-        ]
-    )
+    # Capture RL fields from original datums
+    sampling_logprobs_D = [d.loss_fn_inputs["logprobs"].to_torch() for d in rl_data_D]
+    advantages_D = [d.loss_fn_inputs["advantages"].to_torch() for d in rl_data_D]
+    masks_D = [d.loss_fn_inputs["mask"].to_torch() for d in rl_data_D]
 
-    all_influence_weights: list[torch.Tensor] = []
-    all_future_kl_abs: list[torch.Tensor] = []
+    def loss_fn(
+        data: list[tinker.Datum],
+        logprobs_list: list[torch.Tensor],
+    ) -> tuple[torch.Tensor, dict[str, float]]:
+        total_loss = torch.tensor(0.0)
+        total_tokens = 0
+        all_influence: list[torch.Tensor] = []
+        all_future_kl: list[torch.Tensor] = []
 
-    for datum, current_logprobs_raw in safezip(data_D, current_logprobs_D):
-        sampling_logprobs = datum.loss_fn_inputs["logprobs"].to_torch()
-        advantages = datum.loss_fn_inputs["advantages"].to_torch()
-        mask = datum.loss_fn_inputs["mask"].to_torch()
+        for i, training_logprobs in enumerate(logprobs_list):
+            sampling_logprobs = sampling_logprobs_D[i]
+            advantages = advantages_D[i]
+            mask = masks_D[i]
 
-        # current_logprobs_raw includes logprobs for all positions including BOS
-        # Skip first element to align with the shifted datum format
-        current_logprobs = torch.tensor(current_logprobs_raw[1:], dtype=sampling_logprobs.dtype)
+            action_mask = mask > 0
+            n_action = int(action_mask.sum().item())
+            if n_action == 0:
+                continue
 
-        action_mask = mask > 0
-        if action_mask.sum() == 0:
-            continue
+            # Future-KL computation
+            future_kl = compute_future_kl(
+                current_logprobs=training_logprobs,
+                sampling_logprobs=sampling_logprobs,
+                mask=mask,
+                decay_half_life=decay_half_life,
+                dual_clip_threshold=dual_clip_threshold,
+            )
 
-        # Compute future-KL
-        future_kl = compute_future_kl(
-            current_logprobs=current_logprobs,
-            sampling_logprobs=sampling_logprobs,
-            mask=mask,
-            decay_half_life=decay_half_life,
-            dual_clip_threshold=dual_clip_threshold,
+            # Influence weights
+            influence = compute_influence_weights(
+                future_kl=future_kl,
+                advantages=advantages,
+                current_logprobs=training_logprobs,
+                sampling_logprobs=sampling_logprobs,
+                clip_low=influence_clip_low,
+                clip_high=influence_clip_high,
+                safety_threshold=safety_threshold,
+            )
+
+            # FIPO loss: PPO-style clipped loss with reweighted advantages
+            weighted_adv = advantages * influence.detach()
+            log_ratio = training_logprobs - sampling_logprobs
+            ratio = torch.exp(log_ratio)
+
+            pg_loss1 = -weighted_adv * ratio
+            pg_loss2 = -weighted_adv * torch.clamp(ratio, 1 - clip_epsilon, 1 + clip_epsilon)
+            pg_loss = torch.maximum(pg_loss1, pg_loss2)
+
+            total_loss = total_loss + (pg_loss * mask).sum()
+            total_tokens += n_action
+
+            with torch.no_grad():
+                all_influence.append(influence[action_mask])
+                all_future_kl.append(future_kl[action_mask].abs())
+
+        if total_tokens == 0:
+            return torch.tensor(0.0, requires_grad=True), {"fipo/num_tokens": 0}
+
+        loss = total_loss / total_tokens
+
+        with torch.no_grad():
+            cat_infl = torch.cat(all_influence)
+            cat_fkl = torch.cat(all_future_kl)
+
+        metrics = {
+            "fipo/loss": loss.item(),
+            "fipo/num_tokens": total_tokens,
+            "fipo/influence_weight_mean": cat_infl.mean().item(),
+            "fipo/influence_weight_std": cat_infl.std().item(),
+            "fipo/influence_weight_min": cat_infl.min().item(),
+            "fipo/influence_weight_max": cat_infl.max().item(),
+            "fipo/future_kl_abs_mean": cat_fkl.mean().item(),
+        }
+        return loss, metrics
+
+    return loss_fn
+
+
+def prepare_custom_datums(rl_data_D: list[tinker.Datum]) -> list[tinker.Datum]:
+    """Convert RL datums to the format expected by forward_backward_custom.
+
+    forward_backward_custom only supports target_tokens + weights.
+    We strip out logprobs, advantages, and mask, using mask as weights.
+
+    Args:
+        rl_data_D: Original RL datums with full loss_fn_inputs.
+
+    Returns:
+        Stripped datums with only target_tokens and weights.
+    """
+    custom_datums = []
+    for d in rl_data_D:
+        custom_datums.append(
+            tinker.Datum(
+                model_input=d.model_input,
+                loss_fn_inputs={
+                    "target_tokens": d.loss_fn_inputs["target_tokens"],
+                    "weights": d.loss_fn_inputs["mask"],
+                },
+            )
         )
-
-        # Compute influence weights
-        influence = compute_influence_weights(
-            future_kl=future_kl,
-            advantages=advantages,
-            current_logprobs=current_logprobs,
-            sampling_logprobs=sampling_logprobs,
-            clip_low=influence_clip_low,
-            clip_high=influence_clip_high,
-            safety_threshold=safety_threshold,
-        )
-
-        # Reweight advantages in-place
-        weighted_advantages = advantages * influence
-        datum.loss_fn_inputs["advantages"] = tinker.TensorData.from_torch(weighted_advantages)
-
-        all_influence_weights.append(influence[action_mask])
-        all_future_kl_abs.append(future_kl[action_mask].abs())
-
-    if not all_influence_weights:
-        return {"fipo/num_datums": 0}
-
-    cat_influence = torch.cat(all_influence_weights)
-    cat_future_kl = torch.cat(all_future_kl_abs)
-
-    return {
-        "fipo/num_datums": len(data_D),
-        "fipo/influence_weight_mean": cat_influence.mean().item(),
-        "fipo/influence_weight_std": cat_influence.std().item(),
-        "fipo/influence_weight_min": cat_influence.min().item(),
-        "fipo/influence_weight_max": cat_influence.max().item(),
-        "fipo/future_kl_abs_mean": cat_future_kl.mean().item(),
-    }
+    return custom_datums
