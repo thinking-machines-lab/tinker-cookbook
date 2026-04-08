@@ -59,3 +59,20 @@ Aligned FIPO loss with reference implementation (asymmetric clip, dual-clip, seq
 **GRPO Baseline v3** (PID 2218666):
 - Same config, loss_fn=importance_sampling
 - Log: /tmp/tinker-grpo-deepmath
+
+## 2026-04-08 07:45 UTC — First DeepMath Results (step 0-3)
+
+DeepMath is significantly harder than Hendrycks MATH (~70% vs 91% base accuracy).
+
+| Step | FIPO Correct | FIPO Tokens/ep | GRPO Correct | GRPO Tokens/ep |
+|------|-------------|----------------|-------------|----------------|
+| 0 | 70.8% | 11521 | 88.3% | 10125 |
+| 1 | 62.5% | 12011 | 84.4% | 7928 |
+| 2 | 67.5% | 11044 | 92.2% | 7023 |
+| 3 | 80.4% | 11132 | 94.5% | 8769 |
+
+Notes:
+- Accuracy differences likely due to different random training batches
+- FIPO generates 30-50% longer responses consistently
+- Influence weights stable: ~0.985±0.165
+- Real comparison will be at step 10 eval checkpoint (same test set)
