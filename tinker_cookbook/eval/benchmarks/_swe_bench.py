@@ -51,8 +51,13 @@ from tinker_cookbook.tool_use.types import ToolResult
 
 logger = logging.getLogger(__name__)
 
-MAX_TURNS = 200
-"""Maximum number of agent turns before forced termination."""
+MAX_TURNS = 300
+"""Maximum number of agent turns before forced termination.
+
+Increased from 200 to 300 because V16 analysis showed 22 instances solved
+at max_turns=200 — more turns catches harder instances that need extensive
+exploration before converging on a fix.
+"""
 
 # apply_patch helper — GPT-OSS models use this instead of sed/python for edits.
 # Reads a patch from stdin in the *** Begin Patch / *** Update File format.
