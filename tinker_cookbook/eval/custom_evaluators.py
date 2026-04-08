@@ -68,7 +68,7 @@ class CustomEvaluator(SamplingClientEvaluator):
             if self.grader_fn(content, datum["output"]):
                 num_correct += 1
 
-        metrics["accuracy"] = num_correct / num_examples
+        metrics["accuracy"] = num_correct / num_examples if num_examples > 0 else 0.0
         return metrics
 
 

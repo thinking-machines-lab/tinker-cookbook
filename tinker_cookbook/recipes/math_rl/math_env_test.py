@@ -110,8 +110,8 @@ class TestGradeAnswer:
     def test_latex_fraction_vs_decimal(self):
         # The grader normalizes \frac{1}{2} and 0.5 as equivalent (special case)
         assert grade_answer("\\frac{1}{2}", "0.5") is True
-        # But \frac{3}{4} vs 0.75 is not caught by the normalizer
-        assert grade_answer("\\frac{3}{4}", "0.75") is False
+        # \frac{3}{4} vs 0.75 is caught by the sympy fallback
+        assert grade_answer("\\frac{3}{4}", "0.75") is True
 
     def test_integer_mismatch_strict(self):
         # If ground truth is an integer, given answer must also be an integer

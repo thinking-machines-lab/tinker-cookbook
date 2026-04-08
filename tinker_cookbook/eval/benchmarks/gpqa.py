@@ -120,11 +120,17 @@ class GPQABenchmarkBuilder(BenchmarkBuilder):
             if correct_answer in ("A", "B", "C", "D"):
                 expected = correct_answer
             else:
-                expected = "A"
+                expected = None
                 for i, c in enumerate(choices):
                     if c.strip() == str(correct_answer).strip():
                         expected = chr(65 + i)
                         break
+                if expected is None:
+                    logger.warning(
+                        "GPQA: correct_answer %r does not match any choice, skipping example",
+                        correct_answer,
+                    )
+                    continue
 
             prompt = (
                 f"{question}\n\n{format_mcq_choices(choices)}\n\n"

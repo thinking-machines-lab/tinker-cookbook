@@ -110,8 +110,8 @@ def _fix_sqrt(string: str) -> str:
     splits = string.split("\\sqrt")
     new_string = splits[0]
     for split in splits[1:]:
-        if split[0] != "{":
-            a = split[0]
+        if not split or split[0] != "{":
+            a = split[0] if split else ""
             new_substr = "\\sqrt{" + a + "}" + split[1:]
         else:
             new_substr = "\\sqrt" + split
@@ -311,7 +311,7 @@ def _strip_properly_formatted_commas(expr: str):
     return next_expr
 
 
-def _normalize(expr: str) -> str:
+def _normalize(expr: str) -> str | None:
     """Normalize answer expressions."""
     if expr is None:
         return None
@@ -398,7 +398,7 @@ def should_allow_eval(expr: str):
         if bad_string in expr:
             return False
 
-    return all(re.search(bad_regex, expr) is not None for bad_regex in BAD_REGEXES)
+    return all(re.search(bad_regex, expr) is None for bad_regex in BAD_REGEXES)
 
 
 def are_equal_under_sympy(ground_truth_normalized: str, given_normalized: str):
@@ -454,7 +454,7 @@ def grade_answer(given_answer: str, ground_truth: str) -> bool:
     ground_truth_normalized = _normalize(ground_truth)
     given_normalized = _normalize(given_answer)
 
-    if ground_truth_normalized is None:
+    if ground_truth_normalized is None or given_normalized is None:
         return False
 
     if ground_truth_normalized == given_normalized:
