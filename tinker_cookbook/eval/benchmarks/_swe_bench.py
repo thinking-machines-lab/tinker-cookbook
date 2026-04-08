@@ -248,26 +248,31 @@ class _SWEBashTool:
         result = await self._sandbox.run_command(
             wrapped, workdir="/workspace/repo", timeout=120, max_output_bytes=16000
         )
-        stdout = result.stdout
-        stderr = result.stderr
+        output = result.stdout + result.stderr
 
-        # Truncate long output to conserve context window. Overflow analysis
-        # shows avg 868 tokens/step — reducing from 10K to 5K chars saves ~30K
-        # tokens per overflow instance, roughly doubling available steps.
-        max_chars = 5000
-        if len(stdout) > max_chars:
-            head = stdout[:2500]
-            tail = stdout[-2500:]
-            elided = len(stdout) - max_chars
-            stdout = (
-                f"{head}\n\n[... {elided} characters elided ...]\n\n{tail}\n"
-                "[Output truncated. Use head/tail/grep for smaller output.]"
+        # Match mini-swe-agent's observation format (XML tags + 10K truncation).
+        # GPT-OSS models are trained on this format, not JSON blobs.
+        max_chars = 10000
+        if len(output) < max_chars:
+            formatted = (
+                f"<returncode>{result.exit_code}</returncode>\n"
+                f"<output>\n{output}</output>"
             )
-        if len(stderr) > 4000:
-            stderr = stderr[:4000] + "\n[stderr truncated]"
-
-        output = json.dumps({"exit_code": result.exit_code, "stdout": stdout, "stderr": stderr})
-        return simple_tool_result(output)
+        else:
+            elided = len(output) - max_chars
+            formatted = (
+                f"<returncode>{result.exit_code}</returncode>\n"
+                "<warning>\n"
+                "The output of your last command was too long.\n"
+                "Please try a different command that produces less output.\n"
+                "If you're looking at a file you can use head, tail or sed "
+                "to view a smaller number of lines selectively.\n"
+                "</warning>\n"
+                f"<output_head>\n{output[:5000]}\n</output_head>\n"
+                f"<elided_chars>\n{elided} characters elided\n</elided_chars>\n"
+                f"<output_tail>\n{output[-5000:]}\n</output_tail>"
+            )
+        return simple_tool_result(formatted)
 
 
 # ---------------------------------------------------------------------------
@@ -546,7 +551,7 @@ class _SWEBenchEnvFactory(SandboxMixin, Env):
             initial_messages=initial_messages,
             max_turns=MAX_TURNS,
             reward_fn=reward_fn,
-            max_no_tool_retries=3,
+            max_no_tool_retries=MAX_TURNS,  # unlimited (matches mini-swe-agent)
         )
         self._inner = EnvFromMessageEnv(
             renderer=self.renderer,

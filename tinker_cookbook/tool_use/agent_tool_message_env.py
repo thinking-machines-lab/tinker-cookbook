@@ -109,8 +109,13 @@ class AgentToolMessageEnv(MessageEnv):
             error_msg = unparsed[0].error if hasattr(unparsed[0], "error") else str(unparsed[0])
             error_feedback: Message = {
                 "role": "user",
-                "content": f"Your tool call could not be parsed: {error_msg}. "
-                "Please try again with valid JSON arguments.",
+                "content": (
+                    f"Tool call error:\n\n<error>\n{error_msg}\n</error>\n\n"
+                    "Every response needs to use the 'bash' tool at least once to "
+                    "execute commands.\n\nCall the bash tool with your command as "
+                    'the argument:\n- Tool: bash\n- Arguments: {"command": '
+                    '"your_command_here"}'
+                ),
             }
             self.history.append(error_feedback)
             # _turn_count already incremented at the top of step()
@@ -148,8 +153,11 @@ class AgentToolMessageEnv(MessageEnv):
                 nudge: Message = {
                     "role": "user",
                     "content": (
-                        "You must call the bash tool in every response. "
-                        "Please continue working on the task."
+                        "Tool call error:\n\n<error>\n"
+                        "No tool calls found in the response. Every response "
+                        "MUST include at least one tool call.\n</error>\n\n"
+                        "Call the bash tool with your command as the argument:\n"
+                        '- Tool: bash\n- Arguments: {"command": "your_command_here"}'
                     ),
                 }
                 self.history.append(nudge)
