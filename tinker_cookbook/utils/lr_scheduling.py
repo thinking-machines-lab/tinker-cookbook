@@ -34,6 +34,8 @@ def compute_schedule_lr_multiplier(lr_schedule: LRSchedule, step: int, total_ste
         base_lr = 1e-4
         effective_lr = base_lr * compute_schedule_lr_multiplier("cosine", step=50, total_steps=100)
     """
+    if total_steps <= 0:
+        raise ConfigurationError(f"total_steps must be positive, got {total_steps}")
     if lr_schedule == "linear":
         return 1 - step / total_steps
     elif lr_schedule == "cosine":

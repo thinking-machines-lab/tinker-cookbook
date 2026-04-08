@@ -340,10 +340,11 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
 
         return [
             (
-                win_minus_loss / matchup_count + format_coef * (float(is_valid) - 1.0),
-                {"win_minus_loss": win_minus_loss / matchup_count, "format": is_valid},
+                (win_minus_loss / mc if mc > 0 else 0.0)
+                + format_coef * (float(is_valid) - 1.0),
+                {"win_minus_loss": win_minus_loss / mc if mc > 0 else 0.0, "format": is_valid},
             )
-            for win_minus_loss, is_valid, matchup_count in safezip(
+            for win_minus_loss, is_valid, mc in safezip(
                 win_minus_loss_list, is_valid_list, matchup_count
             )
         ]

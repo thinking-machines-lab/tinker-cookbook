@@ -199,7 +199,11 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
         print(attrs.size_str, attrs.recommended_renderers)
     """
     model_name = model_name.split(":")[0]
-    org, model_version_full = model_name.split("/")
+    if "/" not in model_name:
+        raise ValueError(
+            f"Model name must be in 'org/model' format, got {model_name!r}"
+        )
+    org, model_version_full = model_name.split("/", 1)
     model_version_full = model_version_full.split(":")[0]
     if org == "meta-llama":
         return get_llama_info()[model_version_full]

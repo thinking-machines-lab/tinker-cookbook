@@ -234,6 +234,8 @@ def compute_sampling_client_metrics(
             - ``time/sampling_time_min``: Minimum sampling time across groups.
             - ``time/sampling_time_mean``: Mean sampling time across groups.
     """
+    if not wrapped_trajectory_groups:
+        return {}
     sampling_client_steps = [
         wrapped_trajectory_group.sampling_client_step
         for wrapped_trajectory_group in wrapped_trajectory_groups

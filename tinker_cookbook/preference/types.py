@@ -181,7 +181,10 @@ class ComparisonRendererFromChatRenderer(ComparisonRenderer):
         )
         # Truncate at the first weight==1 position + 1
         tokens = model_input.to_ints()
-        first_weight_one_index = int(torch.nonzero(weights == 1.0)[0])
+        nonzero_indices = torch.nonzero(weights == 1.0)
+        if len(nonzero_indices) == 0:
+            return model_input, weights
+        first_weight_one_index = int(nonzero_indices[0])
         truncated_tokens = tokens[: first_weight_one_index + 1]
         truncated_weights = weights[: first_weight_one_index + 1]
         return types.ModelInput.from_ints(truncated_tokens), truncated_weights
