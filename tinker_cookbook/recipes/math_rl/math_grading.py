@@ -311,7 +311,7 @@ def _strip_properly_formatted_commas(expr: str):
     return next_expr
 
 
-def _normalize(expr: str) -> str | None:
+def _normalize(expr: str | None) -> str | None:
     """Normalize answer expressions."""
     if expr is None:
         return None
@@ -455,7 +455,7 @@ def grade_answer(given_answer: str, ground_truth: str) -> bool:
     given_normalized = _normalize(given_answer)
 
     if ground_truth_normalized is None or given_normalized is None:
-        return ground_truth_normalized == given_normalized
+        return False
 
     if ground_truth_normalized == given_normalized:
         return True
