@@ -21,6 +21,7 @@ has miniconda pre-installed to match the official SWE-bench base environment.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import shlex
@@ -276,10 +277,18 @@ class _SWEBashTool:
             "source /opt/miniconda3/bin/activate && conda activate testbed && "
             f"PAGER=cat MANPAGER=cat PIP_PROGRESS_BAR=off TQDM_DISABLE=1 {command}"
         )
-        result = await self._sandbox.run_command(
-            wrapped, workdir="/workspace/repo", timeout=120, max_output_bytes=16000
-        )
-        output = result.stdout + result.stderr
+        try:
+            result = await self._sandbox.run_command(
+                wrapped, workdir="/workspace/repo", timeout=120, max_output_bytes=16000
+            )
+            output = result.stdout + result.stderr
+        except (asyncio.CancelledError, Exception) as e:
+            # Sandbox died — return error to model instead of crashing
+            return simple_tool_result(
+                f"<returncode>-1</returncode>\n"
+                f"<exception>Sandbox error: {type(e).__name__}: {str(e)[:200]}</exception>\n"
+                f"<output></output>"
+            )
 
         # Match mini-swe-agent's observation format (XML tags + 10K truncation).
         # GPT-OSS models are trained on this format, not JSON blobs.
