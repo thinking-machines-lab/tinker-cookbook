@@ -311,7 +311,7 @@ def _strip_properly_formatted_commas(expr: str):
     return next_expr
 
 
-def _normalize(expr: str | None) -> str | None:
+def _normalize(expr: str) -> str | None:
     """Normalize answer expressions."""
     if expr is None:
         return None
