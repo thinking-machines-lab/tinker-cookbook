@@ -187,15 +187,6 @@ class TestDistillation:
         assert hasattr(dist.sdft, "Config")
         assert hasattr(dist.sdft, "main")
 
-        # Shared dataset types
-        assert dist.DistillationDatasetConfig is not None
-        assert dist.TeacherConfig is not None
-        assert dist.PromptOnlyDatasetBuilder is not None
-
-        # SDFT protocol and utilities
-        assert dist.SDFTBatchProvider is not None
-        assert callable(dist.build_sdft_teacher_prompt)
-
     def test_distillation_all_complete(self):
         import tinker_cookbook.distillation as dist
 
@@ -203,11 +194,6 @@ class TestDistillation:
             "train_on_policy",
             "train_off_policy",
             "sdft",
-            "DistillationDatasetConfig",
-            "TeacherConfig",
-            "PromptOnlyDatasetBuilder",
-            "SDFTBatchProvider",
-            "build_sdft_teacher_prompt",
         }
         assert set(dist.__all__) == expected
 
