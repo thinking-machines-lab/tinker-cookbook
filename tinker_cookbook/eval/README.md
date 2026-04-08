@@ -291,10 +291,10 @@ Official scores from the model card (which may use different settings).
 |-----------|-----------|----------|--------|----------|
 | MMLU-Pro | 85.2%* | 85.3 | **Match** | 32K tokens |
 | MMLU-Redux | **93.5%** | 93.3 | **Match** | 32K tokens |
-| GPQA Diamond | 91.5%* | 84.2 | Above* | 32K tokens |
-| IFEval | 93.6%* | 91.9 | **Match** | 32K tokens |
+| GPQA Diamond | 89.7%* | 84.2 | Above* | 32K tokens |
+| IFEval | 92.5%* | 91.9 | **Match** | 32K tokens |
 | GSM8K | 95.6%* | — | — | system_prompt=\boxed{}, 32K tokens |
-| MATH-500 | 96.2%* | — | — | system_prompt=\boxed{}, 32K tokens |
+| MATH-500 | 97.9%* | — | — | system_prompt=\boxed{}, 32K tokens |
 | MBPP | 84.4%* | — | — | Modal sandbox, 32K tokens |
 | AIME 2026 (pass@4) | 90.0% | 93.33 | Close | system_prompt=\boxed{}, 32K tokens |
 
@@ -346,11 +346,11 @@ Official scores from the [Qwen3.5-35B-A3B model card](https://huggingface.co/Qwe
 | Benchmark | Raw | Completed | Official | Match? |
 |-----------|-----|-----------|----------|--------|
 | MMLU-Redux | 89.2% | **93.8%** | 93.3 | **Match** |
-| GPQA Diamond | 72.2% | **94.1%** | 84.2 | Above |
-| IFEval | 83.0% | **93.0%** | 91.9 | **Match** |
+| GPQA Diamond | 70.7% | **89.7%** | 84.2 | Above |
+| IFEval | 86.9% | **92.5%** | 91.9 | **Match** |
 | C-Eval | **89.2%** | 90.1% | 90.2 | **Match** |
 | SuperGPQA | ~59% | ~67% | 63.4 | **Match** |
-| MATH-500 | 88.8% | **97.6%** | — | — |
+| MATH-500 | 92.0% | **97.9%** | — | — |
 | GSM8K | 81.7% | 88.0% | — | — |
 | MBPP | 84.4% | 87.1% | — | — |
 | IFBench | **67.3%** | — | 70.2 | **Match** |

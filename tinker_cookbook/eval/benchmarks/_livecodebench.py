@@ -102,8 +102,8 @@ class LiveCodeBenchEnv(SandboxMixin, Env):
         )
 
     async def _check_solution(self, code: str) -> bool:
-        assert self.sandbox is not None
         """Run the solution against all test cases in the sandbox."""
+        assert self.sandbox is not None
         try:
             tests = json.loads(self.test_cases_json)
         except (json.JSONDecodeError, TypeError):

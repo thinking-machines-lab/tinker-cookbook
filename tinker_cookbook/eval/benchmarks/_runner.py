@@ -293,14 +293,22 @@ def _compute_pass_at_k(
         return {}
 
     result: PassAtKScores = {}
+    total_examples = len(per_example_results)
     for k in k_values:
         scores: list[float] = []
+        skipped = 0
         for rewards in per_example_results.values():
             n = len(rewards)
             if k > n:
+                skipped += 1
                 continue  # Can't compute pass@k when k > n
             c = sum(1 for r in rewards if r > 0)
             scores.append(_pass_at_k_single(n, c, k))
+        if skipped > 0:
+            logger.debug(
+                "pass@%d: skipped %d/%d examples with fewer than %d samples",
+                k, skipped, total_examples, k,
+            )
         if scores:
             result[k] = sum(scores) / len(scores)
     return result

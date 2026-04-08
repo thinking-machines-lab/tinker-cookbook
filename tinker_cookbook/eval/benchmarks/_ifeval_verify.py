@@ -79,7 +79,7 @@ def verify_instruction(instruction_id: str, response: str, kwargs: dict) -> bool
 
         elif iid == "keywords:letter_frequency":
             letter = kwargs.get("letter", "")
-            relation = kwargs.get("relation", "at least")
+            relation = kwargs.get("let_relation", "at least")
             frequency = kwargs.get("let_frequency", 0)
             count = response.lower().count(letter.lower())
             return _relation_check(count, relation, frequency)
