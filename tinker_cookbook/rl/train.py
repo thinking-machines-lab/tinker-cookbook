@@ -64,7 +64,6 @@ from tinker_cookbook.rl.types import (
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import logtree, ml_log, trace
-from tinker_cookbook.utils.deprecation import warn_deprecated
 from tinker_cookbook.utils.misc_utils import iteration_dir, safezip, split_list
 
 logger = logging.getLogger(__name__)
@@ -1835,10 +1834,8 @@ async def do_sync_training(
 
 @trace.scope
 async def main(
-    config: Config | None = None,
+    config: Config,
     rollout_executor: Executor | None = None,
-    *,
-    cfg: Config | None = None,
 ):
     """Main training loop for MDP RL.
 
@@ -1849,20 +1846,15 @@ async def main(
     final checkpoint upon completion.
 
     Args:
-        config (Config | None): Training configuration. Exactly one of
-            ``config`` or ``cfg`` must be provided.
+        config (Config): Training configuration.
         rollout_executor (Executor | None): Optional ``concurrent.futures.Executor``
             for offloading group rollouts to separate processes or remote
             workers. Pass ``ProcessPoolExecutor(max_workers=N)`` for
             multi-process execution, or any custom ``Executor`` (Ray,
             cluster dispatchers, etc.). Default ``None`` runs rollouts as
             asyncio coroutines in-process.
-        cfg (Config | None): Deprecated alias for ``config``. Will be
-            removed in version 0.3.0.
 
     Raises:
-        ConfigurationError: If neither ``config`` nor ``cfg`` is provided,
-            or if both are provided simultaneously.
         ConfigurationError: If ``kl_penalty_coef > 0`` but
             ``kl_reference_config`` is not set.
 
@@ -1880,13 +1872,6 @@ async def main(
         )
         asyncio.run(main(config=config))
     """
-    if cfg is not None:
-        warn_deprecated("cfg", removal_version="0.3.0", message="Use 'config' instead.")
-        if config is not None:
-            raise ConfigurationError("Cannot pass both 'config' and 'cfg'. Use 'config'.")
-        config = cfg
-    if config is None:
-        raise ConfigurationError("'config' is required.")
 
     if rollout_executor is not None:
         set_rollout_executor(rollout_executor)
