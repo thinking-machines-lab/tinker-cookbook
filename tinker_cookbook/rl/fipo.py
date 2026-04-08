@@ -27,6 +27,7 @@ def compute_future_kl(
     current_logprobs: torch.Tensor,
     sampling_logprobs: torch.Tensor,
     mask: torch.Tensor,
+    advantages: torch.Tensor,
     decay_half_life: float = 32.0,
     dual_clip_threshold: float = 10.0,
 ) -> torch.Tensor:
@@ -37,16 +38,18 @@ def compute_future_kl(
 
     where Δlog p_k = log π_current(o_k) - log π_old(o_k), γ = 2^(-1/τ),
     and M_k is a participation mask that filters tokens where the IS ratio
-    exceeds the dual-clip threshold c (i.e., ratio > c). This prevents
-    collapsed tokens from dominating the future-KL signal.
+    exceeds the dual-clip threshold c AND the advantage is negative. This
+    prevents collapsed tokens in negative-advantage trajectories from
+    dominating the future-KL signal.
 
     Args:
         current_logprobs: Per-token log-probs from current policy. Shape (T,).
         sampling_logprobs: Per-token log-probs from sampling (old) policy. Shape (T,).
         mask: Action mask (1 for action tokens, 0 for observation). Shape (T,).
+        advantages: Per-token advantages. Shape (T,).
         decay_half_life: τ in the decay formula γ = 2^(-1/τ). Default 32.
-        dual_clip_threshold: c for participation mask. Tokens where
-            log(π_current/π_old) > log(c) are excluded. Default 10.0.
+        dual_clip_threshold: c for participation mask. Tokens in negative-
+            advantage sequences where ratio > c are excluded. Default 10.0.
 
     Returns:
         Future-KL values for each position. Shape (T,).
@@ -60,15 +63,16 @@ def compute_future_kl(
     device = current_logprobs.device
 
     # Δlog p = log π_current - log π_old (signed shift)
-    delta_logp = (current_logprobs - sampling_logprobs)
-    # Clamp to avoid numerical issues
-    delta_logp = torch.clamp(delta_logp, min=-20.0, max=20.0)
+    delta_logp = torch.clamp(current_logprobs - sampling_logprobs, min=-20.0, max=20.0)
     delta_logp_masked = delta_logp * mask.to(dtype)
 
-    # Participation mask: only filter tokens where ratio > c (one direction)
-    # This prevents collapsed tokens from dominating future-KL
+    # Participation mask: filter tokens where (advantage < 0) AND (ratio > c)
+    # This matches the reference VeRL implementation exactly
     log_threshold = torch.log(torch.tensor(dual_clip_threshold, device=device, dtype=dtype))
-    participation = (delta_logp <= log_threshold).to(dtype)
+    is_negative_adv = advantages < 0
+    exceeds_threshold = delta_logp > log_threshold
+    ignore = is_negative_adv & exceeds_threshold
+    participation = (~ignore).to(dtype)
     kl_values = delta_logp_masked * participation
 
     # Discounted future sum via backward pass (O(T))
@@ -196,6 +200,7 @@ def make_fipo_loss_fn(
                 current_logprobs=training_logprobs,
                 sampling_logprobs=sampling_logprobs,
                 mask=mask,
+                advantages=advantages,
                 decay_half_life=decay_half_life,
                 dual_clip_threshold=dual_clip_threshold,
             )
