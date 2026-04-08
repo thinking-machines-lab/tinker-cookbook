@@ -26,6 +26,7 @@ jobs:
         run: uv run pytest tests/integration/ -v
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          TINKER_API_KEY: ${{ secrets.TINKER_API_KEY }}
 
   weights:
     if: github.repository == 'thinking-machines-lab/tinker-cookbook'
