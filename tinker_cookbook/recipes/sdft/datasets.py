@@ -437,7 +437,9 @@ class ScienceArrowSFTBuilder(ChatDatasetBuilder):
     thinking_format: bool = False
 
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
-        expanded_dir = self.data_dir if is_cloud_uri(self.data_dir) else str(Path(self.data_dir).expanduser())
+        expanded_dir = (
+            self.data_dir if is_cloud_uri(self.data_dir) else str(Path(self.data_dir).expanduser())
+        )
         questions, golden_answers, _, _ = load_science_from_arrow(
             expanded_dir, thinking_format=self.thinking_format, for_sft=True
         )
@@ -486,7 +488,9 @@ class TooluseArrowSFTBuilder(ChatDatasetBuilder):
     data_dir: str = "~/Repos/Self-Distillation/data/tooluse_data"
 
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
-        expanded_dir = self.data_dir if is_cloud_uri(self.data_dir) else str(Path(self.data_dir).expanduser())
+        expanded_dir = (
+            self.data_dir if is_cloud_uri(self.data_dir) else str(Path(self.data_dir).expanduser())
+        )
         questions, golden_answers, _, _ = load_tooluse_from_arrow(expanded_dir)
 
         import datasets as hf_datasets
