@@ -43,3 +43,19 @@ Monitoring cron set up (every 30 min).
 - First batch only; likely easy problems at start
 
 Both running well. FIPO producing significantly longer reasoning chains.
+
+## 2026-04-08 07:10 UTC — Switched to DeepMath-103K
+
+Killed v2 experiments (Hendrycks MATH too easy — 91%+ base accuracy).
+Aligned FIPO loss with reference implementation (asymmetric clip, dual-clip, sequence filtering).
+
+**FIPO v3** (PID 2218588):
+- Model: Qwen/Qwen3-8B, env=deepmath (DeepMath-103K), group_size=8, groups_per_batch=16
+- max_tokens=16384, lr=1e-6, 50 steps
+- FIPO: tau=32, influence_clip=[0.8, 1.2], ppo_clip=[0.2, 0.28], dual_clip_c=10.0
+- TINKER_SUBPROCESS_SAMPLING=1
+- Log: /tmp/tinker-fipo-deepmath
+
+**GRPO Baseline v3** (PID 2218666):
+- Same config, loss_fn=importance_sampling
+- Log: /tmp/tinker-grpo-deepmath
