@@ -54,18 +54,7 @@ See [tinker_cookbook/recipes/sl_loop.py](tinker_cookbook/recipes/sl_loop.py) and
 
 ### Tutorials
 
-New to Tinker? The [`tutorials/`](tutorials/) directory has progressive [marimo](https://marimo.io/) notebooks that guide you from your first API call to building custom RL training pipelines:
-
-| # | Notebook | What you'll learn |
-|---|----------|-------------------|
-| 101 | [Hello Tinker](tutorials/101_hello_tinker.py) | Architecture overview, client hierarchy, sampling |
-| 102 | [First SFT](tutorials/102_first_sft.py) | Renderers, datum construction, training loop, Kimi K2.5 scaling demo |
-| 103 | [Efficient Sampling](tutorials/103_async_patterns.py) | Concurrent futures, `num_samples`, batch evaluation throughput |
-| 104 | [First RL](tutorials/104_first_rl.py) | GRPO on GSM8K: rewards, advantages, degenerate groups |
-| 301 | [Cookbook RL Abstractions](tutorials/301_cookbook_abstractions.py) | `Env`, `EnvGroupBuilder`, `RLDataset`, `ProblemEnv` |
-| 302 | [Custom RL Environment](tutorials/302_custom_environment.py) | Build your own `ProblemEnv` and `RLDataset` |
-
-Run any tutorial with `marimo edit tutorials/101_hello_tinker.py`. Rendered versions are available on the [Tinker docs site](https://tinker-docs.thinkingmachines.ai/tutorials).
+New to Tinker? The [`tutorials/`](tutorials/) directory contains 20+ progressive [marimo](https://marimo.io/) notebooks that walk through core concepts — rendering, loss functions, completers, weight management — and advanced topics such as custom RL environments, DPO, RLHF, and weight export. Run any tutorial with `marimo edit tutorials/101_hello_tinker.py`. See the [tutorials README](tutorials/README.md) for the full list, or browse rendered versions on the [Tinker docs site](https://tinker-docs.thinkingmachines.ai/tutorials).
 
 To download the weights of any model:
 ```python
@@ -80,26 +69,45 @@ with open(f"model-checkpoint.tar.gz", "wb") as f:
 Besides these primitives, we also offer **Tinker Cookbook** (a.k.a. this repo), a library of a wide range of abstractions to help you customize training environments.
 [`tinker_cookbook/recipes/sl_basic.py`](tinker_cookbook/recipes/sl_basic.py) and [`tinker_cookbook/recipes/rl_basic.py`](tinker_cookbook/recipes/rl_basic.py) contain minimal examples to configure supervised learning and reinforcement learning.
 
-We also include a wide range of more sophisticated examples in the [`tinker_cookbook/recipes/`](tinker_cookbook/recipes/) folder:
-1. **[Chat supervised learning](tinker_cookbook/recipes/chat_sl/)**: supervised fine-tuning on conversational datasets like Tulu3.
-2. **[Math reasoning](tinker_cookbook/recipes/math_rl/)**: improve LLM reasoning capability by rewarding it for answering math questions correctly.
-3. **[Preference learning](tinker_cookbook/recipes/preference/)**: showcase a three-stage RLHF pipeline: 1) supervised fine-tuning, 2) learning a reward model, 3) RL against the reward model.
-4. **[Tool use](tinker_cookbook/recipes/search_tool/)**: train LLMs to better use retrieval tools to answer questions more accurately.
-5. **[Prompt distillation](tinker_cookbook/recipes/prompt_distillation/)**: internalize long and complex instructions into LLMs.
-6. **[Multi-Agent](tinker_cookbook/recipes/multiplayer_rl/)**: optimize LLMs to play against another LLM or themselves.
+We also include more complete examples in the [`tinker_cookbook/recipes/`](tinker_cookbook/recipes/) folder:
+- **[Chat SFT](tinker_cookbook/recipes/chat_sl/)**: supervised fine-tuning on conversational datasets (e.g., Tulu3).
+- **[Math RL](tinker_cookbook/recipes/math_rl/)**: reinforcement learning for mathematical reasoning with verifiable rewards.
+- **[Code RL](tinker_cookbook/recipes/code_rl/)**: RL on competitive programming with sandboxed code execution (DeepCoder replication).
+- **[Preference learning](tinker_cookbook/recipes/preference/)**: DPO and a three-stage RLHF pipeline (SFT, reward model, RL).
+- **[Distillation](tinker_cookbook/recipes/distillation/)**: on-policy and off-policy knowledge distillation with single- and multi-teacher configurations.
+- **[Tool use](tinker_cookbook/recipes/search_tool/)**: RL for retrieval-augmented generation (Search-R1 replication).
+- **[Multi-agent](tinker_cookbook/recipes/multiplayer_rl/)**: multi-agent RL with self-play and cross-play.
 
-These examples are located in each subfolder, and their `README.md` files will walk you through the key implementation details, the commands to run them, and the expected performance.
+The [recipes README](tinker_cookbook/recipes/README.md) covers the full set of 15+ recipes, including Harbor RL, rubric-based grading, VLM classification, and SDFT. Each recipe includes a `README.md` with implementation details, launch commands, and expected results.
+
+### Evaluation (experimental)
+
+Tinker Cookbook includes a [benchmark framework](tinker_cookbook/eval/) for evaluating trained models:
+
+```python
+from tinker_cookbook.eval.benchmarks import run_benchmarks, BenchmarkConfig
+
+results = await run_benchmarks(
+    ["gsm8k", "mmlu_pro", "ifeval"],
+    sampling_client, renderer,
+    BenchmarkConfig(save_dir="evals/step500"),
+)
+```
+
+The framework currently supports 12 benchmarks (GSM8K, MATH-500, MMLU-Pro, MMLU-Redux, GPQA, IFEval, MBPP, C-Eval, SuperGPQA, IFBench, AIME 2025, AIME 2026) with verified scores against published results, plus experimental benchmarks such as LiveCodeBench, Terminal Bench, and SWE-bench. Benchmarks can also serve as inline training evaluators via `BenchmarkEvaluator`.
+
+**Note:** Benchmark scores are sensitive to evaluation configuration — system prompts, `max_tokens`, temperature, and timeout settings can shift results significantly. We document our exact settings alongside all reported scores. This framework is under active development; feedback and contributions are welcome. See the [eval README](tinker_cookbook/eval/README.md) for verified scores, configuration details, and instructions for adding new benchmarks.
 
 ### Documentation
 
 For the full Tinker documentation, visit [tinker-docs.thinkingmachines.ai](https://tinker-docs.thinkingmachines.ai).
 
-### Import our utilities
+### Utilities
 
-Tinker cookbook includes several utilities. Here's a quick overview:
-- [`renderers`](tinker_cookbook/renderers/) converts tokens from/to structured chat message objects
-- [`hyperparam_utils`](tinker_cookbook/hyperparam_utils.py) helps calculate hyperparameters suitable for LoRAs
-- [`evaluation`](tinker_cookbook/eval/evaluators.py) provides abstractions for evaluating Tinker models and [`inspect_evaluation`](tinker_cookbook/eval/inspect_evaluators.py) shows how to integrate with InspectAI to make evaluating on standard benchmarks easy.
+Tinker Cookbook also provides reusable building blocks:
+- [`renderers`](tinker_cookbook/renderers/) — bidirectional conversion between token sequences and structured chat messages
+- [`hyperparam_utils`](tinker_cookbook/hyperparam_utils.py) — learning rate and hyperparameter scaling for LoRA training
+- [`eval`](tinker_cookbook/eval/) — benchmark framework and inline training evaluators (see [Evaluation](#evaluation-experimental) above)
 
 ## Claude Code Skills
 
