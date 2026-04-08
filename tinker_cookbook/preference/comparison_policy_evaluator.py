@@ -109,5 +109,7 @@ class ComparisonEvaluator(SamplingClientEvaluator):
         )
         return {
             "win_rate": np.mean(results).item(),
-            "stderr": np.std(results, ddof=1).item() / np.sqrt(len(results)) if len(results) > 1 else 0.0,
+            "stderr": np.std(results, ddof=1).item() / np.sqrt(len(results))
+            if len(results) > 1
+            else 0.0,
         }

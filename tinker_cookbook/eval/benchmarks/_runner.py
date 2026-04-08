@@ -307,7 +307,10 @@ def _compute_pass_at_k(
         if skipped > 0:
             logger.debug(
                 "pass@%d: skipped %d/%d examples with fewer than %d samples",
-                k, skipped, total_examples, k,
+                k,
+                skipped,
+                total_examples,
+                k,
             )
         if scores:
             result[k] = sum(scores) / len(scores)
