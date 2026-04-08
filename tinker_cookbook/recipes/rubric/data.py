@@ -169,7 +169,7 @@ class PrometheusDatapointListBuilder(RubricDatapointListBuilder):
     data_path: str = "prometheus-eval/Feedback-Collection"
 
     def __call__(self) -> Sequence[RubricBasedDatapoint]:
-        from datasets import load_dataset
+        from tinker_cookbook.utils.dataset_loading import load_dataset
 
         train_dataset = load_dataset(self.data_path)["train"]
         return [self.build_rubric_datapoint(item) for item in train_dataset]  # type: ignore
