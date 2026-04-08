@@ -36,14 +36,17 @@ def compute_future_kl(
         FutureKL_t = Σ_{k≥t} M_k · γ^(k-t) · Δlog p_k
 
     where Δlog p_k = log π_current(o_k) - log π_old(o_k), γ = 2^(-1/τ),
-    and M_k is a participation mask filtering excessively large IS ratios.
+    and M_k is a participation mask that filters tokens where the IS ratio
+    exceeds the dual-clip threshold c (i.e., ratio > c). This prevents
+    collapsed tokens from dominating the future-KL signal.
 
     Args:
         current_logprobs: Per-token log-probs from current policy. Shape (T,).
         sampling_logprobs: Per-token log-probs from sampling (old) policy. Shape (T,).
         mask: Action mask (1 for action tokens, 0 for observation). Shape (T,).
         decay_half_life: τ in the decay formula γ = 2^(-1/τ). Default 32.
-        dual_clip_threshold: c for participation mask. Default 10.0.
+        dual_clip_threshold: c for participation mask. Tokens where
+            log(π_current/π_old) > log(c) are excluded. Default 10.0.
 
     Returns:
         Future-KL values for each position. Shape (T,).
@@ -57,12 +60,16 @@ def compute_future_kl(
     device = current_logprobs.device
 
     # Δlog p = log π_current - log π_old (signed shift)
-    delta_logp = (current_logprobs - sampling_logprobs) * mask.to(dtype)
+    delta_logp = (current_logprobs - sampling_logprobs)
+    # Clamp to avoid numerical issues
+    delta_logp = torch.clamp(delta_logp, min=-20.0, max=20.0)
+    delta_logp_masked = delta_logp * mask.to(dtype)
 
-    # Participation mask: exclude tokens where |Δlog p| exceeds threshold
+    # Participation mask: only filter tokens where ratio > c (one direction)
+    # This prevents collapsed tokens from dominating future-KL
     log_threshold = torch.log(torch.tensor(dual_clip_threshold, device=device, dtype=dtype))
-    participation = (delta_logp.abs() <= log_threshold).to(dtype)
-    kl_values = delta_logp * participation
+    participation = (delta_logp <= log_threshold).to(dtype)
+    kl_values = delta_logp_masked * participation
 
     # Discounted future sum via backward pass (O(T))
     future_kl = torch.empty(T, dtype=dtype, device=device)
@@ -77,9 +84,8 @@ def compute_future_kl(
 def compute_influence_weights(
     future_kl: torch.Tensor,
     advantages: torch.Tensor,
-    current_logprobs: torch.Tensor,
-    sampling_logprobs: torch.Tensor,
-    clip_low: float = 1.0,
+    ratio: torch.Tensor,
+    clip_low: float = 0.8,
     clip_high: float = 1.2,
     safety_threshold: float = 4.0,
 ) -> torch.Tensor:
@@ -87,26 +93,27 @@ def compute_influence_weights(
 
     f_t = clip(exp(FutureKL_t), 1 - ε_low, 1 + ε_high)
 
+    With safety: for negative-advantage tokens where the IS ratio exceeds
+    the safety threshold, influence weights are clamped to [0.8, 1.0] to
+    prevent runaway gradient updates on tokens the model is trying to unlearn.
+
     Args:
         future_kl: Per-token future-KL values. Shape (T,).
         advantages: Per-token advantages. Shape (T,).
-        current_logprobs: Current policy log-probs. Shape (T,).
-        sampling_logprobs: Old policy log-probs. Shape (T,).
-        clip_low: Lower clipping bound. Default 1.0.
-        clip_high: Upper clipping bound. Default 1.2.
+        ratio: IS ratio exp(log_current - log_old). Shape (T,).
+        clip_low: ε_low — lower clipping bound. Default 0.8.
+        clip_high: ε_high — upper clipping bound. Default 1.2.
         safety_threshold: IS ratio threshold for safety clamping. Default 4.0.
 
     Returns:
         Per-token influence weights. Shape (T,).
     """
-    influence = torch.clamp(
-        torch.exp(future_kl),
-        min=1.0 - clip_low,
-        max=1.0 + clip_high,
-    )
+    lower_bound = 1.0 - clip_low
+    upper_bound = 1.0 + clip_high
+
+    influence = torch.clamp(torch.exp(future_kl), min=lower_bound, max=upper_bound)
 
     # Safety: for negative advantage + high IS ratio, clamp influence weights
-    ratio = torch.exp(current_logprobs - sampling_logprobs)
     mask_neg_high_is = (advantages < 0) & (ratio > safety_threshold)
     influence = torch.where(
         mask_neg_high_is,
@@ -119,31 +126,35 @@ def compute_influence_weights(
 
 def make_fipo_loss_fn(
     rl_data_D: list[tinker.Datum],
-    clip_epsilon: float = 0.2,
+    clip_ratio_low: float = 0.2,
+    clip_ratio_high: float = 0.28,
+    clip_ratio_c: float = 10.0,
     decay_half_life: float = 32.0,
     dual_clip_threshold: float = 10.0,
-    influence_clip_low: float = 1.0,
+    influence_clip_low: float = 0.8,
     influence_clip_high: float = 1.2,
     safety_threshold: float = 4.0,
 ):
     """Create a FIPO loss closure for forward_backward_custom.
 
-    The closure captures the RL-specific fields (sampling logprobs, advantages,
-    mask) from the original RL datums, since forward_backward_custom only
-    supports target_tokens + weights in the datum format.
+    The closure captures RL fields (sampling logprobs, advantages, mask) from
+    the original datums. The loss function receives training logprobs from the
+    forward pass and computes the full FIPO loss: PPO-clipped policy gradient
+    with future-KL-reweighted advantages, dual-clip for negative advantages,
+    and sequence-level filtering.
 
-    The returned loss function receives training logprobs from the forward pass
-    and computes the full FIPO loss: PPO-clipped policy gradient with
-    future-KL-reweighted advantages.
+    Matches the reference VeRL implementation's compute_policy_loss_future_kl.
 
     Args:
         rl_data_D: Original RL datums containing "logprobs", "advantages",
             and "mask" in loss_fn_inputs.
-        clip_epsilon: PPO clip range. Default 0.2.
+        clip_ratio_low: PPO lower clip (asymmetric). Default 0.2.
+        clip_ratio_high: PPO upper clip (asymmetric). Default 0.28.
+        clip_ratio_c: Dual-clip threshold for negative advantages. Default 10.0.
         decay_half_life: τ for future-KL decay. Default 32.
         dual_clip_threshold: c for participation mask. Default 10.0.
-        influence_clip_low: ε_low for influence clipping. Default 1.0.
-        influence_clip_high: ε_high for influence clipping. Default 1.2.
+        influence_clip_low: ε_low for influence weight clipping. Default 0.8.
+        influence_clip_high: ε_high for influence weight clipping. Default 1.2.
         safety_threshold: Safety threshold for negative samples. Default 4.0.
 
     Returns:
@@ -162,16 +173,23 @@ def make_fipo_loss_fn(
         total_tokens = 0
         all_influence: list[torch.Tensor] = []
         all_future_kl: list[torch.Tensor] = []
+        all_pg_clipfrac: list[float] = []
 
         for i, training_logprobs in enumerate(logprobs_list):
             sampling_logprobs = sampling_logprobs_D[i]
             advantages = advantages_D[i]
             mask = masks_D[i]
+            mask_f = mask.to(training_logprobs.dtype)
 
             action_mask = mask > 0
             n_action = int(action_mask.sum().item())
             if n_action == 0:
                 continue
+
+            # IS ratio
+            log_ratio = training_logprobs - sampling_logprobs
+            log_ratio = torch.clamp(log_ratio, min=-20.0, max=20.0)
+            ratio = torch.exp(log_ratio)
 
             # Future-KL computation
             future_kl = compute_future_kl(
@@ -186,28 +204,51 @@ def make_fipo_loss_fn(
             influence = compute_influence_weights(
                 future_kl=future_kl,
                 advantages=advantages,
-                current_logprobs=training_logprobs,
-                sampling_logprobs=sampling_logprobs,
+                ratio=ratio,
                 clip_low=influence_clip_low,
                 clip_high=influence_clip_high,
                 safety_threshold=safety_threshold,
             )
 
-            # FIPO loss: PPO-style clipped loss with reweighted advantages
+            # FIPO loss: PPO-style asymmetric clipped loss with reweighted advantages
             weighted_adv = advantages * influence.detach()
-            log_ratio = training_logprobs - sampling_logprobs
-            ratio = torch.exp(log_ratio)
 
+            # Standard PPO clipped loss
             pg_loss1 = -weighted_adv * ratio
-            pg_loss2 = -weighted_adv * torch.clamp(ratio, 1 - clip_epsilon, 1 + clip_epsilon)
-            pg_loss = torch.maximum(pg_loss1, pg_loss2)
+            pg_loss2 = -weighted_adv * torch.clamp(
+                ratio, 1 - clip_ratio_low, 1 + clip_ratio_high
+            )
+            clip_pg_loss1 = torch.maximum(pg_loss1, pg_loss2)
 
-            total_loss = total_loss + (pg_loss * mask).sum()
+            # Dual-clip for negative advantages (DAPO mechanism)
+            pg_loss3 = -weighted_adv * clip_ratio_c
+            clip_pg_loss2 = torch.minimum(pg_loss3, clip_pg_loss1)
+
+            # Sequence-level filtering: reject sequences with >1 lower-clipped token
+            # (In our case, each datum IS a sequence, so we filter the whole datum)
+            lower_clip_mask = (
+                (advantages < 0)
+                & (clip_pg_loss1 > pg_loss3)
+                & action_mask
+            )
+            n_lower_clipped = int(lower_clip_mask.sum().item())
+
+            if n_lower_clipped > 1:
+                # Skip this datum entirely
+                continue
+
+            # Select loss: dual-clip for negative advantages, standard for positive
+            pg_loss = torch.where(weighted_adv < 0, clip_pg_loss2, clip_pg_loss1)
+
+            masked_loss = (pg_loss * mask_f).sum()
+            total_loss = total_loss + masked_loss
             total_tokens += n_action
 
             with torch.no_grad():
                 all_influence.append(influence[action_mask])
                 all_future_kl.append(future_kl[action_mask].abs())
+                clipped = (pg_loss2 > pg_loss1)[action_mask].float().mean().item()
+                all_pg_clipfrac.append(clipped)
 
         if total_tokens == 0:
             return torch.tensor(0.0, requires_grad=True), {"fipo/num_tokens": 0}
@@ -215,8 +256,8 @@ def make_fipo_loss_fn(
         loss = total_loss / total_tokens
 
         with torch.no_grad():
-            cat_infl = torch.cat(all_influence)
-            cat_fkl = torch.cat(all_future_kl)
+            cat_infl = torch.cat(all_influence) if all_influence else torch.tensor([1.0])
+            cat_fkl = torch.cat(all_future_kl) if all_future_kl else torch.tensor([0.0])
 
         metrics = {
             "fipo/loss": loss.item(),
@@ -226,6 +267,7 @@ def make_fipo_loss_fn(
             "fipo/influence_weight_min": cat_infl.min().item(),
             "fipo/influence_weight_max": cat_infl.max().item(),
             "fipo/future_kl_abs_mean": cat_fkl.mean().item(),
+            "fipo/pg_clipfrac": sum(all_pg_clipfrac) / max(len(all_pg_clipfrac), 1),
         }
         return loss, metrics
 

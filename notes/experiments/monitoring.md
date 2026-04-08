@@ -32,3 +32,14 @@ Killed v1 experiments (max_tokens=4096 too small for math reasoning).
 - Log: /tmp/tinker-grpo-baseline-v2
 
 Monitoring cron set up (every 30 min).
+
+## 2026-04-08 06:55 UTC — First Metrics
+
+**FIPO** (step 2/50): reward=0.613, correct=62.5%, avg_tokens=10425, time=336s/step
+- influence_weight=0.987±0.161, future_kl_abs=0.1228
+- Generating much longer responses than baseline (10k vs 3k tokens)
+
+**GRPO** (step 0/50): reward=1.0, correct=100%, avg_tokens=3314, time=1040s/step
+- First batch only; likely easy problems at start
+
+Both running well. FIPO producing significantly longer reasoning chains.

@@ -71,16 +71,21 @@ logger = logging.getLogger(__name__)
 
 @chz.chz
 class FIPOConfig:
-    """FIPO-specific hyperparameters."""
+    """FIPO-specific hyperparameters.
 
-    # Future-KL decay half-life in tokens (τ). Paper uses 32 for 32B, code default 128.
+    Defaults match the paper's 7B/8B settings. For 32B models, use
+    influence_clip_low=1.0 and decay_half_life=32.
+    """
+
+    # Future-KL decay half-life in tokens (τ). Paper: 32 for 32B, code default 128.
     decay_half_life: float = 32.0
-    # PPO clip range ε for policy ratio clipping
-    clip_epsilon: float = 0.2
-    # Dual-clip threshold c for participation mask
-    dual_clip_threshold: float = 10.0
+    # Asymmetric PPO clip ratios (DAPO-style). Paper: [0.2, 0.28] for 32B.
+    clip_ratio_low: float = 0.2
+    clip_ratio_high: float = 0.28
+    # Dual-clip threshold c for DAPO negative-advantage clipping + participation mask
+    clip_ratio_c: float = 10.0
     # Influence weight clipping bounds [1 - clip_low, 1 + clip_high]
-    # Paper uses [1.0, 1.2] for 32B, [0.8, 1.2] for 7B
+    # Paper: [1.0, 1.2] for 32B, [0.8, 1.2] for 7B
     influence_clip_low: float = 0.8
     influence_clip_high: float = 1.2
     # Safety threshold: cap influence weights for negative-advantage high-IS-ratio tokens
@@ -105,7 +110,7 @@ class CLIConfig:
     group_size: int = 8
     groups_per_batch: int = 16
     learning_rate: float = 1e-6
-    max_tokens: int = 4096
+    max_tokens: int = 16384
     temperature: float = 1.0
 
     # FIPO-specific hyperparameters
@@ -217,9 +222,11 @@ async def fipo_train_step(
         # Create FIPO loss closure capturing RL fields
         loss_fn = make_fipo_loss_fn(
             rl_data_D=batch_rl,
-            clip_epsilon=fipo_config.clip_epsilon,
+            clip_ratio_low=fipo_config.clip_ratio_low,
+            clip_ratio_high=fipo_config.clip_ratio_high,
+            clip_ratio_c=fipo_config.clip_ratio_c,
             decay_half_life=fipo_config.decay_half_life,
-            dual_clip_threshold=fipo_config.dual_clip_threshold,
+            dual_clip_threshold=fipo_config.clip_ratio_c,  # Same as dual-clip threshold
             influence_clip_low=fipo_config.influence_clip_low,
             influence_clip_high=fipo_config.influence_clip_high,
             safety_threshold=fipo_config.safety_threshold,
@@ -348,9 +355,10 @@ async def fipo_main(cli_config: CLIConfig):
     num_batches = len(dataset)
     end_batch = min(cli_config.max_steps, num_batches) if cli_config.max_steps else num_batches
     logger.info(f"FIPO training: {end_batch} batches, model={cli_config.model_name}")
-    logger.info(f"FIPO config: decay_half_life={cli_config.fipo.decay_half_life}, "
-                f"clip=[{cli_config.fipo.influence_clip_low}, {cli_config.fipo.influence_clip_high}], "
-                f"ppo_clip={cli_config.fipo.clip_epsilon}")
+    logger.info(f"FIPO config: tau={cli_config.fipo.decay_half_life}, "
+                f"influence_clip=[{cli_config.fipo.influence_clip_low}, {cli_config.fipo.influence_clip_high}], "
+                f"ppo_clip=[{cli_config.fipo.clip_ratio_low}, {cli_config.fipo.clip_ratio_high}], "
+                f"dual_clip_c={cli_config.fipo.clip_ratio_c}")
 
     # Initial checkpoint and sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
