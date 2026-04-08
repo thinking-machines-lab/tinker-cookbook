@@ -31,8 +31,11 @@ from termcolor import colored
 from tinker_cookbook import model_info
 from tinker_cookbook.completers import MessageCompleter, TinkerTokenCompleter
 from tinker_cookbook.recipes.multiplayer_rl.text_arena.env import (
-    OpponentType,
+    STOP_CONDITION,
     TwoPlayerEnvGroupBuilder,
+)
+from tinker_cookbook.recipes.multiplayer_rl.text_arena.tictactoe import (
+    OpponentType,
     make_opponent,
 )
 from tinker_cookbook.renderers import Renderer, get_renderer
@@ -154,7 +157,9 @@ async def main(config: PlayConfig) -> None:
             if again != "y":
                 break
     elif config.mode == "eval":
-        opponent_policy = make_opponent(config.opponent, config.model_name, renderer)
+        opponent_policy = make_opponent(
+            config.opponent, config.model_name, renderer, stop_condition=STOP_CONDITION
+        )
         await eval_model(
             renderer,
             model_token_completer,

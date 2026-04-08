@@ -1,6 +1,6 @@
 import asyncio
 
-from tinker_cookbook.recipes.multiplayer_rl.text_arena.env import (
+from tinker_cookbook.recipes.multiplayer_rl.text_arena.tictactoe import (
     OptimalOpponent,
     RandomOpponent,
 )
