@@ -17,10 +17,11 @@ export interface ToolCallInfo {
   function: { name: string; arguments: string };
 }
 
-/** A conversation message with structured content — matches message_to_jsonable() output. */
+/** A conversation message with structured content — matches message_to_jsonable() output.
+ *  Content accepts string for backward compat with old logtree data. */
 export interface ConversationMessage {
   role: string;
-  content: ContentPart[];
+  content: string | ContentPart[];
   tool_calls?: ToolCallInfo[];
   unparsed_tool_calls?: Array<{ raw_text: string; error: string }>;
   tool_call_id?: string;

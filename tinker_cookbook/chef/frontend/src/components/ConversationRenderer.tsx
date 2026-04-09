@@ -1,13 +1,20 @@
 /** Shared conversation renderer — handles text, thinking, images, tool calls.
  *
  * Used by RolloutDetailPage, EvalTrajectoryPage, and ChatPage.
- * Content is always structured (ContentPart[]), matching renderer's message_to_jsonable() output.
+ * Normalizes content at the boundary: accepts both string content (legacy data)
+ * and structured ContentPart[] (new data from message_to_jsonable).
  */
 
 import { useState } from 'react';
 import type { ConversationMessage, ContentPart, ToolCallInfo } from '../api/types';
 
 export { type ConversationMessage };
+
+/** Normalize content to ContentPart[] — handles legacy string content from old data. */
+function normalizeContent(content: string | ContentPart[]): ContentPart[] {
+  if (typeof content === 'string') return [{ type: 'text', text: content }];
+  return content;
+}
 
 interface Props {
   messages: ConversationMessage[];
@@ -38,8 +45,9 @@ function MessageBubble({ message, showTokenCount }: { message: ConversationMessa
   const [collapsed, setCollapsed] = useState(false);
   const isAssistant = message.role === 'assistant';
   const color = ROLE_COLORS[message.role] ?? 'var(--text-muted)';
+  const parts = normalizeContent(message.content as string | ContentPart[]);
 
-  const textContent = message.content
+  const textContent = parts
     .map((p) => p.text || p.thinking || '')
     .join('');
   const isLong = textContent.length > 200;
@@ -73,7 +81,7 @@ function MessageBubble({ message, showTokenCount }: { message: ConversationMessa
         </div>
       ) : (
         <div className="message-content">
-          {message.content.map((part, i) => (
+          {parts.map((part, i) => (
             <ContentPartView key={i} part={part} thinkingOpen={thinkingOpen} onToggleThinking={() => setThinkingOpen(!thinkingOpen)} />
           ))}
           {message.tool_calls?.map((tc, i) => (
