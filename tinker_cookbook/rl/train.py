@@ -693,7 +693,7 @@ async def do_sync_training_with_stream_minibatch(
             if (
                 config.eval_every > 0 and i_batch % config.eval_every == 0
             ) or i_batch == end_batch - 1:
-                async with trace.scope_span("run_evals"):
+                async with trace.scope_span("run_evaluations"):
                     eval_metrics = await run_evaluations_parallel(
                         evaluators, sampling_client, config, i_batch, store=ml_logger.store
                     )
@@ -1354,7 +1354,7 @@ async def prepare_minibatch(
 
     # Incorporate KL penalty if configured
     if kl_penalty_coef > 0 and kl_reference_client is not None:
-        async with trace.scope_span("kl_vs_base"):
+        async with trace.scope_span("compute_kl_penalty"):
             kl_penalty_metrics = await incorporate_kl_penalty(
                 data_D,
                 kl_reference_client,
@@ -1407,7 +1407,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     metrics = {}
 
     # Compute KL metrics
-    async with trace.scope_span("compute_kl_sample_train"):
+    async with trace.scope_span("compute_kl_metrics"):
         kl_sample_train_metrics = compute_kl_sample_train(data_D, training_logprobs_D)
         metrics.update(kl_sample_train_metrics)
 
@@ -1526,9 +1526,8 @@ async def do_train_step_streaming_and_get_sampling_client(
             metrics.update(prepare_minibatch_metrics)
 
             # Enqueue forward-backward (we'll await results after all minibatches are enqueued)
-            async with trace.scope_span(
-                f"train/fwd_bwd_substep_{i_substep}_mb_{i_minibatch}_enqueue"
-            ):
+            trace.update_scope_context({"substep": i_substep, "minibatch": i_minibatch})
+            async with trace.scope_span("train_fwd_bwd_enqueue"):
                 forward_backward_futures.append(
                     await training_client.forward_backward_async(
                         [_remove_mask(d) for d in data_D],
@@ -1545,16 +1544,17 @@ async def do_train_step_streaming_and_get_sampling_client(
         adam_params = tinker.AdamParams(
             learning_rate=config.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8
         )
-        async with trace.scope_span(f"train/optim_substep_{i_substep}_enqueue"):
+        async with trace.scope_span("train_optim_enqueue"):
             optim_future = await training_client.optim_step_async(adam_params)
 
         # Now consume all forward-backward results
         for i_mb, fwd_bwd_future in enumerate(forward_backward_futures):
-            async with trace.scope_span(f"train/fwd_bwd_substep_{i_substep}_mb_{i_mb}_consume"):
+            trace.update_scope_context({"substep": i_substep, "minibatch": i_mb})
+            async with trace.scope_span("train_fwd_bwd_consume"):
                 fwd_bwd_result = await fwd_bwd_future.result_async()
                 all_training_logprobs_D.extend(_training_logprobs_from_fwd_bwd(fwd_bwd_result))
 
-        async with trace.scope_span(f"train/optim_substep_{i_substep}_consume"):
+        async with trace.scope_span("train_optim_consume"):
             optim_result = await optim_future.result_async()
 
         if optim_result.metrics:

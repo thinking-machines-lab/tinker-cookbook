@@ -174,7 +174,7 @@ async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
         trajectory = await do_single_rollout(policy, env)
     """
     transitions = []
-    async with trace.scope_span("env_initial_observation"):
+    async with trace.scope_span("env_observe"):
         ob, stop_condition = await env.initial_observation()
     while True:
         async with trace.scope_span("policy_sample"):

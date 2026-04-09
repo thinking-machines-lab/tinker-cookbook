@@ -30,12 +30,19 @@ const SPAN_COLORS: Record<string, string> = {
   group_rollout: '#a78bfa',
   policy_sample: '#e5a11c',
   env_step: '#e85850',
-  env_initial_observation: '#6aad7a',
+  env_observe: '#6aad7a',
   compute_group_rewards: '#ec4899',
   train_step: '#06b6d4',
   prepare_minibatch: '#f97316',
   assemble_training_data: '#64748b',
   save_checkpoint: '#14b8a6',
+  train_fwd_bwd_enqueue: '#06b6d4',
+  train_fwd_bwd_consume: '#0891b2',
+  train_optim_enqueue: '#f97316',
+  train_optim_consume: '#ea580c',
+  compute_kl_penalty: '#64748b',
+  compute_kl_metrics: '#64748b',
+  run_evaluations: '#14b8a6',
 };
 
 function getColor(name: string): string {
