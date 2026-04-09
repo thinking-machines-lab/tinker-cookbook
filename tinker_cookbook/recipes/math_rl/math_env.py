@@ -19,6 +19,15 @@ from tinker_cookbook.rl.types import EnvGroupBuilder, RLDataset, RLDatasetBuilde
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 
+def _extract_answer_line(text: str) -> str | None:
+    """Extract answer from 'Answer: $VALUE' format used by DAPO-17K."""
+    for line in reversed(text.strip().split("\n")):
+        line = line.strip()
+        if line.lower().startswith("answer:"):
+            return line[len("answer:"):].strip().strip("$").strip()
+    return None
+
+
 class MathEnv(ProblemEnv):
     def __init__(
         self,
@@ -28,31 +37,40 @@ class MathEnv(ProblemEnv):
         convo_prefix: list[renderers.Message] | None = None,
         grader: Literal["sympy", "math_verify"] = "sympy",
         timeout: float = 1.0,
+        answer_format: Literal["boxed", "answer_line"] = "boxed",
     ):
         super().__init__(renderer, convo_prefix)
         self.problem = problem
         self.answer = answer
         self.grader = grader
         self.timeout = timeout
+        self.answer_format = answer_format
 
     @classmethod
     def question_suffix(cls) -> str:
         return " Write your answer in \\boxed{} format."
 
     def get_question(self) -> str:
+        if self.answer_format == "answer_line":
+            # DAPO prompts already contain instructions; don't append boxed suffix
+            return self.problem
         return self.problem + self.question_suffix()
 
-    def check_format(self, sample_str: str) -> bool:
+    def _extract_answer(self, sample_str: str) -> str | None:
+        """Extract answer from model response based on answer_format."""
+        if self.answer_format == "answer_line":
+            return _extract_answer_line(sample_str)
         try:
-            _ = extract_boxed(sample_str)
-            return True
+            return extract_boxed(sample_str)
         except ValueError:
-            return False
+            return None
+
+    def check_format(self, sample_str: str) -> bool:
+        return self._extract_answer(sample_str) is not None
 
     def check_answer(self, sample_str: str) -> bool:
-        try:
-            answer = extract_boxed(sample_str)
-        except ValueError:
+        answer = self._extract_answer(sample_str)
+        if answer is None:
             return False
         return safe_grade(answer, self.answer, self.grader, self.timeout)
 
@@ -406,11 +424,134 @@ class Gsm8kDatasetBuilder(RLDatasetBuilder):
         return (datasets[0], datasets[1])
 
 
+class DAPODataset(MathDataset):
+    """DAPO-Math-17K dataset (BytedTsinghua-SIA/DAPO-Math-17k).
+
+    The official training dataset from the DAPO/FIPO papers. Contains ~17K
+    unique competition math problems from AoPS with integer answers.
+    """
+
+    def __init__(
+        self,
+        batch_size: int,
+        group_size: int,
+        renderer: renderers.Renderer,
+        convo_prefix: list[renderers.Message] | None = None,
+        seed: int = 0,
+    ):
+        # Load and deduplicate by prompt content
+        full_ds = load_dataset("BytedTsinghua-SIA/DAPO-Math-17k", split="train")
+        # Deduplicate: keep first occurrence of each unique prompt
+        seen: set[str] = set()
+        keep_indices: list[int] = []
+        for i in range(len(full_ds)):
+            prompt_str = str(full_ds[i]["prompt"])
+            if prompt_str not in seen:
+                seen.add(prompt_str)
+                keep_indices.append(i)
+        self.ds = full_ds.select(keep_indices).shuffle(seed=seed)
+        self.batch_size = batch_size
+        self.group_size = group_size
+        self.renderer = renderer
+        self.convo_prefix = convo_prefix
+
+    def _make_env_group_builder(
+        self, x: dict, group_size: int
+    ) -> ProblemGroupBuilder | None:
+        # DAPO-17K has chat-format prompts and ground truth in reward_model
+        prompt_messages = x.get("prompt", [])
+        if not prompt_messages:
+            return None
+        # Extract the problem text from the chat message
+        problem = prompt_messages[0].get("content", "") if prompt_messages else ""
+        answer = x.get("reward_model", {}).get("ground_truth", "")
+        if not (problem and answer):
+            return None
+        return ProblemGroupBuilder(
+            env_thunk=partial(
+                MathEnv, problem, answer, self.renderer,
+                grader="sympy", answer_format="answer_line",
+            ),
+            num_envs=group_size,
+            dataset_name="dapo",
+        )
+
+
+class AIMEDataset(RLDataset):
+    """AIME 2024 dataset (HuggingFaceH4/aime_2024) for evaluation.
+
+    30 hard competition math problems with integer answers — the paper's
+    primary evaluation benchmark.
+    """
+
+    def __init__(
+        self,
+        batch_size: int,
+        renderer: renderers.Renderer,
+    ):
+        self.ds = load_dataset("HuggingFaceH4/aime_2024", split="train")
+        self.batch_size = batch_size
+        self.renderer = renderer
+
+    def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
+        batch_start = index * self.batch_size
+        batch_end = min((index + 1) * self.batch_size, len(self.ds))
+        assert batch_start < batch_end
+        return [
+            builder
+            for row in self.ds.select(range(batch_start, batch_end))
+            if (builder := self._make_env_group_builder(row)) is not None
+        ]
+
+    def __len__(self) -> int:
+        return math.ceil(len(self.ds) / self.batch_size)
+
+    def _make_env_group_builder(self, x: dict) -> ProblemGroupBuilder | None:
+        problem = x.get("problem", "")
+        answer = str(x.get("answer", ""))
+        if not (problem and answer):
+            return None
+        return ProblemGroupBuilder(
+            env_thunk=partial(
+                MathEnv, problem + MathEnv.question_suffix(), answer, self.renderer,
+                grader="math_verify",
+            ),
+            num_envs=1,  # group_size=1 for eval
+            dataset_name="aime2024",
+        )
+
+
+@chz.chz
+class DAPODatasetBuilder(RLDatasetBuilder):
+    batch_size: int
+    model_name_for_tokenizer: str
+    renderer_name: str
+    group_size: int
+    seed: int = 0
+
+    async def __call__(self) -> tuple[DAPODataset, AIMEDataset]:
+        tokenizer = get_tokenizer(self.model_name_for_tokenizer)
+        renderer = renderers.get_renderer(self.renderer_name, tokenizer=tokenizer)
+        train_ds = DAPODataset(
+            batch_size=self.batch_size,
+            group_size=self.group_size,
+            renderer=renderer,
+            seed=self.seed,
+        )
+        # Use AIME 2024 as the eval set (the paper's primary benchmark)
+        test_ds = AIMEDataset(
+            batch_size=30,  # All 30 problems in one batch
+            renderer=renderer,
+        )
+        return train_ds, test_ds
+
+
 # Populate the dataset builder map after all classes are defined
 DATASET_BUILDER_MAP = {
     "math": MathDatasetBuilder,
     "polaris": PolarisDatasetBuilder,
     "deepmath": DeepMathDatasetBuilder,
+    "dapo": DAPODatasetBuilder,
     "gsm8k": Gsm8kDatasetBuilder,
 }
 
