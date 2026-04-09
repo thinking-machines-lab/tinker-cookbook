@@ -2,7 +2,6 @@
 
 import type {
   CheckpointRecord,
-  DataSource,
   IterationInfo,
   LogtreeResponse,
   MetricsResponse,
@@ -14,8 +13,27 @@ import type {
 
 const BASE = '/api';
 
+// Module-level source state: set by App.tsx, used by all API calls.
+let _currentSources: string[] = [];
+
+export function setApiSources(sources: string[]) {
+  _currentSources = [...sources];
+}
+
+export function getApiSources(): string[] {
+  return [..._currentSources];
+}
+
+/** Append ?source= params to a URL. */
+function appendSourceParams(url: string): string {
+  if (_currentSources.length === 0) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  const params = _currentSources.map(s => `source=${encodeURIComponent(s)}`).join('&');
+  return `${url}${sep}${params}`;
+}
+
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
+  const response = await fetch(appendSourceParams(url), init);
   if (!response.ok) {
     throw new Error(`Failed to load ${url}: ${response.status} ${response.statusText}`);
   }
@@ -87,8 +105,8 @@ export const api = {
   getEvalScores: (runId: string) =>
     fetchJSON<import('./types').EvalScorePoint[]>(`${BASE}/runs/${runId}/eval-scores`),
 
-  // SSE stream URL (for EventSource)
-  metricsStreamUrl: (runId: string) => `${BASE}/runs/${runId}/metrics/stream`,
+  // SSE stream URL (for EventSource) — includes source params for consistency
+  metricsStreamUrl: (runId: string) => appendSourceParams(`${BASE}/runs/${runId}/metrics/stream`),
 
   // Eval benchmarks
   listEvalRuns: () =>
@@ -113,18 +131,12 @@ export const api = {
     fetchJSON<import('./types').ScoresTableRow[]>(`${BASE}/eval/scores`),
 
   // Data sources
-  listSources: () => fetchJSON<DataSource[]>(`${BASE}/sources`),
-  addSource: (uri: string) =>
-    fetchJSON<{ sources: DataSource[]; runs_discovered: number }>(`${BASE}/sources`, {
+  getDefaultSources: () =>
+    fetchJSON<string[]>(`${BASE}/sources/defaults`),
+  refreshSources: (sources: string[]) => {
+    const params = sources.map(s => `source=${encodeURIComponent(s)}`).join('&');
+    return fetchJSON<{ runs: number }>(`${BASE}/sources/refresh${params ? '?' + params : ''}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uri }),
-    }),
-  removeSource: (url: string) =>
-    fetchJSON<{ sources: DataSource[]; runs_remaining: number }>(
-      `${BASE}/sources?url=${encodeURIComponent(url)}`,
-      { method: 'DELETE' },
-    ),
-  refreshSources: () =>
-    fetchJSON<{ runs: number }>(`${BASE}/sources/refresh`, { method: 'POST' }),
+    });
+  },
 };

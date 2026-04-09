@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from fnmatch import fnmatch
 from typing import Any
 
@@ -15,14 +16,16 @@ from tinker_cookbook.stores import RunRegistry
 logger = logging.getLogger(__name__)
 
 
-def create_router(registry: RunRegistry) -> APIRouter:
+def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
     router = APIRouter(prefix="/api/runs", tags=["metrics"])
 
     @router.get("/{run_id}/metrics")
     def get_metrics(
         run_id: str,
         keys: str | None = Query(None),
+        source: list[str] = Query(default=[]),
     ) -> dict[str, Any]:
+        registry = resolve_registry(source)
         require_run(registry, run_id)
         store = registry.get_training_store(run_id)
         records = store.read_metrics()
@@ -32,14 +35,16 @@ def create_router(registry: RunRegistry) -> APIRouter:
         return {"run_id": run_id, "total_records": len(records), "records": records}
 
     @router.get("/{run_id}/metrics/keys")
-    def get_metric_keys(run_id: str) -> list[str]:
+    def get_metric_keys(run_id: str, source: list[str] = Query(default=[])) -> list[str]:
+        registry = resolve_registry(source)
         require_run(registry, run_id)
         store = registry.get_training_store(run_id)
         store.read_metrics()
         return sorted(store.metric_keys())
 
     @router.get("/{run_id}/metrics/stream")
-    async def stream_metrics(run_id: str, request: Request) -> StreamingResponse:
+    async def stream_metrics(run_id: str, request: Request, source: list[str] = Query(default=[])) -> StreamingResponse:
+        registry = resolve_registry(source)
         require_run(registry, run_id)
         store = registry.get_training_store(run_id)
 

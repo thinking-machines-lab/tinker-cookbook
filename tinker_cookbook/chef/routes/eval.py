@@ -1,5 +1,6 @@
 """Eval benchmark API routes."""
 
+from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any
 
@@ -8,11 +9,12 @@ from fastapi import APIRouter, HTTPException, Query
 from tinker_cookbook.stores import RunRegistry
 
 
-def create_router(registry: RunRegistry) -> APIRouter:
+def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
     router = APIRouter(prefix="/api/eval", tags=["eval"])
 
     @router.get("/runs")
-    def list_eval_runs() -> list[dict[str, Any]]:
+    def list_eval_runs(source: list[str] = Query(default=[])) -> list[dict[str, Any]]:
+        registry = resolve_registry(source)
         store = registry.get_eval_store()
         if store is None:
             return []
@@ -31,7 +33,8 @@ def create_router(registry: RunRegistry) -> APIRouter:
         return result
 
     @router.get("/runs/{eval_run_id}")
-    def get_eval_run(eval_run_id: str) -> dict[str, Any]:
+    def get_eval_run(eval_run_id: str, source: list[str] = Query(default=[])) -> dict[str, Any]:
+        registry = resolve_registry(source)
         store = registry.get_eval_store()
         if store is None:
             raise HTTPException(status_code=404, detail="No eval data found")
@@ -60,9 +63,11 @@ def create_router(registry: RunRegistry) -> APIRouter:
         correct_only: bool = Query(False),
         incorrect_only: bool = Query(False),
         errors_only: bool = Query(False),
+        source: list[str] = Query(default=[]),
     ) -> dict[str, Any]:
         if sum([correct_only, incorrect_only, errors_only]) > 1:
             raise HTTPException(status_code=400, detail="Only one filter flag can be set at a time")
+        registry = resolve_registry(source)
         store = registry.get_eval_store()
         if store is None:
             raise HTTPException(status_code=404, detail="No eval data found")
@@ -91,7 +96,9 @@ def create_router(registry: RunRegistry) -> APIRouter:
     @router.get("/runs/{eval_run_id}/{benchmark}/trajectories/{idx}")
     def get_eval_trajectory_detail(
         eval_run_id: str, benchmark: str, idx: int,
+        source: list[str] = Query(default=[]),
     ) -> dict[str, Any]:
+        registry = resolve_registry(source)
         store = registry.get_eval_store()
         if store is None:
             raise HTTPException(status_code=404, detail="No eval data found")
@@ -101,7 +108,8 @@ def create_router(registry: RunRegistry) -> APIRouter:
         return traj.to_dict()
 
     @router.get("/scores")
-    def get_scores_table() -> list[dict[str, Any]]:
+    def get_scores_table(source: list[str] = Query(default=[])) -> list[dict[str, Any]]:
+        registry = resolve_registry(source)
         store = registry.get_eval_store()
         if store is None:
             return []

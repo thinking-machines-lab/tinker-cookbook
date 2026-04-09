@@ -1,19 +1,21 @@
 """Run discovery and detail API routes."""
 
+from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from tinker_cookbook.chef.routes._helpers import require_run
 from tinker_cookbook.stores import RunRegistry
 
 
-def create_router(registry: RunRegistry) -> APIRouter:
+def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
     router = APIRouter(prefix="/api/runs", tags=["runs"])
 
     @router.get("")
-    def list_runs() -> list[dict[str, Any]]:
+    def list_runs(source: list[str] = Query(default=[])) -> list[dict[str, Any]]:
+        registry = resolve_registry(source)
         runs = registry.get_runs()
 
         # Pre-compute eval scores for all runs (matched by checkpoint path)
@@ -58,7 +60,8 @@ def create_router(registry: RunRegistry) -> APIRouter:
         return result
 
     @router.get("/{run_id}")
-    def get_run(run_id: str) -> dict[str, Any]:
+    def get_run(run_id: str, source: list[str] = Query(default=[])) -> dict[str, Any]:
+        registry = resolve_registry(source)
         run = require_run(registry, run_id)
         info = asdict(run)
         store = registry.get_training_store(run_id)
@@ -72,7 +75,8 @@ def create_router(registry: RunRegistry) -> APIRouter:
         return info
 
     @router.get("/{run_id}/config")
-    def get_config(run_id: str) -> dict[str, Any]:
+    def get_config(run_id: str, source: list[str] = Query(default=[])) -> dict[str, Any]:
+        registry = resolve_registry(source)
         require_run(registry, run_id)
         config = registry.get_training_store(run_id).read_config()
         if config is None:
@@ -80,18 +84,21 @@ def create_router(registry: RunRegistry) -> APIRouter:
         return config
 
     @router.get("/{run_id}/iterations")
-    def list_iterations(run_id: str) -> list[dict[str, Any]]:
+    def list_iterations(run_id: str, source: list[str] = Query(default=[])) -> list[dict[str, Any]]:
+        registry = resolve_registry(source)
         require_run(registry, run_id)
         return [asdict(it) for it in registry.get_training_store(run_id).list_iterations()]
 
     @router.get("/{run_id}/checkpoints")
-    def get_checkpoints(run_id: str) -> list[dict[str, Any]]:
+    def get_checkpoints(run_id: str, source: list[str] = Query(default=[])) -> list[dict[str, Any]]:
+        registry = resolve_registry(source)
         require_run(registry, run_id)
         return registry.get_training_store(run_id).read_checkpoints()
 
     @router.get("/{run_id}/eval-scores")
-    def get_eval_scores(run_id: str) -> list[dict[str, Any]]:
+    def get_eval_scores(run_id: str, source: list[str] = Query(default=[])) -> list[dict[str, Any]]:
         """Get eval scores matched to this run's checkpoints."""
+        registry = resolve_registry(source)
         require_run(registry, run_id)
 
         checkpoints = registry.get_training_store(run_id).read_checkpoints()

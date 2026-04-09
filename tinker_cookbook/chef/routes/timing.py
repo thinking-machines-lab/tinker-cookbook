@@ -1,5 +1,6 @@
 """Timing data API routes."""
 
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import APIRouter, Query
@@ -8,7 +9,7 @@ from tinker_cookbook.chef.routes._helpers import require_run
 from tinker_cookbook.stores import RunRegistry
 
 
-def create_router(registry: RunRegistry) -> APIRouter:
+def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
     router = APIRouter(prefix="/api/runs", tags=["timing"])
 
     @router.get("/{run_id}/timing")
@@ -16,7 +17,9 @@ def create_router(registry: RunRegistry) -> APIRouter:
         run_id: str,
         step_start: int | None = Query(None),
         step_end: int | None = Query(None),
+        source: list[str] = Query(default=[]),
     ) -> dict[str, Any]:
+        registry = resolve_registry(source)
         require_run(registry, run_id)
         records = registry.get_training_store(run_id).read_timing()
         if step_start is not None:
@@ -30,7 +33,9 @@ def create_router(registry: RunRegistry) -> APIRouter:
         run_id: str,
         step_start: int | None = Query(None),
         step_end: int | None = Query(None),
+        source: list[str] = Query(default=[]),
     ) -> dict[str, Any]:
+        registry = resolve_registry(source)
         require_run(registry, run_id)
         spans = _flatten_spans(
             registry.get_training_store(run_id).read_timing(),
@@ -39,7 +44,8 @@ def create_router(registry: RunRegistry) -> APIRouter:
         return {"run_id": run_id, "total_spans": len(spans), "spans": spans}
 
     @router.get("/{run_id}/timing/concurrency/{step}")
-    def get_concurrency(run_id: str, step: int) -> dict[str, Any]:
+    def get_concurrency(run_id: str, step: int, source: list[str] = Query(default=[])) -> dict[str, Any]:
+        registry = resolve_registry(source)
         require_run(registry, run_id)
         spans = _flatten_spans(registry.get_training_store(run_id).read_timing(), step=step)
         if not spans:
@@ -62,7 +68,8 @@ def create_router(registry: RunRegistry) -> APIRouter:
         return {"step": step, "spans": sorted_spans, "max_concurrency": max_c, "timeline": timeline}
 
     @router.get("/{run_id}/timing/tree/{step}")
-    def get_timing_tree(run_id: str, step: int) -> dict[str, Any]:
+    def get_timing_tree(run_id: str, step: int, source: list[str] = Query(default=[])) -> dict[str, Any]:
+        registry = resolve_registry(source)
         require_run(registry, run_id)
         spans = _flatten_spans(registry.get_training_store(run_id).read_timing(), step=step)
         if not spans:
@@ -75,14 +82,9 @@ def create_router(registry: RunRegistry) -> APIRouter:
                 "wall_start": s.get("wall_start", 0), "wall_end": s.get("wall_end", 0),
                 "attributes": s.get("attributes", {}), "children": [],
             })
-        # Build tree by grouping spans with group_idx under their parent.
-        # Strategy: separate spans into sequential (no group overlap) and
-        # per-group (have group_idx). Per-group spans are organized as:
-        #   parent_span → group N → [child spans with group_idx=N]
         EPS = 0.01
 
-        # Separate spans: those with group_idx and those without
-        grouped_spans: dict[int, list[dict[str, Any]]] = {}  # group_idx → spans
+        grouped_spans: dict[int, list[dict[str, Any]]] = {}
         ungrouped: list[dict[str, Any]] = []
         for node in nodes:
             gidx = node.get("attributes", {}).get("group_idx")
@@ -93,7 +95,6 @@ def create_router(registry: RunRegistry) -> APIRouter:
             else:
                 ungrouped.append(node)
 
-        # Build the ungrouped tree first (sequential spans)
         ungrouped.sort(key=lambda s: (s.get("wall_start", 0), -s.get("duration", 0)))
         root_children: list[dict[str, Any]] = []
         stack: list[dict[str, Any]] = []
@@ -111,10 +112,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
                     root_children.append(node)
             stack.append(node)
 
-        # Now insert grouped spans as children of the enclosing ungrouped span
-        # Each group becomes a subtree: "Group N" → [sorted child spans]
         if grouped_spans:
-            # Find the ungrouped span that contains the grouped spans (usually "sampling")
             all_grouped = [s for spans in grouped_spans.values() for s in spans]
             group_start = min(s["wall_start"] for s in all_grouped)
             group_end = max(s["wall_end"] for s in all_grouped)
@@ -131,7 +129,6 @@ def create_router(registry: RunRegistry) -> APIRouter:
 
             for gidx in sorted(grouped_spans.keys()):
                 spans = sorted(grouped_spans[gidx], key=lambda s: (s["wall_start"], -s["duration"]))
-                # Build a mini-tree for this group
                 group_node: dict[str, Any] = {
                     "name": f"group {gidx}",
                     "duration": max(s["wall_end"] for s in spans) - min(s["wall_start"] for s in spans),
@@ -140,7 +137,6 @@ def create_router(registry: RunRegistry) -> APIRouter:
                     "attributes": {"group_idx": gidx},
                     "children": [],
                 }
-                # Add spans as children, nesting by time containment within the group
                 gstack: list[dict[str, Any]] = []
                 for node in spans:
                     while gstack and gstack[-1]["wall_end"] + EPS < node["wall_start"]:
@@ -152,7 +148,6 @@ def create_router(registry: RunRegistry) -> APIRouter:
                     gstack.append(node)
                 target.append(group_node)
 
-            # Sort target children by wall_start
             target.sort(key=lambda s: s.get("wall_start", 0))
         all_starts = [n["wall_start"] for n in nodes]
         all_ends = [n["wall_end"] for n in nodes]

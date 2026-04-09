@@ -1,4 +1,4 @@
-"""Interactive chat with model checkpoints — persistent sessions."""
+"""Interactive chat with model checkpoints -- persistent sessions."""
 
 from __future__ import annotations
 
@@ -9,10 +9,11 @@ import os
 import re
 import uuid
 from collections import OrderedDict
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from tinker_cookbook.chef.routes._helpers import require_run
@@ -81,7 +82,7 @@ def _get_session_store(registry: RunRegistry, run_id: str) -> ChatSessionStore:
     return ChatSessionStore(storage, prefix)
 
 
-def create_router(registry: RunRegistry) -> APIRouter:
+def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["chat"])
 
     @router.get("/capabilities")
@@ -89,22 +90,25 @@ def create_router(registry: RunRegistry) -> APIRouter:
         return {"chat": has_api_key()}
 
     @router.get("/runs/{run_id}/chat-sessions")
-    def list_chat_sessions(run_id: str) -> list[dict[str, Any]]:
+    def list_chat_sessions(run_id: str, source: list[str] = Query(default=[])) -> list[dict[str, Any]]:
+        registry = resolve_registry(source)
         require_run(registry, run_id)
         return _get_session_store(registry, run_id).list_summaries()
 
     @router.get("/runs/{run_id}/chat-sessions/{session_id}")
-    def get_chat_session(run_id: str, session_id: str) -> dict[str, Any]:
+    def get_chat_session(run_id: str, session_id: str, source: list[str] = Query(default=[])) -> dict[str, Any]:
+        registry = resolve_registry(source)
         session = _get_session_store(registry, run_id).load(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
         return session.model_dump()
 
     @router.post("/runs/{run_id}/chat")
-    async def chat_completion(run_id: str, body: ChatRequest) -> StreamingResponse:
+    async def chat_completion(run_id: str, body: ChatRequest, source: list[str] = Query(default=[])) -> StreamingResponse:
         if not has_api_key():
             raise HTTPException(status_code=503, detail="Interactive chat requires TINKER_API_KEY")
 
+        registry = resolve_registry(source)
         run = require_run(registry, run_id)
 
         store = registry.get_training_store(run_id)
