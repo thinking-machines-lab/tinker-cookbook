@@ -225,26 +225,48 @@ export function TimingPanel({ runId, jumpToStep }: Props) {
             <tr>
               <th>Span</th>
               <th>Count</th>
-              <th>Total</th>
-              <th>Mean</th>
+              <th>Self Time</th>
+              <th>Mean Self</th>
               <th>Max</th>
-              <th>% of Total</th>
+              <th>% of Wall</th>
             </tr>
           </thead>
           <tbody>
             {(() => {
-              const stats = new Map<string, { total: number; count: number; max: number }>();
+              // Compute self-time per span: total time minus time covered by direct children.
+              // Sort spans by wall_start to establish nesting via containment.
+              const sorted = [...filteredSpans].sort((a, b) => a.wall_start - b.wall_start || b.duration - a.duration);
+              const selfTimes = new Map<FlatSpan, number>();
+              for (const span of sorted) {
+                // Self-time starts as full duration; we'll subtract children
+                selfTimes.set(span, span.duration);
+              }
+              // For each span, find its tightest enclosing parent and subtract from parent's self-time
+              for (let i = 0; i < sorted.length; i++) {
+                const child = sorted[i];
+                // Walk backward to find the tightest parent that fully contains this child
+                for (let j = i - 1; j >= 0; j--) {
+                  const parent = sorted[j];
+                  if (parent.wall_start <= child.wall_start + 0.001 && parent.wall_end >= child.wall_end - 0.001 && parent !== child) {
+                    selfTimes.set(parent, Math.max(0, (selfTimes.get(parent) ?? 0) - child.duration));
+                    break;
+                  }
+                }
+              }
+
+              const stats = new Map<string, { total: number; selfTotal: number; count: number; max: number }>();
               let grandTotal = 0;
               for (const s of filteredSpans) {
-                if (!stats.has(s.name)) stats.set(s.name, { total: 0, count: 0, max: 0 });
+                if (!stats.has(s.name)) stats.set(s.name, { total: 0, selfTotal: 0, count: 0, max: 0 });
                 const st = stats.get(s.name)!;
                 st.total += s.duration;
+                st.selfTotal += selfTimes.get(s) ?? s.duration;
                 st.count += 1;
                 st.max = Math.max(st.max, s.duration);
-                grandTotal += s.duration;
+                grandTotal += selfTimes.get(s) ?? s.duration;
               }
               return [...stats.entries()]
-                .sort((a, b) => b[1].total - a[1].total)
+                .sort((a, b) => b[1].selfTotal - a[1].selfTotal)
                 .map(([name, s]) => (
                   <tr key={name} style={{ cursor: 'pointer' }}
                     onClick={() => setHiddenSpanNames((prev) => {
@@ -259,13 +281,13 @@ export function TimingPanel({ runId, jumpToStep }: Props) {
                       <span className="mono" style={{ textDecoration: hiddenSpanNames.has(name) ? 'line-through' : 'none' }}>{name}</span>
                     </td>
                     <td className="mono">{s.count}</td>
-                    <td className="mono">{s.total.toFixed(3)}s</td>
-                    <td className="mono">{(s.total / s.count).toFixed(3)}s</td>
+                    <td className="mono">{s.selfTotal.toFixed(3)}s</td>
+                    <td className="mono">{(s.selfTotal / s.count).toFixed(3)}s</td>
                     <td className="mono">{s.max.toFixed(3)}s</td>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
                         <div style={{
-                          width: `${(s.total / grandTotal) * 100}%`,
+                          width: `${grandTotal > 0 ? (s.selfTotal / grandTotal) * 100 : 0}%`,
                           maxWidth: '80px',
                           height: 6,
                           borderRadius: 3,
@@ -273,7 +295,7 @@ export function TimingPanel({ runId, jumpToStep }: Props) {
                           minWidth: 2,
                         }} />
                         <span className="mono text-muted" style={{ fontSize: '0.6875rem' }}>
-                          {((s.total / grandTotal) * 100).toFixed(1)}%
+                          {grandTotal > 0 ? ((s.selfTotal / grandTotal) * 100).toFixed(1) : '0.0'}%
                         </span>
                       </div>
                     </td>
