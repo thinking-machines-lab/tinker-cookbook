@@ -10,6 +10,7 @@ with ``tinker_cookbook.eval``. Import it directly::
     from tinker_cookbook.stores.eval_store import EvalStore
 """
 
+from tinker_cookbook.stores._base import BaseStore
 from tinker_cookbook.stores._incremental import IncrementalReader
 from tinker_cookbook.stores.registry import RunInfo, RunRegistry
 from tinker_cookbook.stores.storage import (
@@ -25,6 +26,7 @@ from tinker_cookbook.stores.training_store import TrainingRunStore
 
 __all__ = [
     "AsyncStorage",
+    "BaseStore",
     "FsspecStorage",
     "IncrementalReader",
     "LocalStorage",

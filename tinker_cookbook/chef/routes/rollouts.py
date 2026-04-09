@@ -17,7 +17,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
     router = APIRouter(prefix="/api/runs", tags=["rollouts"])
 
     @router.get("/{run_id}/iterations/{iteration}/rollouts")
-    async def get_rollouts(
+    def get_rollouts(
         run_id: str, iteration: int,
         split: str = Query("train"),
         label: str | None = Query(None),
@@ -61,7 +61,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
         }
 
     @router.get("/{run_id}/iterations/{iteration}/rollouts/{group_idx}/{traj_idx}")
-    async def get_rollout_detail(
+    def get_rollout_detail(
         run_id: str, iteration: int, group_idx: int, traj_idx: int,
         split: str = Query("train"), label: str | None = Query(None),
     ) -> dict[str, Any]:
@@ -73,7 +73,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
         return rollout
 
     @router.get("/{run_id}/iterations/{iteration}/logtree")
-    async def get_logtree(
+    def get_logtree(
         run_id: str, iteration: int, base_name: str = Query("train"),
     ) -> dict[str, Any]:
         require_run(registry, run_id)

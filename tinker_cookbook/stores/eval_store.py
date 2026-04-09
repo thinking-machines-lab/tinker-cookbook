@@ -26,7 +26,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from tinker_cookbook.stores.storage import Storage, storage_join
+from tinker_cookbook.stores._base import BaseStore
+from tinker_cookbook.stores.storage import Storage
 
 if TYPE_CHECKING:
     from tinker_cookbook.eval.benchmarks._types import BenchmarkResult, StoredTrajectory
@@ -68,7 +69,7 @@ class RunMetadata:
         return cls(**{k: v for k, v in d.items() if k in valid_fields})
 
 
-class EvalStore:
+class EvalStore(BaseStore):
     """Manages evaluation runs across checkpoints.
 
     All file I/O goes through the ``Storage`` protocol, making this
@@ -82,52 +83,14 @@ class EvalStore:
             # Backward compat: EvalStore("/path/to/eval_store")
             from tinker_cookbook.stores.storage import LocalStorage
 
-            self.storage: Storage = LocalStorage(Path(storage_or_path).expanduser())
-            self.prefix = prefix
+            resolved: Storage = LocalStorage(Path(storage_or_path).expanduser())
         else:
-            self.storage = storage_or_path
-            self.prefix = prefix
+            resolved = storage_or_path
+        super().__init__(resolved, prefix)
 
     def url(self, path: str = "") -> str:
         """Return a human-readable URI for a path within this eval store."""
         return self.storage.url(self._path(path))
-
-    def _path(self, *parts: str) -> str:
-        return storage_join(self.prefix, *parts)
-
-    def _read_json(self, *parts: str) -> dict[str, Any] | None:
-        try:
-            data = self.storage.read(self._path(*parts))
-            return json.loads(data)
-        except FileNotFoundError:
-            return None
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning("Failed to read %s: %s", self._path(*parts), e)
-            return None
-
-    def _write_json(self, data: dict[str, Any], *parts: str) -> None:
-        self.storage.write(self._path(*parts), json.dumps(data, indent=2).encode("utf-8"))
-
-    def _append_jsonl(self, record: dict[str, Any], *parts: str) -> None:
-        self.storage.append(self._path(*parts), (json.dumps(record) + "\n").encode("utf-8"))
-
-    def _read_jsonl(self, *parts: str) -> list[dict[str, Any]]:
-        try:
-            data = self.storage.read(self._path(*parts))
-        except FileNotFoundError:
-            return []
-        except OSError as e:
-            logger.warning("Failed to read %s: %s", self._path(*parts), e)
-            return []
-        records = []
-        for line in data.decode("utf-8", errors="replace").splitlines():
-            line = line.strip()
-            if line:
-                try:
-                    records.append(json.loads(line))
-                except json.JSONDecodeError:
-                    logger.warning("Skipping malformed JSONL line in %s", self._path(*parts))
-        return records
 
     # ── Run management ────────────────────────────────────────────────
 

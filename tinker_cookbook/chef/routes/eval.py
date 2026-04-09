@@ -12,7 +12,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
     router = APIRouter(prefix="/api/eval", tags=["eval"])
 
     @router.get("/runs")
-    async def list_eval_runs() -> list[dict[str, Any]]:
+    def list_eval_runs() -> list[dict[str, Any]]:
         store = registry.get_eval_store()
         if store is None:
             return []
@@ -31,7 +31,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
         return result
 
     @router.get("/runs/{eval_run_id}")
-    async def get_eval_run(eval_run_id: str) -> dict[str, Any]:
+    def get_eval_run(eval_run_id: str) -> dict[str, Any]:
         store = registry.get_eval_store()
         if store is None:
             raise HTTPException(status_code=404, detail="No eval data found")
@@ -55,7 +55,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
         }
 
     @router.get("/runs/{eval_run_id}/{benchmark}/trajectories")
-    async def get_eval_trajectories(
+    def get_eval_trajectories(
         eval_run_id: str, benchmark: str,
         correct_only: bool = Query(False),
         incorrect_only: bool = Query(False),
@@ -89,7 +89,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
         }
 
     @router.get("/runs/{eval_run_id}/{benchmark}/trajectories/{idx}")
-    async def get_eval_trajectory_detail(
+    def get_eval_trajectory_detail(
         eval_run_id: str, benchmark: str, idx: int,
     ) -> dict[str, Any]:
         store = registry.get_eval_store()
@@ -101,7 +101,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
         return traj.to_dict()
 
     @router.get("/scores")
-    async def get_scores_table() -> list[dict[str, Any]]:
+    def get_scores_table() -> list[dict[str, Any]]:
         store = registry.get_eval_store()
         if store is None:
             return []

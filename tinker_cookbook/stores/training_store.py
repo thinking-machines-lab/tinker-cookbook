@@ -15,8 +15,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from tinker_cookbook.stores._base import BaseStore
 from tinker_cookbook.stores._incremental import IncrementalReader
-from tinker_cookbook.stores.storage import Storage, storage_join
+from tinker_cookbook.stores.storage import Storage
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ class IterationInfo:
     eval_labels: list[str] = field(default_factory=list)
 
 
-class TrainingRunStore:
+class TrainingRunStore(BaseStore):
     """Typed read/write access to one training run's data.
 
     All file I/O goes through the ``Storage`` protocol — no direct
@@ -56,8 +57,7 @@ class TrainingRunStore:
     """
 
     def __init__(self, storage: Storage, prefix: str = "") -> None:
-        self.storage = storage
-        self.prefix = prefix
+        super().__init__(storage, prefix)
         # Lazy — created on first access to keep pickle-safe
         self._metrics: IncrementalReader | None = None
         self._timing: IncrementalReader | None = None
@@ -74,43 +74,9 @@ class TrainingRunStore:
         """
         return self.storage.url(self._path(path))
 
-    def _path(self, *parts: str) -> str:
-        return storage_join(self.prefix, *parts)
-
     @staticmethod
     def _iter_dir(iteration: int) -> str:
         return f"iteration_{iteration:06d}"
-
-    # ── JSON/JSONL helpers ────────────────────────────────────────────
-
-    def _read_json(self, *parts: str) -> dict[str, Any] | None:
-        try:
-            data = self.storage.read(self._path(*parts))
-            return json.loads(data)
-        except FileNotFoundError:
-            return None
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning("Failed to read JSON %s: %s", self._path(*parts), e)
-            return None
-
-    def _read_jsonl(self, *parts: str) -> list[dict[str, Any]]:
-        try:
-            data = self.storage.read(self._path(*parts))
-        except FileNotFoundError:
-            return []
-        except OSError as e:
-            logger.warning("Failed to read JSONL %s: %s", self._path(*parts), e)
-            return []
-
-        records: list[dict[str, Any]] = []
-        for line in data.decode("utf-8", errors="replace").splitlines():
-            line = line.strip()
-            if line:
-                try:
-                    records.append(json.loads(line))
-                except json.JSONDecodeError:
-                    logger.warning("Skipping malformed line in %s", self._path(*parts))
-        return records
 
     def _read_jsonl_typed(
         self, from_dict: Callable[[dict[str, Any]], Any], *parts: str
@@ -261,12 +227,6 @@ class TrainingRunStore:
         return iterations
 
     # ── Writes ────────────────────────────────────────────────────────
-
-    def _write_json(self, data: dict[str, Any], *parts: str) -> None:
-        self.storage.write(self._path(*parts), json.dumps(data, indent=2).encode("utf-8"))
-
-    def _append_jsonl(self, record: dict[str, Any], *parts: str) -> None:
-        self.storage.append(self._path(*parts), (json.dumps(record) + "\n").encode("utf-8"))
 
     def write_config(self, config: dict[str, Any]) -> None:
         """Write config.json (overwrites if exists, updates cache)."""

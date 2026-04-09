@@ -12,7 +12,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
     router = APIRouter(prefix="/api/runs", tags=["timing"])
 
     @router.get("/{run_id}/timing")
-    async def get_timing(
+    def get_timing(
         run_id: str,
         step_start: int | None = Query(None),
         step_end: int | None = Query(None),
@@ -26,7 +26,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
         return {"run_id": run_id, "total_records": len(records), "records": records}
 
     @router.get("/{run_id}/timing/flat")
-    async def get_timing_flat(
+    def get_timing_flat(
         run_id: str,
         step_start: int | None = Query(None),
         step_end: int | None = Query(None),
@@ -39,7 +39,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
         return {"run_id": run_id, "total_spans": len(spans), "spans": spans}
 
     @router.get("/{run_id}/timing/concurrency/{step}")
-    async def get_concurrency(run_id: str, step: int) -> dict[str, Any]:
+    def get_concurrency(run_id: str, step: int) -> dict[str, Any]:
         require_run(registry, run_id)
         spans = _flatten_spans(registry.get_training_store(run_id).read_timing(), step=step)
         if not spans:
@@ -62,7 +62,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
         return {"step": step, "spans": sorted_spans, "max_concurrency": max_c, "timeline": timeline}
 
     @router.get("/{run_id}/timing/tree/{step}")
-    async def get_timing_tree(run_id: str, step: int) -> dict[str, Any]:
+    def get_timing_tree(run_id: str, step: int) -> dict[str, Any]:
         require_run(registry, run_id)
         spans = _flatten_spans(registry.get_training_store(run_id).read_timing(), step=step)
         if not spans:

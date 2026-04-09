@@ -8,7 +8,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from tinker_cookbook.stores.storage import Storage
+from tinker_cookbook.stores._base import BaseStore
+from tinker_cookbook.stores.storage import Storage, storage_join
 
 logger = logging.getLogger(__name__)
 
@@ -24,29 +25,24 @@ class ChatSession(BaseModel):
     title: str
 
 
-class ChatSessionStore:
+class ChatSessionStore(BaseStore):
     """Reads and writes chat sessions for a run within its storage."""
 
     def __init__(self, storage: Storage, prefix: str = "") -> None:
-        self._storage = storage
-        self._base = f"{prefix}/chat_sessions" if prefix else "chat_sessions"
+        chat_prefix = storage_join(prefix, "chat_sessions") if prefix else "chat_sessions"
+        super().__init__(storage, chat_prefix)
 
     def save(self, session: ChatSession) -> None:
-        path = f"{self._base}/{session.session_id}.json"
-        self._storage.write(path, json.dumps(session.model_dump(), indent=2).encode())
+        self._write_json(session.model_dump(), f"{session.session_id}.json")
 
     def load(self, session_id: str) -> ChatSession | None:
-        path = f"{self._base}/{session_id}.json"
-        try:
-            data = self._storage.read(path)
-            return ChatSession(**json.loads(data))
-        except FileNotFoundError:
-            return None
+        data = self._read_json(f"{session_id}.json")
+        return ChatSession(**data) if data is not None else None
 
     def list_summaries(self) -> list[dict[str, Any]]:
         """Return lightweight summaries of all sessions, newest first."""
         try:
-            files = self._storage.list_dir(self._base)
+            files = self.storage.list_dir(self._path())
         except FileNotFoundError:
             return []
         except Exception:
@@ -58,7 +54,7 @@ class ChatSessionStore:
             if not f.endswith(".json"):
                 continue
             try:
-                data = self._storage.read(f"{self._base}/{f}")
+                data = self.storage.read(self._path(f))
                 s = json.loads(data)
                 sessions.append({
                     "session_id": s["session_id"],

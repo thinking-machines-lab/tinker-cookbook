@@ -85,16 +85,16 @@ def create_router(registry: RunRegistry) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["chat"])
 
     @router.get("/capabilities")
-    async def get_capabilities() -> dict[str, bool]:
+    def get_capabilities() -> dict[str, bool]:
         return {"chat": has_api_key()}
 
     @router.get("/runs/{run_id}/chat-sessions")
-    async def list_chat_sessions(run_id: str) -> list[dict[str, Any]]:
+    def list_chat_sessions(run_id: str) -> list[dict[str, Any]]:
         require_run(registry, run_id)
         return _get_session_store(registry, run_id).list_summaries()
 
     @router.get("/runs/{run_id}/chat-sessions/{session_id}")
-    async def get_chat_session(run_id: str, session_id: str) -> dict[str, Any]:
+    def get_chat_session(run_id: str, session_id: str) -> dict[str, Any]:
         session = _get_session_store(registry, run_id).load(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")

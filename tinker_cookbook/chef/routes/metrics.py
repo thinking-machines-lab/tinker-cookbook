@@ -19,7 +19,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
     router = APIRouter(prefix="/api/runs", tags=["metrics"])
 
     @router.get("/{run_id}/metrics")
-    async def get_metrics(
+    def get_metrics(
         run_id: str,
         keys: str | None = Query(None),
     ) -> dict[str, Any]:
@@ -32,7 +32,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
         return {"run_id": run_id, "total_records": len(records), "records": records}
 
     @router.get("/{run_id}/metrics/keys")
-    async def get_metric_keys(run_id: str) -> list[str]:
+    def get_metric_keys(run_id: str) -> list[str]:
         require_run(registry, run_id)
         store = registry.get_training_store(run_id)
         store.read_metrics()
