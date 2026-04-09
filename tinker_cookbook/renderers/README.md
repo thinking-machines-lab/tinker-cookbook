@@ -1,4 +1,4 @@
-Check out the [rendering docs](https://tinker-docs.thinkingmachines.ai/rendering) for more details on the rendering system, and the [sequence extension docs](https://tinker-docs.thinkingmachines.ai/rl/sequence-extension) for more details on the sequence extension property.
+Check out the [rendering docs](https://tinker-docs.thinkingmachines.ai/tutorials/core-concepts/rendering/) for more details on the rendering system, and the [sequence extension docs](https://tinker-docs.thinkingmachines.ai/tutorials/advanced/sequence-extension/) for more details on the sequence extension property.
 
 Some tips for development of renderers:
 
