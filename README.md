@@ -32,8 +32,7 @@ We provide two libraries for the broader community to customize their language m
 
 ## Tinker
 
-Refer to the [docs](https://tinker-docs.thinkingmachines.ai/training-sampling) to start from basics.
-Here we introduce a few Tinker primitives - the basic components to fine-tune LLMs:
+Here we introduce a few Tinker primitives — the basic components to fine-tune LLMs (see the [quickstart guide](https://tinker-docs.thinkingmachines.ai/tinker/quickstart/) for more details):
 
 ```python
 import tinker
