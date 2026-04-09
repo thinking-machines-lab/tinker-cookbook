@@ -141,8 +141,9 @@ class Config:
     # Maximum number of training steps. If None, train for num_epochs * n_batches.
     max_steps: int | None = None
 
-    # Number of batches to submit ahead before waiting. 1 = current behavior.
-    pipeline_depth: int = 1
+    # How many batches to submit ahead of the one being waited on.
+    # 0 = no pipelining (current behavior), 2 = submit 2 extra batches ahead.
+    submit_ahead: int = 0
 
 
 @dataclass
@@ -475,34 +476,65 @@ async def main(config: Config):
                 trace.save_gantt_chart_html(window, submitted.step, iter_dir / "timing_gantt.html")
         ml_logger.log_metrics(metrics=submitted.metrics, step=submitted.step)
 
-    pending: deque[SubmittedBatch] = deque()
-    pipeline_depth = config.pipeline_depth
+    assert config.submit_ahead >= 0, f"submit_ahead must be >= 0, got {config.submit_ahead}"
 
-    async def drain_oldest() -> None:
-        oldest = pending.popleft()
-        with trace.trace_iteration(step=oldest.step) as window:
-            await finish_and_log(oldest, window)
+    if config.submit_ahead == 0:
+        # Original loop: one batch at a time, full tracing support.
+        pending_batch: SubmittedBatch | None = None
+        reached_max_steps = False
+        for epoch_idx in range(start_epoch, config.num_epochs):
+            logger.info(f"Starting epoch {epoch_idx}")
+            dataset.set_epoch(seed=epoch_idx)
 
-    reached_max_steps = False
-    for epoch_idx in range(start_epoch, config.num_epochs):
-        logger.info(f"Starting epoch {epoch_idx}")
-        dataset.set_epoch(seed=epoch_idx)
-
-        start_batch_idx = start_batch if epoch_idx == start_epoch else 0
-        for batch_idx in range(start_batch_idx, n_batches):
-            step = epoch_idx * n_batches + batch_idx
-            if config.max_steps is not None and step >= config.max_steps:
-                reached_max_steps = True
+            start_batch_idx = start_batch if epoch_idx == start_epoch else 0
+            for batch_idx in range(start_batch_idx, n_batches):
+                step = epoch_idx * n_batches + batch_idx
+                if config.max_steps is not None and step >= config.max_steps:
+                    reached_max_steps = True
+                    break
+                with trace.trace_iteration(step=step) as window:
+                    submitted_batch = await submit_batch(epoch_idx, batch_idx)
+                    if pending_batch is not None:
+                        await finish_and_log(pending_batch, window)
+                pending_batch = submitted_batch
+            if reached_max_steps:
                 break
-            submitted_batch = await submit_batch(epoch_idx, batch_idx)
-            pending.append(submitted_batch)
-            if len(pending) > pipeline_depth:
-                await drain_oldest()
-        if reached_max_steps:
-            break
 
-    while pending:
-        await drain_oldest()
+        if pending_batch is not None:
+            with trace.trace_iteration(step=pending_batch.step) as window:
+                await finish_and_log(pending_batch, window)
+    else:
+        # Pipelined loop: submit multiple batches ahead for better throughput.
+        # Tracing windows only cover the finish phase since ContextVar doesn't
+        # support multiple concurrent windows.
+        pending: deque[SubmittedBatch] = deque()
+        max_pending = 1 + config.submit_ahead
+
+        async def drain_oldest() -> None:
+            oldest = pending.popleft()
+            with trace.trace_iteration(step=oldest.step) as window:
+                await finish_and_log(oldest, window)
+
+        reached_max_steps = False
+        for epoch_idx in range(start_epoch, config.num_epochs):
+            logger.info(f"Starting epoch {epoch_idx}")
+            dataset.set_epoch(seed=epoch_idx)
+
+            start_batch_idx = start_batch if epoch_idx == start_epoch else 0
+            for batch_idx in range(start_batch_idx, n_batches):
+                step = epoch_idx * n_batches + batch_idx
+                if config.max_steps is not None and step >= config.max_steps:
+                    reached_max_steps = True
+                    break
+                submitted_batch = await submit_batch(epoch_idx, batch_idx)
+                pending.append(submitted_batch)
+                if len(pending) >= max_pending:
+                    await drain_oldest()
+            if reached_max_steps:
+                break
+
+        while pending:
+            await drain_oldest()
 
     did_train = start_epoch < config.num_epochs and (
         config.max_steps is None or start_epoch * n_batches + start_batch < config.max_steps
