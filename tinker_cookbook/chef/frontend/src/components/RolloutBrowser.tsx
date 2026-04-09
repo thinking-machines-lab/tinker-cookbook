@@ -1,8 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { SortableTable } from './SortableTable';
 import type { IterationInfo, RolloutSummary } from '../api/types';
+
+/** Returns a debounced version of `value`, updating only after `delay` ms of inactivity. */
+function useDebouncedValue<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState(value);
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => {
+    timerRef.current = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(timerRef.current);
+  }, [value, delay]);
+  return debounced;
+}
 
 interface Props {
   runId: string;
@@ -27,6 +38,9 @@ export function RolloutBrowser({ runId, iterations, jumpToStep }: Props) {
   const [maxReward, setMaxReward] = useState<string>('');
   const [loading, setLoading] = useState(false);
 
+  const debouncedMinReward = useDebouncedValue(minReward, 300);
+  const debouncedMaxReward = useDebouncedValue(maxReward, 300);
+
   const iterationsWithRollouts = iterations.filter((it) => it.has_train_rollouts);
 
   useEffect(() => {
@@ -50,8 +64,8 @@ export function RolloutBrowser({ runId, iterations, jumpToStep }: Props) {
     api
       .getRollouts(runId, selectedIter, {
         tag: tagFilter || undefined,
-        min_reward: minReward !== '' ? Number(minReward) : undefined,
-        max_reward: maxReward !== '' ? Number(maxReward) : undefined,
+        min_reward: debouncedMinReward !== '' ? Number(debouncedMinReward) : undefined,
+        max_reward: debouncedMaxReward !== '' ? Number(debouncedMaxReward) : undefined,
       })
       .then((resp) => {
         setRollouts(resp.rollouts);
@@ -59,7 +73,7 @@ export function RolloutBrowser({ runId, iterations, jumpToStep }: Props) {
       })
       .catch(() => setRollouts([]))
       .finally(() => setLoading(false));
-  }, [runId, selectedIter, tagFilter, minReward, maxReward]);
+  }, [runId, selectedIter, tagFilter, debouncedMinReward, debouncedMaxReward]);
 
   if (iterationsWithRollouts.length === 0) {
     return <div className="empty-state">

@@ -210,7 +210,7 @@ export interface EvalBenchmarkResult {
   num_truncated: number;
   metrics: Record<string, number>;
   time_seconds: number;
-  pass_at_k?: Record<number, number>;
+  pass_at_k?: Record<string, number>;
 }
 
 export interface EvalTrajectorySummary {
