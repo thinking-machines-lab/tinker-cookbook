@@ -5,7 +5,7 @@
  * flamegraph where depth = nesting level.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 interface SpanNode {
@@ -61,36 +61,35 @@ export function Flamegraph({ root, totalDuration, runId, step }: Props) {
   const globalEnd = root.wall_end;
   const range = globalEnd - globalStart || 1;
 
-  // Flatten the tree with depth info for rendering.
-  // Concurrent siblings (overlapping in time) get pushed to separate rows.
   type FlatEntry = { node: SpanNode; row: number };
-  const entries: FlatEntry[] = [];
-  // Track occupied time ranges per row to avoid overlaps
-  const rowEnds: number[] = []; // rowEnds[i] = the latest wall_end placed in row i
 
-  function findRow(start: number, minRow: number): number {
-    for (let r = minRow; r < rowEnds.length; r++) {
-      if (start >= rowEnds[r] - 0.001) return r;
+  const { entries, maxRow } = useMemo(() => {
+    const flatEntries: FlatEntry[] = [];
+    const rowEnds: number[] = [];
+
+    function findRow(start: number, minRow: number): number {
+      for (let r = minRow; r < rowEnds.length; r++) {
+        if (start >= rowEnds[r] - 0.001) return r;
+      }
+      rowEnds.push(0);
+      return rowEnds.length - 1;
     }
-    rowEnds.push(0);
-    return rowEnds.length - 1;
-  }
 
-  function flatten(node: SpanNode, minRow: number) {
-    if (node.name === 'iteration') {
-      for (const child of node.children) flatten(child, minRow);
-      return;
+    function walk(node: SpanNode, minRow: number) {
+      if (node.name === 'iteration') {
+        for (const child of node.children) walk(child, minRow);
+        return;
+      }
+      const row = findRow(node.wall_start, minRow);
+      rowEnds[row] = Math.max(rowEnds[row] || 0, node.wall_end);
+      flatEntries.push({ node, row });
+      for (const child of node.children) walk(child, row + 1);
     }
-    const row = findRow(node.wall_start, minRow);
-    rowEnds[row] = Math.max(rowEnds[row] || 0, node.wall_end);
-    entries.push({ node, row });
-    // Children start at the next row after this node's row
-    for (const child of node.children) flatten(child, row + 1);
-  }
 
-  flatten(root, 0);
+    walk(root, 0);
+    return { entries: flatEntries, maxRow: rowEnds.length };
+  }, [root]);
 
-  const maxRow = rowEnds.length;
   const totalHeight = maxRow * ROW_HEIGHT + 30;
 
   // Time axis

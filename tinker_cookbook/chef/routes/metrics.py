@@ -6,9 +6,10 @@ import logging
 from fnmatch import fnmatch
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 
+from tinker_cookbook.chef.routes._helpers import require_run
 from tinker_cookbook.stores import RunRegistry
 
 logger = logging.getLogger(__name__)
@@ -22,8 +23,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
         run_id: str,
         keys: str | None = Query(None),
     ) -> dict[str, Any]:
-        if registry.get_run(run_id) is None:
-            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        require_run(registry, run_id)
         store = registry.get_training_store(run_id)
         records = store.read_metrics()
         if keys:
@@ -33,16 +33,14 @@ def create_router(registry: RunRegistry) -> APIRouter:
 
     @router.get("/{run_id}/metrics/keys")
     async def get_metric_keys(run_id: str) -> list[str]:
-        if registry.get_run(run_id) is None:
-            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        require_run(registry, run_id)
         store = registry.get_training_store(run_id)
         store.read_metrics()
         return sorted(store.metric_keys())
 
     @router.get("/{run_id}/metrics/stream")
     async def stream_metrics(run_id: str, request: Request) -> StreamingResponse:
-        if registry.get_run(run_id) is None:
-            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        require_run(registry, run_id)
         store = registry.get_training_store(run_id)
 
         async def event_generator():

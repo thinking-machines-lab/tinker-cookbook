@@ -62,6 +62,7 @@ class TrainingRunStore:
         self._metrics: IncrementalReader | None = None
         self._timing: IncrementalReader | None = None
         self._config: Any = _UNSET
+        self._checkpoints: Any = _UNSET
         self._rollout_cache: dict[str, list[dict[str, Any]]] = {}
 
     def url(self, path: str = "") -> str:
@@ -149,6 +150,14 @@ class TrainingRunStore:
         """Read only metrics added since last call."""
         return self._get_metrics().read()
 
+    def metric_count(self) -> int:
+        """Number of metric records read so far."""
+        return self._get_metrics().total_read
+
+    def latest_metric(self) -> dict[str, Any] | None:
+        """Return the last metric record, or ``None`` if empty."""
+        return self._get_metrics().latest
+
     def metric_keys(self) -> set[str]:
         """All metric keys seen so far (excluding 'step')."""
         return self._get_metrics().known_keys
@@ -193,8 +202,11 @@ class TrainingRunStore:
     # ── Checkpoints (typed) ───────────────────────────────────────────
 
     def read_checkpoints(self) -> list[dict[str, Any]]:
-        """Read checkpoints.jsonl."""
-        return self._read_jsonl("checkpoints.jsonl")
+        """Read checkpoints.jsonl (cached after first read)."""
+        if self._checkpoints is not _UNSET:
+            return self._checkpoints
+        self._checkpoints = self._read_jsonl("checkpoints.jsonl")
+        return self._checkpoints
 
     def read_checkpoint_records(self) -> list[Any]:
         """Read checkpoints.jsonl as ``CheckpointRecord`` objects."""
@@ -288,6 +300,7 @@ class TrainingRunStore:
         Must contain at least a ``"name"`` key.
         """
         self._append_jsonl(record, "checkpoints.jsonl")
+        self._checkpoints = _UNSET  # Invalidate cache
 
     def write_rollouts(
         self,

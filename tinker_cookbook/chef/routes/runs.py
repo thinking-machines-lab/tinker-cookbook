@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from tinker_cookbook.chef.routes._helpers import require_run
 from tinker_cookbook.stores import RunRegistry
 
 
@@ -34,9 +35,12 @@ def create_router(registry: RunRegistry) -> APIRouter:
             config = store.read_config()
             if config:
                 info["config_summary"] = _extract_config_summary(config)
-            metrics = store.read_metrics()
-            if metrics:
-                info["latest_step"] = metrics[-1].get("step")
+
+            # Use incremental read + latest_metric to avoid copying all records
+            store.read_metrics()
+            latest = store.latest_metric()
+            if latest is not None:
+                info["latest_step"] = latest.get("step")
 
             # Find best eval scores across this run's checkpoints
             if eval_by_ckpt:
@@ -55,9 +59,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
 
     @router.get("/{run_id}")
     async def get_run(run_id: str) -> dict[str, Any]:
-        run = registry.get_run(run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        run = require_run(registry, run_id)
         info = asdict(run)
         store = registry.get_training_store(run_id)
         config = store.read_config()
@@ -71,9 +73,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
 
     @router.get("/{run_id}/config")
     async def get_config(run_id: str) -> dict[str, Any]:
-        run = registry.get_run(run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        require_run(registry, run_id)
         config = registry.get_training_store(run_id).read_config()
         if config is None:
             raise HTTPException(status_code=404, detail="No config.json found")
@@ -81,31 +81,25 @@ def create_router(registry: RunRegistry) -> APIRouter:
 
     @router.get("/{run_id}/iterations")
     async def list_iterations(run_id: str) -> list[dict[str, Any]]:
-        run = registry.get_run(run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        require_run(registry, run_id)
         return [asdict(it) for it in registry.get_training_store(run_id).list_iterations()]
 
     @router.get("/{run_id}/checkpoints")
     async def get_checkpoints(run_id: str) -> list[dict[str, Any]]:
-        run = registry.get_run(run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        require_run(registry, run_id)
         return registry.get_training_store(run_id).read_checkpoints()
 
     @router.get("/{run_id}/eval-scores")
     async def get_eval_scores(run_id: str) -> list[dict[str, Any]]:
         """Get eval scores matched to this run's checkpoints."""
-        run = registry.get_run(run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        require_run(registry, run_id)
 
         checkpoints = registry.get_training_store(run_id).read_checkpoints()
         eval_store = registry.get_eval_store()
         if eval_store is None:
             return []
 
-        # Build a map: checkpoint_path → step
+        # Build a map: checkpoint_path -> step
         ckpt_step_map: dict[str, int] = {}
         for ckpt in checkpoints:
             path = ckpt.get("state_path") or ckpt.get("sampler_path")
@@ -120,7 +114,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
             if eval_run.checkpoint_path:
                 step = ckpt_step_map.get(eval_run.checkpoint_path)
             if step is None and eval_run.checkpoint_name:
-                # Try matching by name (e.g., "000050" → batch 50)
+                # Try matching by name (e.g., "000050" -> batch 50)
                 for ckpt in checkpoints:
                     if ckpt.get("name") == eval_run.checkpoint_name:
                         step = ckpt.get("batch")

@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from tinker_cookbook.chef.routes._helpers import require_run
 from tinker_cookbook.stores import RunRegistry
 
 
@@ -24,8 +25,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
         min_reward: float | None = Query(None),
         max_reward: float | None = Query(None),
     ) -> dict[str, Any]:
-        if registry.get_run(run_id) is None:
-            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        require_run(registry, run_id)
         store = registry.get_training_store(run_id)
         base_name = _to_base_name(split, label)
         all_rollouts = store.read_rollouts(iteration, base_name)
@@ -65,8 +65,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
         run_id: str, iteration: int, group_idx: int, traj_idx: int,
         split: str = Query("train"), label: str | None = Query(None),
     ) -> dict[str, Any]:
-        if registry.get_run(run_id) is None:
-            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        require_run(registry, run_id)
         base_name = _to_base_name(split, label)
         rollout = registry.get_training_store(run_id).read_single_rollout(iteration, group_idx, traj_idx, base_name)
         if rollout is None:
@@ -77,8 +76,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
     async def get_logtree(
         run_id: str, iteration: int, base_name: str = Query("train"),
     ) -> dict[str, Any]:
-        if registry.get_run(run_id) is None:
-            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        require_run(registry, run_id)
         logtree = registry.get_training_store(run_id).read_logtree(iteration, base_name)
         if logtree is None:
             raise HTTPException(status_code=404, detail=f"Logtree not found for iteration {iteration}")

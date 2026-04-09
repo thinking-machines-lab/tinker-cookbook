@@ -2,8 +2,9 @@
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 
+from tinker_cookbook.chef.routes._helpers import require_run
 from tinker_cookbook.stores import RunRegistry
 
 
@@ -16,8 +17,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
         step_start: int | None = Query(None),
         step_end: int | None = Query(None),
     ) -> dict[str, Any]:
-        if registry.get_run(run_id) is None:
-            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        require_run(registry, run_id)
         records = registry.get_training_store(run_id).read_timing()
         if step_start is not None:
             records = [r for r in records if r.get("step", 0) >= step_start]
@@ -31,8 +31,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
         step_start: int | None = Query(None),
         step_end: int | None = Query(None),
     ) -> dict[str, Any]:
-        if registry.get_run(run_id) is None:
-            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        require_run(registry, run_id)
         spans = _flatten_spans(
             registry.get_training_store(run_id).read_timing(),
             step_start=step_start, step_end=step_end,
@@ -41,8 +40,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
 
     @router.get("/{run_id}/timing/concurrency/{step}")
     async def get_concurrency(run_id: str, step: int) -> dict[str, Any]:
-        if registry.get_run(run_id) is None:
-            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        require_run(registry, run_id)
         spans = _flatten_spans(registry.get_training_store(run_id).read_timing(), step=step)
         if not spans:
             return {"step": step, "spans": [], "max_concurrency": 0, "timeline": []}
@@ -65,8 +63,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
 
     @router.get("/{run_id}/timing/tree/{step}")
     async def get_timing_tree(run_id: str, step: int) -> dict[str, Any]:
-        if registry.get_run(run_id) is None:
-            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        require_run(registry, run_id)
         spans = _flatten_spans(registry.get_training_store(run_id).read_timing(), step=step)
         if not spans:
             return {"step": step, "root": None}

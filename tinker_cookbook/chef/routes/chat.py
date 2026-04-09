@@ -14,6 +14,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+
+from tinker_cookbook.chef.routes._helpers import require_run
 from pydantic import BaseModel, field_validator
 
 from tinker_cookbook.stores import RunRegistry
@@ -88,8 +90,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
 
     @router.get("/runs/{run_id}/chat-sessions")
     async def list_chat_sessions(run_id: str) -> list[dict[str, Any]]:
-        if registry.get_run(run_id) is None:
-            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        require_run(registry, run_id)
         return _get_session_store(registry, run_id).list_summaries()
 
     @router.get("/runs/{run_id}/chat-sessions/{session_id}")
@@ -104,9 +105,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
         if not has_api_key():
             raise HTTPException(status_code=503, detail="Interactive chat requires TINKER_API_KEY")
 
-        run = registry.get_run(run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        run = require_run(registry, run_id)
 
         store = registry.get_training_store(run_id)
         config = store.read_config()
