@@ -9,6 +9,7 @@ refer to `tinker_cookbook/recipes/sl_loop.py`.
 
 import asyncio
 import logging
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -139,6 +140,9 @@ class Config:
 
     # Maximum number of training steps. If None, train for num_epochs * n_batches.
     max_steps: int | None = None
+
+    # Number of batches to submit ahead before waiting. 1 = current behavior.
+    pipeline_depth: int = 1
 
 
 @dataclass
@@ -457,7 +461,6 @@ async def main(config: Config):
         if submitted.infrequent_eval_metrics is not None:
             metrics.update(submitted.infrequent_eval_metrics)
 
-    pending_batch: SubmittedBatch | None = None
     log_path = Path(config.log_path)
 
     async def finish_and_log(submitted: SubmittedBatch, window: trace.IterationWindow) -> None:
@@ -472,6 +475,14 @@ async def main(config: Config):
                 trace.save_gantt_chart_html(window, submitted.step, iter_dir / "timing_gantt.html")
         ml_logger.log_metrics(metrics=submitted.metrics, step=submitted.step)
 
+    pending: deque[SubmittedBatch] = deque()
+    pipeline_depth = config.pipeline_depth
+
+    async def drain_oldest() -> None:
+        oldest = pending.popleft()
+        with trace.trace_iteration(step=oldest.step) as window:
+            await finish_and_log(oldest, window)
+
     reached_max_steps = False
     for epoch_idx in range(start_epoch, config.num_epochs):
         logger.info(f"Starting epoch {epoch_idx}")
@@ -483,17 +494,15 @@ async def main(config: Config):
             if config.max_steps is not None and step >= config.max_steps:
                 reached_max_steps = True
                 break
-            with trace.trace_iteration(step=step) as window:
-                submitted_batch = await submit_batch(epoch_idx, batch_idx)
-                if pending_batch is not None:
-                    await finish_and_log(pending_batch, window)
-            pending_batch = submitted_batch
+            submitted_batch = await submit_batch(epoch_idx, batch_idx)
+            pending.append(submitted_batch)
+            if len(pending) > pipeline_depth:
+                await drain_oldest()
         if reached_max_steps:
             break
 
-    if pending_batch is not None:
-        with trace.trace_iteration(step=pending_batch.step) as window:
-            await finish_and_log(pending_batch, window)
+    while pending:
+        await drain_oldest()
 
     did_train = start_epoch < config.num_epochs and (
         config.max_steps is None or start_epoch * n_batches + start_batch < config.max_steps
