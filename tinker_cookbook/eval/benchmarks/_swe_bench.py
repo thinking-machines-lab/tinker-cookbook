@@ -150,91 +150,50 @@ if any("WARNING" in r for r in results):
     sys.exit(1)
 '''
 
-_SYSTEM_PROMPT = (
-    "You are a helpful assistant that can interact with a computer shell "
-    "to solve programming tasks."
-)
+_SYSTEM_PROMPT = """\
+You are an autonomous software engineer. Your task is to fix a bug in a code \
+repository by editing source files.
 
-# Instance template adapted from mini-swe-agent's swebench.yaml.
-# Uses their exact format (XML tags, THOUGHT+tool pattern, submission flow)
-# with /testbed replaced by /workspace/repo.
-_INSTANCE_TEMPLATE = """\
-<pr_description>
-Consider the following PR description:
-{problem_statement}
-</pr_description>
+IMPORTANT: You MUST call the bash tool in EVERY response. If you respond \
+without a tool call, the task will end immediately. Keep working until you \
+have fixed the issue.
 
-<instructions>
-# Task Instructions
+## Workflow
 
-## Overview
+1. **Explore**: Find relevant files with grep and find
+2. **Reproduce**: Write and run a script that triggers the bug
+3. **Edit**: Fix the source code using `apply_patch` or sed
+4. **Verify**: Run your reproduction script to confirm the fix
+5. **Test**: Run the test suite to check for regressions
 
-You're a software engineer interacting continuously with a computer by submitting commands.
-You'll be helping implement necessary changes to meet requirements in the PR description.
-Your task is specifically to make changes to non-test files in /workspace/repo in order to \
-fix the issue described in the PR description in a way that is general and consistent with the codebase.
-<IMPORTANT>This is an interactive process where you will think and issue AT LEAST ONE command, \
-see the result, then think and issue your next command(s).</IMPORTANT>
+## Editing files
 
-For each response:
+Use `apply_patch` for edits (preferred):
+```
+cd /workspace/repo && apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: path/to/file.py
+@@
+-    old_line_1
+-    old_line_2
++    new_line_1
++    new_line_2
+*** End Patch
+PATCH
+```
 
-1. Include a THOUGHT section explaining your reasoning and what you're trying to accomplish
-2. Provide one or more bash tool calls to execute
+Use sed for small edits:
+```
+cd /workspace/repo && sed -i 's/old_text/new_text/g' path/to/file.py
+```
 
-## Important Boundaries
+## Rules
 
-- MODIFY: Regular source code files in /workspace/repo
-- DO NOT MODIFY: Tests, configuration files (pyproject.toml, setup.cfg, etc.)
-
-## Recommended Workflow
-
-1. Analyze the codebase by finding and reading relevant files
-2. Create a script to reproduce the issue
-3. Edit the source code to resolve the issue
-4. Verify your fix works by running your script again
-5. Test edge cases to ensure your fix is robust
-
-## Command Execution Rules
-
-You are operating in an environment where
-
-1. You issue at least one command
-2. The system executes the command(s) in a subshell
-3. You see the result(s)
-4. You write your next command(s)
-
-Each response should include:
-
-1. **Reasoning text** where you explain your analysis and plan
-2. At least one tool call with your command
-
-**CRITICAL REQUIREMENTS:**
-
-- Your response SHOULD include reasoning text explaining what you're doing
-- Your response MUST include AT LEAST ONE bash tool call. You can make MULTIPLE tool calls \
-in a single response when the commands are independent (e.g., searching multiple files, \
-reading different parts of the codebase).
-- Directory or environment variable changes are not persistent. Every action is executed in \
-a new subshell.
-- However, you can prefix any action with `cd /workspace/repo && ...`
-
-Example of a CORRECT response:
-<example_response>
-I need to understand the relevant code. Let me find relevant files and check the project structure.
-
-[Makes multiple bash tool calls: {{"command": "cd /workspace/repo && ls -la"}}, \
-{{"command": "cd /workspace/repo && find . -name '*.py' | grep -i relevant"}}, \
-{{"command": "cd /workspace/repo && cat README.md | head -50"}}]
-</example_response>
-
-## Environment Details
-
-- You have a full Linux shell environment
-- Always use non-interactive flags (-y, -f) for commands
-- Avoid interactive tools like vi, nano, or any that require user input
-- You can use bash commands or invoke any tool that is available in the environment
-- The `apply_patch` command is available for editing files
-</instructions>"""
+- The repository is at /workspace/repo
+- ALWAYS prefix commands with `cd /workspace/repo &&`
+- MODIFY only source code files, NOT tests or configuration
+- Each command runs in a fresh subshell — cd is not persistent
+- Do NOT use interactive editors (vi, nano, etc.)"""
 
 
 def _parse_test_ids(raw: str | list) -> list[str]:
@@ -290,28 +249,18 @@ class _SWEBashTool:
                 f"<output></output>"
             )
 
-        # Match mini-swe-agent's observation format (XML tags + 10K truncation).
-        # GPT-OSS models are trained on this format, not JSON blobs.
+        # Truncate long output with head/tail pattern
         max_chars = 10000
-        if len(output) < max_chars:
-            formatted = (
-                f"<returncode>{result.exit_code}</returncode>\n"
-                f"<output>\n{output}</output>"
-            )
-        else:
+        if len(output) > max_chars:
+            head = output[:5000]
+            tail = output[-5000:]
             elided = len(output) - max_chars
-            formatted = (
-                f"<returncode>{result.exit_code}</returncode>\n"
-                "<warning>\n"
-                "The output of your last command was too long.\n"
-                "Please try a different command that produces less output.\n"
-                "If you're looking at a file you can use head, tail or sed "
-                "to view a smaller number of lines selectively.\n"
-                "</warning>\n"
-                f"<output_head>\n{output[:5000]}\n</output_head>\n"
-                f"<elided_chars>\n{elided} characters elided\n</elided_chars>\n"
-                f"<output_tail>\n{output[-5000:]}\n</output_tail>"
+            output = (
+                f"{head}\n\n[... {elided} characters elided ...]\n\n{tail}\n"
+                "[Output truncated. Use head/tail/grep for smaller output.]"
             )
+
+        formatted = json.dumps({"exit_code": result.exit_code, "output": output})
         return simple_tool_result(formatted)
 
 
@@ -569,15 +518,12 @@ class _SWEBenchEnvFactory(SandboxMixin, Env):
         if self.hints_text.strip():
             hints_section = f"\n\n## Hints\n{self.hints_text[:2000]}"
 
-        # Truncate problem statement if needed to fit within context window.
-        # Leave ~8K tokens (~32K chars) for the template overhead + system prompt.
-        max_problem_chars = 400_000  # ~100K tokens, leaves room for template
-        problem_text = self.problem_statement + hints_section
-        if len(problem_text) > max_problem_chars:
-            problem_text = problem_text[:max_problem_chars] + "\n\n[Problem statement truncated]"
-
-        user_prompt = _INSTANCE_TEMPLATE.format(
-            problem_statement=problem_text,
+        user_prompt = (
+            f"## Repository: {self.repo}\n\n"
+            f"## Problem Statement\n{self.problem_statement}"
+            f"{hints_section}\n\n"
+            f"The repository is checked out at `/workspace/repo`. "
+            f"Explore the codebase, find and fix the issue."
         )
 
         # Build initial messages with tool specs in the renderer's native format
