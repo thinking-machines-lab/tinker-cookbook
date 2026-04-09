@@ -15,6 +15,7 @@ from tinker_cookbook.eval.evaluators import EvaluatorBuilder, SamplingClientEval
 from tinker_cookbook.image_processing_utils import get_image_processor, resize_image
 from tinker_cookbook.renderers import ImagePart, Message, TextPart, get_text_content
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.utils import dataset_loading
 from tinker_cookbook.utils.misc_utils import timed
 
 # Set up logger
@@ -79,7 +80,7 @@ class ClassifierEvaluator(SamplingClientEvaluator):
             name=self.config.renderer_name, tokenizer=tokenizer, image_processor=image_processor
         )
 
-        dataset = datasets.load_dataset(self.config.dataset)
+        dataset = dataset_loading.load_dataset(self.config.dataset)
         dataset = cast(datasets.DatasetDict, dataset)
         self.dataset = dataset[self.config.dataset_split]
 
