@@ -569,8 +569,15 @@ class _SWEBenchEnvFactory(SandboxMixin, Env):
         if self.hints_text.strip():
             hints_section = f"\n\n## Hints\n{self.hints_text[:2000]}"
 
+        # Truncate problem statement if needed to fit within context window.
+        # Leave ~8K tokens (~32K chars) for the template overhead + system prompt.
+        max_problem_chars = 400_000  # ~100K tokens, leaves room for template
+        problem_text = self.problem_statement + hints_section
+        if len(problem_text) > max_problem_chars:
+            problem_text = problem_text[:max_problem_chars] + "\n\n[Problem statement truncated]"
+
         user_prompt = _INSTANCE_TEMPLATE.format(
-            problem_statement=self.problem_statement + hints_section,
+            problem_statement=problem_text,
         )
 
         # Build initial messages with tool specs in the renderer's native format
