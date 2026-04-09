@@ -1,0 +1,14 @@
+{
+  "name": "tinker",
+  "description": "Skills for fine-tuning language models with the Tinker API — research, debugging, and more.",
+  "version": "0.3.0",
+  "author": {
+    "name": "Thinking Machines Lab",
+    "email": "tinker@thinkingmachines.ai"
+  },
+  "homepage": "https://thinkingmachines.ai/tinker/",
+  "repository": "https://github.com/thinking-machines-lab/tinker-cookbook",
+  "license": "MIT",
+  "keywords": ["tinker", "fine-tuning", "rl", "sft", "dpo", "llm"],
+  "skills": "skills/"
+}

@@ -116,17 +116,12 @@ Tinker Cookbook ships with [Claude Code skills](https://docs.anthropic.com/en/do
 /plugin marketplace add thinking-machines-lab/tinker-cookbook
 ```
 
-Then install the **tinker** plugin from the Discover tab (`/plugin` → Discover). Once installed, the following skills are available:
+Then install the **tinker** plugin from the Discover tab (`/plugin` → Discover). Once installed, two skills are available:
 
 | Command | What it does |
 |---|---|
-| `/tinker:core` | Getting started — installation, models, SDK basics, hyperparameters |
-| `/tinker:sft` | Supervised fine-tuning, datasets, renderers, distillation |
-| `/tinker:rl` | Reinforcement learning — GRPO, custom environments, multi-turn |
-| `/tinker:preferences` | DPO and RLHF pipelines |
-| `/tinker:ops` | Checkpoints, weight export, logging, evaluation |
-| `/tinker:debug` | Diagnose slow training, hangs, output mismatches, errors |
-| `/tinker:dev` | Contributing to this repo — tests, CI, recipes |
+| `/tinker:research` | Plan and run post-training experiments — SFT, RL, DPO, distillation, evaluation, hyperparameters, model selection, and more |
+| `/tinker:debug` | Diagnose slow training, hangs, output mismatches, renderer issues, and errors |
 
 Skills also trigger automatically based on context — ask Claude to "set up SFT training" and it will load the right skill without a slash command. Skills update automatically when the repo is updated.
 

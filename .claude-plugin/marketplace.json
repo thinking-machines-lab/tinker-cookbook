@@ -5,24 +5,15 @@
     "email": "tinker@thinkingmachines.ai"
   },
   "metadata": {
-    "description": "Claude Code skills for fine-tuning language models with the Tinker API — SFT, RL, DPO, distillation, and more.",
-    "version": "0.2.1"
+    "description": "Claude Code skills for fine-tuning language models with the Tinker API.",
+    "version": "0.3.0"
   },
   "plugins": [
     {
       "name": "tinker",
-      "description": "Skills for fine-tuning language models with the Tinker API — setup, models, SFT, RL, DPO, distillation, checkpoints, weights, and more.",
+      "description": "Skills for fine-tuning language models with the Tinker API — research, debugging, and more.",
       "source": "./",
-      "strict": false,
-      "skills": [
-        "./skills/tinker-core",
-        "./skills/tinker-sft",
-        "./skills/tinker-rl",
-        "./skills/tinker-preferences",
-        "./skills/tinker-ops",
-        "./skills/tinker-debug",
-        "./skills/tinker-dev"
-      ]
+      "strict": true
     }
   ]
 }

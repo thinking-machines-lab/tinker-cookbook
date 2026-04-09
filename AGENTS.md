@@ -4,7 +4,7 @@ Quick reference for agents working on `tinker-cookbook`. Detailed guidance is in
 
 `tinker-cookbook` is a client library with training and eval code built on the Tinker service (hosted by Thinking Machines Lab) and the Tinker SDK (a separate repo with just the API). You author training/eval loops that run on a CPU machine; Tinker executes the heavy GPU work.
 
-**Skills:** This repo ships Claude Code skills in `skills/` covering all major workflows. If installed, they provide detailed guidance for SFT, RL, DPO, distillation, checkpointing, and more.
+**Skills:** This repo ships two Claude Code skills in `skills/`: `research` (SFT, RL, DPO, distillation, evaluation, model selection, experiment methodology) and `debug` (performance, correctness, renderer, and error triage). Install via `/plugin marketplace add thinking-machines-lab/tinker-cookbook`, then use `/tinker:research` or `/tinker:debug`.
 
 ## Composing Types
 
