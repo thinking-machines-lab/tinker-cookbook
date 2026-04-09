@@ -131,8 +131,9 @@ export const api = {
     fetchJSON<import('./types').ScoresTableRow[]>(`${BASE}/eval/scores`),
 
   // Data sources
-  getDefaultSources: () =>
-    fetchJSON<string[]>(`${BASE}/sources/defaults`),
+  getDefaultSources: (): Promise<string[]> =>
+    fetchJSON<Array<{ url: string; type: string }>>(`${BASE}/sources/defaults`)
+      .then(sources => sources.map(s => s.url)),
   refreshSources: (sources: string[]) => {
     const params = sources.map(s => `source=${encodeURIComponent(s)}`).join('&');
     return fetchJSON<{ runs: number }>(`${BASE}/sources/refresh${params ? '?' + params : ''}`, {
