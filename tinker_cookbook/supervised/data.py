@@ -16,6 +16,7 @@ from tinker_cookbook.exceptions import DataFormatError, DataValidationError
 from tinker_cookbook.renderers import Message, Renderer, TrainOnWhat
 from tinker_cookbook.supervised.common import datum_from_model_input_weights
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDataset
+from tinker_cookbook.utils import dataset_loading
 
 logger = logging.getLogger(__name__)
 
@@ -367,8 +368,6 @@ class InterleavedChatDatasetBuilder(ChatDatasetBuilder):
             raise ValueError("At least one dataset source must be provided")
 
         hf_datasets: list[datasets.Dataset] = []
-
-        from tinker_cookbook.utils import dataset_loading
 
         for source in self.sources:
             ds = dataset_loading.load_dataset(source.path, name=source.name, split=source.split)

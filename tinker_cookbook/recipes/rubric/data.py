@@ -11,6 +11,7 @@ from tinker_cookbook.renderers import (
     Message,
     Role,
 )
+from tinker_cookbook.utils import dataset_loading
 
 Conversation: TypeAlias = list[Message]
 
@@ -169,8 +170,6 @@ class PrometheusDatapointListBuilder(RubricDatapointListBuilder):
     data_path: str = "prometheus-eval/Feedback-Collection"
 
     def __call__(self) -> Sequence[RubricBasedDatapoint]:
-        from tinker_cookbook.utils import dataset_loading
-
         train_dataset = dataset_loading.load_dataset(self.data_path)["train"]
         return [self.build_rubric_datapoint(item) for item in train_dataset]  # type: ignore
 

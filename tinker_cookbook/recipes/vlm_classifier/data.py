@@ -28,6 +28,7 @@ from tinker_cookbook.renderers import (
 from tinker_cookbook.supervised.common import datum_from_model_input_weights
 from tinker_cookbook.supervised.types import SupervisedDataset, SupervisedDatasetBuilder
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.utils import dataset_loading
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +76,6 @@ class ClassifierDataset(SupervisedDataset):
         self.renderer = get_renderer(
             name=self.config.renderer_name, tokenizer=tokenizer, image_processor=image_processor
         )
-
-        from tinker_cookbook.utils import dataset_loading
 
         dataset = dataset_loading.load_dataset(self.config.dataset)
         dataset = cast(datasets.DatasetDict, dataset)
