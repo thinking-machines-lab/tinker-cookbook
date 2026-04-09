@@ -52,7 +52,7 @@ from tinker_cookbook.tool_use.types import ToolResult
 
 logger = logging.getLogger(__name__)
 
-MAX_TURNS = 300
+MAX_TURNS = 200
 """Maximum number of agent turns before forced termination.
 
 Increased from 200 to 300 because V16 analysis showed 22 instances solved
@@ -540,7 +540,7 @@ class _SWEBenchEnvFactory(SandboxMixin, Env):
             initial_messages=initial_messages,
             max_turns=MAX_TURNS,
             reward_fn=reward_fn,
-            max_no_tool_retries=MAX_TURNS,  # unlimited (matches mini-swe-agent)
+            max_no_tool_retries=0,
         )
         self._inner = EnvFromMessageEnv(
             renderer=self.renderer,
