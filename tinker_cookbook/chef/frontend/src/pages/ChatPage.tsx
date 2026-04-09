@@ -38,8 +38,11 @@ export function ChatPage() {
 
   useEffect(() => {
     if (!runId) return;
-    fetch(`/api/runs/${runId}/chat-sessions`).then((r) => r.json()).then(setSessions).catch(() => setSessions([]));
-  }, [runId]);
+    fetch(`/api/runs/${runId}/chat-sessions`)
+      .then((r) => r.json())
+      .then((all: SessionSummary[]) => setSessions(all.filter((s) => s.checkpoint_name === checkpoint)))
+      .catch(() => setSessions([]));
+  }, [runId, checkpoint]);
 
   useEffect(() => {
     if (!runId || !sessionId) return;
@@ -110,7 +113,7 @@ export function ChatPage() {
         }
       }
       if (!streamedText && !gotError) setError('No response received');
-      if (runId) fetch(`/api/runs/${runId}/chat-sessions`).then((r) => r.json()).then(setSessions).catch(() => {});
+      if (runId) fetch(`/api/runs/${runId}/chat-sessions`).then((r) => r.json()).then((all: SessionSummary[]) => setSessions(all.filter((s) => s.checkpoint_name === checkpoint))).catch(() => {});
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setLoading(false); }
   };
