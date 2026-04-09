@@ -82,4 +82,4 @@ Work through them in order — each builds on concepts from the previous one.
 
 - **Production recipes** with logging, checkpointing, and evaluation: see [`tinker_cookbook/recipes/`](../tinker_cookbook/recipes/)
 - **Full documentation**: see the [Tinker docs site](https://tinker-docs.thinkingmachines.ai)
-- **API reference**: see the [Tinker API reference](https://tinker-docs.thinkingmachines.ai/api-reference)
+- **API reference**: see the [Tinker API reference](https://tinker-docs.thinkingmachines.ai/tinker/api-reference/serviceclient/)
