@@ -272,6 +272,16 @@ export function RolloutDetailPage() {
 
 type ConvMessage = ConversationMessage;
 
+/** Type guard for logtree nodes (children can be strings or nodes). */
+function isNode(child: string | LogtreeNode): child is LogtreeNode {
+  return typeof child !== 'string';
+}
+
+/** Type guard for logtree conversation data. */
+function isConversationData(data: Record<string, unknown> | undefined): data is { type: 'conversation'; messages: ConvMessage[] } {
+  return data != null && data.type === 'conversation' && Array.isArray(data.messages);
+}
+
 /** Extract conversation messages for a specific trajectory from the logtree.
  *
  * The logtree has "Group Rollout" sections (one per group), each containing
@@ -284,17 +294,12 @@ function extractTrajectoryMessages(
   groupIdx: number,
   trajIdx: number,
 ): ConvMessage[] {
-  // Find "Group Rollout" sections (top-level sections with h2 children containing "Group Rollout")
-  const groupSections = (root.children ?? []).filter((child) => {
-    if (typeof child === 'string') return false;
-    const node = child as LogtreeNode;
+  const groupSections = (root.children ?? []).filter(isNode).filter((node) => {
     if (node.tag !== 'section') return false;
-    // Check if this section has an h2 with "Group Rollout"
-    return (node.children ?? []).some((c) =>
-      typeof c !== 'string' && (c as LogtreeNode).tag === 'h2' &&
-      ((c as LogtreeNode).children ?? []).some((t) => typeof t === 'string' && t.includes('Group Rollout'))
+    return (node.children ?? []).filter(isNode).some((c) =>
+      c.tag === 'h2' && (c.children ?? []).some((t) => typeof t === 'string' && t.includes('Group Rollout'))
     );
-  }) as LogtreeNode[];
+  });
 
   if (groupIdx < groupSections.length) {
     const groupNode = groupSections[groupIdx];
@@ -328,9 +333,9 @@ function extractResponseConversations(groupNode: LogtreeNode): ConvMessage[][] {
 
   function walk(node: LogtreeNode) {
     if (node.tag === 'section') {
-      const headerText = (node.children ?? [])
-        .filter((c) => typeof c !== 'string' && (c as LogtreeNode).tag === 'h3')
-        .flatMap((c) => ((c as LogtreeNode).children ?? []).filter((t) => typeof t === 'string'))
+      const headerText = (node.children ?? []).filter(isNode)
+        .filter((c) => c.tag === 'h3')
+        .flatMap((c) => (c.children ?? []).filter((t): t is string => typeof t === 'string'))
         .join('');
 
       if (headerText.includes('Prompt')) {
@@ -344,8 +349,8 @@ function extractResponseConversations(groupNode: LogtreeNode): ConvMessage[][] {
         return;
       }
     }
-    for (const child of node.children ?? []) {
-      if (typeof child !== 'string') walk(child as LogtreeNode);
+    for (const child of (node.children ?? []).filter(isNode)) {
+      walk(child);
     }
   }
   walk(groupNode);
@@ -364,16 +369,11 @@ function extractResponseConversations(groupNode: LogtreeNode): ConvMessage[][] {
 /** Extract all conversation messages from a subtree. */
 function extractAllConversations(node: LogtreeNode): ConvMessage[][] {
   const convs: ConvMessage[][] = [];
-  if (node.data && (node.data as { type?: string }).type === 'conversation') {
-    const msgs = (node.data as { messages?: ConvMessage[] }).messages ?? [];
-    if (msgs.length > 0) convs.push(msgs);
+  if (isConversationData(node.data)) {
+    if (node.data.messages.length > 0) convs.push(node.data.messages);
   }
-  if (node.children) {
-    for (const child of node.children) {
-      if (typeof child !== 'string') {
-        convs.push(...extractAllConversations(child as LogtreeNode));
-      }
-    }
+  for (const child of (node.children ?? []).filter(isNode)) {
+    convs.push(...extractAllConversations(child));
   }
   return convs;
 }

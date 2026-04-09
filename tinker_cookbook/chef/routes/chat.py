@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -16,15 +17,40 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
 from tinker_cookbook.stores import RunRegistry
+from tinker_cookbook.stores.chat_session_store import ChatSession, ChatSessionStore
 
 logger = logging.getLogger(__name__)
 
 _MAX_CACHED_CLIENTS = 3
 _client_cache: OrderedDict[str, Any] = OrderedDict()
+_client_cache_lock = asyncio.Lock()
 
 
 def has_api_key() -> bool:
     return bool(os.environ.get("TINKER_API_KEY"))
+
+
+def _normalize_message(msg: dict[str, Any]) -> dict[str, Any]:
+    """Ensure a message dict has structured content (list of ContentPart dicts).
+
+    Accepts both ``{"role": "user", "content": "hello"}`` (plain string)
+    and ``{"role": "user", "content": [{"type": "text", "text": "hello"}]}``
+    (already structured). Normalizes the former to the latter.
+    """
+    content = msg.get("content", "")
+    if isinstance(content, str):
+        return {**msg, "content": [{"type": "text", "text": content}]}
+    return msg
+
+
+def _extract_text(msg: dict[str, Any]) -> str:
+    """Extract plain text from a message's content (structured or string)."""
+    content = msg.get("content", "")
+    if isinstance(content, str):
+        return content
+    return "".join(
+        p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"
+    )
 
 
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -45,66 +71,16 @@ class ChatRequest(BaseModel):
         return v
 
 
-class ChatSession(BaseModel):
-    session_id: str
-    checkpoint_name: str
-    run_id: str
-    created_at: str
-    messages: list[dict[str, Any]]
-    title: str  # first user message, truncated
+def _get_session_store(registry: RunRegistry, run_id: str) -> ChatSessionStore:
+    """Create a ChatSessionStore for a run."""
+    storage = registry.storage_for(run_id)
+    run = registry.get_run(run_id)
+    prefix = run.prefix if run else ""
+    return ChatSessionStore(storage, prefix)
 
 
 def create_router(registry: RunRegistry) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["chat"])
-
-    def _sessions_path(run_id: str) -> str:
-        """Path prefix for chat sessions within a run's storage."""
-        run = registry.get_run(run_id)
-        prefix = run.prefix if run else ""
-        return f"{prefix}/chat_sessions" if prefix else "chat_sessions"
-
-    def _save_session(run_id: str, session: ChatSession) -> None:
-        storage = registry.storage_for(run_id)
-        path = f"{_sessions_path(run_id)}/{session.session_id}.json"
-        storage.write(path, json.dumps(session.model_dump(), indent=2).encode())
-
-    def _load_session(run_id: str, session_id: str) -> ChatSession | None:
-        storage = registry.storage_for(run_id)
-        path = f"{_sessions_path(run_id)}/{session_id}.json"
-        try:
-            data = storage.read(path)
-            return ChatSession(**json.loads(data))
-        except FileNotFoundError:
-            return None
-
-    def _list_sessions(run_id: str) -> list[dict[str, Any]]:
-        storage = registry.storage_for(run_id)
-        path = _sessions_path(run_id)
-        try:
-            files = storage.list_dir(path)
-        except FileNotFoundError:
-            return []
-        except Exception:
-            logger.debug("Failed to list chat sessions for %s", run_id, exc_info=True)
-            return []
-        sessions = []
-        for f in sorted(files, reverse=True):
-            if not f.endswith(".json"):
-                continue
-            try:
-                data = storage.read(f"{path}/{f}")
-                s = json.loads(data)
-                sessions.append({
-                    "session_id": s["session_id"],
-                    "checkpoint_name": s["checkpoint_name"],
-                    "title": s.get("title", "Untitled"),
-                    "created_at": s.get("created_at", ""),
-                    "message_count": len(s.get("messages", [])),
-                })
-            except (json.JSONDecodeError, KeyError) as e:
-                logger.debug("Skipping malformed session file %s: %s", f, e)
-                continue
-        return sessions
 
     @router.get("/capabilities")
     async def get_capabilities() -> dict[str, bool]:
@@ -114,11 +90,11 @@ def create_router(registry: RunRegistry) -> APIRouter:
     async def list_chat_sessions(run_id: str) -> list[dict[str, Any]]:
         if registry.get_run(run_id) is None:
             raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
-        return _list_sessions(run_id)
+        return _get_session_store(registry, run_id).list_summaries()
 
     @router.get("/runs/{run_id}/chat-sessions/{session_id}")
     async def get_chat_session(run_id: str, session_id: str) -> dict[str, Any]:
-        session = _load_session(run_id, session_id)
+        session = _get_session_store(registry, run_id).load(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
         return session.model_dump()
@@ -148,9 +124,9 @@ def create_router(registry: RunRegistry) -> APIRouter:
         if not model_name:
             raise HTTPException(status_code=400, detail="No model_name in run config")
 
-        # Create or load session
         session_id = body.session_id or uuid.uuid4().hex[:12]
-        existing = _load_session(run_id, session_id) if body.session_id else None
+        session_store = _get_session_store(registry, run_id)
+        existing = session_store.load(session_id) if body.session_id else None
 
         async def event_stream():
             try:
@@ -161,9 +137,12 @@ def create_router(registry: RunRegistry) -> APIRouter:
                 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
                 cache_key = f"{run_id}:{body.checkpoint_name}"
-                if cache_key in _client_cache:
-                    _client_cache.move_to_end(cache_key)
-                else:
+                async with _client_cache_lock:
+                    if cache_key in _client_cache:
+                        _client_cache.move_to_end(cache_key)
+                    need_load = cache_key not in _client_cache
+
+                if need_load:
                     yield f"data: {json.dumps({'status': 'Loading model and checkpoint...'})}\n\n"
                     tokenizer = get_tokenizer(model_name)
                     renderer_name = config.get("renderer_name") or get_recommended_renderer_name(model_name)
@@ -175,12 +154,13 @@ def create_router(registry: RunRegistry) -> APIRouter:
                     load_future = tc.load_state_async(sampler_path)
                     await load_future
                     sc = await tc.create_sampling_client_async(sampler_path)
-                    _client_cache[cache_key] = (renderer, sc)
-                    # Evict oldest entry if cache exceeds limit
-                    while len(_client_cache) > _MAX_CACHED_CLIENTS:
-                        _client_cache.popitem(last=False)
+                    async with _client_cache_lock:
+                        _client_cache[cache_key] = (renderer, sc)
+                        while len(_client_cache) > _MAX_CACHED_CLIENTS:
+                            _client_cache.popitem(last=False)
 
-                renderer, sc = _client_cache[cache_key]
+                async with _client_cache_lock:
+                    renderer, sc = _client_cache[cache_key]
 
                 messages = [Message(role=m["role"], content=m["content"]) for m in body.messages]
                 model_input = renderer.build_generation_prompt(messages)
@@ -194,17 +174,10 @@ def create_router(registry: RunRegistry) -> APIRouter:
                 response_jsonable = message_to_jsonable(response_msg)
                 response_text = get_text_content(response_msg)
 
-                # Save session with structured messages
-                all_messages = list(body.messages) + [response_jsonable]
-                first_user_content = ""
-                for m in all_messages:
-                    if m.get("role") == "user":
-                        c = m.get("content", "")
-                        if isinstance(c, str):
-                            first_user_content = c
-                        elif isinstance(c, list):
-                            first_user_content = "".join(p.get("text", "") for p in c if isinstance(p, dict))
-                        break
+                # Normalize all messages to structured format before saving
+                all_messages = [_normalize_message(m) for m in body.messages] + [response_jsonable]
+                first_user = next((m for m in all_messages if m.get("role") == "user"), None)
+                first_user_content = _extract_text(first_user) if first_user else ""
                 session = ChatSession(
                     session_id=session_id,
                     checkpoint_name=body.checkpoint_name,
@@ -213,7 +186,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
                     messages=all_messages,
                     title=(first_user_content or "Chat")[:60],
                 )
-                _save_session(run_id, session)
+                session_store.save(session)
 
                 yield f"data: {json.dumps({'content': response_text, 'done': True, 'session_id': session_id, 'message': response_jsonable})}\n\n"
 

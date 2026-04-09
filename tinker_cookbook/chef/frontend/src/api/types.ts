@@ -83,10 +83,10 @@ export interface RolloutSummary {
   num_steps: number;
   total_tokens: number;
   final_ob_len: number;
-  sampling_client_step?: number;
-  status?: string | null;
-  error_type?: string | null;
-  stop_reason?: string | null;
+  sampling_client_step: number | null;
+  status: string | null;
+  error_type: string | null;
+  stop_reason: string | null;
 }
 
 export interface RolloutsResponse {
@@ -115,16 +115,16 @@ export interface RolloutDetail {
   group_idx: number;
   traj_idx: number;
   tags: string[];
-  sampling_client_step?: number;
+  sampling_client_step: number | null;
   total_reward: number;
   final_reward: number;
   trajectory_metrics: Record<string, number>;
   steps: RolloutStep[];
   final_ob_len: number;
-  status?: string | null;
-  error_type?: string | null;
-  error_message?: string | null;
-  stop_reason?: string | null;
+  status: string | null;
+  error_type: string | null;
+  error_message: string | null;
+  stop_reason: string | null;
 }
 
 /** A flat timing span from the /timing/flat endpoint. */
@@ -207,6 +207,7 @@ export interface EvalBenchmarkResult {
   num_examples: number;
   num_correct: number;
   num_errors: number;
+  num_truncated: number;
   metrics: Record<string, number>;
   time_seconds: number;
   pass_at_k?: Record<number, number>;
@@ -229,9 +230,7 @@ export interface EvalTrajectoriesResponse {
   trajectories: EvalTrajectorySummary[];
 }
 
-export interface EvalTrajectoryTurn {
-  role: string;
-  content: ContentPart[];
+export interface EvalTrajectoryTurn extends ConversationMessage {
   token_count: number;
   metadata: Record<string, unknown>;
 }
