@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from tinker_cookbook.stores.storage import Storage, storage_join
+from tinker_cookbook.stores.storage import LocalStorage, Storage, storage_join
 from tinker_cookbook.stores.training_store import TrainingRunStore
 
 _ITERATION_RE = re.compile(r"^iteration_(\d+)$")
@@ -67,6 +67,26 @@ class RunRegistry:
         self._run_storage: dict[str, Storage] = {}
         self._training_stores: dict[str, TrainingRunStore] = {}
         self._eval_store: Any = RunRegistry._EVAL_UNSET
+
+    def add_storage(self, storage: Storage) -> list[RunInfo]:
+        """Add a new storage backend and discover its runs."""
+        self._storages.append(storage)
+        return self.refresh()
+
+    def remove_storage(self, url: str) -> list[RunInfo]:
+        """Remove a storage backend by URL and refresh."""
+        self._storages = [s for s in self._storages if s.url() != url]
+        return self.refresh()
+
+    def list_sources(self) -> list[dict[str, Any]]:
+        """List all registered storage sources."""
+        sources = []
+        for storage in self._storages:
+            sources.append({
+                "url": storage.url(),
+                "type": "local" if isinstance(storage, LocalStorage) else "cloud",
+            })
+        return sources
 
     @property
     def storage_count(self) -> int:

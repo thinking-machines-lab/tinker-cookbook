@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from tinker_cookbook.chef.routes import chat, eval as eval_routes
-from tinker_cookbook.chef.routes import metrics, rollouts, runs, timing
+from tinker_cookbook.chef.routes import metrics, rollouts, runs, sources, timing
 from tinker_cookbook.stores import LocalStorage, RunRegistry
 
 logger = logging.getLogger(__name__)
@@ -72,6 +72,7 @@ def create_app(
     app.include_router(timing.create_router(registry))
     app.include_router(eval_routes.create_router(registry))
     app.include_router(chat.create_router(registry))
+    app.include_router(sources.create_router(registry))
 
     if (_STATIC_DIR / "index.html").exists():
         assets_dir = _STATIC_DIR / "assets"

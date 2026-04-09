@@ -412,3 +412,60 @@ class TestTimingAPI:
     def test_timing_404(self, client) -> None:
         resp = client.get("/api/runs/nonexistent/timing")
         assert resp.status_code == 404
+
+
+# ── Sources API ──────────────────────────────────────────────────────
+
+
+class TestSourcesAPI:
+    def test_list_sources(self, client) -> None:
+        resp = client.get("/api/sources")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["type"] == "local"
+        assert "url" in data[0]
+
+    def test_add_source(self, client, tmp_path: Path) -> None:
+        new_dir = tmp_path / "extra_runs"
+        new_dir.mkdir()
+        (new_dir / "metrics.jsonl").write_text(
+            json.dumps({"step": 0, "loss": 1.0}) + "\n"
+        )
+
+        resp = client.post("/api/sources", json={"uri": str(new_dir)})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["sources"]) == 2
+        assert data["runs_discovered"] >= 2  # original + new
+
+    def test_add_source_invalid_path(self, client) -> None:
+        resp = client.post("/api/sources", json={"uri": "/nonexistent/path/12345"})
+        assert resp.status_code == 400
+
+    def test_remove_source(self, client, tmp_path: Path) -> None:
+        # First add a source
+        new_dir = tmp_path / "to_remove"
+        new_dir.mkdir()
+        (new_dir / "metrics.jsonl").write_text(
+            json.dumps({"step": 0, "loss": 1.0}) + "\n"
+        )
+        client.post("/api/sources", json={"uri": str(new_dir)})
+
+        # Get current sources
+        sources = client.get("/api/sources").json()
+        assert len(sources) == 2
+
+        # Remove the newly added one
+        new_url = [s["url"] for s in sources if str(new_dir) in s["url"]][0]
+        resp = client.delete(f"/api/sources?url={new_url}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["sources"]) == 1
+
+    def test_refresh_sources(self, client) -> None:
+        resp = client.post("/api/sources/refresh")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "runs" in data
+        assert data["runs"] >= 1

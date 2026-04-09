@@ -255,3 +255,8 @@ export interface ScoresTableRow {
   timestamp?: string;
   scores: Record<string, number>;
 }
+
+export interface DataSource {
+  url: string;
+  type: 'local' | 'cloud';
+}

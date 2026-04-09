@@ -2,6 +2,7 @@
 
 import type {
   CheckpointRecord,
+  DataSource,
   IterationInfo,
   LogtreeResponse,
   MetricsResponse,
@@ -13,8 +14,8 @@ import type {
 
 const BASE = '/api';
 
-async function fetchJSON<T>(url: string): Promise<T> {
-  const response = await fetch(url);
+async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init);
   if (!response.ok) {
     throw new Error(`Failed to load ${url}: ${response.status} ${response.statusText}`);
   }
@@ -110,4 +111,20 @@ export const api = {
     ),
   getScoresTable: () =>
     fetchJSON<import('./types').ScoresTableRow[]>(`${BASE}/eval/scores`),
+
+  // Data sources
+  listSources: () => fetchJSON<DataSource[]>(`${BASE}/sources`),
+  addSource: (uri: string) =>
+    fetchJSON<{ sources: DataSource[]; runs_discovered: number }>(`${BASE}/sources`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uri }),
+    }),
+  removeSource: (url: string) =>
+    fetchJSON<{ sources: DataSource[]; runs_remaining: number }>(
+      `${BASE}/sources?url=${encodeURIComponent(url)}`,
+      { method: 'DELETE' },
+    ),
+  refreshSources: () =>
+    fetchJSON<{ runs: number }>(`${BASE}/sources/refresh`, { method: 'POST' }),
 };

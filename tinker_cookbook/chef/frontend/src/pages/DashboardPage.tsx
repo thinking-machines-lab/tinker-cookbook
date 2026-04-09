@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { StatusBadge, TypeBadge, scoreColor, timeAgo } from '../utils/shared';
-import type { RunInfo } from '../api/types';
+import type { DataSource, RunInfo } from '../api/types';
 
 export function DashboardPage() {
   const [runs, setRuns] = useState<RunInfo[]>([]);
@@ -11,6 +11,11 @@ export function DashboardPage() {
   const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set());
   const [selectedForCompare, setSelectedForCompare] = useState<Set<string>>(new Set());
   const [showAllRuns, setShowAllRuns] = useState(false);
+  const [sources, setSources] = useState<DataSource[]>([]);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [newSourceUri, setNewSourceUri] = useState('');
+  const [sourceError, setSourceError] = useState<string | null>(null);
+  const [sourceLoading, setSourceLoading] = useState(false);
   const navigate = useNavigate();
 
   const toggleCompare = (runId: string) => {
@@ -27,7 +32,57 @@ export function DashboardPage() {
       .then(setRuns)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
+    api.listSources().then(setSources).catch(() => {});
   }, []);
+
+  const refreshRuns = () => {
+    api.listRuns().then(setRuns).catch(() => {});
+  };
+
+  const handleAddSource = async () => {
+    if (!newSourceUri.trim()) return;
+    setSourceLoading(true);
+    setSourceError(null);
+    try {
+      const result = await api.addSource(newSourceUri.trim());
+      setSources(result.sources);
+      setNewSourceUri('');
+      refreshRuns();
+    } catch (e: any) {
+      setSourceError(e.message || 'Failed to add source');
+    } finally {
+      setSourceLoading(false);
+    }
+  };
+
+  const handleRemoveSource = async (url: string) => {
+    setSourceLoading(true);
+    setSourceError(null);
+    try {
+      const result = await api.removeSource(url);
+      setSources(result.sources);
+      refreshRuns();
+    } catch (e: any) {
+      setSourceError(e.message || 'Failed to remove source');
+    } finally {
+      setSourceLoading(false);
+    }
+  };
+
+  const handleRefreshSources = async () => {
+    setSourceLoading(true);
+    setSourceError(null);
+    try {
+      await api.refreshSources();
+      const updatedSources = await api.listSources();
+      setSources(updatedSources);
+      refreshRuns();
+    } catch (e: any) {
+      setSourceError(e.message || 'Failed to refresh');
+    } finally {
+      setSourceLoading(false);
+    }
+  };
 
   // Extract all unique model names from both training runs and eval runs
   const allModels = useMemo(() => {
@@ -78,6 +133,112 @@ export function DashboardPage() {
         {activeRuns.length > 0 && filteredRuns.length > activeRuns.length && ' · '}
         {filteredRuns.length - activeRuns.length > 0 && `${filteredRuns.length - activeRuns.length} completed`}
         {filteredRuns.length === 0 && 'No training runs found'}
+      </div>
+
+      {/* Data Sources */}
+      <div className="card" style={{ marginBottom: '1rem', padding: 0 }}>
+        <div
+          className="card-header"
+          style={{ padding: '0.5rem 1rem', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+          onClick={() => setSourcesOpen(!sourcesOpen)}
+        >
+          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Data Sources ({sources.length})
+          </span>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+            {sourcesOpen ? '\u25B2' : '\u25BC'}
+          </span>
+        </div>
+        {sourcesOpen && (
+          <div style={{ padding: '0.75rem 1rem' }}>
+            {sourceError && (
+              <div style={{ color: 'var(--error, #e53e3e)', fontSize: '0.8125rem', marginBottom: '0.5rem' }}>
+                {sourceError}
+              </div>
+            )}
+            {sources.length > 0 && (
+              <div style={{ marginBottom: '0.75rem' }}>
+                {sources.map((src) => (
+                  <div
+                    key={src.url}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '0.5rem',
+                      padding: '0.375rem 0', borderBottom: '1px solid var(--border)',
+                      fontSize: '0.8125rem',
+                    }}
+                  >
+                    <span
+                      style={{
+                        display: 'inline-block', padding: '0.0625rem 0.375rem',
+                        borderRadius: '8px', fontSize: '0.625rem', fontWeight: 600,
+                        textTransform: 'uppercase', letterSpacing: '0.04em',
+                        background: src.type === 'local' ? 'var(--accent-dim)' : 'rgba(139, 92, 246, 0.1)',
+                        color: src.type === 'local' ? 'var(--accent)' : '#8b5cf6',
+                      }}
+                    >
+                      {src.type}
+                    </span>
+                    <span className="mono" style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {src.url}
+                    </span>
+                    <button
+                      onClick={() => handleRemoveSource(src.url)}
+                      disabled={sourceLoading}
+                      style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        color: 'var(--text-muted)', fontSize: '1rem', lineHeight: 1,
+                        padding: '0 0.25rem',
+                      }}
+                      title="Remove source"
+                    >
+                      &times;
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <input
+                type="text"
+                value={newSourceUri}
+                onChange={(e) => setNewSourceUri(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleAddSource(); }}
+                placeholder="Local path or s3://... or gs://..."
+                style={{
+                  flex: 1, padding: '0.375rem 0.625rem',
+                  border: '1px solid var(--border)', borderRadius: '6px',
+                  background: 'var(--bg-secondary, var(--surface))',
+                  color: 'var(--text-primary)', fontSize: '0.8125rem',
+                  fontFamily: 'var(--font-mono)',
+                }}
+              />
+              <button
+                onClick={handleAddSource}
+                disabled={sourceLoading || !newSourceUri.trim()}
+                style={{
+                  padding: '0.375rem 0.75rem', borderRadius: '6px', border: 'none',
+                  background: 'var(--accent)', color: 'white', cursor: 'pointer',
+                  fontWeight: 600, fontSize: '0.8125rem',
+                  opacity: sourceLoading || !newSourceUri.trim() ? 0.5 : 1,
+                }}
+              >
+                Add
+              </button>
+              <button
+                onClick={handleRefreshSources}
+                disabled={sourceLoading}
+                style={{
+                  padding: '0.375rem 0.75rem', borderRadius: '6px',
+                  border: '1px solid var(--border)', background: 'transparent',
+                  color: 'var(--text-secondary)', cursor: 'pointer',
+                  fontSize: '0.8125rem', opacity: sourceLoading ? 0.5 : 1,
+                }}
+              >
+                Refresh
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Model filter */}
