@@ -31,7 +31,7 @@ _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 class ChatRequest(BaseModel):
-    messages: list[dict[str, str]]
+    messages: list[dict[str, Any]]
     checkpoint_name: str
     session_id: str | None = None
     temperature: float = 0.7
@@ -50,7 +50,7 @@ class ChatSession(BaseModel):
     checkpoint_name: str
     run_id: str
     created_at: str
-    messages: list[dict[str, str]]
+    messages: list[dict[str, Any]]
     title: str  # first user message, truncated
 
 
@@ -157,7 +157,7 @@ def create_router(registry: RunRegistry) -> APIRouter:
                 import tinker
                 from tinker_cookbook.model_info import get_recommended_renderer_name
                 from tinker_cookbook.renderers import get_renderer
-                from tinker_cookbook.renderers.base import Message
+                from tinker_cookbook.renderers.base import Message, message_to_jsonable, get_text_content
                 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
                 cache_key = f"{run_id}:{body.checkpoint_name}"
@@ -191,41 +191,31 @@ def create_router(registry: RunRegistry) -> APIRouter:
 
                 tokens = result.sequences[0].tokens if result.sequences else []
                 response_msg, _ = renderer.parse_response(tokens)
-                # Message is a TypedDict — access via dict key, not attribute
-                if isinstance(response_msg, dict):
-                    content = response_msg.get('content', '')
-                else:
-                    content = getattr(response_msg, 'content', str(response_msg))
-                # Content may be string or list of parts
-                if isinstance(content, str):
-                    response_text = content
-                elif isinstance(content, list):
-                    parts = []
-                    for part in content:
-                        if isinstance(part, str):
-                            parts.append(part)
-                        elif isinstance(part, dict):
-                            parts.append(part.get('text', part.get('thinking', '')))
-                        elif hasattr(part, 'text'):
-                            parts.append(part.text)
-                    response_text = ''.join(parts)
-                else:
-                    response_text = str(content)
+                response_jsonable = message_to_jsonable(response_msg)
+                response_text = get_text_content(response_msg)
 
-                # Save session with the new assistant message
-                all_messages = list(body.messages) + [{"role": "assistant", "content": response_text}]
-                first_user = next((m["content"] for m in all_messages if m["role"] == "user"), "Chat")
+                # Save session with structured messages
+                all_messages = list(body.messages) + [response_jsonable]
+                first_user_content = ""
+                for m in all_messages:
+                    if m.get("role") == "user":
+                        c = m.get("content", "")
+                        if isinstance(c, str):
+                            first_user_content = c
+                        elif isinstance(c, list):
+                            first_user_content = "".join(p.get("text", "") for p in c if isinstance(p, dict))
+                        break
                 session = ChatSession(
                     session_id=session_id,
                     checkpoint_name=body.checkpoint_name,
                     run_id=run_id,
                     created_at=existing.created_at if existing else datetime.now().isoformat(),
                     messages=all_messages,
-                    title=first_user[:60],
+                    title=(first_user_content or "Chat")[:60],
                 )
                 _save_session(run_id, session)
 
-                yield f"data: {json.dumps({'content': response_text, 'done': True, 'session_id': session_id})}\n\n"
+                yield f"data: {json.dumps({'content': response_text, 'done': True, 'session_id': session_id, 'message': response_jsonable})}\n\n"
 
             except ImportError as e:
                 yield f"data: {json.dumps({'error': f'Missing dependency: {e}'})}\n\n"

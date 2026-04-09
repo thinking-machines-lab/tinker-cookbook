@@ -86,11 +86,18 @@ def _trajectory_to_stored(
     idx: int,
     trajectory: Trajectory,
     benchmark_name: str,
-    tokenizer,
+    renderer: "Renderer",
     time_seconds: float,
     example_id: str,
 ) -> StoredTrajectory:
-    """Convert a Trajectory to a StoredTrajectory with decoded text."""
+    """Convert a Trajectory to a StoredTrajectory with structured content.
+
+    Uses the renderer to parse assistant responses, preserving thinking blocks,
+    tool calls, and other structured content parts.
+    """
+    from tinker_cookbook.renderers.base import content_to_jsonable
+
+    tokenizer = renderer.tokenizer
     turns: list[StoredTurn] = []
     total_reward = 0.0
     all_metrics: Metrics = {}
@@ -113,13 +120,20 @@ def _trajectory_to_stored(
                 )
             )
 
-        # Decode action (the model's response)
-        ac_text = tokenizer.decode(t.ac.tokens) if t.ac.tokens else ""
+        # Parse action via renderer to preserve structured content
+        if t.ac.tokens:
+            try:
+                parsed_msg, _ = renderer.parse_response(t.ac.tokens)
+                ac_content = content_to_jsonable(parsed_msg["content"])
+            except Exception:
+                ac_content = tokenizer.decode(t.ac.tokens)
+        else:
+            ac_content = ""
         turns.append(
             StoredTurn(
                 role="assistant",
-                content=ac_text,
-                token_count=len(t.ac.tokens),
+                content=ac_content,
+                token_count=len(t.ac.tokens) if t.ac.tokens else 0,
             )
         )
 
@@ -142,10 +156,16 @@ def _trajectory_to_stored(
 
 
 def _last_assistant_content(turns: list[StoredTurn]) -> str:
-    """Return the content of the last assistant turn, or empty string."""
+    """Return the text content of the last assistant turn, or empty string."""
     for turn in reversed(turns):
         if turn.role == "assistant":
-            return turn.content
+            content = turn.content
+            if isinstance(content, str):
+                return content
+            # Structured content — extract text parts
+            return "".join(
+                p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"
+            )
     return ""
 
 
@@ -606,7 +626,7 @@ async def run_benchmark(
                         idx,
                         trajectory,
                         benchmark.name,
-                        tokenizer,
+                        renderer,
                         elapsed,
                         example_id=_get_example_id(env, idx),
                     )
@@ -986,6 +1006,8 @@ def print_trajectory(traj: StoredTrajectory) -> None:
             turn.role, "??"
         )
         content = turn.content
+        if isinstance(content, list):
+            content = "".join(p.get("text", p.get("thinking", "")) for p in content if isinstance(p, dict))
         if len(content) > 500:
             content = content[:500] + f"... ({len(content)} chars)"
         print(f"  {role_color} [{turn.role}] {content}")

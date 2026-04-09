@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { ConversationRenderer } from '../components/ConversationRenderer';
 import { useUrlParam } from '../utils/useUrlParam';
+import type { ConversationMessage, ContentPart } from '../api/types';
 
-interface Message {
-  role: 'user' | 'assistant' | 'system';
-  content: string;
+/** Wrap plain text as structured content. */
+function textContent(text: string): ContentPart[] {
+  return [{ type: 'text', text }];
 }
 
 interface SessionSummary {
@@ -19,7 +21,7 @@ export function ChatPage() {
   const { runId } = useParams<{ runId: string }>();
   const [checkpoint] = useUrlParam('checkpoint', '');
   const [sessionId, setSessionId] = useUrlParam('session', '');
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +45,10 @@ export function ChatPage() {
     if (!runId || !sessionId) return;
     fetch(`/api/runs/${runId}/chat-sessions/${sessionId}`)
       .then((r) => { if (r.ok) return r.json(); throw new Error(''); })
-      .then((d) => setMessages(d.messages ?? []))
+      .then((d) => {
+        // Session messages are already structured ConversationMessage objects
+        setMessages(d.messages ?? []);
+      })
       .catch(() => {});
   }, [runId, sessionId]);
 
@@ -55,7 +60,7 @@ export function ChatPage() {
 
   const sendMessage = async () => {
     if (!input.trim() || loading || !runId || !checkpoint) return;
-    const userMessage: Message = { role: 'user', content: input.trim() };
+    const userMessage: ConversationMessage = { role: 'user', content: textContent(input.trim()) };
     const allMessages = [...messages, userMessage];
     setMessages(allMessages);
     setInput('');
@@ -78,7 +83,7 @@ export function ChatPage() {
       const reader = response.body?.getReader();
       if (!reader) throw new Error('No stream');
       const decoder = new TextDecoder();
-      let content = '';
+      let streamedText = '';
       let gotError = false;
 
       while (true) {
@@ -89,16 +94,22 @@ export function ChatPage() {
           try {
             const data = JSON.parse(line.slice(6));
             if (data.error) { setError(data.error); gotError = true; }
-            else if (data.status) { setMessages([...allMessages, { role: 'assistant', content: `⏳ ${data.status}` }]); }
+            else if (data.status) {
+              setMessages([...allMessages, { role: 'assistant', content: textContent(`\u23f3 ${data.status}`) }]);
+            }
             else if (data.content) {
-              content += data.content;
-              setMessages([...allMessages, { role: 'assistant', content }]);
+              streamedText += data.content;
+              // During streaming, show plain text; when done, use structured message if available
+              const assistantMsg: ConversationMessage = data.message
+                ? data.message
+                : { role: 'assistant', content: textContent(streamedText) };
+              setMessages([...allMessages, assistantMsg]);
               if (data.session_id && !sessionId) setSessionId(data.session_id);
             }
           } catch { /* skip */ }
         }
       }
-      if (!content && !gotError) setError('No response received');
+      if (!streamedText && !gotError) setError('No response received');
       if (runId) fetch(`/api/runs/${runId}/chat-sessions`).then((r) => r.json()).then(setSessions).catch(() => {});
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setLoading(false); }
@@ -145,7 +156,6 @@ export function ChatPage() {
       </div>
 
       <div className="card" style={{ padding: 0, display: 'flex', height: 'calc(100vh - 200px)', minHeight: '350px' }}>
-
         <div style={{
           width: '180px', flexShrink: 0, borderRight: '1px solid var(--border)',
           display: 'flex', flexDirection: 'column', background: 'var(--bg-elevated)',
@@ -191,88 +201,64 @@ export function ChatPage() {
           </div>
         </div>
 
-
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-
-        <div style={{ flex: 1, overflow: 'auto', padding: '1rem' }}>
-          {messages.length === 0 && (
-            <div className="empty-state" style={{ marginTop: '2rem' }}>
-              <div style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.25rem' }}>
-                Chat with <span className="mono" style={{ color: 'var(--accent)' }}>{checkpoint}</span>
-              </div>
-              <div className="text-muted" style={{ fontSize: '0.8125rem' }}>Type a message below to start.</div>
-            </div>
-          )}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
-            {messages.map((msg, i) => (
-              <div key={i} style={{ marginLeft: msg.role === 'assistant' ? '1.5rem' : 0 }}>
-                <div style={{
-                  padding: '0.5rem 0.75rem', borderRadius: '8px',
-                  background: msg.role === 'assistant' ? 'var(--bg-elevated)' : 'var(--bg-deep)',
-                  borderLeft: `3px solid ${msg.role === 'user' ? 'var(--cyan)' : 'var(--purple)'}`,
-                }}>
-                  <div style={{
-                    fontFamily: 'var(--font-mono)', fontSize: '0.5625rem', fontWeight: 600,
-                    color: msg.role === 'user' ? 'var(--cyan)' : 'var(--purple)',
-                    textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.1875rem',
-                  }}>
-                    {msg.role}
-                  </div>
-                  <div style={{ fontSize: '0.8125rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                    {msg.content}
-                  </div>
+          <div style={{ flex: 1, overflow: 'auto', padding: '1rem' }}>
+            {messages.length === 0 && (
+              <div className="empty-state" style={{ marginTop: '2rem' }}>
+                <div style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.25rem' }}>
+                  Chat with <span className="mono" style={{ color: 'var(--accent)' }}>{checkpoint}</span>
                 </div>
+                <div className="text-muted" style={{ fontSize: '0.8125rem' }}>Type a message below to start.</div>
               </div>
-            ))}
-            {loading && <div style={{ marginLeft: '1.5rem', color: 'var(--text-muted)', fontSize: '0.8125rem', fontStyle: 'italic' }}>Generating...</div>}
+            )}
+            <ConversationRenderer messages={messages} />
+            {loading && <div style={{ marginLeft: '1.5rem', color: 'var(--text-muted)', fontSize: '0.8125rem', fontStyle: 'italic', marginTop: '0.5rem' }}>Generating...</div>}
             {error && (
-              <div style={{ padding: '0.5rem 0.75rem', borderRadius: '8px', background: 'var(--error-dim)', borderLeft: '3px solid var(--error)', color: 'var(--error)', fontSize: '0.8125rem' }}>
+              <div style={{ padding: '0.5rem 0.75rem', borderRadius: '8px', background: 'var(--error-dim)', borderLeft: '3px solid var(--error)', color: 'var(--error)', fontSize: '0.8125rem', marginTop: '0.5rem' }}>
                 {error}
               </div>
             )}
+            <div ref={messagesEndRef} />
           </div>
-          <div ref={messagesEndRef} />
-        </div>
 
-
-        <div style={{ borderTop: '1px solid var(--border)', padding: '0.625rem 1rem', display: 'flex', gap: '0.5rem', alignItems: 'center', background: 'var(--bg-surface)' }}>
-          <input
-            type="text" value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-            placeholder="Type a message..." disabled={loading}
-            style={{
-              flex: 1, padding: '0.5rem 0.75rem', borderRadius: '6px',
-              border: '1px solid var(--border)', background: 'var(--bg-elevated)',
-              color: 'var(--text-primary)', fontSize: '0.8125rem',
-              fontFamily: 'var(--font-sans)',
-            }}
-          />
-          <button
-            onClick={sendMessage} disabled={loading || !input.trim()}
-            style={{
-              padding: '0.5rem 1rem', borderRadius: '6px', border: 'none',
-              background: loading || !input.trim() ? 'var(--bg-elevated)' : 'var(--accent)',
-              color: loading || !input.trim() ? 'var(--text-muted)' : '#fff',
-              cursor: loading || !input.trim() ? 'default' : 'pointer',
-              fontWeight: 600, fontSize: '0.8125rem', fontFamily: 'var(--font-sans)',
-            }}
-          >
-            Send
-          </button>
-          {messages.length > 0 && (
-            <button
-              onClick={() => setShowJson(true)}
-              title="View raw JSON"
+          <div style={{ borderTop: '1px solid var(--border)', padding: '0.625rem 1rem', display: 'flex', gap: '0.5rem', alignItems: 'center', background: 'var(--bg-surface)' }}>
+            <input
+              type="text" value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+              placeholder="Type a message..." disabled={loading}
               style={{
-                padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--border)',
-                background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.75rem',
+                flex: 1, padding: '0.5rem 0.75rem', borderRadius: '6px',
+                border: '1px solid var(--border)', background: 'var(--bg-elevated)',
+                color: 'var(--text-primary)', fontSize: '0.8125rem',
+                fontFamily: 'var(--font-sans)',
+              }}
+            />
+            <button
+              onClick={sendMessage} disabled={loading || !input.trim()}
+              style={{
+                padding: '0.5rem 1rem', borderRadius: '6px', border: 'none',
+                background: loading || !input.trim() ? 'var(--bg-elevated)' : 'var(--accent)',
+                color: loading || !input.trim() ? 'var(--text-muted)' : '#fff',
+                cursor: loading || !input.trim() ? 'default' : 'pointer',
+                fontWeight: 600, fontSize: '0.8125rem', fontFamily: 'var(--font-sans)',
               }}
             >
-              {'{ }'}
+              Send
             </button>
-          )}
-        </div>
+            {messages.length > 0 && (
+              <button
+                onClick={() => setShowJson(true)}
+                title="View raw JSON"
+                style={{
+                  padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--border)',
+                  background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.75rem',
+                }}
+              >
+                {'{ }'}
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

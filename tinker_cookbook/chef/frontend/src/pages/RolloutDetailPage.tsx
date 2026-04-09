@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
+import { ConversationRenderer } from '../components/ConversationRenderer';
 import { MetaField, rewardColor } from '../utils/shared';
-import type { RolloutDetail, RolloutSummary, LogtreeNode, LogtreeResponse } from '../api/types';
+import type { RolloutDetail, RolloutSummary, LogtreeNode, LogtreeResponse, ConversationMessage } from '../api/types';
 
 export function RolloutDetailPage() {
   const { runId, iteration, groupIdx, trajIdx } = useParams<{
@@ -193,30 +194,20 @@ export function RolloutDetailPage() {
               <div className="card-title" style={{ marginBottom: '0.5rem' }}>
                 Conversation ({messages.length} messages)
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                {/* Prompt context (all messages except the last assistant = model generation) */}
-                {messages.length > 1 && (
+              {messages.length > 1 && (
+                <>
                   <div style={{ fontSize: '0.625rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', padding: '0.25rem 0' }}>
                     Prompt
                   </div>
-                )}
-                {messages.slice(0, -1).map((msg, i) => (
-                  <ChatBubble key={`prompt-${i}`} message={msg} />
-                ))}
-                {messages.length > 1 && (
+                  <ConversationRenderer messages={messages.slice(0, -1)} showTokenCounts />
                   <div style={{ borderTop: '1px dashed var(--border)', margin: '0.25rem 0', position: 'relative' }}>
                     <span style={{ position: 'absolute', top: '-0.5rem', left: '0.5rem', background: 'var(--bg-surface)', padding: '0 0.5rem', fontSize: '0.625rem', fontWeight: 600, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                       Model Generation
                     </span>
                   </div>
-                )}
-                {/* Model's generation (last message) */}
-                {messages.length > 0 && (() => {
-                  const lastMsg = messages[messages.length - 1];
-                  const step = rollout.steps.length > 0 ? rollout.steps[rollout.steps.length - 1] : null;
-                  return <ChatBubble key="generation" message={lastMsg} stepInfo={step ? { ac_len: step.ac_len, reward: step.reward, episode_done: step.episode_done, ob_len: step.ob_len } : undefined} />;
-                })()}
-              </div>
+                </>
+              )}
+              <ConversationRenderer messages={messages.slice(-1)} showTokenCounts />
               {/* Conversation summary */}
               <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: 'var(--bg-tertiary)', borderRadius: '6px', fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', gap: '1rem' }}>
                 <span>{rollout.steps.length} turn{rollout.steps.length !== 1 ? 's' : ''}</span>
@@ -279,15 +270,7 @@ export function RolloutDetailPage() {
   );
 }
 
-interface ConvMessage { role: string; content: string | ContentPart[]; }
-interface ContentPart {
-  type: string;
-  text?: string;
-  thinking?: string;
-  tool_call?: { function: { name: string; arguments: string } };
-  raw_text?: string;
-  error?: string;
-}
+type ConvMessage = ConversationMessage;
 
 /** Extract conversation messages for a specific trajectory from the logtree.
  *
@@ -395,95 +378,3 @@ function extractAllConversations(node: LogtreeNode): ConvMessage[][] {
   return convs;
 }
 
-/** Chat message: left-aligned, assistant indented, collapsible. */
-interface StepInfo { ac_len: number; reward: number; episode_done: boolean; ob_len: number }
-function ChatBubble({ message, stepInfo }: { message: ConvMessage; tokenCount?: number; stepInfo?: StepInfo }) {
-  const [thinkingOpen, setThinkingOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
-  const isAssistant = message.role === 'assistant';
-
-  const roleColors: Record<string, string> = {
-    user: 'var(--cyan)',
-    assistant: 'var(--purple)',
-    system: 'var(--warning)',
-    tool: 'var(--accent)',
-    environment: 'var(--accent)',
-  };
-  const color = roleColors[message.role] ?? 'var(--text-muted)';
-
-  // Preview: first 120 chars for collapsed view
-  const textContent = typeof message.content === 'string'
-    ? message.content
-    : message.content.map((p) => p.text || p.thinking || '').join('');
-  const isLong = textContent.length > 200;
-  const preview = textContent.slice(0, 120).replace(/\n/g, ' ');
-
-  return (
-    <div style={{ marginLeft: isAssistant ? '2rem' : 0 }}>
-      <div style={{
-        padding: '0.5rem 0.75rem',
-        borderRadius: '8px',
-        background: isAssistant ? 'var(--bg-elevated)' : 'var(--bg-surface)',
-        borderLeft: `3px solid ${color}`,
-      }}>
-        <div style={{
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          cursor: isLong ? 'pointer' : 'default',
-        }} onClick={() => isLong && setCollapsed(!collapsed)}>
-          <div style={{
-            fontFamily: 'var(--font-mono)', fontSize: '0.5625rem', fontWeight: 600,
-            color, textTransform: 'uppercase', letterSpacing: '0.05em',
-          }}>
-            {message.role}
-            {isLong && (
-              <span style={{ marginLeft: '0.5rem', fontSize: '0.5rem', color: 'var(--text-muted)', fontWeight: 400 }}>
-                {collapsed ? '\u25b6 click to expand' : '\u25bc click to collapse'} ({textContent.length} chars)
-              </span>
-            )}
-          </div>
-        </div>
-        {collapsed ? (
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '0.25rem' }}>
-            {preview}...
-          </div>
-        ) : (
-          <div style={{ fontSize: '0.8125rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginTop: '0.25rem' }}>
-            {typeof message.content === 'string' ? (
-              message.content
-            ) : (
-              message.content.map((part, i) => {
-                if (part.type === 'text') return <span key={i}>{part.text}</span>;
-                if (part.type === 'thinking' && part.thinking) {
-                  return (
-                    <div key={i} className="thinking-block">
-                      <div className="thinking-toggle" onClick={(e) => { e.stopPropagation(); setThinkingOpen(!thinkingOpen); }}>
-                        {thinkingOpen ? '\u25bc' : '\u25b6'} Thinking
-                      </div>
-                      {thinkingOpen && <div className="thinking-content">{part.thinking}</div>}
-                    </div>
-                  );
-                }
-                if (part.type === 'tool_call' && part.tool_call) {
-                  return (
-                    <div key={i} className="tool-call-block">
-                      <div className="tool-call-label">Tool: {part.tool_call.function.name}</div>
-                      <pre className="tool-call-code">{part.tool_call.function.arguments}</pre>
-                    </div>
-                  );
-                }
-                if (part.type === 'image') return <span key={i} className="tag">[Image]</span>;
-                return null;
-              })
-            )}
-          </div>
-        )}
-        {/* Token annotation for assistant messages */}
-        {isAssistant && stepInfo && (
-          <div style={{ marginTop: '0.25rem', fontSize: '0.625rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-            {stepInfo.ac_len} tokens
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}

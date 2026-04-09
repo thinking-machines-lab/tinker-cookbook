@@ -1,5 +1,33 @@
 /** TypeScript types matching the Tinker Chef backend API responses. */
 
+// ── Unified conversation types (shared across training, eval, chat) ───────
+
+/** A single content part within a message — matches renderer's ContentPart. */
+export interface ContentPart {
+  type: 'text' | 'thinking' | 'image';
+  text?: string;
+  thinking?: string;
+  image?: string;
+}
+
+/** A parsed tool invocation — matches renderer's ToolCall. */
+export interface ToolCallInfo {
+  type: 'function';
+  id?: string;
+  function: { name: string; arguments: string };
+}
+
+/** A conversation message with structured content — matches message_to_jsonable() output. */
+export interface ConversationMessage {
+  role: string;
+  content: ContentPart[];
+  tool_calls?: ToolCallInfo[];
+  unparsed_tool_calls?: Array<{ raw_text: string; error: string }>;
+  tool_call_id?: string;
+  name?: string;
+  token_count?: number;
+}
+
 export interface RunInfo {
   run_id: string;
   prefix: string;
@@ -203,7 +231,7 @@ export interface EvalTrajectoriesResponse {
 
 export interface EvalTrajectoryTurn {
   role: string;
-  content: string;
+  content: ContentPart[];
   token_count: number;
   metadata: Record<string, unknown>;
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
+import { ConversationRenderer } from '../components/ConversationRenderer';
 import { MetaField } from '../utils/shared';
 import type { EvalTrajectoryDetail } from '../api/types';
 
@@ -111,19 +112,7 @@ export function EvalTrajectoryPage() {
       {/* Conversation */}
       <div className="card">
         <div className="card-header">Conversation ({traj.turns.length} turns)</div>
-        <div className="conversation">
-          {traj.turns.map((turn, i) => (
-            <div key={i} className={`message message-${turn.role}`}>
-              <div className="message-role">
-                {turn.role}
-                <span style={{ fontSize: '0.65rem', fontWeight: 400, marginLeft: '8px', color: 'var(--text-muted)' }}>
-                  {turn.token_count} tokens
-                </span>
-              </div>
-              <div className="message-content">{turn.content}</div>
-            </div>
-          ))}
-        </div>
+        <ConversationRenderer messages={traj.turns} showTokenCounts />
       </div>
     </div>
   );
