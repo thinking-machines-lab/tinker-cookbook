@@ -23,16 +23,20 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
     def get_metrics(
         run_id: str,
         keys: str | None = Query(None),
+        limit: int | None = Query(None, description="Max records to return (from end)"),
         source: list[str] = Query(default=[]),
     ) -> dict[str, Any]:
         registry = resolve_registry(source)
         require_run(registry, run_id)
         store = registry.get_training_store(run_id)
         records = store.read_metrics()
+        total = len(records)
+        if limit is not None and limit < total:
+            records = records[-limit:]
         if keys:
             patterns = [p.strip() for p in keys.split(",")]
             records = [_filter_record(r, patterns) for r in records]
-        return {"run_id": run_id, "total_records": len(records), "records": records}
+        return {"run_id": run_id, "total_records": total, "records": records}
 
     @router.get("/{run_id}/metrics/keys")
     def get_metric_keys(run_id: str, source: list[str] = Query(default=[])) -> list[str]:

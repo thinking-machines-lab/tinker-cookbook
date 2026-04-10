@@ -10,6 +10,25 @@ from tinker_cookbook.chef.routes._helpers import require_run
 from tinker_cookbook.stores import RunRegistry
 
 
+def _build_eval_index(eval_store: Any) -> dict[str, dict[str, float]]:
+    """Build checkpoint_path → best eval scores index. Cached per registry."""
+    result: dict[str, dict[str, float]] = {}
+    if eval_store is None:
+        return result
+    for eval_run in eval_store.list_runs():
+        if eval_run.checkpoint_path and eval_run.scores:
+            existing = result.get(eval_run.checkpoint_path, {})
+            for bench, score in eval_run.scores.items():
+                if bench not in existing or score > existing[bench]:
+                    existing[bench] = score
+            result[eval_run.checkpoint_path] = existing
+    return result
+
+
+# Module-level cache: registry id → eval index.
+_eval_index_cache: dict[int, dict[str, dict[str, float]]] = {}
+
+
 def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
     router = APIRouter(prefix="/api/runs", tags=["runs"])
 
@@ -18,17 +37,11 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
         registry = resolve_registry(source)
         runs = registry.get_runs()
 
-        # Pre-compute eval scores for all runs (matched by checkpoint path)
-        eval_store = registry.get_eval_store()
-        eval_by_ckpt: dict[str, dict[str, float]] = {}
-        if eval_store:
-            for eval_run in eval_store.list_runs():
-                if eval_run.checkpoint_path and eval_run.scores:
-                    existing = eval_by_ckpt.get(eval_run.checkpoint_path, {})
-                    for bench, score in eval_run.scores.items():
-                        if bench not in existing or score > existing[bench]:
-                            existing[bench] = score
-                    eval_by_ckpt[eval_run.checkpoint_path] = existing
+        # Pre-compute eval scores (cached per registry instance)
+        registry_id = id(registry)
+        if registry_id not in _eval_index_cache:
+            _eval_index_cache[registry_id] = _build_eval_index(registry.get_eval_store())
+        eval_by_ckpt = _eval_index_cache[registry_id]
 
         result = []
         for run in runs:

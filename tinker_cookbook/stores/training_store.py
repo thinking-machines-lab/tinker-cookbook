@@ -63,6 +63,7 @@ class TrainingRunStore(BaseStore):
         self._timing: IncrementalReader | None = None
         self._config: Any = _UNSET
         self._checkpoints: Any = _UNSET
+        self._checkpoints_size: int = -1  # File size at last read, for invalidation
         self._rollout_cache: dict[str, list[dict[str, Any]]] = {}
 
     def url(self, path: str = "") -> str:
@@ -165,12 +166,25 @@ class TrainingRunStore(BaseStore):
                 return r
         return None
 
+    def read_rollouts_by_group(
+        self, iteration: int, group_idx: int, base_name: str = "train"
+    ) -> list[dict[str, Any]]:
+        """Return all rollouts for a specific group index."""
+        return [
+            r for r in self.read_rollouts(iteration, base_name) if r.get("group_idx") == group_idx
+        ]
+
     # ── Checkpoints (typed) ───────────────────────────────────────────
 
     def read_checkpoints(self) -> list[dict[str, Any]]:
-        """Read checkpoints.jsonl (cached after first read)."""
+        """Read checkpoints.jsonl (cached, invalidated when file size changes)."""
         if self._checkpoints is not _UNSET:
-            return self._checkpoints
+            stat = self.storage.stat(self._path("checkpoints.jsonl"))
+            current_size = stat.size if stat else 0
+            if current_size == self._checkpoints_size:
+                return self._checkpoints
+        stat = self.storage.stat(self._path("checkpoints.jsonl"))
+        self._checkpoints_size = stat.size if stat else 0
         self._checkpoints = self._read_jsonl("checkpoints.jsonl")
         return self._checkpoints
 

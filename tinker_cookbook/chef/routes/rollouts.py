@@ -26,6 +26,8 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
         tag: str | None = Query(None),
         min_reward: float | None = Query(None),
         max_reward: float | None = Query(None),
+        limit: int | None = Query(None, description="Max rollouts to return"),
+        offset: int = Query(0, description="Number of rollouts to skip"),
         source: list[str] = Query(default=[]),
     ) -> dict[str, Any]:
         registry = resolve_registry(source)
@@ -64,11 +66,17 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
             for r in filtered
         ]
 
+        total = len(summaries)
+        if offset:
+            summaries = summaries[offset:]
+        if limit is not None:
+            summaries = summaries[:limit]
+
         return {
             "run_id": run_id,
             "iteration": iteration,
             "split": split,
-            "total": len(summaries),
+            "total": total,
             "available_tags": sorted(all_tags),
             "rollouts": summaries,
         }
@@ -109,8 +117,9 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
         registry = resolve_registry(source)
         require_run(registry, run_id)
         base_name = _to_base_name(split, label)
-        all_rollouts = registry.get_training_store(run_id).read_rollouts(iteration, base_name)
-        group = [r for r in all_rollouts if r.get("group_idx") == group_idx]
+        group = registry.get_training_store(run_id).read_rollouts_by_group(
+            iteration, group_idx, base_name
+        )
         return {
             "run_id": run_id,
             "iteration": iteration,

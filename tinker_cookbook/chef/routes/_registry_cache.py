@@ -8,6 +8,8 @@ from tinker_cookbook.stores.storage import LocalStorage, Storage, storage_from_u
 
 logger = logging.getLogger(__name__)
 
+_MAX_CACHED_REGISTRIES = 20
+
 _cache: dict[frozenset[str], tuple[RunRegistry, float]] = {}
 _default_registry: RunRegistry | None = None
 _default_sources: list[Storage] = []
@@ -40,19 +42,32 @@ def get_registry(sources: list[str] | None = None) -> RunRegistry:
     registry = RunRegistry(storages)
     registry.refresh()
     _cache[key] = (registry, time.time())
+
+    # Evict oldest entries when cache grows too large
+    if len(_cache) > _MAX_CACHED_REGISTRIES:
+        oldest_key = min(_cache, key=lambda k: _cache[k][1])
+        del _cache[oldest_key]
+
     return registry
 
 
 def refresh_registry(sources: list[str] | None = None) -> int:
-    """Refresh the registry for the given sources. Returns run count."""
+    """Refresh the registry for the given sources. Returns run count.
+
+    Also invalidates any per-registry caches (e.g., eval index in runs.py).
+    """
+    from tinker_cookbook.chef.routes.runs import _eval_index_cache
+
     if not sources:
         if _default_registry is None:
             raise RuntimeError("Registry not initialized")
+        _eval_index_cache.pop(id(_default_registry), None)
         runs = _default_registry.refresh()
         return len(runs)
 
     key = frozenset(sources)
     if key in _cache:
+        _eval_index_cache.pop(id(_cache[key][0]), None)
         runs = _cache[key][0].refresh()
         return len(runs)
 

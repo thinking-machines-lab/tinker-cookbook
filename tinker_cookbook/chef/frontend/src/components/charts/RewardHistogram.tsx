@@ -24,21 +24,21 @@ function computeBins(rewards: number[], numBins: number): BinData[] {
   if (rewards.length === 0) return [];
   const min = Math.min(...rewards);
   const max = Math.max(...rewards);
-  // Handle edge case where all rewards are the same
   if (min === max) {
     return [{ label: min.toFixed(2), count: rewards.length, min, max: max + 0.01 }];
   }
   const binWidth = (max - min) / numBins;
+  // Initialize bins
   const bins: BinData[] = [];
   for (let i = 0; i < numBins; i++) {
     const lo = min + i * binWidth;
     const hi = i === numBins - 1 ? max + 0.001 : min + (i + 1) * binWidth;
-    bins.push({
-      label: lo.toFixed(2),
-      count: rewards.filter((r) => r >= lo && r < hi).length,
-      min: lo,
-      max: hi,
-    });
+    bins.push({ label: lo.toFixed(2), count: 0, min: lo, max: hi });
+  }
+  // Single pass: assign each reward to its bin
+  for (const r of rewards) {
+    const idx = Math.min(Math.floor((r - min) / binWidth), numBins - 1);
+    bins[idx].count++;
   }
   return bins;
 }
