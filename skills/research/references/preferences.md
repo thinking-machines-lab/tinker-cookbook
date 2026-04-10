@@ -1,11 +1,4 @@
----
-name: preferences
-description: Set up and run preference-based training — DPO (Direct Preference Optimization) and RLHF (RL from Human Feedback) pipelines using the Tinker API. Use when the user wants to train with preference data, chosen/rejected pairs, DPO, reward models, RLHF, or human feedback alignment.
----
-
-# Preference-Based Training
-
-DPO and RLHF for aligning models with human preferences.
+# Preferences Reference — DPO and RLHF
 
 ## DPO (Direct Preference Optimization)
 
@@ -25,7 +18,7 @@ DPO directly optimizes a policy from preference pairs without a separate reward 
 
 All from `tinker_cookbook.recipes.preference.datasets`.
 
-### Minimal DPO example
+### Complete DPO example
 
 ```python
 import chz
@@ -119,6 +112,8 @@ class MyComparisonBuilder(ComparisonBuilder):
         ]
 ```
 
+---
+
 ## RLHF Pipeline
 
 Full 3-stage pipeline: SFT -> Reward Model -> RL.
@@ -142,7 +137,7 @@ rm_ckpt = checkpoint_utils.get_last_checkpoint(rm_log_path)
 - `PreferenceModelBuilderFromChatRenderer` — Wraps trained RM for use as RL reward
 - `PairwisePreferenceRLDatasetBuilder` — Creates RL environment from preference data + RM
 
-### Minimal RLHF example
+### Complete RLHF example
 
 ```python
 import asyncio
@@ -246,17 +241,33 @@ if __name__ == "__main__":
     cli_main(cli_config)
 ```
 
+---
+
+## DPO datasets
+
+```python
+from tinker_cookbook.preference.dpo_datasets import DPODatasetBuilderFromComparisons
+
+dataset = DPODatasetBuilderFromComparisons(
+    common_config=common_config,
+    comparison_builder=HHHComparisonBuilder(),
+)
+```
+
+The `DPODatasetBuilderFromComparisons` wraps a `ComparisonBuilder` (which produces chosen/rejected conversation pairs) into a format suitable for `train_dpo.Config`.
+
+---
+
 ## Common pitfalls
 
-- **Sequential API calls**: In custom DPO/RLHF loops, always use `_async` variants and overlap GPU work with data prep. Sequential `.result()` chains waste GPU cycles. The built-in training loops already handle this, but custom evaluation or reward scoring code should use `asyncio.gather()` for concurrent execution.
-- **Sampler desync**: After saving weights between RLHF stages, create a **new** SamplingClient. A stale client silently uses old weights — especially dangerous when chaining SFT -> RM -> RL.
 - **DPO beta**: Start with 0.1 — well-tested default
 - **DPO LR**: Should be lower than SFT (1e-5 vs 2e-4)
 - **DPO from SFT**: Works best from an SFT checkpoint, not raw base model
 - **RLHF RL LR**: Must be much lower than SFT (1e-5 vs 2e-4)
 - **RLHF checkpoints**: Flow between stages — SFT state -> RL init, RM sampler -> RL reward
-- **RM quality**: Validate RM before running Stage 3
+- **RM quality**: Validate RM accuracy before running Stage 3
 - **Preference data quality**: Matters more than quantity
+- **Sampler desync**: After saving weights between stages, create a new SamplingClient
 
 ## Code references
 
