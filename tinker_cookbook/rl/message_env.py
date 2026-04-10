@@ -128,10 +128,26 @@ class EnvFromMessageEnv(types.Env):
         assistant_message, parse_success = self.renderer.parse_response(action)
 
         if not parse_success:
+            if self.terminate_on_parse_error:
+                return types.StepResult(
+                    reward=self.failed_parse_reward,
+                    episode_done=True,
+                    next_observation=tinker.ModelInput.empty(),
+                    next_stop_condition=self._base_stop_condition,
+                    metrics={"parse_error": 1.0},
+                )
+            # Continue the episode — re-render the current conversation so the
+            # model gets a valid prompt on the next turn instead of empty input.
+            # Use the message_env's history if available, otherwise fall back to
+            # initial_observation (which returns current state for most impls).
+            history = getattr(self.message_env, "history", None)
+            if history is None:
+                history = await self.message_env.initial_observation()
+            next_observation = await self._render_in_thread(history)
             return types.StepResult(
-                reward=self.failed_parse_reward,
-                episode_done=self.terminate_on_parse_error,
-                next_observation=tinker.ModelInput.empty(),
+                reward=0.0,
+                episode_done=False,
+                next_observation=next_observation,
                 next_stop_condition=self._base_stop_condition,
                 metrics={"parse_error": 1.0},
             )
