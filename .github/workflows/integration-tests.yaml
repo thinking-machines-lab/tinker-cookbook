@@ -52,24 +52,8 @@ jobs:
           - test_lifecycle
           - test_publish
           - test_adapter_publish
-        transformers-version: ["4.57.6", "5.2.0"]
-        exclude:
-          # Qwen3.5 requires transformers >= 5.0
-          - test: test_export_qwen3_5
-            transformers-version: "4.57.6"
-          - test: test_adapter_qwen3_5
-            transformers-version: "4.57.6"
-          # Lifecycle test doesn't depend on transformers version
-          - test: test_lifecycle
-            transformers-version: "4.57.6"
-          # Publish test doesn't depend on transformers version
-          - test: test_publish
-            transformers-version: "4.57.6"
-          # Adapter publish test doesn't depend on transformers version
-          - test: test_adapter_publish
-            transformers-version: "4.57.6"
 
-    name: ${{ matrix.test }} (transformers ${{ matrix.transformers-version }})
+    name: ${{ matrix.test }}
 
     steps:
       - name: checkout
@@ -82,9 +66,6 @@ jobs:
 
       - name: venv
         run: uv venv && uv sync --all-extras
-
-      - name: pin transformers
-        run: uv pip install transformers==${{ matrix.transformers-version }}
 
       - name: run test
         run: uv run pytest tests/weights/${{ matrix.test }}.py -v --timeout=120

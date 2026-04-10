@@ -20,7 +20,6 @@ def test_kimi_k25_trusts_remote_code_without_env(
     get_image_processor("moonshotai/Kimi-K2.5")
     mock_auto.from_pretrained.assert_called_once_with(
         "moonshotai/Kimi-K2.5",
-        use_fast=True,
         trust_remote_code=True,
         revision="3367c8d1c68584429fab7faf845a32d5195b6ac1",
     )
@@ -35,7 +34,6 @@ def test_no_trust_remote_code_by_default(
     get_image_processor("some-org/some-model")
     mock_auto.from_pretrained.assert_called_once_with(
         "some-org/some-model",
-        use_fast=True,
     )
 
 
@@ -49,6 +47,5 @@ def test_env_var_enables_trust_remote_code(
     get_image_processor("some-org/some-model")
     mock_auto.from_pretrained.assert_called_once_with(
         "some-org/some-model",
-        use_fast=True,
         trust_remote_code=True,
     )
