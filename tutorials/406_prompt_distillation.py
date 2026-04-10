@@ -141,7 +141,23 @@ def _():
 
 
 @app.cell
-async def _(CLASSIFICATION_PROMPT, SENTENCES, get_tokenizer, re, renderers, tinker, types):
+def _(mo):
+    api_key = mo.ui.text(kind="password", label="Paste your Tinker API key")
+    api_key
+    return (api_key,)
+
+@app.cell
+async def _(CLASSIFICATION_PROMPT, SENTENCES, api_key, get_tokenizer, mo, re, renderers, tinker, types):
+    import os
+
+    mo.stop(
+        "TINKER_API_KEY" not in os.environ and not api_key.value,
+        "Paste your API key above",
+    )
+
+    if api_key.value:
+        os.environ["TINKER_API_KEY"] = api_key.value
+
     MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
     tokenizer = get_tokenizer(MODEL_NAME)
     renderer = renderers.get_renderer("qwen3", tokenizer)

@@ -98,6 +98,12 @@ def _(mo):
 
 
 @app.cell
+def _(mo):
+    api_key = mo.ui.text(kind="password", label="Paste your Tinker API key")
+    api_key
+    return (api_key,)
+
+@app.cell
 def _(
     BASE_MODEL,
     BATCH_SIZE,
@@ -105,9 +111,21 @@ def _(
     LORA_RANK,
     MAX_LENGTH,
     TrainOnWhat,
+    api_key,
     asyncio,
+    mo,
     renderer_name,
 ):
+    import os
+
+    mo.stop(
+        "TINKER_API_KEY" not in os.environ and not api_key.value,
+        "Paste your API key above",
+    )
+
+    if api_key.value:
+        os.environ["TINKER_API_KEY"] = api_key.value
+
     from tinker_cookbook.recipes.chat_sl.chat_datasets import NoRobotsBuilder
     from tinker_cookbook.supervised import train as supervised_train
     from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig

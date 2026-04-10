@@ -6,9 +6,11 @@ app = marimo.App()
 
 @app.cell
 def _():
+    import os
+
     import marimo as mo
 
-    return (mo,)
+    return mo, os
 
 
 @app.cell(hide_code=True)
@@ -44,12 +46,26 @@ def _(mo):
 
 
 @app.cell
-async def _():
+def _(mo):
+    api_key = mo.ui.text(kind="password", label="Paste your Tinker API key")
+    api_key
+    return (api_key,)
+
+@app.cell
+async def _(api_key, mo, os):
     import tinker
 
     from tinker_cookbook import renderers
     from tinker_cookbook.supervised.data import conversation_to_datum
     from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+    mo.stop(
+        "TINKER_API_KEY" not in os.environ and not api_key.value,
+        "Paste your API key above",
+    )
+
+    if api_key.value:
+        os.environ["TINKER_API_KEY"] = api_key.value
 
     BASE_MODEL = "Qwen/Qwen3.5-4B"
 
@@ -136,8 +152,7 @@ def _(mo):
 
 
 @app.cell
-def _(OUTPUT_PATH):
-    import os
+def _(OUTPUT_PATH, os):
 
     for _f in sorted(os.listdir(OUTPUT_PATH)):
         _size_mb = os.path.getsize(os.path.join(OUTPUT_PATH, _f)) / 1e6

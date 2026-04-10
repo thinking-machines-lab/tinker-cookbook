@@ -93,7 +93,23 @@ def _(mo):
 
 
 @app.cell
-async def _(TensorData, get_renderer, tinker, torch):
+def _(mo):
+    api_key = mo.ui.text(kind="password", label="Paste your Tinker API key")
+    api_key
+    return (api_key,)
+
+@app.cell
+async def _(TensorData, api_key, get_renderer, mo, tinker, torch):
+    import os
+
+    mo.stop(
+        "TINKER_API_KEY" not in os.environ and not api_key.value,
+        "Paste your API key above",
+    )
+
+    if api_key.value:
+        os.environ["TINKER_API_KEY"] = api_key.value
+
     MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
 
     service_client = tinker.ServiceClient()

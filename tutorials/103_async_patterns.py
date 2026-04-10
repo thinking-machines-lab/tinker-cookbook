@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.0"
 app = marimo.App()
 
 
@@ -48,16 +48,37 @@ def _(mo):
 
 
 @app.cell
-async def _(get_renderer, tinker):
+def _(mo):
+    api_key = mo.ui.text(kind="password", label="Paste your Tinker API key")
+    api_key
+    return (api_key,)
+
+
+@app.cell
+async def _(api_key, get_renderer, mo, tinker):
+    import os
+
+    mo.stop(
+        "TINKER_API_KEY" not in os.environ and not api_key.value,
+        "Paste your API key above",
+    )
+
+    if api_key.value:
+        os.environ["TINKER_API_KEY"] = api_key.value
+
     BASE_MODEL = "Qwen/Qwen3.5-4B"
 
     service_client = tinker.ServiceClient()
-    sampling_client = await service_client.create_sampling_client_async(base_model=BASE_MODEL)
+    sampling_client = await service_client.create_sampling_client_async(
+        base_model=BASE_MODEL
+    )
     tokenizer = sampling_client.get_tokenizer()
     renderer = get_renderer("qwen3_5", tokenizer)
 
     stop_sequences = renderer.get_stop_sequences()
-    params = tinker.SamplingParams(max_tokens=150, temperature=0.7, stop=stop_sequences)
+    params = tinker.SamplingParams(
+        max_tokens=150, temperature=0.7, stop=stop_sequences
+    )
 
     # A diverse set of prompts to sample from
     prompts = [
@@ -87,7 +108,14 @@ def _(mo):
 
 
 @app.cell
-async def _(get_text_content, params, prompts, renderer, sampling_client, time):
+async def _(
+    get_text_content,
+    params,
+    prompts,
+    renderer,
+    sampling_client,
+    time,
+):
     _start = time.time()
     sequential_results = []
     for _prompt_text in prompts:
@@ -122,6 +150,7 @@ def _(mo):
 
 @app.cell
 async def _(
+    asyncio,
     get_text_content,
     params,
     prompts,
@@ -130,8 +159,6 @@ async def _(
     sequential_time,
     time,
 ):
-    import asyncio
-
     _start = time.time()
 
     # Step 1: Submit ALL requests concurrently using asyncio.gather
@@ -209,7 +236,14 @@ def _(mo):
 
 
 @app.cell
-async def _(get_text_content, params, prompts, renderer, sampling_client, time):
+async def _(
+    get_text_content,
+    params,
+    prompts,
+    renderer,
+    sampling_client,
+    time,
+):
     import asyncio
 
     _GROUP_SIZE = 4
@@ -238,7 +272,7 @@ async def _(get_text_content, params, prompts, renderer, sampling_client, time):
     batch_time = time.time() - _start
     print(f"Total: {total_completions} completions in {batch_time:.1f}s")
     print(f"Throughput: {total_completions / batch_time:.1f} completions/second")
-    return
+    return (asyncio,)
 
 
 @app.cell(hide_code=True)

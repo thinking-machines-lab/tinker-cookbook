@@ -209,6 +209,12 @@ def _(mo):
 
 
 @app.cell
+def _(mo):
+    api_key = mo.ui.text(kind="password", label="Paste your Tinker API key")
+    api_key
+    return (api_key,)
+
+@app.cell
 async def _(
     GROUP_SIZE,
     MODEL_NAME,
@@ -216,11 +222,23 @@ async def _(
     ProblemGroupBuilder,
     TinkerTokenCompleter,
     TrajectoryGroup,
+    api_key,
     do_group_rollout,
+    mo,
     partial,
     renderer,
     tinker,
 ):
+    import os
+
+    mo.stop(
+        "TINKER_API_KEY" not in os.environ and not api_key.value,
+        "Paste your API key above",
+    )
+
+    if api_key.value:
+        os.environ["TINKER_API_KEY"] = api_key.value
+
     LORA_RANK = 32
     MAX_TOKENS = 512
     service_client = tinker.ServiceClient()
