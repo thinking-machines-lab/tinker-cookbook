@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter, Query
 
 from tinker_cookbook.chef.routes._registry_cache import (

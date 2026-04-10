@@ -47,15 +47,19 @@ def fixture_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     # Metrics (50 steps)
     metrics_lines = []
     for step in range(50):
-        metrics_lines.append(json.dumps({
-            "step": step,
-            "train_mean_nll": 2.5 - step * 0.03,
-            "env/all/reward/total": min(1.0, step * 0.02),
-            "env/all/turns_per_episode": 3 + step * 0.05,
-            "optim/kl_sample_train_v1": 0.01 + step * 0.001,
-            "time/forward_backward": 1.0 + (step % 5) * 0.1,
-            "time/policy_sample": 0.5 + (step % 3) * 0.05,
-        }))
+        metrics_lines.append(
+            json.dumps(
+                {
+                    "step": step,
+                    "train_mean_nll": 2.5 - step * 0.03,
+                    "env/all/reward/total": min(1.0, step * 0.02),
+                    "env/all/turns_per_episode": 3 + step * 0.05,
+                    "optim/kl_sample_train_v1": 0.01 + step * 0.001,
+                    "time/forward_backward": 1.0 + (step % 5) * 0.1,
+                    "time/policy_sample": 0.5 + (step % 3) * 0.05,
+                }
+            )
+        )
     (run_dir / "metrics.jsonl").write_text("\n".join(metrics_lines) + "\n")
 
     # Checkpoints
@@ -73,15 +77,29 @@ def fixture_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     # Timing spans with concurrency
     timing_lines = []
     for step in range(5):
-        timing_lines.append(json.dumps({
-            "step": step,
-            "spans": [
-                {"name": "forward_backward", "duration": 1.5, "wall_start": 0.0, "wall_end": 1.5},
-                {"name": "policy_sample", "duration": 0.8, "wall_start": 0.0, "wall_end": 0.8},
-                {"name": "env_step", "duration": 0.6, "wall_start": 0.2, "wall_end": 0.8},
-                {"name": "optim_step", "duration": 0.5, "wall_start": 1.5, "wall_end": 2.0},
-            ],
-        }))
+        timing_lines.append(
+            json.dumps(
+                {
+                    "step": step,
+                    "spans": [
+                        {
+                            "name": "forward_backward",
+                            "duration": 1.5,
+                            "wall_start": 0.0,
+                            "wall_end": 1.5,
+                        },
+                        {
+                            "name": "policy_sample",
+                            "duration": 0.8,
+                            "wall_start": 0.0,
+                            "wall_end": 0.8,
+                        },
+                        {"name": "env_step", "duration": 0.6, "wall_start": 0.2, "wall_end": 0.8},
+                        {"name": "optim_step", "duration": 0.5, "wall_start": 1.5, "wall_end": 2.0},
+                    ],
+                }
+            )
+        )
     (run_dir / "timing_spans.jsonl").write_text("\n".join(timing_lines) + "\n")
 
     # Iteration directories with rollouts and logtree
@@ -93,22 +111,41 @@ def fixture_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
         for group_idx in range(2):
             for traj_idx in range(3):
                 reward = 0.0 if iteration == 0 else (group_idx + traj_idx) * 0.2 + iteration * 0.01
-                rollouts.append({
-                    "schema_version": 1, "split": "train", "iteration": iteration,
-                    "group_idx": group_idx, "traj_idx": traj_idx,
-                    "tags": ["math", "gsm8k"] if group_idx == 0 else ["code", "mbpp"],
-                    "sampling_client_step": iteration,
-                    "total_reward": reward,
-                    "final_reward": reward * 0.5,
-                    "trajectory_metrics": {},
-                    "steps": [
-                        {"step_idx": 0, "ob_len": 128, "ac_len": 45, "reward": 0.0,
-                         "episode_done": False, "metrics": {"step_time": 0.5}, "logs": {}},
-                        {"step_idx": 1, "ob_len": 200, "ac_len": 60, "reward": reward,
-                         "episode_done": True, "metrics": {"step_time": 0.3}, "logs": {}},
-                    ],
-                    "final_ob_len": 350,
-                })
+                rollouts.append(
+                    {
+                        "schema_version": 1,
+                        "split": "train",
+                        "iteration": iteration,
+                        "group_idx": group_idx,
+                        "traj_idx": traj_idx,
+                        "tags": ["math", "gsm8k"] if group_idx == 0 else ["code", "mbpp"],
+                        "sampling_client_step": iteration,
+                        "total_reward": reward,
+                        "final_reward": reward * 0.5,
+                        "trajectory_metrics": {},
+                        "steps": [
+                            {
+                                "step_idx": 0,
+                                "ob_len": 128,
+                                "ac_len": 45,
+                                "reward": 0.0,
+                                "episode_done": False,
+                                "metrics": {"step_time": 0.5},
+                                "logs": {},
+                            },
+                            {
+                                "step_idx": 1,
+                                "ob_len": 200,
+                                "ac_len": 60,
+                                "reward": reward,
+                                "episode_done": True,
+                                "metrics": {"step_time": 0.3},
+                                "logs": {},
+                            },
+                        ],
+                        "final_ob_len": 350,
+                    }
+                )
         (iter_dir / "train_rollout_summaries.jsonl").write_text(
             "\n".join(json.dumps(r) for r in rollouts) + "\n"
         )
@@ -117,12 +154,16 @@ def fixture_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
             "title": f"RL Iteration {iteration}",
             "started_at": "2024-04-04T12:34:56",
             "root": {
-                "tag": "div", "attrs": {"class": "lt-root"},
+                "tag": "div",
+                "attrs": {"class": "lt-root"},
                 "children": [],
-                "data": {"type": "conversation", "messages": [
-                    {"role": "user", "content": f"Solve: What is {iteration}*2?"},
-                    {"role": "assistant", "content": f"The answer is {iteration*2}."},
-                ]},
+                "data": {
+                    "type": "conversation",
+                    "messages": [
+                        {"role": "user", "content": f"Solve: What is {iteration}*2?"},
+                        {"role": "assistant", "content": f"The answer is {iteration * 2}."},
+                    ],
+                },
             },
         }
         (iter_dir / "train_logtree.json").write_text(json.dumps(logtree))
@@ -139,10 +180,15 @@ def server(fixture_dir: Path):
 
     proc = subprocess.Popen(
         [
-            sys.executable, "-m", "tinker_cookbook.chef.cli",
-            "serve", str(fixture_dir),
-            "--port", str(TEST_PORT),
-            "--log-level", "warning",
+            sys.executable,
+            "-m",
+            "tinker_cookbook.chef.cli",
+            "serve",
+            str(fixture_dir),
+            "--port",
+            str(TEST_PORT),
+            "--log-level",
+            "warning",
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -153,6 +199,7 @@ def server(fixture_dir: Path):
     for _ in range(30):
         try:
             import urllib.request
+
             urllib.request.urlopen(f"{BASE_URL}/api/runs", timeout=1)
             break
         except Exception:

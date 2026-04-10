@@ -43,7 +43,9 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
         return sorted(store.metric_keys())
 
     @router.get("/{run_id}/metrics/stream")
-    async def stream_metrics(run_id: str, request: Request, source: list[str] = Query(default=[])) -> StreamingResponse:
+    async def stream_metrics(
+        run_id: str, request: Request, source: list[str] = Query(default=[])
+    ) -> StreamingResponse:
         registry = resolve_registry(source)
         require_run(registry, run_id)
         store = registry.get_training_store(run_id)
@@ -72,7 +74,11 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
         return StreamingResponse(
             event_generator(),
             media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
         )
 
     return router
@@ -81,8 +87,6 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
 def _filter_record(record: dict[str, Any], patterns: list[str]) -> dict[str, Any]:
     filtered: dict[str, Any] = {}
     for key, value in record.items():
-        if key == "step":
-            filtered[key] = value
-        elif any(fnmatch(key, p) for p in patterns):
+        if key == "step" or any(fnmatch(key, p) for p in patterns):
             filtered[key] = value
     return filtered

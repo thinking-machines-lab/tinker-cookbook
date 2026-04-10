@@ -2,7 +2,6 @@
 
 import logging
 import time
-from typing import Any
 
 from tinker_cookbook.stores import RunRegistry
 from tinker_cookbook.stores.storage import LocalStorage, Storage, storage_from_uri
@@ -66,8 +65,10 @@ def get_default_sources() -> list[dict[str, str]]:
     """Return the startup sources for UI defaults."""
     result = []
     for s in _default_sources:
-        result.append({
-            "url": s.url(),
-            "type": "local" if isinstance(s, LocalStorage) else "cloud",
-        })
+        result.append(
+            {
+                "url": s.url(),
+                "type": "local" if isinstance(s, LocalStorage) else "cloud",
+            }
+        )
     return result

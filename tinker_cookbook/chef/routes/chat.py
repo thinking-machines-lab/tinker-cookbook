@@ -15,10 +15,9 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
-
-from tinker_cookbook.chef.routes._helpers import require_run
 from pydantic import BaseModel, field_validator
 
+from tinker_cookbook.chef.routes._helpers import require_run
 from tinker_cookbook.stores import RunRegistry
 from tinker_cookbook.stores.chat_session_store import ChatSession, ChatSessionStore
 
@@ -90,13 +89,17 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
         return {"chat": has_api_key()}
 
     @router.get("/runs/{run_id}/chat-sessions")
-    def list_chat_sessions(run_id: str, source: list[str] = Query(default=[])) -> list[dict[str, Any]]:
+    def list_chat_sessions(
+        run_id: str, source: list[str] = Query(default=[])
+    ) -> list[dict[str, Any]]:
         registry = resolve_registry(source)
         require_run(registry, run_id)
         return _get_session_store(registry, run_id).list_summaries()
 
     @router.get("/runs/{run_id}/chat-sessions/{session_id}")
-    def get_chat_session(run_id: str, session_id: str, source: list[str] = Query(default=[])) -> dict[str, Any]:
+    def get_chat_session(
+        run_id: str, session_id: str, source: list[str] = Query(default=[])
+    ) -> dict[str, Any]:
         registry = resolve_registry(source)
         session = _get_session_store(registry, run_id).load(session_id)
         if session is None:
@@ -104,12 +107,14 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
         return session.model_dump()
 
     @router.post("/runs/{run_id}/chat")
-    async def chat_completion(run_id: str, body: ChatRequest, source: list[str] = Query(default=[])) -> StreamingResponse:
+    async def chat_completion(
+        run_id: str, body: ChatRequest, source: list[str] = Query(default=[])
+    ) -> StreamingResponse:
         if not has_api_key():
             raise HTTPException(status_code=503, detail="Interactive chat requires TINKER_API_KEY")
 
         registry = resolve_registry(source)
-        run = require_run(registry, run_id)
+        require_run(registry, run_id)
 
         store = registry.get_training_store(run_id)
         config = store.read_config()
@@ -117,7 +122,9 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
 
         ckpt = next((c for c in checkpoints if c.get("name") == body.checkpoint_name), None)
         if ckpt is None:
-            raise HTTPException(status_code=404, detail=f"Checkpoint '{body.checkpoint_name}' not found")
+            raise HTTPException(
+                status_code=404, detail=f"Checkpoint '{body.checkpoint_name}' not found"
+            )
 
         sampler_path = ckpt.get("sampler_path")
         if not sampler_path:
@@ -134,9 +141,14 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
         async def event_stream():
             try:
                 import tinker
+
                 from tinker_cookbook.model_info import get_recommended_renderer_name
                 from tinker_cookbook.renderers import get_renderer
-                from tinker_cookbook.renderers.base import Message, message_to_jsonable, get_text_content
+                from tinker_cookbook.renderers.base import (
+                    Message,
+                    get_text_content,
+                    message_to_jsonable,
+                )
                 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
                 cache_key = f"{run_id}:{body.checkpoint_name}"
@@ -148,7 +160,9 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
                 if need_load:
                     yield f"data: {json.dumps({'status': 'Loading model and checkpoint...'})}\n\n"
                     tokenizer = get_tokenizer(model_name)
-                    renderer_name = config.get("renderer_name") or get_recommended_renderer_name(model_name)
+                    renderer_name = config.get("renderer_name") or get_recommended_renderer_name(
+                        model_name
+                    )
                     renderer = get_renderer(renderer_name, tokenizer, model_name=model_name)
                     service = tinker.ServiceClient()
                     tc = await service.create_lora_training_client_async(
@@ -168,9 +182,12 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
                 messages = [Message(role=m["role"], content=m["content"]) for m in body.messages]
                 model_input = renderer.build_generation_prompt(messages)
                 sampling_params = tinker.SamplingParams(
-                    max_tokens=body.max_tokens, temperature=body.temperature,
+                    max_tokens=body.max_tokens,
+                    temperature=body.temperature,
                 )
-                result = await sc.sample_async(model_input, num_samples=1, sampling_params=sampling_params)
+                result = await sc.sample_async(
+                    model_input, num_samples=1, sampling_params=sampling_params
+                )
 
                 tokens = result.sequences[0].tokens if result.sequences else []
                 response_msg, _ = renderer.parse_response(tokens)

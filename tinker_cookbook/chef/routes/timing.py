@@ -39,12 +39,15 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
         require_run(registry, run_id)
         spans = _flatten_spans(
             registry.get_training_store(run_id).read_timing(),
-            step_start=step_start, step_end=step_end,
+            step_start=step_start,
+            step_end=step_end,
         )
         return {"run_id": run_id, "total_spans": len(spans), "spans": spans}
 
     @router.get("/{run_id}/timing/concurrency/{step}")
-    def get_concurrency(run_id: str, step: int, source: list[str] = Query(default=[])) -> dict[str, Any]:
+    def get_concurrency(
+        run_id: str, step: int, source: list[str] = Query(default=[])
+    ) -> dict[str, Any]:
         registry = resolve_registry(source)
         require_run(registry, run_id)
         spans = _flatten_spans(registry.get_training_store(run_id).read_timing(), step=step)
@@ -68,7 +71,9 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
         return {"step": step, "spans": sorted_spans, "max_concurrency": max_c, "timeline": timeline}
 
     @router.get("/{run_id}/timing/tree/{step}")
-    def get_timing_tree(run_id: str, step: int, source: list[str] = Query(default=[])) -> dict[str, Any]:
+    def get_timing_tree(
+        run_id: str, step: int, source: list[str] = Query(default=[])
+    ) -> dict[str, Any]:
         registry = resolve_registry(source)
         require_run(registry, run_id)
         spans = _flatten_spans(registry.get_training_store(run_id).read_timing(), step=step)
@@ -77,11 +82,16 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
         sorted_spans = sorted(spans, key=lambda s: (s.get("wall_start", 0), -s.get("duration", 0)))
         nodes: list[dict[str, Any]] = []
         for s in sorted_spans:
-            nodes.append({
-                "name": s.get("name", "?"), "duration": s.get("duration", 0),
-                "wall_start": s.get("wall_start", 0), "wall_end": s.get("wall_end", 0),
-                "attributes": s.get("attributes", {}), "children": [],
-            })
+            nodes.append(
+                {
+                    "name": s.get("name", "?"),
+                    "duration": s.get("duration", 0),
+                    "wall_start": s.get("wall_start", 0),
+                    "wall_end": s.get("wall_end", 0),
+                    "attributes": s.get("attributes", {}),
+                    "children": [],
+                }
+            )
         EPS = 0.01
 
         grouped_spans: dict[int, list[dict[str, Any]]] = {}
@@ -119,7 +129,10 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
 
             def find_parent(children: list[dict[str, Any]]) -> dict[str, Any] | None:
                 for child in children:
-                    if child["wall_start"] <= group_start + EPS and child["wall_end"] >= group_end - EPS:
+                    if (
+                        child["wall_start"] <= group_start + EPS
+                        and child["wall_end"] >= group_end - EPS
+                    ):
                         deeper = find_parent(child.get("children", []))
                         return deeper if deeper else child
                 return None
@@ -131,7 +144,8 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
                 spans = sorted(grouped_spans[gidx], key=lambda s: (s["wall_start"], -s["duration"]))
                 group_node: dict[str, Any] = {
                     "name": f"group {gidx}",
-                    "duration": max(s["wall_end"] for s in spans) - min(s["wall_start"] for s in spans),
+                    "duration": max(s["wall_end"] for s in spans)
+                    - min(s["wall_start"] for s in spans),
                     "wall_start": min(s["wall_start"] for s in spans),
                     "wall_end": max(s["wall_end"] for s in spans),
                     "attributes": {"group_idx": gidx},
@@ -153,12 +167,15 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
         all_ends = [n["wall_end"] for n in nodes]
         total = max(all_ends) - min(all_starts) if all_starts else 0
         return {
-            "step": step, "total_duration": total,
+            "step": step,
+            "total_duration": total,
             "root": {
-                "name": "iteration", "duration": total,
+                "name": "iteration",
+                "duration": total,
                 "wall_start": min(all_starts) if all_starts else 0,
                 "wall_end": max(all_ends) if all_ends else 0,
-                "attributes": {}, "children": root_children,
+                "attributes": {},
+                "children": root_children,
             },
         }
 

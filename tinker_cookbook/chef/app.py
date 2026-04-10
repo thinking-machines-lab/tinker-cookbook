@@ -10,8 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from tinker_cookbook.chef.routes import chat, eval as eval_routes
-from tinker_cookbook.chef.routes import metrics, rollouts, runs, sources, timing
+from tinker_cookbook.chef.routes import chat, metrics, rollouts, runs, sources, timing
+from tinker_cookbook.chef.routes import eval as eval_routes
 from tinker_cookbook.chef.routes._registry_cache import get_registry, init_default
 from tinker_cookbook.stores import LocalStorage, RunRegistry
 from tinker_cookbook.stores.storage import Storage
@@ -54,7 +54,8 @@ def create_app(
         run_list = default_reg.get_runs()
         logger.info(
             "Tinker Chef started -- %d run(s) from %d source(s)",
-            len(run_list), default_reg.storage_count,
+            len(run_list),
+            default_reg.storage_count,
         )
         for run in run_list:
             logger.info("  Run '%s': %d iterations", run.run_id, run.iteration_count)
@@ -99,6 +100,7 @@ def create_app(
                 return FileResponse(str(static_file))
             return FileResponse(str(_STATIC_DIR / "index.html"))
     else:
+
         @app.get("/")
         async def no_frontend() -> dict[str, str]:
             return {"message": "Tinker Chef API is running.", "api_docs": "/docs"}

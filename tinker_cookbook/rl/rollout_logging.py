@@ -133,7 +133,9 @@ def serialize_rollout_summaries(
 
             # Determine trajectory status and stop reason
             last_transition = trajectory.transitions[-1] if trajectory.transitions else None
-            stop_reason = getattr(last_transition.ac, "stop_reason", None) if last_transition else None
+            stop_reason = (
+                getattr(last_transition.ac, "stop_reason", None) if last_transition else None
+            )
 
             # Check for errors matching this trajectory index
             traj_error = None

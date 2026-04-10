@@ -127,15 +127,17 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
                         step = ckpt.get("batch")
                         break
 
-            matched.append({
-                "eval_run_id": eval_run.run_id,
-                "checkpoint_name": eval_run.checkpoint_name,
-                "checkpoint_path": eval_run.checkpoint_path,
-                "step": step,
-                "scores": eval_run.scores,
-                "benchmarks": eval_run.benchmarks,
-                "timestamp": eval_run.timestamp,
-            })
+            matched.append(
+                {
+                    "eval_run_id": eval_run.run_id,
+                    "checkpoint_name": eval_run.checkpoint_name,
+                    "checkpoint_path": eval_run.checkpoint_path,
+                    "step": step,
+                    "scores": eval_run.scores,
+                    "benchmarks": eval_run.benchmarks,
+                    "timestamp": eval_run.timestamp,
+                }
+            )
 
         return sorted(matched, key=lambda x: x.get("step") or 0)
 

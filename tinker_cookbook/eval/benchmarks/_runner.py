@@ -86,7 +86,7 @@ def _trajectory_to_stored(
     idx: int,
     trajectory: Trajectory,
     benchmark_name: str,
-    renderer: "Renderer",
+    renderer: Renderer,
     time_seconds: float,
     example_id: str,
 ) -> StoredTrajectory:
@@ -164,7 +164,9 @@ def _last_assistant_content(turns: list[StoredTurn]) -> str:
                 return content
             # Structured content — extract text parts
             return "".join(
-                p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"
+                p.get("text", "")
+                for p in content
+                if isinstance(p, dict) and p.get("type") == "text"
             )
     return ""
 
@@ -1007,7 +1009,9 @@ def print_trajectory(traj: StoredTrajectory) -> None:
         )
         content = turn.content
         if isinstance(content, list):
-            content = "".join(p.get("text", p.get("thinking", "")) for p in content if isinstance(p, dict))
+            content = "".join(
+                p.get("text", p.get("thinking", "")) for p in content if isinstance(p, dict)
+            )
         if len(content) > 500:
             content = content[:500] + f"... ({len(content)} chars)"
         print(f"  {role_color} [{turn.role}] {content}")

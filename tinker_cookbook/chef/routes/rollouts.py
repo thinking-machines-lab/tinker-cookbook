@@ -19,7 +19,8 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
 
     @router.get("/{run_id}/iterations/{iteration}/rollouts")
     def get_rollouts(
-        run_id: str, iteration: int,
+        run_id: str,
+        iteration: int,
         split: str = Query("train"),
         label: str | None = Query(None),
         tag: str | None = Query(None),
@@ -47,39 +48,59 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
 
         summaries = [
             {
-                "group_idx": r.get("group_idx"), "traj_idx": r.get("traj_idx"),
-                "tags": r.get("tags", []), "total_reward": r.get("total_reward"),
-                "final_reward": r.get("final_reward"), "num_steps": len(r.get("steps", [])),
+                "group_idx": r.get("group_idx"),
+                "traj_idx": r.get("traj_idx"),
+                "tags": r.get("tags", []),
+                "total_reward": r.get("total_reward"),
+                "final_reward": r.get("final_reward"),
+                "num_steps": len(r.get("steps", [])),
                 "total_tokens": sum(s.get("ac_len", 0) for s in r.get("steps", [])),
-                "final_ob_len": r.get("final_ob_len"), "sampling_client_step": r.get("sampling_client_step"),
-                "status": r.get("status"), "error_type": r.get("error_type"),
+                "final_ob_len": r.get("final_ob_len"),
+                "sampling_client_step": r.get("sampling_client_step"),
+                "status": r.get("status"),
+                "error_type": r.get("error_type"),
                 "stop_reason": r.get("stop_reason"),
             }
             for r in filtered
         ]
 
         return {
-            "run_id": run_id, "iteration": iteration, "split": split,
-            "total": len(summaries), "available_tags": sorted(all_tags), "rollouts": summaries,
+            "run_id": run_id,
+            "iteration": iteration,
+            "split": split,
+            "total": len(summaries),
+            "available_tags": sorted(all_tags),
+            "rollouts": summaries,
         }
 
     @router.get("/{run_id}/iterations/{iteration}/rollouts/{group_idx}/{traj_idx}")
     def get_rollout_detail(
-        run_id: str, iteration: int, group_idx: int, traj_idx: int,
-        split: str = Query("train"), label: str | None = Query(None),
+        run_id: str,
+        iteration: int,
+        group_idx: int,
+        traj_idx: int,
+        split: str = Query("train"),
+        label: str | None = Query(None),
         source: list[str] = Query(default=[]),
     ) -> dict[str, Any]:
         registry = resolve_registry(source)
         require_run(registry, run_id)
         base_name = _to_base_name(split, label)
-        rollout = registry.get_training_store(run_id).read_single_rollout(iteration, group_idx, traj_idx, base_name)
+        rollout = registry.get_training_store(run_id).read_single_rollout(
+            iteration, group_idx, traj_idx, base_name
+        )
         if rollout is None:
-            raise HTTPException(status_code=404, detail=f"Rollout ({group_idx}, {traj_idx}) not found at iteration {iteration}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Rollout ({group_idx}, {traj_idx}) not found at iteration {iteration}",
+            )
         return rollout
 
     @router.get("/{run_id}/iterations/{iteration}/groups/{group_idx}")
     def get_group_rollouts(
-        run_id: str, iteration: int, group_idx: int,
+        run_id: str,
+        iteration: int,
+        group_idx: int,
         split: str = Query("train"),
         label: str | None = Query(None),
         source: list[str] = Query(default=[]),
@@ -91,20 +112,27 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
         all_rollouts = registry.get_training_store(run_id).read_rollouts(iteration, base_name)
         group = [r for r in all_rollouts if r.get("group_idx") == group_idx]
         return {
-            "run_id": run_id, "iteration": iteration, "group_idx": group_idx,
-            "total": len(group), "rollouts": group,
+            "run_id": run_id,
+            "iteration": iteration,
+            "group_idx": group_idx,
+            "total": len(group),
+            "rollouts": group,
         }
 
     @router.get("/{run_id}/iterations/{iteration}/logtree")
     def get_logtree(
-        run_id: str, iteration: int, base_name: str = Query("train"),
+        run_id: str,
+        iteration: int,
+        base_name: str = Query("train"),
         source: list[str] = Query(default=[]),
     ) -> dict[str, Any]:
         registry = resolve_registry(source)
         require_run(registry, run_id)
         logtree = registry.get_training_store(run_id).read_logtree(iteration, base_name)
         if logtree is None:
-            raise HTTPException(status_code=404, detail=f"Logtree not found for iteration {iteration}")
+            raise HTTPException(
+                status_code=404, detail=f"Logtree not found for iteration {iteration}"
+            )
         return logtree
 
     return router

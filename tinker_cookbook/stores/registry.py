@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from tinker_cookbook.stores.storage import Storage, storage_join
 from tinker_cookbook.stores.training_store import TrainingRunStore

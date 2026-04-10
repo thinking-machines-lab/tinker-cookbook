@@ -673,7 +673,9 @@ def _make_scope_wrapper(func: Callable[..., Any], name: str) -> Callable[..., An
                     try:
                         return await func(*args, **kwargs)
                     finally:
-                        window.record_span(name, t_start, time.perf_counter(), ctx.attributes or None)
+                        window.record_span(
+                            name, t_start, time.perf_counter(), ctx.attributes or None
+                        )
                         trace_context.reset(token)
                 return await func(*args, **kwargs)
 
@@ -699,7 +701,9 @@ def _make_scope_wrapper(func: Callable[..., Any], name: str) -> Callable[..., An
                 # Record into iteration window if active
                 window = _iteration_window.get(None)
                 if window is not None:
-                    window.record_span(name, t_start, time.perf_counter(), _get_current_attributes())
+                    window.record_span(
+                        name, t_start, time.perf_counter(), _get_current_attributes()
+                    )
 
                 # Reset context
                 if token is not None:
@@ -722,7 +726,9 @@ def _make_scope_wrapper(func: Callable[..., Any], name: str) -> Callable[..., An
                     try:
                         return func(*args, **kwargs)
                     finally:
-                        window.record_span(name, t_start, time.perf_counter(), ctx.attributes or None)
+                        window.record_span(
+                            name, t_start, time.perf_counter(), ctx.attributes or None
+                        )
                         trace_context.reset(token)
                 return func(*args, **kwargs)
 
@@ -748,7 +754,9 @@ def _make_scope_wrapper(func: Callable[..., Any], name: str) -> Callable[..., An
                 # Record into iteration window if active
                 window = _iteration_window.get(None)
                 if window is not None:
-                    window.record_span(name, t_start, time.perf_counter(), _get_current_attributes())
+                    window.record_span(
+                        name, t_start, time.perf_counter(), _get_current_attributes()
+                    )
 
                 # Reset context
                 if token is not None:

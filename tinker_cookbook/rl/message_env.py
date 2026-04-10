@@ -110,9 +110,7 @@ class EnvFromMessageEnv(types.Env):
 
         return model_input, self._base_stop_condition
 
-    def _build_step_conversation(
-        self, *messages: Message | None
-    ) -> list[dict[str, object]]:
+    def _build_step_conversation(self, *messages: Message | None) -> list[dict[str, object]]:
         """Build the _conversation list for this step's logs.
 
         On the first call, prepends the cached initial prompt messages.

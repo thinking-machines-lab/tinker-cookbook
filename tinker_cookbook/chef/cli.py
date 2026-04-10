@@ -11,7 +11,6 @@ import logging
 import os
 import sys
 
-
 # The chef, in all their glory
 BANNER = r"""
       ___________

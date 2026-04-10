@@ -56,13 +56,15 @@ class ChatSessionStore(BaseStore):
             try:
                 data = self.storage.read(self._path(f))
                 s = json.loads(data)
-                sessions.append({
-                    "session_id": s["session_id"],
-                    "checkpoint_name": s["checkpoint_name"],
-                    "title": s.get("title", "Untitled"),
-                    "created_at": s.get("created_at", ""),
-                    "message_count": len(s.get("messages", [])),
-                })
+                sessions.append(
+                    {
+                        "session_id": s["session_id"],
+                        "checkpoint_name": s["checkpoint_name"],
+                        "title": s.get("title", "Untitled"),
+                        "created_at": s.get("created_at", ""),
+                        "message_count": len(s.get("messages", [])),
+                    }
+                )
             except (json.JSONDecodeError, KeyError) as e:
                 logger.debug("Skipping malformed session file %s: %s", f, e)
                 continue

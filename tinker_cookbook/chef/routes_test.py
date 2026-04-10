@@ -21,12 +21,14 @@ def _create_run_dir(run_dir: Path) -> None:
     metrics_lines = []
     for step in range(5):
         metrics_lines.append(
-            json.dumps({
-                "step": step,
-                "train_mean_nll": 2.5 - step * 0.1,
-                "env/all/reward/total": step * 0.2,
-                "time/forward_backward": 1.0 + step * 0.1,
-            })
+            json.dumps(
+                {
+                    "step": step,
+                    "train_mean_nll": 2.5 - step * 0.1,
+                    "env/all/reward/total": step * 0.2,
+                    "time/forward_backward": 1.0 + step * 0.1,
+                }
+            )
         )
     (run_dir / "metrics.jsonl").write_text("\n".join(metrics_lines) + "\n")
 
@@ -40,15 +42,21 @@ def _create_run_dir(run_dir: Path) -> None:
     (run_dir / "checkpoints.jsonl").write_text(json.dumps(ckpt) + "\n")
 
     timing_lines = [
-        {"step": 0, "spans": [
-            {"name": "forward_backward", "duration": 1.5, "wall_start": 0.0, "wall_end": 1.5},
-            {"name": "optim_step", "duration": 0.5, "wall_start": 1.5, "wall_end": 2.0},
-            {"name": "policy_sample", "duration": 0.8, "wall_start": 0.0, "wall_end": 0.8},
-            {"name": "env_step", "duration": 0.6, "wall_start": 0.2, "wall_end": 0.8},
-        ]},
-        {"step": 1, "spans": [
-            {"name": "forward_backward", "duration": 1.3, "wall_start": 2.0, "wall_end": 3.3},
-        ]},
+        {
+            "step": 0,
+            "spans": [
+                {"name": "forward_backward", "duration": 1.5, "wall_start": 0.0, "wall_end": 1.5},
+                {"name": "optim_step", "duration": 0.5, "wall_start": 1.5, "wall_end": 2.0},
+                {"name": "policy_sample", "duration": 0.8, "wall_start": 0.0, "wall_end": 0.8},
+                {"name": "env_step", "duration": 0.6, "wall_start": 0.2, "wall_end": 0.8},
+            ],
+        },
+        {
+            "step": 1,
+            "spans": [
+                {"name": "forward_backward", "duration": 1.3, "wall_start": 2.0, "wall_end": 3.3},
+            ],
+        },
     ]
     (run_dir / "timing_spans.jsonl").write_text(
         "\n".join(json.dumps(s) for s in timing_lines) + "\n"
@@ -61,22 +69,41 @@ def _create_run_dir(run_dir: Path) -> None:
         rollouts = []
         for group_idx in range(2):
             for traj_idx in range(3):
-                rollouts.append({
-                    "schema_version": 1, "split": "train", "iteration": iteration,
-                    "group_idx": group_idx, "traj_idx": traj_idx,
-                    "tags": ["math", "gsm8k"] if group_idx == 0 else ["code", "humaneval"],
-                    "sampling_client_step": iteration,
-                    "total_reward": (group_idx + traj_idx) * 0.3,
-                    "final_reward": (group_idx + traj_idx) * 0.1,
-                    "trajectory_metrics": {"custom": 1.5},
-                    "steps": [
-                        {"step_idx": 0, "ob_len": 128, "ac_len": 45, "reward": 0.0,
-                         "episode_done": False, "metrics": {"step_time": 0.01}, "logs": {}},
-                        {"step_idx": 1, "ob_len": 200, "ac_len": 60, "reward": 1.0,
-                         "episode_done": True, "metrics": {"step_time": 0.02}, "logs": {}},
-                    ],
-                    "final_ob_len": 512,
-                })
+                rollouts.append(
+                    {
+                        "schema_version": 1,
+                        "split": "train",
+                        "iteration": iteration,
+                        "group_idx": group_idx,
+                        "traj_idx": traj_idx,
+                        "tags": ["math", "gsm8k"] if group_idx == 0 else ["code", "humaneval"],
+                        "sampling_client_step": iteration,
+                        "total_reward": (group_idx + traj_idx) * 0.3,
+                        "final_reward": (group_idx + traj_idx) * 0.1,
+                        "trajectory_metrics": {"custom": 1.5},
+                        "steps": [
+                            {
+                                "step_idx": 0,
+                                "ob_len": 128,
+                                "ac_len": 45,
+                                "reward": 0.0,
+                                "episode_done": False,
+                                "metrics": {"step_time": 0.01},
+                                "logs": {},
+                            },
+                            {
+                                "step_idx": 1,
+                                "ob_len": 200,
+                                "ac_len": 60,
+                                "reward": 1.0,
+                                "episode_done": True,
+                                "metrics": {"step_time": 0.02},
+                                "logs": {},
+                            },
+                        ],
+                        "final_ob_len": 512,
+                    }
+                )
         (iter_dir / "train_rollout_summaries.jsonl").write_text(
             "\n".join(json.dumps(r) for r in rollouts) + "\n"
         )
@@ -85,28 +112,46 @@ def _create_run_dir(run_dir: Path) -> None:
             "title": f"RL Iteration {iteration}",
             "started_at": "2024-04-04T12:34:56.789123",
             "root": {
-                "tag": "div", "attrs": {"class": "lt-root"},
+                "tag": "div",
+                "attrs": {"class": "lt-root"},
                 "children": [{"tag": "p", "children": ["Episode completed"]}],
-                "data": {"type": "conversation", "messages": [
-                    {"role": "user", "content": "What is 2+2?"},
-                    {"role": "assistant", "content": "4"},
-                ]},
+                "data": {
+                    "type": "conversation",
+                    "messages": [
+                        {"role": "user", "content": "What is 2+2?"},
+                        {"role": "assistant", "content": "4"},
+                    ],
+                },
             },
         }
         (iter_dir / "train_logtree.json").write_text(json.dumps(logtree))
 
     iter4 = run_dir / "iteration_000004"
-    eval_rollouts = [{
-        "schema_version": 1, "split": "eval", "iteration": 4,
-        "group_idx": 0, "traj_idx": 0, "tags": ["test_set"],
-        "total_reward": 0.9, "final_reward": 0.9,
-        "steps": [{"step_idx": 0, "ob_len": 100, "ac_len": 30, "reward": 0.9,
-                    "episode_done": True, "metrics": {}, "logs": {}}],
-        "final_ob_len": 200,
-    }]
-    (iter4 / "eval_test_rollout_summaries.jsonl").write_text(
-        json.dumps(eval_rollouts[0]) + "\n"
-    )
+    eval_rollouts = [
+        {
+            "schema_version": 1,
+            "split": "eval",
+            "iteration": 4,
+            "group_idx": 0,
+            "traj_idx": 0,
+            "tags": ["test_set"],
+            "total_reward": 0.9,
+            "final_reward": 0.9,
+            "steps": [
+                {
+                    "step_idx": 0,
+                    "ob_len": 100,
+                    "ac_len": 30,
+                    "reward": 0.9,
+                    "episode_done": True,
+                    "metrics": {},
+                    "logs": {},
+                }
+            ],
+            "final_ob_len": 200,
+        }
+    ]
+    (iter4 / "eval_test_rollout_summaries.jsonl").write_text(json.dumps(eval_rollouts[0]) + "\n")
 
 
 @pytest.fixture
@@ -134,9 +179,7 @@ def multi_client(tmp_path: Path):
     for name in ("run_a", "run_b"):
         run_dir = parent / name
         run_dir.mkdir()
-        (run_dir / "metrics.jsonl").write_text(
-            json.dumps({"step": 0, "loss": 2.0}) + "\n"
-        )
+        (run_dir / "metrics.jsonl").write_text(json.dumps({"step": 0, "loss": 2.0}) + "\n")
         (run_dir / "config.json").write_text(json.dumps({"model_name": name}))
 
     app = create_app(parent)
