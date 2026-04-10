@@ -117,7 +117,7 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
         require_run(registry, run_id)
 
         store = registry.get_training_store(run_id)
-        config = store.read_config()
+        config = store.read_config() or {}
         checkpoints = store.read_checkpoints()
 
         ckpt = next((c for c in checkpoints if c.get("name") == body.checkpoint_name), None)

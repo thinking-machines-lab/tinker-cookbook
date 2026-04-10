@@ -24,7 +24,7 @@ import logging
 import math
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from tinker_cookbook.stores.storage import Storage
@@ -115,7 +115,7 @@ def _trajectory_to_stored(
             turns.append(
                 StoredTurn(
                     role=role,
-                    content=ob_text,
+                    content=cast("str | list[dict[str, Any]]", ob_text),
                     token_count=t.ob.length,
                 )
             )
@@ -132,7 +132,7 @@ def _trajectory_to_stored(
         turns.append(
             StoredTurn(
                 role="assistant",
-                content=ac_content,
+                content=cast("str | list[dict[str, Any]]", ac_content),
                 token_count=len(t.ac.tokens) if t.ac.tokens else 0,
             )
         )
