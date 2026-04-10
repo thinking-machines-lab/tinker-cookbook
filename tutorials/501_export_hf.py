@@ -48,8 +48,9 @@ def _(mo):
 @app.cell
 def _(mo):
     api_key = mo.ui.text(kind="password", label="Paste your Tinker API key")
-    api_key
+    api_key  # noqa: B018
     return (api_key,)
+
 
 @app.cell
 async def _(api_key, mo, os):
@@ -153,7 +154,6 @@ def _(mo):
 
 @app.cell
 def _(OUTPUT_PATH, os):
-
     for _f in sorted(os.listdir(OUTPUT_PATH)):
         _size_mb = os.path.getsize(os.path.join(OUTPUT_PATH, _f)) / 1e6
         print(f"  {_f:45s} {_size_mb:>8.1f} MB")

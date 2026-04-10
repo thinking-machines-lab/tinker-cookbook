@@ -143,11 +143,14 @@ def _():
 @app.cell
 def _(mo):
     api_key = mo.ui.text(kind="password", label="Paste your Tinker API key")
-    api_key
+    api_key  # noqa: B018
     return (api_key,)
 
+
 @app.cell
-async def _(CLASSIFICATION_PROMPT, SENTENCES, api_key, get_tokenizer, mo, re, renderers, tinker, types):
+async def _(
+    CLASSIFICATION_PROMPT, SENTENCES, api_key, get_tokenizer, mo, re, renderers, tinker, types
+):
     import os
 
     mo.stop(

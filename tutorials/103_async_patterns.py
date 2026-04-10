@@ -50,7 +50,7 @@ def _(mo):
 @app.cell
 def _(mo):
     api_key = mo.ui.text(kind="password", label="Paste your Tinker API key")
-    api_key
+    api_key  # noqa: B018
     return (api_key,)
 
 
@@ -69,16 +69,12 @@ async def _(api_key, get_renderer, mo, tinker):
     BASE_MODEL = "Qwen/Qwen3.5-4B"
 
     service_client = tinker.ServiceClient()
-    sampling_client = await service_client.create_sampling_client_async(
-        base_model=BASE_MODEL
-    )
+    sampling_client = await service_client.create_sampling_client_async(base_model=BASE_MODEL)
     tokenizer = sampling_client.get_tokenizer()
     renderer = get_renderer("qwen3_5", tokenizer)
 
     stop_sequences = renderer.get_stop_sequences()
-    params = tinker.SamplingParams(
-        max_tokens=150, temperature=0.7, stop=stop_sequences
-    )
+    params = tinker.SamplingParams(max_tokens=150, temperature=0.7, stop=stop_sequences)
 
     # A diverse set of prompts to sample from
     prompts = [

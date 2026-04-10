@@ -66,8 +66,9 @@ def _(mo):
 @app.cell
 def _(mo):
     api_key = mo.ui.text(kind="password", label="Paste your Tinker API key")
-    api_key
+    api_key  # noqa: B018
     return (api_key,)
+
 
 @app.cell
 async def _(api_key, mo, tinker):
