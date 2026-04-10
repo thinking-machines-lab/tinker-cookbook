@@ -15,7 +15,10 @@ import time
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import Page, expect
+
+playwright = pytest.importorskip("playwright.sync_api", reason="playwright not installed")
+Page = playwright.Page
+expect = playwright.expect
 
 # Port for the test server (avoid conflicts with dev server)
 TEST_PORT = 8199
