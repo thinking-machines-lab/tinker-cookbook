@@ -11,7 +11,7 @@ from tinker_cookbook.stores import RunRegistry
 
 
 def _build_eval_index(eval_store: Any) -> dict[str, dict[str, float]]:
-    """Build checkpoint_path → best eval scores index. Cached per registry."""
+    """Build checkpoint_path → best eval scores index."""
     result: dict[str, dict[str, float]] = {}
     if eval_store is None:
         return result
@@ -25,12 +25,11 @@ def _build_eval_index(eval_store: Any) -> dict[str, dict[str, float]]:
     return result
 
 
-# Module-level cache: registry id → eval index.
-_eval_index_cache: dict[int, dict[str, dict[str, float]]] = {}
-
-
 def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
     router = APIRouter(prefix="/api/runs", tags=["runs"])
+
+    # Per-registry eval index cache (lives in the router closure, not module-level)
+    _eval_cache: dict[int, dict[str, dict[str, float]]] = {}
 
     @router.get("")
     def list_runs(source: list[str] = Query(default=[])) -> list[dict[str, Any]]:
@@ -39,9 +38,9 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
 
         # Pre-compute eval scores (cached per registry instance)
         registry_id = id(registry)
-        if registry_id not in _eval_index_cache:
-            _eval_index_cache[registry_id] = _build_eval_index(registry.get_eval_store())
-        eval_by_ckpt = _eval_index_cache[registry_id]
+        if registry_id not in _eval_cache:
+            _eval_cache[registry_id] = _build_eval_index(registry.get_eval_store())
+        eval_by_ckpt = _eval_cache[registry_id]
 
         result = []
         for run in runs:

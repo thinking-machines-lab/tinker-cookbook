@@ -65,6 +65,7 @@ class TrainingRunStore(BaseStore):
         self._checkpoints: Any = _UNSET
         self._checkpoints_size: int = -1  # File size at last read, for invalidation
         self._rollout_cache: dict[str, list[dict[str, Any]]] = {}
+        self._rollout_cache_sizes: dict[str, int] = {}  # File sizes for invalidation
 
     def url(self, path: str = "") -> str:
         """Return a human-readable URI for a path within this run.
@@ -138,6 +139,8 @@ class TrainingRunStore(BaseStore):
     def read_rollouts(self, iteration: int, base_name: str = "train") -> list[dict[str, Any]]:
         """Read rollout summaries for an iteration as raw dicts.
 
+        Cached per (iteration, base_name), invalidated when file size changes.
+
         Args:
             iteration: Training iteration number.
             base_name: Prefix for the JSONL file (e.g. ``"train"``,
@@ -147,10 +150,17 @@ class TrainingRunStore(BaseStore):
         filename = self._rollout_filename(base_name)
         cache_key = f"{iteration}/{filename}"
         if cache_key in self._rollout_cache:
-            return self._rollout_cache[cache_key]
+            # Invalidate if file size changed (e.g., external writer added rollouts)
+            stat = self.storage.stat(self._path(self._iter_dir(iteration), filename))
+            current_size = stat.size if stat else 0
+            if current_size == self._rollout_cache_sizes.get(cache_key, -1):
+                return self._rollout_cache[cache_key]
 
+        path = self._path(self._iter_dir(iteration), filename)
+        stat = self.storage.stat(path)
         records = self._read_jsonl(self._iter_dir(iteration), filename)
         self._rollout_cache[cache_key] = records
+        self._rollout_cache_sizes[cache_key] = stat.size if stat else 0
         return records
 
     def read_single_rollout(
@@ -206,6 +216,142 @@ class TrainingRunStore(BaseStore):
         reader = self._get_timing()
         reader.read()
         return reader.records
+
+    def flatten_timing_spans(
+        self,
+        *,
+        step: int | None = None,
+        step_start: int | None = None,
+        step_end: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Extract flat spans from timing records, optionally filtered by step range."""
+        spans: list[dict[str, Any]] = []
+        for record in self.read_timing():
+            s = record.get("step", 0)
+            if step is not None and s != step:
+                continue
+            if step_start is not None and s < step_start:
+                continue
+            if step_end is not None and s > step_end:
+                continue
+            if "spans" in record:
+                for span in record["spans"]:
+                    spans.append({"step": s, **span})
+            else:
+                spans.append(record)
+        return spans
+
+    def build_timing_tree(self, step: int) -> dict[str, Any]:
+        """Build a hierarchical span tree for a specific step.
+
+        Groups spans by ``group_idx`` attribute and nests children within
+        parents based on wall-time containment.
+        """
+        spans = self.flatten_timing_spans(step=step)
+        if not spans:
+            return {"step": step, "root": None}
+        sorted_spans = sorted(spans, key=lambda s: (s.get("wall_start", 0), -s.get("duration", 0)))
+        nodes: list[dict[str, Any]] = [
+            {
+                "name": s.get("name", "?"),
+                "duration": s.get("duration", 0),
+                "wall_start": s.get("wall_start", 0),
+                "wall_end": s.get("wall_end", 0),
+                "attributes": s.get("attributes", {}),
+                "children": [],
+            }
+            for s in sorted_spans
+        ]
+        eps = 0.01
+
+        grouped_spans: dict[int, list[dict[str, Any]]] = {}
+        ungrouped: list[dict[str, Any]] = []
+        for node in nodes:
+            gidx = node.get("attributes", {}).get("group_idx")
+            if gidx is not None:
+                grouped_spans.setdefault(gidx, []).append(node)
+            else:
+                ungrouped.append(node)
+
+        ungrouped.sort(key=lambda s: (s.get("wall_start", 0), -s.get("duration", 0)))
+        root_children: list[dict[str, Any]] = []
+        stack: list[dict[str, Any]] = []
+        for node in ungrouped:
+            while stack and stack[-1]["wall_end"] + eps < node["wall_start"]:
+                stack.pop()
+            if stack and node["wall_end"] <= stack[-1]["wall_end"] + eps:
+                stack[-1]["children"].append(node)
+            else:
+                while stack and node["wall_end"] > stack[-1]["wall_end"] + eps:
+                    stack.pop()
+                if stack:
+                    stack[-1]["children"].append(node)
+                else:
+                    root_children.append(node)
+            stack.append(node)
+
+        if grouped_spans:
+            all_grouped = [s for spans in grouped_spans.values() for s in spans]
+            group_start = min(s["wall_start"] for s in all_grouped)
+            group_end = max(s["wall_end"] for s in all_grouped)
+
+            def find_parent(
+                children: list[dict[str, Any]],
+            ) -> dict[str, Any] | None:
+                for child in children:
+                    if (
+                        child["wall_start"] <= group_start + eps
+                        and child["wall_end"] >= group_end - eps
+                    ):
+                        deeper = find_parent(child.get("children", []))
+                        return deeper if deeper else child
+                return None
+
+            parent = find_parent(root_children)
+            target = parent["children"] if parent else root_children
+
+            for gidx in sorted(grouped_spans.keys()):
+                gspans = sorted(
+                    grouped_spans[gidx],
+                    key=lambda s: (s["wall_start"], -s["duration"]),
+                )
+                group_node: dict[str, Any] = {
+                    "name": f"group {gidx}",
+                    "duration": max(s["wall_end"] for s in gspans)
+                    - min(s["wall_start"] for s in gspans),
+                    "wall_start": min(s["wall_start"] for s in gspans),
+                    "wall_end": max(s["wall_end"] for s in gspans),
+                    "attributes": {"group_idx": gidx},
+                    "children": [],
+                }
+                gstack: list[dict[str, Any]] = []
+                for node in gspans:
+                    while gstack and gstack[-1]["wall_end"] + eps < node["wall_start"]:
+                        gstack.pop()
+                    if gstack and node["wall_end"] <= gstack[-1]["wall_end"] + eps:
+                        gstack[-1]["children"].append(node)
+                    else:
+                        group_node["children"].append(node)
+                    gstack.append(node)
+                target.append(group_node)
+
+            target.sort(key=lambda s: s.get("wall_start", 0))
+
+        all_starts = [n["wall_start"] for n in nodes]
+        all_ends = [n["wall_end"] for n in nodes]
+        total = max(all_ends) - min(all_starts) if all_starts else 0
+        return {
+            "step": step,
+            "total_duration": total,
+            "root": {
+                "name": "iteration",
+                "duration": total,
+                "wall_start": min(all_starts) if all_starts else 0,
+                "wall_end": max(all_ends) if all_ends else 0,
+                "attributes": {},
+                "children": root_children,
+            },
+        }
 
     # ── Logtree ───────────────────────────────────────────────────────
 

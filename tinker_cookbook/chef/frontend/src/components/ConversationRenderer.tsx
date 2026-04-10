@@ -132,7 +132,14 @@ function ContentPartView({ part, thinkingOpen, onToggleThinking }: {
     }
     return <span className="tag">[Image]</span>;
   }
-  return null;
+  // Unknown content type — render as collapsible JSON so new types don't silently disappear
+  const raw = JSON.stringify(part, null, 2);
+  return (
+    <details style={{ margin: '0.25rem 0' }}>
+      <summary className="tag" style={{ cursor: 'pointer' }}>[{part.type}]</summary>
+      <pre className="mono" style={{ fontSize: '0.625rem', whiteSpace: 'pre-wrap', padding: '0.25rem', background: 'var(--bg-tertiary)', borderRadius: '4px', marginTop: '0.25rem' }}>{raw}</pre>
+    </details>
+  );
 }
 
 function ToolCallView({ toolCall }: { toolCall: ToolCallInfo }) {

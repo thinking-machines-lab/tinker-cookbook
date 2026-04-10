@@ -52,22 +52,15 @@ def get_registry(sources: list[str] | None = None) -> RunRegistry:
 
 
 def refresh_registry(sources: list[str] | None = None) -> int:
-    """Refresh the registry for the given sources. Returns run count.
-
-    Also invalidates any per-registry caches (e.g., eval index in runs.py).
-    """
-    from tinker_cookbook.chef.routes.runs import _eval_index_cache
-
+    """Refresh the registry for the given sources. Returns run count."""
     if not sources:
         if _default_registry is None:
             raise RuntimeError("Registry not initialized")
-        _eval_index_cache.pop(id(_default_registry), None)
         runs = _default_registry.refresh()
         return len(runs)
 
     key = frozenset(sources)
     if key in _cache:
-        _eval_index_cache.pop(id(_cache[key][0]), None)
         runs = _cache[key][0].refresh()
         return len(runs)
 
