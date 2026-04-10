@@ -6,9 +6,6 @@ model's min_pixels/max_pixels config and used hardcoded defaults (min_pixels=313
 65536). This caused image_to_chunk to compute wrong expected_tokens, leading to a 400 error
 from the Tinker server ("Expected N tokens, got M from image").
 
-The root cause was a flattened if/else in the processor's __init__ that always overwrote the
-size config with defaults. This was fixed in transformers 5.x by nesting the conditional.
-
 These tests verify that:
 1. The loaded image processor uses the model config's min_pixels/max_pixels (not hardcoded defaults)
 2. image_to_chunk produces correct expected_tokens for various image dimensions
@@ -16,51 +13,41 @@ These tests verify that:
 
 from typing import Any
 
-import pytest
 import tinker.types
-import transformers
 from PIL import Image
 
 from tinker_cookbook.image_processing_utils import get_image_processor
 from tinker_cookbook.renderers.base import image_to_chunk
 
-_transformers_version = tuple(int(x) for x in transformers.__version__.split(".")[:2])
-_requires_transformers_5 = pytest.mark.skipif(
-    _transformers_version < (5, 0),
-    reason="Qwen2VLImageProcessor has a known bug in transformers <5.0 that ignores model config "
-    "min_pixels/max_pixels (https://github.com/huggingface/transformers/issues/42910)",
-)
-
-# The Qwen3-VL preprocessor_config.json specifies these values.
-# The buggy slow processor on transformers <5.0 would use 3136 / 1003520 instead.
+# The Qwen3-VL preprocessor_config.json specifies these values (via size.shortest_edge / size.longest_edge).
 QWEN3_VL_EXPECTED_MIN_PIXELS = 65536
 QWEN3_VL_EXPECTED_MAX_PIXELS = 16777216
 
 QWEN3_VL_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
 
 
-@_requires_transformers_5
 def test_qwen3_vl_image_processor_uses_config_pixels() -> None:
-    """The image processor must use min/max pixels from the model config, not hardcoded defaults.
-
-    On transformers <5.0, the slow processor always used min_pixels=3136 (hardcoded)
-    instead of min_pixels=65536 (from config), causing wrong token counts.
-    """
-    # Cast to Any: get_image_processor returns BaseImageProcessor which doesn't declare
-    # min_pixels/max_pixels, but the concrete Qwen2VL processor has them at runtime.
+    """The image processor must use min/max pixels from the model config, not hardcoded defaults."""
     processor: Any = get_image_processor(QWEN3_VL_MODEL)
 
-    assert processor.min_pixels == QWEN3_VL_EXPECTED_MIN_PIXELS, (
-        f"Image processor min_pixels={processor.min_pixels}, expected {QWEN3_VL_EXPECTED_MIN_PIXELS}. "
-        f"This may indicate the slow (non-fast) image processor is loaded with buggy defaults. "
+    # In transformers >=5.5, min/max pixels are stored as size.shortest_edge / size.longest_edge.
+    # In earlier 5.x versions they were direct attributes (min_pixels / max_pixels).
+    if hasattr(processor, "min_pixels"):
+        actual_min = processor.min_pixels
+        actual_max = processor.max_pixels
+    else:
+        actual_min = processor.size["shortest_edge"]
+        actual_max = processor.size["longest_edge"]
+
+    assert actual_min == QWEN3_VL_EXPECTED_MIN_PIXELS, (
+        f"Image processor min_pixels={actual_min}, expected {QWEN3_VL_EXPECTED_MIN_PIXELS}. "
         f"See https://github.com/huggingface/transformers/issues/42910"
     )
-    assert processor.max_pixels == QWEN3_VL_EXPECTED_MAX_PIXELS, (
-        f"Image processor max_pixels={processor.max_pixels}, expected {QWEN3_VL_EXPECTED_MAX_PIXELS}."
+    assert actual_max == QWEN3_VL_EXPECTED_MAX_PIXELS, (
+        f"Image processor max_pixels={actual_max}, expected {QWEN3_VL_EXPECTED_MAX_PIXELS}."
     )
 
 
-@_requires_transformers_5
 def test_qwen3_vl_image_to_chunk_token_counts() -> None:
     """Verify image_to_chunk computes correct expected_tokens for various image sizes.
 
@@ -72,17 +59,14 @@ def test_qwen3_vl_image_to_chunk_token_counts() -> None:
     With the buggy processor (min_pixels=3136), small images get far fewer tokens
     because they aren't upscaled to meet the min_pixels threshold.
     """
-    # Cast to Any: get_image_processor returns BaseImageProcessor but image_to_chunk
-    # expects ImageProcessorProtocol; the concrete Qwen2VL processor satisfies it at runtime.
     processor: Any = get_image_processor(QWEN3_VL_MODEL)
 
-    # (width, height, correct_tokens, buggy_tokens_with_min_pixels_3136)
-    # The buggy column documents what the old processor would compute, to show the discrepancy.
+    # (width, height, correct_tokens)
     test_cases: list[tuple[int, int, int]] = [
-        (224, 224, 64),  # buggy: 49 (no upscale with min_pixels=3136)
-        (150, 224, 70),  # buggy: 35 — exactly the "Expected 35, got 70" from issue #181
-        (224, 150, 70),  # buggy: 35
-        (400, 300, 108),  # buggy: 108 (large enough that min_pixels doesn't matter)
+        (224, 224, 64),
+        (150, 224, 70),  # Exactly the "Expected 35, got 70" from issue #181
+        (224, 150, 70),
+        (400, 300, 108),
     ]
 
     for width, height, expected_tokens in test_cases:

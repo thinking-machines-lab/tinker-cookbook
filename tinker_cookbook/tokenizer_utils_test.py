@@ -20,7 +20,6 @@ def test_kimi_k2_thinking_trusts_remote_code_without_env(
     _get_hf_tokenizer("moonshotai/Kimi-K2-Thinking")
     mock_auto.from_pretrained.assert_called_once_with(
         "moonshotai/Kimi-K2-Thinking",
-        use_fast=True,
         trust_remote_code=True,
         revision="a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55",
     )
@@ -35,7 +34,6 @@ def test_kimi_k25_trusts_remote_code_without_env(
     _get_hf_tokenizer("moonshotai/Kimi-K2.5")
     mock_auto.from_pretrained.assert_called_once_with(
         "moonshotai/Kimi-K2.5",
-        use_fast=True,
         trust_remote_code=True,
         revision="2426b45b6af0da48d0dcce71bbce6225e5c73adc",
     )
@@ -50,7 +48,6 @@ def test_no_trust_remote_code_by_default(
     _get_hf_tokenizer("some-org/some-model")
     mock_auto.from_pretrained.assert_called_once_with(
         "some-org/some-model",
-        use_fast=True,
     )
 
 
@@ -64,7 +61,6 @@ def test_env_var_enables_trust_remote_code(
     _get_hf_tokenizer("some-org/some-model")
     mock_auto.from_pretrained.assert_called_once_with(
         "some-org/some-model",
-        use_fast=True,
         trust_remote_code=True,
     )
 
@@ -79,5 +75,4 @@ def test_env_var_falsy_values_do_not_enable(
     _get_hf_tokenizer("some-org/some-model")
     mock_auto.from_pretrained.assert_called_once_with(
         "some-org/some-model",
-        use_fast=True,
     )
