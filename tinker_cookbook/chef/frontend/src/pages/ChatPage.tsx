@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { api } from '../api/client';
 import { ConversationRenderer } from '../components/ConversationRenderer';
 import { useUrlParam } from '../utils/useUrlParam';
 import type { ConversationMessage, ContentPart } from '../api/types';
@@ -33,25 +34,20 @@ export function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetch('/api/capabilities').then((r) => r.json()).then((d) => setChatEnabled(d.chat ?? false)).catch(() => setChatEnabled(false));
+    api.getCapabilities().then((d) => setChatEnabled(d.chat ?? false)).catch(() => setChatEnabled(false));
   }, []);
 
   useEffect(() => {
     if (!runId) return;
-    fetch(`/api/runs/${runId}/chat-sessions`)
-      .then((r) => r.json())
-      .then((all: SessionSummary[]) => setSessions(all.filter((s) => s.checkpoint_name === checkpoint)))
+    api.getChatSessions(runId)
+      .then((all) => setSessions(all.filter((s) => s.checkpoint_name === checkpoint)))
       .catch(() => setSessions([]));
   }, [runId, checkpoint]);
 
   useEffect(() => {
     if (!runId || !sessionId) return;
-    fetch(`/api/runs/${runId}/chat-sessions/${sessionId}`)
-      .then((r) => { if (r.ok) return r.json(); throw new Error(''); })
-      .then((d) => {
-        // Session messages are already structured ConversationMessage objects
-        setMessages(d.messages ?? []);
-      })
+    api.getChatSession(runId, sessionId)
+      .then((d) => setMessages(d.messages ?? []))
       .catch(() => {});
   }, [runId, sessionId]);
 
@@ -113,7 +109,7 @@ export function ChatPage() {
         }
       }
       if (!streamedText && !gotError) setError('No response received');
-      if (runId) fetch(`/api/runs/${runId}/chat-sessions`).then((r) => r.json()).then((all: SessionSummary[]) => setSessions(all.filter((s) => s.checkpoint_name === checkpoint))).catch(() => {});
+      if (runId) api.getChatSessions(runId).then((all) => setSessions(all.filter((s) => s.checkpoint_name === checkpoint))).catch(() => {});
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setLoading(false); }
   };

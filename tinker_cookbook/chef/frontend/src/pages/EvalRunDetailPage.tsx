@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { SortableTable } from '../components/SortableTable';
-import { scoreColor } from '../utils/shared';
+import { ResultTag, scoreColor } from '../utils/shared';
 import { useUrlParam } from '../utils/useUrlParam';
 import type { EvalRunDetail, EvalTrajectorySummary } from '../api/types';
 
@@ -92,8 +92,8 @@ export function EvalRunDetailPage() {
       key: 'status',
       label: 'Status',
       render: (t: EvalTrajectorySummary) => {
-        if (t.error) return <span className="tag" style={{ background: 'rgba(239,68,68,0.15)', color: 'var(--error)' }}>Error</span>;
-        if (t.reward > 0) return <span className="tag" style={{ background: 'rgba(34,197,94,0.15)', color: 'var(--success)' }}>Correct</span>;
+        if (t.error) return <ResultTag variant="error">Error</ResultTag>;
+        if (t.reward > 0) return <ResultTag variant="correct">Correct</ResultTag>;
         return <span className="tag">Wrong</span>;
       },
     },

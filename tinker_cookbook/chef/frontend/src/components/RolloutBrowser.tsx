@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { RewardHistogram } from './charts';
 import { SortableTable } from './SortableTable';
+import { ResultTag } from '../utils/shared';
 import type { IterationInfo, RolloutSummary } from '../api/types';
 
 /** Returns a debounced version of `value`, updating only after `delay` ms of inactivity. */
@@ -82,13 +83,17 @@ export function RolloutBrowser({ runId, iterations, jumpToStep }: Props) {
     </div>;
   }
 
-  // Status counts for summary line
-  const statusCounts = {
-    ok: rollouts.filter((r) => r.status === 'ok' || !r.status).length,
-    error: rollouts.filter((r) => r.status === 'error').length,
-    timeout: rollouts.filter((r) => r.status === 'timeout').length,
-    zeroReward: rollouts.filter((r) => r.total_reward === 0).length,
-  };
+  // Status counts for summary line (single pass)
+  const statusCounts = useMemo(() => {
+    const counts = { ok: 0, error: 0, timeout: 0, zeroReward: 0 };
+    for (const r of rollouts) {
+      if (r.status === 'error') counts.error++;
+      else if (r.status === 'timeout') counts.timeout++;
+      else counts.ok++;
+      if (r.total_reward === 0) counts.zeroReward++;
+    }
+    return counts;
+  }, [rollouts]);
 
   const columns = [
     {
@@ -116,9 +121,9 @@ export function RolloutBrowser({ runId, iterations, jumpToStep }: Props) {
       key: 'status',
       label: 'Status',
       render: (r: RolloutSummary) => {
-        if (r.status === 'error') return <span className="tag" style={{ background: 'rgba(239,68,68,0.15)', color: 'var(--error)' }}>Error</span>;
-        if (r.status === 'timeout') return <span className="tag" style={{ background: 'rgba(245,158,11,0.15)', color: 'var(--warning)' }}>Timeout</span>;
-        if (r.total_reward === 0) return <span className="tag" style={{ background: 'rgba(100,116,139,0.15)', color: 'var(--text-muted)' }}>Zero</span>;
+        if (r.status === 'error') return <ResultTag variant="error">Error</ResultTag>;
+        if (r.status === 'timeout') return <ResultTag variant="timeout">Timeout</ResultTag>;
+        if (r.total_reward === 0) return <ResultTag variant="zero">Zero</ResultTag>;
         return null;
       },
     },

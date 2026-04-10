@@ -3,6 +3,7 @@ import {
   Bar, BarChart, CartesianGrid, Cell,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
+import { api } from '../api/client';
 import { Flamegraph } from './Flamegraph';
 import { getSpanColor } from './Waterfall';
 import type { FlatSpan } from './Waterfall';
@@ -26,8 +27,7 @@ export function TimingPanel({ runId, jumpToStep }: Props) {
   }, [jumpToStep]);
 
   useEffect(() => {
-    fetch(`/api/runs/${runId}/timing/flat`)
-      .then((r) => r.json())
+    api.getTimingFlat(runId)
       .then((data) => setSpans(data.spans ?? []))
       .catch(() => setSpans([]))
       .finally(() => setLoading(false));
@@ -78,8 +78,7 @@ export function TimingPanel({ runId, jumpToStep }: Props) {
   // Fetch tree data for selected step
   useEffect(() => {
     if (steps.length === 0) return;
-    fetch(`/api/runs/${runId}/timing/tree/${displayStep}`)
-      .then((r) => r.json())
+    api.getTimingTree(runId, displayStep)
       .then((data) => setTreeData(data))
       .catch(() => setTreeData(null));
   }, [runId, displayStep, steps.length]);

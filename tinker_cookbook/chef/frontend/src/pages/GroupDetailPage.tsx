@@ -7,7 +7,7 @@ import { api } from '../api/client';
 import { ConversationRenderer } from '../components/ConversationRenderer';
 import { TOOLTIP_CONTENT_STYLE } from '../components/charts';
 import { SERIES_COLORS } from '../theme/colors';
-import { MetaField, rewardColor } from '../utils/shared';
+import { MetaField, ResultTag, rewardColor } from '../utils/shared';
 import { extractConversation } from '../utils/conversation';
 import type { RolloutDetail } from '../api/types';
 
@@ -137,13 +137,7 @@ function TrajectoryColumn({ rollout, runId, iteration }: { rollout: RolloutDetai
         <span>{rollout.steps.length} step{rollout.steps.length !== 1 ? 's' : ''}</span>
         <span>{rollout.steps.reduce((s, st) => s + st.ac_len, 0)} tok</span>
         {rollout.status && rollout.status !== 'ok' && (
-          <span className="badge" style={{
-            background: rollout.status === 'error' ? 'rgba(239,68,68,0.15)' : 'rgba(245,158,11,0.15)',
-            color: rollout.status === 'error' ? 'var(--error)' : 'var(--warning)',
-            fontSize: '0.5625rem',
-          }}>
-            {rollout.status}
-          </span>
+          <ResultTag variant={rollout.status}>{rollout.status}</ResultTag>
         )}
       </div>
 

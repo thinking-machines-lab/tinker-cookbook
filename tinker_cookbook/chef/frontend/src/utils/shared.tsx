@@ -50,6 +50,19 @@ export function MetaField({ label, value, color }: { label: string; value: strin
   );
 }
 
+const RESULT_TAG_STYLES: Record<string, { bg: string; fg: string }> = {
+  error: { bg: 'rgba(239,68,68,0.15)', fg: 'var(--error)' },
+  timeout: { bg: 'rgba(245,158,11,0.15)', fg: 'var(--warning)' },
+  correct: { bg: 'rgba(34,197,94,0.15)', fg: 'var(--success)' },
+  zero: { bg: 'rgba(100,116,139,0.15)', fg: 'var(--text-muted)' },
+};
+
+/** Colored tag for rollout/eval results (error, timeout, correct, zero). */
+export function ResultTag({ variant, children }: { variant: string; children: React.ReactNode }) {
+  const style = RESULT_TAG_STYLES[variant] ?? RESULT_TAG_STYLES.zero;
+  return <span className="tag" style={{ background: style.bg, color: style.fg }}>{children}</span>;
+}
+
 export function TypeBadge({ type }: { type: string | null }) {
   if (!type) return null;
   const color = TYPE_COLORS[type] ?? 'var(--text-muted)';

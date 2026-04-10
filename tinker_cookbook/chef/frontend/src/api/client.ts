@@ -102,6 +102,15 @@ export const api = {
     const qs = params.toString();
     return fetchJSON<TimingResponse>(`${BASE}/runs/${runId}/timing${qs ? '?' + qs : ''}`);
   },
+  getTimingFlat: (runId: string, stepStart?: number, stepEnd?: number) => {
+    const params = new URLSearchParams();
+    if (stepStart !== undefined) params.set('step_start', String(stepStart));
+    if (stepEnd !== undefined) params.set('step_end', String(stepEnd));
+    const qs = params.toString();
+    return fetchJSON<import('./types').TimingFlatResponse>(`${BASE}/runs/${runId}/timing/flat${qs ? '?' + qs : ''}`);
+  },
+  getTimingTree: (runId: string, step: number) =>
+    fetchJSON<{ step: number; total_duration: number; root: unknown }>(`${BASE}/runs/${runId}/timing/tree/${step}`),
 
   // Checkpoints
   getCheckpoints: (runId: string) =>
@@ -135,6 +144,14 @@ export const api = {
     ),
   getScoresTable: () =>
     fetchJSON<import('./types').ScoresTableRow[]>(`${BASE}/eval/scores`),
+
+  // Chat
+  getCapabilities: () =>
+    fetchJSON<{ chat: boolean }>(`${BASE}/capabilities`),
+  getChatSessions: (runId: string) =>
+    fetchJSON<Array<{ session_id: string; checkpoint_name: string; title: string; created_at: string; message_count: number }>>(`${BASE}/runs/${runId}/chat-sessions`),
+  getChatSession: (runId: string, sessionId: string) =>
+    fetchJSON<{ messages: import('./types').ConversationMessage[] }>(`${BASE}/runs/${runId}/chat-sessions/${sessionId}`),
 
   // Data sources
   getDefaultSources: (): Promise<string[]> =>
