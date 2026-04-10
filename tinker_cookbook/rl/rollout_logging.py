@@ -46,11 +46,13 @@ class RolloutSummaryGroup:
         tags (list[str]): Logging / categorization tags (e.g. environment name).
         sampling_client_step (int | None): Step counter of the sampling client,
             or ``None`` if not tracked.
+        model_name (str | None): Model name for this training run.
     """
 
     trajectory_group: TrajectoryGroup
     tags: list[str]
     sampling_client_step: int | None = None
+    model_name: str | None = None
 
 
 def _json_safe(value: Any) -> Any:
@@ -76,6 +78,7 @@ def serialize_rollout_summaries(
     trajectory_groups_P: Sequence[TrajectoryGroup],
     taglist_P: Sequence[list[str]],
     sampling_client_steps_P: Sequence[int | None] | None = None,
+    model_name: str | None = None,
 ) -> list[dict[str, Any]]:
     """Serialize trajectory groups into JSON-safe rollout summary records.
 
@@ -85,11 +88,13 @@ def serialize_rollout_summaries(
     Each record contains::
 
         {
-            "schema_version": 1,
+            "schema_version": 3,
             "split": str, "iteration": int, "group_idx": int, "traj_idx": int,
             "tags": list[str], "sampling_client_step": int | None,
             "total_reward": float, "final_reward": float,
             "trajectory_metrics": dict, "final_ob_len": int,
+            "model_name": str | None,
+            "conversation": list[dict] | None,
             "steps": [{"step_idx", "ob_len", "ac_len", "reward", "episode_done", "metrics", "logs"}, ...]
         }
 
@@ -99,6 +104,7 @@ def serialize_rollout_summaries(
         trajectory_groups_P: One trajectory group per problem (subscript ``_P``).
         taglist_P: Tags for each trajectory group, aligned with *trajectory_groups_P*.
         sampling_client_steps_P: Per-group sampling-client step counters, or ``None``.
+        model_name: Model name for this training run, or ``None``.
 
     Returns:
         List of JSON-serializable rollout summary records, one per trajectory.
@@ -144,19 +150,29 @@ def serialize_rollout_summaries(
             else:
                 status = "ok"
 
+            # Aggregate conversation from per-step logs (populated by
+            # ProblemEnv and EnvFromMessageEnv via the "_conversation" key).
+            conversation: list[Any] = []
+            for step in steps:
+                step_conv = step.get("logs", {}).get("_conversation")
+                if isinstance(step_conv, list):
+                    conversation.extend(step_conv)
+
             records.append(
                 _json_safe(
                     {
-                        "schema_version": 2,
+                        "schema_version": 3,
                         "split": split,
                         "iteration": iteration,
                         "group_idx": group_idx,
                         "traj_idx": traj_idx,
                         "tags": list(tags),
                         "sampling_client_step": sampling_step,
+                        "model_name": model_name,
                         "total_reward": total_rewards_G[traj_idx],
                         "final_reward": trajectory_group.final_rewards_G[traj_idx],
                         "trajectory_metrics": trajectory_group.metrics_G[traj_idx],
+                        "conversation": conversation or None,
                         "steps": steps,
                         "final_ob_len": trajectory.final_ob.length,
                         "status": status,
@@ -229,18 +245,24 @@ def serialize_rollout_summaries_from_groups(
     split: str,
     iteration: int,
     groups_P: Sequence[RolloutSummaryGroup],
+    model_name: str | None = None,
 ) -> list[dict[str, Any]]:
     """Serialize pre-grouped rollout summaries into JSON-safe dicts.
 
     Convenience wrapper around :func:`serialize_rollout_summaries` that accepts
     :class:`RolloutSummaryGroup` objects.
     """
+    # Per-group model_name takes precedence, fall back to the explicit kwarg.
+    resolved_model_name = model_name
+    if groups_P and groups_P[0].model_name is not None:
+        resolved_model_name = groups_P[0].model_name
     return serialize_rollout_summaries(
         split=split,
         iteration=iteration,
         trajectory_groups_P=[group.trajectory_group for group in groups_P],
         taglist_P=[group.tags for group in groups_P],
         sampling_client_steps_P=[group.sampling_client_step for group in groups_P],
+        model_name=resolved_model_name,
     )
 
 

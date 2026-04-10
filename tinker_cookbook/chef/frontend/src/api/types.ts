@@ -117,9 +117,12 @@ export interface RolloutDetail {
   traj_idx: number;
   tags: string[];
   sampling_client_step: number | null;
+  model_name?: string | null;
   total_reward: number;
   final_reward: number;
   trajectory_metrics: Record<string, number>;
+  /** Aggregated conversation messages across all steps (schema v3+). */
+  conversation?: ConversationMessage[] | null;
   steps: RolloutStep[];
   final_ob_len: number;
   status: string | null;

@@ -80,6 +80,12 @@ export const api = {
       `${BASE}/runs/${runId}/iterations/${iteration}/rollouts/${groupIdx}/${trajIdx}`
     ),
 
+  // Group rollouts
+  getGroupRollouts: (runId: string, iteration: number, groupIdx: number) =>
+    fetchJSON<{ rollouts: RolloutDetail[] }>(
+      `${BASE}/runs/${runId}/iterations/${iteration}/groups/${groupIdx}`
+    ),
+
   // Logtree
   getLogtree: (runId: string, iteration: number, baseName?: string) => {
     const params = baseName ? `?base_name=${encodeURIComponent(baseName)}` : '';

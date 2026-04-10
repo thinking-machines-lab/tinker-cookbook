@@ -11,8 +11,7 @@ import {
 } from 'recharts';
 import { api } from '../api/client';
 import type { MetricRecord } from '../api/types';
-
-const RUN_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444'];
+import { RUN_COLORS } from '../theme/colors';
 
 interface RunData {
   runId: string;

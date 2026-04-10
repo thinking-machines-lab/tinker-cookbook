@@ -10,12 +10,10 @@ import {
 } from 'recharts';
 import { api } from '../api/client';
 import type { MetricRecord } from '../api/types';
+import { SERIES_COLORS } from '../theme/colors';
 import { applyEMA, groupMetricKeys } from '../utils/metrics';
 
-const COLORS = [
-  '#8bbe3a', '#a78bfa', '#e5a11c', '#e85850', '#6aad7a',
-  '#ec4899', '#06b6d4', '#f97316', '#64748b', '#14b8a6',
-];
+const COLORS = SERIES_COLORS;
 
 interface Props {
   runId: string;

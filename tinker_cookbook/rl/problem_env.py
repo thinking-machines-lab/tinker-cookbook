@@ -7,6 +7,7 @@ import tinker
 
 from tinker_cookbook import renderers
 from tinker_cookbook.completers import StopCondition
+from tinker_cookbook.renderers.base import message_to_jsonable
 from tinker_cookbook.rl.types import (
     Action,
     ActionExtra,
@@ -141,6 +142,9 @@ class ProblemEnv(Env):
             metrics={
                 "format": correct_format,
                 "correct": correct_answer,
+            },
+            logs={
+                "_conversation": [message_to_jsonable(m) for m in convo + [message]],
             },
         )
 

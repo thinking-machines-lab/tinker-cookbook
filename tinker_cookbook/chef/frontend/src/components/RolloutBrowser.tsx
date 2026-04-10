@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
+import { RewardHistogram } from './charts';
 import { SortableTable } from './SortableTable';
 import type { IterationInfo, RolloutSummary } from '../api/types';
 
@@ -93,7 +94,16 @@ export function RolloutBrowser({ runId, iterations, jumpToStep }: Props) {
     {
       key: 'group',
       label: 'Group',
-      render: (r: RolloutSummary) => <span className="mono">{r.group_idx}</span>,
+      render: (r: RolloutSummary) => (
+        <Link
+          to={`/runs/${runId}/iterations/${selectedIter}/groups/${r.group_idx}`}
+          onClick={(e) => e.stopPropagation()}
+          className="mono"
+          style={{ fontWeight: 600 }}
+        >
+          {r.group_idx}
+        </Link>
+      ),
       sortValue: (r: RolloutSummary) => r.group_idx,
     },
     {
@@ -267,6 +277,27 @@ export function RolloutBrowser({ runId, iterations, jumpToStep }: Props) {
           {statusCounts.zeroReward > 0 && <span>{statusCounts.zeroReward} zero-reward</span>}
         </div>
       </div>
+
+      {/* Reward distribution histogram */}
+      {!loading && rollouts.length > 0 && (
+        <div className="card" style={{ marginBottom: '0.5rem', padding: '0.5rem 0.75rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+            <span style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Reward Distribution
+            </span>
+            <span className="text-muted" style={{ fontSize: '0.625rem' }}>
+              click bin to filter
+            </span>
+          </div>
+          <RewardHistogram
+            rewards={rollouts.map((r) => r.total_reward)}
+            onBinClick={(min, max) => {
+              setMinReward(min.toFixed(2));
+              setMaxReward(max.toFixed(2));
+            }}
+          />
+        </div>
+      )}
 
       {loading ? (
         <div className="loading">Loading rollouts...</div>

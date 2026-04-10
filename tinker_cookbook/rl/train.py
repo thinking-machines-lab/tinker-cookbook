@@ -149,7 +149,8 @@ def _maybe_export_rollout_summary_jsonl(
     from tinker_cookbook.rl.rollout_logging import serialize_rollout_summaries_from_groups
 
     records = serialize_rollout_summaries_from_groups(
-        split=split, iteration=iteration, groups_P=groups_P
+        split=split, iteration=iteration, groups_P=groups_P,
+        model_name=config.model_name,
     )
     store.write_rollouts(iteration, records, base_name=base_name)
 

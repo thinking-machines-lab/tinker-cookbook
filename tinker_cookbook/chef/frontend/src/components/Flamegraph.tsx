@@ -7,6 +7,7 @@
 
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { getSpanColor } from '../theme/colors';
 
 interface SpanNode {
   name: string;
@@ -25,33 +26,8 @@ interface Props {
   step: number;
 }
 
-const SPAN_COLORS: Record<string, string> = {
-  sampling: '#8bbe3a',
-  group_rollout: '#a78bfa',
-  policy_sample: '#e5a11c',
-  env_step: '#e85850',
-  env_observe: '#6aad7a',
-  compute_group_rewards: '#ec4899',
-  train_step: '#06b6d4',
-  prepare_minibatch: '#f97316',
-  assemble_training_data: '#64748b',
-  save_checkpoint: '#14b8a6',
-  train_fwd_bwd_enqueue: '#06b6d4',
-  train_fwd_bwd_consume: '#0891b2',
-  train_optim_enqueue: '#f97316',
-  train_optim_consume: '#ea580c',
-  compute_kl_penalty: '#64748b',
-  compute_kl_metrics: '#64748b',
-  run_evaluations: '#14b8a6',
-};
-
 function getColor(name: string): string {
-  if (SPAN_COLORS[name]) return SPAN_COLORS[name];
-  // Hash-based fallback
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
-  const hue = Math.abs(hash) % 360;
-  return `hsl(${hue}, 60%, 55%)`;
+  return getSpanColor(name);
 }
 
 const ROW_HEIGHT = 28;

@@ -8,6 +8,7 @@ import { CompareRunsPage } from './pages/CompareRunsPage';
 import { EvalRunDetailPage } from './pages/EvalRunDetailPage';
 import { EvalTrajectoryPage } from './pages/EvalTrajectoryPage';
 import { ChatPage } from './pages/ChatPage';
+import { GroupDetailPage } from './pages/GroupDetailPage';
 import './App.css';
 
 const HISTORY_KEY = 'tinker-chef-source-history';
@@ -321,6 +322,7 @@ function AppContent() {
           <Route path="/compare" element={<CompareRunsPage />} />
           <Route path="/runs/:runId" element={<RunDetailPage />} />
           <Route path="/runs/:runId/iterations/:iteration/rollouts/:groupIdx/:trajIdx" element={<RolloutDetailPage />} />
+          <Route path="/runs/:runId/iterations/:iteration/groups/:groupIdx" element={<GroupDetailPage />} />
           <Route path="/runs/:runId/chat" element={<ChatPage />} />
           <Route path="/eval/:evalRunId" element={<EvalRunDetailPage />} />
           <Route path="/eval/:evalRunId/:benchmark/:idx" element={<EvalTrajectoryPage />} />

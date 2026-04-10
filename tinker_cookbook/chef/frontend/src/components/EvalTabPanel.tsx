@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api } from '../api/client';
 import type { EvalScorePoint } from '../api/types';
+import { SERIES_COLORS } from '../theme/colors';
 
 export function EvalTabPanel({ runId }: { runId: string }) {
   const [evalScores, setEvalScores] = useState<EvalScorePoint[]>([]);
@@ -29,7 +30,7 @@ export function EvalTabPanel({ runId }: { runId: string }) {
           Eval Score Progression ({evalScores.length} checkpoints, {benchmarks.length} benchmarks)
         </div>
         {(() => {
-          const COLORS = ['#8bbe3a', '#a78bfa', '#e5a11c', '#e85850', '#6aad7a', '#ec4899', '#06b6d4', '#f97316'];
+          const COLORS = SERIES_COLORS;
           // Build chart data: one row per checkpoint with all benchmark scores
           const chartData = evalScores
             .map((e) => ({

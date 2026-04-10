@@ -77,6 +77,24 @@ def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
             raise HTTPException(status_code=404, detail=f"Rollout ({group_idx}, {traj_idx}) not found at iteration {iteration}")
         return rollout
 
+    @router.get("/{run_id}/iterations/{iteration}/groups/{group_idx}")
+    def get_group_rollouts(
+        run_id: str, iteration: int, group_idx: int,
+        split: str = Query("train"),
+        label: str | None = Query(None),
+        source: list[str] = Query(default=[]),
+    ) -> dict[str, Any]:
+        """Return all rollout details for a specific group."""
+        registry = resolve_registry(source)
+        require_run(registry, run_id)
+        base_name = _to_base_name(split, label)
+        all_rollouts = registry.get_training_store(run_id).read_rollouts(iteration, base_name)
+        group = [r for r in all_rollouts if r.get("group_idx") == group_idx]
+        return {
+            "run_id": run_id, "iteration": iteration, "group_idx": group_idx,
+            "total": len(group), "rollouts": group,
+        }
+
     @router.get("/{run_id}/iterations/{iteration}/logtree")
     def get_logtree(
         run_id: str, iteration: int, base_name: str = Query("train"),
