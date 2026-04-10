@@ -482,7 +482,7 @@ def _(mo):
     - **Tutorial 06**: Build your own custom `Env` for a new task from scratch.
     - **Production recipes**: See `tinker_cookbook/recipes/math_rl/` and `tinker_cookbook/recipes/code_rl/` for full examples with logging, checkpointing, and evaluation.
     - **Standard training loop**: `tinker_cookbook/rl/train.py` is the production training loop that handles all of the above plus KL penalties, async training, and metric logging.
-    - **Docs**: See [RL Environments](https://tinker-docs.thinkingmachines.ai/rl/rl-envs) for the complete environment guide.
+    - **Docs**: See [RL Environments](https://tinker-docs.thinkingmachines.ai/cookbook/rl/) for the complete environment guide.
     """)
     return
 
