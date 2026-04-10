@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { rewardColor } from '../../utils/shared';
 import { TOOLTIP_CONTENT_STYLE } from './ChartTooltip';
 
 interface Props {
@@ -42,12 +43,8 @@ function computeBins(rewards: number[], numBins: number): BinData[] {
   return bins;
 }
 
-/** Color bins by reward range: low=red, mid=yellow, high=green. */
 function binColor(bin: BinData): string {
-  const mid = (bin.min + bin.max) / 2;
-  if (mid >= 0.8) return 'var(--reward-high)';
-  if (mid >= 0.3) return 'var(--reward-mid)';
-  return 'var(--reward-low)';
+  return rewardColor((bin.min + bin.max) / 2);
 }
 
 export function RewardHistogram({ rewards, bins = 15, onBinClick, height = 100 }: Props) {

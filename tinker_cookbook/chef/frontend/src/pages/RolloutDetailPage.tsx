@@ -388,13 +388,11 @@ function getStepMessages(
 
 // ─── Legacy logtree extraction (for schema v1/v2 backward compat) ────────────
 
-type ConvMessage = ConversationMessage;
-
 function isNode(child: string | LogtreeNode): child is LogtreeNode {
   return typeof child !== 'string';
 }
 
-function isConversationData(data: Record<string, unknown> | undefined): data is { type: 'conversation'; messages: ConvMessage[] } {
+function isConversationData(data: Record<string, unknown> | undefined): data is { type: 'conversation'; messages: ConversationMessage[] } {
   return data != null && data.type === 'conversation' && Array.isArray(data.messages);
 }
 
@@ -402,7 +400,7 @@ function extractTrajectoryMessages(
   root: LogtreeNode,
   groupIdx: number,
   trajIdx: number,
-): ConvMessage[] {
+): ConversationMessage[] {
   const groupSections = (root.children ?? []).filter(isNode).filter((node) => {
     if (node.tag !== 'section') return false;
     return (node.children ?? []).filter(isNode).some((c) =>
@@ -421,9 +419,9 @@ function extractTrajectoryMessages(
   return [];
 }
 
-function extractResponseConversations(groupNode: LogtreeNode): ConvMessage[][] {
-  const prompts: ConvMessage[][] = [];
-  const responses: ConvMessage[][] = [];
+function extractResponseConversations(groupNode: LogtreeNode): ConversationMessage[][] {
+  const prompts: ConversationMessage[][] = [];
+  const responses: ConversationMessage[][] = [];
 
   function walk(node: LogtreeNode) {
     if (node.tag === 'section') {
@@ -449,9 +447,9 @@ function extractResponseConversations(groupNode: LogtreeNode): ConvMessage[][] {
   }
   walk(groupNode);
 
-  const results: ConvMessage[][] = [];
+  const results: ConversationMessage[][] = [];
   for (let i = 0; i < Math.max(prompts.length, responses.length); i++) {
-    const combined: ConvMessage[] = [];
+    const combined: ConversationMessage[] = [];
     if (i < prompts.length) combined.push(...prompts[i]);
     if (i < responses.length) combined.push(...responses[i]);
     if (combined.length > 0) results.push(combined);
@@ -459,8 +457,8 @@ function extractResponseConversations(groupNode: LogtreeNode): ConvMessage[][] {
   return results;
 }
 
-function extractAllConversations(node: LogtreeNode): ConvMessage[][] {
-  const convs: ConvMessage[][] = [];
+function extractAllConversations(node: LogtreeNode): ConversationMessage[][] {
+  const convs: ConversationMessage[][] = [];
   if (isConversationData(node.data)) {
     if (node.data.messages.length > 0) convs.push(node.data.messages);
   }

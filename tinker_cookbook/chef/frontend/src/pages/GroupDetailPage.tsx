@@ -7,8 +7,9 @@ import { api } from '../api/client';
 import { ConversationRenderer } from '../components/ConversationRenderer';
 import { TOOLTIP_CONTENT_STYLE } from '../components/charts';
 import { SERIES_COLORS } from '../theme/colors';
-import { rewardColor } from '../utils/shared';
-import type { RolloutDetail, ConversationMessage } from '../api/types';
+import { MetaField, rewardColor } from '../utils/shared';
+import { extractConversation } from '../utils/conversation';
+import type { RolloutDetail } from '../api/types';
 
 export function GroupDetailPage() {
   const { runId, iteration, groupIdx } = useParams<{
@@ -26,14 +27,9 @@ export function GroupDetailPage() {
     const gIdx = Number(groupIdx);
 
     setLoading(true);
-    api.getRollouts(runId, iter)
-      .then(async (resp) => {
-        // Fetch full details for all trajectories in this group
-        const groupRollouts = resp.rollouts.filter((r) => r.group_idx === gIdx);
-        const details = await Promise.all(
-          groupRollouts.map((r) => api.getRolloutDetail(runId, iter, r.group_idx, r.traj_idx))
-        );
-        setRollouts(details.sort((a, b) => a.traj_idx - b.traj_idx));
+    api.getGroupRollouts(runId, iter, gIdx)
+      .then((resp) => {
+        setRollouts(resp.rollouts.sort((a, b) => a.traj_idx - b.traj_idx));
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -70,25 +66,15 @@ export function GroupDetailPage() {
       {/* Group summary */}
       <div className="card" style={{ marginBottom: '0.75rem' }}>
         <div style={{ display: 'flex', gap: '1.25rem', flexWrap: 'wrap', alignItems: 'flex-start' }}>
-          <div>
-            <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Trajectories</div>
-            <div className="mono" style={{ fontWeight: 600 }}>{rollouts.length}</div>
-          </div>
-          <div>
-            <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Reward Range</div>
-            <div className="mono" style={{ fontWeight: 600 }}>
-              <span style={{ color: rewardColor(minReward) }}>{minReward.toFixed(3)}</span>
-              {' — '}
-              <span style={{ color: rewardColor(maxReward) }}>{maxReward.toFixed(3)}</span>
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Spread</div>
-            <div className="mono" style={{ fontWeight: 600 }}>{rewardSpread.toFixed(3)}</div>
-          </div>
+          <MetaField label="Trajectories" value={String(rollouts.length)} />
+          <MetaField
+            label="Reward Range"
+            value={`${minReward.toFixed(3)} — ${maxReward.toFixed(3)}`}
+          />
+          <MetaField label="Spread" value={rewardSpread.toFixed(3)} />
           {rollouts[0].tags.length > 0 && (
             <div>
-              <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Tags</div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.625rem', color: 'var(--text-muted)', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Tags</div>
               <div>{rollouts[0].tags.map((tag) => <span key={tag} className="tag">{tag}</span>)}</div>
             </div>
           )}
@@ -129,7 +115,7 @@ export function GroupDetailPage() {
 }
 
 function TrajectoryColumn({ rollout, runId, iteration }: { rollout: RolloutDetail; runId: string; iteration: string }) {
-  const messages = getConversation(rollout);
+  const messages = extractConversation(rollout);
 
   return (
     <div className="card" style={{ padding: '0.5rem', overflow: 'hidden' }}>
@@ -171,21 +157,4 @@ function TrajectoryColumn({ rollout, runId, iteration }: { rollout: RolloutDetai
       )}
     </div>
   );
-}
-
-/** Extract conversation messages from a rollout detail. */
-function getConversation(rollout: RolloutDetail): ConversationMessage[] {
-  // Try top-level conversation field (schema v3)
-  if (rollout.conversation && rollout.conversation.length > 0) {
-    return rollout.conversation;
-  }
-  // Try per-step _conversation logs
-  const msgs: ConversationMessage[] = [];
-  for (const step of rollout.steps) {
-    const conv = (step.logs as Record<string, unknown>)?._conversation;
-    if (Array.isArray(conv)) {
-      msgs.push(...conv as ConversationMessage[]);
-    }
-  }
-  return msgs;
 }
