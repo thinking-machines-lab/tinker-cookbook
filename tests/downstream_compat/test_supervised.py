@@ -40,7 +40,7 @@ class TestSupervisedData:
 
         assert_params(
             conversation_to_datum,
-            ["conversation", "renderer", "max_length", "train_on_what", "normalization"],
+            ["conversation", "renderer", "max_length", "train_on_what", "reduction"],
         )
 
     def test_from_conversation_file_builder_exists(self):

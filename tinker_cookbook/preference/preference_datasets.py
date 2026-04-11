@@ -133,10 +133,12 @@ class ChatDatasetBuilderFromComparisons(ChatDatasetBuilder):
 
         def comparison_to_datum(labeled_comparison: LabeledComparison) -> tinker.Datum:
             model_input, weights = comparison_renderer.to_model_input_weights(labeled_comparison)
-            # Preference training uses token-sum loss; normalization="none" is explicit.
+            # Preference training uses token-sum loss; reduction="none" is explicit.
             return datum_from_model_input_weights(
-                model_input, weights, self.common_config.max_length,
-                normalization="none",
+                model_input,
+                weights,
+                self.common_config.max_length,
+                reduction="none",
             )
 
         def example_to_data(example: dict[str, str]) -> list[tinker.Datum]:
