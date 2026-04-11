@@ -40,12 +40,20 @@ _UNSET = _Unset()
 
 @dataclass
 class IterationInfo:
-    """Metadata about a single training iteration directory."""
+    """Metadata about a single training iteration directory.
+
+    Populated by :meth:`TrainingRunStore.list_iterations` by scanning
+    the contents of each ``iteration_NNNNNN/`` directory.
+    """
 
     iteration: int
+    """Iteration number (from directory name ``iteration_NNNNNN``)."""
     has_train_rollouts: bool = False
+    """Whether ``train_rollout_summaries.jsonl`` exists."""
     has_train_logtree: bool = False
+    """Whether ``train_logtree.json`` exists."""
     eval_labels: list[str] = field(default_factory=list)
+    """Eval labels found (e.g., ``['gsm8k']`` from ``eval_gsm8k_rollout_summaries.jsonl``)."""
 
 
 class TrainingRunStore(BaseStore):

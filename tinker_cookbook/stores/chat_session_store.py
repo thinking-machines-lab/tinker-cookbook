@@ -15,14 +15,26 @@ logger = logging.getLogger(__name__)
 
 
 class ChatSession(BaseModel):
-    """A persisted chat session with a model checkpoint."""
+    """A persisted chat session with a model checkpoint.
+
+    Stored as ``chat_sessions/{session_id}.json`` within a training run's
+    storage. Created when a user starts an interactive chat via the Chef
+    dashboard, updated on each new message.
+    """
 
     session_id: str
+    """UUID identifying this session."""
     checkpoint_name: str
+    """Name of the checkpoint being chatted with (e.g., ``'000050'``)."""
     run_id: str
+    """Training run this session belongs to."""
     created_at: str
+    """ISO 8601 timestamp of session creation."""
     messages: list[dict[str, Any]]
+    """Conversation history as ``message_to_jsonable()`` dicts.
+    Each message has ``role``, ``content``, and optionally ``tool_calls``."""
     title: str
+    """Auto-generated title from the first user message."""
 
 
 class ChatSessionStore(BaseStore):

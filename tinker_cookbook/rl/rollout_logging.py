@@ -1,4 +1,65 @@
-"""Utilities for exporting per-rollout records to JSONL."""
+"""Utilities for exporting per-rollout records to JSONL.
+
+Rollout Summary Schema (v3)
+---------------------------
+
+Each trajectory produces one JSON record written to
+``{iteration_dir}/{base_name}_rollout_summaries.jsonl``.
+
+Top-level fields::
+
+    {
+        "schema_version": 3,
+        "split": "train" | "eval/{label}",
+        "iteration": int,           # Training batch index
+        "group_idx": int,           # GRPO group index (same problem)
+        "traj_idx": int,            # Trajectory index within the group
+        "tags": ["math", "gsm8k"],  # From EnvGroupBuilder.logging_tags()
+        "sampling_client_step": int | null,  # Checkpoint step used for sampling
+        "model_name": str | null,   # Model name from training config
+
+        # Rewards
+        "total_reward": float,      # sum(step rewards) + final_reward
+        "final_reward": float,      # From EnvGroupBuilder.compute_group_rewards()
+        "trajectory_metrics": {},   # From compute_group_rewards() metrics
+
+        # Conversation (v3+, null for v1-v2)
+        "conversation": [           # Aggregated from per-step _conversation
+            {"role": "user", "content": "...", ...},
+            {"role": "assistant", "content": [...], "tool_calls": [...], ...},
+            ...
+        ] | null,
+
+        # Per-step details
+        "steps": [
+            {
+                "step_idx": int,
+                "ob_len": int,      # Observation tokens (prompt length)
+                "ac_len": int,      # Action tokens (model response length)
+                "reward": float,    # Immediate reward from env.step()
+                "episode_done": bool,
+                "metrics": {"correct": 1.0, "format": 1.0, ...},
+                "logs": {           # Diagnostic data
+                    "_conversation": [...],  # Messages for this step (framework key)
+                    "answer_extraction": "42",  # User-defined diagnostic logs
+                    ...
+                }
+            },
+            ...
+        ],
+
+        "final_ob_len": int,        # Final observation length (context window usage)
+        "status": "ok" | "error" | "timeout",
+        "error_type": str | null,   # Exception class name if status="error"
+        "error_message": str | null,
+        "stop_reason": "stop" | "length" | null  # Why sampling stopped
+    }
+
+Schema history:
+    - v1: Initial schema
+    - v2: Added status, error_type, error_message, stop_reason
+    - v3: Added conversation, model_name; _conversation in step logs
+"""
 
 import json
 import logging

@@ -44,16 +44,28 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RunMetadata:
-    """Metadata for a single evaluation run."""
+    """Metadata for a single evaluation run.
+
+    Stored as ``runs/{run_id}/metadata.json`` and indexed in ``runs.jsonl``.
+    Links an eval run to a training checkpoint for score progression tracking.
+    """
 
     run_id: str
+    """UUID identifying this eval run."""
     model_name: str
+    """Model evaluated (e.g., ``'meta-llama/Llama-3.1-8B-Instruct'``)."""
     checkpoint_path: str | None
+    """Tinker checkpoint path (used to match eval to training checkpoints)."""
     checkpoint_name: str | None
+    """Human-readable checkpoint name (e.g., ``'000050'``)."""
     benchmarks: list[str]
+    """Benchmark names included in this run (e.g., ``['gsm8k', 'math']``)."""
     timestamp: str
+    """ISO 8601 timestamp of eval run creation."""
     config: dict[str, Any] = field(default_factory=dict)
+    """Eval configuration (benchmark settings, concurrency, etc.)."""
     scores: dict[str, float] = field(default_factory=dict)
+    """Benchmark name → score (0-1). Populated after all benchmarks complete."""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dict."""
