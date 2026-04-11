@@ -28,6 +28,7 @@ We provide the following examples:
 - **[Rubric-based grading](./rubric/)**: use an LLM grader with rubrics to provide rewards for RL training.
 - **[Verifiers environments](./verifiers_rl/)**: use RL environments from Prime Intellect's Environments Hub with Tinker.
 - **[VLM image classification](./vlm_classifier/)**: train vision-language models as image classifiers.
+- **[Golf forecasting](./golf_forecasting/)**: forecast golf tournament winners from leaderboard snapshots with web-enriched datasets and proper-scoring RL rewards.
 - **[Harbor RL](./harbor_rl/)**: RL training on Harbor-formatted tasks (e.g., Terminal-Bench) with sandboxed code execution.
 - **[Self-Distillation Fine-Tuning (SDFT)](./sdft/)**: self-distillation via top-K forward KL loss without a separate teacher deployment.
 - **[True Thinking Score (TTS)](./true_thinking_score/)**: quantify the faithfulness of chain-of-thought reasoning to the model's final answer.
