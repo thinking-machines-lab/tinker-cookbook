@@ -183,7 +183,24 @@ def _(mo):
 
 
 @app.cell
-def _(asyncio, config, train):
+def _(mo):
+    api_key = mo.ui.text(kind="password", label="Paste your Tinker API key")
+    api_key  # noqa: B018
+    return (api_key,)
+
+
+@app.cell
+def _(api_key, asyncio, config, mo, train):
+    import os
+
+    mo.stop(
+        "TINKER_API_KEY" not in os.environ and not api_key.value,
+        "Paste your API key above",
+    )
+
+    if api_key.value:
+        os.environ["TINKER_API_KEY"] = api_key.value
+
     # Run the full SFT pipeline
     asyncio.run(train.main(config))
     return

@@ -82,19 +82,19 @@ def _(TokensWithLogprobs, Trajectory, Transition, tinker, trajectory_to_data):
     transitions = [
         Transition(
             ob=tinker.ModelInput.from_ints(o1),
-            ac=TokensWithLogprobs(tokens=a1, logprobs=[-0.5, -0.3]),
+            ac=TokensWithLogprobs(tokens=a1, maybe_logprobs=[-0.5, -0.3]),
             reward=0.0,
             episode_done=False,
         ),
         Transition(
             ob=tinker.ModelInput.from_ints(o1 + a1 + o2),  # Extends previous
-            ac=TokensWithLogprobs(tokens=a2, logprobs=[-0.4, -0.2, -0.1]),
+            ac=TokensWithLogprobs(tokens=a2, maybe_logprobs=[-0.4, -0.2, -0.1]),
             reward=0.0,
             episode_done=False,
         ),
         Transition(
             ob=tinker.ModelInput.from_ints(o1 + a1 + o2 + a2 + o3),  # Extends again
-            ac=TokensWithLogprobs(tokens=a3, logprobs=[-0.6, -0.3]),
+            ac=TokensWithLogprobs(tokens=a3, maybe_logprobs=[-0.6, -0.3]),
             reward=1.0,
             episode_done=True,
         ),
@@ -132,13 +132,13 @@ def _(TokensWithLogprobs, Trajectory, Transition, tinker, trajectory_to_data):
     transitions_split = [
         Transition(
             ob=tinker.ModelInput.from_ints([100, 101]),
-            ac=TokensWithLogprobs(tokens=[200, 201], logprobs=[-0.5, -0.3]),
+            ac=TokensWithLogprobs(tokens=[200, 201], maybe_logprobs=[-0.5, -0.3]),
             reward=0.5,
             episode_done=False,
         ),
         Transition(
             ob=tinker.ModelInput.from_ints([300, 301, 302]),  # New context, not a prefix
-            ac=TokensWithLogprobs(tokens=[400, 401], logprobs=[-0.4, -0.2]),
+            ac=TokensWithLogprobs(tokens=[400, 401], maybe_logprobs=[-0.4, -0.2]),
             reward=0.5,
             episode_done=True,
         ),

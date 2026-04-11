@@ -96,7 +96,24 @@ def _(mo):
 
 
 @app.cell
-def _(get_renderer, tinker):
+def _(mo):
+    api_key = mo.ui.text(kind="password", label="Paste your Tinker API key")
+    api_key  # noqa: B018
+    return (api_key,)
+
+
+@app.cell
+def _(api_key, get_renderer, mo, tinker):
+    import os
+
+    mo.stop(
+        "TINKER_API_KEY" not in os.environ and not api_key.value,
+        "Paste your API key above",
+    )
+
+    if api_key.value:
+        os.environ["TINKER_API_KEY"] = api_key.value
+
     MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
 
     service_client = tinker.ServiceClient()

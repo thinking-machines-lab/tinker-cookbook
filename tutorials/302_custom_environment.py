@@ -205,7 +205,24 @@ def _(mo):
 
 
 @app.cell
-async def _(FormatEnv, get_renderer, get_tokenizer, tinker):
+def _(mo):
+    api_key = mo.ui.text(kind="password", label="Paste your Tinker API key")
+    api_key  # noqa: B018
+    return (api_key,)
+
+
+@app.cell
+async def _(FormatEnv, api_key, get_renderer, get_tokenizer, mo, tinker):
+    import os
+
+    mo.stop(
+        "TINKER_API_KEY" not in os.environ and not api_key.value,
+        "Paste your API key above",
+    )
+
+    if api_key.value:
+        os.environ["TINKER_API_KEY"] = api_key.value
+
     # Create a renderer (we need a tokenizer for this)
     MODEL_NAME = "Qwen/Qwen3.5-4B"
     service_client = tinker.ServiceClient()
