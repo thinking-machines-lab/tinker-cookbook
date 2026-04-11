@@ -16,7 +16,7 @@ class CLIConfig:
     game_name: str = "TicTacToe-v0"
     test_opponent: OpponentType = "base_model"
     batch_size: int = 512
-    num_train_datapoints: int = 40960
+    num_train_datapoints: int = 20480
     num_test_datapoints: int = 128
     learning_rate: float = 3e-5
     max_tokens: int = 64

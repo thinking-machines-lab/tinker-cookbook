@@ -15,7 +15,7 @@ We show how to coordinate the steps of two *Environment* objects such that both 
 python -m tinker_cookbook.recipes.multiplayer_rl.text_arena.train
 ```
 
-With the default settings (batch size 512, ~40k datapoints = 80 steps), training takes roughly 1-2 hours.
+With the default settings (batch size 512, ~20k datapoints = 40 steps), training takes roughly 1 hour.
 
 ### Expected results
 
@@ -27,7 +27,6 @@ The key metric to watch is `test/env/all/reward/total`, which measures how well 
 | 5    | ~ 0.0                    | ~ +0.3                      |
 | 20   | ~ 0.0                    | ~ +0.2                      |
 | 40   | ~ 0.0                    | ~ +0.5 to +0.7              |
-| 60   | ~ 0.0                    | ~ +0.4 to +0.6              |
 
 **Why is a self-play reward of 0 good?** In tic-tac-toe, optimal play by both sides always results in a draw. The self-play training reward converging to 0 means both the "Player 0" and "Player 1" copies of the model have learned to play without making mistakes -- neither side can win. The test reward (vs the untrained base model) rises from negative to positive, meaning the trained model dominates the base model.
 
@@ -47,7 +46,7 @@ The **collapse** at step 80 happens because a small asymmetry gets amplified —
 
 The model **recovers** around step 115, but then settles into a **degenerate equilibrium**: both sides draw in self-play (reward ≈ 0), but the strategy is actually worse than the base model (test reward goes negative). The collapse breaks the learned strategy, and the recovery converges to a different, weaker fixed point. This is a known challenge with self-play RL.
 
-The default of 80 steps avoids the collapse while capturing the performance plateau. Potential mitigations for longer training runs include mixing self-play with games against a fixed opponent (random or base model) in each batch, or periodically freezing a copy of the weights to play against.
+The default of 40 steps captures the performance plateau well before any instability. To experiment with longer runs, pass `num_train_datapoints=131072` for 256 steps, but beware of the collapse described above. Potential mitigations for longer training runs include mixing self-play with games against a fixed opponent (random or base model) in each batch, or periodically freezing a copy of the weights to play against.
 
 ### CLI options
 
@@ -55,7 +54,7 @@ The default of 80 steps avoids the collapse while capturing the performance plat
 |--------|---------|-------------|
 | `model_name` | `Qwen/Qwen3-4B-Instruct-2507` | Base model to train |
 | `batch_size` | `512` | Trajectories per training step |
-| `num_train_datapoints` | `40960` | Total training trajectories (~80 steps) |
+| `num_train_datapoints` | `20480` | Total training trajectories (~40 steps) |
 | `learning_rate` | `3e-5` | Adam learning rate |
 | `eval_every` | `5` | Evaluate every N steps |
 | `save_every` | `20` | Checkpoint every N steps |
