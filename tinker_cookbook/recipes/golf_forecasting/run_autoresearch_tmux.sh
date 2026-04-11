@@ -9,6 +9,8 @@ REPO="${REPO:-$DEFAULT_REPO}"
 LOG_DIR="${LOG_DIR:-$HOME/golf-autoresearch-logs}"
 PROMPT_FILE="${PROMPT_FILE:-$LOG_DIR/golf_prompt.txt}"
 STARTUP_WAIT_SECONDS="${STARTUP_WAIT_SECONDS:-8}"
+REMOTE_CONTROL="${REMOTE_CONTROL:-0}"
+CLAUDE_COMMAND="${CLAUDE_COMMAND:-}"
 
 mkdir -p "$LOG_DIR"
 
@@ -30,6 +32,14 @@ fi
 if [[ -z "${TINKER_API_KEY:-}" ]]; then
   echo "TINKER_API_KEY is not set"
   exit 1
+fi
+
+if [[ -z "$CLAUDE_COMMAND" ]]; then
+  if [[ "$REMOTE_CONTROL" == "1" ]]; then
+    CLAUDE_COMMAND="claude --remote-control \"$SESSION_NAME\""
+  else
+    CLAUDE_COMMAND="claude"
+  fi
 fi
 
 cat > "$PROMPT_FILE" <<'PROMPT'
@@ -65,15 +75,14 @@ tmux new-session -d -s "$SESSION_NAME" "bash -lc '
   mkdir -p \"$LOG_DIR\"
   echo \"[$(date -Is)] starting claude in $REPO\" >> \"$RUN_LOG\"
   uv sync --extra dev
-  claude
+  eval \"$CLAUDE_COMMAND\"
 '"
 
 tmux pipe-pane -o -t "$SESSION_NAME:0.0" "cat >> \"$RUN_LOG\""
 
 sleep "$STARTUP_WAIT_SECONDS"
 
-tmux load-buffer "$PROMPT_FILE"
-tmux paste-buffer -t "$SESSION_NAME:0.0"
+tmux send-keys -t "$SESSION_NAME:0.0" -l -- "$(cat "$PROMPT_FILE")"
 tmux send-keys -t "$SESSION_NAME:0.0" Enter
 
 echo "Started tmux session: $SESSION_NAME"
@@ -84,3 +93,7 @@ echo "  Attach:        tmux attach -t $SESSION_NAME"
 echo "  Detach:        Ctrl-b then d"
 echo "  Tail log:      tail -f \"$RUN_LOG\""
 echo "  Stop session:  tmux kill-session -t $SESSION_NAME"
+if [[ "$REMOTE_CONTROL" == "1" ]]; then
+  echo "  Remote mode:   enabled"
+  echo "  Next step:     attach once to view the remote-control URL or QR code"
+fi

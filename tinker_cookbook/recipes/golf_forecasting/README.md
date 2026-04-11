@@ -154,19 +154,25 @@ The agent must preserve one rule:
 
 ## Overnight tmux Launch
 
-If you want to kick off autoresearch on a remote host and disconnect, you can launch Claude Code inside a detached `tmux` session.
+If you want to kick off autoresearch in an unattended way, there are a few supported paths below.
 
-Before using this:
+Common prerequisites:
 
 - make sure `claude` already works interactively on the machine
 - make sure `TINKER_API_KEY` is set
 - make sure Claude Code is configured to avoid blocking on approval prompts
+- for phone tracking with Claude Remote Control, make sure your Claude Code version and plan support Remote Control and that you are already logged in
 
-The recipe now includes a checked-in launcher:
+The recipe includes a checked-in launcher:
 
 - `tinker_cookbook/recipes/golf_forecasting/run_autoresearch_tmux.sh`
 
-Make it executable if needed:
+<details>
+<summary>Kick off from a remote host with <code>tmux</code></summary>
+
+Use this if you want to start the job on a remote machine, disconnect your SSH session, and let it continue running.
+
+Make the launcher executable if needed:
 
 ```bash
 chmod +x tinker_cookbook/recipes/golf_forecasting/run_autoresearch_tmux.sh
@@ -193,4 +199,82 @@ Notes:
 - doing one manual dry run first is a good idea
 - the script derives the repo root from its own location by default, but you can still override `REPO`
 - you can also override `SESSION_NAME`, `LOG_DIR`, and `STARTUP_WAIT_SECONDS`
+
+</details>
+
+<details>
+<summary>Kick off locally and track it from your phone with Claude Remote Control</summary>
+
+Claude Code supports an official Remote Control mode that lets you monitor and interact with the same local session from the Claude mobile app or from [claude.ai/code](https://claude.ai/code).
+
+The launcher uses `claude --remote-control`, which starts a normal interactive Claude session and also exposes that same session to your phone.
+
+To launch the autoresearch session with Remote Control enabled:
+
+```bash
+export TINKER_API_KEY=your_key_here
+REMOTE_CONTROL=1 tinker_cookbook/recipes/golf_forecasting/run_autoresearch_tmux.sh
+```
+
+Then:
+
+1. Attach once to the tmux session:
+
+```bash
+tmux attach -t golf-autoresearch
+```
+
+2. Claude should show the Remote Control URL in the terminal for that interactive session.
+3. Scan the QR code with the Claude mobile app, or open the URL, or go to [claude.ai/code](https://claude.ai/code) and select the session by name.
+4. Detach from tmux with `Ctrl-b` then `d`.
+
+From that point, the Claude process keeps running on the remote host, and you can monitor or message the same session from your phone.
+
+Notes:
+
+- for Remote Control sessions, the `claude` process must keep running on the host machine
+- if the host loses network for too long or the process exits, the phone session disconnects
+
+</details>
+
+<details>
+<summary>Kick off directly from Claude Code on the web</summary>
+
+You can also start this autoresearch job directly from Claude Code on the web at [claude.ai/code](https://claude.ai/code).
+
+- Claude Code on the web runs in Anthropic-managed cloud infrastructure
+- Remote Control runs on your own machine and exposes that local session remotely
+
+For the web flow, use the official Claude Code on the web setup:
+
+1. Sign in at [claude.ai/code](https://claude.ai/code).
+2. Connect GitHub and grant Claude access to the `tinker-cookbook` repository.
+3. Create or select a cloud environment.
+4. Make sure the cloud environment has the secrets and setup needed for this recipe, especially:
+   - `TINKER_API_KEY`
+   - any other credentials you want the agent to use for public-data access or model tooling
+5. Select the repository and branch you want Claude to work on.
+6. Choose an appropriate permission mode such as auto-accept edits if you want a more autonomous run.
+7. Paste a kickoff prompt like this:
+
+```text
+Read `tinker_cookbook/recipes/golf_forecasting/program.md` and follow it exactly.
+
+Start by discovering public golf data sources, building the first dataset, freezing a clean anchor eval as soon as you have a minimally viable benchmark, defining an initial research eval, establishing a baseline on both, and then entering the endless autoresearch loop.
+
+You have broad freedom to change models, prompts, output formats, training methods, dataset structure, and evaluation design, but once the anchor eval is created it must never change.
+```
+
+If you prefer to bootstrap the web setup from the CLI first, the official docs also mention:
+
+- `/web-setup` inside Claude Code to help sync GitHub and create a default cloud environment
+- `claude --remote "..."` to start a cloud task from the terminal
+
+Notes:
+
+- the web flow requires GitHub integration because Claude needs to clone and push branches in the cloud environment
+- unlike Remote Control, the web flow does not use your local filesystem or local `tmux` session
+- if your autoresearch depends on local-only services or files, prefer the `tmux` + Remote Control path instead
+
+</details>
 
