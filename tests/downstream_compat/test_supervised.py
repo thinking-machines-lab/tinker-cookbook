@@ -39,7 +39,8 @@ class TestSupervisedData:
         from tests.downstream_compat.sig_helpers import assert_params
 
         assert_params(
-            conversation_to_datum, ["conversation", "renderer", "max_length", "train_on_what"]
+            conversation_to_datum,
+            ["conversation", "renderer", "max_length", "train_on_what", "normalization"],
         )
 
     def test_from_conversation_file_builder_exists(self):

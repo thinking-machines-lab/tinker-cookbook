@@ -83,12 +83,16 @@ class DPODatasetBuilderFromComparisons(ChatDatasetBuilder):
             chosen_tokens, chosen_weights = renderer.build_supervised_example(chosen_convo)
             rejected_tokens, rejected_weights = renderer.build_supervised_example(rejected_convo)
 
+            # DPO uses sequence log-probability (token-sum), so normalization
+            # must be "none" to avoid implicit length bias.
             return [
                 datum_from_model_input_weights(
-                    chosen_tokens, chosen_weights, self.common_config.max_length
+                    chosen_tokens, chosen_weights, self.common_config.max_length,
+                    normalization="none",
                 ),
                 datum_from_model_input_weights(
-                    rejected_tokens, rejected_weights, self.common_config.max_length
+                    rejected_tokens, rejected_weights, self.common_config.max_length,
+                    normalization="none",
                 ),
             ]
 
