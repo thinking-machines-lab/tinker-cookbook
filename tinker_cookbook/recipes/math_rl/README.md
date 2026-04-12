@@ -39,6 +39,42 @@ The point (0,3): x=0, y=3. r = sqrt(0^2+3^2)=3. \theta = arctan(y/x) but x=0, y>
 \boxed{(3,\frac{\pi}{2})}<|im_end|>
 ```
 
+## Choosing a loss function
+
+The `loss_fn` flag selects which policy-gradient loss to use. The default is `importance_sampling` (REINFORCE with IS correction). The examples below show how to select `cispo` and `dro`.
+
+### CISPO (Conservative Importance Sampling PPO)
+
+CISPO clips the importance-sampling ratio but applies it as a weight on the log-probability rather than on the advantage. This can be more stable than PPO when the policy drifts far off-policy.
+
+```bash
+python -m tinker_cookbook.recipes.math_rl.train \
+    env=arithmetic loss_fn=cispo \
+    model_name="meta-llama/Llama-3.2-1B" \
+    group_size=4 groups_per_batch=100 learning_rate=1e-4
+```
+
+CISPO defaults to a one-sided clip (`0.0`, `4.0`). You can set that default explicitly via `loss_fn_config`:
+
+```bash
+python -m tinker_cookbook.recipes.math_rl.train \
+    env=arithmetic loss_fn=cispo \
+    'loss_fn_config={"clip_low_threshold": 0.0, "clip_high_threshold": 4.0}' \
+    model_name="meta-llama/Llama-3.2-1B" \
+    group_size=4 groups_per_batch=100 learning_rate=1e-4
+```
+
+### DRO (Distributionally Robust Optimization)
+
+DRO is an off-policy and offline RL objective with a quadratic penalty on the log-ratio between the training and sampling policies. It requires a client-side soft-advantage formulation. The `math_rl` recipe currently uses group-mean-centered advantages, so the command below illustrates the API only; it is not a validated DRO training configuration.
+
+```bash
+python -m tinker_cookbook.recipes.math_rl.train \
+    env=arithmetic loss_fn=dro \
+    model_name="meta-llama/Llama-3.2-1B" \
+    group_size=4 groups_per_batch=100 learning_rate=1e-4
+```
+
 # RL on GSM8K
 
 ```bash
