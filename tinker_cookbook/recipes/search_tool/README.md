@@ -25,10 +25,10 @@ If you launch the chroma service locally, you generally need 160+ GB RAM to load
 
 ### Lightweight alternative: local BM25 (no Chroma, runs on a laptop)
 
-If you don't have a 160 GB RAM machine handy, use the local variant instead. It swaps Chroma + Gemini embeddings for an in-memory BM25 index over a small Wikipedia subset (~3k passages, <10 MB). The training loop is identical, so you can iterate on the recipe without any external infrastructure.
+If you don't have a 160 GB RAM machine handy, use the local backend instead. It swaps Chroma + Gemini embeddings for an in-memory BM25 index over a small Wikipedia subset (~3k passages, <10 MB). The training loop is identical, so you can iterate on the recipe without any external infrastructure.
 
 ```bash
-python -m tinker_cookbook.recipes.search_tool.train_local
+python -m tinker_cookbook.recipes.search_tool.train backend=local
 ```
 
 The first run downloads the [`rag-datasets/rag-mini-wikipedia`](https://huggingface.co/datasets/rag-datasets/rag-mini-wikipedia) corpus from HuggingFace. Subsequent runs reuse the cached copy. No API keys are required.
@@ -47,11 +47,13 @@ The lightweight variant is best for learning the recipe, debugging, and iteratin
 
 ### Example command
 
-This default command trains a `Qwen3-4B-Instruct-2507` with reasonable hyperparameters.
+This default command trains a `Qwen3-4B-Instruct-2507` with reasonable hyperparameters using the full Chroma + Gemini backend.
 
 ```bash
 python -m tinker_cookbook.recipes.search_tool.train
 ```
+
+(The default `backend=chroma` is implicit. Pass `backend=local` to use the lightweight variant described above.)
 
 With the default hyperparameters, you can expect performance like:
 | | Natural Questions | Trivia QA | HotpotQA | 2WikiMultihopQA |
