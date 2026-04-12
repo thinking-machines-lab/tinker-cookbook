@@ -25,6 +25,7 @@ def conversation_to_datum(
     renderer: Renderer,
     max_length: int | None,
     train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
+    reduction: Literal["none", "mean"] = "mean",
 ) -> tinker.Datum:
     """Convert a chat conversation into a training Datum.
 
@@ -41,6 +42,11 @@ def conversation_to_datum(
             resulting datum is truncated to this many tokens.
         train_on_what (TrainOnWhat): Which tokens receive non-zero loss
             weight.  Default ``TrainOnWhat.ALL_ASSISTANT_MESSAGES``.
+        reduction (Literal["none", "mean"]): How to reduce per-token loss
+            weights.  ``"mean"`` (default for SFT) normalizes weights to
+            sum to 1.0 per example, producing consistent gradient
+            magnitudes across variable-length sequences.  ``"none"``
+            preserves raw weights (token-sum loss).
 
     Returns:
         tinker.Datum: A training datum with model input, target tokens,
@@ -62,7 +68,7 @@ def conversation_to_datum(
     model_input, weights = renderer.build_supervised_example(
         conversation, train_on_what=train_on_what
     )
-    return datum_from_model_input_weights(model_input, weights, max_length)
+    return datum_from_model_input_weights(model_input, weights, max_length, reduction=reduction)
 
 
 def _one_of(a: Any, b: Any) -> bool:

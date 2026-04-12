@@ -1,9 +1,12 @@
 import logging
+from typing import Literal
 
 import tinker
 import torch
 
 from tinker_cookbook.exceptions import DataValidationError
+
+_logged_reduction_modes: set[str] = set()
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +105,7 @@ def datum_from_model_input_weights(
     model_input: tinker.ModelInput,
     weights: torch.Tensor,
     max_length: int | None = None,
+    reduction: Literal["none", "mean"] = "none",
 ) -> tinker.Datum:
     """Create a training Datum from a ModelInput and per-token weights tensor.
 
@@ -117,6 +121,12 @@ def datum_from_model_input_weights(
             aligned with ``model_input.length``.
         max_length (int | None): Optional maximum sequence length.  If
             provided, the input is truncated from the right to fit.
+        reduction (Literal["none", "mean"]): How to reduce per-token loss
+            weights after slicing.  ``"none"`` preserves raw weights
+            (token-sum loss).  ``"mean"`` normalizes weights to sum to 1.0
+            per example (token-mean loss), making gradient magnitudes
+            consistent across variable-length sequences.
+            Defaults to ``"none"``.
 
     Returns:
         tinker.Datum: A datum whose ``model_input`` holds the right-shifted
@@ -128,6 +138,9 @@ def datum_from_model_input_weights(
         from tinker_cookbook.supervised.common import datum_from_model_input_weights
 
         datum = datum_from_model_input_weights(model_input, weights, max_length=2048)
+        datum = datum_from_model_input_weights(
+            model_input, weights, max_length=2048, reduction="mean",
+        )
     """
 
     model_input_chunks = list(model_input.chunks)
@@ -165,6 +178,17 @@ def datum_from_model_input_weights(
         model_input_chunks
     )
     weights = weights[1 : len(target_tokens) + 1]
+
+    # Apply weight reduction
+    if reduction == "mean":
+        total = float(weights.sum())
+        if total > 0:
+            weights = weights / total
+        if "mean" not in _logged_reduction_modes:
+            logger.info("Weight reduction: 'mean' (token-mean loss)")
+            _logged_reduction_modes.add("mean")
+    elif reduction != "none":
+        raise ValueError(f"Unknown reduction mode: {reduction!r}")
 
     return tinker.Datum(
         model_input=input_model_input,
