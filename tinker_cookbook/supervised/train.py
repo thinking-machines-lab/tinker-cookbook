@@ -81,6 +81,10 @@ class Config:
             (0 disables).
         max_steps (int | None): Hard cap on training steps.  ``None`` trains
             for ``num_epochs * n_batches``.
+        submit_ahead (int): How many batches to submit ahead of the one being
+            waited on.  ``1`` (default) matches the historical single-lookahead
+            behavior; ``0`` disables pipelining entirely; higher values deepen
+            the pipeline for more overlap at the cost of memory.
 
     Example::
 
@@ -143,8 +147,9 @@ class Config:
     max_steps: int | None = None
 
     # How many batches to submit ahead of the one being waited on.
-    # 0 = no pipelining (current behavior), 2 = submit 2 extra batches ahead.
-    submit_ahead: int = 0
+    # 1 = historical single-lookahead behavior (submit N+1 while finishing N).
+    # 0 = no pipelining, 2+ = deeper pipeline.
+    submit_ahead: int = 1
 
 
 @dataclass
