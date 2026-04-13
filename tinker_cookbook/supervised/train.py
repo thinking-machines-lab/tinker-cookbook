@@ -9,6 +9,8 @@ refer to `tinker_cookbook/recipes/sl_loop.py`.
 
 import asyncio
 import logging
+import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -79,6 +81,10 @@ class Config:
             (0 disables).
         max_steps (int | None): Hard cap on training steps.  ``None`` trains
             for ``num_epochs * n_batches``.
+        submit_ahead (int): How many batches to submit ahead of the one being
+            waited on.  ``1`` (default) matches the historical single-lookahead
+            behavior; ``0`` disables pipelining entirely; higher values deepen
+            the pipeline for more overlap at the cost of memory.
 
     Example::
 
@@ -139,6 +145,11 @@ class Config:
 
     # Maximum number of training steps. If None, train for num_epochs * n_batches.
     max_steps: int | None = None
+
+    # How many batches to submit ahead of the one being waited on.
+    # 1 = historical single-lookahead behavior (submit N+1 while finishing N).
+    # 0 = no pipelining, 2+ = deeper pipeline.
+    submit_ahead: int = 1
 
 
 @dataclass
@@ -457,7 +468,6 @@ async def main(config: Config):
         if submitted.infrequent_eval_metrics is not None:
             metrics.update(submitted.infrequent_eval_metrics)
 
-    pending_batch: SubmittedBatch | None = None
     log_path = Path(config.log_path)
 
     async def finish_and_log(submitted: SubmittedBatch, window: trace.IterationWindow) -> None:
@@ -472,6 +482,29 @@ async def main(config: Config):
                 trace.save_gantt_chart_html(window, submitted.step, iter_dir / "timing_gantt.html")
         ml_logger.log_metrics(metrics=submitted.metrics, step=submitted.step)
 
+    assert config.submit_ahead >= 0, f"submit_ahead must be >= 0, got {config.submit_ahead}"
+
+    # Each step gets its own IterationWindow. Since async is cooperative
+    # (single-threaded), we swap the active window in trace._iteration_window
+    # around each phase so @scope spans land in the correct window.
+    pending: deque[tuple[SubmittedBatch, trace.IterationWindow, float]] = deque()
+    max_pending = 1 + config.submit_ahead
+
+    def _activate_window(window: trace.IterationWindow):
+        return trace._iteration_window.set(window)
+
+    def _deactivate_window(token):
+        trace._iteration_window.reset(token)
+
+    async def drain_oldest() -> None:
+        oldest, window, t_start = pending.popleft()
+        token = _activate_window(window)
+        try:
+            await finish_and_log(oldest, window)
+        finally:
+            window._total_time = time.perf_counter() - t_start
+            _deactivate_window(token)
+
     reached_max_steps = False
     for epoch_idx in range(start_epoch, config.num_epochs):
         logger.info(f"Starting epoch {epoch_idx}")
@@ -483,17 +516,21 @@ async def main(config: Config):
             if config.max_steps is not None and step >= config.max_steps:
                 reached_max_steps = True
                 break
-            with trace.trace_iteration(step=step) as window:
+            window = trace.IterationWindow()
+            t_start = time.perf_counter()
+            token = _activate_window(window)
+            try:
                 submitted_batch = await submit_batch(epoch_idx, batch_idx)
-                if pending_batch is not None:
-                    await finish_and_log(pending_batch, window)
-            pending_batch = submitted_batch
+            finally:
+                _deactivate_window(token)
+            pending.append((submitted_batch, window, t_start))
+            if len(pending) >= max_pending:
+                await drain_oldest()
         if reached_max_steps:
             break
 
-    if pending_batch is not None:
-        with trace.trace_iteration(step=pending_batch.step) as window:
-            await finish_and_log(pending_batch, window)
+    while pending:
+        await drain_oldest()
 
     did_train = start_epoch < config.num_epochs and (
         config.max_steps is None or start_epoch * n_batches + start_batch < config.max_steps
