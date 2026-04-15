@@ -83,16 +83,44 @@ class ComparisonRendererFromChatRenderer(ComparisonRenderer):
         convo = self._comparison_to_convo(labeled_comparison.comparison)
         convo_with_pref = convo + [{"role": "assistant", "content": labeled_comparison.label}]
         model_input, weights = self.convo_renderer.build_supervised_example(convo_with_pref)
-        # TODO: support images in preference learning
-        assert all(isinstance(c, tinker.types.EncodedTextChunk) for c in model_input.chunks), (
-            "Preference learning currently only supports text-only content."
-        )
-        # Truncate at the first weight==1 position + 1
-        tokens = model_input.to_ints()
+        # Find the first position with weight==1 (start of the preference label)
         first_weight_one_index = int(torch.nonzero(weights == 1.0)[0])
-        truncated_tokens = tokens[: first_weight_one_index + 1]
-        truncated_weights = weights[: first_weight_one_index + 1]
-        return types.ModelInput.from_ints(truncated_tokens), truncated_weights
+
+        # Truncate model_input and weights at first_weight_one_index + 1
+        # Handle both text chunks and image chunks
+        truncated_chunks: list[types.ModelInputChunk] = []
+        truncated_weights_list: list[float] = []
+
+        current_pos = 0
+        for chunk in model_input.chunks:
+            chunk_start = current_pos
+            chunk_end = current_pos + chunk.length
+
+            # Check if this chunk is entirely before the truncation point
+            if chunk_end <= first_weight_one_index + 1:
+                truncated_chunks.append(chunk)
+                truncated_weights_list.extend([weights[i].item() for i in range(chunk_start, chunk_end)])
+            else:
+                # Chunk overlaps with truncation point
+                if isinstance(chunk, tinker.types.EncodedTextChunk):
+                    # For text chunks, we can partially include them
+                    tokens_before_truncation = first_weight_one_index + 1 - chunk_start
+                    if tokens_before_truncation > 0:
+                        truncated_chunks.append(
+                            tinker.types.EncodedTextChunk(tokens=chunk.tokens[:tokens_before_truncation])
+                        )
+                        truncated_weights_list.extend(
+                            [weights[i].item() for i in range(chunk_start, chunk_start + tokens_before_truncation)]
+                        )
+                # Image chunks must be entirely included or excluded (can't partially truncate)
+                # If an image chunk overlaps, we exclude it entirely
+
+            current_pos = chunk_end
+
+        truncated_model_input = types.ModelInput(chunks=truncated_chunks)
+        truncated_weights = torch.tensor(truncated_weights_list, dtype=torch.float32)
+
+        return truncated_model_input, truncated_weights
 
     @property
     def tokenizer(self) -> Tokenizer:
