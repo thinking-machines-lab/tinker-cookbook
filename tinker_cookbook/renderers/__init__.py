@@ -136,9 +136,9 @@ def get_renderer(
             - ``"kimi_k2"``: Kimi K2 Thinking format
             - ``"kimi_k25"``: Kimi K2.5 with thinking enabled
             - ``"kimi_k25_disable_thinking"``: Kimi K2.5 with thinking disabled
-            - ``"nemotron3"``: Nemotron-3 with thinking enabled
-            - ``"nemotron3_low_thinking"``: Nemotron-3 with low thinking effort (Super only)
-            - ``"nemotron3_disable_thinking"``: Nemotron-3 with thinking disabled
+            - ``"nemotron3"``: Nemotron-3 with full reasoning (Nano & Super)
+            - ``"nemotron3_low_thinking"``: Nemotron-3 with low-effort reasoning (Super only)
+            - ``"nemotron3_disable_thinking"``: Nemotron-3 with reasoning off (Nano & Super)
             - ``"gpt_oss_no_sysprompt"``: GPT-OSS without system prompt
             - ``"gpt_oss_low_reasoning"``: GPT-OSS with low reasoning
             - ``"gpt_oss_medium_reasoning"``: GPT-OSS with medium reasoning
