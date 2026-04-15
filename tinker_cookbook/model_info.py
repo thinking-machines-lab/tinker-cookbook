@@ -27,6 +27,7 @@ _GPT_OSS = ("gpt_oss_no_sysprompt", "gpt_oss_medium_reasoning")
 _KIMI_K2 = ("kimi_k2",)
 _KIMI_K25 = ("kimi_k25", "kimi_k25_disable_thinking")
 _NEMOTRON3 = ("nemotron3", "nemotron3_disable_thinking")
+_NEMOTRON3_SUPER = _NEMOTRON3 + ("nemotron3_low_thinking",)
 
 
 @dataclass
@@ -172,7 +173,7 @@ def get_nvidia_info() -> dict[str, ModelAttributes]:
             org, "3", "30B-A3B", True, _NEMOTRON3
         ),
         "NVIDIA-Nemotron-3-Super-120B-A12B-BF16": ModelAttributes(
-            org, "3", "120B-A12B", True, _NEMOTRON3
+            org, "3", "120B-A12B", True, _NEMOTRON3_SUPER
         ),
     }
 

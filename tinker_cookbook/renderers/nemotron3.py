@@ -28,6 +28,28 @@ the following ways:
    prepends an empty system message in build_generation_prompt and
    build_supervised_example to match this behavior.
 
+Thinking modes
+--------------
+Both Nano and Super support reasoning ON/OFF. The Super model additionally
+supports a low-effort reasoning mode that produces shorter thinking traces.
+
++---------------------+-------------------------------+---------------------+
+| Mode                | HF template params            | Renderer name       |
++=====================+===============================+=====================+
+| Reasoning ON (full) | enable_thinking=True          | nemotron3           |
++---------------------+-------------------------------+---------------------+
+| Low-effort thinking | enable_thinking=True,         | nemotron3_low       |
+| (Super only)        | low_effort=True               | _thinking           |
++---------------------+-------------------------------+---------------------+
+| Reasoning OFF       | enable_thinking=False         | nemotron3_disable   |
+|                     |                               | _thinking           |
++---------------------+-------------------------------+---------------------+
+
+The low-effort mode appends ``{reasoning effort: low}`` to the last user
+message, signaling the model to use shorter reasoning traces. The generation
+suffix remains ``<think>\\n`` (thinking is still enabled).
+
+Reference: https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
 """
 
 import dataclasses
@@ -333,6 +355,36 @@ class Nemotron3Renderer(Qwen3_5Renderer):
             content = system_prompt
 
         return [Message(role="system", content=content)]
+
+
+class Nemotron3LowThinkingRenderer(Nemotron3Renderer):
+    """Renderer for Nemotron-3 Super with low-effort reasoning.
+
+    Matches the Nemotron-3 Super HF template with ``enable_thinking=True``
+    and ``low_effort=True``. The model still produces a ``<think>`` block but
+    uses significantly fewer reasoning tokens than full thinking mode.
+
+    Mechanically, ``{reasoning effort: low}`` is appended to the last user
+    message content; the generation suffix remains ``<think>\\n`` (same as
+    the full-thinking ``Nemotron3Renderer``).
+
+    This mode is only available on the Nemotron-3 Super model
+    (NVIDIA-Nemotron-3-Super-120B-A12B-BF16); the Nano model's HF template
+    does not support ``low_effort``.
+
+    Reference: https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
+    """
+
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        """Render message, appending low-effort suffix to the last user message."""
+        if message["role"] == "user" and ctx.idx == ctx.last_user_index:
+            content = message.get("content", "")
+            assert isinstance(content, str), (
+                "Nemotron-3 Super is text-only; list content not supported"
+            )
+            message = message.copy()
+            message["content"] = content + "\n\n{reasoning effort: low}"
+        return super().render_message(message, ctx)
 
 
 class Nemotron3DisableThinkingRenderer(Nemotron3Renderer):
