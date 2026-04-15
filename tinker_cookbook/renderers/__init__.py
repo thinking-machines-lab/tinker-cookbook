@@ -106,12 +106,18 @@ def get_renderer(
             - "qwen3_vl_instruct": Qwen3 vision-language instruct (no thinking)
             - "qwen3_disable_thinking": Qwen3 with thinking disabled
             - "qwen3_instruct": Qwen3 instruct 2507 (no thinking)
+            - "qwen3_5": Qwen3.5 VL with thinking
+            - "qwen3_5_disable_thinking": Qwen3.5 VL with thinking disabled
             - "deepseekv3": DeepSeek V3 (defaults to non-thinking mode)
             - "deepseekv3_disable_thinking": DeepSeek V3 non-thinking (alias)
             - "deepseekv3_thinking": DeepSeek V3 thinking mode
             - "kimi_k2": Kimi K2 Thinking format
             - "kimi_k25": Kimi K2.5 with thinking enabled
             - "kimi_k25_disable_thinking": Kimi K2.5 with thinking disabled
+            - "nemotron3": Nemotron-3 with thinking enabled
+            - "nemotron3_disable_thinking": Nemotron-3 with thinking disabled
+            - "nemotron_cascade_2": Nemotron-Cascade-2-30B-A3B with thinking enabled
+            - "nemotron_cascade_2_disable_thinking": Nemotron-Cascade-2-30B-A3B without thinking
             - "gpt_oss_no_sysprompt": GPT-OSS without system prompt
             - "gpt_oss_low_reasoning": GPT-OSS with low reasoning
             - "gpt_oss_medium_reasoning": GPT-OSS with medium reasoning
@@ -132,17 +138,19 @@ def get_renderer(
         return renderer(tokenizer, image_processor)
 
     # Import renderer classes lazily to avoid circular imports and keep exports minimal
-    from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3DisableThinkingRenderer
+    from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3DisableThinkingRenderer, DeepSeekV3ThinkingRenderer
     from tinker_cookbook.renderers.gpt_oss import GptOssRenderer
     from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
     from tinker_cookbook.renderers.kimi_k25 import KimiK25DisableThinkingRenderer, KimiK25Renderer
     from tinker_cookbook.renderers.llama3 import Llama3Renderer
+    from tinker_cookbook.renderers.nemotron3 import Nemotron3DisableThinkingRenderer, Nemotron3Renderer
     from tinker_cookbook.renderers.qwen3 import (
         Qwen3DisableThinkingRenderer,
         Qwen3InstructRenderer,
         Qwen3VLInstructRenderer,
         Qwen3VLRenderer,
     )
+    from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
     from tinker_cookbook.renderers.role_colon import RoleColonRenderer
 
     if name == "role_colon":
@@ -175,6 +183,20 @@ def get_renderer(
         return KimiK25Renderer(tokenizer, image_processor=image_processor)
     elif name == "kimi_k25_disable_thinking":
         return KimiK25DisableThinkingRenderer(tokenizer, image_processor=image_processor)
+    elif name == "nemotron3":
+        return Nemotron3Renderer(tokenizer)
+    elif name == "nemotron3_disable_thinking":
+        return Nemotron3DisableThinkingRenderer(tokenizer)
+    elif name == "nemotron_cascade_2":
+        # Nemotron-Cascade-2 uses the same format as Qwen3.5
+        return Qwen3_5Renderer(tokenizer, image_processor=image_processor)
+    elif name == "nemotron_cascade_2_disable_thinking":
+        # Nemotron-Cascade-2 without thinking mode
+        return Qwen3_5DisableThinkingRenderer(tokenizer, image_processor=image_processor)
+    elif name == "qwen3_5":
+        return Qwen3_5Renderer(tokenizer, image_processor=image_processor)
+    elif name == "qwen3_5_disable_thinking":
+        return Qwen3_5DisableThinkingRenderer(tokenizer, image_processor=image_processor)
     elif name == "gpt_oss_no_sysprompt":
         return GptOssRenderer(tokenizer, use_system_prompt=False)
     elif name == "gpt_oss_low_reasoning":
