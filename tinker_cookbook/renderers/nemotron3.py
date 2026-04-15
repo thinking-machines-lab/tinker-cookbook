@@ -379,7 +379,9 @@ class Nemotron3LowThinkingRenderer(Nemotron3Renderer):
         """Render message, appending low-effort suffix to the last user message."""
         if message["role"] == "user" and ctx.idx == ctx.last_user_index:
             content = message.get("content", "")
-            assert isinstance(content, str), "Nemotron-3 Super is text-only; list content not supported"
+            assert isinstance(content, str), (
+                "Nemotron-3 Super is text-only; list content not supported"
+            )
             message = message.copy()
             message["content"] = content + "\n\n{reasoning effort: low}"
         return super().render_message(message, ctx)
