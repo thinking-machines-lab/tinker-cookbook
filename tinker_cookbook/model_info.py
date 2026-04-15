@@ -88,6 +88,8 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
         return get_llama_info()[model_version_full]
     elif org == "Qwen":
         return get_qwen_info()[model_version_full]
+    elif org == "stepfun-ai":
+        return {"Step-3.5-Flash": ["step3p5"]}[model_version_full]
     elif org == "deepseek-ai":
         return get_deepseek_info()[model_version_full]
     elif org == "openai":
@@ -122,6 +124,8 @@ def get_recommended_renderer_names(model_name: str) -> list[str]:
                 return ["qwen3", "qwen3_disable_thinking"]
         else:
             raise ValueError(f"Unknown model: {model_name}")
+    elif attributes.organization == "stepfun-ai":
+        return ["step3p5"]
     elif attributes.organization == "deepseek-ai":
         # deepseekv3 defaults to non-thinking mode (matches HF template)
         # Use deepseekv3_thinking for thinking mode
@@ -139,3 +143,11 @@ def get_recommended_renderer_name(model_name: str) -> str:
     Return the most recommended renderer for the model.
     """
     return get_recommended_renderer_names(model_name)[0]
+
+
+@cache
+def get_stepfun_info() -> dict[str, ModelAttributes]:
+    org = "stepfun-ai"
+    return {
+        "Step-3.5-Flash": ModelAttributes(org, "3.5", "11B", True),
+    }

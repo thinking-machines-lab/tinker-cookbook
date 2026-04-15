@@ -41,7 +41,9 @@ from tinker_cookbook.renderers.base import (
 # Renderer classes used directly by tests
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3ThinkingRenderer
 from tinker_cookbook.renderers.gpt_oss import GptOssRenderer
-from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
+from tinker_cookbook.renderers.qwen3 import
+    Step3p5FlashRenderer,
+    Step3p5FlashRenderer, Qwen3Renderer
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
 # Global registry for custom renderer factories
@@ -137,7 +139,9 @@ def get_renderer(
     from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
     from tinker_cookbook.renderers.kimi_k25 import KimiK25DisableThinkingRenderer, KimiK25Renderer
     from tinker_cookbook.renderers.llama3 import Llama3Renderer
-    from tinker_cookbook.renderers.qwen3 import (
+    from tinker_cookbook.renderers.qwen3 import
+    Step3p5FlashRenderer,
+    Step3p5FlashRenderer, (
         Qwen3DisableThinkingRenderer,
         Qwen3InstructRenderer,
         Qwen3VLInstructRenderer,
@@ -159,6 +163,8 @@ def get_renderer(
         return Qwen3VLInstructRenderer(tokenizer, image_processor)
     elif name == "qwen3_disable_thinking":
         return Qwen3DisableThinkingRenderer(tokenizer)
+    elif name == "step3p5":
+        return Step3p5FlashRenderer(tokenizer)
     elif name == "qwen3_instruct":
         return Qwen3InstructRenderer(tokenizer)
     elif name == "deepseekv3":
@@ -225,4 +231,5 @@ __all__ = [
     "DeepSeekV3ThinkingRenderer",
     "GptOssRenderer",
     "Qwen3Renderer",
+    "Step3p5FlashRenderer",
 ]
