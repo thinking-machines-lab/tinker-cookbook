@@ -821,40 +821,6 @@ def test_low_thinking_renderer_type(nemotron_low_thinking_renderer):
     assert isinstance(nemotron_low_thinking_renderer, Nemotron3Renderer)
 
 
-def test_low_thinking_generation_ends_with_think(
-    nemotron_super_tokenizer, nemotron_low_thinking_renderer
-):
-    """Low-thinking generation prompt still uses <think>\\n (thinking is enabled)."""
-    messages = get_basic_conversation_for_generation()
-    decoded = nemotron_super_tokenizer.decode(
-        nemotron_low_thinking_renderer.build_generation_prompt(messages).to_ints()
-    )
-    assert decoded.endswith("<|im_start|>assistant\n<think>\n")
-
-
-def test_low_thinking_appends_effort_suffix(
-    nemotron_super_tokenizer, nemotron_low_thinking_renderer
-):
-    """Low-thinking appends {reasoning effort: low} to the last user message."""
-    messages = get_basic_conversation_for_generation()
-    decoded = nemotron_super_tokenizer.decode(
-        nemotron_low_thinking_renderer.build_generation_prompt(messages).to_ints()
-    )
-    assert "{reasoning effort: low}<|im_end|>" in decoded
-
-
-def test_low_thinking_only_affects_last_user_message(
-    nemotron_super_tokenizer, nemotron_low_thinking_renderer
-):
-    """Only the last user message gets the low-effort suffix."""
-    messages = get_basic_conversation_for_generation()
-    decoded = nemotron_super_tokenizer.decode(
-        nemotron_low_thinking_renderer.build_generation_prompt(messages).to_ints()
-    )
-    # Count occurrences — should only appear once (in last user message)
-    assert decoded.count("{reasoning effort: low}") == 1
-
-
 def test_low_thinking_generation_matches_hf(
     nemotron_super_tokenizer, nemotron_low_thinking_renderer
 ):
@@ -895,18 +861,7 @@ def test_low_thinking_multiturn_generation_matches_hf(
     nemotron_super_tokenizer, nemotron_low_thinking_renderer
 ):
     """Multi-turn low-thinking generation matches HF template."""
-    messages = [
-        Message(role="system", content="You are a helpful assistant."),
-        Message(role="user", content="First question."),
-        Message(
-            role="assistant",
-            content=[
-                {"type": "thinking", "thinking": "First turn reasoning."},
-                {"type": "text", "text": "First answer."},
-            ],
-        ),
-        Message(role="user", content="Second question."),
-    ]
+    messages = get_multiturn_thinking_conversation()[:4]
     r = nemotron_low_thinking_renderer
     cookbook = r.build_generation_prompt(messages).to_ints()
     hf = _hf_generation_tokens(

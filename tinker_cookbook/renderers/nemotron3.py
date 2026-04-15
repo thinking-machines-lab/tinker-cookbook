@@ -350,27 +350,16 @@ class Nemotron3LowThinkingRenderer(Nemotron3Renderer):
     _LOW_EFFORT_SUFFIX = "\n\n{reasoning effort: low}"
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
-        """Render message, appending low-effort suffix to the last user message.
-
-        Args:
-            message (Message): The chat message to render.
-            ctx (RenderContext): Positional context including index and is_last flag.
-
-        Returns:
-            RenderedMessage: Header and output token chunks for the message.
-        """
+        """Render message, appending low-effort suffix to the last user message."""
         if message["role"] == "user" and ctx.idx == ctx.last_user_index:
             content = message.get("content", "")
+            message = message.copy()
             if isinstance(content, str):
-                message = Message(**{**message, "content": content + self._LOW_EFFORT_SUFFIX})
+                message["content"] = content + self._LOW_EFFORT_SUFFIX
             else:
-                message = Message(
-                    **{
-                        **message,
-                        "content": list(content)
-                        + [TextPart(type="text", text=self._LOW_EFFORT_SUFFIX)],
-                    }
-                )
+                message["content"] = list(content) + [
+                    TextPart(type="text", text=self._LOW_EFFORT_SUFFIX)
+                ]
         return super().render_message(message, ctx)
 
 
