@@ -9,7 +9,7 @@ Tinker Cookbook comes with useful abstractions so you can flexibly customize you
 - [`rl_basic.py`](./rl_basic.py): a template script to configure reinforcement learning.
 - [`sl_basic.py`](./sl_basic.py): a template script to configure supervised learning.
 
-To explain what goes under-the-hood, we also provide minimal, self-contained scripts that directly use the TinkerAPI to train LLMs.
+To explain what goes under-the-hood, we also provide minimal, self-contained scripts that directly use the Tinker API to train LLMs.
 - [`rl_loop.py`](./rl_loop.py): a minimal reinforcement learning training loop.
 - [`sl_loop.py`](./sl_loop.py): a minimal supervised learning training loop.
 
