@@ -137,6 +137,7 @@ def get_renderer(
             - ``"kimi_k25"``: Kimi K2.5 with thinking enabled
             - ``"kimi_k25_disable_thinking"``: Kimi K2.5 with thinking disabled
             - ``"nemotron3"``: Nemotron-3 with thinking enabled
+            - ``"nemotron3_low_thinking"``: Nemotron-3 with low thinking effort (Super only)
             - ``"nemotron3_disable_thinking"``: Nemotron-3 with thinking disabled
             - ``"gpt_oss_no_sysprompt"``: GPT-OSS without system prompt
             - ``"gpt_oss_low_reasoning"``: GPT-OSS with low reasoning
@@ -191,6 +192,7 @@ def get_renderer(
     from tinker_cookbook.renderers.llama3 import Llama3Renderer
     from tinker_cookbook.renderers.nemotron3 import (
         Nemotron3DisableThinkingRenderer,
+        Nemotron3LowThinkingRenderer,
         Nemotron3Renderer,
     )
     from tinker_cookbook.renderers.qwen3 import (
@@ -238,6 +240,8 @@ def get_renderer(
         renderer = KimiK25DisableThinkingRenderer(tokenizer, image_processor=image_processor)
     elif name == "nemotron3":
         renderer = Nemotron3Renderer(tokenizer)
+    elif name == "nemotron3_low_thinking":
+        renderer = Nemotron3LowThinkingRenderer(tokenizer)
     elif name == "nemotron3_disable_thinking":
         renderer = Nemotron3DisableThinkingRenderer(tokenizer)
     elif name == "gpt_oss_no_sysprompt":

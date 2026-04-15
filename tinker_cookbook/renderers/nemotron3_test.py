@@ -8,6 +8,7 @@ Tests verify that the Nemotron3Renderer produces correct output:
 4. System prompt comes BEFORE tools in the system message
 5. <think></think> is prepended to ALL assistant messages without thinking (not just last)
 6. HF template compatibility for both build_generation_prompt and build_supervised_example
+7. Low-thinking variant appends {reasoning effort: low} to last user message
 """
 
 import json
@@ -17,6 +18,7 @@ import pytest
 from tinker_cookbook.renderers import Message, ToolCall, ToolSpec, get_renderer
 from tinker_cookbook.renderers.nemotron3 import (
     Nemotron3DisableThinkingRenderer,
+    Nemotron3LowThinkingRenderer,
     Nemotron3Renderer,
     _format_nemotron3_tool_declaration,
 )
@@ -47,11 +49,15 @@ def nemotron_renderer_disable_thinking(nemotron_tokenizer):
     return get_renderer("nemotron3_disable_thinking", nemotron_tokenizer)
 
 
-def _hf_generation_tokens(tokenizer, hf_messages, tools=None, enable_thinking: bool = True):
+def _hf_generation_tokens(
+    tokenizer, hf_messages, tools=None, enable_thinking: bool = True, low_effort: bool = False
+):
     """Run HF apply_chat_template with generation prompt and return token list."""
     kwargs = {"add_generation_prompt": True, "tokenize": True, "enable_thinking": enable_thinking}
     if tools is not None:
         kwargs["tools"] = tools
+    if low_effort:
+        kwargs["low_effort"] = True
     result = tokenizer.apply_chat_template(hf_messages, **kwargs)
     # apply_chat_template may return BatchEncoding (dict-like) when tools are provided.
     if hasattr(result, "input_ids"):
@@ -59,11 +65,15 @@ def _hf_generation_tokens(tokenizer, hf_messages, tools=None, enable_thinking: b
     return list(result)
 
 
-def _hf_supervised_tokens(tokenizer, hf_messages, tools=None, enable_thinking: bool = True):
+def _hf_supervised_tokens(
+    tokenizer, hf_messages, tools=None, enable_thinking: bool = True, low_effort: bool = False
+):
     """Run HF apply_chat_template without generation prompt, strip trailing newline, re-encode."""
     kwargs = {"add_generation_prompt": False, "tokenize": False, "enable_thinking": enable_thinking}
     if tools is not None:
         kwargs["tools"] = tools
+    if low_effort:
+        kwargs["low_effort"] = True
     result = tokenizer.apply_chat_template(hf_messages, **kwargs)
     # apply_chat_template with tokenize=False may return BatchEncoding when tools are provided.
     hf_str = result.input_ids if hasattr(result, "input_ids") else result
@@ -786,3 +796,143 @@ def test_renderer_is_not_qwen35(nemotron_renderer):
     from tinker_cookbook.renderers.qwen3_5 import Qwen3_5Renderer
 
     assert type(nemotron_renderer) is not Qwen3_5Renderer
+
+
+# =============================================================================
+# Low Thinking Renderer Tests (Nemotron-3 Super only)
+# =============================================================================
+
+# The low_effort feature is only in the Super model's HF template, so we need
+# the Super tokenizer for HF comparison tests.
+
+
+@pytest.fixture(scope="module")
+def nemotron_super_tokenizer():
+    return get_tokenizer(NEMOTRON3_SUPER_MODEL)
+
+
+@pytest.fixture(scope="module")
+def nemotron_low_thinking_renderer(nemotron_super_tokenizer):
+    return get_renderer("nemotron3_low_thinking", nemotron_super_tokenizer)
+
+
+def test_low_thinking_renderer_type(nemotron_low_thinking_renderer):
+    assert isinstance(nemotron_low_thinking_renderer, Nemotron3LowThinkingRenderer)
+    assert isinstance(nemotron_low_thinking_renderer, Nemotron3Renderer)
+
+
+def test_low_thinking_generation_ends_with_think(
+    nemotron_super_tokenizer, nemotron_low_thinking_renderer
+):
+    """Low-thinking generation prompt still uses <think>\\n (thinking is enabled)."""
+    messages = get_basic_conversation_for_generation()
+    decoded = nemotron_super_tokenizer.decode(
+        nemotron_low_thinking_renderer.build_generation_prompt(messages).to_ints()
+    )
+    assert decoded.endswith("<|im_start|>assistant\n<think>\n")
+
+
+def test_low_thinking_appends_effort_suffix(
+    nemotron_super_tokenizer, nemotron_low_thinking_renderer
+):
+    """Low-thinking appends {reasoning effort: low} to the last user message."""
+    messages = get_basic_conversation_for_generation()
+    decoded = nemotron_super_tokenizer.decode(
+        nemotron_low_thinking_renderer.build_generation_prompt(messages).to_ints()
+    )
+    assert "{reasoning effort: low}<|im_end|>" in decoded
+
+
+def test_low_thinking_only_affects_last_user_message(
+    nemotron_super_tokenizer, nemotron_low_thinking_renderer
+):
+    """Only the last user message gets the low-effort suffix."""
+    messages = get_basic_conversation_for_generation()
+    decoded = nemotron_super_tokenizer.decode(
+        nemotron_low_thinking_renderer.build_generation_prompt(messages).to_ints()
+    )
+    # Count occurrences — should only appear once (in last user message)
+    assert decoded.count("{reasoning effort: low}") == 1
+
+
+def test_low_thinking_generation_matches_hf(
+    nemotron_super_tokenizer, nemotron_low_thinking_renderer
+):
+    """Low-thinking generation matches HF template with low_effort=True."""
+    messages = get_basic_conversation_for_generation()
+    r = nemotron_low_thinking_renderer
+    cookbook = r.build_generation_prompt(messages).to_ints()
+    hf = _hf_generation_tokens(
+        nemotron_super_tokenizer,
+        [r.to_openai_message(m) for m in messages],
+        low_effort=True,
+    )
+    assert cookbook == hf, (
+        f"Cookbook: {nemotron_super_tokenizer.decode(cookbook)}\n"
+        f"HF: {nemotron_super_tokenizer.decode(hf)}"
+    )
+
+
+def test_low_thinking_supervised_matches_hf(
+    nemotron_super_tokenizer, nemotron_low_thinking_renderer
+):
+    """Low-thinking supervised example matches HF template with low_effort=True."""
+    messages = get_basic_conversation_for_supervised()
+    r = nemotron_low_thinking_renderer
+    cookbook = r.build_supervised_example(messages)[0].to_ints()
+    hf = _hf_supervised_tokens(
+        nemotron_super_tokenizer,
+        [r.to_openai_message(m) for m in messages],
+        low_effort=True,
+    )
+    assert cookbook == hf, (
+        f"Cookbook: {nemotron_super_tokenizer.decode(cookbook)}\n"
+        f"HF: {nemotron_super_tokenizer.decode(hf)}"
+    )
+
+
+def test_low_thinking_multiturn_generation_matches_hf(
+    nemotron_super_tokenizer, nemotron_low_thinking_renderer
+):
+    """Multi-turn low-thinking generation matches HF template."""
+    messages = [
+        Message(role="system", content="You are a helpful assistant."),
+        Message(role="user", content="First question."),
+        Message(
+            role="assistant",
+            content=[
+                {"type": "thinking", "thinking": "First turn reasoning."},
+                {"type": "text", "text": "First answer."},
+            ],
+        ),
+        Message(role="user", content="Second question."),
+    ]
+    r = nemotron_low_thinking_renderer
+    cookbook = r.build_generation_prompt(messages).to_ints()
+    hf = _hf_generation_tokens(
+        nemotron_super_tokenizer,
+        [r.to_openai_message(m) for m in messages],
+        low_effort=True,
+    )
+    assert cookbook == hf, (
+        f"Cookbook: {nemotron_super_tokenizer.decode(cookbook)}\n"
+        f"HF: {nemotron_super_tokenizer.decode(hf)}"
+    )
+
+
+def test_low_thinking_multiturn_supervised_matches_hf(
+    nemotron_super_tokenizer, nemotron_low_thinking_renderer
+):
+    """Multi-turn low-thinking supervised example matches HF template."""
+    messages = get_multiturn_thinking_conversation()
+    r = nemotron_low_thinking_renderer
+    cookbook = r.build_supervised_example(messages)[0].to_ints()
+    hf = _hf_supervised_tokens(
+        nemotron_super_tokenizer,
+        [r.to_openai_message(m) for m in messages],
+        low_effort=True,
+    )
+    assert cookbook == hf, (
+        f"Cookbook: {nemotron_super_tokenizer.decode(cookbook)}\n"
+        f"HF: {nemotron_super_tokenizer.decode(hf)}"
+    )

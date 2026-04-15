@@ -335,6 +335,45 @@ class Nemotron3Renderer(Qwen3_5Renderer):
         return [Message(role="system", content=content)]
 
 
+class Nemotron3LowThinkingRenderer(Nemotron3Renderer):
+    """Renderer for Nemotron-3 models with low thinking effort.
+
+    Matches the Nemotron-3 Super HF template with ``low_effort=True``.
+    Thinking is still enabled (generation suffix is ``<think>\\n``), but
+    ``{reasoning effort: low}`` is appended to the last user message to
+    signal the model should use less reasoning.
+
+    This mode is only available on the Nemotron-3 Super model
+    (NVIDIA-Nemotron-3-Super-120B-A12B-BF16).
+    """
+
+    _LOW_EFFORT_SUFFIX = "\n\n{reasoning effort: low}"
+
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        """Render message, appending low-effort suffix to the last user message.
+
+        Args:
+            message (Message): The chat message to render.
+            ctx (RenderContext): Positional context including index and is_last flag.
+
+        Returns:
+            RenderedMessage: Header and output token chunks for the message.
+        """
+        if message["role"] == "user" and ctx.idx == ctx.last_user_index:
+            content = message.get("content", "")
+            if isinstance(content, str):
+                message = Message(**{**message, "content": content + self._LOW_EFFORT_SUFFIX})
+            else:
+                message = Message(
+                    **{
+                        **message,
+                        "content": list(content)
+                        + [TextPart(type="text", text=self._LOW_EFFORT_SUFFIX)],
+                    }
+                )
+        return super().render_message(message, ctx)
+
+
 class Nemotron3DisableThinkingRenderer(Nemotron3Renderer):
     """Renderer for Nemotron-3 models with thinking disabled.
 
