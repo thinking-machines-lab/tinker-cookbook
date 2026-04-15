@@ -102,6 +102,7 @@ eval-terminal-bench = [
 ]
 eval-swe-bench = [
     "tinker_cookbook[modal]",
+    "swebench>=2.0.0",
 ]
 eval-ifbench = [
     # The ifbench package must also be installed separately (not on PyPI):
