@@ -83,16 +83,24 @@ class ComparisonRendererFromChatRenderer(ComparisonRenderer):
         convo = self._comparison_to_convo(labeled_comparison.comparison)
         convo_with_pref = convo + [{"role": "assistant", "content": labeled_comparison.label}]
         model_input, weights = self.convo_renderer.build_supervised_example(convo_with_pref)
-        # TODO: support images in preference learning
-        assert all(isinstance(c, tinker.types.EncodedTextChunk) for c in model_input.chunks), (
-            "Preference learning currently only supports text-only content."
-        )
-        # Truncate at the first weight==1 position + 1
-        tokens = model_input.to_ints()
-        first_weight_one_index = int(torch.nonzero(weights == 1.0)[0])
-        truncated_tokens = tokens[: first_weight_one_index + 1]
-        truncated_weights = weights[: first_weight_one_index + 1]
-        return types.ModelInput.from_ints(truncated_tokens), truncated_weights
+        # Support both text and image chunks
+        all_text = all(isinstance(c, tinker.types.EncodedTextChunk) for c in model_input.chunks)
+        if all_text:
+            # Text-only: use existing truncation logic
+            tokens = model_input.to_ints()
+            first_weight_one_index = int(torch.nonzero(weights == 1.0)[0])
+            truncated_tokens = tokens[: first_weight_one_index + 1]
+            truncated_weights = weights[: first_weight_one_index + 1]
+            return types.ModelInput.from_ints(truncated_tokens), truncated_weights
+        else:
+            # Mixed content (text + images): truncate by chunks
+            # Find the index where weights first become 1.0
+            first_weight_one_index = int(torch.nonzero(weights == 1.0)[0])
+            # Get original chunks and truncate them
+            truncated_chunks = model_input.chunks[: first_weight_one_index + 1]
+            truncated_weights = weights[: first_weight_one_index + 1]
+            # Reconstruct ModelInput from truncated chunks
+            return types.ModelInput(chunks=list(truncated_chunks)), truncated_weights
 
     @property
     def tokenizer(self) -> Tokenizer:
