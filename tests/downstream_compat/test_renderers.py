@@ -180,6 +180,7 @@ EXPECTED_RENDERER_NAMES = [
     "gpt_oss_medium_reasoning",
     "gpt_oss_high_reasoning",
     "nemotron3",
+    "nemotron3_low_thinking",
     "nemotron3_disable_thinking",
 ]
 
