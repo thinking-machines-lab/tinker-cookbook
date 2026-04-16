@@ -1,0 +1,74 @@
+name: integration-tests
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    name: integration tests
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install-uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: venv
+        run: uv venv && uv sync --all-extras
+
+      - name: pytest (integration)
+        run: uv run pytest tests/integration/ -v
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          TINKER_API_KEY: ${{ secrets.TINKER_API_KEY }}
+
+  weights:
+    if: github.repository == 'thinking-machines-lab/tinker-cookbook'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        test:
+          - test_export_gpt_oss
+          - test_export_qwen3
+          - test_export_qwen3_5
+          - test_export_deepseek
+          - test_adapter_qwen3
+          - test_adapter_gpt_oss
+          - test_adapter_qwen3_5
+          - test_adapter_kimi
+          - test_adapter_deepseek
+          - test_strategy_consistency
+          - test_quantized
+          - test_quantized_equivalence
+          - test_lifecycle
+          - test_publish
+          - test_adapter_publish
+
+    name: ${{ matrix.test }}
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install-uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: venv
+        run: uv venv && uv sync --all-extras
+
+      - name: run test
+        run: uv run pytest tests/weights/${{ matrix.test }}.py -v --timeout=120
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          TINKER_API_KEY: ${{ secrets.TINKER_API_KEY }}

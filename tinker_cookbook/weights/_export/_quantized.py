@@ -5,6 +5,9 @@ Produces output compatible with vLLM's compressed-tensors format.
 
 Currently supports DeepSeek V3/V3.1 models. The infrastructure (FP8 math, vLLM
 config generation, resume support) is reusable for future model families.
+
+The :class:`FP8BlockFormat` class implements the
+:class:`~._quant_format.QuantizationFormat` protocol.
 """
 
 from __future__ import annotations
@@ -16,26 +19,8 @@ from pathlib import Path
 
 import torch
 from safetensors import safe_open
-from safetensors.torch import load_file, save_file
 
 from tinker_cookbook.exceptions import WeightsMergeError
-from tinker_cookbook.weights._artifacts import (
-    copy_artifact_file,
-    copy_model_code_files,
-    get_model_state_shapes,
-    get_shard_files,
-    load_adapter_weights,
-)
-from tinker_cookbook.weights._export import (
-    is_multimodal_from_dict,
-    save_tokenizer_and_processor,
-)
-from tinker_cookbook.weights._merge import (
-    apply_merge_op,
-    detect_merge_profile,
-    plan_merge_ops,
-    validate_merge_op_shapes,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -295,23 +280,14 @@ def _weight_scale_key(weight_key: str) -> str:
 
     Uses ``.weight_scale`` (compressed-tensors convention), NOT
     ``.weight_scale_inv`` (DeepSeek native convention).
+
+    Handles both per-expert keys (``experts.0.down_proj.weight`` →
+    ``experts.0.down_proj.weight_scale``) and fused 3D keys
+    (``experts.down_proj`` → ``experts.down_proj.weight_scale``).
     """
-    return weight_key.removesuffix(".weight") + ".weight_scale"
-
-
-# Linear projection suffixes used to build the compressed-tensors ignore list.
-# Only modules matching these suffixes are considered for the ignore list.
-_LINEAR_PROJ_SUFFIXES = (
-    ".q_proj.weight",
-    ".q_a_proj.weight",
-    ".q_b_proj.weight",
-    ".kv_a_proj_with_mqa.weight",
-    ".kv_b_proj.weight",
-    ".o_proj.weight",
-    ".gate_proj.weight",
-    ".up_proj.weight",
-    ".down_proj.weight",
-)
+    if weight_key.endswith(".weight"):
+        return weight_key.removesuffix(".weight") + ".weight_scale"
+    return weight_key + ".weight_scale"
 
 
 def _build_vllm_quantization_config(output_weight_map: dict[str, str]) -> dict:
@@ -320,6 +296,17 @@ def _build_vllm_quantization_config(output_weight_map: dict[str, str]) -> dict:
     Produces a config dict that tells vLLM which layers are FP8-quantized
     (routed experts) and which to ignore (everything else). No library
     imports needed — the schema is fixed and well-known.
+
+    The decision is binary for every ``.weight`` key in the output:
+
+    * **Has a matching ``.weight_scale``** → quantized → omitted from
+      ``ignore`` so vLLM loads it as FP8.
+    * **No matching ``.weight_scale``** → not quantized → added to
+      ``ignore`` so vLLM leaves it alone.
+
+    Adding non-``nn.Linear`` modules (norms, embeddings) to ``ignore`` is
+    harmless — vLLM only consults the ignore list for modules that match
+    ``targets: ["Linear"]``, so extra entries are silently skipped.
 
     Args:
         output_weight_map: Mapping of weight key -> shard filename.
@@ -334,18 +321,16 @@ def _build_vllm_quantization_config(output_weight_map: dict[str, str]) -> dict:
         if key.endswith(".weight_scale")
     }
 
-    # Build ignore list: linear projection modules that were NOT quantized
+    # Build ignore list: every .weight module that was NOT quantized.
+    # This is model-agnostic — no need to enumerate projection suffixes
+    # per architecture.
     ignore: list[str] = []
     for key in sorted(output_weight_map):
-        if not any(key.endswith(suffix) for suffix in _LINEAR_PROJ_SUFFIXES):
+        if not key.endswith(".weight"):
             continue
         prefix = key.removesuffix(".weight")
         if prefix not in quantized_prefixes:
             ignore.append(prefix)
-
-    # Also ignore lm_head if present and not quantized
-    if "lm_head.weight" in output_weight_map and "lm_head" not in quantized_prefixes:
-        ignore.append("lm_head")
 
     return {
         "quant_method": "compressed-tensors",
@@ -445,62 +430,154 @@ def _serialize_vllm_scheme(group: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Resume state management
+# FP8BlockFormat — QuantizationFormat implementation
 # ---------------------------------------------------------------------------
 
-_MERGE_STATE_FILE = "merge_state.json"
 
+class FP8BlockFormat:
+    """FP8 blockwise quantization for DeepSeek V3-family models.
 
-def _load_resume_state(output_path: Path) -> dict:
-    """Load resume state from a previous incomplete run.
+    Implements the :class:`~._quant_format.QuantizationFormat` protocol.
+    Quantizes routed expert weights to FP8 with blockwise scaling after
+    LoRA merge, preserving dense/shared-expert weights in BF16.
 
-    Returns:
-        Dict with keys: ``status``, ``completed_shards`` (list of filenames),
-        ``total_shards``. Returns empty dict if no state file exists.
+    For models with native FP8 checkpoints (e.g. DeepSeek V3.1), handles
+    dequantization before merge so LoRA math works in float precision.
+
+    Args:
+        config_dict: Parsed config.json dict.
+        model_dir: Resolved local model directory.
+        serving_format: Serving framework format (e.g. ``"vllm"``).
+        device: Device for quantization math (``"cpu"``, ``"cuda"``, etc.).
     """
-    state_file = output_path / _MERGE_STATE_FILE
-    if not state_file.exists():
-        return {}
-    with open(state_file) as f:
-        state = json.load(f)
 
-    # Validate: every completed shard file must exist
-    completed = state.get("completed_shards", [])
-    for shard_name in completed:
-        if not (output_path / shard_name).exists():
-            raise WeightsMergeError(
-                f"Resume state references {shard_name!r} but file not found in {output_path}. "
-                f"Delete {output_path} and restart."
+    def __init__(
+        self,
+        config_dict: dict,
+        model_dir: Path,
+        serving_format: str,
+        device: str = "cpu",
+    ) -> None:
+        self._serving_format = serving_format
+        self._device = torch.device(device)
+
+        # Native FP8 handling
+        self._is_native_fp8 = _has_native_fp8_quantization(config_dict)
+        self._native_block_size = (
+            _get_native_block_size(config_dict) if self._is_native_fp8 else None
+        )
+        self._cross_shard_loader = (
+            _make_cross_shard_tensor_loader(model_dir) if self._is_native_fp8 else None
+        )
+
+        if self._is_native_fp8:
+            logger.info(
+                "Native FP8 checkpoint detected (block_size=%s), will dequantize before re-quantize",
+                self._native_block_size,
             )
-    return state
 
+    def should_skip_output_key(self, key: str) -> bool:
+        """Skip checkpoint keys and native scale tensors in output."""
+        return _should_skip_checkpoint_key(key) or key.endswith(".weight_scale_inv")
 
-def _save_merge_state(
-    output_path: Path,
-    *,
-    status: str,
-    completed_shards: list[str],
-    total_shards: int,
-) -> None:
-    """Save merge state atomically for resume support."""
-    state = {
-        "status": status,
-        "completed_shards": completed_shards,
-        "total_shards": total_shards,
-    }
-    tmp = output_path / f"{_MERGE_STATE_FILE}.tmp"
-    with open(tmp, "w") as f:
-        json.dump(state, f, indent=2)
-    tmp.rename(output_path / _MERGE_STATE_FILE)
+    def filter_model_keys(self, keys: set[str]) -> set[str]:
+        """Exclude keys that shouldn't be merge targets.
 
+        Delegates to :meth:`should_skip_output_key` to keep skip logic
+        in one place.
+        """
+        return {k for k in keys if not self.should_skip_output_key(k)}
 
-def _save_shard_atomic(
-    output_path: Path, shard_name: str, tensors: dict[str, torch.Tensor]
-) -> None:
-    """Save a shard file atomically (write to temp, then rename)."""
-    tmp_name = f"{shard_name}.tmp"
-    save_file(tensors, str(output_path / tmp_name))
-    (output_path / tmp_name).rename(output_path / shard_name)
+    def pre_merge_transform(
+        self,
+        key: str,
+        tensor: torch.Tensor,
+        shard_tensors: dict[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """Dequantize native FP8 weights before merge.
+
+        Native FP8 checkpoints store weights in float8_e4m3fn + scale_inv.
+        We dequantize to BF16 so LoRA merge math works in float precision.
+        """
+        if not (
+            key.endswith(".weight") and tensor.dtype == torch.float8_e4m3fn and self._is_native_fp8
+        ):
+            return tensor
+
+        scale_key = key.replace(".weight", ".weight_scale_inv")
+        scale_inv = shard_tensors.get(scale_key)
+        if scale_inv is None and self._cross_shard_loader is not None:
+            scale_inv = self._cross_shard_loader(scale_key)
+        if scale_inv is None:
+            raise WeightsMergeError(
+                f"Native FP8 weight {key!r} has no .weight_scale_inv tensor "
+                f"in any shard. Cannot dequantize for merge."
+            )
+        assert self._native_block_size is not None
+        return dequantize_blockwise(tensor, scale_inv, block_size=self._native_block_size)
+
+    def post_merge_transform(
+        self,
+        key: str,
+        tensor: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        """Quantize routed expert weights to FP8, pass through everything else."""
+        if not _is_routed_expert_weight(key):
+            return {key: tensor}
+
+        if tensor.ndim == 2:
+            return self._quantize_expert(key, tensor)
+        elif tensor.ndim == 3:
+            return self._quantize_fused_experts(key, tensor)
+        return {key: tensor}
+
+    def _to_device(self, tensor: torch.Tensor) -> torch.Tensor:
+        if self._device.type != "cpu":
+            return tensor.to(self._device)
+        return tensor
+
+    def _to_cpu(self, tensor: torch.Tensor) -> torch.Tensor:
+        if self._device.type != "cpu":
+            return tensor.cpu()
+        return tensor
+
+    def _quantize_expert(self, key: str, tensor: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Quantize a 2D expert weight tensor to FP8."""
+        fp8_tensor, scale = quantize_blockwise(self._to_device(tensor))
+        return {key: self._to_cpu(fp8_tensor), _weight_scale_key(key): self._to_cpu(scale)}
+
+    def _quantize_fused_experts(self, key: str, tensor: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Quantize a fused 3D expert tensor [num_experts, out, in] to FP8.
+
+        Moves the entire tensor to the compute device once, quantizes each
+        expert slice independently, then moves results back.
+        """
+        tensor = self._to_device(tensor)
+
+        fp8_slices = []
+        scale_slices = []
+        for i in range(tensor.shape[0]):
+            fp8_slice, scale_slice = quantize_blockwise(tensor[i])
+            fp8_slices.append(fp8_slice)
+            scale_slices.append(scale_slice)
+
+        return {
+            key: self._to_cpu(torch.stack(fp8_slices)),
+            _weight_scale_key(key): self._to_cpu(torch.stack(scale_slices)),
+        }
+
+    def finalize_config(
+        self,
+        config_dict: dict,
+        weight_map: dict[str, str],
+    ) -> dict:
+        """Patch config with compressed-tensors metadata for vLLM."""
+        patched = dict(config_dict)
+        if self._serving_format == "vllm":
+            quant_config = _build_vllm_quantization_config(weight_map)
+            patched["compression_config"] = _serialize_for_vllm(quant_config)
+            patched.pop("quantization_config", None)
+        return patched
 
 
 # ---------------------------------------------------------------------------
@@ -517,21 +594,12 @@ def build_quantized(
     model_dir: Path,
     config_dict: dict,
     serving_format: str,
+    device: str = "cpu",
 ) -> None:
     """Merge LoRA adapter and quantize routed experts to FP8.
 
-    Processes one safetensors shard at a time:
-    1. Load shard tensors
-    2. Apply any LoRA merge ops targeting this shard
-    3. Quantize routed expert weights to FP8 with blockwise scales
-    4. Preserve dense/shared-expert weights in BF16
-    5. Write output shard (preserving input shard layout)
-    6. Track progress for resume support
-
-    After all shards are processed:
-    - Write safetensors index
-    - Patch config.json with compressed-tensors metadata
-    - Copy tokenizer, model code
+    Delegates to :func:`~._shard_engine.run_shard_merge` with an
+    :class:`FP8BlockFormat` instance for quantization.
 
     Args:
         base_model: Model name or path (for tokenizer loading).
@@ -541,269 +609,20 @@ def build_quantized(
         model_dir: Resolved local model directory.
         config_dict: Parsed config.json dict.
         serving_format: Serving framework format (e.g. "vllm").
+        device: Device for quantization math ("cpu", "cuda", etc.).
     """
-    out = Path(output_path)
+    from tinker_cookbook.weights._export._shard_engine import run_shard_merge
 
-    # Check for resume
-    resume_state = {}
-    if out.exists():
-        resume_state = _load_resume_state(out)
-        if not resume_state:
-            raise FileExistsError(f"Output path already exists: {out}")
-        if resume_state.get("status") == "completed":
-            logger.info("Output already complete at %s, skipping", out)
-            return
-        logger.info(
-            "Resuming: %d/%d shards completed",
-            len(resume_state.get("completed_shards", [])),
-            resume_state.get("total_shards", "?"),
-        )
-    else:
-        out.mkdir(parents=True, exist_ok=False)
+    quant_format = FP8BlockFormat(config_dict, model_dir, serving_format, device)
 
-    # 1. Load adapter
-    adapter_weights, adapter_config = load_adapter_weights(Path(adapter_path))
-
-    # 2. Read model metadata
-    model_shapes = get_model_state_shapes(model_dir)
-    model_state_keys = set(model_shapes.keys())
-
-    # Pre-filter keys that DeepSeek checkpoints include but shouldn't be merged.
-    # Also exclude .weight_scale_inv — these are native FP8 scales, not merge targets.
-    filtered_keys = {
-        k
-        for k in model_state_keys
-        if not _should_skip_checkpoint_key(k) and not k.endswith(".weight_scale_inv")
-    }
-
-    # 3. Detect merge profile and plan ops
-    profile = detect_merge_profile(config_dict, model_state_keys)
-    logger.info(
-        "Detected merge profile: expert_layout=%s, language_model_prefix=%s",
-        profile.expert_layout,
-        profile.has_language_model_prefix,
+    run_shard_merge(
+        base_model=base_model,
+        adapter_path=adapter_path,
+        output_path=output_path,
+        trust_remote_code=trust_remote_code,
+        model_dir=model_dir,
+        config_dict=config_dict,
+        quant_format=quant_format,
+        resume=True,
+        preserve_shard_names=True,
     )
-
-    merge_ops = plan_merge_ops(adapter_weights, adapter_config, filtered_keys, profile)
-    total_ops = sum(len(ops) for ops in merge_ops.values())
-    logger.info("Planned %d merge operations across %d target keys", total_ops, len(merge_ops))
-
-    # Validate shapes against filtered keys
-    filtered_shapes = {k: v for k, v in model_shapes.items() if k in filtered_keys}
-    validate_merge_op_shapes(merge_ops, filtered_shapes)
-
-    # 4. Set up native FP8 handling (cross-shard scale lookup)
-    is_native_fp8 = _has_native_fp8_quantization(config_dict)
-    native_block_size = _get_native_block_size(config_dict) if is_native_fp8 else None
-    cross_shard_loader = _make_cross_shard_tensor_loader(model_dir) if is_native_fp8 else None
-    if is_native_fp8:
-        logger.info(
-            "Native FP8 checkpoint detected (block_size=%s), will dequantize before re-quantize",
-            native_block_size,
-        )
-
-    # 5. Process shards
-    shard_files = get_shard_files(model_dir)
-    completed_shards = set(resume_state.get("completed_shards", []))
-    all_completed: list[str] = list(completed_shards)
-    weight_map: dict[str, str] = {}
-
-    # Rebuild weight map from already-completed shards
-    for shard_name in completed_shards:
-        shard_tensors = load_file(str(out / shard_name))
-        for key in shard_tensors:
-            weight_map[key] = shard_name
-        # Pop merge ops for completed shard keys
-        for key in shard_tensors:
-            merge_ops.pop(key, None)
-        del shard_tensors
-
-    logger.info(
-        "Processing %d input shard(s) (%d already completed)",
-        len(shard_files),
-        len(completed_shards),
-    )
-    ops_applied = 0
-
-    for i, shard_file in enumerate(shard_files):
-        # Determine output shard name (preserve input naming)
-        out_shard_name = shard_file
-
-        if out_shard_name in completed_shards:
-            logger.info("Skipping completed shard %d/%d: %s", i + 1, len(shard_files), shard_file)
-            continue
-
-        logger.info("Processing shard %d/%d: %s", i + 1, len(shard_files), shard_file)
-        tensors = load_file(str(model_dir / shard_file))
-        output_tensors: dict[str, torch.Tensor] = {}
-
-        for key in list(tensors.keys()):
-            tensor = tensors[key]
-
-            # Skip keys that shouldn't be in output
-            if _should_skip_checkpoint_key(key):
-                continue
-
-            # Skip native scale_inv tensors (we generate new .weight_scale)
-            if key.endswith(".weight_scale_inv"):
-                continue
-
-            # Step 1: Dequantize native FP8 weights BEFORE merge
-            # Native FP8 checkpoints store weights in FP8 + scale_inv.
-            # We must dequantize to BF16 first so the LoRA merge math works
-            # correctly in float precision.
-            if key.endswith(".weight") and tensor.dtype == torch.float8_e4m3fn and is_native_fp8:
-                scale_key = key.replace(".weight", ".weight_scale_inv")
-                # Scale may be in this shard or a different one
-                scale_inv = tensors.get(scale_key)
-                if scale_inv is None and cross_shard_loader is not None:
-                    scale_inv = cross_shard_loader(scale_key)
-                if scale_inv is not None:
-                    assert native_block_size is not None
-                    tensor = dequantize_blockwise(tensor, scale_inv, block_size=native_block_size)
-                else:
-                    raise WeightsMergeError(
-                        f"Native FP8 weight {key!r} has no .weight_scale_inv tensor "
-                        f"in any shard. Cannot dequantize for merge."
-                    )
-
-            # Step 2: Apply LoRA merge ops (on dequantized BF16 tensors)
-            ops_for_key = merge_ops.pop(key, [])
-            if ops_for_key:
-                temp = {key: tensor}
-                for op in ops_for_key:
-                    apply_merge_op(temp, op)
-                    ops_applied += 1
-                tensor = temp[key]
-
-            # Step 3: Quantize routed experts to FP8, preserve everything else
-            if _is_routed_expert_weight(key) and key.endswith(".weight"):
-                fp8_tensor, scale = quantize_blockwise(tensor)
-                output_tensors[key] = fp8_tensor
-                output_tensors[_weight_scale_key(key)] = scale
-            else:
-                output_tensors[key] = tensor
-
-            weight_map[key] = out_shard_name
-            # Also track scale tensors in weight map
-            scale_out_key = _weight_scale_key(key) if key.endswith(".weight") else None
-            if (
-                scale_out_key
-                and scale_out_key in output_tensors
-                and scale_out_key not in weight_map
-            ):
-                weight_map[scale_out_key] = out_shard_name
-
-        del tensors
-
-        # Save shard atomically
-        _save_shard_atomic(out, out_shard_name, output_tensors)
-        del output_tensors
-
-        all_completed.append(out_shard_name)
-        _save_merge_state(
-            out,
-            status="in_progress",
-            completed_shards=all_completed,
-            total_shards=len(shard_files),
-        )
-
-    # Verify all merge ops were consumed
-    if merge_ops:
-        unconsumed = list(merge_ops.keys())
-        raise WeightsMergeError(
-            f"Merge ops not applied — {len(unconsumed)} target keys not found in any shard: "
-            f"{unconsumed[:5]}{'...' if len(unconsumed) > 5 else ''}"
-        )
-
-    logger.info("Applied %d/%d merge operations", ops_applied, total_ops)
-
-    # 6. Write index
-    shard_names = set(weight_map.values())
-    index = {
-        "metadata": {"total_size": _compute_total_size(out, shard_names)},
-        "weight_map": dict(sorted(weight_map.items())),
-    }
-    index_path = out / "model.safetensors.index.json"
-    with open(index_path, "w") as f:
-        json.dump(index, f, indent=2)
-
-    # 7. Copy config and patch with quantization metadata
-    src_config = model_dir / "config.json"
-    if src_config.exists():
-        copy_artifact_file(src_config, out / "config.json")
-
-    if serving_format == "vllm":
-        quant_config = _build_vllm_quantization_config(weight_map)
-        _patch_config_with_quantization(out, quant_config)
-
-    # 7. Copy model code and tokenizer
-    copy_model_code_files(model_dir, out)
-    save_tokenizer_and_processor(
-        base_model, out, is_multimodal_from_dict(config_dict), trust_remote_code
-    )
-
-    # 8. Mark complete
-    _save_merge_state(
-        out,
-        status="completed",
-        completed_shards=all_completed,
-        total_shards=len(shard_files),
-    )
-
-    logger.info("Done — quantized model saved to %s", out)
-
-
-_DTYPE_SIZES: dict[str, int] = {
-    "F64": 8,
-    "F32": 4,
-    "F16": 2,
-    "BF16": 2,
-    "I64": 8,
-    "I32": 4,
-    "I16": 2,
-    "I8": 1,
-    "U8": 1,
-    "F8_E4M3": 1,
-    "F8_E5M2": 1,
-    "BOOL": 1,
-}
-
-
-def _compute_total_size(output_path: Path, shard_names: set[str]) -> int:
-    """Compute total byte size of all tensors across output shards.
-
-    Reads safetensors headers only (shape + dtype) without loading tensor data,
-    matching the HuggingFace convention for ``model.safetensors.index.json``.
-    """
-    total = 0
-    for name in shard_names:
-        shard_path = output_path / name
-        if not shard_path.exists():
-            continue
-        with safe_open(str(shard_path), framework="pt") as f:
-            for key in f.keys():  # noqa: SIM118
-                shape = f.get_slice(key).get_shape()
-                dtype_str = f.get_slice(key).get_dtype()
-                numel = 1
-                for dim in shape:
-                    numel *= dim
-                total += numel * _DTYPE_SIZES.get(dtype_str, 4)
-    return total
-
-
-def _patch_config_with_quantization(output_path: Path, quant_config: dict) -> None:
-    """Patch config.json with compressed-tensors quantization metadata.
-
-    Adds ``compression_config`` and removes ``quantization_config`` (which
-    refers to the input model's native quantization, not our output).
-    """
-    config_path = output_path / "config.json"
-    with open(config_path) as f:
-        config = json.load(f)
-
-    config["compression_config"] = _serialize_for_vllm(quant_config)
-    config.pop("quantization_config", None)
-
-    with open(config_path, "w") as f:
-        json.dump(config, f, indent=2)

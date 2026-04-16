@@ -30,7 +30,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class RolloutResult:
-    """Output of a :class:`RolloutStrategy`."""
+    """Output of a :class:`RolloutStrategy`.
+
+    Attributes:
+        trajectories (list[Trajectory]): Successfully completed trajectories.
+        envs (Sequence[Env]): The environments that produced the successful
+            trajectories, in the same order as ``trajectories``.
+        errors (list[RolloutError]): Errors encountered during rollout
+            collection.  Empty when all rollouts succeed.
+    """
 
     trajectories: list[Trajectory]
     envs: Sequence[Env]
@@ -65,6 +73,16 @@ class RolloutStrategy(ABC):
         May raise on unrecoverable errors (e.g. retry budget exhausted).
         The caller (:func:`do_group_rollout`) handles group-level error
         recovery based on :attr:`catches_group_errors`.
+
+        Args:
+            env_group_builder (EnvGroupBuilder): Builder used to create the
+                environments for this rollout group.
+            policy (TokenCompleter): The policy (language model) used to
+                generate actions during rollouts.
+
+        Returns:
+            RolloutResult: The collected trajectories, surviving environments,
+                and any errors encountered.
         """
         ...
 
@@ -82,6 +100,20 @@ class FailFast(RolloutStrategy):
         env_group_builder: EnvGroupBuilder,
         policy: TokenCompleter,
     ) -> RolloutResult:
+        """Run all rollouts concurrently, raising immediately on any failure.
+
+        Args:
+            env_group_builder (EnvGroupBuilder): Builder used to create the
+                environments for this rollout group.
+            policy (TokenCompleter): The policy used to generate actions.
+
+        Returns:
+            RolloutResult: Result with all trajectories and an empty error list.
+
+        Raises:
+            Exception: Any exception raised by a single rollout propagates
+                immediately, cancelling the remaining rollouts.
+        """
         from tinker_cookbook.rl.rollouts import do_single_rollout
 
         envs = await env_group_builder.make_envs()
@@ -93,12 +125,12 @@ class FailFast(RolloutStrategy):
 
 @dataclass(frozen=True)
 class RetryOnFailure(RolloutStrategy):
-    """Retry failed trajectories with fresh environments.
+    """Retry failed or timed-out trajectories with fresh environments.
 
-    When a trajectory fails (container crash, sandbox flake, transient error),
-    a fresh env is created via ``make_envs()`` and the rollout is retried.
-    This continues until either all trajectories succeed or the retry budget
-    is exhausted.
+    When a trajectory fails (container crash, sandbox flake, transient error)
+    or exceeds ``per_rollout_timeout`` seconds, a fresh env is created via
+    ``make_envs()`` and the rollout is retried. This continues until either
+    all trajectories succeed or the retry budget is exhausted.
 
     If the retry budget is exhausted and a failure still occurs, the remaining
     in-flight tasks are cancelled and the exception is re-raised. This avoids
@@ -111,9 +143,14 @@ class RetryOnFailure(RolloutStrategy):
         max_retries: Total retry budget across all trajectories in the group.
             For example, with ``max_retries=3`` and a group of 8 envs, up to
             3 individual trajectory failures will be retried.
+        per_rollout_timeout: Maximum seconds for a single rollout before it
+            is cancelled and retried. ``0`` disables the timeout (default).
+            Set this to catch sampling requests that hang indefinitely — e.g.,
+            ``per_rollout_timeout=1800`` for a 30-minute deadline per rollout.
     """
 
     max_retries: int = 3
+    per_rollout_timeout: float = 0
 
     @property
     def catches_group_errors(self) -> bool:
@@ -124,14 +161,42 @@ class RetryOnFailure(RolloutStrategy):
         env_group_builder: EnvGroupBuilder,
         policy: TokenCompleter,
     ) -> RolloutResult:
+        """Run rollouts with automatic retry on individual trajectory failures.
+
+        Creates environments, launches all rollouts concurrently, and retries
+        any that fail (or time out) by creating a fresh environment. Uses
+        ``asyncio.wait(FIRST_COMPLETED)`` so retries begin immediately upon
+        detecting a failure.
+
+        Args:
+            env_group_builder (EnvGroupBuilder): Builder used to create (and
+                re-create on retry) environments for this rollout group.
+            policy (TokenCompleter): The policy used to generate actions.
+
+        Returns:
+            RolloutResult: Result containing the successfully completed
+                trajectories, surviving environments, and a list of any
+                errors encountered (including retried ones).
+
+        Raises:
+            Exception: Re-raises the failing exception when the retry budget
+                is exhausted, after cancelling all remaining in-flight tasks.
+        """
         from tinker_cookbook.rl.rollouts import do_single_rollout
 
         envs = await env_group_builder.make_envs()
+        timeout = self.per_rollout_timeout if self.per_rollout_timeout > 0 else None
+
+        def _launch(env: Env) -> asyncio.Task[Trajectory]:
+            coro = do_single_rollout(policy, env)
+            if timeout is not None:
+                coro = asyncio.wait_for(coro, timeout=timeout)
+            return asyncio.create_task(coro)
 
         # Map task -> env for tracking
         task_to_env: dict[asyncio.Task[Trajectory], Env] = {}
         for env in envs:
-            task = asyncio.create_task(do_single_rollout(policy, env))
+            task = _launch(env)
             task_to_env[task] = env
 
         trajectories: list[Trajectory] = []
@@ -154,8 +219,11 @@ class RetryOnFailure(RolloutStrategy):
                     await asyncio.gather(*pending, return_exceptions=True)
                     raise
                 except Exception as exc:
+                    is_timeout = isinstance(exc, (asyncio.TimeoutError, TimeoutError))
+                    label = "timed out" if is_timeout else "failed"
                     logger.warning(
-                        "Trajectory failed (%s): %s (retries_remaining=%d)",
+                        "Trajectory %s (%s): %s (retries_remaining=%d)",
+                        label,
                         type(exc).__name__,
                         exc,
                         retries_remaining,
@@ -174,7 +242,7 @@ class RetryOnFailure(RolloutStrategy):
                         # envs the unused containers get GC'd.
                         new_envs = await env_group_builder.make_envs()
                         new_env = new_envs[0]
-                        new_task = asyncio.create_task(do_single_rollout(policy, new_env))
+                        new_task = _launch(new_env)
                         task_to_env[new_task] = new_env
                         pending.add(new_task)
                     else:
@@ -210,6 +278,18 @@ def rollout_strategy_from_config(
     - ``False`` -> :class:`FailFast` (crash on any error, the default)
     - ``True``  -> :class:`RetryOnFailure` with default ``max_retries=3``
     - A :class:`RolloutStrategy` instance -> passed through as-is
+
+    Args:
+        rollout_error_tolerance (bool | RolloutStrategy): The config value to
+            convert.  ``False`` for fail-fast, ``True`` for retry with
+            defaults, or a pre-built :class:`RolloutStrategy` instance.
+
+    Returns:
+        RolloutStrategy: The resolved strategy instance.
+
+    Raises:
+        ConfigurationError: If the value is not a bool or
+            :class:`RolloutStrategy`.
     """
     if isinstance(rollout_error_tolerance, RolloutStrategy):
         return rollout_error_tolerance

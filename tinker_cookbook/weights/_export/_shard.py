@@ -3,36 +3,19 @@
 Processes one safetensors shard at a time, keeping peak memory proportional to
 the largest shard rather than the full model. Produces output identical to the
 full-model path.
+
+Model-specific shard processing (e.g. INT4 dequant/requant for Kimi K2.5)
+lives in dedicated ``_shard_<model>.py`` modules and is invoked via hooks
+that this file dispatches to based on the detected merge profile.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 
-from safetensors.torch import load_file
-
-from tinker_cookbook.exceptions import WeightsMergeError
-from tinker_cookbook.weights._artifacts import (
-    ShardWriter,
-    copy_artifact_file,
-    copy_model_code_files,
-    get_model_state_shapes,
-    get_shard_files,
-    load_adapter_weights,
-)
-from tinker_cookbook.weights._export import (
-    cleanup_on_failure,
-    is_multimodal_from_dict,
-    save_tokenizer_and_processor,
-)
-from tinker_cookbook.weights._merge import (
-    apply_merge_op,
-    detect_merge_profile,
-    plan_merge_ops,
-    validate_merge_op_shapes,
-)
+from tinker_cookbook.weights._export._quant_format import ShardHooks
+from tinker_cookbook.weights._export._shard_engine import run_shard_merge
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +28,7 @@ def build_sharded(
     trust_remote_code: bool,
     model_dir: Path,
     config_dict: dict,
+    device: str = "cpu",
 ) -> None:
     """Merge by processing one safetensors shard at a time.
 
@@ -55,102 +39,52 @@ def build_sharded(
         trust_remote_code: Whether to trust remote code for HF loading.
         model_dir: Resolved local directory containing model files.
         config_dict: Parsed config.json dict (loaded by dispatcher).
+        device: Device for quantization math ("cpu", "cuda", etc.).
     """
-    # 0. Fail fast if output already exists (before any expensive work)
-    out = Path(output_path)
-    if out.exists():
-        raise FileExistsError(f"Output path already exists: {out}")
+    shard_hooks = _build_shard_hooks(config_dict, device=device)
 
-    # 1. Load adapter (small — only LoRA matrices)
-    adapter_weights, adapter_config = load_adapter_weights(Path(adapter_path))
-
-    # 2. Read model state shapes from safetensors headers (no weight loading)
-    model_shapes = get_model_state_shapes(model_dir)
-    model_state_keys = set(model_shapes.keys())
-
-    # 3. Detect model-specific merge profile from config + key names
-    profile = detect_merge_profile(config_dict, model_state_keys)
-    logger.info(
-        "Detected merge profile: expert_layout=%s, language_model_prefix=%s",
-        profile.expert_layout,
-        profile.has_language_model_prefix,
+    run_shard_merge(
+        base_model=base_model,
+        adapter_path=adapter_path,
+        output_path=output_path,
+        trust_remote_code=trust_remote_code,
+        model_dir=model_dir,
+        config_dict=config_dict,
+        shard_hooks=shard_hooks,
     )
 
-    # 4. Plan all merge ops (validates keys before any heavy I/O)
-    merge_ops = plan_merge_ops(adapter_weights, adapter_config, model_state_keys, profile)
-    total_ops = sum(len(ops) for ops in merge_ops.values())
-    logger.info("Planned %d merge operations across %d target keys", total_ops, len(merge_ops))
 
-    # 5. Validate shapes upfront (catches mismatches before loading any shards)
-    validate_merge_op_shapes(merge_ops, model_shapes)
+# ---------------------------------------------------------------------------
+# Model-specific shard hooks
+# ---------------------------------------------------------------------------
 
-    # 6. Process shards
-    out.mkdir(parents=True, exist_ok=False)
 
-    try:
-        shard_files = get_shard_files(model_dir)
-        logger.info("Processing %d input shard(s)", len(shard_files))
+def _build_shard_hooks(
+    config_dict: dict,
+    device: str = "cpu",
+) -> ShardHooks | None:
+    """Build shard hooks based on the model's quantization config.
 
-        writer = ShardWriter(out)
-        ops_applied = 0
+    Detection is config-driven via ``quantization_config``:
 
-        for i, shard_file in enumerate(shard_files):
-            logger.info("Processing shard %d/%d: %s", i + 1, len(shard_files), shard_file)
-            tensors = load_file(str(model_dir / shard_file))
+    - ``format: pack-quantized`` → INT4 packed (Kimi K2, K2.5)
+    - ``quant_method: mxfp4 | mxfp8`` → MX block format (GPT-OSS)
 
-            # Apply any merge ops targeting keys in this shard
-            for key in list(tensors.keys()):
-                ops_for_key = merge_ops.pop(key, [])
-                for op in ops_for_key:
-                    apply_merge_op(tensors, op)
-                    ops_applied += 1
+    Other quantized formats (DeepSeek native FP8) are NOT matched —
+    they use the ``QuantizationFormat`` protocol path instead.
+    """
+    from tinker_cookbook.weights._merge_utils import is_pack_quantized
 
-            # Write all tensors from this shard to output
-            for key, tensor in tensors.items():
-                writer.add_tensor(key, tensor)
-            del tensors
-            writer.flush()
+    if is_pack_quantized(config_dict):
+        from tinker_cookbook.weights._export._shard_packed_int4 import PackedInt4ShardHooks
 
-        # 7. Verify all ops were consumed
-        if merge_ops:
-            unconsumed = list(merge_ops.keys())
-            raise WeightsMergeError(
-                f"Merge ops not applied — {len(unconsumed)} target keys not found in any shard: "
-                f"{unconsumed[:5]}{'...' if len(unconsumed) > 5 else ''}"
-            )
+        return PackedInt4ShardHooks(config_dict)
 
-        logger.info("Applied %d/%d merge operations", ops_applied, total_ops)
+    qc = config_dict.get("quantization_config", {})
+    method = qc.get("quant_method", "") if isinstance(qc, dict) else ""
+    if method in ("mxfp4", "mxfp8"):
+        from tinker_cookbook.weights._export._shard_mx_block import MXBlockShardHooks
 
-        # 8. Finalize output shards
-        weight_map = writer.finalize()
+        return MXBlockShardHooks(config_dict, device=device)
 
-        # 9. Write index file (only for multi-shard output; HF convention
-        #    is no index for single-shard models)
-        shard_names = set(weight_map.values())
-        if len(shard_names) > 1:
-            index = {
-                "metadata": {"total_size": writer.total_size},
-                "weight_map": dict(sorted(weight_map.items())),
-            }
-            index_path = out / "model.safetensors.index.json"
-            with open(index_path, "w") as f:
-                json.dump(index, f, indent=2)
-
-        # 10. Save config, tokenizer, and model code files.
-        #     Copy config.json directly (safe — it's a single known file).
-        #     Copy *.py files for trust_remote_code model support.
-        #     We intentionally don't glob-copy all non-weight files to avoid
-        #     accidentally including stale index files or other artifacts that
-        #     could break downstream loaders like vLLM/SGLang.
-        src_config = model_dir / "config.json"
-        if src_config.exists():
-            copy_artifact_file(src_config, out / "config.json")
-        copy_model_code_files(model_dir, out)
-        save_tokenizer_and_processor(
-            base_model, out, is_multimodal_from_dict(config_dict), trust_remote_code
-        )
-
-        logger.info("Done — merged model saved to %s", out)
-    except Exception:
-        cleanup_on_failure(out)
-        raise
+    return None

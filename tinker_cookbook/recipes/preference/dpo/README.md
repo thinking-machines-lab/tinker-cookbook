@@ -1,6 +1,6 @@
 # Direct Preference Optimization
 
-Please check our [doc](https://tinker-docs.thinkingmachines.ai/preferences/dpo-guide) for background on DPO.
+Please check our [doc](https://tinker-docs.thinkingmachines.ai/cookbook/preferences/dpo-guide/) for background on DPO.
 
 Here is an example command:
 ```

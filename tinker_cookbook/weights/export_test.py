@@ -11,7 +11,7 @@ import pytest
 import torch
 from safetensors.torch import load_file, save_file
 
-from tinker_cookbook.weights._export import build_hf_model
+from tinker_cookbook.weights._export import _TOKENIZER_AND_PROCESSOR_FILES, build_hf_model
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -344,6 +344,221 @@ class TestBuildShardedFusedExperts:
 
         assert (output_dir / "model.safetensors").exists()
         assert not (output_dir / "model.safetensors.index.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Shard-by-shard with Nemotron (Mamba fused in_proj + MoE experts)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildShardedNemotron:
+    """Shard-by-shard merge for Nemotron: Mamba gate_proj/x_proj → in_proj + MoE experts."""
+
+    HIDDEN = 8
+    INTERMEDIATE = 12
+    IN_PROJ_DIM = INTERMEDIATE * 2 + 6  # gate + x + B + C + dt
+    NUM_EXPERTS = 2
+
+    def test_mamba_fused_and_moe_experts(self, tmp_path: Path):
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+
+        # Nemotron-like model: backbone prefix, in_proj (fused), per-expert up/down
+        config = {"architectures": ["NemotronHForCausalLM"], "model_type": "nemotron_h"}
+        state_dict: dict[str, torch.Tensor] = {
+            # Mamba layer (layer 0)
+            "backbone.layers.0.mixer.in_proj.weight": torch.zeros(
+                self.IN_PROJ_DIM, self.HIDDEN, dtype=torch.float32
+            ),
+            "backbone.layers.0.mixer.out_proj.weight": torch.zeros(
+                self.HIDDEN, self.INTERMEDIATE, dtype=torch.float32
+            ),
+            # MoE layer (layer 1)
+            "backbone.layers.1.mixer.shared_experts.up_proj.weight": torch.zeros(
+                self.INTERMEDIATE, self.HIDDEN, dtype=torch.float32
+            ),
+        }
+        for e in range(self.NUM_EXPERTS):
+            state_dict[f"backbone.layers.1.mixer.experts.{e}.up_proj.weight"] = torch.zeros(
+                self.INTERMEDIATE, self.HIDDEN, dtype=torch.float32
+            )
+            state_dict[f"backbone.layers.1.mixer.experts.{e}.down_proj.weight"] = torch.zeros(
+                self.HIDDEN, self.INTERMEDIATE, dtype=torch.float32
+            )
+        _create_synthetic_model(model_dir, config, state_dict)
+
+        # Adapter: Mamba gate_proj/x_proj + MoE w1/w2 + empty w3
+        prefix = "base_model.model.backbone"
+        gate_fill, x_fill, expert_fill = 0.5, 0.3, 0.1
+        adapter_weights: dict[str, torch.Tensor] = {
+            # Mamba gate_proj/x_proj (will be merged into in_proj)
+            f"{prefix}.layers.0.mixer.gate_proj.lora_A.weight": (
+                torch.ones(1, self.HIDDEN) * gate_fill
+            ),
+            f"{prefix}.layers.0.mixer.gate_proj.lora_B.weight": torch.ones(self.INTERMEDIATE, 1),
+            f"{prefix}.layers.0.mixer.x_proj.lora_A.weight": (torch.ones(1, self.HIDDEN) * x_fill),
+            f"{prefix}.layers.0.mixer.x_proj.lora_B.weight": torch.ones(self.INTERMEDIATE, 1),
+            # MoE w1 (up_proj)
+            f"{prefix}.layers.1.mixer.experts.w1.lora_A.weight": (
+                torch.ones(self.NUM_EXPERTS, 1, self.HIDDEN) * expert_fill
+            ),
+            f"{prefix}.layers.1.mixer.experts.w1.lora_B.weight": torch.ones(
+                self.NUM_EXPERTS, self.INTERMEDIATE, 1
+            ),
+            # MoE w2 (down_proj)
+            f"{prefix}.layers.1.mixer.experts.w2.lora_A.weight": (
+                torch.ones(self.NUM_EXPERTS, 1, self.INTERMEDIATE) * expert_fill
+            ),
+            f"{prefix}.layers.1.mixer.experts.w2.lora_B.weight": torch.ones(
+                self.NUM_EXPERTS, self.HIDDEN, 1
+            ),
+            # Empty w3 placeholder
+            f"{prefix}.layers.1.mixer.experts.w3.lora_A.weight": torch.empty(0),
+            f"{prefix}.layers.1.mixer.experts.w3.lora_B.weight": torch.empty(0),
+        }
+        _create_adapter(adapter_dir, adapter_weights, {"lora_alpha": 1, "r": 1})
+
+        build_hf_model(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+            merge_strategy="shard",
+        )
+
+        out_tensors = _load_output_tensors(output_dir)
+
+        # Verify Mamba in_proj: gate in [0:INTERMEDIATE], x in [INTERMEDIATE:2*INTERMEDIATE]
+        in_proj = out_tensors["backbone.layers.0.mixer.in_proj.weight"]
+        gate_slice = in_proj[: self.INTERMEDIATE]
+        x_slice = in_proj[self.INTERMEDIATE : 2 * self.INTERMEDIATE]
+        rest = in_proj[2 * self.INTERMEDIATE :]
+
+        assert torch.allclose(gate_slice, torch.full_like(gate_slice, gate_fill), atol=1e-6)
+        assert torch.allclose(x_slice, torch.full_like(x_slice, x_fill), atol=1e-6)
+        assert rest.abs().sum() == 0, "B/C/dt rows should be unchanged"
+
+        # Verify MoE expert up_proj and down_proj merged
+        for e in range(self.NUM_EXPERTS):
+            up = out_tensors[f"backbone.layers.1.mixer.experts.{e}.up_proj.weight"]
+            down = out_tensors[f"backbone.layers.1.mixer.experts.{e}.down_proj.weight"]
+            assert torch.allclose(up, torch.full_like(up, expert_fill), atol=1e-6)
+            assert torch.allclose(down, torch.full_like(down, expert_fill), atol=1e-6)
+
+        # Verify out_proj unchanged (no adapter targeting it)
+        out_proj = out_tensors["backbone.layers.0.mixer.out_proj.weight"]
+        assert out_proj.abs().sum() == 0
+
+
+# ---------------------------------------------------------------------------
+# Tokenizer file copy (no re-serialization)
+# ---------------------------------------------------------------------------
+
+
+class TestTokenizerFileCopy:
+    """Verify that tokenizer files are copied verbatim from the source model.
+
+    Transformers v5 rewrites ``tokenizer_class`` to ``"TokenizersBackend"``
+    when loading and re-saving via ``save_pretrained()``.  Our export copies
+    files directly to preserve the original values.
+    """
+
+    def test_tokenizer_class_preserved(self, tmp_path: Path):
+        """tokenizer_config.json must be byte-identical to the source."""
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+
+        # Use a tokenizer_class that would be corrupted by save_pretrained()
+        tok_config = json.dumps({"tokenizer_class": "Qwen2Tokenizer", "model_max_length": 4096})
+
+        config = {"architectures": ["TestModel"], "model_type": "test"}
+        state_dict = {"model.layers.0.proj.weight": torch.zeros(4, 4, dtype=torch.float32)}
+        _create_synthetic_model(model_dir, config, state_dict)
+        # Overwrite tokenizer_config.json with our specific content
+        (model_dir / "tokenizer_config.json").write_text(tok_config)
+
+        _create_adapter(
+            adapter_dir,
+            {
+                "base_model.model.model.layers.0.proj.lora_A.weight": torch.ones(1, 4),
+                "base_model.model.model.layers.0.proj.lora_B.weight": torch.ones(4, 1),
+            },
+            {"lora_alpha": 1, "r": 1},
+        )
+
+        build_hf_model(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+        )
+
+        # tokenizer_config.json must be byte-identical to the source
+        assert (output_dir / "tokenizer_config.json").read_text() == tok_config
+
+    def test_all_allowlisted_files_copied(self, tmp_path: Path):
+        """Every file in _TOKENIZER_AND_PROCESSOR_FILES is copied when present."""
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+
+        config = {"architectures": ["TestModel"], "model_type": "test"}
+        state_dict = {"model.layers.0.proj.weight": torch.zeros(4, 4, dtype=torch.float32)}
+        _create_synthetic_model(model_dir, config, state_dict)
+
+        # Write every allowlisted file into the source model dir
+        for name in _TOKENIZER_AND_PROCESSOR_FILES:
+            (model_dir / name).write_text(f"content-of-{name}")
+
+        _create_adapter(
+            adapter_dir,
+            {
+                "base_model.model.model.layers.0.proj.lora_A.weight": torch.ones(1, 4),
+                "base_model.model.model.layers.0.proj.lora_B.weight": torch.ones(4, 1),
+            },
+            {"lora_alpha": 1, "r": 1},
+        )
+
+        build_hf_model(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+        )
+
+        for name in _TOKENIZER_AND_PROCESSOR_FILES:
+            assert (output_dir / name).exists(), f"{name} missing from output"
+            assert (output_dir / name).read_bytes() == (model_dir / name).read_bytes(), (
+                f"{name} content differs from source"
+            )
+
+    def test_tiktoken_model_copied(self, tmp_path: Path):
+        """tiktoken.model (used by Kimi) is copied as a tokenizer file."""
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+
+        config = {"architectures": ["TestModel"], "model_type": "test"}
+        state_dict = {"model.layers.0.proj.weight": torch.zeros(4, 4, dtype=torch.float32)}
+        _create_synthetic_model(model_dir, config, state_dict)
+        (model_dir / "tiktoken.model").write_text("fake-tiktoken-data")
+
+        _create_adapter(
+            adapter_dir,
+            {
+                "base_model.model.model.layers.0.proj.lora_A.weight": torch.ones(1, 4),
+                "base_model.model.model.layers.0.proj.lora_B.weight": torch.ones(4, 1),
+            },
+            {"lora_alpha": 1, "r": 1},
+        )
+
+        build_hf_model(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+        )
+
+        assert (output_dir / "tiktoken.model").exists()
+        assert (output_dir / "tiktoken.model").read_text() == "fake-tiktoken-data"
 
 
 # ---------------------------------------------------------------------------

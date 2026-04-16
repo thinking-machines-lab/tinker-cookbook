@@ -46,6 +46,15 @@ class KimiK25Renderer(KimiK2Renderer):
         image_processor: ImageProcessor | None = None,
         strip_thinking_from_history: bool = True,
     ):
+        """Initialize the Kimi K2.5 renderer.
+
+        Args:
+            tokenizer (Tokenizer): The tokenizer to use for encoding.
+            image_processor (ImageProcessor | None): Processor for converting images
+                to model-compatible chunks. Required if messages contain image content.
+            strip_thinking_from_history (bool): When True (default), replaces thinking
+                content with empty ``<think></think>`` in historical assistant messages.
+        """
         super().__init__(tokenizer, strip_thinking_from_history=strip_thinking_from_history)
         self.image_processor = image_processor
         (self._think_open_token,) = self.tokenizer.encode("<think>", add_special_tokens=False)
@@ -88,7 +97,19 @@ class KimiK25Renderer(KimiK2Renderer):
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:
-        """Build generation prompt with <think> prefill for thinking mode."""
+        """Build generation prompt with ``<think>`` prefill for thinking mode.
+
+        Appends an open ``<think>`` tag as the default prefill to enable the model's
+        thinking mode. A custom prefill overrides this default.
+
+        Args:
+            messages (list[Message]): The conversation messages.
+            role (Role): The role for the generation prompt (default "assistant").
+            prefill (str | None): Optional prefill text. If None, defaults to ``<think>``.
+
+        Returns:
+            tinker.ModelInput: The tokenized model input ready for sampling.
+        """
         # If no prefill specified, use <think> to enable thinking
         if prefill is None:
             prefill = "<think>"
@@ -112,6 +133,14 @@ class KimiK25Renderer(KimiK2Renderer):
         Per the HuggingFace chat template, Kimi K2.5 uses TypeScript-style tool
         declarations instead of JSON format. The tool_declare message comes BEFORE
         the regular system message.
+
+        Args:
+            tools (list[ToolSpec]): Tool specifications to encode in TypeScript style.
+            system_prompt (str): Custom system prompt. If empty, uses the default
+                Kimi system prompt.
+
+        Returns:
+            list[Message]: Messages to prepend to conversations (tool_declare + system).
 
         Reference: kimi-k2.5-hf-tokenizer/chat_template.jinja
         """
@@ -145,7 +174,17 @@ class KimiK25DisableThinkingRenderer(KimiK25Renderer):
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:
-        """Build generation prompt with <think></think> prefill to disable thinking."""
+        """Build generation prompt with ``<think></think>`` prefill to disable thinking.
+
+        Args:
+            messages (list[Message]): The conversation messages.
+            role (Role): The role for the generation prompt (default "assistant").
+            prefill (str | None): Optional prefill text. If None, defaults to
+                ``<think></think>`` to disable thinking.
+
+        Returns:
+            tinker.ModelInput: The tokenized model input ready for sampling.
+        """
         # If no prefill specified, use <think></think> to disable thinking
         if prefill is None:
             prefill = "<think></think>"

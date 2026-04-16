@@ -9,7 +9,7 @@ If you have an agent or application built on LiteLLM (or frameworks that use it,
 1. **Run your existing code against Tinker** without rewriting it to use the Tinker SDK directly
 2. **Get raw token IDs** from every request, which you can feed into Tinker's training APIs for supervised learning or RL
 
-Tinker also offers an [OpenAI-compatible endpoint](/compatible-apis/openai), which works with LiteLLM out of the box. However, the native `SamplingClient` used by this integration provides better performance.
+Tinker also offers an [OpenAI-compatible endpoint](https://tinker-docs.thinkingmachines.ai/tinker/compatible-apis/openai/), which works with LiteLLM out of the box. However, the native `SamplingClient` used by this integration provides better performance.
 
 ## Setup
 
@@ -19,7 +19,7 @@ This integration requires `litellm` as an additional dependency. From the tinker
 uv pip install -e ".[litellm]"
 ```
 
-You also need a `TINKER_API_KEY` — see [Getting an API key](https://tinker-docs.thinkingmachines.ai/install#getting-an-api-key).
+You also need a `TINKER_API_KEY` — see [Getting an API key](https://tinker-docs.thinkingmachines.ai/tinker/quickstart/#getting-an-api-key).
 
 ## Quick start
 
@@ -47,7 +47,7 @@ print(response.choices[0].message.content)
 
 LiteLLM uses the `model` parameter to decide which provider handles the request. The `tinker/` prefix routes to this provider — everything after the prefix is an arbitrary label that appears in the response metadata (it does **not** select the model).
 
-The actual model is determined by `base_model`, which is passed directly to Tinker's `ServiceClient.create_sampling_client(base_model=...)`. This must be a model name from Tinker's [model lineup](https://tinker-docs.thinkingmachines.ai/model-lineup), e.g.:
+The actual model is determined by `base_model`, which is passed directly to Tinker's `ServiceClient.create_sampling_client(base_model=...)`. This must be a model name from Tinker's [model lineup](https://tinker-docs.thinkingmachines.ai/tinker/models/), e.g.:
 
 - `Qwen/Qwen3-4B-Instruct-2507`
 - `meta-llama/Llama-3.1-8B-Instruct`
@@ -91,7 +91,7 @@ response = await litellm.acompletion(
 )
 ```
 
-See [Saving and loading weights](https://tinker-docs.thinkingmachines.ai/save-load) for how to obtain checkpoint paths.
+See [Saving and loading weights](https://tinker-docs.thinkingmachines.ai/cookbook/storage/) for how to obtain checkpoint paths.
 
 ### Custom Tinker deployments
 
@@ -128,7 +128,7 @@ completion_token_ids = fields["completion_token_ids"]  # list[int]
 | LiteLLM parameter | Description |
 |---|---|
 | `model` | Must start with `tinker/` to route to this provider. The rest is a label for the response metadata. |
-| `base_model` | **Required.** Tinker model name passed to `create_sampling_client()`. See [model lineup](https://tinker-docs.thinkingmachines.ai/model-lineup). |
+| `base_model` | **Required.** Tinker model name passed to `create_sampling_client()`. See [model lineup](https://tinker-docs.thinkingmachines.ai/tinker/models/). |
 | `temperature` | Sampling temperature |
 | `max_tokens` / `max_completion_tokens` | Maximum tokens to generate |
 | `top_p` | Nucleus sampling parameter |

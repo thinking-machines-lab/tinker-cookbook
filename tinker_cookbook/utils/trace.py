@@ -17,7 +17,10 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from io import TextIOWrapper
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from tinker_cookbook.stores.training_store import TrainingRunStore
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +46,11 @@ class TraceEvent:
     cat: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert the TraceEvent to a dictionary for JSON serialization."""
+        """Convert the TraceEvent to a dictionary for JSON serialization.
+
+        Returns:
+            dict[str, Any]: Chrome Trace / Perfetto-compatible event dict.
+        """
         result = {
             "name": self.name,
             "ph": self.ph.value,
@@ -59,6 +66,17 @@ class TraceEvent:
 
 @dataclass
 class ScopeContext:
+    """Mutable context attached to a traced function call.
+
+    Use :func:`get_scope_context` inside a ``@scope``-decorated function to
+    retrieve the current ``ScopeContext`` and add custom key/value attributes
+    that will be included in the Perfetto trace event's ``args``.
+
+    Attributes:
+        attributes (dict[str, Any]): User-defined key/value pairs to attach
+            to the trace span.
+    """
+
     # Additional attributes to log into the trace for this function call
     attributes: dict[str, Any] = field(default_factory=dict)
 
@@ -123,6 +141,17 @@ class IterationWindow:
         self._total_time: float | None = None
 
     def record_span(self, name: str, start_time: float, end_time: float) -> None:
+        """Record a completed span into this window.
+
+        Thread-safe. Wall-clock timestamps are derived from the monotonic
+        ``start_time``/``end_time`` pair so spans from different threads or
+        processes can be compared on a shared timeline.
+
+        Args:
+            name (str): Span name (typically the function or block label).
+            start_time (float): ``time.perf_counter()`` value at span start.
+            end_time (float): ``time.perf_counter()`` value at span end.
+        """
         with self._lock:
             self.spans.append(
                 SpanRecord(
@@ -135,7 +164,15 @@ class IterationWindow:
             )
 
     def aggregate(self) -> dict[str, float]:
-        """Aggregate collected spans into a flat timing dict."""
+        """Aggregate collected spans into a flat timing dict.
+
+        Single-occurrence spans produce ``time/{name}``. Multi-occurrence
+        spans produce ``time/{name}:total``, ``time/{name}:count``,
+        ``time/{name}:mean``, and ``time/{name}:max``.
+
+        Returns:
+            dict[str, float]: Flat dictionary of timing metrics.
+        """
         with self._lock:
             spans = list(self.spans)
 
@@ -162,10 +199,14 @@ class IterationWindow:
         return metrics
 
     def get_timing_metrics(self) -> dict[str, float]:
-        """Get aggregated timing metrics including time/total.
+        """Get aggregated timing metrics including ``time/total``.
 
-        Call this after the ``trace_iteration`` context manager has exited,
-        which sets ``_total_time``.
+        Call this after the :func:`trace_iteration` context manager has exited,
+        which sets the total wall-clock time for the iteration.
+
+        Returns:
+            dict[str, float]: Aggregated span metrics plus ``time/total``
+                if the iteration has completed.
         """
         metrics = self.aggregate()
         if self._total_time is not None:
@@ -173,15 +214,24 @@ class IterationWindow:
         return metrics
 
     def merge_spans(self, spans: list[SpanRecord]) -> None:
-        """Merge externally-collected spans (e.g. from worker processes) into this window."""
+        """Merge externally-collected spans (e.g. from worker processes) into this window.
+
+        Args:
+            spans (list[SpanRecord]): Span records collected elsewhere to
+                incorporate into this window's aggregation.
+        """
         with self._lock:
             self.spans.extend(spans)
 
     def get_span_records(self) -> list[dict[str, Any]]:
-        """Get span records for Gantt chart rendering.
+        """Get span records formatted for Gantt chart rendering.
 
-        Uses wall-clock timestamps (time.time) so that spans from different
+        Uses wall-clock timestamps (``time.time``) so that spans from different
         processes can be placed on a shared timeline.
+
+        Returns:
+            list[dict[str, Any]]: List of dicts with keys ``task``, ``start``,
+                and ``end`` suitable for passing to ``plotly.express.timeline``.
         """
         with self._lock:
             spans = list(self.spans)
@@ -201,19 +251,22 @@ class IterationWindow:
             for s in spans
         ]
 
-    def write_spans_jsonl(self, path: Path | str, step: int) -> None:
-        """Append span records for this iteration as one JSON line to the given file.
+    def get_span_dicts(self) -> list[dict[str, Any]]:
+        """Return span records as JSON-serializable dicts.
 
-        Format: ``{"step": N, "spans": [{"name": ..., "duration": ..., "wall_start": ..., "wall_end": ...}, ...]}``
+        Wall times are normalized relative to the earliest span.
+
+        Returns:
+            List of dicts with keys: ``name``, ``duration``, ``wall_start``, ``wall_end``.
         """
         with self._lock:
             spans = list(self.spans)
 
         if not spans:
-            return
+            return []
 
         t0 = min(s.wall_start for s in spans)
-        span_dicts = [
+        return [
             {
                 "name": s.name,
                 "duration": s.end_time - s.start_time,
@@ -222,9 +275,36 @@ class IterationWindow:
             }
             for s in spans
         ]
+
+    def write_spans_jsonl(self, path: Path | str, step: int) -> None:
+        """Append span records for this iteration as one JSON line to the given file.
+
+        Format: ``{"step": N, "spans": [{"name": ..., "duration": ..., "wall_start": ..., "wall_end": ...}, ...]}``
+
+        .. deprecated::
+            Prefer ``store.write_timing_spans(step, window.get_span_dicts())``
+            which goes through the Storage protocol.
+
+        Args:
+            path (Path | str): File path to append to (created if missing).
+            step (int): Training step number to include in the record.
+        """
+        span_dicts = self.get_span_dicts()
+        if not span_dicts:
+            return
         line = json.dumps({"step": step, "spans": span_dicts})
         with open(path, "a") as f:
             f.write(line + "\n")
+
+    def save_timing(self, step: int, *, store: "TrainingRunStore | None") -> None:
+        """Write timing spans to ``timing_spans.jsonl`` via the store.
+
+        Args:
+            step: Training step number.
+            store: A ``TrainingRunStore``, or ``None`` to skip.
+        """
+        if store is not None:
+            store.write_timing_spans(step, self.get_span_dicts())
 
 
 # Context variable to track the current iteration window
@@ -234,7 +314,16 @@ _iteration_window: ContextVar[IterationWindow | None] = ContextVar(
 
 
 class TraceCollector:
-    """Collects trace events and exports them in Chrome Trace/Perfetto Format."""
+    """Collects trace events and exports them in Chrome Trace/Perfetto Format.
+
+    Events are queued in-memory and flushed to a JSONL file by a background
+    daemon thread.  Call :meth:`shutdown` (or let ``atexit`` handle it) to
+    flush remaining events and join the thread.
+
+    Args:
+        flush_interval_sec (float): Maximum seconds between disk flushes.
+        output_file (str): Path for the JSONL output file.
+    """
 
     def __init__(self, flush_interval_sec: float = 1.0, output_file: str = "trace_events.jsonl"):
         self.event_queue: queue.Queue[TraceEvent] = queue.Queue()
@@ -249,16 +338,28 @@ class TraceCollector:
         self.next_fake_pid = 0
         self.thread_id_to_fake_pid: dict[int, int] = {}
 
-    def add_event(self, event: TraceEvent):
-        """Thread-safe addition of trace events."""
+    def add_event(self, event: TraceEvent) -> None:
+        """Enqueue a trace event for asynchronous flushing to disk.
+
+        Args:
+            event (TraceEvent): The event to record.
+        """
         self.event_queue.put(event)
 
     def get_timestamp(self) -> float:
-        """Get current timestamp in microseconds relative to start."""
+        """Get the current high-resolution timestamp in microseconds.
+
+        Returns:
+            float: Microseconds from ``time.perf_counter``.
+        """
         return time.perf_counter() * 1e6
 
     def get_all_events_immediately_available(self) -> list[TraceEvent]:
-        """Get all events that are immediately available."""
+        """Drain all events currently in the queue without blocking.
+
+        Returns:
+            list[TraceEvent]: All events that were available at call time.
+        """
         events = []
         while True:
             try:
@@ -308,8 +409,8 @@ class TraceCollector:
             # Flush remaining events on shutdown
             self._write_events(self.get_all_events_immediately_available(), f)
 
-    def shutdown(self):
-        """Shutdown the background flusher thread."""
+    def shutdown(self) -> None:
+        """Shutdown the background flusher thread and flush remaining events."""
         self.shutdown_event.set()
         self.flusher_thread.join(timeout=5.0)
 
@@ -390,7 +491,15 @@ def trace_shutdown() -> None:
 
 @dataclass
 class FunctionCallContext:
-    """Context information for a function call"""
+    """Context information captured at the start of a traced function call.
+
+    Attributes:
+        scope_context (ScopeContext): Mutable context for user-defined attributes.
+        coroutine_name (str): Name of the asyncio task or ``sync:{thread_name}``.
+        thread_name (str): Name of the OS thread executing the call.
+        category (str): Trace event category (typically ``"async"``).
+        thread_id (int): OS thread identifier used as the Perfetto process ID.
+    """
 
     scope_context: ScopeContext
     coroutine_name: str
@@ -401,6 +510,16 @@ class FunctionCallContext:
 
 @dataclass
 class CreateTraceEventsResult:
+    """Bundle of trace events and context created when a span begins.
+
+    Attributes:
+        begin_event (TraceEvent): The ``B`` (begin) event for the span.
+        metadata_coroutine_event (TraceEvent): Metadata naming the coroutine track.
+        metadata_thread_event (TraceEvent): Metadata naming the thread group.
+        function_call_context (FunctionCallContext): Context to carry through
+            the span's lifetime and use when emitting the end event.
+    """
+
     begin_event: TraceEvent
     metadata_coroutine_event: TraceEvent
     metadata_thread_event: TraceEvent
@@ -602,42 +721,47 @@ def _make_scope_wrapper(func: Callable[..., Any], name: str) -> Callable[..., An
 
 
 def scope(func: Callable[..., Any]) -> Callable[..., Any]:
-    """
-    Decorator for tracing both async and sync functions. In the resulting trace:
-    - Each track represents a coroutine (or a sync function if not a coroutine)
-    - A thread is a group of tracks, representing all the coroutines running on that thread
+    """Decorator for tracing both async and sync functions.
 
-    For better tracking, make sure to name all coroutines so that we can group them
-    properly in the trace.
+    Wraps *func* so that each call emits begin/end events to the Perfetto
+    trace (if :func:`trace_init` was called) and records a span in the
+    current :class:`IterationWindow` (if inside :func:`trace_iteration`).
 
-    Example usage:
+    In the resulting trace:
 
-    from tinker_cookbook.utils.trace import scope, trace_init, get_scope_context
+    - Each track represents a coroutine (or sync call on a thread).
+    - A thread is a group of tracks for all coroutines on that thread.
 
-    @scope
-    async def foo():
-        await asyncio.sleep(0.1)
-        # Log additional attributes for this function call into the trace
-        context = get_scope_context()
-        context.attributes["foo"] = 1
-        context.attributes["foo2"] = "abc"
-        await bar()
+    For better tracking, name ``asyncio`` tasks so they can be grouped
+    properly in the trace viewer.
 
-    @scope
-    async def bar():
-        # Name the coroutines so that we can group them properly in the trace
-        await asyncio.gather(
-            asyncio.create_task(baz(), name="baz"),
-            asyncio.create_task(baz(), name="baz2"),
-        )
+    Args:
+        func (Callable[..., Any]): The function to instrument.
 
-    @scope
-    async def main():
-        await foo()
+    Returns:
+        Callable[..., Any]: Wrapped function with identical signature.
 
-    if __name__ == "__main__":
-        trace_init()
-        asyncio.run(main())
+    Example::
+
+        from tinker_cookbook.utils.trace import scope, trace_init, get_scope_context
+
+        @scope
+        async def foo():
+            await asyncio.sleep(0.1)
+            context = get_scope_context()
+            context.attributes["foo"] = 1
+            await bar()
+
+        @scope
+        async def bar():
+            await asyncio.gather(
+                asyncio.create_task(baz(), name="baz"),
+                asyncio.create_task(baz(), name="baz2"),
+            )
+
+        if __name__ == "__main__":
+            trace_init()
+            asyncio.run(foo())
     """
     return _make_scope_wrapper(func, func.__name__)
 
@@ -719,18 +843,22 @@ def scope_span_sync(name: str):
 
 
 def get_scope_context() -> ScopeContext:
-    """
-    Call this to get the current scope's context. This allows the functions
-    to log additional attributes into the trace.
+    """Return the :class:`ScopeContext` for the current ``@scope``-decorated call.
 
-    Example usage:
+    Use this inside a traced function to attach custom attributes that will
+    appear in the Perfetto trace event's ``args`` dict.
 
-    @scope
-    async def foo():
-        context = get_scope_context()
-        context.attributes["foo"] = 1
-        context.attributes["foo2"] = "abc"
-        await bar()
+    Returns:
+        ScopeContext: The mutable context for the current span.
+
+    Example::
+
+        @scope
+        async def foo():
+            context = get_scope_context()
+            context.attributes["batch_size"] = 32
+            context.attributes["epoch"] = 5
+            await bar()
     """
 
     result = trace_context.get(ScopeContext())
@@ -739,13 +867,20 @@ def get_scope_context() -> ScopeContext:
 
 
 def update_scope_context(values: dict[str, Any]) -> None:
-    """Update the current scope's context. Example usage:
+    """Convenience helper to merge key/value pairs into the current scope's context.
 
-    @scope
-    async def foo(step: int):
-        update_scope_context({"step": step})
-        await bar()
+    Equivalent to ``get_scope_context().attributes.update(values)``.
 
+    Args:
+        values (dict[str, Any]): Key/value pairs to add to the current span's
+            trace attributes.
+
+    Example::
+
+        @scope
+        async def foo(step: int):
+            update_scope_context({"step": step})
+            await bar()
     """
     result = trace_context.get(ScopeContext())
     assert result is not None, "Trace context is not set"
@@ -783,6 +918,11 @@ def save_gantt_chart_html(window: IterationWindow, step: int, path: Path | str) 
     """Build a Plotly Gantt chart from the window's spans and save as standalone HTML.
 
     No-op if plotly is not installed or the window has no spans.
+
+    Args:
+        window (IterationWindow): The iteration window containing span data.
+        step (int): Training step number, used in the chart title.
+        path (Path | str): Output file path for the HTML chart.
     """
     span_records = window.get_span_records()
     fig = _build_gantt_chart(span_records, step)
@@ -833,8 +973,12 @@ def trace_iteration(step: int) -> Generator[IterationWindow, None, None]:
         _iteration_window.reset(token)
 
 
-def convert_jsonl_to_json_main():
-    """Helper script to convert the trace events format into a visualizable format"""
+def convert_jsonl_to_json_main() -> None:
+    """CLI entry point to convert trace JSONL to JSON for Chrome Tracing / Perfetto.
+
+    Reads a JSONL trace file (one event per line) and writes a single JSON
+    array suitable for loading in ``chrome://tracing`` or ``https://ui.perfetto.dev/``.
+    """
     parser = argparse.ArgumentParser(
         description="Convert trace events from JSONL format to JSON format for visualization in chrome://tracing or https://ui.perfetto.dev/"
     )

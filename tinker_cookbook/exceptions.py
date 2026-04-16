@@ -44,7 +44,12 @@ __all__ = [
     "WeightsError",
     "WeightsDownloadError",
     "WeightsMergeError",
+    "WeightsAdapterError",
     "SandboxError",
+    "EvalError",
+    "EvalTimeoutError",
+    "EvalGradingError",
+    "BenchmarkNotFoundError",
 ]
 
 
@@ -184,6 +189,17 @@ class WeightsMergeError(WeightsError, ValueError):
     """
 
 
+class WeightsAdapterError(WeightsError, ValueError):
+    """Failed to convert a Tinker LoRA adapter to PEFT format.
+
+    Raised when the adapter cannot be converted for serving — e.g. the
+    model family is not supported for adapter serving, adapter key names
+    cannot be remapped, or tensor shapes are inconsistent.  Inherits
+    from :class:`ValueError` because adapter conversion errors are
+    validation failures.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Sandbox errors
 # ---------------------------------------------------------------------------
@@ -194,4 +210,67 @@ class SandboxError(TinkerCookbookError, RuntimeError):
 
     Base class for sandbox errors — e.g. sandbox termination, timeouts,
     or unexpected sandbox failures.
+    """
+
+
+# ---------------------------------------------------------------------------
+# Evaluation errors
+# ---------------------------------------------------------------------------
+
+
+class EvalError(TinkerCookbookError, RuntimeError):
+    """An error during benchmark evaluation.
+
+    Base class for eval-related errors. Inherits from :class:`RuntimeError`
+    because eval errors are operational failures (network, timeout, sandbox)
+    rather than configuration issues.
+
+    Eval errors are **non-fatal by default**: the benchmark runner catches
+    them per-example, records them as scored failures (reward=0), and
+    continues with remaining examples. The error details are preserved in
+    :attr:`StoredTrajectory.error` for post-hoc analysis.
+    """
+
+
+class EvalTimeoutError(EvalError, TimeoutError):
+    """A single evaluation example exceeded its time limit.
+
+    Raised when ``asyncio.wait_for`` hits the per-example timeout
+    configured via :attr:`BenchmarkConfig.timeout_seconds`. The example
+    is scored as a failure (reward=0) with ``error="timeout (Ns)"``.
+
+    Timeout thresholds vary by benchmark type:
+    - Single-turn programmatic grading: 60–300s
+    - Single-turn with LLM judge: 300–600s
+    - Code execution in sandbox: 300–600s
+    - Multi-turn agent interaction: 600–1800s
+
+    Users can adjust via ``BenchmarkConfig.timeout_seconds``. If a
+    benchmark frequently times out, consider increasing the timeout
+    rather than treating it as a bug — some benchmarks are inherently
+    slow (e.g., multi-turn SWE tasks on large codebases).
+    """
+
+
+class EvalGradingError(EvalError):
+    """The grading function failed on a model response.
+
+    Raised when the grader (programmatic, LLM judge, or execution-based)
+    cannot produce a score — e.g. the judge response is unparseable, the
+    sandbox crashes during test execution, or the answer extractor returns
+    an unexpected format.
+
+    The example is scored as a failure (reward=0). Check
+    :attr:`StoredTrajectory.error` for the specific grading failure.
+    """
+
+
+class BenchmarkNotFoundError(EvalError, KeyError):
+    """The requested benchmark is not in the registry.
+
+    Raised when ``run_benchmark("unknown_name", ...)`` is called and
+    the name cannot be resolved — neither by direct registry lookup
+    nor by auto-importing ``tinker_cookbook.eval.benchmarks.<name>``.
+
+    Available benchmarks are listed in the error message.
     """

@@ -5,3 +5,7 @@ tinker_cookbook/_version.py
 .env.*
 .venv
 uv.lock
+skills-workspace/
+tinker-debug-workspace/
+eval_qwen35_35b.md
+run_eval_qwen35.py

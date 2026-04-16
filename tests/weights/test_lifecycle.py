@@ -26,6 +26,7 @@ from tinker_cookbook.weights import build_hf_model, download
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(900)
 class TestFullLifecycle:
     """Train 1 step → save → download → build merged HF model."""
 

@@ -1,0 +1,19 @@
+{
+  "name": "tinker-skills",
+  "owner": {
+    "name": "Thinking Machines Lab",
+    "email": "tinker@thinkingmachines.ai"
+  },
+  "metadata": {
+    "description": "Claude Code skills for fine-tuning language models with the Tinker API.",
+    "version": "0.3.0"
+  },
+  "plugins": [
+    {
+      "name": "tinker",
+      "description": "Skills for fine-tuning language models with the Tinker API — research, debugging, and more.",
+      "source": "./",
+      "strict": true
+    }
+  ]
+}

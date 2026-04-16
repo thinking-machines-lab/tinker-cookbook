@@ -37,7 +37,8 @@ def get_image_processor(model_name: str) -> ImageProcessor:
         kwargs["trust_remote_code"] = True
         kwargs["revision"] = "3367c8d1c68584429fab7faf845a32d5195b6ac1"
 
-    processor = AutoImageProcessor.from_pretrained(model_name, use_fast=True, **kwargs)
+    processor = AutoImageProcessor.from_pretrained(model_name, **kwargs)
+
     return processor
 
 

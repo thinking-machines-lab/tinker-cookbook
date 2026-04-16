@@ -3,9 +3,13 @@
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from tinker_cookbook.checkpoint_utils import (
     CheckpointRecord,
+    RollingCheckpointManager,
     get_last_checkpoint,
     load_checkpoints_file,
 )
@@ -158,3 +162,230 @@ def test_checkpoint_record_extra_overlap_with_known_keys():
     # to_dict() should have batch=5, not 99
     d = record.to_dict()
     assert d["batch"] == 5
+
+
+# ---------------------------------------------------------------------------
+# RollingCheckpointManager tests
+# ---------------------------------------------------------------------------
+
+
+class TestRollingCheckpointManagerShouldSave:
+    """Tests for _should_save logic."""
+
+    def _make_mgr(
+        self, rolling_save_every: int = 1, save_every: int = 0
+    ) -> RollingCheckpointManager:
+        return RollingCheckpointManager(
+            training_client=MagicMock(),
+            service_client=MagicMock(),
+            log_path="/tmp/unused",
+            rolling_save_every=rolling_save_every,
+            save_every=save_every,
+        )
+
+    def test_disabled_when_zero(self):
+        mgr = self._make_mgr(rolling_save_every=0)
+        assert not mgr._should_save(1)
+        assert not mgr._should_save(5)
+
+    def test_skips_step_zero(self):
+        mgr = self._make_mgr(rolling_save_every=1)
+        assert not mgr._should_save(0)
+
+    def test_saves_on_cadence(self):
+        mgr = self._make_mgr(rolling_save_every=3)
+        assert not mgr._should_save(1)
+        assert not mgr._should_save(2)
+        assert mgr._should_save(3)
+        assert not mgr._should_save(4)
+        assert not mgr._should_save(5)
+        assert mgr._should_save(6)
+
+    def test_saves_every_step(self):
+        mgr = self._make_mgr(rolling_save_every=1)
+        assert mgr._should_save(1)
+        assert mgr._should_save(2)
+        assert mgr._should_save(3)
+
+    def test_skips_when_periodic_fires(self):
+        mgr = self._make_mgr(rolling_save_every=1, save_every=5)
+        assert mgr._should_save(1)
+        assert mgr._should_save(4)
+        assert not mgr._should_save(5)  # periodic fires here
+        assert mgr._should_save(6)
+        assert not mgr._should_save(10)  # periodic fires here
+
+    def test_skips_when_periodic_fires_same_cadence(self):
+        """Rolling and periodic on same cadence means rolling never fires."""
+        mgr = self._make_mgr(rolling_save_every=5, save_every=5)
+        assert not mgr._should_save(5)
+        assert not mgr._should_save(10)
+
+
+def _make_save_state_mock(paths: list[str]) -> AsyncMock:
+    """Create a save_state_async mock that returns different paths on each call."""
+    call_idx = 0
+
+    async def _save_state_async(name: str, ttl_seconds: int | None = None) -> MagicMock:
+        nonlocal call_idx
+        path = paths[call_idx % len(paths)]
+        call_idx += 1
+        future = MagicMock()
+        result = MagicMock()
+        result.path = path
+        future.result_async = AsyncMock(return_value=result)
+        return future
+
+    return AsyncMock(side_effect=_save_state_async)
+
+
+@pytest.mark.asyncio
+async def test_maybe_save_async_saves_and_deletes():
+    """Verify rolling checkpoint is saved with correct params, and old one is deleted."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_training_client = MagicMock()
+        mock_service_client = MagicMock()
+        mock_rest_client = MagicMock()
+        mock_service_client.create_rest_client.return_value = mock_rest_client
+        mock_rest_client.delete_checkpoint_from_tinker_path_async = AsyncMock()
+
+        mock_training_client.save_state_async = _make_save_state_mock(
+            ["tinker://run/state/000001", "tinker://run/state/000002", "tinker://run/state/000003"]
+        )
+
+        mgr = RollingCheckpointManager(
+            training_client=mock_training_client,
+            service_client=mock_service_client,
+            log_path=tmpdir,
+            rolling_save_every=1,
+            save_every=10,
+            rolling_ttl_seconds=3600,
+        )
+
+        # Step 1: fire rolling save
+        await mgr.maybe_save_async(step=1, loop_state={"batch": 1})
+        # Task is pending; resolve it by calling again at step 2
+        await mgr.maybe_save_async(step=2, loop_state={"batch": 2})
+
+        # After step 2, the step-1 save should have completed
+        # and no delete (first rolling checkpoint, no prev)
+        mock_rest_client.delete_checkpoint_from_tinker_path_async.assert_not_called()
+
+        # Now resolve step 2 by calling step 3
+        await mgr.maybe_save_async(step=3, loop_state={"batch": 3})
+
+        # Step 2's save completed → delete step 1's checkpoint
+        mock_rest_client.delete_checkpoint_from_tinker_path_async.assert_called_once_with(
+            "tinker://run/state/000001"
+        )
+
+        # Verify checkpoints.jsonl was written
+        ckpts = [
+            CheckpointRecord.from_dict(json.loads(line))
+            for line in (Path(tmpdir) / "checkpoints.jsonl").read_text().strip().split("\n")
+        ]
+        assert len(ckpts) >= 2
+        assert all(c.extra.get("rolling") is True for c in ckpts)
+        assert all(c.sampler_path is None for c in ckpts)  # no sampler export
+
+
+@pytest.mark.asyncio
+async def test_maybe_save_async_skips_when_disabled():
+    """No save should happen when rolling_save_every=0."""
+    mock_training_client = MagicMock()
+    mock_training_client.save_state_async = AsyncMock()
+
+    mgr = RollingCheckpointManager(
+        training_client=mock_training_client,
+        service_client=MagicMock(),
+        log_path="/tmp/unused",
+        rolling_save_every=0,
+    )
+
+    await mgr.maybe_save_async(step=1, loop_state={"batch": 1})
+    await mgr.maybe_save_async(step=2, loop_state={"batch": 2})
+    mock_training_client.save_state_async.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_finalize_deletes_last_rolling_checkpoint():
+    """finalize_async should delete the last rolling checkpoint."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_training_client = MagicMock()
+        mock_service_client = MagicMock()
+        mock_rest_client = MagicMock()
+        mock_service_client.create_rest_client.return_value = mock_rest_client
+        mock_rest_client.delete_checkpoint_from_tinker_path_async = AsyncMock()
+
+        mock_training_client.save_state_async = _make_save_state_mock(["tinker://run/state/000001"])
+
+        mgr = RollingCheckpointManager(
+            training_client=mock_training_client,
+            service_client=mock_service_client,
+            log_path=tmpdir,
+            rolling_save_every=1,
+        )
+
+        await mgr.maybe_save_async(step=1, loop_state={"batch": 1})
+        await mgr.finalize_async()
+
+        # Should delete the step-1 checkpoint (the only/last one)
+        mock_rest_client.delete_checkpoint_from_tinker_path_async.assert_called_once_with(
+            "tinker://run/state/000001"
+        )
+        # After finalize, _prev_state_path should be None
+        assert mgr._prev_state_path is None
+
+
+@pytest.mark.asyncio
+async def test_save_failure_is_swallowed():
+    """A failed rolling save should be logged but not raise."""
+    mock_training_client = MagicMock()
+    mock_training_client.save_state_async = AsyncMock(side_effect=RuntimeError("server error"))
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mgr = RollingCheckpointManager(
+            training_client=mock_training_client,
+            service_client=MagicMock(),
+            log_path=tmpdir,
+            rolling_save_every=1,
+        )
+
+        # Should not raise
+        await mgr.maybe_save_async(step=1, loop_state={"batch": 1})
+        # Resolve the failed task
+        await mgr.maybe_save_async(step=2, loop_state={"batch": 2})
+
+
+@pytest.mark.asyncio
+async def test_delete_failure_is_swallowed():
+    """A failed delete should be logged but not raise."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_training_client = MagicMock()
+        mock_service_client = MagicMock()
+        mock_rest_client = MagicMock()
+        mock_service_client.create_rest_client.return_value = mock_rest_client
+        mock_rest_client.delete_checkpoint_from_tinker_path_async = AsyncMock(
+            side_effect=RuntimeError("delete failed")
+        )
+
+        mock_training_client.save_state_async = _make_save_state_mock(
+            ["tinker://run/state/000001", "tinker://run/state/000002", "tinker://run/state/000003"]
+        )
+
+        mgr = RollingCheckpointManager(
+            training_client=mock_training_client,
+            service_client=mock_service_client,
+            log_path=tmpdir,
+            rolling_save_every=1,
+        )
+
+        # Save at step 1
+        await mgr.maybe_save_async(step=1, loop_state={"batch": 1})
+        # Resolve step 1, save at step 2 — delete of step 1 will fail
+        await mgr.maybe_save_async(step=2, loop_state={"batch": 2})
+        # Resolve step 2 (triggers delete of step 1, which fails)
+        await mgr.maybe_save_async(step=3, loop_state={"batch": 3})
+
+        # Should not raise — delete failure is swallowed
+        assert mock_rest_client.delete_checkpoint_from_tinker_path_async.called

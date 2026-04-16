@@ -145,22 +145,22 @@ class CLIConfig:
     temperature: float = 1.0
 
 
-async def cli_main(cfg: CLIConfig):
-    env_args = json.loads(cfg.vf_env_args) if cfg.vf_env_args else {}
+async def cli_main(config: CLIConfig):
+    env_args = json.loads(config.vf_env_args) if config.vf_env_args else {}
     return await evaluate(
-        vf_env_id=cfg.vf_env_id,
+        vf_env_id=config.vf_env_id,
         vf_env_args=env_args,
-        model_name=cfg.model_name,
-        num_examples=cfg.num_examples,
-        rollouts_per_example=cfg.rollouts_per_example,
-        max_concurrent=cfg.max_concurrent,
-        max_tokens=cfg.max_tokens,
-        temperature=cfg.temperature,
-        model_path=cfg.model_path,
+        model_name=config.model_name,
+        num_examples=config.num_examples,
+        rollouts_per_example=config.rollouts_per_example,
+        max_concurrent=config.max_concurrent,
+        max_tokens=config.max_tokens,
+        temperature=config.temperature,
+        model_path=config.model_path,
     )
 
 
 if __name__ == "__main__":
-    cfg = chz.entrypoint(CLIConfig)
+    config = chz.entrypoint(CLIConfig)
 
-    asyncio.run(cli_main(cfg))
+    asyncio.run(cli_main(config))

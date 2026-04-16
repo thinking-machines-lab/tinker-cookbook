@@ -10,11 +10,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
-    strategy:
-      matrix:
-        transformers-version: ["4.57.6", "5.3.0"]
-
-    name: test (transformers ${{ matrix.transformers-version }})
+    name: test
 
     steps:
       - name: checkout
@@ -27,9 +23,6 @@ jobs:
 
       - name: venv
         run: uv venv && uv sync --all-extras
-
-      - name: pin transformers
-        run: uv pip install transformers==${{ matrix.transformers-version }}
 
       - name: pytest (unit)
         run: uv run pytest tinker_cookbook/

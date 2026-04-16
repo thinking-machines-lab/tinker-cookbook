@@ -714,6 +714,169 @@ def test_scope_double_wrapping_prevention():
         assert first_ref is second_ref
 
 
+# --- Before/after telemetry verification ---
+
+
+def test_metrics_keys_sync_rl_training():
+    """Verify the metric keys produced by the sync RL training pattern.
+
+    Simulates the do_sync_training iteration structure:
+    trace_iteration wrapping scope_span("sampling"), scope_span("train"),
+    plus @scope-decorated sub-functions.
+    """
+
+    @scope
+    async def run_evaluations_parallel():
+        await asyncio.sleep(0.01)
+
+    @scope
+    async def train_step():
+        await asyncio.sleep(0.01)
+
+    async def do_train_step_and_get_sampling_client():
+        """Simulates the real function: train_step has @scope, no outer wrapper."""
+        await train_step()
+
+    async def run():
+        with trace_iteration(step=0) as window:
+            # Evals (via @scope on run_evaluations_parallel)
+            await run_evaluations_parallel()
+
+            # Sampling phase
+            async with scope_span("sampling"):
+                await asyncio.sleep(0.02)
+
+            # Train phase (train_step has @scope, no call-site wrapper)
+            await do_train_step_and_get_sampling_client()
+
+        return window
+
+    window = asyncio.run(run())
+    metrics = window.get_timing_metrics()
+
+    # Phase-level metrics
+    assert "time/total" in metrics
+    assert "time/sampling" in metrics
+    # Sub-function metrics
+    assert "time/run_evaluations_parallel" in metrics
+    assert "time/train_step" in metrics
+    # time/train is no longer emitted (was redundant with time/train_step)
+    assert "time/train" not in metrics
+
+
+def test_metrics_keys_streaming_rl_training():
+    """Verify the metric keys produced by the streaming RL training pattern.
+
+    Simulates do_sync_training_with_stream_minibatch: trace_iteration wrapping
+    scope_span("run_evals") with per-substep spans inside.
+    """
+
+    async def run():
+        with trace_iteration(step=0) as window:
+            async with scope_span("run_evals"):
+                await asyncio.sleep(0.01)
+
+            # Simulate streaming train with per-substep spans
+            async with scope_span("train"):
+                async with scope_span("train/fwd_bwd_substep_0_mb_0_enqueue"):
+                    await asyncio.sleep(0.01)
+                async with scope_span("train/optim_substep_0_enqueue"):
+                    await asyncio.sleep(0.01)
+                async with scope_span("train/fwd_bwd_substep_0_mb_0_consume"):
+                    await asyncio.sleep(0.01)
+                async with scope_span("train/optim_substep_0_consume"):
+                    await asyncio.sleep(0.01)
+
+        return window
+
+    window = asyncio.run(run())
+    metrics = window.get_timing_metrics()
+
+    assert "time/total" in metrics
+    assert "time/run_evals" in metrics
+    assert "time/train" in metrics
+    assert "time/train/fwd_bwd_substep_0_mb_0_enqueue" in metrics
+    assert "time/train/optim_substep_0_enqueue" in metrics
+    assert "time/train/fwd_bwd_substep_0_mb_0_consume" in metrics
+    assert "time/train/optim_substep_0_consume" in metrics
+
+
+def test_metrics_keys_async_rl_training():
+    """Verify the metric keys produced by the async RL training pattern.
+
+    In async training, the training_loop gets its own trace_iteration per step,
+    and the evaluation_loop gets a separate trace_iteration per eval.
+    """
+
+    @scope
+    async def train_step():
+        await asyncio.sleep(0.01)
+
+    async def run():
+        # Training loop iteration
+        with trace_iteration(step=0) as train_window:
+            await train_step()
+
+        # Evaluation loop iteration
+        with trace_iteration(step=0) as eval_window:
+            async with scope_span("run_evals"):
+                await asyncio.sleep(0.01)
+
+        return train_window, eval_window
+
+    train_window, eval_window = asyncio.run(run())
+
+    train_metrics = train_window.get_timing_metrics()
+    assert "time/total" in train_metrics
+    assert "time/train_step" in train_metrics
+
+    eval_metrics = eval_window.get_timing_metrics()
+    assert "time/total" in eval_metrics
+    assert "time/run_evals" in eval_metrics
+
+
+def test_gantt_chart_sync_rl_layout():
+    """Verify Gantt chart spans for the sync RL training pattern."""
+    window = IterationWindow()
+    # Simulate: evals, then sampling (wide, overlapping sub-spans), then train_step
+    window.record_span("run_evaluations_parallel", 0.0, 1.0)
+    window.record_span("sampling", 1.0, 5.0)
+    # Overlapping rollout spans within sampling
+    window.record_span("do_group_rollout_and_filter_constant_reward", 1.0, 3.5)
+    window.record_span("do_group_rollout_and_filter_constant_reward", 1.1, 4.0)
+    window.record_span("do_group_rollout_and_filter_constant_reward", 1.2, 5.0)
+    window.record_span("train_step", 5.0, 6.8)
+    window.record_span("save_checkpoint_and_get_sampling_client", 6.9, 7.0)
+
+    records = window.get_span_records()
+    task_names = [r["task"] for r in records]
+    assert "sampling" in task_names
+    assert "train_step" in task_names
+    assert "run_evaluations_parallel" in task_names
+
+    # Verify aggregation: rollout spans appear with :total (3 calls)
+    metrics = window.aggregate()
+    assert metrics["time/do_group_rollout_and_filter_constant_reward:count"] == 3
+    assert "time/do_group_rollout_and_filter_constant_reward:total" in metrics
+    # Phase-level spans are single calls
+    assert "time/sampling" in metrics
+    assert "time/train_step" in metrics
+
+    # Gantt chart renders without error
+    with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
+        path = Path(f.name)
+    try:
+        save_gantt_chart_html(window, step=0, path=path)
+        try:
+            import plotly  # noqa: F401
+
+            assert path.exists()
+        except ImportError:
+            pass
+    finally:
+        path.unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
     trace_init()
     asyncio.run(example_program())

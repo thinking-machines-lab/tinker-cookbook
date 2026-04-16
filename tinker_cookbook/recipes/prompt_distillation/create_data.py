@@ -96,7 +96,7 @@ def setup_clients():
     return sampling_client, tokenizer, renderer
 
 
-async def create_data_async(cfg: Config, sampling_client: Any, tokenizer: Any, renderer: Any):
+async def create_data_async(config: Config, sampling_client: Any, tokenizer: Any, renderer: Any):
     # read sentences from multilingual.txt file
     with open("tinker_cookbook/example_data/multilingual.txt") as f:
         sentences = f.readlines()
@@ -132,7 +132,7 @@ async def create_data_async(cfg: Config, sampling_client: Any, tokenizer: Any, r
         questions.append(question)
 
     # save the input and final answer to a file
-    with open(cfg.output_file, "w") as f:
+    with open(config.output_file, "w") as f:
         for question, answer in zip(questions, answers):
             if answer is None:
                 continue
@@ -153,11 +153,11 @@ async def create_data_async(cfg: Config, sampling_client: Any, tokenizer: Any, r
     return
 
 
-def main(cfg: Config):
+def main(config: Config):
     # check if the output file exists
-    output_path = Path(cfg.output_file)
+    output_path = Path(config.output_file)
     if output_path.exists():
-        print(f"Output file {cfg.output_file} already exists")
+        print(f"Output file {config.output_file} already exists")
         return
     elif not output_path.parent.exists():
         # check if the output directory exists
@@ -170,8 +170,8 @@ def main(cfg: Config):
 
     print("Sampling data")
     # Run async data creation
-    asyncio.run(create_data_async(cfg, sampling_client, tokenizer, renderer))
-    print(f"Saved data to {cfg.output_file}")
+    asyncio.run(create_data_async(config, sampling_client, tokenizer, renderer))
+    print(f"Saved data to {config.output_file}")
 
 
 if __name__ == "__main__":

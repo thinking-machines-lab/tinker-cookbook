@@ -9,7 +9,7 @@ Tinker Cookbook comes with useful abstractions so you can flexibly customize you
 - [`rl_basic.py`](./rl_basic.py): a template script to configure reinforcement learning.
 - [`sl_basic.py`](./sl_basic.py): a template script to configure supervised learning.
 
-To explain what goes under-the-hood, we also provide minimal, self-contained scripts that directly use the TinkerAPI to train LLMs.
+To explain what goes under-the-hood, we also provide minimal, self-contained scripts that directly use the Tinker API to train LLMs.
 - [`rl_loop.py`](./rl_loop.py): a minimal reinforcement learning training loop.
 - [`sl_loop.py`](./sl_loop.py): a minimal supervised learning training loop.
 
@@ -29,6 +29,8 @@ We provide the following examples:
 - **[Verifiers environments](./verifiers_rl/)**: use RL environments from Prime Intellect's Environments Hub with Tinker.
 - **[VLM image classification](./vlm_classifier/)**: train vision-language models as image classifiers.
 - **[Harbor RL](./harbor_rl/)**: RL training on Harbor-formatted tasks (e.g., Terminal-Bench) with sandboxed code execution.
+- **[Self-Distillation Fine-Tuning (SDFT)](./sdft/)**: self-distillation via top-K forward KL loss without a separate teacher deployment.
+- **[True Thinking Score (TTS)](./true_thinking_score/)**: quantify the faithfulness of chain-of-thought reasoning to the model's final answer.
 
 These examples are located in each subfolder, and their `README.md` file will walk you through the key implementation details, the commands to run them, and the expected performance.
 

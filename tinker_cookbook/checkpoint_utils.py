@@ -4,7 +4,10 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from tinker_cookbook.stores.training_store import TrainingRunStore
 
 import tinker
 
@@ -51,7 +54,15 @@ class CheckpointRecord:
             self.extra = {k: v for k, v in self.extra.items() if k not in overlap}
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize to a dict for JSON storage. Omits ``None`` optional fields."""
+        """Serialize to a dict for JSON storage.
+
+        Omits ``None`` optional fields. Extra metadata keys are merged
+        into the top-level dict.
+
+        Returns:
+            dict[str, Any]: JSON-serializable dict with known fields and
+                any extra metadata.
+        """
         d: dict[str, Any] = {"name": self.name}
         if self.batch is not None:
             d["batch"] = self.batch
@@ -72,6 +83,12 @@ class CheckpointRecord:
 
         Unknown keys are preserved in :attr:`extra` so that downstream
         metadata (e.g. ``step``) round-trips without loss.
+
+        Args:
+            d (dict[str, Any]): Dict with at least a ``"name"`` key.
+
+        Returns:
+            CheckpointRecord: Reconstructed record.
         """
         return cls(
             name=d["name"],
@@ -84,7 +101,14 @@ class CheckpointRecord:
         )
 
     def has(self, key: str) -> bool:
-        """Check whether a field is present (not None), including extra keys."""
+        """Check whether a field is present (not None), including extra keys.
+
+        Args:
+            key (str): Field name to check (known attribute or extra key).
+
+        Returns:
+            bool: True if the field exists and is not ``None``.
+        """
         if key in _CHECKPOINT_RECORD_KNOWN_KEYS:
             return getattr(self, key) is not None
         return key in self.extra
@@ -98,6 +122,15 @@ class CheckpointRecord:
         For known fields, returns the attribute value (which may be ``None``
         if the field is optional and unset).  Returns *default* only when the
         key is not a known field **and** is absent from :attr:`extra`.
+
+        Args:
+            key (str): Field name to look up (known attribute or extra key).
+            default (Any): Value to return if ``key`` is not a known field
+                and is absent from :attr:`extra`. If omitted, returns
+                ``None`` for missing extra keys.
+
+        Returns:
+            Any: The field value, extra value, or *default*.
         """
         if key in _CHECKPOINT_RECORD_KNOWN_KEYS:
             return getattr(self, key)
@@ -116,7 +149,14 @@ _CHECKPOINT_RECORD_KNOWN_KEYS = frozenset(
 def add_renderer_name_to_user_metadata(
     user_metadata: dict[str, str], renderer_name: str | None
 ) -> None:
-    """Attach renderer name to training-run metadata when available."""
+    """Attach renderer name to training-run metadata when available.
+
+    Args:
+        user_metadata (dict[str, str]): Mutable metadata dict to update
+            in-place.
+        renderer_name (str | None): Renderer name to store, or ``None``
+            to skip.
+    """
     if renderer_name:
         user_metadata[RENDERER_NAME_METADATA_KEY] = renderer_name
 
@@ -147,7 +187,18 @@ def _handle_checkpoint_renderer_check_result(
 def get_renderer_name_from_checkpoint(
     service_client: tinker.ServiceClient, checkpoint_path: str
 ) -> str | None:
-    """Read renderer_name metadata from the training run referenced by a checkpoint path."""
+    """Read renderer_name metadata from the training run referenced by a checkpoint path.
+
+    Args:
+        service_client (tinker.ServiceClient): Tinker service client for
+            API access.
+        checkpoint_path (str): Tinker checkpoint path
+            (e.g. ``"tinker://run-id/sampler_weights/final"``).
+
+    Returns:
+        str | None: The renderer name if present in the run metadata,
+            otherwise ``None``.
+    """
     try:
         rest_client = service_client.create_rest_client()
         training_run = rest_client.get_training_run_by_tinker_path(checkpoint_path).result()
@@ -164,7 +215,16 @@ def get_renderer_name_from_checkpoint(
 async def get_renderer_name_from_checkpoint_async(
     service_client: tinker.ServiceClient, checkpoint_path: str
 ) -> str | None:
-    """Async version of get_renderer_name_from_checkpoint."""
+    """Async version of :func:`get_renderer_name_from_checkpoint`.
+
+    Args:
+        service_client (tinker.ServiceClient): Tinker service client for
+            API access.
+        checkpoint_path (str): Tinker checkpoint path.
+
+    Returns:
+        str | None: The renderer name if present, otherwise ``None``.
+    """
     try:
         rest_client = service_client.create_rest_client()
         training_run = await rest_client.get_training_run_by_tinker_path_async(checkpoint_path)
@@ -185,13 +245,24 @@ def resolve_renderer_name_from_checkpoint_or_default(
     load_checkpoint_path: str | None,
     base_url: str | None = None,
 ) -> str:
-    """
-    Resolve renderer name for training/eval setup.
+    """Resolve renderer name for training/eval setup.
 
     Precedence:
-    1) explicit renderer name, if provided
-    2) renderer metadata from load checkpoint path, if available
-    3) recommended renderer for model_name
+        1. ``explicit_renderer_name``, if provided.
+        2. Renderer metadata from ``load_checkpoint_path``, if available.
+        3. Recommended renderer for ``model_name``.
+
+    Args:
+        model_name (str): HuggingFace model identifier.
+        explicit_renderer_name (str | None): User-specified renderer, or
+            ``None`` to auto-detect.
+        load_checkpoint_path (str | None): Tinker checkpoint path to read
+            renderer metadata from, or ``None``.
+        base_url (str | None): Custom Tinker service URL. Defaults to the
+            standard endpoint.
+
+    Returns:
+        str: Resolved renderer name.
     """
     if explicit_renderer_name is not None:
         return explicit_renderer_name
@@ -217,8 +288,18 @@ async def resolve_renderer_name_from_checkpoint_or_default_async(
     load_checkpoint_path: str | None,
     base_url: str | None = None,
 ) -> str:
-    """
-    Async version of resolve_renderer_name_from_checkpoint_or_default.
+    """Async version of :func:`resolve_renderer_name_from_checkpoint_or_default`.
+
+    Args:
+        model_name (str): HuggingFace model identifier.
+        explicit_renderer_name (str | None): User-specified renderer, or
+            ``None`` to auto-detect.
+        load_checkpoint_path (str | None): Tinker checkpoint path to read
+            renderer metadata from, or ``None``.
+        base_url (str | None): Custom Tinker service URL.
+
+    Returns:
+        str: Resolved renderer name.
     """
     if explicit_renderer_name is not None:
         return explicit_renderer_name
@@ -244,9 +325,16 @@ def check_renderer_name_for_checkpoint(
     checkpoint_path: str,
     expected_renderer_name: str | None,
 ) -> None:
-    """
-    Inspect a checkpoint's originating training run metadata and compare renderer name.
+    """Inspect a checkpoint's training run metadata and compare renderer name.
 
+    Logs info if the renderer matches or metadata is missing, and logs a
+    warning on mismatch. No-ops if ``expected_renderer_name`` is ``None``.
+
+    Args:
+        service_client (tinker.ServiceClient): Tinker service client.
+        checkpoint_path (str): Tinker checkpoint path.
+        expected_renderer_name (str | None): Expected renderer name, or
+            ``None`` to skip the check.
     """
     if expected_renderer_name is None:
         return None
@@ -264,15 +352,20 @@ async def check_renderer_name_for_checkpoint_async(
     checkpoint_path: str,
     expected_renderer_name: str | None,
 ) -> None:
-    """
-    Compare an expected renderer with renderer metadata attached to a checkpoint's training run.
+    """Async version of :func:`check_renderer_name_for_checkpoint`.
 
-    Behavior:
-    - If ``expected_renderer_name`` is None, returns None and does no check.
-    - Otherwise fetches ``renderer_name`` from the run referenced by ``checkpoint_path``.
+    Compares an expected renderer with renderer metadata attached to a
+    checkpoint's training run.
+
+    - If ``expected_renderer_name`` is ``None``, returns immediately.
     - Logs info if metadata is missing or matches.
-    - Logs warning if the checkpoint renderer differs from the expected renderer.
+    - Logs warning if the checkpoint renderer differs from expected.
 
+    Args:
+        service_client (tinker.ServiceClient): Tinker service client.
+        checkpoint_path (str): Tinker checkpoint path.
+        expected_renderer_name (str | None): Expected renderer name, or
+            ``None`` to skip the check.
     """
     if expected_renderer_name is None:
         return None
@@ -289,6 +382,14 @@ async def check_renderer_name_for_checkpoint_async(
 
 @trace.scope
 def load_checkpoints_file(log_dir: str) -> list[CheckpointRecord]:
+    """Load checkpoint records from a JSONL file.
+
+    Args:
+        log_dir: Directory containing the ``checkpoints.jsonl`` file.
+
+    Returns:
+        A list of CheckpointRecord instances, or an empty list if the file does not exist.
+    """
     checkpoint_path = Path(log_dir) / CHECKPOINTS_BASE_NAME
     if not checkpoint_path.exists():
         logger.info(f"No checkpoints found at {checkpoint_path}")
@@ -334,6 +435,7 @@ async def save_checkpoint_async(
     loop_state: dict[str, Any],
     kind: Literal["state", "sampler", "both"] = "state",
     ttl_seconds: int | None = None,
+    store: "TrainingRunStore | None" = None,
 ) -> dict[str, str]:
     """Save model checkpoint and append a record to ``checkpoints.jsonl``.
 
@@ -345,6 +447,7 @@ async def save_checkpoint_async(
             ``epoch``, ``final``, and any additional user metadata.
         kind: Which checkpoint types to save.
         ttl_seconds: Server-side retention. ``None`` keeps the checkpoint indefinitely.
+        store: If provided, write the checkpoint record via Storage protocol.
 
     Returns:
         Dict mapping ``"state_path"`` and/or ``"sampler_path"`` to tinker:// paths.
@@ -363,8 +466,11 @@ async def save_checkpoint_async(
     logger.info(f"Saved checkpoints: {paths}")
 
     record = CheckpointRecord.from_dict({"name": name, **loop_state, **paths})
-    with open(Path(log_path) / "checkpoints.jsonl", "a") as f:
-        f.write(json.dumps(record.to_dict()) + "\n")
+    if store is not None:
+        store.write_checkpoint(record.to_dict())
+    else:
+        with open(Path(log_path) / "checkpoints.jsonl", "a") as f:
+            f.write(json.dumps(record.to_dict()) + "\n")
 
     return paths
 
@@ -377,14 +483,30 @@ def save_checkpoint(
     loop_state: dict[str, Any],
     kind: Literal["state", "sampler", "both"] = "state",
     ttl_seconds: int | None = None,
+    store: "TrainingRunStore | None" = None,
 ) -> dict[str, str]:
-    """Save model checkpoint.
+    """Save model checkpoint (synchronous wrapper around save_checkpoint_async).
+
     Args:
-        training_client: Training client to save from
-        name: Name for the checkpoint
-        log_path: Path to the log directory, where we can find checkpoints.jsonl file
+        training_client: Training client to save from.
+        name: Name for the checkpoint (used in the tinker:// path).
+        log_path: Directory containing ``checkpoints.jsonl``.
+        loop_state: Training loop state dict (may include ``batch``, ``epoch``, etc.).
+        kind: Which checkpoint types to save (``"state"``, ``"sampler"``, or ``"both"``).
+        ttl_seconds: Server-side retention. ``None`` keeps the checkpoint indefinitely.
+        store: If provided, write the checkpoint record via Storage protocol.
+
     Returns:
-        Path to the saved checkpoint
+        Dict mapping ``"state_path"`` and/or ``"sampler_path"`` to tinker:// paths.
+
+    Example::
+
+        save_checkpoint(
+            training_client=training_client,
+            name="step-100",
+            log_path="./logs",
+            loop_state={"epoch": 0, "batch": 100},
+        )
     """
     return asyncio.run(
         save_checkpoint_async(
@@ -394,5 +516,160 @@ def save_checkpoint(
             kind=kind,
             loop_state=loop_state,
             ttl_seconds=ttl_seconds,
+            store=store,
         )
     )
+
+
+class RollingCheckpointManager:
+    """Fire-and-forget rolling checkpoints with automatic cleanup.
+
+    Rolling checkpoints are cheap resume points (saves training state for
+    resume but skips the sampler-weight export) saved at a finer
+    interval than periodic checkpoints. After each successful save, the previous
+    rolling checkpoint is deleted to bound storage usage. A short TTL acts as a
+    safety net in case deletion fails.
+
+    Usage::
+
+        mgr = RollingCheckpointManager(
+            training_client=tc,
+            service_client=sc,
+            log_path="/tmp/logs",
+            rolling_save_every=1,
+            save_every=20,
+        )
+        for step in range(num_steps):
+            train_step(...)
+            await mgr.maybe_save_async(step, {"batch": step})
+        await mgr.finalize_async()
+    """
+
+    def __init__(
+        self,
+        training_client: tinker.TrainingClient,
+        service_client: tinker.ServiceClient,
+        log_path: str,
+        rolling_save_every: int,
+        save_every: int = 0,
+        rolling_ttl_seconds: int = 7200,
+        store: "TrainingRunStore | None" = None,
+    ) -> None:
+        self._training_client = training_client
+        self._service_client = service_client
+        self._log_path = log_path
+        self._rolling_save_every = rolling_save_every
+        self._save_every = save_every
+        self._rolling_ttl_seconds = rolling_ttl_seconds
+        self._store = store
+
+        self._pending_task: asyncio.Task[None] | None = None
+        self._prev_state_path: str | None = None
+
+    def _should_save(self, step: int) -> bool:
+        """Return True if *step* warrants a rolling save."""
+        if self._rolling_save_every <= 0 or step <= 0:
+            return False
+        if step % self._rolling_save_every != 0:
+            return False
+        # Skip when a periodic checkpoint fires on the same step.
+        return not (self._save_every > 0 and step % self._save_every == 0)
+
+    # ------------------------------------------------------------------
+    # Async interface (SL / RL)
+    # ------------------------------------------------------------------
+
+    async def maybe_save_async(self, step: int, loop_state: dict[str, Any]) -> None:
+        """Resolve any pending save, then fire a new one if *step* warrants it.
+
+        Call once per training step. The save runs as a background
+        ``asyncio.Task`` so it overlaps with the next training step.
+        """
+        await self._resolve_pending_async()
+
+        if not self._should_save(step):
+            return
+
+        self._pending_task = asyncio.create_task(
+            self._do_save_async(step, loop_state),
+            name=f"rolling_checkpoint_{step:06d}",
+        )
+
+    async def finalize_async(self) -> None:
+        """Await any pending save, then delete the last rolling checkpoint.
+
+        Call after the final checkpoint save so that the last entry in
+        ``checkpoints.jsonl`` always points to valid server-side data.
+        In the happy path this leaves zero rolling checkpoints on the server.
+        """
+        await self._resolve_pending_async()
+        await self._delete_prev_async()
+
+    async def _resolve_pending_async(self) -> None:
+        if self._pending_task is None:
+            return
+        try:
+            await self._pending_task
+        except Exception:
+            logger.warning("Rolling checkpoint save failed", exc_info=True)
+        self._pending_task = None
+
+    async def _do_save_async(self, step: int, loop_state: dict[str, Any]) -> None:
+        name = f"{step:06d}"
+        paths = await save_checkpoint_async(
+            training_client=self._training_client,
+            name=name,
+            log_path=self._log_path,
+            loop_state={**loop_state, "rolling": True},
+            kind="state",
+            ttl_seconds=self._rolling_ttl_seconds,
+            store=self._store,
+        )
+        new_state_path = paths.get("state_path")
+
+        # Delete the previous rolling checkpoint now that the new one is saved.
+        await self._delete_prev_async()
+
+        self._prev_state_path = new_state_path
+
+    async def _delete_prev_async(self) -> None:
+        if self._prev_state_path is None:
+            return
+        try:
+            rest_client = self._service_client.create_rest_client()
+            await rest_client.delete_checkpoint_from_tinker_path_async(self._prev_state_path)
+            logger.info("Deleted rolling checkpoint %s", self._prev_state_path)
+        except Exception:
+            logger.warning(
+                "Failed to delete rolling checkpoint %s (TTL will clean up)",
+                self._prev_state_path,
+                exc_info=True,
+            )
+        self._prev_state_path = None
+
+    # ------------------------------------------------------------------
+    # Sync interface (DPO)
+    # ------------------------------------------------------------------
+
+    def maybe_save(self, step: int, loop_state: dict[str, Any]) -> None:
+        """Synchronous version of :meth:`maybe_save_async`.
+
+        Blocks on the save but catches all errors so it never crashes the
+        training loop. Suitable for synchronous training loops (e.g. DPO).
+        """
+        if not self._should_save(step):
+            return
+        try:
+            asyncio.run(self._do_save_async(step, loop_state))
+        except Exception:
+            logger.warning("Rolling checkpoint save failed", exc_info=True)
+
+    def finalize(self) -> None:
+        """Synchronous version of :meth:`finalize_async`."""
+        try:
+            asyncio.run(self._delete_prev_async())
+        except Exception:
+            logger.warning(
+                "Failed to delete last rolling checkpoint (TTL will clean up)",
+                exc_info=True,
+            )

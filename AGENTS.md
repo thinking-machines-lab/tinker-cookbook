@@ -1,62 +1,14 @@
 # Tinker Cookbook Agent Guide
 
-Quick reference for agents working on `tinker-cookbook`. Full documentation is in `docs/`.
+Quick reference for agents working on `tinker-cookbook`. Detailed guidance is in the skills under `skills/`.
 
 `tinker-cookbook` is a client library with training and eval code built on the Tinker service (hosted by Thinking Machines Lab) and the Tinker SDK (a separate repo with just the API). You author training/eval loops that run on a CPU machine; Tinker executes the heavy GPU work.
 
-**Start here:** `docs/training-sampling.mdx` - Complete walkthrough of training and sampling basics.
-
-## Documentation Map (`docs/`)
-
-**API Fundamentals:**
-- `index.mdx` - Tinker overview, division of responsibilities
-- `install.mdx` - Installation, API key setup
-- `training-sampling.mdx` - **Starter guide**: data prep, forward_backward, sampling, vision inputs
-- `losses.mdx` - Loss functions (cross_entropy, importance_sampling, ppo, cispo, dro, forward_backward_custom)
-- `save-load.mdx` - Checkpointing (save_weights_for_sampler vs save_state)
-- `async.mdx` - Sync/async APIs, futures, overlapping requests
-- `model-lineup.mdx` - Available models
-- `under-the-hood.mdx` - Clock cycles, worker pools
-
-**API Reference (`api-reference/`):**
-- `types.md` - **All API types** (Datum, ModelInput, TensorData, SamplingParams, etc.)
-- `trainingclient.md`, `samplingclient.md`, `serviceclient.md`, `restclient.md` - Client APIs
-
-**Supervised Learning (`supervised-learning/`):**
-- `../supervised-learning.mdx` - SL overview
-- `sl-basic.mdx` - First SL run
-- `sl-hyperparams.mdx` - LR formula, batch size
-- `sl-loop.mdx` - Minimal training loop
-- `prompt-distillation.mdx` - Distilling prompts
-- `sweep-case-study.mdx` - Hyperparameter sweeps
-
-**Reinforcement Learning (`rl/`):**
-- `../rl.mdx` - RL overview (RLVR, RLHF)
-- `rl-basic.mdx` - First RL run
-- `rl-envs.mdx` - Custom Env, EnvGroupBuilder, RLDataset
-- `rl-loops.mdx` - Minimal RL loop
-- `rl-hyperparams.mdx` - batch_size vs group_size, async training
-- `sequence-extension.mdx` - Multi-turn RL, KV-cache
-
-**Preferences (`preferences/`):**
-- `../preferences.mdx` - DPO vs RLHF overview
-- `dpo-guide.mdx` - DPO training
-- `rlhf-example.mdx` - RLHF pipeline
-
-**Other:**
-- `rendering.mdx` - Renderers (bridge between chat-style data and token sequences), vision inputs, TrainOnWhat
-- `completers.mdx` - TokenCompleter vs MessageCompleter
-- `evals.mdx` - Inline evals, Inspect AI, custom evaluators
-- `lora-primer.mdx` - LoRA background
-- `download-weights.mdx` / `publish-weights.mdx` - Weight export
-
----
+**Skills:** This repo ships two Claude Code skills in `skills/`: `research` (SFT, RL, DPO, distillation, evaluation, model selection, experiment methodology) and `debug` (performance, correctness, renderer, and error triage). Install via `/plugin marketplace add thinking-machines-lab/tinker-cookbook`, then use `/tinker:research` or `/tinker:debug`.
 
 ## Composing Types
 
-Agents often struggle with the nested type hierarchy. Key resources:
-
-**Reference:** `docs/api-reference/types.md` documents all API types.
+Agents often struggle with the nested type hierarchy.
 
 **Core types:**
 - `Datum` = `model_input` (ModelInput) + `loss_fn_inputs` (dict of TensorData)
@@ -87,7 +39,7 @@ Agents often struggle with the nested type hierarchy. Key resources:
 - Logging: `tinker_cookbook/utils/logtree.py`, `tinker_cookbook/rl/rollouts.py`
 - Recipes: `tinker_cookbook/recipes/`
 
-**Training outputs:** RL and SL training write human-readable HTML reports and machine-readable JSON files (metrics, rollout transcripts, per-trajectory summaries) to `log_path`. Point agents at a `log_path` directory to analyze training runs — `metrics.jsonl` for scalar metrics, `*_rollout_summaries.jsonl` for per-trajectory data, and `*_logtree.json` for full rollout transcripts including model responses. See `docs/rl/rl-logging.mdx` for the complete file reference and parsing examples.
+**Training outputs:** RL and SL training write human-readable HTML reports and machine-readable JSON files (metrics, rollout transcripts, per-trajectory summaries) to `log_path`. Point agents at a `log_path` directory to analyze training runs — `metrics.jsonl` for scalar metrics, `*_rollout_summaries.jsonl` for per-trajectory data, and `*_logtree.json` for full rollout transcripts including model responses.
 
 ---
 
@@ -107,13 +59,13 @@ Agents often struggle with the nested type hierarchy. Key resources:
 
 ## Common Pitfalls
 
-1. **LoRA LR:** Use `hyperparam_utils.get_lr(model_name)` - LoRA needs ~10x higher LR than full fine-tuning.
+1. **Sequential API calls:** The #1 performance mistake. Always use `_async` variants and submit calls back-to-back before awaiting. Use `asyncio.gather` for concurrent evaluation — never sequential loops over API calls.
 
-2. **Renderer mismatch:** Match `renderer_name` to model family (`llama3`, `qwen3`, `role_colon`).
+2. **Sampler desync:** Create a **new** sampling client after saving weights. A stale client silently samples from old weights.
 
-3. **Async gaps:** Submit `forward_backward_async` and `optim_step_async` back-to-back before awaiting.
+3. **LoRA LR:** Use `hyperparam_utils.get_lr(model_name)` - LoRA needs ~10x higher LR than full fine-tuning.
 
-4. **Sampler desync:** Create a **new** sampling client after saving weights.
+4. **Renderer mismatch:** Use `model_info.get_recommended_renderer_name()` — never hardcode renderer names.
 
 5. **Type construction:** Use helper functions, not manual dict construction. See `supervised/data.py` and `supervised/common.py`.
 

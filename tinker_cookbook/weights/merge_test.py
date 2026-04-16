@@ -22,19 +22,55 @@ from tinker_cookbook.weights._merge import (
     plan_merge_ops,
     validate_merge_op_shapes,
 )
+from tinker_cookbook.weights._merge_deepseek import detect_profile as detect_deepseek_profile
+from tinker_cookbook.weights._merge_default import detect_profile as detect_default_profile
+from tinker_cookbook.weights._merge_gpt_oss import detect_profile as detect_gpt_oss_profile
+from tinker_cookbook.weights._merge_kimi_k25 import detect_profile as detect_kimi_k25_profile
+from tinker_cookbook.weights._merge_nemotron import detect_profile as detect_nemotron_profile
+from tinker_cookbook.weights._merge_qwen3_5 import detect_profile as detect_qwen3_5_profile
+from tinker_cookbook.weights._merge_utils import (
+    create_virtual_weight_keys,
+    create_virtual_weight_shapes,
+    is_pack_quantized,
+)
+from tinker_cookbook.weights._packed_int4 import (
+    dequantize_int4_group,
+    pack_int4,
+    quantize_int4_group,
+    unpack_int4,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_base_model(state_dict: dict[str, torch.Tensor], class_name: str = "SomeModel") -> Any:
+def _make_base_model(
+    state_dict: dict[str, torch.Tensor],
+    class_name: str = "SomeModel",
+    config_dict: dict | None = None,
+) -> Any:
     """Create a minimal mock model with a real state_dict and controllable class name.
 
     Uses a dynamically-created class so ``str(type(model))`` contains the
     desired class name (important for GPT-OSS detection).
+
+    Args:
+        config_dict: If provided, attaches a mock ``config`` with a ``to_dict()``
+            method. This is used by ``merge_adapter_weights`` for profile detection.
     """
-    cls = type(class_name, (), {"state_dict": lambda self: state_dict})
+
+    class _Config:
+        def __init__(self, d: dict) -> None:
+            self._d = d
+
+        def to_dict(self) -> dict:
+            return self._d
+
+    attrs: dict[str, Any] = {"state_dict": lambda self: state_dict}
+    if config_dict is not None:
+        attrs["config"] = _Config(config_dict)
+    cls = type(class_name, (), attrs)
     return cls()
 
 
@@ -260,6 +296,30 @@ class TestFusedInterleavedMerge:
         assert fused[:, :, 0::2].abs().max() == 0.0, "up delta leaked into gate slots"
         assert fused[:, :, 1::2].abs().sum() > 0
 
+    def test_broadcast_lora_a_interleaved(self):
+        """Real Tinker pattern: lora_A shared (1, rank, dim), lora_B per-expert."""
+        state_dict = self._make_state_dict()
+        model = _make_base_model(state_dict, class_name="GptOssModel")
+
+        prefix = "base_model.model.model.layers.0.mlp.experts"
+        rank = 1
+        adapter = {
+            f"{prefix}.w1.lora_A.weight": torch.ones(1, rank, self.IN_DIM) * 0.01,
+            f"{prefix}.w1.lora_B.weight": torch.ones(self.NUM_EXPERTS, self.OUT_DIM, rank),
+            f"{prefix}.w3.lora_A.weight": torch.ones(1, rank, self.IN_DIM) * 0.05,
+            f"{prefix}.w3.lora_B.weight": torch.ones(self.NUM_EXPERTS, self.OUT_DIM, rank),
+        }
+
+        merge_adapter_weights(model, adapter, {"lora_alpha": 1, "r": rank})
+
+        fused = state_dict["model.layers.0.mlp.experts.gate_up_proj"]
+        assert torch.allclose(
+            fused[:, :, 0::2], torch.full_like(fused[:, :, 0::2], 0.01), atol=1e-6
+        )
+        assert torch.allclose(
+            fused[:, :, 1::2], torch.full_like(fused[:, :, 1::2], 0.05), atol=1e-6
+        )
+
 
 # ---------------------------------------------------------------------------
 # Fused expert weights — concatenated (Qwen3.5, Qwen3-VL)
@@ -332,6 +392,149 @@ class TestFusedConcatenatedMerge:
         assert fused[:, :, :sz].abs().max() == 0.0, "up delta leaked into gate half"
         assert fused[:, :, sz:].abs().sum() > 0
 
+    def test_broadcast_lora_a_concatenated(self):
+        """Real Tinker pattern: lora_A shared (1, rank, dim), lora_B per-expert."""
+        state_dict = self._make_state_dict()
+        model = _make_base_model(state_dict, class_name="QwenModel")
+
+        prefix = "base_model.model.model.layers.0.mlp.experts"
+        rank = 1
+        adapter = {
+            f"{prefix}.w1.lora_A.weight": torch.ones(1, rank, self.IN_DIM) * 0.02,
+            f"{prefix}.w1.lora_B.weight": torch.ones(self.NUM_EXPERTS, self.OUT_DIM, rank),
+            f"{prefix}.w3.lora_A.weight": torch.ones(1, rank, self.IN_DIM) * 0.07,
+            f"{prefix}.w3.lora_B.weight": torch.ones(self.NUM_EXPERTS, self.OUT_DIM, rank),
+        }
+
+        merge_adapter_weights(model, adapter, {"lora_alpha": 1, "r": rank})
+
+        fused = state_dict["model.layers.0.mlp.experts.gate_up_proj"]
+        sz = self.FUSED_DIM // 2
+        assert torch.allclose(fused[:, :, :sz], torch.full_like(fused[:, :, :sz], 0.02), atol=1e-6)
+        assert torch.allclose(fused[:, :, sz:], torch.full_like(fused[:, :, sz:], 0.07), atol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Fused expert weights — concatenated, transposed (Qwen3.5 MoE)
+# ---------------------------------------------------------------------------
+
+
+class TestFusedConcatenatedTransposedMerge:
+    """Qwen3.5 MoE: gate_up_proj = (n_exp, fused, hidden) with fused on dim 1.
+
+    Uses asymmetric dims (HIDDEN != FUSED_DIM) so _detect_fused_axis can
+    distinguish which axis is fused.
+    """
+
+    NUM_EXPERTS = 2
+    HIDDEN = 8  # hidden_size
+    INTERMEDIATE = 3  # moe_intermediate_size (asymmetric vs HIDDEN)
+    FUSED_DIM = INTERMEDIATE * 2  # gate + up = 6
+
+    def _make_state_dict(self) -> dict[str, torch.Tensor]:
+        return {
+            # Qwen3.5 layout: (num_experts, fused_dim, hidden_size)
+            "model.layers.0.mlp.experts.gate_up_proj": torch.zeros(
+                self.NUM_EXPERTS, self.FUSED_DIM, self.HIDDEN
+            ),
+            "model.layers.0.mlp.experts.down_proj": torch.zeros(
+                self.NUM_EXPERTS, self.HIDDEN, self.INTERMEDIATE
+            ),
+        }
+
+    def _make_adapter(self, gate_fill: float, up_fill: float) -> dict[str, torch.Tensor]:
+        prefix = "base_model.model.model.layers.0.mlp.experts"
+        # LoRA for gate_proj: maps hidden→intermediate
+        gate_A, gate_B = _make_expert_lora_pair(
+            self.NUM_EXPERTS, self.INTERMEDIATE, self.HIDDEN, fill=gate_fill
+        )
+        up_A, up_B = _make_expert_lora_pair(
+            self.NUM_EXPERTS, self.INTERMEDIATE, self.HIDDEN, fill=up_fill
+        )
+        return {
+            f"{prefix}.w1.lora_A.weight": gate_A,
+            f"{prefix}.w1.lora_B.weight": gate_B,
+            f"{prefix}.w3.lora_A.weight": up_A,
+            f"{prefix}.w3.lora_B.weight": up_B,
+        }
+
+    def test_gate_and_up_in_correct_halves(self):
+        """Gate delta goes to dim1[:intermediate], up to dim1[intermediate:]."""
+        state_dict = self._make_state_dict()
+        model = _make_base_model(state_dict, class_name="QwenModel")
+        adapter = self._make_adapter(gate_fill=0.02, up_fill=0.07)
+
+        merge_adapter_weights(model, adapter, {"lora_alpha": 1, "r": 1})
+
+        fused = state_dict["model.layers.0.mlp.experts.gate_up_proj"]
+        gate_half = fused[:, : self.INTERMEDIATE, :]
+        up_half = fused[:, self.INTERMEDIATE :, :]
+
+        assert torch.allclose(gate_half, torch.full_like(gate_half, 0.02), atol=1e-6)
+        assert torch.allclose(up_half, torch.full_like(up_half, 0.07), atol=1e-6)
+
+    def test_up_does_not_leak_into_gate(self):
+        """Up-only adapter should not touch the gate half (dim 1)."""
+        state_dict = self._make_state_dict()
+        model = _make_base_model(state_dict, class_name="QwenModel")
+
+        prefix = "base_model.model.model.layers.0.mlp.experts"
+        up_A, up_B = _make_expert_lora_pair(
+            self.NUM_EXPERTS, self.INTERMEDIATE, self.HIDDEN, fill=0.1
+        )
+        adapter = {
+            f"{prefix}.w3.lora_A.weight": up_A,
+            f"{prefix}.w3.lora_B.weight": up_B,
+        }
+
+        merge_adapter_weights(model, adapter, {"lora_alpha": 1, "r": 1})
+
+        fused = state_dict["model.layers.0.mlp.experts.gate_up_proj"]
+        assert fused[:, : self.INTERMEDIATE, :].abs().max() == 0.0, "up delta leaked into gate half"
+        assert fused[:, self.INTERMEDIATE :, :].abs().sum() > 0
+
+    def test_gate_only_does_not_leak_into_up(self):
+        """Gate-only adapter should not touch the up half (dim 1)."""
+        state_dict = self._make_state_dict()
+        model = _make_base_model(state_dict, class_name="QwenModel")
+
+        prefix = "base_model.model.model.layers.0.mlp.experts"
+        gate_A, gate_B = _make_expert_lora_pair(
+            self.NUM_EXPERTS, self.INTERMEDIATE, self.HIDDEN, fill=0.05
+        )
+        adapter = {
+            f"{prefix}.w1.lora_A.weight": gate_A,
+            f"{prefix}.w1.lora_B.weight": gate_B,
+        }
+
+        merge_adapter_weights(model, adapter, {"lora_alpha": 1, "r": 1})
+
+        fused = state_dict["model.layers.0.mlp.experts.gate_up_proj"]
+        assert fused[:, : self.INTERMEDIATE, :].abs().sum() > 0
+        assert fused[:, self.INTERMEDIATE :, :].abs().max() == 0.0, "gate delta leaked into up half"
+
+    def test_broadcast_lora_a_transposed(self):
+        """Real Tinker pattern: lora_A shared (1, rank, dim), lora_B per-expert."""
+        state_dict = self._make_state_dict()
+        model = _make_base_model(state_dict, class_name="QwenModel")
+
+        prefix = "base_model.model.model.layers.0.mlp.experts"
+        rank = 1
+        adapter = {
+            f"{prefix}.w1.lora_A.weight": torch.ones(1, rank, self.HIDDEN) * 0.02,
+            f"{prefix}.w1.lora_B.weight": torch.ones(self.NUM_EXPERTS, self.INTERMEDIATE, rank),
+            f"{prefix}.w3.lora_A.weight": torch.ones(1, rank, self.HIDDEN) * 0.07,
+            f"{prefix}.w3.lora_B.weight": torch.ones(self.NUM_EXPERTS, self.INTERMEDIATE, rank),
+        }
+
+        merge_adapter_weights(model, adapter, {"lora_alpha": 1, "r": rank})
+
+        fused = state_dict["model.layers.0.mlp.experts.gate_up_proj"]
+        gate_half = fused[:, : self.INTERMEDIATE, :]
+        up_half = fused[:, self.INTERMEDIATE :, :]
+        assert torch.allclose(gate_half, torch.full_like(gate_half, 0.02), atol=1e-6)
+        assert torch.allclose(up_half, torch.full_like(up_half, 0.07), atol=1e-6)
+
 
 # ---------------------------------------------------------------------------
 # Error cases for expert LoRA
@@ -349,6 +552,235 @@ class TestExpertErrorCases:
         }
         with pytest.raises(WeightsMergeError, match="must be 3D"):
             merge_adapter_weights(model, adapter_weights, {"lora_alpha": 1, "r": 1})
+
+
+# ---------------------------------------------------------------------------
+# Tests: Nemotron detection and empty expert handling
+# ---------------------------------------------------------------------------
+
+
+class TestNemotronProfile:
+    def test_detect_nemotron_profile(self):
+        config = {"architectures": ["NemotronHForCausalLM"]}
+        keys: set[str] = {"backbone.layers.0.mixer.q_proj.weight"}
+        profile = detect_nemotron_profile(config, keys)
+        assert profile is not None
+        assert profile.model_family == "nemotron"
+        assert profile.expert_layout == "separate"
+        # Nemotron maps w1→up_proj, w2→down_proj (no gate_proj)
+        assert (".w1.weight", ".up_proj.weight") in profile.expert_key_remaps
+        assert (".w2.weight", ".down_proj.weight") in profile.expert_key_remaps
+        assert not any("gate_proj" in new for _, new in profile.expert_key_remaps)
+
+    def test_non_nemotron_not_detected(self):
+        config = {"architectures": ["LlamaForCausalLM"]}
+        keys: set[str] = {"model.layers.0.self_attn.q_proj.weight"}
+        assert detect_nemotron_profile(config, keys) is None
+
+    def test_detect_merge_profile_dispatches_to_nemotron(self):
+        """detect_merge_profile should pick up Nemotron via the registered detector."""
+        config = {"architectures": ["NemotronHForCausalLM"]}
+        keys: set[str] = {"backbone.layers.0.mixer.q_proj.weight"}
+        profile = detect_merge_profile(config, keys)
+        assert profile.model_family == "nemotron"
+
+
+class TestEmptyExpertMerge:
+    def test_empty_expert_tensors_skipped_in_merge(self):
+        """Empty expert LoRA tensors (Nemotron w3) should be silently skipped."""
+        num_experts = 2
+        state_dict: dict[str, torch.Tensor] = {}
+        for e in range(num_experts):
+            state_dict[f"backbone.layers.0.mixer.experts.{e}.up_proj.weight"] = torch.zeros(8, 4)
+            state_dict[f"backbone.layers.0.mixer.experts.{e}.down_proj.weight"] = torch.zeros(4, 8)
+
+        model = _make_base_model(
+            state_dict,
+            config_dict={"architectures": ["NemotronHForCausalLM"]},
+        )
+
+        adapter_weights = {
+            # w1 (up_proj) — real 3D expert tensors
+            "base_model.model.backbone.layers.0.mixer.experts.w1.lora_A.weight": torch.ones(
+                num_experts, 1, 4
+            ),
+            "base_model.model.backbone.layers.0.mixer.experts.w1.lora_B.weight": torch.ones(
+                num_experts, 8, 1
+            ),
+            # w2 (down_proj) — real 3D expert tensors
+            "base_model.model.backbone.layers.0.mixer.experts.w2.lora_A.weight": torch.ones(
+                num_experts, 1, 8
+            ),
+            "base_model.model.backbone.layers.0.mixer.experts.w2.lora_B.weight": torch.ones(
+                num_experts, 4, 1
+            ),
+            # w3 — empty placeholders (no gate_proj in Nemotron)
+            "base_model.model.backbone.layers.0.mixer.experts.w3.lora_A.weight": torch.empty(0),
+            "base_model.model.backbone.layers.0.mixer.experts.w3.lora_B.weight": torch.empty(0),
+        }
+
+        # Should not raise — empty tensors should be skipped.
+        merge_adapter_weights(model, adapter_weights, {"lora_alpha": 1, "r": 1})
+
+        # Verify the non-empty expert weights were actually merged.
+        for e in range(num_experts):
+            up_weight = model.state_dict()[f"backbone.layers.0.mixer.experts.{e}.up_proj.weight"]
+            assert up_weight.abs().sum() > 0, f"Expert {e} up_proj should have been merged"
+
+
+class TestNemotronFusedProjectionMerge:
+    """Test Mamba gate_proj/x_proj → fused in_proj merge via slice_start."""
+
+    HIDDEN = 8
+    INTERMEDIATE = 12
+    # in_proj = [gate (INTERMEDIATE) | x (INTERMEDIATE) | B+C+dt (6)]
+    IN_PROJ_DIM = INTERMEDIATE * 2 + 6
+
+    def _make_model_and_adapter(self):
+        state_dict = {
+            "backbone.layers.0.mixer.in_proj.weight": torch.zeros(self.IN_PROJ_DIM, self.HIDDEN),
+            "backbone.layers.0.mixer.out_proj.weight": torch.zeros(self.HIDDEN, self.INTERMEDIATE),
+        }
+        model = _make_base_model(
+            state_dict,
+            config_dict={"architectures": ["NemotronHForCausalLM"]},
+        )
+        adapter_weights = {
+            "base_model.model.backbone.layers.0.mixer.gate_proj.lora_A.weight": (
+                torch.ones(1, self.HIDDEN) * 0.5
+            ),
+            "base_model.model.backbone.layers.0.mixer.gate_proj.lora_B.weight": (
+                torch.ones(self.INTERMEDIATE, 1)
+            ),
+            "base_model.model.backbone.layers.0.mixer.x_proj.lora_A.weight": (
+                torch.ones(1, self.HIDDEN) * 0.3
+            ),
+            "base_model.model.backbone.layers.0.mixer.x_proj.lora_B.weight": (
+                torch.ones(self.INTERMEDIATE, 1)
+            ),
+        }
+        return model, adapter_weights
+
+    def test_gate_and_x_merged_into_in_proj(self):
+        model, adapter_weights = self._make_model_and_adapter()
+        merge_adapter_weights(model, adapter_weights, {"lora_alpha": 1, "r": 1})
+
+        in_proj = model.state_dict()["backbone.layers.0.mixer.in_proj.weight"]
+        gate_slice = in_proj[: self.INTERMEDIATE]
+        x_slice = in_proj[self.INTERMEDIATE : 2 * self.INTERMEDIATE]
+        rest = in_proj[2 * self.INTERMEDIATE :]
+
+        # gate delta = lora_B @ lora_A = ones(12,1) @ (ones(1,8)*0.5) = 0.5
+        assert torch.allclose(gate_slice, torch.full_like(gate_slice, 0.5), atol=1e-6)
+        # x delta = ones(12,1) @ (ones(1,8)*0.3) = 0.3
+        assert torch.allclose(x_slice, torch.full_like(x_slice, 0.3), atol=1e-6)
+        # B/C/dt rows should be unchanged (zeros)
+        assert rest.abs().sum() == 0
+
+    def test_out_proj_unchanged(self):
+        model, adapter_weights = self._make_model_and_adapter()
+        merge_adapter_weights(model, adapter_weights, {"lora_alpha": 1, "r": 1})
+
+        out_proj = model.state_dict()["backbone.layers.0.mixer.out_proj.weight"]
+        assert out_proj.abs().sum() == 0, "out_proj should not be affected"
+
+
+class TestNemotronPartialLoraMerge:
+    """Test merge with partial LoRA coverage (train_attn/train_mlp flags)."""
+
+    HIDDEN = 8
+    INTERMEDIATE = 12
+    IN_PROJ_DIM = INTERMEDIATE * 2 + 6
+    NUM_EXPERTS = 2
+
+    def test_attn_only_merges_into_in_proj(self):
+        """Adapter with only Mamba gate_proj/x_proj (train_mlp=False)."""
+        state_dict: dict[str, torch.Tensor] = {
+            "backbone.layers.0.mixer.in_proj.weight": torch.zeros(self.IN_PROJ_DIM, self.HIDDEN),
+            "backbone.layers.0.mixer.out_proj.weight": torch.zeros(self.HIDDEN, self.INTERMEDIATE),
+        }
+        for e in range(self.NUM_EXPERTS):
+            state_dict[f"backbone.layers.1.mixer.experts.{e}.up_proj.weight"] = torch.zeros(
+                self.INTERMEDIATE, self.HIDDEN
+            )
+
+        model = _make_base_model(
+            state_dict, config_dict={"architectures": ["NemotronHForCausalLM"]}
+        )
+
+        # Only ATTN group: gate_proj + x_proj, no experts
+        adapter_weights = {
+            "base_model.model.backbone.layers.0.mixer.gate_proj.lora_A.weight": (
+                torch.ones(1, self.HIDDEN) * 0.5
+            ),
+            "base_model.model.backbone.layers.0.mixer.gate_proj.lora_B.weight": (
+                torch.ones(self.INTERMEDIATE, 1)
+            ),
+            "base_model.model.backbone.layers.0.mixer.x_proj.lora_A.weight": (
+                torch.ones(1, self.HIDDEN) * 0.3
+            ),
+            "base_model.model.backbone.layers.0.mixer.x_proj.lora_B.weight": (
+                torch.ones(self.INTERMEDIATE, 1)
+            ),
+        }
+
+        merge_adapter_weights(model, adapter_weights, {"lora_alpha": 1, "r": 1})
+
+        in_proj = model.state_dict()["backbone.layers.0.mixer.in_proj.weight"]
+        assert torch.allclose(
+            in_proj[: self.INTERMEDIATE],
+            torch.full_like(in_proj[: self.INTERMEDIATE], 0.5),
+            atol=1e-6,
+        )
+        assert torch.allclose(
+            in_proj[self.INTERMEDIATE : 2 * self.INTERMEDIATE],
+            torch.full_like(in_proj[self.INTERMEDIATE : 2 * self.INTERMEDIATE], 0.3),
+            atol=1e-6,
+        )
+
+        # Experts should be unchanged (no LoRA)
+        for e in range(self.NUM_EXPERTS):
+            w = model.state_dict()[f"backbone.layers.1.mixer.experts.{e}.up_proj.weight"]
+            assert w.abs().sum() == 0
+
+    def test_mlp_only_no_mamba_merge(self):
+        """Adapter with only expert weights (train_attn=False)."""
+        state_dict: dict[str, torch.Tensor] = {
+            "backbone.layers.0.mixer.in_proj.weight": torch.zeros(self.IN_PROJ_DIM, self.HIDDEN),
+        }
+        for e in range(self.NUM_EXPERTS):
+            state_dict[f"backbone.layers.1.mixer.experts.{e}.up_proj.weight"] = torch.zeros(
+                self.INTERMEDIATE, self.HIDDEN
+            )
+
+        model = _make_base_model(
+            state_dict, config_dict={"architectures": ["NemotronHForCausalLM"]}
+        )
+
+        # Only MLP group: experts, no Mamba
+        adapter_weights = {
+            "base_model.model.backbone.layers.1.mixer.experts.w1.lora_A.weight": (
+                torch.ones(self.NUM_EXPERTS, 1, self.HIDDEN) * 0.1
+            ),
+            "base_model.model.backbone.layers.1.mixer.experts.w1.lora_B.weight": torch.ones(
+                self.NUM_EXPERTS, self.INTERMEDIATE, 1
+            ),
+            "base_model.model.backbone.layers.1.mixer.experts.w2.lora_A.weight": torch.empty(0),
+            "base_model.model.backbone.layers.1.mixer.experts.w2.lora_B.weight": torch.empty(0),
+            "base_model.model.backbone.layers.1.mixer.experts.w3.lora_A.weight": torch.empty(0),
+            "base_model.model.backbone.layers.1.mixer.experts.w3.lora_B.weight": torch.empty(0),
+        }
+
+        merge_adapter_weights(model, adapter_weights, {"lora_alpha": 1, "r": 1})
+
+        # Experts should have delta
+        for e in range(self.NUM_EXPERTS):
+            w = model.state_dict()[f"backbone.layers.1.mixer.experts.{e}.up_proj.weight"]
+            assert w.abs().sum() > 0, f"Expert {e} should have been merged"
+
+        # in_proj should be unchanged (no Mamba LoRA)
+        in_proj = model.state_dict()["backbone.layers.0.mixer.in_proj.weight"]
+        assert in_proj.abs().sum() == 0, "in_proj should be unchanged without Mamba LoRA"
 
 
 # ===========================================================================
@@ -707,8 +1139,27 @@ class TestValidateMergeOpShapes:
             ]
         }
         shapes = {"gate_up_proj": (2, 4, 8)}  # half is (2, 4, 4), delta is (2, 4, 6)
-        with pytest.raises(WeightsMergeError, match=r"Shape mismatch.*gate_up_proj"):
+        with pytest.raises(WeightsMergeError, match=r"gate_up_proj"):
             validate_merge_op_shapes(ops, shapes)
+
+    def test_valid_3d_fused_transposed_passes(self):
+        """Qwen3.5 MoE: gate_up_proj = (n, fused, hidden) — fused on dim 1."""
+        ops = {
+            "gate_up_proj": [
+                MergeOp(
+                    target_key="gate_up_proj",
+                    lora_A=torch.ones(2, 1, 8),  # (n_exp, rank, hidden=8)
+                    lora_B=torch.ones(2, 3, 1),  # (n_exp, intermediate=3, rank)
+                    is_expert_3d=True,
+                    fused_proj_idx=0,
+                    fused_proj_interleaved=False,
+                )
+            ]
+        }
+        # Target (2, 6, 8): fused on dim 1 (6=2*3), hidden=8
+        # Delta via bmm is (2, 8, 3) → transposed to (2, 3, 8) to match slice
+        shapes = {"gate_up_proj": (2, 6, 8)}
+        validate_merge_op_shapes(ops, shapes)  # should not raise
 
     def test_valid_3d_non_fused_passes(self):
         ops = {
@@ -724,3 +1175,600 @@ class TestValidateMergeOpShapes:
         }
         shapes = {"down_proj": (2, 4, 8)}
         validate_merge_op_shapes(ops, shapes)  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Per-model profile detection and dispatch
+# ---------------------------------------------------------------------------
+
+
+class TestPerModelProfileDetection:
+    """Tests for per-model detect_profile functions and model_family dispatch."""
+
+    def test_default_profile_sets_model_family(self):
+        config: dict = {"architectures": ["QwenForCausalLM"]}
+        keys = {"model.layers.0.self_attn.q_proj.weight"}
+        profile = detect_default_profile(config, keys)
+        assert profile.model_family == "default"
+
+    def test_gpt_oss_profile_sets_model_family(self):
+        config: dict = {"architectures": ["GptOssForCausalLM"]}
+        keys = {"model.layers.0.self_attn.q_proj.weight"}
+        profile = detect_gpt_oss_profile(config, keys)
+        assert profile is not None
+        assert profile.model_family == "gpt_oss"
+
+    def test_gpt_oss_returns_none_for_non_gpt_oss(self):
+        config: dict = {"architectures": ["QwenForCausalLM"]}
+        keys = {"model.layers.0.self_attn.q_proj.weight"}
+        assert detect_gpt_oss_profile(config, keys) is None
+
+    def test_deepseek_profile_sets_model_family(self):
+        config: dict = {"model_type": "deepseek_v3"}
+        keys = {"model.layers.0.self_attn.q_proj.weight"}
+        profile = detect_deepseek_profile(config, keys)
+        assert profile is not None
+        assert profile.model_family == "deepseek"
+        assert profile.expert_layout == "separate"
+
+    def test_deepseek_returns_none_for_non_deepseek(self):
+        config: dict = {"model_type": "qwen3"}
+        keys = {"model.layers.0.self_attn.q_proj.weight"}
+        assert detect_deepseek_profile(config, keys) is None
+
+    def test_detect_merge_profile_sets_model_family_for_gpt_oss(self):
+        config: dict = {"architectures": ["GptOssForCausalLM"]}
+        keys = {"model.layers.0.self_attn.q_proj.weight"}
+        profile = detect_merge_profile(config, keys)
+        assert profile.model_family == "gpt_oss"
+
+    def test_detect_merge_profile_sets_model_family_for_deepseek(self):
+        config: dict = {"model_type": "deepseek_v3"}
+        keys = {"model.layers.0.self_attn.q_proj.weight"}
+        profile = detect_merge_profile(config, keys)
+        assert profile.model_family == "deepseek"
+
+    def test_detect_merge_profile_defaults_to_default(self):
+        config: dict = {"architectures": ["QwenForCausalLM"]}
+        keys = {"model.layers.0.self_attn.q_proj.weight"}
+        profile = detect_merge_profile(config, keys)
+        assert profile.model_family == "default"
+
+    def test_unknown_model_family_raises(self):
+        """plan_merge_ops rejects unknown model_family values."""
+        profile = MergeProfile(model_family="nonexistent")
+        with pytest.raises(WeightsMergeError, match="Unknown model_family"):
+            plan_merge_ops({}, {"lora_alpha": 1, "r": 1}, set(), profile)
+
+    def test_qwen3_5_profile_sets_model_family(self):
+        config: dict = {"model_type": "qwen3_5"}
+        keys: set[str] = {"model.language_model.layers.0.linear_attn.in_proj_qkv.weight"}
+        profile = detect_qwen3_5_profile(config, keys)
+        assert profile is not None
+        assert profile.model_family == "qwen3_5"
+        assert profile.split_qkv_projections is True
+        assert profile.has_language_model_prefix is True
+        assert profile.expert_layout == "separate"
+
+    def test_qwen3_5_moe_profile(self):
+        config: dict = {"model_type": "qwen3_5_moe"}
+        keys: set[str] = {
+            "model.language_model.layers.0.linear_attn.in_proj_qkv.weight",
+            "model.language_model.layers.0.mlp.experts.gate_up_proj",
+        }
+        profile = detect_qwen3_5_profile(config, keys)
+        assert profile is not None
+        assert profile.expert_layout == "fused_concatenated"
+
+    def test_qwen3_5_returns_none_for_qwen3(self):
+        config: dict = {"model_type": "qwen3"}
+        keys: set[str] = {"model.layers.0.self_attn.q_proj.weight"}
+        assert detect_qwen3_5_profile(config, keys) is None
+
+    def test_detect_merge_profile_dispatches_qwen3_5(self):
+        config: dict = {"model_type": "qwen3_5"}
+        keys: set[str] = {"model.language_model.layers.0.linear_attn.in_proj_qkv.weight"}
+        profile = detect_merge_profile(config, keys)
+        assert profile.model_family == "qwen3_5"
+        assert profile.split_qkv_projections is True
+
+
+# ---------------------------------------------------------------------------
+# Qwen3.5 split in_proj_q/k/v → fused in_proj_qkv
+# ---------------------------------------------------------------------------
+
+
+def _make_qkv_adapter(
+    q_out: int, k_out: int, v_out: int, in_dim: int, rank: int = 1
+) -> tuple[dict[str, torch.Tensor], dict[str, int]]:
+    """Build a minimal adapter dict with in_proj_q/k/v LoRA weights.
+
+    Uses fill values 1/2/3 for Q/K/V so we can verify each slice is updated
+    with the correct delta independently.
+    """
+    prefix = "base_model.model.model.layers.0.linear_attn"
+    adapter_weights = {
+        f"{prefix}.in_proj_q.lora_A.weight": torch.ones(rank, in_dim),
+        f"{prefix}.in_proj_q.lora_B.weight": torch.ones(q_out, rank) * 1.0,
+        f"{prefix}.in_proj_k.lora_A.weight": torch.ones(rank, in_dim),
+        f"{prefix}.in_proj_k.lora_B.weight": torch.ones(k_out, rank) * 2.0,
+        f"{prefix}.in_proj_v.lora_A.weight": torch.ones(rank, in_dim),
+        f"{prefix}.in_proj_v.lora_B.weight": torch.ones(v_out, rank) * 3.0,
+    }
+    adapter_config = {"lora_alpha": 1, "r": rank}
+    return adapter_weights, adapter_config
+
+
+class TestQwen35QkvFusion:
+    """Tests for the in_proj_q/k/v → in_proj_qkv fusion fix."""
+
+    Q_OUT = 4
+    K_OUT = 4
+    V_OUT = 8
+    IN_DIM = 6
+    FUSED_ROWS = Q_OUT + K_OUT + V_OUT  # 16
+
+    def _make_state_dict(self) -> dict[str, torch.Tensor]:
+        return {
+            "model.layers.0.linear_attn.in_proj_qkv.weight": torch.zeros(
+                self.FUSED_ROWS, self.IN_DIM
+            )
+        }
+
+    def _make_profile(self, **kwargs: Any) -> MergeProfile:
+        return MergeProfile(model_family="qwen3_5", split_qkv_projections=True, **kwargs)
+
+    def test_planning_maps_to_fused_key(self):
+        adapter_weights, adapter_config = _make_qkv_adapter(
+            self.Q_OUT, self.K_OUT, self.V_OUT, self.IN_DIM
+        )
+        model_state_keys = set(self._make_state_dict())
+        profile = self._make_profile()
+        ops = plan_merge_ops(adapter_weights, adapter_config, model_state_keys, profile)
+
+        fused_key = "model.layers.0.linear_attn.in_proj_qkv.weight"
+        assert fused_key in ops
+        assert not any(
+            k.endswith((".in_proj_q.weight", ".in_proj_k.weight", ".in_proj_v.weight")) for k in ops
+        )
+        assert len(ops[fused_key]) == 3
+
+    def test_slice_starts_are_correct(self):
+        adapter_weights, adapter_config = _make_qkv_adapter(
+            self.Q_OUT, self.K_OUT, self.V_OUT, self.IN_DIM
+        )
+        model_state_keys = set(self._make_state_dict())
+        profile = self._make_profile()
+        ops = plan_merge_ops(adapter_weights, adapter_config, model_state_keys, profile)
+        merge_ops = ops["model.layers.0.linear_attn.in_proj_qkv.weight"]
+        starts = sorted(op.slice_start for op in merge_ops if op.slice_start is not None)
+        assert starts == [0, self.Q_OUT, self.Q_OUT + self.K_OUT]
+
+    def test_correct_delta_applied_to_each_slice(self):
+        adapter_weights, adapter_config = _make_qkv_adapter(
+            self.Q_OUT, self.K_OUT, self.V_OUT, self.IN_DIM
+        )
+        state_dict = self._make_state_dict()
+        profile = self._make_profile()
+        ops = plan_merge_ops(adapter_weights, adapter_config, set(state_dict.keys()), profile)
+        for op_list in ops.values():
+            for op in op_list:
+                apply_merge_op(state_dict, op)
+
+        fused = state_dict["model.layers.0.linear_attn.in_proj_qkv.weight"]
+        assert torch.allclose(fused[: self.Q_OUT], torch.full_like(fused[: self.Q_OUT], 1.0))
+        assert torch.allclose(
+            fused[self.Q_OUT : self.Q_OUT + self.K_OUT],
+            torch.full_like(fused[self.Q_OUT : self.Q_OUT + self.K_OUT], 2.0),
+        )
+        assert torch.allclose(
+            fused[self.Q_OUT + self.K_OUT :],
+            torch.full_like(fused[self.Q_OUT + self.K_OUT :], 3.0),
+        )
+
+    def test_slices_do_not_overlap(self):
+        adapter_weights, adapter_config = _make_qkv_adapter(
+            self.Q_OUT, self.K_OUT, self.V_OUT, self.IN_DIM
+        )
+        fused = torch.full((self.FUSED_ROWS, self.IN_DIM), 99.0)
+        state_dict = {"model.layers.0.linear_attn.in_proj_qkv.weight": fused}
+        profile = self._make_profile()
+        ops = plan_merge_ops(adapter_weights, adapter_config, set(state_dict.keys()), profile)
+        for op_list in ops.values():
+            for op in op_list:
+                apply_merge_op(state_dict, op)
+
+        assert torch.allclose(fused[: self.Q_OUT], torch.full_like(fused[: self.Q_OUT], 100.0))
+        assert torch.allclose(
+            fused[self.Q_OUT : self.Q_OUT + self.K_OUT],
+            torch.full_like(fused[self.Q_OUT : self.Q_OUT + self.K_OUT], 101.0),
+        )
+        assert torch.allclose(
+            fused[self.Q_OUT + self.K_OUT :],
+            torch.full_like(fused[self.Q_OUT + self.K_OUT :], 102.0),
+        )
+
+    def test_unequal_qkv_dims(self):
+        q_out, k_out, v_out, in_dim = 3, 5, 7, 4
+        adapter_weights, adapter_config = _make_qkv_adapter(q_out, k_out, v_out, in_dim)
+        fused_rows = q_out + k_out + v_out
+        state_dict = {
+            "model.layers.0.linear_attn.in_proj_qkv.weight": torch.zeros(fused_rows, in_dim)
+        }
+        profile = self._make_profile()
+        ops = plan_merge_ops(adapter_weights, adapter_config, set(state_dict.keys()), profile)
+        for op_list in ops.values():
+            for op in op_list:
+                apply_merge_op(state_dict, op)
+
+        fused = state_dict["model.layers.0.linear_attn.in_proj_qkv.weight"]
+        assert torch.allclose(fused[:q_out], torch.full((q_out, in_dim), 1.0))
+        assert torch.allclose(fused[q_out : q_out + k_out], torch.full((k_out, in_dim), 2.0))
+        assert torch.allclose(fused[q_out + k_out :], torch.full((v_out, in_dim), 3.0))
+
+    def test_vision_prefix_with_qkv_fusion(self):
+        adapter_weights, adapter_config = _make_qkv_adapter(
+            self.Q_OUT, self.K_OUT, self.V_OUT, self.IN_DIM
+        )
+        state_dict = {
+            "model.language_model.layers.0.linear_attn.in_proj_qkv.weight": torch.zeros(
+                self.FUSED_ROWS, self.IN_DIM
+            ),
+        }
+        profile = self._make_profile(has_language_model_prefix=True)
+        ops = plan_merge_ops(adapter_weights, adapter_config, set(state_dict.keys()), profile)
+        for op_list in ops.values():
+            for op in op_list:
+                apply_merge_op(state_dict, op)
+
+        fused = state_dict["model.language_model.layers.0.linear_attn.in_proj_qkv.weight"]
+        assert torch.allclose(fused[: self.Q_OUT], torch.full((self.Q_OUT, self.IN_DIM), 1.0))
+
+    def test_validate_passes_for_sliced_ops(self):
+        fused_key = "model.layers.0.linear_attn.in_proj_qkv.weight"
+        ops = {
+            fused_key: [
+                MergeOp(
+                    target_key=fused_key,
+                    lora_A=torch.ones(1, self.IN_DIM),
+                    lora_B=torch.ones(self.Q_OUT, 1),
+                    slice_start=0,
+                ),
+                MergeOp(
+                    target_key=fused_key,
+                    lora_A=torch.ones(1, self.IN_DIM),
+                    lora_B=torch.ones(self.K_OUT, 1),
+                    slice_start=self.Q_OUT,
+                ),
+                MergeOp(
+                    target_key=fused_key,
+                    lora_A=torch.ones(1, self.IN_DIM),
+                    lora_B=torch.ones(self.V_OUT, 1),
+                    slice_start=self.Q_OUT + self.K_OUT,
+                ),
+            ]
+        }
+        shapes = {fused_key: (self.FUSED_ROWS, self.IN_DIM)}
+        validate_merge_op_shapes(ops, shapes)  # should not raise
+
+    def test_validate_rejects_slice_overflow(self):
+        ops = {
+            "in_proj_qkv.weight": [
+                MergeOp(
+                    target_key="in_proj_qkv.weight",
+                    lora_A=torch.ones(1, self.IN_DIM),
+                    lora_B=torch.ones(self.Q_OUT, 1),
+                    slice_start=self.FUSED_ROWS - 1,
+                )
+            ]
+        }
+        shapes = {"in_proj_qkv.weight": (self.FUSED_ROWS, self.IN_DIM)}
+        with pytest.raises(WeightsMergeError, match=r"Shape mismatch.*in_proj_qkv"):
+            validate_merge_op_shapes(ops, shapes)
+
+    def test_validate_rejects_in_dim_mismatch(self):
+        ops = {
+            "in_proj_qkv.weight": [
+                MergeOp(
+                    target_key="in_proj_qkv.weight",
+                    lora_A=torch.ones(1, self.IN_DIM + 1),
+                    lora_B=torch.ones(self.Q_OUT, 1),
+                    slice_start=0,
+                )
+            ]
+        }
+        shapes = {"in_proj_qkv.weight": (self.FUSED_ROWS, self.IN_DIM)}
+        with pytest.raises(WeightsMergeError, match=r"Shape mismatch.*in_proj_qkv"):
+            validate_merge_op_shapes(ops, shapes)
+
+
+# ---------------------------------------------------------------------------
+# unembed_tokens remapping for vision models (tied vs non-tied embeddings)
+# ---------------------------------------------------------------------------
+
+
+def _make_unembed_adapter(
+    vocab: int, hidden: int, rank: int = 1
+) -> tuple[dict[str, torch.Tensor], dict[str, int]]:
+    """Build a minimal adapter with a single unembed_tokens LoRA."""
+    prefix = "base_model.model.model.unembed_tokens"
+    adapter_weights = {
+        f"{prefix}.lora_A.weight": torch.ones(rank, hidden),
+        f"{prefix}.lora_B.weight": torch.ones(vocab, rank),
+    }
+    return adapter_weights, {"lora_alpha": 1, "r": rank}
+
+
+class TestUnembedTokensVisionRemap:
+    """Tests for unembed_tokens → lm_head / embed_tokens remap in vision models."""
+
+    VOCAB = 8
+    HIDDEN = 4
+
+    def _make_profile(self, **kwargs: Any) -> MergeProfile:
+        return MergeProfile(model_family="qwen3_5", split_qkv_projections=True, **kwargs)
+
+    def test_tied_embeddings_merges_into_embed_tokens(self):
+        embed = torch.zeros(self.VOCAB, self.HIDDEN)
+        state_dict: dict[str, torch.Tensor] = {
+            "model.language_model.embed_tokens.weight": embed,
+        }
+        profile = self._make_profile(has_language_model_prefix=True)
+        adapter_weights, config = _make_unembed_adapter(self.VOCAB, self.HIDDEN)
+        ops = plan_merge_ops(adapter_weights, config, set(state_dict.keys()), profile)
+        for op_list in ops.values():
+            for op in op_list:
+                apply_merge_op(state_dict, op)
+        assert torch.allclose(embed, torch.ones(self.VOCAB, self.HIDDEN))
+
+    def test_non_tied_embeddings_merges_into_lm_head(self):
+        embed = torch.zeros(self.VOCAB, self.HIDDEN)
+        lm_head = torch.zeros(self.VOCAB, self.HIDDEN)
+        state_dict: dict[str, torch.Tensor] = {
+            "model.language_model.embed_tokens.weight": embed,
+            "lm_head.weight": lm_head,
+        }
+        profile = self._make_profile(has_language_model_prefix=True)
+        adapter_weights, config = _make_unembed_adapter(self.VOCAB, self.HIDDEN)
+        ops = plan_merge_ops(adapter_weights, config, set(state_dict.keys()), profile)
+        for op_list in ops.values():
+            for op in op_list:
+                apply_merge_op(state_dict, op)
+        assert torch.allclose(lm_head, torch.ones(self.VOCAB, self.HIDDEN))
+        assert torch.allclose(embed, torch.zeros(self.VOCAB, self.HIDDEN))
+
+
+# ---------------------------------------------------------------------------
+# Kimi K2.5 — profile detection, name remapping, INT4 pack/unpack
+# ---------------------------------------------------------------------------
+
+
+class TestKimiK25ProfileDetection:
+    """Profile detection for Kimi K2.5 (model_type=kimi_k25)."""
+
+    def test_detects_kimi_k25(self):
+        config = {"model_type": "kimi_k25", "architectures": ["KimiK25ForConditionalGeneration"]}
+        keys: set[str] = set()
+        profile = detect_kimi_k25_profile(config, keys)
+        assert profile is not None
+        assert profile.model_family == "kimi_k25"
+        assert profile.expert_layout == "separate"
+        assert profile.has_language_model_prefix is False
+
+    def test_ignores_non_k25(self):
+        config = {"model_type": "kimi_k2"}
+        assert detect_kimi_k25_profile(config, set()) is None
+
+    def test_dispatch_detects_k25(self):
+        config = {"model_type": "kimi_k25"}
+        keys = {"language_model.model.layers.0.self_attn.q_a_proj.weight"}
+        profile = detect_merge_profile(config, keys)
+        assert profile.model_family == "kimi_k25"
+
+    def test_kimi_k2_falls_through_to_default(self):
+        """Kimi-K2 (model_type=kimi_k2) should NOT match K2.5 detector."""
+        config = {"model_type": "kimi_k2"}
+        keys = {"model.layers.0.self_attn.q_a_proj.weight"}
+        profile = detect_merge_profile(config, keys)
+        assert profile.model_family == "default"
+
+
+class TestKimiK25NameRemapping:
+    """Name remapping for K2.5's language_model.model.* prefix."""
+
+    HIDDEN = 64
+    RANK = 1
+
+    def _make_adapter(
+        self, adapter_key_base: str, out_dim: int, in_dim: int
+    ) -> tuple[dict[str, torch.Tensor], dict]:
+        """Create a minimal adapter targeting a single key."""
+        weights = {
+            f"{adapter_key_base}.lora_A.weight": torch.ones(self.RANK, in_dim),
+            f"{adapter_key_base}.lora_B.weight": torch.ones(out_dim, self.RANK),
+        }
+        return weights, {"lora_alpha": 1, "r": self.RANK}
+
+    def test_attention_remaps_to_language_model_prefix(self):
+        """Adapter attention key → language_model.model.layers.* in model."""
+        model_keys = {"language_model.model.layers.0.self_attn.q_a_proj.weight"}
+        adapter_weights, config = self._make_adapter(
+            "base_model.model.model.layers.0.self_attn.q_a_proj", self.HIDDEN, self.HIDDEN
+        )
+        profile = MergeProfile(model_family="kimi_k25", expert_layout="separate")
+        ops = plan_merge_ops(adapter_weights, config, model_keys, profile)
+        assert "language_model.model.layers.0.self_attn.q_a_proj.weight" in ops
+
+    def test_unembed_remaps_to_language_model_lm_head(self):
+        """Adapter unembed_tokens → language_model.lm_head in model."""
+        model_keys = {"language_model.lm_head.weight"}
+        adapter_weights, config = self._make_adapter(
+            "base_model.model.model.unembed_tokens", self.HIDDEN, self.HIDDEN
+        )
+        profile = MergeProfile(model_family="kimi_k25", expert_layout="separate")
+        ops = plan_merge_ops(adapter_weights, config, model_keys, profile)
+        assert "language_model.lm_head.weight" in ops
+
+    def test_direct_lm_head_remaps_to_language_model_lm_head(self):
+        """Adapter lm_head (direct ref) → language_model.lm_head in model."""
+        model_keys = {"language_model.lm_head.weight"}
+        adapter_weights, config = self._make_adapter(
+            "base_model.model.lm_head", self.HIDDEN, self.HIDDEN
+        )
+        profile = MergeProfile(model_family="kimi_k25", expert_layout="separate")
+        ops = plan_merge_ops(adapter_weights, config, model_keys, profile)
+        assert "language_model.lm_head.weight" in ops
+
+    def test_expert_remaps_to_per_expert_keys(self):
+        """3D expert LoRA → per-expert 2D ops under language_model.model.*."""
+        n_exp = 2
+        exp_dim = 16
+        model_keys = set()
+        for i in range(n_exp):
+            for proj in ("gate_proj", "up_proj"):
+                model_keys.add(f"language_model.model.layers.1.mlp.experts.{i}.{proj}.weight")
+        adapter_weights = {
+            "base_model.model.model.layers.1.mlp.experts.w1.lora_A.weight": torch.ones(
+                1, self.RANK, self.HIDDEN
+            ),
+            "base_model.model.model.layers.1.mlp.experts.w1.lora_B.weight": torch.ones(
+                n_exp, exp_dim, self.RANK
+            ),
+            "base_model.model.model.layers.1.mlp.experts.w3.lora_A.weight": torch.ones(
+                1, self.RANK, self.HIDDEN
+            ),
+            "base_model.model.model.layers.1.mlp.experts.w3.lora_B.weight": torch.ones(
+                n_exp, exp_dim, self.RANK
+            ),
+        }
+        config = {"lora_alpha": 1, "r": self.RANK}
+        profile = MergeProfile(model_family="kimi_k25", expert_layout="separate")
+        ops = plan_merge_ops(adapter_weights, config, model_keys, profile)
+        # Should have per-expert ops
+        for i in range(n_exp):
+            assert f"language_model.model.layers.1.mlp.experts.{i}.gate_proj.weight" in ops
+            assert f"language_model.model.layers.1.mlp.experts.{i}.up_proj.weight" in ops
+
+
+class TestKimiK25VirtualWeightKeys:
+    """Virtual .weight key creation from .weight_packed keys."""
+
+    def test_creates_virtual_keys(self):
+        keys = {
+            "language_model.model.layers.1.mlp.experts.0.gate_proj.weight_packed",
+            "language_model.model.layers.1.mlp.experts.0.gate_proj.weight_scale",
+            "language_model.model.layers.1.mlp.experts.0.gate_proj.weight_shape",
+            "language_model.model.layers.0.self_attn.q_a_proj.weight",  # bf16, no packed
+        }
+        augmented, packed_map = create_virtual_weight_keys(keys)
+        virtual = "language_model.model.layers.1.mlp.experts.0.gate_proj.weight"
+        assert virtual in augmented
+        assert virtual in packed_map
+        assert packed_map[virtual].endswith(".weight_packed")
+        # bf16 key unchanged
+        assert "language_model.model.layers.0.self_attn.q_a_proj.weight" in augmented
+        assert "language_model.model.layers.0.self_attn.q_a_proj.weight" not in packed_map
+
+    def test_no_virtual_key_when_plain_weight_exists(self):
+        """If a key has both .weight and .weight_packed, don't create virtual."""
+        keys = {
+            "layer.gate_proj.weight",
+            "layer.gate_proj.weight_packed",
+        }
+        _, packed_map = create_virtual_weight_keys(keys)
+        assert "layer.gate_proj.weight" not in packed_map
+
+    def test_virtual_shapes(self):
+        packed_map = {
+            "layer.weight": "layer.weight_packed",
+        }
+        shapes = {
+            "layer.weight_packed": (2048, 896),  # I32: 896 * 8 = 7168
+            "layer.weight_scale": (2048, 224),
+        }
+        augmented = create_virtual_weight_shapes(shapes, packed_map)
+        assert augmented["layer.weight"] == (2048, 7168)
+
+
+class TestIsPackQuantizedGuard:
+    """Ensure is_pack_quantized only fires for compressed-tensors pack-quantized format.
+
+    Detection is based on the explicit ``format: pack-quantized`` field in
+    ``quantization_config``, not weight key heuristics.  This makes it safe
+    when new quantized model formats are added.
+    """
+
+    _PACK_QUANTIZED_CONFIG = {
+        "quantization_config": {
+            "quant_method": "compressed-tensors",
+            "format": "pack-quantized",
+            "config_groups": {"group_0": {"weights": {"num_bits": 4, "group_size": 32}}},
+        },
+    }
+
+    def test_kimi_k2_triggers(self):
+        """Kimi K2 has quantization_config at top level."""
+        assert is_pack_quantized(self._PACK_QUANTIZED_CONFIG)
+
+    def test_kimi_k25_triggers_via_text_config(self):
+        """Kimi K2.5 nests quantization_config under text_config."""
+        config = {"model_type": "kimi_k25", "text_config": self._PACK_QUANTIZED_CONFIG}
+        assert is_pack_quantized(config)
+
+    def test_nemotron_nvfp4_does_not_trigger(self):
+        """Nemotron NVFP4 has no quantization_config (quantization is implicit in dtypes)."""
+        config = {"model_type": "nemotron_h"}
+        assert not is_pack_quantized(config)
+
+    def test_deepseek_native_fp8_does_not_trigger(self):
+        """DeepSeek V3.1 native FP8 uses quant_method=fp8, not pack-quantized."""
+        config = {"quantization_config": {"quant_method": "fp8"}}
+        assert not is_pack_quantized(config)
+
+    def test_standard_bf16_does_not_trigger(self):
+        config = {"model_type": "qwen3"}
+        assert not is_pack_quantized(config)
+
+    def test_empty_config_does_not_trigger(self):
+        assert not is_pack_quantized({})
+
+
+class TestPackedInt4:
+    """INT4 pack/unpack and quantization round-trip."""
+
+    def test_pack_unpack_roundtrip(self):
+        values = torch.randint(-8, 8, (4, 32), dtype=torch.int8)
+        packed = pack_int4(values)
+        assert packed.shape == (4, 4)  # 32 / 8 = 4
+        assert packed.dtype == torch.int32
+        unpacked = unpack_int4(packed)
+        assert unpacked.shape == (4, 32)
+        assert torch.equal(unpacked, values)
+
+    def test_pack_unpack_boundary_values(self):
+        """Test with min/max INT4 values."""
+        values = torch.tensor([[-8, 7, 0, -1, 3, -5, 6, -8]], dtype=torch.int8)
+        packed = pack_int4(values)
+        unpacked = unpack_int4(packed)
+        assert torch.equal(unpacked, values)
+
+    def test_quantize_dequantize_roundtrip(self):
+        """Quantize then dequantize should approximately preserve values."""
+        tensor = torch.randn(8, 64, dtype=torch.bfloat16) * 2.0
+        packed, scale = quantize_int4_group(tensor, group_size=32)
+        assert packed.shape == (8, 8)  # 64 / 8
+        assert scale.shape == (8, 2)  # 64 / 32
+        dequantized = dequantize_int4_group(packed, scale, (8, 64), group_size=32)
+        assert dequantized.shape == (8, 64)
+        # INT4 quantization is lossy but should be reasonably close
+        assert torch.allclose(tensor.float(), dequantized.float(), atol=0.5)
+
+    def test_dequantize_known_values(self):
+        """Dequantize hand-crafted values to verify math."""
+        # 1 row, 8 cols, group_size=8
+        # All values = 2, scale = 1.0 → dequant = 2.0
+        values = torch.full((1, 8), 2, dtype=torch.int8)
+        packed = pack_int4(values)
+        scale = torch.ones(1, 1, dtype=torch.bfloat16)
+        result = dequantize_int4_group(packed, scale, (1, 8), group_size=8)
+        assert torch.allclose(result.float(), torch.full((1, 8), 2.0))

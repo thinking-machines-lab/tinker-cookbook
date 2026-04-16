@@ -1,4 +1,4 @@
-"""TextArena TicTacToe environment for tinker RL."""
+"""General two-player TextArena environment and dataset builders for tinker RL."""
 
 import asyncio
 from collections.abc import Sequence
@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 import chz
-import tinker
 from tinker import types
 
 try:
@@ -18,10 +17,15 @@ except ImportError:
         "git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'"
     ) from None
 
-from tinker_cookbook.completers import StopCondition, TinkerMessageCompleter
+from tinker_cookbook.completers import MessageCompleter, StopCondition
+from tinker_cookbook.recipes.multiplayer_rl.text_arena.tictactoe import (
+    OpponentType,
+    make_opponent,
+)
 from tinker_cookbook.renderers import Message, Renderer, get_renderer, get_text_content
 from tinker_cookbook.rl.types import (
     Action,
+    ActionExtra,
     Env,
     EnvGroupBuilder,
     Observation,
@@ -101,7 +105,7 @@ class TwoPlayerEnv(Env):
     coordinator: TwoPlayerCoordinator
     self_play: bool
     renderer: Renderer
-    opponent_policy: TinkerMessageCompleter | None
+    opponent_policy: MessageCompleter | None
 
     def __post_init__(self):
         assert self.self_play == (self.opponent_policy is None), (
@@ -138,7 +142,7 @@ class TwoPlayerEnv(Env):
         opponent_action_content = get_text_content(opponent_response)
         await self.coordinator.make_move(opponent_player_id, opponent_action_content)
 
-    async def step(self, action: Action) -> StepResult:
+    async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
         """Take a step in the environment."""
         if self.coordinator.game_done:
             return self.get_done_step()
@@ -196,7 +200,7 @@ class TwoPlayerEnvGroupBuilder(EnvGroupBuilder):
     num_envs: int
     self_play: bool
     num_players: ClassVar[int] = 2
-    opponent_policy: TinkerMessageCompleter | None = None
+    opponent_policy: MessageCompleter | None = None
 
     async def make_envs(self) -> Sequence[Env]:
         """Create a group of environments sharing the same TextArena game."""
@@ -204,7 +208,7 @@ class TwoPlayerEnvGroupBuilder(EnvGroupBuilder):
             raise ValueError("this env requires an even number of environments (players)")
 
         def _construct_coordinator() -> TwoPlayerCoordinator:
-            """During training, the coordinator performs necessary blocking/synchronization, so that the policys can take turns to make moves on the shared environment, across different Environment objects"""
+            """Constructs a coordinator that synchronizes two policies taking turns on a shared environment."""
             shared_env = ta.make(env_id=self.game_name)
             shared_env.reset(num_players=self.num_players)
             return TwoPlayerCoordinator(shared_env=shared_env)
@@ -263,19 +267,14 @@ class TwoPlayerTextArenaDatasetBuilder(RLDatasetBuilder):
     model_name: str
     game_name: str
     renderer_name: str
+    test_opponent: OpponentType = "base_model"
 
-    def _construct_opponent_policy(self, renderer: Renderer) -> TinkerMessageCompleter:
-        """Play against a fixed policy during testing."""
-        service_client = tinker.ServiceClient(base_url=self.base_url)
-        sampling_client = service_client.create_sampling_client(base_model=self.model_name)
-        return TinkerMessageCompleter(
-            sampling_client=sampling_client,
-            renderer=renderer,
-            max_tokens=64,
-            stop_condition=STOP_CONDITION,
+    def _construct_opponent_policy(self, renderer: Renderer) -> MessageCompleter:
+        return make_opponent(
+            self.test_opponent, self.model_name, renderer, self.base_url, STOP_CONDITION
         )
 
-    async def __call__(self) -> tuple[TwoPlayerTextArenaDataset, TwoPlayerTextArenaDataset | None]:
+    async def __call__(self) -> tuple[TwoPlayerTextArenaDataset, TwoPlayerTextArenaDataset]:
         """Build the dataset for training and testing."""
         renderer = get_renderer(self.renderer_name, get_tokenizer(self.model_name))
 
@@ -292,7 +291,7 @@ class TwoPlayerTextArenaDatasetBuilder(RLDatasetBuilder):
             num_datapoints=self.num_train_datapoints,
         )
 
-        # The testing dataset plays against a fixed policy, constructed by self._opponent_policy
+        # The testing dataset plays against a fixed policy
         test_builder = TwoPlayerEnvGroupBuilder(
             game_name=self.game_name,
             renderer=renderer,

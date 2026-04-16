@@ -10,6 +10,7 @@ from dataclasses import fields
 from tinker_cookbook.completers import TokensWithLogprobs
 from tinker_cookbook.rl.types import (
     Action,
+    ActionExtra,
     Env,
     EnvGroupBuilder,
     Logs,
@@ -43,6 +44,25 @@ class TestTypeAliases:
 
     def test_observation_alias_exists(self):
         assert Observation is not None
+
+
+# ---------------------------------------------------------------------------
+# ActionExtra
+# ---------------------------------------------------------------------------
+
+
+class TestActionExtra:
+    def test_is_typed_dict(self):
+        extra = ActionExtra(stop_reason="stop")
+        assert isinstance(extra, dict)
+
+    def test_all_fields_optional(self):
+        extra: ActionExtra = {}
+        assert isinstance(extra, dict)
+
+    def test_stop_reason_key(self):
+        extra = ActionExtra(stop_reason="length")
+        assert extra["stop_reason"] == "length"
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +140,7 @@ class TestEnv:
     def test_step_signature(self):
         from tests.downstream_compat.sig_helpers import assert_params
 
-        assert_params(Env.step, ["action"])
+        assert_params(Env.step, ["action", "extra"])
 
 
 # ---------------------------------------------------------------------------

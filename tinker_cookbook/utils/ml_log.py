@@ -10,7 +10,10 @@ from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from tinker_cookbook.stores.training_store import TrainingRunStore
 
 import chz
 from rich.console import Console
@@ -50,7 +53,17 @@ except ImportError:
 
 
 def dump_config(config: Any) -> Any:
-    """Convert configuration object to JSON-serializable format."""
+    """Recursively convert a configuration object to a JSON-serializable format.
+
+    Handles ``chz`` dataclasses, standard dataclasses, dicts, lists, enums,
+    callables, and plain objects with ``__dict__``.
+
+    Args:
+        config (Any): Configuration object to convert.
+
+    Returns:
+        Any: A JSON-serializable representation (dict, list, str, number, etc.).
+    """
     if hasattr(config, "to_dict"):
         return config.to_dict()
     elif chz.is_chz(config):
@@ -78,32 +91,61 @@ def dump_config(config: Any) -> Any:
 
 
 class Logger(ABC):
-    """Abstract base class for loggers."""
+    """Abstract base class for metric/experiment loggers.
+
+    Subclasses must implement :meth:`log_hparams` and :meth:`log_metrics`.
+    Other methods have default no-op implementations and can be overridden
+    as needed.
+    """
 
     @abstractmethod
     def log_hparams(self, config: Any) -> None:
-        """Log hyperparameters/configuration."""
+        """Log hyperparameters/configuration.
+
+        Args:
+            config (Any): Configuration object (will be passed through
+                :func:`dump_config` by callers).
+        """
         pass
 
     @abstractmethod
     def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
-        """Log metrics dictionary with optional step number."""
+        """Log a dictionary of metrics with an optional step number.
+
+        Args:
+            metrics (dict[str, Any]): Metric name-to-value mapping.
+            step (int | None): Training step (or ``None`` for step-less logging).
+        """
         pass
 
     def log_long_text(self, key: str, text: str) -> None:
-        """Log long text content (optional to implement)."""
+        """Log long text content (optional to implement).
+
+        Args:
+            key (str): Identifier for the text entry.
+            text (str): The text content to log.
+        """
         pass
 
     def close(self) -> None:
-        """Cleanup when done (optional to implement)."""
+        """Release resources and flush pending data (optional to implement)."""
         pass
 
     def sync(self) -> None:
-        """Force synchronization (optional to implement)."""
+        """Force synchronization of buffered data to the backend (optional to implement)."""
         pass
 
     def get_logger_url(self) -> str | None:
-        """Get a permalink to view this logger's results."""
+        """Return a permalink to view this logger's results, or ``None``.
+
+        Returns:
+            str | None: URL string if the backend provides one.
+        """
+        return None
+
+    @property
+    def store(self) -> "TrainingRunStore | None":
+        """The ``TrainingRunStore`` backing this logger, or ``None``."""
         return None
 
 
@@ -119,38 +161,57 @@ class _PermissiveJSONEncoder(json.JSONEncoder):
 
 
 class JsonLogger(Logger):
-    """Logger that writes metrics to a JSONL file."""
+    """Logger that writes metrics to a JSONL file and config to JSON.
 
-    def __init__(self, log_dir: str | Path):
-        self.log_dir = Path(log_dir).expanduser()
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.metrics_file = self.log_dir / "metrics.jsonl"
+    On first :meth:`log_hparams` call, writes ``config.json`` and
+    ``code.diff`` (via :func:`code_state`) into *log_dir*.  Subsequent
+    :meth:`log_metrics` calls append one JSON object per line to
+    ``metrics.jsonl``.
+
+    All file I/O goes through a :class:`~tinker_cookbook.stores.TrainingRunStore`,
+    enabling cloud storage backends.
+
+    Args:
+        log_dir (str | Path): Directory for output files (created if missing).
+        store (TrainingRunStore | None): Optional pre-configured store.
+            If ``None`` (default), a ``LocalStorage``-backed store is created.
+    """
+
+    def __init__(self, log_dir: str | Path, store: "TrainingRunStore | None" = None) -> None:
+        from tinker_cookbook.stores.storage import storage_from_uri
+        from tinker_cookbook.stores.training_store import TrainingRunStore as _TRS
+
+        self.log_dir = str(log_dir)
+        self._store = store or _TRS(storage_from_uri(self.log_dir))
         self._logged_hparams = False
 
+    @property
+    def store(self) -> "TrainingRunStore":
+        """The ``TrainingRunStore`` backing this logger (always available)."""
+        return self._store
+
     def log_hparams(self, config: Any) -> None:
-        """Log hyperparameters to a separate config.json file."""
+        """Log hyperparameters to config.json and code diff."""
         if not self._logged_hparams:
             config_dict = dump_config(config)
-            config_file = self.log_dir / "config.json"
-            with open(config_file, "w") as f:
-                json.dump(config_dict, f, indent=2, cls=_PermissiveJSONEncoder)
-            diff_file = code_state()
-            with open(self.log_dir / "code.diff", "w") as f:
-                f.write(diff_file)
+            # Use _PermissiveJSONEncoder as safety net for non-serializable values
+            sanitized = json.loads(json.dumps(config_dict, cls=_PermissiveJSONEncoder))
+            self._store.write_config(sanitized)
+            self._store.write_code_diff(code_state())
             self._logged_hparams = True
 
     def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
         """Append metrics to JSONL file."""
-        log_entry = {"step": step} if step is not None else {}
-        log_entry.update(metrics)
-
-        with open(self.metrics_file, "a") as f:
-            f.write(json.dumps(log_entry) + "\n")
-            logger.info("Wrote metrics to %s", self.metrics_file)
+        self._store.write_metrics(metrics, step)
+        logger.info("Wrote metrics to %s/metrics.jsonl", self.log_dir)
 
 
 class PrettyPrintLogger(Logger):
-    """Logger that displays metrics in a formatted table in the console."""
+    """Logger that displays metrics as a Rich-formatted table in the console.
+
+    Noisy aggregate keys (e.g. ``*:total``, ``*:count``) are hidden from
+    console output but still available in other logger sinks.
+    """
 
     def __init__(self):
         self.console = Console()
@@ -164,19 +225,36 @@ class PrettyPrintLogger(Logger):
             for key, value in config_dict.items():
                 self.console.print(f"  {key}: {_maybe_truncate_repr(value)}")
 
+    # Metric suffixes to hide from console output. These are still logged to
+    # metrics.jsonl and other sinks — only the pretty-print table is filtered.
+    _HIDDEN_SUFFIXES = (":total", ":count")
+
     def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
         """Display metrics in console."""
         if not metrics:
             return
 
+        # Filter out noisy aggregate keys from the console display
+        display_items = [
+            (k, v)
+            for k, v in sorted(metrics.items())
+            if not any(k.endswith(s) for s in self._HIDDEN_SUFFIXES)
+        ]
+        if not display_items:
+            return
+
+        # Adapt column width to the longest metric name
+        max_key_len = max(len(k) for k, _ in display_items)
+        metric_col_width = min(max(max_key_len, 20), 60)
+
         table = Table(show_header=True, header_style="bold magenta")
-        table.add_column("Metric", style="cyan", width=30)
+        table.add_column("Metric", style="cyan", width=metric_col_width)
         table.add_column("Value", style="green")
 
         if step is not None:
             table.title = f"Step {step}"
 
-        for key, value in sorted(metrics.items()):
+        for key, value in display_items:
             if isinstance(value, float):
                 value_str = f"{value:.6f}"
             else:
@@ -203,7 +281,20 @@ def _rich_console_use_logger(console: Console):
 
 
 class WandbLogger(Logger):
-    """Logger for Weights & Biases."""
+    """Logger that streams metrics and config to Weights & Biases.
+
+    Requires ``wandb`` to be installed and ``WANDB_API_KEY`` to be set.
+
+    Args:
+        project (str | None): W&B project name.
+        config (Any | None): Initial configuration to log.
+        log_dir (str | Path | None): Local directory for W&B files.
+        wandb_name (str | None): Display name for the W&B run.
+
+    Raises:
+        ImportError: If ``wandb`` is not installed.
+        ConfigurationError: If ``WANDB_API_KEY`` is not set.
+    """
 
     def __init__(
         self,
@@ -254,7 +345,21 @@ class WandbLogger(Logger):
 
 
 class NeptuneLogger(Logger):
-    """Logger for Neptune."""
+    """Logger that streams metrics and config to Neptune.
+
+    Requires ``neptune-scale`` to be installed and ``NEPTUNE_API_TOKEN``
+    to be set.
+
+    Args:
+        project (str | None): Neptune project name (``workspace/project``).
+        config (Any | None): Initial configuration to log.
+        log_dir (str | Path | None): Local log directory for Neptune files.
+        neptune_name (str | None): Experiment display name.
+
+    Raises:
+        ImportError: If ``neptune-scale`` is not installed.
+        ConfigurationError: If ``NEPTUNE_API_TOKEN`` is not set.
+    """
 
     def __init__(
         self,
@@ -304,7 +409,20 @@ class NeptuneLogger(Logger):
 
 
 class TrackioLogger(Logger):
-    """Logger for Trackio."""
+    """Logger that streams metrics and config to Trackio.
+
+    Requires ``trackio`` to be installed.
+
+    Args:
+        project (str | None): Trackio project name (defaults to ``"default"``).
+        config (Any | None): Initial configuration to log.
+        log_dir (str | Path | None): Local log directory (unused by Trackio
+            but accepted for interface consistency).
+        trackio_name (str | None): Display name for the run.
+
+    Raises:
+        ImportError: If ``trackio`` is not installed.
+    """
 
     def __init__(
         self,
@@ -327,9 +445,12 @@ class TrackioLogger(Logger):
         )
 
     def log_hparams(self, config: Any) -> None:
-        """Log hyperparameters to trackio."""
-        if self.run and trackio is not None:
-            pass
+        """Log hyperparameters to trackio.
+
+        Trackio receives its config at ``init()`` time; there is no post-init
+        config update API.  This method is a no-op because the config was
+        already forwarded during ``__init__``.
+        """
 
     def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
         """Log metrics to trackio."""
@@ -344,7 +465,14 @@ class TrackioLogger(Logger):
 
 
 class MultiplexLogger(Logger):
-    """Logger that forwards operations to multiple child loggers."""
+    """Logger that fans out every operation to multiple child loggers.
+
+    This is the logger returned by :func:`setup_logging` and is the primary
+    interface callers use to log metrics, hyperparameters, and text.
+
+    Args:
+        loggers (list[Logger]): Child loggers to forward calls to.
+    """
 
     def __init__(self, loggers: list[Logger]):
         self.loggers = loggers
@@ -384,6 +512,14 @@ class MultiplexLogger(Logger):
                 return url
         return None
 
+    @property
+    def store(self) -> "TrainingRunStore | None":
+        """Return the TrainingRunStore from the JsonLogger child, if any."""
+        for lg in self.loggers:
+            if isinstance(lg, JsonLogger):
+                return lg.store
+        return None
+
 
 def setup_logging(
     log_dir: str,
@@ -405,15 +541,16 @@ def setup_logging(
     Returns:
         MultiplexLogger that combines all enabled loggers
     """
-    # Create log directory
-    log_dir_path = Path(log_dir).expanduser()
-    log_dir_path.mkdir(parents=True, exist_ok=True)
+    # Cloud URIs (s3://, gs://, az://) go through FsspecStorage; file:// and
+    # bare paths are local.  Third-party loggers need a local directory.
+    is_cloud = "://" in log_dir and not log_dir.startswith("file://")
+    local_log_dir: str | None = None if is_cloud else str(Path(log_dir).expanduser())
 
     # Initialize loggers
     loggers = []
 
-    # Always add JSON logger
-    loggers.append(JsonLogger(log_dir_path))
+    # Always add JSON logger (handles both local and cloud paths via Storage)
+    loggers.append(JsonLogger(log_dir))
 
     # Always add pretty print logger
     loggers.append(PrettyPrintLogger())
@@ -429,7 +566,7 @@ def setup_logging(
                 WandbLogger(
                     project=wandb_project,
                     config=config,
-                    log_dir=log_dir_path,
+                    log_dir=local_log_dir,
                     wandb_name=wandb_name,
                 )
             )
@@ -452,7 +589,7 @@ def setup_logging(
                 NeptuneLogger(
                     project=wandb_project,
                     config=config,
-                    log_dir=log_dir_path,
+                    log_dir=local_log_dir,
                     neptune_name=wandb_name,
                 )
             )
@@ -462,7 +599,7 @@ def setup_logging(
             TrackioLogger(
                 project=wandb_project,
                 config=config,
-                log_dir=log_dir_path,
+                log_dir=local_log_dir,
                 trackio_name=wandb_name,
             )
         )
@@ -475,10 +612,10 @@ def setup_logging(
     if config is not None:
         ml_logger.log_hparams(config)
 
-    if do_configure_logging_module:
-        configure_logging_module(str(log_dir_path / "logs.log"))
+    if do_configure_logging_module and local_log_dir is not None:
+        configure_logging_module(str(Path(local_log_dir) / "logs.log"))
 
-    logger.info(f"Logging to: {log_dir_path}")
+    logger.info(f"Logging to: {log_dir}")
     return ml_logger
 
 
@@ -490,7 +627,19 @@ def _get_command_line_invocation() -> str:
 
 
 def configure_logging_module(path: str, level: int = logging.INFO) -> logging.Logger:
-    """Configure logging to console (color) and file (plain), forcing override of prior config."""
+    """Configure the Python ``logging`` module with coloured console and plain file handlers.
+
+    Replaces any previously installed root handlers (like ``basicConfig(..., force=True)``).
+    The console handler uses ANSI colours for level names; the file handler
+    writes plain text.
+
+    Args:
+        path (str): File path for the log file (appended to, created if missing).
+        level (int): Root logger level (default ``logging.INFO``).
+
+    Returns:
+        logging.Logger: The root logger instance.
+    """
     # ANSI escape codes for colors
     COLORS = {
         "DEBUG": "\033[94m",  # Blue

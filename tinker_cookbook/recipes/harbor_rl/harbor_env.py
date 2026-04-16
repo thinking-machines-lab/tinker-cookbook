@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 import chz
-import modal
 
 from tinker_cookbook import model_info, tokenizer_utils
 from tinker_cookbook.recipes.harbor_rl.harbor_tools import HarborBashTool, HarborReward
@@ -31,10 +30,20 @@ HARBOR_SYSTEM_PROMPT = (
     "Complete the task described by the user."
 )
 
-SandboxFactory = Callable[[modal.Image, int], Awaitable[SandboxInterface]]
+SandboxFactory = Callable[[Path, int], Awaitable[SandboxInterface]]
 
 
-async def default_sandbox_factory(image: modal.Image, timeout: int) -> SandboxInterface:
+async def default_sandbox_factory(env_dir: Path, timeout: int) -> SandboxInterface:
+    """Create a Modal sandbox from a task environment directory.
+
+    Args:
+        env_dir: Path to the task's environment/ directory (must contain a Dockerfile).
+        timeout: Sandbox lifetime in seconds.
+    """
+    import modal
+
+    dockerfile_path = env_dir / "Dockerfile"
+    image = modal.Image.from_dockerfile(path=str(dockerfile_path), context_dir=str(env_dir))
     return await ModalSandbox.create(image=image, timeout=timeout)
 
 
@@ -54,10 +63,6 @@ def load_harbor_tasks(dataset: str) -> list[HarborTask]:
     tasks: list[HarborTask] = []
     for task_dir in sorted(tasks_dir.iterdir()):
         if not task_dir.is_dir():
-            continue
-        instruction_file = task_dir / "instruction.md"
-        toml_file = task_dir / "task.toml"
-        if not instruction_file.exists() or not toml_file.exists():
             continue
         tasks.append(
             HarborTask(
@@ -99,6 +104,8 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
         command_timeout: int = 120,
         grader_timeout: int = 60,
         max_trajectory_tokens: int = 32 * 1024,
+        max_generation_tokens: int | None = None,
+        context_overflow_reward: float = -0.1,
         sandbox_factory: SandboxFactory | None = None,
         reward_fn: RewardFn | None = None,
     ):
@@ -111,6 +118,8 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
         self.command_timeout = command_timeout
         self.grader_timeout = grader_timeout
         self.max_trajectory_tokens = max_trajectory_tokens
+        self.max_generation_tokens = max_generation_tokens
+        self.context_overflow_reward = context_overflow_reward
         self.sandbox_factory = sandbox_factory or default_sandbox_factory
         self.reward_fn = reward_fn
         self._sandboxes: list[SandboxInterface] = []
@@ -118,14 +127,7 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
     async def make_envs(self) -> Sequence[Env]:
         self._sandboxes = []
 
-        # Use pre-built docker image from task config when available, otherwise build from Dockerfile
-        docker_image = self.task.config.get("environment", {}).get("docker_image")
-        if docker_image:
-            image = modal.Image.from_registry(docker_image)
-        else:
-            env_dir = self.task.task_dir / "environment"
-            dockerfile_path = env_dir / "Dockerfile"
-            image = modal.Image.from_dockerfile(path=str(dockerfile_path), context_dir=str(env_dir))
+        env_dir = self.task.task_dir / "environment"
 
         # Create renderer (stateless, shared across envs)
         tokenizer = tokenizer_utils.get_tokenizer(self.model_name)
@@ -138,7 +140,7 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
 
         envs = []
         for _ in range(self.group_size):
-            sandbox = await self.sandbox_factory(image, self.sandbox_timeout)
+            sandbox = await self.sandbox_factory(env_dir, self.sandbox_timeout)
             self._sandboxes.append(sandbox)
 
             bash_tool = HarborBashTool(sandbox, command_timeout=self.command_timeout)
@@ -155,6 +157,8 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
                     reward_fn=reward_fn,
                     max_turns=self.max_turns,
                     max_trajectory_tokens=self.max_trajectory_tokens,
+                    max_generation_tokens=self.max_generation_tokens,
+                    context_overflow_reward=self.context_overflow_reward,
                 )
             )
         return envs
@@ -205,6 +209,8 @@ class HarborDatasetBuilder(RLDatasetBuilder):
     command_timeout: int = 120
     grader_timeout: int = 60
     max_trajectory_tokens: int = 32 * 1024
+    max_generation_tokens: int | None = None
+    context_overflow_reward: float = -0.1
     sandbox_factory: SandboxFactory | None = None
     reward_fn: RewardFn | None = None
 
@@ -220,6 +226,8 @@ class HarborDatasetBuilder(RLDatasetBuilder):
                 command_timeout=self.command_timeout,
                 grader_timeout=self.grader_timeout,
                 max_trajectory_tokens=self.max_trajectory_tokens,
+                max_generation_tokens=self.max_generation_tokens,
+                context_overflow_reward=self.context_overflow_reward,
                 sandbox_factory=self.sandbox_factory,
                 reward_fn=self.reward_fn,
             )

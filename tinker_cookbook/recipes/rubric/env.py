@@ -19,6 +19,7 @@ from tinker_cookbook.recipes.rubric.data import (
 from tinker_cookbook.renderers import Renderer, get_renderer
 from tinker_cookbook.rl.types import (
     Action,
+    ActionExtra,
     Env,
     EnvGroupBuilder,
     RLDataset,
@@ -87,7 +88,7 @@ class RubricGradedEnv(Env):
             print(colored(f"Extracted Score: {score}", "magenta") + "\n")
         return score, grader_response_content
 
-    async def step(self, action: Action) -> StepResult:
+    async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
         with logtree.scope_header("Prompt"):
             logtree.log_formatter(ConversationFormatter(messages=self.convo))
 

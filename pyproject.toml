@@ -9,24 +9,24 @@ authors = [
 license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
-    "aiohttp",
-    "anyio",
-    "blobfile",
-    "chz",
-    "cloudpickle",
+    "aiohttp>=3.9.0",
+    "anyio>=4.0.0",
+    "blobfile>=3.0.0",
+    "chz>=0.4.0",
+    "cloudpickle>=3.0.0",
     "datasets>=2.14.0",
-    "huggingface_hub",
+    "huggingface_hub>=0.20.0",
     "numpy>=1.24.0",
-    "pillow",
-    "pydantic",
-    "rich",
-    "safetensors",
-    "termcolor",
+    "pillow>=10.0.0",
+    "pydantic>=2.0.0",
+    "rich>=13.0.0",
+    "safetensors>=0.4.0",
+    "termcolor>=2.0.0",
     "tiktoken>=0.12.0", # Required for Kimi tokenizer
     "tinker>=0.9.0",
     "torch>=2.0",
-    "tqdm",
-    "transformers>=4.57.6,<=5.3.0",
+    "tqdm>=4.60.0",
+    "transformers>=4.57.6,<=5.5.3",
 ]
 
 [project.urls]
@@ -36,31 +36,37 @@ Documentation = "https://tinker-docs.thinkingmachines.ai/"
 
 [project.optional-dependencies]
 dev = [
-    "pytest",
-    "pytest-asyncio",
-    "pytest-timeout",
-    "ruff",
-    "pyright",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-timeout>=2.0.0",
+    "ruff>=0.4.0",
+    "pyright>=1.1.300",
 ]
 math-rl = [
-    "math-verify",
-    "pylatexenc",
-    "sympy",
+    "math-verify>=0.5.0",
+    "pylatexenc>=2.0",
+    "sympy>=1.12.0",
 ]
 modal = [
-    "modal",
+    "modal>=1.0.0",
 ]
 multiplayer-rl = [
     "textarena>=0.7.4",
 ]
 vector-search = [
-    "chromadb",
-    "google-genai",
-    "huggingface_hub",
+    "chromadb>=1.0.0",
+    "google-genai>=1.0.0",
+    "huggingface_hub>=0.20.0",
+]
+cloud = [
+    "fsspec>=2023.1.0",
+    "gcsfs>=2023.1.0",
+    "s3fs>=2023.1.0",
+    "adlfs>=2023.1.0",
 ]
 wandb = [
-    "wandb",
-    "plotly",
+    "wandb>=0.16.0",
+    "plotly>=5.0.0",
 ]
 neptune-scale = [
     "neptune-scale>=0.27.0",
@@ -70,16 +76,52 @@ trackio = [
 ]
 verifiers = [
     "verifiers>=0.1.9,<0.1.10",
-    "openai",
+    "openai>=1.0.0",
 ]
 inspect = [
-    "inspect-ai",
+    "inspect-ai>=0.3.100",
     "inspect-evals>=0.3.106",
 ]
 litellm = [
-    "litellm",
+    "litellm>=1.80.0,!=1.82.7,!=1.82.8",
+]
+eval-math500 = [
+    "tinker_cookbook[math-rl]",
+]
+eval-hmmt = [
+    "antlr4-python3-runtime>=4.11,<4.14",
+]
+eval-mbpp = [
+    "tinker_cookbook[modal]",
+]
+eval-livecodebench = [
+    "tinker_cookbook[modal]",
+]
+eval-terminal-bench = [
+    "tinker_cookbook[modal]",
+]
+eval-swe-bench = [
+    "tinker_cookbook[modal]",
+]
+eval-ifbench = [
+    # The ifbench package must also be installed separately (not on PyPI):
+    #   uv pip install 'ifbench @ git+https://github.com/allenai/IFBench.git'
+    "nltk",
+    "emoji",
+    "syllapy",
+    "langdetect",
+]
+eval = [
+    "tinker_cookbook[eval-math500]",
+    "tinker_cookbook[eval-hmmt]",
+    "tinker_cookbook[eval-mbpp]",
+    "tinker_cookbook[eval-livecodebench]",
+    "tinker_cookbook[eval-terminal-bench]",
+    "tinker_cookbook[eval-swe-bench]",
+    "tinker_cookbook[eval-ifbench]",
 ]
 all = [
+    "tinker_cookbook[eval]",
     "tinker_cookbook[math-rl]",
     "tinker_cookbook[modal]",
     "tinker_cookbook[multiplayer-rl]",
@@ -105,7 +147,7 @@ version-file = "tinker_cookbook/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["tinker_cookbook"]
-exclude = ["*_test.py"]
+exclude = ["*_test.py", "**/results/"]
 
 [tool.pytest.ini_options]
 testpaths = ["tinker_cookbook", "tests"]

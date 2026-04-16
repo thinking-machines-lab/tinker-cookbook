@@ -16,14 +16,16 @@ from tinker_cookbook.exceptions import WeightsMergeError
 from tinker_cookbook.weights._export._quantized import (
     _build_vllm_quantization_config,
     _is_routed_expert_weight,
-    _load_resume_state,
-    _save_merge_state,
-    _save_shard_atomic,
     _serialize_for_vllm,
     _should_skip_checkpoint_key,
     dequantize_blockwise,
     is_deepseek_config,
     quantize_blockwise,
+)
+from tinker_cookbook.weights._export._shard_engine import (
+    _load_resume_state,
+    _save_merge_state,
+    _save_shard_atomic,
 )
 
 # ---------------------------------------------------------------------------
@@ -94,8 +96,14 @@ class TestIsDeepseekConfig:
 
 class TestIsRoutedExpertWeight:
     def test_routed_expert_matched(self):
+        # DeepSeek / Qwen3.5 per-expert keys
         assert _is_routed_expert_weight("model.layers.3.mlp.experts.42.gate_proj.weight")
         assert _is_routed_expert_weight("model.layers.0.mlp.experts.0.down_proj.weight")
+
+    def test_fused_expert_matched(self):
+        # Qwen3-VL fused 3D expert keys (no .weight suffix, no per-expert index)
+        assert _is_routed_expert_weight("model.language_model.layers.0.mlp.experts.gate_up_proj")
+        assert _is_routed_expert_weight("model.language_model.layers.0.mlp.experts.down_proj")
 
     def test_shared_expert_rejected(self):
         assert not _is_routed_expert_weight("model.layers.0.mlp.shared_experts.gate_proj.weight")
@@ -159,7 +167,7 @@ class TestBuildVllmQuantizationConfig:
         assert ia["dynamic"] is True
 
     def test_ignore_list_correct(self):
-        """Dense projections should be in ignore, routed experts should NOT."""
+        """Non-quantized modules should be in ignore, quantized experts should NOT."""
         weight_map = {
             "model.layers.0.mlp.experts.0.gate_proj.weight": "s.safetensors",
             "model.layers.0.mlp.experts.0.gate_proj.weight_scale": "s.safetensors",
@@ -173,6 +181,40 @@ class TestBuildVllmQuantizationConfig:
         assert "model.layers.0.mlp.shared_experts.gate_proj" in ignore
         # Routed expert should NOT be in ignore
         assert "model.layers.0.mlp.experts.0.gate_proj" not in ignore
+
+    def test_ignore_list_covers_non_standard_linear_modules(self):
+        """Modules outside _LINEAR_PROJ_SUFFIXES (e.g. Qwen 3.5 linear attention,
+        vision encoder) must also land in the ignore list when not quantized."""
+        weight_map = {
+            # Quantized routed expert
+            "model.language_model.layers.0.mlp.experts.0.gate_proj.weight": "s.safetensors",
+            "model.language_model.layers.0.mlp.experts.0.gate_proj.weight_scale": "s.safetensors",
+            # Linear attention projections (Qwen 3.5 - nn.Linear, not quantized)
+            "model.language_model.layers.0.linear_attn.in_proj_qkv.weight": "s.safetensors",
+            "model.language_model.layers.0.linear_attn.in_proj_z.weight": "s.safetensors",
+            "model.language_model.layers.0.linear_attn.out_proj.weight": "s.safetensors",
+            # Vision encoder (nn.Linear, not quantized)
+            "model.visual.blocks.0.attn.proj.weight": "s.safetensors",
+            "model.visual.blocks.0.mlp.linear_fc1.weight": "s.safetensors",
+            # Shared expert gate (nn.Linear, not quantized)
+            "model.language_model.layers.0.mlp.shared_expert_gate.weight": "s.safetensors",
+            # Non-Linear modules (harmless to include in ignore)
+            "model.language_model.layers.0.input_layernorm.weight": "s.safetensors",
+            "model.language_model.embed_tokens.weight": "s.safetensors",
+        }
+        config = _build_vllm_quantization_config(weight_map)
+        ignore = set(config["ignore"])
+
+        # All non-quantized modules in ignore
+        assert "model.language_model.layers.0.linear_attn.in_proj_qkv" in ignore
+        assert "model.language_model.layers.0.linear_attn.in_proj_z" in ignore
+        assert "model.language_model.layers.0.linear_attn.out_proj" in ignore
+        assert "model.visual.blocks.0.attn.proj" in ignore
+        assert "model.visual.blocks.0.mlp.linear_fc1" in ignore
+        assert "model.language_model.layers.0.mlp.shared_expert_gate" in ignore
+
+        # Quantized expert NOT in ignore
+        assert "model.language_model.layers.0.mlp.experts.0.gate_proj" not in ignore
 
 
 class TestSerializeForVllm:
@@ -423,6 +465,166 @@ class TestOutputShardAssembly:
 
 
 # ---------------------------------------------------------------------------
+# post_merge_transform — per-expert vs fused expert keys
+# ---------------------------------------------------------------------------
+
+
+class TestPostMergeTransform:
+    """Test FP8BlockFormat.post_merge_transform across model key formats.
+
+    Covers:
+    - DeepSeek/Qwen3.5 per-expert 2D keys (``experts.0.gate_proj.weight``)
+    - Qwen3-VL fused 3D keys (``experts.gate_up_proj``)
+    - Dense/shared/non-expert keys must pass through unchanged
+    """
+
+    @pytest.fixture()
+    def fmt(self, tmp_path: Path):
+        from tinker_cookbook.weights._export._quantized import FP8BlockFormat
+
+        # Non-native-FP8 config so pre_merge_transform is a no-op
+        config = {"model_type": "qwen2_moe"}
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        return FP8BlockFormat(config, model_dir, serving_format="vllm", device="cpu")
+
+    # -- Per-expert 2D keys (DeepSeek, Qwen3.5) -- existing behavior ---------
+
+    def test_per_expert_2d_quantized(self, fmt):
+        """Per-expert 2D weight → FP8 + scale (DeepSeek / Qwen3.5 format)."""
+        key = "model.layers.0.mlp.experts.0.gate_proj.weight"
+        tensor = torch.randn(256, 128, dtype=torch.bfloat16)
+        result = fmt.post_merge_transform(key, tensor)
+        assert key in result
+        assert result[key].dtype == torch.float8_e4m3fn
+        assert result[key].shape == (256, 128)
+        scale_key = "model.layers.0.mlp.experts.0.gate_proj.weight_scale"
+        assert scale_key in result
+        assert result[scale_key].dtype == torch.float32
+
+    def test_per_expert_2d_vl_prefix_quantized(self, fmt):
+        """Per-expert 2D weight with language_model prefix → FP8 (Qwen3.5)."""
+        key = "model.language_model.layers.0.mlp.experts.42.down_proj.weight"
+        tensor = torch.randn(128, 256, dtype=torch.bfloat16)
+        result = fmt.post_merge_transform(key, tensor)
+        assert result[key].dtype == torch.float8_e4m3fn
+
+    # -- Fused 3D keys (Qwen3-VL) -- new behavior ----------------------------
+
+    def test_fused_3d_quantized(self, fmt):
+        """Fused 3D expert tensor → FP8 + scale (Qwen3-VL format)."""
+        key = "model.language_model.layers.0.mlp.experts.gate_up_proj"
+        # [num_experts, out_features, in_features]
+        tensor = torch.randn(128, 2048, 1536, dtype=torch.bfloat16)
+        result = fmt.post_merge_transform(key, tensor)
+        assert key in result
+        assert result[key].dtype == torch.float8_e4m3fn
+        assert result[key].shape == (128, 2048, 1536)
+        scale_key = "model.language_model.layers.0.mlp.experts.gate_up_proj.weight_scale"
+        assert scale_key in result
+        assert result[scale_key].dtype == torch.float32
+        # Scale should be 3D: [num_experts, ceil(2048/128), ceil(1536/128)]
+        assert result[scale_key].shape == (128, 16, 12)
+
+    def test_fused_3d_down_proj_quantized(self, fmt):
+        """Fused 3D down_proj → FP8 (another Qwen3-VL key)."""
+        key = "model.language_model.layers.0.mlp.experts.down_proj"
+        tensor = torch.randn(128, 768, 2048, dtype=torch.bfloat16)
+        result = fmt.post_merge_transform(key, tensor)
+        assert result[key].dtype == torch.float8_e4m3fn
+        assert result[key].shape == (128, 768, 2048)
+
+    def test_fused_3d_round_trip_quality(self, fmt):
+        """Quantized fused 3D tensor should approximately round-trip."""
+        key = "model.language_model.layers.0.mlp.experts.down_proj"
+        tensor = torch.randn(4, 256, 256, dtype=torch.bfloat16)
+        result = fmt.post_merge_transform(key, tensor)
+        scale_key = key + ".weight_scale"
+        # Dequantize each expert slice and check error
+        for i in range(4):
+            fp8_slice = result[key][i]
+            scale_slice = result[scale_key][i]
+            recovered = dequantize_blockwise(fp8_slice, scale_slice)
+            error = (recovered.float() - tensor[i].float()).abs().max().item()
+            assert error < 1.0, f"Expert {i} round-trip error too large: {error}"
+
+    # -- Pass-through (dense, shared, non-expert) -----------------------------
+
+    def test_dense_weight_passthrough(self, fmt):
+        """Dense weight should pass through unchanged."""
+        key = "model.layers.0.self_attn.q_proj.weight"
+        tensor = torch.randn(256, 128, dtype=torch.bfloat16)
+        result = fmt.post_merge_transform(key, tensor)
+        assert list(result.keys()) == [key]
+        assert result[key] is tensor
+
+    def test_shared_expert_passthrough(self, fmt):
+        """Shared expert weight should pass through unchanged."""
+        key = "model.layers.0.mlp.shared_experts.gate_proj.weight"
+        tensor = torch.randn(256, 128, dtype=torch.bfloat16)
+        result = fmt.post_merge_transform(key, tensor)
+        assert list(result.keys()) == [key]
+        assert result[key] is tensor
+
+    def test_norm_weight_passthrough(self, fmt):
+        """Norm weight should pass through unchanged."""
+        key = "model.layers.0.input_layernorm.weight"
+        tensor = torch.randn(128, dtype=torch.bfloat16)
+        result = fmt.post_merge_transform(key, tensor)
+        assert list(result.keys()) == [key]
+        assert result[key] is tensor
+
+    def test_embed_passthrough(self, fmt):
+        """Embedding weight should pass through unchanged."""
+        key = "model.embed_tokens.weight"
+        tensor = torch.randn(1000, 128, dtype=torch.bfloat16)
+        result = fmt.post_merge_transform(key, tensor)
+        assert list(result.keys()) == [key]
+        assert result[key] is tensor
+
+
+class TestVllmConfigWithFusedExperts:
+    """Verify vLLM config generation handles both per-expert and fused keys."""
+
+    def test_fused_expert_not_in_ignore(self):
+        """Fused expert with weight_scale should NOT be in ignore list."""
+        weight_map = {
+            # Fused expert (Qwen3-VL style)
+            "model.language_model.layers.0.mlp.experts.gate_up_proj": "s.safetensors",
+            "model.language_model.layers.0.mlp.experts.gate_up_proj.weight_scale": "s.safetensors",
+            "model.language_model.layers.0.mlp.experts.down_proj": "s.safetensors",
+            "model.language_model.layers.0.mlp.experts.down_proj.weight_scale": "s.safetensors",
+            # Dense weight
+            "model.language_model.layers.0.self_attn.q_proj.weight": "s.safetensors",
+        }
+        config = _build_vllm_quantization_config(weight_map)
+        ignore = config["ignore"]
+        # Dense should be in ignore
+        assert "model.language_model.layers.0.self_attn.q_proj" in ignore
+        # Fused experts should NOT be in ignore (they have weight_scale)
+        assert "model.language_model.layers.0.mlp.experts.gate_up_proj" not in ignore
+        assert "model.language_model.layers.0.mlp.experts.down_proj" not in ignore
+
+    def test_mixed_per_expert_and_fused(self):
+        """Mixed format (Qwen3.5 has both) should handle both correctly."""
+        weight_map = {
+            # Per-expert (quantized)
+            "model.language_model.layers.0.mlp.experts.0.gate_proj.weight": "s.safetensors",
+            "model.language_model.layers.0.mlp.experts.0.gate_proj.weight_scale": "s.safetensors",
+            # Fused (quantized)
+            "model.language_model.layers.0.mlp.experts.gate_up_proj": "s.safetensors",
+            "model.language_model.layers.0.mlp.experts.gate_up_proj.weight_scale": "s.safetensors",
+            # Dense (not quantized)
+            "model.language_model.layers.0.self_attn.q_proj.weight": "s.safetensors",
+        }
+        config = _build_vllm_quantization_config(weight_map)
+        ignore = config["ignore"]
+        assert "model.language_model.layers.0.self_attn.q_proj" in ignore
+        assert "model.language_model.layers.0.mlp.experts.0.gate_proj" not in ignore
+        assert "model.language_model.layers.0.mlp.experts.gate_up_proj" not in ignore
+
+
+# ---------------------------------------------------------------------------
 # Cross-shard native FP8 scale handling
 # ---------------------------------------------------------------------------
 
@@ -613,3 +815,325 @@ class TestCrossShardFP8Scale:
             f"Expected delta ~{lora_fill}, got {delta.mean().item():.4f}. "
             "Merge may have been applied before dequantization."
         )
+
+
+# ---------------------------------------------------------------------------
+# GPU device parameter tests
+# ---------------------------------------------------------------------------
+
+_HAVE_CUDA = torch.cuda.is_available()
+
+
+class TestFP8BlockFormatDevice:
+    """Test FP8BlockFormat with device parameter (GPU acceleration)."""
+
+    def _make_format(self, tmp_path: Path, device: str = "cpu"):
+        from tinker_cookbook.weights._export._quantized import FP8BlockFormat
+
+        config_dict = {"model_type": "deepseek_v3"}
+        # Create minimal model dir with a single safetensors file
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        save_file({"dummy.weight": torch.randn(4, 4)}, str(model_dir / "model.safetensors"))
+        (model_dir / "config.json").write_text(json.dumps(config_dict))
+        return FP8BlockFormat(config_dict, model_dir, "vllm", device=device)
+
+    def test_cpu_post_merge_transform_routed_expert(self, tmp_path: Path):
+        fmt = self._make_format(tmp_path, "cpu")
+        tensor = torch.randn(256, 512, dtype=torch.bfloat16)
+        key = "model.layers.0.mlp.experts.0.gate_proj.weight"
+        scale_key = "model.layers.0.mlp.experts.0.gate_proj.weight_scale"
+        result = fmt.post_merge_transform(key, tensor)
+        assert key in result
+        assert scale_key in result
+        assert result[key].dtype == torch.float8_e4m3fn
+        assert result[scale_key].dtype == torch.float32
+        assert result[key].shape == (256, 512)
+
+    @pytest.mark.skipif(not _HAVE_CUDA, reason="No CUDA GPU available")
+    def test_gpu_post_merge_transform_matches_cpu(self, tmp_path: Path):
+        """GPU and CPU produce identical FP8 output for post_merge_transform."""
+        from tinker_cookbook.weights._export._quantized import FP8BlockFormat
+
+        config_dict = {"model_type": "deepseek_v3"}
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        save_file({"dummy.weight": torch.randn(4, 4)}, str(model_dir / "model.safetensors"))
+        (model_dir / "config.json").write_text(json.dumps(config_dict))
+
+        cpu_fmt = FP8BlockFormat(config_dict, model_dir, "vllm", device="cpu")
+        gpu_fmt = FP8BlockFormat(config_dict, model_dir, "vllm", device="cuda")
+
+        tensor = torch.randn(256, 512, dtype=torch.bfloat16)
+        key = "model.layers.0.mlp.experts.0.gate_proj.weight"
+
+        cpu_result = cpu_fmt.post_merge_transform(key, tensor)
+        gpu_result = gpu_fmt.post_merge_transform(key, tensor)
+
+        # Both should produce same keys
+        assert set(cpu_result.keys()) == set(gpu_result.keys())
+
+        for k in cpu_result:
+            assert cpu_result[k].device.type == "cpu", f"CPU result on wrong device: {k}"
+            assert gpu_result[k].device.type == "cpu", f"GPU result not moved back to CPU: {k}"
+            assert cpu_result[k].dtype == gpu_result[k].dtype, f"Dtype mismatch: {k}"
+            assert cpu_result[k].shape == gpu_result[k].shape, f"Shape mismatch: {k}"
+            if cpu_result[k].dtype == torch.float8_e4m3fn:
+                assert torch.equal(
+                    cpu_result[k].to(torch.float32), gpu_result[k].to(torch.float32)
+                ), f"FP8 tensor mismatch: {k}"
+            else:
+                assert torch.equal(cpu_result[k], gpu_result[k]), f"Tensor mismatch: {k}"
+
+    @pytest.mark.skipif(not _HAVE_CUDA, reason="No CUDA GPU available")
+    def test_gpu_pre_merge_transform_native_fp8(self, tmp_path: Path):
+        """GPU device doesn't break pre_merge_transform (dequant stays on CPU)."""
+        from tinker_cookbook.weights._export._quantized import FP8BlockFormat
+
+        config_dict = {
+            "model_type": "deepseek_v3",
+            "quantization_config": {"quant_method": "fp8", "weight_block_size": [4, 4]},
+        }
+        # Create model with FP8 weight + scale
+        fp8_weight = torch.randn(8, 8, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
+        scale_inv = torch.ones(2, 2, dtype=torch.float32) * 0.1
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        save_file(
+            {
+                "model.layers.0.mlp.experts.0.gate_proj.weight": fp8_weight,
+                "model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv": scale_inv,
+            },
+            str(model_dir / "model.safetensors"),
+        )
+        (model_dir / "config.json").write_text(json.dumps(config_dict))
+
+        fmt = FP8BlockFormat(config_dict, model_dir, "vllm", device="cuda")
+        shard = {
+            "model.layers.0.mlp.experts.0.gate_proj.weight": fp8_weight,
+            "model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv": scale_inv,
+        }
+        result = fmt.pre_merge_transform(
+            "model.layers.0.mlp.experts.0.gate_proj.weight", fp8_weight, shard
+        )
+        assert result.dtype == torch.bfloat16
+        assert result.device.type == "cpu"
+
+    def test_non_expert_passthrough(self, tmp_path: Path):
+        """Non-expert weights pass through post_merge_transform unchanged."""
+        fmt = self._make_format(tmp_path)
+        tensor = torch.randn(64, 64, dtype=torch.bfloat16)
+        result = fmt.post_merge_transform("model.layers.0.self_attn.q_proj.weight", tensor)
+        assert list(result.keys()) == ["model.layers.0.self_attn.q_proj.weight"]
+        assert torch.equal(result["model.layers.0.self_attn.q_proj.weight"], tensor)
+
+
+# ---------------------------------------------------------------------------
+# Shard engine validation tests
+# ---------------------------------------------------------------------------
+
+
+class TestShardEngineValidation:
+    """Test shard engine parameter validation and edge cases."""
+
+    def test_resume_requires_preserve_shard_names(self, tmp_path: Path):
+        from tinker_cookbook.weights._export._shard_engine import run_shard_merge
+
+        with pytest.raises(ValueError, match="resume=True requires preserve_shard_names=True"):
+            run_shard_merge(
+                base_model="dummy",
+                adapter_path=str(tmp_path),
+                output_path=str(tmp_path / "out"),
+                trust_remote_code=False,
+                model_dir=tmp_path,
+                config_dict={},
+                resume=True,
+                preserve_shard_names=False,
+            )
+
+
+class TestShardEngineWithMockFormat:
+    """Test run_shard_merge with a mock QuantizationFormat.
+
+    Verifies the engine calls protocol methods in the right order and
+    wires pre/post transforms correctly, independent of any specific
+    quantization format implementation.
+    """
+
+    @staticmethod
+    def _setup_model_and_adapter(tmp_path: Path):
+        """Create a minimal 1-layer model and adapter for shard engine tests."""
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+
+        # Model with one dense weight and one expert weight
+        weights = {
+            "model.layers.0.self_attn.q_proj.weight": torch.randn(8, 4, dtype=torch.bfloat16),
+            "model.layers.0.mlp.experts.0.gate_proj.weight": torch.randn(
+                8, 4, dtype=torch.bfloat16
+            ),
+            "model.layers.0.norm.weight": torch.ones(8, dtype=torch.bfloat16),
+        }
+        save_file(weights, str(model_dir / "model.safetensors"))
+
+        config = {"model_type": "test", "architectures": ["TestModel"]}
+        (model_dir / "config.json").write_text(json.dumps(config))
+
+        # Minimal tokenizer
+        (model_dir / "tokenizer_config.json").write_text(json.dumps({"model_max_length": 512}))
+        (model_dir / "tokenizer.json").write_text(
+            json.dumps(
+                {
+                    "version": "1.0",
+                    "model": {"type": "BPE", "vocab": {"a": 0}, "merges": []},
+                    "added_tokens": [],
+                }
+            )
+        )
+
+        # Adapter targeting the attention weight
+        adapter_dir = tmp_path / "adapter"
+        adapter_dir.mkdir()
+        adapter_weights = {
+            "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": (
+                torch.ones(1, 4) * 0.01
+            ),
+            "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": torch.ones(8, 1),
+        }
+        save_file(adapter_weights, str(adapter_dir / "adapter_model.safetensors"))
+        (adapter_dir / "adapter_config.json").write_text(json.dumps({"lora_alpha": 1, "r": 1}))
+
+        return model_dir, adapter_dir, config, weights
+
+    def test_mock_format_transforms_called(self, tmp_path: Path):
+        """Verify pre/post transforms are called and output includes transformed keys."""
+        from tinker_cookbook.weights._export._shard_engine import run_shard_merge
+
+        model_dir, adapter_dir, config, orig_weights = self._setup_model_and_adapter(tmp_path)
+        output_dir = tmp_path / "output"
+
+        # Mock format: adds a ".transformed" suffix key for expert weights
+        class MockFormat:
+            def filter_model_keys(self, keys):
+                return keys
+
+            def should_skip_output_key(self, key):
+                return False
+
+            def pre_merge_transform(self, key, tensor, shard_tensors):
+                return tensor
+
+            def post_merge_transform(self, key, tensor):
+                if "experts" in key:
+                    # Simulate quantization: add a scale key
+                    scale_key = key.replace(".weight", ".weight_scale")
+                    return {key: tensor, scale_key: torch.tensor([1.0])}
+                return {key: tensor}
+
+            def finalize_config(self, config_dict, weight_map):
+                patched = dict(config_dict)
+                patched["test_patched"] = True
+                return patched
+
+        run_shard_merge(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+            trust_remote_code=False,
+            model_dir=model_dir,
+            config_dict=config,
+            quant_format=MockFormat(),
+            preserve_shard_names=True,
+        )
+
+        # Load output
+        out_tensors = load_file(str(output_dir / "model.safetensors"))
+
+        # Expert weight should have a .weight_scale added by post_merge_transform
+        assert "model.layers.0.mlp.experts.0.gate_proj.weight" in out_tensors
+        assert "model.layers.0.mlp.experts.0.gate_proj.weight_scale" in out_tensors
+
+        # Dense weight should be present (passthrough)
+        assert "model.layers.0.self_attn.q_proj.weight" in out_tensors
+
+        # Norm weight should be present (passthrough)
+        assert "model.layers.0.norm.weight" in out_tensors
+
+        # Config should have been patched by finalize_config
+        out_config = json.loads((output_dir / "config.json").read_text())
+        assert out_config.get("test_patched") is True
+
+    def test_mock_format_skip_keys(self, tmp_path: Path):
+        """Verify should_skip_output_key excludes keys from output."""
+        from tinker_cookbook.weights._export._shard_engine import run_shard_merge
+
+        model_dir, adapter_dir, config, _ = self._setup_model_and_adapter(tmp_path)
+        output_dir = tmp_path / "output"
+
+        class SkipNormFormat:
+            def filter_model_keys(self, keys):
+                return keys
+
+            def should_skip_output_key(self, key):
+                return "norm" in key
+
+            def pre_merge_transform(self, key, tensor, shard_tensors):
+                return tensor
+
+            def post_merge_transform(self, key, tensor):
+                return {key: tensor}
+
+            def finalize_config(self, config_dict, weight_map):
+                return config_dict
+
+        run_shard_merge(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+            trust_remote_code=False,
+            model_dir=model_dir,
+            config_dict=config,
+            quant_format=SkipNormFormat(),
+            preserve_shard_names=True,
+        )
+
+        out_tensors = load_file(str(output_dir / "model.safetensors"))
+        assert "model.layers.0.norm.weight" not in out_tensors
+        assert "model.layers.0.self_attn.q_proj.weight" in out_tensors
+
+    def test_mock_format_filter_model_keys(self, tmp_path: Path):
+        """Verify filter_model_keys excludes keys from merge planning."""
+        from tinker_cookbook.weights._export._shard_engine import run_shard_merge
+
+        model_dir, adapter_dir, config, _ = self._setup_model_and_adapter(tmp_path)
+        output_dir = tmp_path / "output"
+
+        class FilterFormat:
+            def filter_model_keys(self, keys):
+                # Exclude the attention weight from merge planning
+                return {k for k in keys if "q_proj" not in k}
+
+            def should_skip_output_key(self, key):
+                return False
+
+            def pre_merge_transform(self, key, tensor, shard_tensors):
+                return tensor
+
+            def post_merge_transform(self, key, tensor):
+                return {key: tensor}
+
+            def finalize_config(self, config_dict, weight_map):
+                return config_dict
+
+        # This should fail because adapter targets q_proj but it's filtered out
+        with pytest.raises(WeightsMergeError, match="does not exist in the model"):
+            run_shard_merge(
+                base_model=str(model_dir),
+                adapter_path=str(adapter_dir),
+                output_path=str(output_dir),
+                trust_remote_code=False,
+                model_dir=model_dir,
+                config_dict=config,
+                quant_format=FilterFormat(),
+                preserve_shard_names=True,
+            )

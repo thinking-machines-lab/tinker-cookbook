@@ -9,6 +9,8 @@ refer to `tinker_cookbook/recipes/sl_loop.py`.
 
 import asyncio
 import logging
+import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,13 +33,71 @@ from tinker_cookbook.supervised.types import SupervisedDatasetBuilder
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.lr_scheduling import LRSchedule, compute_schedule_lr_multiplier
+from tinker_cookbook.utils.misc_utils import iteration_dir
 
 logger = logging.getLogger(__name__)
 
 
 @chz.chz
 class Config:
-    """Configuration for supervised fine-tuning."""
+    """Configuration for supervised fine-tuning.
+
+    This ``chz`` dataclass holds every knob for a supervised learning run: model
+    selection, learning-rate schedule, checkpointing cadence, evaluation, and logging.
+
+    Attributes:
+        log_path (str): Directory for checkpoints, metrics, and trace files.
+            Tilde (``~``) is expanded automatically.
+        model_name (str): HuggingFace model identifier (e.g. ``"Qwen/Qwen3-8B"``).
+        load_checkpoint_path (str | None): Path to a Tinker checkpoint to
+            initialise weights from. ``None`` starts from the base model.
+        renderer_name (str | None): Renderer to apply when tokenising chat
+            messages.  Should match the model family (e.g. ``"qwen3"``).
+        dataset_builder (SupervisedDatasetBuilder): Builder that produces
+            the training (and optionally evaluation) dataset.
+        learning_rate (float): Peak learning rate. Default ``1e-4``.
+        lr_schedule (LRSchedule): Learning-rate schedule type.
+            Default ``"linear"`` decay.
+        num_epochs (int): Number of passes over the dataset. Default ``1``.
+        lora_rank (int): LoRA rank for the adapter. Default ``32``.
+        base_url (str | None): Override the Tinker service URL.
+        evaluator_builders (list[EvaluatorBuilder]): Factories for evaluators
+            run every ``eval_every`` steps.
+        infrequent_evaluator_builders (list[EvaluatorBuilder]): Factories for
+            evaluators run every ``infrequent_eval_every`` steps.
+        save_every (int): Save a checkpoint every *N* steps (0 disables).
+        eval_every (int): Run evaluators every *N* steps (0 disables).
+        infrequent_eval_every (int): Run infrequent evaluators every *N* steps
+            (0 disables).
+        ttl_seconds (int | None): Time-to-live for periodic checkpoints.
+            The final checkpoint is kept indefinitely. Default ``604800`` (7 days).
+        adam_beta1 (float): Adam beta1. Default ``0.9``.
+        adam_beta2 (float): Adam beta2. Default ``0.95``.
+        adam_eps (float): Adam epsilon. Default ``1e-8``.
+        wandb_project (str | None): Weights & Biases project name.
+        wandb_name (str | None): Weights & Biases run name.
+        enable_trace (bool): Enable async tracing to ``trace_events.jsonl``.
+        span_chart_every (int): Write a Gantt-chart HTML every *N* steps
+            (0 disables).
+        max_steps (int | None): Hard cap on training steps.  ``None`` trains
+            for ``num_epochs * n_batches``.
+        submit_ahead (int): How many batches to submit ahead of the one being
+            waited on.  ``1`` (default) matches the historical single-lookahead
+            behavior; ``0`` disables pipelining entirely; higher values deepen
+            the pipeline for more overlap at the cost of memory.
+
+    Example::
+
+        from tinker_cookbook.supervised import train
+
+        config = train.Config(
+            log_path="~/logs/sft-run",
+            model_name="Qwen/Qwen3-8B",
+            dataset_builder=my_dataset_builder,
+            learning_rate=1e-4,
+        )
+        asyncio.run(train.main(config))
+    """
 
     # Required parameters
     log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
@@ -65,6 +125,11 @@ class Config:
     infrequent_eval_every: int = 100
     # Periodic checkpoints use this TTL; the final checkpoint is kept indefinitely.
     ttl_seconds: int | None = 604800  # 7 days
+    # Rolling checkpoint cadence (0 = disabled). Saves training state for resume
+    # but skips the sampler-weight export, making it cheaper than periodic checkpoints.
+    rolling_save_every: int = 0
+    # TTL for rolling checkpoints; short to auto-clean if explicit deletion fails.
+    rolling_ttl_seconds: int = 7200  # 2 hours
 
     # Adam optimizer parameters
     adam_beta1: float = 0.9
@@ -81,9 +146,37 @@ class Config:
     # Maximum number of training steps. If None, train for num_epochs * n_batches.
     max_steps: int | None = None
 
+    # How many batches to submit ahead of the one being waited on.
+    # 1 = historical single-lookahead behavior (submit N+1 while finishing N).
+    # 0 = no pipelining, 2+ = deeper pipeline.
+    submit_ahead: int = 1
+
 
 @dataclass
 class SubmittedBatch:
+    """A batch that has been submitted to the Tinker service but not yet resolved.
+
+    Holds the API futures for the forward-backward and optimizer-step calls along
+    with bookkeeping needed to log metrics and save checkpoints once the futures
+    complete.
+
+    Attributes:
+        fwd_bwd_future (APIFuture[tinker.ForwardBackwardOutput]): Future for
+            the forward-backward pass.
+        optim_step_future (APIFuture[tinker.OptimStepResponse]): Future for
+            the optimizer step.
+        metrics (dict[str, int | float | str]): Accumulated metrics dict that
+            will be logged after the batch resolves.
+        data (list): The list of ``tinker.Datum`` objects sent in this batch.
+        step (int): Global training step index.
+        epoch_idx (int): Current epoch index.
+        batch_idx (int): Batch index within the current epoch.
+        eval_metrics (dict[str, float] | None): Evaluation metrics gathered
+            before this step was submitted, or ``None``.
+        infrequent_eval_metrics (dict[str, float] | None): Infrequent
+            evaluation metrics, or ``None``.
+    """
+
     fwd_bwd_future: APIFuture[tinker.ForwardBackwardOutput]
     optim_step_future: APIFuture[tinker.OptimStepResponse]
     metrics: dict[str, int | float | str]
@@ -95,7 +188,6 @@ class SubmittedBatch:
     infrequent_eval_metrics: dict[str, float] | None = None
 
 
-@trace.scope
 async def run_evals(
     evaluators: list[Evaluator],
     training_client: tinker.TrainingClient,
@@ -103,15 +195,22 @@ async def run_evals(
 ) -> dict[str, float]:
     """Evaluate the current model weights and prefix results with ``test/``.
 
-    The helper is called immediately before optimizer step `step` is submitted, so it
-    measures the weights produced after step `step-1` (or the initial weights for step 0).
-    Training-client evaluators run against the mutable training client, while sampling
-    evaluators request a fresh `SamplingClient` snapshot via
-    `save_weights_and_get_sampling_client_async` to ensure their work uses a fixed
-    checkpoint. Returned metrics are prefixed with ``test/`` so they can be logged next
-    to the same-step training metrics.
+    The helper is called immediately before optimizer step *step* is submitted, so it
+    measures the weights produced after step ``step-1`` (or the initial weights for
+    step 0).  Training-client evaluators run against the mutable training client,
+    while sampling evaluators request a fresh ``SamplingClient`` snapshot via
+    ``save_weights_and_get_sampling_client_async`` to ensure their work uses a fixed
+    checkpoint.
+
+    Args:
+        evaluators (list[Evaluator]): Evaluators to run.
+        training_client (tinker.TrainingClient): The active training client
+            whose weights will be evaluated.
+        step (int): The training step index (used for logging context).
+
+    Returns:
+        dict[str, float]: Metric name to value mapping.
     """
-    trace.update_scope_context({"step": step})
 
     metrics = {}
     sampling_client = None
@@ -133,9 +232,7 @@ async def run_evals(
             nonlocal sampling_client
             if sampling_client is None:
                 # Snapshot the current pre-step weights and create a new sampling client.
-                sampling_client = await training_client.save_weights_and_get_sampling_client_async(
-                    f"evals_step_{step}"
-                )
+                sampling_client = await training_client.save_weights_and_get_sampling_client_async()
             return await evaluator(sampling_client)
         else:
             raise ConfigurationError(f"Unknown evaluator type: {type(evaluator)}")
@@ -153,16 +250,21 @@ async def main(config: Config):
     """Run the standard supervised learning loop used by the supervised recipes.
 
     Responsibilities:
-    1. Initialize logging, build the dataset/evaluator objects, construct (or resume) the
-       training client, and determine the ``epoch``/``batch`` indices to start from.
-    2. Iterate over batches: fetch data, optionally run evaluations before submitting the
-       optimizer step (so they observe pre-step weights), issue `forward_backward` and
-       `optim_step` requests, and log metrics once the futures resolve.
+
+    1. Initialize logging, build the dataset/evaluator objects, construct (or resume)
+       the training client, and determine the ``epoch``/``batch`` indices to start from.
+    2. Iterate over batches: fetch data, optionally run evaluations before submitting
+       the optimizer step (so they observe pre-step weights), issue ``forward_backward``
+       and ``optim_step`` requests, and log metrics once the futures resolve.
     3. Save checkpoints at the configured cadence so runs can resume or export weights,
        then emit a final checkpoint when training completes.
 
-    Training and evaluation metrics share the same ``step`` index to keep dashboards easy
-    to read.
+    Training and evaluation metrics share the same ``step`` index to keep dashboards
+    easy to read.
+
+    Args:
+        config (Config): Fully populated training configuration.
+            See :class:`Config` for fields and usage example.
     """
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     if resume_info:
@@ -180,6 +282,7 @@ async def main(config: Config):
         config=config,
         do_configure_logging_module=True,
     )
+    store = ml_logger.store
     if config.enable_trace:
         # Get and rename the current (main) task
         current_task = asyncio.current_task()
@@ -226,6 +329,16 @@ async def main(config: Config):
             rank=config.lora_rank,
             user_metadata=user_metadata,
         )
+
+    rolling_mgr = checkpoint_utils.RollingCheckpointManager(
+        training_client=training_client,
+        service_client=service_client,
+        log_path=config.log_path,
+        rolling_save_every=config.rolling_save_every,
+        save_every=config.save_every,
+        rolling_ttl_seconds=config.rolling_ttl_seconds,
+        store=store,
+    )
 
     dataset, maybe_test_dataset = config.dataset_builder()
     n_batches = len(dataset)
@@ -321,7 +434,13 @@ async def main(config: Config):
                     loop_state={"epoch": submitted.epoch_idx, "batch": submitted.batch_idx},
                     kind="both",
                     ttl_seconds=config.ttl_seconds,
+                    store=store,
                 )
+
+        await rolling_mgr.maybe_save_async(
+            step=submitted.step,
+            loop_state={"epoch": submitted.epoch_idx, "batch": submitted.batch_idx},
+        )
 
         async with trace.scope_span("step"):
             fwd_bwd_result = await submitted.fwd_bwd_future.result_async()
@@ -349,19 +468,42 @@ async def main(config: Config):
         if submitted.infrequent_eval_metrics is not None:
             metrics.update(submitted.infrequent_eval_metrics)
 
-    pending_batch: SubmittedBatch | None = None
     log_path = Path(config.log_path)
 
     async def finish_and_log(submitted: SubmittedBatch, window: trace.IterationWindow) -> None:
         """Finish a batch, merge timing metrics, and log."""
         await finish_batch(submitted)
         submitted.metrics.update(window.get_timing_metrics())
-        window.write_spans_jsonl(log_path / "timing_spans.jsonl", step=submitted.step)
+        window.save_timing(submitted.step, store=store)
         if config.span_chart_every > 0 and submitted.step % config.span_chart_every == 0:
-            trace.save_gantt_chart_html(
-                window, submitted.step, log_path / f"timing_gantt_{submitted.step:06d}.html"
-            )
+            iter_dir = iteration_dir(log_path, submitted.step)
+            if iter_dir is not None:
+                iter_dir.mkdir(parents=True, exist_ok=True)
+                trace.save_gantt_chart_html(window, submitted.step, iter_dir / "timing_gantt.html")
         ml_logger.log_metrics(metrics=submitted.metrics, step=submitted.step)
+
+    assert config.submit_ahead >= 0, f"submit_ahead must be >= 0, got {config.submit_ahead}"
+
+    # Each step gets its own IterationWindow. Since async is cooperative
+    # (single-threaded), we swap the active window in trace._iteration_window
+    # around each phase so @scope spans land in the correct window.
+    pending: deque[tuple[SubmittedBatch, trace.IterationWindow, float]] = deque()
+    max_pending = 1 + config.submit_ahead
+
+    def _activate_window(window: trace.IterationWindow):
+        return trace._iteration_window.set(window)
+
+    def _deactivate_window(token):
+        trace._iteration_window.reset(token)
+
+    async def drain_oldest() -> None:
+        oldest, window, t_start = pending.popleft()
+        token = _activate_window(window)
+        try:
+            await finish_and_log(oldest, window)
+        finally:
+            window._total_time = time.perf_counter() - t_start
+            _deactivate_window(token)
 
     reached_max_steps = False
     for epoch_idx in range(start_epoch, config.num_epochs):
@@ -374,17 +516,21 @@ async def main(config: Config):
             if config.max_steps is not None and step >= config.max_steps:
                 reached_max_steps = True
                 break
-            with trace.trace_iteration(step=step) as window:
+            window = trace.IterationWindow()
+            t_start = time.perf_counter()
+            token = _activate_window(window)
+            try:
                 submitted_batch = await submit_batch(epoch_idx, batch_idx)
-                if pending_batch is not None:
-                    await finish_and_log(pending_batch, window)
-            pending_batch = submitted_batch
+            finally:
+                _deactivate_window(token)
+            pending.append((submitted_batch, window, t_start))
+            if len(pending) >= max_pending:
+                await drain_oldest()
         if reached_max_steps:
             break
 
-    if pending_batch is not None:
-        with trace.trace_iteration(step=pending_batch.step) as window:
-            await finish_and_log(pending_batch, window)
+    while pending:
+        await drain_oldest()
 
     did_train = start_epoch < config.num_epochs and (
         config.max_steps is None or start_epoch * n_batches + start_batch < config.max_steps
@@ -397,9 +543,13 @@ async def main(config: Config):
             kind="both",
             loop_state={"epoch": config.num_epochs, "batch": 0},
             ttl_seconds=None,
+            store=store,
         )
     else:
         logger.info("Training was already complete; nothing to do")
+    # Clean up rolling checkpoints after the final save so that the last
+    # entry in checkpoints.jsonl always points to valid server-side data.
+    await rolling_mgr.finalize_async()
 
     ml_logger.close()
     logger.info("Training completed successfully")

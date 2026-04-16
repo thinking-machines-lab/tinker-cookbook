@@ -11,6 +11,7 @@ to the token-level Env interface, including:
 import asyncio
 from unittest.mock import MagicMock, patch
 
+import pytest
 import tinker
 
 from tinker_cookbook.renderers.base import Message
@@ -247,11 +248,42 @@ class TestMaxTrajectoryTokens:
         result = asyncio.run(env.step([1]))
 
         assert result.episode_done is True
-        assert result.reward == 0.0
+        assert result.reward == -0.1  # default context_overflow_reward
         assert result.next_observation.length == 0  # empty observation
         assert result.metrics["context_overflow"] == 1.0
         # Original metrics should be preserved
         assert result.metrics["turns"] == 5.0
+
+    def test_no_overflow_check_when_episode_done(self):
+        """When episode is already done, context overflow check should NOT fire.
+
+        The real reward from the env should be preserved even if the rendered
+        conversation exceeds the limit — there is no next sampling call.
+        """
+        renderer = _make_renderer(gen_prompt_tokens=list(range(100)), stop_sequences=["<s>"])
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(
+                reward=0.9,
+                episode_done=True,  # episode is done (e.g., model gave final answer)
+                next_messages=[{"role": "user", "content": "x"}],
+                metrics={"accuracy": 1.0},
+            ),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer,
+            message_env=msg_env,
+            max_trajectory_tokens=50,  # observation (100) exceeds limit (50)
+            context_overflow_reward=-1.0,
+        )
+
+        result = asyncio.run(env.step([1]))
+
+        # Real reward should be preserved, NOT replaced by context_overflow_reward
+        assert result.reward == 0.9
+        assert result.episode_done is True
+        assert "context_overflow" not in result.metrics
+        assert result.metrics["accuracy"] == 1.0
 
     def test_within_limit_continues(self):
         """When next_observation is within max_trajectory_tokens, episode continues."""
@@ -293,6 +325,235 @@ class TestMaxTrajectoryTokens:
 
         assert result.episode_done is False
         assert "context_overflow" not in result.metrics
+
+
+class TestMaxGenerationTokens:
+    def test_generation_budget_causes_overflow(self):
+        """When observation + max_generation_tokens > max_trajectory_tokens, episode ends.
+
+        The observation (80 tokens) fits under the trajectory limit (100) by itself,
+        but adding the generation budget (30) pushes it over: 80 + 30 = 110 > 100.
+        """
+        renderer = _make_renderer(gen_prompt_tokens=list(range(80)), stop_sequences=["<s>"])
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(
+                reward=0.9,
+                episode_done=False,
+                next_messages=[{"role": "user", "content": "x"}],
+                metrics={"turns": 2.0},
+            ),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer,
+            message_env=msg_env,
+            max_trajectory_tokens=100,
+            max_generation_tokens=30,
+        )
+
+        result = asyncio.run(env.step([1]))
+
+        assert result.episode_done is True
+        assert result.reward == -0.1  # default context_overflow_reward
+        assert result.next_observation.length == 0
+        assert result.metrics["context_overflow"] == 1.0
+        assert result.metrics["turns"] == 2.0
+
+    def test_generation_budget_within_limit_continues(self):
+        """When observation + max_generation_tokens <= max_trajectory_tokens, episode continues."""
+        renderer = _make_renderer(gen_prompt_tokens=list(range(50)), stop_sequences=["<s>"])
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(
+                reward=0.5,
+                episode_done=False,
+                next_messages=[{"role": "user", "content": "x"}],
+            ),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer,
+            message_env=msg_env,
+            max_trajectory_tokens=100,
+            max_generation_tokens=30,  # 50 + 30 = 80 <= 100
+        )
+
+        result = asyncio.run(env.step([1]))
+
+        assert result.episode_done is False
+        assert result.reward == 0.5
+        assert "context_overflow" not in result.metrics
+
+    def test_initial_observation_raises_on_overflow(self):
+        """initial_observation raises ValueError when prompt + generation budget exceeds limit."""
+        renderer = _make_renderer(gen_prompt_tokens=list(range(80)), stop_sequences=["<s>"])
+        msg_env = StubMessageEnv(
+            initial_messages=[{"role": "user", "content": "hi"}],
+            step_result=MessageStepResult(reward=0, episode_done=False, next_messages=[]),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer,
+            message_env=msg_env,
+            max_trajectory_tokens=100,
+            max_generation_tokens=30,  # 80 + 30 = 110 > 100
+        )
+
+        with pytest.raises(ValueError, match="too long for the model's context window"):
+            asyncio.run(env.initial_observation())
+
+    def test_initial_observation_ok_when_within_limit(self):
+        """initial_observation succeeds when prompt + generation budget fits."""
+        renderer = _make_renderer(gen_prompt_tokens=list(range(50)), stop_sequences=["<s>"])
+        msg_env = StubMessageEnv(
+            initial_messages=[{"role": "user", "content": "hi"}],
+            step_result=MessageStepResult(reward=0, episode_done=False, next_messages=[]),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer,
+            message_env=msg_env,
+            max_trajectory_tokens=100,
+            max_generation_tokens=30,  # 50 + 30 = 80 <= 100
+        )
+
+        model_input, stop_cond = asyncio.run(env.initial_observation())
+
+        assert model_input.to_ints() == list(range(50))
+        assert stop_cond == ["<s>"]
+
+
+class TestContextOverflowReward:
+    def test_custom_overflow_reward(self):
+        """context_overflow_reward is used when episode terminates due to overflow."""
+        renderer = _make_renderer(gen_prompt_tokens=list(range(100)), stop_sequences=["<s>"])
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(
+                reward=0.9,
+                episode_done=False,
+                next_messages=[{"role": "user", "content": "x"}],
+            ),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer,
+            message_env=msg_env,
+            max_trajectory_tokens=50,
+            context_overflow_reward=-0.5,
+        )
+
+        result = asyncio.run(env.step([1]))
+
+        assert result.episode_done is True
+        assert result.reward == -0.5
+        assert result.metrics["context_overflow"] == 1.0
+
+    def test_custom_overflow_reward_with_generation_budget(self):
+        """context_overflow_reward works with max_generation_tokens check."""
+        renderer = _make_renderer(gen_prompt_tokens=list(range(80)), stop_sequences=["<s>"])
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(
+                reward=0.9,
+                episode_done=False,
+                next_messages=[{"role": "user", "content": "x"}],
+                metrics={"turns": 3.0},
+            ),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer,
+            message_env=msg_env,
+            max_trajectory_tokens=100,
+            max_generation_tokens=30,  # 80 + 30 = 110 > 100
+            context_overflow_reward=-1.0,
+        )
+
+        result = asyncio.run(env.step([1]))
+
+        assert result.episode_done is True
+        assert result.reward == -1.0
+        assert result.metrics["context_overflow"] == 1.0
+        assert result.metrics["turns"] == 3.0
+
+    def test_default_overflow_reward(self):
+        """Default context_overflow_reward is -0.1 (matches failed_parse_reward)."""
+        renderer = _make_renderer(gen_prompt_tokens=list(range(100)), stop_sequences=["<s>"])
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(
+                reward=0.9,
+                episode_done=False,
+                next_messages=[{"role": "user", "content": "x"}],
+            ),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer,
+            message_env=msg_env,
+            max_trajectory_tokens=50,
+        )
+
+        result = asyncio.run(env.step([1]))
+
+        assert result.reward == -0.1
+
+
+class TestMaxTokensReached:
+    def test_stop_reason_length_terminates_episode(self):
+        """When stop_reason='length', episode terminates with context_overflow_reward."""
+        renderer = _make_renderer(gen_prompt_tokens=[1, 2, 3], stop_sequences=["<s>"])
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(
+                reward=0.9,
+                episode_done=False,
+                next_messages=[{"role": "user", "content": "x"}],
+            ),
+        )
+        env = EnvFromMessageEnv(renderer=renderer, message_env=msg_env)
+
+        result = asyncio.run(env.step([1, 2, 3], extra={"stop_reason": "length"}))
+
+        assert result.episode_done is True
+        assert result.reward == -0.1  # default context_overflow_reward
+        assert result.next_observation.length == 0
+        assert result.metrics["max_tokens_reached"] == 1.0
+        # MessageEnv.step should NOT have been called (we short-circuit)
+        assert len(msg_env.step_calls) == 0
+
+    def test_stop_reason_length_uses_custom_overflow_reward(self):
+        """stop_reason='length' uses the configured context_overflow_reward."""
+        renderer = _make_renderer()
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(reward=0.9, episode_done=False, next_messages=[]),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer,
+            message_env=msg_env,
+            context_overflow_reward=-0.5,
+        )
+
+        result = asyncio.run(env.step([1], extra={"stop_reason": "length"}))
+
+        assert result.reward == -0.5
+        assert result.metrics["max_tokens_reached"] == 1.0
+
+    def test_stop_reason_stop_continues_normally(self):
+        """When stop_reason='stop' (default), normal processing occurs."""
+        renderer = _make_renderer(gen_prompt_tokens=[10, 20], stop_sequences=["<s>"])
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(
+                reward=0.7,
+                episode_done=False,
+                next_messages=[{"role": "user", "content": "x"}],
+            ),
+        )
+        env = EnvFromMessageEnv(renderer=renderer, message_env=msg_env)
+
+        result = asyncio.run(env.step([1, 2]))
+
+        assert result.reward == 0.7
+        assert result.episode_done is False
+        assert "max_tokens_reached" not in result.metrics
+        assert len(msg_env.step_calls) == 1
 
 
 class TestStepThreading:

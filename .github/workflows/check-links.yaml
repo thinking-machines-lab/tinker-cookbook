@@ -1,0 +1,47 @@
+name: check-links
+
+on:
+  push:
+    branches: [main]
+    paths: ["**/*.md"]
+  pull_request:
+    paths: ["**/*.md"]
+
+jobs:
+  check-links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check relative links in Markdown files
+        run: |
+          python3 -c "
+          import re, os, glob, sys
+
+          link_re = re.compile(r'\[([^\]]*)\]\(([^)]+)\)')
+          exists_cache = {}
+          broken = []
+          for md in glob.glob('**/*.md', recursive=True):
+              dirpath = os.path.dirname(md)
+              with open(md) as f:
+                  for lineno, line in enumerate(f, 1):
+                      for m in link_re.finditer(line):
+                          link = m.group(2)
+                          if link.startswith(('http://', 'https://', '#', 'mailto:')):
+                              continue
+                          path = link.split('#')[0]
+                          if not path:
+                              continue
+                          resolved = os.path.normpath(os.path.join(dirpath, path))
+                          if resolved not in exists_cache:
+                              exists_cache[resolved] = os.path.exists(resolved)
+                          if not exists_cache[resolved]:
+                              broken.append((md, lineno, link))
+
+          if broken:
+              for src, lineno, link in broken:
+                  print(f'::error file={src},line={lineno}::{src}:{lineno}: broken link -> {link}')
+              sys.exit(1)
+          else:
+              print('All relative links OK')
+          "

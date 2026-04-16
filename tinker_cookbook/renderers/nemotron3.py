@@ -28,6 +28,28 @@ the following ways:
    prepends an empty system message in build_generation_prompt and
    build_supervised_example to match this behavior.
 
+Thinking modes
+--------------
+Both Nano and Super support reasoning ON/OFF. The Super model additionally
+supports a low-effort reasoning mode that produces shorter thinking traces.
+
++---------------------+-------------------------------+---------------------+
+| Mode                | HF template params            | Renderer name       |
++=====================+===============================+=====================+
+| Reasoning ON (full) | enable_thinking=True          | nemotron3           |
++---------------------+-------------------------------+---------------------+
+| Low-effort thinking | enable_thinking=True,         | nemotron3_low       |
+| (Super only)        | low_effort=True               | _thinking           |
++---------------------+-------------------------------+---------------------+
+| Reasoning OFF       | enable_thinking=False         | nemotron3_disable   |
+|                     |                               | _thinking           |
++---------------------+-------------------------------+---------------------+
+
+The low-effort mode appends ``{reasoning effort: low}`` to the last user
+message, signaling the model to use shorter reasoning traces. The generation
+suffix remains ``<think>\\n`` (thinking is still enabled).
+
+Reference: https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
 """
 
 import dataclasses
@@ -131,9 +153,30 @@ class Nemotron3Renderer(Qwen3_5Renderer):
         return messages
 
     def build_generation_prompt(self, messages: list[Message], *args: object, **kwargs: object):  # type: ignore[override]
+        """Build generation prompt, prepending an empty system message if none exists.
+
+        Args:
+            messages (list[Message]): The conversation messages.
+            *args: Additional positional arguments passed to the parent.
+            **kwargs: Additional keyword arguments passed to the parent.
+
+        Returns:
+            tinker.ModelInput: The tokenized model input ready for sampling.
+        """
         return super().build_generation_prompt(self._normalize_messages(messages), *args, **kwargs)  # type: ignore[arg-type]
 
     def build_supervised_example(self, messages: list[Message], *args: object, **kwargs: object):  # type: ignore[override]
+        """Build supervised example, prepending an empty system message if none exists.
+
+        Args:
+            messages (list[Message]): The conversation messages for supervised training.
+            *args: Additional positional arguments passed to the parent.
+            **kwargs: Additional keyword arguments passed to the parent.
+
+        Returns:
+            tuple[tinker.ModelInput, torch.Tensor]: The tokenized model input and
+                per-token weight tensor.
+        """
         return super().build_supervised_example(self._normalize_messages(messages), *args, **kwargs)  # type: ignore[arg-type]
 
     def _assistant_header_suffix(self, message: Message, ctx: RenderContext) -> str:
@@ -314,6 +357,36 @@ class Nemotron3Renderer(Qwen3_5Renderer):
         return [Message(role="system", content=content)]
 
 
+class Nemotron3LowThinkingRenderer(Nemotron3Renderer):
+    """Renderer for Nemotron-3 Super with low-effort reasoning.
+
+    Matches the Nemotron-3 Super HF template with ``enable_thinking=True``
+    and ``low_effort=True``. The model still produces a ``<think>`` block but
+    uses significantly fewer reasoning tokens than full thinking mode.
+
+    Mechanically, ``{reasoning effort: low}`` is appended to the last user
+    message content; the generation suffix remains ``<think>\\n`` (same as
+    the full-thinking ``Nemotron3Renderer``).
+
+    This mode is only available on the Nemotron-3 Super model
+    (NVIDIA-Nemotron-3-Super-120B-A12B-BF16); the Nano model's HF template
+    does not support ``low_effort``.
+
+    Reference: https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
+    """
+
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        """Render message, appending low-effort suffix to the last user message."""
+        if message["role"] == "user" and ctx.idx == ctx.last_user_index:
+            content = message.get("content", "")
+            assert isinstance(content, str), (
+                "Nemotron-3 Super is text-only; list content not supported"
+            )
+            message = message.copy()
+            message["content"] = content + "\n\n{reasoning effort: low}"
+        return super().render_message(message, ctx)
+
+
 class Nemotron3DisableThinkingRenderer(Nemotron3Renderer):
     """Renderer for Nemotron-3 models with thinking disabled.
 
@@ -323,6 +396,15 @@ class Nemotron3DisableThinkingRenderer(Nemotron3Renderer):
     """
 
     def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
+        """Return generation suffix tokens with ``<think></think>`` to disable thinking.
+
+        Args:
+            role (Role): The role for the generation prompt.
+            ctx (RenderContext): Positional context for the generation message.
+
+        Returns:
+            list[int]: Encoded tokens for the generation suffix.
+        """
         maybe_newline = "\n" if ctx.idx > 0 else ""
         header_str = f"{maybe_newline}<|im_start|>{role}\n<think></think>"
         return self.tokenizer.encode(header_str, add_special_tokens=False)
