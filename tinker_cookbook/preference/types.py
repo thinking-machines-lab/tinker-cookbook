@@ -94,12 +94,22 @@ class ComparisonRendererFromChatRenderer(ComparisonRenderer):
             return types.ModelInput.from_ints(truncated_tokens), truncated_weights
         else:
             # Mixed content (text + images): truncate by chunks
-            # Find the index where weights first become 1.0
+            # Weights are per-token, but chunks may contain multiple tokens each.
+            # Find the chunk index containing the first weight=1.0 token by
+            # accumulating token counts across chunks.
             first_weight_one_index = int(torch.nonzero(weights == 1.0)[0])
-            # Get original chunks and truncate them
-            truncated_chunks = model_input.chunks[: first_weight_one_index + 1]
-            truncated_weights = weights[: first_weight_one_index + 1]
-            # Reconstruct ModelInput from truncated chunks
+            token_offset = 0
+            truncated_chunk_idx = 0
+            for idx, chunk in enumerate(model_input.chunks):
+                chunk_len = chunk.length
+                if token_offset + chunk_len > first_weight_one_index:
+                    # The first weight-one token falls within this chunk
+                    truncated_chunk_idx = idx
+                    break
+                token_offset += chunk_len
+                truncated_chunk_idx = idx + 1
+            truncated_chunks = model_input.chunks[: truncated_chunk_idx + 1]
+            truncated_weights = weights[: truncated_chunks[-1].length + token_offset]
             return types.ModelInput(chunks=list(truncated_chunks)), truncated_weights
 
     @property

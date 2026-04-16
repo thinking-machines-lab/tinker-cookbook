@@ -89,7 +89,7 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
     elif org == "Qwen":
         return get_qwen_info()[model_version_full]
     elif org == "stepfun-ai":
-        return {"Step-3.5-Flash": ["step3p5"]}[model_version_full]
+        return get_stepfun_info()[model_version_full]
     elif org == "deepseek-ai":
         return get_deepseek_info()[model_version_full]
     elif org == "openai":
