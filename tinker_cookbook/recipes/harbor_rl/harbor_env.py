@@ -52,14 +52,19 @@ def load_harbor_tasks(dataset: str) -> list[HarborTask]:
     """Load Harbor tasks from ~/.cache/harbor/tasks/<dataset>/."""
     tasks_dir = HARBOR_CACHE_DIR / dataset
     tasks: list[HarborTask] = []
-    for uuid_dir in sorted(tasks_dir.iterdir()):
-        (task_dir,) = [d for d in uuid_dir.iterdir() if d.is_dir()]
+    for task_dir in sorted(tasks_dir.iterdir()):
+        if not task_dir.is_dir():
+            continue
+        instruction_file = task_dir / "instruction.md"
+        toml_file = task_dir / "task.toml"
+        if not instruction_file.exists() or not toml_file.exists():
+            continue
         tasks.append(
             HarborTask(
                 task_name=task_dir.name,
-                instruction=(task_dir / "instruction.md").read_text(),
+                instruction=instruction_file.read_text(),
                 task_dir=task_dir,
-                config=tomllib.loads((task_dir / "task.toml").read_text()),
+                config=tomllib.loads(toml_file.read_text()),
             )
         )
     tasks.sort(key=lambda t: t.task_name)
@@ -113,10 +118,14 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
     async def make_envs(self) -> Sequence[Env]:
         self._sandboxes = []
 
-        # Build Modal image from the task's Dockerfile
-        env_dir = self.task.task_dir / "environment"
-        dockerfile_path = env_dir / "Dockerfile"
-        image = modal.Image.from_dockerfile(path=str(dockerfile_path), context_dir=str(env_dir))
+        # Use pre-built docker image from task config when available, otherwise build from Dockerfile
+        docker_image = self.task.config.get("environment", {}).get("docker_image")
+        if docker_image:
+            image = modal.Image.from_registry(docker_image)
+        else:
+            env_dir = self.task.task_dir / "environment"
+            dockerfile_path = env_dir / "Dockerfile"
+            image = modal.Image.from_dockerfile(path=str(dockerfile_path), context_dir=str(env_dir))
 
         # Create renderer (stateless, shared across envs)
         tokenizer = tokenizer_utils.get_tokenizer(self.model_name)
