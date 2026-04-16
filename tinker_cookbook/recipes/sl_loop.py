@@ -4,6 +4,7 @@ Uses existing modules but with a simple, flat training loop.
 """
 
 import logging
+import math
 import time
 
 import chz
@@ -58,7 +59,7 @@ def main(config: Config):
 
     # Drop the last incomplete batch (like PyTorch's drop_last=True) — a partial
     # batch has different effective gradient magnitude, which can cause a training spike.
-    n_train_batches = len(train_dataset) // config.batch_size
+    n_train_batches = math.ceil(len(train_dataset) / config.batch_size)
     n_dropped = len(train_dataset) % config.batch_size
     if n_dropped:
         logger.info(
