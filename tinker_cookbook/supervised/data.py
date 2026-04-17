@@ -16,6 +16,7 @@ from tinker_cookbook.exceptions import DataFormatError, DataValidationError
 from tinker_cookbook.renderers import Message, Renderer, TrainOnWhat
 from tinker_cookbook.supervised.common import datum_from_model_input_weights
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDataset
+from tinker_cookbook.utils import dataset_loading
 
 logger = logging.getLogger(__name__)
 
@@ -331,7 +332,9 @@ class HFDatasetSource:
     """A single HuggingFace dataset to include in an interleaved mix.
 
     Attributes:
-        path: HuggingFace dataset path (e.g. ``"allenai/tulu-3-sft-mixture"``).
+        path: HuggingFace dataset path (e.g. ``"allenai/tulu-3-sft-mixture"``),
+        local path, or cloud URI (``s3://``, ``gs://``, ``az://``).
+        Cloud URIs require the ``tinker-cookbook[cloud]`` extras.
         name: HuggingFace dataset config name (passed as ``name`` to ``load_dataset``).
         split: Dataset split to load.
         weight: Relative mixing weight. When set, weights are normalized across sources
@@ -373,7 +376,7 @@ class InterleavedChatDatasetBuilder(ChatDatasetBuilder):
         hf_datasets: list[datasets.Dataset] = []
 
         for source in self.sources:
-            ds = datasets.load_dataset(source.path, name=source.name, split=source.split)
+            ds = dataset_loading.load_dataset(source.path, name=source.name, split=source.split)
             if not isinstance(ds, datasets.Dataset):
                 raise TypeError(
                     f"Expected a Dataset but got {type(ds).__name__}. "

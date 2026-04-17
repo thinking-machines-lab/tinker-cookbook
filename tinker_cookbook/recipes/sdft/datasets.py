@@ -14,7 +14,6 @@ from pathlib import Path
 
 import chz
 import tinker
-from datasets import load_dataset, load_from_disk
 
 from tinker_cookbook import renderers
 from tinker_cookbook.distillation.datasets import PromptOnlyEnv
@@ -26,6 +25,7 @@ from tinker_cookbook.supervised.types import (
     SupervisedDataset,
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.utils.dataset_loading import is_cloud_uri, load_dataset, load_from_disk
 
 logger = logging.getLogger(__name__)
 
@@ -437,7 +437,9 @@ class ScienceArrowSFTBuilder(ChatDatasetBuilder):
     thinking_format: bool = False
 
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
-        expanded_dir = str(Path(self.data_dir).expanduser())
+        expanded_dir = (
+            self.data_dir if is_cloud_uri(self.data_dir) else str(Path(self.data_dir).expanduser())
+        )
         questions, golden_answers, _, _ = load_science_from_arrow(
             expanded_dir, thinking_format=self.thinking_format, for_sft=True
         )
@@ -486,7 +488,9 @@ class TooluseArrowSFTBuilder(ChatDatasetBuilder):
     data_dir: str = "~/Repos/Self-Distillation/data/tooluse_data"
 
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
-        expanded_dir = str(Path(self.data_dir).expanduser())
+        expanded_dir = (
+            self.data_dir if is_cloud_uri(self.data_dir) else str(Path(self.data_dir).expanduser())
+        )
         questions, golden_answers, _, _ = load_tooluse_from_arrow(expanded_dir)
 
         import datasets as hf_datasets
