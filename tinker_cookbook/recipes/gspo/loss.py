@@ -10,9 +10,8 @@ and is theoretically correct since the policy's "action" is the full sequence.
 
 from collections.abc import Callable
 
-import torch
-
 import tinker.types as types
+import torch
 
 # Empirical clip bounds from the paper (§4.2).
 # Sequence-level ratios stay near 1.0 by construction (geometric mean),
