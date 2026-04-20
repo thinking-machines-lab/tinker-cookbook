@@ -177,6 +177,12 @@ _MODEL_EVAL_DEFAULTS: dict[str, dict[str, int | float]] = {
         "context_window": 131072,
         "timeout_seconds": 1800,
     },
+    "moonshotai/Kimi-K2.6": {"max_tokens": 32768, "context_window": 32768, "timeout_seconds": 1800},
+    "moonshotai/Kimi-K2.6:peft:131072": {
+        "max_tokens": 131072,
+        "context_window": 131072,
+        "timeout_seconds": 1800,
+    },
     # Llama — Instruction (non-thinking), 32K context
     "meta-llama/Llama-3.3-70B-Instruct": {
         "max_tokens": 32768,

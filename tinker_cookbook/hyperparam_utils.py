@@ -96,6 +96,7 @@ def _get_hidden_size(model_name: str) -> int:
         # Kimi
         "moonshotai/Kimi-K2-Thinking": 7168,
         "moonshotai/Kimi-K2.5": 7168,
+        "moonshotai/Kimi-K2.6": 7168,
         # Qwen3 (text-only)
         "Qwen/Qwen3-235B-A22B-Instruct-2507": 4096,
         "Qwen/Qwen3-30B-A3B-Instruct-2507": 2048,
@@ -231,6 +232,7 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
         "openai/gpt-oss-120b",
         "moonshotai/Kimi-K2-Thinking",
         "moonshotai/Kimi-K2.5",
+        "moonshotai/Kimi-K2.6",
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
         "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",
     ):
