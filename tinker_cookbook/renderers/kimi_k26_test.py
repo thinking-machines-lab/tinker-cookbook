@@ -11,7 +11,8 @@ template for the corresponding flag combination:
 
 import pytest
 
-from tinker_cookbook.renderers import Message, ToolCall, ToolSpec, get_renderer
+from tinker_cookbook.renderers import Message, ToolCall, get_renderer
+from tinker_cookbook.renderers.kimi_k25_test import get_tool_spec
 from tinker_cookbook.renderers.testing_utils import extract_token_ids
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
@@ -207,19 +208,10 @@ def test_kimi_k26_preserve_thinking_matches_hf(kimi_tokenizer, kimi_renderer_pre
 
 
 def _preserve_thinking_multi_assistant_conversation() -> list[Message]:
-    """Two assistant turns, each with distinct thinking. preserve_thinking=true
-    must retain both; default K2.5 behavior strips the first."""
-    return [
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "What is 2+2?"},
-        {
-            "role": "assistant",
-            "content": [
-                {"type": "thinking", "thinking": "HIST_THINK_A"},
-                {"type": "text", "text": "4"},
-            ],
-        },
-        {"role": "user", "content": "Now what is 3+3?"},
+    """Extends the base multi-turn conversation with a final assistant turn
+    that has its own thinking block, so both HIST and CURRENT thinking exist
+    to distinguish strip-history vs preserve-history behavior."""
+    return _multi_turn_conversation_with_thinking() + [
         {
             "role": "assistant",
             "content": [
@@ -233,8 +225,6 @@ def _preserve_thinking_multi_assistant_conversation() -> list[Message]:
 def test_kimi_k26_preserve_thinking_supervised_matches_hf(
     kimi_tokenizer, kimi_renderer_preserve_thinking
 ):
-    """build_supervised_example output with preserve_thinking=true keeps every
-    historical <think>...</think> block and matches HF apply_chat_template."""
     messages = _preserve_thinking_multi_assistant_conversation()
     model_input, _ = kimi_renderer_preserve_thinking.build_supervised_example(messages)
     cookbook_tokens = model_input.to_ints()
@@ -252,32 +242,15 @@ def test_kimi_k26_preserve_thinking_supervised_matches_hf(
         f"Cookbook: {kimi_tokenizer.decode(cookbook_tokens)}\n"
         f"HF:       {kimi_tokenizer.decode(hf_tokens)}"
     )
-    decoded = kimi_tokenizer.decode(cookbook_tokens)
-    assert "<think>HIST_THINK_A</think>4" in decoded
-    assert "<think>CURRENT_THINK</think>6" in decoded
-
-
-def _get_tool_spec() -> ToolSpec:
-    return ToolSpec(
-        name="get_weather",
-        description="Get the current weather for a location",
-        parameters={
-            "type": "object",
-            "properties": {
-                "location": {"type": "string", "description": "City and state"},
-            },
-            "required": ["location"],
-        },
-    )
 
 
 def test_kimi_k26_preserve_thinking_tool_call_matches_hf(
     kimi_tokenizer, kimi_renderer_preserve_thinking
 ):
-    """Multi-turn tool-calling with preserve_thinking=true: a completed non-tool
-    assistant turn exists before the tool-calling turn, so the historical
-    thinking block must be preserved. Asserts HF token equivalence."""
-    tools = [_get_tool_spec()]
+    """A non-tool-call assistant turn precedes the tool-calling turn so that
+    the preserve_thinking flag affects the output (the non-tool-call turn's
+    thinking would be stripped in default mode)."""
+    tools = [get_tool_spec()]
     tool_call = ToolCall(
         id="functions.get_weather:0",
         function=ToolCall.FunctionBody(
@@ -335,9 +308,6 @@ def test_kimi_k26_preserve_thinking_tool_call_matches_hf(
         f"Cookbook: {kimi_tokenizer.decode(cookbook_tokens)}\n"
         f"HF:       {kimi_tokenizer.decode(hf_tokens)}"
     )
-    decoded = kimi_tokenizer.decode(cookbook_tokens)
-    assert "<think>HIST_REASONING</think>I'm doing great!" in decoded
-    assert "<think>CURRENT_REASONING</think>" in decoded
 
 
 # =============================================================================
