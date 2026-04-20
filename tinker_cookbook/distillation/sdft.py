@@ -615,9 +615,17 @@ async def main(
     teacher_client = service_client.create_sampling_client(base_model=cfg.model_name)
     logger.info(f"Created static teacher sampling client for {cfg.model_name}")
 
+    checkpoint_mgr = checkpoint_utils.CheckpointManager(
+        training_client=training_client,
+        service_client=service_client,
+        log_path=cfg.log_path,
+        save_every=cfg.save_every,
+        store=store,
+    )
+
     # Initial sampling client for student
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        training_client, start_batch, cfg.log_path, cfg.save_every, store=store
+        training_client, checkpoint_mgr, start_batch, start_batch
     )
 
     log_path = Path(cfg.log_path)
@@ -738,7 +746,7 @@ async def main(
 
             # Refresh sampling client
             sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-                training_client, i_batch + 1, cfg.log_path, cfg.save_every, store=store
+                training_client, checkpoint_mgr, i_batch + 1
             )
 
             # Optional teacher hard-sync
@@ -762,15 +770,7 @@ async def main(
 
     # Final checkpoint
     if start_batch < num_batches:
-        await checkpoint_utils.save_checkpoint_async(
-            training_client=training_client,
-            name="final",
-            log_path=cfg.log_path,
-            kind="both",
-            loop_state={"batch": num_batches},
-            ttl_seconds=None,
-            store=store,
-        )
+        await checkpoint_mgr.save_final_async(loop_state={"batch": num_batches})
 
     ml_logger.close()
     logger.info("SDFT training completed successfully")
