@@ -252,7 +252,7 @@ def _build_rg_args(
     if output_mode == "files_with_matches":
         args.append("--files-with-matches")
     elif output_mode == "count_matches":
-        args.append("--count-matches")
+        args.extend(["--count-matches", "--with-filename"])
 
     args.append("--")
     args.append(pattern)
@@ -454,7 +454,7 @@ class HarborGrepTool:
         # rg exit codes: 0=matches found, 1=no matches, 2+=error
         if result.exit_code == 1:
             return _tool_result("No matches found")
-        if result.exit_code not in (0, 1):
+        if result.exit_code != 0:
             return _error_result(f"Failed to grep. Error: {result.stderr[:MAX_OUTPUT_CHARS]}")
 
         output = result.stdout
@@ -463,10 +463,10 @@ class HarborGrepTool:
 
         message = ""
 
-        # Strip path prefix for relative paths
+        # Strip path prefix for relative paths (per-line to avoid corrupting match content)
         if path not in (".", "/"):
             prefix = path.rstrip("/") + "/"
-            output = output.replace(prefix, "")
+            output = "\n".join(line.removeprefix(prefix) for line in output.split("\n"))
 
         # Split into lines for post-processing
         lines = output.split("\n")
@@ -558,12 +558,12 @@ class HarborReadFileTool:
     ) -> ToolResult:
         """Read text content from a file.
 
-Tips:
-- Content will be returned with a line number before each line like cat -n format.
-- Use line_offset and n_lines parameters when you only need to read a part of the file.
-- Always read multiple files in one response when possible.
-- The maximum number of lines that can be read at once is 1000.
-- Any lines longer than 2000 characters will be truncated, ending with "..."."""
+        Tips:
+        - Content will be returned with a line number before each line like cat -n format.
+        - Use line_offset and n_lines parameters when you only need to read a part of the file.
+        - Always read multiple files in one response when possible.
+        - The maximum number of lines that can be read at once is 1000.
+        - Any lines longer than 2000 characters will be truncated, ending with "..."."""
         if not path or not path.strip():
             return _error_result("path is required")
 
@@ -579,6 +579,7 @@ Tips:
                 "to read from a specific position."
             )
 
+        # Read 2x the byte budget so we can count total_lines even when content is capped
         result = await self._sandbox.read_file(
             path, max_bytes=MAX_READ_BYTES * 2, timeout=self._command_timeout
         )
@@ -761,14 +762,11 @@ class HarborWriteFileTool:
                     path, content, timeout=self._command_timeout
                 )
             else:
-                # append mode: read existing content, concatenate, write back
-                existing = await self._sandbox.read_file(path, timeout=self._command_timeout)
-                if existing.exit_code == 0:
-                    new_content = existing.stdout + content
-                else:
-                    new_content = content
-                result = await self._sandbox.write_file(
-                    path, new_content, timeout=self._command_timeout
+                # Append directly via shell to avoid truncating large files
+                result = await self._sandbox.run_command(
+                    f"cat >> {shlex.quote(path)} << 'HARBOR_EOF'\n{content}\nHARBOR_EOF",
+                    workdir="/",
+                    timeout=self._command_timeout,
                 )
 
             if result.exit_code != 0:
@@ -834,8 +832,10 @@ class HarborStrReplaceFileTool:
         if not path or not path.strip():
             return _error_result("path is required")
 
-        # Read the file
-        result = await self._sandbox.read_file(path, timeout=self._command_timeout)
+        # Read the full file (large cap to avoid truncating content before editing)
+        result = await self._sandbox.read_file(
+            path, max_bytes=10 * 1024 * 1024, timeout=self._command_timeout
+        )
         if result.exit_code != 0:
             stderr = result.stderr.strip()
             if "No such file" in stderr or "not found" in stderr.lower():
@@ -847,11 +847,15 @@ class HarborStrReplaceFileTool:
 
         edits = [edit] if isinstance(edit, Edit) else edit
 
-        # Apply edits sequentially
+        # Apply edits sequentially, counting replacements as we go
+        total_replacements = 0
         for e in edits:
             if e.replace_all:
+                total_replacements += content.count(e.old)
                 content = content.replace(e.old, e.new)
             else:
+                if e.old in content:
+                    total_replacements += 1
                 content = content.replace(e.old, e.new, 1)
 
         if content == original_content:
@@ -865,14 +869,6 @@ class HarborStrReplaceFileTool:
             return _error_result(
                 f"Failed to write {path}. Error: {write_result.stderr[:MAX_OUTPUT_CHARS]}"
             )
-
-        # Count replacements
-        total_replacements = 0
-        for e in edits:
-            if e.replace_all:
-                total_replacements += original_content.count(e.old)
-            else:
-                total_replacements += 1 if e.old in original_content else 0
 
         return _tool_result(
             f"File successfully edited. "

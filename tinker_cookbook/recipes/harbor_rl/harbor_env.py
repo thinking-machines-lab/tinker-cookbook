@@ -26,7 +26,7 @@ from tinker_cookbook.renderers.base import Message, Renderer
 from tinker_cookbook.rl.types import Env, EnvGroupBuilder, RLDataset, RLDatasetBuilder
 from tinker_cookbook.sandbox import SandboxInterface
 from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
-from tinker_cookbook.tool_use import build_agent_tool_env
+from tinker_cookbook.tool_use import FunctionTool, build_agent_tool_env
 from tinker_cookbook.tool_use.agent_tool_message_env import RewardFn
 
 logger = logging.getLogger(__name__)
@@ -35,6 +35,12 @@ HARBOR_CACHE_DIR = Path.home() / ".cache" / "harbor" / "tasks"
 HARBOR_SYSTEM_PROMPT = (
     "You are a skilled software engineer working in a sandboxed environment. "
     "You have access to a bash tool to execute commands. "
+    "Complete the task described by the user."
+)
+HARBOR_FILE_TOOLS_SYSTEM_PROMPT = (
+    "You are a skilled software engineer working in a sandboxed environment. "
+    "You have access to bash, file search (Glob, Grep), file reading (ReadFile), "
+    "file writing (WriteFile), and file editing (StrReplaceFile) tools. "
     "Complete the task described by the user."
 )
 
@@ -87,7 +93,7 @@ def load_harbor_tasks(dataset: str) -> list[HarborTask]:
 def _initial_messages(
     task: HarborTask,
     renderer: Renderer,
-    tools: list,
+    tools: list[FunctionTool],
     system_prompt: str = HARBOR_SYSTEM_PROMPT,
 ) -> list[Message]:
     """Build initial messages with tool schemas and task instruction."""
@@ -133,6 +139,8 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
         self.context_overflow_reward = context_overflow_reward
         self.sandbox_factory = sandbox_factory or default_sandbox_factory
         self.reward_fn = reward_fn
+        if enable_file_tools and not rg_host_path:
+            raise ValueError("rg_host_path is required when enable_file_tools=True")
         self.enable_file_tools = enable_file_tools
         self.rg_host_path = rg_host_path
         self._sandboxes: list[SandboxInterface] = []
@@ -144,16 +152,16 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
         )
         return get_renderer(renderer_name, tokenizer)
 
-    def _build_tools(self, sandbox: SandboxInterface | None = None) -> list:
+    def _build_tools(self, sandbox: SandboxInterface) -> list[FunctionTool]:
         """Build the list of tool objects for this environment."""
-        bash_tool = HarborBashTool(sandbox, command_timeout=self.command_timeout)  # type: ignore[arg-type]
-        tools = [bash_tool.bash]
+        bash_tool = HarborBashTool(sandbox, command_timeout=self.command_timeout)
+        tools: list[FunctionTool] = [bash_tool.bash]
         if self.enable_file_tools:
-            glob_tool = HarborGlobTool(sandbox, command_timeout=self.command_timeout)  # type: ignore[arg-type]
-            grep_tool = HarborGrepTool(sandbox, command_timeout=self.command_timeout)  # type: ignore[arg-type]
-            read_tool = HarborReadFileTool(sandbox, command_timeout=self.command_timeout)  # type: ignore[arg-type]
-            write_tool = HarborWriteFileTool(sandbox, command_timeout=self.command_timeout)  # type: ignore[arg-type]
-            replace_tool = HarborStrReplaceFileTool(sandbox, command_timeout=self.command_timeout)  # type: ignore[arg-type]
+            glob_tool = HarborGlobTool(sandbox, command_timeout=self.command_timeout)
+            grep_tool = HarborGrepTool(sandbox, command_timeout=self.command_timeout)
+            read_tool = HarborReadFileTool(sandbox, command_timeout=self.command_timeout)
+            write_tool = HarborWriteFileTool(sandbox, command_timeout=self.command_timeout)
+            replace_tool = HarborStrReplaceFileTool(sandbox, command_timeout=self.command_timeout)
             tools.extend(
                 [
                     glob_tool.Glob,
@@ -170,6 +178,9 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
 
         env_dir = self.task.task_dir / "environment"
         renderer = self._create_renderer()
+        system_prompt = (
+            HARBOR_FILE_TOOLS_SYSTEM_PROMPT if self.enable_file_tools else HARBOR_SYSTEM_PROMPT
+        )
 
         tests_dir = self.task.task_dir / "tests"
 
@@ -197,7 +208,9 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
                 build_agent_tool_env(
                     renderer=renderer,
                     tools=tools,
-                    initial_messages=_initial_messages(self.task, renderer, tools),
+                    initial_messages=_initial_messages(
+                        self.task, renderer, tools, system_prompt=system_prompt
+                    ),
                     reward_fn=reward_fn,
                     max_turns=self.max_turns,
                     max_trajectory_tokens=self.max_trajectory_tokens,
