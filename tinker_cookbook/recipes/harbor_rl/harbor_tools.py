@@ -616,54 +616,48 @@ class HarborReadFileTool:
         return self._format_forward(content_lines, total_lines, line_offset, n_lines, path)
 
     async def _read_tail_via_sandbox(self, path: str, line_offset: int, n_lines: int) -> ToolResult:
-        """Read tail of file using sandbox commands for accuracy on large files."""
-        tail_count = min(abs(line_offset), n_lines, MAX_READ_LINES)
-        # Get total line count and tail content in one command
-        cmd = f"wc -l < {shlex.quote(path)} && tail -n {tail_count} {shlex.quote(path)}"
-        result = await self._sandbox.run_command(
-            cmd, workdir="/", timeout=self._command_timeout, max_output_bytes=MAX_READ_BYTES * 2
+        """Read from a negative offset using sandbox commands.
+
+        line_offset=-100, n_lines=10 means: start 100 lines from EOF, read 10 lines.
+        We get total lines via wc -l, compute the start line, then use sed.
+        """
+        qpath = shlex.quote(path)
+        # First get total line count
+        wc_result = await self._sandbox.run_command(
+            f"wc -l < {qpath}", workdir="/", timeout=self._command_timeout
         )
-        if result.exit_code != 0:
-            stderr = result.stderr.strip()
+        if wc_result.exit_code != 0:
+            stderr = wc_result.stderr.strip()
             if "No such file" in stderr or "not found" in stderr.lower():
                 return _error_result(f"`{path}` does not exist.")
             if "Is a directory" in stderr:
                 return _error_result(f"`{path}` is not a file.")
             return _error_result(f"Failed to read {path}. Error: {stderr}")
 
-        output_lines = result.stdout.split("\n")
         try:
-            total_lines = int(output_lines[0].strip())
-        except (ValueError, IndexError):
+            total_lines = int(wc_result.stdout.strip())
+        except ValueError:
             total_lines = 0
 
-        # Lines after the first (wc -l output) are the tail content
-        tail_lines = output_lines[1:]
-        if tail_lines and tail_lines[-1] == "":
-            tail_lines = tail_lines[:-1]
+        # Compute start line: e.g. total=500, offset=-100 → start=401
+        start_line = max(1, total_lines + line_offset + 1)
+        end_line = start_line + n_lines - 1
 
-        start_line = max(1, total_lines - len(tail_lines) + 1)
-        truncated_line_numbers: list[int] = []
-        formatted: list[str] = []
-        for idx, line in enumerate(tail_lines):
-            line_num = start_line + idx
-            truncated = _truncate_line(line, MAX_READ_LINE_LENGTH)
-            if truncated != line:
-                truncated_line_numbers.append(line_num)
-            formatted.append(f"{line_num:6d}\t{truncated}")
-
-        message = (
-            f"{len(tail_lines)} lines read from file starting from line {start_line}."
-            if tail_lines
-            else "No lines read from file."
+        # Read the computed range via sed
+        sed_result = await self._sandbox.run_command(
+            f"sed -n '{start_line},{end_line}p' {qpath}",
+            workdir="/",
+            timeout=self._command_timeout,
+            max_output_bytes=MAX_READ_BYTES * 2,
         )
-        message += f" Total lines in file: {total_lines}."
-        if len(tail_lines) < abs(line_offset):
-            message += " End of file reached."
-        if truncated_line_numbers:
-            message += f" Lines {truncated_line_numbers} were truncated."
+        if sed_result.exit_code != 0:
+            return _error_result(f"Failed to read {path}. Error: {sed_result.stderr.strip()}")
 
-        return _tool_result(message, "\n".join(formatted))
+        content_lines = sed_result.stdout.split("\n")
+        if content_lines and content_lines[-1] == "":
+            content_lines = content_lines[:-1]
+
+        return self._format_forward(content_lines, total_lines, start_line, n_lines, path)
 
     def _format_forward(
         self,
