@@ -12,7 +12,15 @@ from typing import Any
 import chz
 
 from tinker_cookbook import model_info, tokenizer_utils
-from tinker_cookbook.recipes.harbor_rl.harbor_tools import HarborBashTool, HarborReward
+from tinker_cookbook.recipes.harbor_rl.harbor_tools import (
+    HarborBashTool,
+    HarborGlobTool,
+    HarborGrepTool,
+    HarborReadFileTool,
+    HarborReward,
+    HarborStrReplaceFileTool,
+    HarborWriteFileTool,
+)
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import Message, Renderer
 from tinker_cookbook.rl.types import Env, EnvGroupBuilder, RLDataset, RLDatasetBuilder
@@ -79,13 +87,14 @@ def load_harbor_tasks(dataset: str) -> list[HarborTask]:
 def _initial_messages(
     task: HarborTask,
     renderer: Renderer,
-    bash_tool: HarborBashTool,
+    tools: list,
+    system_prompt: str = HARBOR_SYSTEM_PROMPT,
 ) -> list[Message]:
     """Build initial messages with tool schemas and task instruction."""
-    tool_schemas = [bash_tool.bash.to_spec()]
+    tool_schemas = [t.to_spec() for t in tools]
     prefix = renderer.create_conversation_prefix_with_tools(
         tools=tool_schemas,
-        system_prompt=HARBOR_SYSTEM_PROMPT,
+        system_prompt=system_prompt,
     )
     return prefix + [{"role": "user", "content": task.instruction}]
 
@@ -108,6 +117,8 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
         context_overflow_reward: float = -0.1,
         sandbox_factory: SandboxFactory | None = None,
         reward_fn: RewardFn | None = None,
+        enable_file_tools: bool = False,
+        rg_host_path: str | None = None,
     ):
         self.task = task
         self.model_name = model_name
@@ -122,28 +133,61 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
         self.context_overflow_reward = context_overflow_reward
         self.sandbox_factory = sandbox_factory or default_sandbox_factory
         self.reward_fn = reward_fn
+        self.enable_file_tools = enable_file_tools
+        self.rg_host_path = rg_host_path
         self._sandboxes: list[SandboxInterface] = []
+
+    def _create_renderer(self) -> Renderer:
+        tokenizer = tokenizer_utils.get_tokenizer(self.model_name)
+        renderer_name = self.renderer_name or model_info.get_recommended_renderer_name(
+            self.model_name
+        )
+        return get_renderer(renderer_name, tokenizer)
+
+    def _build_tools(self, sandbox: SandboxInterface | None = None) -> list:
+        """Build the list of tool objects for this environment."""
+        bash_tool = HarborBashTool(sandbox, command_timeout=self.command_timeout)  # type: ignore[arg-type]
+        tools = [bash_tool.bash]
+        if self.enable_file_tools:
+            glob_tool = HarborGlobTool(sandbox, command_timeout=self.command_timeout)  # type: ignore[arg-type]
+            grep_tool = HarborGrepTool(sandbox, command_timeout=self.command_timeout)  # type: ignore[arg-type]
+            read_tool = HarborReadFileTool(sandbox, command_timeout=self.command_timeout)  # type: ignore[arg-type]
+            write_tool = HarborWriteFileTool(sandbox, command_timeout=self.command_timeout)  # type: ignore[arg-type]
+            replace_tool = HarborStrReplaceFileTool(sandbox, command_timeout=self.command_timeout)  # type: ignore[arg-type]
+            tools.extend(
+                [
+                    glob_tool.Glob,
+                    grep_tool.Grep,
+                    read_tool.ReadFile,
+                    write_tool.WriteFile,
+                    replace_tool.StrReplaceFile,
+                ]
+            )
+        return tools
 
     async def make_envs(self) -> Sequence[Env]:
         self._sandboxes = []
 
         env_dir = self.task.task_dir / "environment"
-
-        # Create renderer (stateless, shared across envs)
-        tokenizer = tokenizer_utils.get_tokenizer(self.model_name)
-        renderer_name = self.renderer_name or model_info.get_recommended_renderer_name(
-            self.model_name
-        )
-        renderer = get_renderer(renderer_name, tokenizer)
+        renderer = self._create_renderer()
 
         tests_dir = self.task.task_dir / "tests"
+
+        # Read rg binary from host once if file tools are enabled
+        rg_bytes: bytes | None = None
+        if self.enable_file_tools and self.rg_host_path:
+            rg_bytes = Path(self.rg_host_path).read_bytes()
 
         envs = []
         for _ in range(self.group_size):
             sandbox = await self.sandbox_factory(env_dir, self.sandbox_timeout)
             self._sandboxes.append(sandbox)
 
-            bash_tool = HarborBashTool(sandbox, command_timeout=self.command_timeout)
+            # Upload rg binary into sandbox if file tools are enabled
+            if rg_bytes is not None:
+                await sandbox.write_file("/usr/local/bin/rg", rg_bytes, executable=True)
+
+            tools = self._build_tools(sandbox)
             reward_fn = self.reward_fn or HarborReward(
                 tests_dir=tests_dir,
                 sandbox=sandbox,
@@ -152,8 +196,8 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
             envs.append(
                 build_agent_tool_env(
                     renderer=renderer,
-                    tools=[bash_tool.bash],
-                    initial_messages=_initial_messages(self.task, renderer, bash_tool),
+                    tools=tools,
+                    initial_messages=_initial_messages(self.task, renderer, tools),
                     reward_fn=reward_fn,
                     max_turns=self.max_turns,
                     max_trajectory_tokens=self.max_trajectory_tokens,
@@ -213,6 +257,8 @@ class HarborDatasetBuilder(RLDatasetBuilder):
     context_overflow_reward: float = -0.1
     sandbox_factory: SandboxFactory | None = None
     reward_fn: RewardFn | None = None
+    enable_file_tools: bool = False
+    rg_host_path: str | None = None
 
     def _make_env_group_builders(self, group_size: int) -> list[HarborEnvGroupBuilder]:
         return [
@@ -230,6 +276,8 @@ class HarborDatasetBuilder(RLDatasetBuilder):
                 context_overflow_reward=self.context_overflow_reward,
                 sandbox_factory=self.sandbox_factory,
                 reward_fn=self.reward_fn,
+                enable_file_tools=self.enable_file_tools,
+                rg_host_path=self.rg_host_path,
             )
             for task in self.tasks
         ]
