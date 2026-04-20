@@ -113,6 +113,8 @@ def _get_hidden_size(model_name: str) -> int:
         "Qwen/Qwen3.5-35B-A3B": 2048,
         "Qwen/Qwen3.5-27B": 5120,
         "Qwen/Qwen3.5-4B": 2560,
+        # Qwen3.6 (same architecture family as Qwen3.5, hidden_size under text_config)
+        "Qwen/Qwen3.6-35B-A3B": 2048,
         # OpenAI
         "openai/gpt-oss-120b": 2880,
         "openai/gpt-oss-20b": 2880,
