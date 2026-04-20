@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import logging
 import shlex
-from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal
@@ -579,6 +578,12 @@ class HarborReadFileTool:
                 "to read from a specific position."
             )
 
+        if line_offset < 0:
+            # Use tail command for accurate tail reads regardless of file size
+            return await self._read_tail_via_sandbox(
+                path, line_offset, min(n_lines, MAX_READ_LINES)
+            )
+
         # Read 2x the byte budget so we can count total_lines even when content is capped
         result = await self._sandbox.read_file(
             path, max_bytes=MAX_READ_BYTES * 2, timeout=self._command_timeout
@@ -597,11 +602,57 @@ class HarborReadFileTool:
         total_lines = len(all_lines)
 
         n_lines = min(n_lines, MAX_READ_LINES)
+        return self._format_forward(all_lines, total_lines, line_offset, n_lines, path)
 
-        if line_offset < 0:
-            return self._format_tail(all_lines, total_lines, line_offset, n_lines, path)
-        else:
-            return self._format_forward(all_lines, total_lines, line_offset, n_lines, path)
+    async def _read_tail_via_sandbox(self, path: str, line_offset: int, n_lines: int) -> ToolResult:
+        """Read tail of file using sandbox commands for accuracy on large files."""
+        tail_count = min(abs(line_offset), n_lines, MAX_READ_LINES)
+        # Get total line count and tail content in one command
+        cmd = f"wc -l < {shlex.quote(path)} && tail -n {tail_count} {shlex.quote(path)}"
+        result = await self._sandbox.run_command(
+            cmd, workdir="/", timeout=self._command_timeout, max_output_bytes=MAX_READ_BYTES * 2
+        )
+        if result.exit_code != 0:
+            stderr = result.stderr.strip()
+            if "No such file" in stderr or "not found" in stderr.lower():
+                return _error_result(f"`{path}` does not exist.")
+            if "Is a directory" in stderr:
+                return _error_result(f"`{path}` is not a file.")
+            return _error_result(f"Failed to read {path}. Error: {stderr}")
+
+        output_lines = result.stdout.split("\n")
+        try:
+            total_lines = int(output_lines[0].strip())
+        except (ValueError, IndexError):
+            total_lines = 0
+
+        # Lines after the first (wc -l output) are the tail content
+        tail_lines = output_lines[1:]
+        if tail_lines and tail_lines[-1] == "":
+            tail_lines = tail_lines[:-1]
+
+        start_line = max(1, total_lines - len(tail_lines) + 1)
+        truncated_line_numbers: list[int] = []
+        formatted: list[str] = []
+        for idx, line in enumerate(tail_lines):
+            line_num = start_line + idx
+            truncated = _truncate_line(line, MAX_READ_LINE_LENGTH)
+            if truncated != line:
+                truncated_line_numbers.append(line_num)
+            formatted.append(f"{line_num:6d}\t{truncated}")
+
+        message = (
+            f"{len(tail_lines)} lines read from file starting from line {start_line}."
+            if tail_lines
+            else "No lines read from file."
+        )
+        message += f" Total lines in file: {total_lines}."
+        if len(tail_lines) < abs(line_offset):
+            message += " End of file reached."
+        if truncated_line_numbers:
+            message += f" Lines {truncated_line_numbers} were truncated."
+
+        return _tool_result(message, "\n".join(formatted))
 
     def _format_forward(
         self,
@@ -657,67 +708,6 @@ class HarborReadFileTool:
         output = "\n".join(formatted)
         return _tool_result(message, output)
 
-    def _format_tail(
-        self,
-        all_lines: list[str],
-        total_lines: int,
-        line_offset: int,
-        n_lines: int,
-        path: str,
-    ) -> ToolResult:
-        tail_count = abs(line_offset)
-
-        # Build tail buffer: (line_no, truncated_line, was_truncated)
-        tail_buf: deque[tuple[int, str, bool]] = deque(maxlen=tail_count)
-        for i, line in enumerate(all_lines):
-            truncated = _truncate_line(line, MAX_READ_LINE_LENGTH)
-            tail_buf.append((i + 1, truncated, truncated != line))
-
-        all_entries = list(tail_buf)
-        line_limit = min(n_lines, MAX_READ_LINES)
-        candidates = all_entries[:line_limit]
-        max_lines_reached = len(all_entries) > MAX_READ_LINES and len(candidates) == MAX_READ_LINES
-
-        # Apply MAX_BYTES — keep newest lines that fit
-        total_candidate_bytes = sum(len(e[1].encode("utf-8")) for e in candidates)
-        max_bytes_reached = False
-        if total_candidate_bytes > MAX_READ_BYTES:
-            max_bytes_reached = True
-            kept = 0
-            nb = 0
-            for entry in reversed(candidates):
-                nb += len(entry[1].encode("utf-8"))
-                if nb > MAX_READ_BYTES:
-                    break
-                kept += 1
-            candidates = candidates[len(candidates) - kept :]
-
-        lines_out: list[str] = []
-        truncated_line_numbers: list[int] = []
-        for line_no, truncated, was_truncated in candidates:
-            if was_truncated:
-                truncated_line_numbers.append(line_no)
-            lines_out.append(f"{line_no:6d}\t{truncated}")
-
-        start_line = candidates[0][0] if candidates else total_lines + 1
-        message = (
-            f"{len(candidates)} lines read from file starting from line {start_line}."
-            if candidates
-            else "No lines read from file."
-        )
-        message += f" Total lines in file: {total_lines}."
-        if max_lines_reached:
-            message += f" Max {MAX_READ_LINES} lines reached."
-        elif max_bytes_reached:
-            message += f" Max {MAX_READ_BYTES} bytes reached."
-        elif len(candidates) < n_lines:
-            message += " End of file reached."
-        if truncated_line_numbers:
-            message += f" Lines {truncated_line_numbers} were truncated."
-
-        output = "\n".join(lines_out)
-        return _tool_result(message, output)
-
 
 # ---------------------------------------------------------------------------
 # HarborWriteFileTool (mirrors src/kimi_cli/tools/file/write.py)
@@ -762,9 +752,12 @@ class HarborWriteFileTool:
                     path, content, timeout=self._command_timeout
                 )
             else:
-                # Append directly via shell to avoid truncating large files
+                # Write to temp file then append via cat to avoid both
+                # large-file truncation (read+concat) and heredoc delimiter collisions
+                tmp = f"/tmp/.harbor_append_{id(content):x}"
+                await self._sandbox.write_file(tmp, content, timeout=self._command_timeout)
                 result = await self._sandbox.run_command(
-                    f"cat >> {shlex.quote(path)} << 'HARBOR_EOF'\n{content}\nHARBOR_EOF",
+                    f"cat {shlex.quote(tmp)} >> {shlex.quote(path)} && rm -f {shlex.quote(tmp)}",
                     workdir="/",
                     timeout=self._command_timeout,
                 )
@@ -832,7 +825,9 @@ class HarborStrReplaceFileTool:
         if not path or not path.strip():
             return _error_result("path is required")
 
-        # Read the full file (large cap to avoid truncating content before editing)
+        # 10MB cap: sufficient for source files in Harbor coding tasks.
+        # Files exceeding this are truncated — acceptable since StrReplaceFile
+        # targets source code, not binary artifacts or large logs.
         result = await self._sandbox.read_file(
             path, max_bytes=10 * 1024 * 1024, timeout=self._command_timeout
         )
