@@ -11,7 +11,7 @@ template for the corresponding flag combination:
 
 import pytest
 
-from tinker_cookbook.renderers import Message, get_renderer
+from tinker_cookbook.renderers import Message, ToolCall, ToolSpec, get_renderer
 from tinker_cookbook.renderers.testing_utils import extract_token_ids
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
@@ -138,11 +138,20 @@ def test_kimi_k26_preserve_thinking_keeps_history_thinking(
 # =============================================================================
 
 
-def _hf_tokens(tokenizer, hf_messages, *, thinking: bool, preserve_thinking: bool) -> list[int]:
+def _hf_tokens(
+    tokenizer,
+    hf_messages,
+    *,
+    thinking: bool,
+    preserve_thinking: bool,
+    tools: list | None = None,
+    add_generation_prompt: bool = True,
+) -> list[int]:
     return extract_token_ids(
         tokenizer.apply_chat_template(
             hf_messages,
-            add_generation_prompt=True,
+            tools=tools,
+            add_generation_prompt=add_generation_prompt,
             tokenize=True,
             thinking=thinking,
             preserve_thinking=preserve_thinking,
@@ -190,6 +199,145 @@ def test_kimi_k26_preserve_thinking_matches_hf(kimi_tokenizer, kimi_renderer_pre
         f"Cookbook: {kimi_tokenizer.decode(cookbook_tokens)}\n"
         f"HF:       {kimi_tokenizer.decode(hf_tokens)}"
     )
+
+
+# =============================================================================
+# preserve_thinking guardrails: supervised + tool-calling
+# =============================================================================
+
+
+def _preserve_thinking_multi_assistant_conversation() -> list[Message]:
+    """Two assistant turns, each with distinct thinking. preserve_thinking=true
+    must retain both; default K2.5 behavior strips the first."""
+    return [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "What is 2+2?"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "HIST_THINK_A"},
+                {"type": "text", "text": "4"},
+            ],
+        },
+        {"role": "user", "content": "Now what is 3+3?"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "CURRENT_THINK"},
+                {"type": "text", "text": "6"},
+            ],
+        },
+    ]
+
+
+def test_kimi_k26_preserve_thinking_supervised_matches_hf(
+    kimi_tokenizer, kimi_renderer_preserve_thinking
+):
+    """build_supervised_example output with preserve_thinking=true keeps every
+    historical <think>...</think> block and matches HF apply_chat_template."""
+    messages = _preserve_thinking_multi_assistant_conversation()
+    model_input, _ = kimi_renderer_preserve_thinking.build_supervised_example(messages)
+    cookbook_tokens = model_input.to_ints()
+
+    hf_messages = [kimi_renderer_preserve_thinking.to_openai_message(m) for m in messages]
+    hf_tokens = _hf_tokens(
+        kimi_tokenizer,
+        hf_messages,
+        thinking=True,
+        preserve_thinking=True,
+        add_generation_prompt=False,
+    )
+
+    assert cookbook_tokens == hf_tokens, (
+        f"Cookbook: {kimi_tokenizer.decode(cookbook_tokens)}\n"
+        f"HF:       {kimi_tokenizer.decode(hf_tokens)}"
+    )
+    decoded = kimi_tokenizer.decode(cookbook_tokens)
+    assert "<think>HIST_THINK_A</think>4" in decoded
+    assert "<think>CURRENT_THINK</think>6" in decoded
+
+
+def _get_tool_spec() -> ToolSpec:
+    return ToolSpec(
+        name="get_weather",
+        description="Get the current weather for a location",
+        parameters={
+            "type": "object",
+            "properties": {
+                "location": {"type": "string", "description": "City and state"},
+            },
+            "required": ["location"],
+        },
+    )
+
+
+def test_kimi_k26_preserve_thinking_tool_call_matches_hf(
+    kimi_tokenizer, kimi_renderer_preserve_thinking
+):
+    """Multi-turn tool-calling with preserve_thinking=true: a completed non-tool
+    assistant turn exists before the tool-calling turn, so the historical
+    thinking block must be preserved. Asserts HF token equivalence."""
+    tools = [_get_tool_spec()]
+    tool_call = ToolCall(
+        id="functions.get_weather:0",
+        function=ToolCall.FunctionBody(
+            name="get_weather",
+            arguments='{"location": "New York, NY"}',
+        ),
+    )
+    messages: list[Message] = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "How are you today?"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "HIST_REASONING"},
+                {"type": "text", "text": "I'm doing great!"},
+            ],
+        },
+        {"role": "user", "content": "What's the weather in NYC?"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "CURRENT_REASONING"},
+                {"type": "text", "text": ""},
+            ],
+            "tool_calls": [tool_call],
+        },
+        {
+            "role": "tool",
+            "name": "get_weather",
+            "tool_call_id": "functions.get_weather:0",
+            "content": '{"temperature": 72, "condition": "sunny"}',
+        },
+    ]
+
+    openai_tools = [{"type": "function", "function": tool} for tool in tools]
+    prefix_messages = kimi_renderer_preserve_thinking.create_conversation_prefix_with_tools(
+        tools, system_prompt="You are a helpful assistant."
+    )
+    prefix_messages = [m for m in prefix_messages if m["role"] == "tool_declare"]
+    full_messages = prefix_messages + messages
+    cookbook_tokens = kimi_renderer_preserve_thinking.build_generation_prompt(
+        full_messages
+    ).to_ints()
+
+    hf_messages = [kimi_renderer_preserve_thinking.to_openai_message(m) for m in messages]
+    hf_tokens = _hf_tokens(
+        kimi_tokenizer,
+        hf_messages,
+        thinking=True,
+        preserve_thinking=True,
+        tools=openai_tools,
+    )
+
+    assert cookbook_tokens == hf_tokens, (
+        f"Cookbook: {kimi_tokenizer.decode(cookbook_tokens)}\n"
+        f"HF:       {kimi_tokenizer.decode(hf_tokens)}"
+    )
+    decoded = kimi_tokenizer.decode(cookbook_tokens)
+    assert "<think>HIST_REASONING</think>I'm doing great!" in decoded
+    assert "<think>CURRENT_REASONING</think>" in decoded
 
 
 # =============================================================================
