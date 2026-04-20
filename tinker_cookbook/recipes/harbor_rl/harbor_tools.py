@@ -147,42 +147,35 @@ class HarborGlobTool:
             )
 
         dir_path = directory or "/"
-        script = (
-            "import json, pathlib\n"
-            f"d = pathlib.Path({dir_path!r})\n"
-            "matches = []\n"
-            f"for p in sorted(d.glob({pattern!r})):\n"
-            f"    if not {include_dirs!r} and p.is_dir():\n"
-            "        continue\n"
-            "    matches.append(str(p.relative_to(d)))\n"
-            "total = len(matches)\n"
-            f"matches = matches[:{MAX_GLOB_MATCHES}]\n"
-            'print(json.dumps({"matches": matches, "total": total}))\n'
+        # Use bash glob expansion (supports brace expansion like *.{js,ts})
+        # shopt -s globstar enables ** for recursive matching
+        # shopt -s nullglob prevents literal pattern output when no matches
+        type_flag = "" if include_dirs else '[ -f "$f" ] && '
+        cmd = (
+            f"cd {shlex.quote(dir_path)} && "
+            "shopt -s globstar nullglob 2>/dev/null; "
+            f"for f in {pattern}; do {type_flag}"
+            'echo "$f"; done | sort | head -n '
+            f"{MAX_GLOB_MATCHES + 1}"
         )
-
-        result = await self._sandbox.run_command(
-            f"python3 -c {shlex.quote(script)}",
-            workdir="/",
-            timeout=self._command_timeout,
-        )
+        result = await self._sandbox.run_command(cmd, workdir="/", timeout=self._command_timeout)
 
         if result.exit_code != 0:
             return _error_result(
                 f"Failed to search for pattern {pattern}. Error: {result.stderr[:MAX_OUTPUT_CHARS]}"
             )
 
-        try:
-            data = json.loads(result.stdout.strip())
-            matches: list[str] = data["matches"]
-            total: int = data["total"]
-        except (json.JSONDecodeError, KeyError) as e:
-            return _error_result(f"Failed to parse glob results. Error: {e}")
+        matches = [m for m in result.stdout.strip().split("\n") if m]
+        total = len(matches)
+        truncated = total > MAX_GLOB_MATCHES
+        if truncated:
+            matches = matches[:MAX_GLOB_MATCHES]
 
         if not matches:
             return _tool_result(f"No matches found for pattern `{pattern}`.")
 
         message = f"Found {total} matches for pattern `{pattern}`."
-        if total > MAX_GLOB_MATCHES:
+        if truncated:
             message += (
                 f" Only the first {MAX_GLOB_MATCHES} matches are returned. "
                 "You may want to use a more specific pattern."
