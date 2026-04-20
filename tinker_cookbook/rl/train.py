@@ -640,7 +640,7 @@ async def do_sync_training_with_stream_minibatch(
     tokenizer: Tokenizer,
     error_counter: RolloutErrorCounter | None = None,
     strategy: RolloutStrategy | None = None,
-    rolling_mgr: checkpoint_utils.RollingCheckpointManager | None = None,
+    checkpoint_mgr: checkpoint_utils.CheckpointManager | None = None,
 ):
     """Implement fully synchronous on-policy training with minibatch streaming.
 
@@ -671,14 +671,9 @@ async def do_sync_training_with_stream_minibatch(
             Defaults to None.
     """
     # Initial sampling client
+    assert checkpoint_mgr is not None
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        training_client,
-        start_batch,
-        config.log_path,
-        config.save_every,
-        start_batch,
-        config.ttl_seconds,
-        store=ml_logger.store,
+        training_client, checkpoint_mgr, start_batch, start_batch
     )
 
     for i_batch in range(start_batch, end_batch):
@@ -765,9 +760,9 @@ async def do_sync_training_with_stream_minibatch(
                     i_batch,
                     trajectory_groups_queue,
                     training_client,
+                    checkpoint_mgr,
                     kl_reference_client,
                     tokenizer,
-                    store=ml_logger.store,
                 )
                 # _Shutdown cannot appear in the sync path's local queue
                 assert streaming_result is not None, "Unexpected shutdown in sync streaming path"
@@ -794,8 +789,10 @@ async def do_sync_training_with_stream_minibatch(
             )
 
         # Rolling checkpoint (fire-and-forget, overlaps with next iteration)
-        if rolling_mgr is not None:
-            await rolling_mgr.maybe_save_async(step=i_batch + 1, loop_state={"batch": i_batch + 1})
+        if checkpoint_mgr is not None:
+            await checkpoint_mgr.maybe_save_rolling_async(
+                step=i_batch + 1, loop_state={"batch": i_batch + 1}
+            )
 
         # Log metrics
         metrics.update(full_batch_metrics)
@@ -878,7 +875,7 @@ async def do_async_training(
     tokenizer: Tokenizer,
     error_counter: RolloutErrorCounter | None = None,
     strategy: RolloutStrategy | None = None,
-    rolling_mgr: checkpoint_utils.RollingCheckpointManager | None = None,
+    checkpoint_mgr: checkpoint_utils.CheckpointManager | None = None,
 ):
     """Implement async off-policy training, capped at K steps off policy.
 
@@ -1093,10 +1090,10 @@ async def do_async_training(
                         i_batch,
                         trajectory_groups_queue,
                         training_client,
+                        checkpoint_mgr,
                         kl_reference_client,
                         tokenizer,
                         filter_stale_trajectory_group,
-                        store=ml_logger.store,
                     )
                 if streaming_result is None:
                     logger.info("[training_loop] Received shutdown signal from streaming")
@@ -1157,11 +1154,11 @@ async def do_async_training(
                         config,
                         i_batch,
                         training_client,
+                        checkpoint_mgr,
                         kl_reference_client,
                         tokenizer,
                         [g.env_group_builder for g in wrapped_trajectory_groups],
                         [g.trajectory_group for g in wrapped_trajectory_groups],
-                        store=ml_logger.store,
                     )
                 iter_dir = iteration_dir(config.log_path, i_batch)
                 _maybe_export_rollout_summary_jsonl(
@@ -1183,8 +1180,8 @@ async def do_async_training(
             sampling_client_updated_event.set()
 
             # Rolling checkpoint (fire-and-forget, overlaps with next iteration)
-            if rolling_mgr is not None:
-                await rolling_mgr.maybe_save_async(
+            if checkpoint_mgr is not None:
+                await checkpoint_mgr.maybe_save_rolling_async(
                     step=i_batch + 1, loop_state={"batch": i_batch + 1}
                 )
 
@@ -1253,50 +1250,38 @@ async def do_async_training(
 @trace.scope
 async def save_checkpoint_and_get_sampling_client(
     training_client: tinker.TrainingClient,
+    checkpoint_mgr: checkpoint_utils.CheckpointManager,
     i_batch: int,
-    log_path: str,
-    save_every: int,
     start_batch: int = 0,
-    ttl_seconds: int | None = None,
-    store: TrainingRunStore | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """Save a checkpoint (if due) and return a fresh sampling client.
 
-    When ``save_every > 0`` and ``i_batch`` falls on the save cadence, a
-    full checkpoint (weights + optimizer state) is persisted. Otherwise a
-    lightweight sampler-only snapshot is created so that subsequent rollouts
-    use the latest weights.
+    When ``i_batch`` falls on the periodic checkpoint cadence, a full
+    checkpoint (weights + optimizer state) is persisted via
+    *checkpoint_mgr*. Otherwise a lightweight sampler-only snapshot is
+    created so that subsequent rollouts use the latest weights.
 
     Args:
         training_client (tinker.TrainingClient): Client connected to the
             Tinker training service.
+        checkpoint_mgr (checkpoint_utils.CheckpointManager): Manager that
+            handles periodic checkpoint saves.
         i_batch (int): Current training iteration index.
-        log_path (str): Directory for checkpoints and logs.
-        save_every (int): Checkpoint cadence in iterations. 0 disables
-            periodic checkpointing.
         start_batch (int): First iteration index of this run, used to avoid
             checkpointing on the very first step. Defaults to 0.
-        ttl_seconds (int | None): Time-to-live for periodic checkpoints.
-            None disables expiry. Defaults to None.
 
     Returns:
         tuple[tinker.SamplingClient, dict[str, Any]]: A sampling client
         loaded with the latest weights, and a (possibly empty) metrics dict.
     """
     metrics: dict[str, Any] = {}
-    async with trace.scope_span("save_checkpoint"):
-        if save_every > 0 and i_batch > start_batch and i_batch % save_every == 0:
-            path_dict = await checkpoint_utils.save_checkpoint_async(
-                training_client=training_client,
-                name=f"{i_batch:06d}",
-                log_path=log_path,
-                loop_state={"batch": i_batch},
-                kind="both",
-                ttl_seconds=ttl_seconds,
-                store=store,
-            )
-            return training_client.create_sampling_client(path_dict["sampler_path"]), metrics
-        else:
+    if i_batch > start_batch and checkpoint_mgr.should_save_periodic(i_batch):
+        path_dict = await checkpoint_mgr.save_periodic_async(
+            step=i_batch, loop_state={"batch": i_batch}
+        )
+        return training_client.create_sampling_client(path_dict["sampler_path"]), metrics
+    else:
+        async with trace.scope_span("save_checkpoint"):
             return await training_client.save_weights_and_get_sampling_client_async(), metrics
 
 
@@ -1364,14 +1349,11 @@ async def prepare_minibatch(
 @trace.scope
 async def compute_full_batch_metrics_and_get_sampling_client(
     training_client: tinker.TrainingClient,
+    checkpoint_mgr: checkpoint_utils.CheckpointManager,
     i_batch: int,
     data_D: list[tinker.Datum],
     training_logprobs_D: list[torch.Tensor],
-    log_path: str,
-    save_every: int,
     do_compute_post_kl: bool,
-    ttl_seconds: int | None = None,
-    store: TrainingRunStore | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """Compute end-of-iteration metrics and return a fresh sampling client.
 
@@ -1382,17 +1364,15 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     Args:
         training_client (tinker.TrainingClient): Client connected to the
             Tinker training service.
+        checkpoint_mgr (checkpoint_utils.CheckpointManager): Manager that
+            handles periodic checkpoint saves.
         i_batch (int): Current training iteration index (used for checkpoint
             naming).
         data_D (list[tinker.Datum]): Training data from the current iteration.
         training_logprobs_D (list[torch.Tensor]): Per-datum log-probabilities
             returned by the training forward pass.
-        log_path (str): Directory for checkpoints and logs.
-        save_every (int): Checkpoint cadence in iterations.
         do_compute_post_kl (bool): Whether to compute post-update KL metrics
             against the new sampling client (adds an extra sampling call).
-        ttl_seconds (int | None): Time-to-live for periodic checkpoints.
-            Defaults to None.
 
     Returns:
         tuple[tinker.SamplingClient, dict[str, Any]]: A sampling client
@@ -1408,7 +1388,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
 
     # Get a sampling client using the new weights
     sampling_client, checkpoint_metrics = await save_checkpoint_and_get_sampling_client(
-        training_client, i_batch, log_path, save_every, ttl_seconds=ttl_seconds, store=store
+        training_client, checkpoint_mgr, i_batch
     )
     metrics.update(checkpoint_metrics)
 
@@ -1427,10 +1407,10 @@ async def do_train_step_streaming_and_get_sampling_client(
     i_batch: int,
     trajectory_groups_queue: asyncio.Queue[WrappedTrajectoryGroup | _Shutdown | None],
     training_client: tinker.TrainingClient,
+    checkpoint_mgr: checkpoint_utils.CheckpointManager,
     kl_reference_client: tinker.SamplingClient | None,
     tokenizer: Tokenizer,
     trajectory_group_filter: Callable[[WrappedTrajectoryGroup | None], bool] = lambda _: True,
-    store: TrainingRunStore | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any], list[WrappedTrajectoryGroup]] | None:
     """Consume trajectory groups from a queue and train as minibatches become ready.
 
@@ -1568,15 +1548,12 @@ async def do_train_step_streaming_and_get_sampling_client(
         full_batch_metrics,
     ) = await compute_full_batch_metrics_and_get_sampling_client(
         training_client,
+        checkpoint_mgr,
         # NOTE: saving the checkpoint as the i + 1 step
         i_batch + 1,
         all_data_D,
         all_training_logprobs_D,
-        config.log_path,
-        config.save_every,
         config.compute_post_kl,
-        config.ttl_seconds,
-        store=store,
     )
     metrics.update(full_batch_metrics)
     return sampling_client, metrics, all_wrapped_trajectory_groups
@@ -1587,11 +1564,11 @@ async def do_train_step_and_get_sampling_client(
     config: Config,
     i_batch: int,
     training_client: tinker.TrainingClient,
+    checkpoint_mgr: checkpoint_utils.CheckpointManager,
     kl_reference_client: tinker.SamplingClient | None,
     tokenizer: Tokenizer,
     env_group_builders_P: Sequence[EnvGroupBuilder],
     trajectory_groups_P: list[TrajectoryGroup],
-    store: TrainingRunStore | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """Prepare a minibatch, run one training step, and return updated weights.
 
@@ -1642,15 +1619,12 @@ async def do_train_step_and_get_sampling_client(
 
     sampling_client, full_batch_metrics = await compute_full_batch_metrics_and_get_sampling_client(
         training_client,
+        checkpoint_mgr,
         # NOTE: saving the checkpoint as the i + 1 step
         i_batch + 1,
         data_D,
         training_logprobs_D,
-        config.log_path,
-        config.save_every,
         config.compute_post_kl,
-        config.ttl_seconds,
-        store=store,
     )
     metrics.update(full_batch_metrics)
 
@@ -1671,7 +1645,7 @@ async def do_sync_training(
     tokenizer: Tokenizer,
     error_counter: RolloutErrorCounter | None = None,
     strategy: RolloutStrategy | None = None,
-    rolling_mgr: checkpoint_utils.RollingCheckpointManager | None = None,
+    checkpoint_mgr: checkpoint_utils.CheckpointManager | None = None,
 ):
     """Implement fully synchronous on-policy training.
 
@@ -1702,14 +1676,9 @@ async def do_sync_training(
             Defaults to None.
     """
     # Initial sampling client
+    assert checkpoint_mgr is not None
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        training_client,
-        start_batch,
-        config.log_path,
-        config.save_every,
-        start_batch,
-        config.ttl_seconds,
-        store=ml_logger.store,
+        training_client, checkpoint_mgr, start_batch, start_batch
     )
 
     for i_batch in range(start_batch, end_batch):
@@ -1803,18 +1772,18 @@ async def do_sync_training(
                     config,
                     i_batch,
                     training_client,
+                    checkpoint_mgr,
                     kl_reference_client,
                     tokenizer,
                     env_group_builders_P,
                     trajectory_groups_P,
-                    store=ml_logger.store,
                 )
 
                 metrics.update(train_step_metrics)
 
                 # Rolling checkpoint (fire-and-forget, overlaps with next iteration)
-                if rolling_mgr is not None:
-                    await rolling_mgr.maybe_save_async(
+                if checkpoint_mgr is not None:
+                    await checkpoint_mgr.maybe_save_rolling_async(
                         step=i_batch + 1, loop_state={"batch": i_batch + 1}
                     )
 
@@ -1971,12 +1940,13 @@ async def main(
     else:
         kl_reference_client = None
 
-    rolling_mgr = checkpoint_utils.RollingCheckpointManager(
+    checkpoint_mgr = checkpoint_utils.CheckpointManager(
         training_client=training_client,
         service_client=service_client,
         log_path=config.log_path,
-        rolling_save_every=config.rolling_save_every,
         save_every=config.save_every,
+        ttl_seconds=config.ttl_seconds,
+        rolling_save_every=config.rolling_save_every,
         rolling_ttl_seconds=config.rolling_ttl_seconds,
         store=store,
     )
@@ -2001,26 +1971,15 @@ async def main(
         tokenizer=tokenizer,
         error_counter=error_counter,
         strategy=strategy,
-        rolling_mgr=rolling_mgr,
+        checkpoint_mgr=checkpoint_mgr,
     )
 
     # Save final checkpoint
     if start_batch < end_batch:
-        _ = await checkpoint_utils.save_checkpoint_async(
-            training_client=training_client,
-            name="final",
-            log_path=config.log_path,
-            kind="both",
-            loop_state={"batch": end_batch},
-            ttl_seconds=None,
-            store=store,
-        )
+        await checkpoint_mgr.save_final_async(loop_state={"batch": end_batch})
     else:
         logger.info("Training was already complete; nothing to do")
-
-    # Clean up rolling checkpoints after the final save so that the last
-    # entry in checkpoints.jsonl always points to valid server-side data.
-    await rolling_mgr.finalize_async()
+        await checkpoint_mgr.finalize_async()
 
     # Cleanup
     if rollout_executor is not None:

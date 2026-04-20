@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from tinker_cookbook.checkpoint_utils import (
+    CheckpointManager,
     CheckpointRecord,
-    RollingCheckpointManager,
     get_last_checkpoint,
     load_checkpoints_file,
 )
@@ -165,17 +165,15 @@ def test_checkpoint_record_extra_overlap_with_known_keys():
 
 
 # ---------------------------------------------------------------------------
-# RollingCheckpointManager tests
+# CheckpointManager tests
 # ---------------------------------------------------------------------------
 
 
-class TestRollingCheckpointManagerShouldSave:
-    """Tests for _should_save logic."""
+class TestCheckpointManagerShouldSave:
+    """Tests for _should_save_rolling logic."""
 
-    def _make_mgr(
-        self, rolling_save_every: int = 1, save_every: int = 0
-    ) -> RollingCheckpointManager:
-        return RollingCheckpointManager(
+    def _make_mgr(self, rolling_save_every: int = 1, save_every: int = 0) -> CheckpointManager:
+        return CheckpointManager(
             training_client=MagicMock(),
             service_client=MagicMock(),
             log_path="/tmp/unused",
@@ -185,41 +183,76 @@ class TestRollingCheckpointManagerShouldSave:
 
     def test_disabled_when_zero(self):
         mgr = self._make_mgr(rolling_save_every=0)
-        assert not mgr._should_save(1)
-        assert not mgr._should_save(5)
+        assert not mgr._should_save_rolling(1)
+        assert not mgr._should_save_rolling(5)
 
     def test_skips_step_zero(self):
         mgr = self._make_mgr(rolling_save_every=1)
-        assert not mgr._should_save(0)
+        assert not mgr._should_save_rolling(0)
 
     def test_saves_on_cadence(self):
         mgr = self._make_mgr(rolling_save_every=3)
-        assert not mgr._should_save(1)
-        assert not mgr._should_save(2)
-        assert mgr._should_save(3)
-        assert not mgr._should_save(4)
-        assert not mgr._should_save(5)
-        assert mgr._should_save(6)
+        assert not mgr._should_save_rolling(1)
+        assert not mgr._should_save_rolling(2)
+        assert mgr._should_save_rolling(3)
+        assert not mgr._should_save_rolling(4)
+        assert not mgr._should_save_rolling(5)
+        assert mgr._should_save_rolling(6)
 
     def test_saves_every_step(self):
         mgr = self._make_mgr(rolling_save_every=1)
-        assert mgr._should_save(1)
-        assert mgr._should_save(2)
-        assert mgr._should_save(3)
+        assert mgr._should_save_rolling(1)
+        assert mgr._should_save_rolling(2)
+        assert mgr._should_save_rolling(3)
 
     def test_skips_when_periodic_fires(self):
         mgr = self._make_mgr(rolling_save_every=1, save_every=5)
-        assert mgr._should_save(1)
-        assert mgr._should_save(4)
-        assert not mgr._should_save(5)  # periodic fires here
-        assert mgr._should_save(6)
-        assert not mgr._should_save(10)  # periodic fires here
+        assert mgr._should_save_rolling(1)
+        assert mgr._should_save_rolling(4)
+        assert not mgr._should_save_rolling(5)  # periodic fires here
+        assert mgr._should_save_rolling(6)
+        assert not mgr._should_save_rolling(10)  # periodic fires here
 
     def test_skips_when_periodic_fires_same_cadence(self):
         """Rolling and periodic on same cadence means rolling never fires."""
         mgr = self._make_mgr(rolling_save_every=5, save_every=5)
-        assert not mgr._should_save(5)
-        assert not mgr._should_save(10)
+        assert not mgr._should_save_rolling(5)
+        assert not mgr._should_save_rolling(10)
+
+
+class TestCheckpointManagerShouldSavePeriodic:
+    """Tests for should_save_periodic logic."""
+
+    def _make_mgr(self, save_every: int = 5) -> CheckpointManager:
+        return CheckpointManager(
+            training_client=MagicMock(),
+            service_client=MagicMock(),
+            log_path="/tmp/unused",
+            save_every=save_every,
+        )
+
+    def test_disabled_when_zero(self):
+        mgr = self._make_mgr(save_every=0)
+        assert not mgr.should_save_periodic(1)
+        assert not mgr.should_save_periodic(5)
+
+    def test_skips_step_zero(self):
+        mgr = self._make_mgr(save_every=5)
+        assert not mgr.should_save_periodic(0)
+
+    def test_saves_on_cadence(self):
+        mgr = self._make_mgr(save_every=5)
+        assert not mgr.should_save_periodic(1)
+        assert not mgr.should_save_periodic(4)
+        assert mgr.should_save_periodic(5)
+        assert not mgr.should_save_periodic(6)
+        assert mgr.should_save_periodic(10)
+
+    def test_saves_every_step(self):
+        mgr = self._make_mgr(save_every=1)
+        assert mgr.should_save_periodic(1)
+        assert mgr.should_save_periodic(2)
+        assert mgr.should_save_periodic(3)
 
 
 def _make_save_state_mock(paths: list[str]) -> AsyncMock:
@@ -253,7 +286,7 @@ async def test_maybe_save_async_saves_and_deletes():
             ["tinker://run/state/000001", "tinker://run/state/000002", "tinker://run/state/000003"]
         )
 
-        mgr = RollingCheckpointManager(
+        mgr = CheckpointManager(
             training_client=mock_training_client,
             service_client=mock_service_client,
             log_path=tmpdir,
@@ -295,7 +328,7 @@ async def test_maybe_save_async_skips_when_disabled():
     mock_training_client = MagicMock()
     mock_training_client.save_state_async = AsyncMock()
 
-    mgr = RollingCheckpointManager(
+    mgr = CheckpointManager(
         training_client=mock_training_client,
         service_client=MagicMock(),
         log_path="/tmp/unused",
@@ -319,7 +352,7 @@ async def test_finalize_deletes_last_rolling_checkpoint():
 
         mock_training_client.save_state_async = _make_save_state_mock(["tinker://run/state/000001"])
 
-        mgr = RollingCheckpointManager(
+        mgr = CheckpointManager(
             training_client=mock_training_client,
             service_client=mock_service_client,
             log_path=tmpdir,
@@ -344,7 +377,7 @@ async def test_save_failure_is_swallowed():
     mock_training_client.save_state_async = AsyncMock(side_effect=RuntimeError("server error"))
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        mgr = RollingCheckpointManager(
+        mgr = CheckpointManager(
             training_client=mock_training_client,
             service_client=MagicMock(),
             log_path=tmpdir,
@@ -373,7 +406,7 @@ async def test_delete_failure_is_swallowed():
             ["tinker://run/state/000001", "tinker://run/state/000002", "tinker://run/state/000003"]
         )
 
-        mgr = RollingCheckpointManager(
+        mgr = CheckpointManager(
             training_client=mock_training_client,
             service_client=mock_service_client,
             log_path=tmpdir,
