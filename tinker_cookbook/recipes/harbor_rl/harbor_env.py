@@ -196,7 +196,9 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
 
             # Upload rg binary into sandbox if file tools are enabled
             if rg_bytes is not None:
-                await sandbox.write_file("/usr/local/bin/rg", rg_bytes, executable=True)
+                rg_result = await sandbox.write_file("/usr/local/bin/rg", rg_bytes, executable=True)
+                if rg_result.exit_code != 0:
+                    raise RuntimeError(f"Failed to upload rg binary to sandbox: {rg_result.stderr}")
 
             tools = self._build_tools(sandbox)
             reward_fn = self.reward_fn or HarborReward(

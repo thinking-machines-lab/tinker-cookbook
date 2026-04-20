@@ -578,15 +578,20 @@ class HarborReadFileTool:
                 "to read from a specific position."
             )
 
+        n_lines = min(n_lines, MAX_READ_LINES)
+
         if line_offset < 0:
             # Use tail command for accurate tail reads regardless of file size
-            return await self._read_tail_via_sandbox(
-                path, line_offset, min(n_lines, MAX_READ_LINES)
-            )
+            return await self._read_tail_via_sandbox(path, line_offset, n_lines)
 
-        # Read 2x the byte budget so we can count total_lines even when content is capped
-        result = await self._sandbox.read_file(
-            path, max_bytes=MAX_READ_BYTES * 2, timeout=self._command_timeout
+        # Use sed + wc in sandbox to read the exact requested line range,
+        # so pagination works correctly for files larger than the byte budget
+        end_line = line_offset + n_lines - 1
+        cmd = (
+            f"wc -l < {shlex.quote(path)} && sed -n '{line_offset},{end_line}p' {shlex.quote(path)}"
+        )
+        result = await self._sandbox.run_command(
+            cmd, workdir="/", timeout=self._command_timeout, max_output_bytes=MAX_READ_BYTES * 2
         )
 
         if result.exit_code != 0:
@@ -597,12 +602,18 @@ class HarborReadFileTool:
                 return _error_result(f"`{path}` is not a file.")
             return _error_result(f"Failed to read {path}. Error: {stderr}")
 
-        content = result.stdout
-        all_lines = content.splitlines()
-        total_lines = len(all_lines)
+        output_lines = result.stdout.split("\n")
+        try:
+            total_lines = int(output_lines[0].strip())
+        except (ValueError, IndexError):
+            total_lines = 0
 
-        n_lines = min(n_lines, MAX_READ_LINES)
-        return self._format_forward(all_lines, total_lines, line_offset, n_lines, path)
+        # Lines after the first (wc -l output) are the sed content
+        content_lines = output_lines[1:]
+        if content_lines and content_lines[-1] == "":
+            content_lines = content_lines[:-1]
+
+        return self._format_forward(content_lines, total_lines, line_offset, n_lines, path)
 
     async def _read_tail_via_sandbox(self, path: str, line_offset: int, n_lines: int) -> ToolResult:
         """Read tail of file using sandbox commands for accuracy on large files."""
@@ -656,30 +667,26 @@ class HarborReadFileTool:
 
     def _format_forward(
         self,
-        all_lines: list[str],
+        content_lines: list[str],
         total_lines: int,
         line_offset: int,
         n_lines: int,
         path: str,
     ) -> ToolResult:
+        """Format pre-sliced lines (already at the requested offset) with cat -n style."""
         lines_read: list[str] = []
         truncated_line_numbers: list[int] = []
         n_bytes = 0
-        max_lines_reached = False
         max_bytes_reached = False
 
-        for i in range(line_offset - 1, len(all_lines)):
-            line = all_lines[i]
+        for i, line in enumerate(content_lines):
             truncated = _truncate_line(line, MAX_READ_LINE_LENGTH)
             if truncated != line:
-                truncated_line_numbers.append(i + 1)
+                truncated_line_numbers.append(line_offset + i)
             lines_read.append(truncated)
             n_bytes += len(truncated.encode("utf-8"))
 
             if len(lines_read) >= n_lines:
-                break
-            if len(lines_read) >= MAX_READ_LINES:
-                max_lines_reached = True
                 break
             if n_bytes >= MAX_READ_BYTES:
                 max_bytes_reached = True
@@ -696,9 +703,7 @@ class HarborReadFileTool:
             else "No lines read from file."
         )
         message += f" Total lines in file: {total_lines}."
-        if max_lines_reached:
-            message += f" Max {MAX_READ_LINES} lines reached."
-        elif max_bytes_reached:
+        if max_bytes_reached:
             message += f" Max {MAX_READ_BYTES} bytes reached."
         elif len(lines_read) < n_lines:
             message += " End of file reached."
@@ -747,6 +752,14 @@ class HarborWriteFileTool:
             return _error_result("path is required")
 
         try:
+            # Resolve relative paths so both modes target the same file
+            if not path.startswith("/"):
+                resolve = await self._sandbox.run_command(
+                    f"readlink -f {shlex.quote(path)}", workdir="/", timeout=self._command_timeout
+                )
+                if resolve.exit_code == 0 and resolve.stdout.strip():
+                    path = resolve.stdout.strip()
+
             if mode == "overwrite":
                 result = await self._sandbox.write_file(
                     path, content, timeout=self._command_timeout
