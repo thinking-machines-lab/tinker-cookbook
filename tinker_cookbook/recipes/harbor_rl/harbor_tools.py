@@ -446,9 +446,7 @@ class HarborGrepTool:
         )
         cmd = " ".join(shlex.quote(arg) for arg in args)
 
-        result = await self._sandbox.run_command(
-            cmd, workdir="/", timeout=self._command_timeout, max_output_bytes=MAX_OUTPUT_CHARS
-        )
+        result = await self._sandbox.run_command(cmd, workdir="/", timeout=self._command_timeout)
 
         # rg exit codes: 0=matches found, 1=no matches, 2+=error
         if result.exit_code == 1:
@@ -832,11 +830,9 @@ class HarborStrReplaceFileTool:
         if not path or not path.strip():
             return _error_result("path is required")
 
-        # 10MB cap: sufficient for source files in Harbor coding tasks.
-        # Files exceeding this are truncated — acceptable since StrReplaceFile
-        # targets source code, not binary artifacts or large logs.
+        max_edit_bytes = 10 * 1024 * 1024  # 10MB
         result = await self._sandbox.read_file(
-            path, max_bytes=10 * 1024 * 1024, timeout=self._command_timeout
+            path, max_bytes=max_edit_bytes, timeout=self._command_timeout
         )
         if result.exit_code != 0:
             stderr = result.stderr.strip()
@@ -845,6 +841,14 @@ class HarborStrReplaceFileTool:
             return _error_result(f"Failed to read {path}. Error: {stderr}")
 
         content = result.stdout
+
+        # Fail if the file was truncated to avoid silent data loss on write-back
+        if len(content.encode("utf-8")) >= max_edit_bytes:
+            return _error_result(
+                f"File is too large to edit (>{max_edit_bytes // (1024 * 1024)}MB). "
+                "Use the bash tool with sed or other commands for large files."
+            )
+
         original_content = content
 
         edits = [edit] if isinstance(edit, Edit) else edit
