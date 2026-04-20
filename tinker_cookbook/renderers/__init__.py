@@ -136,9 +136,9 @@ def get_renderer(
             - ``"kimi_k2"``: Kimi K2 Thinking format
             - ``"kimi_k25"``: Kimi K2.5 with thinking enabled
             - ``"kimi_k25_disable_thinking"``: Kimi K2.5 with thinking disabled
-            - ``"kimi_k26"``: Kimi K2.6 with thinking enabled (HF default)
+            - ``"kimi_k26"``: Kimi K2.6 with thinking enabled (HF default — same token output as ``kimi_k25``)
             - ``"kimi_k26_disable_thinking"``: Kimi K2.6 with thinking disabled
-            - ``"kimi_k26_preserve_thinking"``: Kimi K2.6 with thinking enabled and preserved across history (``preserve_thinking=true``)
+            - ``"kimi_k26_preserve_thinking"``: Kimi K2.6 with thinking enabled and historical ``<think>...</think>`` blocks preserved (HF ``preserve_thinking=true``); use for long-horizon agents / multi-turn RL
             - ``"nemotron3"``: Nemotron-3 with full reasoning (Nano & Super)
             - ``"nemotron3_low_thinking"``: Nemotron-3 with low-effort reasoning (Super only)
             - ``"nemotron3_disable_thinking"``: Nemotron-3 with reasoning off (Nano & Super)
