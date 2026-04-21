@@ -70,6 +70,7 @@ from tinker_cookbook.rl.types import (
     TrajectoryGroup,
 )
 from tinker_cookbook.utils import ml_log, trace
+from tinker_cookbook.utils.misc_utils import split_list
 
 logger = logging.getLogger(__name__)
 
@@ -464,6 +465,269 @@ async def build_topk_distillation_datums(
     return new_datums, metrics
 
 
+@trace.scope
+async def build_reverse_kl_datums(
+    data_D: list[tinker.Datum],
+    metadata_D: list[dict[str, int]],
+    teacher_client: tinker.SamplingClient,
+    teacher_prompts_P: list[tinker.ModelInput],
+    topk: int = 20,
+    max_context_length: int = 32768,
+    vocab_size: int | None = None,
+    skip_first_n_tokens: int = 3,
+) -> tuple[list[tinker.Datum], dict[str, float]]:
+    """Build datums for reverse-KL custom-loss training over the teacher's top-K.
+
+    Teacher-forces each student completion through the teacher, extracts the
+    teacher's top-K token distribution at every completion position, and
+    renormalizes it.
+
+    Tinker's ``forward_backward_custom`` only accepts ``loss_fn_inputs`` keys in
+    ``{"target_tokens", "weights"}`` (and only JSON-serializable floats), so we
+    pack the renormalized teacher probability into ``weights`` with ``0`` as
+    the sentinel for both (a) invalid top-K slots (after vocab filtering) and
+    (b) masked positions (prompt, trailing, or skipped). This matches the
+    forward-KL CE encoding. :func:`reverse_kl_custom_loss` recovers the mask
+    via ``weights > 0`` and reconstructs ``log q_renorm = log(weights)``.
+
+    The loss (REINFORCE form, stop-grad on the advantage):
+
+        L = sum_t sum_{k in S_t} p_renorm(x_k|t) * sg[log p_renorm - log q_renorm]
+    """
+    teacher_forced_sequences_D: list[tinker.ModelInput] = []
+    teacher_prompt_lengths_D: list[int] = []
+    completion_lengths_D: list[int] = []
+    truncated_count = 0
+
+    for i, datum in enumerate(data_D):
+        group_idx = metadata_D[i]["group_idx"]
+        teacher_prompt = teacher_prompts_P[group_idx]
+
+        completion_tokens, teacher_prompt_len, _, was_truncated = _extract_completion_tokens(
+            datum, teacher_prompt, max_context_length
+        )
+        if was_truncated:
+            truncated_count += 1
+
+        if not completion_tokens:
+            teacher_forced_sequences_D.append(teacher_prompt)
+            teacher_prompt_lengths_D.append(teacher_prompt_len)
+            completion_lengths_D.append(0)
+            continue
+
+        teacher_forced = _build_teacher_forced_sequence(teacher_prompt, completion_tokens)
+        teacher_forced_sequences_D.append(teacher_forced)
+        teacher_prompt_lengths_D.append(teacher_prompt_len)
+        completion_lengths_D.append(len(completion_tokens))
+
+    topk_responses_D = await asyncio.gather(
+        *[
+            teacher_client.sample_async(
+                prompt=teacher_forced,
+                num_samples=1,
+                sampling_params=tinker.SamplingParams(max_tokens=1),
+                include_prompt_logprobs=True,
+                topk_prompt_logprobs=topk,
+            )
+            for teacher_forced in teacher_forced_sequences_D
+        ]
+    )
+
+    new_datums: list[tinker.Datum] = []
+    total_positions = 0.0
+    total_teacher_entropy = 0.0
+
+    for i, datum in enumerate(data_D):
+        mask = datum.loss_fn_inputs["mask"].to_torch()
+        completion_mask_indices = torch.where(mask > 0)[0]
+        N = datum.model_input.length
+        completion_len = completion_lengths_D[i]
+        teacher_prompt_len = teacher_prompt_lengths_D[i]
+
+        target_tokens_NK = torch.zeros(N, topk, dtype=torch.long)
+        # All slots start at 0 (masked). Valid slots get the renormalized
+        # teacher probability; masked positions and unused slots keep 0.
+        weights_NK = torch.zeros(N, topk, dtype=torch.float32)
+
+        if completion_len > 0 and len(completion_mask_indices) > 0:
+            topk_all = topk_responses_D[i].topk_prompt_logprobs
+
+            num_tokens = min(completion_len, len(completion_mask_indices))
+            for t in range(num_tokens):
+                if t < skip_first_n_tokens:
+                    continue
+
+                teacher_pos = teacher_prompt_len + t
+                student_pos = int(completion_mask_indices[t].item())
+
+                if topk_all is None or teacher_pos >= len(topk_all):
+                    continue
+                topk_entries = topk_all[teacher_pos]
+                if topk_entries is None:
+                    continue
+
+                filtered = [
+                    (tok_id, lp)
+                    for tok_id, lp in topk_entries[:topk]
+                    if vocab_size is None or tok_id < vocab_size
+                ]
+                if not filtered:
+                    continue
+
+                k_actual = len(filtered)
+                token_ids = torch.tensor([tok_id for tok_id, _ in filtered], dtype=torch.long)
+                raw_lps = torch.tensor([lp for _, lp in filtered], dtype=torch.float32)
+
+                teacher_log_renorm = raw_lps - torch.logsumexp(raw_lps, dim=0)
+                teacher_probs = teacher_log_renorm.exp()
+
+                target_tokens_NK[student_pos, :k_actual] = token_ids
+                weights_NK[student_pos, :k_actual] = teacher_probs
+
+                total_teacher_entropy += -(teacher_probs * teacher_log_renorm).sum().item()
+                total_positions += 1
+
+        new_datums.append(
+            tinker.Datum(
+                model_input=datum.model_input,
+                loss_fn_inputs={
+                    "target_tokens": tinker.TensorData.from_torch(target_tokens_NK),
+                    "weights": tinker.TensorData.from_torch(weights_NK),
+                },
+            )
+        )
+
+    metrics: dict[str, float] = {
+        "sdft/teacher_truncated_count": float(truncated_count),
+        "sdft/num_datums": float(len(data_D)),
+        "sdft/topk": float(topk),
+    }
+    if total_positions > 0:
+        metrics["sdft/total_completion_positions"] = total_positions
+        metrics["sdft/mean_teacher_entropy"] = total_teacher_entropy / total_positions
+
+    return new_datums, metrics
+
+
+def reverse_kl_custom_loss(
+    data: list[tinker.Datum],
+    logprobs_list: list[torch.Tensor],
+) -> tuple[torch.Tensor, dict[str, float]]:
+    """Analytical reverse-KL loss over the teacher's top-K (REINFORCE form).
+
+    Consumes datums built by :func:`build_reverse_kl_datums`. The server
+    returns student logprobs at the teacher-top-K ``target_tokens`` (shape
+    ``(N, K)``); we renormalize student over those K slots, stop-grad the
+    ``[log p_renorm - log q_renorm]`` bracket, and take the mass-weighted
+    sum. Gradient flows only through the outer ``p_renorm`` weight, matching
+    Tinker's ``importance_sampling`` convention.
+
+    The per-slot ``weights`` carry renormalized teacher probability (``q_renorm``)
+    at valid slots and ``0`` at padding slots or masked positions. We recover
+    the per-slot validity mask via ``weights > 0`` and reconstruct
+    ``log q_renorm = log(weights)`` for the KL computation.
+    """
+    total_loss = torch.tensor(0.0)
+    sum_kl = 0.0
+    sum_student_entropy = 0.0
+    sum_positions = 0.0
+
+    for i, datum in enumerate(data):
+        student_logp_NK = logprobs_list[i]
+        weights_NK = datum.loss_fn_inputs["weights"].to_torch()  # q_renorm or 0
+
+        slot_mask_NK = weights_NK > 0  # (N, K)
+        position_mask_N = slot_mask_NK.any(dim=-1).float()  # (N,)
+
+        # Reconstruct log q_renorm safely; clamp away from 0 for the log op.
+        safe_weights = weights_NK.clamp(min=1e-30)
+        teacher_log_renorm_NK = torch.where(
+            slot_mask_NK, torch.log(safe_weights), torch.zeros_like(weights_NK)
+        )
+
+        neg_inf = torch.full_like(student_logp_NK, float("-inf"))
+        masked_logp = torch.where(slot_mask_NK, student_logp_NK, neg_inf)
+        log_p_renorm = torch.log_softmax(masked_logp, dim=-1)
+        log_p_renorm = torch.nan_to_num(log_p_renorm, nan=0.0, neginf=0.0)
+        p_renorm = log_p_renorm.exp()
+
+        adv_NK = (log_p_renorm - teacher_log_renorm_NK).detach()
+        per_pos_NK = p_renorm * adv_NK * slot_mask_NK.float()
+        per_pos_N = per_pos_NK.sum(dim=-1)
+        loss_d = (per_pos_N * position_mask_N).sum()
+        total_loss = total_loss + loss_d
+
+        with torch.no_grad():
+            kl_NK = p_renorm * (log_p_renorm - teacher_log_renorm_NK) * slot_mask_NK.float()
+            per_pos_kl = kl_NK.sum(dim=-1)
+            sum_kl += (per_pos_kl * position_mask_N).sum().item()
+            ent_NK = -(p_renorm * log_p_renorm * slot_mask_NK.float())
+            per_pos_ent = ent_NK.sum(dim=-1)
+            sum_student_entropy += (per_pos_ent * position_mask_N).sum().item()
+            sum_positions += position_mask_N.sum().item()
+
+    metrics: dict[str, float] = {"sdft/reverse_kl_loss": total_loss.item()}
+    if sum_positions > 0:
+        metrics["sdft/reverse_kl_mean"] = sum_kl / sum_positions
+        metrics["sdft/student_entropy_mean"] = sum_student_entropy / sum_positions
+    metrics["sdft/reverse_kl_positions"] = sum_positions
+
+    return total_loss, metrics
+
+
+@trace.scope
+async def _train_step_reverse_kl(
+    data_D: list[tinker.Datum],
+    training_client: tinker.TrainingClient,
+    learning_rate: float,
+    num_substeps: int,
+    metrics: dict[str, Any] | None = None,
+) -> None:
+    """Substep-pipelined custom forward/backward for the reverse-KL loss.
+
+    Mirrors :func:`tinker_cookbook.rl.train.train_step` but uses
+    ``forward_backward_custom_async`` with :func:`reverse_kl_custom_loss`.
+    The datums produced by :func:`build_reverse_kl_datums` carry
+    ``position_mask`` / ``k_valid`` / ``teacher_logprobs`` instead of the
+    standard ``mask`` key, so no mask stripping is needed.
+    """
+    batches = split_list(data_D, min(num_substeps, len(data_D)))
+    if not batches:
+        return
+
+    adam_params = tinker.AdamParams(learning_rate=learning_rate, beta1=0.9, beta2=0.95, eps=1e-8)
+    fwd_bwd_future = await training_client.forward_backward_custom_async(
+        batches[0], reverse_kl_custom_loss
+    )
+    optim_future = await training_client.optim_step_async(adam_params)
+    loss_metrics: dict[str, float] = {}
+    optim_result: tinker.OptimStepResponse | None = None
+
+    for i in range(len(batches)):
+        if i + 1 < len(batches):
+            next_fwd_bwd_future = await training_client.forward_backward_custom_async(
+                batches[i + 1], reverse_kl_custom_loss
+            )
+            next_optim_future = await training_client.optim_step_async(adam_params)
+        else:
+            next_fwd_bwd_future = None
+            next_optim_future = None
+
+        fwd_bwd_result = await fwd_bwd_future.result_async()
+        if fwd_bwd_result.metrics:
+            loss_metrics.update(fwd_bwd_result.metrics)
+        optim_result = await optim_future.result_async()
+
+        if next_fwd_bwd_future is not None and next_optim_future is not None:
+            fwd_bwd_future = next_fwd_bwd_future
+            optim_future = next_optim_future
+
+    if metrics is not None:
+        metrics.update(loss_metrics)
+        if optim_result is not None and optim_result.metrics:
+            metrics.update(optim_result.metrics)
+
+
 @chz.chz
 class Config:
     """Configuration for SDFT training.
@@ -498,6 +762,7 @@ class Config:
 
     # SDFT-specific
     topk: int = 20
+    reverse: bool = False
     demo_template: str = DEFAULT_DEMO_TEMPLATE
     system_prompt: str | None = None
     teacher_sync_every: int | None = None
@@ -690,8 +955,30 @@ async def main(
                 for question, golden_answer in zip(questions_P, golden_answers_P)
             ]
 
-            if cfg.topk > 0:
-                # Top-K CE distillation
+            if cfg.topk > 0 and cfg.reverse:
+                # Analytical reverse KL over teacher top-K via custom loss
+                async with trace.scope_span("build_reverse_kl_datums"):
+                    rev_datums, rev_metrics = await build_reverse_kl_datums(
+                        data_D,
+                        metadata_D,
+                        teacher_client,
+                        teacher_prompts_P,
+                        topk=cfg.topk,
+                        max_context_length=cfg.max_context_length,
+                        vocab_size=len(tokenizer),
+                    )
+                metrics.update(rev_metrics)
+
+                async with trace.scope_span("train"):
+                    await _train_step_reverse_kl(
+                        data_D=rev_datums,
+                        training_client=training_client,
+                        learning_rate=cfg.learning_rate,
+                        num_substeps=cfg.num_substeps,
+                        metrics=metrics,
+                    )
+            elif cfg.topk > 0:
+                # Top-K CE distillation (forward KL)
                 async with trace.scope_span("build_topk_distillation_datums"):
                     topk_datums, topk_metrics = await build_topk_distillation_datums(
                         data_D,
@@ -715,7 +1002,12 @@ async def main(
                         metrics=metrics,
                     )
             else:
-                # IS only (old approach): compute advantages then train
+                # DEPRECATED: single-sample importance-sampling approximation of
+                # reverse KL. Superseded by `reverse=True` (analytical top-K
+                # reverse KL over the teacher distribution). Kept only so that
+                # historical configs with `topk=0` continue to run; new work
+                # should set `topk>0` and toggle `reverse` for the forward/reverse
+                # choice.
                 async with trace.scope_span("compute_sdft_advantages"):
                     is_metrics = await compute_sdft_advantages(
                         data_D,

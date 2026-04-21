@@ -11,8 +11,10 @@ from tinker_cookbook.distillation.sdft import (
     DEFAULT_DEMO_TEMPLATE,
     _build_teacher_forced_sequence,
     _extract_completion_tokens,
+    build_reverse_kl_datums,
     build_sdft_teacher_prompt,
     build_topk_distillation_datums,
+    reverse_kl_custom_loss,
 )
 from tinker_cookbook.recipes.sdft.datasets import SDFTDataset, _format_sciknoweval_choices
 from tinker_cookbook.recipes.sdft.eval import (
@@ -381,3 +383,187 @@ class TestBuildTopkDistillationDatums:
 
         weights = new_datums[0].loss_fn_inputs["weights"].to_torch()
         assert weights.sum() == 0.0
+
+
+def _pack_weights(
+    teacher_log_renorm_NK: torch.Tensor,
+    position_mask_N: torch.Tensor,
+    k_valid_N: torch.Tensor,
+) -> torch.Tensor:
+    """Test helper: pack teacher renorm probs into the `0` sentinel encoding."""
+    N, K = teacher_log_renorm_NK.shape
+    weights = torch.zeros(N, K, dtype=torch.float32)
+    probs = teacher_log_renorm_NK.exp()
+    for n in range(N):
+        if position_mask_N[n].item() > 0:
+            k = int(k_valid_N[n].item())
+            weights[n, :k] = probs[n, :k]
+    return weights
+
+
+class TestBuildReverseKLDatums:
+    @pytest.mark.asyncio
+    async def test_shapes_and_renorm(self):
+        """Reverse-KL datums carry (N, K) target_tokens + weights (log q renorm
+        at valid slots, -inf elsewhere)."""
+        K = 3
+        datum = _make_datum([10, 20, 30], [40, 50, 60, 70, 80])
+        teacher_prompt = tinker.ModelInput.from_ints([100, 200])
+
+        # Teacher-forced length = 2 prompt + 5 completion = 7 positions
+        mock_topk = [None] * 2 + [
+            [(40, -0.5), (41, -1.5), (42, -2.5)],
+            [(50, -0.3), (51, -1.3), (52, -2.3)],
+            [(60, -0.8), (61, -1.8), (62, -2.8)],
+            [(70, -0.1), (71, -1.1), (72, -2.1)],
+            [(80, -0.4), (81, -1.4), (82, -2.4)],
+        ]
+        mock_response = MagicMock()
+        mock_response.topk_prompt_logprobs = mock_topk
+        mock_client = AsyncMock()
+        mock_client.sample_async = AsyncMock(return_value=mock_response)
+
+        rev_datums, metrics = await build_reverse_kl_datums(
+            data_D=[datum],
+            metadata_D=[{"group_idx": 0, "traj_idx": 0}],
+            teacher_client=mock_client,
+            teacher_prompts_P=[teacher_prompt],
+            topk=K,
+            skip_first_n_tokens=0,
+        )
+
+        rd = rev_datums[0]
+        target_tokens = rd.loss_fn_inputs["target_tokens"].to_torch()
+        weights = rd.loss_fn_inputs["weights"].to_torch()
+
+        N = datum.model_input.length
+        assert target_tokens.shape == (N, K)
+        assert weights.shape == (N, K)
+
+        prompt_len = 2  # [10, 20] → input_tokens length before completion mask starts
+        for pos in range(prompt_len):
+            # Prompt positions are fully masked (all zeros)
+            assert (weights[pos] == 0).all()
+        for pos in range(prompt_len, N):
+            assert (weights[pos] > 0).all()  # all K slots valid for this mock
+            # Teacher probs sum to 1 (renormalized over top-K)
+            assert math.isclose(weights[pos].sum().item(), 1.0, rel_tol=1e-5)
+
+        assert metrics["sdft/num_datums"] == 1.0
+        assert metrics["sdft/topk"] == float(K)
+        assert metrics["sdft/mean_teacher_entropy"] > 0.0
+
+    @pytest.mark.asyncio
+    async def test_skip_first_n_tokens(self):
+        """skip_first_n_tokens=3 fully masks the first three completion positions."""
+        K = 2
+        datum = _make_datum([10, 20], [30, 40, 50, 60, 70])
+        teacher_prompt = tinker.ModelInput.from_ints([100])
+
+        mock_topk = [None] + [
+            [(30, -0.5), (31, -1.5)],
+            [(40, -0.5), (41, -1.5)],
+            [(50, -0.5), (51, -1.5)],
+            [(60, -0.5), (61, -1.5)],
+            [(70, -0.5), (71, -1.5)],
+        ]
+        mock_response = MagicMock()
+        mock_response.topk_prompt_logprobs = mock_topk
+        mock_client = AsyncMock()
+        mock_client.sample_async = AsyncMock(return_value=mock_response)
+
+        rev_datums, _ = await build_reverse_kl_datums(
+            data_D=[datum],
+            metadata_D=[{"group_idx": 0, "traj_idx": 0}],
+            teacher_client=mock_client,
+            teacher_prompts_P=[teacher_prompt],
+            topk=K,
+            skip_first_n_tokens=3,
+        )
+        weights = rev_datums[0].loss_fn_inputs["weights"].to_torch()
+        # Of model_input length 6, only 2 positions should have any positive weight.
+        active_positions = (weights > 0).any(dim=-1).sum().item()
+        assert active_positions == 2
+
+
+class TestReverseKLCustomLoss:
+    def _make_rev_datum(
+        self,
+        N: int,
+        K: int,
+        teacher_log_renorm_NK: torch.Tensor,
+        position_mask_N: torch.Tensor,
+        k_valid_N: torch.Tensor,
+    ) -> tinker.Datum:
+        weights = _pack_weights(teacher_log_renorm_NK, position_mask_N, k_valid_N)
+        return tinker.Datum(
+            model_input=tinker.ModelInput.from_ints([0] * N),
+            loss_fn_inputs={
+                "target_tokens": tinker.TensorData.from_torch(torch.zeros(N, K, dtype=torch.long)),
+                "weights": tinker.TensorData.from_torch(weights),
+            },
+        )
+
+    def test_zero_when_distributions_equal(self):
+        """L_rev ≈ 0 when student (after renorm) matches teacher."""
+        N, K = 4, 3
+        raw = torch.tensor([0.2, -0.1, 0.5])
+        teacher_log_renorm = (raw - torch.logsumexp(raw, dim=0)).unsqueeze(0).repeat(N, 1)
+        position_mask = torch.tensor([0.0, 1.0, 1.0, 1.0])
+        k_valid = torch.tensor([K, K, K, K], dtype=torch.long)
+
+        student_logp = raw.unsqueeze(0).repeat(N, 1).clone().requires_grad_(True)
+
+        datum = self._make_rev_datum(N, K, teacher_log_renorm, position_mask, k_valid)
+        loss, metrics = reverse_kl_custom_loss([datum], [student_logp])
+
+        assert abs(loss.item()) < 1e-6
+        assert metrics["sdft/reverse_kl_mean"] < 1e-6
+        assert metrics["sdft/reverse_kl_positions"] == 3.0
+
+    def test_positive_kl_and_gradient(self):
+        """L_rev > 0 when p ≠ q, and gradient flows through student logits."""
+        N, K = 2, 3
+        teacher_raw = torch.tensor([0.0, -2.0, -4.0])
+        teacher_log_renorm = (teacher_raw - torch.logsumexp(teacher_raw, dim=0))
+        teacher_log_renorm_NK = teacher_log_renorm.unsqueeze(0).repeat(N, 1)
+
+        student_logp = torch.tensor([[-4.0, -2.0, 0.0], [-4.0, -2.0, 0.0]], requires_grad=True)
+
+        position_mask = torch.tensor([1.0, 1.0])
+        k_valid = torch.tensor([K, K], dtype=torch.long)
+        datum = self._make_rev_datum(N, K, teacher_log_renorm_NK, position_mask, k_valid)
+
+        loss, metrics = reverse_kl_custom_loss([datum], [student_logp])
+        assert loss.item() > 0.1
+
+        p_renorm = torch.log_softmax(student_logp, dim=-1).exp()
+        kl_full = (
+            p_renorm
+            * (torch.log_softmax(student_logp, dim=-1) - teacher_log_renorm_NK)
+        ).sum()
+        assert abs(metrics["sdft/reverse_kl_mean"] * 2 - kl_full.item()) < 1e-4
+
+        loss.backward()
+        assert student_logp.grad is not None
+        assert student_logp.grad.abs().sum().item() > 0.0
+
+    def test_position_mask_zeros_contribution(self):
+        """Position-mask=0 fully excludes a position from the loss and metrics."""
+        N, K = 2, 2
+        teacher_log_renorm_NK = torch.tensor(
+            [[-0.1, -2.5], [-0.1, -2.5]], dtype=torch.float32
+        )
+        student_logp = torch.tensor([[2.0, -2.0], [2.0, -2.0]], requires_grad=True)
+        position_mask = torch.tensor([0.0, 1.0])
+        k_valid = torch.tensor([K, K], dtype=torch.long)
+        datum = self._make_rev_datum(N, K, teacher_log_renorm_NK, position_mask, k_valid)
+
+        loss_masked, metrics_masked = reverse_kl_custom_loss([datum], [student_logp])
+        datum_all = self._make_rev_datum(
+            N, K, teacher_log_renorm_NK, torch.tensor([1.0, 1.0]), k_valid
+        )
+        student_logp2 = torch.tensor([[2.0, -2.0], [2.0, -2.0]], requires_grad=True)
+        loss_all, _ = reverse_kl_custom_loss([datum_all], [student_logp2])
+        assert abs(loss_masked.item() * 2 - loss_all.item()) < 1e-5
+        assert metrics_masked["sdft/reverse_kl_positions"] == 1.0
