@@ -627,7 +627,8 @@ def reverse_kl_custom_loss(
     the per-slot validity mask via ``weights > 0`` and reconstruct
     ``log q_renorm = log(weights)`` for the KL computation.
     """
-    total_loss = torch.tensor(0.0)
+    device = logprobs_list[0].device if logprobs_list else torch.device("cpu")
+    total_loss = torch.zeros((), device=device)
     sum_kl = 0.0
     sum_student_entropy = 0.0
     sum_positions = 0.0
@@ -648,6 +649,7 @@ def reverse_kl_custom_loss(
         neg_inf = torch.full_like(student_logp_NK, float("-inf"))
         masked_logp = torch.where(slot_mask_NK, student_logp_NK, neg_inf)
         log_p_renorm = torch.log_softmax(masked_logp, dim=-1)
+        # Invalid slots land at 0 here (→ p_renorm=1), but are zeroed below via slot_mask_NK.
         log_p_renorm = torch.nan_to_num(log_p_renorm, nan=0.0, neginf=0.0)
         p_renorm = log_p_renorm.exp()
 
@@ -687,9 +689,9 @@ async def _train_step_reverse_kl(
 
     Mirrors :func:`tinker_cookbook.rl.train.train_step` but uses
     ``forward_backward_custom_async`` with :func:`reverse_kl_custom_loss`.
-    The datums produced by :func:`build_reverse_kl_datums` carry
-    ``position_mask`` / ``k_valid`` / ``teacher_logprobs`` instead of the
-    standard ``mask`` key, so no mask stripping is needed.
+    The datums produced by :func:`build_reverse_kl_datums` carry only
+    ``target_tokens`` and ``weights`` (with ``0`` in ``weights`` acting as
+    the mask sentinel), so no ``mask`` stripping is needed.
     """
     batches = split_list(data_D, min(num_substeps, len(data_D)))
     if not batches:
@@ -809,6 +811,12 @@ async def main(
             batches. Use :class:`~tinker_cookbook.recipes.sdft.datasets.SDFTDataset`.
         test_dataset: Optional test dataset for periodic evaluation.
     """
+    if cfg.reverse and cfg.topk == 0:
+        raise ValueError(
+            "reverse=True requires topk>0: the analytical reverse KL runs over "
+            "the teacher's top-K set, which doesn't exist when topk=0."
+        )
+
     ml_logger = ml_log.setup_logging(
         log_dir=cfg.log_path,
         wandb_project=cfg.wandb_project,

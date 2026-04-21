@@ -9,11 +9,13 @@ import torch
 
 from tinker_cookbook.distillation.sdft import (
     DEFAULT_DEMO_TEMPLATE,
+    Config,
     _build_teacher_forced_sequence,
     _extract_completion_tokens,
     build_reverse_kl_datums,
     build_sdft_teacher_prompt,
     build_topk_distillation_datums,
+    main as sdft_main,
     reverse_kl_custom_loss,
 )
 from tinker_cookbook.recipes.sdft.datasets import SDFTDataset, _format_sciknoweval_choices
@@ -567,3 +569,40 @@ class TestReverseKLCustomLoss:
         loss_all, _ = reverse_kl_custom_loss([datum_all], [student_logp2])
         assert abs(loss_masked.item() * 2 - loss_all.item()) < 1e-5
         assert metrics_masked["sdft/reverse_kl_positions"] == 1.0
+
+    @pytest.mark.asyncio
+    async def test_reverse_with_topk_zero_raises(self, tmp_path):
+        """reverse=True requires topk>0; otherwise fail loudly up-front."""
+        cfg = Config(
+            model_name="Qwen/Qwen3-8B",
+            log_path=str(tmp_path),
+            topk=0,
+            reverse=True,
+        )
+        with pytest.raises(ValueError, match="reverse=True requires topk>0"):
+            await sdft_main(cfg, sdft_dataset=MagicMock())
+
+    def test_all_masked_row_is_nan_safe(self):
+        """A row with zero valid top-K slots must not produce NaN — it's guarded
+        by `nan_to_num` after `log_softmax(all -inf)`. Guardrail regression test."""
+        N, K = 3, 3
+        # Row 0 and 1 fully masked (no valid slots); row 2 has normal teacher probs.
+        teacher_log_renorm_NK = torch.zeros(N, K)
+        teacher_log_renorm_NK[2] = torch.log_softmax(
+            torch.tensor([0.0, -1.0, -2.0]), dim=0
+        )
+        position_mask = torch.tensor([0.0, 0.0, 1.0])
+        k_valid = torch.tensor([0, 0, K], dtype=torch.long)
+
+        student_logp = torch.randn(N, K, requires_grad=True)
+        datum = self._make_rev_datum(N, K, teacher_log_renorm_NK, position_mask, k_valid)
+        loss, metrics = reverse_kl_custom_loss([datum], [student_logp])
+
+        assert torch.isfinite(loss)
+        assert metrics["sdft/reverse_kl_positions"] == 1.0
+        loss.backward()
+        assert student_logp.grad is not None
+        assert torch.isfinite(student_logp.grad).all()
+        # Gradient on the fully-masked rows should be exactly zero.
+        assert (student_logp.grad[0] == 0).all()
+        assert (student_logp.grad[1] == 0).all()
