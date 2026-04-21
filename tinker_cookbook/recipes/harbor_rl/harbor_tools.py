@@ -737,10 +737,11 @@ class HarborWriteFileTool:
             return _error_result("path is required")
 
         try:
-            # Resolve relative paths so both modes target the same file
+            # Resolve relative paths so both modes and other tools target the same file.
+            # Use readlink -m which resolves even if the file doesn't exist yet.
             if not path.startswith("/"):
                 resolve = await self._sandbox.run_command(
-                    f"readlink -f {shlex.quote(path)}", workdir="/", timeout=self._command_timeout
+                    f"readlink -m {shlex.quote(path)}", workdir="/", timeout=self._command_timeout
                 )
                 if resolve.exit_code == 0 and resolve.stdout.strip():
                     path = resolve.stdout.strip()
@@ -822,6 +823,14 @@ class HarborStrReplaceFileTool:
         - Should prefer this tool over WriteFile tool and Shell sed command."""
         if not path or not path.strip():
             return _error_result("path is required")
+
+        # Resolve relative paths so edits target the same file other tools see
+        if not path.startswith("/"):
+            resolve = await self._sandbox.run_command(
+                f"readlink -m {shlex.quote(path)}", workdir="/", timeout=self._command_timeout
+            )
+            if resolve.exit_code == 0 and resolve.stdout.strip():
+                path = resolve.stdout.strip()
 
         max_edit_bytes = 10 * 1024 * 1024  # 10MB
         result = await self._sandbox.read_file(
