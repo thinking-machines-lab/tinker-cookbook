@@ -15,8 +15,10 @@ from tinker_cookbook.distillation.sdft import (
     build_reverse_kl_datums,
     build_sdft_teacher_prompt,
     build_topk_distillation_datums,
-    main as sdft_main,
     reverse_kl_custom_loss,
+)
+from tinker_cookbook.distillation.sdft import (
+    main as sdft_main,
 )
 from tinker_cookbook.recipes.sdft.datasets import SDFTDataset, _format_sciknoweval_choices
 from tinker_cookbook.recipes.sdft.eval import (
@@ -527,7 +529,7 @@ class TestReverseKLCustomLoss:
         """L_rev > 0 when p ≠ q, and gradient flows through student logits."""
         N, K = 2, 3
         teacher_raw = torch.tensor([0.0, -2.0, -4.0])
-        teacher_log_renorm = (teacher_raw - torch.logsumexp(teacher_raw, dim=0))
+        teacher_log_renorm = teacher_raw - torch.logsumexp(teacher_raw, dim=0)
         teacher_log_renorm_NK = teacher_log_renorm.unsqueeze(0).repeat(N, 1)
 
         student_logp = torch.tensor([[-4.0, -2.0, 0.0], [-4.0, -2.0, 0.0]], requires_grad=True)
@@ -541,8 +543,7 @@ class TestReverseKLCustomLoss:
 
         p_renorm = torch.log_softmax(student_logp, dim=-1).exp()
         kl_full = (
-            p_renorm
-            * (torch.log_softmax(student_logp, dim=-1) - teacher_log_renorm_NK)
+            p_renorm * (torch.log_softmax(student_logp, dim=-1) - teacher_log_renorm_NK)
         ).sum()
         assert abs(metrics["sdft/reverse_kl_mean"] * 2 - kl_full.item()) < 1e-4
 
@@ -553,9 +554,7 @@ class TestReverseKLCustomLoss:
     def test_position_mask_zeros_contribution(self):
         """Position-mask=0 fully excludes a position from the loss and metrics."""
         N, K = 2, 2
-        teacher_log_renorm_NK = torch.tensor(
-            [[-0.1, -2.5], [-0.1, -2.5]], dtype=torch.float32
-        )
+        teacher_log_renorm_NK = torch.tensor([[-0.1, -2.5], [-0.1, -2.5]], dtype=torch.float32)
         student_logp = torch.tensor([[2.0, -2.0], [2.0, -2.0]], requires_grad=True)
         position_mask = torch.tensor([0.0, 1.0])
         k_valid = torch.tensor([K, K], dtype=torch.long)
@@ -588,9 +587,7 @@ class TestReverseKLCustomLoss:
         N, K = 3, 3
         # Row 0 and 1 fully masked (no valid slots); row 2 has normal teacher probs.
         teacher_log_renorm_NK = torch.zeros(N, K)
-        teacher_log_renorm_NK[2] = torch.log_softmax(
-            torch.tensor([0.0, -1.0, -2.0]), dim=0
-        )
+        teacher_log_renorm_NK[2] = torch.log_softmax(torch.tensor([0.0, -1.0, -2.0]), dim=0)
         position_mask = torch.tensor([0.0, 0.0, 1.0])
         k_valid = torch.tensor([0, 0, K], dtype=torch.long)
 
