@@ -150,13 +150,14 @@ class HarborGlobTool:
         # Use bash glob expansion (supports brace expansion like *.{js,ts})
         # shopt -s globstar enables ** for recursive matching
         # shopt -s nullglob prevents literal pattern output when no matches
+        # Wrap in subshell so cd failure stops the entire command
         type_flag = "" if include_dirs else '[ -f "$f" ] && '
         cmd = (
-            f"cd {shlex.quote(dir_path)} && "
-            "shopt -s globstar nullglob 2>/dev/null; "
+            f"(cd {shlex.quote(dir_path)} && "
+            "shopt -s globstar nullglob 2>/dev/null && "
             f"for f in {pattern}; do {type_flag}"
             'echo "$f"; done | sort | head -n '
-            f"{MAX_GLOB_MATCHES + 1}"
+            f"{MAX_GLOB_MATCHES + 1})"
         )
         result = await self._sandbox.run_command(cmd, workdir="/", timeout=self._command_timeout)
 
@@ -853,7 +854,9 @@ class HarborStrReplaceFileTool:
 
         original_content = content
 
-        edits = [edit] if isinstance(edit, Edit) else edit
+        # Normalize: model_dump() produces dicts, so coerce to Edit objects
+        raw_edits = [edit] if isinstance(edit, Edit | dict) else edit
+        edits = [e if isinstance(e, Edit) else Edit(**e) for e in raw_edits]
 
         # Apply edits sequentially, counting replacements as we go
         total_replacements = 0
