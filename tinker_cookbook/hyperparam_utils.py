@@ -231,6 +231,7 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
         "openai/gpt-oss-120b",
         "moonshotai/Kimi-K2-Thinking",
         "moonshotai/Kimi-K2.5",
+        "nvidia/Nemotron-Cascade-2-30B-A3B",
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
         "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",
     ):
