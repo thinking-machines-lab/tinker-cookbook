@@ -178,6 +178,9 @@ def get_nvidia_info() -> dict[str, ModelAttributes]:
         "NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": ModelAttributes(
             org, "3", "30B-A3B", True, _NEMOTRON3
         ),
+        "NVIDIA-Nemotron-Cascade-2-30B-A3B": ModelAttributes(
+            org, "Cascade-2", "30B-A3B", True, _NEMOTRON3
+        ),
         "NVIDIA-Nemotron-3-Super-120B-A12B-BF16": ModelAttributes(
             org, "3", "120B-A12B", True, _NEMOTRON3_SUPER
         ),
