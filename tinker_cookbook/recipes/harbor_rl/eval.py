@@ -97,7 +97,7 @@ async def evaluate_task(
         env = build_agent_tool_env(
             renderer=renderer,
             tools=[bash_tool.bash],
-            initial_messages=_initial_messages(task, renderer, bash_tool),
+            initial_messages=_initial_messages(task, renderer, [bash_tool.bash]),
             reward_fn=reward_fn,
             max_turns=config.max_turns,
         )
