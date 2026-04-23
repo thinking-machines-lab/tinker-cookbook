@@ -113,8 +113,9 @@ def get_qwen_info() -> dict[str, ModelAttributes]:
         "Qwen3.5-35B-A3B": ModelAttributes(org, "3.5", "35B-A3B", True, _QWEN3_5, is_vl=True),
         "Qwen3.5-397B-A17B": ModelAttributes(org, "3.5", "397B-A17B", True, _QWEN3_5, is_vl=True),
         # Qwen3.6 reuses the Qwen3.5 renderer: identical tokenizer, special tokens,
-        # preprocessor, and chat template (same architectures=Qwen3_5MoeForConditionalGeneration
-        # and model_type=qwen3_5_moe), so renderer/merge/export code paths are shared.
+        # preprocessor, and chat template (same qwen3_5 / qwen3_5_moe model_type),
+        # so renderer/merge/export code paths are shared.
+        "Qwen3.6-27B": ModelAttributes(org, "3.6", "27B", True, _QWEN3_5, is_vl=True),
         "Qwen3.6-35B-A3B": ModelAttributes(org, "3.6", "35B-A3B", True, _QWEN3_5, is_vl=True),
     }
 
