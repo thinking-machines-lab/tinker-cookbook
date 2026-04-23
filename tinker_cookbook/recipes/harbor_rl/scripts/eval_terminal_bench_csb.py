@@ -64,14 +64,16 @@ async def evaluate_task_csb(
     context_dir = str(env_dir)
 
     # Create a CSB sandbox directly from the Dockerfile
-    # Use template alias for caching (avoids rebuilding on subsequent runs)
+    # Use snapshot alias for caching (avoids rebuilding on subsequent runs)
     task_name_slug = task.task_name.lower().replace("_", "-").replace(" ", "-")
     sandbox = await CodeSandboxSandbox.create(
         dockerfile_path=dockerfile_path,
         context_dir=context_dir,
         timeout=config.sandbox_timeout,
-        tier=os.environ.get("CSB_TIER", "Micro"),
-        template_alias=f"harbor@{task_name_slug}",
+        cpu=int(os.environ.get("CSB_CPU", "2")),
+        memory_mb=int(os.environ.get("CSB_MEMORY_MB", "2048")),
+        disk_mb=int(os.environ.get("CSB_DISK_MB", "10240")),
+        snapshot_alias=f"harbor@{task_name_slug}",
     )
 
     try:
@@ -229,6 +231,6 @@ if __name__ == "__main__":
 
     tasks = load_harbor_tasks("terminal-bench-2.0")
     print(f"Loaded {len(tasks)} tasks")
-    print(f"Sandbox backend: CodeSandbox (tier={os.environ.get('CSB_TIER', 'Micro')})")
+    print(f"Sandbox backend: CodeSandbox (cpu={os.environ.get('CSB_CPU', '2')}, mem={os.environ.get('CSB_MEMORY_MB', '2048')}MB)")
 
     asyncio.run(run_eval_csb(config, tasks))

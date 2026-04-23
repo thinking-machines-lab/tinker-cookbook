@@ -64,6 +64,10 @@ def load_harbor_tasks(dataset: str) -> list[HarborTask]:
     for task_dir in sorted(tasks_dir.iterdir()):
         if not task_dir.is_dir():
             continue
+        instruction_file = task_dir / "instruction.md"
+        toml_file = task_dir / "task.toml"
+        if not instruction_file.exists() or not toml_file.exists():
+            continue
         tasks.append(
             HarborTask(
                 task_name=task_dir.name,

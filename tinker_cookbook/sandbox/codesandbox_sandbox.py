@@ -1,12 +1,12 @@
 """
 CodeSandbox sandbox implementation for tinker-cookbook.
 
-Implements SandboxInterface using the CodeSandbox API (via Pint protocol).
+Implements SandboxInterface using the CodeSandbox Bartender API + Pint protocol.
 Requires: CSB_API_KEY environment variable and Docker for image builds.
 
 This adapter bridges the tinker-cookbook SandboxInterface with CodeSandbox's
 two-layer API:
-  - CodeSandboxClient: lifecycle (create template, fork sandbox, start/stop VM)
+  - CodeSandboxClient: lifecycle via Bartender API (snapshots, sandboxes, start/stop)
   - PintClient: execution (run commands, read/write files inside the VM)
 
 Usage:
@@ -36,6 +36,9 @@ MAX_STREAM_OUTPUT_BYTES = 128 * 1024
 API_TIMEOUT = httpx.Timeout(connect=30.0, read=120.0, write=30.0, pool=30.0)
 MAX_RETRIES = 3
 RETRY_DELAY = 2.0
+
+BARTENDER_BASE_URL = "https://api.bartender.codesandbox.stream"
+LEGACY_BASE_URL = "https://api.codesandbox.stream"
 
 
 async def _retry_request(fn, retries=MAX_RETRIES):
@@ -161,9 +164,9 @@ class _PintClient:
 
 
 class _CSBApiClient:
-    """Client for CodeSandbox REST API (sandbox lifecycle management)."""
+    """Client for CodeSandbox Bartender API (sandbox lifecycle management)."""
 
-    def __init__(self, api_key: str, base_url: str = "https://api.codesandbox.stream"):
+    def __init__(self, api_key: str, base_url: str = BARTENDER_BASE_URL):
         self._api_key = api_key
         self._base_url = base_url
 
@@ -174,94 +177,130 @@ class _CSBApiClient:
         return headers
 
     async def get_meta_info(self) -> dict:
+        # Meta endpoint remains on the legacy API
         async def _do():
             async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
-                r = await client.get(f"{self._base_url}/meta/info", headers=self._headers())
+                r = await client.get(
+                    f"{LEGACY_BASE_URL}/meta/info", headers=self._headers()
+                )
                 r.raise_for_status()
                 return r.json()
         return await _retry_request(_do)
 
-    async def create_template(self, registry: str, repository: str, name: str, tag: str,
-                              architecture: str | None = None) -> dict:
+    async def get_snapshot_by_alias(self, alias: str) -> dict | None:
+        """Look up a snapshot by its alias. Returns None if not found."""
+        async def _do():
+            async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
+                r = await client.get(
+                    f"{self._base_url}/api/v1/snapshots/@{alias}",
+                    headers=self._headers(),
+                )
+                if r.status_code == 404:
+                    return None
+                r.raise_for_status()
+                return r.json()
+        return await _retry_request(_do)
+
+    async def create_snapshot(
+        self,
+        registry: str,
+        repository: str,
+        name: str,
+        tag: str,
+        architecture: str | None = None,
+    ) -> dict:
         body = {
-            "forkOf": "snapshot",
-            "image": {"registry": registry, "repository": repository, "name": name, "tag": tag},
-            "tags": ["sdk"],
+            "image": {
+                "registry": registry,
+                "repository": repository,
+                "name": name,
+                "tag": tag,
+            },
         }
         if architecture:
             body["image"]["architecture"] = architecture
         async def _do():
             async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
                 r = await client.post(
-                    f"{self._base_url}/templates",
+                    f"{self._base_url}/api/v1/snapshots/",
                     headers=self._headers({"Content-Type": "application/json"}),
                     json=body,
                 )
                 r.raise_for_status()
-                return r.json()["data"]
+                return r.json()
         return await _retry_request(_do)
 
-    async def fork_sandbox(self, sandbox_id: str, title: str | None = None) -> dict:
-        body = {}
-        if title:
-            body["title"] = title
+    async def assign_snapshot_alias(self, snapshot_id: str, alias: str) -> dict:
         async def _do():
             async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
                 r = await client.post(
-                    f"{self._base_url}/sandbox/{sandbox_id}/fork",
+                    f"{self._base_url}/api/v1/snapshots/{snapshot_id}/aliases",
+                    headers=self._headers({"Content-Type": "application/json"}),
+                    json={"alias": alias},
+                )
+                r.raise_for_status()
+                # 204 No Content is the expected success response
+                if r.status_code == 204 or not r.content:
+                    return {"status": "ok"}
+                return r.json()
+        return await _retry_request(_do)
+
+    async def create_sandbox(
+        self,
+        snapshot_alias: str,
+        millicpu: int = 2000,
+        memory_bytes: int = 2 * 1024 * 1024 * 1024,
+        disk_bytes: int = 10 * 1024 * 1024 * 1024,
+    ) -> dict:
+        body = {
+            "snapshot_alias": snapshot_alias,
+            "ephemeral": True,
+            "millicpu": millicpu,
+            "memory_bytes": memory_bytes,
+            "disk_bytes": disk_bytes,
+        }
+        async def _do():
+            async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
+                r = await client.post(
+                    f"{self._base_url}/api/v1/sandboxes",
                     headers=self._headers({"Content-Type": "application/json"}),
                     json=body,
                 )
                 r.raise_for_status()
-                return r.json()["data"]
+                return r.json()
         return await _retry_request(_do)
 
-    async def start_vm(self, sandbox_id: str, tier: str = "Micro",
-                       hibernation_timeout_seconds: int = 3600) -> dict:
-        body = {"hibernation_timeout_seconds": hibernation_timeout_seconds, "tier": tier}
+    async def start_sandbox(self, sandbox_id: str) -> dict:
         async def _do():
             async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
                 r = await client.post(
-                    f"{self._base_url}/vm/{sandbox_id}/start",
-                    headers=self._headers({"Content-Type": "application/json"}),
-                    json=body,
-                )
-                r.raise_for_status()
-                return r.json()["data"]
-        return await _retry_request(_do)
-
-    async def shutdown_vm(self, sandbox_id: str) -> None:
-        async def _do():
-            async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
-                r = await client.post(
-                    f"{self._base_url}/vm/{sandbox_id}/shutdown",
-                    headers=self._headers({"Content-Type": "application/json"}),
-                    json={},
-                )
-                r.raise_for_status()
-        return await _retry_request(_do)
-
-    async def assign_tag_alias(self, namespace: str, alias: str, tag_id: str) -> dict:
-        async def _do():
-            async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
-                r = await client.put(
-                    f"{self._base_url}/vm/alias/{namespace}/{alias}",
-                    headers=self._headers({"Content-Type": "application/json"}),
-                    json={"tag_id": tag_id},
-                )
-                r.raise_for_status()
-                return r.json()["data"]
-        return await _retry_request(_do)
-
-    async def get_template(self, template_id: str) -> dict:
-        async def _do():
-            async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
-                r = await client.get(
-                    f"{self._base_url}/templates/{template_id}",
+                    f"{self._base_url}/api/v1/sandboxes/{sandbox_id}/start",
                     headers=self._headers(),
                 )
                 r.raise_for_status()
-                return r.json()["data"]
+                return r.json()
+        return await _retry_request(_do)
+
+    async def wait_for_sandbox(self, sandbox_id: str) -> dict:
+        async def _do():
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                r = await client.post(
+                    f"{self._base_url}/api/v1/sandboxes/{sandbox_id}/wait",
+                    headers=self._headers(),
+                )
+                r.raise_for_status()
+                return r.json()
+        return await _retry_request(_do)
+
+    async def stop_sandbox(self, sandbox_id: str) -> None:
+        async def _do():
+            async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
+                r = await client.post(
+                    f"{self._base_url}/api/v1/sandboxes/{sandbox_id}/stop",
+                    headers=self._headers({"Content-Type": "application/json"}),
+                    json={"stop_type": "shutdown"},
+                )
+                r.raise_for_status()
         return await _retry_request(_do)
 
 
@@ -271,11 +310,11 @@ class CodeSandboxSandbox:
 
     Lifecycle:
     1. Build Docker image from task Dockerfile, push to CSB registry
-    2. Create a CSB template from that image
-    3. Fork the template to get a fresh sandbox
-    4. Start the VM and get Pint connection details
+    2. Create a CSB snapshot from that image
+    3. Create an ephemeral sandbox from the snapshot
+    4. Start the sandbox and get Pint connection details
     5. Execute commands / read / write files via Pint
-    6. Shutdown VM on cleanup
+    6. Stop sandbox on cleanup
     """
 
     def __init__(
@@ -298,23 +337,27 @@ class CodeSandboxSandbox:
         dockerfile_path: str,
         context_dir: str | None = None,
         timeout: int = 3600,
-        tier: str = "Micro",
-        template_alias: str | None = None,
+        cpu: int = 2,
+        memory_mb: int = 2048,
+        disk_mb: int = 10240,
+        snapshot_alias: str | None = None,
     ) -> CodeSandboxSandbox:
         """Create a new CodeSandbox sandbox from a Dockerfile.
 
         Args:
             dockerfile_path: Path to the Dockerfile.
             context_dir: Docker build context directory (defaults to Dockerfile's parent).
-            timeout: VM hibernation timeout in seconds.
-            tier: VM tier (Pico, Nano, Micro, Small, Medium, Large, XLarge).
-            template_alias: Optional alias like "harbor@task-name" for template caching.
+            timeout: VM timeout in seconds (not used by Bartender API directly).
+            cpu: Number of CPUs (converted to millicpu).
+            memory_mb: Memory in MB (converted to bytes).
+            disk_mb: Disk in MB (converted to bytes).
+            snapshot_alias: Optional alias like "harbor@task-name" for snapshot caching.
         """
         api_key = os.environ.get("CSB_API_KEY")
         if not api_key:
             raise ValueError("CSB_API_KEY environment variable not set")
 
-        base_url = os.environ.get("CSB_BASE_URL", "https://api.codesandbox.stream")
+        base_url = os.environ.get("CSB_BASE_URL", BARTENDER_BASE_URL)
         registry = os.environ.get("CSB_REGISTRY", "registry.codesandbox.stream")
         architecture = os.environ.get("CSB_IMAGE_ARCH", "amd64")
 
@@ -326,18 +369,15 @@ class CodeSandboxSandbox:
         if not team_id:
             raise ValueError("Failed to get team ID from CSB API")
 
-        # Check if template already exists (via alias)
-        template_id = None
-        if template_alias:
-            try:
-                tmpl = await csb.get_template(template_alias)
-                template_id = tmpl.get("tag")
-                logger.info("Reusing existing template %s -> %s", template_alias, template_id)
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code != 404:
-                    raise
+        # Check if snapshot already exists (via alias)
+        snapshot_id = None
+        if snapshot_alias:
+            existing = await csb.get_snapshot_by_alias(snapshot_alias)
+            if existing:
+                snapshot_id = existing.get("id")
+                logger.info("Reusing existing snapshot %s -> %s", snapshot_alias, snapshot_id)
 
-        if not template_id:
+        if not snapshot_id:
             # Docker login
             dockerfile = Path(dockerfile_path)
             ctx = context_dir or str(dockerfile.parent)
@@ -347,7 +387,6 @@ class CodeSandboxSandbox:
 
             # Build and push
             repo = base64.b32encode(team_id.encode()).decode().lower().rstrip("=")
-            # Use the task directory name (parent of "environment/") for unique image names
             task_dir = dockerfile.parent.parent
             image_name = task_dir.name.lower().replace("_", "-")
             image_tag = os.environ.get("CSB_IMAGE_TAG", "latest")
@@ -380,36 +419,50 @@ class CodeSandboxSandbox:
                     f"{push_result.stderr}"
                 )
 
-            # Create template
-            tmpl_data = await csb.create_template(
+            # Create snapshot
+            snapshot_data = await csb.create_snapshot(
                 registry=registry, repository=repo, name=image_name, tag=image_tag,
                 architecture=architecture,
             )
-            template_id = tmpl_data.get("tag")
-            logger.info("Created CSB template: %s", template_id)
+            snapshot_id = snapshot_data.get("id")
+            logger.info("Created CSB snapshot: %s", snapshot_id)
 
             # Assign alias for future reuse
-            if template_alias and "@" in template_alias:
-                ns, alias = template_alias.split("@", 1)
-                await csb.assign_tag_alias(ns, alias, template_id)
+            if snapshot_alias:
+                await csb.assign_snapshot_alias(snapshot_id, snapshot_alias)
 
-        # Fork and start
-        fork = await csb.fork_sandbox(template_id, title="tinker-cookbook eval")
-        sandbox_id = fork["id"]
-        logger.info("Forked sandbox: %s", sandbox_id)
+        # Create sandbox with explicit resources
+        millicpu = cpu * 1000
+        memory_bytes = memory_mb * 1024 * 1024
+        disk_bytes = disk_mb * 1024 * 1024
 
-        start_data = await csb.start_vm(sandbox_id, tier=tier,
-                                         hibernation_timeout_seconds=timeout)
-        logger.info("VM started: bootup_type=%s", start_data.get("bootup_type"))
+        alias = snapshot_alias or f"snapshot-{snapshot_id}"
+        sandbox_data = await csb.create_sandbox(
+            snapshot_alias=alias,
+            millicpu=millicpu,
+            memory_bytes=memory_bytes,
+            disk_bytes=disk_bytes,
+        )
+        sandbox_id = sandbox_data["id"]
+        logger.info("Created sandbox: %s", sandbox_id)
+
+        # Start the sandbox and wait for it to reach running state
+        await csb.start_sandbox(sandbox_id)
+        wait_data = await csb.wait_for_sandbox(sandbox_id)
+        logger.info("Sandbox started and running: %s", sandbox_id)
+
+        # Bartender API returns agent_url/agent_token
+        pint_url = wait_data.get("pint_url") or wait_data.get("agent_url")
+        pint_token = wait_data.get("pint_token") or wait_data.get("agent_token")
 
         pint = _PintClient(
-            pint_url=start_data["pint_url"],
-            pint_token=start_data["pint_token"],
+            pint_url=pint_url,
+            pint_token=pint_token,
         )
 
         instance = cls(sandbox_id=sandbox_id, pint_client=pint, csb_client=csb)
 
-        # Configure DNS (matching Harbor's togetherai env)
+        # Configure DNS
         await instance.run_command('echo "nameserver 1.1.1.1" > /etc/resolv.conf', workdir="/")
 
         return instance
@@ -505,14 +558,14 @@ class CodeSandboxSandbox:
             return SandboxResult(stdout="", stderr=str(e), exit_code=-1)
 
     async def cleanup(self) -> None:
-        """Shutdown the CodeSandbox VM."""
+        """Stop the CodeSandbox sandbox."""
         try:
-            await self._csb.shutdown_vm(self._sandbox_id)
-            logger.info("Shutdown CSB sandbox: %s", self._sandbox_id)
+            await self._csb.stop_sandbox(self._sandbox_id)
+            logger.info("Stopped CSB sandbox: %s", self._sandbox_id)
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
-                logger.debug("VM already stopped: %s", self._sandbox_id)
+                logger.debug("Sandbox already stopped: %s", self._sandbox_id)
             else:
-                logger.warning("Failed to shutdown sandbox %s: %s", self._sandbox_id, e)
+                logger.warning("Failed to stop sandbox %s: %s", self._sandbox_id, e)
         except Exception as e:
             logger.warning("Cleanup error for %s: %s", self._sandbox_id, e)
