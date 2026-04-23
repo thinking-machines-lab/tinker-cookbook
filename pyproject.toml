@@ -40,10 +40,7 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "pytest-timeout>=2.0.0",
     "ruff>=0.4.0",
-    # Pinned below 1.1.409: that release introduced a regression that flags
-    # attribute access like torch.allclose / torch.zeros as
-    # reportPrivateImportUsage because those names are not in torch.__all__.
-    "pyright>=1.1.300,<1.1.409",
+    "pyright>=1.1.300",
 ]
 math-rl = [
     "math-verify>=0.5.0",
@@ -209,3 +206,8 @@ exclude = [
     # Vendored from HuggingFace, kept identical to upstream
     "kimi-k2.5-hf-tokenizer/tool_declaration_ts.py",
 ]
+# Disabled because pyright 1.1.409+ flags attribute access like torch.zeros /
+# torch.allclose as private, since PyTorch does not list these names in
+# torch.__all__ (neither do numpy, pandas, and similar scientific libs). The
+# rule's signal is dominated by these false positives for our codebase.
+reportPrivateImportUsage = "none"
