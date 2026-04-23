@@ -40,7 +40,10 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "pytest-timeout>=2.0.0",
     "ruff>=0.4.0",
-    "pyright>=1.1.300",
+    # Pinned below 1.1.409: that release introduced a regression that flags
+    # attribute access like torch.allclose / torch.zeros as
+    # reportPrivateImportUsage because those names are not in torch.__all__.
+    "pyright>=1.1.300,<1.1.409",
 ]
 math-rl = [
     "math-verify>=0.5.0",
