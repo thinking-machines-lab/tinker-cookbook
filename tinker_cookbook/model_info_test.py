@@ -10,9 +10,20 @@ from tinker_cookbook.model_info import (
 
 
 class TestQwen3_6:
-    """Qwen3.6-35B-A3B is architecturally identical to Qwen3.5-35B-A3B
-    (same tokenizer, chat template, and ``qwen3_5_moe`` model_type) and
-    therefore reuses the qwen3_5 renderer."""
+    """Qwen3.6 models are architecturally identical to their Qwen3.5
+    counterparts (same tokenizer, chat template, and ``qwen3_5`` /
+    ``qwen3_5_moe`` model_type) and therefore reuse the qwen3_5 renderer."""
+
+    def test_qwen3_6_27b_uses_qwen3_5_renderer(self):
+        assert get_recommended_renderer_name("Qwen/Qwen3.6-27B") == "qwen3_5"
+
+    def test_qwen3_6_27b_attributes(self):
+        attrs = get_model_attributes("Qwen/Qwen3.6-27B")
+        assert attrs.organization == "Qwen"
+        assert attrs.version_str == "3.6"
+        assert attrs.size_str == "27B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is True
 
     def test_qwen3_6_35b_a3b_uses_qwen3_5_renderer(self):
         assert get_recommended_renderer_name("Qwen/Qwen3.6-35B-A3B") == "qwen3_5"
