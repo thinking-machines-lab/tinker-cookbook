@@ -206,3 +206,8 @@ exclude = [
     # Vendored from HuggingFace, kept identical to upstream
     "kimi-k2.5-hf-tokenizer/tool_declaration_ts.py",
 ]
+# Disabled because pyright 1.1.409+ flags attribute access like torch.zeros /
+# torch.allclose as private, since PyTorch does not list these names in
+# torch.__all__ (neither do numpy, pandas, and similar scientific libs). The
+# rule's signal is dominated by these false positives for our codebase.
+reportPrivateImportUsage = "none"
