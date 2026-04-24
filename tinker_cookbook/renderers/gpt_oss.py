@@ -141,6 +141,32 @@ def _format_tool_definition(tool: ToolSpec) -> str:
     return "\n".join(lines)
 
 
+def _try_repair_json(args: str) -> tuple[dict | None, str]:
+    """Try to repair common JSON errors in tool call arguments.
+
+    Returns (parsed_dict, repaired_args) on success, or (None, original_args) on failure.
+
+    Known model error patterns:
+    1. Trailing ``"]}`` instead of ``"}`` — extra ``]`` before close brace
+    2. Extra fields with array bracket: ``"cmd"], "timeout": N}`` — model adds
+       unsupported parameters with stray ``]``
+    """
+    repairs = [
+        # Pattern 1: "...]}" → "...}"
+        lambda s: s[:-2] + "}" if s.endswith("]}") else None,
+        # Pattern 2: "..."], "timeout": N}" → "..."}" — strip from "], onwards
+        lambda s: re.sub(r'"\],\s*"timeout"\s*:\s*\d+\s*\}', '"}', s) if '"], "timeout"' in s else None,
+    ]
+    for repair in repairs:
+        fixed = repair(args)
+        if fixed is not None and fixed != args:
+            try:
+                return json.loads(fixed), fixed
+            except json.JSONDecodeError:
+                pass
+    return None, args
+
+
 class GptOssRenderer(Renderer):
     """
     Renderer for OpenAI's open source models using the Harmony format.
@@ -375,10 +401,16 @@ class GptOssRenderer(Renderer):
         ]
         return RenderedMessage(header=header, output=output)
 
+    _has_tools: bool = False
+    """Set by create_conversation_prefix_with_tools to include tool routing in system msg."""
+
     def _get_system_message(self) -> Message | None:
         """Return system message if configured, else None.
 
         Uses internal role to render as actual 'system' (not mapped to 'developer').
+        When tools are registered (via create_conversation_prefix_with_tools),
+        the tool routing instruction is appended to match the Harmony spec
+        (single combined system message, not two separate ones).
         """
         if not self.use_system_prompt:
             return None
@@ -391,6 +423,9 @@ class GptOssRenderer(Renderer):
             current_date=current_date,
             reasoning_effort=self.reasoning_effort,
         )
+        # Per Harmony spec: tool routing goes in the same system message
+        if self._has_tools:
+            content += "\n" + self._TOOL_ROUTING_INSTRUCTION
         return Message(role=self._INTERNAL_SYSTEM_ROLE, content=content)
 
     @property
@@ -590,19 +625,25 @@ class GptOssRenderer(Renderer):
             recipient = msg["recipient"]
             if recipient and recipient.startswith("functions."):
                 tool_name = recipient.split("functions.", 1)[1]
+                args = msg_content.strip()
+                # Try to parse JSON, with repair for common model errors
+                parsed = None
                 try:
-                    json.loads(msg_content)
+                    parsed = json.loads(args)
+                except json.JSONDecodeError:
+                    parsed, args = _try_repair_json(args)
+                if parsed is not None:
                     tool_calls.append(
                         ToolCall(
                             function=ToolCall.FunctionBody(
-                                name=tool_name, arguments=msg_content.strip()
+                                name=tool_name, arguments=args
                             ),
                             id=None,  # Harmony format doesn't include tool call IDs
                         )
                     )
-                except json.JSONDecodeError as e:
+                else:
                     unparsed.append(
-                        UnparsedToolCall(raw_text=msg_raw_text, error=f"Invalid JSON: {e}")
+                        UnparsedToolCall(raw_text=msg_raw_text, error=f"Invalid JSON: {args[:100]}")
                     )
                 continue
 
@@ -678,33 +719,40 @@ class GptOssRenderer(Renderer):
 
         return messages
 
+    _TOOL_ROUTING_INSTRUCTION = (
+        "Calls to these tools must go to the commentary channel: 'functions'."
+    )
+
     def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
     ) -> list[Message]:
         """Create conversation prefix with tools in Harmony format.
 
         Returns a list of messages to prepend to conversations:
-        1. If tools present: A system message with tool routing instruction
-        2. A developer message with user instructions and tool definitions
+        1. A developer message with user instructions and tool definitions
 
-        Tools are defined using TypeScript-ish syntax in a `functions` namespace,
-        following the OpenAI Harmony spec.
-
-        Note: When using this with tools, you typically don't need use_system_prompt=True
-        since this method provides the necessary system setup for tool routing.
+        When ``use_system_prompt=True``, the tool routing instruction is appended
+        to the main system prompt (matching the Harmony spec which puts both in
+        a single system message). Otherwise it gets its own system message.
 
         Reference: https://raw.githubusercontent.com/openai/openai-cookbook/main/articles/openai-harmony.md
         """
         messages: list[Message] = []
 
-        # Tool routing instruction goes in system message (per Harmony spec)
+        # Tool routing instruction: per Harmony spec, this goes in the SAME
+        # system message as the main system prompt, not a separate one.
+        # When use_system_prompt=True, build_generation_prompt() prepends the
+        # system message — we append the tool routing to it via _get_system_message().
+        # When use_system_prompt=False, we need a standalone system message.
         if tools:
-            messages.append(
-                Message(
-                    role=self._INTERNAL_SYSTEM_ROLE,
-                    content="Calls to these tools must go to the commentary channel: 'functions'.",
+            self._has_tools = True
+            if not self.use_system_prompt:
+                messages.append(
+                    Message(
+                        role=self._INTERNAL_SYSTEM_ROLE,
+                        content=self._TOOL_ROUTING_INSTRUCTION,
+                    )
                 )
-            )
 
         # User instructions and tool definitions go in developer message
         content_parts: list[str] = []
