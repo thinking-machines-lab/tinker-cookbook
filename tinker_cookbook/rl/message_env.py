@@ -16,7 +16,7 @@ import tinker
 
 from tinker_cookbook.completers import StopCondition
 from tinker_cookbook.renderers import Renderer
-from tinker_cookbook.renderers.base import Message
+from tinker_cookbook.renderers.base import Message, message_to_jsonable
 from tinker_cookbook.rl import types
 
 
@@ -95,6 +95,7 @@ class EnvFromMessageEnv(types.Env):
 
     async def initial_observation(self) -> tuple[tinker.ModelInput, StopCondition]:
         messages = await self.message_env.initial_observation()
+        self._initial_messages: list[Message] | None = messages
         model_input = await self._render_in_thread(messages)
 
         if self._exceeds_context_limit(model_input.length):
@@ -108,6 +109,22 @@ class EnvFromMessageEnv(types.Env):
             )
 
         return model_input, self._base_stop_condition
+
+    def _build_step_conversation(self, *messages: Message | None) -> list[dict[str, object]]:
+        """Build the _conversation list for this step's logs.
+
+        On the first call, prepends the cached initial prompt messages.
+        Subsequent calls include only the new messages from this step.
+        """
+        conv: list[dict[str, object]] = []
+        initial = getattr(self, "_initial_messages", None)
+        if initial is not None:
+            conv.extend(message_to_jsonable(m) for m in initial)
+            self._initial_messages = None
+        for m in messages:
+            if m is not None:
+                conv.append(message_to_jsonable(m))
+        return conv
 
     async def step(
         self, action: types.Action, *, extra: types.ActionExtra | None = None
@@ -123,6 +140,7 @@ class EnvFromMessageEnv(types.Env):
                 next_observation=tinker.ModelInput.empty(),
                 next_stop_condition=self._base_stop_condition,
                 metrics={"max_tokens_reached": 1.0},
+                logs={"_conversation": self._build_step_conversation()},
             )
 
         assistant_message, parse_success = self.renderer.parse_response(action)
@@ -134,11 +152,30 @@ class EnvFromMessageEnv(types.Env):
                 next_observation=tinker.ModelInput.empty(),
                 next_stop_condition=self._base_stop_condition,
                 metrics={"parse_error": 1.0},
+                logs={"_conversation": self._build_step_conversation(assistant_message)},
             )
 
         msg_step = await self.message_env.step(assistant_message)
         next_observation = await self._render_in_thread(msg_step.next_messages)
         next_stop_condition = msg_step.next_stop_condition or self._base_stop_condition
+
+        # Build conversation for this step: assistant message + any new env
+        # response messages (tool results, environment observations, etc.).
+        conv = self._build_step_conversation(assistant_message)
+        # msg_step.next_messages is the full conversation history. New env
+        # response messages (tool results, etc.) appear after the last
+        # assistant message. Capture them for the conversation log.
+        if msg_step.next_messages:
+            last_assistant_idx = -1
+            for i in range(len(msg_step.next_messages) - 1, -1, -1):
+                if msg_step.next_messages[i]["role"] == "assistant":
+                    last_assistant_idx = i
+                    break
+            if last_assistant_idx >= 0:
+                for m in msg_step.next_messages[last_assistant_idx + 1 :]:
+                    conv.append(message_to_jsonable(m))
+
+        step_logs = {**msg_step.logs, "_conversation": conv}
 
         # Check if the full trajectory + generation budget fits in the context window.
         # next_observation is the entire rendered conversation so far, which becomes
@@ -151,7 +188,7 @@ class EnvFromMessageEnv(types.Env):
                 next_observation=tinker.ModelInput.empty(),
                 next_stop_condition=self._base_stop_condition,
                 metrics={**msg_step.metrics, "context_overflow": 1.0},
-                logs=msg_step.logs,
+                logs=step_logs,
             )
 
         return types.StepResult(
@@ -160,5 +197,5 @@ class EnvFromMessageEnv(types.Env):
             next_observation=next_observation,
             next_stop_condition=next_stop_condition,
             metrics=msg_step.metrics,
-            logs=msg_step.logs,
+            logs=step_logs,
         )
