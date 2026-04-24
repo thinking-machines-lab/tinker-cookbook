@@ -50,6 +50,9 @@ math-rl = [
 modal = [
     "modal>=1.0.0",
 ]
+daytona = [
+    "daytona>=0.168.0",
+]
 multiplayer-rl = [
     "textarena>=0.7.4",
 ]
@@ -124,6 +127,7 @@ all = [
     "tinker_cookbook[eval]",
     "tinker_cookbook[math-rl]",
     "tinker_cookbook[modal]",
+    "tinker_cookbook[daytona]",
     "tinker_cookbook[multiplayer-rl]",
     "tinker_cookbook[vector-search]",
     "tinker_cookbook[wandb]",
