@@ -11,6 +11,7 @@ import pandas as pd
 from huggingface_hub import hf_hub_download
 
 from tinker_cookbook import model_info, tokenizer_utils
+from tinker_cookbook.recipes.search_tool.local_tools import LocalSearchTool
 from tinker_cookbook.recipes.search_tool.tools import (
     ChromaTool,
     RetrievalConfig,
@@ -20,6 +21,8 @@ from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import Message, Renderer
 from tinker_cookbook.rl.types import Env, EnvGroupBuilder, RLDataset, RLDatasetBuilder
 from tinker_cookbook.tool_use import build_agent_tool_env
+
+SearchToolLike = ChromaTool | LocalSearchTool
 
 SEARCH_TASK_INSTRUCTIONS = """You are an expert assistant who solves tasks using a Wikipedia search tool.
 
@@ -111,10 +114,10 @@ def download_search_r1_dataset(split: Literal["train", "test"]) -> list[SearchR1
 def _initial_messages(
     datum: SearchR1Datum,
     renderer: Renderer,
-    chroma_tool: ChromaTool,
+    search_tool: SearchToolLike,
 ) -> list[Message]:
     """Build initial messages with tool schemas and task question."""
-    tool_schemas = [chroma_tool.search.to_spec()]
+    tool_schemas = [search_tool.search.to_spec()]
     prefix = renderer.create_conversation_prefix_with_tools(
         tools=tool_schemas,
         system_prompt=SEARCH_TASK_INSTRUCTIONS,
@@ -123,7 +126,12 @@ def _initial_messages(
 
 
 class SearchEnvGroupBuilder(EnvGroupBuilder):
-    """EnvGroupBuilder that creates search environments with a shared ChromaTool."""
+    """EnvGroupBuilder that creates search environments with a shared search tool.
+
+    The search tool may be a ``ChromaTool`` (remote vector search) or a
+    ``LocalSearchTool`` (in-memory BM25) — both expose the same ``@tool``-decorated
+    ``search`` method, so the env builder is agnostic to which backend is used.
+    """
 
     def __init__(
         self,
@@ -132,7 +140,7 @@ class SearchEnvGroupBuilder(EnvGroupBuilder):
         renderer_name: str | None,
         max_turns: int,
         group_size: int,
-        chroma_tool: ChromaTool,
+        search_tool: SearchToolLike,
         format_coef: float = 0.1,
         max_trajectory_tokens: int = 32 * 1024,
         max_generation_tokens: int | None = None,
@@ -143,7 +151,7 @@ class SearchEnvGroupBuilder(EnvGroupBuilder):
         self.renderer_name = renderer_name
         self.max_turns = max_turns
         self.group_size = group_size
-        self.chroma_tool = chroma_tool
+        self.search_tool = search_tool
         self.format_coef = format_coef
         self.max_trajectory_tokens = max_trajectory_tokens
         self.max_generation_tokens = max_generation_tokens
@@ -157,7 +165,7 @@ class SearchEnvGroupBuilder(EnvGroupBuilder):
         renderer = get_renderer(renderer_name, tokenizer)
 
         # Tool, initial_messages, reward_fn are all stateless - can share
-        initial_messages = _initial_messages(self.datum, renderer, self.chroma_tool)
+        initial_messages = _initial_messages(self.datum, renderer, self.search_tool)
         reward_fn = TextAnswerReward(
             gold_answers=self.datum["answer"], format_coef=self.format_coef
         )
@@ -165,7 +173,7 @@ class SearchEnvGroupBuilder(EnvGroupBuilder):
         return [
             build_agent_tool_env(
                 renderer=renderer,
-                tools=[self.chroma_tool.search],
+                tools=[self.search_tool.search],
                 initial_messages=initial_messages,
                 reward_fn=reward_fn,
                 max_turns=self.max_turns,
@@ -241,7 +249,61 @@ class SearchR1DatasetBuilder(RLDatasetBuilder):
                 renderer_name=self.renderer_name,
                 max_turns=self.max_turns,
                 group_size=self.group_size,
-                chroma_tool=chroma_tool,
+                search_tool=chroma_tool,
+                format_coef=self.format_coef,
+                max_trajectory_tokens=self.max_trajectory_tokens,
+                max_generation_tokens=self.max_generation_tokens,
+                context_overflow_reward=self.context_overflow_reward,
+            )
+            for datum in data
+        ]
+        dataset = SearchRLDataset(
+            env_group_builders=env_builders,
+            batch_size=self.batch_size,
+        )
+        return dataset, None
+
+
+@chz.chz
+class LocalSearchR1DatasetBuilder(RLDatasetBuilder):
+    """Build an RL dataset over SearchR1 tasks with an in-memory BM25 search tool.
+
+    Uses ``LocalSearchTool`` over a small Wikipedia passage corpus. No external
+    services required. Retrieval quality is lower than the Chroma+Gemini setup,
+    so this is best for iterating on the training loop rather than benchmarking.
+    """
+
+    model_name_for_tokenizer: str
+    batch_size: int
+    group_size: int
+    renderer_name: str | None = None
+    n_results: int = 3
+    max_turns: int = 5
+    format_coef: float = 0.1
+    max_trajectory_tokens: int = 32 * 1024
+    max_generation_tokens: int | None = None
+    context_overflow_reward: float = -0.1
+    seed: int = 0
+    # Cap training questions — the small default corpus doesn't cover rare entities well.
+    max_train_examples: int | None = 2048
+
+    async def __call__(self) -> tuple[RLDataset, RLDataset | None]:
+        search_tool = LocalSearchTool.build(n_results=self.n_results)
+
+        data = download_search_r1_dataset("train")
+        rng = random.Random(self.seed)
+        rng.shuffle(data)
+        if self.max_train_examples is not None:
+            data = data[: self.max_train_examples]
+
+        env_builders = [
+            SearchEnvGroupBuilder(
+                datum=datum,
+                model_name=self.model_name_for_tokenizer,
+                renderer_name=self.renderer_name,
+                max_turns=self.max_turns,
+                group_size=self.group_size,
+                search_tool=search_tool,
                 format_coef=self.format_coef,
                 max_trajectory_tokens=self.max_trajectory_tokens,
                 max_generation_tokens=self.max_generation_tokens,

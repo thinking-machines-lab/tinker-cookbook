@@ -23,13 +23,37 @@ Currently, the tool use RL run relies on a separate Chroma vector search service
 
 If you launch the chroma service locally, you generally need 160+ GB RAM to load the vector index in memory for good performance.
 
+### Lightweight alternative: local BM25 (no Chroma, runs on a laptop)
+
+If you don't have a 160 GB RAM machine handy, use the local backend instead. It swaps Chroma + Gemini embeddings for an in-memory BM25 index over a small Wikipedia subset (~3k passages, <10 MB). The training loop is identical, so you can iterate on the recipe without any external infrastructure.
+
+```bash
+python -m tinker_cookbook.recipes.search_tool.train backend=local
+```
+
+The first run downloads the [`rag-datasets/rag-mini-wikipedia`](https://huggingface.co/datasets/rag-datasets/rag-mini-wikipedia) corpus from HuggingFace. Subsequent runs reuse the cached copy. No API keys are required.
+
+**Trade-offs vs the full setup:**
+
+| | Full (Chroma + Gemini) | Lightweight (local BM25) |
+|---|---|---|
+| RAM | 160+ GB | <1 GB |
+| Retrieval | Dense embedding + vector search | Lexical (BM25) |
+| External services | Chroma server, Gemini API | None |
+| Corpus | Full Wikipedia (~30M passages) | ~3k curated passages |
+| Expected accuracy | Paper-level (see table below) | Lower — suitable for iteration, not benchmarking |
+
+The lightweight variant is best for learning the recipe, debugging, and iterating on the training loop. Use the full Chroma setup when you want to replicate the reported benchmark numbers.
+
 ### Example command
 
-This default command trains a `Qwen3-4B-Instruct-2507` with reasonable hyperparameters.
+This default command trains a `Qwen3-4B-Instruct-2507` with reasonable hyperparameters using the full Chroma + Gemini backend.
 
 ```bash
 python -m tinker_cookbook.recipes.search_tool.train
 ```
+
+(The default `backend=chroma` is implicit. Pass `backend=local` to use the lightweight variant described above.)
 
 With the default hyperparameters, you can expect performance like:
 | | Natural Questions | Trivia QA | HotpotQA | 2WikiMultihopQA |
