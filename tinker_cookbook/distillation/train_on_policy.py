@@ -9,10 +9,7 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
-
-if TYPE_CHECKING:
-    from tinker_cookbook.stores.training_store import TrainingRunStore
+from typing import Any, cast
 
 import chz
 import tinker
@@ -229,13 +226,13 @@ async def do_train_step_and_get_sampling_client(
     config: Config,
     i_batch: int,
     training_client: tinker.TrainingClient,
+    checkpoint_mgr: checkpoint_utils.CheckpointManager,
     service_client: tinker.ServiceClient,
     tokenizer: Tokenizer,
     env_group_builders_P: Sequence[EnvGroupBuilder],
     trajectory_groups_P: list[TrajectoryGroup],
     dataset_indices_P: list[int],
     teacher_clients: list[tinker.SamplingClient],
-    store: TrainingRunStore | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     trace.update_scope_context({"step": i_batch})
 
@@ -264,14 +261,12 @@ async def do_train_step_and_get_sampling_client(
 
     sampling_client, full_batch_metrics = await compute_full_batch_metrics_and_get_sampling_client(
         training_client,
+        checkpoint_mgr,
         # NOTE: saving the checkpoint as the i + 1 step
         i_batch + 1,
         data_D,
         training_logprobs_D,
-        config.log_path,
-        config.save_every,
         config.compute_post_kl,
-        store=store,
     )
     metrics.update(full_batch_metrics)
 
@@ -285,6 +280,7 @@ async def do_sync_training(
     num_batches: int,
     config: Config,
     training_client: tinker.TrainingClient,
+    checkpoint_mgr: checkpoint_utils.CheckpointManager,
     service_client: tinker.ServiceClient,
     evaluators: list[SamplingClientEvaluator],
     dataset: CompositeDataset,
@@ -296,7 +292,7 @@ async def do_sync_training(
 
     # Initial sampling client
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
-        training_client, start_batch, config.log_path, config.save_every, store=ml_logger.store
+        training_client, checkpoint_mgr, start_batch, start_batch
     )
 
     log_path = Path(config.log_path)
@@ -345,13 +341,13 @@ async def do_sync_training(
                 config,
                 i_batch,
                 training_client,
+                checkpoint_mgr,
                 service_client,
                 tokenizer,
                 env_group_builders_P,
                 trajectory_groups_P,
                 dataset_indices_P,
                 teacher_clients,
-                store=ml_logger.store,
             )
 
             metrics.update(train_step_metrics)
@@ -379,7 +375,6 @@ async def main(
         config=config,
         wandb_name=config.wandb_name,
     )
-    store = ml_logger.store
     if config.enable_trace:
         # Get and rename the current (main) task
         current_task = asyncio.current_task()
@@ -475,6 +470,13 @@ async def main(
     )
     logger.info(f"Will train on {num_batches} batches (dataset has {num_batches})")
 
+    checkpoint_mgr = checkpoint_utils.CheckpointManager(
+        training_client=training_client,
+        service_client=service_client,
+        log_path=config.log_path,
+        save_every=config.save_every,
+    )
+
     # Training loop
     await do_sync_training(
         start_batch=start_batch,
@@ -482,6 +484,7 @@ async def main(
         num_batches=num_batches,
         config=config,
         training_client=training_client,
+        checkpoint_mgr=checkpoint_mgr,
         service_client=service_client,
         evaluators=evaluators,
         dataset=composite_dataset,
@@ -492,15 +495,7 @@ async def main(
 
     # Save final checkpoint
     if start_batch < num_batches:
-        _ = await checkpoint_utils.save_checkpoint_async(
-            training_client=training_client,
-            name="final",
-            log_path=config.log_path,
-            kind="both",
-            loop_state={"batch": num_batches},
-            ttl_seconds=None,
-            store=store,
-        )
+        await checkpoint_mgr.save_final_async(loop_state={"batch": num_batches})
     else:
         logger.info("Training was already complete; nothing to do")
 

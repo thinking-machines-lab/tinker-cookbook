@@ -269,7 +269,7 @@ def do_update(
     ml_logger: ml_log.Logger,
     log_path: str,
     tokenizer: Tokenizer,
-    rolling_mgr: checkpoint_utils.RollingCheckpointManager | None = None,
+    checkpoint_mgr: checkpoint_utils.CheckpointManager | None = None,
 ):
     """Perform a single DPO training update step.
 
@@ -299,23 +299,13 @@ def do_update(
     metrics: dict[str, int | float | str] = {"epoch": epoch_idx}
 
     with trace.trace_iteration(step=step) as window:
-        # Save checkpoint if needed
-        if config.save_every > 0 and step % config.save_every == 0 and step > 0:
-            with trace.scope_span_sync("save_checkpoint"):
-                save_result = checkpoint_utils.save_checkpoint(
-                    training_client=training_client,
-                    name=f"{step:06d}",
-                    log_path=log_path,
-                    kind="both",
-                    loop_state={"epoch": epoch_idx, "batch": batch_idx},
-                    ttl_seconds=config.ttl_seconds,
-                    store=ml_logger.store,
-                )
-            if "state_path" in save_result:
+        # Save checkpoint (periodic + rolling) if needed
+        if checkpoint_mgr is not None:
+            save_result = checkpoint_mgr.maybe_save(
+                step=step, loop_state={"epoch": epoch_idx, "batch": batch_idx}
+            )
+            if save_result and "state_path" in save_result:
                 metrics["state_path"] = save_result["state_path"]
-
-        if rolling_mgr is not None:
-            rolling_mgr.maybe_save(step=step, loop_state={"epoch": epoch_idx, "batch": batch_idx})
 
         learning_rate = config.learning_rate * compute_schedule_lr_multiplier(
             lr_schedule=config.lr_schedule, step=step, total_steps=total_steps
@@ -510,12 +500,13 @@ def main(config: Config):
     model_info.warn_if_renderer_not_recommended(config.model_name, config.renderer_name)
     training_client, reference_client = create_dpo_clients(config, resume_info, user_metadata)
     service_client = tinker.ServiceClient(base_url=config.base_url)
-    rolling_mgr = checkpoint_utils.RollingCheckpointManager(
+    checkpoint_mgr = checkpoint_utils.CheckpointManager(
         training_client=training_client,
         service_client=service_client,
         log_path=config.log_path,
-        rolling_save_every=config.rolling_save_every,
         save_every=config.save_every,
+        ttl_seconds=config.ttl_seconds,
+        rolling_save_every=config.rolling_save_every,
         rolling_ttl_seconds=config.rolling_ttl_seconds,
         store=store,
     )
@@ -560,7 +551,7 @@ def main(config: Config):
                 ml_logger=ml_logger,
                 log_path=config.log_path,
                 tokenizer=tokenizer,
-                rolling_mgr=rolling_mgr,
+                checkpoint_mgr=checkpoint_mgr,
             )
         if reached_max_steps:
             break
@@ -570,20 +561,10 @@ def main(config: Config):
         config.max_steps is None or start_epoch * n_batches + start_batch < config.max_steps
     )
     if did_train:
-        checkpoint_utils.save_checkpoint(
-            training_client=training_client,
-            name="final",
-            log_path=config.log_path,
-            kind="both",
-            loop_state={"epoch": config.num_epochs, "batch": 0},
-            ttl_seconds=None,
-            store=store,
-        )
+        checkpoint_mgr.save_final(loop_state={"epoch": config.num_epochs, "batch": 0})
     else:
         logger.info("Training was already complete; nothing to do")
-    # Clean up rolling checkpoints after the final save so that the last
-    # entry in checkpoints.jsonl always points to valid server-side data.
-    rolling_mgr.finalize()
+        checkpoint_mgr.finalize()
 
     # Cleanup
     ml_logger.close()
