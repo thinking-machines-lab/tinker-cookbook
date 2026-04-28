@@ -206,3 +206,6 @@ exclude = [
     # Vendored from HuggingFace, kept identical to upstream
     "kimi-k2.5-hf-tokenizer/tool_declaration_ts.py",
 ]
+# PyTorch's __init__.py doesn't declare __all__, so recent pyright versions
+# flag every torch.* symbol as a private import. See pytorch/pytorch#50798.
+reportPrivateImportUsage = "none"
