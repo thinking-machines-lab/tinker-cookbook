@@ -25,7 +25,10 @@ def test_parse_response_eos_only_is_success(renderer: RoleColonRenderer):
     single-turn eval case. Must report parse_success=True so the grader runs."""
     answer = "The answer is \\boxed{42}."
     tokens = renderer.tokenizer.encode(answer, add_special_tokens=False)
-    tokens.append(renderer.tokenizer.eos_token_id)
+    assert isinstance(tokens, list)
+    eos_token_id = renderer.tokenizer.eos_token_id
+    assert isinstance(eos_token_id, int)
+    tokens.append(eos_token_id)
 
     message, parse_success = renderer.parse_response(tokens)
 
@@ -61,7 +64,10 @@ def test_parse_response_user_delimiter_with_eos_is_failure(renderer: RoleColonRe
     (sampling should have stopped at User:). Keep parse_success=False."""
     text = "Some answer.\n\nUser:"
     tokens = renderer.tokenizer.encode(text, add_special_tokens=False)
-    tokens.append(renderer.tokenizer.eos_token_id)
+    assert isinstance(tokens, list)
+    eos_token_id = renderer.tokenizer.eos_token_id
+    assert isinstance(eos_token_id, int)
+    tokens.append(eos_token_id)
 
     message, parse_success = renderer.parse_response(tokens)
 
