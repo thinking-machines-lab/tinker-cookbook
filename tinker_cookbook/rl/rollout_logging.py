@@ -1,4 +1,65 @@
-"""Utilities for exporting per-rollout records to JSONL."""
+"""Utilities for exporting per-rollout records to JSONL.
+
+Rollout Summary Schema (v3)
+---------------------------
+
+Each trajectory produces one JSON record written to
+``{iteration_dir}/{base_name}_rollout_summaries.jsonl``.
+
+Top-level fields::
+
+    {
+        "schema_version": 3,
+        "split": "train" | "eval/{label}",
+        "iteration": int,           # Training batch index
+        "group_idx": int,           # GRPO group index (same problem)
+        "traj_idx": int,            # Trajectory index within the group
+        "tags": ["math", "gsm8k"],  # From EnvGroupBuilder.logging_tags()
+        "sampling_client_step": int | null,  # Checkpoint step used for sampling
+        "model_name": str | null,   # Model name from training config
+
+        # Rewards
+        "total_reward": float,      # sum(step rewards) + final_reward
+        "final_reward": float,      # From EnvGroupBuilder.compute_group_rewards()
+        "trajectory_metrics": {},   # From compute_group_rewards() metrics
+
+        # Conversation (v3+, null for v1-v2)
+        "conversation": [           # Aggregated from per-step _conversation
+            {"role": "user", "content": "...", ...},
+            {"role": "assistant", "content": [...], "tool_calls": [...], ...},
+            ...
+        ] | null,
+
+        # Per-step details
+        "steps": [
+            {
+                "step_idx": int,
+                "ob_len": int,      # Observation tokens (prompt length)
+                "ac_len": int,      # Action tokens (model response length)
+                "reward": float,    # Immediate reward from env.step()
+                "episode_done": bool,
+                "metrics": {"correct": 1.0, "format": 1.0, ...},
+                "logs": {           # Diagnostic data
+                    "_conversation": [...],  # Messages for this step (framework key)
+                    "answer_extraction": "42",  # User-defined diagnostic logs
+                    ...
+                }
+            },
+            ...
+        ],
+
+        "final_ob_len": int,        # Final observation length (context window usage)
+        "status": "ok" | "error" | "timeout",
+        "error_type": str | null,   # Exception class name if status="error"
+        "error_message": str | null,
+        "stop_reason": "stop" | "length" | null  # Why sampling stopped
+    }
+
+Schema history:
+    - v1: Initial schema
+    - v2: Added status, error_type, error_message, stop_reason
+    - v3: Added conversation, model_name; _conversation in step logs
+"""
 
 import json
 import logging
@@ -46,11 +107,13 @@ class RolloutSummaryGroup:
         tags (list[str]): Logging / categorization tags (e.g. environment name).
         sampling_client_step (int | None): Step counter of the sampling client,
             or ``None`` if not tracked.
+        model_name (str | None): Model name for this training run.
     """
 
     trajectory_group: TrajectoryGroup
     tags: list[str]
     sampling_client_step: int | None = None
+    model_name: str | None = None
 
 
 def _json_safe(value: Any) -> Any:
@@ -76,6 +139,7 @@ def serialize_rollout_summaries(
     trajectory_groups_P: Sequence[TrajectoryGroup],
     taglist_P: Sequence[list[str]],
     sampling_client_steps_P: Sequence[int | None] | None = None,
+    model_name: str | None = None,
 ) -> list[dict[str, Any]]:
     """Serialize trajectory groups into JSON-safe rollout summary records.
 
@@ -85,11 +149,13 @@ def serialize_rollout_summaries(
     Each record contains::
 
         {
-            "schema_version": 1,
+            "schema_version": 3,
             "split": str, "iteration": int, "group_idx": int, "traj_idx": int,
             "tags": list[str], "sampling_client_step": int | None,
             "total_reward": float, "final_reward": float,
             "trajectory_metrics": dict, "final_ob_len": int,
+            "model_name": str | None,
+            "conversation": list[dict] | None,
             "steps": [{"step_idx", "ob_len", "ac_len", "reward", "episode_done", "metrics", "logs"}, ...]
         }
 
@@ -99,6 +165,7 @@ def serialize_rollout_summaries(
         trajectory_groups_P: One trajectory group per problem (subscript ``_P``).
         taglist_P: Tags for each trajectory group, aligned with *trajectory_groups_P*.
         sampling_client_steps_P: Per-group sampling-client step counters, or ``None``.
+        model_name: Model name for this training run, or ``None``.
 
     Returns:
         List of JSON-serializable rollout summary records, one per trajectory.
@@ -125,21 +192,56 @@ def serialize_rollout_summaries(
                     }
                 )
 
+            # Determine trajectory status and stop reason
+            last_transition = trajectory.transitions[-1] if trajectory.transitions else None
+            stop_reason = (
+                getattr(last_transition.ac, "stop_reason", None) if last_transition else None
+            )
+
+            # Check for errors matching this trajectory index
+            traj_error = None
+            for err in trajectory_group.rollout_errors:
+                # RolloutError doesn't carry traj_idx, so we can only report
+                # group-level errors. If there are errors, mark all trajectories.
+                traj_error = err
+                break
+
+            if traj_error is not None:
+                status = "error"
+            elif stop_reason == "length":
+                status = "timeout"
+            else:
+                status = "ok"
+
+            # Aggregate conversation from per-step logs (populated by
+            # ProblemEnv and EnvFromMessageEnv via the "_conversation" key).
+            conversation: list[Any] = []
+            for step in steps:
+                step_conv = step.get("logs", {}).get("_conversation")
+                if isinstance(step_conv, list):
+                    conversation.extend(step_conv)
+
             records.append(
                 _json_safe(
                     {
-                        "schema_version": 1,
+                        "schema_version": 3,
                         "split": split,
                         "iteration": iteration,
                         "group_idx": group_idx,
                         "traj_idx": traj_idx,
                         "tags": list(tags),
                         "sampling_client_step": sampling_step,
+                        "model_name": model_name,
                         "total_reward": total_rewards_G[traj_idx],
                         "final_reward": trajectory_group.final_rewards_G[traj_idx],
                         "trajectory_metrics": trajectory_group.metrics_G[traj_idx],
+                        "conversation": conversation or None,
                         "steps": steps,
                         "final_ob_len": trajectory.final_ob.length,
+                        "status": status,
+                        "error_type": traj_error.error_type if traj_error else None,
+                        "error_message": traj_error.error_message if traj_error else None,
+                        "stop_reason": stop_reason,
                     }
                 )
             )
@@ -206,18 +308,24 @@ def serialize_rollout_summaries_from_groups(
     split: str,
     iteration: int,
     groups_P: Sequence[RolloutSummaryGroup],
+    model_name: str | None = None,
 ) -> list[dict[str, Any]]:
     """Serialize pre-grouped rollout summaries into JSON-safe dicts.
 
     Convenience wrapper around :func:`serialize_rollout_summaries` that accepts
     :class:`RolloutSummaryGroup` objects.
     """
+    # Per-group model_name takes precedence, fall back to the explicit kwarg.
+    resolved_model_name = model_name
+    if groups_P and groups_P[0].model_name is not None:
+        resolved_model_name = groups_P[0].model_name
     return serialize_rollout_summaries(
         split=split,
         iteration=iteration,
         trajectory_groups_P=[group.trajectory_group for group in groups_P],
         taglist_P=[group.tags for group in groups_P],
         sampling_client_steps_P=[group.sampling_client_step for group in groups_P],
+        model_name=resolved_model_name,
     )
 
 
