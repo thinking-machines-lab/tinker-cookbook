@@ -527,13 +527,17 @@ class CheckpointManager:
     Manages three kinds of checkpoints:
 
     * **Periodic** – full checkpoints (state + sampler weights) saved every
-      ``save_every`` steps with a configurable TTL.
+      ``save_every`` steps with a configurable TTL.  When
+      ``async_periodic_saves=True``, these run as fire-and-forget background
+      tasks so the training loop is not blocked; the checkpoint record is
+      written to ``checkpoints.jsonl`` once the background save completes.
     * **Rolling** – cheap resume-only checkpoints (state only, no sampler
       export) saved every ``rolling_save_every`` steps.  After each save the
       previous rolling checkpoint is deleted to bound storage.  A short TTL
       acts as a safety net if deletion fails.
     * **Final** – a permanent checkpoint saved at the end of training with no
-      TTL, followed by cleanup of any remaining rolling checkpoint.
+      TTL, followed by cleanup of any remaining rolling checkpoint.  The final
+      checkpoint always blocks (never fire-and-forget).
 
     For training loops where periodic and rolling saves happen at the same
     point, use :meth:`maybe_save_async` / :meth:`maybe_save` which handles
@@ -566,6 +570,7 @@ class CheckpointManager:
         rolling_save_every: int = 0,
         rolling_ttl_seconds: int = 7200,
         store: "TrainingRunStore | None" = None,
+        async_periodic_saves: bool = False,
     ) -> None:
         self._training_client = training_client
         self._service_client = service_client
@@ -575,8 +580,10 @@ class CheckpointManager:
         self._rolling_save_every = rolling_save_every
         self._rolling_ttl_seconds = rolling_ttl_seconds
         self._store = store
+        self._async_periodic_saves = async_periodic_saves
 
-        self._pending_task: asyncio.Task[None] | None = None
+        self._pending_rolling_task: asyncio.Task[None] | None = None
+        self._pending_periodic_task: asyncio.Task[dict[str, str]] | None = None
         self._prev_state_path: str | None = None
 
     # ------------------------------------------------------------------
@@ -637,12 +644,12 @@ class CheckpointManager:
         The save runs as a background ``asyncio.Task`` so it overlaps with the
         next training step.
         """
-        await self._resolve_pending_async()
+        await self._resolve_pending_rolling_async()
 
         if not self._should_save_rolling(step):
             return
 
-        self._pending_task = asyncio.create_task(
+        self._pending_rolling_task = asyncio.create_task(
             self._do_rolling_save_async(step, loop_state),
             name=f"rolling_checkpoint_{step:06d}",
         )
@@ -669,13 +676,24 @@ class CheckpointManager:
     ) -> dict[str, str] | None:
         """Save periodic checkpoint if due, then fire rolling save if due.
 
-        Returns the periodic checkpoint path dict if a periodic save happened,
-        otherwise ``None``.  Suitable for training loops where periodic and
-        rolling saves happen at the same point (SL, DPO).
+        Returns the periodic checkpoint path dict if a periodic save happened
+        synchronously, otherwise ``None``.  When ``async_periodic_saves`` is
+        enabled, periodic saves run as background tasks and this always returns
+        ``None``.
+
+        Suitable for training loops where periodic and rolling saves happen at
+        the same point (SL, DPO).
         """
         result: dict[str, str] | None = None
         if self.should_save_periodic(step):
-            result = await self.save_periodic_async(step, loop_state)
+            if self._async_periodic_saves:
+                await self._resolve_pending_periodic_async()
+                self._pending_periodic_task = asyncio.create_task(
+                    self.save_periodic_async(step, loop_state),
+                    name=f"periodic_checkpoint_{step:06d}",
+                )
+            else:
+                result = await self.save_periodic_async(step, loop_state)
         await self.maybe_save_rolling_async(step, loop_state)
         return result
 
@@ -699,6 +717,9 @@ class CheckpointManager:
         deleted so that the last entry in ``checkpoints.jsonl`` always points
         to valid server-side data.
         """
+        # Drain any in-flight periodic save so its record lands in
+        # checkpoints.jsonl *before* the final record.
+        await self._resolve_pending_periodic_async()
         paths = await save_checkpoint_async(
             training_client=self._training_client,
             name="final",
@@ -730,12 +751,13 @@ class CheckpointManager:
     # ------------------------------------------------------------------
 
     async def finalize_async(self) -> None:
-        """Await any pending rolling save, then delete the last rolling checkpoint.
+        """Await any pending saves, then delete the last rolling checkpoint.
 
         Called automatically by :meth:`save_final_async`.  Can also be called
         directly if the final checkpoint is saved through other means.
         """
-        await self._resolve_pending_async()
+        await self._resolve_pending_periodic_async()
+        await self._resolve_pending_rolling_async()
         await self._delete_prev_async()
 
     def finalize(self) -> None:
@@ -752,14 +774,23 @@ class CheckpointManager:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _resolve_pending_async(self) -> None:
-        if self._pending_task is None:
+    async def _resolve_pending_rolling_async(self) -> None:
+        if self._pending_rolling_task is None:
             return
         try:
-            await self._pending_task
+            await self._pending_rolling_task
         except Exception:
             logger.warning("Rolling checkpoint save failed", exc_info=True)
-        self._pending_task = None
+        self._pending_rolling_task = None
+
+    async def _resolve_pending_periodic_async(self) -> None:
+        if self._pending_periodic_task is None:
+            return
+        try:
+            await self._pending_periodic_task
+        except Exception:
+            logger.warning("Background periodic checkpoint save failed", exc_info=True)
+        self._pending_periodic_task = None
 
     async def _do_rolling_save_async(self, step: int, loop_state: dict[str, Any]) -> None:
         name = f"{step:06d}"

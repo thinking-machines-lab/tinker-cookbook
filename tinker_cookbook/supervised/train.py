@@ -81,6 +81,11 @@ class Config:
             (0 disables).
         max_steps (int | None): Hard cap on training steps.  ``None`` trains
             for ``num_epochs * n_batches``.
+        async_periodic_saves (bool): When ``True``, periodic checkpoint saves
+            run as fire-and-forget background tasks instead of blocking the
+            training loop.  The checkpoint record is written to
+            ``checkpoints.jsonl`` once the save completes.  The final
+            checkpoint always blocks.  Default ``False``.
         submit_ahead (int): How many batches to submit ahead of the one being
             waited on.  ``1`` (default) matches the historical single-lookahead
             behavior; ``0`` disables pipelining entirely; higher values deepen
@@ -130,6 +135,10 @@ class Config:
     rolling_save_every: int = 0
     # TTL for rolling checkpoints; short to auto-clean if explicit deletion fails.
     rolling_ttl_seconds: int = 7200  # 2 hours
+    # When True, periodic checkpoint saves run as background asyncio tasks
+    # (fire-and-forget) instead of blocking the training loop. The final
+    # checkpoint always blocks regardless of this setting.
+    async_periodic_saves: bool = False
 
     # Adam optimizer parameters
     adam_beta1: float = 0.9
@@ -339,6 +348,7 @@ async def main(config: Config):
         rolling_save_every=config.rolling_save_every,
         rolling_ttl_seconds=config.rolling_ttl_seconds,
         store=store,
+        async_periodic_saves=config.async_periodic_saves,
     )
 
     dataset, maybe_test_dataset = config.dataset_builder()

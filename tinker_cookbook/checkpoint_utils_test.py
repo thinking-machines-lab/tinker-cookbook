@@ -422,3 +422,197 @@ async def test_delete_failure_is_swallowed():
 
         # Should not raise — delete failure is swallowed
         assert mock_rest_client.delete_checkpoint_from_tinker_path_async.called
+
+
+# ---------------------------------------------------------------------------
+# Async periodic saves tests
+# ---------------------------------------------------------------------------
+
+
+def _make_both_save_mocks(
+    state_paths: list[str], sampler_paths: list[str]
+) -> tuple[AsyncMock, AsyncMock]:
+    """Create mocks for save_state_async and save_weights_for_sampler_async."""
+    state_mock = _make_save_state_mock(state_paths)
+
+    sampler_idx = 0
+
+    async def _save_sampler_async(name: str, ttl_seconds: int | None = None) -> MagicMock:
+        nonlocal sampler_idx
+        path = sampler_paths[sampler_idx % len(sampler_paths)]
+        sampler_idx += 1
+        future = MagicMock()
+        result = MagicMock()
+        result.path = path
+        future.result_async = AsyncMock(return_value=result)
+        return future
+
+    return state_mock, AsyncMock(side_effect=_save_sampler_async)
+
+
+@pytest.mark.asyncio
+async def test_async_periodic_saves_fire_and_forget():
+    """Periodic saves should run as background tasks when async_periodic_saves=True."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_training_client = MagicMock()
+        state_mock, sampler_mock = _make_both_save_mocks(
+            ["tinker://run/state/000005"], ["tinker://run/sampler/000005"]
+        )
+        mock_training_client.save_state_async = state_mock
+        mock_training_client.save_weights_for_sampler_async = sampler_mock
+
+        mgr = CheckpointManager(
+            training_client=mock_training_client,
+            service_client=MagicMock(),
+            log_path=tmpdir,
+            save_every=5,
+            async_periodic_saves=True,
+        )
+
+        # Steps 1-4: no periodic save
+        for step in range(1, 5):
+            result = await mgr.maybe_save_async(step=step, loop_state={"batch": step})
+            assert result is None
+            mock_training_client.save_state_async.assert_not_called()
+
+        # Step 5: triggers periodic save, but async — returns None immediately
+        result = await mgr.maybe_save_async(step=5, loop_state={"batch": 5})
+        assert result is None  # async mode returns None
+        assert mgr._pending_periodic_task is not None
+
+        # Resolve by calling finalize
+        await mgr.finalize_async()
+        assert mgr._pending_periodic_task is None
+
+        # Verify checkpoints.jsonl was written with both state and sampler paths
+        ckpts = [
+            CheckpointRecord.from_dict(json.loads(line))
+            for line in (Path(tmpdir) / "checkpoints.jsonl").read_text().strip().split("\n")
+        ]
+        assert len(ckpts) == 1
+        assert ckpts[0].state_path == "tinker://run/state/000005"
+        assert ckpts[0].sampler_path == "tinker://run/sampler/000005"
+
+
+@pytest.mark.asyncio
+async def test_async_periodic_saves_resolves_before_next():
+    """A pending async periodic save should resolve before the next one fires."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_training_client = MagicMock()
+        state_mock, sampler_mock = _make_both_save_mocks(
+            ["tinker://run/state/000005", "tinker://run/state/000010"],
+            ["tinker://run/sampler/000005", "tinker://run/sampler/000010"],
+        )
+        mock_training_client.save_state_async = state_mock
+        mock_training_client.save_weights_for_sampler_async = sampler_mock
+
+        mgr = CheckpointManager(
+            training_client=mock_training_client,
+            service_client=MagicMock(),
+            log_path=tmpdir,
+            save_every=5,
+            async_periodic_saves=True,
+        )
+
+        # Step 5: fires first periodic save
+        await mgr.maybe_save_async(step=5, loop_state={"batch": 5})
+        assert mgr._pending_periodic_task is not None
+
+        # Step 10: should resolve step 5 first, then fire step 10
+        await mgr.maybe_save_async(step=10, loop_state={"batch": 10})
+        # step 5 resolved, step 10 is now pending
+        assert mgr._pending_periodic_task is not None
+
+        await mgr.finalize_async()
+
+        ckpts = [
+            CheckpointRecord.from_dict(json.loads(line))
+            for line in (Path(tmpdir) / "checkpoints.jsonl").read_text().strip().split("\n")
+        ]
+        assert len(ckpts) == 2
+        assert ckpts[0].name == "000005"
+        assert ckpts[1].name == "000010"
+
+
+@pytest.mark.asyncio
+async def test_async_periodic_save_final_ordering():
+    """Final checkpoint record should always appear after any pending periodic save."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_training_client = MagicMock()
+        state_mock, sampler_mock = _make_both_save_mocks(
+            ["tinker://run/state/000005", "tinker://run/state/final"],
+            ["tinker://run/sampler/000005", "tinker://run/sampler/final"],
+        )
+        mock_training_client.save_state_async = state_mock
+        mock_training_client.save_weights_for_sampler_async = sampler_mock
+
+        mgr = CheckpointManager(
+            training_client=mock_training_client,
+            service_client=MagicMock(),
+            log_path=tmpdir,
+            save_every=5,
+            async_periodic_saves=True,
+        )
+
+        # Fire a background periodic save at step 5
+        await mgr.maybe_save_async(step=5, loop_state={"batch": 5})
+        assert mgr._pending_periodic_task is not None
+
+        # save_final_async should drain the pending periodic save first
+        await mgr.save_final_async(loop_state={"epoch": 1, "batch": 0})
+
+        ckpts = [
+            CheckpointRecord.from_dict(json.loads(line))
+            for line in (Path(tmpdir) / "checkpoints.jsonl").read_text().strip().split("\n")
+        ]
+        assert len(ckpts) == 2
+        assert ckpts[0].name == "000005"
+        assert ckpts[1].name == "final"
+
+
+@pytest.mark.asyncio
+async def test_async_periodic_save_failure_is_swallowed():
+    """A failed async periodic save should be logged but not raise."""
+    mock_training_client = MagicMock()
+    mock_training_client.save_state_async = AsyncMock(side_effect=RuntimeError("server error"))
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mgr = CheckpointManager(
+            training_client=mock_training_client,
+            service_client=MagicMock(),
+            log_path=tmpdir,
+            save_every=5,
+            async_periodic_saves=True,
+        )
+
+        # Step 5: fires periodic save that will fail
+        await mgr.maybe_save_async(step=5, loop_state={"batch": 5})
+
+        # Finalize should not raise
+        await mgr.finalize_async()
+
+
+@pytest.mark.asyncio
+async def test_sync_periodic_saves_still_work():
+    """With async_periodic_saves=False (default), saves block and return paths."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_training_client = MagicMock()
+        state_mock, sampler_mock = _make_both_save_mocks(
+            ["tinker://run/state/000005"], ["tinker://run/sampler/000005"]
+        )
+        mock_training_client.save_state_async = state_mock
+        mock_training_client.save_weights_for_sampler_async = sampler_mock
+
+        mgr = CheckpointManager(
+            training_client=mock_training_client,
+            service_client=MagicMock(),
+            log_path=tmpdir,
+            save_every=5,
+            async_periodic_saves=False,
+        )
+
+        result = await mgr.maybe_save_async(step=5, loop_state={"batch": 5})
+        assert result is not None
+        assert result["state_path"] == "tinker://run/state/000005"
+        assert result["sampler_path"] == "tinker://run/sampler/000005"
+        assert mgr._pending_periodic_task is None
