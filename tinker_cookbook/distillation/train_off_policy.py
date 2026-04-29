@@ -414,6 +414,15 @@ async def main(config: Config) -> None:
 
     evaluators = [eb() for eb in config.evaluator_builders]
 
+    checkpoint_mgr = checkpoint_utils.CheckpointManager(
+        training_client=training_client,
+        service_client=service_client,
+        log_path=config.log_path,
+        save_every=config.save_every,
+        ttl_seconds=config.ttl_seconds,
+        store=store,
+    )
+
     sampling_client: tinker.SamplingClient | None = None
 
     for i_batch in range(start_batch, total_batches):
@@ -454,15 +463,9 @@ async def main(config: Config) -> None:
         if train_result.metrics:
             metrics.update({f"train/{k}": v for k, v in train_result.metrics.items()})
 
-        if config.save_every > 0 and i_batch > start_batch and i_batch % config.save_every == 0:
-            path_dict = await checkpoint_utils.save_checkpoint_async(
-                training_client=training_client,
-                name=f"{i_batch:06d}",
-                log_path=config.log_path,
-                kind="both",
-                loop_state={"batch": i_batch},
-                ttl_seconds=config.ttl_seconds,
-                store=store,
+        if i_batch > start_batch and checkpoint_mgr.should_save_periodic(i_batch):
+            path_dict = await checkpoint_mgr.save_periodic_async(
+                step=i_batch, loop_state={"batch": i_batch}
             )
             sampling_client = training_client.create_sampling_client(path_dict["sampler_path"])
         else:
@@ -476,15 +479,7 @@ async def main(config: Config) -> None:
 
     # Final checkpoint
     if start_batch < total_batches:
-        await checkpoint_utils.save_checkpoint_async(
-            training_client=training_client,
-            name="final",
-            log_path=config.log_path,
-            kind="both",
-            loop_state={"batch": total_batches},
-            ttl_seconds=None,
-            store=store,
-        )
+        await checkpoint_mgr.save_final_async(loop_state={"batch": total_batches})
 
     ml_logger.close()
     logger.info("Off-policy distillation completed successfully")

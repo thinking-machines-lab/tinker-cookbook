@@ -521,28 +521,43 @@ def save_checkpoint(
     )
 
 
-class RollingCheckpointManager:
-    """Fire-and-forget rolling checkpoints with automatic cleanup.
+class CheckpointManager:
+    """Unified checkpoint manager for periodic, rolling, and final checkpoints.
 
-    Rolling checkpoints are cheap resume points (saves training state for
-    resume but skips the sampler-weight export) saved at a finer
-    interval than periodic checkpoints. After each successful save, the previous
-    rolling checkpoint is deleted to bound storage usage. A short TTL acts as a
-    safety net in case deletion fails.
+    Manages three kinds of checkpoints:
+
+    * **Periodic** – full checkpoints (state + sampler weights) saved every
+      ``save_every`` steps with a configurable TTL.  When
+      ``async_periodic_saves=True``, these run as fire-and-forget background
+      tasks so the training loop is not blocked; the checkpoint record is
+      written to ``checkpoints.jsonl`` once the background save completes.
+    * **Rolling** – cheap resume-only checkpoints (state only, no sampler
+      export) saved every ``rolling_save_every`` steps.  After each save the
+      previous rolling checkpoint is deleted to bound storage.  A short TTL
+      acts as a safety net if deletion fails.
+    * **Final** – a permanent checkpoint saved at the end of training with no
+      TTL, followed by cleanup of any remaining rolling checkpoint.  The final
+      checkpoint always blocks (never fire-and-forget).
+
+    For training loops where periodic and rolling saves happen at the same
+    point, use :meth:`maybe_save_async` / :meth:`maybe_save` which handles
+    both in one call.  For loops where they happen at different points,
+    call :meth:`should_save_periodic` + :meth:`save_periodic_async` and
+    :meth:`maybe_save_rolling_async` separately.
 
     Usage::
 
-        mgr = RollingCheckpointManager(
+        mgr = CheckpointManager(
             training_client=tc,
             service_client=sc,
             log_path="/tmp/logs",
-            rolling_save_every=1,
             save_every=20,
+            rolling_save_every=1,
         )
-        for step in range(num_steps):
+        for step in range(1, num_steps + 1):
             train_step(...)
             await mgr.maybe_save_async(step, {"batch": step})
-        await mgr.finalize_async()
+        await mgr.save_final_async({"batch": num_steps})
     """
 
     def __init__(
@@ -550,23 +565,71 @@ class RollingCheckpointManager:
         training_client: tinker.TrainingClient,
         service_client: tinker.ServiceClient,
         log_path: str,
-        rolling_save_every: int,
         save_every: int = 0,
+        ttl_seconds: int | None = 604800,
+        rolling_save_every: int = 0,
         rolling_ttl_seconds: int = 7200,
         store: "TrainingRunStore | None" = None,
+        async_periodic_saves: bool = False,
     ) -> None:
         self._training_client = training_client
         self._service_client = service_client
         self._log_path = log_path
-        self._rolling_save_every = rolling_save_every
         self._save_every = save_every
+        self._ttl_seconds = ttl_seconds
+        self._rolling_save_every = rolling_save_every
         self._rolling_ttl_seconds = rolling_ttl_seconds
         self._store = store
+        self._async_periodic_saves = async_periodic_saves
 
-        self._pending_task: asyncio.Task[None] | None = None
+        self._pending_rolling_task: asyncio.Task[None] | None = None
+        self._pending_periodic_task: asyncio.Task[dict[str, str]] | None = None
         self._prev_state_path: str | None = None
 
-    def _should_save(self, step: int) -> bool:
+    # ------------------------------------------------------------------
+    # Periodic checkpoints
+    # ------------------------------------------------------------------
+
+    def should_save_periodic(self, step: int) -> bool:
+        """Return True if *step* warrants a periodic checkpoint."""
+        return self._save_every > 0 and step > 0 and step % self._save_every == 0
+
+    async def save_periodic_async(self, step: int, loop_state: dict[str, Any]) -> dict[str, str]:
+        """Save a periodic checkpoint (state + sampler) and return paths.
+
+        Callers that need the returned ``sampler_path`` (e.g. to create a
+        sampling client) should call :meth:`should_save_periodic` first, then
+        this method directly.
+        """
+        async with trace.scope_span("save_checkpoint"):
+            return await save_checkpoint_async(
+                training_client=self._training_client,
+                name=f"{step:06d}",
+                log_path=self._log_path,
+                loop_state=loop_state,
+                kind="both",
+                ttl_seconds=self._ttl_seconds,
+                store=self._store,
+            )
+
+    def save_periodic(self, step: int, loop_state: dict[str, Any]) -> dict[str, str]:
+        """Synchronous version of :meth:`save_periodic_async`."""
+        with trace.scope_span_sync("save_checkpoint"):
+            return save_checkpoint(
+                training_client=self._training_client,
+                name=f"{step:06d}",
+                log_path=self._log_path,
+                loop_state=loop_state,
+                kind="both",
+                ttl_seconds=self._ttl_seconds,
+                store=self._store,
+            )
+
+    # ------------------------------------------------------------------
+    # Rolling checkpoints
+    # ------------------------------------------------------------------
+
+    def _should_save_rolling(self, step: int) -> bool:
         """Return True if *step* warrants a rolling save."""
         if self._rolling_save_every <= 0 or step <= 0:
             return False
@@ -575,46 +638,161 @@ class RollingCheckpointManager:
         # Skip when a periodic checkpoint fires on the same step.
         return not (self._save_every > 0 and step % self._save_every == 0)
 
-    # ------------------------------------------------------------------
-    # Async interface (SL / RL)
-    # ------------------------------------------------------------------
+    async def maybe_save_rolling_async(self, step: int, loop_state: dict[str, Any]) -> None:
+        """Resolve any pending rolling save, then fire a new one if *step* warrants it.
 
-    async def maybe_save_async(self, step: int, loop_state: dict[str, Any]) -> None:
-        """Resolve any pending save, then fire a new one if *step* warrants it.
-
-        Call once per training step. The save runs as a background
-        ``asyncio.Task`` so it overlaps with the next training step.
+        The save runs as a background ``asyncio.Task`` so it overlaps with the
+        next training step.
         """
-        await self._resolve_pending_async()
+        await self._resolve_pending_rolling_async()
 
-        if not self._should_save(step):
+        if not self._should_save_rolling(step):
             return
 
-        self._pending_task = asyncio.create_task(
-            self._do_save_async(step, loop_state),
+        self._pending_rolling_task = asyncio.create_task(
+            self._do_rolling_save_async(step, loop_state),
             name=f"rolling_checkpoint_{step:06d}",
         )
 
-    async def finalize_async(self) -> None:
-        """Await any pending save, then delete the last rolling checkpoint.
+    def maybe_save_rolling(self, step: int, loop_state: dict[str, Any]) -> None:
+        """Synchronous version of :meth:`maybe_save_rolling_async`.
 
-        Call after the final checkpoint save so that the last entry in
-        ``checkpoints.jsonl`` always points to valid server-side data.
-        In the happy path this leaves zero rolling checkpoints on the server.
+        Blocks on the save but catches all errors so it never crashes the
+        training loop.
         """
-        await self._resolve_pending_async()
-        await self._delete_prev_async()
-
-    async def _resolve_pending_async(self) -> None:
-        if self._pending_task is None:
+        if not self._should_save_rolling(step):
             return
         try:
-            await self._pending_task
+            asyncio.run(self._do_rolling_save_async(step, loop_state))
         except Exception:
             logger.warning("Rolling checkpoint save failed", exc_info=True)
-        self._pending_task = None
 
-    async def _do_save_async(self, step: int, loop_state: dict[str, Any]) -> None:
+    # ------------------------------------------------------------------
+    # Combined convenience (periodic + rolling in one call)
+    # ------------------------------------------------------------------
+
+    async def maybe_save_async(
+        self, step: int, loop_state: dict[str, Any]
+    ) -> dict[str, str] | None:
+        """Save periodic checkpoint if due, then fire rolling save if due.
+
+        Returns the periodic checkpoint path dict if a periodic save happened
+        synchronously, otherwise ``None``.  When ``async_periodic_saves`` is
+        enabled, periodic saves run as background tasks and this always returns
+        ``None``.
+
+        Suitable for training loops where periodic and rolling saves happen at
+        the same point (SL, DPO).
+        """
+        result: dict[str, str] | None = None
+        if self.should_save_periodic(step):
+            if self._async_periodic_saves:
+                await self._resolve_pending_periodic_async()
+                self._pending_periodic_task = asyncio.create_task(
+                    self.save_periodic_async(step, loop_state),
+                    name=f"periodic_checkpoint_{step:06d}",
+                )
+            else:
+                result = await self.save_periodic_async(step, loop_state)
+        await self.maybe_save_rolling_async(step, loop_state)
+        return result
+
+    def maybe_save(self, step: int, loop_state: dict[str, Any]) -> dict[str, str] | None:
+        """Synchronous version of :meth:`maybe_save_async`."""
+        result: dict[str, str] | None = None
+        if self.should_save_periodic(step):
+            result = self.save_periodic(step, loop_state)
+        self.maybe_save_rolling(step, loop_state)
+        return result
+
+    # ------------------------------------------------------------------
+    # Final checkpoint
+    # ------------------------------------------------------------------
+
+    async def save_final_async(self, loop_state: dict[str, Any]) -> dict[str, str]:
+        """Save the final checkpoint (no TTL) and clean up rolling checkpoints.
+
+        The final checkpoint is saved with ``ttl_seconds=None`` so it persists
+        indefinitely.  After saving, any remaining rolling checkpoint is
+        deleted so that the last entry in ``checkpoints.jsonl`` always points
+        to valid server-side data.
+        """
+        # Drain any in-flight periodic save so its record lands in
+        # checkpoints.jsonl *before* the final record.
+        await self._resolve_pending_periodic_async()
+        paths = await save_checkpoint_async(
+            training_client=self._training_client,
+            name="final",
+            log_path=self._log_path,
+            kind="both",
+            loop_state=loop_state,
+            ttl_seconds=None,
+            store=self._store,
+        )
+        await self.finalize_async()
+        return paths
+
+    def save_final(self, loop_state: dict[str, Any]) -> dict[str, str]:
+        """Synchronous version of :meth:`save_final_async`."""
+        paths = save_checkpoint(
+            training_client=self._training_client,
+            name="final",
+            log_path=self._log_path,
+            kind="both",
+            loop_state=loop_state,
+            ttl_seconds=None,
+            store=self._store,
+        )
+        self.finalize()
+        return paths
+
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
+
+    async def finalize_async(self) -> None:
+        """Await any pending saves, then delete the last rolling checkpoint.
+
+        Called automatically by :meth:`save_final_async`.  Can also be called
+        directly if the final checkpoint is saved through other means.
+        """
+        await self._resolve_pending_periodic_async()
+        await self._resolve_pending_rolling_async()
+        await self._delete_prev_async()
+
+    def finalize(self) -> None:
+        """Synchronous version of :meth:`finalize_async`."""
+        try:
+            asyncio.run(self._delete_prev_async())
+        except Exception:
+            logger.warning(
+                "Failed to delete last rolling checkpoint (TTL will clean up)",
+                exc_info=True,
+            )
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    async def _resolve_pending_rolling_async(self) -> None:
+        if self._pending_rolling_task is None:
+            return
+        try:
+            await self._pending_rolling_task
+        except Exception:
+            logger.warning("Rolling checkpoint save failed", exc_info=True)
+        self._pending_rolling_task = None
+
+    async def _resolve_pending_periodic_async(self) -> None:
+        if self._pending_periodic_task is None:
+            return
+        try:
+            await self._pending_periodic_task
+        except Exception:
+            logger.warning("Background periodic checkpoint save failed", exc_info=True)
+        self._pending_periodic_task = None
+
+    async def _do_rolling_save_async(self, step: int, loop_state: dict[str, Any]) -> None:
         name = f"{step:06d}"
         paths = await save_checkpoint_async(
             training_client=self._training_client,
@@ -646,30 +824,3 @@ class RollingCheckpointManager:
                 exc_info=True,
             )
         self._prev_state_path = None
-
-    # ------------------------------------------------------------------
-    # Sync interface (DPO)
-    # ------------------------------------------------------------------
-
-    def maybe_save(self, step: int, loop_state: dict[str, Any]) -> None:
-        """Synchronous version of :meth:`maybe_save_async`.
-
-        Blocks on the save but catches all errors so it never crashes the
-        training loop. Suitable for synchronous training loops (e.g. DPO).
-        """
-        if not self._should_save(step):
-            return
-        try:
-            asyncio.run(self._do_save_async(step, loop_state))
-        except Exception:
-            logger.warning("Rolling checkpoint save failed", exc_info=True)
-
-    def finalize(self) -> None:
-        """Synchronous version of :meth:`finalize_async`."""
-        try:
-            asyncio.run(self._delete_prev_async())
-        except Exception:
-            logger.warning(
-                "Failed to delete last rolling checkpoint (TTL will clean up)",
-                exc_info=True,
-            )
