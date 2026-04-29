@@ -80,7 +80,15 @@ class RoleColonRenderer(Renderer):
 
         Returns:
             tuple[Message, bool]: The parsed assistant message and whether the response
-                terminated cleanly with the expected stop sequence (not EOS).
+                terminated cleanly — either via the ``\\n\\nUser:`` stop sequence or
+                via EOS. Malformed cases (no terminator at all, ``\\n\\nUser:``
+                followed by EOS, or multiple ``\\n\\nUser:`` delimiters) return
+                ``False``. Callers that need to distinguish stop-sequence
+                termination from EOS termination (e.g. ``ProblemEnv`` with
+                ``require_stop_sequence_for_format=True``) should check the EOS
+                token themselves; this method intentionally treats both as a
+                successful parse so that single-turn evals on base models grade
+                normally (see issue #685).
         """
         import logging
 
