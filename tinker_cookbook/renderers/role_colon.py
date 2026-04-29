@@ -86,9 +86,11 @@ class RoleColonRenderer(Renderer):
 
         logger = logging.getLogger(__name__)
 
-        # Strip EOS token from the end if present (base models may terminate with EOS
-        # instead of the expected stop sequence). We still return False for parse success
-        # since the model didn't produce the expected stop sequence.
+        # Strip EOS token from the end if present. Base models on single-turn
+        # prompts commonly terminate with EOS instead of the "\n\nUser:" stop
+        # sequence — that is still a clean end-of-turn signal, so treat it as a
+        # successful parse. Without this, EnvFromMessageEnv short-circuits with
+        # failed_parse_reward=0 and never grades the response (see issue #685).
         terminated_with_eos = False
         eos_token_id = self.tokenizer.eos_token_id
         if eos_token_id is not None and response and response[-1] == eos_token_id:
@@ -98,6 +100,8 @@ class RoleColonRenderer(Renderer):
         str_response = str(self.tokenizer.decode(response))
         splitted = str_response.split("\n\nUser:")
         if len(splitted) == 1:
+            if terminated_with_eos:
+                return Message(role="assistant", content=str_response.strip()), True
             logger.debug(f"Response is not a valid assistant response: {str_response}")
             return Message(role="assistant", content=str_response.strip()), False
         elif len(splitted) == 2:
