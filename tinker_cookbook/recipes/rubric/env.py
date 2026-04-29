@@ -93,8 +93,8 @@ class RubricGradedEnv(Env):
             logtree.log_formatter(ConversationFormatter(messages=self.convo))
 
         # obtain the policy action message
-        (policy_action_message, parse_success) = self.renderer.parse_response(action)
-        parse_success_bool = bool(parse_success)
+        (policy_action_message, termination) = self.renderer.parse_response(action)
+        parse_success_bool = termination.is_clean
         format_score = float(parse_success_bool)
 
         if self.debug:
@@ -107,11 +107,11 @@ class RubricGradedEnv(Env):
             print(colored("DEBUG: Policy Action Message", "green"))
             print(colored("=" * 80, "green"))
             print(colored(json.dumps(policy_action_message, indent=2), "green") + "\n")
-            print(colored(f"Parse Success: {parse_success}", "green") + "\n")
+            print(colored(f"Termination: {termination}", "green") + "\n")
 
         with logtree.scope_header("Policy Response"):
             logtree.log_formatter(ConversationFormatter(messages=[policy_action_message]))
-            logtree.log_text(f"Parse success: {parse_success}")
+            logtree.log_text(f"Termination: {termination}")
 
         convo = self.convo + [policy_action_message]
         results = await asyncio.gather(

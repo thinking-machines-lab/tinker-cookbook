@@ -67,7 +67,7 @@ class _SamplingResult:
     completion_token_ids: list[int]
     logprobs: list[float] | None
     parsed_message: renderers.Message
-    parse_success: bool
+    termination: renderers.ParseTermination
     model_name: str
 
 
@@ -139,14 +139,14 @@ async def _sample_chat_completion(
     completion_token_ids: list[int] = seq.tokens
     logprobs: list[float] | None = seq.logprobs
 
-    parsed_message, parse_success = renderer.parse_response(completion_token_ids)
+    parsed_message, termination = renderer.parse_response(completion_token_ids)
 
     return _SamplingResult(
         prompt_token_ids=prompt_token_ids,
         completion_token_ids=completion_token_ids,
         logprobs=logprobs,
         parsed_message=parsed_message,
-        parse_success=parse_success,
+        termination=termination,
         model_name=model_name,
     )
 
@@ -172,7 +172,7 @@ def _sampling_result_to_chat_completion_dict(result: _SamplingResult) -> dict[st
 
     if tool_calls_out:
         finish_reason = "tool_calls"
-    elif result.parse_success:
+    elif result.termination.is_clean:
         finish_reason = "stop"
     else:
         finish_reason = "length"

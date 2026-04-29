@@ -34,6 +34,43 @@ from tinker_cookbook.tokenizer_utils import Tokenizer
 
 logger = logging.getLogger(__name__)
 
+
+class ParseTermination(StrEnum):
+    """How a sampled response ended, as observed by ``Renderer.parse_response``.
+
+    Each consumer chooses its own policy from this signal:
+
+    - Eval grading (``EnvFromMessageEnv``): grade anything that terminated cleanly,
+      i.e. ``termination.is_clean`` (``STOP_SEQUENCE`` or ``EOS``).
+    - Strict format rewards (``ProblemEnv`` with ``require_stop_sequence_for_format=True``):
+      only reward ``termination.is_stop_sequence`` (``STOP_SEQUENCE`` exclusively).
+    - Lenient format rewards: ``termination.is_clean``.
+
+    Replacing the previous ``parse_success: bool`` lets each call site express its
+    policy explicitly instead of leaning on a bool whose meaning silently shifted
+    between consumers (see issue #685 / #339).
+    """
+
+    STOP_SEQUENCE = "stop_sequence"
+    """The renderer's expected stop signal (``\\n\\nUser:``, ``<|im_end|>``, ...) fired."""
+
+    EOS = "eos"
+    """Termination via the model's EOS token, accepted as a fallback by some renderers."""
+
+    MALFORMED = "malformed"
+    """Response did not terminate cleanly (truncated, multiple stop signals, ...)."""
+
+    @property
+    def is_clean(self) -> bool:
+        """True for any clean termination — what eval grading should gate on."""
+        return self != ParseTermination.MALFORMED
+
+    @property
+    def is_stop_sequence(self) -> bool:
+        """True only for the renderer's expected stop signal — strict format-reward gate."""
+        return self == ParseTermination.STOP_SEQUENCE
+
+
 # Tool types are based on kosong (https://github.com/MoonshotAI/kosong).
 
 
@@ -364,7 +401,7 @@ class StreamingParser:
 
     tokenizer: "Tokenizer"
     end_message_token: int
-    parse_final_response: Callable[[list[int]], tuple["Message", bool]]
+    parse_final_response: Callable[[list[int]], tuple["Message", "ParseTermination"]]
 
     _utf8_decoder: Utf8TokenDecoder = field(init=False)
     _accumulated_text: str = field(init=False, default="")
@@ -448,7 +485,7 @@ class StreamingParser:
 
         yield from self._emit_remaining()
 
-        message, _success = self.parse_final_response(self._all_tokens)
+        message, _termination = self.parse_final_response(self._all_tokens)
         yield message
 
     def reset(self) -> None:
@@ -1221,7 +1258,7 @@ class Renderer(ABC):
         ...
 
     @abstractmethod
-    def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+    def parse_response(self, response: list[int]) -> tuple[Message, ParseTermination]:
         """
         Parse sampled tokens back into a Message.
 
@@ -1229,9 +1266,10 @@ class Renderer(ABC):
             response (list[int]): Token IDs returned from sampling.
 
         Returns:
-            tuple[Message, bool]: A ``(message, success)`` tuple. If success
-                is False, the response could not be parsed (e.g., missing stop
-                token), but a best-effort message is still returned.
+            tuple[Message, ParseTermination]: A ``(message, termination)`` tuple.
+                ``termination`` is an explicit signal — see :class:`ParseTermination`.
+                A best-effort ``Message`` is always returned, even on
+                ``MALFORMED``, so callers can still log / display partial output.
         """
         ...
 
@@ -1264,7 +1302,9 @@ class Renderer(ABC):
             f"{type(self).__name__} must define _end_message_token to support streaming"
         )
 
-    def _parse_response_for_streaming(self, response: list[int]) -> tuple[Message, bool]:
+    def _parse_response_for_streaming(
+        self, response: list[int]
+    ) -> tuple[Message, ParseTermination]:
         """Parse response for streaming, always applying full content parsing.
 
         Unlike parse_response which may short-circuit on missing stop token,
@@ -1677,12 +1717,12 @@ def tokens_weights_from_strings_weights(
 
 def parse_response_for_stop_token(
     response: list[int], tokenizer: Tokenizer, stop_token: int
-) -> tuple[Message, bool]:
+) -> tuple[Message, ParseTermination]:
     """Parse a sampled token sequence by splitting on a stop token.
 
     Expects the response to contain exactly zero or one occurrence of the
     stop token. Zero means the model ran out of tokens (returns
-    ``success=False``). More than one indicates a sampler bug and raises
+    ``MALFORMED``). More than one indicates a sampler bug and raises
     an error.
 
     Args:
@@ -1691,9 +1731,11 @@ def parse_response_for_stop_token(
         stop_token (int): The token ID that signals end-of-generation.
 
     Returns:
-        tuple[Message, bool]: A ``(message, success)`` tuple. ``success``
-            is True if exactly one stop token was found, False if the stop
-            token was missing (truncated response).
+        tuple[Message, ParseTermination]: ``STOP_SEQUENCE`` if exactly one stop
+            token was found, ``MALFORMED`` if the stop token was missing
+            (truncated response). Chat-template renderers using this helper
+            don't distinguish EOS from their stop signal — for them the
+            chat-end token is both.
 
     Raises:
         RendererError: If more than one stop token is found in the response.
@@ -1702,10 +1744,10 @@ def parse_response_for_stop_token(
     if emt_count == 0:
         str_response = str(tokenizer.decode(response))
         logger.debug(f"Response is not a valid assistant response: {str_response}")
-        return Message(role="assistant", content=str_response), False
+        return Message(role="assistant", content=str_response), ParseTermination.MALFORMED
     elif emt_count == 1:
         str_response = str(tokenizer.decode(response[: response.index(stop_token)]))
-        return Message(role="assistant", content=str_response), True
+        return Message(role="assistant", content=str_response), ParseTermination.STOP_SEQUENCE
     else:
         raise RendererError(
             f"When parsing response, expected to split into 1 or 2 pieces using stop tokens, but got {emt_count}. "

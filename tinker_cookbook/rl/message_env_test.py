@@ -53,15 +53,18 @@ def _make_renderer(
     parse_success: bool = True,
 ) -> MagicMock:
     """Build a mock Renderer with the methods EnvFromMessageEnv calls."""
+    from tinker_cookbook.renderers.base import ParseTermination
+
     renderer = MagicMock()
 
     prompt = _make_model_input(gen_prompt_tokens or [1, 2, 3])
     renderer.build_generation_prompt = MagicMock(return_value=prompt)
     renderer.get_stop_sequences = MagicMock(return_value=stop_sequences or ["<stop>"])
+    termination = ParseTermination.STOP_SEQUENCE if parse_success else ParseTermination.MALFORMED
     renderer.parse_response = MagicMock(
         return_value=(
             parse_message or {"role": "assistant", "content": "hello"},
-            parse_success,
+            termination,
         )
     )
     return renderer

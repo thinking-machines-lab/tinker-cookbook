@@ -125,9 +125,9 @@ class EnvFromMessageEnv(types.Env):
                 metrics={"max_tokens_reached": 1.0},
             )
 
-        assistant_message, parse_success = self.renderer.parse_response(action)
+        assistant_message, termination = self.renderer.parse_response(action)
 
-        if not parse_success:
+        if not termination.is_clean:
             return types.StepResult(
                 reward=self.failed_parse_reward,
                 episode_done=self.terminate_on_parse_error,
