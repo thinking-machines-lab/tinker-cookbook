@@ -39,13 +39,18 @@ def _make_sampling_result(
     prompt_tokens: list[int] | None = None,
     completion_tokens: list[int] | None = None,
     content: str = "Hello!",
-    parse_success: bool = True,
+    termination: ParseTermination = ParseTermination.STOP_SEQUENCE,
     tool_calls: list[ToolCall] | None = None,
 ) -> _SamplingResult:
+    """Build a fake _SamplingResult.
+
+    Pass ``termination`` directly to drive any ParseTermination state
+    (including ``EOS``, which provider tests may want to assert mapping
+    semantics for).
+    """
     msg: dict[str, Any] = {"role": "assistant", "content": content}
     if tool_calls is not None:
         msg["tool_calls"] = tool_calls
-    termination = ParseTermination.STOP_SEQUENCE if parse_success else ParseTermination.MALFORMED
     return _SamplingResult(
         prompt_token_ids=prompt_tokens or [1, 2, 3],
         completion_token_ids=completion_tokens or [4, 5, 6],
@@ -160,7 +165,16 @@ class TestSamplingResultToDict:
         assert d["usage"]["completion_tokens"] == 3
 
     def test_parse_failure_gives_length_finish(self) -> None:
-        result = _make_sampling_result(parse_success=False)
+        result = _make_sampling_result(termination=ParseTermination.MALFORMED)
+        d = _sampling_result_to_chat_completion_dict(result)
+        assert d["choices"][0]["finish_reason"] == "length"
+
+    def test_eos_termination_gives_length_finish(self) -> None:
+        """Pre-PR strictness: only stop-sequence termination is reported as
+        ``finish_reason=stop``. EOS-only termination (RoleColon base-model
+        case) maps to ``length`` so this provider is unchanged by the #685
+        renderer fix. See provider.py:175."""
+        result = _make_sampling_result(termination=ParseTermination.EOS)
         d = _sampling_result_to_chat_completion_dict(result)
         assert d["choices"][0]["finish_reason"] == "length"
 

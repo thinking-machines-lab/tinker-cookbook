@@ -94,8 +94,12 @@ class RubricGradedEnv(Env):
 
         # obtain the policy action message
         (policy_action_message, termination) = self.renderer.parse_response(action)
-        parse_success_bool = termination.is_clean
-        format_score = float(parse_success_bool)
+        # Mirrors ProblemEnv's strict default: stop-sequence termination is the
+        # only "well-formed" outcome for format-reward shaping. EOS-only
+        # termination (relevant only for RoleColonRenderer) does not earn the
+        # format reward — keep eval grading and RL training consistent.
+        format_valid = termination.is_stop_sequence
+        format_score = float(format_valid)
 
         if self.debug:
             print("\n" + colored("=" * 80, "blue"))
@@ -147,7 +151,7 @@ class RubricGradedEnv(Env):
             logtree.table_from_dict(
                 {
                     "rubric_score_mean": f"{avg_score:.3f}",
-                    "format_parse_success": parse_success_bool,
+                    "format_valid": format_valid,
                     "format_penalty": f"{format_penalty:.3f}",
                     "total_reward": f"{total_reward:.3f}",
                 },
@@ -164,7 +168,8 @@ class RubricGradedEnv(Env):
                 "rubric_score": avg_score,
             },
             logs={
-                "parse_success": int(parse_success_bool),
+                "format_valid": int(format_valid),
+                "termination": str(termination),
                 "num_rubrics": len(self.rubric_items),
             },
         )

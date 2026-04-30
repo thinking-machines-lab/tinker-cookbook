@@ -61,8 +61,8 @@ class ProblemEnv(Env):
         # renderer's stop sequence) does not earn the format reward. This
         # preserves the strict R1-Zero training behavior from #339, which
         # treated stop-sequence termination as the only "well-formed" outcome.
-        # Eval grading (EnvFromMessageEnv) is unaffected — it uses the
-        # renderer's lenient parse_success directly.
+        # Eval grading (EnvFromMessageEnv) is unaffected — it reads
+        # ``termination.is_clean`` directly.
         self.require_stop_sequence_for_format = require_stop_sequence_for_format
 
     @property

@@ -112,7 +112,6 @@ class PromptOnlyEnv(ProblemEnv):
 
     async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
         """Return zero reward always."""
-        _message, _termination = self.renderer.parse_response(action)
         return StepResult(
             reward=0.0,
             episode_done=True,

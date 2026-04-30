@@ -1,5 +1,7 @@
 """Simple role:content format renderer."""
 
+import logging
+
 import tinker
 
 from tinker_cookbook.renderers.base import (
@@ -11,6 +13,8 @@ from tinker_cookbook.renderers.base import (
     ToolSpec,
     ensure_text,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class RoleColonRenderer(Renderer):
@@ -88,10 +92,6 @@ class RoleColonRenderer(Renderer):
                 otherwise (no terminator, ``\\n\\nUser:`` followed by EOS, or
                 multiple ``\\n\\nUser:`` delimiters).
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
         terminated_with_eos = False
         eos_token_id = self.tokenizer.eos_token_id
         if eos_token_id is not None and response and response[-1] == eos_token_id:
@@ -103,6 +103,9 @@ class RoleColonRenderer(Renderer):
         if len(splitted) == 1:
             if terminated_with_eos:
                 return Message(role="assistant", content=str_response.strip()), ParseTermination.EOS
+            # No "\n\nUser:" delimiter and no EOS — the response was likely
+            # truncated mid-sentence (max_tokens hit). Best-effort message,
+            # MALFORMED termination.
             logger.debug(f"Response is not a valid assistant response: {str_response}")
             return (
                 Message(role="assistant", content=str_response.strip()),

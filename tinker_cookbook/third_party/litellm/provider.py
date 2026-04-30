@@ -172,7 +172,10 @@ def _sampling_result_to_chat_completion_dict(result: _SamplingResult) -> dict[st
 
     if tool_calls_out:
         finish_reason = "tool_calls"
-    elif result.termination.is_clean:
+    elif result.termination.is_stop_sequence:
+        # Match pre-PR strictness: for RoleColonRenderer, EOS-only termination
+        # is reported as "length" so this provider behaves identically to before
+        # the #685 renderer fix. Eval grading uses is_clean elsewhere.
         finish_reason = "stop"
     else:
         finish_reason = "length"
