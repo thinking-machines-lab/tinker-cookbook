@@ -4,6 +4,7 @@ Basic CLI for training with supervised learning. Currently only used for integra
 """
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import chz
@@ -13,7 +14,10 @@ from tinker_cookbook.eval.evaluators import EvaluatorBuilder
 from tinker_cookbook.recipes.chat_sl import chat_datasets
 from tinker_cookbook.supervised import train
 from tinker_cookbook.supervised.data import FromConversationFileBuilder
-from tinker_cookbook.supervised.types import ChatDatasetBuilder, ChatDatasetBuilderCommonConfig
+from tinker_cookbook.supervised.types import (
+    ChatDatasetBuilder,
+    ChatDatasetBuilderCommonConfig,
+)
 from tinker_cookbook.utils.lr_scheduling import LRSchedule
 
 
@@ -60,6 +64,7 @@ class CLIConfig:
     rolling_save_every: int = 0
     rolling_ttl_seconds: int = 7200
 
+    fireworks_base_model_name: str | None = None
 
 def get_dataset_builder(
     dataset: str,
@@ -171,6 +176,7 @@ def cli_main(cli_config: CLIConfig):
         max_steps=cli_config.max_steps,
         rolling_save_every=cli_config.rolling_save_every,
         rolling_ttl_seconds=cli_config.rolling_ttl_seconds,
+        fireworks_base_model_name=cli_config.fireworks_base_model_name,
     )
     asyncio.run(train.main(config))
 

@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 import numpy as np
 import tinker
 
-from tinker_cookbook.completers import TinkerTokenCompleter, TokenCompleter
+from tinker_cookbook.completers import FireworksTokenCompleter, TokenCompleter
 from tinker_cookbook.eval.benchmarks._types import BenchmarkResult
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
 from tinker_cookbook.exceptions import AllTrajectoriesFailedError
@@ -273,7 +273,7 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
                 sampling_client, rollout_summary_export=rollout_summary_export, store=store
             )
 
-        policy = TinkerTokenCompleter(sampling_client, max_tokens=self.max_tokens)
+        policy = FireworksTokenCompleter(sampling_client, max_tokens=self.max_tokens)
         return await self.eval_token_completer(
             policy,
             rollout_summary_export=rollout_summary_export,

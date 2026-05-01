@@ -202,7 +202,11 @@ class TwentyQuestionsDatasetBuilder(RLDatasetBuilder):
     group_size: int
     base_url: str | None = None
     num_epochs: int = 1
-    test_group_size: int = 32
+    # Eval flattens all test groups into one asyncio.gather; default 32 × ~100
+    # test words was ~3.2k concurrent trajectories (policy + answerer per step),
+    # which can overwhelm hosted inference (httpx.ReadError). Align with
+    # guess_number (test_group_size=4).
+    test_group_size: int = 4
     answerer_base_model: str = "meta-llama/Llama-3.1-8B-Instruct"
 
     async def __call__(self) -> tuple[RLDataset, RLDataset]:

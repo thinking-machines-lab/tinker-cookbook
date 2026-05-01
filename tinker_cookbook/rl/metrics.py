@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import tinker
 import torch
-
+from fireworks.training.sdk import FiretitanTrainingClient
 from tinker_cookbook.utils import trace
 from tinker_cookbook.utils.misc_utils import safezip
 
@@ -123,7 +123,7 @@ async def compute_post_kl(
 @trace.scope
 async def incorporate_kl_penalty(
     data_D: list[tinker.Datum],
-    base_sampling_client: tinker.SamplingClient,
+    reference_training_client: FiretitanTrainingClient,
     kl_penalty_coef: float,
     kl_discount_factor: float,
 ) -> dict[str, float]:
@@ -162,7 +162,7 @@ async def incorporate_kl_penalty(
     ]
     base_logprobs_D = await asyncio.gather(
         *[
-            base_sampling_client.compute_logprobs_async(sequence_input)
+            reference_training_client.forward_async(sequence_input)
             for sequence_input in full_sequence_inputs_D
         ]
     )
