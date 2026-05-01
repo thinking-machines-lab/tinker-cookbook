@@ -1,0 +1,66 @@
+# Fireworks-specific settings
+fireworks_base_url: "https://api.fireworks.ai"  # Fireworks service URL
+
+account: null  # Fireworks account ID (falls back to FIREWORKS_ACCOUNT_ID env var)
+
+# Model Configuration
+model:
+  name: accounts/fireworks/models/qwen3p5-27b
+  lora_rank: 32         # LoRA rank 0 means no LoRA fine-tuning, which is compatible with Fireworks backend
+
+# Training Configuration (fireworks-specific)
+training:
+  learning_rate: 1e-5
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1e-8
+  weight_decay: 0.01
+  grad_clip_norm: 1.0
+  max_length: null  # Auto-derived from training shape if null
+
+deployment:
+  deployment_id: null
+  deployment_shape: null  # Auto-derived from training shape if null
+  deployment_region: null          # Region for deployment; falls back to training_infra.region
+  deployment_accelerator_type: null  # Accelerator for deployment; falls back to training_infra.accelerator_type
+  hot_load_bucket_type: FW_HOSTED  # Bucket type for hot-load snapshots
+  deployment_timeout_s: 5400       # Timeout for deployment creation/readiness (90 min)
+  deployment_extra_args: null      # Extra Helm args for the deployment
+  tokenizer_model: Qwen/Qwen3.5-27B
+  sample_timeout: 600              # HTTP read timeout for sampling completions (10 min)
+  disable_speculative_decoding: true  # Disable EAGLE speculation for hotload compatibility
+  extra_values: null               # Extra Helm values dict (e.g. {"priorityClass": "deployment"})
+  replica_count: 1
+
+hotload:
+  hot_load_interval: 1             # Sync weights to deployment every N steps (0 = disabled)
+  hot_load_timeout: 1200            # Timeout for hotload_and_wait (seconds)
+  hot_load_before_training: false  # Push initial weights to deployment before first step
+  dcp_timeout: 2700                # Timeout for DCP save_state / load_state_with_optimizer (45 min)
+
+training_infra:
+  training_shape_id: accounts/fireworks/trainingShapes/qwen3p5-27b-256k-lora
+  training_job_id: null                    # Job ID for the trainer job
+  region: null
+  custom_image_tag: null           # Custom Docker image tag
+  accelerator_type: null           # GPU type (auto-resolved from training shape)
+  accelerator_count: null          # Number of GPUs (auto-resolved from training shape)
+  skip_validations: false          # Skip control plane training shape validations
+  node_count: 1                    # Number of training nodes
+  extra_args: null                 # Extra CLI args for the trainer job
+
+reference_training_infra:
+  training_shape_id: accounts/fireworks/trainingShapes/qwen3p5-27b-256k-forward-only
+  training_job_id: null                    # Job ID for the reference trainer job
+  region: null
+  custom_image_tag: null           # Custom Docker image tag
+  accelerator_type: null           # GPU type (auto-resolved from training shape)
+  accelerator_count: null          # Number of GPUs (auto-resolved from training shape)
+  skip_validations: false          # Skip control plane training shape validations
+  node_count: 1                    # Number of training nodes
+  extra_args: null                 # Extra CLI args for the reference trainer job
+
+display_name: "qwen3p5-27b-policy"
+ref_display_name: "qwen3p5-27b-ref"
+algorithm:
+  kl_beta: 0.0  # If > 0, spin-up a reference trainer. If 0, train without reference.
