@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from tinker_cookbook.fireworks.utils.fileio import fileio
+from tinker_cookbook.fireworks.utils import fileio
 
 logger = logging.getLogger(__name__)
 

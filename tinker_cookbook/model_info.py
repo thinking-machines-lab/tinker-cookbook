@@ -104,6 +104,7 @@ def get_qwen_info() -> dict[str, ModelAttributes]:
         "Qwen3-32B": ModelAttributes(org, "3", "32B", True, _QWEN3),
         "Qwen3-30B-A3B": ModelAttributes(org, "3", "30B-A3B", True, _QWEN3),
         "Qwen3-4B-Instruct-2507": ModelAttributes(org, "3", "4B", True, _QWEN3_INSTRUCT),
+        "Qwen3-30B-A3B-Thinking-2507": ModelAttributes(org, "3", "30B-A3B", True, _QWEN3),
         "Qwen3-30B-A3B-Instruct-2507": ModelAttributes(org, "3", "30B-A3B", True, _QWEN3_INSTRUCT),
         "Qwen3-235B-A22B-Instruct-2507": ModelAttributes(
             org, "3", "235B-A22B", True, _QWEN3_INSTRUCT

@@ -19,7 +19,7 @@ class CLIConfig:
     num_train_datapoints: int = 40960
     num_test_datapoints: int = 128
     learning_rate: float = 3e-5
-    max_tokens: int = 64
+    max_tokens: int = 512
     eval_every: int = 5
     save_every: int = 20
     wandb_project: str | None = None
@@ -29,7 +29,10 @@ class CLIConfig:
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
     max_steps: int | None = None
+    base_url: str | None = None
 
+    fireworks_base_model_name: str | None = None
+    fireworks_deployment_id: str | None = None
 
 def build_config(cli_config: CLIConfig) -> train.Config:
     model_name = cli_config.model_name
@@ -70,6 +73,9 @@ def build_config(cli_config: CLIConfig) -> train.Config:
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
         max_steps=cli_config.max_steps,
+        base_url=cli_config.base_url,
+        fireworks_base_model_name=cli_config.fireworks_base_model_name,
+        fireworks_deployment_id=cli_config.fireworks_deployment_id,
     )
 
 

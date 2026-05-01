@@ -6,10 +6,11 @@ The TokenCompleter operates on tokens. This is the version used by RL algorithms
 Evals and other code should use the appropriate interface.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TypeAlias
 
 import tinker
+from fireworks.training.sdk import DeploymentSampler
 
 from tinker_cookbook import renderers
 
@@ -133,6 +134,52 @@ class TinkerTokenCompleter(TokenCompleter):
             maybe_logprobs=sampled_seq.logprobs,
             stop_reason=sampled_seq.stop_reason,
         )
+
+@dataclass
+class FireworksTokenCompleter(TokenCompleter):
+    """
+    TokenCompleter that uses a Fireworks DeploymentSampler (completions via sample_with_tokens).
+
+    Converts prompt token IDs to a single user message via the tokenizer, then calls
+    sampler.completions. Response token IDs and
+    logprobs come from the first SampledCompletion. The *stop* condition is not
+    passed through to the sampler in this implementation.
+    """
+
+    sampler: DeploymentSampler
+    max_tokens: int
+    n: int = 1
+    temperature: float = 1.0
+    http_timeout: float = 3600
+
+    def sample_kwargs(self) -> dict:
+        return dict(
+            max_tokens=self.max_tokens,
+            temperature=self.temperature,
+            http_timeout=self.http_timeout,
+            logprobs=True,
+        )
+
+    async def __call__(
+        self,
+        model_input: tinker.ModelInput,
+        stop: StopCondition,
+    ) -> TokensWithLogprobs:
+        sample_result, _ = await self.sampler.async_completions_stream(
+            prompt=model_input.to_ints(),
+            n=self.n,
+            # stop=stop,
+            **self.sample_kwargs(),
+        )
+        # Extract tokens and logprobs from the first (and only) sample
+        contents = sample_result['choices'][0]['logprobs']['content']
+        tokens = []
+        logprobs = []
+        for content in contents:
+            tokens.append(content['token_id'])
+            logprobs.append(content['logprob'])
+
+        return TokensWithLogprobs(tokens=tokens, maybe_logprobs=logprobs)
 
 
 class TinkerMessageCompleter(MessageCompleter):
