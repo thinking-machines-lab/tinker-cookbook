@@ -293,13 +293,11 @@ class TestQwen35MoeSplitQkvAndExperts:
                 is_vision=True,
             )
 
-            # Read dims from saved safetensors (save_pretrained writes separate keys)
             saved = load_file(str(model_path / "model.safetensors"))
             orig_qkv = saved[self.FUSED_QKV_KEY].clone()
-            gate_key_0 = "model.language_model.layers.0.mlp.experts.0.gate_proj.weight"
-            orig_gate = saved[gate_key_0].clone()
-            expert_out_dim, expert_in_dim = orig_gate.shape
-            num_experts = 2
+            expert_in_dim = config.text_config.hidden_size
+            expert_out_dim = config.text_config.moe_intermediate_size
+            num_experts = config.text_config.num_experts
 
             # Build adapter with both QKV and expert LoRA weights
             rank = 1
@@ -338,17 +336,27 @@ class TestQwen35MoeSplitQkvAndExperts:
             qkv_delta = (merged[self.FUSED_QKV_KEY] - orig_qkv).abs().sum()
             assert qkv_delta > 0, "QKV weights not updated"
 
-            # Expert gate/up deltas applied (check per-expert keys from safetensors)
+            # Expert gate deltas applied. Experts are stored fused as
+            # `experts.gate_up_proj` of shape (num_experts, 2*moe_inter, hidden);
+            # the first moe_inter rows (along dim=1) are gate, the rest are up.
+            gate_up_key = "model.language_model.layers.0.mlp.experts.gate_up_proj"
             for i in range(num_experts):
-                gate_key = f"model.language_model.layers.0.mlp.experts.{i}.gate_proj.weight"
-                gate_delta = (merged[gate_key] - saved[gate_key]).abs().sum()
+                gate_delta = (
+                    (
+                        merged[gate_up_key][i, :expert_out_dim]
+                        - saved[gate_up_key][i, :expert_out_dim]
+                    )
+                    .abs()
+                    .sum()
+                )
                 assert gate_delta > 0, f"Expert {i} gate_proj not updated"
 
     def test_down_proj_with_broadcast_w2(self):
         """w2 (down_proj) uses reversed broadcast: A per-expert, B shared."""
         config = _make_tiny_qwen3_5_moe_config()
-        tc = config.text_config
-        num_experts = tc.num_experts
+        num_experts = config.text_config.num_experts
+        down_in_dim = config.text_config.moe_intermediate_size
+        down_out_dim = config.text_config.hidden_size
 
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -366,9 +374,6 @@ class TestQwen35MoeSplitQkvAndExperts:
             )
 
             saved = load_file(str(model_path / "model.safetensors"))
-            down_key_0 = "model.language_model.layers.0.mlp.experts.0.down_proj.weight"
-            orig_down = saved[down_key_0].clone()
-            down_out_dim, down_in_dim = orig_down.shape
 
             # w2 adapter: A per-expert, B shared (reversed broadcast)
             rank = 1
@@ -395,9 +400,11 @@ class TestQwen35MoeSplitQkvAndExperts:
             )
 
             merged = load_file(str(output_path / "model.safetensors"))
+            # Experts are stored fused as `experts.down_proj` of shape
+            # (num_experts, hidden, moe_inter); slice along dim=0 per expert.
+            dk = "model.language_model.layers.0.mlp.experts.down_proj"
             for i in range(num_experts):
-                dk = f"model.language_model.layers.0.mlp.experts.{i}.down_proj.weight"
-                delta = (merged[dk] - saved[dk]).abs().sum()
+                delta = (merged[dk][i] - saved[dk][i]).abs().sum()
                 assert delta > 0, f"Expert {i} down_proj not updated"
 
 
@@ -416,8 +423,9 @@ class TestQwen35MoeFP8Export:
 
     def test_routed_experts_fp8_dense_bf16_ignore_list_complete(self):
         config = _make_tiny_qwen3_5_moe_config()
-        tc = config.text_config
-        num_experts = tc.num_experts
+        num_experts = config.text_config.num_experts
+        expert_in_dim = config.text_config.hidden_size
+        expert_out_dim = config.text_config.moe_intermediate_size
 
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -438,11 +446,6 @@ class TestQwen35MoeFP8Export:
                 {k: v.to(torch.bfloat16) for k, v in orig_tensors.items()},
                 str(model_path / "model.safetensors"),
             )
-            orig_tensors = load_file(str(model_path / "model.safetensors"))
-
-            # Read expert dims from saved checkpoint
-            gate_key_0 = "model.language_model.layers.0.mlp.experts.0.gate_proj.weight"
-            expert_out_dim, expert_in_dim = orig_tensors[gate_key_0].shape
 
             # Build adapter with expert LoRA weights
             rank = 1
@@ -470,16 +473,19 @@ class TestQwen35MoeFP8Export:
             saved_sd = load_merged_tensors(output_path)
             saved_config = json.loads((output_path / "config.json").read_text())
 
-            # -- Routed experts: FP8 with scale tensors --
-            for i in range(num_experts):
-                for proj in ("gate_proj", "up_proj", "down_proj"):
-                    key = f"model.language_model.layers.0.mlp.experts.{i}.{proj}.weight"
-                    assert saved_sd[key].dtype == torch.float8_e4m3fn, (
-                        f"Routed expert should be FP8: {key}"
-                    )
-                    scale_key = key.removesuffix(".weight") + ".weight_scale"
-                    assert scale_key in saved_sd, f"Missing scale: {scale_key}"
-                    assert saved_sd[scale_key].dtype == torch.float32
+            # -- Routed experts: FP8 with per-expert scale tensors. Experts
+            # are stored fused (`experts.gate_up_proj`, `experts.down_proj`),
+            # with weight_scale of shape (num_experts, 1, 1) for per-expert
+            # scaling.
+            for fused in ("gate_up_proj", "down_proj"):
+                key = f"model.language_model.layers.0.mlp.experts.{fused}"
+                assert saved_sd[key].dtype == torch.float8_e4m3fn, (
+                    f"Routed expert should be FP8: {key}"
+                )
+                scale_key = key + ".weight_scale"
+                assert scale_key in saved_sd, f"Missing scale: {scale_key}"
+                assert saved_sd[scale_key].dtype == torch.float32
+                assert saved_sd[scale_key].shape[0] == num_experts
 
             # -- Non-expert weights: BF16, no scale --
             qkv_key = "model.language_model.layers.0.linear_attn.in_proj_qkv.weight"
@@ -511,16 +517,18 @@ class TestQwen35MoeFP8Export:
             # Shared expert gate
             assert "model.language_model.layers.0.mlp.shared_expert_gate" in ignore
 
-            # Vision encoder modules
-            vision_modules_in_ignore = [m for m in ignore if m.startswith("model.visual.")]
+            # Vision encoder modules (path varies by transformers version:
+            # older releases used `model.visual.*`, newer ones nest it under
+            # `model.language_model.visual.*`).
+            vision_modules_in_ignore = [m for m in ignore if ".visual." in m]
             assert len(vision_modules_in_ignore) > 0, (
                 "Vision encoder nn.Linear modules missing from ignore list"
             )
 
-            # Routed experts must NOT be in ignore
-            for i in range(num_experts):
-                for proj in ("gate_proj", "up_proj", "down_proj"):
-                    module = f"model.language_model.layers.0.mlp.experts.{i}.{proj}"
-                    assert module not in ignore, (
-                        f"Quantized expert should not be in ignore: {module}"
-                    )
+            # Routed experts must NOT be in ignore. (Routed-expert modules end
+            # in `.experts` or `.experts.<something>` — distinct from
+            # `.shared_expert.*`, which is excluded from quantization.)
+            routed_in_ignore = [m for m in ignore if ".experts" in m and "shared_expert" not in m]
+            assert not routed_in_ignore, (
+                f"Quantized routed experts should not be in ignore: {routed_in_ignore}"
+            )
