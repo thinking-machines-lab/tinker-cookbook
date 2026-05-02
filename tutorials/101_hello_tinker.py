@@ -121,6 +121,7 @@ async def _(service_client):
 async def _(sampling_client, tokenizer, types):
     # Encode a prompt into tokens
     prompt_text = "The three largest cities in the world by population are"
+    print("Prompt tokens:", tokenizer.encode(prompt_text))
     prompt = types.ModelInput.from_ints(tokenizer.encode(prompt_text))
 
     # Sample a completion
@@ -131,6 +132,7 @@ async def _(sampling_client, tokenizer, types):
 
     # Decode and print
     completion_tokens = result.sequences[0].tokens
+    print("Completion tokens:", completion_tokens)
     print(prompt_text + tokenizer.decode(completion_tokens))
     return prompt, result
 
@@ -151,10 +153,10 @@ def _(mo):
 @app.cell
 def _(result):
     _seq = result.sequences[0]
-    print(f"Stop reason:    {_seq.stop_reason}")
+    print(f"Stop reason:      {_seq.stop_reason}")
     print(f"Tokens generated: {len(_seq.tokens)}")
-    print(f"Token IDs:      {_seq.tokens[:10]}...")
-    print(f"Log probs:      {_seq.logprobs}")  # first 10
+    print(f"Token IDs:        {_seq.tokens[:10]} ...")
+    print(f"Log probs:        {_seq.logprobs[:10]} ...")  # first 10
     return
 
 
