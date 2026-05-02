@@ -342,9 +342,13 @@ class TestQwen35MoeSplitQkvAndExperts:
             gate_up_key = "model.language_model.layers.0.mlp.experts.gate_up_proj"
             for i in range(num_experts):
                 gate_delta = (
-                    merged[gate_up_key][i, :expert_out_dim]
-                    - saved[gate_up_key][i, :expert_out_dim]
-                ).abs().sum()
+                    (
+                        merged[gate_up_key][i, :expert_out_dim]
+                        - saved[gate_up_key][i, :expert_out_dim]
+                    )
+                    .abs()
+                    .sum()
+                )
                 assert gate_delta > 0, f"Expert {i} gate_proj not updated"
 
     def test_down_proj_with_broadcast_w2(self):
@@ -524,9 +528,7 @@ class TestQwen35MoeFP8Export:
             # Routed experts must NOT be in ignore. (Routed-expert modules end
             # in `.experts` or `.experts.<something>` — distinct from
             # `.shared_expert.*`, which is excluded from quantization.)
-            routed_in_ignore = [
-                m for m in ignore if ".experts" in m and "shared_expert" not in m
-            ]
+            routed_in_ignore = [m for m in ignore if ".experts" in m and "shared_expert" not in m]
             assert not routed_in_ignore, (
                 f"Quantized routed experts should not be in ignore: {routed_in_ignore}"
             )
