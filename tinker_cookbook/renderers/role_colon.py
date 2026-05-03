@@ -1,15 +1,20 @@
 """Simple role:content format renderer."""
 
+import logging
+
 import tinker
 
 from tinker_cookbook.renderers.base import (
     Message,
+    ParseTermination,
     RenderContext,
     RenderedMessage,
     Renderer,
     ToolSpec,
     ensure_text,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class RoleColonRenderer(Renderer):
@@ -69,7 +74,7 @@ class RoleColonRenderer(Renderer):
         """
         return ["\n\nUser:"]
 
-    def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+    def parse_response(self, response: list[int]) -> tuple[Message, ParseTermination]:
         """Parse sampled token IDs back into an assistant Message.
 
         Splits the decoded text on the ``\\n\\nUser:`` stop sequence. Handles EOS
@@ -79,16 +84,14 @@ class RoleColonRenderer(Renderer):
             response (list[int]): Raw token IDs from the sampler.
 
         Returns:
-            tuple[Message, bool]: The parsed assistant message and whether the response
-                terminated cleanly with the expected stop sequence (not EOS).
+            tuple[Message, ParseTermination]: ``STOP_SEQUENCE`` when the
+                ``\\n\\nUser:`` delimiter ended the response cleanly; ``EOS``
+                when the model terminated with the EOS token without emitting
+                the delimiter (still a clean end-of-turn signal for base
+                models on single-turn prompts — see issue #685); ``MALFORMED``
+                otherwise (no terminator, ``\\n\\nUser:`` followed by EOS, or
+                multiple ``\\n\\nUser:`` delimiters).
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
-        # Strip EOS token from the end if present (base models may terminate with EOS
-        # instead of the expected stop sequence). We still return False for parse success
-        # since the model didn't produce the expected stop sequence.
         terminated_with_eos = False
         eos_token_id = self.tokenizer.eos_token_id
         if eos_token_id is not None and response and response[-1] == eos_token_id:
@@ -98,19 +101,38 @@ class RoleColonRenderer(Renderer):
         str_response = str(self.tokenizer.decode(response))
         splitted = str_response.split("\n\nUser:")
         if len(splitted) == 1:
+            if terminated_with_eos:
+                return Message(role="assistant", content=str_response.strip()), ParseTermination.EOS
+            # No "\n\nUser:" delimiter and no EOS — the response was likely
+            # truncated mid-sentence (max_tokens hit). Best-effort message,
+            # MALFORMED termination.
             logger.debug(f"Response is not a valid assistant response: {str_response}")
-            return Message(role="assistant", content=str_response.strip()), False
+            return (
+                Message(role="assistant", content=str_response.strip()),
+                ParseTermination.MALFORMED,
+            )
         elif len(splitted) == 2:
             before, _after = splitted
-            return Message(role="assistant", content=before.strip()), not terminated_with_eos
+            if terminated_with_eos:
+                # Malformed: sampling should have stopped at "\n\nUser:" before emitting EOS.
+                return (
+                    Message(role="assistant", content=before.strip()),
+                    ParseTermination.MALFORMED,
+                )
+            return (
+                Message(role="assistant", content=before.strip()),
+                ParseTermination.STOP_SEQUENCE,
+            )
         else:
             logger.warning(
                 "RoleColonRenderer.parse_response saw multiple stop delimiters "
-                "(count=%d). Returning parse_success=False. Full response:\n%s",
+                "(count=%d). Returning MALFORMED. Full response:\n%s",
                 len(splitted) - 1,
                 str_response,
             )
-            return Message(role="assistant", content=splitted[0].strip()), False
+            return Message(
+                role="assistant", content=splitted[0].strip()
+            ), ParseTermination.MALFORMED
 
     @property
     def _bos_tokens(self) -> list[int]:

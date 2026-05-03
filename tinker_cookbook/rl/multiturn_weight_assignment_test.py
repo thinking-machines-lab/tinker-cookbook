@@ -178,6 +178,8 @@ def _make_stub_renderer():
     # Message since it's a TypedDict).
     action_tokens_by_id: dict[int, list[int]] = {}
 
+    from tinker_cookbook.renderers.base import ParseTermination
+
     parse_results = iter(
         [
             # Call 1: model makes a tool call
@@ -192,10 +194,10 @@ def _make_stub_renderer():
                         )
                     ],
                 ),
-                True,
+                ParseTermination.STOP_SEQUENCE,
             ),
             # Call 2: model gives final answer (no tool calls)
-            (Message(role="assistant", content="done"), True),
+            (Message(role="assistant", content="done"), ParseTermination.STOP_SEQUENCE),
         ]
     )
 

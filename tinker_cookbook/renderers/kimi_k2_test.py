@@ -122,7 +122,7 @@ def test_kimi_streaming_matches_batch():
     response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
 
     batch_message, batch_success = renderer.parse_response(response_tokens)
-    assert batch_success
+    assert batch_success.is_clean
 
     deltas = list(renderer.parse_response_streaming(response_tokens))
     streaming_message = deltas[-1]

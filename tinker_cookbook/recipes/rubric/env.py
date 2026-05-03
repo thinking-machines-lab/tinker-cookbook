@@ -93,9 +93,13 @@ class RubricGradedEnv(Env):
             logtree.log_formatter(ConversationFormatter(messages=self.convo))
 
         # obtain the policy action message
-        (policy_action_message, parse_success) = self.renderer.parse_response(action)
-        parse_success_bool = bool(parse_success)
-        format_score = float(parse_success_bool)
+        (policy_action_message, termination) = self.renderer.parse_response(action)
+        # Mirrors ProblemEnv's strict default: stop-sequence termination is the
+        # only "well-formed" outcome for format-reward shaping. EOS-only
+        # termination (relevant only for RoleColonRenderer) does not earn the
+        # format reward — keep eval grading and RL training consistent.
+        format_valid = termination.is_stop_sequence
+        format_score = float(format_valid)
 
         if self.debug:
             print("\n" + colored("=" * 80, "blue"))
@@ -107,11 +111,11 @@ class RubricGradedEnv(Env):
             print(colored("DEBUG: Policy Action Message", "green"))
             print(colored("=" * 80, "green"))
             print(colored(json.dumps(policy_action_message, indent=2), "green") + "\n")
-            print(colored(f"Parse Success: {parse_success}", "green") + "\n")
+            print(colored(f"Termination: {termination}", "green") + "\n")
 
         with logtree.scope_header("Policy Response"):
             logtree.log_formatter(ConversationFormatter(messages=[policy_action_message]))
-            logtree.log_text(f"Parse success: {parse_success}")
+            logtree.log_text(f"Termination: {termination}")
 
         convo = self.convo + [policy_action_message]
         results = await asyncio.gather(
@@ -147,7 +151,7 @@ class RubricGradedEnv(Env):
             logtree.table_from_dict(
                 {
                     "rubric_score_mean": f"{avg_score:.3f}",
-                    "format_parse_success": parse_success_bool,
+                    "format_valid": format_valid,
                     "format_penalty": f"{format_penalty:.3f}",
                     "total_reward": f"{total_reward:.3f}",
                 },
@@ -164,7 +168,8 @@ class RubricGradedEnv(Env):
                 "rubric_score": avg_score,
             },
             logs={
-                "parse_success": int(parse_success_bool),
+                "format_valid": int(format_valid),
+                "termination": str(termination),
                 "num_rubrics": len(self.rubric_items),
             },
         )
