@@ -321,7 +321,7 @@ async def main(config: Config):
     model_info.warn_if_renderer_not_recommended(config.model_name, config.renderer_name)
 
     training_client = service_client.create_training_client(
-        base_model=config.fireworks_base_model_name or config.model_name,
+        base_model=config.fireworks_base_model_name,
         lora_rank=config.lora_rank,
         user_metadata=user_metadata,
     )
@@ -466,9 +466,24 @@ async def main(config: Config):
         if optim_step_result.metrics:
             metrics.update(optim_step_result.metrics)
 
-        # logprobs = [x["logprobs"] for x in fwd_bwd_result.loss_fn_outputs]
         weights = [datum.loss_fn_inputs["weights"] for datum in submitted.data]
-        # train_nll = compute_mean_nll(logprobs, weights)
+        # Per-datum logprobs are only present when the backend returns them
+        # (upstream tinker does, firetitan's cross_entropy backward does not).
+        # Compute train_mean_nll only when shapes match; otherwise fall back to
+        # whatever the backend put in fwd_bwd_result.metrics (e.g. ce_loss_sum,
+        # response_tokens) so wandb still gets a training-loss signal.
+        loss_outputs = fwd_bwd_result.loss_fn_outputs or []
+        logprobs = [
+            x["logprobs"] for x in loss_outputs if isinstance(x, dict) and "logprobs" in x
+        ]
+        train_mean_nll = None
+        if len(logprobs) == len(weights) and len(logprobs) > 0:
+            train_mean_nll = compute_mean_nll(logprobs, weights)
+        elif fwd_bwd_result.metrics:
+            ce_sum = fwd_bwd_result.metrics.get("ce_loss_sum")
+            resp_tokens = fwd_bwd_result.metrics.get("response_tokens")
+            if ce_sum is not None and resp_tokens:
+                train_mean_nll = float(ce_sum) / float(resp_tokens)
 
         metrics.update(
             num_sequences=len(submitted.data),
@@ -476,8 +491,12 @@ async def main(config: Config):
             num_loss_tokens=sum(
                 sum(datum.loss_fn_inputs["weights"].data) for datum in submitted.data
             ),
-            # train_mean_nll=train_nll,
         )
+        if fwd_bwd_result.metrics:
+            for k, v in fwd_bwd_result.metrics.items():
+                metrics[f"train/{k}"] = v
+        if train_mean_nll is not None:
+            metrics["train_mean_nll"] = train_mean_nll
         # Merge evaluation metrics gathered before the training step was submitted
         if submitted.eval_metrics is not None:
             metrics.update(submitted.eval_metrics)

@@ -1974,7 +1974,7 @@ async def main(
     model_info.warn_if_renderer_not_recommended(config.model_name, config.renderer_name)
 
     training_client = service_client.create_training_client(
-        base_model=config.fireworks_base_model_name or config.model_name,
+        base_model=config.fireworks_base_model_name,
         lora_rank=config.lora_rank,
         user_metadata=user_metadata,
     )
@@ -1995,7 +1995,7 @@ async def main(
         policy_client=training_client,
         deploy_mgr=deploy_mgr,
         deployment_id=config.fireworks_deployment_id,
-        base_model=config.fireworks_base_model_name or config.model_name,
+        base_model=config.fireworks_base_model_name,
         hotload_timeout=config.fireworks_hot_load_timeout,
         lora_rank=config.lora_rank,
     )
