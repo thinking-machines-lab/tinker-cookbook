@@ -22,6 +22,26 @@ logger = logging.getLogger(__name__)
 RENDERER_NAME_METADATA_KEY = "renderer_name"
 
 
+def extract_trainer_job_id(base_url: str | None) -> str | None:
+    """Extract the trailing trainer job id from a Firetitan ``base_url``.
+
+    Expects URLs of the form
+    ``https://api.fireworks.ai/training/v1/rlorTrainerJobs/{account}/{job_id}``.
+    Returns ``None`` for ``None`` input or URLs that do not match.
+    """
+    if not base_url:
+        return None
+    marker = "/rlorTrainerJobs/"
+    idx = base_url.find(marker)
+    if idx < 0:
+        return None
+    tail = base_url[idx + len(marker):].strip("/")
+    parts = tail.split("/")
+    if len(parts) < 2:
+        return None
+    return parts[1]
+
+
 _MISSING = object()  # sentinel for distinguishing "not set" from None
 
 
@@ -455,6 +475,7 @@ async def save_checkpoint_async(
     """
     state_name = f"{name}-state"
     sampler_name = f"{name}-sampler"
+
     futures = {}
     if kind in ["state", "both"]:
         futures["state"] = await training_client.save_state_async(state_name, ttl_seconds=ttl_seconds)
@@ -468,6 +489,33 @@ async def save_checkpoint_async(
 
     results = {k: await v.result_async() for k, v in futures.items()}
     paths = {k + "_path": v.path for k, v in results.items()}
+
+    # The firetitan server renames DCP saves to its own internal ``step-N``
+    # counter, and only the server-canonical name is loadable cross-job.  The
+    # name we pass (e.g. ``"000002-state"``) is just a local alias that this
+    # trainer pod remembers within the session — fine for same-job resume,
+    # broken for cross-job.  Replace the local name with the highest ``step-N``
+    # entry visible to the control plane right after the save lands.
+    if "state_path" in paths:
+        try:
+            training_entries = [
+                c["checkpoint_id"]
+                for c in training_client.list_checkpoints()
+                if c.get("checkpoint_type") == "training"
+            ]
+            def _step_num(n: str) -> int:
+                if n.startswith("step-"):
+                    try:
+                        return int(n.removeprefix("step-"))
+                    except ValueError:
+                        return -1
+                return -1
+            step_entries = [n for n in training_entries if _step_num(n) >= 0]
+            if step_entries:
+                paths["state_path"] = max(step_entries, key=_step_num)
+        except Exception:
+            logger.warning("list_checkpoints (post-save) failed; using server-returned path", exc_info=True)
+
     if sampler_snapshot_name:
         paths["sampler_path"] = sampler_snapshot_name
     trace.update_scope_context(paths)

@@ -9,15 +9,17 @@ refer to `tinker_cookbook/recipes/sl_loop.py`.
 
 import asyncio
 import logging
+import os
 import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import chz
 import tinker
+from fireworks.training.sdk import FiretitanServiceClient, FiretitanTrainingClient
 from tinker.lib.public_interfaces import APIFuture
-
 from tinker_cookbook import checkpoint_utils, model_info
 from tinker_cookbook.display import colorize_example
 from tinker_cookbook.eval.evaluators import (
@@ -160,6 +162,7 @@ class Config:
     # 0 = no pipelining, 2+ = deeper pipeline.
     submit_ahead: int = 1
 
+    fireworks_base_model_name: str | None = None
 
 @dataclass
 class SubmittedBatch:
@@ -186,6 +189,7 @@ class SubmittedBatch:
             evaluation metrics, or ``None``.
     """
 
+    # fwd_future: APIFuture[tinker.ForwardBackwardOutput]
     fwd_bwd_future: APIFuture[tinker.ForwardBackwardOutput]
     optim_step_future: APIFuture[tinker.OptimStepResponse]
     metrics: dict[str, int | float | str]
@@ -199,7 +203,7 @@ class SubmittedBatch:
 
 async def run_evals(
     evaluators: list[Evaluator],
-    training_client: tinker.TrainingClient,
+    training_client: FiretitanTrainingClient,
     step: int,
 ) -> dict[str, float]:
     """Evaluate the current model weights and prefix results with ``test/``.
@@ -278,11 +282,12 @@ async def main(config: Config):
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     if resume_info:
         start_epoch = resume_info.epoch or 0
-        start_batch = resume_info.batch
+        start_batch = resume_info.batch or 0
     else:
         start_epoch = 0
         start_batch = 0
-    # (start_epoch, start_batch) now represent the next batch to execute if resuming.
+    # (start_epoch, start_batch) represent the next batch to execute if resuming.
+    # Saves below record loop_state with the *next* (epoch, batch) so this is consistent.
 
     ml_logger = ml_log.setup_logging(
         log_dir=config.log_path,
@@ -304,7 +309,10 @@ async def main(config: Config):
         )
         trace.trace_init(output_file=trace_events_path)
 
-    service_client = tinker.ServiceClient(base_url=config.base_url)
+    service_client = FiretitanServiceClient(
+        base_url=config.base_url,
+        api_key=os.environ["FIREWORKS_API_KEY"],
+    )
 
     user_metadata: dict[str, str] = {}
     if wandb_link := ml_logger.get_logger_url():
@@ -312,32 +320,34 @@ async def main(config: Config):
     checkpoint_utils.add_renderer_name_to_user_metadata(user_metadata, config.renderer_name)
     model_info.warn_if_renderer_not_recommended(config.model_name, config.renderer_name)
 
+    training_client = service_client.create_training_client(
+        base_model=config.fireworks_base_model_name,
+        lora_rank=config.lora_rank,
+        user_metadata=user_metadata,
+    )
+    current_job_id = checkpoint_utils.extract_trainer_job_id(config.base_url)
     if resume_info:
-        # Resuming interrupted training - load optimizer state for proper continuation
-        await checkpoint_utils.check_renderer_name_for_checkpoint_async(
-            service_client, resume_info.state_path, config.renderer_name
-        )
-        training_client = (
-            await service_client.create_training_client_from_state_with_optimizer_async(
-                resume_info.state_path, user_metadata=user_metadata
+        # Resuming interrupted training - load optimizer state for proper continuation.
+        # load_state_with_optimizer returns an APIFuture; await it so a load failure
+        # surfaces here instead of silently corrupting the next forward_backward.
+        # If the checkpoint was written by a different trainer job, rewrite the local
+        # state name into an opaque cross_job:// reference the trainer can resolve.
+        source_job_id = resume_info.get("source_trainer_job_id")
+        load_path = resume_info.state_path
+        if source_job_id and source_job_id != current_job_id:
+            load_path = training_client.resolve_checkpoint_path(
+                load_path, source_job_id=source_job_id
             )
-        )
-        logger.info(f"Resumed training from {resume_info.state_path}")
+            logger.info(
+                f"Cross-job resume: rewriting {resume_info.state_path!r} from "
+                f"job {source_job_id!r} into {load_path!r}"
+            )
+        load_future = training_client.load_state_with_optimizer(load_path)
+        await load_future.result_async()
+        logger.info(f"Resumed training from {load_path}")
     elif config.load_checkpoint_path:
         # Starting fresh from a checkpoint - load weights only (fresh optimizer)
-        await checkpoint_utils.check_renderer_name_for_checkpoint_async(
-            service_client, config.load_checkpoint_path, config.renderer_name
-        )
-        training_client = await service_client.create_training_client_from_state_async(
-            config.load_checkpoint_path, user_metadata=user_metadata
-        )
-        logger.info(f"Loaded weights from {config.load_checkpoint_path}")
-    else:
-        training_client = await service_client.create_lora_training_client_async(
-            base_model=config.model_name,
-            rank=config.lora_rank,
-            user_metadata=user_metadata,
-        )
+        raise ValueError("Loading weights from a checkpoint is not supported. Please specify the base model when starting the fireworks rlor-trainer-job.")
 
     checkpoint_mgr = checkpoint_utils.CheckpointManager(
         training_client=training_client,
@@ -412,10 +422,12 @@ async def main(config: Config):
                     infrequent_evaluators, training_client, step
                 )
 
+        # fwd_future = await training_client.forward_async(data, "cross_entropy")
         fwd_bwd_future = await training_client.forward_backward_async(data, loss_fn="cross_entropy")
         optim_step_future = await training_client.optim_step_async(adam_params)
 
         return SubmittedBatch(
+            # fwd_future=fwd_future,
             fwd_bwd_future=fwd_bwd_future,
             optim_step_future=optim_step_future,
             metrics=metrics,
@@ -434,9 +446,17 @@ async def main(config: Config):
         metrics = submitted.metrics
         metrics["progress"] = min((submitted.step + 1) / progress_denominator, 1.0)
 
+        # Record the *next* (epoch, batch) to execute so resume picks up correctly.
+        next_batch_idx = submitted.batch_idx + 1
+        if next_batch_idx >= n_batches:
+            next_loop_state = {"epoch": submitted.epoch_idx + 1, "batch": 0}
+        else:
+            next_loop_state = {"epoch": submitted.epoch_idx, "batch": next_batch_idx}
+        if current_job_id is not None:
+            next_loop_state["source_trainer_job_id"] = current_job_id
         await checkpoint_mgr.maybe_save_async(
             step=submitted.step,
-            loop_state={"epoch": submitted.epoch_idx, "batch": submitted.batch_idx},
+            loop_state=next_loop_state,
         )
 
         async with trace.scope_span("step"):
@@ -446,9 +466,24 @@ async def main(config: Config):
         if optim_step_result.metrics:
             metrics.update(optim_step_result.metrics)
 
-        logprobs = [x["logprobs"] for x in fwd_bwd_result.loss_fn_outputs]
         weights = [datum.loss_fn_inputs["weights"] for datum in submitted.data]
-        train_nll = compute_mean_nll(logprobs, weights)
+        # Per-datum logprobs are only present when the backend returns them
+        # (upstream tinker does, firetitan's cross_entropy backward does not).
+        # Compute train_mean_nll only when shapes match; otherwise fall back to
+        # whatever the backend put in fwd_bwd_result.metrics (e.g. ce_loss_sum,
+        # response_tokens) so wandb still gets a training-loss signal.
+        loss_outputs = fwd_bwd_result.loss_fn_outputs or []
+        logprobs = [
+            x["logprobs"] for x in loss_outputs if isinstance(x, dict) and "logprobs" in x
+        ]
+        train_mean_nll = None
+        if len(logprobs) == len(weights) and len(logprobs) > 0:
+            train_mean_nll = compute_mean_nll(logprobs, weights)
+        elif fwd_bwd_result.metrics:
+            ce_sum = fwd_bwd_result.metrics.get("ce_loss_sum")
+            resp_tokens = fwd_bwd_result.metrics.get("response_tokens")
+            if ce_sum is not None and resp_tokens:
+                train_mean_nll = float(ce_sum) / float(resp_tokens)
 
         metrics.update(
             num_sequences=len(submitted.data),
@@ -456,8 +491,12 @@ async def main(config: Config):
             num_loss_tokens=sum(
                 sum(datum.loss_fn_inputs["weights"].data) for datum in submitted.data
             ),
-            train_mean_nll=train_nll,
         )
+        if fwd_bwd_result.metrics:
+            for k, v in fwd_bwd_result.metrics.items():
+                metrics[f"train/{k}"] = v
+        if train_mean_nll is not None:
+            metrics["train_mean_nll"] = train_mean_nll
         # Merge evaluation metrics gathered before the training step was submitted
         if submitted.eval_metrics is not None:
             metrics.update(submitted.eval_metrics)
@@ -533,9 +572,10 @@ async def main(config: Config):
         config.max_steps is None or start_epoch * n_batches + start_batch < config.max_steps
     )
     if did_train:
-        await checkpoint_mgr.save_final_async(
-            loop_state={"epoch": config.num_epochs, "batch": 0},
-        )
+        final_loop_state: dict[str, Any] = {"epoch": config.num_epochs, "batch": 0}
+        if current_job_id is not None:
+            final_loop_state["source_trainer_job_id"] = current_job_id
+        await checkpoint_mgr.save_final_async(loop_state=final_loop_state)
     else:
         logger.info("Training was already complete; nothing to do")
         await checkpoint_mgr.finalize_async()
