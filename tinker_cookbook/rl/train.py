@@ -983,16 +983,18 @@ async def do_async_training(
     )
     trajectory_groups_queue = asyncio.Queue[WrappedTrajectoryGroup | _Shutdown | None]()
 
-    # Initial sampling client to use
-    path_dict = await checkpoint_utils.save_checkpoint_async(
-        training_client=training_client,
-        name=f"{start_batch:06d}",
-        log_path=config.log_path,
-        loop_state={"batch": start_batch},
-        kind="both",
-        ttl_seconds=config.ttl_seconds,
-        store=ml_logger.store,
-    )
+    # Initial sampling client. If weights were already hotloaded during setup
+    # (Fireworks path) reuse that deployment sampler; otherwise force a save+hotload.
+    assert checkpoint_mgr is not None
+    if weight_syncer is not None and weight_syncer.base_identity is not None:
+        initial_sampling_client = weight_syncer.get_deployment_sampler()
+    else:
+        initial_sampling_client, _ = await save_checkpoint_and_get_sampling_client(
+            training_client,
+            checkpoint_mgr,
+            weight_syncer,
+            start_batch,
+        )
 
     # Shutdown coordination — cascading sequence:
     # 1. Dataloader exhausts data → sets dataloader_done_event (prevents requeuing stale
@@ -1006,10 +1008,8 @@ async def do_async_training(
     evaluation_loop_should_shutdown_event = asyncio.Event()
     worker_alive_counter = _AsyncCounter(config.async_config.groups_per_batch)
 
-    # This will be updated by the training loop
-    sampling_client = DeploymentSampler(
-        config.model_name,
-    )
+    # This will be updated by the training loop as new weights are hotloaded.
+    sampling_client = initial_sampling_client
     sampling_client_step = start_batch
     sampling_client_updated_event = asyncio.Event()
     sampling_client_updated_event.set()
@@ -1317,40 +1317,40 @@ async def save_checkpoint_and_get_sampling_client(
     weight_syncer: WeightSyncer,
     i_batch: int,
     start_batch: int = 0,
-) -> tuple[tinker.SamplingClient, dict[str, Any]]:
-    """Save a checkpoint (if due) and return a fresh sampling client.
+) -> tuple[DeploymentSampler, dict[str, Any]]:
+    """Persist a periodic DCP checkpoint when due, sync sampler weights to the
+    deployment, and return a fresh ``DeploymentSampler`` bound to those weights.
 
-    When ``i_batch`` falls on the periodic checkpoint cadence, a full
-    checkpoint (weights + optimizer state) is persisted via
-    *checkpoint_mgr*. Otherwise a lightweight sampler-only snapshot is
-    created so that subsequent rollouts use the latest weights.
+    The DCP checkpoint (weights + optimizer state) is saved via *checkpoint_mgr*
+    only on the periodic-save cadence; sampler weights are *always* re-synced
+    via *weight_syncer* so subsequent rollouts use the latest policy.
 
     Args:
-        training_client (tinker.TrainingClient): Client connected to the
-            Tinker training service.
-        checkpoint_mgr (checkpoint_utils.CheckpointManager): Manager that
-            handles periodic checkpoint saves.
-        i_batch (int): Current training iteration index.
-        start_batch (int): First iteration index of this run, used to avoid
+        training_client: Firetitan training client.
+        checkpoint_mgr: Manager that handles periodic / rolling DCP saves.
+        weight_syncer: WeightSyncer that pushes sampler snapshots to the
+            inference deployment.
+        i_batch: Current training iteration index.
+        start_batch: First iteration index of this run, used to avoid
             checkpointing on the very first step. Defaults to 0.
 
     Returns:
-        tuple[tinker.SamplingClient, dict[str, Any]]: A sampling client
-        loaded with the latest weights, and a (possibly empty) metrics dict.
+        A ``(DeploymentSampler, metrics)`` pair. The sampler is bound to the
+        deployment that just received the new weights.
     """
     metrics: dict[str, Any] = {}
     if i_batch > start_batch and checkpoint_mgr.should_save_periodic(i_batch):
-        path_dict = await checkpoint_mgr.save_periodic_async(
-            step=i_batch, loop_state={"batch": i_batch}
-        )
-    else:
         async with trace.scope_span("save_checkpoint"):
-            await training_client.save_weights_and_get_sampling_client_async(), metrics
+            await checkpoint_mgr.save_periodic_async(
+                step=i_batch, loop_state={"batch": i_batch}
+            )
 
-    checkpoint_type = "base" # if config.lora_rank == 0 else "delta"
-    success = weight_syncer.hotload(path_dict["sampler_path"], checkpoint_type=checkpoint_type)
-    if not success:
-        raise ValueError(f"Failed to save and load checkpoint {path_dict["sampler_path"]}")
+    async with trace.scope_span("save_and_hotload"):
+        snapshot_name = weight_syncer.save_and_hotload(f"step-{i_batch}")
+    if snapshot_name is None:
+        raise RuntimeError(f"Failed to save+hotload sampler weights at step {i_batch}")
+    for k, v in weight_syncer.last_timing.items():
+        metrics[f"weight_sync/{k}"] = v
     return weight_syncer.get_deployment_sampler(), metrics
 
 @trace.scope
@@ -1449,7 +1449,6 @@ async def compute_full_batch_metrics_and_get_sampling_client(
         metrics.
     """
     metrics = {}
-    print("training_logprobs_D: ", len(training_logprobs_D))
     # Compute KL metrics
     async with trace.scope_span("compute_kl_sample_train"):
         kl_sample_train_metrics = compute_kl_sample_train(data_D, training_logprobs_D)
@@ -1962,10 +1961,7 @@ async def main(
     logging.getLogger("pylatexenc").setLevel(logging.WARNING)
 
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
-    if resume_info:
-        start_batch = resume_info.batch
-    else:
-        start_batch = 0
+    start_batch = (resume_info.batch or 0) if resume_info else 0
 
     service_client = FiretitanServiceClient(
         base_url=config.base_url,
@@ -1978,42 +1974,30 @@ async def main(
     model_info.warn_if_renderer_not_recommended(config.model_name, config.renderer_name)
 
     training_client = service_client.create_training_client(
-        base_model=config.model_name,
+        base_model=config.fireworks_base_model_name or config.model_name,
         lora_rank=config.lora_rank,
+        user_metadata=user_metadata,
     )
     if resume_info:
-        # Resuming interrupted training - load optimizer state for proper continuation
-        await checkpoint_utils.check_renderer_name_for_checkpoint_async(
-            service_client, resume_info.state_path, config.renderer_name
-        )
-        training_client = (
-            await service_client.create_training_client_from_state_with_optimizer_async(
-                resume_info.state_path, user_metadata=user_metadata
-            )
-        )
+        # Resuming interrupted training: load optimizer state for proper continuation.
+        load_future = training_client.load_state_with_optimizer(resume_info.state_path)
+        await load_future.result_async()
         logger.info(f"Resumed training from {resume_info.state_path}")
     elif config.load_checkpoint_path:
-        # Starting fresh from a checkpoint - load weights only (fresh optimizer)
-        await checkpoint_utils.check_renderer_name_for_checkpoint_async(
-            service_client, config.load_checkpoint_path, config.renderer_name
+        raise ValueError(
+            "Loading weights from a checkpoint is not supported with the firetitan "
+            "backend. Specify the desired base model when starting the fireworks "
+            "rlor-trainer-job instead."
         )
-        training_client = await service_client.create_training_client_from_state_async(
-            config.load_checkpoint_path, user_metadata=user_metadata
-        )
-        logger.info(f"Loaded weights from {config.load_checkpoint_path}")
-        training_client.load_state(config.load_checkpoint_path)
-    # else:
-    #     training_client = await service_client.create_lora_training_client_async(
-    #         config.model_name, rank=config.lora_rank, user_metadata=user_metadata
-    #     )
 
     deploy_mgr = DeploymentManager(api_key=os.environ["FIREWORKS_API_KEY"])
     weight_syncer = WeightSyncer(
         policy_client=training_client,
         deploy_mgr=deploy_mgr,
         deployment_id=config.fireworks_deployment_id,
-        base_model=config.fireworks_base_model_name,
+        base_model=config.fireworks_base_model_name or config.model_name,
         hotload_timeout=config.fireworks_hot_load_timeout,
+        lora_rank=config.lora_rank,
     )
     if config.fireworks_deployment_id:
         name = f"resume-{start_batch}-base" if start_batch > 0 else "step-0-base"

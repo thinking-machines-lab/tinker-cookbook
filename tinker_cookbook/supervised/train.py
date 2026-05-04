@@ -14,6 +14,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import chz
 import tinker
@@ -281,11 +282,12 @@ async def main(config: Config):
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     if resume_info:
         start_epoch = resume_info.epoch or 0
-        start_batch = resume_info.batch
+        start_batch = resume_info.batch or 0
     else:
         start_epoch = 0
         start_batch = 0
-    # (start_epoch, start_batch) now represent the next batch to execute if resuming.
+    # (start_epoch, start_batch) represent the next batch to execute if resuming.
+    # Saves below record loop_state with the *next* (epoch, batch) so this is consistent.
 
     ml_logger = ml_log.setup_logging(
         log_dir=config.log_path,
@@ -319,13 +321,30 @@ async def main(config: Config):
     model_info.warn_if_renderer_not_recommended(config.model_name, config.renderer_name)
 
     training_client = service_client.create_training_client(
-        base_model=config.fireworks_base_model_name,
+        base_model=config.fireworks_base_model_name or config.model_name,
         lora_rank=config.lora_rank,
+        user_metadata=user_metadata,
     )
+    current_job_id = checkpoint_utils.extract_trainer_job_id(config.base_url)
     if resume_info:
-        # Resuming interrupted training - load optimizer state for proper continuation
-        training_client.load_state_with_optimizer(resume_info.state_path)
-        logger.info(f"Resumed training from {resume_info.state_path}")
+        # Resuming interrupted training - load optimizer state for proper continuation.
+        # load_state_with_optimizer returns an APIFuture; await it so a load failure
+        # surfaces here instead of silently corrupting the next forward_backward.
+        # If the checkpoint was written by a different trainer job, rewrite the local
+        # state name into an opaque cross_job:// reference the trainer can resolve.
+        source_job_id = resume_info.get("source_trainer_job_id")
+        load_path = resume_info.state_path
+        if source_job_id and source_job_id != current_job_id:
+            load_path = training_client.resolve_checkpoint_path(
+                load_path, source_job_id=source_job_id
+            )
+            logger.info(
+                f"Cross-job resume: rewriting {resume_info.state_path!r} from "
+                f"job {source_job_id!r} into {load_path!r}"
+            )
+        load_future = training_client.load_state_with_optimizer(load_path)
+        await load_future.result_async()
+        logger.info(f"Resumed training from {load_path}")
     elif config.load_checkpoint_path:
         # Starting fresh from a checkpoint - load weights only (fresh optimizer)
         raise ValueError("Loading weights from a checkpoint is not supported. Please specify the base model when starting the fireworks rlor-trainer-job.")
@@ -427,9 +446,17 @@ async def main(config: Config):
         metrics = submitted.metrics
         metrics["progress"] = min((submitted.step + 1) / progress_denominator, 1.0)
 
+        # Record the *next* (epoch, batch) to execute so resume picks up correctly.
+        next_batch_idx = submitted.batch_idx + 1
+        if next_batch_idx >= n_batches:
+            next_loop_state = {"epoch": submitted.epoch_idx + 1, "batch": 0}
+        else:
+            next_loop_state = {"epoch": submitted.epoch_idx, "batch": next_batch_idx}
+        if current_job_id is not None:
+            next_loop_state["source_trainer_job_id"] = current_job_id
         await checkpoint_mgr.maybe_save_async(
             step=submitted.step,
-            loop_state={"epoch": submitted.epoch_idx, "batch": submitted.batch_idx},
+            loop_state=next_loop_state,
         )
 
         async with trace.scope_span("step"):
@@ -526,9 +553,10 @@ async def main(config: Config):
         config.max_steps is None or start_epoch * n_batches + start_batch < config.max_steps
     )
     if did_train:
-        await checkpoint_mgr.save_final_async(
-            loop_state={"epoch": config.num_epochs, "batch": 0},
-        )
+        final_loop_state: dict[str, Any] = {"epoch": config.num_epochs, "batch": 0}
+        if current_job_id is not None:
+            final_loop_state["source_trainer_job_id"] = current_job_id
+        await checkpoint_mgr.save_final_async(loop_state=final_loop_state)
     else:
         logger.info("Training was already complete; nothing to do")
         await checkpoint_mgr.finalize_async()
