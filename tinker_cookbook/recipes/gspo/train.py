@@ -18,6 +18,8 @@ Variable naming follows the cookbook convention:
 
 import logging
 import time
+from datetime import datetime
+from pathlib import Path
 
 import chz
 import datasets
@@ -31,7 +33,6 @@ from tinker_cookbook import checkpoint_utils, model_info, renderers
 from tinker_cookbook.recipes.gspo.loss import DEFAULT_CLIP_HIGH, DEFAULT_CLIP_LOW, make_gspo_loss
 from tinker_cookbook.recipes.math_rl.math_env import extract_gsm8k_final_answer
 from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed, grade_answer
-from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log
 
 logger = logging.getLogger(__name__)
@@ -41,8 +42,14 @@ logging.getLogger("httpx").setLevel(logging.WARN)
 @chz.chz
 class Config:
     base_url: str | None = None
-    log_path: str = "/tmp/tinker-examples/gspo"
+    log_path: str = chz.field(
+        default_factory=lambda: (
+            f"/tmp/tinker-examples/gspo/gspo-gsm8k-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
+        )
+    )
     model_name: str = "meta-llama/Llama-3.1-8B"
+    renderer_name: str | None = None
+    load_checkpoint_path: str | None = None
     batch_size: int = 128
     group_size: int = 16
     learning_rate: float = 4e-5
@@ -52,6 +59,9 @@ class Config:
     ttl_seconds: int | None = 604800
     clip_low: float = DEFAULT_CLIP_LOW
     clip_high: float = DEFAULT_CLIP_HIGH
+    max_steps: int | None = None
+    wandb_project: str | None = None
+    wandb_name: str | None = None
 
 
 def get_reward(response: str, answer: str) -> float:
@@ -64,16 +74,63 @@ def get_reward(response: str, answer: str) -> float:
 
 
 def main(config: Config):
+    wandb_name = config.wandb_name or Path(config.log_path).name
+    config = chz.replace(config, wandb_name=wandb_name)
+
     ml_logger = ml_log.setup_logging(
         log_dir=config.log_path,
-        wandb_project=None,
-        wandb_name=None,
+        wandb_project=config.wandb_project,
+        wandb_name=config.wandb_name,
         config=config,
         do_configure_logging_module=True,
     )
 
-    tokenizer = get_tokenizer(config.model_name)
-    renderer_name = model_info.get_recommended_renderer_name(config.model_name)
+    service_client = tinker.ServiceClient(base_url=config.base_url)
+    resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
+    checkpoint_path_for_renderer = (
+        resume_info.state_path
+        if resume_info and resume_info.state_path
+        else config.load_checkpoint_path
+    )
+    renderer_name = checkpoint_utils.resolve_renderer_name_from_checkpoint_or_default(
+        model_name=config.model_name,
+        explicit_renderer_name=config.renderer_name,
+        load_checkpoint_path=checkpoint_path_for_renderer,
+        base_url=config.base_url,
+    )
+
+    user_metadata: dict[str, str] = {}
+    if wandb_link := ml_logger.get_logger_url():
+        user_metadata["wandb_link"] = wandb_link
+    checkpoint_utils.add_renderer_name_to_user_metadata(user_metadata, renderer_name)
+    model_info.warn_if_renderer_not_recommended(config.model_name, renderer_name)
+
+    if resume_info:
+        assert resume_info.state_path is not None
+        checkpoint_utils.check_renderer_name_for_checkpoint(
+            service_client, resume_info.state_path, renderer_name
+        )
+        training_client = service_client.create_training_client_from_state_with_optimizer(
+            resume_info.state_path, user_metadata=user_metadata
+        )
+        start_batch = resume_info.batch or 0
+        logger.info(f"Resuming from batch {start_batch}")
+    elif config.load_checkpoint_path:
+        checkpoint_utils.check_renderer_name_for_checkpoint(
+            service_client, config.load_checkpoint_path, renderer_name
+        )
+        training_client = service_client.create_training_client_from_state(
+            config.load_checkpoint_path, user_metadata=user_metadata
+        )
+        start_batch = 0
+        logger.info(f"Loaded weights from {config.load_checkpoint_path}")
+    else:
+        training_client = service_client.create_lora_training_client(
+            base_model=config.model_name, rank=config.lora_rank, user_metadata=user_metadata
+        )
+        start_batch = 0
+
+    tokenizer = training_client.get_tokenizer()
     renderer = renderers.get_renderer(renderer_name, tokenizer)
     logger.info(f"Using renderer: {renderer_name}")
 
@@ -94,21 +151,8 @@ def main(config: Config):
     ]
 
     n_train_batches = len(train_dataset) // config.batch_size
-
-    service_client = tinker.ServiceClient(base_url=config.base_url)
-
-    resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
-    if resume_info:
-        training_client = service_client.create_training_client_from_state_with_optimizer(
-            resume_info.state_path
-        )
-        start_batch = resume_info.batch
-        logger.info(f"Resuming from batch {start_batch}")
-    else:
-        training_client = service_client.create_lora_training_client(
-            base_model=config.model_name, rank=config.lora_rank
-        )
-        start_batch = 0
+    if config.max_steps is not None:
+        n_train_batches = min(n_train_batches, config.max_steps)
 
     sampling_params = types.SamplingParams(
         max_tokens=config.max_tokens,
@@ -136,6 +180,7 @@ def main(config: Config):
                 kind="state",
                 loop_state={"batch": batch_idx},
                 ttl_seconds=config.ttl_seconds,
+                store=ml_logger.store,
             )
 
         batch_start = batch_idx * config.batch_size
@@ -189,7 +234,7 @@ def main(config: Config):
             if len(set(rewards_G)) == 1:
                 continue
 
-            # Normalize advantages within the group by std (GSPO paper §3).
+            # Normalize advantages within the group by std (GSPO paper section 3).
             mean_r = sum(rewards_G) / len(rewards_G)
             variance = sum((r - mean_r) ** 2 for r in rewards_G) / len(rewards_G)
             std_r = variance**0.5
@@ -234,24 +279,27 @@ def main(config: Config):
             fwd_bwd_result = fwd_bwd_future.result()
             optim_result = optim_future.result()
 
-            if fwd_bwd_result.metrics:
-                for k, v in fwd_bwd_result.metrics.items():
-                    metrics[f"train/{k}"] = v
+            for k, v in fwd_bwd_result.metrics.items():
+                metrics[f"train/{k}"] = v
             if optim_result.metrics:
                 metrics.update(optim_result.metrics)
 
         metrics["time/total"] = time.time() - t_start
-        metrics["reward/mean"] = sum(rewards_P) / len(rewards_P) if rewards_P else 0.0
+        metrics["reward/total"] = sum(rewards_P) / len(rewards_P) if rewards_P else 0.0
         ml_logger.log_metrics(metrics, step=batch_idx)
 
-    checkpoint_utils.save_checkpoint(
-        training_client=training_client,
-        name="final",
-        log_path=config.log_path,
-        kind="both",
-        loop_state={"batch": n_train_batches},
-        ttl_seconds=None,
-    )
+    if start_batch < n_train_batches:
+        checkpoint_utils.save_checkpoint(
+            training_client=training_client,
+            name="final",
+            log_path=config.log_path,
+            kind="both",
+            loop_state={"batch": n_train_batches},
+            ttl_seconds=None,
+            store=ml_logger.store,
+        )
+    else:
+        logger.info("Training was already complete; nothing to do")
     ml_logger.close()
     logger.info("Training complete.")
 

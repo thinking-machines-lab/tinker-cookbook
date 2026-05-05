@@ -13,7 +13,7 @@ from collections.abc import Callable
 import tinker.types as types
 import torch
 
-# Empirical clip bounds from the paper (§4.2).
+# Empirical clip bounds from the paper, section 4.2.
 # Sequence-level ratios stay near 1.0 by construction (geometric mean),
 # so these are much tighter than GRPO's 0.8-1.27 token-level bounds.
 DEFAULT_CLIP_LOW: float = 1.0 - 3e-4
@@ -48,37 +48,45 @@ def make_gspo_loss(
         data: list[types.Datum],
         new_logprobs_list: list[torch.Tensor],
     ) -> tuple[torch.Tensor, dict[str, float]]:
-        total_loss = torch.tensor(0.0)
-        clip_fracs: list[float] = []
-        log_ratios: list[float] = []
+        del data
+        if not new_logprobs_list:
+            return torch.tensor(0.0), {
+                "gspo_loss": 0.0,
+                "clip_frac": 0.0,
+                "mean_log_ratio": 0.0,
+            }
 
-        for old_lp, ob_len, advantage, new_lp in zip(
-            old_logprobs_D, ob_lens_D, advantages_D, new_logprobs_list
+        mean_log_ratios = []
+        for old_lp, ob_len, new_lp in zip(
+            old_logprobs_D, ob_lens_D, new_logprobs_list, strict=True
         ):
             # Slice to completion tokens only (prompt positions have old_lp=0.0).
-            old_completion = old_lp[ob_len:]
+            old_completion = old_lp.to(device=new_lp.device, dtype=new_lp.dtype)[ob_len:]
             new_completion = new_lp[ob_len:]
 
             # Sequence-level IS ratio: geometric mean of per-token ratios.
             # s_i = exp( (1/|y|) * sum_t [ log pi_theta(y_t) - log pi_old(y_t) ] )
-            mean_log_ratio = (new_completion - old_completion).mean()
-            s_i = torch.exp(mean_log_ratio)
+            mean_log_ratios.append((new_completion - old_completion).mean())
 
-            unclipped = s_i * advantage
-            clipped = torch.clamp(s_i, clip_low, clip_high) * advantage
-            loss_i = -torch.min(unclipped, clipped)
+        mean_log_ratio_tensor = torch.stack(mean_log_ratios)
+        sequence_ratios = torch.exp(mean_log_ratio_tensor)
+        advantages = torch.tensor(
+            advantages_D,
+            dtype=sequence_ratios.dtype,
+            device=sequence_ratios.device,
+        )
 
-            total_loss = total_loss + loss_i
-            clip_fracs.append(float(s_i.item() < clip_low or s_i.item() > clip_high))
-            log_ratios.append(mean_log_ratio.item())
+        unclipped = sequence_ratios * advantages
+        clipped = torch.clamp(sequence_ratios, clip_low, clip_high) * advantages
+        losses = -torch.minimum(unclipped, clipped)
+        avg_loss = losses.mean()
 
-        n = len(new_logprobs_list)
-        avg_loss = total_loss / n
+        clipped_mask = (sequence_ratios < clip_low) | (sequence_ratios > clip_high)
 
         return avg_loss, {
             "gspo_loss": avg_loss.item(),
-            "clip_frac": sum(clip_fracs) / n if n else 0.0,
-            "mean_log_ratio": sum(log_ratios) / n if n else 0.0,
+            "clip_frac": clipped_mask.float().mean().item(),
+            "mean_log_ratio": mean_log_ratio_tensor.mean().item(),
         }
 
     return gspo_loss
