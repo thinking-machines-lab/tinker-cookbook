@@ -52,10 +52,18 @@ class ProblemEnv(Env):
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None = None,
         format_coef: float = 0.1,
+        require_stop_sequence_for_format: bool = True,
     ):
         self.renderer = renderer
         self.convo_prefix = convo_prefix or []
         self.format_coef = format_coef
+        # When True, a response that terminates with EOS (instead of the
+        # renderer's stop sequence) does not earn the format reward. This
+        # preserves the strict R1-Zero training behavior from #339, which
+        # treated stop-sequence termination as the only "well-formed" outcome.
+        # Eval grading (EnvFromMessageEnv) is unaffected — it reads
+        # ``termination.is_clean`` directly.
+        self.require_stop_sequence_for_format = require_stop_sequence_for_format
 
     @property
     def stop_condition(self) -> StopCondition:
@@ -110,9 +118,14 @@ class ProblemEnv(Env):
             extra (ActionExtra | None): Optional action metadata (unused).
         """
         convo = self.convo_prefix + [{"role": "user", "content": self.get_question()}]
-        message, parse_success = self.renderer.parse_response(action)
+        message, termination = self.renderer.parse_response(action)
         content = renderers.get_text_content(message)
-        correct_format = float(parse_success) and float(self.check_format(content))
+        well_formed = (
+            termination.is_stop_sequence
+            if self.require_stop_sequence_for_format
+            else termination.is_clean
+        )
+        correct_format = float(well_formed) and float(self.check_format(content))
         correct_answer = float(self.check_answer(content))
         total_reward = self.format_coef * (correct_format - 1) + correct_answer
 

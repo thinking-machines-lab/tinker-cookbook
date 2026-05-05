@@ -706,7 +706,7 @@ def test_parse_response_plain_text(nemotron_tokenizer, nemotron_renderer):
     """parse_response decodes a plain text response (no thinking)."""
     tokens = nemotron_tokenizer.encode("The answer is 42.<|im_end|>", add_special_tokens=False)
     message, success = nemotron_renderer.parse_response(tokens)
-    assert success
+    assert success.is_clean
     from tinker_cookbook.renderers import get_text_content
 
     assert "42" in get_text_content(message)
@@ -719,7 +719,7 @@ def test_parse_response_with_thinking(nemotron_tokenizer, nemotron_renderer):
     tokens = nemotron_tokenizer.encode(response_text, add_special_tokens=False)
     message, success = nemotron_renderer.parse_response(tokens)
 
-    assert success
+    assert success.is_clean
     content = message.get("content")
     assert isinstance(content, list)
     thinking_parts = [p for p in content if p["type"] == "thinking"]
@@ -744,7 +744,7 @@ def test_parse_response_for_streaming_with_thinking(nemotron_tokenizer, nemotron
     tokens = nemotron_tokenizer.encode(response_text, add_special_tokens=False)
     message, success = nemotron_renderer._parse_response_for_streaming(tokens)
 
-    assert success
+    assert success.is_clean
     content = message.get("content")
     assert isinstance(content, list)
     thinking_parts = [p for p in content if p["type"] == "thinking"]
@@ -774,7 +774,7 @@ def test_parse_response_tool_call(nemotron_tokenizer, nemotron_renderer):
     tokens = nemotron_tokenizer.encode(tool_call_text, add_special_tokens=False)
     message, success = nemotron_renderer.parse_response(tokens)
 
-    assert success
+    assert success.is_clean
     tool_calls = message.get("tool_calls", [])
     assert len(tool_calls) == 1
     assert tool_calls[0].function.name == "get_weather"

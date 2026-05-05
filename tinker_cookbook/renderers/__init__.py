@@ -19,6 +19,7 @@ from tinker_cookbook.renderers.base import (
     Message,
     # Streaming types
     MessageDelta,
+    ParseTermination,
     # Renderer base
     RenderContext,
     Renderer,
@@ -136,6 +137,9 @@ def get_renderer(
             - ``"kimi_k2"``: Kimi K2 Thinking format
             - ``"kimi_k25"``: Kimi K2.5 with thinking enabled
             - ``"kimi_k25_disable_thinking"``: Kimi K2.5 with thinking disabled
+            - ``"kimi_k26"``: Kimi K2.6 with thinking enabled (HF default — same token output as ``kimi_k25``)
+            - ``"kimi_k26_disable_thinking"``: Kimi K2.6 with thinking disabled
+            - ``"kimi_k26_preserve_thinking"``: Kimi K2.6 with thinking enabled and historical ``<think>...</think>`` blocks preserved (HF ``preserve_thinking=true``); use for long-horizon agents / multi-turn RL
             - ``"nemotron3"``: Nemotron-3 with full reasoning (Nano & Super)
             - ``"nemotron3_low_thinking"``: Nemotron-3 with low-effort reasoning (Super only)
             - ``"nemotron3_disable_thinking"``: Nemotron-3 with reasoning off (Nano & Super)
@@ -189,6 +193,7 @@ def get_renderer(
     from tinker_cookbook.renderers.gpt_oss import GptOssRenderer
     from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
     from tinker_cookbook.renderers.kimi_k25 import KimiK25DisableThinkingRenderer, KimiK25Renderer
+    from tinker_cookbook.renderers.kimi_k26 import KimiK26PreserveThinkingRenderer
     from tinker_cookbook.renderers.llama3 import Llama3Renderer
     from tinker_cookbook.renderers.nemotron3 import (
         Nemotron3DisableThinkingRenderer,
@@ -238,6 +243,12 @@ def get_renderer(
         renderer = KimiK25Renderer(tokenizer, image_processor=image_processor)
     elif name == "kimi_k25_disable_thinking":
         renderer = KimiK25DisableThinkingRenderer(tokenizer, image_processor=image_processor)
+    elif name == "kimi_k26":
+        renderer = KimiK25Renderer(tokenizer, image_processor=image_processor)
+    elif name == "kimi_k26_disable_thinking":
+        renderer = KimiK25DisableThinkingRenderer(tokenizer, image_processor=image_processor)
+    elif name == "kimi_k26_preserve_thinking":
+        renderer = KimiK26PreserveThinkingRenderer(tokenizer, image_processor=image_processor)
     elif name == "nemotron3":
         renderer = Nemotron3Renderer(tokenizer)
     elif name == "nemotron3_low_thinking":
@@ -265,6 +276,7 @@ __all__ = [
     "ContentPart",
     "ImagePart",
     "Message",
+    "ParseTermination",
     "Role",
     "TextPart",
     "ThinkingPart",

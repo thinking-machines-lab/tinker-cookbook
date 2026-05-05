@@ -49,6 +49,7 @@ Full listing of available models with types, architecture, and sizes.
 | `deepseek-ai/DeepSeek-V3.1-Base` | Base | MoE | Large |
 | `moonshotai/Kimi-K2-Thinking` | Reasoning | MoE | Large |
 | `moonshotai/Kimi-K2.5` | Reasoning + Vision | MoE | Large |
+| `moonshotai/Kimi-K2.6` | Reasoning + Vision | MoE | Large |
 
 ## Model types explained
 

@@ -5,7 +5,8 @@ fused ``in_proj_qkv`` weight (Q‖K‖V, with potentially unequal dims), but
 Tinker trains separate ``in_proj_q/k/v`` LoRA adapters. All Qwen3.5 models
 are vision-language with the ``model.language_model.*`` key prefix.
 
-Supported models: Qwen3.5-4B, Qwen3.5-27B, Qwen3.5-35B-A3B, Qwen3.5-397B-A17B.
+Supported models: Qwen3.5-4B, Qwen3.5-27B, Qwen3.5-35B-A3B, Qwen3.5-397B-A17B,
+Qwen3.6-27B, Qwen3.6-35B-A3B (same ``qwen3_5`` / ``qwen3_5_moe`` architecture family).
 """
 
 from __future__ import annotations
@@ -46,7 +47,8 @@ def detect_profile(model_config: dict, model_state_keys: set[str]) -> MergeProfi
     are vision-language with the ``model.language_model.*`` key prefix.
 
     Supported models: Qwen3.5-4B, Qwen3.5-27B, Qwen3.5-35B-A3B,
-    Qwen3.5-397B-A17B.
+    Qwen3.5-397B-A17B, Qwen3.6-27B, and Qwen3.6-35B-A3B (same ``qwen3_5`` /
+    ``qwen3_5_moe`` model_type).
     """
     if model_config.get("model_type") not in ("qwen3_5", "qwen3_5_moe"):
         return None

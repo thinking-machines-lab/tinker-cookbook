@@ -36,6 +36,9 @@ def get_image_processor(model_name: str) -> ImageProcessor:
     if model_name == "moonshotai/Kimi-K2.5":
         kwargs["trust_remote_code"] = True
         kwargs["revision"] = "3367c8d1c68584429fab7faf845a32d5195b6ac1"
+    elif model_name == "moonshotai/Kimi-K2.6":
+        kwargs["trust_remote_code"] = True
+        kwargs["revision"] = "2b2b88e33c96d813ebb4c83a740252fe08018e3a"
 
     processor = AutoImageProcessor.from_pretrained(model_name, **kwargs)
 

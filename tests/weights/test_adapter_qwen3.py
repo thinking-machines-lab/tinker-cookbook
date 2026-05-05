@@ -26,6 +26,7 @@ from tinker_cookbook.weights import build_hf_model
 def _make_tiny_qwen3_dense_config() -> PretrainedConfig:
     config = AutoConfig.from_pretrained("Qwen/Qwen3-8B", trust_remote_code=True)
     config.num_hidden_layers = 1
+    config.layer_types = config.layer_types[:1]  # must match num_hidden_layers
     config.hidden_size = 64
     config.intermediate_size = 64
     config.num_attention_heads = 2

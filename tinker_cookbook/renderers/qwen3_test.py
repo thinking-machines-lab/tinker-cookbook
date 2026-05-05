@@ -45,7 +45,7 @@ def test_qwen3_parse_response_extracts_thinking():
 
     message, success = renderer.parse_response(response_tokens)
 
-    assert success
+    assert success.is_clean
     assert message["role"] == "assistant"
 
     content = message["content"]
@@ -71,7 +71,7 @@ def test_qwen3_parse_response_multiple_think_blocks():
 
     message, success = renderer.parse_response(response_tokens)
 
-    assert success
+    assert success.is_clean
     content = message["content"]
     assert isinstance(content, list)
     assert len(content) == 4
@@ -92,7 +92,7 @@ def test_qwen3_parse_response_no_thinking_returns_string():
 
     message, success = renderer.parse_response(response_tokens)
 
-    assert success
+    assert success.is_clean
     # Content should remain a string for backward compatibility
     assert isinstance(message["content"], str)
     assert message["content"] == "Just a plain response without thinking."
@@ -108,7 +108,7 @@ def test_qwen3_parse_response_with_tool_calls():
 
     message, success = renderer.parse_response(response_tokens)
 
-    assert success
+    assert success.is_clean
     content = message["content"]
     assert isinstance(content, list)
 
@@ -137,7 +137,7 @@ def test_qwen3_parse_response_tool_call_only():
 
     message, success = renderer.parse_response(response_tokens)
 
-    assert success
+    assert success.is_clean
     content = message["content"]
     assert isinstance(content, list)
     # Content should be empty — only a tool call, no text or thinking
@@ -320,7 +320,7 @@ def test_qwen3_streaming_matches_batch():
     response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
 
     batch_message, batch_success = renderer.parse_response(response_tokens)
-    assert batch_success
+    assert batch_success.is_clean
 
     deltas = list(renderer.parse_response_streaming(response_tokens))
     streaming_message = deltas[-1]
@@ -636,9 +636,9 @@ def test_qwen3_5_parse_response_restores_prefilled_think_tag(qwen3_5_tokenizer, 
         add_special_tokens=False,
     )
 
-    parsed_message, parse_success = qwen3_5_renderer.parse_response(response_tokens)
+    parsed_message, termination = qwen3_5_renderer.parse_response(response_tokens)
 
-    assert parse_success is True
+    assert termination.is_stop_sequence
     assert isinstance(parsed_message["content"], list)
     assert parsed_message["content"] == [
         ThinkingPart(type="thinking", thinking="reasoning"),
@@ -680,7 +680,7 @@ def test_qwen3_5_streaming_matches_batch_with_prefilled_think(qwen3_5_tokenizer,
     )
 
     batch_message, batch_success = qwen3_5_renderer.parse_response(response_tokens)
-    assert batch_success
+    assert batch_success.is_clean
 
     deltas = list(qwen3_5_renderer.parse_response_streaming(response_tokens))
     streaming_message = deltas[-1]
@@ -699,7 +699,7 @@ def test_qwen3_5_normalize_noop_when_think_present(qwen3_5_tokenizer, qwen3_5_re
 
     # Both paths should work identically
     batch_message, batch_success = qwen3_5_renderer.parse_response(response_tokens)
-    assert batch_success
+    assert batch_success.is_clean
 
     deltas = list(qwen3_5_renderer.parse_response_streaming(response_tokens))
     streaming_message = deltas[-1]

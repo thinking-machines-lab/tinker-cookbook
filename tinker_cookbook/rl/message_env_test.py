@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import tinker
 
-from tinker_cookbook.renderers.base import Message
+from tinker_cookbook.renderers.base import Message, ParseTermination
 from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
 
 # ---------------------------------------------------------------------------
@@ -50,9 +50,23 @@ def _make_renderer(
     gen_prompt_tokens: list[int] | None = None,
     stop_sequences: list[str] | None = None,
     parse_message: Message | None = None,
-    parse_success: bool = True,
+    termination: ParseTermination | None = None,
+    parse_success: bool | None = None,
 ) -> MagicMock:
-    """Build a mock Renderer with the methods EnvFromMessageEnv calls."""
+    """Build a mock Renderer with the methods EnvFromMessageEnv calls.
+
+    Pass ``termination`` directly to drive any ParseTermination state
+    (including ``EOS``, which can't be expressed via the bool shortcut).
+    ``parse_success`` is a back-compat shortcut: True -> STOP_SEQUENCE,
+    False -> MALFORMED.
+    """
+    if termination is None:
+        if parse_success is None:
+            parse_success = True
+        termination = (
+            ParseTermination.STOP_SEQUENCE if parse_success else ParseTermination.MALFORMED
+        )
+
     renderer = MagicMock()
 
     prompt = _make_model_input(gen_prompt_tokens or [1, 2, 3])
@@ -61,7 +75,7 @@ def _make_renderer(
     renderer.parse_response = MagicMock(
         return_value=(
             parse_message or {"role": "assistant", "content": "hello"},
-            parse_success,
+            termination,
         )
     )
     return renderer
@@ -129,6 +143,55 @@ class TestStepParseFailure:
         assert result.metrics == {"parse_error": 1.0}
         assert result.next_observation.length == 0
         # MessageEnv.step should NOT have been called
+        assert len(msg_env.step_calls) == 0
+
+    def test_eos_termination_invokes_grader(self):
+        """Regression test for issue #685.
+
+        When parse_response returns ``ParseTermination.EOS`` (model emitted
+        EOS instead of the renderer's stop sequence — the common base-model
+        single-turn case), ``EnvFromMessageEnv.step`` must NOT short-circuit
+        with ``failed_parse_reward``. It must call ``MessageEnv.step`` so the
+        grader runs. Pre-#685, the renderer reported ``parse_success=False``
+        on this shape and every base-model single-turn benchmark scored 0%.
+        """
+
+        renderer = _make_renderer(
+            parse_message={"role": "assistant", "content": "graded answer"},
+            termination=ParseTermination.EOS,
+        )
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(reward=1.0, episode_done=True, next_messages=[]),
+        )
+        env = EnvFromMessageEnv(
+            renderer=renderer,
+            message_env=msg_env,
+            failed_parse_reward=-99.0,  # would be the bug's reward if grader skipped
+        )
+
+        result = asyncio.run(env.step([1, 2, 3]))
+
+        # Grader was invoked and its reward propagated — not the failed-parse reward.
+        assert result.reward == 1.0
+        assert "parse_error" not in result.metrics
+        assert len(msg_env.step_calls) == 1
+        assert msg_env.step_calls[0]["content"] == "graded answer"
+
+    def test_malformed_termination_skips_grader(self):
+        """``ParseTermination.MALFORMED`` short-circuits with failed_parse_reward."""
+
+        renderer = _make_renderer(termination=ParseTermination.MALFORMED)
+        msg_env = StubMessageEnv(
+            initial_messages=[],
+            step_result=MessageStepResult(reward=1.0, episode_done=True, next_messages=[]),
+        )
+        env = EnvFromMessageEnv(renderer=renderer, message_env=msg_env, failed_parse_reward=-2.0)
+
+        result = asyncio.run(env.step([1, 2, 3]))
+
+        assert result.reward == -2.0
+        assert result.metrics == {"parse_error": 1.0}
         assert len(msg_env.step_calls) == 0
 
     def test_parse_failure_no_terminate(self):

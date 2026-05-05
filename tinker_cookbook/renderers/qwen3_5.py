@@ -23,6 +23,7 @@ import re
 from tinker_cookbook.renderers.base import (
     ImagePart,
     Message,
+    ParseTermination,
     RenderContext,
     Role,
     TextPart,
@@ -196,20 +197,22 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
         else:
             message.pop("unparsed_tool_calls", None)
 
-    def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+    def parse_response(self, response: list[int]) -> tuple[Message, ParseTermination]:
         """Parse response with Qwen3.5-specific post-processing."""
-        message, success = super().parse_response(response)
-        if not success:
-            return message, success
+        message, termination = super().parse_response(response)
+        if not termination.is_clean:
+            return message, termination
 
         self._postprocess_parsed_message(message)
-        return message, success
+        return message, termination
 
-    def _parse_response_for_streaming(self, response: list[int]) -> tuple[Message, bool]:
+    def _parse_response_for_streaming(
+        self, response: list[int]
+    ) -> tuple[Message, ParseTermination]:
         """Parse response for streaming with Qwen3.5-specific post-processing."""
-        message, parse_success = super()._parse_response_for_streaming(response)
+        message, termination = super()._parse_response_for_streaming(response)
         self._postprocess_parsed_message(message)
-        return message, parse_success
+        return message, termination
 
     def _format_tool_call_xml(self, tool_call: ToolCall) -> str:
         """Format a single tool call in Qwen3.5's XML parameter format."""

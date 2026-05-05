@@ -23,7 +23,7 @@ def test_gptoss_parse_response_extracts_thinking():
 
     message, success = renderer.parse_response(response_tokens)
 
-    assert success
+    assert success.is_clean
     content = message["content"]
     assert isinstance(content, list)
 
@@ -46,7 +46,7 @@ def test_gptoss_parse_response_multiple_analysis():
 
     message, success = renderer.parse_response(response_tokens)
 
-    assert success
+    assert success.is_clean
     content = message["content"]
     assert isinstance(content, list)
     assert len(content) == 3
@@ -66,7 +66,7 @@ def test_gptoss_parse_response_final_only():
 
     message, success = renderer.parse_response(response_tokens)
 
-    assert success
+    assert success.is_clean
     content = message["content"]
     assert isinstance(content, list)
     assert len(content) == 1
@@ -83,7 +83,7 @@ def test_gptoss_parse_response_no_channels():
 
     message, success = renderer.parse_response(response_tokens)
 
-    assert success
+    assert success.is_clean
     # No channel markers, so content stays as string
     assert isinstance(message["content"], str)
     assert message["content"] == "Plain response without channels."
@@ -100,7 +100,7 @@ def test_gptoss_parse_response_tool_call():
 
     message, success = renderer.parse_response(response_tokens)
 
-    assert success
+    assert success.is_clean
     assert "tool_calls" in message
     assert len(message["tool_calls"]) == 1
     assert message["tool_calls"][0].function.name == "get_weather"
@@ -117,7 +117,7 @@ def test_gptoss_parse_response_tool_call_with_analysis():
 
     message, success = renderer.parse_response(response_tokens)
 
-    assert success
+    assert success.is_clean
     content = message["content"]
     assert isinstance(content, list)
 
@@ -142,7 +142,7 @@ def test_gptoss_parse_response_invalid_tool_call_json():
 
     message, success = renderer.parse_response(response_tokens)
 
-    assert success
+    assert success.is_clean
     assert "unparsed_tool_calls" in message
     assert len(message["unparsed_tool_calls"]) == 1
     assert "Invalid JSON" in message["unparsed_tool_calls"][0].error
@@ -158,7 +158,7 @@ def test_gptoss_parse_response_tool_call_recipient_before_channel():
 
     message, success = renderer.parse_response(response_tokens)
 
-    assert success
+    assert success.is_clean
     assert "tool_calls" in message
     assert len(message["tool_calls"]) == 1
     assert message["tool_calls"][0].function.name == "get_weather"
@@ -177,7 +177,7 @@ def test_gptoss_parse_response_commentary_preamble():
 
     message, success = renderer.parse_response(response_tokens)
 
-    assert success
+    assert success.is_clean
     content = message["content"]
     assert isinstance(content, list)
     assert len(content) == 1

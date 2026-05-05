@@ -81,6 +81,11 @@ class Config:
             (0 disables).
         max_steps (int | None): Hard cap on training steps.  ``None`` trains
             for ``num_epochs * n_batches``.
+        async_periodic_saves (bool): When ``True``, periodic checkpoint saves
+            run as fire-and-forget background tasks instead of blocking the
+            training loop.  The checkpoint record is written to
+            ``checkpoints.jsonl`` once the save completes.  The final
+            checkpoint always blocks.  Default ``False``.
         submit_ahead (int): How many batches to submit ahead of the one being
             waited on.  ``1`` (default) matches the historical single-lookahead
             behavior; ``0`` disables pipelining entirely; higher values deepen
@@ -130,6 +135,10 @@ class Config:
     rolling_save_every: int = 0
     # TTL for rolling checkpoints; short to auto-clean if explicit deletion fails.
     rolling_ttl_seconds: int = 7200  # 2 hours
+    # When True, periodic checkpoint saves run as background asyncio tasks
+    # (fire-and-forget) instead of blocking the training loop. The final
+    # checkpoint always blocks regardless of this setting.
+    async_periodic_saves: bool = False
 
     # Adam optimizer parameters
     adam_beta1: float = 0.9
@@ -330,14 +339,16 @@ async def main(config: Config):
             user_metadata=user_metadata,
         )
 
-    rolling_mgr = checkpoint_utils.RollingCheckpointManager(
+    checkpoint_mgr = checkpoint_utils.CheckpointManager(
         training_client=training_client,
         service_client=service_client,
         log_path=config.log_path,
-        rolling_save_every=config.rolling_save_every,
         save_every=config.save_every,
+        ttl_seconds=config.ttl_seconds,
+        rolling_save_every=config.rolling_save_every,
         rolling_ttl_seconds=config.rolling_ttl_seconds,
         store=store,
+        async_periodic_saves=config.async_periodic_saves,
     )
 
     dataset, maybe_test_dataset = config.dataset_builder()
@@ -423,21 +434,7 @@ async def main(config: Config):
         metrics = submitted.metrics
         metrics["progress"] = min((submitted.step + 1) / progress_denominator, 1.0)
 
-        if config.save_every > 0 and submitted.step % config.save_every == 0 and submitted.step > 0:
-            async with trace.scope_span("save_checkpoint"):
-                # Enqueue a checkpoint save after the forward/backward and optimizer
-                # requests for this step; the snapshot will reflect post-step weights.
-                await checkpoint_utils.save_checkpoint_async(
-                    training_client=training_client,
-                    name=f"{submitted.step:06d}",
-                    log_path=config.log_path,
-                    loop_state={"epoch": submitted.epoch_idx, "batch": submitted.batch_idx},
-                    kind="both",
-                    ttl_seconds=config.ttl_seconds,
-                    store=store,
-                )
-
-        await rolling_mgr.maybe_save_async(
+        await checkpoint_mgr.maybe_save_async(
             step=submitted.step,
             loop_state={"epoch": submitted.epoch_idx, "batch": submitted.batch_idx},
         )
@@ -536,20 +533,12 @@ async def main(config: Config):
         config.max_steps is None or start_epoch * n_batches + start_batch < config.max_steps
     )
     if did_train:
-        await checkpoint_utils.save_checkpoint_async(
-            training_client=training_client,
-            name="final",
-            log_path=config.log_path,
-            kind="both",
+        await checkpoint_mgr.save_final_async(
             loop_state={"epoch": config.num_epochs, "batch": 0},
-            ttl_seconds=None,
-            store=store,
         )
     else:
         logger.info("Training was already complete; nothing to do")
-    # Clean up rolling checkpoints after the final save so that the last
-    # entry in checkpoints.jsonl always points to valid server-side data.
-    await rolling_mgr.finalize_async()
+        await checkpoint_mgr.finalize_async()
 
     ml_logger.close()
     logger.info("Training completed successfully")

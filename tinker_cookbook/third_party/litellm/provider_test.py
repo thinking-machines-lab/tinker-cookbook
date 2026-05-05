@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tinker_cookbook.renderers.base import ToolCall
+from tinker_cookbook.renderers.base import ParseTermination, ToolCall
 from tinker_cookbook.third_party.litellm.provider import (
     _extract_sampling_params,
     _prepare_messages_with_tools,
@@ -39,9 +39,15 @@ def _make_sampling_result(
     prompt_tokens: list[int] | None = None,
     completion_tokens: list[int] | None = None,
     content: str = "Hello!",
-    parse_success: bool = True,
+    termination: ParseTermination = ParseTermination.STOP_SEQUENCE,
     tool_calls: list[ToolCall] | None = None,
 ) -> _SamplingResult:
+    """Build a fake _SamplingResult.
+
+    Pass ``termination`` directly to drive any ParseTermination state
+    (including ``EOS``, which provider tests may want to assert mapping
+    semantics for).
+    """
     msg: dict[str, Any] = {"role": "assistant", "content": content}
     if tool_calls is not None:
         msg["tool_calls"] = tool_calls
@@ -50,7 +56,7 @@ def _make_sampling_result(
         completion_token_ids=completion_tokens or [4, 5, 6],
         logprobs=[0.1, 0.2, 0.3],
         parsed_message=msg,  # type: ignore[arg-type]
-        parse_success=parse_success,
+        termination=termination,
         model_name="tinker/test-model",
     )
 
@@ -159,7 +165,16 @@ class TestSamplingResultToDict:
         assert d["usage"]["completion_tokens"] == 3
 
     def test_parse_failure_gives_length_finish(self) -> None:
-        result = _make_sampling_result(parse_success=False)
+        result = _make_sampling_result(termination=ParseTermination.MALFORMED)
+        d = _sampling_result_to_chat_completion_dict(result)
+        assert d["choices"][0]["finish_reason"] == "length"
+
+    def test_eos_termination_gives_length_finish(self) -> None:
+        """Pre-PR strictness: only stop-sequence termination is reported as
+        ``finish_reason=stop``. EOS-only termination (RoleColon base-model
+        case) maps to ``length`` so this provider is unchanged by the #685
+        renderer fix. See provider.py:175."""
+        result = _make_sampling_result(termination=ParseTermination.EOS)
         d = _sampling_result_to_chat_completion_dict(result)
         assert d["choices"][0]["finish_reason"] == "length"
 
@@ -216,7 +231,7 @@ class TestSampleChatCompletion:
         renderer.get_stop_sequences.return_value = ["<|endoftext|>"]
         renderer.parse_response.return_value = (
             {"role": "assistant", "content": "response"},
-            True,
+            ParseTermination.STOP_SEQUENCE,
         )
 
         result = await _sample_chat_completion(
@@ -229,7 +244,7 @@ class TestSampleChatCompletion:
 
         assert result.prompt_token_ids == [1, 2, 3]
         assert result.completion_token_ids == [10, 20, 30]
-        assert result.parse_success is True
+        assert result.termination.is_clean
         assert result.parsed_message["content"] == "response"
 
         # Verify sampling params were passed correctly
@@ -254,7 +269,7 @@ class TestSampleChatCompletion:
         ]
         renderer.parse_response.return_value = (
             {"role": "assistant", "content": "done"},
-            True,
+            ParseTermination.STOP_SEQUENCE,
         )
 
         tools = [
@@ -271,7 +286,7 @@ class TestSampleChatCompletion:
         )
 
         renderer.create_conversation_prefix_with_tools.assert_called_once()
-        assert result.parse_success is True
+        assert result.termination.is_clean
 
     @pytest.mark.asyncio
     async def test_custom_stop_sequences(self) -> None:
@@ -286,7 +301,7 @@ class TestSampleChatCompletion:
         renderer.build_generation_prompt.return_value.to_ints.return_value = [1]
         renderer.parse_response.return_value = (
             {"role": "assistant", "content": "ok"},
-            True,
+            ParseTermination.STOP_SEQUENCE,
         )
 
         await _sample_chat_completion(
@@ -426,7 +441,7 @@ class TestTinkerLiteLLMProvider:
         mock_renderer.get_stop_sequences.return_value = ["<|end|>"]
         mock_renderer.parse_response.return_value = (
             {"role": "assistant", "content": "Hello!"},
-            True,
+            ParseTermination.STOP_SEQUENCE,
         )
 
         provider._clients["Qwen/Qwen3-8B"] = _ClientBundle(
