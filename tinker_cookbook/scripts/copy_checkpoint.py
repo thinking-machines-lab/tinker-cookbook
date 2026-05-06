@@ -44,7 +44,7 @@ def copy_checkpoint(
     #     weights_access_token=source_api_key,
     #     user_metadata={"copied_from_path": source_path},
     # )
-    
+
     source_client = tinker.ServiceClient(api_key=source_api_key)
     weights_info = source_client.create_rest_client().get_weights_info_by_tinker_path(
         source_path
