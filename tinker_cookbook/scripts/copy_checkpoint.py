@@ -12,7 +12,6 @@ a training client.
 """
 
 import argparse
-import asyncio
 import re
 
 import tinker
@@ -21,7 +20,7 @@ CHECKPOINT_NAME_RE = re.compile(r"/(?:weights|sampler_weights)/([^/]+)$")
 TRAINING_WEIGHTS_PATH_RE = re.compile(r"/weights/[^/]+$")
 
 
-async def copy_checkpoint(
+def copy_checkpoint(
     source_path: str,
     source_api_key: str,
     destination_api_key: str,
@@ -39,9 +38,9 @@ async def copy_checkpoint(
     # TODO: replace with create_training_client_from_state_async once the SDK
     # handles token-scoped checkpoint metadata lookup.
     source_client = tinker.ServiceClient(api_key=source_api_key)
-    weights_info = await source_client.create_rest_client().get_weights_info_by_tinker_path(
+    weights_info = source_client.create_rest_client().get_weights_info_by_tinker_path(
         source_path
-    )
+    ).result()
     if not weights_info.is_lora or weights_info.lora_rank is None:
         raise SystemExit(
             f"Source checkpoint {source_path!r} is not a LoRA run; "
@@ -49,7 +48,7 @@ async def copy_checkpoint(
         )
 
     destination_client = tinker.ServiceClient(api_key=destination_api_key)
-    training_client = await destination_client.create_lora_training_client_async(
+    training_client = destination_client.create_lora_training_client(
         base_model=weights_info.base_model,
         rank=weights_info.lora_rank,
         train_mlp=weights_info.train_mlp if weights_info.train_mlp is not None else True,
@@ -60,17 +59,14 @@ async def copy_checkpoint(
         user_metadata={"copied_from_path": source_path},
     )
 
-    load_future = await training_client.load_state_async(
-        source_path, weights_access_token=source_api_key
-    )
-    await load_future.result_async()
+    training_client.load_state(source_path, weights_access_token=source_api_key).result()
 
     if output_kind == "training":
-        future = await training_client.save_state_async(name)
-        print(f"training_path: {(await future.result_async()).path}")
+        future = training_client.save_state(name)
+        print(f"training_path: {future.result().path}")
     if output_kind == "sampler":
-        future = await training_client.save_weights_for_sampler_async(name)
-        print(f"sampler_path:  {(await future.result_async()).path}")
+        future = training_client.save_weights_for_sampler(name)
+        print(f"sampler_path:  {future.result().path}")
 
 
 def checkpoint_name_from_path(source_path: str) -> str:
@@ -104,14 +100,12 @@ def main() -> None:
         help="What to save in the destination account.",
     )
     args = parser.parse_args()
-    asyncio.run(
-        copy_checkpoint(
-            args.source_path,
-            args.source_api_key,
-            args.destination_api_key,
-            args.output_name,
-            args.output_kind,
-        )
+    copy_checkpoint(
+        args.source_path,
+        args.source_api_key,
+        args.destination_api_key,
+        args.output_name,
+        args.output_kind,
     )
 
 
