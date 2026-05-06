@@ -85,8 +85,12 @@ async def evaluate_task(
     start = time.monotonic()
     env_dir = task.task_dir / "environment"
 
-    sandbox = await sandbox_factory(env_dir, config.sandbox_timeout)
+    # NB: sandbox_factory is inside the try/except. If sandbox creation
+    # raises (image build OOM, fishbowl timeout, etc.) the exception would
+    # otherwise escape to asyncio.gather and cancel every in-flight task.
+    sandbox = None
     try:
+        sandbox = await sandbox_factory(env_dir, config.sandbox_timeout)
         bash_tool = HarborBashTool(sandbox, command_timeout=config.command_timeout)
         reward_fn = HarborReward(
             tests_dir=task.task_dir / "tests",
@@ -134,10 +138,11 @@ async def evaluate_task(
             error=str(e),
         )
     finally:
-        try:
-            await sandbox.cleanup()
-        except Exception as e:
-            logger.warning("Sandbox cleanup failed for %s: %s", task.task_name, e)
+        if sandbox is not None:
+            try:
+                await sandbox.cleanup()
+            except Exception as e:
+                logger.warning("Sandbox cleanup failed for %s: %s", task.task_name, e)
 
     # Write results to files immediately
     status = "ERROR" if result.error else ("PASS" if result.reward > 0 else "FAIL")
