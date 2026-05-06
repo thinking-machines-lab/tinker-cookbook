@@ -16,7 +16,7 @@ import re
 
 import tinker
 
-CHECKPOINT_NAME_RE = re.compile(r"/(?:weights|sampler_weights)/([^/]+)$")
+CHECKPOINT_NAME_RE = re.compile(r"/weights/([^/]+)$")
 TRAINING_WEIGHTS_PATH_RE = re.compile(r"/weights/[^/]+$")
 
 
@@ -35,8 +35,16 @@ def copy_checkpoint(
         )
     name = output_name or checkpoint_name_from_path(source_path)
 
-    # TODO: replace with create_training_client_from_state_async once the SDK
-    # handles token-scoped checkpoint metadata lookup.
+    # TODO: once token-scoped metadata lookup works in the SDK, replace this
+    # manual setup with:
+
+    # destination_client = tinker.ServiceClient(api_key=destination_api_key)
+    # training_client = destination_client.create_training_client_from_state(
+    #     source_path,
+    #     weights_access_token=source_api_key,
+    #     user_metadata={"copied_from_path": source_path},
+    # )
+    
     source_client = tinker.ServiceClient(api_key=source_api_key)
     weights_info = source_client.create_rest_client().get_weights_info_by_tinker_path(
         source_path
@@ -64,7 +72,7 @@ def copy_checkpoint(
     if output_kind == "training":
         future = training_client.save_state(name)
         print(f"training_path: {future.result().path}")
-    if output_kind == "sampler":
+    elif output_kind == "sampler":
         future = training_client.save_weights_for_sampler(name)
         print(f"sampler_path:  {future.result().path}")
 
