@@ -56,9 +56,9 @@ def copy_checkpoint(
     # )
 
     source_client = tinker.ServiceClient(api_key=source_api_key)
-    weights_info = source_client.create_rest_client().get_weights_info_by_tinker_path(
-        source_path
-    ).result()
+    weights_info = (
+        source_client.create_rest_client().get_weights_info_by_tinker_path(source_path).result()
+    )
     if not weights_info.is_lora or weights_info.lora_rank is None:
         raise SystemExit(
             f"Source checkpoint {source_path!r} is not a LoRA run; "
@@ -91,8 +91,7 @@ def checkpoint_name_from_path(source_path: str) -> str:
     match = CHECKPOINT_NAME_RE.search(source_path)
     if match is None:
         raise SystemExit(
-            f"Could not derive a checkpoint name from {source_path!r}; "
-            "pass --output-name."
+            f"Could not derive a checkpoint name from {source_path!r}; pass --output-name."
         )
     return match.group(1)
 
