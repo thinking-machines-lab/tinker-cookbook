@@ -28,7 +28,6 @@ async def copy_checkpoint(
     output_name: str | None,
     output_kind: str,
 ) -> None:
-    # Ensure the source path is a trainable weights checkpoint.
     if not TRAINING_WEIGHTS_PATH_RE.search(source_path):
         raise SystemExit(
             f"Source path must be a tinker://.../weights/<name> checkpoint, "
@@ -37,8 +36,8 @@ async def copy_checkpoint(
         )
     name = output_name or checkpoint_name_from_path(source_path)
 
-    # TODO: use create_training_client_from_state_async once tinker SDK fixes
-    # ServiceClient._get_rest_client_for_weights (duplicate kwarg in <=0.18.2).
+    # TODO: replace with create_training_client_from_state_async once the SDK
+    # handles token-scoped checkpoint metadata lookup.
     source_client = tinker.ServiceClient(api_key=source_api_key)
     weights_info = await source_client.create_rest_client().get_weights_info_by_tinker_path(
         source_path
@@ -72,6 +71,7 @@ async def copy_checkpoint(
     if output_kind == "sampler":
         future = await training_client.save_weights_for_sampler_async(name)
         print(f"sampler_path:  {(await future.result_async()).path}")
+
 
 def checkpoint_name_from_path(source_path: str) -> str:
     match = CHECKPOINT_NAME_RE.search(source_path)
