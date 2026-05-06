@@ -1,14 +1,24 @@
 """Copy trainable Tinker weights from one account into another.
 
+This creates a fresh LoRA training run under the destination account, loads the
+source checkpoint using the source account's API key as `weights_access_token`,
+and saves a new destination-owned checkpoint.
+
+Note: this only works for trainable `weights/...` checkpoints, not sampler-only
+`sampler_weights/...` checkpoints.
+
 Usage:
+    export SRC_TINKER_API_KEY=...   # owns the source checkpoint
+    export DST_TINKER_API_KEY=...   # owns the copied checkpoint
+
     python -m tinker_cookbook.scripts.copy_checkpoint \\
         --source-path tinker://<run-id>:train:0/weights/<name> \\
         --source-api-key "$SRC_TINKER_API_KEY" \\
         --destination-api-key "$DST_TINKER_API_KEY"
+    # sampler_path: tinker://<new-run-id>:train:0/sampler_weights/<name>
 
-The source path must be a `.../weights/<name>` checkpoint from `save_state`.
-Sampler-only checkpoints (`.../sampler_weights/<name>`) cannot be loaded into
-a training client.
+By default, this script saves sampler weights; pass `--output-kind training` to
+save a trainable `weights/...` checkpoint instead.
 """
 
 import argparse
