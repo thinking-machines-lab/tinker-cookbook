@@ -34,6 +34,10 @@ We provide the following examples:
 
 These examples are located in each subfolder, and their `README.md` file will walk you through the key implementation details, the commands to run them, and the expected performance.
 
+## Operational Utilities
+
+- **[Cross-account checkpoint copy](./cross_account_checkpoint/)**: copy a Tinker checkpoint between two accounts (e.g. across organizations or between a service account and a developer account) using two API keys. Produces a fresh `tinker://` path that the destination account fully owns, so downstream sampling/training only needs the destination key at runtime.
+
 ### Logging and Recovering From Training Interruptions
 
 Our examples support the following CLI arguments to log the results.
