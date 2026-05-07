@@ -143,68 +143,102 @@ def _get_hidden_size(model_name: str) -> int:
     return hidden_size
 
 
+# Per-model LoRA parameter counts at rank=1, broken down by which submodules
+# are LoRA-adapted. Total params = lora_rank * sum of selected components.
+#
+# The four components correspond to Tinker's create_lora_training_client flags:
+#   "mlp"            -> trained when train_mlp=True
+#   "attn"           -> trained when train_attn=True
+#   "unembed"        -> trained when train_unembed=True
+#   "mlp_attn_extra" -> trained only when train_mlp=True AND train_attn=True
+#                       (NemotronH-specific: SSM/Mamba state matrices that count
+#                       as joint MLP-attention components in Tinker's adapter
+#                       layout). Defaults to 0 when omitted.
+#
+# To refresh these counts (e.g., when a new model ships), ask a Tinker team
+# member to re-run the measurement script.
+_LORA_PARAMS_PER_RANK_BY_COMPONENT: dict[str, dict[str, int]] = {
+    "Qwen/Qwen3-235B-A22B-Instruct-2507": {"mlp": 56_598_528, "attn": 3_176_448, "unembed": 156_032},
+    "Qwen/Qwen3-30B-A3B": {"mlp": 14_450_688, "attn": 835_584, "unembed": 153_984},
+    "Qwen/Qwen3-30B-A3B-Base": {"mlp": 14_450_688, "attn": 835_584, "unembed": 153_984},
+    "Qwen/Qwen3-30B-A3B-Instruct-2507": {"mlp": 14_450_688, "attn": 835_584, "unembed": 153_984},
+    "Qwen/Qwen3-32B": {"mlp": 5_898_240, "attn": 2_490_368, "unembed": 157_056},
+    "Qwen/Qwen3-4B-Instruct-2507": {"mlp": 1_327_104, "attn": 737_280, "unembed": 154_496},
+    "Qwen/Qwen3-8B": {"mlp": 1_769_472, "attn": 958_464, "unembed": 156_032},
+    "Qwen/Qwen3-8B-Base": {"mlp": 1_769_472, "attn": 958_464, "unembed": 156_032},
+    "Qwen/Qwen3-VL-235B-A22B-Instruct": {"mlp": 56_598_528, "attn": 3_176_448, "unembed": 156_032},
+    "Qwen/Qwen3-VL-30B-A3B-Instruct": {"mlp": 14_450_688, "attn": 835_584, "unembed": 153_984},
+    "Qwen/Qwen3.5-27B": {"mlp": 4_325_376, "attn": 2_965_504, "unembed": 253_440},
+    "Qwen/Qwen3.5-35B-A3B": {"mlp": 16_281_600, "attn": 1_013_760, "unembed": 250_368},
+    "Qwen/Qwen3.5-397B-A17B": {"mlp": 96_030_720, "attn": 2_841_600, "unembed": 252_416},
+    "Qwen/Qwen3.5-4B": {"mlp": 1_130_496, "attn": 897_024, "unembed": 250_880},
+    "Qwen/Qwen3.6-27B": {"mlp": 4_325_376, "attn": 2_965_504, "unembed": 253_440},
+    "Qwen/Qwen3.6-35B-A3B": {"mlp": 16_281_600, "attn": 1_013_760, "unembed": 250_368},
+    "deepseek-ai/DeepSeek-V3.1": {"mlp": 94_307_328, "attn": 2_440_000, "unembed": 136_448},
+    "deepseek-ai/DeepSeek-V3.1-Base": {"mlp": 94_307_328, "attn": 2_440_000, "unembed": 136_448},
+    "meta-llama/Llama-3.1-70B": {"mlp": 8_847_360, "attn": 4_096_000, "unembed": 136_448},
+    "meta-llama/Llama-3.1-8B": {"mlp": 1_769_472, "attn": 851_968, "unembed": 132_352},
+    "meta-llama/Llama-3.1-8B-Instruct": {"mlp": 1_769_472, "attn": 851_968, "unembed": 132_352},
+    "meta-llama/Llama-3.2-1B": {"mlp": 491_520, "attn": 212_992, "unembed": 130_304},
+    "meta-llama/Llama-3.2-3B": {"mlp": 946_176, "attn": 573_440, "unembed": 131_328},
+    "meta-llama/Llama-3.3-70B-Instruct": {"mlp": 8_847_360, "attn": 4_096_000, "unembed": 136_448},
+    "moonshotai/Kimi-K2-Thinking": {"mlp": 144_583_680, "attn": 1_940_288, "unembed": 171_008},
+    "moonshotai/Kimi-K2.5": {"mlp": 144_583_680, "attn": 1_940_288, "unembed": 171_008},
+    "moonshotai/Kimi-K2.6": {"mlp": 144_583_680, "attn": 1_940_288, "unembed": 171_008},
+    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": {
+        "mlp": 493_312, "attn": 259_200, "unembed": 133_760, "mlp_attn_extra": 11_178_496
+    },
+    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": {
+        "mlp": 2_783_744, "attn": 532_480, "unembed": 135_168, "mlp_attn_extra": 109_708_800
+    },
+    "openai/gpt-oss-120b": {"mlp": 40_124_160, "attn": 746_496, "unembed": 203_968},
+    "openai/gpt-oss-20b": {"mlp": 6_842_880, "attn": 497_664, "unembed": 203_968},
+}
+
+
 def get_lora_param_count(
     model_name: str,
     lora_rank: int = 32,
-    detailed: bool = False,
-    include_experts: bool = True,
-    shared_expert_outer_loras: bool = True,
-) -> int | dict[str, int]:
+    train_mlp: bool = True,
+    train_attn: bool = True,
+    train_unembed: bool = True,
+) -> int:
     """Get the number of parameters in the LoRA adapter.
 
+    Mirrors the signature of ``ServiceClient.create_lora_training_client``: the
+    returned count reflects exactly which submodules will be adapted.
+
     Args:
-        model_name: HuggingFace model identifier.
+        model_name: Tinker base model identifier.
         lora_rank: Rank of the LoRA decomposition.
-        detailed: If True, return a dict with expert/non-expert/total breakdowns.
-        include_experts: Whether to include MoE expert layers in the count.
-        shared_expert_outer_loras: If True, count shared outer dimensions only once
-            across experts (reflects actual parameter sharing).
+        train_mlp: Whether MLP layers are LoRA-trained.
+        train_attn: Whether attention layers are LoRA-trained.
+        train_unembed: Whether the unembedding (LM head) is LoRA-trained.
 
     Returns:
-        Total parameter count as an int, or a detailed breakdown dict if ``detailed`` is True.
+        Total trainable parameter count.
     """
-
-    dim_sum = 0
-    dim_sum_experts = 0
-    ignore = ["gate", "embed_tokens", "q_b_proj", "kv_b_proj"]
-    if not include_experts:
-        ignore.append("experts")
-
-    for name, shape in _list_param_shapes_from_safetensors_remote(model_name).items():
-        if (
-            len(shape) == 2
-            and name.endswith(".weight")
-            and not any(v in name.split(".") for v in ignore)
-        ):
-            parts = name.split(".")
-            if "experts" not in parts or not shared_expert_outer_loras:
-                dim_sum += shape[0] + shape[1]
-            else:
-                # For expert shared outer_loras, we only count the outer dims once, since they are shared across experts
-                expert_idx = int(parts[parts.index("experts") + 1])
-                weight_name = parts[parts.index("experts") + 2]
-                assert weight_name in ["gate_proj", "down_proj", "up_proj"], (
-                    f"Unexpected expert weight name: {weight_name}"
-                )
-                intermediate_dim = shape[1] if weight_name == "down_proj" else shape[0]
-                outer_dim = shape[0] if weight_name == "down_proj" else shape[1]
-
-                dim_sum_experts += intermediate_dim
-                if expert_idx == 0:
-                    dim_sum_experts += outer_dim
-
-    non_expert_params = lora_rank * dim_sum
-    expert_params = lora_rank * dim_sum_experts
-
-    return (
-        (expert_params + non_expert_params)
-        if not detailed
-        else {
-            "expert_params": expert_params,
-            "non_expert_params": non_expert_params,
-            "total_params": expert_params + non_expert_params,
-        }
-    )
+    if not (train_mlp or train_attn or train_unembed):
+        raise ValueError(
+            "At least one of train_mlp, train_attn, or train_unembed must be True."
+        )
+    if model_name not in _LORA_PARAMS_PER_RANK_BY_COMPONENT:
+        raise ConfigurationError(
+            f"No LoRA parameter count baked in for {model_name!r}. "
+            f"Ask a Tinker team member to refresh the lookup table."
+        )
+    components = _LORA_PARAMS_PER_RANK_BY_COMPONENT[model_name]
+    per_rank = 0
+    if train_mlp:
+        per_rank += components["mlp"]
+    if train_attn:
+        per_rank += components["attn"]
+    if train_unembed:
+        per_rank += components["unembed"]
+    if train_mlp and train_attn:
+        # NemotronH SSM/Mamba components only adapted when both flags are on.
+        per_rank += components.get("mlp_attn_extra", 0)
+    return per_rank * lora_rank
 
 
 def get_lr(model_name: str, is_lora: bool = True) -> float:
