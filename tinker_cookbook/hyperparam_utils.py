@@ -158,7 +158,11 @@ def _get_hidden_size(model_name: str) -> int:
 # To refresh these counts (e.g., when a new model ships), ask a Tinker team
 # member to re-run the measurement script.
 _LORA_PARAMS_PER_RANK_BY_COMPONENT: dict[str, dict[str, int]] = {
-    "Qwen/Qwen3-235B-A22B-Instruct-2507": {"mlp": 56_598_528, "attn": 3_176_448, "unembed": 156_032},
+    "Qwen/Qwen3-235B-A22B-Instruct-2507": {
+        "mlp": 56_598_528,
+        "attn": 3_176_448,
+        "unembed": 156_032,
+    },
     "Qwen/Qwen3-30B-A3B": {"mlp": 14_450_688, "attn": 835_584, "unembed": 153_984},
     "Qwen/Qwen3-30B-A3B-Base": {"mlp": 14_450_688, "attn": 835_584, "unembed": 153_984},
     "Qwen/Qwen3-30B-A3B-Instruct-2507": {"mlp": 14_450_688, "attn": 835_584, "unembed": 153_984},
@@ -186,10 +190,16 @@ _LORA_PARAMS_PER_RANK_BY_COMPONENT: dict[str, dict[str, int]] = {
     "moonshotai/Kimi-K2.5": {"mlp": 144_583_680, "attn": 1_940_288, "unembed": 171_008},
     "moonshotai/Kimi-K2.6": {"mlp": 144_583_680, "attn": 1_940_288, "unembed": 171_008},
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": {
-        "mlp": 493_312, "attn": 259_200, "unembed": 133_760, "mlp_attn_extra": 11_178_496
+        "mlp": 493_312,
+        "attn": 259_200,
+        "unembed": 133_760,
+        "mlp_attn_extra": 11_178_496,
     },
     "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": {
-        "mlp": 2_783_744, "attn": 532_480, "unembed": 135_168, "mlp_attn_extra": 109_708_800
+        "mlp": 2_783_744,
+        "attn": 532_480,
+        "unembed": 135_168,
+        "mlp_attn_extra": 109_708_800,
     },
     "openai/gpt-oss-120b": {"mlp": 40_124_160, "attn": 746_496, "unembed": 203_968},
     "openai/gpt-oss-20b": {"mlp": 6_842_880, "attn": 497_664, "unembed": 203_968},
@@ -219,9 +229,7 @@ def get_lora_param_count(
         Total trainable parameter count.
     """
     if not (train_mlp or train_attn or train_unembed):
-        raise ValueError(
-            "At least one of train_mlp, train_attn, or train_unembed must be True."
-        )
+        raise ValueError("At least one of train_mlp, train_attn, or train_unembed must be True.")
     if model_name not in _LORA_PARAMS_PER_RANK_BY_COMPONENT:
         raise ConfigurationError(
             f"No LoRA parameter count baked in for {model_name!r}. "
