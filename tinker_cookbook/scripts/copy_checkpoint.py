@@ -46,9 +46,9 @@ def copy_checkpoint(
     destination_client = tinker.ServiceClient()
     tinker_version = importlib.metadata.version("tinker").split(".")
 
-    # SDK >=0.18.3 can fetch source checkpoint metadata with weights_access_token and is preferred.
+    # SDK >=0.19.0 can fetch source checkpoint metadata with weights_access_token and is preferred.
     # Older SDKs need the manual metadata lookup below.
-    if (int(tinker_version[0]), int(tinker_version[1]), int(tinker_version[2])) >= (0, 18, 3):
+    if (int(tinker_version[0]), int(tinker_version[1]), int(tinker_version[2])) >= (0, 19, 0):
         training_client = destination_client.create_training_client_from_state(
             source_path,
             weights_access_token=source_access_token,
