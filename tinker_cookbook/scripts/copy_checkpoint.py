@@ -1,8 +1,7 @@
-"""Copy trainable Tinker weights from one account into another.
+"""Copy trainable Tinker weights into the currently authenticated account.
 
-This copies a trainable Tinker checkpoint into the destination account by
-loading the source weights with an access token and saving them as a new
-destination-owned checkpoint.
+This copies a trainable Tinker checkpoint by loading the source weights with an
+access token and saving them as a new destination-owned checkpoint.
 
 Note: this only works for trainable `weights/...` checkpoints, not sampler-only
 `sampler_weights/...` checkpoints.
@@ -14,7 +13,7 @@ Usage:
     python -m tinker_cookbook.scripts.copy_checkpoint \\
         --source-path tinker://<run-id>:train:0/weights/<name> \\
         --source-access-token "$SRC_TINKER_ACCESS_TOKEN"
-    # sampler_path: tinker://<new-run-id>:train:0/sampler_weights/<name>
+    # Prints: sampler_path: tinker://<new-run-id>:train:0/sampler_weights/<name>
 
 By default, this script saves sampler weights; pass `--output-kind training` to
 save a trainable `weights/...` checkpoint instead.
@@ -58,9 +57,7 @@ def copy_checkpoint(
     else:
         source_client = tinker.ServiceClient(api_key=source_access_token)
         weights_info = (
-            source_client.create_rest_client()
-            .get_weights_info_by_tinker_path(source_path)
-            .result()
+            source_client.create_rest_client().get_weights_info_by_tinker_path(source_path).result()
         )
         if weights_info.lora_rank is None:
             raise SystemExit(
