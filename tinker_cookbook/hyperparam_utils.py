@@ -146,14 +146,10 @@ def _get_hidden_size(model_name: str) -> int:
 # Per-model LoRA parameter counts at rank=1, broken down by which submodules
 # are LoRA-adapted. Total params = lora_rank * sum of selected components.
 #
-# The four components correspond to Tinker's create_lora_training_client flags:
-#   "mlp"            -> trained when train_mlp=True
-#   "attn"           -> trained when train_attn=True
-#   "unembed"        -> trained when train_unembed=True
-#   "mlp_attn_extra" -> trained only when train_mlp=True AND train_attn=True
-#                       (NemotronH-specific: SSM/Mamba state matrices that count
-#                       as joint MLP-attention components in Tinker's adapter
-#                       layout). Defaults to 0 when omitted.
+# The three components correspond to Tinker's create_lora_training_client flags:
+#   "mlp"     -> trained when train_mlp=True
+#   "attn"    -> trained when train_attn=True
+#   "unembed" -> trained when train_unembed=True
 #
 # To refresh these counts (e.g., when a new model ships), ask a Tinker team
 # member to re-run the measurement script.
@@ -190,16 +186,14 @@ _LORA_PARAMS_PER_RANK_BY_COMPONENT: dict[str, dict[str, int]] = {
     "moonshotai/Kimi-K2.5": {"mlp": 144_583_680, "attn": 1_940_288, "unembed": 171_008},
     "moonshotai/Kimi-K2.6": {"mlp": 144_583_680, "attn": 1_940_288, "unembed": 171_008},
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": {
-        "mlp": 493_312,
-        "attn": 259_200,
+        "mlp": 11_346_176,
+        "attn": 584_832,
         "unembed": 133_760,
-        "mlp_attn_extra": 11_178_496,
     },
     "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": {
-        "mlp": 2_783_744,
-        "attn": 532_480,
+        "mlp": 111_349_760,
+        "attn": 1_675_264,
         "unembed": 135_168,
-        "mlp_attn_extra": 109_708_800,
     },
     "openai/gpt-oss-120b": {"mlp": 40_124_160, "attn": 746_496, "unembed": 203_968},
     "openai/gpt-oss-20b": {"mlp": 6_842_880, "attn": 497_664, "unembed": 203_968},
@@ -243,9 +237,6 @@ def get_lora_param_count(
         per_rank += components["attn"]
     if train_unembed:
         per_rank += components["unembed"]
-    if train_mlp and train_attn:
-        # NemotronH SSM/Mamba components only adapted when both flags are on.
-        per_rank += components.get("mlp_attn_extra", 0)
     return per_rank * lora_rank
 
 
