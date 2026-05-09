@@ -131,10 +131,13 @@ class TestHarborReward:
         assert info["grading_error"] == 1.0
 
     def test_upload_tests(self, tmp_path: Path) -> None:
-        """Files are uploaded; .sh files marked executable; subdirs skipped."""
+        """Files are uploaded recursively; .sh files marked executable."""
         (tmp_path / "test.sh").write_text("#!/bin/bash\necho ok")
         (tmp_path / "helper.py").write_text("print('hi')")
-        (tmp_path / "subdir").mkdir()
+        (tmp_path / "fixtures").mkdir()
+        (tmp_path / "fixtures" / "expected.txt").write_text("expected")
+        (tmp_path / "fixtures" / "nested").mkdir()
+        (tmp_path / "fixtures" / "nested" / "deep.py").write_text("# deep")
 
         sandbox = FakeSandbox()
         sandbox.files["/logs/verifier/reward.txt"] = "1.0"
@@ -144,10 +147,11 @@ class TestHarborReward:
 
         assert "/tests/test.sh" in sandbox.files
         assert "/tests/helper.py" in sandbox.files
+        assert "/tests/fixtures/expected.txt" in sandbox.files
+        assert "/tests/fixtures/nested/deep.py" in sandbox.files
         assert "/tests/test.sh" in sandbox.executable_files
         assert "/tests/helper.py" not in sandbox.executable_files
-        # subdir should not be uploaded
-        assert not any("subdir" in p for p in sandbox.files if p.startswith("/tests/"))
+        assert "/tests/fixtures/expected.txt" not in sandbox.executable_files
 
 
 # ---------------------------------------------------------------------------
