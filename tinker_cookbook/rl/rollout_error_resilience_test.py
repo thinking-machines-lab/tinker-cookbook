@@ -23,6 +23,7 @@ from tinker_cookbook.rl.rollouts import (
     RolloutErrorCounter,
     _do_group_rollout_and_filter_constant_reward_impl,
     do_group_rollout,
+    set_rollout_executor,
 )
 from tinker_cookbook.rl.types import (
     Env,
@@ -417,6 +418,16 @@ class TestImplErrorHandling:
                     train.main(_train_config(max_concurrent_samples=1), rollout_executor=executor)
                 )
         finally:
+            executor.shutdown(wait=False)
+
+    def test_train_main_rejects_active_rollout_executor_with_sample_cap_before_startup(self):
+        executor = ThreadPoolExecutor(max_workers=1)
+        try:
+            set_rollout_executor(executor)
+            with pytest.raises(ConfigurationError, match="not supported with rollout_executor"):
+                asyncio.run(train.main(_train_config(max_concurrent_samples=1)))
+        finally:
+            set_rollout_executor(None)
             executor.shutdown(wait=False)
 
     def test_sample_semaphore_limits_concurrent_policy_calls(self):

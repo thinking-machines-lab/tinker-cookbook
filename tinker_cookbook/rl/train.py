@@ -54,6 +54,7 @@ from tinker_cookbook.rl.rollouts import (
     RolloutErrorCounter,
     do_group_rollout,  # noqa: F401 — re-exported for verifiers monkey-patching
     do_group_rollout_and_filter_constant_reward,
+    get_rollout_executor,
     set_rollout_executor,
 )
 from tinker_cookbook.rl.types import (
@@ -1865,7 +1866,10 @@ async def main(
         raise ConfigurationError(
             f"max_concurrent_samples must be positive, got {config.max_concurrent_samples}"
         )
-    if rollout_executor is not None and config.max_concurrent_samples is not None:
+    effective_rollout_executor = (
+        rollout_executor if rollout_executor is not None else get_rollout_executor()
+    )
+    if effective_rollout_executor is not None and config.max_concurrent_samples is not None:
         raise ConfigurationError(
             "max_concurrent_samples is not supported with rollout_executor. "
             "The sampling cap uses an in-process asyncio.Semaphore and cannot "
