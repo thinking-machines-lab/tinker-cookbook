@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import pickle
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
+import chz
 import pytest
 import tinker
 
 from tinker_cookbook.completers import TokenCompleter, TokensWithLogprobs
 from tinker_cookbook.exceptions import AllTrajectoriesFailedError, ConfigurationError
+from tinker_cookbook.rl import train
 from tinker_cookbook.rl.rollout_strategy import (
     FailFast,
     RetryOnFailure,
@@ -24,6 +27,8 @@ from tinker_cookbook.rl.rollouts import (
 from tinker_cookbook.rl.types import (
     Env,
     EnvGroupBuilder,
+    RLDataset,
+    RLDatasetBuilder,
     RolloutError,
     StepResult,
     Trajectory,
@@ -114,6 +119,31 @@ class _ConcurrencyTrackingSamplingClient:
             return _FakeSampleResponse()
         finally:
             self.active -= 1
+
+
+class _EmptyDataset(RLDataset):
+    def get_batch(self, index):
+        return []
+
+    def __len__(self):
+        return 0
+
+
+@chz.chz
+class _EmptyDatasetBuilder(RLDatasetBuilder):
+    async def __call__(self):
+        return _EmptyDataset(), None
+
+
+def _train_config(**kwargs):
+    return train.Config(
+        learning_rate=1e-5,
+        dataset_builder=_EmptyDatasetBuilder(),
+        model_name="meta-llama/Llama-3.1-8B-Instruct",
+        max_tokens=8,
+        log_path="/tmp/tinker-train-test",
+        **kwargs,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -375,6 +405,20 @@ class TestRetryOnFailureStrategy:
 
 
 class TestImplErrorHandling:
+    def test_train_main_rejects_nonpositive_sample_cap_before_startup(self):
+        with pytest.raises(ConfigurationError, match="max_concurrent_samples must be positive"):
+            asyncio.run(train.main(_train_config(max_concurrent_samples=-1)))
+
+    def test_train_main_rejects_executor_with_sample_cap_before_startup(self):
+        executor = ThreadPoolExecutor(max_workers=1)
+        try:
+            with pytest.raises(ConfigurationError, match="not supported with rollout_executor"):
+                asyncio.run(
+                    train.main(_train_config(max_concurrent_samples=1), rollout_executor=executor)
+                )
+        finally:
+            executor.shutdown(wait=False)
+
     def test_sample_semaphore_limits_concurrent_policy_calls(self):
         builder = _FakeEnvGroupBuilder(n_envs=5)
         sampling_client = _ConcurrencyTrackingSamplingClient()

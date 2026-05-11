@@ -523,19 +523,6 @@ class Config:
     max_steps: int | None = None
 
 
-def _validate_rollout_execution_config(config: Config, rollout_executor: Executor | None) -> None:
-    if config.max_concurrent_samples is not None and config.max_concurrent_samples <= 0:
-        raise ConfigurationError(
-            f"max_concurrent_samples must be positive, got {config.max_concurrent_samples}"
-        )
-    if rollout_executor is not None and config.max_concurrent_samples is not None:
-        raise ConfigurationError(
-            "max_concurrent_samples is not supported with rollout_executor. "
-            "The sampling cap uses an in-process asyncio.Semaphore and cannot "
-            "coordinate sampling across executor workers."
-        )
-
-
 @trace.scope
 async def run_single_evaluation(
     evaluator: SamplingClientEvaluator,
@@ -1874,7 +1861,16 @@ async def main(
         asyncio.run(main(config=config))
     """
 
-    _validate_rollout_execution_config(config, rollout_executor)
+    if config.max_concurrent_samples is not None and config.max_concurrent_samples <= 0:
+        raise ConfigurationError(
+            f"max_concurrent_samples must be positive, got {config.max_concurrent_samples}"
+        )
+    if rollout_executor is not None and config.max_concurrent_samples is not None:
+        raise ConfigurationError(
+            "max_concurrent_samples is not supported with rollout_executor. "
+            "The sampling cap uses an in-process asyncio.Semaphore and cannot "
+            "coordinate sampling across executor workers."
+        )
 
     if rollout_executor is not None:
         set_rollout_executor(rollout_executor)
