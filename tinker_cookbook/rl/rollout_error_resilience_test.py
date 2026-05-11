@@ -90,6 +90,32 @@ class _FakeEnvGroupBuilder(EnvGroupBuilder):
         return [_FakeEnv() for _ in range(self.n_envs)]
 
 
+class _FakeSampleSequence:
+    tokens = [4, 5]
+    logprobs = [0.1, 0.2]
+    stop_reason = "stop"
+
+
+class _FakeSampleResponse:
+    sequences = [_FakeSampleSequence()]
+
+
+class _ConcurrencyTrackingSamplingClient:
+    def __init__(self, delay: float = 0.01):
+        self.delay = delay
+        self.active = 0
+        self.max_active = 0
+
+    async def sample_async(self, *args, **kwargs):
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            await asyncio.sleep(self.delay)
+            return _FakeSampleResponse()
+        finally:
+            self.active -= 1
+
+
 # ---------------------------------------------------------------------------
 # rollout_strategy_from_config tests
 # ---------------------------------------------------------------------------
@@ -349,6 +375,25 @@ class TestRetryOnFailureStrategy:
 
 
 class TestImplErrorHandling:
+    def test_sample_semaphore_limits_concurrent_policy_calls(self):
+        builder = _FakeEnvGroupBuilder(n_envs=5)
+        sampling_client = _ConcurrencyTrackingSamplingClient()
+
+        result = asyncio.run(
+            _do_group_rollout_and_filter_constant_reward_impl(
+                sampling_client,  # type: ignore[arg-type]
+                builder,
+                max_tokens=100,
+                temperature=1.0,
+                do_remove_constant_reward_groups=False,
+                sample_semaphore=asyncio.Semaphore(2),
+            )
+        )
+
+        assert result is not None
+        assert len(result.trajectories_G) == 5
+        assert sampling_client.max_active == 2
+
     def test_fail_fast_propagates_error(self):
         builder = _FakeEnvGroupBuilder(n_envs=2)
         sampling_client = MagicMock(spec=tinker.SamplingClient)

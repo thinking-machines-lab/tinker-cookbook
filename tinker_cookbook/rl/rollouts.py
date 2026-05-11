@@ -349,6 +349,7 @@ async def do_group_rollout_and_filter_constant_reward(
     do_remove_constant_reward_groups: bool,
     enable_logging: bool = True,
     strategy: RolloutStrategy | None = None,
+    sample_semaphore: asyncio.Semaphore | None = None,
 ) -> TrajectoryGroup | None:
     """Run a group rollout, optionally dispatching to an external executor.
 
@@ -376,6 +377,9 @@ async def do_group_rollout_and_filter_constant_reward(
         strategy (RolloutStrategy | None): Controls how trajectories are
             collected within the group (error handling, retries, etc.).
             Defaults to :class:`FailFast`.
+        sample_semaphore (asyncio.Semaphore | None): Optional semaphore that
+            caps the number of in-flight sampling calls across concurrent
+            rollouts in the current event loop.
 
     Returns:
         TrajectoryGroup | None: The completed trajectory group, or ``None``
@@ -399,6 +403,8 @@ async def do_group_rollout_and_filter_constant_reward(
 
     executor = get_rollout_executor()
     if executor is not None:
+        if sample_semaphore is not None:
+            raise ValueError("sample_semaphore is not supported with rollout_executor")
         task = _RolloutTask(
             sampling_client=sampling_client,
             env_group_builder=env_group_builder,
@@ -419,7 +425,20 @@ async def do_group_rollout_and_filter_constant_reward(
         do_remove_constant_reward_groups,
         enable_logging,
         strategy=strategy,
+        sample_semaphore=sample_semaphore,
     )
+
+
+@dataclass
+class _SemaphoreTokenCompleter(TokenCompleter):
+    """Limit concurrent calls to an underlying token completer."""
+
+    completer: TokenCompleter
+    semaphore: asyncio.Semaphore
+
+    async def __call__(self, model_input: tinker.ModelInput, stop):
+        async with self.semaphore:
+            return await self.completer(model_input, stop)
 
 
 async def _do_group_rollout_and_filter_constant_reward_impl(
@@ -430,11 +449,16 @@ async def _do_group_rollout_and_filter_constant_reward_impl(
     do_remove_constant_reward_groups: bool,
     enable_logging: bool = True,
     strategy: RolloutStrategy | None = None,
+    sample_semaphore: asyncio.Semaphore | None = None,
 ) -> TrajectoryGroup | None:
     if strategy is None:
         strategy = FailFast()
 
-    policy = TinkerTokenCompleter(sampling_client, max_tokens=max_tokens, temperature=temperature)
+    policy: TokenCompleter = TinkerTokenCompleter(
+        sampling_client, max_tokens=max_tokens, temperature=temperature
+    )
+    if sample_semaphore is not None:
+        policy = _SemaphoreTokenCompleter(policy, sample_semaphore)
 
     try:
         with logtree.optional_enable_logging(enable_logging):

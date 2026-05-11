@@ -482,6 +482,9 @@ class Config:
     compute_post_kl: bool = False
     # Remove groups where all trajectories have identical reward.
     remove_constant_reward_groups: bool = False
+    # Maximum number of in-flight sampling calls during training rollouts.
+    # None disables the cap.
+    max_concurrent_samples: int | None = None
     # Tolerance for errors during rollouts (container crashes, sandbox flakes, etc.).
     # False (default): crash on any error (FailFast).
     # True: retry failed trajectories with default budget (RetryOnFailure(max_retries=3)).
@@ -518,6 +521,19 @@ class Config:
 
     # Maximum number of training iterations. If None, train on the full dataset.
     max_steps: int | None = None
+
+
+def _validate_rollout_execution_config(config: Config, rollout_executor: Executor | None) -> None:
+    if config.max_concurrent_samples is not None and config.max_concurrent_samples <= 0:
+        raise ConfigurationError(
+            f"max_concurrent_samples must be positive, got {config.max_concurrent_samples}"
+        )
+    if rollout_executor is not None and config.max_concurrent_samples is not None:
+        raise ConfigurationError(
+            "max_concurrent_samples is not supported with rollout_executor. "
+            "The sampling cap uses an in-process asyncio.Semaphore and cannot "
+            "coordinate sampling across executor workers."
+        )
 
 
 @trace.scope
@@ -641,6 +657,7 @@ async def do_sync_training_with_stream_minibatch(
     error_counter: RolloutErrorCounter | None = None,
     strategy: RolloutStrategy | None = None,
     checkpoint_mgr: checkpoint_utils.CheckpointManager | None = None,
+    sample_semaphore: asyncio.Semaphore | None = None,
 ):
     """Implement fully synchronous on-policy training with minibatch streaming.
 
@@ -669,6 +686,9 @@ async def do_sync_training_with_stream_minibatch(
             tracking rollout errors. Defaults to None.
         strategy (RolloutStrategy | None): Rollout error handling strategy.
             Defaults to None.
+        sample_semaphore (asyncio.Semaphore | None): Optional in-process
+            semaphore shared across rollout workers to cap concurrent sampling
+            calls. Defaults to None.
     """
     # Initial sampling client
     assert checkpoint_mgr is not None
@@ -725,6 +745,7 @@ async def do_sync_training_with_stream_minibatch(
                             do_remove_constant_reward_groups=config.remove_constant_reward_groups,
                             enable_logging=enable_logging,
                             strategy=strategy,
+                            sample_semaphore=sample_semaphore,
                         )
                     worker_metrics["time/trajectory_group_worker_loop/total"] = (
                         time.time() - t_start
@@ -876,6 +897,7 @@ async def do_async_training(
     error_counter: RolloutErrorCounter | None = None,
     strategy: RolloutStrategy | None = None,
     checkpoint_mgr: checkpoint_utils.CheckpointManager | None = None,
+    sample_semaphore: asyncio.Semaphore | None = None,
 ):
     """Implement async off-policy training, capped at K steps off policy.
 
@@ -914,6 +936,9 @@ async def do_async_training(
             tracking rollout errors. Defaults to None.
         strategy (RolloutStrategy | None): Rollout error handling strategy.
             Defaults to None.
+        sample_semaphore (asyncio.Semaphore | None): Optional in-process
+            semaphore shared across rollout workers to cap concurrent sampling
+            calls. Defaults to None.
     """
     assert config.async_config is not None
 
@@ -994,6 +1019,7 @@ async def do_async_training(
                     temperature=config.temperature,
                     do_remove_constant_reward_groups=config.remove_constant_reward_groups,
                     strategy=strategy,
+                    sample_semaphore=sample_semaphore,
                 )
             worker_metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
             # Ingest error info (safe: same event loop thread)
@@ -1646,6 +1672,7 @@ async def do_sync_training(
     error_counter: RolloutErrorCounter | None = None,
     strategy: RolloutStrategy | None = None,
     checkpoint_mgr: checkpoint_utils.CheckpointManager | None = None,
+    sample_semaphore: asyncio.Semaphore | None = None,
 ):
     """Implement fully synchronous on-policy training.
 
@@ -1674,6 +1701,9 @@ async def do_sync_training(
             tracking rollout errors. Defaults to None.
         strategy (RolloutStrategy | None): Rollout error handling strategy.
             Defaults to None.
+        sample_semaphore (asyncio.Semaphore | None): Optional in-process
+            semaphore shared across rollout workers to cap concurrent sampling
+            calls. Defaults to None.
     """
     # Initial sampling client
     assert checkpoint_mgr is not None
@@ -1722,6 +1752,7 @@ async def do_sync_training(
                                 do_remove_constant_reward_groups=False,
                                 enable_logging=i < config.num_groups_to_log,
                                 strategy=strategy,
+                                sample_semaphore=sample_semaphore,
                             )
                             for i, builder in enumerate(env_group_builders_P)
                         ),
@@ -1825,7 +1856,8 @@ async def main(
 
     Raises:
         ConfigurationError: If ``kl_penalty_coef > 0`` but
-            ``kl_reference_config`` is not set.
+            ``kl_reference_config`` is not set, or if the sampling concurrency
+            cap is combined with an external rollout executor.
 
     Example::
 
@@ -1841,6 +1873,8 @@ async def main(
         )
         asyncio.run(main(config=config))
     """
+
+    _validate_rollout_execution_config(config, rollout_executor)
 
     if rollout_executor is not None:
         set_rollout_executor(rollout_executor)
@@ -1940,6 +1974,12 @@ async def main(
     else:
         kl_reference_client = None
 
+    sample_semaphore = (
+        asyncio.Semaphore(config.max_concurrent_samples)
+        if config.max_concurrent_samples is not None
+        else None
+    )
+
     checkpoint_mgr = checkpoint_utils.CheckpointManager(
         training_client=training_client,
         service_client=service_client,
@@ -1972,6 +2012,7 @@ async def main(
         error_counter=error_counter,
         strategy=strategy,
         checkpoint_mgr=checkpoint_mgr,
+        sample_semaphore=sample_semaphore,
     )
 
     # Save final checkpoint
