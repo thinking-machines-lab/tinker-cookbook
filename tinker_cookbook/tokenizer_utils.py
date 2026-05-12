@@ -168,9 +168,7 @@ def _get_hf_tokenizer(model_name: str) -> Tokenizer:
             from transformers.utils import cached_file
 
             cached_file(model_name, "tiktoken.model", revision=revision)
-            tokenizer_json = try_to_load_from_cache(
-                model_name, "tokenizer.json", revision=revision
-            )
+            tokenizer_json = try_to_load_from_cache(model_name, "tokenizer.json", revision=revision)
             assert isinstance(tokenizer_json, str), (
                 f"tokenizer.json not in cache for {model_name}@{revision}"
             )
