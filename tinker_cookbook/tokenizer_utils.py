@@ -142,24 +142,41 @@ def _get_hf_tokenizer(model_name: str) -> Tokenizer:
         kwargs["revision"] = "2426b45b6af0da48d0dcce71bbce6225e5c73adc"
     elif model_name == "moonshotai/Kimi-K2.6":
         kwargs["trust_remote_code"] = True
-        kwargs["revision"] = "5a49d036ab7472b7d5912ded487150ec1358c11d"
+        kwargs["revision"] = "81bcaaa7947338ce2641983d98947bca0cc1a4d4"
 
     tokenizer = AutoTokenizer.from_pretrained(model_name, **kwargs)
 
-    # Kimi models require the custom TikTokenTokenizer which overrides apply_chat_template
-    # to format tool declarations as TypeScript. On some platforms (x86_64 + transformers
-    # >=5.5), AutoTokenizer resolves to TokenizersBackend instead. Bypass AutoTokenizer
-    # and directly load the custom class in that case.
+    # Kimi models require the custom TikTokenTokenizer{,Fast} class which overrides
+    # apply_chat_template to format tool declarations as TypeScript. On some platforms
+    # (x86_64 + transformers >=5.5), AutoTokenizer resolves to TokenizersBackend
+    # instead. Bypass AutoTokenizer and directly load the custom class in that case.
     if (
         model_name.startswith("moonshotai/Kimi-K2")
         and "apply_chat_template" not in type(tokenizer).__dict__
     ):
+        from huggingface_hub import try_to_load_from_cache
         from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
         revision = kwargs.get("revision")
-        cls = get_class_from_dynamic_module(
-            "tokenization_kimi.TikTokenTokenizer", model_name, revision=revision
-        )
-        tokenizer = cls.from_pretrained(model_name, revision=revision)
+        if model_name == "moonshotai/Kimi-K2.6":
+            # K2.6's main branch was rewritten to a tokenizer.json + PreTrainedTokenizerFast
+            # subclass; the slow TikTokenTokenizer module no longer exists upstream.
+            class_ref = "tokenization_kimi_fast.TikTokenTokenizerFast"
+            # TikTokenTokenizerFast.__init__ expects model_root to be a local directory
+            # containing tokenizer.json + tiktoken.model. AutoTokenizer above downloads
+            # tokenizer.json but not tiktoken.model, so fetch that explicitly.
+            from transformers.utils import cached_file
+
+            cached_file(model_name, "tiktoken.model", revision=revision)
+            tokenizer_json = try_to_load_from_cache(model_name, "tokenizer.json", revision=revision)
+            assert isinstance(tokenizer_json, str), (
+                f"tokenizer.json not in cache for {model_name}@{revision}"
+            )
+            cls = get_class_from_dynamic_module(class_ref, model_name, revision=revision)
+            tokenizer = cls.from_pretrained(os.path.dirname(tokenizer_json))
+        else:
+            class_ref = "tokenization_kimi.TikTokenTokenizer"
+            cls = get_class_from_dynamic_module(class_ref, model_name, revision=revision)
+            tokenizer = cls.from_pretrained(model_name, revision=revision)
 
     return tokenizer
