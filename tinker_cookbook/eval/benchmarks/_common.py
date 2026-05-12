@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from datasets import Dataset
 
 from tinker_cookbook.renderers.base import Message
+from tinker_cookbook.utils import dataset_loading
 
 if TYPE_CHECKING:
     from tinker_cookbook.sandbox.sandbox_interface import SandboxInterface
@@ -163,8 +164,6 @@ def load_benchmark_dataset(
         PermissionError: If the dataset is gated and requires authentication.
         RuntimeError: If the dataset cannot be loaded for other reasons.
     """
-    from datasets import load_dataset
-
     resolved_trust = _resolve_trust_remote_code(trust_remote_code)
 
     kwargs: dict = {"split": split}
@@ -174,7 +173,7 @@ def load_benchmark_dataset(
         kwargs["trust_remote_code"] = True
 
     try:
-        ds = load_dataset(path, **kwargs)
+        ds = dataset_loading.load_dataset(path, **kwargs)
     except Exception as e:
         err_str = str(e).lower()
         # Gated dataset — needs HF auth + terms acceptance
