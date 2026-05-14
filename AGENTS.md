@@ -77,6 +77,8 @@ Agents often struggle with the nested type hierarchy.
 
 4. **Renderer mismatch:** Use `model_info.get_recommended_renderer_name()` — never hardcode renderer names.
 
+   **Never call `tokenizer.encode(prompt)` directly on a chat-tuned model** (gpt-oss, Llama-3-Instruct, Qwen-Instruct, etc.). Raw encoding skips the chat template, producing OOD prompt tokens. The sampler and trainer then take subtly different code paths on those OOD inputs, and per-token sampler/trainer logprob KL can inflate by 5×+ (max ratios in the tens), silently breaking PPO/CISPO/GRPO importance ratios. Use `tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True)` (take `["input_ids"]` from the returned `BatchEncoding`) or a cookbook renderer for the prompt. Raw `encode` is correct only for base / continued-pretraining / NLL-eval workflows where there is no conversation.
+
 5. **Type construction:** Use helper functions, not manual dict construction. See `supervised/data.py` and `supervised/common.py`.
 
 6. **Group semantics:** RL advantages are centered within each group.
