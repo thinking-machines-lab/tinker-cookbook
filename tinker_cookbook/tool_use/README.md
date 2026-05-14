@@ -97,3 +97,26 @@ For examples of using the tool-use library, see the the following:
 
 - [code_rl recipe](../recipes/code_rl/) - Code generation with python execution tool
 - [search_tool recipe](../recipes/search_tool/) - Multi-hop QA with search tool
+
+## OpenAI-compatible tool-call interop
+
+Some OpenAI-compatible sampling APIs return model-native tool calls as text in
+`message.content` instead of structured OpenAI `message.tool_calls`. The helpers
+in `openai_compat.py` can normalize XML-style Qwen/Tinker tool-call blocks into
+structured `ToolCall` objects:
+
+```python
+from tinker_cookbook.tool_use.openai_compat import normalize_xml_tool_call_message
+
+message = normalize_xml_tool_call_message(
+    {
+        "role": "assistant",
+        "content": "<tool_call><function=search><parameter=query>weather</parameter></function></tool_call>",
+    },
+    allowed_tool_names={"search"},
+)
+```
+
+For providers that reject OpenAI `assistant.tool_calls` and `role=tool` messages
+on subsequent turns, use `linearize_tool_history_for_text_chat` to represent
+tool-call history as plain assistant text before sending the next request.
