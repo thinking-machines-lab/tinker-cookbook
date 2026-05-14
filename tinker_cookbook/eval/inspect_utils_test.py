@@ -1,17 +1,48 @@
 """Tests for inspect_utils conversion functions."""
 
+from typing import cast
+
 import pytest
 
 pytest.importorskip("inspect_ai")
 
 from inspect_ai.model import ChatMessage as InspectAIChatMessage
 from inspect_ai.model import ChatMessageAssistant as InspectAIChatMessageAssistant
+from inspect_ai.model import ChatMessageTool as InspectAIChatMessageTool
 from inspect_ai.model import ChatMessageUser as InspectAIChatMessageUser
 from inspect_ai.model import ContentReasoning as InspectAIContentReasoning
 from inspect_ai.model import ContentText as InspectAIContentText
+from inspect_ai.tool import ToolCall as InspectAIToolCall
+from inspect_ai.tool import ToolFunction as InspectAIToolFunction
+from inspect_ai.tool import ToolInfo as InspectAIToolInfo
 
 from tinker_cookbook import renderers
-from tinker_cookbook.eval.inspect_utils import _message_to_inspect_content, convert_inspect_messages
+from tinker_cookbook.eval.inspect_utils import (
+    _conversation_with_tool_declarations,
+    _message_to_inspect_content,
+    _message_to_inspect_tool_calls,
+    _validate_required_tool_choice,
+    convert_inspect_messages,
+)
+from tinker_cookbook.exceptions import ConfigurationError
+from tinker_cookbook.renderers.base import UnparsedToolCall
+
+
+class FakeToolRenderer:
+    def __init__(self):
+        self.received_tools: list[renderers.ToolSpec] | None = None
+        self.received_system_prompt: str | None = None
+
+    def create_conversation_prefix_with_tools(
+        self, tools: list[renderers.ToolSpec], system_prompt: str = ""
+    ) -> list[renderers.Message]:
+        self.received_tools = tools
+        self.received_system_prompt = system_prompt
+        return [
+            renderers.Message(role="tool_declare", content="tool specs"),
+            renderers.Message(role="system", content=system_prompt or "default system"),
+        ]
+
 
 # --- Output: _message_to_inspect_content ---
 
@@ -65,6 +96,51 @@ def test_message_to_inspect_content_empty_thinking():
     assert result[0].reasoning == ""
 
 
+def test_message_to_inspect_tool_calls():
+    message = renderers.Message(
+        role="assistant",
+        content="",
+        tool_calls=[
+            renderers.ToolCall(
+                id="call_123",
+                function=renderers.ToolCall.FunctionBody(
+                    name="lookup", arguments='{"query":"GDP"}'
+                ),
+            )
+        ],
+    )
+
+    result = _message_to_inspect_tool_calls(message, choice_index=0)
+
+    assert result is not None
+    assert len(result) == 1
+    assert result[0].id == "call_123"
+    assert result[0].function == "lookup"
+    assert result[0].arguments == {"query": "GDP"}
+
+
+def test_message_to_inspect_tool_calls_preserves_unparsed_tool_calls():
+    message = renderers.Message(
+        role="assistant",
+        content="",
+        unparsed_tool_calls=[
+            UnparsedToolCall(
+                raw_text="<tool_call>{bad json}</tool_call>",
+                error="Invalid JSON: expected property name",
+            )
+        ],
+    )
+
+    result = _message_to_inspect_tool_calls(message, choice_index=0)
+
+    assert result is not None
+    assert len(result) == 1
+    assert result[0].id == "unparsed_call_0_0"
+    assert result[0].function == "unparsed_tool_call"
+    assert result[0].arguments == {"raw_text": "<tool_call>{bad json}</tool_call>"}
+    assert result[0].parse_error == "Invalid JSON: expected property name"
+
+
 # --- Input: convert_inspect_messages ---
 
 
@@ -114,3 +190,210 @@ def test_convert_inspect_messages_structured_non_assistant_flattens():
     assert len(result) == 1
     assert result[0]["role"] == "user"
     assert result[0]["content"] == "hello world"
+
+
+def test_convert_inspect_messages_preserves_tool_calls_and_tool_results():
+    messages: list[InspectAIChatMessage] = [
+        InspectAIChatMessageAssistant(
+            content="",
+            tool_calls=[
+                InspectAIToolCall(
+                    id="call_123",
+                    function="lookup",
+                    arguments={"query": "GDP"},
+                )
+            ],
+        ),
+        InspectAIChatMessageTool(
+            content="tool result",
+            tool_call_id="call_123",
+            function="lookup",
+        ),
+    ]
+
+    result = convert_inspect_messages(messages)
+
+    assert result[0]["role"] == "assistant"
+    tool_calls = result[0].get("tool_calls")
+    assert tool_calls is not None
+    assert len(tool_calls) == 1
+    assert tool_calls[0].id == "call_123"
+    assert tool_calls[0].function.name == "lookup"
+    assert tool_calls[0].function.arguments == '{"query":"GDP"}'
+    assert result[1]["role"] == "tool"
+    assert result[1].get("tool_call_id") == "call_123"
+    assert result[1].get("name") == "lookup"
+
+
+def test_conversation_with_tool_declarations_passes_tools_and_system_prompt():
+    fake_renderer = FakeToolRenderer()
+    convo = [
+        renderers.Message(role="system", content="custom system"),
+        renderers.Message(role="user", content="use a tool"),
+    ]
+    tools = [
+        InspectAIToolInfo(
+            name="lookup",
+            description="Look up a value",
+        )
+    ]
+
+    result = _conversation_with_tool_declarations(
+        cast(renderers.Renderer, fake_renderer), convo, tools, "auto"
+    )
+
+    assert fake_renderer.received_tools == [
+        {
+            "name": "lookup",
+            "description": "Look up a value",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": False,
+            },
+        }
+    ]
+    assert fake_renderer.received_system_prompt == "custom system"
+    assert [message["role"] for message in result] == ["tool_declare", "system", "user"]
+
+
+def test_conversation_with_tool_declarations_respects_tool_choice_none():
+    fake_renderer = FakeToolRenderer()
+    convo = [renderers.Message(role="user", content="do not use tools")]
+    tools = [InspectAIToolInfo(name="lookup", description="Look up a value")]
+
+    result = _conversation_with_tool_declarations(
+        cast(renderers.Renderer, fake_renderer), convo, tools, "none"
+    )
+
+    assert result == convo
+    assert fake_renderer.received_tools is None
+
+
+def test_conversation_with_tool_declarations_rejects_any_without_tools():
+    fake_renderer = FakeToolRenderer()
+    convo = [renderers.Message(role="user", content="must use a tool")]
+
+    with pytest.raises(ConfigurationError, match="requires at least one tool"):
+        _conversation_with_tool_declarations(
+            cast(renderers.Renderer, fake_renderer), convo, [], "any"
+        )
+
+
+def test_conversation_with_tool_declarations_filters_specific_tool_choice():
+    fake_renderer = FakeToolRenderer()
+    convo = [renderers.Message(role="user", content="use the calculator")]
+    tools = [
+        InspectAIToolInfo(name="lookup", description="Look up a value"),
+        InspectAIToolInfo(name="calculate", description="Calculate a value"),
+    ]
+
+    _conversation_with_tool_declarations(
+        cast(renderers.Renderer, fake_renderer),
+        convo,
+        tools,
+        InspectAIToolFunction(name="calculate"),
+    )
+
+    assert fake_renderer.received_tools is not None
+    assert [tool["name"] for tool in fake_renderer.received_tools] == ["calculate"]
+
+
+def test_conversation_with_tool_declarations_rejects_unknown_specific_tool_choice():
+    fake_renderer = FakeToolRenderer()
+    convo = [renderers.Message(role="user", content="use the calculator")]
+    tools = [InspectAIToolInfo(name="lookup", description="Look up a value")]
+
+    with pytest.raises(ConfigurationError, match="unknown tool_choice function"):
+        _conversation_with_tool_declarations(
+            cast(renderers.Renderer, fake_renderer),
+            convo,
+            tools,
+            InspectAIToolFunction(name="calculate"),
+        )
+
+
+def test_validate_required_tool_choice_accepts_any_with_tool_call():
+    _validate_required_tool_choice(
+        [
+            renderers.Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    renderers.ToolCall(
+                        id="call_123",
+                        function=renderers.ToolCall.FunctionBody(
+                            name="lookup", arguments='{"query":"GDP"}'
+                        ),
+                    )
+                ],
+            )
+        ],
+        "any",
+    )
+
+
+def test_validate_required_tool_choice_rejects_any_without_tool_call():
+    with pytest.raises(ConfigurationError, match="requires a tool call"):
+        _validate_required_tool_choice(
+            [renderers.Message(role="assistant", content="direct answer")],
+            "any",
+        )
+
+
+def test_validate_required_tool_choice_accepts_any_with_unparsed_tool_call():
+    _validate_required_tool_choice(
+        [
+            renderers.Message(
+                role="assistant",
+                content="",
+                unparsed_tool_calls=[
+                    UnparsedToolCall(
+                        raw_text="<tool_call>{bad json}</tool_call>",
+                        error="Invalid JSON: expected property name",
+                    )
+                ],
+            )
+        ],
+        "any",
+    )
+
+
+def test_validate_required_tool_choice_accepts_specific_with_unparsed_tool_call():
+    _validate_required_tool_choice(
+        [
+            renderers.Message(
+                role="assistant",
+                content="",
+                unparsed_tool_calls=[
+                    UnparsedToolCall(
+                        raw_text="<tool_call>{bad json}</tool_call>",
+                        error="Invalid JSON: expected property name",
+                    )
+                ],
+            )
+        ],
+        InspectAIToolFunction(name="calculate"),
+    )
+
+
+def test_validate_required_tool_choice_rejects_wrong_specific_tool():
+    with pytest.raises(ConfigurationError, match="requested function"):
+        _validate_required_tool_choice(
+            [
+                renderers.Message(
+                    role="assistant",
+                    content="",
+                    tool_calls=[
+                        renderers.ToolCall(
+                            id="call_123",
+                            function=renderers.ToolCall.FunctionBody(
+                                name="lookup", arguments='{"query":"GDP"}'
+                            ),
+                        )
+                    ],
+                )
+            ],
+            InspectAIToolFunction(name="calculate"),
+        )
