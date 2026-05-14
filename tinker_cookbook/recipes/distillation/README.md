@@ -103,8 +103,8 @@ See `tinker_cookbook/recipes/harbor_rl/README.md` for full details on the Harbor
 
 ```bash
 python -m tinker_cookbook.recipes.distillation.on_policy_distillation_harbor_multi_turn \
-    model_name=moonshotai/Kimi-K2-Thinking \
-    teacher_model=moonshotai/Kimi-K2-Thinking \
+    model_name=moonshotai/Kimi-K2.6 \
+    teacher_model=moonshotai/Kimi-K2.6 \
     max_turns=10 \
     group_size=4 \
     groups_per_batch=8 \
@@ -135,7 +135,7 @@ For every dataset, we can define a teacher model and batch size (`groups_per_bat
 {
     "dataset_builder": RLDatasetBuilder,
     "teacher_model": {
-        "base_model": str,  # e.g. "Qwen/Qwen3-32B"
+        "base_model": str,  # e.g. "Qwen/Qwen3.6-27B"
         "load_checkpoint_path": str | None  # e.g. "tinker://<unique_id>/sampler_weights/final
     },
     "groups_per_batch": int

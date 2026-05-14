@@ -349,9 +349,9 @@ async def _(SYSTEM_PROMPT, get_text_content, renderer, tinker, training_client):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Scaling up: fine-tuning Kimi K2.5 with the same code
+    ## Scaling up: fine-tuning Kimi K2.6 with the same code
 
-    Everything we just did on Qwen3.5-4B (4 billion parameters) works identically on much larger models. Let's fine-tune **Kimi K2.5** -- a frontier-class model -- using the exact same training data and loop. With Tinker, you don't need to own the GPUs; you just change the model name.
+    Everything we just did on Qwen3.5-4B (4 billion parameters) works identically on much larger models. Let's fine-tune **Kimi K2.6** -- a frontier-class model -- using the exact same training data and loop. With Tinker, you don't need to own the GPUs; you just change the model name.
     """)
     return
 
@@ -361,16 +361,16 @@ async def _(conversations, conversation_to_datum, get_renderer, service_client, 
     import contextlib
     import io
 
-    BIG_MODEL = "moonshotai/Kimi-K2.5"
+    BIG_MODEL = "moonshotai/Kimi-K2.6"
 
-    # Create a LoRA training client for Kimi K2.5 -- same API, bigger model
+    # Create a LoRA training client for Kimi K2.6 -- same API, bigger model
     big_training_client = await service_client.create_lora_training_client_async(
         base_model=BIG_MODEL, rank=16
     )
     big_tokenizer = big_training_client.get_tokenizer()
 
-    # Use the disable-thinking renderer so Kimi K2.5 responds directly without <think> blocks
-    big_renderer = get_renderer("kimi_k25_disable_thinking", big_tokenizer)
+    # Use the disable-thinking renderer so Kimi K2.6 responds directly without <think> blocks
+    big_renderer = get_renderer("kimi_k26_disable_thinking", big_tokenizer)
 
     # Build the same training data with the new renderer (suppress noisy tokenizer debug output)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -421,7 +421,7 @@ def _(big_losses, losses, plt):
         marker="s",
         linewidth=2,
         color="#dc2626",
-        label="Kimi K2.5",
+        label="Kimi K2.6",
     )
     _ax.set_xlabel("Training step")
     _ax.set_ylabel("Loss (cross-entropy)")
@@ -441,7 +441,7 @@ async def _(
     get_text_content,
     tinker,
 ):
-    # Sample from the fine-tuned Kimi K2.5
+    # Sample from the fine-tuned Kimi K2.6
     big_sampling_client = await big_training_client.save_weights_and_get_sampling_client_async(
         name="tinker-tinker-kimi"
     )

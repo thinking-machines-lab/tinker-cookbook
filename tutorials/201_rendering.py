@@ -43,8 +43,8 @@ def _(mo):
 def _():
     from tinker_cookbook import renderers, tokenizer_utils
 
-    tokenizer = tokenizer_utils.get_tokenizer("Qwen/Qwen3-30B-A3B")
-    renderer = renderers.get_renderer("qwen3", tokenizer)
+    tokenizer = tokenizer_utils.get_tokenizer("Qwen/Qwen3.6-35B-A3B")
+    renderer = renderers.get_renderer("qwen3_5", tokenizer)
     renderer  # noqa: B018
     return renderer, renderers, tokenizer, tokenizer_utils
 
@@ -120,7 +120,7 @@ def _(renderer, tokenizer):
     stop_sequences = renderer.get_stop_sequences()
     print(f"Stop sequences: {stop_sequences}")
 
-    # For Qwen3, this is the <|im_end|> token
+    # For Qwen models, this is the <|im_end|> token
     for tok in stop_sequences:
         if isinstance(tok, int):
             print(f"  Token {tok} decodes to: {tokenizer.decode([tok])!r}")
@@ -166,7 +166,7 @@ def _(mo):
     from tinker.types import SamplingParams
 
     service_client = tinker.ServiceClient()
-    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3-30B-A3B")
+    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.6-35B-A3B")
 
     prompt = renderer.build_generation_prompt(messages[:-1])
     stop_sequences = renderer.get_stop_sequences()
@@ -273,8 +273,8 @@ def _(mo):
 def _(renderers, tokenizer_utils):
     # Example: switching between renderers
     # Each model family needs its own tokenizer
-    qwen_tokenizer = tokenizer_utils.get_tokenizer("Qwen/Qwen3-30B-A3B")
-    qwen_renderer = renderers.get_renderer("qwen3", qwen_tokenizer)
+    qwen_tokenizer = tokenizer_utils.get_tokenizer("Qwen/Qwen3.6-35B-A3B")
+    qwen_renderer = renderers.get_renderer("qwen3_5", qwen_tokenizer)
 
     test_messages = [{"role": "user", "content": "Hello!"}]
     prompt_tokens = qwen_renderer.build_generation_prompt(test_messages)
@@ -288,7 +288,7 @@ def _(mo):
     mo.md(r"""
     ## Vision inputs with `ImagePart`
 
-    For vision-language models (like Qwen3-VL), message content can include images alongside text. Use `ImagePart` for images and `TextPart` for text within the same message.
+    For vision-language models (like Qwen3.6 and Qwen3.5), message content can include images alongside text. Use `ImagePart` for images and `TextPart` for text within the same message.
     """)
     return
 
@@ -321,11 +321,11 @@ def _(mo):
     ```python
     from tinker_cookbook.image_processing_utils import get_image_processor
 
-    model_name = "Qwen/Qwen3-VL-235B-A22B-Instruct"
+    model_name = "Qwen/Qwen3.5-397B-A17B"
     tokenizer = tokenizer_utils.get_tokenizer(model_name)
     image_processor = get_image_processor(model_name)
 
-    renderer = renderers.get_renderer("qwen3_vl_instruct", tokenizer, image_processor=image_processor)
+    renderer = renderers.get_renderer("qwen3_5", tokenizer, image_processor=image_processor)
     ```
 
     The VL renderers handle vision special tokens (`<|vision_start|>`, `<|vision_end|>`) and image preprocessing automatically.

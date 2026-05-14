@@ -225,7 +225,7 @@ def _(mo):
 def _():
     from tinker_cookbook.hyperparam_utils import get_lora_param_count
 
-    _model = "Qwen/Qwen3-4B-Instruct-2507"
+    _model = "Qwen/Qwen3.5-4B"
     _ranks = [8, 32, 128]
 
     print(f"Model: {_model}")

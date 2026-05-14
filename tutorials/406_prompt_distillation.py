@@ -161,9 +161,9 @@ async def _(
     if api_key.value:
         os.environ["TINKER_API_KEY"] = api_key.value
 
-    MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
+    MODEL_NAME = "Qwen/Qwen3.5-4B"
     tokenizer = get_tokenizer(MODEL_NAME)
-    renderer = renderers.get_renderer("qwen3", tokenizer)
+    renderer = renderers.get_renderer("qwen3_5", tokenizer)
 
     service_client = tinker.ServiceClient()
     sampling_client = await service_client.create_sampling_client_async(base_model=MODEL_NAME)
