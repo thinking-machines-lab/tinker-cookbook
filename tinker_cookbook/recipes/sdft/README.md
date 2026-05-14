@@ -44,7 +44,7 @@ We verified both design choices by running ablations on the [official SDFT codeb
 
 **Top-K=20 matches full-vocab KL** (68.04% vs 68.04% with EMA, 69.07% vs 67.01% without). **Static teacher matches EMA** — the 1-2pp difference is within noise. Both design choices are validated.
 
-We also confirmed our Tinker implementation produces identical results to the reference on the same model (a compact Qwen model): both get 56.70% tooluse accuracy with top-K=20 and static teacher.
+We also confirmed our Tinker implementation produces identical results to the reference on the same model (`Qwen3.5-4B` in non-thinking mode): both get 56.70% tooluse accuracy with top-K=20 and static teacher.
 
 ## Setup
 
