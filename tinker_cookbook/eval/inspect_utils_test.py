@@ -25,6 +25,7 @@ from tinker_cookbook.eval.inspect_utils import (
     convert_inspect_messages,
 )
 from tinker_cookbook.exceptions import ConfigurationError
+from tinker_cookbook.renderers.base import UnparsedToolCall
 
 
 class FakeToolRenderer:
@@ -116,6 +117,28 @@ def test_message_to_inspect_tool_calls():
     assert result[0].id == "call_123"
     assert result[0].function == "lookup"
     assert result[0].arguments == {"query": "GDP"}
+
+
+def test_message_to_inspect_tool_calls_preserves_unparsed_tool_calls():
+    message = renderers.Message(
+        role="assistant",
+        content="",
+        unparsed_tool_calls=[
+            UnparsedToolCall(
+                raw_text="<tool_call>{bad json}</tool_call>",
+                error="Invalid JSON: expected property name",
+            )
+        ],
+    )
+
+    result = _message_to_inspect_tool_calls(message, choice_index=0)
+
+    assert result is not None
+    assert len(result) == 1
+    assert result[0].id == "unparsed_call_0_0"
+    assert result[0].function == "unparsed_tool_call"
+    assert result[0].arguments == {"raw_text": "<tool_call>{bad json}</tool_call>"}
+    assert result[0].parse_error == "Invalid JSON: expected property name"
 
 
 # --- Input: convert_inspect_messages ---
@@ -317,6 +340,42 @@ def test_validate_required_tool_choice_rejects_any_without_tool_call():
             [renderers.Message(role="assistant", content="direct answer")],
             "any",
         )
+
+
+def test_validate_required_tool_choice_accepts_any_with_unparsed_tool_call():
+    _validate_required_tool_choice(
+        [
+            renderers.Message(
+                role="assistant",
+                content="",
+                unparsed_tool_calls=[
+                    UnparsedToolCall(
+                        raw_text="<tool_call>{bad json}</tool_call>",
+                        error="Invalid JSON: expected property name",
+                    )
+                ],
+            )
+        ],
+        "any",
+    )
+
+
+def test_validate_required_tool_choice_accepts_specific_with_unparsed_tool_call():
+    _validate_required_tool_choice(
+        [
+            renderers.Message(
+                role="assistant",
+                content="",
+                unparsed_tool_calls=[
+                    UnparsedToolCall(
+                        raw_text="<tool_call>{bad json}</tool_call>",
+                        error="Invalid JSON: expected property name",
+                    )
+                ],
+            )
+        ],
+        InspectAIToolFunction(name="calculate"),
+    )
 
 
 def test_validate_required_tool_choice_rejects_wrong_specific_tool():

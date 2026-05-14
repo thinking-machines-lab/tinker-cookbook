@@ -31,7 +31,7 @@ from termcolor import colored
 
 from tinker_cookbook import renderers
 from tinker_cookbook.exceptions import ConfigurationError
-from tinker_cookbook.renderers.base import ensure_list
+from tinker_cookbook.renderers.base import UnparsedToolCall, ensure_list
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 logger = logging.getLogger(__name__)
@@ -72,18 +72,38 @@ def _renderer_tool_call_to_inspect_tool_call(
     )
 
 
+def _renderer_unparsed_tool_call_to_inspect_tool_call(
+    tool_call: UnparsedToolCall, *, choice_index: int, tool_index: int
+) -> InspectAIToolCall:
+    return InspectAIToolCall(
+        id=f"unparsed_call_{choice_index}_{tool_index}",
+        function="unparsed_tool_call",
+        arguments={"raw_text": tool_call.raw_text},
+        parse_error=tool_call.error,
+    )
+
+
 def _message_to_inspect_tool_calls(
     message: renderers.Message, *, choice_index: int
 ) -> list[InspectAIToolCall] | None:
-    tool_calls = message.get("tool_calls")
-    if not tool_calls:
+    tool_calls = message.get("tool_calls") or []
+    unparsed_tool_calls = message.get("unparsed_tool_calls") or []
+    if not tool_calls and not unparsed_tool_calls:
         return None
-    return [
+
+    inspect_tool_calls = [
         _renderer_tool_call_to_inspect_tool_call(
             tool_call, choice_index=choice_index, tool_index=tool_index
         )
         for tool_index, tool_call in enumerate(tool_calls)
     ]
+    inspect_tool_calls.extend(
+        _renderer_unparsed_tool_call_to_inspect_tool_call(
+            tool_call, choice_index=choice_index, tool_index=tool_index
+        )
+        for tool_index, tool_call in enumerate(unparsed_tool_calls)
+    )
+    return inspect_tool_calls
 
 
 def _inspect_tool_info_to_renderer_tool_spec(tool_info: InspectAIToolInfo) -> renderers.ToolSpec:
@@ -146,11 +166,14 @@ def _validate_required_tool_choice(
 
     for choice_index, message in enumerate(messages):
         tool_calls = message.get("tool_calls") or []
-        if not tool_calls:
+        unparsed_tool_calls = message.get("unparsed_tool_calls") or []
+        if not tool_calls and not unparsed_tool_calls:
             raise ConfigurationError(
                 f"Inspect tool_choice={tool_choice!r} requires a tool call, but choice "
                 f"{choice_index} did not produce one"
             )
+        if unparsed_tool_calls:
+            continue
         if isinstance(tool_choice, InspectAIToolFunction) and all(
             tool_call.function.name != tool_choice.name for tool_call in tool_calls
         ):
