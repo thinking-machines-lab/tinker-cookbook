@@ -19,7 +19,7 @@ Example — merged model::
         output_dir="./adapter",
     )
     weights.build_hf_model(
-        base_model="Qwen/Qwen3.5-35B-A3B",
+        base_model="Qwen/Qwen3.6-35B-A3B",
         adapter_path=adapter_dir,
         output_path="./model",
     )

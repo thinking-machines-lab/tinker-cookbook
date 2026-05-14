@@ -180,14 +180,14 @@ def _(mo):
 def _(ArithmeticDatasetBuilder):
     from tinker_cookbook.rl import train as rl_train
 
-    MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
+    MODEL_NAME = "Qwen/Qwen3.5-4B"
 
     rl_config = rl_train.Config(
         log_path="~/logs/tutorial-rl-config",
         model_name=MODEL_NAME,
         dataset_builder=ArithmeticDatasetBuilder(
             model_name=MODEL_NAME,
-            renderer_name="qwen3",
+            renderer_name="qwen3_5",
             batch_size=4,
             num_batches=20,
             group_size=4,

@@ -44,7 +44,7 @@ We verified both design choices by running ablations on the [official SDFT codeb
 
 **Top-K=20 matches full-vocab KL** (68.04% vs 68.04% with EMA, 69.07% vs 67.01% without). **Static teacher matches EMA** — the 1-2pp difference is within noise. Both design choices are validated.
 
-We also confirmed our Tinker implementation produces identical results to the reference on the same model (`Qwen/Qwen3-4B-Instruct-2507`): both get 56.70% tooluse accuracy with top-K=20 and static teacher.
+We also confirmed our Tinker implementation produces identical results to the reference on the same model (a compact Qwen model): both get 56.70% tooluse accuracy with top-K=20 and static teacher.
 
 ## Setup
 
@@ -70,7 +70,7 @@ export TINKER_API_KEY=<your-key>
 ```bash
 # SDFT on tool-use (top-K distillation, K=20)
 python -m tinker_cookbook.recipes.sdft.train \
-    model_name=Qwen/Qwen3.5-35B-A3B \
+    model_name=Qwen/Qwen3.6-35B-A3B \
     dataset=toolalpaca \
     toolalpaca_data_path=Self-Distillation/data/tooluse_data/train_data \
     groups_per_batch=128 \
@@ -85,7 +85,7 @@ The key experiment: train sequentially on two tasks and measure retention.
 
 ```bash
 python -m tinker_cookbook.recipes.sdft.run_continual_learning \
-    model_name=Qwen/Qwen3.5-35B-A3B \
+    model_name=Qwen/Qwen3.6-35B-A3B \
     data_dir=Self-Distillation/data \
     methods=sft,sdft_topk \
     learning_rates=5e-4 \
@@ -99,7 +99,7 @@ python -m tinker_cookbook.recipes.sdft.run_continual_learning \
 
 ```bash
 python -m tinker_cookbook.recipes.sdft.train \
-    model_name=Qwen/Qwen3.5-35B-A3B \
+    model_name=Qwen/Qwen3.6-35B-A3B \
     dataset=sciknoweval \
     groups_per_batch=4 \
     max_tokens=256 \
@@ -116,14 +116,14 @@ python -m tinker_cookbook.recipes.sdft.train \
 | `topk` | `20` | Top-K tokens for distillation (0 = importance sampling fallback) |
 | `learning_rate` | `2e-5` | Adam learning rate. For LoRA, use 5e-4 to 1e-3 |
 | `groups_per_batch` | `32` | Problems per training batch |
-| `lora_rank` | `128` | LoRA adapter rank (64 for `Qwen/Qwen3.5-35B-A3B`) |
+| `lora_rank` | `128` | LoRA adapter rank (64 for `Qwen/Qwen3.6-35B-A3B`) |
 | `max_tokens` | `2048` | Max completion length |
 | `thinking_format` | `false` | Convert data for thinking models (e.g., Qwen3.5) |
 | `teacher_sync_every` | `None` | Optional periodic teacher weight sync |
 
 ## Results
 
-### Continual Learning: `Qwen/Qwen3.5-35B-A3B` (Tinker, LoRA 64)
+### Continual Learning: `Qwen/Qwen3.6-35B-A3B` (Tinker, LoRA 64)
 
 **Stage 1: Train on tool-use, evaluate both tasks**
 

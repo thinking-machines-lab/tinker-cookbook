@@ -73,7 +73,7 @@ async def _(api_key, mo, os):
     )
 
     _tokenizer = get_tokenizer(BASE_MODEL)
-    _renderer = renderers.get_renderer("qwen3", _tokenizer)
+    _renderer = renderers.get_renderer("qwen3_5", _tokenizer)
     _messages = [
         {"role": "user", "content": "What is Tinker?"},
         {"role": "assistant", "content": "Tinker is a cloud training API for LLM fine-tuning."},
