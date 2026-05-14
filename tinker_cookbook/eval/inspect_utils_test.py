@@ -21,8 +21,10 @@ from tinker_cookbook.eval.inspect_utils import (
     _conversation_with_tool_declarations,
     _message_to_inspect_content,
     _message_to_inspect_tool_calls,
+    _validate_required_tool_choice,
     convert_inspect_messages,
 )
+from tinker_cookbook.exceptions import ConfigurationError
 
 
 class FakeToolRenderer:
@@ -246,6 +248,16 @@ def test_conversation_with_tool_declarations_respects_tool_choice_none():
     assert fake_renderer.received_tools is None
 
 
+def test_conversation_with_tool_declarations_rejects_any_without_tools():
+    fake_renderer = FakeToolRenderer()
+    convo = [renderers.Message(role="user", content="must use a tool")]
+
+    with pytest.raises(ConfigurationError, match="requires at least one tool"):
+        _conversation_with_tool_declarations(
+            cast(renderers.Renderer, fake_renderer), convo, [], "any"
+        )
+
+
 def test_conversation_with_tool_declarations_filters_specific_tool_choice():
     fake_renderer = FakeToolRenderer()
     convo = [renderers.Message(role="user", content="use the calculator")]
@@ -263,3 +275,66 @@ def test_conversation_with_tool_declarations_filters_specific_tool_choice():
 
     assert fake_renderer.received_tools is not None
     assert [tool["name"] for tool in fake_renderer.received_tools] == ["calculate"]
+
+
+def test_conversation_with_tool_declarations_rejects_unknown_specific_tool_choice():
+    fake_renderer = FakeToolRenderer()
+    convo = [renderers.Message(role="user", content="use the calculator")]
+    tools = [InspectAIToolInfo(name="lookup", description="Look up a value")]
+
+    with pytest.raises(ConfigurationError, match="unknown tool_choice function"):
+        _conversation_with_tool_declarations(
+            cast(renderers.Renderer, fake_renderer),
+            convo,
+            tools,
+            InspectAIToolFunction(name="calculate"),
+        )
+
+
+def test_validate_required_tool_choice_accepts_any_with_tool_call():
+    _validate_required_tool_choice(
+        [
+            renderers.Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    renderers.ToolCall(
+                        id="call_123",
+                        function=renderers.ToolCall.FunctionBody(
+                            name="lookup", arguments='{"query":"GDP"}'
+                        ),
+                    )
+                ],
+            )
+        ],
+        "any",
+    )
+
+
+def test_validate_required_tool_choice_rejects_any_without_tool_call():
+    with pytest.raises(ConfigurationError, match="requires a tool call"):
+        _validate_required_tool_choice(
+            [renderers.Message(role="assistant", content="direct answer")],
+            "any",
+        )
+
+
+def test_validate_required_tool_choice_rejects_wrong_specific_tool():
+    with pytest.raises(ConfigurationError, match="requested function"):
+        _validate_required_tool_choice(
+            [
+                renderers.Message(
+                    role="assistant",
+                    content="",
+                    tool_calls=[
+                        renderers.ToolCall(
+                            id="call_123",
+                            function=renderers.ToolCall.FunctionBody(
+                                name="lookup", arguments='{"query":"GDP"}'
+                            ),
+                        )
+                    ],
+                )
+            ],
+            InspectAIToolFunction(name="calculate"),
+        )

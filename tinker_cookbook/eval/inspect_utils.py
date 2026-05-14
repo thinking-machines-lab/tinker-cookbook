@@ -99,12 +99,16 @@ def _select_tools_for_choice(
 ) -> list[renderers.ToolSpec]:
     if tool_choice == "none":
         return []
+    if tool_choice == "any" and not tools:
+        raise ConfigurationError("Inspect tool_choice='any' requires at least one tool")
 
     tool_specs = [_inspect_tool_info_to_renderer_tool_spec(tool) for tool in tools]
     if isinstance(tool_choice, InspectAIToolFunction):
         matching_tool_specs = [tool for tool in tool_specs if tool["name"] == tool_choice.name]
         if not matching_tool_specs:
-            logger.warning(f"Inspect requested unknown tool_choice function: {tool_choice.name}")
+            raise ConfigurationError(
+                f"Inspect requested unknown tool_choice function: {tool_choice.name}"
+            )
         return matching_tool_specs
     return tool_specs
 
@@ -132,6 +136,28 @@ def _conversation_with_tool_declarations(
             f"Renderer {type(renderer).__name__} does not support Inspect AI tool-use evals"
         ) from exc
     return prefix + messages_after_system
+
+
+def _validate_required_tool_choice(
+    messages: list[renderers.Message], tool_choice: InspectAIToolChoice
+) -> None:
+    if tool_choice != "any" and not isinstance(tool_choice, InspectAIToolFunction):
+        return
+
+    for choice_index, message in enumerate(messages):
+        tool_calls = message.get("tool_calls") or []
+        if not tool_calls:
+            raise ConfigurationError(
+                f"Inspect tool_choice={tool_choice!r} requires a tool call, but choice "
+                f"{choice_index} did not produce one"
+            )
+        if isinstance(tool_choice, InspectAIToolFunction) and all(
+            tool_call.function.name != tool_choice.name for tool_call in tool_calls
+        ):
+            raise ConfigurationError(
+                f"Inspect tool_choice requested function {tool_choice.name!r}, but choice "
+                f"{choice_index} produced {[tool_call.function.name for tool_call in tool_calls]!r}"
+            )
 
 
 def get_model_usage(
@@ -295,6 +321,7 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
         parsed_responses = [
             self.renderer.parse_response(r.tokens)[0] for r in sampled_token_sequences
         ]
+        _validate_required_tool_choice(parsed_responses, tool_choice)
         if self.include_reasoning:
             all_choices = [
                 InspectAIModelOutputChoice(
