@@ -25,7 +25,7 @@ If you launch the chroma service locally, you generally need 160+ GB RAM to load
 
 ### Example command
 
-This default command trains a `Qwen3.5-4B` with reasonable hyperparameters.
+This default command trains `Qwen3.5-4B` in non-thinking mode with reasonable hyperparameters.
 
 ```bash
 python -m tinker_cookbook.recipes.search_tool.train
@@ -34,7 +34,7 @@ python -m tinker_cookbook.recipes.search_tool.train
 With the default hyperparameters, you can expect performance like:
 | | Natural Questions | Trivia QA | HotpotQA | 2WikiMultihopQA |
 |---|---|---|---|---|
-| Qwen3.5-4B | 51.8 | 70.2 | 52.0 | 47.7 |
+| Qwen3.5-4B non-thinking | 51.8 | 70.2 | 52.0 | 47.7 |
 
 A successful run generally learns multi-turn search within 10-25 steps, which can be monitored by checking if `env/all/turns_per_episode` has increased over 2 turns.
 

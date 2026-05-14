@@ -124,9 +124,9 @@ def _(mo):
 
 @app.cell
 def _(EnvFromMessageEnv, NamingGameEnv, get_tokenizer, renderers):
-    MODEL_NAME = "Qwen/Qwen3.5-4B"
+    MODEL_NAME = "Qwen/Qwen3.5-4B"  # Use non-thinking mode for instruction-style examples.
     tokenizer = get_tokenizer(MODEL_NAME)
-    renderer = renderers.get_renderer("qwen3_5", tokenizer)
+    renderer = renderers.get_renderer("qwen3_5_disable_thinking", tokenizer)
 
     # Wrap a MessageEnv into a token-level Env
     message_env = NamingGameEnv(topic="coffee shop")

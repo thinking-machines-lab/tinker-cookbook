@@ -107,9 +107,9 @@ def _(ComparisonRendererFromChatRenderer, comparison):
     from tinker_cookbook import renderers
     from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-    MODEL_NAME = "Qwen/Qwen3.5-4B"
+    MODEL_NAME = "Qwen/Qwen3.5-4B"  # Use non-thinking mode for instruction-style examples.
     tokenizer = get_tokenizer(MODEL_NAME)
-    renderer = renderers.get_renderer("qwen3_5", tokenizer)
+    renderer = renderers.get_renderer("qwen3_5_disable_thinking", tokenizer)
 
     comparison_renderer = ComparisonRendererFromChatRenderer(renderer)
 

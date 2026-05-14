@@ -139,13 +139,13 @@ def _(mo):
 def _(ChatDatasetBuilderCommonConfig, SimpleDatasetBuilder):
     from tinker_cookbook.supervised import train
 
-    MODEL_NAME = "Qwen/Qwen3.5-4B"
+    MODEL_NAME = "Qwen/Qwen3.5-4B"  # Use non-thinking mode for instruction-style examples.
     LOG_PATH = "~/logs/tutorial-sft-config"
 
     dataset_builder = SimpleDatasetBuilder(
         common_config=ChatDatasetBuilderCommonConfig(
             model_name_for_tokenizer=MODEL_NAME,
-            renderer_name="qwen3_5",
+            renderer_name="qwen3_5_disable_thinking",
             max_length=512,
             batch_size=4,
         ),

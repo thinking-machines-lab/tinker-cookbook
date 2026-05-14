@@ -49,11 +49,12 @@ Optional environment variables for Modal:
 
 ### Example command
 
-Train a `Qwen3.5-4B` model with:
+Train a `Qwen3.5-4B` model in non-thinking mode with:
 
 ```bash
 python -m tinker_cookbook.recipes.code_rl.train \
     model_name="Qwen/Qwen3.5-4B" \
+    renderer_name=qwen3_5_disable_thinking \
     group_size=8 groups_per_batch=128 \
     learning_rate=4e-5 \
     lora_rank=32 \
@@ -64,7 +65,7 @@ After 100 steps of training, you can expect the following performance on **LiveC
 
 | Model | Pass@1 | Pass@8 |
 |-------|--------|--------|
-| Qwen3.5-4B (before training) | 33.8% | 44.3% |
-| Qwen3.5-4B (after 100 steps) | 42.7% | 55.0% |
+| Qwen3.5-4B non-thinking (before training) | 33.8% | 44.3% |
+| Qwen3.5-4B non-thinking (after 100 steps) | 42.7% | 55.0% |
 
 [1] Luo, M., Tan, S., Huang, R., Patel, A., Ariyak, A., Wu, Q., Shi, X., Xin, R., Cai, C., Weber, M., Zhang, C., Li, L. E., Popa, R. A., & Stoica, I. (2025). DeepCoder: A fully open-source 14B coder at O3-mini level.

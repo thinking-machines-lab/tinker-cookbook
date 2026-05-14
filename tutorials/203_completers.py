@@ -114,12 +114,12 @@ def _(api_key, get_renderer, mo, tinker):
     if api_key.value:
         os.environ["TINKER_API_KEY"] = api_key.value
 
-    MODEL_NAME = "Qwen/Qwen3.5-4B"
+    MODEL_NAME = "Qwen/Qwen3.5-4B"  # Use non-thinking mode for instruction-style examples.
 
     service_client = tinker.ServiceClient()
     sampling_client = service_client.create_sampling_client(base_model=MODEL_NAME)
     tokenizer = sampling_client.get_tokenizer()
-    renderer = get_renderer("qwen3_instruct", tokenizer)
+    renderer = get_renderer("qwen3_5_disable_thinking", tokenizer)
 
     print(f"Sampling client ready for {MODEL_NAME}")
     return MODEL_NAME, renderer, sampling_client, tokenizer

@@ -111,14 +111,14 @@ async def _(TensorData, api_key, get_renderer, mo, tinker, torch):
     if api_key.value:
         os.environ["TINKER_API_KEY"] = api_key.value
 
-    MODEL_NAME = "Qwen/Qwen3.5-4B"
+    MODEL_NAME = "Qwen/Qwen3.5-4B"  # Use non-thinking mode for instruction-style examples.
 
     service_client = tinker.ServiceClient()
     training_client = await service_client.create_lora_training_client_async(
         base_model=MODEL_NAME, rank=16
     )
     tokenizer = training_client.get_tokenizer()
-    renderer = get_renderer("qwen3_instruct", tokenizer)
+    renderer = get_renderer("qwen3_5_disable_thinking", tokenizer)
 
     # Prepare held-out SFT data for the NLL evaluator
     eval_examples = [
