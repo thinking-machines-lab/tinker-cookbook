@@ -30,8 +30,8 @@ from tinker_cookbook.weights import build_hf_model, download
 class TestFullLifecycle:
     """Train 1 step → save → download → build merged HF model."""
 
-    MODEL_NAME = "Qwen/Qwen3-8B"
-    RENDERER_NAME = "qwen3"
+    MODEL_NAME = "Qwen/Qwen3.5-4B"
+    RENDERER_NAME = "qwen3_5"
     BATCH_SIZE = 4
     MAX_LENGTH = 512
     LORA_RANK = 8
