@@ -1764,6 +1764,10 @@ class TestPackedInt4:
         # empirical max-error across 10k random seeds was 0.7461; atol=0.75 keeps
         # the structural-correctness check while making flakes < 1 in 10,000.
         assert torch.allclose(tensor.float(), dequantized.float(), atol=0.75)
+        # Tighter body-of-distribution check: 95% of the 512 values should be
+        # within 0.5 of the original. Worst p95 across 10k seeds was 0.4531.
+        diffs = (tensor.float() - dequantized.float()).abs()
+        assert torch.quantile(diffs.flatten(), 0.95).item() < 0.5
 
     def test_dequantize_known_values(self):
         """Dequantize hand-crafted values to verify math."""
