@@ -9,7 +9,8 @@ def test_vlm_classifier():
         "tinker_cookbook.recipes.vlm_classifier.train",
         [
             "experiment_dir=/tmp/tinker-smoke-test/vlm_classifier",
-            "model_name=Qwen/Qwen3-VL-30B-A3B-Instruct",
+            "model_name=Qwen/Qwen3.6-35B-A3B",
+            "renderer_name=qwen3_5_disable_thinking",
             "batch_size=16",
             "num_epochs=1",
             "n_eval=16",

@@ -300,6 +300,7 @@ def _(mo):
     config = train.Config(
         log_path="~/logs/sft-with-evals",
         model_name="Qwen/Qwen3.5-4B",
+        renderer_name="qwen3_5_disable_thinking",
         dataset_builder=my_dataset_builder,
         learning_rate=1e-4,
 

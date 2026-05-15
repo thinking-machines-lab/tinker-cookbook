@@ -156,7 +156,7 @@ adapter_dir = weights.download(
 
 # Step 2: Merge LoRA into base model
 weights.build_hf_model(
-    base_model="Qwen/Qwen3.5-35B-A3B",
+    base_model="Qwen/Qwen3.6-35B-A3B",
     adapter_path=adapter_dir,
     output_path="./model",
     dtype="bfloat16",

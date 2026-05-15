@@ -5,7 +5,7 @@
 Launcher for training image classifiers based on VLMs.
 
 ```bash
-python -m tinker_cookbook.recipes.vlm_classifier.sweep experiment_dir=./sweep model_name=Qwen/Qwen3-VL-30B-A3B-Instruct
+python -m tinker_cookbook.recipes.vlm_classifier.sweep experiment_dir=./sweep
 ```
 
 """
@@ -35,8 +35,8 @@ class ExperimentConfig:
     experiment_dir: str
 
     dataset: str = "caltech101"
-    renderer_name: str = "qwen3_vl"
-    model_name: str = "Qwen/Qwen3-VL-235B-A22B-Instruct"
+    renderer_name: str = "qwen3_5_disable_thinking"
+    model_name: str = "Qwen/Qwen3.6-35B-A3B"
 
     # Infrastructure parameters
     base_url: str | None = None
@@ -158,8 +158,8 @@ class SweepConfig:
 
     experiment_dir: str
 
-    renderer_name: str = "qwen3_vl"
-    model_name: str = "Qwen/Qwen3-VL-235B-A22B-Instruct"
+    renderer_name: str = "qwen3_5_disable_thinking"
+    model_name: str = "Qwen/Qwen3.6-35B-A3B"
 
     datasets: list[str] = chz.field(default_factory=lambda: ["caltech101"])
     examples_per_class: list[int] = chz.field(default_factory=lambda: [1, 2, 4, 8, 16])

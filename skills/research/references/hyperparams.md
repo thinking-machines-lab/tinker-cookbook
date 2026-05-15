@@ -83,7 +83,7 @@ params = get_lora_param_count("meta-llama/Llama-3.1-8B", lora_rank=32)
 | Math GRPO | Llama-3.1-8B-Instruct | 4e-5 | 128x16 | 32 |
 | DPO | Llama-3.2-1B | 1e-5 | 256 | 32 |
 | Distillation | Qwen3-8B-Base | 1e-4 | 1024x4 | 128 |
-| Multi-turn RL | Kimi-K2-Thinking | 1e-5 | 8x4 | 32 |
+| Multi-turn RL | Kimi-K2.6 | 1e-5 | 8x4 | 32 |
 
 ## Pitfalls
 

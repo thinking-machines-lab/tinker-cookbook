@@ -35,7 +35,8 @@ register_litellm_provider()
 response = await litellm.acompletion(
     model="tinker/my-label",
     messages=[{"role": "user", "content": "Hello!"}],
-    base_model="Qwen/Qwen3-4B-Instruct-2507",
+    base_model="Qwen/Qwen3.5-4B",
+    renderer_name="qwen3_5_disable_thinking",
     temperature=0.7,
     max_tokens=256,
 )
@@ -49,9 +50,11 @@ LiteLLM uses the `model` parameter to decide which provider handles the request.
 
 The actual model is determined by `base_model`, which is passed directly to Tinker's `ServiceClient.create_sampling_client(base_model=...)`. This must be a model name from Tinker's [model lineup](https://tinker-docs.thinkingmachines.ai/tinker/models/), e.g.:
 
-- `Qwen/Qwen3-4B-Instruct-2507`
+- `Qwen/Qwen3.5-4B`
 - `meta-llama/Llama-3.1-8B-Instruct`
 - `moonshotai/Kimi-K2.5`
+
+Use `renderer_name` when you need a non-default chat mode. For example, `Qwen/Qwen3.5-4B` defaults to thinking mode, so use `renderer_name="qwen3_5_disable_thinking"` for direct instruction-style responses.
 
 You can list available models with:
 
@@ -78,16 +81,16 @@ sampler = service.create_sampling_client(
     model_path="tinker://<experiment-id>/sampler_weights/000080"
 )
 
-# The provider reads the base model from the sampling client automatically
-# to resolve the correct renderer and tokenizer.
-provider.set_client(sampler)
+# The provider reads the base model from the sampling client automatically.
+provider.set_client(sampler, renderer_name="qwen3_5_disable_thinking")
 
 # Now litellm calls will sample from your fine-tuned checkpoint.
 # base_model must still match so the provider finds the right client bundle.
 response = await litellm.acompletion(
     model="tinker/my-finetuned",
     messages=[{"role": "user", "content": "Hello!"}],
-    base_model="Qwen/Qwen3-4B-Instruct-2507",
+    base_model="Qwen/Qwen3.5-4B",
+    renderer_name="qwen3_5_disable_thinking",
 )
 ```
 
@@ -112,7 +115,8 @@ The key feature of this integration is token-level access for training workflows
 response = await litellm.acompletion(
     model="tinker/my-label",
     messages=messages,
-    base_model="Qwen/Qwen3-4B-Instruct-2507",
+    base_model="Qwen/Qwen3.5-4B",
+    renderer_name="qwen3_5_disable_thinking",
 )
 
 # Raw token IDs are in provider_specific_fields
@@ -129,6 +133,7 @@ completion_token_ids = fields["completion_token_ids"]  # list[int]
 |---|---|
 | `model` | Must start with `tinker/` to route to this provider. The rest is a label for the response metadata. |
 | `base_model` | **Required.** Tinker model name passed to `create_sampling_client()`. See [model lineup](https://tinker-docs.thinkingmachines.ai/tinker/models/). |
+| `renderer_name` | Optional renderer override, e.g. `qwen3_5_disable_thinking` for non-thinking Qwen3.5/Qwen3.6 calls. |
 | `temperature` | Sampling temperature |
 | `max_tokens` / `max_completion_tokens` | Maximum tokens to generate |
 | `top_p` | Nucleus sampling parameter |
@@ -138,13 +143,14 @@ completion_token_ids = fields["completion_token_ids"]  # list[int]
 
 ## Tool calling
 
-Tool declarations are supported for models whose renderers implement `create_conversation_prefix_with_tools` (Qwen3, DeepSeek V3, Kimi K2/K2.5, GPT-OSS):
+Tool declarations are supported for models whose renderers implement `create_conversation_prefix_with_tools` (Qwen3, Qwen3.5/Qwen3.6, DeepSeek V3, Kimi K2/K2.5/K2.6, GPT-OSS):
 
 ```python
 response = await litellm.acompletion(
     model="tinker/my-agent",
     messages=[{"role": "user", "content": "What's the weather in SF?"}],
-    base_model="Qwen/Qwen3-4B-Instruct-2507",
+    base_model="Qwen/Qwen3.5-4B",
+    renderer_name="qwen3_5_disable_thinking",
     tools=[{
         "type": "function",
         "function": {

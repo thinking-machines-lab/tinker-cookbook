@@ -45,9 +45,9 @@ logger = logging.getLogger(__name__)
 
 Method = Literal["sft", "sdft_is", "sdft_topk", "sdft_hybrid"]
 
-MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
+MODEL_NAME = "Qwen/Qwen3.6-35B-A3B"
 DATA_DIR = "~/Self-Distillation/data"
-LORA_RANK = 128
+LORA_RANK = 64
 BATCH_SIZE = 128
 MAX_TOKENS = 2048
 EVAL_EVERY = 10  # Eval every N batches
@@ -65,13 +65,13 @@ class ExperimentConfig:
     max_tokens: int = MAX_TOKENS
 
     # What to run
-    methods: str = "sft,sdft_is,sdft_topk"  # comma-separated
-    learning_rates: str = "5e-4,1e-3"  # comma-separated
+    methods: str = "sft,sdft_topk"  # comma-separated
+    learning_rates: str = "1e-4,5e-4,1e-3"  # comma-separated
     stages: str = "1,2"  # comma-separated
 
     # SDFT-TopK specific
     topk: int = 20
-    thinking_format: bool = False
+    thinking_format: bool = True
 
     # Logging
     log_root: str = "/tmp/tinker-sdft-continual-v3"

@@ -37,7 +37,11 @@ class CLIConfig:
     split: Literal["train", "test"] = chz.field(default="test", doc="Dataset split to use")
 
     # Model parameters
-    base_model: str = chz.field(default="Qwen/Qwen3-4B-Instruct-2507", doc="Base model to use")
+    base_model: str = chz.field(default="Qwen/Qwen3.5-4B", doc="Base model to use")
+    renderer_name: str | None = chz.field(
+        default="qwen3_5_disable_thinking",
+        doc="Renderer override to use if the checkpoint does not record one",
+    )
     tinker_checkpoint_url: str = chz.field(doc="Tinker checkpoint URL (required)")
     max_tokens: int = chz.field(default=1024, doc="Maximum number of tokens to generate")
 
@@ -117,7 +121,9 @@ async def evaluate_one_dataset(data: list[SearchR1Datum], config: CLIConfig):
         service_client, config.tinker_checkpoint_url
     )
     if renderer_name is None:
-        renderer_name = model_info.get_recommended_renderer_name(config.base_model)
+        renderer_name = config.renderer_name or model_info.get_recommended_renderer_name(
+            config.base_model
+        )
     print(f"Using renderer: {renderer_name}")
     renderer = get_renderer(renderer_name, tokenizer)
 

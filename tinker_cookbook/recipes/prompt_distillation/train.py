@@ -21,7 +21,7 @@ class CLIConfig:
     # Required parameters
     file_path: str = "/tmp/tinker-datasets/prompt_distillation_lang.jsonl"
     log_path: str | None = None
-    model_name: str = "Qwen/Qwen3-30B-A3B"
+    model_name: str = "Qwen/Qwen3.6-35B-A3B"
     load_checkpoint_path: str | None = None
 
     # Training parameters

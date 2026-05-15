@@ -258,11 +258,15 @@ def _(mo):
     |---|---|---|
     | `qwen3` | Qwen3 | Thinking enabled (default) |
     | `qwen3_disable_thinking` | Qwen3 | Thinking disabled |
+    | `qwen3_5` | Qwen3.5/Qwen3.6 | Vision + thinking |
+    | `qwen3_5_disable_thinking` | Qwen3.5/Qwen3.6 | Vision, thinking disabled |
     | `llama3` | Llama 3 | Omits the HF preamble |
     | `deepseekv3` | DeepSeek V3 | Non-thinking mode (default) |
     | `deepseekv3_thinking` | DeepSeek V3 | Thinking mode |
     | `nemotron3` | NVIDIA Nemotron 3 | Thinking enabled |
     | `kimi_k2` | Kimi K2 | Thinking format |
+    | `kimi_k26` | Kimi K2.6 | Thinking enabled |
+    | `kimi_k26_disable_thinking` | Kimi K2.6 | Thinking disabled |
 
     Each renderer produces the correct special tokens for its model family. The default renderers match HuggingFace's `apply_chat_template` output, so models trained with Tinker work with the OpenAI-compatible endpoint.
     """)

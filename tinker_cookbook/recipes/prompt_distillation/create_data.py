@@ -78,9 +78,11 @@ Text to classify:
 @chz.chz
 class Config:
     output_file: str
+    model_name: str = "Qwen/Qwen3.6-35B-A3B"
+    renderer_name: str = "qwen3_5"
 
 
-def setup_clients():
+def setup_clients(config: Config):
     # disable tokenizer parallelism warnings
     import os
 
@@ -89,9 +91,9 @@ def setup_clients():
     print("Creating service client")
     service_client = tinker.ServiceClient()
     print("Creating sampling client")
-    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3-30B-A3B")
-    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
-    renderer = renderers.get_renderer("qwen3", tokenizer)
+    sampling_client = service_client.create_sampling_client(base_model=config.model_name)
+    tokenizer = get_tokenizer(config.model_name)
+    renderer = renderers.get_renderer(config.renderer_name, tokenizer)
 
     return sampling_client, tokenizer, renderer
 
@@ -166,7 +168,7 @@ def main(config: Config):
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Setup clients synchronously
-    sampling_client, tokenizer, renderer = setup_clients()
+    sampling_client, tokenizer, renderer = setup_clients(config)
 
     print("Sampling data")
     # Run async data creation

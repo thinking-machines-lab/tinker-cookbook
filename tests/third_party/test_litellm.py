@@ -11,7 +11,8 @@ import tinker_cookbook.third_party.litellm.provider as provider_mod
 from tinker_cookbook.third_party.litellm import register_litellm_provider
 
 # Use a small model for fast smoke testing
-BASE_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
+BASE_MODEL = "Qwen/Qwen3.5-4B"
+RENDERER_NAME = "qwen3_5_disable_thinking"
 
 
 @pytest.fixture(scope="module")
@@ -43,6 +44,7 @@ async def test_acompletion_basic(tinker_provider) -> None:
         model="tinker/test",
         messages=[{"role": "user", "content": "What is 2+2? Answer with just the number."}],
         base_model=BASE_MODEL,
+        renderer_name=RENDERER_NAME,
         temperature=0.0,
         max_tokens=32,
     )
@@ -77,6 +79,7 @@ async def test_acompletion_with_system_message(tinker_provider) -> None:
             {"role": "user", "content": "Say hello."},
         ],
         base_model=BASE_MODEL,
+        renderer_name=RENDERER_NAME,
         temperature=0.0,
         max_tokens=32,
     )
@@ -96,6 +99,7 @@ async def test_acompletion_multi_turn(tinker_provider) -> None:
             {"role": "user", "content": "What is my name?"},
         ],
         base_model=BASE_MODEL,
+        renderer_name=RENDERER_NAME,
         temperature=0.0,
         max_tokens=32,
     )
@@ -110,6 +114,7 @@ def test_completion_sync(tinker_provider) -> None:
         model="tinker/test",
         messages=[{"role": "user", "content": "Say hi."}],
         base_model=BASE_MODEL,
+        renderer_name=RENDERER_NAME,
         temperature=0.0,
         max_tokens=16,
     )
@@ -140,12 +145,13 @@ async def test_set_client_with_finetuned_checkpoint(tinker_provider) -> None:
     checkpoint_sampler = training_client.save_weights_and_get_sampling_client()
 
     # Inject via set_client — base_model is derived from the sampling client
-    tinker_provider.set_client(checkpoint_sampler)
+    tinker_provider.set_client(checkpoint_sampler, renderer_name=RENDERER_NAME)
 
     response = await litellm.acompletion(
         model="tinker/finetuned-test",
         messages=[{"role": "user", "content": "Say hello."}],
         base_model=BASE_MODEL,
+        renderer_name=RENDERER_NAME,
         temperature=0.0,
         max_tokens=32,
     )

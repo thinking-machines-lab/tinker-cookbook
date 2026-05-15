@@ -9,7 +9,7 @@ python -m tinker_cookbook.recipes.vlm_classifier.train \
     experiment_dir=./vlm_classifier \
     wandb_project=vlm-classifier \
     dataset=caltech101 \
-    renderer_name=qwen3_5 \
+    renderer_name=qwen3_5_disable_thinking \
     model_name=Qwen/Qwen3.6-35B-A3B
 ```
 
@@ -24,7 +24,7 @@ python -m tinker_cookbook.recipes.vlm_classifier.eval \
     dataset=caltech101 \
     model_path=$YOUR_MODEL_PATH \
     model_name=Qwen/Qwen3.6-35B-A3B \
-    renderer_name=qwen3_5
+    renderer_name=qwen3_5_disable_thinking
 ```
 
 This will print the test accuracy of your model.

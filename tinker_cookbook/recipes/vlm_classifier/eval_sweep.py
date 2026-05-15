@@ -71,7 +71,7 @@ def parse_hyperparams_from_experiment_name(experiment_name: str) -> dict[str, An
     Experiment names follow the format from sweep.py:
     {dataset}-{model_name}-{lora_rank}rank-{learning_rate}lr-{batch_size}batch-{examples_per_class}shot-seed{subset_seed}-{date}
 
-    Example: caltech101-Qwen-Qwen3-VL-235B-A22B-Instruct-32rank-0.0005lr-32batch-4shot-seed0-2025-11-26
+    Example: caltech101-Qwen-Qwen3.6-35B-A3B-32rank-0.0005lr-32batch-4shot-seed0-2025-11-26
     """
 
     hyperparams: dict[str, Any] = {}
@@ -115,8 +115,8 @@ class EvalConfig:
     experiment_dir: str
     output_file: str
 
-    renderer_name: str = "qwen3_vl"
-    model_name: str = "Qwen/Qwen3-VL-235B-A22B-Instruct"
+    renderer_name: str = "qwen3_5_disable_thinking"
+    model_name: str = "Qwen/Qwen3.6-35B-A3B"
 
     # Infrastructure parameters
     base_url: str | None = None

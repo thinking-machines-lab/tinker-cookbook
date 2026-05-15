@@ -335,25 +335,22 @@ class TestTinkerLiteLLMProvider:
 
         provider = None
         try:
-            original_len = len(litellm.custom_provider_map)
+            provider_map = getattr(litellm, "custom_provider_map")
+            original_len = len(provider_map)
             provider = register_litellm_provider()
-            assert len(litellm.custom_provider_map) == original_len + 1
-            entry = litellm.custom_provider_map[-1]
+            assert len(provider_map) == original_len + 1
+            entry = provider_map[-1]
             assert entry["provider"] == "tinker"
             assert entry["custom_handler"] is provider
 
             # Calling again returns the same instance without adding a duplicate
             provider2 = register_litellm_provider()
             assert provider2 is provider
-            assert len(litellm.custom_provider_map) == original_len + 1
+            assert len(provider_map) == original_len + 1
         finally:
             # Clean up
             if provider is not None:
-                litellm.custom_provider_map[:] = [
-                    e
-                    for e in litellm.custom_provider_map
-                    if e.get("custom_handler") is not provider
-                ]
+                provider_map[:] = [e for e in provider_map if e.get("custom_handler") is not provider]
             provider_mod._registered_provider = old_registered
 
     def test_set_client_creates_bundle(self) -> None:
@@ -374,8 +371,8 @@ class TestTinkerLiteLLMProvider:
             mock_get_tok.return_value = MagicMock()
             provider.set_client(mock_client)
 
-        assert "Qwen/Qwen3-8B" in provider._clients
-        assert provider._clients["Qwen/Qwen3-8B"].sampling_client is mock_client
+        assert ("Qwen/Qwen3-8B", "qwen3") in provider._clients
+        assert provider._clients[("Qwen/Qwen3-8B", "qwen3")].sampling_client is mock_client
 
     def test_set_client_updates_existing_bundle(self) -> None:
         from tinker_cookbook.third_party.litellm.provider import (
@@ -388,15 +385,39 @@ class TestTinkerLiteLLMProvider:
         new_client = MagicMock()
         new_client.get_base_model.return_value = "Qwen/Qwen3-8B"
 
-        provider._clients["Qwen/Qwen3-8B"] = _ClientBundle(
+        provider._clients[("Qwen/Qwen3-8B", "qwen3")] = _ClientBundle(
             sampling_client=old_client,
             renderer=MagicMock(),
             tokenizer=MagicMock(),
             base_model="Qwen/Qwen3-8B",
+            renderer_name="qwen3",
         )
 
         provider.set_client(new_client)
-        assert provider._clients["Qwen/Qwen3-8B"].sampling_client is new_client
+        assert provider._clients[("Qwen/Qwen3-8B", "qwen3")].sampling_client is new_client
+
+    def test_get_or_create_client_uses_renderer_override(self) -> None:
+        from tinker_cookbook.third_party.litellm.provider import TinkerLiteLLMProvider
+
+        service_client = MagicMock()
+        service_client.create_sampling_client.return_value = MagicMock()
+        provider = TinkerLiteLLMProvider(service_client=service_client)
+
+        with (
+            patch("tinker_cookbook.third_party.litellm.provider.get_tokenizer") as mock_get_tok,
+            patch(
+                "tinker_cookbook.third_party.litellm.provider.renderers.get_renderer"
+            ) as mock_get_renderer,
+        ):
+            tokenizer = MagicMock()
+            mock_get_tok.return_value = tokenizer
+            provider._get_or_create_client(
+                "Qwen/Qwen3.5-4B",
+                renderer_name="qwen3_5_disable_thinking",
+            )
+
+        mock_get_renderer.assert_called_once_with("qwen3_5_disable_thinking", tokenizer)
+        assert ("Qwen/Qwen3.5-4B", "qwen3_5_disable_thinking") in provider._clients
 
     @pytest.mark.asyncio
     async def test_acompletion_requires_base_model(self) -> None:
@@ -444,11 +465,12 @@ class TestTinkerLiteLLMProvider:
             ParseTermination.STOP_SEQUENCE,
         )
 
-        provider._clients["Qwen/Qwen3-8B"] = _ClientBundle(
+        provider._clients[("Qwen/Qwen3-8B", "qwen3")] = _ClientBundle(
             sampling_client=mock_sampling_client,
             renderer=mock_renderer,
             tokenizer=MagicMock(),
             base_model="Qwen/Qwen3-8B",
+            renderer_name="qwen3",
         )
 
         model_response = MagicMock()

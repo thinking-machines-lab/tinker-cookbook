@@ -14,7 +14,8 @@ Usage::
     response = await litellm.acompletion(
         model="tinker/my-model",
         messages=[{"role": "user", "content": "Hello!"}],
-        base_model="Qwen/Qwen3-4B-Instruct-2507",
+        base_model="Qwen/Qwen3.5-4B",
+        renderer_name="qwen3_5_disable_thinking",
     )
 
     # Access raw tokens for training
@@ -313,6 +314,7 @@ class _ClientBundle:
     renderer: renderers.Renderer
     tokenizer: Tokenizer
     base_model: str
+    renderer_name: str
 
 
 class TinkerLiteLLMProvider(CustomLLM):
@@ -323,7 +325,7 @@ class TinkerLiteLLMProvider(CustomLLM):
         service_client: tinker.ServiceClient | None = None,
     ) -> None:
         super().__init__()
-        self._clients: dict[str, _ClientBundle] = {}
+        self._clients: dict[tuple[str, str], _ClientBundle] = {}
         self._service_client = service_client
 
     def _get_service_client(self) -> tinker.ServiceClient:
@@ -331,46 +333,56 @@ class TinkerLiteLLMProvider(CustomLLM):
             self._service_client = tinker.ServiceClient()
         return self._service_client
 
-    def _get_or_create_client(self, base_model: str) -> _ClientBundle:
-        """Get or lazily create a client bundle for the given base model."""
-        if base_model not in self._clients:
+    def _get_or_create_client(
+        self,
+        base_model: str,
+        renderer_name: str | None = None,
+    ) -> _ClientBundle:
+        """Get or lazily create a client bundle for the given model/renderer pair."""
+        renderer_name = renderer_name or get_recommended_renderer_name(base_model)
+        key = (base_model, renderer_name)
+        if key not in self._clients:
             tokenizer = get_tokenizer(base_model)
-            renderer_name = get_recommended_renderer_name(base_model)
             renderer = renderers.get_renderer(renderer_name, tokenizer)
-            sampling_client = self._get_service_client().create_sampling_client(
-                base_model=base_model
+            sampling_client = next(
+                (
+                    bundle.sampling_client
+                    for bundle in self._clients.values()
+                    if bundle.base_model == base_model
+                ),
+                None,
             )
-            self._clients[base_model] = _ClientBundle(
+            if sampling_client is None:
+                sampling_client = self._get_service_client().create_sampling_client(
+                    base_model=base_model
+                )
+            self._clients[key] = _ClientBundle(
                 sampling_client=sampling_client,
                 renderer=renderer,
                 tokenizer=tokenizer,
                 base_model=base_model,
+                renderer_name=renderer_name,
             )
-        return self._clients[base_model]
+        return self._clients[key]
 
     def set_client(
         self,
         sampling_client: tinker.SamplingClient,
+        renderer_name: str | None = None,
     ) -> None:
         """Inject a custom SamplingClient (e.g., for a fine-tuned checkpoint).
 
         The base model is read from the client via ``get_base_model()``,
-        and used to resolve the correct renderer and tokenizer. If a bundle
-        for that base model already exists, only the sampling client is replaced.
+        and used to resolve the correct renderer and tokenizer unless
+        ``renderer_name`` is provided. If any bundle for that base model already
+        exists, its sampling client is replaced.
         """
         base_model = sampling_client.get_base_model()
-        if base_model in self._clients:
-            self._clients[base_model].sampling_client = sampling_client
-        else:
-            tokenizer = get_tokenizer(base_model)
-            renderer_name = get_recommended_renderer_name(base_model)
-            renderer = renderers.get_renderer(renderer_name, tokenizer)
-            self._clients[base_model] = _ClientBundle(
-                sampling_client=sampling_client,
-                renderer=renderer,
-                tokenizer=tokenizer,
-                base_model=base_model,
-            )
+        for bundle in self._clients.values():
+            if bundle.base_model == base_model:
+                bundle.sampling_client = sampling_client
+        bundle = self._get_or_create_client(base_model, renderer_name=renderer_name)
+        bundle.sampling_client = sampling_client
 
     async def acompletion(
         self,
@@ -392,13 +404,17 @@ class TinkerLiteLLMProvider(CustomLLM):
         client=None,
     ) -> ModelResponse:
         base_model: str = (litellm_params or {}).get("base_model", "")
+        renderer_name: str | None = (litellm_params or {}).get(
+            "renderer_name"
+        ) or optional_params.get("renderer_name")
         if not base_model:
             raise ValueError(
                 "base_model is required for the Tinker provider. "
-                "Pass it as: litellm.acompletion(..., base_model='Qwen/Qwen3-4B-Instruct-2507')"
+                "Pass it as: litellm.acompletion(..., base_model='Qwen/Qwen3.5-4B', "
+                "renderer_name='qwen3_5_disable_thinking')"
             )
 
-        bundle = self._get_or_create_client(base_model)
+        bundle = self._get_or_create_client(base_model, renderer_name=renderer_name)
         sampling_params = _extract_sampling_params(optional_params)
 
         try:
@@ -435,13 +451,17 @@ class TinkerLiteLLMProvider(CustomLLM):
         client=None,
     ) -> ModelResponse:
         base_model: str = (litellm_params or {}).get("base_model", "")
+        renderer_name: str | None = (litellm_params or {}).get(
+            "renderer_name"
+        ) or optional_params.get("renderer_name")
         if not base_model:
             raise ValueError(
                 "base_model is required for the Tinker provider. "
-                "Pass it as: litellm.completion(..., base_model='Qwen/Qwen3-4B-Instruct-2507')"
+                "Pass it as: litellm.completion(..., base_model='Qwen/Qwen3.5-4B', "
+                "renderer_name='qwen3_5_disable_thinking')"
             )
 
-        bundle = self._get_or_create_client(base_model)
+        bundle = self._get_or_create_client(base_model, renderer_name=renderer_name)
         sampling_params = _extract_sampling_params(optional_params)
 
         coro = _sample_chat_completion(

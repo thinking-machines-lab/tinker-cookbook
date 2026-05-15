@@ -7,6 +7,8 @@ Full listing of available models with types, architecture, and sizes.
 | Model | Type | Arch | Size |
 |-------|------|------|------|
 | `Qwen/Qwen3.5-397B-A17B` | Hybrid + Vision | MoE | Large |
+| `Qwen/Qwen3.6-35B-A3B` | Hybrid + Vision | MoE | Medium |
+| `Qwen/Qwen3.6-27B` | Hybrid + Vision | Dense | Medium |
 | `Qwen/Qwen3.5-35B-A3B` | Hybrid + Vision | MoE | Medium |
 | `Qwen/Qwen3.5-27B` | Hybrid + Vision | Dense | Medium |
 | `Qwen/Qwen3.5-4B` | Hybrid + Vision | Dense | Compact |
@@ -47,7 +49,6 @@ Full listing of available models with types, architecture, and sizes.
 | `openai/gpt-oss-20b` | Reasoning | MoE | Small |
 | `deepseek-ai/DeepSeek-V3.1` | Hybrid | MoE | Large |
 | `deepseek-ai/DeepSeek-V3.1-Base` | Base | MoE | Large |
-| `moonshotai/Kimi-K2-Thinking` | Reasoning | MoE | Large |
 | `moonshotai/Kimi-K2.5` | Reasoning + Vision | MoE | Large |
 | `moonshotai/Kimi-K2.6` | Reasoning + Vision | MoE | Large |
 

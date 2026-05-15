@@ -53,7 +53,8 @@ The default of 80 steps avoids the collapse while capturing the performance plat
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `model_name` | `Qwen/Qwen3-4B-Instruct-2507` | Base model to train |
+| `model_name` | `Qwen/Qwen3.5-4B` | Base model to train |
+| `renderer_name` | `qwen3_5_disable_thinking` | Non-thinking renderer for instruction-style gameplay |
 | `batch_size` | `512` | Trajectories per training step |
 | `num_train_datapoints` | `40960` | Total training trajectories (~80 steps) |
 | `learning_rate` | `3e-5` | Adam learning rate |

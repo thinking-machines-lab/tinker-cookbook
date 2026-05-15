@@ -37,7 +37,8 @@ def get_prometheus_datapoint() -> RubricBasedDatapoint:
 async def main(datapoint: RubricBasedDatapoint):
     # Configuration parameters
     policy_name = "meta-llama/Llama-3.1-8B-Instruct"
-    grader_name = "Qwen/Qwen3-30B-A3B-Instruct-2507"
+    grader_name = "Qwen/Qwen3.6-35B-A3B"
+    grader_renderer_name = "qwen3_5_disable_thinking"
     policy_max_tokens = 64
     grader_max_tokens = 64
 
@@ -52,7 +53,7 @@ async def main(datapoint: RubricBasedDatapoint):
     grader = TinkerMessageCompleter(
         sampling_client=service_client.create_sampling_client(base_model=grader_name),
         renderer=get_renderer(
-            model_info.get_recommended_renderer_name(grader_name), get_tokenizer(grader_name)
+            grader_renderer_name, get_tokenizer(grader_name)
         ),
         max_tokens=grader_max_tokens,
     )
