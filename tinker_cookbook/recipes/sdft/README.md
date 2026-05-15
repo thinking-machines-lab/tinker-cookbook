@@ -123,7 +123,7 @@ python -m tinker_cookbook.recipes.sdft.train \
 
 ## Results
 
-### Continual Learning: `Qwen/Qwen3.6-35B-A3B` (Tinker, LoRA 64)
+### Continual Learning: `Qwen/Qwen3.6-35B-A3B` (Tinker, LoRA rank 64)
 
 **Stage 1: Train on tool-use, evaluate both tasks**
 
