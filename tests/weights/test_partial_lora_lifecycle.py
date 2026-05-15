@@ -169,7 +169,7 @@ _DENSE_RENDERER = "qwen3"
 @pytest.mark.integration
 @pytest.mark.timeout(900)
 class TestPartialLoraDense:
-    """E2E: partial LoRA on dense Qwen3-4B → download → adapter export + full merge."""
+    """E2E: partial LoRA on dense Qwen3-4B-Instruct-2507 → download → adapter export + full merge."""
 
     def test_attn_only(self) -> None:
         """train_attn=True, train_mlp=False, train_unembed=False."""
