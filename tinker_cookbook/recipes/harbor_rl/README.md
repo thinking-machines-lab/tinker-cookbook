@@ -85,6 +85,25 @@ The first argument is the task's `environment/` directory (containing a Dockerfi
 
 `cli_main()` accepts an optional `sandbox_factory` parameter. When `None`, it falls back to `default_sandbox_factory` (Modal). The factory flows through: `cli_main` -> `HarborDatasetBuilder` -> `HarborEnvGroupBuilder.make_envs()`.
 
+### Daytona backend (alternative)
+
+A Daytona factory with the same signature is also available:
+
+```python
+from tinker_cookbook.sandbox.daytona_sandbox import daytona_sandbox_factory
+
+cli_main(sandbox_factory=daytona_sandbox_factory, ...)
+```
+
+Install the extra and set your API key:
+
+```bash
+uv pip install 'tinker-cookbook[daytona] @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
+export DAYTONA_API_KEY="***"
+```
+
+Each task's `environment/Dockerfile` is built into a Daytona image via `Image.from_dockerfile(...)`. Daytona caches image builds by content hash, so rebuilding across a sweep of rollouts is automatic. For further cold-start savings, pre-create a named snapshot with `daytona.snapshot.create(...)` and set `DAYTONA_SNAPSHOT`.
+
 ## Running
 
 First, download the Terminal-Bench tasks:
