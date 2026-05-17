@@ -34,7 +34,14 @@ Homepage = "https://thinkingmachines.ai/tinker"
 Repository = "https://github.com/thinking-machines-lab/tinker-cookbook"
 Documentation = "https://tinker-docs.thinkingmachines.ai/"
 
+[project.scripts]
+tinker-chef = "tinker_cookbook.chef.cli:main"
+
 [project.optional-dependencies]
+chef = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
@@ -121,6 +128,7 @@ eval = [
     "tinker_cookbook[eval-ifbench]",
 ]
 all = [
+    "tinker_cookbook[chef]",
     "tinker_cookbook[eval]",
     "tinker_cookbook[math-rl]",
     "tinker_cookbook[modal]",

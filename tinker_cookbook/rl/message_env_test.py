@@ -660,7 +660,9 @@ class TestLogsPassthrough:
 
         result = asyncio.run(env.step([1]))
 
-        assert result.logs == {"assistant": "hello world", "tool_call_0": "name=search"}
+        assert result.logs["assistant"] == "hello world"
+        assert result.logs["tool_call_0"] == "name=search"
+        assert "_conversation" in result.logs
 
     def test_logs_forwarded_on_context_overflow(self):
         """Logs from MessageEnv are preserved even when context overflows."""
@@ -684,7 +686,9 @@ class TestLogsPassthrough:
 
         assert result.episode_done is True
         assert result.metrics["context_overflow"] == 1.0
-        assert result.logs == {"assistant": "some response", "tool_result_0": "result data"}
+        assert result.logs["assistant"] == "some response"
+        assert result.logs["tool_result_0"] == "result data"
+        assert "_conversation" in result.logs
 
     def test_no_logs_on_parse_error(self):
         """Parse errors bypass MessageEnv, so logs are empty."""
@@ -704,10 +708,12 @@ class TestLogsPassthrough:
 
         result = asyncio.run(env.step([1]))
 
-        assert result.logs == {}
+        # Parse errors bypass MessageEnv; only _conversation is present
+        assert "should_not" not in result.logs
+        assert "_conversation" in result.logs
 
     def test_empty_logs_by_default(self):
-        """When MessageEnv doesn't set logs, StepResult.logs defaults to empty."""
+        """When MessageEnv doesn't set logs, StepResult.logs defaults to _conversation only."""
         renderer = _make_renderer(gen_prompt_tokens=[1, 2])
         msg_env = StubMessageEnv(
             initial_messages=[],
@@ -721,4 +727,5 @@ class TestLogsPassthrough:
 
         result = asyncio.run(env.step([1]))
 
-        assert result.logs == {}
+        # Only framework key present; no user-supplied logs
+        assert list(result.logs.keys()) == ["_conversation"]

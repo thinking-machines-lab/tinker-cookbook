@@ -149,7 +149,10 @@ def _maybe_export_rollout_summary_jsonl(
     from tinker_cookbook.rl.rollout_logging import serialize_rollout_summaries_from_groups
 
     records = serialize_rollout_summaries_from_groups(
-        split=split, iteration=iteration, groups_P=groups_P
+        split=split,
+        iteration=iteration,
+        groups_P=groups_P,
+        model_name=config.model_name,
     )
     store.write_rollouts(iteration, records, base_name=base_name)
 
@@ -688,7 +691,7 @@ async def do_sync_training_with_stream_minibatch(
             if (
                 config.eval_every > 0 and i_batch % config.eval_every == 0
             ) or i_batch == end_batch - 1:
-                async with trace.scope_span("run_evals"):
+                async with trace.scope_span("run_evaluations"):
                     eval_metrics = await run_evaluations_parallel(
                         evaluators, sampling_client, config, i_batch, store=ml_logger.store
                     )
@@ -712,8 +715,9 @@ async def do_sync_training_with_stream_minibatch(
 
                 @trace.scope
                 async def trajectory_group_worker_task(
-                    builder: EnvGroupBuilder, enable_logging: bool
+                    builder: EnvGroupBuilder, enable_logging: bool, group_idx: int = 0
                 ) -> None:
+                    trace.update_scope_context({"group_idx": group_idx})
                     worker_metrics: dict[str, Any] = {}
                     t_start = time.time()
                     async with trace.scope_span("trajectory_group_worker"):
@@ -749,7 +753,7 @@ async def do_sync_training_with_stream_minibatch(
                 for i, builder in enumerate(env_group_builders_P):
                     asyncio.create_task(
                         trajectory_group_worker_task(
-                            builder, enable_logging=i < config.num_groups_to_log
+                            builder, enable_logging=i < config.num_groups_to_log, group_idx=i
                         ),
                         name=f"trajectory_group_worker_task_{i}",
                     )
@@ -973,8 +977,10 @@ async def do_async_training(
         logger.info("[dataloader_loop] Terminated")
 
     @trace.scope
-    async def trajectory_group_worker_loop():
+    async def trajectory_group_worker_loop(worker_idx: int = 0):
         """Generates trajectories for a single env builder"""
+        trace.update_scope_context({"worker_idx": worker_idx})
+        group_counter = 0
         while True:
             env_group_builder = await env_group_builders_queue.get()
             if isinstance(env_group_builder, _Shutdown):
@@ -984,6 +990,7 @@ async def do_async_training(
             # Save a reference to the sampling client step in case it changes
             # while we're running the rollout
             sampling_client_step_copy = sampling_client_step
+            trace.update_scope_context({"group_idx": group_counter})
             worker_metrics: dict[str, Any] = {}
             t_start = time.time()
             async with trace.scope_span("trajectory_group_worker"):
@@ -996,6 +1003,7 @@ async def do_async_training(
                     strategy=strategy,
                 )
             worker_metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
+            group_counter += 1
             # Ingest error info (safe: same event loop thread)
             if error_counter is not None:
                 error_counter.ingest(trajectory_group)
@@ -1238,7 +1246,7 @@ async def do_async_training(
         asyncio.create_task(dataloader_loop(), name="dataloader_loop"),
         *[
             asyncio.create_task(
-                trajectory_group_worker_loop(), name=f"trajectory_group_worker_loop_{i}"
+                trajectory_group_worker_loop(worker_idx=i), name=f"trajectory_group_worker_loop_{i}"
             )
             for i in range(config.async_config.groups_per_batch)
         ],
@@ -1334,7 +1342,7 @@ async def prepare_minibatch(
 
     # Incorporate KL penalty if configured
     if kl_penalty_coef > 0 and kl_reference_client is not None:
-        async with trace.scope_span("kl_vs_base"):
+        async with trace.scope_span("compute_kl_penalty"):
             kl_penalty_metrics = await incorporate_kl_penalty(
                 data_D,
                 kl_reference_client,
@@ -1382,7 +1390,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     metrics = {}
 
     # Compute KL metrics
-    async with trace.scope_span("compute_kl_sample_train"):
+    async with trace.scope_span("compute_kl_metrics"):
         kl_sample_train_metrics = compute_kl_sample_train(data_D, training_logprobs_D)
         metrics.update(kl_sample_train_metrics)
 
@@ -1501,9 +1509,8 @@ async def do_train_step_streaming_and_get_sampling_client(
             metrics.update(prepare_minibatch_metrics)
 
             # Enqueue forward-backward (we'll await results after all minibatches are enqueued)
-            async with trace.scope_span(
-                f"train/fwd_bwd_substep_{i_substep}_mb_{i_minibatch}_enqueue"
-            ):
+            trace.update_scope_context({"substep": i_substep, "minibatch": i_minibatch})
+            async with trace.scope_span("train_fwd_bwd_enqueue"):
                 forward_backward_futures.append(
                     await training_client.forward_backward_async(
                         [_remove_mask(d) for d in data_D],
@@ -1520,16 +1527,17 @@ async def do_train_step_streaming_and_get_sampling_client(
         adam_params = tinker.AdamParams(
             learning_rate=config.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8
         )
-        async with trace.scope_span(f"train/optim_substep_{i_substep}_enqueue"):
+        async with trace.scope_span("train_optim_enqueue"):
             optim_future = await training_client.optim_step_async(adam_params)
 
         # Now consume all forward-backward results
         for i_mb, fwd_bwd_future in enumerate(forward_backward_futures):
-            async with trace.scope_span(f"train/fwd_bwd_substep_{i_substep}_mb_{i_mb}_consume"):
+            trace.update_scope_context({"substep": i_substep, "minibatch": i_mb})
+            async with trace.scope_span("train_fwd_bwd_consume"):
                 fwd_bwd_result = await fwd_bwd_future.result_async()
                 all_training_logprobs_D.extend(_training_logprobs_from_fwd_bwd(fwd_bwd_result))
 
-        async with trace.scope_span(f"train/optim_substep_{i_substep}_consume"):
+        async with trace.scope_span("train_optim_consume"):
             optim_result = await optim_future.result_async()
 
         if optim_result.metrics:
@@ -1712,17 +1720,24 @@ async def do_sync_training(
                 ):
                     # Note: do_remove_constant_reward_groups=False here because we remove
                     # constant reward groups after all rollouts are collected (below)
+                    @trace.scope
+                    async def group_rollout(
+                        builder: EnvGroupBuilder, group_idx: int, enable_logging: bool
+                    ) -> TrajectoryGroup | None:
+                        trace.update_scope_context({"group_idx": group_idx})
+                        return await do_group_rollout_and_filter_constant_reward(
+                            sampling_client,
+                            builder,
+                            max_tokens=config.max_tokens,
+                            temperature=config.temperature,
+                            do_remove_constant_reward_groups=False,
+                            enable_logging=enable_logging,
+                            strategy=strategy,
+                        )
+
                     results_P = await gather_with_progress(
                         (
-                            do_group_rollout_and_filter_constant_reward(
-                                sampling_client,
-                                builder,
-                                max_tokens=config.max_tokens,
-                                temperature=config.temperature,
-                                do_remove_constant_reward_groups=False,
-                                enable_logging=i < config.num_groups_to_log,
-                                strategy=strategy,
-                            )
+                            group_rollout(builder, i, i < config.num_groups_to_log)
                             for i, builder in enumerate(env_group_builders_P)
                         ),
                         desc=f"Sampling batch {i_batch}",

@@ -54,7 +54,8 @@ class StoredTurnDict(TypedDict):
     """JSON schema for a single turn in a stored trajectory."""
 
     role: TurnRole
-    content: str
+    content: str | list[dict[str, Any]]
+    """Text string or structured content parts (from renderer's content_to_jsonable)."""
     token_count: int
     metadata: dict[str, Any]
 
@@ -414,8 +415,9 @@ class StoredTurn:
 
     role: TurnRole
     """``"user"``, ``"assistant"``, ``"environment"``, ``"grader"``."""
-    content: str
-    """Decoded text content of this turn."""
+    content: str | list[dict[str, Any]]
+    """Text string or structured content parts (from renderer's content_to_jsonable).
+    Structured form is a list of dicts like ``[{"type": "text", "text": "..."}, ...]``."""
     token_count: int = 0
     """Number of tokens in this turn."""
     metadata: dict[str, Any] = field(default_factory=dict)

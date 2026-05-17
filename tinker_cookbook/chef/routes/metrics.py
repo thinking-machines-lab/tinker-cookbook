@@ -1,0 +1,96 @@
+"""Metrics API routes including SSE streaming."""
+
+import asyncio
+import json
+import logging
+from collections.abc import Callable
+from fnmatch import fnmatch
+from typing import Any
+
+from fastapi import APIRouter, Query, Request
+from fastapi.responses import StreamingResponse
+
+from tinker_cookbook.chef.routes._helpers import require_run
+from tinker_cookbook.stores import RunRegistry
+
+logger = logging.getLogger(__name__)
+
+
+def create_router(resolve_registry: Callable[..., RunRegistry]) -> APIRouter:
+    router = APIRouter(prefix="/api/runs", tags=["metrics"])
+
+    @router.get("/{run_id}/metrics")
+    def get_metrics(
+        run_id: str,
+        keys: str | None = Query(None),
+        limit: int | None = Query(None, description="Max records to return (from end)"),
+        source: list[str] = Query(default=[]),
+    ) -> dict[str, Any]:
+        registry = resolve_registry(source)
+        require_run(registry, run_id)
+        store = registry.get_training_store(run_id)
+        records = store.read_metrics()
+        total = len(records)
+        if limit is not None and limit < total:
+            records = records[-limit:]
+        if keys:
+            patterns = [p.strip() for p in keys.split(",")]
+            records = [_filter_record(r, patterns) for r in records]
+        return {"run_id": run_id, "total_records": total, "records": records}
+
+    @router.get("/{run_id}/metrics/keys")
+    def get_metric_keys(run_id: str, source: list[str] = Query(default=[])) -> list[str]:
+        registry = resolve_registry(source)
+        require_run(registry, run_id)
+        store = registry.get_training_store(run_id)
+        store.read_metrics()
+        return sorted(store.metric_keys())
+
+    @router.get("/{run_id}/metrics/stream")
+    async def stream_metrics(
+        run_id: str, request: Request, source: list[str] = Query(default=[])
+    ) -> StreamingResponse:
+        registry = resolve_registry(source)
+        require_run(registry, run_id)
+        store = registry.get_training_store(run_id)
+
+        async def event_generator():
+            store.read_metrics()
+            idle_cycles = 0
+            max_idle = 40
+
+            while True:
+                if await request.is_disconnected():
+                    break
+                new = store.read_new_metrics()
+                if new:
+                    idle_cycles = 0
+                    for record in new:
+                        yield f"data: {json.dumps(record)}\n\n"
+                else:
+                    idle_cycles += 1
+                    yield ": keepalive\n\n"
+                    if idle_cycles >= max_idle:
+                        yield "event: timeout\ndata: {}\n\n"
+                        break
+                await asyncio.sleep(15)
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    return router
+
+
+def _filter_record(record: dict[str, Any], patterns: list[str]) -> dict[str, Any]:
+    filtered: dict[str, Any] = {}
+    for key, value in record.items():
+        if key == "step" or any(fnmatch(key, p) for p in patterns):
+            filtered[key] = value
+    return filtered
