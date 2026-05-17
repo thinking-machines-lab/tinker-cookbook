@@ -555,7 +555,7 @@ Tinker errors can be opaque. This section maps common error messages to root cau
 | `tokens and weights must be the same length` | Mismatch between token sequence and loss weight array | Check your `datum_from_model_input_weights()` call — usually means `max_length` truncated tokens but not weights |
 | `Expected X tokens, got Y from image` | VLM image token count mismatch — usually a `transformers` version issue | Upgrade `transformers>=5.0` or install `torchvision`. HuggingFace `Qwen2VLImageProcessor` had a bug in older versions. |
 | `RendererError: Unknown renderer` | Invalid renderer name | Use `model_info.get_recommended_renderer_name(model_name)` |
-| `qwen3_vl renderer requires an image_processor` | VL renderer needs image processor | Pass `image_processor` to `get_renderer()`. Load it from `transformers.AutoProcessor`. |
+| `image_processor is required to render image content` | VL renderer needs image processor for image inputs | Pass `image_processor` to `get_renderer()`. Use `get_image_processor(model_name)`. |
 | `DataFormatError: Each line must contain a 'messages' field` | JSONL data file has wrong format | Each line must be a JSON object with a `messages` key containing a list of message dicts |
 | `StreamingSupervisedDatasetFromHFDataset only supports forward iteration` | Tried to seek backward in streaming dataset | Streaming datasets are forward-only; don't try to restart from an earlier batch |
 

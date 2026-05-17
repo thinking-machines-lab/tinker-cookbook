@@ -155,7 +155,6 @@ Use `get_recommended_renderer_name()` — never hardcode:
 - **Qwen3**: `qwen3`, `qwen3_disable_thinking`, `qwen3_instruct`, `qwen3_vl`, `qwen3_vl_instruct`
 - **Qwen3.5**: `qwen3_5`, `qwen3_5_disable_thinking`
 - **DeepSeek V3**: `deepseekv3` (no thinking), `deepseekv3_thinking`
-- **Kimi K2**: `kimi_k2`
 - **Kimi K2.6**: `kimi_k26`, `kimi_k26_disable_thinking`
 - **Nemotron3**: `nemotron3`, `nemotron3_disable_thinking`
 - **GPT-OSS**: `gpt_oss_no_sysprompt`, `gpt_oss_low_reasoning`, `gpt_oss_medium_reasoning`, `gpt_oss_high_reasoning`
@@ -185,7 +184,7 @@ renderer = get_renderer(
 )
 ```
 
-Forgetting `image_processor` fails as soon as you render image content.
+Forgetting `image_processor` raises `AssertionError("image_processor is required to render image content")` as soon as you render image content.
 
 ### VL renderers by model
 
