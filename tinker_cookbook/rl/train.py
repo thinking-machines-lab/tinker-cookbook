@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable, Coroutine, Iterable, Iterator, Sequence
 from concurrent.futures import Executor
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -501,6 +502,22 @@ class Config:
     stream_minibatch_config: StreamMinibatchConfig | None = None
     # Optional service base URL override (primarily internal/dev use).
     base_url: str | None = None
+    # When True, evaluators are scheduled as fire-and-forget asyncio Tasks instead
+    # of awaited inline by the train loop. Each evaluator's metrics are logged
+    # asynchronously via ml_logger when it finishes, keyed to the iteration step
+    # at which the eval was scheduled (not the step at which it completes). Useful
+    # when an eval pass is comparable in wall-clock to a training step — e.g. long
+    # CoT eval on hundreds of problems — and you'd rather not block training.
+    # Tradeoffs:
+    #   * Eval rollouts compete with training rollouts for Tinker's per-account
+    #     sampling concurrency. Heavy evals may slow training.
+    #   * W&B receives retroactive step writes (well-supported but worth noting
+    #     when reading chart hover values).
+    #   * Pending evals are awaited up to `async_eval_drain_timeout_s` at shutdown.
+    async_eval: bool = False
+    # Maximum seconds to wait for pending async evals at shutdown. None = wait
+    # indefinitely. Only consulted when ``async_eval=True``.
+    async_eval_drain_timeout_s: float | None = 600.0
 
     # -------------------------------------------------------------------------
     # Checkpoint retention and logging detail (advanced)
@@ -578,6 +595,91 @@ async def run_single_evaluation(
         return eval_metrics
 
 
+_async_eval_dispatcher: ContextVar[_AsyncEvalDispatcher | None] = ContextVar(
+    "async_eval_dispatcher", default=None
+)
+
+
+def get_async_eval_dispatcher() -> _AsyncEvalDispatcher | None:
+    """Return the currently installed async-eval dispatcher (or ``None``)."""
+    return _async_eval_dispatcher.get()
+
+
+def set_async_eval_dispatcher(dispatcher: _AsyncEvalDispatcher | None) -> None:
+    """Install (or clear) the async-eval dispatcher in the current context."""
+    _async_eval_dispatcher.set(dispatcher)
+
+
+class _AsyncEvalDispatcher:
+    """Holds state for ``Config.async_eval=True``: scheduling and shutdown drain.
+
+    When installed (via :func:`set_async_eval_dispatcher`), :func:`run_evaluations_parallel`
+    consults it instead of awaiting evaluators inline. Each evaluator is fired as an
+    ``asyncio.Task`` whose result is logged via ``ml_logger.log_metrics(metrics,
+    step=i_batch_when_scheduled)`` when it finishes. The train loop receives only
+    sentinel metrics at the time of the schedule call.
+    """
+
+    def __init__(self, ml_logger: ml_log.Logger):
+        self._ml_logger = ml_logger
+        self._pending: set[asyncio.Task] = set()
+
+    def schedule(
+        self,
+        evaluators: list[SamplingClientEvaluator],
+        sampling_client: tinker.SamplingClient,
+        config: Config,
+        i_batch: int,
+        store: TrainingRunStore | None = None,
+    ) -> dict[str, Any]:
+        """Fire one ``asyncio.Task`` per evaluator. Return sentinel metrics."""
+        sentinel: dict[str, Any] = {}
+        captured_step = int(i_batch)
+        for i, evaluator in enumerate(evaluators):
+            ev_name = _get_evaluator_name(evaluator)
+            evaluator_label = _sanitize_filename_component(ev_name or str(i))
+            task = asyncio.create_task(
+                self._run_and_log(
+                    evaluator, config, captured_step, sampling_client, evaluator_label, store
+                ),
+                name=f"async_eval_{evaluator_label}_iter_{captured_step:06d}",
+            )
+            self._pending.add(task)
+            task.add_done_callback(self._pending.discard)
+            sentinel[f"async_eval/{evaluator_label}/scheduled"] = 1.0
+        sentinel["async_eval/in_flight"] = float(len(self._pending))
+        return sentinel
+
+    async def _run_and_log(
+        self,
+        evaluator: SamplingClientEvaluator,
+        config: Config,
+        i_batch: int,
+        sampling_client: tinker.SamplingClient,
+        evaluator_label: str,
+        store: TrainingRunStore | None,
+    ) -> None:
+        try:
+            metrics = await run_single_evaluation(
+                evaluator, config, i_batch, sampling_client, evaluator_label, store=store
+            )
+            self._ml_logger.log_metrics(metrics, step=i_batch)
+            logger.info("Async eval %s at iter=%d completed.", evaluator_label, i_batch)
+        except Exception as e:
+            logger.warning("Async eval %s at iter=%d failed: %s", evaluator_label, i_batch, e)
+
+    async def drain(self, timeout: float | None = None) -> None:
+        """Await all pending eval tasks. No-op when none are in flight."""
+        if not self._pending:
+            return
+        logger.info(
+            "Draining %d pending async eval task(s) (timeout=%s)...",
+            len(self._pending),
+            timeout,
+        )
+        await asyncio.wait(list(self._pending), timeout=timeout)
+
+
 @trace.scope
 async def run_evaluations_parallel(
     evaluators: list[SamplingClientEvaluator],
@@ -591,6 +693,12 @@ async def run_evaluations_parallel(
     Each evaluator is launched as an independent ``asyncio.Task``. Results
     are gathered and merged into a single metrics dictionary.
 
+    When :func:`get_async_eval_dispatcher` returns a dispatcher (installed via
+    ``Config.async_eval=True`` in :func:`main`), evaluators are scheduled
+    fire-and-forget instead and the returned dict contains only sentinel keys.
+    The real metrics get logged retroactively via the dispatcher's
+    ``ml_logger`` reference at the captured iteration step.
+
     Args:
         evaluators (list[SamplingClientEvaluator]): Evaluators to execute.
         sampling_client (tinker.SamplingClient): Sampling client with the
@@ -599,8 +707,13 @@ async def run_evaluations_parallel(
         i_batch (int): Current training iteration index.
 
     Returns:
-        dict[str, Any]: Merged metrics from all evaluators.
+        dict[str, Any]: Merged metrics from all evaluators, OR sentinel metrics
+            when async eval is enabled.
     """
+
+    dispatcher = get_async_eval_dispatcher()
+    if dispatcher is not None:
+        return dispatcher.schedule(evaluators, sampling_client, config, i_batch, store=store)
 
     # Create tasks for all evaluators with names for better traceability
     tasks = []
@@ -1850,6 +1963,10 @@ async def main(
         config=config,
         wandb_name=config.wandb_name,
     )
+    async_eval_dispatcher: _AsyncEvalDispatcher | None = None
+    if config.async_eval:
+        async_eval_dispatcher = _AsyncEvalDispatcher(ml_logger=ml_logger)
+        set_async_eval_dispatcher(async_eval_dispatcher)
     store = ml_logger.store
     if config.enable_trace:
         # Get and rename the current (main) task
@@ -1982,6 +2099,9 @@ async def main(
         await checkpoint_mgr.finalize_async()
 
     # Cleanup
+    if async_eval_dispatcher is not None:
+        await async_eval_dispatcher.drain(timeout=config.async_eval_drain_timeout_s)
+        set_async_eval_dispatcher(None)
     if rollout_executor is not None:
         rollout_executor.shutdown(wait=True)
         set_rollout_executor(None)
