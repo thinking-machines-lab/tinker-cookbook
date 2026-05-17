@@ -67,6 +67,12 @@ Agents often struggle with the nested type hierarchy.
 
 ---
 
+## Finding supported models
+
+For an identifier to pass to the SDK, call `service_client.get_server_capabilities().supported_models` — authoritative, includes `:peft:` long-context variants, but requires `TINKER_API_KEY`. For a read-only lookup with pricing and context length (no auth), browse <https://tinker-docs.thinkingmachines.ai/tinker/models/>.
+
+---
+
 ## Common Pitfalls
 
 1. **Sequential API calls:** The #1 performance mistake. Always use `_async` variants and submit calls back-to-back before awaiting. Use `asyncio.gather` for concurrent evaluation — never sequential loops over API calls.
