@@ -34,7 +34,7 @@ from tinker_cookbook.distillation.datasets import (
 
 @chz.chz
 class CLIConfig:
-    model_name: str = "Qwen/Qwen3-8B-Base"
+    model_name: str = "Qwen/Qwen3.5-9B-Base"
     teacher_model: str = "Qwen/Qwen3-8B"
     dataset: str = "deepmath"
     group_size: int = 4

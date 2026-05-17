@@ -247,8 +247,8 @@ class CalculatorDataset(RLDataset):
 class CalculatorDatasetBuilder(RLDatasetBuilder):
     batch_size: int = 2
     group_size: int = 4
-    renderer_name: str = "llama3"
-    model_name: str = "meta-llama/Llama-3.1-8B"
+    renderer_name: str = "qwen3_5"
+    model_name: str = "Qwen/Qwen3.5-9B-Base"
 
     async def __call__(self):
         problems = [("What is 123 * 456?", 56088), ("What is 789 + 321?", 1110)]
@@ -257,7 +257,7 @@ class CalculatorDatasetBuilder(RLDatasetBuilder):
 
 @chz.chz
 class CLIConfig:
-    model_name: str = "meta-llama/Llama-3.1-8B"
+    model_name: str = "Qwen/Qwen3.5-9B-Base"
     group_size: int = 4
     groups_per_batch: int = 8
     learning_rate: float = 1e-5
