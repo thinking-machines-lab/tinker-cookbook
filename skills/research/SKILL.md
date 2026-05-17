@@ -40,11 +40,10 @@ Model type fundamentally affects how you train and what to expect.
 
 | Type | What it is | Training implications | Examples |
 |------|-----------|----------------------|----------|
-| **Base** | Pre-trained only, no instruction tuning | Full post-training pipeline (SFT then RL). Has a renderer but no instruction-following behavior out of the box. | `Qwen3-8B-Base`, `Llama-3.1-8B` |
-| **Instruction** | Fine-tuned for chat/instructions | Ready for RL or further SFT. Has chat template. Most common starting point. | `Llama-3.1-8B-Instruct`, `Qwen3-8B-Instruct` |
+| **Base** | Pre-trained only, no instruction tuning | Full post-training pipeline (SFT then RL). Has a renderer but no instruction-following behavior out of the box. | `Qwen3.5-9B-Base`, `Qwen3.5-35B-A3B-Base` |
 | **Reasoning** | Trained for chain-of-thought with `<think>` blocks | Produces long reasoning traces. Need higher `max_tokens`. Training data should include thinking. | `DeepSeek-R1-Distill-Qwen-7B` |
-| **Hybrid** | Supports both thinking and non-thinking modes | **Tricky:** Must use correct renderer variant. `_disable_thinking` for direct answers, default for reasoning. Wrong choice silently corrupts training. | `Qwen3-8B`, `Kimi-K2-Thinking` |
-| **Vision** | Multimodal (text + images) | Needs VL renderer + image_processor. Image token count must match. | `Qwen3-VL-2B`, `Qwen3.5-VL-72B-A22B` |
+| **Hybrid** | Supports both thinking and non-thinking modes | **Tricky:** Must use correct renderer variant. `_disable_thinking` for direct answers, default for reasoning. Wrong choice silently corrupts training. | `Qwen3-8B`, `Kimi-K2.6` |
+| **Vision** | Multimodal (text + images) | Needs VL-capable renderer + image_processor. Image token count must match. | `Qwen3.6-35B-A3B`, `Qwen3.5-397B-A17B` |
 
 **Always resolve the renderer automatically:**
 ```python
@@ -52,7 +51,7 @@ from tinker_cookbook import model_info
 renderer_name = model_info.get_recommended_renderer_name(model_name)
 ```
 
-**Cost tip:** Prefer MoE models — cost scales with active parameters. `Qwen3-30B-A3B` (3B active) is cheaper than `Qwen3-32B` (32B active) at similar quality.
+**Cost tip:** Prefer MoE models — cost scales with active parameters. `Qwen3.6-35B-A3B` (3B active) is cheaper than `Qwen3.6-27B` (27B active) at similar quality.
 
 For the full model lineup, read `references/models.md`. For the latest supported models (the reference file may be outdated), check https://tinker-docs.thinkingmachines.ai/tinker/models/.
 
@@ -276,7 +275,7 @@ cd tinker-cookbook && pip install -e .                 # Cookbook
 ```python
 import tinker
 svc = tinker.ServiceClient()
-tc = svc.create_lora_training_client(base_model="meta-llama/Llama-3.2-1B", rank=32)
+tc = svc.create_lora_training_client(base_model="Qwen/Qwen3.5-9B-Base", rank=32)
 print(tc.get_info())
 ```
 
@@ -305,7 +304,7 @@ from tinker_cookbook.renderers import TrainOnWhat
 from tinker_cookbook.supervised import train
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 
-model_name = "meta-llama/Llama-3.1-8B"
+model_name = "Qwen/Qwen3.5-9B-Base"
 renderer_name = model_info.get_recommended_renderer_name(model_name)
 common_config = ChatDatasetBuilderCommonConfig(
     model_name_for_tokenizer=model_name,
@@ -346,7 +345,7 @@ from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.recipes.math_rl.math_env import Gsm8kDatasetBuilder
 from tinker_cookbook.rl import train
 
-model_name = "meta-llama/Llama-3.1-8B"
+model_name = "Qwen/Qwen3.5-9B-Base"
 renderer_name = model_info.get_recommended_renderer_name(model_name)
 builder = Gsm8kDatasetBuilder(
     batch_size=128, group_size=16,
@@ -387,7 +386,7 @@ from tinker_cookbook.preference.dpo_datasets import DPODatasetBuilderFromCompari
 from tinker_cookbook.recipes.preference.datasets import HHHComparisonBuilder
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 
-model_name = "meta-llama/Llama-3.2-1B"
+model_name = "Qwen/Qwen3.5-9B-Base"
 renderer_name = model_info.get_recommended_renderer_name(model_name)
 common_config = ChatDatasetBuilderCommonConfig(
     model_name_for_tokenizer=model_name,
@@ -425,7 +424,7 @@ from tinker_cookbook.distillation.datasets import (
     DistillationDatasetConfig, PromptOnlyDatasetBuilder, TeacherConfig,
 )
 
-student_model = "Qwen/Qwen3-8B-Base"
+student_model = "Qwen/Qwen3.5-9B-Base"
 teacher_model = "Qwen/Qwen3-8B"
 renderer_name = model_info.get_recommended_renderer_name(student_model)
 

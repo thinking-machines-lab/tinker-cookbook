@@ -24,7 +24,7 @@ This formula gives <0.5% regret vs exhaustive sweeps across diverse SFT experime
 
 ```python
 from tinker_cookbook.hyperparam_utils import get_lr
-lr = get_lr("meta-llama/Llama-3.1-8B", is_lora=True)
+lr = get_lr("Qwen/Qwen3.5-9B-Base", is_lora=True)
 ```
 
 ## LoRA rank
@@ -36,7 +36,7 @@ lr = get_lr("meta-llama/Llama-3.1-8B", is_lora=True)
 
 ```python
 from tinker_cookbook.hyperparam_utils import get_lora_param_count
-params = get_lora_param_count("meta-llama/Llama-3.1-8B", lora_rank=32)
+params = get_lora_param_count("Qwen/Qwen3.5-9B-Base", lora_rank=32)
 ```
 
 ## Batch size
@@ -79,11 +79,11 @@ params = get_lora_param_count("meta-llama/Llama-3.1-8B", lora_rank=32)
 
 | Scenario | Model | LR | Batch | LoRA Rank |
 |----------|-------|-----|-------|-----------|
-| SFT on chat data | Llama-3.1-8B | `get_lr(model)` | 128 | 32 |
-| Math GRPO | Llama-3.1-8B-Instruct | 4e-5 | 128x16 | 32 |
-| DPO | Llama-3.2-1B | 1e-5 | 256 | 32 |
-| Distillation | Qwen3-8B-Base | 1e-4 | 1024x4 | 128 |
-| Multi-turn RL | Kimi-K2-Thinking | 1e-5 | 8x4 | 32 |
+| SFT on chat data | Qwen3.5-9B-Base | `get_lr(model)` | 128 | 32 |
+| Math GRPO | Qwen3.5-9B (non-thinking) | 4e-5 | 128x16 | 32 |
+| DPO | Qwen3.5-9B-Base | 1e-5 | 256 | 32 |
+| Distillation | Qwen3.5-9B-Base | 1e-4 | 1024x4 | 128 |
+| Multi-turn RL | Kimi-K2.6 | 1e-5 | 8x4 | 32 |
 
 ## Pitfalls
 

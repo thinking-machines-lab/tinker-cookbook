@@ -397,7 +397,7 @@ except Exception as e:
 
 # Step 2: Can we create a training session? (small model for speed)
 try:
-    tc = svc.create_lora_training_client(base_model="meta-llama/Llama-3.2-1B", rank=32)
+    tc = svc.create_lora_training_client(base_model="Qwen/Qwen3.5-9B-Base", rank=32)
     print(f"Training client created: {tc.get_info()}")
 except Exception as e:
     print(f"Training client failed: {type(e).__name__}: {e}")
@@ -450,7 +450,7 @@ Never hardcode renderer names. Each model family has specific token formats, and
 | Qwen3 | `qwen3` | `qwen3_disable_thinking` | Default is thinking-enabled. `qwen3_instruct` for instruction-only. |
 | Qwen3.5 | `qwen3_5` | `qwen3_5_disable_thinking` | Hybrid attention; also has VL variants. |
 | DeepSeek V3 | `deepseekv3_thinking` | `deepseekv3` | Default is non-thinking. Thinking adds `<think>` prefill. |
-| Kimi K2.5 | `kimi_k25` | `kimi_k25_disable_thinking` | Vision-capable. |
+| Kimi K2.6 | `kimi_k26` | `kimi_k26_disable_thinking` | Vision-capable. |
 | Nemotron3 | `nemotron3` | `nemotron3_disable_thinking` | |
 
 **Common hybrid model mistakes:**
@@ -510,7 +510,7 @@ else:
 
 ### Step 3: Check thinking mode handling
 
-For models with thinking capabilities (Qwen3, DeepSeek V3, Kimi K2.5, Nemotron3):
+For models with thinking capabilities (Qwen3, DeepSeek V3, Kimi K2.6, Nemotron3):
 
 - Use the `_disable_thinking` renderer variant if you don't want `<think>` blocks
 - Historical assistant messages may have thinking stripped by default (depends on renderer)

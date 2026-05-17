@@ -100,7 +100,7 @@ for i, messages in enumerate(test_cases):
 
 ## Thinking mode
 
-Models with thinking capabilities (Qwen3, DeepSeek V3, Kimi K2.5, Nemotron3) have two renderer variants:
+Models with thinking capabilities (Qwen3, DeepSeek V3, Kimi K2.6, Nemotron3) have two renderer variants:
 - **With thinking** (`qwen3`, `deepseekv3_thinking`): Model produces `<think>...</think>` blocks before responding
 - **Without thinking** (`qwen3_disable_thinking`, `deepseekv3`): Thinking is suppressed
 
@@ -156,7 +156,7 @@ Use `get_recommended_renderer_name()` — never hardcode:
 - **Qwen3.5**: `qwen3_5`, `qwen3_5_disable_thinking`
 - **DeepSeek V3**: `deepseekv3` (no thinking), `deepseekv3_thinking`
 - **Kimi K2**: `kimi_k2`
-- **Kimi K2.5**: `kimi_k25`, `kimi_k25_disable_thinking`
+- **Kimi K2.6**: `kimi_k26`, `kimi_k26_disable_thinking`
 - **Nemotron3**: `nemotron3`, `nemotron3_disable_thinking`
 - **GPT-OSS**: `gpt_oss_no_sysprompt`, `gpt_oss_low_reasoning`, `gpt_oss_medium_reasoning`, `gpt_oss_high_reasoning`
 - **Generic fallback**: `role_colon`
@@ -167,33 +167,32 @@ Vision-language (VL) models add image tokens alongside text tokens, creating add
 
 ### Setup
 
-VL renderers require an image processor from the `transformers` library:
+VL renderers require an image processor:
 
 ```python
-from transformers import AutoProcessor
+from tinker_cookbook.image_processing_utils import get_image_processor
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-model_name = "Qwen/Qwen3-VL-7B-Instruct"
+model_name = "Qwen/Qwen3.6-35B-A3B"
 tokenizer = get_tokenizer(model_name)
-processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+image_processor = get_image_processor(model_name)
 
 renderer = get_renderer(
-    "qwen3_vl_instruct",
+    "qwen3_5",
     tokenizer,
-    image_processor=processor.image_processor,  # Required for VL renderers
+    image_processor=image_processor,  # Required when messages contain images
 )
 ```
 
-Forgetting `image_processor` raises `RendererError("qwen3_vl renderer requires an image_processor")`.
+Forgetting `image_processor` fails as soon as you render image content.
 
 ### VL renderers by model
 
 | Model | Renderer | Notes |
 |-------|----------|-------|
-| Qwen3-VL | `qwen3_vl` | Thinking-enabled VL. For instruct-only: `qwen3_vl_instruct`. |
-| Qwen3.5 (VL variants) | `qwen3_5` | Same renderer handles VL when image_processor provided |
-| Kimi K2.5 | `kimi_k25` | Supports vision natively |
+| Qwen3.5/Qwen3.6 (VL variants) | `qwen3_5` | Same renderer handles VL when image_processor provided |
+| Kimi K2.6 | `kimi_k26` | Supports vision natively |
 
 ### Common VL issues
 

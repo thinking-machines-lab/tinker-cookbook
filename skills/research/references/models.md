@@ -7,30 +7,15 @@ Full listing of available models with types, architecture, and sizes.
 | Model | Type | Arch | Size |
 |-------|------|------|------|
 | `Qwen/Qwen3.5-397B-A17B` | Hybrid + Vision | MoE | Large |
-| `Qwen/Qwen3.5-35B-A3B` | Hybrid + Vision | MoE | Medium |
-| `Qwen/Qwen3.5-27B` | Hybrid + Vision | Dense | Medium |
+| `Qwen/Qwen3.6-35B-A3B` | Hybrid + Vision | MoE | Medium |
+| `Qwen/Qwen3.6-27B` | Hybrid + Vision | Dense | Medium |
+| `Qwen/Qwen3.5-35B-A3B-Base` | Base | MoE | Medium |
+| `Qwen/Qwen3.5-9B` | Hybrid + Vision | Dense | Small |
+| `Qwen/Qwen3.5-9B-Base` | Base | Dense | Small |
 | `Qwen/Qwen3.5-4B` | Hybrid + Vision | Dense | Compact |
-| `Qwen/Qwen3-235B-A22B-Instruct-2507` | Instruction | MoE | Large |
-| `Qwen/Qwen3-30B-A3B-Instruct-2507` | Instruction | MoE | Medium |
-| `Qwen/Qwen3-30B-A3B` | Hybrid | MoE | Medium |
-| `Qwen/Qwen3-30B-A3B-Base` | Base | MoE | Medium |
-| `Qwen/Qwen3-32B` | Hybrid | Dense | Medium |
 | `Qwen/Qwen3-8B` | Hybrid | Dense | Small |
-| `Qwen/Qwen3-8B-Base` | Base | Dense | Small |
-| `Qwen/Qwen3-4B-Instruct-2507` | Instruction | Dense | Compact |
-| `Qwen/Qwen3-VL-235B-A22B-Instruct` | Vision | MoE | Large |
-| `Qwen/Qwen3-VL-30B-A3B-Instruct` | Vision | MoE | Medium |
 
-## Llama family
-
-| Model | Type | Arch | Size |
-|-------|------|------|------|
-| `meta-llama/Llama-3.3-70B-Instruct` | Instruction | Dense | Large |
-| `meta-llama/Llama-3.1-70B` | Base | Dense | Large |
-| `meta-llama/Llama-3.1-8B` | Base | Dense | Small |
-| `meta-llama/Llama-3.1-8B-Instruct` | Instruction | Dense | Small |
-| `meta-llama/Llama-3.2-3B` | Base | Dense | Compact |
-| `meta-llama/Llama-3.2-1B` | Base | Dense | Compact |
+Use the `_disable_thinking` renderer variant when you want direct instruction-following behavior from a hybrid Qwen replacement.
 
 ## Nemotron family
 
@@ -46,9 +31,6 @@ Full listing of available models with types, architecture, and sizes.
 | `openai/gpt-oss-120b` | Reasoning | MoE | Medium |
 | `openai/gpt-oss-20b` | Reasoning | MoE | Small |
 | `deepseek-ai/DeepSeek-V3.1` | Hybrid | MoE | Large |
-| `deepseek-ai/DeepSeek-V3.1-Base` | Base | MoE | Large |
-| `moonshotai/Kimi-K2-Thinking` | Reasoning | MoE | Large |
-| `moonshotai/Kimi-K2.5` | Reasoning + Vision | MoE | Large |
 | `moonshotai/Kimi-K2.6` | Reasoning + Vision | MoE | Large |
 
 ## Model types explained
