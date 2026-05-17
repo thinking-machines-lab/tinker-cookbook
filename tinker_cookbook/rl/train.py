@@ -595,17 +595,17 @@ async def run_single_evaluation(
         return eval_metrics
 
 
-_async_eval_dispatcher: ContextVar["_AsyncEvalDispatcher | None"] = ContextVar(
+_async_eval_dispatcher: ContextVar[_AsyncEvalDispatcher | None] = ContextVar(
     "async_eval_dispatcher", default=None
 )
 
 
-def get_async_eval_dispatcher() -> "_AsyncEvalDispatcher | None":
+def get_async_eval_dispatcher() -> _AsyncEvalDispatcher | None:
     """Return the currently installed async-eval dispatcher (or ``None``)."""
     return _async_eval_dispatcher.get()
 
 
-def set_async_eval_dispatcher(dispatcher: "_AsyncEvalDispatcher | None") -> None:
+def set_async_eval_dispatcher(dispatcher: _AsyncEvalDispatcher | None) -> None:
     """Install (or clear) the async-eval dispatcher in the current context."""
     _async_eval_dispatcher.set(dispatcher)
 
@@ -628,7 +628,7 @@ class _AsyncEvalDispatcher:
         self,
         evaluators: list[SamplingClientEvaluator],
         sampling_client: tinker.SamplingClient,
-        config: "Config",
+        config: Config,
         i_batch: int,
         store: TrainingRunStore | None = None,
     ) -> dict[str, Any]:
@@ -653,7 +653,7 @@ class _AsyncEvalDispatcher:
     async def _run_and_log(
         self,
         evaluator: SamplingClientEvaluator,
-        config: "Config",
+        config: Config,
         i_batch: int,
         sampling_client: tinker.SamplingClient,
         evaluator_label: str,
@@ -665,10 +665,8 @@ class _AsyncEvalDispatcher:
             )
             self._ml_logger.log_metrics(metrics, step=i_batch)
             logger.info("Async eval %s at iter=%d completed.", evaluator_label, i_batch)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "Async eval %s at iter=%d failed: %s", evaluator_label, i_batch, e
-            )
+        except Exception as e:
+            logger.warning("Async eval %s at iter=%d failed: %s", evaluator_label, i_batch, e)
 
     async def drain(self, timeout: float | None = None) -> None:
         """Await all pending eval tasks. No-op when none are in flight."""
@@ -715,9 +713,7 @@ async def run_evaluations_parallel(
 
     dispatcher = get_async_eval_dispatcher()
     if dispatcher is not None:
-        return dispatcher.schedule(
-            evaluators, sampling_client, config, i_batch, store=store
-        )
+        return dispatcher.schedule(evaluators, sampling_client, config, i_batch, store=store)
 
     # Create tasks for all evaluators with names for better traceability
     tasks = []

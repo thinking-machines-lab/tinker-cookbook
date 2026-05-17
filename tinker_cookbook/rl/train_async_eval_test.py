@@ -30,9 +30,7 @@ async def test_schedule_returns_sentinel_immediately():
         return {"score": 0.5}
 
     with patch("tinker_cookbook.rl.train.run_single_evaluation", side_effect=slow_run):
-        sentinel = dispatcher.schedule(
-            [MagicMock(name="ev")], MagicMock(), MagicMock(), i_batch=7
-        )
+        sentinel = dispatcher.schedule([MagicMock(name="ev")], MagicMock(), MagicMock(), i_batch=7)
         # schedule() must return immediately. The eval coroutine may or may not have
         # actually started yet (it's a freshly-created task).
         assert sentinel.get("async_eval/in_flight") == 1.0
