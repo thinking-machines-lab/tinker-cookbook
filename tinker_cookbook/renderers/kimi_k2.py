@@ -115,7 +115,7 @@ def _parse_tool_calls_section(
 
 class KimiK2Renderer(Renderer):
     """
-    Format for Kimi K2-style thinking models (base class reused by Kimi K2.6):
+    Format for moonshotai/Kimi-K2-Thinking:
         <|im_system|>system<|im_middle|>You are Kimi, an AI assistant created by Moonshot AI.<|im_end|>
         <|im_user|>user<|im_middle|>What can you help me with?<|im_end|>
         <|im_assistant|>assistant<|im_middle|><think>reasoning</think>I can help you with...<|im_end|>
@@ -631,7 +631,7 @@ class KimiK2Renderer(Renderer):
         If no system_prompt is provided, uses the default system prompt to match
         HuggingFace chat template behavior.
 
-        Reference: Kimi K2 chat_template.jinja (subclassed by KimiK25Renderer for K2.6).
+        Reference: https://huggingface.co/moonshotai/Kimi-K2-Thinking/blob/main/chat_template.jinja
         """
         messages: list[Message] = []
 
