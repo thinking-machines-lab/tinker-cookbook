@@ -11,6 +11,8 @@ Use these as a reference when choosing learning rate and LoRA rank for your mode
 
 > **Note:** Wall times are approximate and depend on server load at the time of the run. They may fluctuate significantly between runs.
 
+> **Rerun needed:** This historical report includes models that are now deprecated. Keep the original model names for traceability, but rerun affected sweeps with the recommended replacements before using these results as current guidance.
+
 ## Key Findings
 
 **Optimal learning rate is model-size dependent.** Across all models, the best LR per model breaks down as:

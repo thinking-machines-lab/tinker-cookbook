@@ -4,7 +4,7 @@
 
 ```bash
 python -m tinker_cookbook.recipes.chat_sl.train \
-    model_name=Qwen/Qwen3-8B-Base \
+    model_name=Qwen/Qwen3.5-9B-Base \
     dataset=no_robots \
     learning_rate=5e-4 \
     batch_size=64 \
@@ -20,7 +20,7 @@ After 140 steps of training, `test/nll` decreases to 1.788.
 
 ```bash
 python -m tinker_cookbook.recipes.chat_sl.train \
-    model_name=Qwen/Qwen3-8B-Base \
+    model_name=Qwen/Qwen3.5-9B-Base \
     dataset=tulu3 \
     learning_rate=5e-4 \
     batch_size=128 \

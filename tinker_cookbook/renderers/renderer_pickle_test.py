@@ -16,8 +16,8 @@ from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 # Models that don't require special access / are commonly available in CI.
 # Each entry is (renderer_name, model_name).
 _TEXT_RENDERERS = [
-    ("role_colon", "meta-llama/Llama-3.1-8B-Instruct"),
-    ("llama3", "meta-llama/Llama-3.1-8B-Instruct"),
+    ("role_colon", "Qwen/Qwen3.5-9B-Base"),
+    ("llama3", "meta-llama/Llama-3.2-1B-Instruct"),
     ("qwen3", "Qwen/Qwen3-8B"),
     ("qwen3_disable_thinking", "Qwen/Qwen3-8B"),
     ("qwen3_instruct", "Qwen/Qwen3-8B"),
@@ -58,7 +58,7 @@ class TestRendererPickle:
 
     def test_pickle_without_metadata_raises(self) -> None:
         """Renderers created directly (not via get_renderer()) raise on pickle."""
-        tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
+        tokenizer = get_tokenizer("meta-llama/Llama-3.2-1B-Instruct")
 
         from tinker_cookbook.renderers.llama3 import Llama3Renderer
 
@@ -69,13 +69,13 @@ class TestRendererPickle:
 
     def test_pickle_with_manual_metadata(self) -> None:
         """Manually setting pickle metadata works for direct-constructed renderers."""
-        tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
+        tokenizer = get_tokenizer("meta-llama/Llama-3.2-1B-Instruct")
 
         from tinker_cookbook.renderers.llama3 import Llama3Renderer
 
         renderer = Llama3Renderer(tokenizer)
         renderer._renderer_name = "llama3"
-        renderer._model_name = "meta-llama/Llama-3.1-8B-Instruct"
+        renderer._model_name = "meta-llama/Llama-3.2-1B-Instruct"
         renderer._has_image_processor = False
 
         restored = pickle.loads(pickle.dumps(renderer))
@@ -96,14 +96,14 @@ class TestRendererPickle:
 
     def test_pickle_with_explicit_model_name(self) -> None:
         """The model_name param in get_renderer() overrides tokenizer.name_or_path."""
-        tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
+        tokenizer = get_tokenizer("meta-llama/Llama-3.2-1B-Instruct")
         # tokenizer.name_or_path is remapped, but we can override it
-        renderer = get_renderer("llama3", tokenizer, model_name="meta-llama/Llama-3.1-8B-Instruct")
+        renderer = get_renderer("llama3", tokenizer, model_name="meta-llama/Llama-3.2-1B-Instruct")
 
-        assert renderer._model_name == "meta-llama/Llama-3.1-8B-Instruct"
+        assert renderer._model_name == "meta-llama/Llama-3.2-1B-Instruct"
 
         restored = pickle.loads(pickle.dumps(renderer))
-        assert restored._model_name == "meta-llama/Llama-3.1-8B-Instruct"
+        assert restored._model_name == "meta-llama/Llama-3.2-1B-Instruct"
         assert type(restored) is type(renderer)
 
     def test_pickle_custom_registered_renderer(self) -> None:
@@ -115,7 +115,7 @@ class TestRendererPickle:
 
         register_renderer("test_custom_pickle", my_factory)
         try:
-            tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
+            tokenizer = get_tokenizer("meta-llama/Llama-3.2-1B-Instruct")
             renderer = get_renderer("test_custom_pickle", tokenizer)
 
             assert renderer._renderer_name == "test_custom_pickle"
@@ -133,7 +133,7 @@ class TestMessageCompleterPickle:
 
         We test the Renderer part here; SamplingClient has its own __reduce__ in the SDK.
         """
-        tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
+        tokenizer = get_tokenizer("meta-llama/Llama-3.2-1B-Instruct")
         renderer = get_renderer("llama3", tokenizer)
 
         # Just verify the renderer component pickles fine when it would be inside a completer

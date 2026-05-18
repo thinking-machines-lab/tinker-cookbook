@@ -2,7 +2,7 @@
 
 Provides the shard processing hooks used by the shard engine
 (:mod:`_shard_engine`) when processing checkpoints with INT4 quantized
-expert weights (e.g. Kimi K2, K2.5). This keeps all INT4 dequant/merge/
+expert weights (e.g. Kimi K2, Kimi K2.6). This keeps all INT4 dequant/merge/
 requant logic isolated so it cannot affect other model families.
 
 The :class:`PackedInt4ShardHooks` class implements the
@@ -186,7 +186,7 @@ def get_int4_group_size(config_dict: dict) -> int:
 
 class PackedInt4ShardHooks:
     """Hooks for models with compressed-tensors ``pack-quantized`` format
-    (e.g. Kimi K2, K2.5): dequant INT4 → merge LoRA → requant INT4.
+    (e.g. Kimi K2, Kimi K2.6): dequant INT4 → merge LoRA → requant INT4.
 
     Implements the :class:`~._quant_format.ShardHooks` protocol.
     """

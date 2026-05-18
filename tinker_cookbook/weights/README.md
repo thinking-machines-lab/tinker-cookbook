@@ -25,7 +25,7 @@ Two build paths for trained LoRA adapters:
 | **Qwen3.5 MoE** (35B-A3B, 397B-A17B) | ✅ | ✅ | bf16 | Split QKV + fused experts; vLLM MoE LoRA experimental |
 | **GPT-OSS** (20B, 120B) | ✅ | ✅ | bf16 | `.attn` → `.self_attn` remap; interleaved expert layout |
 | **Kimi-K2** (~1T-A32B) | ✅ | ✅ | INT4 pack-quantized | DeepSeek arch; separate experts; shard-by-shard dequant/merge/requant |
-| **Kimi-K2.5** (~1T-A32B) | ✅ | ✅ | INT4 pack-quantized | VL model; `language_model.model.*` prefix; vLLM LoRA not yet supported |
+| **Kimi-K2.6** (~1T-A32B) | ✅ | ✅ | INT4 pack-quantized | VL model; `language_model.model.*` prefix; vLLM LoRA not yet supported |
 | **DeepSeek V3 / V3.1** | ✅ | ❌ | bf16 or native FP8 | vLLM/SGLang don't support DeepSeek LoRA |
 | **Nemotron-3** (Nano 30B, Super 120B) | ✅ | ✅ | bf16 | `backbone.*` weight prefix (handled automatically) |
 
@@ -46,7 +46,7 @@ Use `hyperparam_utils.get_lr(model_name)` when available. LoRA training typicall
 | **Qwen3** (all sizes) | `get_lr(model_name)` | `get_lr(model_name, is_lora=False)` | Calibrated; scales with hidden size |
 | **Llama 3.x** (all sizes) | `get_lr(model_name)` | `get_lr(model_name, is_lora=False)` | Calibrated; scales with hidden size |
 | **Kimi-K2** | ~5e-4 | ~5e-5 | Not yet calibrated in `get_lr`; start with 5e-4 for LoRA |
-| **Kimi-K2.5** | ~5e-4 | ~5e-5 | Same as K2 (same hidden size / architecture) |
+| **Kimi-K2.6** | ~5e-4 | ~5e-5 | Same as K2 (same hidden size / architecture) |
 | **DeepSeek V3 / V3.1** | ~5e-4 | ~5e-5 | Not yet calibrated; similar architecture to Kimi |
 | **GPT-OSS** | ~5e-4 | ~5e-5 | Not yet calibrated |
 | **Nemotron-3** | ~5e-4 | ~5e-5 | Not yet calibrated |
@@ -69,7 +69,7 @@ Default settings that work well across models:
 | `"auto"` / `"shard"` (default) | Large models, quantized checkpoints | ~1 shard (~10 GB) |
 | `"full"` | Small models, need specific output dtype | Full model size |
 
-For Kimi K2/K2.5 (595 GB–1 TB), always use the default shard strategy. The shard path automatically handles INT4 dequant → LoRA merge → INT4 requant for packed expert weights.
+For Kimi K2/K2.6 (595 GB–1 TB), always use the default shard strategy. The shard path automatically handles INT4 dequant → LoRA merge → INT4 requant for packed expert weights.
 
 Wall time depends on I/O bandwidth and service load (multiple concurrent jobs share the storage). Expect ~30–60 minutes for a 600 GB model on NFS, faster on local SSD.
 
@@ -81,11 +81,11 @@ MoE models store expert weights in different layouts. The merge/adapter code han
 
 | Layout | Models | Structure |
 |---|---|---|
-| **Separate** | DeepSeek, Kimi-K2, Kimi-K2.5, Qwen3 MoE (transformers 4.x) | Individual `experts.{i}.gate_proj.weight` per expert |
+| **Separate** | DeepSeek, Kimi-K2, Kimi-K2.6, Qwen3 MoE (transformers 4.x) | Individual `experts.{i}.gate_proj.weight` per expert |
 | **Fused concatenated** | Qwen3 MoE (transformers 5.x), Qwen3.5 MoE, Qwen3-VL MoE | Single `experts.gate_up_proj` with `[gate \| up]` layout |
 | **Fused interleaved** | GPT-OSS | Single `experts.gate_up_proj` with `[g0, u0, g1, u1, ...]` layout |
 
-### INT4 Pack-Quantized Experts (Kimi K2, K2.5)
+### INT4 Pack-Quantized Experts (Kimi K2, K2.6)
 
 Kimi models on HuggingFace use compressed-tensors `pack-quantized` format for routed expert weights:
 
@@ -115,7 +115,7 @@ Qwen3.5 linear attention layers use a fused `in_proj_qkv` weight, but Tinker tra
 | `base_model.model.` prefix strip | All models | Tinker adapter prefix → HF parameter names |
 | `unembed_tokens` → `lm_head` (or `embed_tokens`) | All models | Tinker naming → HF naming; tied embeddings use `embed_tokens` |
 | `model.*` → `model.language_model.*` | Qwen3.5 VL, Qwen3-VL | Inner `language_model` prefix for standard VL models |
-| `model.*` → `language_model.model.*` | Kimi-K2.5 | Outer `language_model.` prefix (different from Qwen pattern) |
+| `model.*` → `language_model.model.*` | Kimi-K2.6 | Outer `language_model.` prefix (different from Qwen pattern) |
 | `.attn` → `.self_attn` | GPT-OSS | Tinker internal naming → HF naming |
 | `w1/w2/w3` → `gate_proj/down_proj/up_proj` | MoE expert keys | Tinker expert naming → HF naming |
 
@@ -129,7 +129,7 @@ Qwen3.5 linear attention layers use a fused `in_proj_qkv` weight, but Tinker tra
 
 **Unblock when:** vLLM adds DeepSeek V3 LoRA support.
 
-### Kimi-K2.5 (`model_type=kimi_k25`)
+### Kimi-K2.6 (`model_type=kimi_k25`)
 
 **Status:** Adapter conversion works, but vLLM 0.18 does not implement `SupportsLoRA` for `KimiK25ForConditionalGeneration`.
 
@@ -146,11 +146,11 @@ Adapter serving has been verified end-to-end with vLLM 0.18:
 | Model | vLLM LoRA | Status |
 |---|---|---|
 | Qwen3-8B (dense) | Full support | ✅ Verified |
-| Qwen3-30B-A3B (MoE) | Experimental | ✅ Verified (requires all 3 expert projections) |
+| Qwen3.6-35B-A3B (MoE) | Experimental | ✅ Verified (requires all 3 expert projections) |
 | Qwen3.5-4B (split QKV) | Full support | ✅ Verified (split in_proj_q/k/v works) |
 | GPT-OSS-20B | Full support | ⚠️ Conversion verified; serving blocked by mxfp4+LoRA incompatibility |
 | Kimi-K2 | Supported (DeepSeekV2) | ⚠️ Conversion verified; model too large (~1TB) for routine e2e testing |
-| Kimi-K2.5 | Not supported | ⚠️ Conversion verified; vLLM 0.18 lacks LoRA for `KimiK25ForConditionalGeneration` |
+| Kimi-K2.6 | Not supported | ⚠️ Conversion verified; vLLM 0.18 lacks LoRA for `KimiK25ForConditionalGeneration` |
 | DeepSeek V3/V3.1 | Not supported | ❌ Adapter conversion blocked |
 | Nemotron-3-Nano (30B-A3B) | Full support (vLLM) | ✅ Verified (`backbone.*` → `model.*` remap, TP=2) |
 | Nemotron-3-Super (120B-A12B) | Full support (vLLM) | ✅ Verified (`backbone.*` → `model.*` remap, TP=4) |

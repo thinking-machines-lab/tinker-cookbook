@@ -3,8 +3,8 @@ Multi-teacher on-policy distillation example.
 
 This script demonstrates on-policy distillation with multiple datasets and
 different teacher models for each dataset. It uses:
-- DeepMath dataset with Qwen3-32B as teacher
-- Tulu3 dataset with Qwen3-235B-A22B-Instruct-2507 as teacher
+- DeepMath dataset with Qwen3.6-27B as teacher
+- Tulu3 dataset with Qwen3.5-397B-A17B in non-thinking mode as teacher
 - Qwen3-8B as student model
 - qwen3_instruct renderer
 
@@ -48,9 +48,9 @@ class CLIConfig:
     load_checkpoint_path: str | None = None  # Student checkpoint
 
     # Teacher configurations
-    deepmath_teacher_model: str = "Qwen/Qwen3-32B"
+    deepmath_teacher_model: str = "Qwen/Qwen3.6-27B"
     deepmath_teacher_checkpoint: str | None = None
-    tulu3_teacher_model: str = "Qwen/Qwen3-235B-A22B-Instruct-2507"
+    tulu3_teacher_model: str = "Qwen/Qwen3.5-397B-A17B"
     tulu3_teacher_checkpoint: str | None = None
 
     # Dataset configuration

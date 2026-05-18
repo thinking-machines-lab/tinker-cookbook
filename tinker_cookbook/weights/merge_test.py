@@ -1539,12 +1539,12 @@ class TestUnembedTokensVisionRemap:
 
 
 # ---------------------------------------------------------------------------
-# Kimi K2.5 — profile detection, name remapping, INT4 pack/unpack
+# Kimi K2.6 / kimi_k25 — profile detection, name remapping, INT4 pack/unpack
 # ---------------------------------------------------------------------------
 
 
 class TestKimiK25ProfileDetection:
-    """Profile detection for Kimi K2.5 (model_type=kimi_k25)."""
+    """Profile detection for Kimi K2.6 (model_type=kimi_k25)."""
 
     def test_detects_kimi_k25(self):
         config = {"model_type": "kimi_k25", "architectures": ["KimiK25ForConditionalGeneration"]}
@@ -1566,7 +1566,7 @@ class TestKimiK25ProfileDetection:
         assert profile.model_family == "kimi_k25"
 
     def test_kimi_k2_falls_through_to_default(self):
-        """Kimi-K2 (model_type=kimi_k2) should NOT match K2.5 detector."""
+        """Kimi-K2 (model_type=kimi_k2) should NOT match the kimi_k25 detector."""
         config = {"model_type": "kimi_k2"}
         keys = {"model.layers.0.self_attn.q_a_proj.weight"}
         profile = detect_merge_profile(config, keys)
@@ -1574,7 +1574,7 @@ class TestKimiK25ProfileDetection:
 
 
 class TestKimiK25NameRemapping:
-    """Name remapping for K2.5's language_model.model.* prefix."""
+    """Name remapping for the kimi_k25 language_model.model.* prefix."""
 
     HIDDEN = 64
     RANK = 1
@@ -1711,7 +1711,7 @@ class TestIsPackQuantizedGuard:
         assert is_pack_quantized(self._PACK_QUANTIZED_CONFIG)
 
     def test_kimi_k25_triggers_via_text_config(self):
-        """Kimi K2.5 nests quantization_config under text_config."""
+        """Kimi K2.6 nests quantization_config under text_config."""
         config = {"model_type": "kimi_k25", "text_config": self._PACK_QUANTIZED_CONFIG}
         assert is_pack_quantized(config)
 

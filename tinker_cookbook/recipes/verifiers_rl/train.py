@@ -27,8 +27,9 @@ logger = logging.getLogger(__name__)
 @chz.chz
 class CLIConfig:
     # model configuration
-    model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
+    model_name: str = "Qwen/Qwen3.5-4B"
     lora_rank: int = 32
+    renderer_name: str = "qwen3_5_disable_thinking"
 
     # environment configuration
     vf_env_id: str = "reverse-text"

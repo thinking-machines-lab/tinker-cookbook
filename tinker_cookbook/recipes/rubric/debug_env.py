@@ -2,7 +2,6 @@ import asyncio
 
 import tinker
 
-from tinker_cookbook import model_info
 from tinker_cookbook.completers import TinkerMessageCompleter, TinkerTokenCompleter
 from tinker_cookbook.recipes.rubric.env import Rubric, RubricBasedDatapoint, RubricGradedEnv
 from tinker_cookbook.renderers import get_renderer
@@ -36,8 +35,8 @@ def get_prometheus_datapoint() -> RubricBasedDatapoint:
 
 async def main(datapoint: RubricBasedDatapoint):
     # Configuration parameters
-    policy_name = "meta-llama/Llama-3.1-8B-Instruct"
-    grader_name = "Qwen/Qwen3-30B-A3B-Instruct-2507"
+    policy_name = "Qwen/Qwen3.5-9B"
+    grader_name = "Qwen/Qwen3.6-35B-A3B"
     policy_max_tokens = 64
     grader_max_tokens = 64
 
@@ -46,13 +45,11 @@ async def main(datapoint: RubricBasedDatapoint):
         sampling_client=service_client.create_sampling_client(base_model=policy_name),
         max_tokens=policy_max_tokens,
     )
-    policy_renderer = get_renderer(
-        model_info.get_recommended_renderer_name(policy_name), get_tokenizer(policy_name)
-    )
+    policy_renderer = get_renderer("qwen3_5_disable_thinking", get_tokenizer(policy_name))
     grader = TinkerMessageCompleter(
         sampling_client=service_client.create_sampling_client(base_model=grader_name),
         renderer=get_renderer(
-            model_info.get_recommended_renderer_name(grader_name), get_tokenizer(grader_name)
+            "qwen3_5_disable_thinking", get_tokenizer(grader_name)
         ),
         max_tokens=grader_max_tokens,
     )

@@ -18,7 +18,7 @@ We observe an AIME'24 score of ~55% using a rank-128 LoRA after 3000 steps. We u
 
 ```bash
 python -m tinker_cookbook.recipes.distillation.off_policy_reasoning \
-    model_name=Qwen/Qwen3-8B-Base \
+    model_name=Qwen/Qwen3.5-9B-Base \
     learning_rate=1e-3 \
     batch_size=128 \
     lora_rank=128 \
@@ -31,7 +31,7 @@ We observe an AIME'24 score of ~65% using a rank-128 LoRA after 100 steps. For o
 
 ```bash
 python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
-    model_name=Qwen/Qwen3-8B-Base \
+    model_name=Qwen/Qwen3.5-9B-Base \
     load_checkpoint_path=tinker://4a1939e6-04be-5a77-9e4e-910ccff9f27e:train:0/weights/final \
     dataset=deepmath \
     learning_rate=1e-4 \
@@ -65,7 +65,7 @@ In our experiment, we saw [IF-eval](https://huggingface.co/datasets/google/IFEva
 
 ```bash
 python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
-    model_name=Qwen/Qwen3-8B-Base \
+    model_name=Qwen/Qwen3.5-9B-Base \
     dataset=tulu3 \
     learning_rate=1e-4 \
     groups_per_batch=64 \
@@ -103,8 +103,8 @@ See `tinker_cookbook/recipes/harbor_rl/README.md` for full details on the Harbor
 
 ```bash
 python -m tinker_cookbook.recipes.distillation.on_policy_distillation_harbor_multi_turn \
-    model_name=moonshotai/Kimi-K2-Thinking \
-    teacher_model=moonshotai/Kimi-K2-Thinking \
+    model_name=moonshotai/Kimi-K2.6 \
+    teacher_model=moonshotai/Kimi-K2.6 \
     max_turns=10 \
     group_size=4 \
     groups_per_batch=8 \
@@ -135,7 +135,7 @@ For every dataset, we can define a teacher model and batch size (`groups_per_bat
 {
     "dataset_builder": RLDatasetBuilder,
     "teacher_model": {
-        "base_model": str,  # e.g. "Qwen/Qwen3-32B"
+        "base_model": str,  # e.g. "Qwen/Qwen3.6-27B"
         "load_checkpoint_path": str | None  # e.g. "tinker://<unique_id>/sampler_weights/final
     },
     "groups_per_batch": int

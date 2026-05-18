@@ -1835,7 +1835,8 @@ async def main(
         config = Config(
             learning_rate=1e-5,
             dataset_builder=my_dataset_builder,
-            model_name="meta-llama/Llama-3.1-8B-Instruct",
+            model_name="Qwen/Qwen3.5-9B",
+            renderer_name="qwen3_5_disable_thinking",
             max_tokens=2048,
             log_path="./logs/my_rl_run",
         )

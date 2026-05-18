@@ -4,7 +4,7 @@ Defines two protocols that plug into :func:`run_shard_merge`:
 
 - :class:`ShardHooks` — for models with pre-quantized weights on disk that
   need dequant → merge → requant as an atomic per-key operation (e.g. INT4
-  packed format for Kimi K2/K2.5).
+  packed format for Kimi K2/K2.6).
 
 - :class:`QuantizationFormat` — for post-merge quantization where the output
   model needs selected weights quantized after LoRA merge (e.g. FP8 blockwise

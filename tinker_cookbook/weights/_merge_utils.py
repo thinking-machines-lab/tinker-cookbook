@@ -406,7 +406,7 @@ def create_virtual_weight_keys(
 ) -> tuple[set[str], dict[str, str]]:
     """Add virtual ``.weight`` keys for compressed-tensors packed weights.
 
-    Some model checkpoints (e.g. Kimi K2, K2.5) store routed expert weights
+    Some model checkpoints (e.g. Kimi K2, Kimi K2.6) store routed expert weights
     in the compressed-tensors ``pack-quantized`` format: ``weight_packed``,
     ``weight_scale``, ``weight_shape``.  LoRA merge planning targets plain
     ``.weight`` keys, so we create virtual entries for the planner.
@@ -462,7 +462,7 @@ def create_virtual_weight_shapes(
 def find_quantization_config(config_dict: dict) -> dict | None:
     """Find the ``quantization_config`` dict, checking both top-level and ``text_config``.
 
-    Vision-language models (e.g. Kimi K2.5) nest quantization config under
+    Vision-language models (e.g. Kimi K2.6) nest quantization config under
     ``text_config``, while standard models have it at the top level.
 
     Returns the first ``quantization_config`` dict found, or ``None``.
@@ -479,7 +479,7 @@ def find_quantization_config(config_dict: dict) -> dict | None:
 def is_pack_quantized(config_dict: dict) -> bool:
     """Check if the model uses compressed-tensors ``pack-quantized`` format.
 
-    This format (used by Kimi K2, K2.5) stores quantized weights as
+    This format (used by Kimi K2, Kimi K2.6) stores quantized weights as
     ``weight_packed`` / ``weight_scale`` / ``weight_shape`` triplets.
     Detection is based on the explicit ``format: pack-quantized`` field
     in ``quantization_config``, not on weight key heuristics.

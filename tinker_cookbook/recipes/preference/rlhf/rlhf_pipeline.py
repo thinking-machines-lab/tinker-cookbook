@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 
 @chz.chz
 class CLIConfig:
-    base_model: str = "meta-llama/Llama-3.2-3B"
-    short_name: str = "llama3b"
+    base_model: str = "Qwen/Qwen3.5-9B-Base"
+    short_name: str = "qwen9b"
     run_sft: bool = True
     run_rm: bool = True
     run_rl: bool = True

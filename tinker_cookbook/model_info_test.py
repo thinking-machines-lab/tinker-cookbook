@@ -31,22 +31,20 @@ class TestQwen3_6:
 class TestWarnIfRendererNotRecommended:
     def test_no_warning_when_renderer_is_none(self, caplog: pytest.LogCaptureFixture):
         with caplog.at_level(logging.WARNING):
-            warn_if_renderer_not_recommended("Qwen/Qwen3-4B-Instruct-2507", None)
+            warn_if_renderer_not_recommended("Qwen/Qwen3.5-4B", None)
         assert caplog.text == ""
 
     def test_no_warning_when_renderer_is_recommended(self, caplog: pytest.LogCaptureFixture):
         with caplog.at_level(logging.WARNING):
-            warn_if_renderer_not_recommended("Qwen/Qwen3-4B-Instruct-2507", "qwen3_instruct")
+            warn_if_renderer_not_recommended("Qwen/Qwen3.5-4B", "qwen3_5_disable_thinking")
         assert caplog.text == ""
 
     def test_warning_when_renderer_not_recommended(self, caplog: pytest.LogCaptureFixture):
         with caplog.at_level(logging.WARNING):
-            warn_if_renderer_not_recommended(
-                "Qwen/Qwen3-4B-Instruct-2507", "qwen3_disable_thinking"
-            )
+            warn_if_renderer_not_recommended("Qwen/Qwen3.5-4B", "qwen3_instruct")
         assert "not recommended" in caplog.text
-        assert "qwen3_disable_thinking" in caplog.text
         assert "qwen3_instruct" in caplog.text
+        assert "qwen3_5_disable_thinking" in caplog.text
 
     def test_no_warning_for_unknown_model(self, caplog: pytest.LogCaptureFixture):
         with caplog.at_level(logging.WARNING):

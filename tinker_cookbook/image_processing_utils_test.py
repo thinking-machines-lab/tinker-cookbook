@@ -12,16 +12,16 @@ def _clear_cache() -> None:
 
 
 @patch("transformers.models.auto.image_processing_auto.AutoImageProcessor")
-def test_kimi_k25_trusts_remote_code_without_env(
+def test_kimi_k26_trusts_remote_code_without_env(
     mock_auto: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Hardcoded Kimi K2.5 should pass trust_remote_code=True without the env var."""
+    """Hardcoded Kimi K2.6 should pass trust_remote_code=True without the env var."""
     monkeypatch.delenv("HF_TRUST_REMOTE_CODE", raising=False)
-    get_image_processor("moonshotai/Kimi-K2.5")
+    get_image_processor("moonshotai/Kimi-K2.6")
     mock_auto.from_pretrained.assert_called_once_with(
-        "moonshotai/Kimi-K2.5",
+        "moonshotai/Kimi-K2.6",
         trust_remote_code=True,
-        revision="3367c8d1c68584429fab7faf845a32d5195b6ac1",
+        revision="b5aabbfb20227ed42becbf5541dbffd213942c58",
     )
 
 

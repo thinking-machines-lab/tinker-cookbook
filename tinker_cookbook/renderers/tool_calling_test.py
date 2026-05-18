@@ -24,9 +24,8 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
     "model_name,renderer_name",
     [
         ("Qwen/Qwen3-8B", "qwen3"),
-        ("Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3_instruct"),
-        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5"),
-        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5_disable_thinking"),
+        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
+        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3_disable_thinking"),
     ],
@@ -72,9 +71,8 @@ def test_qwen3_tool_response_rendering(model_name: str, renderer_name: str):
     "model_name,renderer_name",
     [
         ("Qwen/Qwen3-8B", "qwen3"),
-        ("Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3_instruct"),
-        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5"),
-        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5_disable_thinking"),
+        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
+        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3_disable_thinking"),
     ],
@@ -116,7 +114,7 @@ weather in NYC
     "model_name,renderer_name",
     [
         ("Qwen/Qwen3-8B", "qwen3"),
-        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5"),
+        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
     ],
 )
@@ -166,15 +164,15 @@ LA
     assert "LA" in message["tool_calls"][1].function.arguments
 
 
-def test_kimi_k2_parse_tool_call():
-    """Test parsing tool call from Kimi K2 response.
+def test_kimi_k26_parse_tool_call():
+    """Test parsing tool call from Kimi K2.6 response.
 
-    Kimi K2 uses tool_id format "functions.{name}:{idx}", and the function
+    Kimi K2.6 uses tool_id format "functions.{name}:{idx}", and the function
     name should be extracted correctly.
     """
-    model_name = "moonshotai/Kimi-K2-Thinking"
+    model_name = "moonshotai/Kimi-K2.6"
     tokenizer = get_tokenizer(model_name)
-    renderer = get_renderer("kimi_k2", tokenizer)
+    renderer = get_renderer("kimi_k26", tokenizer)
 
     # Simulate model response with tool call (Kimi K2 format)
     response_text = """<think></think>I'll search for that.
@@ -298,11 +296,11 @@ def test_deepseek_parse_invalid_tool_call_json():
     assert "Invalid JSON" in message["unparsed_tool_calls"][0].error
 
 
-def test_kimi_k2_parse_invalid_tool_call_json():
-    """Test that invalid JSON in Kimi K2 tool call is captured as unparsed."""
-    model_name = "moonshotai/Kimi-K2-Thinking"
+def test_kimi_k26_parse_invalid_tool_call_json():
+    """Test that invalid JSON in Kimi K2.6 tool call is captured as unparsed."""
+    model_name = "moonshotai/Kimi-K2.6"
     tokenizer = get_tokenizer(model_name)
-    renderer = get_renderer("kimi_k2", tokenizer)
+    renderer = get_renderer("kimi_k26", tokenizer)
 
     response_text = """<think></think>I'll search.
 <|tool_calls_section_begin|><|tool_call_begin|>functions.search:0<|tool_call_argument_begin|>{invalid}<|tool_call_end|><|tool_calls_section_end|><|im_end|>"""

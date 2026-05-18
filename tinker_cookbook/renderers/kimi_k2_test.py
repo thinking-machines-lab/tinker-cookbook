@@ -72,7 +72,7 @@ def _get_tool_call_conversation() -> list[Message]:
 
 def test_kimi_streaming_simple_text():
     """Test streaming parsing of simple text response."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2.6")
     renderer = KimiK2Renderer(tokenizer)
 
     response_str = "Hello, world!<|im_end|>"
@@ -92,7 +92,7 @@ def test_kimi_streaming_simple_text():
 
 def test_kimi_streaming_with_thinking():
     """Test streaming parsing with thinking blocks."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2.6")
     renderer = KimiK2Renderer(tokenizer)
 
     response_str = "<think>Let me reason about this.</think>The answer is 42.<|im_end|>"
@@ -115,7 +115,7 @@ def test_kimi_streaming_with_thinking():
 
 def test_kimi_streaming_matches_batch():
     """Test that streaming parse produces same final message as batch parse."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2.6")
     renderer = KimiK2Renderer(tokenizer)
 
     response_str = "<think>Step 1: Analyze.\nStep 2: Compute.</think>The result is 123.<|im_end|>"
@@ -134,7 +134,7 @@ def test_kimi_streaming_matches_batch():
 
 def test_kimi_streaming_content_index_increments():
     """Test that content_index increments when switching content types."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2.6")
     renderer = KimiK2Renderer(tokenizer)
 
     response_str = "<think>thinking</think>text<|im_end|>"
@@ -151,7 +151,7 @@ def test_kimi_streaming_content_index_increments():
 
 def test_kimi_streaming_multiple_think_blocks():
     """Test streaming with multiple interleaved think blocks."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2.6")
     renderer = KimiK2Renderer(tokenizer)
 
     response_str = "<think>first thought</think>partial<think>second thought</think>final<|im_end|>"
@@ -176,7 +176,7 @@ def test_kimi_streaming_multiple_think_blocks():
 
 def test_kimi_streaming_empty_response():
     """Test streaming parsing of empty/minimal response."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2.6")
     renderer = KimiK2Renderer(tokenizer)
 
     response_str = "<|im_end|>"
@@ -190,7 +190,7 @@ def test_kimi_streaming_empty_response():
 
 def test_kimi_streaming_no_unnecessary_buffering():
     """Test that we don't buffer more than necessary when no tag prefix matches."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2.6")
     renderer = KimiK2Renderer(tokenizer)
 
     response_str = "Hello world<|im_end|>"
@@ -204,7 +204,7 @@ def test_kimi_streaming_no_unnecessary_buffering():
 
 def test_kimi_streaming_with_emoji():
     """Test that streaming parser handles emoji correctly."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2.6")
     renderer = KimiK2Renderer(tokenizer)
 
     response_str = "<think>Let me think 🤔</think>Here's a party 🎉!<|im_end|>"
@@ -287,7 +287,7 @@ class TestKimiK2StreamingBatchEquivalence:
 
     @pytest.fixture
     def renderer(self):
-        tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+        tokenizer = get_tokenizer("moonshotai/Kimi-K2.6")
         return KimiK2Renderer(tokenizer)
 
     def test_simple_text(self, renderer):
@@ -450,7 +450,7 @@ def test_kimi_k2_thinking_stripped_when_no_suffix_messages():
     Kimi K2 should preserve thinking only after the last non-tool-call assistant.
     This test checks that the history thinking is stripped with the presence of a non-tool-call assistant.
     """
-    model_name = "moonshotai/Kimi-K2-Thinking"
+    model_name = "moonshotai/Kimi-K2.6"
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer("kimi_k2", tokenizer)
 
@@ -502,7 +502,7 @@ def test_kimi_k2_thinking_preserved_in_suffix_after_last_non_tool_call():
     Suffix thinking is preserved but history thinking is stripped relative to the
     position of the last non-tool-call assistant.
     """
-    model_name = "moonshotai/Kimi-K2-Thinking"
+    model_name = "moonshotai/Kimi-K2.6"
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer("kimi_k2", tokenizer)
 
@@ -554,7 +554,7 @@ def test_kimi_k2_thinking_preserved_when_no_non_tool_call_assistant():
     """
     When no non-tool-call assistant exists, all thinking should be preserved.
     """
-    model_name = "moonshotai/Kimi-K2-Thinking"
+    model_name = "moonshotai/Kimi-K2.6"
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer("kimi_k2", tokenizer)
 
@@ -590,7 +590,7 @@ def test_kimi_k2_thinking_preserved_when_no_non_tool_call_assistant():
 
 
 def test_kimi_k2_build_supervised_examples_last_assistant_matches():
-    model_name = "moonshotai/Kimi-K2-Thinking"
+    model_name = "moonshotai/Kimi-K2.6"
     tokenizer = get_tokenizer(model_name)
     renderer: KimiK2Renderer = get_renderer("kimi_k2", tokenizer)  # type: ignore
 
@@ -608,7 +608,7 @@ def test_kimi_k2_build_supervised_examples_last_assistant_matches():
 
 
 def test_kimi_k2_build_supervised_examples_all_assistant_matches():
-    model_name = "moonshotai/Kimi-K2-Thinking"
+    model_name = "moonshotai/Kimi-K2.6"
     tokenizer = get_tokenizer(model_name)
     renderer: KimiK2Renderer = get_renderer("kimi_k2", tokenizer)  # type: ignore
 
@@ -650,7 +650,7 @@ def test_kimi_k2_build_supervised_examples_all_assistant_matches():
 
 
 def test_kimi_k2_build_supervised_examples_warns_on_non_assistant_mode():
-    model_name = "moonshotai/Kimi-K2-Thinking"
+    model_name = "moonshotai/Kimi-K2.6"
     tokenizer = get_tokenizer(model_name)
     renderer: KimiK2Renderer = get_renderer("kimi_k2", tokenizer)  # type: ignore
 
@@ -681,7 +681,7 @@ def test_kimi_k2_build_supervised_examples_warns_on_non_assistant_mode():
 
 
 def test_kimi_k2_build_supervised_examples_all_assistant_matches_with_tool_calls():
-    model_name = "moonshotai/Kimi-K2-Thinking"
+    model_name = "moonshotai/Kimi-K2.6"
     tokenizer = get_tokenizer(model_name)
     renderer: KimiK2Renderer = get_renderer("kimi_k2", tokenizer)  # type: ignore
 

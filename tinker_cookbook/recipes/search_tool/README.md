@@ -2,7 +2,7 @@
 
 [Search-R1](https://arxiv.org/pdf/2503.09516) is a recent paper that showcases tool-use RL for multi-hop QA on Wikipedia.
 It provides a clean setup for testing tool-use RL and also released their training and evaluation data.
-In this demo, we demonstrate similar experiments using `Qwen3-4B-Instruct-2507`, and we include our replication results using `Qwen/Qwen2.5-7B-Instruct` at the end.
+In this demo, we demonstrate similar experiments using `Qwen3.5-4B` in non-thinking mode, and we include our replication results using `Qwen/Qwen2.5-7B-Instruct` at the end.
 
 ## Running This Demo
 
@@ -25,7 +25,7 @@ If you launch the chroma service locally, you generally need 160+ GB RAM to load
 
 ### Example command
 
-This default command trains a `Qwen3-4B-Instruct-2507` with reasonable hyperparameters.
+This default command trains `Qwen3.5-4B` in non-thinking mode with reasonable hyperparameters.
 
 ```bash
 python -m tinker_cookbook.recipes.search_tool.train
@@ -35,6 +35,8 @@ With the default hyperparameters, you can expect performance like:
 | | Natural Questions | Trivia QA | HotpotQA | 2WikiMultihopQA |
 |---|---|---|---|---|
 | Qwen3-4B-Instruct-2507 | 51.8 | 70.2 | 52.0 | 47.7 |
+
+> **Note:** `Qwen3-4B-Instruct-2507` is deprecated. Rerun this experiment with `Qwen/Qwen3.5-4B` using `qwen3_5_disable_thinking` before treating these numbers as current.
 
 A successful run generally learns multi-turn search within 10-25 steps, which can be monitored by checking if `env/all/turns_per_episode` has increased over 2 turns.
 

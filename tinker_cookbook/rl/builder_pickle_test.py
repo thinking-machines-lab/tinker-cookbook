@@ -29,8 +29,8 @@ class TestProblemGroupBuilderPickle:
         )
         MathEnv = math_env_mod.MathEnv
 
-        tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
-        renderer = get_renderer("llama3", tokenizer)
+        tokenizer = get_tokenizer("Qwen/Qwen3.5-9B")
+        renderer = get_renderer("qwen3_5_disable_thinking", tokenizer)
 
         builder = ProblemGroupBuilder(
             env_thunk=partial(MathEnv, "What is 2+2?", "4", renderer),
@@ -43,7 +43,7 @@ class TestProblemGroupBuilderPickle:
         assert restored.num_envs == 4
         assert restored.dataset_name == "test_math"
         # Verify the renderer inside the partial survived
-        assert restored.env_thunk.args[2]._renderer_name == "llama3"
+        assert restored.env_thunk.args[2]._renderer_name == "qwen3_5_disable_thinking"
 
     def test_pickle_with_convo_prefix(self) -> None:
         """ProblemGroupBuilder with convo_prefix in the partial survives pickle."""
@@ -54,8 +54,8 @@ class TestProblemGroupBuilderPickle:
         )
         MathEnv = math_env_mod.MathEnv
 
-        tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
-        renderer = get_renderer("llama3", tokenizer)
+        tokenizer = get_tokenizer("Qwen/Qwen3.5-9B")
+        renderer = get_renderer("qwen3_5_disable_thinking", tokenizer)
         convo_prefix: list[Message] = [{"role": "system", "content": "You are helpful."}]
 
         builder = ProblemGroupBuilder(
@@ -77,8 +77,8 @@ class TestRolloutTask:
         )
         MathEnv = math_env_mod.MathEnv
 
-        tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
-        renderer = get_renderer("llama3", tokenizer)
+        tokenizer = get_tokenizer("Qwen/Qwen3.5-9B")
+        renderer = get_renderer("qwen3_5_disable_thinking", tokenizer)
 
         builder = ProblemGroupBuilder(
             env_thunk=partial(MathEnv, "What is 2+2?", "4", renderer),

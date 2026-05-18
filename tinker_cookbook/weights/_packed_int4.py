@@ -1,7 +1,7 @@
 """INT4 group-quantized weight packing and unpacking.
 
 Supports the compressed-tensors ``pack-quantized`` format used by models like
-Kimi K2.5.  In this format, eight 4-bit signed integers (range [−8, 7]) are
+Kimi K2.6.  In this format, eight 4-bit signed integers (range [−8, 7]) are
 packed into a single ``int32`` from LSB to MSB.
 
 Key conventions (matching compressed-tensors / vLLM):

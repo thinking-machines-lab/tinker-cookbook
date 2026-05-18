@@ -16,7 +16,7 @@ Usage:
 
     # GSM8K, larger model
     python -m tinker_cookbook.recipes.true_thinking_score.analyze \
-        dataset=gsm8k model_name=Qwen/Qwen3.5-27B n_problems=50
+        dataset=gsm8k model_name=Qwen/Qwen3.6-27B n_problems=50
 
     # Full MATH-500
     python -m tinker_cookbook.recipes.true_thinking_score.analyze \

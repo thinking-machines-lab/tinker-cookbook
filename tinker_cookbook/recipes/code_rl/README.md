@@ -1,6 +1,6 @@
 # Replicating DeepCoder with Tinker
 
-Competitive programming problems are a common testbed for RL with LLMs. The recent [DeepCoder](https://pretty-radio-b75.notion.site/DeepCoder-A-Fully-Open-Source-14B-Coder-at-O3-mini-Level-1cf81902c14680b3bee5eb349a512a51) blog post introduces a dataset and training pipeline for this purpose. This recipe demonstrates a similar setup using `Qwen3-4B-Instruct-2507`.
+Competitive programming problems are a common testbed for RL with LLMs. The recent [DeepCoder](https://pretty-radio-b75.notion.site/DeepCoder-A-Fully-Open-Source-14B-Coder-at-O3-mini-Level-1cf81902c14680b3bee5eb349a512a51) blog post introduces a dataset and training pipeline for this purpose. This recipe demonstrates a similar setup using `Qwen3.5-4B` in non-thinking mode.
 
 ## Running This Demo
 
@@ -49,11 +49,12 @@ Optional environment variables for Modal:
 
 ### Example command
 
-Train a `Qwen3-4B-Instruct-2507` model with:
+Train a `Qwen3.5-4B` model in non-thinking mode with:
 
 ```bash
 python -m tinker_cookbook.recipes.code_rl.train \
-    model_name="Qwen/Qwen3-4B-Instruct-2507" \
+    model_name="Qwen/Qwen3.5-4B" \
+    renderer_name=qwen3_5_disable_thinking \
     group_size=8 groups_per_batch=128 \
     learning_rate=4e-5 \
     lora_rank=32 \
@@ -66,5 +67,7 @@ After 100 steps of training, you can expect the following performance on **LiveC
 |-------|--------|--------|
 | Qwen3-4B-Instruct-2507 (before training) | 33.8% | 44.3% |
 | Qwen3-4B-Instruct-2507 (after 100 steps) | 42.7% | 55.0% |
+
+> **Note:** `Qwen3-4B-Instruct-2507` is deprecated. Rerun this experiment with `Qwen/Qwen3.5-4B` using `qwen3_5_disable_thinking` before treating these numbers as current.
 
 [1] Luo, M., Tan, S., Huang, R., Patel, A., Ariyak, A., Wu, Q., Shi, X., Xin, R., Cai, C., Weber, M., Zhang, C., Li, L. E., Popa, R. A., & Stoica, I. (2025). DeepCoder: A fully open-source 14B coder at O3-mini level.

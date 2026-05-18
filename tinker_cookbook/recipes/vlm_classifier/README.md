@@ -9,11 +9,11 @@ python -m tinker_cookbook.recipes.vlm_classifier.train \
     experiment_dir=./vlm_classifier \
     wandb_project=vlm-classifier \
     dataset=caltech101 \
-    renderer_name=qwen3_vl \
-    model_name=Qwen/Qwen3-VL-30B-A3B-Instruct
+    renderer_name=qwen3_5 \
+    model_name=Qwen/Qwen3.6-35B-A3B
 ```
 
-Currently, the qwen series of VLMs are supported. Running the above script after installing tinker-cookbook will fine-tune `Qwen/Qwen3-VL-30B-A3B-Instruct` on the `caltech101` as an example.
+Currently, the qwen series of VLMs are supported. Running the above script after installing tinker-cookbook will fine-tune `Qwen/Qwen3.6-35B-A3B` on the `caltech101` as an example.
 
 ### Evaluation
 
@@ -23,8 +23,8 @@ Once trained, you can evaluate the class predictions from your VLM as follows:
 python -m tinker_cookbook.recipes.vlm_classifier.eval \
     dataset=caltech101 \
     model_path=$YOUR_MODEL_PATH \
-    model_name=Qwen/Qwen3-VL-30B-A3B-Instruct \
-    renderer_name=qwen3_vl
+    model_name=Qwen/Qwen3.6-35B-A3B \
+    renderer_name=qwen3_5
 ```
 
 This will print the test accuracy of your model.

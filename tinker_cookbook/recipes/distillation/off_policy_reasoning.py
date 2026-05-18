@@ -6,7 +6,7 @@ which contains reasoning traces with chain-of-thought style responses.
 
 Example usage:
     python -m tinker_cookbook.recipes.distillation.off_policy_reasoning \
-        model_name=Qwen/Qwen3-8B-Base \
+        model_name=Qwen/Qwen3.5-9B-Base \
         learning_rate=1e-4 \
         batch_size=128 \
         lora_rank=128 \
@@ -92,9 +92,9 @@ class CLIConfig:
     """Command-line configuration for SFT on OpenThoughts3."""
 
     # Model configuration
-    model_name: str = "Qwen/Qwen3-8B-Base"
+    model_name: str = "Qwen/Qwen3.5-9B-Base"
     lora_rank: int = 128
-    renderer_name: str | None = "qwen3"
+    renderer_name: str | None = "role_colon"
     load_checkpoint_path: str | None = None
 
     # Training hyperparameters

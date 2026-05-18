@@ -1,4 +1,4 @@
-"""Renderer for Moonshot AI's Kimi K2.5 models."""
+"""Renderer for Moonshot AI's Kimi K2.6 models using the ``kimi_k25`` architecture."""
 
 from typing import cast
 
@@ -21,7 +21,7 @@ from tinker_cookbook.tokenizer_utils import Tokenizer
 
 class KimiK25Renderer(KimiK2Renderer):
     """
-    Renderer for Kimi K2.5 with thinking enabled (default).
+    Renderer for Kimi K2.6 with thinking enabled (default).
 
     Key differences from KimiK2Renderer:
     1. Generation prompt prefill: Appends `<think>` (open tag) to enable thinking mode
@@ -46,7 +46,7 @@ class KimiK25Renderer(KimiK2Renderer):
         image_processor: ImageProcessor | None = None,
         strip_thinking_from_history: bool = True,
     ):
-        """Initialize the Kimi K2.5 renderer.
+        """Initialize the Kimi K2.6 renderer.
 
         Args:
             tokenizer (Tokenizer): The tokenizer to use for encoding.
@@ -130,7 +130,7 @@ class KimiK25Renderer(KimiK2Renderer):
     ) -> list[Message]:
         """Create system messages with TypeScript-style tool specifications.
 
-        Per the HuggingFace chat template, Kimi K2.5 uses TypeScript-style tool
+        Per the HuggingFace chat template, Kimi K2.6 uses TypeScript-style tool
         declarations instead of JSON format. The tool_declare message comes BEFORE
         the regular system message.
 
@@ -142,7 +142,7 @@ class KimiK25Renderer(KimiK2Renderer):
         Returns:
             list[Message]: Messages to prepend to conversations (tool_declare + system).
 
-        Reference: kimi-k2.5-hf-tokenizer/chat_template.jinja
+        Reference: Kimi K2.6 chat_template.jinja
         """
         messages: list[Message] = []
 
@@ -161,7 +161,7 @@ class KimiK25Renderer(KimiK2Renderer):
 
 class KimiK25DisableThinkingRenderer(KimiK25Renderer):
     """
-    Renderer for Kimi K2.5 with thinking disabled.
+    Renderer for Kimi K2.6 with thinking disabled.
 
     Uses `<think></think>` prefill instead of `<think>` to disable thinking mode.
 

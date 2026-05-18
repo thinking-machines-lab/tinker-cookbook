@@ -27,7 +27,7 @@ Example usage::
 
     # SDFT with top-K=20 distillation on tool-use data
     python -m tinker_cookbook.recipes.sdft.train \\
-        model_name=Qwen/Qwen3.5-35B-A3B \\
+        model_name=Qwen/Qwen3.6-35B-A3B \\
         dataset=toolalpaca \\
         toolalpaca_data_path=~/Self-Distillation/data/tooluse_data/train_data \\
         groups_per_batch=128 \\

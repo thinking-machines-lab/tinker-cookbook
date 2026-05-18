@@ -81,9 +81,6 @@ def _cfg(
 
 # Models already swept (included for completeness, skipped by default)
 ALREADY_DONE: dict[str, ModelSweepConfig] = {
-    "deepseek-ai/DeepSeek-V3.1-Base": _cfg(
-        "deepseek-ai/DeepSeek-V3.1-Base", "large", "MoE, already swept"
-    ),
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": _cfg(
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "medium", "MoE, already swept"
     ),
@@ -96,33 +93,21 @@ ALREADY_DONE: dict[str, ModelSweepConfig] = {
 NEW_MODELS: list[ModelSweepConfig] = [
     # --- Large ---
     _cfg("Qwen/Qwen3.5-397B-A17B", "large", "MoE Hybrid+Vision"),
-    _cfg("Qwen/Qwen3-VL-235B-A22B-Instruct", "large", "MoE Vision"),
-    _cfg("Qwen/Qwen3-235B-A22B-Instruct-2507", "large", "MoE Instruction"),
     _cfg("deepseek-ai/DeepSeek-V3.1", "large", "MoE Hybrid", renderer_name="deepseekv3_thinking"),
-    _cfg("meta-llama/Llama-3.1-70B", "large", "Dense Base"),
-    _cfg("meta-llama/Llama-3.3-70B-Instruct", "large", "Dense Instruction"),
-    _cfg("moonshotai/Kimi-K2-Thinking", "large", "MoE Reasoning"),
-    _cfg("moonshotai/Kimi-K2.5", "large", "MoE Reasoning+Vision"),
+    _cfg("moonshotai/Kimi-K2.6", "large", "MoE Reasoning+Vision"),
     # --- Medium ---
-    _cfg("Qwen/Qwen3.5-35B-A3B", "medium", "MoE Hybrid+Vision"),
-    _cfg("Qwen/Qwen3.5-27B", "medium", "Dense Hybrid+Vision"),
-    _cfg("Qwen/Qwen3-VL-30B-A3B-Instruct", "medium", "MoE Vision"),
-    _cfg("Qwen/Qwen3-30B-A3B-Instruct-2507", "medium", "MoE Instruction"),
-    _cfg("Qwen/Qwen3-30B-A3B", "medium", "MoE Hybrid"),
-    _cfg("Qwen/Qwen3-30B-A3B-Base", "medium", "MoE Base"),
-    _cfg("Qwen/Qwen3-32B", "medium", "Dense Hybrid"),
+    _cfg("Qwen/Qwen3.6-35B-A3B", "medium", "MoE Hybrid+Vision"),
+    _cfg("Qwen/Qwen3.6-27B", "medium", "Dense Hybrid+Vision"),
+    _cfg("Qwen/Qwen3.5-35B-A3B-Base", "medium", "MoE Base"),
     _cfg("openai/gpt-oss-120b", "medium", "MoE Reasoning"),
     # --- Small ---
     _cfg("Qwen/Qwen3-8B", "small", "Dense Hybrid"),
-    _cfg("Qwen/Qwen3-8B-Base", "small", "Dense Base"),
+    _cfg("Qwen/Qwen3.5-9B-Base", "small", "Dense Base"),
+    _cfg("Qwen/Qwen3.5-9B", "small", "Dense Instruction", renderer_name="qwen3_5_disable_thinking"),
     _cfg("openai/gpt-oss-20b", "small", "MoE Reasoning"),
-    _cfg("meta-llama/Llama-3.1-8B", "small", "Dense Base"),
-    _cfg("meta-llama/Llama-3.1-8B-Instruct", "small", "Dense Instruction"),
     _cfg("Qwen/Qwen3.5-4B", "small", "Dense Hybrid+Vision"),
     # --- Compact ---
-    _cfg("Qwen/Qwen3-4B-Instruct-2507", "compact", "Dense Instruction"),
-    _cfg("meta-llama/Llama-3.2-3B", "compact", "Dense Base"),
-    _cfg("meta-llama/Llama-3.2-1B", "compact", "Dense Base"),
+    _cfg("Qwen/Qwen3.5-4B", "compact", "Dense Instruction", renderer_name="qwen3_5_disable_thinking"),
 ]
 
 

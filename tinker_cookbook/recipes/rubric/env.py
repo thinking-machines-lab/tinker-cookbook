@@ -8,7 +8,6 @@ import tinker
 from termcolor import colored
 from tinker.types import ModelInput
 
-from tinker_cookbook import model_info
 from tinker_cookbook.completers import MessageCompleter, StopCondition, TinkerMessageCompleter
 from tinker_cookbook.recipes.rubric.data import (
     Conversation,
@@ -229,12 +228,12 @@ class RubricGradedDatasetBuilder(RLDatasetBuilder):
     test_datapoint_list_builder: RubricDatapointListBuilder | None = None
 
     base_url: str | None = None
-    grader_llm_name: str = "Qwen/Qwen3-30B-A3B-Instruct-2507"
+    grader_llm_name: str = "Qwen/Qwen3.6-35B-A3B"
+    grader_renderer_name: str = "qwen3_5_disable_thinking"
 
     def _get_grader_llm(self) -> MessageCompleter:
         tokenizer = get_tokenizer(self.grader_llm_name)
-        renderer_name = model_info.get_recommended_renderer_name(self.grader_llm_name)
-        renderer = get_renderer(name=renderer_name, tokenizer=tokenizer)
+        renderer = get_renderer(name=self.grader_renderer_name, tokenizer=tokenizer)
         service_client = tinker.ServiceClient(base_url=self.base_url)
         sampling_client = service_client.create_sampling_client(base_model=self.grader_llm_name)
         return TinkerMessageCompleter(

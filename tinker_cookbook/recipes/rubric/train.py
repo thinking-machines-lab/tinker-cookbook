@@ -16,9 +16,9 @@ class CLIConfig:
     """Simple command-line configuration for RL training."""
 
     # Model configuration
-    model_name: str = "meta-llama/Llama-3.1-8B-Instruct"
+    model_name: str = "Qwen/Qwen3.5-9B"
     lora_rank: int = 32
-    renderer_name: str | None = None
+    renderer_name: str | None = "qwen3_5_disable_thinking"
     load_checkpoint_path: str | None = None
 
     seed: int = 0  # Random seed for data shuffling
@@ -31,7 +31,7 @@ class CLIConfig:
     max_tokens: int = 5
     temperature: float = 1.0
     kl_penalty_coef: float = 0.0
-    grader_llm_name: str = "Qwen/Qwen3-30B-A3B-Instruct-2507"
+    grader_llm_name: str = "Qwen/Qwen3.6-35B-A3B"
     train_jsonl_path: str = "tinker_cookbook/example_data/example_rubric_train.jsonl"
     test_jsonl_path: str = "tinker_cookbook/example_data/example_rubric_test.jsonl"
 
