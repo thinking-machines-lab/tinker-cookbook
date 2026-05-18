@@ -37,7 +37,7 @@ def test_deepseek_parse_response_extracts_thinking():
 
     message, success = renderer.parse_response(response_tokens)
 
-    assert success
+    assert success.is_clean
     content = message["content"]
     assert isinstance(content, list)
 
@@ -60,7 +60,7 @@ def test_deepseek_parse_response_no_thinking_returns_string():
 
     message, success = renderer.parse_response(response_tokens)
 
-    assert success
+    assert success.is_clean
     assert isinstance(message["content"], str)
     assert message["content"] == "Just a plain response."
 
@@ -75,7 +75,7 @@ def test_deepseek_parse_response_multiple_think_blocks():
 
     message, success = renderer.parse_response(response_tokens)
 
-    assert success
+    assert success.is_clean
     content = message["content"]
     assert isinstance(content, list)
     assert len(content) == 4

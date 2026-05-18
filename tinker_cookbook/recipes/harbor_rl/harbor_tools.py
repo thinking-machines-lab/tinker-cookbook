@@ -88,13 +88,18 @@ class HarborReward:
             return 0.0, {"reward": 0.0, "test_passed": 0.0, "grading_error": 1.0}
 
     async def _upload_tests(self) -> None:
-        """Upload test files from local tests_dir to /tests/ in sandbox."""
+        """Upload test files from local tests_dir to /tests/ in sandbox.
+
+        Walks ``tests_dir`` recursively so nested fixture trees (e.g. a
+        ``tests/repo_overlay/`` directory copied into the workspace by
+        ``test.sh``) are preserved. ``Path.iterdir`` would silently drop them.
+        """
         await self.sandbox.run_command("mkdir -p /tests", workdir="/")
-        for file_path in self.tests_dir.iterdir():
+        for file_path in self.tests_dir.rglob("*"):
             if not file_path.is_file():
                 continue
             content = file_path.read_text()
-            target = f"/tests/{file_path.name}"
+            target = f"/tests/{file_path.relative_to(self.tests_dir)}"
             await self.sandbox.write_file(target, content, executable=(file_path.suffix == ".sh"))
 
     async def _parse_reward(self) -> float:

@@ -19,6 +19,7 @@ from tinker_cookbook.renderers.base import (
     ImagePart,
     ImageProcessorProtocol,
     Message,
+    ParseTermination,
     RenderContext,
     RenderedMessage,
     Renderer,
@@ -213,7 +214,7 @@ class Qwen3Renderer(Renderer):
         """
         return [self._end_message_token]
 
-    def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+    def parse_response(self, response: list[int]) -> tuple[Message, ParseTermination]:
         """Parse sampled token IDs back into an assistant Message.
 
         Decodes the response, strips the ``<|im_end|>`` stop token, and parses
@@ -224,15 +225,15 @@ class Qwen3Renderer(Renderer):
             response (list[int]): Raw token IDs from the sampler.
 
         Returns:
-            tuple[Message, bool]: The parsed assistant message (with structured content
-                and optional tool_calls) and whether the stop token was found.
+            tuple[Message, ParseTermination]: ``STOP_SEQUENCE`` if the
+                ``<|im_end|>`` stop token was found, ``MALFORMED`` otherwise.
         """
         response = self._normalize_response_tokens(response)
-        assistant_message, parse_success = parse_response_for_stop_token(
+        assistant_message, termination = parse_response_for_stop_token(
             response, self.tokenizer, self._end_message_token
         )
-        if not parse_success:
-            return assistant_message, False
+        if not termination.is_clean:
+            return assistant_message, termination
 
         # Parse <think>...</think> and <tool_call>...</tool_call> blocks together
         # to preserve ordering. Tool calls use Qwen's format:
@@ -258,9 +259,11 @@ class Qwen3Renderer(Renderer):
             # No special blocks found - keep as string for backward compatibility
             assistant_message["content"] = content
 
-        return assistant_message, True
+        return assistant_message, termination
 
-    def _parse_response_for_streaming(self, response: list[int]) -> tuple[Message, bool]:
+    def _parse_response_for_streaming(
+        self, response: list[int]
+    ) -> tuple[Message, ParseTermination]:
         """Parse response for streaming, always applying full content parsing.
 
         Unlike parse_response which short-circuits on missing stop token,
@@ -272,7 +275,7 @@ class Qwen3Renderer(Renderer):
         parse_response_streaming already normalizes before feeding tokens
         to the parser.
         """
-        assistant_message, parse_success = parse_response_for_stop_token(
+        assistant_message, termination = parse_response_for_stop_token(
             response, self.tokenizer, self._end_message_token
         )
 
@@ -294,7 +297,7 @@ class Qwen3Renderer(Renderer):
         else:
             assistant_message["content"] = content
 
-        return assistant_message, parse_success
+        return assistant_message, termination
 
     def to_openai_message(self, message: Message) -> dict:
         """Convert a Message to OpenAI API format with reasoning_content for thinking.

@@ -13,6 +13,17 @@ Each entry includes:
 
 ---
 
+### [cookbook] Fix base-model single-turn evals + replace `parse_success` bool with `ParseTermination` enum ([#688](https://github.com/thinking-machines-lab/tinker-cookbook/pull/688))
+**Date:** 2026-04-30
+**Type:** fix
+**Tags:** renderers, eval, rl
+
+Fixes #685: every base model × every single-turn benchmark scored 0% because `RoleColonRenderer.parse_response` reported `parse_success=False` on EOS-terminated responses, and `EnvFromMessageEnv.step` short-circuits with `failed_parse_reward=0` in that case — so the grader was never invoked. Re-running AIME 2025 against `Qwen/Qwen3-8B-Base` now gives 6/30 (20.0%) instead of 0/30.
+
+**Breaking API change.** `Renderer.parse_response` now returns `tuple[Message, ParseTermination]` instead of `tuple[Message, bool]`. `ParseTermination` is a `StrEnum` with `STOP_SEQUENCE` / `EOS` / `MALFORMED` values plus `is_clean` and `is_stop_sequence` properties. Note that `ParseTermination` is truthy in all three states (it's a `StrEnum`), so `if not parse_success:` patterns will silently always be False without raising `TypeError`. Migration: replace with `if not termination.is_clean:` (lenient, what eval grading reads) or `if not termination.is_stop_sequence:` (strict, what RL format-reward shaping reads). All in-tree call sites are updated. R1-Zero / math RL training behavior is preserved by default via a new `ProblemEnv.require_stop_sequence_for_format=True` knob.
+
+---
+
 ### [cookbook] Fix grading bugs in IFEval, MATH-500, and GPQA benchmarks ([#643](https://github.com/thinking-machines-lab/tinker-cookbook/pull/643))
 **Date:** 2026-04-08
 **Type:** fix

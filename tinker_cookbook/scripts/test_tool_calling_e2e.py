@@ -150,11 +150,11 @@ async def test_model(
     # Parse response
     response_tokens = result.sequences[0].tokens
     raw_response = str(tokenizer.decode(response_tokens))
-    message, parse_success = renderer.parse_response(response_tokens)
+    message, termination = renderer.parse_response(response_tokens)
 
     # Check if we got tool calls
     has_tool_calls = "tool_calls" in message and len(message.get("tool_calls", [])) > 0
-    success = parse_success and has_tool_calls
+    success = termination.is_clean and has_tool_calls
 
     return success, message, raw_response
 

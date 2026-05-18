@@ -102,7 +102,7 @@ weather in NYC
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
     message, success = renderer.parse_response(response_tokens)
 
-    assert success is True
+    assert success.is_clean
     assert message["role"] == "assistant"
     assert "tool_calls" in message
     assert len(message["tool_calls"]) == 1
@@ -156,7 +156,7 @@ LA
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
     message, success = renderer.parse_response(response_tokens)
 
-    assert success is True
+    assert success.is_clean
     assert "tool_calls" in message
     assert len(message["tool_calls"]) == 2
     assert message["tool_calls"][0].function.name == "get_weather"
@@ -183,7 +183,7 @@ def test_kimi_k2_parse_tool_call():
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
     message, success = renderer.parse_response(response_tokens)
 
-    assert success is True
+    assert success.is_clean
     assert "tool_calls" in message
     assert len(message["tool_calls"]) == 1
     # Verify function name is extracted from tool_id
@@ -207,7 +207,7 @@ def test_deepseek_parse_tool_call():
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
     message, success = renderer.parse_response(response_tokens)
 
-    assert success is True
+    assert success.is_clean
     assert "tool_calls" in message
     assert len(message["tool_calls"]) == 1
     assert message["tool_calls"][0].function.name == "get_weather"
@@ -237,7 +237,7 @@ def test_qwen3_parse_invalid_tool_call_json():
     message, success = renderer.parse_response(response_tokens)
 
     # Parse succeeds, but tool call is captured as unparsed
-    assert success is True
+    assert success.is_clean
     assert "tool_calls" not in message or len(message.get("tool_calls", [])) == 0
     assert "unparsed_tool_calls" in message
     assert len(message["unparsed_tool_calls"]) == 1
@@ -267,7 +267,7 @@ def test_qwen3_mixed_valid_invalid_tool_calls():
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
     message, success = renderer.parse_response(response_tokens)
 
-    assert success is True
+    assert success.is_clean
     # Valid tool call should be parsed
     assert "tool_calls" in message
     assert len(message["tool_calls"]) == 1
@@ -291,7 +291,7 @@ def test_deepseek_parse_invalid_tool_call_json():
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
     message, success = renderer.parse_response(response_tokens)
 
-    assert success is True
+    assert success.is_clean
     assert "tool_calls" not in message or len(message.get("tool_calls", [])) == 0
     assert "unparsed_tool_calls" in message
     assert len(message["unparsed_tool_calls"]) == 1
@@ -310,7 +310,7 @@ def test_kimi_k2_parse_invalid_tool_call_json():
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
     message, success = renderer.parse_response(response_tokens)
 
-    assert success is True
+    assert success.is_clean
     assert "tool_calls" not in message or len(message.get("tool_calls", [])) == 0
     assert "unparsed_tool_calls" in message
     assert len(message["unparsed_tool_calls"]) == 1

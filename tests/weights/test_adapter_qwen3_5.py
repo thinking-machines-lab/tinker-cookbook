@@ -269,6 +269,10 @@ class TestQwen35MoeAdapterExport:
     def test_expert_expansion_with_broadcast(self):
         config = _make_tiny_qwen3_5_moe_config()
         num_experts = config.text_config.num_experts
+        expert_in_dim = config.text_config.hidden_size
+        expert_out_dim = config.text_config.moe_intermediate_size
+        down_in_dim = config.text_config.moe_intermediate_size
+        down_out_dim = config.text_config.hidden_size
 
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -284,13 +288,6 @@ class TestQwen35MoeAdapterExport:
                 tokenizer_name="Qwen/Qwen3.5-35B-A3B",
                 is_vision=True,
             )
-
-            # Read expert dims from saved model
-            saved = load_file(str(model_path / "model.safetensors"))
-            gate_key = "model.language_model.layers.0.mlp.experts.0.gate_proj.weight"
-            expert_out_dim, expert_in_dim = saved[gate_key].shape
-            down_key = "model.language_model.layers.0.mlp.experts.0.down_proj.weight"
-            down_out_dim, down_in_dim = saved[down_key].shape
 
             # Broadcast adapter: w1/w3 A shared, w2 B shared
             rank = 1

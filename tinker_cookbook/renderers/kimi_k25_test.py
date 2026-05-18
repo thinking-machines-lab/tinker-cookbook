@@ -711,19 +711,19 @@ def test_kimi_k25_eot_parsing(kimi_tokenizer, kimi_renderer):
     test_response = "The answer is 42.<|im_end|>"
     response_tokens = kimi_tokenizer.encode(test_response)
 
-    message, format_correct = kimi_renderer.parse_response(response_tokens)
+    message, termination = kimi_renderer.parse_response(response_tokens)
     assert message["role"] == "assistant"
     assert message["content"] == "The answer is 42."
-    assert format_correct is True
+    assert termination.is_stop_sequence
 
     # Test without EOT token
     test_response_no_eot = "The answer is 42."
     response_tokens_no_eot = kimi_tokenizer.encode(test_response_no_eot)
 
-    message, format_correct = kimi_renderer.parse_response(response_tokens_no_eot)
+    message, termination = kimi_renderer.parse_response(response_tokens_no_eot)
     assert message["role"] == "assistant"
     assert message["content"] == "The answer is 42."
-    assert format_correct is False
+    assert not termination.is_clean
 
 
 def test_kimi_k25_parse_response_restores_prefilled_think_tag(kimi_tokenizer, kimi_renderer):
@@ -732,9 +732,9 @@ def test_kimi_k25_parse_response_restores_prefilled_think_tag(kimi_tokenizer, ki
         add_special_tokens=False,
     )
 
-    parsed_message, parse_success = kimi_renderer.parse_response(response_tokens)
+    parsed_message, termination = kimi_renderer.parse_response(response_tokens)
 
-    assert parse_success is True
+    assert termination.is_stop_sequence
     assert parsed_message["content"] == [
         ThinkingPart(type="thinking", thinking="reasoning..."),
         TextPart(type="text", text="2"),

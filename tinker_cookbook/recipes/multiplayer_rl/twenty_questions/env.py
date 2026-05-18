@@ -106,7 +106,7 @@ class TwentyQuestionsEnv(Env):
         """
 
         # step 1: accepts the action from the player (policy)
-        (action_message, _parse_success) = self.renderer.parse_response(action)
+        (action_message, _termination) = self.renderer.parse_response(action)
         self.turns.append({"role": "player", "content": action_message["content"]})
 
         # step 2: the answerer responds

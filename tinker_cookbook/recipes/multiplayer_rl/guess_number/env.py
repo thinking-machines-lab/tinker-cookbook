@@ -72,7 +72,7 @@ class GuessNumberEnv(Env):
     async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
         # step 1: parse the action tokens into a message
         # this step is specific to our library, but usually templated, so you can just copy it.
-        (action_message, _parse_success) = self.renderer.parse_response(action)
+        (action_message, _termination) = self.renderer.parse_response(action)
 
         # step 2: based on the string answer, we compute the reward and the user turn.
         # This part is NOT templated, so you need to implement it. But it is plain python without using special libraries.

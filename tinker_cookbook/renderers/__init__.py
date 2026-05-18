@@ -19,6 +19,7 @@ from tinker_cookbook.renderers.base import (
     Message,
     # Streaming types
     MessageDelta,
+    ParseTermination,
     # Renderer base
     RenderContext,
     Renderer,
@@ -275,6 +276,7 @@ __all__ = [
     "ContentPart",
     "ImagePart",
     "Message",
+    "ParseTermination",
     "Role",
     "TextPart",
     "ThinkingPart",

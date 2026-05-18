@@ -142,7 +142,7 @@ def _get_hf_tokenizer(model_name: str) -> Tokenizer:
         kwargs["revision"] = "2426b45b6af0da48d0dcce71bbce6225e5c73adc"
     elif model_name == "moonshotai/Kimi-K2.6":
         kwargs["trust_remote_code"] = True
-        kwargs["revision"] = "2b2b88e33c96d813ebb4c83a740252fe08018e3a"
+        kwargs["revision"] = "b5aabbfb20227ed42becbf5541dbffd213942c58"
 
     tokenizer = AutoTokenizer.from_pretrained(model_name, **kwargs)
 

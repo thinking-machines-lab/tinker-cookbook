@@ -4,6 +4,7 @@ import tinker
 
 from tinker_cookbook.renderers.base import (
     Message,
+    ParseTermination,
     RenderContext,
     RenderedMessage,
     Renderer,
@@ -82,7 +83,7 @@ class Llama3Renderer(Renderer):
         """
         return [self._end_message_token]
 
-    def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+    def parse_response(self, response: list[int]) -> tuple[Message, ParseTermination]:
         """Parse sampled token IDs back into an assistant Message.
 
         Strips the ``<|eot_id|>`` stop token if present and decodes the remaining
@@ -92,7 +93,7 @@ class Llama3Renderer(Renderer):
             response (list[int]): Raw token IDs from the sampler.
 
         Returns:
-            tuple[Message, bool]: The parsed assistant message and whether the stop
-                token was found (True means the response terminated cleanly).
+            tuple[Message, ParseTermination]: ``STOP_SEQUENCE`` if the
+                ``<|eot_id|>`` stop token was found, ``MALFORMED`` otherwise.
         """
         return parse_response_for_stop_token(response, self.tokenizer, self._end_message_token)

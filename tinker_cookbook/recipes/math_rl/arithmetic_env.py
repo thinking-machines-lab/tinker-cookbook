@@ -21,8 +21,15 @@ class ArithmeticEnv(ProblemEnv):
         y: int,
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None = None,
+        format_coef: float = 0.1,
+        require_stop_sequence_for_format: bool = True,
     ):
-        super().__init__(renderer, convo_prefix)
+        super().__init__(
+            renderer,
+            convo_prefix,
+            format_coef=format_coef,
+            require_stop_sequence_for_format=require_stop_sequence_for_format,
+        )
         self.x = x
         self.y = y
 

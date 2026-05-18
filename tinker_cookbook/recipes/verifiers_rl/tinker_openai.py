@@ -101,10 +101,12 @@ class TinkerChatCompletions(OpenAIAsyncChatCompletions):
         completion_token_ids: list[int] = seq.tokens
         logprobs: list[float] = seq.logprobs or [0.0] * len(completion_token_ids)
 
-        assistant_message, parse_success = self._parent.renderer.parse_response(
-            completion_token_ids
-        )
-        finish_reason = "stop" if parse_success else "length"
+        assistant_message, termination = self._parent.renderer.parse_response(completion_token_ids)
+        # Match the strict pre-PR semantics: only stop-sequence termination
+        # counts as a clean "stop". For RoleColonRenderer, EOS-only termination
+        # is reported as "length" so this client behaves identically to before
+        # the #685 renderer fix.
+        finish_reason = "stop" if termination.is_stop_sequence else "length"
 
         # Convert list content to string for OpenAI compatibility
         openai_content = renderers.format_content_as_string(assistant_message["content"])

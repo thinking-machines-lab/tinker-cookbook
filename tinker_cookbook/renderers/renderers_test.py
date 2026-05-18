@@ -1074,10 +1074,10 @@ def test_supervised_generation_parse_consistency(
         )
 
     # Check 2: Parse the action tokens
-    parsed_message, parse_success = renderer.parse_response(ac)
+    parsed_message, termination = renderer.parse_response(ac)
 
     # Check parse success
-    assert parse_success, (
+    assert termination.is_clean, (
         f"Failed to parse action tokens for {renderer_name}.\n"
         f"Action tokens: {ac}\n"
         f"Decoded: {tokenizer.decode(ac)!r}\n"
@@ -1147,19 +1147,19 @@ def test_eot_parsing(model_name: str, renderer_name: str):
     test_response_with_eot = f"53 + 18 = 71{eot_token}"
     response_tokens = tokenizer.encode(test_response_with_eot, add_special_tokens=False)
 
-    message, format_correct = renderer.parse_response(response_tokens)
+    message, termination = renderer.parse_response(response_tokens)
     assert message["role"] == "assistant"
     assert message["content"] == "53 + 18 = 71"
-    assert format_correct is True
+    assert termination.is_stop_sequence
 
-    # Test case 2: No EOT token - should have format=False
+    # Test case 2: No EOT token - should be malformed
     test_response_no_eot = "53 + 18 = 71"
     response_tokens_no_eot = tokenizer.encode(test_response_no_eot, add_special_tokens=False)
 
-    message, format_correct = renderer.parse_response(response_tokens_no_eot)
+    message, termination = renderer.parse_response(response_tokens_no_eot)
     assert message["role"] == "assistant"
     assert message["content"] == "53 + 18 = 71"
-    assert format_correct is False
+    assert not termination.is_clean
 
     # Test case 3: Double EOT token - should raise ValueError
     test_response_double_eot = f"53 + 18 = 71{eot_token}{eot_token}"

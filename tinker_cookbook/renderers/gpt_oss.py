@@ -12,6 +12,7 @@ from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.renderers.base import (
     ContentPart,
     Message,
+    ParseTermination,
     RenderContext,
     RenderedMessage,
     Renderer,
@@ -472,7 +473,7 @@ class GptOssRenderer(Renderer):
         """
         return [self._return_token, self._call_token]
 
-    def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+    def parse_response(self, response: list[int]) -> tuple[Message, ParseTermination]:
         """Parse sampled token IDs back into an assistant Message.
 
         Finds the ``<|return|>`` or ``<|call|>`` stop token, decodes the preceding
@@ -483,8 +484,9 @@ class GptOssRenderer(Renderer):
             response (list[int]): Raw token IDs from the sampler.
 
         Returns:
-            tuple[Message, bool]: The parsed assistant message (with structured content
-                and optional tool_calls) and whether a stop token was found.
+            tuple[Message, ParseTermination]: ``STOP_SEQUENCE`` if a
+                ``<|return|>`` or ``<|call|>`` stop token was found,
+                ``MALFORMED`` otherwise.
 
         Raises:
             RendererError: If multiple ``<|call|>`` or ``<|return|>`` tokens are found,
@@ -494,7 +496,7 @@ class GptOssRenderer(Renderer):
         return_count = response.count(self._return_token)
         if call_count == 0 and return_count == 0:
             str_response = str(self.tokenizer.decode(response))
-            return Message(role="assistant", content=str_response), False
+            return Message(role="assistant", content=str_response), ParseTermination.MALFORMED
         if call_count > 1:
             raise RendererError(
                 f"When parsing response, expected at most 1 <|call|> token, but got {call_count}. "
@@ -523,7 +525,7 @@ class GptOssRenderer(Renderer):
         if unparsed:
             message["unparsed_tool_calls"] = unparsed
 
-        return message, True
+        return message, ParseTermination.STOP_SEQUENCE
 
     def to_openai_message(self, message: Message) -> dict:
         """Convert a Message to OpenAI API format with reasoning_content for thinking.

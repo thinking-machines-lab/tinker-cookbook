@@ -16,6 +16,7 @@ import transformers
 from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.renderers.base import (
     Message,
+    ParseTermination,
     RenderContext,
     RenderedMessage,
     Renderer,
@@ -269,17 +270,17 @@ class _DeepSeekV3BaseRenderer(Renderer):
 
     def _parse_response_content(
         self, response: list[int], *, allow_missing_stop: bool = False
-    ) -> tuple[Message, bool]:
+    ) -> tuple[Message, ParseTermination]:
         """Shared parsing logic for both batch and streaming paths.
 
         Callers are responsible for normalization — this method does NOT call
         ``_normalize_response_tokens``.
         """
-        assistant_message, parse_success = parse_response_for_stop_token(
+        assistant_message, termination = parse_response_for_stop_token(
             response, self.tokenizer, self._end_message_token
         )
-        if not parse_success and not allow_missing_stop:
-            return assistant_message, False
+        if not termination.is_clean and not allow_missing_stop:
+            return assistant_message, termination
 
         assert isinstance(assistant_message["content"], str)
         content = assistant_message["content"]
@@ -308,9 +309,9 @@ class _DeepSeekV3BaseRenderer(Renderer):
         else:
             assistant_message["content"] = content
 
-        return assistant_message, parse_success
+        return assistant_message, termination
 
-    def parse_response(self, response: list[int]) -> tuple[Message, bool]:
+    def parse_response(self, response: list[int]) -> tuple[Message, ParseTermination]:
         """Parse sampled token IDs back into an assistant Message.
 
         Normalizes response tokens, strips the end-of-sentence stop token, and
@@ -321,13 +322,15 @@ class _DeepSeekV3BaseRenderer(Renderer):
             response (list[int]): Raw token IDs from the sampler.
 
         Returns:
-            tuple[Message, bool]: The parsed assistant message (with structured content
-                and optional tool_calls) and whether the stop token was found.
+            tuple[Message, ParseTermination]: ``STOP_SEQUENCE`` if the
+                end-of-sentence stop token was found, ``MALFORMED`` otherwise.
         """
         response = self._normalize_response_tokens(response)
         return self._parse_response_content(response, allow_missing_stop=False)
 
-    def _parse_response_for_streaming(self, response: list[int]) -> tuple[Message, bool]:
+    def _parse_response_for_streaming(
+        self, response: list[int]
+    ) -> tuple[Message, ParseTermination]:
         """Parse response for streaming, always applying full content parsing.
 
         Unlike parse_response which short-circuits on missing stop token,

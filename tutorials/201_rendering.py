@@ -132,7 +132,13 @@ def _(mo):
     mo.md(r"""
     ## `parse_response()` -- decoding tokens back to a message
 
-    After sampling, you get raw token IDs. `parse_response()` converts them back into a structured message dict.
+    After sampling, you get raw token IDs. `parse_response()` converts them back into a structured message dict and a `ParseTermination` enum that tells you how the response ended:
+
+    - `STOP_SEQUENCE` — the renderer's expected stop signal fired (e.g. `<|im_end|>` for chat templates, `\n\nUser:` for RoleColon).
+    - `EOS` — the model emitted EOS instead. Some renderers (notably `RoleColonRenderer` for base models) accept this as a clean parse on single-turn prompts.
+    - `MALFORMED` — no clean termination (truncated, or multiple/conflicting stop signals).
+
+    Use `termination.is_clean` (any clean termination — what eval grading reads) or `termination.is_stop_sequence` (strict — what RL format-reward shaping reads).
     """)
     return
 
@@ -142,10 +148,10 @@ def _(renderer):
     # Simulate some sampled tokens (in practice these come from the model)
     fake_tokens = [45, 7741, 34651, 31410, 614, 4911, 76665, 13, 151645]
 
-    parsed_message, parse_success = renderer.parse_response(fake_tokens)
+    parsed_message, termination = renderer.parse_response(fake_tokens)
     print(f"Parsed message: {parsed_message}")
-    print(f"Parse success: {parse_success}")
-    return fake_tokens, parse_success, parsed_message
+    print(f"Termination: {termination} (is_clean={termination.is_clean})")
+    return fake_tokens, parsed_message, termination
 
 
 @app.cell(hide_code=True)
