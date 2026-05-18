@@ -31,8 +31,8 @@ from tinker_cookbook.recipes.sdft.eval import (
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
-RENDERER_NAME = "qwen3_instruct"
+MODEL_NAME = "Qwen/Qwen3.5-4B"
+RENDERER_NAME = "qwen3_5_disable_thinking"
 
 
 @pytest.fixture

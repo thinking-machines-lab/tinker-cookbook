@@ -135,8 +135,8 @@ def get_renderer(
             - ``"deepseekv3_disable_thinking"``: DeepSeek V3 non-thinking (alias)
             - ``"deepseekv3_thinking"``: DeepSeek V3 thinking mode
             - ``"kimi_k2"``: Kimi K2 Thinking format
-            - ``"kimi_k25"``: Kimi K2.5 with thinking enabled
-            - ``"kimi_k25_disable_thinking"``: Kimi K2.5 with thinking disabled
+            - ``"kimi_k25"``: Kimi K2.6-compatible renderer with thinking enabled
+            - ``"kimi_k25_disable_thinking"``: Kimi K2.6-compatible renderer with thinking disabled
             - ``"kimi_k26"``: Kimi K2.6 with thinking enabled (HF default — same token output as ``kimi_k25``)
             - ``"kimi_k26_disable_thinking"``: Kimi K2.6 with thinking disabled
             - ``"kimi_k26_preserve_thinking"``: Kimi K2.6 with thinking enabled and historical ``<think>...</think>`` blocks preserved (HF ``preserve_thinking=true``); use for long-horizon agents / multi-turn RL

@@ -37,7 +37,7 @@ class CLIConfig:
     split: Literal["train", "test"] = chz.field(default="test", doc="Dataset split to use")
 
     # Model parameters
-    base_model: str = chz.field(default="Qwen/Qwen3-4B-Instruct-2507", doc="Base model to use")
+    base_model: str = chz.field(default="Qwen/Qwen3.5-4B", doc="Base model to use")
     tinker_checkpoint_url: str = chz.field(doc="Tinker checkpoint URL (required)")
     max_tokens: int = chz.field(default=1024, doc="Maximum number of tokens to generate")
 

@@ -5,7 +5,7 @@ fused ``in_proj_qkv`` weight (Q‖K‖V, with potentially unequal dims), but
 Tinker trains separate ``in_proj_q/k/v`` LoRA adapters. All Qwen3.5 models
 are vision-language with the ``model.language_model.*`` key prefix.
 
-Supported models: Qwen3.5-4B, Qwen3.5-27B, Qwen3.5-35B-A3B, Qwen3.5-397B-A17B,
+Supported models: Qwen3.5-4B, Qwen3.5-9B, Qwen3.5-397B-A17B,
 Qwen3.6-27B, Qwen3.6-35B-A3B (same ``qwen3_5`` / ``qwen3_5_moe`` architecture family).
 """
 
@@ -46,7 +46,7 @@ def detect_profile(model_config: dict, model_state_keys: set[str]) -> MergeProfi
     Tinker trains separate ``in_proj_q/k/v`` LoRA adapters. All Qwen3.5 models
     are vision-language with the ``model.language_model.*`` key prefix.
 
-    Supported models: Qwen3.5-4B, Qwen3.5-27B, Qwen3.5-35B-A3B,
+    Supported models: Qwen3.5-4B, Qwen3.5-9B,
     Qwen3.5-397B-A17B, Qwen3.6-27B, and Qwen3.6-35B-A3B (same ``qwen3_5`` /
     ``qwen3_5_moe`` model_type).
     """
@@ -87,7 +87,7 @@ def build_qwen3_5_name_remaps(
             k == "lm_head.weight" or k.startswith("lm_head.") for k in model_state_keys
         )
         if has_top_level_lm_head:
-            # Non-tied (e.g. Qwen3.5-27B): lm_head stored at top level
+            # Non-tied (e.g. Qwen3.6-27B): lm_head stored at top level
             remaps.append(("model.language_model.unembed_tokens", "lm_head"))
         else:
             # Tied (e.g. Qwen3.5-4B): no separate lm_head; merge into embed_tokens

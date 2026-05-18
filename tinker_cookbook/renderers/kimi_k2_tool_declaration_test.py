@@ -1,4 +1,4 @@
-"""Tests for Kimi K2 tool declaration rendering."""
+"""Tests for Kimi K2.6 tool declaration rendering."""
 
 import json
 
@@ -49,8 +49,8 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 )
 def test_tool_declaration_message_order(tools, expected_order):
     """Test that tool_declare message comes before system message."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
-    renderer = get_renderer("kimi_k2", tokenizer)
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2.6")
+    renderer = get_renderer("kimi_k26", tokenizer)
 
     messages = renderer.create_conversation_prefix_with_tools(tools, "")
 
@@ -63,8 +63,8 @@ def test_tool_declaration_message_order(tools, expected_order):
 
 def test_tool_declaration_no_duplicate_system():
     """Test that tool declaration doesn't result in duplicate system messages."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
-    renderer = get_renderer("kimi_k2", tokenizer)
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2.6")
+    renderer = get_renderer("kimi_k26", tokenizer)
 
     tools: list[ToolSpec] = [
         {"name": "test", "description": "Test", "parameters": {"type": "object", "properties": {}}}
@@ -86,8 +86,8 @@ def test_tool_declaration_no_duplicate_system():
 
 def test_tool_json_keys_are_sorted():
     """Test that tool declaration JSON has sorted keys at all nesting levels."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
-    renderer = get_renderer("kimi_k2", tokenizer)
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2.6")
+    renderer = get_renderer("kimi_k26", tokenizer)
 
     tools: list[ToolSpec] = [
         {
@@ -160,14 +160,16 @@ def test_tool_declaration_matches_hf_tokens():
     messages: list[Message] = [{"role": "user", "content": "What's the weather in SF?"}]
 
     # Tinker-cookbook approach
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
-    renderer = get_renderer("kimi_k2", tokenizer)
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2.6")
+    renderer = get_renderer("kimi_k26", tokenizer)
     convo = renderer.create_conversation_prefix_with_tools(tools_toolspec, "") + messages
     cookbook_tokens = renderer.build_generation_prompt(convo).to_ints()
 
     # HuggingFace approach (pass OpenAI format to match tinker-cookbook's output)
     hf_tokenizer = AutoTokenizer.from_pretrained(
-        "moonshotai/Kimi-K2-Thinking", trust_remote_code=True
+        "moonshotai/Kimi-K2.6",
+        trust_remote_code=True,
+        revision="b5aabbfb20227ed42becbf5541dbffd213942c58",
     )
     hf_tokens = extract_token_ids(
         hf_tokenizer.apply_chat_template(
@@ -204,15 +206,17 @@ def test_tool_declaration_string_matches_hf():
     messages_list: list[Message] = [{"role": "user", "content": "Test"}]
 
     # Tinker-cookbook
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
-    renderer = get_renderer("kimi_k2", tokenizer)
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2.6")
+    renderer = get_renderer("kimi_k26", tokenizer)
     convo = renderer.create_conversation_prefix_with_tools(tools_toolspec, "") + messages_list
     cookbook_prompt = renderer.build_generation_prompt(convo)
     cookbook_str = tokenizer.decode(cookbook_prompt.to_ints())
 
     # HuggingFace (pass OpenAI format)
     hf_tokenizer = AutoTokenizer.from_pretrained(
-        "moonshotai/Kimi-K2-Thinking", trust_remote_code=True
+        "moonshotai/Kimi-K2.6",
+        trust_remote_code=True,
+        revision="b5aabbfb20227ed42becbf5541dbffd213942c58",
     )
     hf_str = hf_tokenizer.apply_chat_template(
         messages_list, tools=tools_openai, tokenize=False, add_generation_prompt=True
@@ -227,8 +231,8 @@ def test_tool_declaration_string_matches_hf():
 
 def test_empty_tools_list():
     """Test that empty tools list doesn't cause issues."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
-    renderer = get_renderer("kimi_k2", tokenizer)
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2.6")
+    renderer = get_renderer("kimi_k26", tokenizer)
 
     messages = renderer.create_conversation_prefix_with_tools([], "")
 
@@ -239,8 +243,8 @@ def test_empty_tools_list():
 
 def test_custom_system_prompt_with_tools():
     """Test that custom system prompt is preserved when using tools."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
-    renderer = get_renderer("kimi_k2", tokenizer)
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2.6")
+    renderer = get_renderer("kimi_k26", tokenizer)
 
     tools: list[ToolSpec] = [
         {"name": "test", "description": "Test", "parameters": {"type": "object", "properties": {}}}

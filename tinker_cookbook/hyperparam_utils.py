@@ -79,40 +79,22 @@ def get_lora_lr_over_full_finetune_lr(model_name: str, lora_alpha: int = 32) -> 
 def _get_hidden_size(model_name: str) -> int:
     # Known hidden sizes for models in the lineup. This avoids network lookups and
     # works around gated repos (Llama) and configs that nest hidden_size under
-    # text_config (Qwen3-VL, Qwen3.5, Kimi-K2.5).
+    # text_config (Qwen3-VL, Qwen3.5, Kimi-K2.6).
     _KNOWN_HIDDEN_SIZES: dict[str, int] = {
         # Llama-3 (gated — cannot fetch config without HF_TOKEN)
-        "meta-llama/Llama-3.2-1B": 2048,
         "meta-llama/Llama-3.2-1B-Instruct": 2048,
-        "meta-llama/Llama-3.2-3B": 3072,
         "meta-llama/Llama-3.2-3B-Instruct": 3072,
-        "meta-llama/Llama-3.1-8B": 4096,
-        "meta-llama/Llama-3.1-8B-Instruct": 4096,
-        "meta-llama/Llama-3.1-70B": 8192,
-        "meta-llama/Llama-3.3-70B-Instruct": 8192,
         # DeepSeek
         "deepseek-ai/DeepSeek-V3.1": 7168,
-        "deepseek-ai/DeepSeek-V3.1-Base": 7168,
         # Kimi
-        "moonshotai/Kimi-K2-Thinking": 7168,
-        "moonshotai/Kimi-K2.5": 7168,
         "moonshotai/Kimi-K2.6": 7168,
         # Qwen3 (text-only)
-        "Qwen/Qwen3-235B-A22B-Instruct-2507": 4096,
-        "Qwen/Qwen3-30B-A3B-Instruct-2507": 2048,
-        "Qwen/Qwen3-30B-A3B": 2048,
-        "Qwen/Qwen3-30B-A3B-Base": 2048,
-        "Qwen/Qwen3-32B": 5120,
         "Qwen/Qwen3-8B": 4096,
-        "Qwen/Qwen3-8B-Base": 4096,
-        "Qwen/Qwen3-4B-Instruct-2507": 2560,
-        # Qwen3-VL (config nests hidden_size under text_config)
-        "Qwen/Qwen3-VL-235B-A22B-Instruct": 4096,
-        "Qwen/Qwen3-VL-30B-A3B-Instruct": 2048,
         # Qwen3.5 (config nests hidden_size under text_config)
         "Qwen/Qwen3.5-397B-A17B": 4096,
-        "Qwen/Qwen3.5-35B-A3B": 2048,
-        "Qwen/Qwen3.5-27B": 5120,
+        "Qwen/Qwen3.5-35B-A3B-Base": 2048,
+        "Qwen/Qwen3.5-9B": 4096,
+        "Qwen/Qwen3.5-9B-Base": 4096,
         "Qwen/Qwen3.5-4B": 2560,
         # Qwen3.6 (same architecture family as Qwen3.5, hidden_size under text_config)
         "Qwen/Qwen3.6-27B": 5120,
@@ -154,36 +136,13 @@ def _get_hidden_size(model_name: str) -> int:
 # To refresh these counts (e.g., when a new model ships), ask a Tinker team
 # member to re-run the measurement script.
 _LORA_PARAMS_PER_RANK_BY_COMPONENT: dict[str, dict[str, int]] = {
-    "Qwen/Qwen3-235B-A22B-Instruct-2507": {
-        "mlp": 56_598_528,
-        "attn": 3_176_448,
-        "unembed": 156_032,
-    },
-    "Qwen/Qwen3-30B-A3B": {"mlp": 14_450_688, "attn": 835_584, "unembed": 153_984},
-    "Qwen/Qwen3-30B-A3B-Base": {"mlp": 14_450_688, "attn": 835_584, "unembed": 153_984},
-    "Qwen/Qwen3-30B-A3B-Instruct-2507": {"mlp": 14_450_688, "attn": 835_584, "unembed": 153_984},
-    "Qwen/Qwen3-32B": {"mlp": 5_898_240, "attn": 2_490_368, "unembed": 157_056},
-    "Qwen/Qwen3-4B-Instruct-2507": {"mlp": 1_327_104, "attn": 737_280, "unembed": 154_496},
     "Qwen/Qwen3-8B": {"mlp": 1_769_472, "attn": 958_464, "unembed": 156_032},
-    "Qwen/Qwen3-8B-Base": {"mlp": 1_769_472, "attn": 958_464, "unembed": 156_032},
-    "Qwen/Qwen3-VL-235B-A22B-Instruct": {"mlp": 56_598_528, "attn": 3_176_448, "unembed": 156_032},
-    "Qwen/Qwen3-VL-30B-A3B-Instruct": {"mlp": 14_450_688, "attn": 835_584, "unembed": 153_984},
-    "Qwen/Qwen3.5-27B": {"mlp": 4_325_376, "attn": 2_965_504, "unembed": 253_440},
-    "Qwen/Qwen3.5-35B-A3B": {"mlp": 16_281_600, "attn": 1_013_760, "unembed": 250_368},
     "Qwen/Qwen3.5-397B-A17B": {"mlp": 96_030_720, "attn": 2_841_600, "unembed": 252_416},
+    "Qwen/Qwen3.5-35B-A3B-Base": {"mlp": 16_281_600, "attn": 1_013_760, "unembed": 250_368},
     "Qwen/Qwen3.5-4B": {"mlp": 1_130_496, "attn": 897_024, "unembed": 250_880},
     "Qwen/Qwen3.6-27B": {"mlp": 4_325_376, "attn": 2_965_504, "unembed": 253_440},
     "Qwen/Qwen3.6-35B-A3B": {"mlp": 16_281_600, "attn": 1_013_760, "unembed": 250_368},
     "deepseek-ai/DeepSeek-V3.1": {"mlp": 94_307_328, "attn": 2_440_000, "unembed": 136_448},
-    "deepseek-ai/DeepSeek-V3.1-Base": {"mlp": 94_307_328, "attn": 2_440_000, "unembed": 136_448},
-    "meta-llama/Llama-3.1-70B": {"mlp": 8_847_360, "attn": 4_096_000, "unembed": 136_448},
-    "meta-llama/Llama-3.1-8B": {"mlp": 1_769_472, "attn": 851_968, "unembed": 132_352},
-    "meta-llama/Llama-3.1-8B-Instruct": {"mlp": 1_769_472, "attn": 851_968, "unembed": 132_352},
-    "meta-llama/Llama-3.2-1B": {"mlp": 491_520, "attn": 212_992, "unembed": 130_304},
-    "meta-llama/Llama-3.2-3B": {"mlp": 946_176, "attn": 573_440, "unembed": 131_328},
-    "meta-llama/Llama-3.3-70B-Instruct": {"mlp": 8_847_360, "attn": 4_096_000, "unembed": 136_448},
-    "moonshotai/Kimi-K2-Thinking": {"mlp": 144_583_680, "attn": 1_940_288, "unembed": 171_008},
-    "moonshotai/Kimi-K2.5": {"mlp": 144_583_680, "attn": 1_940_288, "unembed": 171_008},
     "moonshotai/Kimi-K2.6": {"mlp": 144_583_680, "attn": 1_940_288, "unembed": 171_008},
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": {
         "mlp": 11_346_176,
@@ -263,11 +222,8 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
         exponent_model = 0.0775
     elif model_name in (
         "deepseek-ai/DeepSeek-V3.1",
-        "deepseek-ai/DeepSeek-V3.1-Base",
         "openai/gpt-oss-20b",
         "openai/gpt-oss-120b",
-        "moonshotai/Kimi-K2-Thinking",
-        "moonshotai/Kimi-K2.5",
         "moonshotai/Kimi-K2.6",
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
         "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",

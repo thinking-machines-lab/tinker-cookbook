@@ -4,7 +4,7 @@ Processes one safetensors shard at a time, keeping peak memory proportional to
 the largest shard rather than the full model. Produces output identical to the
 full-model path.
 
-Model-specific shard processing (e.g. INT4 dequant/requant for Kimi K2.5)
+Model-specific shard processing (e.g. INT4 dequant/requant for Kimi K2.6)
 lives in dedicated ``_shard_<model>.py`` modules and is invoked via hooks
 that this file dispatches to based on the detected merge profile.
 """
@@ -67,7 +67,7 @@ def _build_shard_hooks(
 
     Detection is config-driven via ``quantization_config``:
 
-    - ``format: pack-quantized`` → INT4 packed (Kimi K2, K2.5)
+    - ``format: pack-quantized`` → INT4 packed (Kimi K2, Kimi K2.6)
     - ``quant_method: mxfp4 | mxfp8`` → MX block format (GPT-OSS)
 
     Other quantized formats (DeepSeek native FP8) are NOT matched —

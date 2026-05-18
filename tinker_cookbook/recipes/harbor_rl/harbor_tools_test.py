@@ -213,8 +213,8 @@ class TestHarborEnvGroupBuilderPickle:
         """HarborEnvGroupBuilder survives pickle/unpickle with default sandbox_factory."""
         builder = HarborEnvGroupBuilder(
             task=self._make_task(tmp_path),
-            model_name="meta-llama/Llama-3.1-8B-Instruct",
-            renderer_name="llama3",
+            model_name="Qwen/Qwen3.5-9B",
+            renderer_name="qwen3_5_disable_thinking",
             max_turns=5,
             group_size=2,
         )
@@ -236,8 +236,8 @@ class TestHarborEnvGroupBuilderPickle:
         """Non-default scalar parameters survive pickle roundtrip."""
         builder = HarborEnvGroupBuilder(
             task=self._make_task(tmp_path),
-            model_name="meta-llama/Llama-3.1-8B-Instruct",
-            renderer_name="llama3",
+            model_name="Qwen/Qwen3.5-9B",
+            renderer_name="qwen3_5_disable_thinking",
             max_turns=5,
             group_size=2,
             sandbox_timeout=300,

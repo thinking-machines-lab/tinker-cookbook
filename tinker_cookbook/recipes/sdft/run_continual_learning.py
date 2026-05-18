@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 Method = Literal["sft", "sdft_is", "sdft_topk", "sdft_hybrid"]
 
-MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
+MODEL_NAME = "Qwen/Qwen3.5-4B"
 DATA_DIR = "~/Self-Distillation/data"
 LORA_RANK = 128
 BATCH_SIZE = 128

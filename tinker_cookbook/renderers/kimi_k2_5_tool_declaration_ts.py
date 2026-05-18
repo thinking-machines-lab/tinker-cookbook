@@ -1,7 +1,7 @@
 """
 Encode structured tool declaration to typescript style string.
 
-Copied from kimi-k2.5-hf-tokenizer/tool_declaration_ts.py for Kimi K2.5 support.
+TypeScript-style tool declaration encoder used by Kimi K2.6-compatible renderers.
 """
 
 import dataclasses

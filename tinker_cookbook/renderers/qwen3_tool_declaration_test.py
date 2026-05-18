@@ -17,14 +17,13 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 # Qwen3 models use JSON tool calls with OpenAI-style tool wrapper in tool declarations.
 QWEN3_MODELS = [
-    ("Qwen/Qwen3-30B-A3B", "qwen3"),
-    ("Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3_instruct"),
+    ("Qwen/Qwen3-8B", "qwen3"),
 ]
 
-# Qwen3.5 models use XML tool calls and raw function specs in tool declarations.
+# Qwen3.5/Qwen3.6 models use XML tool calls and raw function specs in tool declarations.
 QWEN3_5_MODELS = [
-    ("Qwen/Qwen3.5-35B-A3B", "qwen3_5"),
-    ("Qwen/Qwen3.5-35B-A3B", "qwen3_5_disable_thinking"),
+    ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
+    ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
 ]
 
 ALL_QWEN_MODELS = QWEN3_MODELS + QWEN3_5_MODELS

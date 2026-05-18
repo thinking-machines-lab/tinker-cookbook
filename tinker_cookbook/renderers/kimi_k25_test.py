@@ -1,5 +1,5 @@
 """
-Tests for Kimi K2.5 renderer.
+Tests for the Kimi K2.6 renderer path backed by KimiK25Renderer.
 
 Tests verify that the KimiK25Renderer produces correct output:
 1. Generation prompt includes `<think>` prefill (thinking enabled)
@@ -29,7 +29,7 @@ from tinker_cookbook.renderers.kimi_k2_5_tool_declaration_ts import encode_tools
 from tinker_cookbook.renderers.testing_utils import extract_token_ids
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-KIMI_K25_MODEL = "moonshotai/Kimi-K2.5"
+KIMI_K25_MODEL = "moonshotai/Kimi-K2.6"
 
 
 # =============================================================================
@@ -39,24 +39,24 @@ KIMI_K25_MODEL = "moonshotai/Kimi-K2.5"
 
 @pytest.fixture(scope="module")
 def kimi_tokenizer():
-    """Get the Kimi K2.5 tokenizer (cached per module)."""
+    """Get the Kimi K2.6 tokenizer (cached per module)."""
     try:
         return get_tokenizer(KIMI_K25_MODEL)
     except ModuleNotFoundError as e:
         if "Kimi-K2" in str(e):
-            pytest.skip(f"K2.5 tokenizer has HF module import bug: {e}")
+            pytest.skip(f"K2.6 tokenizer has HF module import bug: {e}")
         raise
 
 
 @pytest.fixture(scope="module")
 def kimi_renderer(kimi_tokenizer):
-    """Get the Kimi K2.5 renderer (cached per module)."""
+    """Get the Kimi K2.6-compatible renderer (cached per module)."""
     return get_renderer("kimi_k25", kimi_tokenizer)
 
 
 @pytest.fixture(scope="module")
 def kimi_renderer_disable_thinking(kimi_tokenizer):
-    """Get the Kimi K2.5 disable-thinking renderer (cached per module)."""
+    """Get the Kimi K2.6-compatible disable-thinking renderer (cached per module)."""
     return get_renderer("kimi_k25_disable_thinking", kimi_tokenizer)
 
 
@@ -557,7 +557,7 @@ def test_kimi_k25_multi_step_tool_calls_matches_hf(
 
 
 def test_kimi_k25_tool_declaration_is_typescript(kimi_renderer):
-    """Test that K2.5 uses TypeScript-style tool declarations."""
+    """Test that Kimi K2.6 uses TypeScript-style tool declarations."""
     tools = [get_tool_spec()]
     prefix_messages = kimi_renderer.create_conversation_prefix_with_tools(tools)
 
@@ -706,7 +706,7 @@ def test_kimi_k25_thinking_stripped_in_history(build_mode: str, kimi_tokenizer, 
 
 
 def test_kimi_k25_eot_parsing(kimi_tokenizer, kimi_renderer):
-    """Test EOT token parsing for K2.5 renderer."""
+    """Test EOT token parsing for the Kimi K2.6 renderer."""
     # Test with EOT token
     test_response = "The answer is 42.<|im_end|>"
     response_tokens = kimi_tokenizer.encode(test_response)
@@ -773,7 +773,7 @@ def test_kimi_k25_parse_response_streaming_restores_prefilled_think_tag(
     "image_dimensions_and_expected_tokens", [(2048, 1365, 3626), (17, 64, 3), (5000, 6000, 4189)]
 )
 def test_kimi_k25_image_content(image_dimensions_and_expected_tokens: tuple[int, int, int]):
-    """Test that image-content is encoded properly for kimi2.5"""
+    """Test that image-content is encoded properly for Kimi K2.6."""
     width, height, expected_tokens = image_dimensions_and_expected_tokens
     dummy_image = Image.new("RGB", (width, height))
     messages = [

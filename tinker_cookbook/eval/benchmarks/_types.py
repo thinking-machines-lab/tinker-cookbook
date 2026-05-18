@@ -112,29 +112,22 @@ _MODEL_EVAL_DEFAULTS: dict[str, dict[str, int | float]] = {
         "context_window": 262144,
         "timeout_seconds": 1800,
     },
-    "Qwen/Qwen3.5-35B-A3B": {"max_tokens": 65536, "context_window": 65536, "timeout_seconds": 1800},
-    "Qwen/Qwen3.5-27B": {"max_tokens": 65536, "context_window": 65536, "timeout_seconds": 1800},
+    "Qwen/Qwen3.6-35B-A3B": {"max_tokens": 65536, "context_window": 65536, "timeout_seconds": 1800},
+    "Qwen/Qwen3.6-27B": {"max_tokens": 65536, "context_window": 65536, "timeout_seconds": 1800},
+    "Qwen/Qwen3.5-35B-A3B-Base": {
+        "max_tokens": 65536,
+        "context_window": 65536,
+        "timeout_seconds": 1800,
+    },
+    "Qwen/Qwen3.5-9B": {"max_tokens": 65536, "context_window": 65536, "timeout_seconds": 300},
+    "Qwen/Qwen3.5-9B-Base": {
+        "max_tokens": 65536,
+        "context_window": 65536,
+        "timeout_seconds": 300,
+    },
     "Qwen/Qwen3.5-4B": {"max_tokens": 65536, "context_window": 65536, "timeout_seconds": 1800},
     # Qwen3 — Hybrid (thinking), 32K context
-    "Qwen/Qwen3-30B-A3B": {"max_tokens": 32768, "context_window": 32768, "timeout_seconds": 1800},
-    "Qwen/Qwen3-32B": {"max_tokens": 32768, "context_window": 32768, "timeout_seconds": 1800},
     "Qwen/Qwen3-8B": {"max_tokens": 32768, "context_window": 32768, "timeout_seconds": 1800},
-    # Qwen3 — Instruction (non-thinking), 32K context
-    "Qwen/Qwen3-235B-A22B-Instruct-2507": {
-        "max_tokens": 32768,
-        "context_window": 32768,
-        "timeout_seconds": 300,
-    },
-    "Qwen/Qwen3-30B-A3B-Instruct-2507": {
-        "max_tokens": 32768,
-        "context_window": 32768,
-        "timeout_seconds": 300,
-    },
-    "Qwen/Qwen3-4B-Instruct-2507": {
-        "max_tokens": 32768,
-        "context_window": 32768,
-        "timeout_seconds": 300,
-    },
     # Nemotron — Hybrid (thinking), 64K context
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": {
         "max_tokens": 65536,
@@ -166,54 +159,11 @@ _MODEL_EVAL_DEFAULTS: dict[str, dict[str, int | float]] = {
         "timeout_seconds": 1800,
     },
     # Kimi — Reasoning, 32K context
-    "moonshotai/Kimi-K2-Thinking": {
-        "max_tokens": 32768,
-        "context_window": 32768,
-        "timeout_seconds": 1800,
-    },
-    "moonshotai/Kimi-K2.5": {"max_tokens": 32768, "context_window": 32768, "timeout_seconds": 1800},
-    "moonshotai/Kimi-K2.5:peft:131072": {
-        "max_tokens": 131072,
-        "context_window": 131072,
-        "timeout_seconds": 1800,
-    },
     "moonshotai/Kimi-K2.6": {"max_tokens": 32768, "context_window": 32768, "timeout_seconds": 1800},
     "moonshotai/Kimi-K2.6:peft:131072": {
         "max_tokens": 131072,
         "context_window": 131072,
         "timeout_seconds": 1800,
-    },
-    # Llama — Instruction (non-thinking), 32K context
-    "meta-llama/Llama-3.3-70B-Instruct": {
-        "max_tokens": 32768,
-        "context_window": 32768,
-        "timeout_seconds": 300,
-    },
-    "meta-llama/Llama-3.1-8B-Instruct": {
-        "max_tokens": 32768,
-        "context_window": 32768,
-        "timeout_seconds": 300,
-    },
-    # Llama — Base, 32K context
-    "meta-llama/Llama-3.1-70B": {
-        "max_tokens": 32768,
-        "context_window": 32768,
-        "timeout_seconds": 300,
-    },
-    "meta-llama/Llama-3.1-8B": {
-        "max_tokens": 32768,
-        "context_window": 32768,
-        "timeout_seconds": 300,
-    },
-    "meta-llama/Llama-3.2-3B": {
-        "max_tokens": 32768,
-        "context_window": 32768,
-        "timeout_seconds": 300,
-    },
-    "meta-llama/Llama-3.2-1B": {
-        "max_tokens": 32768,
-        "context_window": 32768,
-        "timeout_seconds": 300,
     },
 }
 
@@ -360,13 +310,13 @@ class BenchmarkConfig:
         Example::
 
             config = BenchmarkConfig.for_model(
-                "Qwen/Qwen3.5-35B-A3B",
+                "Qwen/Qwen3.6-35B-A3B",
                 save_dir="evals/my_model",
             )
             result = await run_benchmark("gsm8k", client, renderer, config)
 
         Args:
-            model_name: Model ID (e.g., ``"Qwen/Qwen3.5-35B-A3B"``).
+            model_name: Model ID (e.g., ``"Qwen/Qwen3.6-35B-A3B"``).
                 See https://tinker-docs.thinkingmachines.ai/tinker/models/
             **kwargs: Override any :class:`BenchmarkConfig` field.
 

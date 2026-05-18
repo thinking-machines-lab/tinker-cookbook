@@ -36,8 +36,8 @@ class ExperimentConfig:
 
     dataset: str = "caltech101"
 
-    renderer_name: str = "qwen3_vl"
-    model_name: str = "Qwen/Qwen3-VL-235B-A22B-Instruct"
+    renderer_name: str = "qwen3_5"
+    model_name: str = "Qwen/Qwen3.5-397B-A17B"
 
     # Infrastructure parameters
     base_url: str | None = None

@@ -18,7 +18,7 @@ def json_already_exists(log_relpath: str) -> bool:
 
 
 def build_rl_basic_config(max_steps_off_policy: int, name: str) -> rl_train.Config:
-    model_name = "meta-llama/Llama-3.1-8B"
+    model_name = "Qwen/Qwen3.5-9B-Base"
     renderer_name = model_info.get_recommended_renderer_name(model_name)
     builder = Gsm8kDatasetBuilder(
         batch_size=128,

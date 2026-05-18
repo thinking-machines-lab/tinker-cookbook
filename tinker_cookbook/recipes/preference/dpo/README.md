@@ -6,7 +6,7 @@ Here is an example command:
 ```
 python -m tinker_cookbook.recipes.preference.dpo.train \
     log_path=/tmp/dpo-hhh-experiment \
-    model_name=meta-llama/Llama-3.2-1B \
+    model_name=Qwen/Qwen3.5-9B-Base \
     dataset=hhh \
     renderer_name=role_colon \
     learning_rate=1e-5 \

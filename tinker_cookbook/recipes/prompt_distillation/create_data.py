@@ -89,9 +89,9 @@ def setup_clients():
     print("Creating service client")
     service_client = tinker.ServiceClient()
     print("Creating sampling client")
-    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3-30B-A3B")
-    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
-    renderer = renderers.get_renderer("qwen3", tokenizer)
+    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.6-35B-A3B")
+    tokenizer = get_tokenizer("Qwen/Qwen3.6-35B-A3B")
+    renderer = renderers.get_renderer("qwen3_5", tokenizer)
 
     return sampling_client, tokenizer, renderer
 

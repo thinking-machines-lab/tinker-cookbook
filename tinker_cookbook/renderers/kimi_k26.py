@@ -1,7 +1,7 @@
 """Renderer for Moonshot AI's Kimi K2.6 models.
 
-K2.6 is a near-drop-in replacement for K2.5 at the renderer level — the
-only template difference is the new opt-in ``preserve_thinking`` flag.
+K2.6 reuses the existing ``kimi_k25`` renderer implementation; the only
+template difference is the new opt-in ``preserve_thinking`` flag.
 The ``kimi_k26`` and ``kimi_k26_disable_thinking`` renderer names
 therefore dispatch directly to ``KimiK25Renderer`` /
 ``KimiK25DisableThinkingRenderer`` in the factory; only the
@@ -19,7 +19,7 @@ class KimiK26PreserveThinkingRenderer(KimiK25Renderer):
     Matches the K2.6 HF chat template rendered with
     ``preserve_thinking=true``: every historical assistant turn keeps its
     full ``<think>...</think>`` reasoning block, instead of the default
-    K2.5/K2.6 behavior that collapses prior reasoning to empty
+    default K2.6 behavior that collapses prior reasoning to empty
     ``<think></think>`` and preserves only the current turn's thinking.
 
     Use this variant when reasoning traces on prior turns are load-bearing

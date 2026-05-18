@@ -1,6 +1,6 @@
-"""Kimi K2.5 merge planning.
+"""Kimi K2.6 merge planning for the ``kimi_k25`` model type.
 
-Kimi K2.5 is a vision-language model (``model_type=kimi_k25``) wrapping a
+Kimi K2.6 is a vision-language model (``model_type=kimi_k25``) wrapping a
 Kimi-K2 / DeepSeek-style text backbone.  It differs from other VL models in
 two ways that require a dedicated merge module:
 
@@ -35,15 +35,15 @@ from tinker_cookbook.weights._merge_utils import (
 
 
 def detect_profile(model_config: dict, model_state_keys: set[str]) -> MergeProfile | None:
-    """Detect Kimi K2.5 from ``model_type``.
+    """Detect Kimi K2.6 from ``model_type``.
 
-    K2.5 uses DeepSeek-style separate per-expert weights and a non-standard
+    Kimi K2.6 uses DeepSeek-style separate per-expert weights and a non-standard
     VL prefix (``language_model.model.*``).  We set
     ``has_language_model_prefix=False`` because the default name-remap logic
     assumes the *inner* prefix pattern — this module provides its own
     remapping in :func:`plan_merge_ops`.
 
-    Returns ``None`` for non-K2.5 models so the detector chain continues.
+    Returns ``None`` for non-``kimi_k25`` models so the detector chain continues.
     """
     if model_config.get("model_type") != "kimi_k25":
         return None
@@ -61,7 +61,7 @@ def detect_profile(model_config: dict, model_state_keys: set[str]) -> MergeProfi
 
 
 def _build_kimi_k25_name_remaps() -> list[tuple[str, str]]:
-    """Build name remaps for Kimi K2.5's ``language_model.model.*`` prefix.
+    """Build name remaps for Kimi K2.6's ``language_model.model.*`` prefix.
 
     Remap order matters — applied sequentially via ``str.replace``:
 
@@ -110,9 +110,9 @@ def plan_merge_ops(
     model_state_keys: set[str],
     profile: MergeProfile,
 ) -> dict[str, list[MergeOp]]:
-    """Plan merge ops for Kimi K2.5.
+    """Plan merge ops for Kimi K2.6.
 
-    Uses K2.5-specific name remapping (``language_model.model.*`` prefix)
+    Uses ``kimi_k25``-specific name remapping (``language_model.model.*`` prefix)
     and separate per-expert expansion.  The ``model_state_keys`` should
     already include virtual ``.weight`` entries from
     :func:`create_virtual_weight_keys`.

@@ -23,7 +23,6 @@ from tinker_cookbook.renderers.deepseek_v3 import (
     DeepSeekV3ThinkingRenderer,
 )
 from tinker_cookbook.renderers.gpt_oss import GptOssRenderer
-from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
 from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
 from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
@@ -253,7 +252,7 @@ def test_utf8_decoder_with_real_tokenizer_ascii():
     However, for ASCII text (single-byte UTF-8), there's no splitting issue,
     so the decoder should work correctly.
     """
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2.6")
 
     # ASCII-only text won't have UTF-8 splitting issues
     test_str = "Hello World! How are you today?"
@@ -284,7 +283,7 @@ def test_utf8_decoder_handles_replacement_chars():
     for incomplete UTF-8 instead of raising exceptions. The decoder detects these
     and buffers tokens until the sequence completes.
     """
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2.6")
 
     # The emoji 🎉 is encoded as multiple tokens
     test_str = "🎉"
@@ -318,7 +317,7 @@ def test_utf8_decoder_handles_replacement_chars():
 
 def test_utf8_decoder_mixed_ascii_and_emoji():
     """Test streaming with mixed ASCII and multi-byte Unicode."""
-    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2.6")
 
     # Mix of ASCII and emoji
     test_str = "Hello 🎉 World 🌍!"
@@ -356,11 +355,10 @@ def test_utf8_decoder_mixed_ascii_and_emoji():
             GptOssRenderer,
             {"use_system_prompt": True, "reasoning_effort": "medium"},
         ),
-        ("Qwen/Qwen3-30B-A3B", Qwen3Renderer, {}),
-        ("Qwen/Qwen3.5-35B-A3B", Qwen3_5Renderer, {}),
-        ("Qwen/Qwen3.5-35B-A3B", Qwen3_5DisableThinkingRenderer, {}),
-        ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer, {}),
-        ("moonshotai/Kimi-K2.5", KimiK25Renderer, {}),
+        ("Qwen/Qwen3-8B", Qwen3Renderer, {}),
+        ("Qwen/Qwen3.6-35B-A3B", Qwen3_5Renderer, {}),
+        ("Qwen/Qwen3.6-35B-A3B", Qwen3_5DisableThinkingRenderer, {}),
+        ("moonshotai/Kimi-K2.6", KimiK25Renderer, {}),
     ],
 )
 def test_thinking_generation_parse_correspondence(model_name, renderer_cls, renderer_kwargs):

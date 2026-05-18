@@ -59,18 +59,12 @@ def get_llama_info() -> dict[str, ModelAttributes]:
 
     Returns:
         dict[str, ModelAttributes]: Mapping from model version name
-            (e.g. ``"Llama-3.1-8B-Instruct"``) to its attributes.
+            (e.g. ``"Llama-3.2-1B-Instruct"``) to its attributes.
     """
     org = "meta-llama"
     return {
         "Llama-3.2-1B-Instruct": ModelAttributes(org, "3.2", "1B", True, _LLAMA3),
         "Llama-3.2-3B-Instruct": ModelAttributes(org, "3.2", "3B", True, _LLAMA3),
-        "Llama-3.1-8B-Instruct": ModelAttributes(org, "3.1", "8B", True, _LLAMA3),
-        "Llama-3.2-1B": ModelAttributes(org, "3.2", "1B", False, _ROLE_COLON),
-        "Llama-3.2-3B": ModelAttributes(org, "3.2", "3B", False, _ROLE_COLON),
-        "Llama-3.1-8B": ModelAttributes(org, "3.1", "8B", False, _ROLE_COLON),
-        "Llama-3.1-70B": ModelAttributes(org, "3.1", "70B", False, _ROLE_COLON),
-        "Llama-3.3-70B-Instruct": ModelAttributes(org, "3.3", "70B", True, _LLAMA3),
     }
 
 
@@ -86,31 +80,19 @@ def get_qwen_info() -> dict[str, ModelAttributes]:
     """
     org = "Qwen"
     return {
-        "Qwen3-VL-30B-A3B-Instruct": ModelAttributes(
-            org, "3", "30B-A3B", True, _QWEN3_VL_INSTRUCT, is_vl=True
-        ),
-        "Qwen3-VL-235B-A22B-Instruct": ModelAttributes(
-            org, "3", "235B-A22B", True, _QWEN3_VL_INSTRUCT, is_vl=True
-        ),
         "Qwen3-4B-Base": ModelAttributes(org, "3", "4B", False, _ROLE_COLON),
-        "Qwen3-8B-Base": ModelAttributes(org, "3", "8B", False, _ROLE_COLON),
         "Qwen3-14B-Base": ModelAttributes(org, "3", "14B", False, _ROLE_COLON),
-        "Qwen3-30B-A3B-Base": ModelAttributes(org, "3", "30B-A3B", False, _ROLE_COLON),
         "Qwen3-0.6B": ModelAttributes(org, "3", "0.6B", True, _QWEN3),
         "Qwen3-1.7B": ModelAttributes(org, "3", "1.7B", True, _QWEN3),
         "Qwen3-4B": ModelAttributes(org, "3", "4B", True, _QWEN3),
         "Qwen3-8B": ModelAttributes(org, "3", "8B", True, _QWEN3),
         "Qwen3-14B": ModelAttributes(org, "3", "14B", True, _QWEN3),
-        "Qwen3-32B": ModelAttributes(org, "3", "32B", True, _QWEN3),
-        "Qwen3-30B-A3B": ModelAttributes(org, "3", "30B-A3B", True, _QWEN3),
-        "Qwen3-4B-Instruct-2507": ModelAttributes(org, "3", "4B", True, _QWEN3_INSTRUCT),
-        "Qwen3-30B-A3B-Instruct-2507": ModelAttributes(org, "3", "30B-A3B", True, _QWEN3_INSTRUCT),
-        "Qwen3-235B-A22B-Instruct-2507": ModelAttributes(
-            org, "3", "235B-A22B", True, _QWEN3_INSTRUCT
-        ),
         "Qwen3.5-4B": ModelAttributes(org, "3.5", "4B", True, _QWEN3_5, is_vl=True),
-        "Qwen3.5-27B": ModelAttributes(org, "3.5", "27B", True, _QWEN3_5, is_vl=True),
-        "Qwen3.5-35B-A3B": ModelAttributes(org, "3.5", "35B-A3B", True, _QWEN3_5, is_vl=True),
+        "Qwen3.5-9B": ModelAttributes(org, "3.5", "9B", True, _QWEN3_5, is_vl=True),
+        "Qwen3.5-9B-Base": ModelAttributes(org, "3.5", "9B", False, _ROLE_COLON, is_vl=True),
+        "Qwen3.5-35B-A3B-Base": ModelAttributes(
+            org, "3.5", "35B-A3B", False, _ROLE_COLON, is_vl=True
+        ),
         "Qwen3.5-397B-A17B": ModelAttributes(org, "3.5", "397B-A17B", True, _QWEN3_5, is_vl=True),
         # Qwen3.6 reuses the Qwen3.5 renderer: identical tokenizer, special tokens,
         # preprocessor, and chat template (same qwen3_5 / qwen3_5_moe model_type),
@@ -131,7 +113,6 @@ def get_deepseek_info() -> dict[str, ModelAttributes]:
     org = "deepseek-ai"
     return {
         "DeepSeek-V3.1": ModelAttributes(org, "3", "671B-A37B", True, _DEEPSEEKV3),
-        "DeepSeek-V3.1-Base": ModelAttributes(org, "3", "671B-A37B", False, _ROLE_COLON),
     }
 
 
@@ -156,12 +137,10 @@ def get_moonshot_info() -> dict[str, ModelAttributes]:
 
     Returns:
         dict[str, ModelAttributes]: Mapping from model version name
-            (e.g. ``"Kimi-K2-Thinking"``) to its attributes.
+            (e.g. ``"Kimi-K2.6"``) to its attributes.
     """
     org = "moonshotai"
     return {
-        "Kimi-K2-Thinking": ModelAttributes(org, "K2", "1T-A32B", True, _KIMI_K2),
-        "Kimi-K2.5": ModelAttributes(org, "K2.5", "1T-A32B", True, _KIMI_K25, is_vl=True),
         "Kimi-K2.6": ModelAttributes(org, "K2.6", "1T-A32B", True, _KIMI_K26, is_vl=True),
     }
 
@@ -189,7 +168,7 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
     """Get model metadata by name.
 
     Args:
-        model_name: HuggingFace model identifier (e.g. ``"meta-llama/Llama-3.1-8B"``).
+        model_name: HuggingFace model identifier (e.g. ``"Qwen/Qwen3.6-35B-A3B"``).
             An optional ``:checkpoint`` suffix is stripped before lookup.
 
     Returns:

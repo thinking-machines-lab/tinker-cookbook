@@ -37,7 +37,7 @@ logging.getLogger("httpx").setLevel(logging.WARN)
 class Config:
     base_url: str | None = None
     log_path: str = "/tmp/tinker-examples/rl-loop"
-    model_name: str = "meta-llama/Llama-3.1-8B"
+    model_name: str = "Qwen/Qwen3.5-9B-Base"
     batch_size: int = 128
     group_size: int = 16
     learning_rate: float = 4e-5

@@ -62,20 +62,20 @@ MODEL_CONFIGS = [
         "renderer_name": "qwen3",
     },
     {
-        "model_name": "Qwen/Qwen3-30B-A3B-Instruct-2507",
-        "renderer_name": "qwen3_instruct",
+        "model_name": "Qwen/Qwen3.6-35B-A3B",
+        "renderer_name": "qwen3_5_disable_thinking",
     },
     {
-        "model_name": "meta-llama/Llama-3.1-8B-Instruct",
-        "renderer_name": "llama3",
+        "model_name": "Qwen/Qwen3.5-9B",
+        "renderer_name": "qwen3_5_disable_thinking",
     },
     {
         "model_name": "deepseek-ai/DeepSeek-V3.1",
         "renderer_name": "deepseekv3",
     },
     {
-        "model_name": "moonshotai/Kimi-K2-Thinking",
-        "renderer_name": "kimi_k2",
+        "model_name": "moonshotai/Kimi-K2.6",
+        "renderer_name": "kimi_k26",
     },
     {
         "model_name": "openai/gpt-oss-20b",

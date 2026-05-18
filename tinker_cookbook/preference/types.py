@@ -300,8 +300,8 @@ class PreferenceModelBuilderFromChatRenderer(PreferenceModelBuilder):
     Example::
 
         builder = PreferenceModelBuilderFromChatRenderer(
-            renderer_name="llama3",
-            model_name="meta-llama/Llama-3.1-8B-Instruct",
+            renderer_name="qwen3_5_disable_thinking",
+            model_name="Qwen/Qwen3.5-9B",
             rm_weights_path="path/to/rm_weights",
         )
         pref_model = builder()

@@ -163,7 +163,7 @@ python -m tinker_cookbook.recipes.true_thinking_score.analyze \
 
 ```bash
 python -m tinker_cookbook.recipes.true_thinking_score.analyze \
-    dataset=gsm8k model_name=Qwen/Qwen3.5-27B n_problems=50
+    dataset=gsm8k model_name=Qwen/Qwen3.6-27B n_problems=50
 ```
 
 Results are saved to `/tmp/tinker-examples/tts/<run-name>/`:
@@ -231,6 +231,8 @@ pytest tinker_cookbook/recipes/true_thinking_score/tts_test.py -v
 | SV steps | — | 115 | 110 | 113 |
 | SV decorative | 12-21% | 56.5% | 49.1% | **36.3%** |
 | Accuracy | — | 58% | 62% | **70%** |
+
+> **Note:** These historical results include `Qwen3.5-27B`, which is deprecated. Rerun that column with `Qwen/Qwen3.6-27B` before treating the comparison as current.
 
 ### Findings
 
