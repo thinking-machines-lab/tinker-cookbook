@@ -29,7 +29,7 @@ class TestProblemGroupBuilderPickle:
         )
         MathEnv = math_env_mod.MathEnv
 
-        tokenizer = get_tokenizer("Qwen/Qwen3.5-9B")
+        tokenizer = get_tokenizer("Qwen/Qwen3.5-4B")
         renderer = get_renderer("qwen3_5_disable_thinking", tokenizer)
 
         builder = ProblemGroupBuilder(
@@ -54,7 +54,7 @@ class TestProblemGroupBuilderPickle:
         )
         MathEnv = math_env_mod.MathEnv
 
-        tokenizer = get_tokenizer("Qwen/Qwen3.5-9B")
+        tokenizer = get_tokenizer("Qwen/Qwen3.5-4B")
         renderer = get_renderer("qwen3_5_disable_thinking", tokenizer)
         convo_prefix: list[Message] = [{"role": "system", "content": "You are helpful."}]
 
@@ -77,7 +77,7 @@ class TestRolloutTask:
         )
         MathEnv = math_env_mod.MathEnv
 
-        tokenizer = get_tokenizer("Qwen/Qwen3.5-9B")
+        tokenizer = get_tokenizer("Qwen/Qwen3.5-4B")
         renderer = get_renderer("qwen3_5_disable_thinking", tokenizer)
 
         builder = ProblemGroupBuilder(
@@ -101,7 +101,10 @@ class TestRolloutTask:
         assert restored.temperature == 1.0
         assert restored.remove_constant_reward_groups is False
         assert restored.env_group_builder.num_envs == 2
-        assert restored.env_group_builder.env_thunk.args[2]._renderer_name == "qwen3_5_disable_thinking"
+        assert (
+            restored.env_group_builder.env_thunk.args[2]._renderer_name
+            == "qwen3_5_disable_thinking"
+        )
 
 
 class TestRolloutExecutorContextVar:

@@ -71,6 +71,7 @@ from tinker_cookbook.tokenizer_utils import (
     unregister_tokenizer,
 )
 
+
 def _is_vl_or_default(model_name: str) -> bool:
     """Return is_vl from the registry, or False for models the registry no longer covers.
 
