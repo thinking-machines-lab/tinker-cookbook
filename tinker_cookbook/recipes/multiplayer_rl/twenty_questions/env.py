@@ -229,9 +229,9 @@ class TwentyQuestionsDatasetBuilder(RLDatasetBuilder):
         return training_dataset, test_dataset
 
     def _construct_answer_completer(self, service_client: tinker.ServiceClient) -> MessageCompleter:
-        if self.answerer_base_model.startswith("Qwen/Qwen3.5") or self.answerer_base_model.startswith(
-            "Qwen/Qwen3.6"
-        ):
+        if self.answerer_base_model.startswith(
+            "Qwen/Qwen3.5"
+        ) or self.answerer_base_model.startswith("Qwen/Qwen3.6"):
             answerer_renderer_name = "qwen3_5_disable_thinking"
         elif self.answerer_base_model.startswith("Qwen/Qwen3"):
             answerer_renderer_name = "qwen3_disable_thinking"

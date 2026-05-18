@@ -34,9 +34,7 @@ QA_DATASET = MemoryDataset(
 )
 
 service_client = tinker.ServiceClient()
-sampling_client = service_client.create_sampling_client(
-    base_model="Qwen/Qwen3.5-9B"
-)
+sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.5-9B")
 
 api = InspectAPIFromTinkerSampling(
     renderer_name="qwen3_5_disable_thinking",  # pyright: ignore[reportCallIssue]
