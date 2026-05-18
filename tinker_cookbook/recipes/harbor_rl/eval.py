@@ -54,7 +54,7 @@ class EvalConfig:
     max_tasks: int | None = None
     checkpoint_url: str | None = None
     base_url: str | None = None
-    renderer_name: str | None = "kimi_k26_disable_thinking"
+    renderer_name: str | None = None
 
 
 @dataclass

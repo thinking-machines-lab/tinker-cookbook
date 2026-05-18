@@ -59,7 +59,7 @@ class CLIConfig:
     # Student model
     model_name: str = "moonshotai/Kimi-K2.6"
     lora_rank: int = 32
-    renderer_name: str | None = "kimi_k26_disable_thinking"
+    renderer_name: str | None = None
     load_checkpoint_path: str | None = None
 
     # Teacher model

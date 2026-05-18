@@ -92,50 +92,20 @@ ALREADY_DONE: dict[str, ModelSweepConfig] = {
 # All new models to sweep, grouped by tier.
 NEW_MODELS: list[ModelSweepConfig] = [
     # --- Large ---
-    _cfg(
-        "Qwen/Qwen3.5-397B-A17B",
-        "large",
-        "MoE Hybrid+Vision",
-        renderer_name="qwen3_5_disable_thinking",
-    ),
+    _cfg("Qwen/Qwen3.5-397B-A17B", "large", "MoE Hybrid+Vision"),
     _cfg("deepseek-ai/DeepSeek-V3.1", "large", "MoE Hybrid", renderer_name="deepseekv3_thinking"),
-    _cfg(
-        "moonshotai/Kimi-K2.6",
-        "large",
-        "MoE Reasoning+Vision",
-        renderer_name="kimi_k26_disable_thinking",
-    ),
+    _cfg("moonshotai/Kimi-K2.6", "large", "MoE Reasoning+Vision"),
     # --- Medium ---
-    _cfg(
-        "Qwen/Qwen3.6-35B-A3B",
-        "medium",
-        "MoE Hybrid+Vision",
-        renderer_name="qwen3_5_disable_thinking",
-    ),
-    _cfg(
-        "Qwen/Qwen3.6-27B",
-        "medium",
-        "Dense Hybrid+Vision",
-        renderer_name="qwen3_5_disable_thinking",
-    ),
+    _cfg("Qwen/Qwen3.6-35B-A3B", "medium", "MoE Hybrid+Vision"),
+    _cfg("Qwen/Qwen3.6-27B", "medium", "Dense Hybrid+Vision"),
     _cfg("Qwen/Qwen3.5-35B-A3B-Base", "medium", "MoE Base"),
     _cfg("openai/gpt-oss-120b", "medium", "MoE Reasoning"),
     # --- Small ---
     _cfg("Qwen/Qwen3-8B", "small", "Dense Hybrid"),
     _cfg("Qwen/Qwen3.5-9B-Base", "small", "Dense Base"),
     _cfg("openai/gpt-oss-20b", "small", "MoE Reasoning"),
-    _cfg(
-        "Qwen/Qwen3.5-9B",
-        "small",
-        "Dense Hybrid+Vision",
-        renderer_name="qwen3_5_disable_thinking",
-    ),
-    _cfg(
-        "Qwen/Qwen3.5-4B",
-        "small",
-        "Dense Hybrid+Vision",
-        renderer_name="qwen3_5_disable_thinking",
-    ),
+    _cfg("Qwen/Qwen3.5-9B", "small", "Dense Hybrid+Vision"),
+    _cfg("Qwen/Qwen3.5-4B", "small", "Dense Hybrid+Vision"),
 ]
 
 

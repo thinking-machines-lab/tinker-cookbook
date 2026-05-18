@@ -31,7 +31,7 @@ from collections.abc import Callable
 import pytest
 from PIL import Image
 
-from tinker_cookbook.exceptions import RendererError
+from tinker_cookbook.exceptions import ConfigurationError, RendererError
 from tinker_cookbook.image_processing_utils import get_image_processor
 from tinker_cookbook.model_info import get_model_attributes, get_recommended_renderer_name
 from tinker_cookbook.renderers import (
@@ -70,6 +70,21 @@ from tinker_cookbook.tokenizer_utils import (
     register_tokenizer,
     unregister_tokenizer,
 )
+
+def _is_vl_or_default(model_name: str) -> bool:
+    """Return is_vl from the registry, or False for models the registry no longer covers.
+
+    Renderer-format tests load tokenizers via the family-wide remap in
+    ``tokenizer_utils.py`` (Llama-3 thinkingmachineslabinc mirror, etc.), which
+    works for models that are no longer in the Tinker model registry (e.g. the
+    2026-06-12 retirements). For those models, registry lookup raises — fall
+    back to ``is_vl=False`` since they're all text-only.
+    """
+    try:
+        return get_model_attributes(model_name).is_vl
+    except (KeyError, ConfigurationError):
+        return False
+
 
 # =============================================================================
 # Conversation Generator (seeded random conversations for parametrized tests)
@@ -555,8 +570,8 @@ def test_generation_against_hf_chat_templates(
         )
 
     tokenizer = get_tokenizer(model_name)
-    attributes = get_model_attributes(model_name)
-    image_processor = get_image_processor(model_name) if attributes.is_vl else None
+    # is_vl falls back to False for models no longer in the registry — see _is_vl_or_default.
+    image_processor = get_image_processor(model_name) if _is_vl_or_default(model_name) else None
 
     # Use renderer_override if provided, otherwise use default logic
     if renderer_override is not None:
@@ -655,8 +670,8 @@ def test_supervised_example_against_hf_chat_templates(
         )
 
     tokenizer = get_tokenizer(model_name)
-    attributes = get_model_attributes(model_name)
-    image_processor = get_image_processor(model_name) if attributes.is_vl else None
+    # is_vl falls back to False for models no longer in the registry — see _is_vl_or_default.
+    image_processor = get_image_processor(model_name) if _is_vl_or_default(model_name) else None
 
     # Use renderer_override if provided, otherwise use default logic
     if renderer_override is not None:
@@ -714,8 +729,8 @@ def test_tokenization_boundary_with_whitespace(model_name: str):
     convo = get_thinking_with_whitespace_conversation()
 
     tokenizer = get_tokenizer(model_name)
-    attributes = get_model_attributes(model_name)
-    image_processor = get_image_processor(model_name) if attributes.is_vl else None
+    # is_vl falls back to False for models no longer in the registry — see _is_vl_or_default.
+    image_processor = get_image_processor(model_name) if _is_vl_or_default(model_name) else None
     render_name = get_recommended_renderer_name(model_name)
     cookbook_renderer = get_renderer(render_name, tokenizer, image_processor)
 
@@ -768,8 +783,8 @@ def test_tool_call_supervised_rendering(model_name: str):
     convo = get_tool_call_conversation()
 
     tokenizer = get_tokenizer(model_name)
-    attributes = get_model_attributes(model_name)
-    image_processor = get_image_processor(model_name) if attributes.is_vl else None
+    # is_vl falls back to False for models no longer in the registry — see _is_vl_or_default.
+    image_processor = get_image_processor(model_name) if _is_vl_or_default(model_name) else None
     render_name = (
         get_recommended_renderer_name(model_name)
         if not model_name.startswith("openai")
