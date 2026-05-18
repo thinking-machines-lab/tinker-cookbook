@@ -17,7 +17,7 @@ from tinker_cookbook.renderers.role_colon import RoleColonRenderer
 from tinker_cookbook.rl.problem_env import ProblemEnv
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-_BASE_MODEL = "Qwen/Qwen3.5-9B-Base"
+_BASE_MODEL = "meta-llama/Llama-3.1-8B"
 
 
 @pytest.fixture(scope="module")

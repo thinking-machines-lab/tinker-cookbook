@@ -182,7 +182,7 @@ def test_qwen3_disable_thinking_supervised():
     Test that Qwen3DisableThinkingRenderer adds the correct empty thinking block
     to assistant messages for SFT, matching HF tokenizer with thinking=False.
     """
-    model_name = "Qwen/Qwen3-30B-A3B"
+    model_name = "Qwen/Qwen3-8B"
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     renderer = get_renderer("qwen3_disable_thinking", tokenizer)
 
@@ -212,7 +212,7 @@ def test_qwen3_disable_thinking_supervised():
 
 def test_qwen3_disable_thinking_generation():
     """Test Qwen3DisableThinkingRenderer generation matches HF with enable_thinking=False."""
-    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
+    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
     cookbook_renderer = get_renderer("qwen3_disable_thinking", tokenizer)
 
     convo = _get_basic_3turn()
@@ -241,7 +241,7 @@ def test_qwen3_disable_thinking_4turn():
     Only the last assistant message should have the empty thinking block
     (historical thinking is stripped, matching HF behavior).
     """
-    model_name = "Qwen/Qwen3-30B-A3B"
+    model_name = "Qwen/Qwen3-8B"
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     renderer = get_renderer("qwen3_disable_thinking", tokenizer)
 
@@ -620,7 +620,7 @@ class TestQwen3StreamingBatchEquivalence:
 
 @pytest.fixture
 def qwen3_5_tokenizer():
-    return get_tokenizer("Qwen/Qwen3.6-35B-A3B")
+    return get_tokenizer("Qwen/Qwen3.5-35B-A3B")
 
 
 @pytest.fixture

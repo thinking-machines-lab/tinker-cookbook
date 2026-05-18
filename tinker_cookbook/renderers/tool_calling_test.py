@@ -24,9 +24,9 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
     "model_name,renderer_name",
     [
         ("Qwen/Qwen3-8B", "qwen3"),
-        ("Qwen/Qwen3.6-35B-A3B", "qwen3_instruct"),
-        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
-        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
+        ("Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3_instruct"),
+        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5"),
+        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5_disable_thinking"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3_disable_thinking"),
     ],
@@ -72,9 +72,9 @@ def test_qwen3_tool_response_rendering(model_name: str, renderer_name: str):
     "model_name,renderer_name",
     [
         ("Qwen/Qwen3-8B", "qwen3"),
-        ("Qwen/Qwen3.6-35B-A3B", "qwen3_instruct"),
-        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
-        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
+        ("Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3_instruct"),
+        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5"),
+        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5_disable_thinking"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3_disable_thinking"),
     ],
@@ -116,7 +116,7 @@ weather in NYC
     "model_name,renderer_name",
     [
         ("Qwen/Qwen3-8B", "qwen3"),
-        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
+        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
     ],
 )
@@ -172,7 +172,7 @@ def test_kimi_k2_parse_tool_call():
     Kimi K2 uses tool_id format "functions.{name}:{idx}", and the function
     name should be extracted correctly.
     """
-    model_name = "moonshotai/Kimi-K2.6"
+    model_name = "moonshotai/Kimi-K2-Thinking"
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer("kimi_k2", tokenizer)
 
@@ -300,7 +300,7 @@ def test_deepseek_parse_invalid_tool_call_json():
 
 def test_kimi_k2_parse_invalid_tool_call_json():
     """Test that invalid JSON in Kimi K2 tool call is captured as unparsed."""
-    model_name = "moonshotai/Kimi-K2.6"
+    model_name = "moonshotai/Kimi-K2-Thinking"
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer("kimi_k2", tokenizer)
 
