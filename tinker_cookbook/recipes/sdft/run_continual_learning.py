@@ -334,9 +334,7 @@ async def cli_main(config: ExperimentConfig) -> None:
     logger.info(f"Stages: {stages}")
     logger.info(f"Log root: {config.log_root}")
 
-    # Resolve renderer. Qwen3.5-4B replaces the retired Qwen3-4B-Instruct-2507
-    # (a non-thinking instruct model); pin the non-thinking renderer to preserve
-    # the original recipe's behavior.
+    # Resolve renderer
     renderer_name = await checkpoint_utils.resolve_renderer_name_from_checkpoint_or_default_async(
         model_name=config.model_name,
         explicit_renderer_name="qwen3_5_disable_thinking",

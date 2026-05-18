@@ -38,6 +38,10 @@ class CLIConfig:
 
     # Model parameters
     base_model: str = chz.field(default="Qwen/Qwen3.5-4B", doc="Base model to use")
+    renderer_name: str = chz.field(
+        default="qwen3_5_disable_thinking",
+        doc="Renderer to use if the checkpoint does not record one",
+    )
     tinker_checkpoint_url: str = chz.field(doc="Tinker checkpoint URL (required)")
     max_tokens: int = chz.field(default=1024, doc="Maximum number of tokens to generate")
 
@@ -113,13 +117,11 @@ async def evaluate_one_dataset(data: list[SearchR1Datum], config: CLIConfig):
     policy = TinkerTokenCompleter(sampling_client, max_tokens=config.max_tokens)
 
     tokenizer = tokenizer_utils.get_tokenizer(config.base_model)
-    # Default to qwen3_5_disable_thinking for the new Qwen3.5-4B default
-    # (replacing the retired non-thinking Qwen3-4B-Instruct-2507).
     renderer_name = await checkpoint_utils.get_renderer_name_from_checkpoint_async(
         service_client, config.tinker_checkpoint_url
     )
     if renderer_name is None:
-        renderer_name = "qwen3_5_disable_thinking"
+        renderer_name = config.renderer_name
     print(f"Using renderer: {renderer_name}")
     renderer = get_renderer(renderer_name, tokenizer)
 
