@@ -479,7 +479,7 @@ TOOL_CAPABLE_MODELS = {
 # - renderer_override: None to use get_recommended_renderer_name, or a specific renderer name
 # - hf_kwargs: Extra kwargs to pass to apply_chat_template (e.g., {"thinking": True})
 _HF_TEST_MODELS = [
-    ("meta-llama/Llama-3.2-1B-Instruct", None, {}),
+    ("meta-llama/Llama-3.2-1B-Instruct", "llama3", {}),
     ("Qwen/Qwen3-8B", None, {}),
     ("deepseek-ai/DeepSeek-V3.1", None, {}),  # non-thinking (default)
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking", {"thinking": True}),  # thinking mode
@@ -604,7 +604,7 @@ def test_generation_against_hf_chat_templates(
 # - Qwen/Qwen3-8B: HF template adds empty <think> blocks to non-thinking messages
 # Format: (model_name, renderer_override, hf_kwargs) - same as _HF_TEST_MODELS
 _SUPERVISED_TEST_MODELS = [
-    ("meta-llama/Llama-3.2-1B-Instruct", None, {}),
+    ("meta-llama/Llama-3.2-1B-Instruct", "llama3", {}),
     ("deepseek-ai/DeepSeek-V3.1", None, {}),  # non-thinking (default)
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking", {"thinking": True}),  # thinking mode
     # Kimi K2.6 default renderer auto-prepends a system message that the HF

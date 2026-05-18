@@ -81,9 +81,6 @@ def _get_hidden_size(model_name: str) -> int:
     # works around configs that nest hidden_size under text_config (Qwen3.5/3.6,
     # Kimi-K2.6).
     _KNOWN_HIDDEN_SIZES: dict[str, int] = {
-        # Llama-3 (gated — cannot fetch config without HF_TOKEN)
-        "meta-llama/Llama-3.2-1B-Instruct": 2048,
-        "meta-llama/Llama-3.2-3B-Instruct": 3072,
         # DeepSeek
         "deepseek-ai/DeepSeek-V3.1": 7168,
         # Kimi

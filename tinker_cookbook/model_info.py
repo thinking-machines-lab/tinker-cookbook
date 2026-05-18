@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 # Common renderer tuples, defined once to reduce repetition.
 # Tuples (not lists) because these are shared across ModelAttributes instances
 # — a mutable list would risk silent cross-model corruption if mutated.
-_LLAMA3 = ("llama3",)
 _ROLE_COLON = ("role_colon",)
 _QWEN3 = ("qwen3", "qwen3_disable_thinking")
 _QWEN3_5 = ("qwen3_5", "qwen3_5_disable_thinking")
@@ -46,21 +45,6 @@ class ModelAttributes:
     is_chat: bool
     recommended_renderers: tuple[str, ...]
     is_vl: bool = False
-
-
-@cache
-def get_llama_info() -> dict[str, ModelAttributes]:
-    """Return model attributes for all supported Meta Llama models.
-
-    Returns:
-        dict[str, ModelAttributes]: Mapping from model version name
-            (e.g. ``"Llama-3.2-1B-Instruct"``) to its attributes.
-    """
-    org = "meta-llama"
-    return {
-        "Llama-3.2-1B-Instruct": ModelAttributes(org, "3.2", "1B", True, _LLAMA3),
-        "Llama-3.2-3B-Instruct": ModelAttributes(org, "3.2", "3B", True, _LLAMA3),
-    }
 
 
 @cache
@@ -185,9 +169,7 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
         raise ValueError(f"Model name must be in 'org/model' format, got {model_name!r}")
     org, model_version_full = model_name.split("/", 1)
     model_version_full = model_version_full.split(":")[0]
-    if org == "meta-llama":
-        return get_llama_info()[model_version_full]
-    elif org == "Qwen":
+    if org == "Qwen":
         return get_qwen_info()[model_version_full]
     elif org == "deepseek-ai":
         return get_deepseek_info()[model_version_full]
