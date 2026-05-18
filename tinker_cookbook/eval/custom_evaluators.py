@@ -91,9 +91,7 @@ evaluator = CustomEvaluator(
 )
 
 service_client = tinker.ServiceClient()
-sampling_client = service_client.create_sampling_client(
-    base_model="Qwen/Qwen3.5-9B"
-)
+sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.5-9B")
 
 
 async def main():

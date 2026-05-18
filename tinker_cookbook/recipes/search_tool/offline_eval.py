@@ -6,7 +6,7 @@ from typing import Literal, TypedDict
 import chz
 import tinker
 
-from tinker_cookbook import checkpoint_utils, model_info, tokenizer_utils
+from tinker_cookbook import checkpoint_utils, tokenizer_utils
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.recipes.search_tool.search_env import (
     SEARCH_TASK_INSTRUCTIONS,
