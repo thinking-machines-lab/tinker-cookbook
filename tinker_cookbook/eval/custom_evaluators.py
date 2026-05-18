@@ -86,13 +86,13 @@ def grader_fn(response: str, target: str) -> bool:
 evaluator = CustomEvaluator(
     dataset=QA_DATASET,
     grader_fn=grader_fn,
-    renderer_name="llama3",
-    model_name="meta-llama/Llama-3.1-8B-Instruct",
+    renderer_name="qwen3_5_disable_thinking",
+    model_name="Qwen/Qwen3.5-9B",
 )
 
 service_client = tinker.ServiceClient()
 sampling_client = service_client.create_sampling_client(
-    base_model="meta-llama/Llama-3.1-8B-Instruct"
+    base_model="Qwen/Qwen3.5-9B"
 )
 
 

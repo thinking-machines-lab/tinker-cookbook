@@ -53,7 +53,7 @@ class TestInterleavedChatDatasetBuilder:
             test_size=test_size,
             stopping_strategy=stopping_strategy,
             common_config=ChatDatasetBuilderCommonConfig(
-                model_name_for_tokenizer="meta-llama/Llama-3.1-8B",
+                model_name_for_tokenizer="Qwen/Qwen3.5-9B-Base",
                 renderer_name="llama3",
                 max_length=128,
                 batch_size=batch_size,

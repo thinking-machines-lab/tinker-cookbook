@@ -13,7 +13,7 @@ uv pip install 'tinker-cookbook[math-rl] @ git+https://github.com/thinking-machi
 Trivial, but runs fast enough that you can see it learn. Reward should go from 0.66 to 1 in the first few steps.
 
 ```bash
-python -m tinker_cookbook.recipes.math_rl.train model_name="meta-llama/Llama-3.2-1B" group_size=4 groups_per_batch=100 learning_rate=1e-4
+python -m tinker_cookbook.recipes.math_rl.train model_name="Qwen/Qwen3.5-9B-Base" group_size=4 groups_per_batch=100 learning_rate=1e-4
 ```
 
 ## RL on MATH dataset.
@@ -68,7 +68,7 @@ So the best possible is sum1=20 and sum2=21, product 420. So the maximum sum is 
 # RL on GSM8K
 
 ```bash
-python -m tinker_cookbook.recipes.math_rl.train env=gsm8k model_name="meta-llama/Llama-3.1-8B-Instruct" group_size=64 groups_per_batch=32 learning_rate=8e-5 max_tokens=1024
+python -m tinker_cookbook.recipes.math_rl.train env=gsm8k model_name="Qwen/Qwen3.5-9B" renderer_name=qwen3_5_disable_thinking group_size=64 groups_per_batch=32 learning_rate=8e-5 max_tokens=1024
 ```
 
 Generally, you should observe that training reward goes above 0.8 within a few steps. After 220 steps of training, we achieve `"test/env/all/correct": 0.9090`. A smaller group_size (8) and larger `groups_per_batch` (64) will achieve `0.8824` accuracy in around a quarter of the time.

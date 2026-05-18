@@ -29,7 +29,7 @@ class TestProblemGroupBuilderPickle:
         )
         MathEnv = math_env_mod.MathEnv
 
-        tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
+        tokenizer = get_tokenizer("meta-llama/Llama-3.2-1B-Instruct")
         renderer = get_renderer("llama3", tokenizer)
 
         builder = ProblemGroupBuilder(
@@ -54,7 +54,7 @@ class TestProblemGroupBuilderPickle:
         )
         MathEnv = math_env_mod.MathEnv
 
-        tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
+        tokenizer = get_tokenizer("meta-llama/Llama-3.2-1B-Instruct")
         renderer = get_renderer("llama3", tokenizer)
         convo_prefix: list[Message] = [{"role": "system", "content": "You are helpful."}]
 
@@ -77,7 +77,7 @@ class TestRolloutTask:
         )
         MathEnv = math_env_mod.MathEnv
 
-        tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
+        tokenizer = get_tokenizer("meta-llama/Llama-3.2-1B-Instruct")
         renderer = get_renderer("llama3", tokenizer)
 
         builder = ProblemGroupBuilder(

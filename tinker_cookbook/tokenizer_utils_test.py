@@ -12,30 +12,16 @@ def _clear_cache() -> None:
 
 
 @patch("transformers.models.auto.tokenization_auto.AutoTokenizer")
-def test_kimi_k2_thinking_trusts_remote_code_without_env(
+def test_kimi_k26_trusts_remote_code_without_env(
     mock_auto: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Hardcoded Kimi models should pass trust_remote_code=True without the env var."""
+    """Hardcoded Kimi K2.6 should pass trust_remote_code=True without the env var."""
     monkeypatch.delenv("HF_TRUST_REMOTE_CODE", raising=False)
-    _get_hf_tokenizer("moonshotai/Kimi-K2-Thinking")
+    _get_hf_tokenizer("moonshotai/Kimi-K2.6")
     mock_auto.from_pretrained.assert_called_once_with(
-        "moonshotai/Kimi-K2-Thinking",
+        "moonshotai/Kimi-K2.6",
         trust_remote_code=True,
-        revision="a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55",
-    )
-
-
-@patch("transformers.models.auto.tokenization_auto.AutoTokenizer")
-def test_kimi_k25_trusts_remote_code_without_env(
-    mock_auto: MagicMock, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Hardcoded Kimi K2.5 should pass trust_remote_code=True without the env var."""
-    monkeypatch.delenv("HF_TRUST_REMOTE_CODE", raising=False)
-    _get_hf_tokenizer("moonshotai/Kimi-K2.5")
-    mock_auto.from_pretrained.assert_called_once_with(
-        "moonshotai/Kimi-K2.5",
-        trust_remote_code=True,
-        revision="2426b45b6af0da48d0dcce71bbce6225e5c73adc",
+        revision="b5aabbfb20227ed42becbf5541dbffd213942c58",
     )
 
 

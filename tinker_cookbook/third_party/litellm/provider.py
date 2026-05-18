@@ -14,7 +14,7 @@ Usage::
     response = await litellm.acompletion(
         model="tinker/my-model",
         messages=[{"role": "user", "content": "Hello!"}],
-        base_model="Qwen/Qwen3-4B-Instruct-2507",
+        base_model="Qwen/Qwen3.5-4B",
     )
 
     # Access raw tokens for training
@@ -395,7 +395,7 @@ class TinkerLiteLLMProvider(CustomLLM):
         if not base_model:
             raise ValueError(
                 "base_model is required for the Tinker provider. "
-                "Pass it as: litellm.acompletion(..., base_model='Qwen/Qwen3-4B-Instruct-2507')"
+                "Pass it as: litellm.acompletion(..., base_model='Qwen/Qwen3.5-4B')"
             )
 
         bundle = self._get_or_create_client(base_model)
@@ -438,7 +438,7 @@ class TinkerLiteLLMProvider(CustomLLM):
         if not base_model:
             raise ValueError(
                 "base_model is required for the Tinker provider. "
-                "Pass it as: litellm.completion(..., base_model='Qwen/Qwen3-4B-Instruct-2507')"
+                "Pass it as: litellm.completion(..., base_model='Qwen/Qwen3.5-4B')"
             )
 
         bundle = self._get_or_create_client(base_model)

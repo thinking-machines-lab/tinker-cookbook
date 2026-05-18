@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 class EvalConfig:
     """Configuration for Harbor evaluation."""
 
-    model_name: str = "moonshotai/Kimi-K2-Thinking"
+    model_name: str = "moonshotai/Kimi-K2.6"
     output_path: str = "tinker_cookbook/recipes/harbor_rl/scripts/results"
     max_turns: int = 10
     max_tokens: int = 2048
@@ -54,7 +54,7 @@ class EvalConfig:
     max_tasks: int | None = None
     checkpoint_url: str | None = None
     base_url: str | None = None
-    renderer_name: str | None = None
+    renderer_name: str | None = "kimi_k26_disable_thinking"
 
 
 @dataclass

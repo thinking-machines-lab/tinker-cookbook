@@ -10,8 +10,8 @@ from tinker_cookbook.rl import train
 
 @chz.chz
 class CLIConfig:
-    model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
-    renderer_name: str | None = None
+    model_name: str = "Qwen/Qwen3.5-4B"
+    renderer_name: str | None = "qwen3_5_disable_thinking"
     group_size: int = 8
     batch_size: int = 32
     learning_rate: float = 3e-5

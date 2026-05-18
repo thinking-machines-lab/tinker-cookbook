@@ -21,9 +21,9 @@ class CLIConfig:
     """Command-line configuration for Harbor RL training."""
 
     # Model configuration
-    model_name: str = "moonshotai/Kimi-K2-Thinking"
+    model_name: str = "moonshotai/Kimi-K2.6"
     lora_rank: int = 32
-    renderer_name: str | None = None
+    renderer_name: str | None = "kimi_k26_disable_thinking"
     load_checkpoint_path: str | None = None
     max_tokens: int = 8192
     temperature: float = 1.0

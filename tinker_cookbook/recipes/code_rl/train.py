@@ -18,9 +18,9 @@ class CLIConfig:
     """Command-line configuration for DeepCoder RL training."""
 
     # Model configuration
-    model_name: str = "meta-llama/Llama-3.1-8B-Instruct"
+    model_name: str = "Qwen/Qwen3.5-9B"
     lora_rank: int = 32
-    renderer_name: str | None = None
+    renderer_name: str | None = "qwen3_5_disable_thinking"
     load_checkpoint_path: str | None = None
 
     # Data / environment configuration

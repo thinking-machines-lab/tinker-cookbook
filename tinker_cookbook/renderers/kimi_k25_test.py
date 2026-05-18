@@ -29,7 +29,7 @@ from tinker_cookbook.renderers.kimi_k2_5_tool_declaration_ts import encode_tools
 from tinker_cookbook.renderers.testing_utils import extract_token_ids
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-KIMI_K25_MODEL = "moonshotai/Kimi-K2.5"
+KIMI_K25_MODEL = "moonshotai/Kimi-K2.6"
 
 
 # =============================================================================

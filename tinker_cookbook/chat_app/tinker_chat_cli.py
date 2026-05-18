@@ -26,7 +26,7 @@ logging.basicConfig(
 
 @chz.chz
 class Config:
-    base_model: str = "meta-llama/Llama-3.2-1B"
+    base_model: str = "Qwen/Qwen3.5-9B-Base"
     model_path: str | None = None
     max_tokens: int = 512
     temperature: float = 0.7

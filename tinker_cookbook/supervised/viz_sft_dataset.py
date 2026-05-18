@@ -17,7 +17,7 @@ from tinker_cookbook.utils.misc_utils import lookup_func
 
 @chz.chz
 class Config:
-    model_name: str = "meta-llama/Llama-3.1-8B"  # just for tokenizer
+    model_name: str = "Qwen/Qwen3.5-9B-Base"  # just for tokenizer
     dataset_path: str = "Tulu3Builder"
     renderer_name: str | None = None
     max_length: int | None = None

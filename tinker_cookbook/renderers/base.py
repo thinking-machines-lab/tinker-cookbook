@@ -1762,7 +1762,7 @@ class ImageProcessorProtocol(Protocol):
     """Protocol for image processors used by vision-language renderers.
 
     Implementations must provide either ``get_number_of_image_patches`` (used
-    by Qwen3-VL style processors) or ``get_resize_config`` (used by Kimi-K2.5
+    by Qwen3-VL style processors) or ``get_resize_config`` (used by Kimi-K2.6
     style processors) to compute the number of image tokens an image will
     produce after preprocessing.
 
