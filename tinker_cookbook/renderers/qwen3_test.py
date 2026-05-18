@@ -37,7 +37,7 @@ def _is_message(obj) -> TypeGuard[Message]:
 
 def test_qwen3_parse_response_extracts_thinking():
     """Test Qwen3Renderer.parse_response extracts thinking to ThinkingPart."""
-    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = Qwen3Renderer(tokenizer)
 
     response_str = "<think>Let me reason about this.</think>The answer is 42.<|im_end|>"
@@ -63,7 +63,7 @@ def test_qwen3_parse_response_extracts_thinking():
 
 def test_qwen3_parse_response_multiple_think_blocks():
     """Test Qwen3Renderer.parse_response handles multiple interleaved think blocks."""
-    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = Qwen3Renderer(tokenizer)
 
     response_str = "<think>step 1</think>partial answer<think>step 2</think>final answer<|im_end|>"
@@ -84,7 +84,7 @@ def test_qwen3_parse_response_multiple_think_blocks():
 
 def test_qwen3_parse_response_no_thinking_returns_string():
     """Test Qwen3Renderer.parse_response returns string when no thinking."""
-    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = Qwen3Renderer(tokenizer)
 
     response_str = "Just a plain response without thinking.<|im_end|>"
@@ -100,7 +100,7 @@ def test_qwen3_parse_response_no_thinking_returns_string():
 
 def test_qwen3_parse_response_with_tool_calls():
     """Test Qwen3Renderer.parse_response puts tool calls in message['tool_calls'], not content."""
-    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = Qwen3Renderer(tokenizer)
 
     response_str = '<think>Let me search</think>I will search for that.<tool_call>{"name": "web_search", "arguments": {"query": "weather"}}</tool_call><|im_end|>'
@@ -127,7 +127,7 @@ def test_qwen3_parse_response_with_tool_calls():
 
 def test_qwen3_parse_response_tool_call_only():
     """Test Qwen3Renderer.parse_response with only a tool call."""
-    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = Qwen3Renderer(tokenizer)
 
     response_str = (
@@ -182,7 +182,7 @@ def test_qwen3_disable_thinking_supervised():
     Test that Qwen3DisableThinkingRenderer adds the correct empty thinking block
     to assistant messages for SFT, matching HF tokenizer with thinking=False.
     """
-    model_name = "Qwen/Qwen3-8B"
+    model_name = "Qwen/Qwen3-30B-A3B"
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     renderer = get_renderer("qwen3_disable_thinking", tokenizer)
 
@@ -212,7 +212,7 @@ def test_qwen3_disable_thinking_supervised():
 
 def test_qwen3_disable_thinking_generation():
     """Test Qwen3DisableThinkingRenderer generation matches HF with enable_thinking=False."""
-    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     cookbook_renderer = get_renderer("qwen3_disable_thinking", tokenizer)
 
     convo = _get_basic_3turn()
@@ -241,7 +241,7 @@ def test_qwen3_disable_thinking_4turn():
     Only the last assistant message should have the empty thinking block
     (historical thinking is stripped, matching HF behavior).
     """
-    model_name = "Qwen/Qwen3-8B"
+    model_name = "Qwen/Qwen3-30B-A3B"
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     renderer = get_renderer("qwen3_disable_thinking", tokenizer)
 
@@ -270,7 +270,7 @@ def test_qwen3_disable_thinking_4turn():
 
 def test_qwen3_streaming_simple_text():
     """Test streaming parsing of simple text response without thinking."""
-    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = Qwen3Renderer(tokenizer)
 
     response_str = "Hello, world!<|im_end|>"
@@ -290,7 +290,7 @@ def test_qwen3_streaming_simple_text():
 
 def test_qwen3_streaming_with_thinking():
     """Test streaming parsing with thinking blocks."""
-    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = Qwen3Renderer(tokenizer)
 
     response_str = "<think>Let me reason about this.</think>The answer is 42.<|im_end|>"
@@ -313,7 +313,7 @@ def test_qwen3_streaming_with_thinking():
 
 def test_qwen3_streaming_matches_batch():
     """Test that streaming parse produces same final message as batch parse."""
-    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = Qwen3Renderer(tokenizer)
 
     response_str = "<think>Step 1: Analyze.\nStep 2: Compute.</think>The result is 123.<|im_end|>"
@@ -332,7 +332,7 @@ def test_qwen3_streaming_matches_batch():
 
 def test_qwen3_streaming_content_index_increments():
     """Test that content_index increments when switching content types."""
-    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = Qwen3Renderer(tokenizer)
 
     response_str = "<think>thinking</think>text<|im_end|>"
@@ -349,7 +349,7 @@ def test_qwen3_streaming_content_index_increments():
 
 def test_qwen3_streaming_empty_response():
     """Test streaming parsing of empty/minimal response."""
-    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = Qwen3Renderer(tokenizer)
 
     response_str = "<|im_end|>"
@@ -363,7 +363,7 @@ def test_qwen3_streaming_empty_response():
 
 def test_qwen3_streaming_multiple_think_blocks():
     """Test streaming with multiple interleaved think blocks."""
-    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = Qwen3Renderer(tokenizer)
 
     response_str = "<think>first thought</think>partial<think>second thought</think>final<|im_end|>"
@@ -388,7 +388,7 @@ def test_qwen3_streaming_multiple_think_blocks():
 
 def test_qwen3_streaming_no_unnecessary_buffering():
     """Test that we don't buffer more than necessary when no tag prefix matches."""
-    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = Qwen3Renderer(tokenizer)
 
     response_str = "Hello world<|im_end|>"
@@ -402,7 +402,7 @@ def test_qwen3_streaming_no_unnecessary_buffering():
 
 def test_qwen3_streaming_with_emoji():
     """Test that streaming parser handles multi-byte UTF-8 (emoji) correctly."""
-    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = Qwen3Renderer(tokenizer)
 
     response_str = "<think>Let me think 🤔</think>Here's a party 🎉!<|im_end|>"
@@ -426,7 +426,7 @@ def test_qwen3_streaming_with_emoji():
 )
 def test_qwen3_streaming_supported_by_text_variants(renderer_name):
     """All text-only Qwen3 renderer variants support streaming."""
-    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
     renderer = get_renderer(renderer_name, tokenizer)
 
     response_str = "<think>reasoning</think>answer<|im_end|>"
@@ -488,7 +488,7 @@ class TestQwen3StreamingBatchEquivalence:
 
     @pytest.fixture
     def renderer(self):
-        tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+        tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
         return Qwen3Renderer(tokenizer)
 
     def test_simple_text(self, renderer):
