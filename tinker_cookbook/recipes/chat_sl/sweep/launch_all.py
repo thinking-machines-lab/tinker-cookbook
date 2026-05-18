@@ -80,9 +80,6 @@ def _cfg(
 
 
 # Models already swept (included for completeness, skipped by default).
-# NOTE: deepseek-ai/DeepSeek-V3.1-Base was previously here but is retiring
-# 2026-06-12; its replacement Qwen/Qwen3.5-35B-A3B-Base appears under NEW_MODELS
-# below and needs a fresh sweep.
 ALREADY_DONE: dict[str, ModelSweepConfig] = {
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": _cfg(
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "medium", "MoE, already swept"
@@ -92,61 +89,51 @@ ALREADY_DONE: dict[str, ModelSweepConfig] = {
     ),
 }
 
-# All new models to sweep, grouped by tier. The 2026-06-12 deprecation wave
-# replaced ~20 entries with the lineup below; instruct-tuned chat models are
-# pinned to their non-thinking renderer per Tinker guidance.
+# All new models to sweep, grouped by tier.
 NEW_MODELS: list[ModelSweepConfig] = [
     # --- Large ---
     _cfg(
         "Qwen/Qwen3.5-397B-A17B",
         "large",
-        "MoE Hybrid+Vision (also replaces Qwen3-235B-A22B-Instruct-2507 and Qwen3-VL-235B-A22B-Instruct)",
+        "MoE Hybrid+Vision",
         renderer_name="qwen3_5_disable_thinking",
     ),
     _cfg("deepseek-ai/DeepSeek-V3.1", "large", "MoE Hybrid", renderer_name="deepseekv3_thinking"),
     _cfg(
         "moonshotai/Kimi-K2.6",
         "large",
-        "MoE Reasoning+Vision (replaces Kimi-K2-Thinking and Kimi-K2.5)",
+        "MoE Reasoning+Vision",
         renderer_name="kimi_k26_disable_thinking",
     ),
     # --- Medium ---
     _cfg(
         "Qwen/Qwen3.6-35B-A3B",
         "medium",
-        "MoE Hybrid+Vision (replaces Qwen3.5-35B-A3B, Qwen3-30B-A3B, Qwen3-30B-A3B-Instruct-2507, Qwen3-VL-30B-A3B-Instruct)",
+        "MoE Hybrid+Vision",
         renderer_name="qwen3_5_disable_thinking",
     ),
     _cfg(
         "Qwen/Qwen3.6-27B",
         "medium",
-        "Dense Hybrid+Vision (replaces Qwen3.5-27B, Qwen3-32B, Llama-3.3-70B-Instruct)",
+        "Dense Hybrid+Vision",
         renderer_name="qwen3_5_disable_thinking",
     ),
-    _cfg(
-        "Qwen/Qwen3.5-35B-A3B-Base",
-        "medium",
-        "MoE Base (replaces Qwen3-30B-A3B-Base, Llama-3.1-70B, DeepSeek-V3.1-Base)",
-    ),
+    _cfg("Qwen/Qwen3.5-35B-A3B-Base", "medium", "MoE Base"),
     _cfg("openai/gpt-oss-120b", "medium", "MoE Reasoning"),
     # --- Small ---
     _cfg("Qwen/Qwen3-8B", "small", "Dense Hybrid"),
-    _cfg(
-        "Qwen/Qwen3.5-9B-Base",
-        "small",
-        "Dense Base (replaces Qwen3-8B-Base, Llama-3.1-8B, Llama-3.2-3B, Llama-3.2-1B)",
-    ),
+    _cfg("Qwen/Qwen3.5-9B-Base", "small", "Dense Base"),
     _cfg("openai/gpt-oss-20b", "small", "MoE Reasoning"),
     _cfg(
         "Qwen/Qwen3.5-9B",
         "small",
-        "Dense Hybrid+Vision (replaces Llama-3.1-8B-Instruct)",
+        "Dense Hybrid+Vision",
         renderer_name="qwen3_5_disable_thinking",
     ),
     _cfg(
         "Qwen/Qwen3.5-4B",
         "small",
-        "Dense Hybrid+Vision (replaces Qwen3-4B-Instruct-2507)",
+        "Dense Hybrid+Vision",
         renderer_name="qwen3_5_disable_thinking",
     ),
 ]
