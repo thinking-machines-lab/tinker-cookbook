@@ -298,6 +298,58 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ## Custom loss: scoring a fixed target-token set at one sequence position
+
+    The built-in losses (`cross_entropy`, `importance_sampling`, `ppo`, `cispo`) require `target_tokens` to be the same length as the input sequence - one target per position. They are aimed at next-token prediction across an entire sequence.
+
+    If you instead want to score only a *small fixed vocabulary* (e.g. 21 emotion-word tokens) at *one specific output position*, that is a different shape of problem and you should use `forward_backward_custom`. The logprobs tensor it gives you has shape `[T, vocab_size]` (full logprobs over the vocabulary at each input position), so you can:
+
+    1. Index into the position you care about.
+    2. Gather the logits at the target-token IDs you care about.
+    3. Renormalize and compute whatever loss you want (KL, JSD, etc.) against your ground-truth distribution.
+
+    The target-token IDs and target probabilities ride along in `Datum.loss_fn_inputs` for that datum. Tinker's `forward_backward_custom` accepts arbitrary entries in `loss_fn_inputs` as long as the values are `TensorData` or JSON-serializable.
+    """)
+    return
+
+
+@app.cell
+def _(torch):
+    def kl_over_target_set(data, logprobs_list):
+        """KL divergence over a fixed target-token set at one sequence position.
+
+        Each datum carries:
+          - loss_fn_inputs["score_position"]: int, the sequence position to score at.
+          - loss_fn_inputs["target_token_ids"]: 1D long tensor of K target token IDs.
+          - loss_fn_inputs["target_probs"]: 1D float tensor of K ground-truth probs.
+        """
+        total_loss = torch.tensor(0.0)
+        for datum, logprobs in zip(data, logprobs_list):
+            pos = int(datum.loss_fn_inputs["score_position"].to_torch().item())
+            target_ids = datum.loss_fn_inputs["target_token_ids"].to_torch().long()
+            target_probs = datum.loss_fn_inputs["target_probs"].to_torch()
+
+            # logprobs[pos] has shape [vocab_size]. Gather the K target slots,
+            # then renormalize them so they form a distribution over the target set.
+            target_logprobs = logprobs[pos][target_ids]
+            target_logprobs = target_logprobs - target_logprobs.logsumexp(0)
+
+            # KL(target || model) over the K-slot distribution.
+            kl = (target_probs * (target_probs.clamp_min(1e-12).log() - target_logprobs)).sum()
+            total_loss = total_loss + kl
+
+        return total_loss, {"kl_over_target_set": total_loss.item()}
+
+    # The shape mismatch you would see with `cross_entropy`
+    # (`target_tokens.shape[0]=K, token_count=T`) does not apply here:
+    # `forward_backward_custom` returns full per-position logprobs and lets
+    # you index where you want.
+    return (kl_over_target_set,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ## When to use each loss
 
     | Loss | Use case | Key property |
@@ -307,6 +359,7 @@ def _(mo):
     | `ppo` | RL with multiple gradient steps per rollout | Clips the IS ratio to prevent large updates |
     | `cispo` | RL; alternative to PPO | Clips the ratio but applies it as a weight on log-prob; sometimes more stable |
     | `forward_backward_custom` | DPO, custom regularizers, research losses | Full flexibility; 1.5x FLOPs due to extra forward pass |
+    | `forward_backward_custom` (logit set at one position) | Few-class classification at a known output position; KL against a target distribution over a fixed token set | Sidesteps the "target_tokens must equal sequence length" constraint of built-in losses |
 
     **Rule of thumb:** Start with `cross_entropy` for SFT and `importance_sampling` for RL. Switch to `ppo` or `cispo` if you see training instability from large policy updates. Use `forward_backward_custom` for anything that does not fit the built-in losses.
     """)
