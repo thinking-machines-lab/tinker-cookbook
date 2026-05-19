@@ -38,6 +38,7 @@ class CLIConfig:
     max_tokens: int = 5
     temperature: float = 1.0
     kl_penalty_coef: float = 0.0
+    remove_constant_reward_groups: bool = False
 
     # Number of optimizer steps per training iteration.
     # Useful for very large batch sizes.
@@ -149,6 +150,7 @@ async def cli_main(cli_config: CLIConfig):
         load_checkpoint_path=cli_config.load_checkpoint_path,
         compute_post_kl=cli_config.compute_post_kl,
         kl_penalty_coef=cli_config.kl_penalty_coef,
+        remove_constant_reward_groups=cli_config.remove_constant_reward_groups,
         num_substeps=cli_config.num_substeps,
         eval_every=cli_config.eval_every,
         save_every=cli_config.save_every,
