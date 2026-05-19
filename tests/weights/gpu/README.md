@@ -64,7 +64,7 @@ CUDA_VISIBLE_DEVICES=1 HF_HUB_CACHE=~/huggingface/hub pytest tests/weights/gpu/t
 
 | File | Model | Type | Merge CPU | Merge GPU | Adapter | FP8 CPU | FP8 GPU | MXFP4 | MXFP4 GPU | INT4 CPU | INT4 GPU | CPU/GPU equiv |
 |------|-------|------|:---------:|:---------:|:-------:|:-------:|:-------:|:-----:|:---------:|:--------:|:--------:|:-------------:|
-| test_qwen3.py | Qwen3-4B | Dense | ✅ | | ✅ | | | | | | | |
+| test_qwen3.py | Qwen3-4B-Instruct-2507 | Dense | ✅ | | ✅ | | | | | | | |
 | test_qwen3_5.py | Qwen3.5-35B-A3B | MoE | ✅ | | ✅ | ✅ | ✅ | | | | | |
 | test_qwen3_vl.py | Qwen3-VL-30B-A3B | VL MoE | ✅ | ✅ | ✅ | ✅ | | | | | | |
 | test_deepseek.py | DeepSeek-V3.1 | FP8 MoE | | | | ✅ | ✅ | | | | | ✅ |
@@ -75,21 +75,21 @@ CUDA_VISIBLE_DEVICES=1 HF_HUB_CACHE=~/huggingface/hub pytest tests/weights/gpu/t
 
 ### Tinker model lineup coverage
 
-All 36 models on [Tinker](https://tinker-docs.thinkingmachines.ai/tinker/models/) map to one of the 8 configurations above. Scaled-up variants (e.g. Qwen3-32B vs Qwen3-4B) share the same merge profile and code path — shard-by-shard processing is size-independent.
+Every model on [Tinker](https://tinker-docs.thinkingmachines.ai/tinker/models/) maps to one of the 8 configurations above. Scaled-up variants share the same merge profile and code path — shard-by-shard processing is size-independent.
 
 | Config | Models | Tested by |
 |--------|--------|-----------|
-| Qwen3 dense (tied) | Qwen3-0.6B, 1.7B, 4B + variants | test_qwen3.py |
-| Qwen3 dense (untied) | Qwen3-8B, 14B, 32B + variants | test_qwen3.py (same path) |
-| Qwen3 MoE | Qwen3-30B-A3B, 235B-A22B + variants | test_qwen3_5.py (same merge profile) |
-| Qwen3-VL MoE | Qwen3-VL-30B-A3B, 235B-A22B | test_qwen3_vl.py |
-| Qwen3.5 (dense + MoE, VL) | Qwen3.5-4B, 27B, 35B-A3B, 397B-A17B | test_qwen3_5.py |
+| Qwen3 dense (tied) | Qwen3-4B-Instruct-2507 | test_qwen3.py |
+| Qwen3 dense (untied) | Qwen3-8B, Qwen3-8B-Base, Qwen3-32B | test_qwen3.py (same path) |
+| Qwen3 MoE | Qwen3-30B-A3B(-Base/-Instruct-2507), Qwen3-235B-A22B-Instruct-2507 | test_qwen3_5.py (same merge profile) |
+| Qwen3-VL MoE | Qwen3-VL-30B-A3B-Instruct, Qwen3-VL-235B-A22B-Instruct | test_qwen3_vl.py |
+| Qwen3.5 / Qwen3.6 (dense + MoE, VL) | Qwen3.5-4B, 9B(-Base), 27B, 35B-A3B(-Base), 397B-A17B; Qwen3.6-27B, 35B-A3B | test_qwen3_5.py |
 | DeepSeek V3 (native FP8) | DeepSeek-V3.1, V3.1-Base | test_deepseek.py |
 | Kimi K2 (INT4) | Kimi-K2-Thinking | test_kimi.py |
-| Kimi K2.5 (VL + INT4) | Kimi-K2.5 | test_kimi_k25.py |
+| Kimi K2.5/K2.6 (VL + INT4) | Kimi-K2.5, Kimi-K2.6 | test_kimi_k25.py |
 | GPT-OSS (MXFP4) | gpt-oss-20b, 120b | test_gpt_oss.py |
-| Nemotron (fused proj) | Nemotron-Nano-30B, Super-120B | test_nemotron.py |
-| Llama 3.x | Llama-3.1/3.2/3.3 (8 models) | Not tested (gated on HF) — uses default merge profile, same path as Qwen3 dense |
+| Nemotron (fused proj) | Nemotron-3-Nano-30B-A3B, Nemotron-3-Super-120B-A12B | test_nemotron.py |
+| Llama 3.x | Llama-3.1/3.2/3.3 (6 models) | Not tested (gated on HF) — uses default merge profile, same path as Qwen3 dense |
 
 ## Last validated
 
