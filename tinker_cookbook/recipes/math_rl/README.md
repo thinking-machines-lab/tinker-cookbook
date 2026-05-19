@@ -68,8 +68,10 @@ So the best possible is sum1=20 and sum2=21, product 420. So the maximum sum is 
 # RL on GSM8K
 
 ```bash
-python -m tinker_cookbook.recipes.math_rl.train env=gsm8k model_name="Qwen/Qwen3.5-9B" renderer_name=qwen3_5_disable_thinking group_size=64 groups_per_batch=32 learning_rate=8e-5 max_tokens=1024
+python -m tinker_cookbook.recipes.math_rl.train env=gsm8k model_name="Qwen/Qwen3.5-9B" group_size=64 groups_per_batch=32 learning_rate=8e-5 max_tokens=1024
 ```
+
+> **Rerun needed:** the `0.9090` / `0.8824` numbers below were measured on the now-retired `Llama-3.1-8B-Instruct`. The recipe now defaults to `Qwen/Qwen3.5-9B` in thinking mode (better suited to math). Rerun before treating these numbers as current, and consider raising `max_tokens` since thinking-mode rollouts are longer.
 
 Generally, you should observe that training reward goes above 0.8 within a few steps. After 220 steps of training, we achieve `"test/env/all/correct": 0.9090`. A smaller group_size (8) and larger `groups_per_batch` (64) will achieve `0.8824` accuracy in around a quarter of the time.
 
