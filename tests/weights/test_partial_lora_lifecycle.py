@@ -163,7 +163,7 @@ def _assert_full_merge(adapter_dir: Path, model_name: str, output_dir: Path) -> 
 # -------------------------------------------------------------------------
 
 _DENSE_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
-_DENSE_RENDERER = "qwen3"
+_DENSE_RENDERER = "qwen3_instruct"
 
 
 @pytest.mark.integration
