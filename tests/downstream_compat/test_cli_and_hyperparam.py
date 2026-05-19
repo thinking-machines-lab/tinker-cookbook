@@ -11,6 +11,31 @@ from tinker_cookbook.hyperparam_utils import (
     get_lora_param_count,
     get_lr,
 )
+from tinker_cookbook.model_info import (
+    get_deepseek_info,
+    get_gpt_oss_info,
+    get_llama_info,
+    get_moonshot_info,
+    get_nvidia_info,
+    get_qwen_info,
+)
+
+
+def _all_model_info_names() -> list[str]:
+    """Every model registered in ``model_info``, as ``org/name`` HF IDs."""
+    names: list[str] = []
+    for getter in (
+        get_llama_info,
+        get_qwen_info,
+        get_deepseek_info,
+        get_gpt_oss_info,
+        get_moonshot_info,
+        get_nvidia_info,
+    ):
+        for name, attrs in getter().items():
+            names.append(f"{attrs.organization}/{name}")
+    return sorted(names)
+
 
 # Independently-measured rank=1 LoRA parameter counts for every Tinker base
 # model under every valid combination of train_mlp / train_attn / train_unembed.
@@ -371,6 +396,14 @@ class TestHyperparamUtils:
                 train_attn=False,
                 train_unembed=False,
             )
+
+    @pytest.mark.parametrize("model_name", _all_model_info_names())
+    def test_get_lora_param_count_covers_every_model_info_entry(self, model_name: str):
+        """Every model registered in ``model_info`` must have a row in
+        ``_LORA_PARAMS_PER_RANK_BY_COMPONENT``. Catches drift when a new model
+        is added to the registry without measuring its LoRA param counts.
+        """
+        assert get_lora_param_count(model_name, lora_rank=1) > 0
 
     @pytest.mark.parametrize(
         "flag_combo",
