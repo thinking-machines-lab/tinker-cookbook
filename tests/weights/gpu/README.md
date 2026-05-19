@@ -87,7 +87,7 @@ Every model on [Tinker](https://tinker-docs.thinkingmachines.ai/tinker/models/) 
 | DeepSeek V3 (native FP8) | DeepSeek-V3.1, V3.1-Base | test_deepseek.py |
 | Kimi K2 (INT4) | Kimi-K2-Thinking | test_kimi.py |
 | Kimi K2.5/K2.6 (VL + INT4) | Kimi-K2.5, Kimi-K2.6 | test_kimi_k25.py |
-| GPT-OSS (MXFP4) | gpt-oss-20b, 120b | test_gpt_oss.py |
+| GPT-OSS (MXFP4) | gpt-oss-20b, gpt-oss-120b | test_gpt_oss.py |
 | Nemotron (fused proj) | Nemotron-3-Nano-30B-A3B, Nemotron-3-Super-120B-A12B | test_nemotron.py |
 | Llama 3.x | Llama-3.1/3.2/3.3 (6 models) | Not tested (gated on HF) — uses default merge profile, same path as Qwen3 dense |
 
