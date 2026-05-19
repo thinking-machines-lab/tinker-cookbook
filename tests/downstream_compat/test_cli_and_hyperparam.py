@@ -36,6 +36,7 @@ def _all_model_info_names() -> list[str]:
             names.append(f"{attrs.organization}/{name}")
     return sorted(names)
 
+
 # Independently-measured rank=1 LoRA parameter counts for every Tinker base
 # model under every valid combination of train_mlp / train_attn / train_unembed.
 # Keys are (train_mlp, train_attn, train_unembed). The all-False case is
