@@ -80,7 +80,7 @@ params = get_lora_param_count("Qwen/Qwen3.5-9B-Base", lora_rank=32)
 | Scenario | Model | LR | Batch | LoRA Rank |
 |----------|-------|-----|-------|-----------|
 | SFT on chat data | Qwen3.5-9B-Base | `get_lr(model)` | 128 | 32 |
-| Math GRPO | Qwen3.5-9B (non-thinking) | 4e-5 | 128x16 | 32 |
+| Math GRPO | Qwen3.5-9B (thinking) | 4e-5 | 128x16 | 32 |
 | DPO | Qwen3.5-9B-Base | 1e-5 | 256 | 32 |
 | Distillation | Qwen3.5-9B-Base | 1e-4 | 1024x4 | 128 |
 | Multi-turn RL | Kimi-K2.6 | 1e-5 | 8x4 | 32 |

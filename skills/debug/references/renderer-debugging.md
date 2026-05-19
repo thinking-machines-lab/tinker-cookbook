@@ -100,9 +100,11 @@ for i, messages in enumerate(test_cases):
 
 ## Thinking mode
 
-Models with thinking capabilities (Qwen3, DeepSeek V3, Kimi K2.6, Nemotron3) have two renderer variants:
-- **With thinking** (`qwen3`, `deepseekv3_thinking`): Model produces `<think>...</think>` blocks before responding
-- **Without thinking** (`qwen3_disable_thinking`, `deepseekv3`): Thinking is suppressed
+Models with thinking capabilities (Qwen3, Qwen3.5/Qwen3.6, DeepSeek V3, Kimi K2.6, Nemotron3) have two renderer variants:
+- **With thinking** (`qwen3`, `qwen3_5`, `deepseekv3_thinking`): Model produces `<think>...</think>` blocks before responding
+- **Without thinking** (`qwen3_disable_thinking`, `qwen3_5_disable_thinking`, `deepseekv3`): Thinking is suppressed
+
+(Qwen3.5 and Qwen3.6 share the same renderers: `qwen3_5` and `qwen3_5_disable_thinking`.)
 
 Common issues:
 - Training on data with `<think>` blocks using a non-thinking renderer → Thinking tokens get wrong loss weights

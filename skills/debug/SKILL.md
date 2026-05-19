@@ -510,7 +510,7 @@ else:
 
 ### Step 3: Check thinking mode handling
 
-For models with thinking capabilities (Qwen3, DeepSeek V3, Kimi K2.6, Nemotron3):
+For models with thinking capabilities (Qwen3, Qwen3.5/Qwen3.6, DeepSeek V3, Kimi K2.6, Nemotron3):
 
 - Use the `_disable_thinking` renderer variant if you don't want `<think>` blocks
 - Historical assistant messages may have thinking stripped by default (depends on renderer)
