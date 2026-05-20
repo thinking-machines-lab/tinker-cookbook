@@ -115,7 +115,7 @@ python -m tinker_cookbook.recipes.sdft.train \
 | `model_name` | — | Model for both student and teacher |
 | `topk` | `20` | Top-K tokens for distillation (0 = importance sampling fallback) |
 | `learning_rate` | `2e-5` | Adam learning rate. For LoRA, use 5e-4 to 1e-3 |
-| `groups_per_batch` | `32` | Problems per training batch |
+| `groups_per_batch` | `128` | Problems per training batch |
 | `lora_rank` | `128` | LoRA adapter rank (64 for `Qwen/Qwen3.6-35B-A3B`) |
 | `max_tokens` | `2048` | Max completion length |
 | `thinking_format` | `false` | Convert data for thinking models (e.g., Qwen3.5) |
