@@ -118,7 +118,7 @@ python -m tinker_cookbook.recipes.sdft.train \
 | `groups_per_batch` | `128` | Problems per training batch |
 | `lora_rank` | `128` | LoRA adapter rank (64 for `Qwen/Qwen3.6-35B-A3B`) |
 | `max_tokens` | `2048` | Max completion length |
-| `thinking_format` | `false` | Convert data for thinking models (e.g., Qwen3.5) |
+| `thinking_format` | `false` | Convert data for thinking models — set to `true` for Qwen3.5/3.6 family; tables above use `true` |
 | `teacher_sync_every` | `None` | Optional periodic teacher weight sync |
 
 ## Results
