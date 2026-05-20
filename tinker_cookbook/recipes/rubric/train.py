@@ -28,7 +28,7 @@ class CLIConfig:
     test_group_size: int = 1
     groups_per_batch: int = 100
     learning_rate: float = 1e-5
-    max_tokens: int = 5
+    max_tokens: int = 32
     temperature: float = 1.0
     kl_penalty_coef: float = 0.0
     grader_llm_name: str = "Qwen/Qwen3.6-35B-A3B"

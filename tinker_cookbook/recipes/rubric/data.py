@@ -78,18 +78,33 @@ class Rubric:
         ]
 
     def extract_score(self, response: str) -> float:
+        def parse_score(score_text: str) -> float:
+            return float(score_text.strip())
+
         match = re.search(self.extraction_regex, response, re.DOTALL)
         if match is None:
             match = re.search(r"<scores?>(.*?)</scores?>", response, re.DOTALL)
         if match is not None:
             try:
-                return float(match.group(1))
+                return parse_score(match.group(1))
             except ValueError:
                 print(f"Warning: Failed to extract score from grader response: {response}")
                 return 0.0
-        else:
-            print(f"Warning: Failed to extract score from grader response: {response}")
-            return 0.0
+
+        tag_match = re.search(
+            r"<([A-Za-z][A-Za-z0-9_-]*)>\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*</\1>",
+            response,
+            re.DOTALL,
+        )
+        if tag_match is not None:
+            try:
+                return parse_score(tag_match.group(2))
+            except ValueError:
+                print(f"Warning: Failed to extract score from grader response: {response}")
+                return 0.0
+
+        print(f"Warning: Failed to extract score from grader response: {response}")
+        return 0.0
 
     def to_dict(self) -> dict[str, str]:
         return {

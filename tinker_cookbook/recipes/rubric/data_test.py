@@ -11,3 +11,9 @@ def test_extract_score_accepts_plural_scores_tag():
     rubric = Rubric(rubric_str="Correct?", extraction_regex=r"<score>(.*)</score>")
 
     assert rubric.extract_score("<scores>0</scores>") == 0.0
+
+
+def test_extract_score_accepts_numeric_score_in_other_tag():
+    rubric = Rubric(rubric_str="Correct?")
+
+    assert rubric.extract_score("<r> 0 </r>") == 0.0
