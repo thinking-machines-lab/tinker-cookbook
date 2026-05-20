@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from typing import cast
 
 import tinker
 
@@ -214,6 +215,6 @@ class TestTemperature:
         evaluator = RLTestSetEvaluator(dataset, max_tokens=8, temperature=0.5)
         sampling_client = _RecordingSamplingClient()
 
-        asyncio.run(evaluator(sampling_client))
+        asyncio.run(evaluator(cast(tinker.SamplingClient, sampling_client)))
 
         assert sampling_client.temperatures == [0.5]
