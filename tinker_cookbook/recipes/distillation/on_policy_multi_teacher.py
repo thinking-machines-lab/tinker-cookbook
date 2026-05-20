@@ -5,8 +5,8 @@ This script demonstrates on-policy distillation with multiple datasets and
 different teacher models for each dataset. It uses:
 - DeepMath dataset with Qwen3.6-27B as teacher
 - Tulu3 dataset with Qwen3.5-397B-A17B as teacher
-- Qwen3-8B as student model
-- qwen3_5_disable_thinking renderer
+- Qwen3.5-9B as student model
+- the recommended Qwen3.5 renderer
 
 Example usage:
     python -m tinker_cookbook.recipes.distillation.on_policy_multi_teacher \
@@ -42,7 +42,7 @@ class CLIConfig:
     """Command-line configuration for multi-teacher on-policy distillation."""
 
     # Model configuration
-    model_name: str = "Qwen/Qwen3-8B"  # Student model
+    model_name: str = "Qwen/Qwen3.5-9B"  # Student model
     lora_rank: int = 128
     renderer_name: str | None = None
     load_checkpoint_path: str | None = None  # Student checkpoint

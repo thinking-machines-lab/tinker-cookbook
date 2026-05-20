@@ -150,6 +150,7 @@ The trainer will then sample from each configuration, and concatenate all the in
 
 ```bash
 python -m tinker_cookbook.recipes.distillation.on_policy_multi_teacher \
+    model_name=Qwen/Qwen3.5-9B \
     learning_rate=1e-4 \
     deepmath_groups_per_batch=256 \
     tulu3_groups_per_batch=256 \
