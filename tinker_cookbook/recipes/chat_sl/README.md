@@ -14,7 +14,7 @@ python -m tinker_cookbook.recipes.chat_sl.train \
     wandb_project=cookbook_sl
 ```
 
-After 140 steps of training, `test/nll` decreases to 1.788.
+After 140 steps of training, `test/nll` decreases to 1.663.
 
 ## SFT on Tulu3 dataset
 
