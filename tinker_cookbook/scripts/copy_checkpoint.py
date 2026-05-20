@@ -1,19 +1,27 @@
 """Copy trainable Tinker weights into the currently authenticated account.
 
-This copies a trainable Tinker checkpoint by loading the source weights with an
-access token and saving them as a new destination-owned checkpoint.
+This copies a trainable Tinker checkpoint by loading the source weights and
+saving them as a new destination-owned checkpoint.
 
 Note: this only works for trainable `weights/...` checkpoints, not sampler-only
 `sampler_weights/...` checkpoints.
 
 Usage:
-    export SRC_TINKER_ACCESS_TOKEN=...  # grants access to the source checkpoint;
-                                        # a Tinker API key works for now
+    python -m tinker_cookbook.scripts.copy_checkpoint \\
+        --source-path tinker://<run-id>:train:0/weights/<name>
+    # Prints: sampler_path: tinker://<new-run-id>:train:0/sampler_weights/<name>
 
+To save into a specific destination project, pass `--destination-project-id`:
     python -m tinker_cookbook.scripts.copy_checkpoint \\
         --source-path tinker://<run-id>:train:0/weights/<name> \\
-        --source-access-token "$SRC_TINKER_ACCESS_TOKEN"
-    # Prints: sampler_path: tinker://<new-run-id>:train:0/sampler_weights/<name>
+        --destination-project-id <project-id>
+
+For cross-org copies, pass `--source-access-token` or set
+`SRC_TINKER_ACCESS_TOKEN` to a token that can read the source checkpoint:
+    python -m tinker_cookbook.scripts.copy_checkpoint \\
+        --source-path tinker://<run-id>:train:0/weights/<name> \\
+        --source-access-token "$SRC_TINKER_ACCESS_TOKEN" \\
+        --destination-project-id <project-id>
 
 By default, this script saves sampler weights; pass `--output-kind training` to
 save a trainable `weights/...` checkpoint instead.
@@ -21,6 +29,7 @@ save a trainable `weights/...` checkpoint instead.
 
 import argparse
 import importlib.metadata
+import os
 import re
 
 import tinker
@@ -31,7 +40,8 @@ TRAINING_WEIGHTS_PATH_RE = re.compile(r"/weights/[^/]+$")
 
 def copy_checkpoint(
     source_path: str,
-    source_access_token: str,
+    source_access_token: str | None,
+    destination_project_id: str | None,
     output_name: str | None,
     output_kind: str,
 ) -> None:
@@ -43,39 +53,20 @@ def copy_checkpoint(
         )
     name = output_name or checkpoint_name_from_path(source_path)
 
-    destination_client = tinker.ServiceClient()
     tinker_version = importlib.metadata.version("tinker").split(".")
 
-    # SDK >=0.19.0 can fetch source checkpoint metadata with weights_access_token and is preferred.
-    # Older SDKs need the manual metadata lookup below.
     if (int(tinker_version[0]), int(tinker_version[1]), int(tinker_version[2])) >= (0, 19, 0):
+        destination_client = tinker.ServiceClient(project_id=destination_project_id)
         training_client = destination_client.create_training_client_from_state(
             source_path,
             weights_access_token=source_access_token,
             user_metadata={"copied_from_path": source_path},
         )
     else:
-        source_client = tinker.ServiceClient(api_key=source_access_token)
-        weights_info = (
-            source_client.create_rest_client().get_weights_info_by_tinker_path(source_path).result()
+        raise SystemExit(
+            "copy_checkpoint requires tinker>=0.19.0. "
+            f"Found tinker=={'.'.join(tinker_version)}; upgrade the Tinker SDK and try again."
         )
-        if weights_info.lora_rank is None:
-            raise SystemExit(
-                f"Could not determine rank metadata for source checkpoint {source_path!r}; "
-                "cannot recreate the destination training run."
-            )
-
-        training_client = destination_client.create_lora_training_client(
-            base_model=weights_info.base_model,
-            rank=weights_info.lora_rank,
-            train_mlp=weights_info.train_mlp if weights_info.train_mlp is not None else True,
-            train_attn=weights_info.train_attn if weights_info.train_attn is not None else True,
-            train_unembed=weights_info.train_unembed
-            if weights_info.train_unembed is not None
-            else True,
-            user_metadata={"copied_from_path": source_path},
-        )
-        training_client.load_state(source_path, weights_access_token=source_access_token).result()
 
     if output_kind == "training":
         future = training_client.save_state(name)
@@ -100,8 +91,18 @@ def main() -> None:
     parser.add_argument("--source-path", required=True)
     parser.add_argument(
         "--source-access-token",
-        required=True,
-        help="Token that grants access to the source checkpoint. Tinker API key works for now.",
+        default=os.environ.get("SRC_TINKER_ACCESS_TOKEN"),
+        help=(
+            "Token that grants access to the source checkpoint. Defaults to "
+            "SRC_TINKER_ACCESS_TOKEN; only needed for cross-org copies."
+        ),
+    )
+    parser.add_argument(
+        "--destination-project-id",
+        "--target-project-id",
+        dest="destination_project_id",
+        default=None,
+        help="Project ID to save the destination checkpoint into.",
     )
     parser.add_argument(
         "--output-name",
@@ -121,6 +122,7 @@ def main() -> None:
     copy_checkpoint(
         args.source_path,
         args.source_access_token,
+        args.destination_project_id,
         args.output_name,
         args.output_kind,
     )
