@@ -75,7 +75,7 @@ To train the LLM to add with a rubric-based LLM, run
 python -m tinker_cookbook.recipes.rubric.train
 ```
 
-You can see the reward quickly goes up.
+You can see the reward quickly goes up. In this example, `test/env/all/reward/total` improves from 0.354 at step 0 to 0.994 by step 60, while the final training batch reaches `env/all/rubric_score=1.0`.
 
 <img width="705" height="279" alt="Training metrics showing reward increasing over training steps for the addition task" src="https://github.com/user-attachments/assets/2f825805-20a7-4cf3-8d06-55d5e9a98098" />
 
