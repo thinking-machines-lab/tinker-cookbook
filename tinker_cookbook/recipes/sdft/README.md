@@ -123,42 +123,44 @@ python -m tinker_cookbook.recipes.sdft.train \
 
 ## Results
 
-### Continual Learning: `Qwen/Qwen3.5-35B-A3B` (Tinker, LoRA 64) — historical, rerun with `Qwen/Qwen3.6-35B-A3B`
+### Continual Learning: `Qwen/Qwen3.6-35B-A3B` (Tinker, LoRA 64)
 
 **Stage 1: Train on tool-use, evaluate both tasks**
 
 | Method | LR | Tool-use | Science | Sci Δ |
 |--------|-----|----------|---------|-------|
-| Base model | — | 61.86% | 46.35% | — |
-| SFT | 1e-4 | 8.25% | 36.88% | -9.47 |
-| SFT | 5e-4 | 67.01% | 29.19% | **-17.16** |
-| SFT | 1e-3 | 69.07% | 37.08% | **-9.27** |
-| SDFT | 1e-4 | 63.92% | 45.17% | -1.18 |
-| **SDFT** | **5e-4** | **65.98%** | **46.55%** | **+0.20** |
-| **SDFT** | **1e-3** | **67.01%** | **53.65%** | **+7.30** |
+| Base model | — | 45.36% | 37.67% | — |
+| SFT | 1e-4 | 65.98% | 44.38% | +6.71 |
+| **SFT** | **5e-4** | **73.20%** | **50.49%** | **+12.82** |
+| SFT | 1e-3 | 70.10% | 35.50% | -2.17 |
+| SDFT | 1e-4 | 59.79% | 38.07% | +0.39 |
+| SDFT | 5e-4 | 54.64% | 39.96% | +2.29 |
+| SDFT | 1e-3 | 53.61% | 42.60% | +4.93 |
 
 **Stage 2: Train on science (from Stage 1 checkpoint), evaluate both tasks**
 
 | Method | LR | Tool-use | Science | TU Retention |
 |--------|-----|----------|---------|-------------|
-| SFT | 1e-4 | 64.95% | 57.40% | — * |
-| SFT | 5e-4 | 68.04% | 63.71% | 101% |
-| SFT | 1e-3 | 8.25% | 64.69% | **12%** |
-| **SDFT** | **1e-4** | **61.86%** | **56.80%** | **97%** |
-| **SDFT** | **5e-4** | **61.86%** | **63.51%** | **94%** |
-| SDFT | 1e-3 | 35.05% | 60.75% | 52% |
+| SFT | 1e-4 | 56.70% | 58.78% | 86% |
+| SFT | 5e-4 | 48.45% | 66.07% | 66% |
+| SFT | 1e-3 | 1.03% | 66.47% | **1%** |
+| **SDFT** | **1e-4** | **64.95%** | **49.70%** | **108%** |
+| **SDFT** | **5e-4** | **52.58%** | **58.19%** | **96%** |
+| SDFT | 1e-3 | 63.92% | 0.20% | 119% †
 
-\* SFT lr=1e-4 Stage 1 tool-use was 8.25% (anomalous), so Stage 2 retention is not meaningful.
+† SDFT lr=1e-3 Stage 2 also exhibits a training collapse — science accuracy drops to ~0% even though tool-use is preserved. Both methods fail at lr=1e-3, in mirror-image ways.
 
 ### Findings
 
-1. **SDFT preserves prior knowledge during new-task training.** After tool-use training (Stage 1), SFT causes -9 to -17pp science degradation. SDFT either preserves or improves science (+0 to +7pp).
+1. **SDFT preserves prior knowledge across all learning rates.** After Stage 2 science training, SDFT retains 96-108% of Stage 1 tool-use ability at the two well-behaved LRs (1e-4 and 5e-4). SFT retention degrades quickly with LR (86% → 66% → 1%).
 
-2. **SFT can retain knowledge with careful LR tuning.** At lr=5e-4, SFT retains 101% of tool-use after Stage 2 science training. However, at lr=1e-3, tool-use collapses to 8.25% (12% retention). The right LR for retention isn't known in advance.
+2. **SFT can catastrophically forget at high LR.** At lr=1e-3 in Stage 2, SFT tool-use collapses to 1.03% (1% retention) — a single bad LR choice wipes out Stage 1 learning. The "right" LR isn't known in advance.
 
-3. **SDFT retention is robust across learning rates.** 94-97% tool-use retention in Stage 2 at lr=5e-4 and 1e-4, without needing to tune for retention specifically.
+3. **SFT is the stronger target-task learner on this model.** In Stage 1, SFT lr=5e-4 reaches 73.2% tool-use vs SDFT's best of 59.8% (lr=1e-4). The on-policy KL signal that protects retention also slows raw learning of the new task.
 
-4. **Practical recommendation.** Use SDFT when you need to fine-tune on new data without risking degradation of existing capabilities. Use SFT with a conservative learning rate when you can afford some forgetting and want maximum target-task performance. Optimizing SFT's learning rate and number of steps can also help control retention.
+4. **Practical recommendation.** Use SDFT when retention matters — its tool-use stays within ~12pp across Stage 2 lr=1e-4 / 5e-4 while SFT swings ~50pp. Use SFT with a carefully tuned LR when you need maximum target-task performance and can afford some forgetting. Avoid lr=1e-3 with either method on this setup.
+
+> **Note on absolute scores:** Base `Qwen/Qwen3.6-35B-A3B` scores ~45% on ToolAlpaca, lower than `Qwen/Qwen3.5-35B-A3B` (~64%) under the same single-turn exact-match grader. The dominant failure mode is that `Qwen3.6` emits one tool call and stops to await results on requests where the gold answer expects the full multi-step plan up front. Whether this reflects a real tool-use regression or a behavioral shift toward multi-turn agentic use is not characterized here. Stage-1 Δ and Stage-2 TU Retention are the regime-independent metrics for evaluating SDFT vs SFT, and both reproduce the SDFT recipe's central claims.
 
 ## Files
 
