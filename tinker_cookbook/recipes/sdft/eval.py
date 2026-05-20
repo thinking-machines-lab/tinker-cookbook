@@ -80,14 +80,29 @@ def evaluate_science_correctness(responses: list[str], answers: list[str]) -> li
 # ---------------------------------------------------------------------------
 
 
+def _strip_thinking(text: str) -> str:
+    """Strip the model's thinking block from a response.
+
+    Thinking-mode models (Qwen3.5 family with the ``qwen3_5`` renderer, etc.)
+    reason inside ``<think>...</think>`` before producing their structured
+    answer. Some models (e.g. Qwen3.6) draft the full ReAct ``Action:`` /
+    ``Action Input:`` block inside the scratchpad, which would cause the
+    regex extractors below to double-count actions. Only the text after the
+    closing tag is the final assistant message.
+    """
+    if "</think>" in text:
+        return text.split("</think>", 1)[-1]
+    return text
+
+
 def extract_actions(text: str) -> list[str]:
-    """Extract all Action: fields from model response."""
-    return re.findall(r"Action:\s*(\w+)", text)
+    """Extract all Action: fields from the model's final response."""
+    return re.findall(r"Action:\s*(\w+)", _strip_thinking(text))
 
 
 def extract_action_inputs(text: str) -> dict[str, str]:
-    """Extract and merge all Action Input: JSON blocks from model response."""
-    json_blocks = re.findall(r"Action Input:\s*(\{.*?\})", text, re.DOTALL)
+    """Extract and merge all Action Input: JSON blocks from the model's final response."""
+    json_blocks = re.findall(r"Action Input:\s*(\{.*?\})", _strip_thinking(text), re.DOTALL)
     combined: dict[str, str] = {}
     for block in json_blocks:
         try:
