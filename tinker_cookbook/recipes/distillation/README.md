@@ -32,6 +32,7 @@ We observe an AIME'24 score of ~65% using a rank-128 LoRA after 100 steps. For o
 ```bash
 python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
     model_name=Qwen/Qwen3.5-9B-Base \
+    teacher_model=Qwen/Qwen3.5-9B \
     load_checkpoint_path=tinker://4a1939e6-04be-5a77-9e4e-910ccff9f27e:train:0/weights/final \
     dataset=deepmath \
     learning_rate=1e-4 \
@@ -41,6 +42,8 @@ python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
 ```
 
 This script can also be used to replicate the experiments in our Discussion section, after you have run RL to obtain an appropriate checkpoint for the teacher model.
+
+The teacher should use the same tokenizer family as the student, because the KL term scores the student's sampled token IDs under the teacher. For example, a `Qwen/Qwen3.5-9B-Base` student should use a Qwen3.5/Qwen3.6 teacher such as `Qwen/Qwen3.5-9B`; a Qwen3 teacher cannot score Qwen3.5-only token IDs.
 
 ### Checkpoints
 
@@ -66,6 +69,7 @@ In our experiment, we saw [IF-eval](https://huggingface.co/datasets/google/IFEva
 ```bash
 python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
     model_name=Qwen/Qwen3.5-9B-Base \
+    teacher_model=Qwen/Qwen3.5-9B \
     dataset=tulu3 \
     learning_rate=1e-4 \
     groups_per_batch=64 \
