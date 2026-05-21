@@ -64,6 +64,8 @@ class BenchmarkConfig:
     # Benchmark dataset: "science" or "tooluse" (matching paper's naming)
     dataset: str = "science"
 
+    thinking_format: bool = True
+
     # Path to the cloned SDFT paper repo's data directory
     data_dir: str = "~/Repos/Self-Distillation/data"
 
@@ -78,6 +80,9 @@ class BenchmarkConfig:
     learning_rate: float = 2e-5
     groups_per_batch: int = 32
     max_tokens: int = 2048
+    temperature: float = 0.0
+    top_p: float = 1.0
+    top_k: int = -1
     max_steps: int | None = None
     eval_every: int = 20
     save_every: int = 20
@@ -117,6 +122,7 @@ async def run_base_eval(config: BenchmarkConfig) -> dict[str, float]:
     renderer = renderers.get_renderer(renderer_name, tokenizer=tokenizer)
 
     log_path = _make_log_path(config, "base-eval")
+    Path(log_path).mkdir(parents=True, exist_ok=True)
 
     logger.info(f"=== Phase: Base model eval on {config.dataset} ===")
     logger.info(f"Model: {config.model_name}")
@@ -124,7 +130,11 @@ async def run_base_eval(config: BenchmarkConfig) -> dict[str, float]:
     service_client = tinker.ServiceClient(base_url=config.base_url)
     sampling_client = service_client.create_sampling_client(base_model=config.model_name)
 
-    evaluator = _build_evaluator(config, renderer)
+    evaluator = _build_evaluator(
+        config,
+        renderer,
+        save_path=f"{log_path}/trajectories.jsonl",
+    )
     metrics = await evaluator(sampling_client)
 
     _print_metrics("Base model", metrics)
@@ -162,6 +172,7 @@ async def run_sft(config: BenchmarkConfig) -> str | None:
         dataset_builder = ScienceArrowSFTBuilder(
             common_config=common_config,
             data_dir=f"{expanded_data_dir}/science_data",
+            thinking_format=config.thinking_format,
         )
     else:
         raise ValueError(f"SFT benchmark not yet implemented for dataset: {config.dataset}")
@@ -211,7 +222,11 @@ async def run_sdft(config: BenchmarkConfig) -> str | None:
     logger.info(f"=== Phase: SDFT training on {config.dataset} ===")
 
     if config.dataset == "science":
-        train_q, train_a, _, _ = load_science_from_arrow(f"{expanded_data_dir}/science_data")
+        train_q, train_a, _, _ = load_science_from_arrow(
+            f"{expanded_data_dir}/science_data",
+            thinking_format=config.thinking_format,
+            for_sft=False,
+        )
     else:
         raise ValueError(f"SDFT benchmark not yet implemented for dataset: {config.dataset}")
 
@@ -263,6 +278,7 @@ async def run_eval_checkpoint(config: BenchmarkConfig) -> dict[str, float]:
         raise ValueError("checkpoint_path must be set for eval_checkpoint phase")
 
     log_path = _make_log_path(config, "eval-checkpoint")
+    Path(log_path).mkdir(parents=True, exist_ok=True)
 
     logger.info(f"=== Phase: Eval checkpoint on {config.dataset} ===")
     logger.info(f"Checkpoint: {config.checkpoint_path}")
@@ -272,7 +288,11 @@ async def run_eval_checkpoint(config: BenchmarkConfig) -> dict[str, float]:
         base_model=config.model_name, model_path=config.checkpoint_path
     )
 
-    evaluator = _build_evaluator(config, renderer)
+    evaluator = _build_evaluator(
+        config,
+        renderer,
+        save_path=f"{log_path}/trajectories.jsonl",
+    )
     metrics = await evaluator(sampling_client)
 
     _print_metrics("Checkpoint", metrics)
@@ -288,19 +308,56 @@ async def run_eval_checkpoint(config: BenchmarkConfig) -> dict[str, float]:
 def _build_evaluator(
     config: BenchmarkConfig,
     renderer: renderers.Renderer,
+    *,
+    save_path: str | None = None,
 ):  # type: ignore[return]
-    """Build the appropriate evaluator for the dataset using the paper's eval data."""
-    from tinker_cookbook.recipes.sdft.datasets import load_science_from_arrow
-    from tinker_cookbook.recipes.sdft.eval import SciKnowEvalEvaluator
+    """Build the appropriate evaluator for the dataset using the paper's eval data.
+
+    ``save_path`` (if set) is forwarded to the evaluator so it persists a
+    per-example ``trajectories.jsonl`` containing raw completions, stop reasons,
+    token counts, and scores.
+    """
+    from tinker_cookbook.recipes.sdft.datasets import (
+        load_science_from_arrow,
+        load_tooluse_from_arrow,
+    )
+    from tinker_cookbook.recipes.sdft.eval import (
+        SciKnowEvalEvaluator,
+        ToolUseEvaluator,
+    )
 
     expanded_data_dir = str(Path(config.data_dir).expanduser())
 
     if config.dataset == "science":
         _, _, eval_prompts, eval_answers = load_science_from_arrow(
-            f"{expanded_data_dir}/science_data"
+            f"{expanded_data_dir}/science_data",
+            thinking_format=config.thinking_format,
         )
         # eval_prompts are message lists (from paper's Arrow eval data)
-        return SciKnowEvalEvaluator(eval_prompts, eval_answers, renderer, max_tokens=2048)
+        return SciKnowEvalEvaluator(
+            eval_prompts,
+            eval_answers,
+            renderer,
+            max_tokens=config.max_tokens,
+            temperature=config.temperature,
+            top_p=config.top_p,
+            top_k=config.top_k,
+            save_path=save_path,
+        )
+    elif config.dataset == "tooluse":
+        _, _, eval_prompts, eval_golds = load_tooluse_from_arrow(
+            f"{expanded_data_dir}/tooluse_data"
+        )
+        return ToolUseEvaluator(
+            eval_prompts,
+            eval_golds,
+            renderer,
+            max_tokens=config.max_tokens,
+            temperature=config.temperature,
+            top_p=config.top_p,
+            top_k=config.top_k,
+            save_path=save_path,
+        )
     else:
         raise ValueError(f"Eval not yet implemented for dataset: {config.dataset}")
 

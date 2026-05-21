@@ -108,6 +108,33 @@ python -m tinker_cookbook.recipes.sdft.train \
     lora_rank=64
 ```
 
+### Running evals
+
+```bash
+python -m tinker_cookbook.recipes.sdft.benchmark \
+    phase=base_eval \
+    dataset=tooluse \
+    model_name=Qwen/Qwen3.6-35B-A3B \
+    data_dir=Self-Distillation/data \
+    temperature=1.0 \
+    top_p=0.95 \
+    top_k=20
+```
+
+```bash
+python -m tinker_cookbook.recipes.sdft.benchmark \
+    phase=base_eval \
+    dataset=science \
+    model_name=Qwen/Qwen3.6-35B-A3B \
+    data_dir=Self-Distillation/data \
+    max_tokens=64000 \
+    temperature=1.0 \
+    top_p=0.95 \
+    top_k=20
+```
+
+Science completions can be long. Use a larger token budget when reproducing SciKnowEval numbers; length-truncated completions are scored as incorrect. The commands above use the supported Qwen thinking-mode sampling settings (`temperature=1.0`, `top_p=0.95`, `top_k=20`).
+
 ## Key Parameters
 
 | Parameter | Default | Description |
@@ -117,36 +144,36 @@ python -m tinker_cookbook.recipes.sdft.train \
 | `learning_rate` | `2e-5` | Adam learning rate. For LoRA, use 5e-4 to 1e-3 |
 | `groups_per_batch` | `128` | Problems per training batch |
 | `lora_rank` | `128` | LoRA adapter rank (64 for `Qwen/Qwen3.6-35B-A3B`) |
-| `max_tokens` | `2048` | Max completion length |
-| `thinking_format` | `false` | Convert data for thinking models — set to `true` for Qwen3.5/3.6 family; tables above use `true` |
+| `max_tokens` | `2048` | Max completion length. Use `16384` when reproducing science evals |
+| `thinking_format` | `true` | Convert data + system prompt to thinking-model format (Qwen3.5/3.6 family). Set to `false` only for non-thinking models (e.g. Qwen2.5-Instruct) |
 | `teacher_sync_every` | `None` | Optional periodic teacher weight sync |
 
 ## Results
 
-### Continual Learning: `Qwen/Qwen3.6-35B-A3B` (Tinker, LoRA 64)
+### Continual Learning: `Qwen/Qwen3.6-35B-A3B` (Tinker, LoRA 64, non-thinking mode)
 
 **Stage 1: Train on tool-use, evaluate both tasks**
 
 | Method | LR | Tool-use | Science | Sci Δ |
 |--------|-----|----------|---------|-------|
-| Base model | — | 45.36% | 37.67% | — |
-| SFT | 1e-4 | 65.98% | 44.38% | +6.71 |
-| **SFT** | **5e-4** | **73.20%** | **50.49%** | **+12.82** |
-| SFT | 1e-3 | 70.10% | 35.50% | -2.17 |
-| SDFT | 1e-4 | 59.79% | 38.07% | +0.39 |
-| SDFT | 5e-4 | 54.64% | 39.96% | +2.29 |
-| SDFT | 1e-3 | 53.61% | 42.60% | +4.93 |
+| Base model | — | 42.27% | 71.79% | — |
+| SFT | 1e-4 | 64.95% | TBD | TBD |
+| SFT | 5e-4 | 74.23% | TBD | TBD |
+| SFT | 1e-3 | 68.04% | TBD | TBD |
+| SDFT | 1e-4 | 63.92% | 45.17% | -1.18 |
+| **SDFT** | **5e-4** | **65.98%** | **46.55%** | **+0.20** |
+| **SDFT** | **1e-3** | **67.01%** | **53.65%** | **+7.30** |
 
 **Stage 2: Train on science (from Stage 1 checkpoint), evaluate both tasks**
 
 | Method | LR | Tool-use | Science | TU Retention |
 |--------|-----|----------|---------|-------------|
-| SFT | 1e-4 | 56.70% | 58.78% | 86% |
-| SFT | 5e-4 | 48.45% | 66.07% | 66% |
-| SFT | 1e-3 | 1.03% | 66.47% | **1%** |
-| **SDFT** | **1e-4** | **64.95%** | **49.70%** | **108%** |
-| **SDFT** | **5e-4** | **52.58%** | **58.19%** | **96%** |
-| SDFT | 1e-3 | 63.92% | 0.20% | 119% †
+| SFT | 1e-4 | 50.52% | TBD | 78% |
+| SFT | 5e-4 | 46.39% | TBD | 63% |
+| SFT | 1e-3 | 0.00% | TBD | **0%** |
+| **SDFT** | **1e-4** | **61.86%** | **56.80%** | **97%** |
+| **SDFT** | **5e-4** | **61.86%** | **63.51%** | **94%** |
+| SDFT | 1e-3 | 35.05% | 60.75% | 52% |
 
 † SDFT lr=1e-3 Stage 2 also exhibits a training collapse — science accuracy drops to ~0% even though tool-use is preserved. Both methods fail at lr=1e-3, in mirror-image ways.
 

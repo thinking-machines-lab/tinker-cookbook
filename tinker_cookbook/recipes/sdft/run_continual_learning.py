@@ -71,7 +71,7 @@ class ExperimentConfig:
 
     # SDFT-TopK specific
     topk: int = 20
-    thinking_format: bool = False
+    thinking_format: bool = True
 
     # Logging
     log_root: str = "/tmp/tinker-sdft-continual-v3"

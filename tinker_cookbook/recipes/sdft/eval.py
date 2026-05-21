@@ -13,6 +13,7 @@ import logging
 import re
 from collections import Counter
 from collections.abc import Sequence
+from pathlib import Path
 
 import tinker
 
@@ -157,6 +158,9 @@ class SciKnowEvalEvaluator(SamplingClientEvaluator):
     Generates greedy completions for each prompt and checks exact match
     on the extracted answer, supporting both <answer> tags (Qwen2.5)
     and thinking model outputs (Qwen3.5).
+
+    When ``save_path`` is set, also writes a JSONL of per-example raw chat
+    completions, stop reasons, token counts, and correctness scores.
     """
 
     def __init__(
@@ -165,34 +169,68 @@ class SciKnowEvalEvaluator(SamplingClientEvaluator):
         answers: list[str],
         renderer: renderers.Renderer,
         max_tokens: int = 2048,
+        temperature: float = 0.0,
+        top_p: float = 1.0,
+        top_k: int = -1,
         system_prompt_override: str | None = None,
+        save_path: str | None = None,
     ):
         self.prompts = prompts
         self.answers = answers
         self.renderer = renderer
         self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.top_p = top_p
+        self.top_k = top_k
         self.system_prompt_override = system_prompt_override
+        self.save_path = save_path
 
     async def __call__(self, sampling_client: tinker.SamplingClient) -> dict[str, float]:
         stop_condition = self.renderer.get_stop_sequences()
         sampling_params = tinker.SamplingParams(
             stop=stop_condition,
             max_tokens=self.max_tokens,
-            temperature=0.0,
+            temperature=self.temperature,
+            top_p=self.top_p,
+            top_k=self.top_k,
         )
 
+        tokenizer = sampling_client.get_tokenizer()
+        debug_prompt_printed = False
         tasks = []
         for prompt_messages in self.prompts:
             if self.system_prompt_override is not None:
                 # Replace system prompt for thinking models
-                messages = list(prompt_messages)
-                if messages and messages[0].get("role") == "system":
-                    messages[0] = {**messages[0], "content": self.system_prompt_override}
+                messages_for_prompt = list(prompt_messages)
+                if messages_for_prompt and messages_for_prompt[0].get("role") == "system":
+                    messages_for_prompt[0] = {
+                        **messages_for_prompt[0],
+                        "content": self.system_prompt_override,
+                    }
                 else:
-                    messages.insert(0, {"role": "system", "content": self.system_prompt_override})
-                model_input = self.renderer.build_generation_prompt(messages)  # type: ignore[arg-type]
+                    messages_for_prompt.insert(
+                        0, {"role": "system", "content": self.system_prompt_override}
+                    )
+                model_input = self.renderer.build_generation_prompt(messages_for_prompt)  # type: ignore[arg-type]
             else:
-                model_input = self.renderer.build_generation_prompt(prompt_messages)  # type: ignore[arg-type]
+                messages_for_prompt = list(prompt_messages)
+                model_input = self.renderer.build_generation_prompt(messages_for_prompt)  # type: ignore[arg-type]
+
+            if not debug_prompt_printed:
+                print("===== SciKnowEval debug prompt =====")
+                print(f"max_tokens: {sampling_params.max_tokens}")
+                print(f"temperature: {sampling_params.temperature}")
+                print(f"top_p: {sampling_params.top_p}")
+                print(f"top_k: {sampling_params.top_k}")
+                print(f"stop: {sampling_params.stop}")
+                print(f"prompt_tokens: {model_input.length}")
+                print("messages:")
+                print(json.dumps(messages_for_prompt, indent=2))
+                print("rendered_prompt:")
+                print(tokenizer.decode(model_input.to_ints()))
+                print("===== end SciKnowEval debug prompt =====", flush=True)
+                debug_prompt_printed = True
+
             tasks.append(
                 sampling_client.sample_async(
                     prompt=model_input, num_samples=1, sampling_params=sampling_params
@@ -200,11 +238,25 @@ class SciKnowEvalEvaluator(SamplingClientEvaluator):
             )
 
         results = await asyncio.gather(*tasks)
-        tokenizer = sampling_client.get_tokenizer()
-        responses = [tokenizer.decode(r.sequences[0].tokens) for r in results]
+        sampled_sequences = [r.sequences[0] for r in results]
+        responses = [tokenizer.decode(seq.tokens) for seq in sampled_sequences]
+        stop_reasons = [str(seq.stop_reason) for seq in sampled_sequences]
+        completion_num_tokens = [len(seq.tokens) for seq in sampled_sequences]
 
-        scores = evaluate_science_correctness(responses, self.answers)
+        scores = [
+            0 if stop_reason == "length" else score
+            for score, stop_reason in zip(
+                evaluate_science_correctness(responses, self.answers), stop_reasons
+            )
+        ]
         accuracy = sum(scores) / len(scores) if scores else 0.0
+
+        if self.save_path is not None:
+            # Run JSON encoding + disk write off the event loop so we don't
+            # stall heartbeats / concurrent tasks during inline training evals.
+            await asyncio.to_thread(
+                self._persist_trajectories, responses, stop_reasons, completion_num_tokens, scores
+            )
 
         logger.info(f"SciKnowEval eval: {sum(scores)}/{len(scores)} correct ({accuracy:.2%})")
         return {
@@ -213,12 +265,37 @@ class SciKnowEvalEvaluator(SamplingClientEvaluator):
             "sciknoweval/num_total": float(len(scores)),
         }
 
+    def _persist_trajectories(
+        self,
+        responses: list[str],
+        stop_reasons: list[str],
+        completion_num_tokens: list[int],
+        scores: list[int],
+    ) -> None:
+        out = Path(self.save_path)  # type: ignore[arg-type]
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("w") as f:
+            for resp, stop_reason, n_tokens, score in zip(
+                responses, stop_reasons, completion_num_tokens, scores
+            ):
+                row = {
+                    "raw_chat_completion": resp,
+                    "stop_reason": stop_reason,
+                    "completion_num_tokens": n_tokens,
+                    "correct_score": score,
+                }
+                f.write(json.dumps(row) + "\n")
+        logger.info(f"SciKnowEval trajectories -> {out}")
+
 
 class ToolUseEvaluator(SamplingClientEvaluator):
     """Evaluates ToolAlpaca accuracy during training.
 
     Generates greedy completions and checks exact match on extracted
     Action/Action Input fields, matching the paper's eval methodology.
+
+    When ``save_path`` is set, also writes a JSONL of per-example raw chat
+    completions, stop reasons, token counts, and correctness scores.
     """
 
     def __init__(
@@ -227,18 +304,28 @@ class ToolUseEvaluator(SamplingClientEvaluator):
         golden_answers: list[list[dict[str, str]]],
         renderer: renderers.Renderer,
         max_tokens: int = 1024,
+        temperature: float = 0.0,
+        top_p: float = 1.0,
+        top_k: int = -1,
+        save_path: str | None = None,
     ):
         self.prompts = prompts
         self.golden_answers = golden_answers
         self.renderer = renderer
         self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.top_p = top_p
+        self.top_k = top_k
+        self.save_path = save_path
 
     async def __call__(self, sampling_client: tinker.SamplingClient) -> dict[str, float]:
         stop_condition = self.renderer.get_stop_sequences()
         sampling_params = tinker.SamplingParams(
             stop=stop_condition,
             max_tokens=self.max_tokens,
-            temperature=0.0,
+            temperature=self.temperature,
+            top_p=self.top_p,
+            top_k=self.top_k,
         )
 
         tasks = []
@@ -253,10 +340,23 @@ class ToolUseEvaluator(SamplingClientEvaluator):
 
         results = await asyncio.gather(*tasks)
         tokenizer = sampling_client.get_tokenizer()
-        responses = [tokenizer.decode(r.sequences[0].tokens) for r in results]
+        sampled_sequences = [r.sequences[0] for r in results]
+        responses = [tokenizer.decode(seq.tokens) for seq in sampled_sequences]
+        stop_reasons = [str(seq.stop_reason) for seq in sampled_sequences]
+        completion_num_tokens = [len(seq.tokens) for seq in sampled_sequences]
 
-        scores = evaluate_tooluse_correctness(responses, self.golden_answers)
+        scores = [
+            0 if stop_reason == "length" else score
+            for score, stop_reason in zip(
+                evaluate_tooluse_correctness(responses, self.golden_answers), stop_reasons
+            )
+        ]
         accuracy = sum(scores) / len(scores) if scores else 0.0
+
+        if self.save_path is not None:
+            await asyncio.to_thread(
+                self._persist_trajectories, responses, stop_reasons, completion_num_tokens, scores
+            )
 
         logger.info(f"ToolUse eval: {sum(scores)}/{len(scores)} correct ({accuracy:.2%})")
         return {
@@ -264,3 +364,25 @@ class ToolUseEvaluator(SamplingClientEvaluator):
             "tooluse/num_correct": float(sum(scores)),
             "tooluse/num_total": float(len(scores)),
         }
+
+    def _persist_trajectories(
+        self,
+        responses: list[str],
+        stop_reasons: list[str],
+        completion_num_tokens: list[int],
+        scores: list[int],
+    ) -> None:
+        out = Path(self.save_path)  # type: ignore[arg-type]
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("w") as f:
+            for resp, stop_reason, n_tokens, score in zip(
+                responses, stop_reasons, completion_num_tokens, scores
+            ):
+                row = {
+                    "raw_chat_completion": resp,
+                    "stop_reason": stop_reason,
+                    "completion_num_tokens": n_tokens,
+                    "correct_score": score,
+                }
+                f.write(json.dumps(row) + "\n")
+        logger.info(f"ToolUse trajectories -> {out}")
