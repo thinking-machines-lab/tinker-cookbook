@@ -78,12 +78,9 @@ class Rubric:
         ]
 
     def extract_score(self, response: str) -> float:
-        default_score_regex = r"<scores?>\s*([01])\s*</scores?>"
-
-        for regex in (self.extraction_regex, default_score_regex):
-            match = re.search(regex, response, re.DOTALL)
-            if match is not None:
-                return float(match.group(1))
+        match = re.search(self.extraction_regex, response, re.DOTALL)
+        if match is not None:
+            return float(match.group(1))
 
         print(f"Warning: Failed to extract score from grader response: {response}")
         return 0.0
