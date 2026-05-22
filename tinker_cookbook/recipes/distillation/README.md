@@ -45,6 +45,8 @@ This script can also be used to replicate the experiments in our Discussion sect
 
 The teacher should use the same tokenizer family as the student, because the KL term scores the student's sampled token IDs under the teacher. For example, a `Qwen/Qwen3.5-9B-Base` student should use a Qwen3.5/Qwen3.6 teacher such as `Qwen/Qwen3.5-9B`; a Qwen3 teacher cannot score Qwen3.5-only token IDs.
 
+The rank-128 Qwen3.5 run above produced the 100-step sampler checkpoint `tinker://4bbf6e43-35b1-5575-a80e-0a14b7d3be3f:train:0/sampler_weights/000100`. The full 202-batch run finished with final sampler checkpoint `tinker://4bbf6e43-35b1-5575-a80e-0a14b7d3be3f:train:0/sampler_weights/final` and final training `teacher_kl=0.0404`.
+
 ### Checkpoints
 
 The results of running the above scripts with various LoRA ranks can be found here:
@@ -52,7 +54,7 @@ The results of running the above scripts with various LoRA ranks can be found he
 | Stage | Rank 8 | Rank 32 | Rank 128 |
 |-------|--------|---------|----------|
 | Supervised fine-tuning (SFT) | `tinker://c15f09f1-f225-5f98-bab1-ec8dfac5da2a:train:0/weights/final` | `tinker://b9190d16-c849-51d5-a690-1b5de146a284:train:0/weights/final` | `tinker://144888f7-c8e5-5534-8e6d-51e8394d7387:train:0/weights/final` |
-| On-policy distillation | `tinker://4a97bc02-f4d0-5ecd-888a-3e8cc5b0f7f6:train:0/sampler_weights/000080` | `tinker://bfffa2b2-a78f-59be-a2ef-cc9188bfce7e:train:0/sampler_weights/000080` | `tinker://1dd8de47-be86-54d3-9355-ebf80827be26:train:0/sampler_weights/000080` |
+| On-policy distillation | `tinker://4a97bc02-f4d0-5ecd-888a-3e8cc5b0f7f6:train:0/sampler_weights/000080` | `tinker://bfffa2b2-a78f-59be-a2ef-cc9188bfce7e:train:0/sampler_weights/000080` | `tinker://4bbf6e43-35b1-5575-a80e-0a14b7d3be3f:train:0/sampler_weights/000100` |
 
 See the on-policy distillation launch command above for an example of how to load the checkpoint path.
 
