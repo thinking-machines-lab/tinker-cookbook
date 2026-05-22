@@ -4,9 +4,9 @@ Trains models with partial LoRA configurations (attn-only, mlp-only) for
 1 step, downloads the real adapter weights from Tinker, and verifies
 build_lora_adapter and build_hf_model succeed with partial coverage.
 
-Tests three architectures: dense (Qwen3-4B-Instruct-2507), dense Qwen3.5
-(Qwen3.5-4B), and MoE (Qwen3.5-35B-A3B). All tests verify adapter export
-and full weight merge.
+Tests three architectures: dense Qwen3 (Qwen3-8B), dense Qwen3.5
+(Qwen3.5-4B), and MoE Qwen3.6 (Qwen3.6-35B-A3B). All tests verify adapter
+export and full weight merge.
 
 Requires TINKER_API_KEY and network access. Skipped otherwise.
 """
@@ -159,17 +159,17 @@ def _assert_full_merge(adapter_dir: Path, model_name: str, output_dir: Path) -> 
 
 
 # -------------------------------------------------------------------------
-# Dense model tests (Qwen3-4B-Instruct-2507)
+# Dense model tests (Qwen3-8B)
 # -------------------------------------------------------------------------
 
-_DENSE_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
-_DENSE_RENDERER = "qwen3_instruct"
+_DENSE_MODEL = "Qwen/Qwen3-8B"
+_DENSE_RENDERER = "qwen3"
 
 
 @pytest.mark.integration
 @pytest.mark.timeout(900)
 class TestPartialLoraDense:
-    """E2E: partial LoRA on dense Qwen3-4B-Instruct-2507 → download → adapter export + full merge."""
+    """E2E: partial LoRA on dense Qwen3-8B → download → adapter export + full merge."""
 
     def test_attn_only(self) -> None:
         """train_attn=True, train_mlp=False, train_unembed=False."""
@@ -267,17 +267,17 @@ class TestPartialLoraQwen35:
 
 
 # -------------------------------------------------------------------------
-# MoE model tests (Qwen3.5-30B-A3B)
+# MoE model tests (Qwen3.6-35B-A3B)
 # -------------------------------------------------------------------------
 
-_MOE_MODEL = "Qwen/Qwen3.5-35B-A3B"
+_MOE_MODEL = "Qwen/Qwen3.6-35B-A3B"
 _MOE_RENDERER = "qwen3_5"
 
 
 @pytest.mark.integration
 @pytest.mark.timeout(900)
 class TestPartialLoraMoE:
-    """E2E: partial LoRA on MoE Qwen3.5-35B-A3B → download → adapter export + full merge."""
+    """E2E: partial LoRA on MoE Qwen3.6-35B-A3B → download → adapter export + full merge."""
 
     def test_attn_only(self) -> None:
         """train_attn=True, train_mlp=False, train_unembed=False on MoE."""

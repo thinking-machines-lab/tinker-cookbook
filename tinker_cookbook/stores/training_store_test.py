@@ -22,7 +22,7 @@ def run_dir(tmp_path: Path) -> Path:
     (d / "config.json").write_text(
         json.dumps(
             {
-                "model_name": "Llama-3.1-8B",
+                "model_name": "Qwen3.5-9B-Base",
                 "learning_rate": 1e-4,
                 "loss_fn": "importance_sampling",
                 "lora_rank": 32,
@@ -120,7 +120,7 @@ class TestTrainingRunStore:
         store = TrainingRunStore(LocalStorage(run_dir))
         config = store.read_config()
         assert config is not None
-        assert config["model_name"] == "Llama-3.1-8B"
+        assert config["model_name"] == "Qwen3.5-9B-Base"
 
     def test_config_cached(self, run_dir: Path) -> None:
         store = TrainingRunStore(LocalStorage(run_dir))
@@ -199,7 +199,7 @@ class TestTrainingRunStore:
         restored = pickle.loads(pickle.dumps(store))
         config = restored.read_config()
         assert config is not None
-        assert config["model_name"] == "Llama-3.1-8B"
+        assert config["model_name"] == "Qwen3.5-9B-Base"
 
     def test_nonexistent(self, tmp_path: Path) -> None:
         store = TrainingRunStore(LocalStorage(tmp_path), "nonexistent")
@@ -348,7 +348,7 @@ class TestRunRegistry:
         store = registry.get_training_store(run_id)
         config = store.read_config()
         assert config is not None
-        assert config["model_name"] == "Llama-3.1-8B"
+        assert config["model_name"] == "Qwen3.5-9B-Base"
 
     def test_multi_storage(self, tmp_path: Path) -> None:
         # Create two storage roots with different runs

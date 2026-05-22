@@ -458,10 +458,10 @@ CONVERSATION_REGISTRY: dict[str, tuple[Callable[[], list[Message]], str, bool]] 
 
 # Models that support tool calling in their renderers
 TOOL_CAPABLE_MODELS = {
-    "Qwen/Qwen3-30B-A3B",
+    "Qwen/Qwen3-8B",
     "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "Qwen/Qwen3-VL-30B-A3B-Instruct",
-    "Qwen/Qwen3.5-35B-A3B",
+    "Qwen/Qwen3.6-35B-A3B",
     "meta-llama/Llama-3.1-8B-Instruct",
     "deepseek-ai/DeepSeek-V3.1",
     "moonshotai/Kimi-K2-Thinking",
@@ -482,15 +482,15 @@ TOOL_CAPABLE_MODELS = {
 # - hf_kwargs: Extra kwargs to pass to apply_chat_template (e.g., {"thinking": True})
 _HF_TEST_MODELS = [
     ("meta-llama/Llama-3.1-8B-Instruct", None, {}),
-    ("Qwen/Qwen3-30B-A3B", None, {}),
+    ("Qwen/Qwen3-8B", None, {}),
     ("Qwen/Qwen3-30B-A3B-Instruct-2507", None, {}),
     ("deepseek-ai/DeepSeek-V3.1", None, {}),  # non-thinking (default)
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking", {"thinking": True}),  # thinking mode
     ("openai/gpt-oss-20b", None, {}),
     ("moonshotai/Kimi-K2-Thinking", None, {}),
     ("Qwen/Qwen3-VL-30B-A3B-Instruct", None, {}),
-    ("Qwen/Qwen3.5-35B-A3B", None, {}),
-    ("Qwen/Qwen3.5-35B-A3B", "qwen3_5_disable_thinking", {"enable_thinking": False}),
+    ("Qwen/Qwen3.6-35B-A3B", None, {}),
+    ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking", {"enable_thinking": False}),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", None, {}),
     (
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
@@ -504,10 +504,10 @@ _HF_TEST_MODELS = [
 # - Llama3: see llama3.py docstring (double-encoding, assistant content handling)
 # - gpt-oss: no HF template
 _HF_TOOL_COMPATIBLE_MODELS = {
-    "Qwen/Qwen3-30B-A3B",
+    "Qwen/Qwen3-8B",
     "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "Qwen/Qwen3-VL-30B-A3B-Instruct",
-    "Qwen/Qwen3.5-35B-A3B",
+    "Qwen/Qwen3.6-35B-A3B",
     "deepseek-ai/DeepSeek-V3.1",
     "moonshotai/Kimi-K2-Thinking",
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
@@ -607,7 +607,7 @@ def test_generation_against_hf_chat_templates(
 # Models for supervised tests
 # Excluded:
 # - gpt-oss: analysis channel diverges from HF template
-# - Qwen/Qwen3-30B-A3B: HF template adds empty <think> blocks to non-thinking messages
+# - Qwen/Qwen3-8B: HF template adds empty <think> blocks to non-thinking messages
 # Format: (model_name, renderer_override, hf_kwargs) - same as _HF_TEST_MODELS
 _SUPERVISED_TEST_MODELS = [
     ("meta-llama/Llama-3.1-8B-Instruct", None, {}),
@@ -616,8 +616,8 @@ _SUPERVISED_TEST_MODELS = [
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking", {"thinking": True}),  # thinking mode
     ("moonshotai/Kimi-K2-Thinking", None, {}),
     ("Qwen/Qwen3-VL-30B-A3B-Instruct", None, {}),
-    ("Qwen/Qwen3.5-35B-A3B", None, {}),
-    ("Qwen/Qwen3.5-35B-A3B", "qwen3_5_disable_thinking", {"enable_thinking": False}),
+    ("Qwen/Qwen3.6-35B-A3B", None, {}),
+    ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking", {"enable_thinking": False}),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", None, {}),
     (
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
@@ -709,7 +709,7 @@ def test_supervised_example_against_hf_chat_templates(
 @pytest.mark.parametrize(
     "model_name",
     [
-        "Qwen/Qwen3-30B-A3B",
+        "Qwen/Qwen3-8B",
     ],
 )
 def test_tokenization_boundary_with_whitespace(model_name: str):
@@ -756,8 +756,8 @@ def test_tokenization_boundary_with_whitespace(model_name: str):
 @pytest.mark.parametrize(
     "model_name",
     [
-        "Qwen/Qwen3-30B-A3B",
-        "Qwen/Qwen3.5-35B-A3B",
+        "Qwen/Qwen3-8B",
+        "Qwen/Qwen3.6-35B-A3B",
         # Llama3 does not support tool calling - see llama3.py docstring
         "deepseek-ai/DeepSeek-V3.1",
         "moonshotai/Kimi-K2-Thinking",
@@ -817,7 +817,7 @@ def test_tool_call_supervised_rendering(model_name: str):
     "model_name,renderer_class",
     [
         ("Qwen/Qwen3-8B", Qwen3Renderer),
-        ("Qwen/Qwen3.5-35B-A3B", Qwen3_5Renderer),
+        ("Qwen/Qwen3.6-35B-A3B", Qwen3_5Renderer),
         ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3ThinkingRenderer),
         ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer),
         ("moonshotai/Kimi-K2.5", KimiK25Renderer),
@@ -849,7 +849,7 @@ def test_strip_thinking_from_history_default(model_name: str, renderer_class):
     "model_name,renderer_class",
     [
         ("Qwen/Qwen3-8B", Qwen3Renderer),
-        ("Qwen/Qwen3.5-35B-A3B", Qwen3_5Renderer),
+        ("Qwen/Qwen3.6-35B-A3B", Qwen3_5Renderer),
         ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3ThinkingRenderer),
         ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer),
         ("moonshotai/Kimi-K2.5", KimiK25Renderer),
@@ -935,8 +935,8 @@ _CONSISTENCY_RENDERERS = [
     ("Qwen/Qwen3-8B", "qwen3"),
     ("Qwen/Qwen3-8B", "qwen3_disable_thinking"),
     ("Qwen/Qwen3-8B", "qwen3_instruct"),
-    ("Qwen/Qwen3.5-35B-A3B", "qwen3_5"),
-    ("Qwen/Qwen3.5-35B-A3B", "qwen3_5_disable_thinking"),
+    ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
+    ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking"),
     ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning"),
@@ -1103,10 +1103,10 @@ def test_supervised_generation_parse_consistency(
 @pytest.mark.parametrize(
     "model_name,renderer_name",
     [
-        ("Qwen/Qwen3-30B-A3B", "qwen3"),
+        ("Qwen/Qwen3-8B", "qwen3"),
         ("Qwen/Qwen3-8B", "qwen3_disable_thinking"),
-        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5"),
-        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5_disable_thinking"),
+        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
+        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
         ("meta-llama/Llama-3.1-8B-Instruct", "llama3"),
         # deepseekv3 defaults to non-thinking, deepseekv3_thinking is thinking mode
         ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
@@ -1181,8 +1181,8 @@ def test_eot_parsing(model_name: str, renderer_name: str):
     [
         ("meta-llama/Llama-3.1-8B-Instruct", "llama3"),
         ("Qwen/Qwen3-8B", "qwen3"),
-        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5"),
-        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5_disable_thinking"),
+        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
+        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
         ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
     ],
 )
@@ -1313,14 +1313,14 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
     ),
     # Qwen3.5 with strip_thinking_from_history=False (preserves thinking)
     (
-        "Qwen/Qwen3.5-35B-A3B",
+        "Qwen/Qwen3.6-35B-A3B",
         Qwen3_5Renderer,
         {"strip_thinking_from_history": False},
         get_multiturn_thinking_conversation,
     ),
     # Qwen3.5 disable thinking with strip_thinking_from_history=False (preserves thinking)
     (
-        "Qwen/Qwen3.5-35B-A3B",
+        "Qwen/Qwen3.6-35B-A3B",
         Qwen3_5DisableThinkingRenderer,
         {"strip_thinking_from_history": False},
         get_multiturn_thinking_conversation,
