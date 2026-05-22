@@ -22,10 +22,12 @@ class Rubric:
     """
 
     rubric_str: str
-    extraction_regex: str = r"<scores?>(.*?)</scores?>"
+    extraction_regex: str = r"<scores?>\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*</scores?>"
     grader_output_format_instruction: str = (
         "Please output your score between 0 and 1 wrapped in <score> ... </score>"
     )
+    min_score: float = 0.0
+    max_score: float = 1.0
 
     def _convert_role(self, role: Role) -> str:
         return "Human" if role in ("user", "system") else "Chatbot"
@@ -78,50 +80,49 @@ class Rubric:
         ]
 
     def extract_score(self, response: str) -> float:
-        def parse_score(score_text: str) -> float:
-            return float(score_text.strip())
-
-        match = re.search(self.extraction_regex, response, re.DOTALL)
-        if match is None:
-            match = re.search(r"<scores?>(.*?)</scores?>", response, re.DOTALL)
-        if match is not None:
-            try:
-                return parse_score(match.group(1))
-            except ValueError:
-                print(f"Warning: Failed to extract score from grader response: {response}")
-                return 0.0
-
-        tag_match = re.search(
-            r"<([A-Za-z][A-Za-z0-9_-]*)>\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*</\1>",
-            response,
-            re.DOTALL,
+        default_score_regex = (
+            r"<scores?>\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*</scores?>"
         )
-        if tag_match is not None:
+
+        def parse_score(score_text: str) -> float | None:
             try:
-                return parse_score(tag_match.group(2))
+                score = float(score_text.strip())
             except ValueError:
-                print(f"Warning: Failed to extract score from grader response: {response}")
-                return 0.0
+                return None
+            if self.min_score <= score <= self.max_score:
+                return score
+            return None
+
+        for regex in (self.extraction_regex, default_score_regex):
+            matches = list(re.finditer(regex, response, re.DOTALL))
+            for match in reversed(matches):
+                score = parse_score(match.group(1))
+                if score is not None:
+                    return score
 
         print(f"Warning: Failed to extract score from grader response: {response}")
         return 0.0
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "rubric_str": self.rubric_str,
             "extraction_regex": self.extraction_regex,
             "grader_output_format_instruction": self.grader_output_format_instruction,
+            "min_score": self.min_score,
+            "max_score": self.max_score,
         }
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict())
 
     @staticmethod
-    def from_dict(d: dict[str, str]) -> "Rubric":
+    def from_dict(d: dict[str, Any]) -> "Rubric":
         return Rubric(
             rubric_str=d["rubric_str"],
             extraction_regex=d["extraction_regex"],
             grader_output_format_instruction=d["grader_output_format_instruction"],
+            min_score=d.get("min_score", 0.0),
+            max_score=d.get("max_score", 1.0),
         )
 
     @staticmethod
@@ -209,8 +210,10 @@ class PrometheusDatapointListBuilder(RubricDatapointListBuilder):
 
         rubric = Rubric(
             rubric_str=rubric_text,
-            extraction_regex=r"<scores?>(.*?)</scores?>",
+            extraction_regex=r"<scores?>\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*</scores?>",
             grader_output_format_instruction="Please output your score between 1 and 5 wrapped in <score> ... </score>",
+            min_score=1.0,
+            max_score=5.0,
         )
 
         return RubricBasedDatapoint(
