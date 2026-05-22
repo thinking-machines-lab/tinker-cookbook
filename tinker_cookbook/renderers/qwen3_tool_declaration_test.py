@@ -22,7 +22,12 @@ QWEN3_MODELS = [
 ]
 
 # Qwen3.5 models use XML tool calls and raw function specs in tool declarations.
+# Qwen3.6 reuses the `qwen3_5` renderer (same tokenizer, special tokens, and chat
+# template — see model_info.py), so we parametrize over both families to confirm
+# the renderer-vs-HF parity holds for each.
 QWEN3_5_MODELS = [
+    ("Qwen/Qwen3.5-4B", "qwen3_5"),
+    ("Qwen/Qwen3.5-4B", "qwen3_5_disable_thinking"),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
 ]
