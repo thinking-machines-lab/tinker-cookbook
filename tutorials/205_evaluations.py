@@ -111,14 +111,14 @@ async def _(TensorData, api_key, get_renderer, mo, tinker, torch):
     if api_key.value:
         os.environ["TINKER_API_KEY"] = api_key.value
 
-    MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
+    MODEL_NAME = "Qwen/Qwen3.5-4B"
 
     service_client = tinker.ServiceClient()
     training_client = await service_client.create_lora_training_client_async(
         base_model=MODEL_NAME, rank=16
     )
     tokenizer = training_client.get_tokenizer()
-    renderer = get_renderer("qwen3_instruct", tokenizer)
+    renderer = get_renderer("qwen3_5_disable_thinking", tokenizer)
 
     # Prepare held-out SFT data for the NLL evaluator
     eval_examples = [
@@ -299,7 +299,7 @@ def _(mo):
 
     config = train.Config(
         log_path="~/logs/sft-with-evals",
-        model_name="Qwen/Qwen3-4B-Instruct-2507",
+        model_name="Qwen/Qwen3.5-4B",
         dataset_builder=my_dataset_builder,
         learning_rate=1e-4,
 
@@ -328,7 +328,7 @@ def _(mo):
 
     config = train.Config(
         log_path="~/logs/rl-with-evals",
-        model_name="meta-llama/Llama-3.1-8B",
+        model_name="Qwen/Qwen3.5-9B-Base",
         dataset_builder=my_rl_dataset_builder,
 
         evaluator_builders=[make_accuracy_evaluator],

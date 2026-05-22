@@ -94,7 +94,7 @@ def _(mo):
     mo.md(r"""
     ## Sampling from a model
 
-    Let's create a **SamplingClient** to generate text. We will use `Qwen/Qwen3-4B-Instruct-2507`, a compact model that keeps costs low.
+    Let's create a **SamplingClient** to generate text. We will use `Qwen/Qwen3.5-4B`, a compact model that keeps costs low.
 
     The sampling workflow is:
     1. Create a `SamplingClient` with a base model name
@@ -107,7 +107,7 @@ def _(mo):
 
 @app.cell
 async def _(service_client):
-    MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
+    MODEL_NAME = "Qwen/Qwen3.5-4B"
 
     # Create a sampling client -- this connects to a remote GPU worker
     sampling_client = await service_client.create_sampling_client_async(base_model=MODEL_NAME)

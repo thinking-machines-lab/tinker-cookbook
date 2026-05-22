@@ -37,7 +37,7 @@ def _(mo):
     mo.md(r"""
     ## Setup
 
-    We use Llama 3.2 3B as the base model. All three stages use LoRA for parameter-efficient training.
+    We use Qwen3.5 9B as the base model. All three stages use LoRA for parameter-efficient training.
     """)
     return
 
@@ -54,7 +54,7 @@ def _():
     from tinker_cookbook import checkpoint_utils, model_info
     from tinker_cookbook.supervised.types import TrainOnWhat
 
-    BASE_MODEL = "meta-llama/Llama-3.2-3B"
+    BASE_MODEL = "Qwen/Qwen3.5-9B-Base"
     LORA_RANK = 64
     MAX_LENGTH = 16384
     BATCH_SIZE = 256

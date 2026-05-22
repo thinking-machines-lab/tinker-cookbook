@@ -43,8 +43,8 @@ def _(mo):
 def _():
     from tinker_cookbook import renderers, tokenizer_utils
 
-    tokenizer = tokenizer_utils.get_tokenizer("Qwen/Qwen3-30B-A3B")
-    renderer = renderers.get_renderer("qwen3", tokenizer)
+    tokenizer = tokenizer_utils.get_tokenizer("Qwen/Qwen3.6-35B-A3B")
+    renderer = renderers.get_renderer("qwen3_5", tokenizer)
     renderer  # noqa: B018
     return renderer, renderers, tokenizer, tokenizer_utils
 
@@ -120,7 +120,7 @@ def _(renderer, tokenizer):
     stop_sequences = renderer.get_stop_sequences()
     print(f"Stop sequences: {stop_sequences}")
 
-    # For Qwen3, this is the <|im_end|> token
+    # For Qwen3.5/3.6, this is the <|im_end|> token
     for tok in stop_sequences:
         if isinstance(tok, int):
             print(f"  Token {tok} decodes to: {tokenizer.decode([tok])!r}")
@@ -166,7 +166,7 @@ def _(mo):
     from tinker.types import SamplingParams
 
     service_client = tinker.ServiceClient()
-    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3-30B-A3B")
+    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.6-35B-A3B")
 
     prompt = renderer.build_generation_prompt(messages[:-1])
     stop_sequences = renderer.get_stop_sequences()
@@ -256,13 +256,13 @@ def _(mo):
 
     | Name | Model family | Notes |
     |---|---|---|
-    | `qwen3` | Qwen3 | Thinking enabled (default) |
-    | `qwen3_disable_thinking` | Qwen3 | Thinking disabled |
-    | `llama3` | Llama 3 | Omits the HF preamble |
+    | `qwen3_5` | Qwen3.5 / Qwen3.6 (incl. VL) | Thinking enabled (default) |
+    | `qwen3_5_disable_thinking` | Qwen3.5 / Qwen3.6 (incl. VL) | Thinking disabled |
     | `deepseekv3` | DeepSeek V3 | Non-thinking mode (default) |
     | `deepseekv3_thinking` | DeepSeek V3 | Thinking mode |
     | `nemotron3` | NVIDIA Nemotron 3 | Thinking enabled |
-    | `kimi_k2` | Kimi K2 | Thinking format |
+    | `kimi_k26` | Kimi K2.6 | Thinking enabled (default) |
+    | `kimi_k26_disable_thinking` | Kimi K2.6 | Thinking disabled |
 
     Each renderer produces the correct special tokens for its model family. The default renderers match HuggingFace's `apply_chat_template` output, so models trained with Tinker work with the OpenAI-compatible endpoint.
     """)
@@ -273,12 +273,12 @@ def _(mo):
 def _(renderers, tokenizer_utils):
     # Example: switching between renderers
     # Each model family needs its own tokenizer
-    qwen_tokenizer = tokenizer_utils.get_tokenizer("Qwen/Qwen3-30B-A3B")
-    qwen_renderer = renderers.get_renderer("qwen3", qwen_tokenizer)
+    qwen_tokenizer = tokenizer_utils.get_tokenizer("Qwen/Qwen3.6-35B-A3B")
+    qwen_renderer = renderers.get_renderer("qwen3_5", qwen_tokenizer)
 
     test_messages = [{"role": "user", "content": "Hello!"}]
     prompt_tokens = qwen_renderer.build_generation_prompt(test_messages)
-    print("Qwen3 prompt:")
+    print("Qwen3.5/3.6 prompt:")
     print(qwen_tokenizer.decode(prompt_tokens.to_ints()))
     return prompt_tokens, qwen_renderer, qwen_tokenizer, test_messages
 
@@ -288,7 +288,7 @@ def _(mo):
     mo.md(r"""
     ## Vision inputs with `ImagePart`
 
-    For vision-language models (like Qwen3-VL), message content can include images alongside text. Use `ImagePart` for images and `TextPart` for text within the same message.
+    For vision-language models (Qwen3.5 and Qwen3.6 are all vision-capable), message content can include images alongside text. Use `ImagePart` for images and `TextPart` for text within the same message.
     """)
     return
 
@@ -321,11 +321,11 @@ def _(mo):
     ```python
     from tinker_cookbook.image_processing_utils import get_image_processor
 
-    model_name = "Qwen/Qwen3-VL-235B-A22B-Instruct"
+    model_name = "Qwen/Qwen3.5-397B-A17B"
     tokenizer = tokenizer_utils.get_tokenizer(model_name)
     image_processor = get_image_processor(model_name)
 
-    renderer = renderers.get_renderer("qwen3_vl_instruct", tokenizer, image_processor=image_processor)
+    renderer = renderers.get_renderer("qwen3_5_disable_thinking", tokenizer, image_processor=image_processor)
     ```
 
     The VL renderers handle vision special tokens (`<|vision_start|>`, `<|vision_end|>`) and image preprocessing automatically.
@@ -350,10 +350,10 @@ def _(renderers):
     # Define a factory function that creates your renderer
     def my_renderer_factory(tokenizer, image_processor=None):
         # In practice, you would return a custom Renderer subclass here.
-        # For demonstration, we just return the Qwen3 renderer.
-        from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
+        # For demonstration, we just return the Qwen3.5 renderer.
+        from tinker_cookbook.renderers.qwen3_5 import Qwen3_5Renderer
 
-        return Qwen3Renderer(tokenizer)
+        return Qwen3_5Renderer(tokenizer)
 
     # Register it under a namespaced name
     renderers.register_renderer("MyOrg/custom_format", my_renderer_factory)

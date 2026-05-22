@@ -66,7 +66,7 @@ def _(mo):
     mo.md(r"""
     ## Setup
 
-    Create a LoRA training client and a renderer. We use Llama-3.1-8B (a base/pretrained model) since RL works well from a base model that has broad knowledge but hasn't been instruction-tuned.
+    Create a LoRA training client and a renderer. We use Qwen3.5-9B-Base (a base/pretrained model) since RL works well from a base model that has broad knowledge but hasn't been instruction-tuned.
     """)
     return
 
@@ -90,14 +90,14 @@ async def _(api_key, get_renderer, mo, tinker):
     if api_key.value:
         os.environ["TINKER_API_KEY"] = api_key.value
 
-    base_model = "meta-llama/Llama-3.1-8B"
+    base_model = "Qwen/Qwen3.5-9B-Base"
 
     service_client = tinker.ServiceClient()
     training_client = await service_client.create_lora_training_client_async(
         base_model=base_model, rank=32
     )
     tokenizer = training_client.get_tokenizer()
-    renderer = get_renderer("llama3", tokenizer)
+    renderer = get_renderer("role_colon", tokenizer)
 
     sampling_params = tinker.SamplingParams(
         max_tokens=256,

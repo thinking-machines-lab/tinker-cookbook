@@ -68,7 +68,7 @@ def _(mo):
 def _(KLReferenceConfig):
     # Example: KL penalty against the base model
     kl_config = KLReferenceConfig(
-        base_model="Qwen/Qwen3-4B-Instruct-2507",
+        base_model="Qwen/Qwen3.5-4B",
         load_checkpoint_path=None,  # Use base model weights as reference
     )
 
