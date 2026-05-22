@@ -22,9 +22,14 @@ QWEN3_MODELS = [
 ]
 
 # Qwen3.5 models use XML tool calls and raw function specs in tool declarations.
+# NB: kept on Qwen3.5-35B-A3B (a deprecated model). Qwen3.6's HF chat template
+# wraps tool declarations in {"type": "function", "function": {...}} (OpenAI-
+# style), whereas Qwen3.5 emits the raw function spec — which is what the
+# `qwen3_5` renderer also emits. Swap to Qwen3.6 here would break the
+# renderer-vs-HF parity assertions in this file.
 QWEN3_5_MODELS = [
-    ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
-    ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
+    ("Qwen/Qwen3.5-35B-A3B", "qwen3_5"),
+    ("Qwen/Qwen3.5-35B-A3B", "qwen3_5_disable_thinking"),
 ]
 
 ALL_QWEN_MODELS = QWEN3_MODELS + QWEN3_5_MODELS
