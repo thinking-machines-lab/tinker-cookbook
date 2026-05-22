@@ -188,7 +188,7 @@ class PrometheusDatapointListBuilder(RubricDatapointListBuilder):
 
         rubric = Rubric(
             rubric_str=rubric_text,
-            extraction_regex=r"<scores?>\s*([1-5])\s*</scores?>",
+            extraction_regex=r"<score>(.*)</score>",
             grader_output_format_instruction="Please output your score between 1 and 5 wrapped in <score> ... </score>",
         )
 
