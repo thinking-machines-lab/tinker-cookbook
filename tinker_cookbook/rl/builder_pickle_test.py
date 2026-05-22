@@ -101,7 +101,7 @@ class TestRolloutTask:
         assert restored.temperature == 1.0
         assert restored.remove_constant_reward_groups is False
         assert restored.env_group_builder.num_envs == 2
-        assert restored.env_group_builder.env_thunk.args[2]._renderer_name == "llama3"
+        assert restored.env_group_builder.env_thunk.args[2]._renderer_name == "qwen3_5"
 
 
 class TestRolloutExecutorContextVar:
