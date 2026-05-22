@@ -159,3 +159,5 @@ python -m tinker_cookbook.recipes.distillation.on_policy_multi_teacher \
     lora_rank=128 \
     wandb_project=cookbook_distillation
 ```
+
+The Qwen3.5-9B run above completed 403 batches with final sampler checkpoint `tinker://5b2d2979-6c02-5dfb-acd4-d988ab8e73d5:train:0/sampler_weights/final`. The final training `teacher_kl` was 0.1427, with `teacher_kl/dataset_0=0.0533` for DeepMath and `teacher_kl/dataset_1=0.1924` for Tulu3.
