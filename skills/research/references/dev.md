@@ -184,7 +184,7 @@ tinker_cookbook/recipes/<recipe_name>/
 ```python
 @chz.chz
 class CLIConfig:
-    model_name: str = "meta-llama/Llama-3.1-8B"
+    model_name: str = "Qwen/Qwen3.5-9B-Base"
     learning_rate: float = 1e-4
 
 async def cli_main(cli_config: CLIConfig):

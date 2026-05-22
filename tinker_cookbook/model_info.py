@@ -63,8 +63,6 @@ def get_llama_info() -> dict[str, ModelAttributes]:
     """
     org = "meta-llama"
     return {
-        "Llama-3.2-1B-Instruct": ModelAttributes(org, "3.2", "1B", True, _LLAMA3),
-        "Llama-3.2-3B-Instruct": ModelAttributes(org, "3.2", "3B", True, _LLAMA3),
         "Llama-3.1-8B-Instruct": ModelAttributes(org, "3.1", "8B", True, _LLAMA3),
         "Llama-3.2-1B": ModelAttributes(org, "3.2", "1B", False, _ROLE_COLON),
         "Llama-3.2-3B": ModelAttributes(org, "3.2", "3B", False, _ROLE_COLON),
@@ -92,15 +90,9 @@ def get_qwen_info() -> dict[str, ModelAttributes]:
         "Qwen3-VL-235B-A22B-Instruct": ModelAttributes(
             org, "3", "235B-A22B", True, _QWEN3_VL_INSTRUCT, is_vl=True
         ),
-        "Qwen3-4B-Base": ModelAttributes(org, "3", "4B", False, _ROLE_COLON),
         "Qwen3-8B-Base": ModelAttributes(org, "3", "8B", False, _ROLE_COLON),
-        "Qwen3-14B-Base": ModelAttributes(org, "3", "14B", False, _ROLE_COLON),
         "Qwen3-30B-A3B-Base": ModelAttributes(org, "3", "30B-A3B", False, _ROLE_COLON),
-        "Qwen3-0.6B": ModelAttributes(org, "3", "0.6B", True, _QWEN3),
-        "Qwen3-1.7B": ModelAttributes(org, "3", "1.7B", True, _QWEN3),
-        "Qwen3-4B": ModelAttributes(org, "3", "4B", True, _QWEN3),
         "Qwen3-8B": ModelAttributes(org, "3", "8B", True, _QWEN3),
-        "Qwen3-14B": ModelAttributes(org, "3", "14B", True, _QWEN3),
         "Qwen3-32B": ModelAttributes(org, "3", "32B", True, _QWEN3),
         "Qwen3-30B-A3B": ModelAttributes(org, "3", "30B-A3B", True, _QWEN3),
         "Qwen3-4B-Instruct-2507": ModelAttributes(org, "3", "4B", True, _QWEN3_INSTRUCT),

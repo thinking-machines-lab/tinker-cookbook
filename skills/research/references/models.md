@@ -6,9 +6,14 @@ Full listing of available models with types, architecture, and sizes.
 
 | Model | Type | Arch | Size |
 |-------|------|------|------|
+| `Qwen/Qwen3.6-35B-A3B` | Hybrid + Vision | MoE | Medium |
+| `Qwen/Qwen3.6-27B` | Hybrid + Vision | Dense | Medium |
 | `Qwen/Qwen3.5-397B-A17B` | Hybrid + Vision | MoE | Large |
 | `Qwen/Qwen3.5-35B-A3B` | Hybrid + Vision | MoE | Medium |
+| `Qwen/Qwen3.5-35B-A3B-Base` | Base | MoE | Medium |
 | `Qwen/Qwen3.5-27B` | Hybrid + Vision | Dense | Medium |
+| `Qwen/Qwen3.5-9B` | Hybrid + Vision | Dense | Small |
+| `Qwen/Qwen3.5-9B-Base` | Base | Dense | Small |
 | `Qwen/Qwen3.5-4B` | Hybrid + Vision | Dense | Compact |
 | `Qwen/Qwen3-235B-A22B-Instruct-2507` | Instruction | MoE | Large |
 | `Qwen/Qwen3-30B-A3B-Instruct-2507` | Instruction | MoE | Medium |
@@ -20,6 +25,8 @@ Full listing of available models with types, architecture, and sizes.
 | `Qwen/Qwen3-4B-Instruct-2507` | Instruction | Dense | Compact |
 | `Qwen/Qwen3-VL-235B-A22B-Instruct` | Vision | MoE | Large |
 | `Qwen/Qwen3-VL-30B-A3B-Instruct` | Vision | MoE | Medium |
+
+Use the `_disable_thinking` renderer variant when you want direct instruction-following behavior from a hybrid Qwen model.
 
 ## Llama family
 

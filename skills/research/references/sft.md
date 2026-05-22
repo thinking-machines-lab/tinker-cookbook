@@ -14,13 +14,14 @@
 | `qwen3_instruct` | Qwen3 Instruct 2507 | No thinking |
 | `qwen3_vl` | Qwen3 VL | Vision + thinking |
 | `qwen3_vl_instruct` | Qwen3 VL Instruct | Vision, no thinking |
-| `qwen3_5` | Qwen3.5 VL | Thinking enabled |
-| `qwen3_5_disable_thinking` | Qwen3.5 VL | Thinking disabled |
+| `qwen3_5` | Qwen3.5/Qwen3.6 VL | Thinking enabled |
+| `qwen3_5_disable_thinking` | Qwen3.5/Qwen3.6 VL | Thinking disabled |
 | `deepseekv3` | DeepSeek V3 | Defaults to non-thinking |
 | `deepseekv3_thinking` | DeepSeek V3 | Thinking mode |
 | `kimi_k2` | Kimi K2 | Thinking format |
-| `kimi_k25` | Kimi K2.5 | Thinking enabled |
-| `kimi_k25_disable_thinking` | Kimi K2.5 | Thinking disabled |
+| `kimi_k26` | Kimi K2.6 | Thinking enabled |
+| `kimi_k26_disable_thinking` | Kimi K2.6 | Thinking disabled |
+| `kimi_k26_preserve_thinking` | Kimi K2.6 | Preserve historical thinking |
 | `nemotron3` | Nemotron-3 | Thinking enabled |
 | `nemotron3_disable_thinking` | Nemotron-3 | Thinking disabled |
 | `gpt_oss_no_sysprompt` | GPT-OSS | No system prompt |
@@ -98,7 +99,7 @@ register_renderer("my_renderer", my_renderer_factory)
 - `tinker_cookbook/renderers/qwen3_5.py` — Qwen3.5 renderers
 - `tinker_cookbook/renderers/llama3.py` — Llama3 renderer
 - `tinker_cookbook/renderers/deepseek_v3.py` — DeepSeek renderers
-- `tinker_cookbook/renderers/kimi_k2.py`, `kimi_k25.py` — Kimi renderers
+- `tinker_cookbook/renderers/kimi_k2.py`, `kimi_k26.py` — Kimi renderers
 - `tinker_cookbook/renderers/nemotron3.py` — Nemotron renderer
 - `tinker_cookbook/renderers/gpt_oss.py` — GPT-OSS renderers
 
@@ -115,7 +116,7 @@ from tinker_cookbook import model_info
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 from tinker_cookbook.renderers import TrainOnWhat
 
-model_name = "meta-llama/Llama-3.1-8B"
+model_name = "Qwen/Qwen3.5-9B-Base"
 common_config = ChatDatasetBuilderCommonConfig(
     model_name_for_tokenizer=model_name,
     renderer_name=model_info.get_recommended_renderer_name(model_name),

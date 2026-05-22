@@ -35,7 +35,7 @@ from tinker_cookbook.utils.lr_scheduling import LRSchedule
 
 @chz.chz
 class CLIConfig:
-    model_name: str = "meta-llama/Llama-3.2-1B"
+    model_name: str = "Qwen/Qwen3.5-9B-Base"
     dataset: str = "hhh"  # hhh, helpsteer3, or ultrafeedback
     load_checkpoint_path: str | None = None
     renderer_name: str | None = None
@@ -158,7 +158,7 @@ from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 
 @chz.chz
 class CLIConfig:
-    base_model: str = "meta-llama/Llama-3.2-3B"
+    base_model: str = "Qwen/Qwen3.5-9B-Base"
     lora_rank: int = 64
     batch_size: int = 256
     max_length: int = 16384

@@ -75,7 +75,7 @@ For an identifier to pass to the SDK, call `service_client.get_server_capabiliti
 
 ## Common Pitfalls
 
-1. **Sequential API calls:** The #1 performance mistake. Always use `_async` variants and submit calls back-to-back before awaiting. Use `asyncio.gather` for concurrent evaluation — never sequential loops over API calls.
+1. **Sequential API calls:** The #1 performance mistake. Always use `_async` variants and submit calls back-to-back before awaiting. Use `asyncio.gather` for concurrent evaluation — never sequential loops over API calls. Tinker is designed for high request concurrency from a single Python process; when exact limits matter, check the current SDK/client configuration rather than inventing small caps. For very high parallelism, shard work across multiple Python processes and pass pickled sampling clients where appropriate.
 
 2. **Sampler desync:** Create a **new** sampling client after saving weights. A stale client silently samples from old weights.
 
