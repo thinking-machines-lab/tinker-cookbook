@@ -14,7 +14,7 @@ Our results can be reproduced by running:
 
 ### Supervised fine-tuning
 
-We observe an AIME'24 score of ~55% using a rank-128 LoRA after 3000 steps. We use a learning rate of 1e-3 with LoRA and 1e-4 with full fine-tuning.
+We observe an AIME'24 score of TODO% using a rank-128 LoRA after 3000 steps. We use a learning rate of 1e-3 with LoRA and 1e-4 with full fine-tuning.
 
 ```bash
 python -m tinker_cookbook.recipes.distillation.off_policy_reasoning \
@@ -27,7 +27,7 @@ python -m tinker_cookbook.recipes.distillation.off_policy_reasoning \
 
 ### On-policy distillation
 
-We observe an AIME'24 score of ~65% using a rank-128 LoRA after 100 steps. For on-policy distillation experiments, we use a learning rate of 1e-4 with LoRA and 5e-5 with full fine-tuning.
+We observe an AIME'24 score of TODO% using a rank-128 LoRA after 100 steps. For on-policy distillation experiments, we use a learning rate of 1e-4 with LoRA and 5e-5 with full fine-tuning.
 
 ```bash
 python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
@@ -42,10 +42,6 @@ python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
 ```
 
 This script can also be used to replicate the experiments in our Discussion section, after you have run RL to obtain an appropriate checkpoint for the teacher model.
-
-The teacher should use the same tokenizer family as the student, because the KL term scores the student's sampled token IDs under the teacher. For example, a `Qwen/Qwen3.5-9B-Base` student should use a Qwen3.5/Qwen3.6 teacher such as `Qwen/Qwen3.5-9B`; a Qwen3 teacher cannot score Qwen3.5-only token IDs.
-
-The rank-128 Qwen3.5 run above produced the 100-step sampler checkpoint `tinker://4bbf6e43-35b1-5575-a80e-0a14b7d3be3f:train:0/sampler_weights/000100`. The full 202-batch run finished with final sampler checkpoint `tinker://4bbf6e43-35b1-5575-a80e-0a14b7d3be3f:train:0/sampler_weights/final` and final training `teacher_kl=0.0404`.
 
 ### Checkpoints
 
@@ -72,6 +68,7 @@ In our experiment, we saw [IF-eval](https://huggingface.co/datasets/google/IFEva
 python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
     model_name=Qwen/Qwen3.5-9B-Base \
     teacher_model=Qwen/Qwen3.5-9B \
+    load_checkpoint_path=tinker://YOUR_SFT_INITIALIZATION \
     dataset=tulu3 \
     learning_rate=1e-4 \
     groups_per_batch=64 \
@@ -141,7 +138,7 @@ For every dataset, we can define a teacher model and batch size (`groups_per_bat
 {
     "dataset_builder": RLDatasetBuilder,
     "teacher_model": {
-        "base_model": str,  # e.g. "Qwen/Qwen3.6-27B"
+        "base_model": str,  # e.g. "Qwen/Qwen3.5-9B"
         "load_checkpoint_path": str | None  # e.g. "tinker://<unique_id>/sampler_weights/final
     },
     "groups_per_batch": int
@@ -152,12 +149,10 @@ The trainer will then sample from each configuration, and concatenate all the in
 
 ```bash
 python -m tinker_cookbook.recipes.distillation.on_policy_multi_teacher \
-    model_name=Qwen/Qwen3.5-9B \
+    model_name=Qwen/Qwen3.5-9B-Base \
     learning_rate=1e-4 \
     deepmath_groups_per_batch=256 \
     tulu3_groups_per_batch=256 \
     lora_rank=128 \
     wandb_project=cookbook_distillation
 ```
-
-The Qwen3.5-9B run above completed 403 batches with final sampler checkpoint `tinker://5b2d2979-6c02-5dfb-acd4-d988ab8e73d5:train:0/sampler_weights/final`. The final training `teacher_kl` was 0.1427, with `teacher_kl/dataset_0=0.0533` for DeepMath and `teacher_kl/dataset_1=0.1924` for Tulu3.
