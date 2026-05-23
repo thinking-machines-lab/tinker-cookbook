@@ -45,7 +45,7 @@ The point (0,3): x=0, y=3. r = sqrt(0^2+3^2)=3. \theta = arctan(y/x) but x=0, y>
 python -m tinker_cookbook.recipes.math_rl.train env=gsm8k model_name="Qwen/Qwen3.5-9B" group_size=64 groups_per_batch=32 learning_rate=8e-5 max_tokens=1024
 ```
 
-Generally, you should observe that training reward goes above 0.8 within a few steps. After 220 steps of training, we achieve `"test/env/all/correct": 0.9090`. A smaller group_size (8) and larger `groups_per_batch` (64) will achieve `0.8824` accuracy in around a quarter of the time.
+Generally, you should observe that training reward goes above 0.8 within a few steps. After 220 steps of training, we achieve `"test/env/all/correct": 0.9621`. A smaller `group_size` (8) and larger `groups_per_batch` (64) reaches `"test/env/all/correct": 0.9447`.
 
 Here is an example chain of thought,
 ```
