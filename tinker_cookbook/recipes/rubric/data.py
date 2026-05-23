@@ -22,7 +22,7 @@ class Rubric:
     """
 
     rubric_str: str
-    extraction_regex: str = r"<scores?>\s*([01])\s*</scores?>"
+    extraction_regex: str = r"<score>(.*)</score>"
     grader_output_format_instruction: str = (
         "Please output your score between 0 and 1 wrapped in <score> ... </score>"
     )
