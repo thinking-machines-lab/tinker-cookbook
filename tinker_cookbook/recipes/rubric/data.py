@@ -22,7 +22,7 @@ class Rubric:
     """
 
     rubric_str: str
-    extraction_regex: str = r"<score>(.*)</score>"
+    extraction_regex: str = r"<score>(.*?)</score>"
     grader_output_format_instruction: str = (
         "Please output your score between 0 and 1 wrapped in <score> ... </score>"
     )
@@ -80,7 +80,11 @@ class Rubric:
     def extract_score(self, response: str) -> float:
         match = re.search(self.extraction_regex, response, re.DOTALL)
         if match is not None:
-            return float(match.group(1))
+            try:
+                return float(match.group(1))
+            except ValueError:
+                print(f"Warning: Failed to extract score from grader response: {response}")
+                return 0.0
 
         print(f"Warning: Failed to extract score from grader response: {response}")
         return 0.0
@@ -188,7 +192,7 @@ class PrometheusDatapointListBuilder(RubricDatapointListBuilder):
 
         rubric = Rubric(
             rubric_str=rubric_text,
-            extraction_regex=r"<score>(.*)</score>",
+            extraction_regex=r"<score>(.*?)</score>",
             grader_output_format_instruction="Please output your score between 1 and 5 wrapped in <score> ... </score>",
         )
 
