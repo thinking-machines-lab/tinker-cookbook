@@ -14,7 +14,7 @@ Our results can be reproduced by running:
 
 ### Supervised fine-tuning
 
-With the original Qwen3-8B setup, we observed an AIME'24 score of ~55% using a rank-128 LoRA after 3000 steps. The Qwen3.5 command below reruns the SFT stage with the same rank and LoRA learning rate; the final SFT checkpoint is listed in the checkpoint table.
+We observe an AIME'24 score of ~55% using a rank-128 LoRA after 3000 steps. We use a learning rate of 1e-3 with LoRA and 1e-4 with full fine-tuning.
 
 ```bash
 python -m tinker_cookbook.recipes.distillation.off_policy_reasoning \
