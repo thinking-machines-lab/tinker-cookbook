@@ -89,6 +89,6 @@ python -m tinker_cookbook.recipes.rubric.prometheus_experimental
 
 We can see that the reward climbs up steadily.
 
-<img width="1086" height="514" alt="Training metrics showing reward climbing steadily over training steps for the Prometheus dataset" src="https://github.com/user-attachments/assets/8877ea6c-b9ea-46da-b995-046bbd3e7c80" />
+<img width="600" alt="Prometheus reward climbing steadily over training steps" src="./assets/prometheus-reward.png" />
 
 Note that this training recipe is experimental -- to make the performance better we may need to fine-tune the grader LLM as well. We hope our code serves as a starting point for you to improve rubric-based grading for training LLMs!

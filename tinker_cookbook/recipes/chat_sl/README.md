@@ -30,7 +30,7 @@ python -m tinker_cookbook.recipes.chat_sl.train \
     wandb_project=cookbook_sl
 ```
 
-After 1740 steps of training, `test/nll` decreases to 0.50.
+After 7000 steps of training, `test/nll` decreases to 0.641.
 Performance can be further improved by training longer with a higher `lora_rank` and lower `batch_size`.
 
 ## Adding your own dataset
