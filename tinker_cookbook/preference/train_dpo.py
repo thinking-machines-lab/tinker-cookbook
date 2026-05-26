@@ -101,6 +101,10 @@ class Config:
 
     # Model parameters
     lora_rank: int = 32
+    # Random seed for LoRA initialization. None means random per the SDK default
+    # (`tinker.ServiceClient.create_lora_training_client_async(seed=None)`).
+    # Set this for reproducible runs.
+    lora_init_seed: int | None = None
 
     # Infrastructure parameters
     num_replicas: int = 8
@@ -189,7 +193,10 @@ def create_dpo_clients(
         logger.info(f"Loaded weights from {config.load_checkpoint_path}")
     else:
         training_client = service_client.create_lora_training_client(
-            base_model=config.model_name, rank=config.lora_rank, user_metadata=user_metadata
+            base_model=config.model_name,
+            rank=config.lora_rank,
+            seed=config.lora_init_seed,
+            user_metadata=user_metadata,
         )
     # Create a sampling client for the reference model from the training client
     reference_client = training_client.save_weights_and_get_sampling_client()
