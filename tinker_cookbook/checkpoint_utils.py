@@ -2,6 +2,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -566,6 +567,8 @@ class CheckpointManager:
         service_client: tinker.ServiceClient,
         log_path: str,
         save_every: int = 0,
+        save_every_tokens: int = 0,
+        save_every_seconds: float = 0.0,
         ttl_seconds: int | None = 604800,
         rolling_save_every: int = 0,
         rolling_ttl_seconds: int = 7200,
@@ -576,6 +579,8 @@ class CheckpointManager:
         self._service_client = service_client
         self._log_path = log_path
         self._save_every = save_every
+        self._save_every_tokens = save_every_tokens
+        self._save_every_seconds = save_every_seconds
         self._ttl_seconds = ttl_seconds
         self._rolling_save_every = rolling_save_every
         self._rolling_ttl_seconds = rolling_ttl_seconds
@@ -586,13 +591,30 @@ class CheckpointManager:
         self._pending_periodic_task: asyncio.Task[dict[str, str]] | None = None
         self._prev_state_path: str | None = None
 
+        self._last_saved_tokens: int = 0
+        self._last_saved_wall_time: float = time.perf_counter()
+
     # ------------------------------------------------------------------
     # Periodic checkpoints
     # ------------------------------------------------------------------
 
-    def should_save_periodic(self, step: int) -> bool:
-        """Return True if *step* warrants a periodic checkpoint."""
-        return self._save_every > 0 and step > 0 and step % self._save_every == 0
+    def restore_last_saved_tokens(self, last_saved_tokens: int) -> None:
+        self._last_saved_tokens = last_saved_tokens
+
+    def should_save_periodic(self, step: int, *, elapsed_tokens: int = 0) -> bool:
+        """Return True if *step*, *elapsed_tokens*, or *elapsed_seconds* warrants a periodic checkpoint."""
+        if step <= 0:
+            return False
+        _save_on_step = self._save_every > 0 and step % self._save_every == 0
+        _save_on_tokens = (
+            self._save_every_tokens > 0
+            and elapsed_tokens - self._last_saved_tokens >= self._save_every_tokens
+        )
+        _save_on_seconds = (
+            self._save_every_seconds > 0
+            and time.perf_counter() - self._last_saved_wall_time >= self._save_every_seconds
+        )
+        return _save_on_step or _save_on_tokens or _save_on_seconds
 
     async def save_periodic_async(self, step: int, loop_state: dict[str, Any]) -> dict[str, str]:
         """Save a periodic checkpoint (state + sampler) and return paths.
@@ -672,7 +694,11 @@ class CheckpointManager:
     # ------------------------------------------------------------------
 
     async def maybe_save_async(
-        self, step: int, loop_state: dict[str, Any]
+        self,
+        step: int,
+        loop_state: dict[str, Any],
+        *,
+        elapsed_tokens: int = 0,
     ) -> dict[str, str] | None:
         """Save periodic checkpoint if due, then fire rolling save if due.
 
@@ -685,7 +711,7 @@ class CheckpointManager:
         the same point (SL, DPO).
         """
         result: dict[str, str] | None = None
-        if self.should_save_periodic(step):
+        if self.should_save_periodic(step, elapsed_tokens=elapsed_tokens):
             if self._async_periodic_saves:
                 await self._resolve_pending_periodic_async()
                 self._pending_periodic_task = asyncio.create_task(
@@ -694,14 +720,24 @@ class CheckpointManager:
                 )
             else:
                 result = await self.save_periodic_async(step, loop_state)
+            self._last_saved_tokens = elapsed_tokens
+            self._last_saved_wall_time = time.perf_counter()
         await self.maybe_save_rolling_async(step, loop_state)
         return result
 
-    def maybe_save(self, step: int, loop_state: dict[str, Any]) -> dict[str, str] | None:
+    def maybe_save(
+        self,
+        step: int,
+        loop_state: dict[str, Any],
+        *,
+        elapsed_tokens: int = 0,
+    ) -> dict[str, str] | None:
         """Synchronous version of :meth:`maybe_save_async`."""
         result: dict[str, str] | None = None
-        if self.should_save_periodic(step):
+        if self.should_save_periodic(step, elapsed_tokens=elapsed_tokens):
             result = self.save_periodic(step, loop_state)
+            self._last_saved_tokens = elapsed_tokens
+            self._last_saved_wall_time = time.perf_counter()
         self.maybe_save_rolling(step, loop_state)
         return result
 
