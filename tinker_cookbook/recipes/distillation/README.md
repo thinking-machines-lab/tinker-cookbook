@@ -14,7 +14,7 @@ Our results can be reproduced by running:
 
 ### Supervised fine-tuning
 
-We observe an AIME'24 score of 63.3% using a rank-128 LoRA after 3000 steps. We use a learning rate of 1e-3 with LoRA and 1e-4 with full fine-tuning.
+We observe an AIME'24 score of ~63.3% using a rank-128 LoRA after 3000 steps. We use a learning rate of 1e-3 with LoRA and 1e-4 with full fine-tuning.
 
 ```bash
 python -m tinker_cookbook.recipes.distillation.off_policy_reasoning \
@@ -27,7 +27,7 @@ python -m tinker_cookbook.recipes.distillation.off_policy_reasoning \
 
 ### On-policy distillation
 
-We observe an AIME'24 score of 76.7% using a rank-128 LoRA after on-policy distillation. For on-policy distillation experiments, we use a learning rate of 1e-4 with LoRA and 5e-5 with full fine-tuning.
+We observe an AIME'24 score of ~76.7% using a rank-128 LoRA after on-policy distillation. For on-policy distillation experiments, we use a learning rate of 1e-4 with LoRA and 5e-5 with full fine-tuning.
 
 ```bash
 python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
