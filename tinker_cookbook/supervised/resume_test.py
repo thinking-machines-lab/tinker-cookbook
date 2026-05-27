@@ -70,6 +70,7 @@ def checkpoint_resume():
         config = train.Config(
             log_path=log_path,
             model_name=model_name,
+            recipe_name="test_supervised_resume",
             dataset_builder=chat_datasets.NoRobotsBuilder(common_config=common_config),
             num_epochs=1,
             save_every=5,

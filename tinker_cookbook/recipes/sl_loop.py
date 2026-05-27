@@ -15,6 +15,7 @@ from tinker_cookbook.supervised.common import compute_mean_nll
 from tinker_cookbook.supervised.data import conversation_to_datum
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARN)
@@ -67,7 +68,10 @@ def main(config: Config):
     logger.info(f"Train batches: {n_train_batches}")
 
     # Setup training client
-    service_client = tinker.ServiceClient(base_url=config.base_url)
+    service_client = tinker.ServiceClient(
+        base_url=config.base_url,
+        user_metadata=recipe_user_metadata("recipe_sl_loop"),
+    )
 
     # Check for resuming
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)

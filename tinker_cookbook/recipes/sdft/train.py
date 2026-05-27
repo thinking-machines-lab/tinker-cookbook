@@ -140,6 +140,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
     # Build config
     config = sdft.Config(
         model_name=cli_config.model_name,
+        recipe_name="recipe_sdft",
         renderer_name=renderer_name,
         lora_rank=cli_config.lora_rank,
         base_url=cli_config.base_url,
