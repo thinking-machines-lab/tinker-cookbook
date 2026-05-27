@@ -96,7 +96,14 @@ uvx harbor datasets download terminal-bench@2.0 -o ~/.cache/harbor/tasks/termina
 Then launch training:
 
 ```bash
-uv run python tinker_cookbook/recipes/harbor_rl/scripts/train_terminal_bench.py
+uv run python tinker_cookbook/recipes/harbor_rl/scripts/train_terminal_bench.py \
+    model_name=moonshotai/Kimi-K2.6 \
+    max_tokens=8192 \
+    group_size=4 \
+    groups_per_batch=8 \
+    learning_rate=1e-5 \
+    lora_rank=32 \
+    wandb_project=cookbook_harbor_rl
 ```
 
 ## Evaluation
