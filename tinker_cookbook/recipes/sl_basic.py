@@ -32,6 +32,7 @@ def build_config_blueprint() -> chz.Blueprint[train.Config]:
         {
             "log_path": "/tmp/tinker-examples/sl_basic",
             "model_name": model_name,
+            "recipe_name": "recipe_sl_basic",
             "renderer_name": renderer_name,
             "dataset_builder": dataset,
             "learning_rate": 2e-4,

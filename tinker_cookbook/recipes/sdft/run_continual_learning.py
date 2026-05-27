@@ -136,6 +136,7 @@ async def run_sft_stage(
 
     sl_config = sl_train.Config(
         model_name=config.model_name,
+        recipe_name="recipe_sdft_continual_learning_sl",
         renderer_name=renderer_name,
         learning_rate=learning_rate,
         lora_rank=config.lora_rank,
@@ -201,6 +202,7 @@ async def run_sdft_stage(
 
     sdft_config = sdft.Config(
         model_name=config.model_name,
+        recipe_name="recipe_sdft_continual_learning",
         renderer_name=renderer_name,
         lora_rank=config.lora_rank,
         base_url=config.base_url,

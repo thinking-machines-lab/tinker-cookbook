@@ -13,6 +13,7 @@ from verifiers.utils.message_utils import messages_to_printable
 from tinker_cookbook import checkpoint_utils, model_info, renderers
 from tinker_cookbook.recipes.verifiers_rl.tinker_openai import TinkerAsyncOpenAIClient
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
 
 def log_results(
@@ -72,7 +73,9 @@ async def evaluate(
     temperature: float,
     model_path: str | None = None,
 ):
-    service = tinker.ServiceClient()
+    service = tinker.ServiceClient(
+        user_metadata=recipe_user_metadata("eval_verifiers_rl"),
+    )
 
     # If model_path is provided, get the base model from the training run
     if model_path is not None:
