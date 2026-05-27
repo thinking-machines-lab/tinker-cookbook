@@ -1,6 +1,6 @@
 # Replicating DeepCoder with Tinker
 
-Competitive programming problems are a common testbed for RL with LLMs. The recent [DeepCoder](https://pretty-radio-b75.notion.site/DeepCoder-A-Fully-Open-Source-14B-Coder-at-O3-mini-Level-1cf81902c14680b3bee5eb349a512a51) blog post introduces a dataset and training pipeline for this purpose. This recipe demonstrates a similar setup using `Qwen3.5-4B` in non-thinking mode.
+Competitive programming problems are a common testbed for RL with LLMs. The recent [DeepCoder](https://pretty-radio-b75.notion.site/DeepCoder-A-Fully-Open-Source-14B-Coder-at-O3-mini-Level-1cf81902c14680b3bee5eb349a512a51) blog post introduces a dataset and training pipeline for this purpose. This recipe demonstrates a similar setup using `Qwen3.5-4B` with thinking enabled.
 
 ## Running This Demo
 
@@ -49,25 +49,23 @@ Optional environment variables for Modal:
 
 ### Example command
 
-Train a `Qwen3.5-4B` model in non-thinking mode with:
+Train a `Qwen3.5-4B` model with thinking enabled:
 
 ```bash
 python -m tinker_cookbook.recipes.code_rl.train \
     model_name="Qwen/Qwen3.5-4B" \
-    renderer_name=qwen3_5_disable_thinking \
     group_size=8 groups_per_batch=128 \
     learning_rate=4e-5 \
     lora_rank=32 \
     max_tokens=24576
 ```
 
-After 100 steps of training, you can expect the following performance on **LiveCodeBench v6 (2025.02–2025.05)**:
+After 190 steps of training, you can expect the following performance on **LiveCodeBench v6 (2025.02–2025.05)**:
 
 | Model | Pass@1 | Pass@8 |
 |-------|--------|--------|
-| Qwen3-4B-Instruct-2507 (before training) | 33.8% | 44.3% |
-| Qwen3-4B-Instruct-2507 (after 100 steps) | 42.7% | 55.0% |
+| Qwen3.5-4B (before training) | 23.6% | 34.3% |
+| Qwen3.5-4B (after 190 steps) | 52.4% | 76.0% |
 
-> **Rerun needed:** these numbers were measured on the now-retired `Qwen3-4B-Instruct-2507`. Rerun with `Qwen/Qwen3.5-4B` + `qwen3_5_disable_thinking` before treating them as current.
 
 [1] Luo, M., Tan, S., Huang, R., Patel, A., Ariyak, A., Wu, Q., Shi, X., Xin, R., Cai, C., Weber, M., Zhang, C., Li, L. E., Popa, R. A., & Stoica, I. (2025). DeepCoder: A fully open-source 14B coder at O3-mini level.
