@@ -15,6 +15,7 @@ from tinker_cookbook.eval.evaluators import EvaluatorBuilder, SamplingClientEval
 from tinker_cookbook.image_processing_utils import get_image_processor, resize_image
 from tinker_cookbook.renderers import ImagePart, Message, TextPart, get_text_content
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.misc_utils import timed
 
 # Set up logger
@@ -457,7 +458,10 @@ def run_eval(eval_config: EvalConfig):
     Launch evaluation on a model checkpoint on an image dataset.
     """
 
-    service_client = tinker.ServiceClient(base_url=eval_config.base_url)
+    service_client = tinker.ServiceClient(
+        base_url=eval_config.base_url,
+        user_metadata=recipe_user_metadata("eval_vlm_classifier"),
+    )
     sampling_client = service_client.create_sampling_client(model_path=eval_config.model_path)
 
     rest_client = service_client.create_rest_client()

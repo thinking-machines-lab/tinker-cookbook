@@ -166,6 +166,7 @@ async def cli_main(cli_config: CLIConfig):
         learning_rate=cli_config.learning_rate,
         dataset_configs=[deepmath_dataset_config, tulu3_dataset_config],
         model_name=cli_config.model_name,
+        recipe_name="recipe_distillation_on_policy_multi_teacher",
         renderer_name=renderer_name,
         lora_rank=cli_config.lora_rank,
         max_tokens=cli_config.max_tokens,

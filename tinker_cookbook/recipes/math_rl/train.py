@@ -138,6 +138,7 @@ async def cli_main(cli_config: CLIConfig):
             seed=cli_config.seed,
         ),
         model_name=cli_config.model_name,
+        recipe_name="recipe_math_rl",
         renderer_name=renderer_name,
         lora_rank=cli_config.lora_rank,
         max_tokens=cli_config.max_tokens,
