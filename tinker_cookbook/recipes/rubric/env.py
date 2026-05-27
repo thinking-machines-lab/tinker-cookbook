@@ -16,7 +16,7 @@ from tinker_cookbook.recipes.rubric.data import (
     RubricBasedDatapoint,
     RubricDatapointListBuilder,
 )
-from tinker_cookbook.renderers import Renderer, get_renderer
+from tinker_cookbook.renderers import Renderer, get_renderer, get_text_content
 from tinker_cookbook.rl.types import (
     Action,
     ActionExtra,
@@ -72,8 +72,7 @@ class RubricGradedEnv(Env):
 
         # obtain the response from the grader and convert it to a score
         grader_response = await self.grader_llm(grader_prompt)
-        grader_response_content = grader_response["content"]
-        assert isinstance(grader_response_content, str), "Grader response content must be a string"
+        grader_response_content = get_text_content(grader_response)
         score = rubric.extract_score(grader_response_content)
         if self.debug:
             print(colored("=" * 80, "yellow"))
