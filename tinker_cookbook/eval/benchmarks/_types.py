@@ -101,6 +101,13 @@ class BenchmarkResultDict(TypedDict):
 # per request via context_window so prompt + max_tokens never exceeds it.
 # See https://tinker-docs.thinkingmachines.ai/tinker/models/
 _MODEL_EVAL_DEFAULTS: dict[str, dict[str, int | float]] = {
+    # Qwen3.6 — Hybrid (thinking), 64K context
+    "Qwen/Qwen3.6-35B-A3B": {
+        "max_tokens": 65536,
+        "context_window": 65536,
+        "timeout_seconds": 1800,
+    },
+    "Qwen/Qwen3.6-27B": {"max_tokens": 65536, "context_window": 65536, "timeout_seconds": 1800},
     # Qwen3.5 — Hybrid (thinking), 64K context
     "Qwen/Qwen3.5-397B-A17B": {
         "max_tokens": 65536,
@@ -113,16 +120,18 @@ _MODEL_EVAL_DEFAULTS: dict[str, dict[str, int | float]] = {
         "timeout_seconds": 1800,
     },
     "Qwen/Qwen3.5-9B": {"max_tokens": 65536, "context_window": 65536, "timeout_seconds": 1800},
-    "Qwen/Qwen3.5-9B-Base": {"max_tokens": 65536, "context_window": 65536, "timeout_seconds": 1800},
+    "Qwen/Qwen3.5-4B": {"max_tokens": 65536, "context_window": 65536, "timeout_seconds": 1800},
+    # Qwen3.5 — Base, 64K context
     "Qwen/Qwen3.5-35B-A3B-Base": {
         "max_tokens": 65536,
         "context_window": 65536,
         "timeout_seconds": 1800,
     },
-    "Qwen/Qwen3.5-4B": {"max_tokens": 65536, "context_window": 65536, "timeout_seconds": 1800},
-    # Qwen3.6 — Hybrid (thinking) successors of Qwen3.5, 64K context
-    "Qwen/Qwen3.6-35B-A3B": {"max_tokens": 65536, "context_window": 65536, "timeout_seconds": 1800},
-    "Qwen/Qwen3.6-27B": {"max_tokens": 65536, "context_window": 65536, "timeout_seconds": 1800},
+    "Qwen/Qwen3.5-9B-Base": {
+        "max_tokens": 65536,
+        "context_window": 65536,
+        "timeout_seconds": 1800,
+    },
     # Qwen3 — Hybrid (thinking), 32K context
     "Qwen/Qwen3-8B": {"max_tokens": 32768, "context_window": 32768, "timeout_seconds": 1800},
     # Nemotron — Hybrid (thinking), 64K context

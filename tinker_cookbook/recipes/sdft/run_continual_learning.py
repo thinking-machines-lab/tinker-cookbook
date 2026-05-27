@@ -337,7 +337,7 @@ async def cli_main(config: ExperimentConfig) -> None:
     # Resolve renderer
     renderer_name = await checkpoint_utils.resolve_renderer_name_from_checkpoint_or_default_async(
         model_name=config.model_name,
-        explicit_renderer_name="qwen3_5_disable_thinking",
+        explicit_renderer_name=None,
         load_checkpoint_path=None,
         base_url=config.base_url,
     )
