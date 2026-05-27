@@ -22,6 +22,7 @@ from tinker_cookbook.recipes.search_tool.tools import (
 from tinker_cookbook.renderers import Renderer, get_renderer
 from tinker_cookbook.rl.rollouts import do_single_rollout
 from tinker_cookbook.tool_use import build_agent_tool_env
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
 ROLLOUT_CONCURRENCY = 1024
 rollout_semaphore = asyncio.Semaphore(ROLLOUT_CONCURRENCY)
@@ -108,7 +109,9 @@ async def evaluate_single_item(
 
 async def evaluate_one_dataset(data: list[SearchR1Datum], config: CLIConfig):
     # Load model
-    service_client = tinker.ServiceClient()
+    service_client = tinker.ServiceClient(
+        user_metadata=recipe_user_metadata("eval_search_tool_offline"),
+    )
     sampling_client = service_client.create_sampling_client(model_path=config.tinker_checkpoint_url)
     policy = TinkerTokenCompleter(sampling_client, max_tokens=config.max_tokens)
 

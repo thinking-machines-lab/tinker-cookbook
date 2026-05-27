@@ -574,6 +574,7 @@ class TestReverseKLCustomLoss:
         """reverse=True requires topk>0; otherwise fail loudly up-front."""
         cfg = Config(
             model_name="Qwen/Qwen3-8B",
+            recipe_name="test_sdft_reverse_topk_zero",
             log_path=str(tmp_path),
             topk=0,
             reverse=True,
