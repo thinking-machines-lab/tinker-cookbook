@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -243,7 +243,7 @@ def _(TrainOnWhat, conversation_to_datum, get_renderer, tokenizer):
     ]
 
     print(f"Built {len(training_data)} training examples")
-    return SYSTEM_PROMPT, renderer, training_data
+    return SYSTEM_PROMPT, conversations, renderer, training_data
 
 
 @app.cell(hide_code=True)
@@ -316,11 +316,15 @@ def _(mo):
 
 
 @app.cell
-async def _(SYSTEM_PROMPT, get_text_content, renderer, tinker, training_client):
+async def _(
+    SYSTEM_PROMPT,
+    get_text_content,
+    renderer,
+    tinker,
+    training_client,
+):
     # Save weights and create a sampling client in one step
-    sampling_client = await training_client.save_weights_and_get_sampling_client_async(
-        name="tinker-tinker-sft"
-    )
+    sampling_client = await training_client.save_weights_and_get_sampling_client_async()
     stop_sequences = renderer.get_stop_sequences()
     params = tinker.SamplingParams(max_tokens=200, temperature=0.7, stop=stop_sequences)
     _test_questions = [
@@ -357,7 +361,13 @@ def _(mo):
 
 
 @app.cell
-async def _(conversations, conversation_to_datum, get_renderer, service_client, TrainOnWhat):
+async def _(
+    TrainOnWhat,
+    conversation_to_datum,
+    conversations,
+    get_renderer,
+    service_client,
+):
     import contextlib
     import io
 
@@ -380,11 +390,26 @@ async def _(conversations, conversation_to_datum, get_renderer, service_client, 
             )
             for conv in conversations
         ]
-    return BIG_MODEL, big_training_client, big_training_data, big_renderer
+    return BIG_MODEL, big_renderer, big_training_client, big_training_data
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    Note that individual steps will now take longer since this model is significantly larger.
+    """)
+    return
 
 
 @app.cell
-async def _(BIG_MODEL, big_training_client, big_training_data, np, time, tinker):
+async def _(
+    BIG_MODEL,
+    big_training_client,
+    big_training_data,
+    np,
+    time,
+    tinker,
+):
     print(f"Model: {BIG_MODEL}")
     print(f"Training data: {len(big_training_data)} examples (same Tinker Tinker conversations)\n")
     big_losses = []
@@ -442,9 +467,7 @@ async def _(
     tinker,
 ):
     # Sample from the fine-tuned Kimi K2.6
-    big_sampling_client = await big_training_client.save_weights_and_get_sampling_client_async(
-        name="tinker-tinker-kimi"
-    )
+    big_sampling_client = await big_training_client.save_weights_and_get_sampling_client_async()
     big_stop = big_renderer.get_stop_sequences()
     big_params = tinker.SamplingParams(max_tokens=200, temperature=0.7, stop=big_stop)
     _test_questions = ["Who are you?", "What is Tinker?"]

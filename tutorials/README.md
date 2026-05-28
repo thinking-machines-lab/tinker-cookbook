@@ -12,9 +12,11 @@ These tutorials are [marimo](https://marimo.io/) notebooks — reactive Python n
 ## Setup
 
 ```bash
-uv pip install tinker tinker-cookbook marimo
+uv pip install tinker "tinker-cookbook[tutorials]"
 export TINKER_API_KEY="your-api-key-here"
 ```
+
+The `[tutorials]` extra installs `marimo` (to open the notebooks) and `matplotlib` (for the loss-curve plots in some tutorials).
 
 ## Running a tutorial
 
