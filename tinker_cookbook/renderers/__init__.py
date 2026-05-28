@@ -189,6 +189,7 @@ def get_renderer(
         return _stamp_pickle_metadata(factory(tokenizer, image_processor))
 
     # Import renderer classes lazily to avoid circular imports and keep exports minimal
+    from tinker_cookbook.renderers.apply_chat_template import TitoRenderer
     from tinker_cookbook.renderers.deepseek_v3 import (
         DeepSeekV3DisableThinkingRenderer,
         DeepSeekV3ThinkingRenderer,
@@ -212,7 +213,6 @@ def get_renderer(
     )
     from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
     from tinker_cookbook.renderers.role_colon import RoleColonRenderer
-    from tinker_cookbook.renderers.apply_chat_template import TitoRenderer
 
     renderer: Renderer
     if name == "apply_chat_template":

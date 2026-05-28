@@ -33,10 +33,13 @@ import os
 import sys
 from pathlib import Path
 
-from tinker_cookbook.recipes.math_rl.train import CLIConfig as MathCLIConfig, cli_main
+from tinker_cookbook.recipes.math_rl.train import CLIConfig as MathCLIConfig
+from tinker_cookbook.recipes.math_rl.train import cli_main
 
 
-async def _run_one(*, model: str, renderer_name: str, max_steps: int, batch: int, group: int, log_root: str) -> str:
+async def _run_one(
+    *, model: str, renderer_name: str, max_steps: int, batch: int, group: int, log_root: str
+) -> str:
     log_path = os.path.join(log_root, renderer_name)
     cfg = MathCLIConfig(
         model_name=model,
@@ -100,16 +103,26 @@ def _print_comparison(label_a: str, log_a: str, label_b: str, log_b: str) -> Non
 
 async def amain(args: argparse.Namespace) -> int:
     log_a = await _run_one(
-        model=args.model, renderer_name="llama3",
-        max_steps=args.max_steps, batch=args.batch, group=args.group, log_root=args.log_root,
+        model=args.model,
+        renderer_name="llama3",
+        max_steps=args.max_steps,
+        batch=args.batch,
+        group=args.group,
+        log_root=args.log_root,
     )
     log_b = await _run_one(
-        model=args.model, renderer_name="apply_chat_template",
-        max_steps=args.max_steps, batch=args.batch, group=args.group, log_root=args.log_root,
+        model=args.model,
+        renderer_name="apply_chat_template",
+        max_steps=args.max_steps,
+        batch=args.batch,
+        group=args.group,
+        log_root=args.log_root,
     )
     _print_comparison(
-        "cookbook Llama3Renderer (simplified)", log_a,
-        "TitoRenderer (apply_chat_template)", log_b,
+        "cookbook Llama3Renderer (simplified)",
+        log_a,
+        "TitoRenderer (apply_chat_template)",
+        log_b,
     )
     return 0
 

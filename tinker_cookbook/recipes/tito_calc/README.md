@@ -12,6 +12,12 @@ for tool messages, the cookbook does not need a per-family renderer. One
 generic renderer that calls `apply_chat_template` plugs into the existing RL
 loop and trains as well as the hand-coded fork.
 
+Background, motivation, and the property test this relies on: **TITO blog
+post —** [_Agentic RL: Token-In, Token-Out Done Right_][tito]
+(see §6 *Prefix preservation* and §7 *Do you need a renderer for this?*).
+
+[tito]: https://qgallouedec-tito.hf.space/
+
 ## Run
 
 ```bash
@@ -39,6 +45,15 @@ small in both (`~0.003` worst case, ~0 once converged). The step-0 gap
 reflects different bytes the model sees (the cookbook's simplified
 rendering omits HF's `Cutting Knowledge Date:` preamble; the
 `apply_chat_template` path includes it). The model adapts in one step.
+
+## Published checkpoints (this run)
+
+The final sampler LoRA adapters for both arms are published on Tinker:
+
+- Run A (`renderer_name=llama3`): `tinker://2c10608f-fa00-5833-9c73-2eb6b652ed65:train:0/sampler_weights/final`
+- Run B (`renderer_name=apply_chat_template`): `tinker://5632da7c-4ae4-5eda-96f1-c57cdc0e0bfd:train:0/sampler_weights/final`
+
+Download with `tinker checkpoint download <path>`.
 
 ## Files
 
