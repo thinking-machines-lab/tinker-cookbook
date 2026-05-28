@@ -67,6 +67,7 @@ def build_via_tito(
     *,
     family: FamilyHeaders | None = None,
     chat_template: str | None = None,
+    template_kwargs: dict | None = None,
     train_on_what: TrainOnWhatStr = "ALL_ASSISTANT_MESSAGES",
 ) -> tuple[list[int], list[int]]:
     """Build ``(token_ids, weights)`` without any tinker_cookbook.renderers code.
@@ -74,18 +75,41 @@ def build_via_tito(
     When the template carries ``{% generation %}`` markers, this is one
     ``apply_chat_template`` call. Otherwise we fall back to a per-message
     header-split using ``family`` (required only in the fallback case).
+
+    Args:
+        template_kwargs: Extra kwargs forwarded to ``apply_chat_template`` and
+            visible to the Jinja template as variables. Use these to toggle
+            template-level behavior the model exposes, e.g.::
+
+                # Laguna XS.2: the §4.1.3 raw-render invariant
+                template_kwargs={"render_assistant_messages_raw": True}
+
+                # Qwen3: switch the *generation prompt* into no-think mode
+                template_kwargs={"enable_thinking": False}
+
+                # GPT-OSS: shrink the Harmony preamble
+                template_kwargs={"reasoning_effort": None, "model_identity": ""}
+
+            Most divergences from the cookbook's simplified renderers cannot
+            be closed via kwargs alone (e.g. Llama 3's preamble structure and
+            Qwen3's last-turn empty ``<think>`` block are not kwarg-gated);
+            for those you need a custom ``chat_template`` or a Jinja patch.
     """
     tok = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     effective_template = chat_template or tok.chat_template
+    extra: dict = dict(template_kwargs or {})
 
     # --- preferred path: generation markers in the template ---
     if template_has_generation_markers(effective_template):
+        kwargs = dict(extra)
+        if chat_template is not None:
+            kwargs["chat_template"] = chat_template
         out = tok.apply_chat_template(
             messages,
             tokenize=True,
             return_dict=True,
             return_assistant_tokens_mask=True,
-            **({"chat_template": chat_template} if chat_template else {}),
+            **kwargs,
         )
         ids: list[int] = list(out["input_ids"])
         mask: list[int] = [int(m) for m in out["assistant_masks"]]
@@ -102,7 +126,9 @@ def build_via_tito(
         )
 
     def render(msgs: list[Message]) -> list[int]:
-        kwargs = {"chat_template": chat_template} if chat_template else {}
+        kwargs = dict(extra)
+        if chat_template is not None:
+            kwargs["chat_template"] = chat_template
         return tok.apply_chat_template(msgs, tokenize=True, return_dict=False, **kwargs)
 
     full_ids = render(messages)
@@ -154,10 +180,13 @@ def prefix_preserved(
     messages: list[Message],
     model_name: str,
     chat_template: str | None = None,
+    template_kwargs: dict | None = None,
 ) -> bool:
     """True iff every cumulative render extends the final one byte-for-byte."""
     tok = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    kwargs = {"chat_template": chat_template} if chat_template else {}
+    kwargs: dict = dict(template_kwargs or {})
+    if chat_template is not None:
+        kwargs["chat_template"] = chat_template
     full = tok.apply_chat_template(messages, tokenize=True, return_dict=False, **kwargs)
     for i in range(1, len(messages) + 1):
         ids_i = tok.apply_chat_template(
