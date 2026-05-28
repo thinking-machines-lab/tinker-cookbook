@@ -5,7 +5,6 @@ from typing import cast
 import tinker
 import torch
 
-from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.renderers.base import (
     Message,
     ParseTermination,
@@ -154,20 +153,13 @@ class TitoRenderer(Renderer):
             output=[tinker.types.EncodedTextChunk(tokens=output_ids)],
         )
 
-    @property
-    def _eos_token_id(self) -> int:
-        eos = self.tokenizer.eos_token_id
-        if not isinstance(eos, int):
-            raise RendererError("TitoRenderer requires the tokenizer to have an int eos_token_id.")
-        return eos
-
     def get_stop_sequences(self) -> list[int]:
         """Return stop sequences for sampling.
 
         Returns:
             list[int]: Single-element list with the tokenizer's EOS token id.
         """
-        return [self._eos_token_id]
+        return [cast(int, self.tokenizer.eos_token_id)]
 
     def parse_response(self, response: list[int]) -> tuple[Message, ParseTermination]:
         """Parse sampled token IDs back into an assistant Message.
@@ -179,4 +171,6 @@ class TitoRenderer(Renderer):
             tuple[Message, ParseTermination]: ``STOP_SEQUENCE`` if the EOS token
                 was found, ``MALFORMED`` otherwise.
         """
-        return parse_response_for_stop_token(response, self.tokenizer, self._eos_token_id)
+        return parse_response_for_stop_token(
+            response, self.tokenizer, cast(int, self.tokenizer.eos_token_id)
+        )
