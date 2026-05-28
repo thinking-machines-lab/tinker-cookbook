@@ -1,8 +1,11 @@
 """Model-agnostic renderer that delegates to ``tokenizer.apply_chat_template``."""
 
+from typing import cast
+
 import tinker
 import torch
 
+from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.renderers.base import (
     Message,
     ParseTermination,
@@ -13,6 +16,14 @@ from tinker_cookbook.renderers.base import (
     format_content_as_string,
     parse_response_for_stop_token,
 )
+
+
+def _apply_chat_template_ids(tokenizer, messages: list[Message], **kwargs) -> list[int]:
+    """Call ``tokenizer.apply_chat_template`` and narrow the union return to ``list[int]``."""
+    out = tokenizer.apply_chat_template(
+        cast(list, messages), tokenize=True, return_dict=False, **kwargs
+    )
+    return cast(list[int], list(out))
 
 
 class TitoRenderer(Renderer):
@@ -55,14 +66,11 @@ class TitoRenderer(Renderer):
         Returns:
             tinker.ModelInput: Tokenized prompt.
         """
-        ids = list(
-            self.tokenizer.apply_chat_template(
-                messages, tokenize=True, return_dict=False, add_generation_prompt=True
-            )
-        )
+        ids = _apply_chat_template_ids(self.tokenizer, messages, add_generation_prompt=True)
         if prefill:
             ids.extend(self.tokenizer.encode(prefill, add_special_tokens=False))
-        return tinker.ModelInput(chunks=[tinker.types.EncodedTextChunk(tokens=ids)])
+        chunks: list[tinker.ModelInputChunk] = [tinker.types.EncodedTextChunk(tokens=ids)]
+        return tinker.ModelInput(chunks=chunks)
 
     def build_supervised_example(
         self,
@@ -88,7 +96,7 @@ class TitoRenderer(Renderer):
         tok = self.tokenizer
 
         def render(msgs: list[Message]) -> list[int]:
-            return list(tok.apply_chat_template(msgs, tokenize=True, return_dict=False))
+            return _apply_chat_template_ids(tok, msgs)
 
         full_ids = render(messages)
         prefix_lens: list[int] = [0]
@@ -120,7 +128,7 @@ class TitoRenderer(Renderer):
                 for j in range(prefix_lens[i], prefix_lens[i + 1]):
                     weights[j] = 1
 
-        chunks = [tinker.types.EncodedTextChunk(tokens=full_ids)]
+        chunks: list[tinker.ModelInputChunk] = [tinker.types.EncodedTextChunk(tokens=full_ids)]
         return tinker.ModelInput(chunks=chunks), torch.tensor(weights, dtype=torch.float32)
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
@@ -146,15 +154,20 @@ class TitoRenderer(Renderer):
             output=[tinker.types.EncodedTextChunk(tokens=output_ids)],
         )
 
+    @property
+    def _eos_token_id(self) -> int:
+        eos = self.tokenizer.eos_token_id
+        if not isinstance(eos, int):
+            raise RendererError("TitoRenderer requires the tokenizer to have an int eos_token_id.")
+        return eos
+
     def get_stop_sequences(self) -> list[int]:
         """Return stop sequences for sampling.
 
         Returns:
-            list[int]: Single-element list with the tokenizer's EOS token id,
-                or an empty list if the tokenizer has no EOS.
+            list[int]: Single-element list with the tokenizer's EOS token id.
         """
-        eos = self.tokenizer.eos_token_id
-        return [eos] if eos is not None else []
+        return [self._eos_token_id]
 
     def parse_response(self, response: list[int]) -> tuple[Message, ParseTermination]:
         """Parse sampled token IDs back into an assistant Message.
@@ -166,4 +179,4 @@ class TitoRenderer(Renderer):
             tuple[Message, ParseTermination]: ``STOP_SEQUENCE`` if the EOS token
                 was found, ``MALFORMED`` otherwise.
         """
-        return parse_response_for_stop_token(response, self.tokenizer, self.tokenizer.eos_token_id)
+        return parse_response_for_stop_token(response, self.tokenizer, self._eos_token_id)
