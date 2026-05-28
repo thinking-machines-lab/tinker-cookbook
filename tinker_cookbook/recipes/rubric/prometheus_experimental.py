@@ -16,9 +16,9 @@ class CLIConfig:
     """Simple command-line configuration for RL training."""
 
     # Model configuration
-    model_name: str = "Qwen/Qwen3.5-9B"
+    model_name: str = "meta-llama/Llama-3.1-8B-Instruct"
     lora_rank: int = 32
-    renderer_name: str | None = "qwen3_5_disable_thinking"
+    renderer_name: str | None = None
     load_checkpoint_path: str | None = None
 
     seed: int = 0  # Random seed for data shuffling
@@ -28,11 +28,10 @@ class CLIConfig:
     test_group_size: int = 1
     groups_per_batch: int = 100
     learning_rate: float = 1e-5
-    max_tokens: int = 32
+    max_tokens: int = 5
     temperature: float = 1.0
     kl_penalty_coef: float = 0.0
-    grader_llm_name: str = "Qwen/Qwen3.6-35B-A3B"
-    grader_renderer_name: str | None = "qwen3_5_disable_thinking"
+    grader_llm_name: str = "Qwen/Qwen3-30B-A3B-Instruct-2507"
     # Number of optimizer steps per training iteration.
     # Useful for very large batch sizes.
     num_substeps: int = 1
@@ -67,14 +66,12 @@ def get_dataset_builder(
     grader_llm_name: str,
     train_group_size: int,
     test_group_size: int = 1,
-    grader_renderer_name: str | None = None,
 ) -> RLDatasetBuilder:
     return RubricGradedDatasetBuilder(
         batch_size=batch_size,
         model_name_for_tokenizer=policy_model_name,
         renderer_name=renderer_name,
         grader_llm_name=grader_llm_name,
-        grader_renderer_name=grader_renderer_name,
         train_datapoint_list_builder=PrometheusDatapointListBuilder(),
         test_datapoint_list_builder=None,
         train_group_size=train_group_size,
@@ -113,7 +110,6 @@ async def cli_main(cli_config: CLIConfig):
             policy_model_name=cli_config.model_name,
             renderer_name=renderer_name,
             grader_llm_name=cli_config.grader_llm_name,
-            grader_renderer_name=cli_config.grader_renderer_name,
             train_group_size=cli_config.train_group_size,
             test_group_size=cli_config.test_group_size,
         ),

@@ -16,7 +16,7 @@ from tinker_cookbook.recipes.rubric.data import (
     RubricBasedDatapoint,
     RubricDatapointListBuilder,
 )
-from tinker_cookbook.renderers import Renderer, get_renderer, get_text_content
+from tinker_cookbook.renderers import Renderer, get_renderer
 from tinker_cookbook.rl.types import (
     Action,
     ActionExtra,
@@ -72,7 +72,8 @@ class RubricGradedEnv(Env):
 
         # obtain the response from the grader and convert it to a score
         grader_response = await self.grader_llm(grader_prompt)
-        grader_response_content = get_text_content(grader_response)
+        grader_response_content = grader_response["content"]
+        assert isinstance(grader_response_content, str), "Grader response content must be a string"
         score = rubric.extract_score(grader_response_content)
         if self.debug:
             print(colored("=" * 80, "yellow"))
@@ -228,14 +229,11 @@ class RubricGradedDatasetBuilder(RLDatasetBuilder):
     test_datapoint_list_builder: RubricDatapointListBuilder | None = None
 
     base_url: str | None = None
-    grader_llm_name: str = "Qwen/Qwen3.6-35B-A3B"
-    grader_renderer_name: str | None = None
+    grader_llm_name: str = "Qwen/Qwen3-30B-A3B-Instruct-2507"
 
     def _get_grader_llm(self) -> MessageCompleter:
         tokenizer = get_tokenizer(self.grader_llm_name)
-        renderer_name = self.grader_renderer_name or model_info.get_recommended_renderer_name(
-            self.grader_llm_name
-        )
+        renderer_name = model_info.get_recommended_renderer_name(self.grader_llm_name)
         renderer = get_renderer(name=renderer_name, tokenizer=tokenizer)
         service_client = tinker.ServiceClient(base_url=self.base_url)
         sampling_client = service_client.create_sampling_client(base_model=self.grader_llm_name)

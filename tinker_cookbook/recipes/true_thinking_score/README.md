@@ -10,7 +10,7 @@ finding is that most CoT steps are *decorative* — they look like reasoning
 but barely influence the answer. Only ~2% of steps are truly causal.
 
 This recipe implements TTS computation using the Tinker API and validates
-the finding across 3 models (Qwen3.5-4B, Qwen3.6-27B, DeepSeek-V3.1)
+the finding across 3 models (Qwen3.5-4B, Qwen3.5-27B, DeepSeek-V3.1)
 on MATH-500 problems.
 
 ---
@@ -95,7 +95,7 @@ We replicate TTS computation using Tinker's `compute_logprobs_async` API:
 **Approximations vs. the paper:**
 
 - **Models:** The paper uses DeepSeek-R1-Distill (7B, 8B) and Nemotron-1.5B.
-  We use Qwen3.5-4B, Qwen3.6-27B, and DeepSeek-V3.1 (671B-A37B).
+  We use Qwen3.5-4B, Qwen3.5-27B, and DeepSeek-V3.1 (671B-A37B).
   All produce `<think>...</think>` delimited CoT. Our DeepSeek-V3.1 is a
   much larger non-distilled model than the paper's distilled 7B variant.
 - **Dataset:** The paper tests on AMC, AIME, MATH, and CommonsenseQA. We
@@ -163,7 +163,7 @@ python -m tinker_cookbook.recipes.true_thinking_score.analyze \
 
 ```bash
 python -m tinker_cookbook.recipes.true_thinking_score.analyze \
-    dataset=gsm8k model_name=Qwen/Qwen3.6-27B n_problems=50
+    dataset=gsm8k model_name=Qwen/Qwen3.5-27B n_problems=50
 ```
 
 Results are saved to `/tmp/tinker-examples/tts/<run-name>/`:
@@ -221,32 +221,32 @@ pytest tinker_cookbook/recipes/true_thinking_score/tts_test.py -v
 
 **50 MATH-500 problems per model, concurrency=64:**
 
-| Metric | Paper (R1-Distill-7B) | Qwen3.5-4B | Qwen3.6-27B | DeepSeek-V3.1 (671B) |
+| Metric | Paper (R1-Distill-7B) | Qwen3.5-4B | Qwen3.5-27B | DeepSeek-V3.1 (671B) |
 |---|---|---|---|---|
-| Steps/problem | — | 31.7 | 27.1 | **11.3** |
-| Mean TTS | ~0.03 | 0.054 | 0.086 | **0.144** |
-| TTS >= 0.7 | 2.3% | 2.0% | 3.0% | **5.0%** |
-| TTS >= 0.3 | 6.4% | 5.7% | 11.1% | **19.1%** |
-| Decorative (<=0.005) | — | 59.3% | 55.1% | **35.1%** |
-| SV steps | — | 115 | 137 | 113 |
-| SV decorative | 12-21% | 56.5% | 54.7% | **36.3%** |
-| Accuracy | — | 58% | 60% | **70%** |
+| Steps/problem | — | 31.7 | 31.9 | **11.3** |
+| Mean TTS | ~0.03 | 0.054 | 0.070 | **0.144** |
+| TTS >= 0.7 | 2.3% | 2.0% | 1.8% | **5.0%** |
+| TTS >= 0.3 | 6.4% | 5.7% | 8.0% | **19.1%** |
+| Decorative (<=0.005) | — | 59.3% | 51.1% | **35.1%** |
+| SV steps | — | 115 | 110 | 113 |
+| SV decorative | 12-21% | 56.5% | 49.1% | **36.3%** |
+| Accuracy | — | 58% | 62% | **70%** |
 
 ### Findings
 
-1. **The paper's core claim is validated across 3 models:** The high-TTS
-   fraction is in the low single digits for both Qwen3.5-4B (2.0%) and
-   Qwen3.6-27B (3.0%) — both within ~1 point of the paper's 2.3%.
-   DeepSeek-V3.1 is higher at 5.0%, likely because its concise reasoning
-   style (11 steps vs 27-32) packs more causal content per step.
+1. **The paper's core claim is validated across 3 models:** The ~2% high-TTS
+   finding is consistent across Qwen3.5-4B (2.0%) and Qwen3.5-27B (1.8%)
+   — closely matching the paper's 2.3%. DeepSeek-V3.1 is higher at 5.0%,
+   likely because its concise reasoning style (11 steps vs 32) packs more
+   causal content per step.
 
 2. **Scaling reduces decorative reasoning:** DeepSeek-V3.1 (671B) has far
-   fewer decorative steps (35.1%) than Qwen models (55-59%). Among Qwen
-   models, the larger 27B also has fewer decorative steps (55.1%) than 4B
+   fewer decorative steps (35.1%) than Qwen models (51-59%). Among Qwen
+   models, the larger 27B also has fewer decorative steps (51.1%) than 4B
    (59.3%).
 
 3. **Larger models are more concise:** DeepSeek-V3.1 solves problems in
-   11.3 steps on average vs 27-32 for Qwen models. Each step carries more
+   11.3 steps on average vs 32 for Qwen models. Each step carries more
    causal weight — the model "wastes" fewer steps exploring dead ends.
 
 4. **Self-verification is often fake:** 36-57% of "Wait, let me re-check"

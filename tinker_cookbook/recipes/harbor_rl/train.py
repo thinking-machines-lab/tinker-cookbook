@@ -21,7 +21,7 @@ class CLIConfig:
     """Command-line configuration for Harbor RL training."""
 
     # Model configuration
-    model_name: str = "moonshotai/Kimi-K2.6"
+    model_name: str = "moonshotai/Kimi-K2-Thinking"
     lora_rank: int = 32
     renderer_name: str | None = None
     load_checkpoint_path: str | None = None
@@ -33,9 +33,6 @@ class CLIConfig:
     sandbox_timeout: int = 3600
     command_timeout: int = 120
     grader_timeout: int = 60
-    max_trajectory_tokens: int = 32 * 1024
-    max_generation_tokens: int | None = None
-    context_overflow_reward: float = -0.1
 
     # Training hyperparameters
     group_size: int = 4
@@ -80,11 +77,6 @@ async def cli_main(
 
     log_path = cli_config.log_path or f"/tmp/tinker-examples/harbor_rl/{run_name}"
     wandb_name = cli_config.wandb_name or run_name
-    max_generation_tokens = (
-        cli_config.max_generation_tokens
-        if cli_config.max_generation_tokens is not None
-        else cli_config.max_tokens
-    )
 
     dataset_builder = HarborDatasetBuilder(
         tasks=tasks,
@@ -96,9 +88,6 @@ async def cli_main(
         sandbox_timeout=cli_config.sandbox_timeout,
         command_timeout=cli_config.command_timeout,
         grader_timeout=cli_config.grader_timeout,
-        max_trajectory_tokens=cli_config.max_trajectory_tokens,
-        max_generation_tokens=max_generation_tokens,
-        context_overflow_reward=cli_config.context_overflow_reward,
         sandbox_factory=sandbox_factory,
     )
 
