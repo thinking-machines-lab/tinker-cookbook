@@ -2,6 +2,8 @@
 
 This recipe implements the SDFT algorithm from ["Self-Distillation Enables Continual Learning"](https://arxiv.org/abs/2601.19897) (Shenfeld et al., 2026) using Tinker. SDFT is an on-policy distillation method that learns new skills from demonstrations while preserving prior capabilities — addressing catastrophic forgetting in sequential fine-tuning.
 
+**Model compatibility note:** the original paper and released demonstrations target Qwen2.5-style instruct models. We keep this recipe as a reference implementation of SDFT, but it is likely to work poorly out of the box with Qwen3.5/3.6 long-thinking models unless the SFT demonstrations are regenerated for those models.
+
 ## Algorithm
 
 ### What the paper does
