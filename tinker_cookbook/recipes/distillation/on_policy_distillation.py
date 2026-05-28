@@ -9,7 +9,6 @@ Example usage:
     # For reasoning tasks (DeepMath)
     python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
         model_name=Qwen/Qwen3.5-9B-Base \
-        teacher_model=Qwen/Qwen3.5-9B \
         dataset=deepmath \
         learning_rate=1e-4 \
         groups_per_batch=1024 \
@@ -19,7 +18,6 @@ Example usage:
     # For chat tasks (Tulu3)
     python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
         model_name=Qwen/Qwen3.5-9B-Base \
-        teacher_model=Qwen/Qwen3.5-9B \
         dataset=tulu3 \
         learning_rate=1e-4 \
         groups_per_batch=1024 \
@@ -58,7 +56,7 @@ class CLIConfig:
     load_checkpoint_path: str | None = None  # Student checkpoint
 
     # Teacher configuration
-    teacher_model: str = "Qwen/Qwen3.5-9B"
+    teacher_model: str = "Qwen/Qwen3-8B"
     teacher_checkpoint: str | None = None
 
     # Dataset configuration

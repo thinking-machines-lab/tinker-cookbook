@@ -94,7 +94,7 @@ class CLIConfig:
     # Model configuration
     model_name: str = "Qwen/Qwen3.5-9B-Base"
     lora_rank: int = 128
-    renderer_name: str | None = None
+    renderer_name: str | None = "qwen3_5"
     load_checkpoint_path: str | None = None
 
     # Training hyperparameters
