@@ -32,6 +32,7 @@ from tinker_cookbook.supervised.nll_evaluator import NLLEvaluator
 from tinker_cookbook.supervised.types import SupervisedDatasetBuilder
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log, trace
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.lr_scheduling import LRSchedule, compute_schedule_lr_multiplier
 from tinker_cookbook.utils.misc_utils import iteration_dir
 
@@ -49,6 +50,9 @@ class Config:
         log_path (str): Directory for checkpoints, metrics, and trace files.
             Tilde (``~``) is expanded automatically.
         model_name (str): HuggingFace model identifier (e.g. ``"Qwen/Qwen3-8B"``).
+        recipe_name (str): Slug identifying the recipe driving this run
+            (e.g. ``"recipe_sl_basic"``).  Attached as ``user_metadata`` on the
+            ``ServiceClient`` so all downstream training/sampling calls inherit it.
         load_checkpoint_path (str | None): Path to a Tinker checkpoint to
             initialise weights from. ``None`` starts from the base model.
         renderer_name (str | None): Renderer to apply when tokenising chat
@@ -107,6 +111,7 @@ class Config:
     # Required parameters
     log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
     model_name: str
+    recipe_name: str
     load_checkpoint_path: str | None = None
     renderer_name: str | None = None
     dataset_builder: SupervisedDatasetBuilder
@@ -304,7 +309,10 @@ async def main(config: Config):
         )
         trace.trace_init(output_file=trace_events_path)
 
-    service_client = tinker.ServiceClient(base_url=config.base_url)
+    service_client = tinker.ServiceClient(
+        base_url=config.base_url,
+        user_metadata=recipe_user_metadata(config.recipe_name),
+    )
 
     user_metadata: dict[str, str] = {}
     if wandb_link := ml_logger.get_logger_url():

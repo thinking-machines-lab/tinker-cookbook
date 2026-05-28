@@ -128,6 +128,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
     # Build training config
     config = train.Config(
         model_name=cli_config.model_name,
+        recipe_name="recipe_search_tool",
         renderer_name=renderer_name,
         log_path=log_path,
         dataset_builder=builder,

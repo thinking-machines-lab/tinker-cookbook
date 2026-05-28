@@ -107,6 +107,7 @@ def cli_main(cli_config: CLIConfig):
     config = train_dpo.Config(
         log_path=log_path,
         model_name=cli_config.model_name,
+        recipe_name="recipe_preference_dpo",
         renderer_name=renderer_name,
         dataset_builder=get_dataset_builder(
             cli_config.dataset,

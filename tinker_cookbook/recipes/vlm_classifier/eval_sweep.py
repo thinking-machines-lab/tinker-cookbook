@@ -34,6 +34,7 @@ from tinker_cookbook.checkpoint_utils import (
     load_checkpoints_file,
 )
 from tinker_cookbook.recipes.vlm_classifier.eval import get_evaluator_builder
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -207,7 +208,10 @@ async def evaluate_sweep(
     Evaluate all few-shot image classifier experiments in a sweep directory.
     """
 
-    service_client = tinker.ServiceClient(base_url=eval_config.base_url)
+    service_client = tinker.ServiceClient(
+        base_url=eval_config.base_url,
+        user_metadata=recipe_user_metadata("eval_vlm_classifier_sweep"),
+    )
 
     # Limit concurrent evaluation tasks
     semaphore = asyncio.Semaphore(eval_config.max_parallel_evals)

@@ -70,6 +70,7 @@ from tinker_cookbook.rl.types import (
     TrajectoryGroup,
 )
 from tinker_cookbook.utils import ml_log, trace
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.misc_utils import split_list
 
 logger = logging.getLogger(__name__)
@@ -752,6 +753,7 @@ class Config:
 
     # Model
     model_name: str
+    recipe_name: str
     renderer_name: str | None = None
     lora_rank: int = 128
     base_url: str | None = None
@@ -840,7 +842,10 @@ async def main(
     start_batch = resume_info.batch if resume_info else 0
 
     # Service and training client setup
-    service_client = tinker.ServiceClient(base_url=cfg.base_url)
+    service_client = tinker.ServiceClient(
+        base_url=cfg.base_url,
+        user_metadata=recipe_user_metadata(cfg.recipe_name),
+    )
     user_metadata: dict[str, str] = {}
     if wandb_link := ml_logger.get_logger_url():
         user_metadata["wandb_link"] = wandb_link

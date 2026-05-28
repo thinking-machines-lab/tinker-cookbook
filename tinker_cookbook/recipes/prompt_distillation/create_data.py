@@ -10,6 +10,7 @@ from tqdm.asyncio import tqdm_asyncio
 
 from tinker_cookbook import renderers
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
 LANGUAGE_CLASSIFICATION_PROMPT = """You are a precise language classifier.
 
@@ -87,7 +88,9 @@ def setup_clients():
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     print("Creating service client")
-    service_client = tinker.ServiceClient()
+    service_client = tinker.ServiceClient(
+        user_metadata=recipe_user_metadata("dataset_prompt_distillation"),
+    )
     print("Creating sampling client")
     sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.6-35B-A3B")
     tokenizer = get_tokenizer("Qwen/Qwen3.6-35B-A3B")

@@ -81,6 +81,7 @@ def sft_stage(
     config = supervised_train.Config(
         log_path=log_path,
         model_name=base_model,
+        recipe_name="recipe_preference_rlhf_sft",
         renderer_name=renderer_name,
         dataset_builder=dataset_builder,
         evaluator_builders=[],  # Could add evaluators here
@@ -136,6 +137,7 @@ def train_rm(
     config = supervised_train.Config(
         log_path=log_path,
         model_name=base_model,
+        recipe_name="recipe_preference_rlhf_rm",
         renderer_name=renderer_name,
         dataset_builder=dataset_builder,
         evaluator_builders=[],  # Could add evaluators here
@@ -222,6 +224,7 @@ async def train_rl(
 
     config = train.Config(
         model_name=base_model,
+        recipe_name="recipe_preference_rlhf_rl",
         renderer_name=renderer_name,
         dataset_builder=rl_dataset_builder,
         load_checkpoint_path=sft_checkpoint,

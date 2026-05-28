@@ -57,6 +57,7 @@ def build_config(cli_config: CLIConfig) -> train.Config:
 
     return train.Config(
         model_name=model_name,
+        recipe_name="recipe_multiplayer_twenty_questions",
         renderer_name=renderer_name,
         log_path=log_path,
         dataset_builder=dataset_builder,
