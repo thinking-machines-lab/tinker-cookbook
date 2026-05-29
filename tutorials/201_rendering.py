@@ -150,7 +150,9 @@ def _(renderer, tokenizer):
     # Simulate what the model emits during sampling: the assistant's reply text
     # followed by the <|im_end|> stop token. (In practice these come from the
     # sampler -- here we build them by hand so the example is reproducible.)
-    fake_tokens = tokenizer.encode("They have efficient DNA repair and cancer-resistant cells.<|im_end|>")
+    fake_tokens = tokenizer.encode(
+        "They have efficient DNA repair and cancer-resistant cells.<|im_end|>"
+    )
     parsed_message, termination = renderer.parse_response(fake_tokens)
 
     print(f"Fake tokens: {fake_tokens}")
