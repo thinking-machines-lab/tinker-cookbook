@@ -617,8 +617,8 @@ def setup_logging(
         )
         print(f"Trackio logging enabled for project: {wandb_project}")
 
-    # Add HF dataset logger if configured
-    if hf_dataset_repo:
+    # Add HF dataset logger if configured (requires a local dir to stage parquet files)
+    if hf_dataset_repo and local_log_dir is not None:
         try:
             from tinker_cookbook.utils.hf_dataset_logger import HfDatasetLogger
 
