@@ -602,7 +602,7 @@ class CheckpointManager:
         self._last_saved_tokens = last_saved_tokens
 
     def should_save_periodic(self, step: int, *, elapsed_tokens: int = 0) -> bool:
-        """Return True if *step*, *elapsed_tokens*, or *elapsed_seconds* warrants a periodic checkpoint."""
+        """Return True if *step*, *elapsed_tokens*, or time since last save warrants a periodic checkpoint."""
         if step <= 0:
             return False
         _save_on_step = self._save_every > 0 and step % self._save_every == 0
