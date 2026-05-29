@@ -1,4 +1,8 @@
-"""E2e adapter tests for Qwen3.5: split QKV, tied embeddings, MoE expert expansion."""
+"""E2e adapter tests for Qwen3.5: split QKV, tied embeddings, MoE expert expansion.
+
+Qwen3.5 and Qwen3.6 share the same architecture and qwen3_5 renderer, so the MoE
+cases use Qwen3.6-35B-A3B while the dense cases use Qwen3.5-4B.
+"""
 
 import json
 import tempfile
