@@ -1,5 +1,6 @@
-"""GPU e2e tests for Qwen3.6 MoE models.
+"""GPU e2e tests for Qwen3.5 and Qwen3.6 MoE models.
 
+(Note that Qwen3.5 and Qwen3.6 share the same architecture and use the same qwen3_5 renderer.)
 Covers: shard merge, PEFT adapter export, FP8 experts quantized merge.
 Model: Qwen/Qwen3.6-35B-A3B (MoE with fused concatenated gate_up_proj).
 """
