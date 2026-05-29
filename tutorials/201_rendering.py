@@ -102,7 +102,7 @@ def _(mo):
     mo.md(r"""
     The output is a `ModelInput` object containing the tokenized chat template. Notice how each message is wrapped in special tokens like `<|im_start|>` and `<|im_end|>`, and the final `<|im_start|>assistant` is left open for the model to fill in.
 
-    Because `qwen3_5` is a thinking renderer, the prompt also ends with an open `<think>` tag that primes the model to reason before answering. If you'd prefer non-thinking mode, the `qwen3_5_disable_thinking` variant inserts `<think></think>` instead so the model replies directly.
+    Because `qwen3_5` is a thinking renderer, the prompt also ends with an open `<think>` tag that primes the model to reason before answering. If you'd prefer non-thinking mode instead, the `qwen3_5_disable_thinking` variant instead inserts `<think></think>` instead so the model replies directly.
     """)
     return
 
@@ -352,8 +352,6 @@ def _(mo):
 
 @app.cell
 def _(renderers):
-    from tinker_cookbook.renderers.base import Renderer
-
     # Define a factory function that creates your renderer
     def my_renderer_factory(tokenizer, image_processor=None):
         # In practice, you would return a custom Renderer subclass here.
