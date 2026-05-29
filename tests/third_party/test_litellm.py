@@ -11,7 +11,7 @@ import tinker_cookbook.third_party.litellm.provider as provider_mod
 from tinker_cookbook.third_party.litellm import register_litellm_provider
 
 # Use a small model for fast smoke testing
-BASE_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
+BASE_MODEL = "Qwen/Qwen3.5-4B"
 
 
 @pytest.fixture(scope="module")
