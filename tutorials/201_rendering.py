@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -34,7 +34,7 @@ def _(mo):
     mo.md(r"""
     ## Setup
 
-    We need a tokenizer (to map between text and token IDs) and a renderer (to apply the model's chat format).
+    We need a tokenizer (to map between text and token IDs) and a renderer (to apply the model's chat format). Note for this example that both Qwen3.5 and Qwen3.6 models use the same `qwen3_5` renderer.
     """)
     return
 
@@ -94,13 +94,15 @@ def _(messages, renderer, tokenizer):
     print()
     print("Decoded tokens:")
     print(tokenizer.decode(prompt.to_ints()))
-    return (prompt,)
+    return
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     The output is a `ModelInput` object containing the tokenized chat template. Notice how each message is wrapped in special tokens like `<|im_start|>` and `<|im_end|>`, and the final `<|im_start|>assistant` is left open for the model to fill in.
+
+    Because `qwen3_5` is a thinking renderer, the prompt also ends with an open `<think>` tag that primes the model to reason before answering. If you'd prefer non-thinking mode, the `qwen3_5_disable_thinking` variant inserts `<think></think>` instead so the model replies directly.
     """)
     return
 
@@ -124,7 +126,7 @@ def _(renderer, tokenizer):
     for tok in stop_sequences:
         if isinstance(tok, int):
             print(f"  Token {tok} decodes to: {tokenizer.decode([tok])!r}")
-    return (stop_sequences,)
+    return
 
 
 @app.cell(hide_code=True)
@@ -144,14 +146,17 @@ def _(mo):
 
 
 @app.cell
-def _(renderer):
-    # Simulate some sampled tokens (in practice these come from the model)
-    fake_tokens = [45, 7741, 34651, 31410, 614, 4911, 76665, 13, 151645]
-
+def _(renderer, tokenizer):
+    # Simulate what the model emits during sampling: the assistant's reply text
+    # followed by the <|im_end|> stop token. (In practice these come from the
+    # sampler -- here we build them by hand so the example is reproducible.)
+    fake_tokens = tokenizer.encode("They have efficient DNA repair and cancer-resistant cells.<|im_end|>")
     parsed_message, termination = renderer.parse_response(fake_tokens)
+
+    print(f"Fake tokens: {fake_tokens}")
     print(f"Parsed message: {parsed_message}")
     print(f"Termination: {termination} (is_clean={termination.is_clean})")
-    return fake_tokens, parsed_message, termination
+    return
 
 
 @app.cell(hide_code=True)
@@ -202,7 +207,7 @@ def _(messages, renderer, tokenizer):
     for i, (tok_id, w) in enumerate(zip(token_ids, weights.tolist())):
         label = "COMPLETION" if w > 0 else "prompt"
         print(f"  [{i:3d}] {label:10s}  {tokenizer.decode([tok_id])!r}")
-    return model_input, token_ids, weights
+    return
 
 
 @app.cell(hide_code=True)
@@ -244,7 +249,7 @@ def _(messages, renderer, renderers):
     # Compare with default (last assistant message only)
     _, weights_last = renderer.build_supervised_example(messages)
     print(f"Tokens with weight > 0 (default): {(weights_last > 0).sum().item()}")
-    return weights_all, weights_last
+    return
 
 
 @app.cell(hide_code=True)
@@ -272,15 +277,20 @@ def _(mo):
 @app.cell
 def _(renderers, tokenizer_utils):
     # Example: switching between renderers
-    # Each model family needs its own tokenizer
-    qwen_tokenizer = tokenizer_utils.get_tokenizer("Qwen/Qwen3.6-35B-A3B")
-    qwen_renderer = renderers.get_renderer("qwen3_5", qwen_tokenizer)
+    # Each model family needs its own tokenizer + matching renderer
+    _test_messages = [{"role": "user", "content": "Hello!"}]
 
-    test_messages = [{"role": "user", "content": "Hello!"}]
-    prompt_tokens = qwen_renderer.build_generation_prompt(test_messages)
-    print("Qwen3.5/3.6 prompt:")
-    print(qwen_tokenizer.decode(prompt_tokens.to_ints()))
-    return prompt_tokens, qwen_renderer, qwen_tokenizer, test_messages
+    for _model_name, _renderer_name in [
+        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
+        ("moonshotai/Kimi-K2.6", "kimi_k26"),
+    ]:
+        _tokenizer = tokenizer_utils.get_tokenizer(_model_name)
+        _renderer = renderers.get_renderer(_renderer_name, _tokenizer)
+        _prompt_tokens = _renderer.build_generation_prompt(_test_messages)
+        print(f"--- {_model_name} ({_renderer_name}) ---")
+        print(_tokenizer.decode(_prompt_tokens.to_ints()))
+        print()
+    return
 
 
 @app.cell(hide_code=True)
@@ -294,7 +304,7 @@ def _(mo):
 
 
 @app.cell
-def _(renderers):
+def _():
     from tinker_cookbook.renderers import ImagePart, Message, TextPart
 
     # A multimodal message with an image and text
@@ -310,25 +320,22 @@ def _(renderers):
     # Text-only messages still work as plain strings
     text_message = Message(role="user", content="Describe this in one word.")
     print("Text message:", text_message)
-    return ImagePart, Message, TextPart, multimodal_message, text_message
+    return
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    To use vision renderers, you also need an image processor:
+    The Qwen3.5 and Qwen3.6 models are natively vision-capable -- the same `qwen3_5` renderer you set up above also handles images. You just additionally load an image processor and pass it in:
 
     ```python
     from tinker_cookbook.image_processing_utils import get_image_processor
 
-    model_name = "Qwen/Qwen3.5-397B-A17B"
-    tokenizer = tokenizer_utils.get_tokenizer(model_name)
-    image_processor = get_image_processor(model_name)
-
-    renderer = renderers.get_renderer("qwen3_5_disable_thinking", tokenizer, image_processor=image_processor)
+    image_processor = get_image_processor("Qwen/Qwen3.6-35B-A3B")
+    renderer = renderers.get_renderer("qwen3_5", tokenizer, image_processor=image_processor)
     ```
 
-    The VL renderers handle vision special tokens (`<|vision_start|>`, `<|vision_end|>`) and image preprocessing automatically.
+    With an image processor attached, the renderer handles the vision special tokens (`<|vision_start|>`, `<|vision_end|>`) and image preprocessing automatically.
     """)
     return
 
@@ -363,7 +370,7 @@ def _(renderers):
 
     # Clean up
     renderers.unregister_renderer("MyOrg/custom_format")
-    return Renderer, my_renderer_factory
+    return
 
 
 @app.cell(hide_code=True)
