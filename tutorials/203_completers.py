@@ -268,10 +268,10 @@ async def _(get_text_content, message_completer):
     # Step 2: Ask the judge to score it
     judge_prompt = f"""Rate the following answer on a scale of 1-5 for accuracy and clarity.
 
-    Question: {question}
-    Answer: {candidate_text}
+Question: {question}
+Answer: {candidate_text}
 
-    Respond with ONLY a number from 1 to 5."""
+Respond with ONLY a number from 1 to 5."""
 
     judge_response = await message_completer([{"role": "user", "content": judge_prompt}])
     judge_text = get_text_content(judge_response)
