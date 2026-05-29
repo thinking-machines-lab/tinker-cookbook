@@ -1,7 +1,7 @@
 """GPU e2e tests for Qwen3 dense models.
 
 Covers: shard merge, PEFT adapter export.
-Model: Qwen/Qwen3-4B-Instruct-2507 (dense transformer, qwen3 renderer).
+Model: Qwen/Qwen3-8B (dense transformer, qwen3 renderer).
 """
 
 from __future__ import annotations
@@ -20,8 +20,8 @@ from tests.weights.gpu.conftest import (
 )
 from tinker_cookbook.weights import build_hf_model, build_lora_adapter
 
-MODEL = "Qwen/Qwen3-4B-Instruct-2507"
-RENDERER = "qwen3_instruct"
+MODEL = "Qwen/Qwen3-8B"
+RENDERER = "qwen3"
 
 
 @pytest.fixture(scope="module")
