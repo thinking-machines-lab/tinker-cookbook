@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -38,26 +38,17 @@ def _():
 
     warnings.filterwarnings("ignore", message="IProgress not found")
 
-    import asyncio
-
     import tinker
 
     from tinker_cookbook.completers import (
-        MessageCompleter,
         TinkerMessageCompleter,
         TinkerTokenCompleter,
-        TokenCompleter,
-        TokensWithLogprobs,
     )
     from tinker_cookbook.renderers import get_renderer, get_text_content
 
     return (
-        MessageCompleter,
         TinkerMessageCompleter,
         TinkerTokenCompleter,
-        TokenCompleter,
-        TokensWithLogprobs,
-        asyncio,
         get_renderer,
         get_text_content,
         tinker,
@@ -122,7 +113,7 @@ def _(api_key, get_renderer, mo, tinker):
     renderer = get_renderer("qwen3_5_disable_thinking", tokenizer)
 
     print(f"Sampling client ready for {MODEL_NAME}")
-    return MODEL_NAME, renderer, sampling_client, tokenizer
+    return renderer, sampling_client, tokenizer
 
 
 @app.cell(hide_code=True)
@@ -159,7 +150,7 @@ def _(mo):
 
 
 @app.cell
-def _(asyncio, renderer, token_completer, tokenizer):
+async def _(renderer, token_completer, tokenizer):
     # Build a prompt from messages
     messages_for_tokens = [
         {"role": "user", "content": "What is 7 * 8?"},
@@ -168,13 +159,13 @@ def _(asyncio, renderer, token_completer, tokenizer):
     stop_sequences = renderer.get_stop_sequences()
 
     # Generate tokens
-    token_result = asyncio.run(token_completer(model_input, stop=stop_sequences))
+    token_result = await token_completer(model_input, stop=stop_sequences)
 
     print(f"Generated {len(token_result.tokens)} tokens")
     print(f"Stop reason: {token_result.stop_reason}")
     print(f"Log-probs (first 5): {token_result.logprobs[:5]}")
     print(f"Decoded: {tokenizer.decode(token_result.tokens)}")
-    return messages_for_tokens, model_input, stop_sequences, token_result
+    return
 
 
 @app.cell(hide_code=True)
@@ -214,16 +205,16 @@ def _(TinkerMessageCompleter, renderer, sampling_client):
 
 
 @app.cell
-def _(asyncio, get_text_content, message_completer):
+async def _(get_text_content, message_completer):
     # Generate a message response
     conversation = [
         {"role": "user", "content": "Explain what a hash table is in one sentence."},
     ]
 
-    response = asyncio.run(message_completer(conversation))
+    response = await message_completer(conversation)
     print(f"Role: {response['role']}")
     print(f"Content: {get_text_content(response)}")
-    return conversation, response
+    return
 
 
 @app.cell(hide_code=True)
@@ -237,16 +228,16 @@ def _(mo):
 
 
 @app.cell
-def _(asyncio, get_text_content, message_completer):
+async def _(get_text_content, message_completer):
     multi_turn = [
         {"role": "user", "content": "What is the largest planet in our solar system?"},
         {"role": "assistant", "content": "Jupiter."},
         {"role": "user", "content": "How many moons does it have?"},
     ]
 
-    followup = asyncio.run(message_completer(multi_turn))
+    followup = await message_completer(multi_turn)
     print(f"Response: {get_text_content(followup)}")
-    return followup, multi_turn
+    return
 
 
 @app.cell(hide_code=True)
@@ -265,24 +256,24 @@ def _(mo):
 
 
 @app.cell
-def _(asyncio, get_text_content, message_completer):
+async def _(get_text_content, message_completer):
     import re
 
     # Step 1: Generate a candidate answer
     question = "Why do leaves change color in autumn?"
-    candidate = asyncio.run(message_completer([{"role": "user", "content": question}]))
+    candidate = await message_completer([{"role": "user", "content": question}])
     candidate_text = get_text_content(candidate)
     print(f"Candidate answer:\n{candidate_text}\n")
 
     # Step 2: Ask the judge to score it
     judge_prompt = f"""Rate the following answer on a scale of 1-5 for accuracy and clarity.
 
-Question: {question}
-Answer: {candidate_text}
+    Question: {question}
+    Answer: {candidate_text}
 
-Respond with ONLY a number from 1 to 5."""
+    Respond with ONLY a number from 1 to 5."""
 
-    judge_response = asyncio.run(message_completer([{"role": "user", "content": judge_prompt}]))
+    judge_response = await message_completer([{"role": "user", "content": judge_prompt}])
     judge_text = get_text_content(judge_response)
 
     # Step 3: Parse the score
@@ -290,17 +281,7 @@ Respond with ONLY a number from 1 to 5."""
     score = int(match.group()) if match else None
     print(f"Judge response: {judge_text}")
     print(f"Parsed score: {score}")
-    return (
-        candidate,
-        candidate_text,
-        judge_prompt,
-        judge_response,
-        judge_text,
-        match,
-        question,
-        re,
-        score,
-    )
+    return
 
 
 @app.cell(hide_code=True)
