@@ -32,6 +32,10 @@ from tinker_cookbook.rl.data_processing import (
 )
 from tinker_cookbook.rl.metric_util import RLTestSetEvaluator, compute_trajectory_metrics
 from tinker_cookbook.rl.metrics import discounted_future_sum_vectorized
+from tinker_cookbook.rl.rollout_logging import (
+    RolloutSummaryGroup,
+    serialize_rollout_summaries_from_groups,
+)
 from tinker_cookbook.rl.train import (
     compute_full_batch_metrics_and_get_sampling_client,
     do_group_rollout_and_filter_constant_reward,
@@ -157,6 +161,7 @@ class Config:
 
     wandb_project: str | None = None
     wandb_name: str | None = None
+    rollout_trace_logging: bool = False
 
     log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
     base_url: str | None = None
@@ -321,7 +326,7 @@ async def do_sync_training(
             # Get batch and sample trajectories
             env_group_builders_P, dataset_indices_P = dataset.get_batch(i_batch)
             async with trace.scope_span("sample"):
-                trajectory_groups_P = await asyncio.gather(
+                rollout_results_P = await asyncio.gather(
                     *[
                         asyncio.create_task(
                             do_group_rollout_and_filter_constant_reward(
@@ -336,11 +341,39 @@ async def do_sync_training(
                         for i, builder in enumerate(env_group_builders_P)
                     ],
                 )
-            trajectory_groups_P = [
-                trajectory_group
-                for trajectory_group in trajectory_groups_P
+            successful_rollouts = [
+                (env_group_builder, dataset_idx, trajectory_group)
+                for env_group_builder, dataset_idx, trajectory_group in safezip(
+                    env_group_builders_P,
+                    dataset_indices_P,
+                    rollout_results_P,
+                )
                 if trajectory_group is not None
             ]
+            env_group_builders_P = [
+                env_group_builder for env_group_builder, _dataset_idx, _tg in successful_rollouts
+            ]
+            dataset_indices_P = [dataset_idx for _builder, dataset_idx, _tg in successful_rollouts]
+            trajectory_groups_P = [
+                trajectory_group for _builder, _dataset_idx, trajectory_group in successful_rollouts
+            ]
+            if config.rollout_trace_logging:
+                rollout_records = serialize_rollout_summaries_from_groups(
+                    split="train",
+                    iteration=i_batch,
+                    groups_P=[
+                        RolloutSummaryGroup(
+                            trajectory_group=trajectory_group,
+                            tags=env_group_builder.logging_tags(),
+                            sampling_client_step=i_batch,
+                        )
+                        for env_group_builder, trajectory_group in safezip(
+                            env_group_builders_P, trajectory_groups_P
+                        )
+                    ],
+                    tokenizer=tokenizer,
+                )
+                ml_logger.log_rollouts(rollout_records, step=i_batch)
 
             # Train step
             sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(

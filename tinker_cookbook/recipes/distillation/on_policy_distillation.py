@@ -83,6 +83,7 @@ class CLIConfig:
     log_path: str | None = None
     wandb_project: str | None = None
     wandb_name: str | None = None
+    rollout_trace_logging: bool = False
     compute_post_kl: bool = False
 
     # Evaluation and checkpointing
@@ -164,6 +165,7 @@ async def cli_main(cli_config: CLIConfig):
         loss_fn_config=cli_config.loss_fn_config,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
+        rollout_trace_logging=cli_config.rollout_trace_logging,
         log_path=log_path,
         base_url=cli_config.base_url,
         load_checkpoint_path=cli_config.load_checkpoint_path,

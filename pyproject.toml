@@ -66,6 +66,7 @@ cloud = [
 ]
 wandb = [
     "wandb>=0.16.0",
+    "weave>=0.52.0",
     "plotly>=5.0.0",
 ]
 neptune-scale = [

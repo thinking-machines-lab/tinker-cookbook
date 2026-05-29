@@ -33,6 +33,12 @@ try:
 except ImportError:
     wandb = None
 
+# Weave is imported lazily because it is relatively heavy, and regular W&B
+# metrics should not pay that cost unless rollout tracing is actually used.
+_weave_available: bool | None = None
+weave: Any | None = None
+_weave_log_rollout: Any | None = None
+
 # Check Neptune availability
 _neptune_available = False
 try:
@@ -50,6 +56,44 @@ try:
     _trackio_available = True
 except ImportError:
     trackio = None
+
+
+def _rollout_for_weave(record: dict[str, Any]) -> dict[str, Any]:
+    """Return one rollout in a scan-friendly shape for Weave."""
+    return {
+        "schema_version": record.get("schema_version"),
+        "split": record.get("split"),
+        "iteration": record.get("iteration"),
+        "group_idx": record.get("group_idx"),
+        "traj_idx": record.get("traj_idx"),
+        "tags": record.get("tags", []),
+        "sampling_client_step": record.get("sampling_client_step"),
+        "total_reward": record.get("total_reward"),
+        "final_reward": record.get("final_reward"),
+        "trajectory_metrics": record.get("trajectory_metrics", {}),
+        "final_ob_len": record.get("final_ob_len"),
+        "turns": record.get("steps", []),
+    }
+
+
+def _load_weave() -> bool:
+    global _weave_available, _weave_log_rollout, weave
+    if _weave_available is not None:
+        return _weave_available
+
+    try:
+        import weave as weave_module
+    except ImportError:
+        _weave_available = False
+        weave = None
+        return False
+
+    weave = weave_module
+    _weave_available = True
+    _weave_log_rollout = weave_module.op(name="tinker_rollout", enable_code_capture=False)(
+        _rollout_for_weave
+    )
+    return True
 
 
 def dump_config(config: Any) -> Any:
@@ -124,6 +168,15 @@ class Logger(ABC):
         Args:
             key (str): Identifier for the text entry.
             text (str): The text content to log.
+        """
+        pass
+
+    def log_rollouts(self, records: list[dict[str, Any]], step: int | None = None) -> None:
+        """Log per-rollout records to a trace backend, when available.
+
+        Args:
+            records: JSON-serializable rollout records.
+            step: Training step associated with the records.
         """
         pass
 
@@ -320,6 +373,35 @@ class WandbLogger(Logger):
             dir=str(log_dir) if log_dir else None,
             name=wandb_name,
         )
+        self._weave_client = None
+        self._weave_project_name = self._get_weave_project_name(project)
+        self._warned_weave_unavailable = False
+
+    def _get_weave_project_name(self, project: str | None) -> str | None:
+        project_name = project or getattr(self.run, "project", None)
+        entity = getattr(self.run, "entity", None)
+        if project_name and entity and "/" not in project_name:
+            return f"{entity}/{project_name}"
+        return project_name
+
+    def _ensure_weave_client(self) -> bool:
+        if self._weave_client is not None:
+            return True
+        if not _load_weave() or weave is None:
+            if not self._warned_weave_unavailable:
+                logger.warning("weave is not installed; skipping Weave rollout logging")
+                self._warned_weave_unavailable = True
+            return False
+        if not self._weave_project_name:
+            logger.warning("Could not initialize Weave rollout tracing: missing W&B project")
+            return False
+        try:
+            self._weave_client = weave.init(self._weave_project_name)
+            logger.info("Weave rollout tracing enabled for project: %s", self._weave_project_name)
+            return True
+        except Exception as e:
+            logger.warning("Could not initialize Weave rollout tracing: %s", e)
+            return False
 
     def log_hparams(self, config: Any) -> None:
         """Log hyperparameters to wandb."""
@@ -332,8 +414,39 @@ class WandbLogger(Logger):
             wandb.log(metrics, step=step)
             logger.info("Logging to: %s", self.run.url)
 
+    def log_rollouts(self, records: list[dict[str, Any]], step: int | None = None) -> None:
+        """Log rollout records as Weave traces linked to this W&B run."""
+        if not records or not self.run:
+            return
+        if not self._ensure_weave_client() or _weave_log_rollout is None:
+            return
+
+        did_set_run_context = False
+        try:
+            if step is not None:
+                self._weave_client.set_wandb_run_context(run_id=self.run.id, step=step)
+                did_set_run_context = True
+            for record in records:
+                attrs = {
+                    "split": record.get("split"),
+                    "iteration": record.get("iteration"),
+                    "group_idx": record.get("group_idx"),
+                    "traj_idx": record.get("traj_idx"),
+                    "tags": record.get("tags", []),
+                }
+                with weave.attributes(attrs):
+                    _weave_log_rollout(record)
+            logger.info("Logged %d rollout traces to Weave", len(records))
+        except Exception as e:
+            logger.warning("Failed to log rollout traces to Weave: %s", e)
+        finally:
+            if did_set_run_context:
+                self._weave_client.clear_wandb_run_context()
+
     def close(self) -> None:
         """Close wandb run."""
+        if self._weave_client is not None and weave is not None:
+            weave.finish()
         if self.run and wandb is not None:
             wandb.finish()
 
@@ -492,6 +605,11 @@ class MultiplexLogger(Logger):
         for logger in self.loggers:
             if hasattr(logger, "log_long_text"):
                 logger.log_long_text(key, text)
+
+    def log_rollouts(self, records: list[dict[str, Any]], step: int | None = None) -> None:
+        """Forward rollout records to trace-capable child loggers."""
+        for logger in self.loggers:
+            logger.log_rollouts(records, step)
 
     def close(self) -> None:
         """Close all child loggers."""

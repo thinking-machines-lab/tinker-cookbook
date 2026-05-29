@@ -1,15 +1,20 @@
-"""Utilities for exporting per-rollout records to JSONL."""
+"""Utilities for exporting per-rollout records."""
+
+from __future__ import annotations
 
 import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tinker_cookbook.rl.types import TrajectoryGroup
 from tinker_cookbook.utils.deprecation import deprecated
 from tinker_cookbook.utils.misc_utils import safezip
+
+if TYPE_CHECKING:
+    from tinker_cookbook.tokenizer_utils import Tokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +74,20 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
+def _decode_tokens(tokenizer: Tokenizer, tokens: Sequence[int]) -> str:
+    if not tokens:
+        return ""
+    return tokenizer.decode(list(tokens))
+
+
+def _decode_model_input(tokenizer: Tokenizer, model_input: Any) -> str | None:
+    try:
+        return _decode_tokens(tokenizer, model_input.to_ints())
+    except Exception:
+        logger.debug("Failed to decode rollout model input", exc_info=True)
+        return None
+
+
 def serialize_rollout_summaries(
     *,
     split: str,
@@ -76,6 +95,7 @@ def serialize_rollout_summaries(
     trajectory_groups_P: Sequence[TrajectoryGroup],
     taglist_P: Sequence[list[str]],
     sampling_client_steps_P: Sequence[int | None] | None = None,
+    tokenizer: Tokenizer | None = None,
 ) -> list[dict[str, Any]]:
     """Serialize trajectory groups into JSON-safe rollout summary records.
 
@@ -99,6 +119,8 @@ def serialize_rollout_summaries(
         trajectory_groups_P: One trajectory group per problem (subscript ``_P``).
         taglist_P: Tags for each trajectory group, aligned with *trajectory_groups_P*.
         sampling_client_steps_P: Per-group sampling-client step counters, or ``None``.
+        tokenizer: Optional tokenizer used to add best-effort decoded observation
+            and action text to each step.
 
     Returns:
         List of JSON-serializable rollout summary records, one per trajectory.
@@ -113,17 +135,22 @@ def serialize_rollout_summaries(
         for traj_idx, trajectory in enumerate(trajectory_group.trajectories_G):
             steps = []
             for step_idx, transition in enumerate(trajectory.transitions):
-                steps.append(
-                    {
-                        "step_idx": step_idx,
-                        "ob_len": transition.ob.length,
-                        "ac_len": len(transition.ac.tokens),
-                        "reward": transition.reward,
-                        "episode_done": transition.episode_done,
-                        "metrics": transition.metrics,
-                        "logs": transition.logs,
-                    }
-                )
+                step = {
+                    "step_idx": step_idx,
+                    "ob_len": transition.ob.length,
+                    "ac_len": len(transition.ac.tokens),
+                    "reward": transition.reward,
+                    "episode_done": transition.episode_done,
+                    "metrics": transition.metrics,
+                    "logs": transition.logs,
+                }
+                if tokenizer is not None:
+                    ob_text = _decode_model_input(tokenizer, transition.ob)
+                    if ob_text is not None:
+                        step["ob_text"] = ob_text
+                    step["ac_text"] = _decode_tokens(tokenizer, transition.ac.tokens)
+                    step["stop_reason"] = str(transition.ac.stop_reason)
+                steps.append(step)
 
             records.append(
                 _json_safe(
@@ -158,6 +185,7 @@ def write_rollout_summaries_jsonl(
     trajectory_groups_P: Sequence[TrajectoryGroup],
     taglist_P: Sequence[list[str]],
     sampling_client_steps_P: Sequence[int | None] | None = None,
+    tokenizer: Tokenizer | None = None,
 ) -> None:
     """Write one JSON record per rollout trajectory to a JSONL file.
 
@@ -171,6 +199,7 @@ def write_rollout_summaries_jsonl(
         trajectory_groups_P (Sequence[TrajectoryGroup]): One trajectory group per problem.
         taglist_P (Sequence[list[str]]): Tags for each trajectory group.
         sampling_client_steps_P (Sequence[int | None] | None): Per-group step counters.
+        tokenizer: Optional tokenizer used to add decoded observation/action text.
     """
     records = serialize_rollout_summaries(
         split=split,
@@ -178,6 +207,7 @@ def write_rollout_summaries_jsonl(
         trajectory_groups_P=trajectory_groups_P,
         taglist_P=taglist_P,
         sampling_client_steps_P=sampling_client_steps_P,
+        tokenizer=tokenizer,
     )
     path_obj = Path(path)
     path_obj.parent.mkdir(parents=True, exist_ok=True)
@@ -206,6 +236,7 @@ def serialize_rollout_summaries_from_groups(
     split: str,
     iteration: int,
     groups_P: Sequence[RolloutSummaryGroup],
+    tokenizer: Tokenizer | None = None,
 ) -> list[dict[str, Any]]:
     """Serialize pre-grouped rollout summaries into JSON-safe dicts.
 
@@ -218,6 +249,7 @@ def serialize_rollout_summaries_from_groups(
         trajectory_groups_P=[group.trajectory_group for group in groups_P],
         taglist_P=[group.tags for group in groups_P],
         sampling_client_steps_P=[group.sampling_client_step for group in groups_P],
+        tokenizer=tokenizer,
     )
 
 
@@ -227,6 +259,7 @@ def write_rollout_summaries_jsonl_from_groups(
     split: str,
     iteration: int,
     groups_P: Sequence[RolloutSummaryGroup],
+    tokenizer: Tokenizer | None = None,
 ) -> None:
     """Serialize rollout summaries from pre-grouped records to a JSONL file.
 
@@ -241,6 +274,7 @@ def write_rollout_summaries_jsonl_from_groups(
         groups_P (Sequence[RolloutSummaryGroup]): One summary group per
             problem, each containing a trajectory group, tags, and an optional
             sampling-client step.
+        tokenizer: Optional tokenizer used to add decoded observation/action text.
     """
     write_rollout_summaries_jsonl(
         path,
@@ -249,4 +283,5 @@ def write_rollout_summaries_jsonl_from_groups(
         trajectory_groups_P=[group.trajectory_group for group in groups_P],
         taglist_P=[group.tags for group in groups_P],
         sampling_client_steps_P=[group.sampling_client_step for group in groups_P],
+        tokenizer=tokenizer,
     )
