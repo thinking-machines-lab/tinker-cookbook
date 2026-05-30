@@ -65,6 +65,61 @@ So the best possible is sum1=20 and sum2=21, product 420. So the maximum sum is 
 \boxed{420}<|im_end|>
 ```
 
+## Choosing a loss function
+
+The `loss_fn` flag selects which policy-gradient loss to use. The default is `importance_sampling` (REINFORCE with IS correction). You can switch to `ppo`, `cispo`, or `dro` to compare training stability and final performance on the same task.
+
+### CISPO (Conservative Importance Sampling PPO)
+
+CISPO clips the importance-sampling ratio but applies it as a weight on the log-probability rather than on the advantage. This can be more stable than PPO when the policy drifts far off-policy.
+
+```bash
+python -m tinker_cookbook.recipes.math_rl.train \
+    env=arithmetic loss_fn=cispo \
+    model_name="meta-llama/Llama-3.2-1B" \
+    group_size=4 groups_per_batch=100 learning_rate=1e-4
+```
+
+You can tune the clipping range via `loss_fn_config`:
+
+```bash
+python -m tinker_cookbook.recipes.math_rl.train \
+    env=arithmetic loss_fn=cispo \
+    'loss_fn_config={"clip_low_threshold": 0.9, "clip_high_threshold": 1.1}' \
+    model_name="meta-llama/Llama-3.2-1B" \
+    group_size=4 groups_per_batch=100 learning_rate=1e-4
+```
+
+### DRO (Distributionally Robust Optimization)
+
+DRO optimizes for worst-case performance across the batch, which can improve robustness on harder examples at the cost of slower average improvement.
+
+```bash
+python -m tinker_cookbook.recipes.math_rl.train \
+    env=arithmetic loss_fn=dro \
+    model_name="meta-llama/Llama-3.2-1B" \
+    group_size=4 groups_per_batch=100 learning_rate=1e-4
+```
+
+### Comparing loss functions on MATH
+
+To compare loss functions on a harder task, run the same configuration with different `loss_fn` values:
+
+```bash
+for loss in importance_sampling ppo cispo dro; do
+    python -m tinker_cookbook.recipes.math_rl.train \
+        env=math loss_fn=$loss \
+        model_name="Qwen/Qwen3-8B" \
+        group_size=16 groups_per_batch=64 learning_rate=2e-5 max_tokens=512 \
+        wandb_project=math-loss-comparison wandb_name="math-$loss"
+done
+```
+
+Compare the `test/env/all/correct` metric across runs to see how each loss affects convergence speed and final accuracy. As a rule of thumb:
+- Start with `importance_sampling` (unbounded ratio, fastest convergence on-policy)
+- Try `ppo` or `cispo` if you see instability from large policy updates
+- Try `dro` if you want to improve worst-case performance across problem types
+
 # RL on GSM8K
 
 ```bash
