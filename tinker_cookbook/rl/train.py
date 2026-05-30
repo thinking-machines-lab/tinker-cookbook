@@ -475,6 +475,10 @@ class Config:
     num_substeps: int = 1
     # LoRA rank for the training adapter.
     lora_rank: int = 32
+    # Random seed for LoRA initialization. None means random per the SDK default
+    # (`tinker.ServiceClient.create_lora_training_client_async(seed=None)`).
+    # Set this for reproducible runs.
+    lora_init_seed: int | None = None
 
     # -------------------------------------------------------------------------
     # Sampling and diagnostics (advanced)
@@ -1909,7 +1913,10 @@ async def main(
         logger.info(f"Loaded weights from {config.load_checkpoint_path}")
     else:
         training_client = await service_client.create_lora_training_client_async(
-            config.model_name, rank=config.lora_rank, user_metadata=user_metadata
+            config.model_name,
+            rank=config.lora_rank,
+            seed=config.lora_init_seed,
+            user_metadata=user_metadata,
         )
 
     # Get tokenizer from training client
