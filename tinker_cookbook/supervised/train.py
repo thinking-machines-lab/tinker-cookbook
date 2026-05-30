@@ -562,6 +562,18 @@ async def main(config: Config):
         config.max_steps is None or start_epoch * n_batches + start_batch < config.max_steps
     )
     if did_train:
+        # Final eval on the post-final-optim weights, before the final checkpoint
+        # save. The in-loop eval at `step % eval_every == 0` snapshots *pre-step*
+        # weights, so the last in-loop eval sees weights that are at most
+        # `eval_every - 1` optim steps stale relative to the final checkpoint
+        # (and exactly `eval_every` stale in the common case where `total_steps`
+        # is a multiple of `eval_every`). Re-running evaluators here logs metrics
+        # at `step=total_steps`, matching the final checkpoint's label.
+        if evaluators and config.eval_every > 0:
+            async with trace.scope_span("evals_final"):
+                final_eval_metrics = await run_evals(evaluators, training_client, total_steps)
+            if final_eval_metrics:
+                ml_logger.log_metrics(metrics=final_eval_metrics, step=total_steps)
         await checkpoint_mgr.save_final_async(
             loop_state={
                 "epoch": config.num_epochs,
