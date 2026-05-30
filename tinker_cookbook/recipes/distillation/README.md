@@ -14,7 +14,7 @@ Our results can be reproduced by running:
 
 ### Supervised fine-tuning
 
-We observe an AIME'24 score of ~55% using a rank-128 LoRA after 3000 steps. We use a learning rate of 1e-3 with LoRA and 1e-4 with full fine-tuning.
+We observe an AIME'24 score of ~60.0% using a rank-128 LoRA after 3000 steps. We use a learning rate of 1e-3 with LoRA and 1e-4 with full fine-tuning.
 
 ```bash
 python -m tinker_cookbook.recipes.distillation.off_policy_reasoning \
@@ -32,7 +32,8 @@ We observe an AIME'24 score of ~65% using a rank-128 LoRA after 100 steps. For o
 ```bash
 python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
     model_name=Qwen/Qwen3.5-9B-Base \
-    load_checkpoint_path=tinker://4a1939e6-04be-5a77-9e4e-910ccff9f27e:train:0/weights/final \
+    teacher_model=Qwen/Qwen3.5-9B \
+    load_checkpoint_path=tinker://b89f6676-49c4-53ed-9788-2e0c81a9eabf:train:0/weights/final \
     dataset=deepmath \
     learning_rate=1e-4 \
     groups_per_batch=512 \
@@ -48,8 +49,8 @@ The results of running the above scripts with various LoRA ranks can be found he
 
 | Stage | Rank 8 | Rank 32 | Rank 128 |
 |-------|--------|---------|----------|
-| Supervised fine-tuning (SFT) | `tinker://c15f09f1-f225-5f98-bab1-ec8dfac5da2a:train:0/weights/final` | `tinker://b9190d16-c849-51d5-a690-1b5de146a284:train:0/weights/final` | `tinker://4a1939e6-04be-5a77-9e4e-910ccff9f27e:train:0/weights/final` |
-| On-policy distillation | `tinker://4a97bc02-f4d0-5ecd-888a-3e8cc5b0f7f6:train:0/sampler_weights/000080` | `tinker://bfffa2b2-a78f-59be-a2ef-cc9188bfce7e:train:0/sampler_weights/000080` | `tinker://1dd8de47-be86-54d3-9355-ebf80827be26:train:0/sampler_weights/000080` |
+| Supervised fine-tuning (SFT) | `tinker://414d30d0-3b63-5596-919d-647960d156c2:train:0/weights/final` | `tinker://1a32513a-6177-5642-bebd-ecc8e255d4a7:train:0/weights/final` | `tinker://b89f6676-49c4-53ed-9788-2e0c81a9eabf:train:0/weights/final` |
+| On-policy distillation | `rerun in progress` | `rerun in progress` | `tinker://12abc743-21dd-5903-b86e-ac62cc21659a:train:0/sampler_weights/final` |
 
 See the on-policy distillation launch command above for an example of how to load the checkpoint path.
 
