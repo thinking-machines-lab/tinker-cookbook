@@ -321,6 +321,10 @@ class TrainingRunStore:
         """Write code.diff (overwrites)."""
         self.storage.write(self._path("code.diff"), diff.encode("utf-8"))
 
+    def flush(self) -> None:
+        """Flush buffered writes in the underlying storage backend."""
+        self.storage.flush()
+
     # ── Async variants ────────────────────────────────────────────────
 
     async def aread_config(self) -> dict[str, Any] | None:
@@ -362,3 +366,7 @@ class TrainingRunStore:
     async def awrite_checkpoint(self, record: dict[str, Any]) -> None:
         """Async version of :meth:`write_checkpoint`."""
         await asyncio.to_thread(self.write_checkpoint, record)
+
+    async def aflush(self) -> None:
+        """Async version of :meth:`flush`."""
+        await asyncio.to_thread(self.flush)
