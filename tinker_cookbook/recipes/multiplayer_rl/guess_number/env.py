@@ -20,6 +20,7 @@ from tinker_cookbook.rl.types import (
     StepResult,
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.utils.logtree_formatters import ConversationFormatter
 
 _UPPER_BOUND = 1024
 SYSTEM_PROMPT = f"""
@@ -70,6 +71,7 @@ class GuessNumberEnv(Env):
             return RETURN_ON_FAIL
 
     async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
+        convo_for_player = [self.system_prompt] + self.turns
         # step 1: parse the action tokens into a message
         # this step is specific to our library, but usually templated, so you can just copy it.
         (action_message, _termination) = self.renderer.parse_response(action)
@@ -94,6 +96,10 @@ class GuessNumberEnv(Env):
                 "guess": action_content,
                 "feedback": ensure_text(user_turn["content"]),
                 "target": self.gold_answer,
+            },
+            trace={
+                "prompt": ConversationFormatter(messages=convo_for_player).to_data(),
+                "policy_response": ConversationFormatter(messages=[action_message]).to_data(),
             },
         )
 
