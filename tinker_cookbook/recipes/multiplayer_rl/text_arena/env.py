@@ -31,6 +31,7 @@ from tinker_cookbook.rl.types import (
     Observation,
     RLDataset,
     RLDatasetBuilder,
+    RolloutTrace,
     StepResult,
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
@@ -166,11 +167,11 @@ class TwoPlayerEnv(Env):
             next_observation=self.get_observation(),
             next_stop_condition=self.stop_condition,
             metrics={},
-            trace={
-                "prompt": ConversationFormatter(messages=prompt_messages).to_data(),
-                "policy_response": ConversationFormatter(messages=[action_message]).to_data(),
-                "game_done": self.coordinator.game_done,
-            },
+            trace=RolloutTrace(
+                prompt=ConversationFormatter(messages=prompt_messages).to_data(),
+                policy_response=ConversationFormatter(messages=[action_message]).to_data(),
+                env_state={"game_done": self.coordinator.game_done},
+            ),
         )
 
     def get_done_step(self) -> StepResult:

@@ -14,6 +14,7 @@ from tinker_cookbook.rl.types import (
     EnvGroupBuilder,
     Metrics,
     Observation,
+    RolloutTrace,
     StepResult,
     Trajectory,
 )
@@ -155,11 +156,11 @@ class ProblemEnv(Env):
                 "format": correct_format,
                 "correct": correct_answer,
             },
-            trace={
-                "prompt": prompt_formatter.to_data(),
-                "policy_response": response_formatter.to_data(),
-                "reward": reward_table,
-            },
+            trace=RolloutTrace(
+                prompt=prompt_formatter.to_data(),
+                policy_response=response_formatter.to_data(),
+                reward_data=reward_table,
+            ),
         )
 
 

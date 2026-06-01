@@ -24,6 +24,7 @@ from tinker_cookbook.rl.types import (
     EnvGroupBuilder,
     RLDataset,
     RLDatasetBuilder,
+    RolloutTrace,
     StepResult,
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
@@ -180,12 +181,12 @@ class RubricGradedEnv(Env):
                 "termination": str(termination),
                 "num_rubrics": len(self.rubric_items),
             },
-            trace={
-                "prompt": prompt_formatter.to_data(),
-                "policy_response": response_formatter.to_data(),
-                "rubric_grades": rubric_grades,
-                "reward_terms": reward_terms,
-            },
+            trace=RolloutTrace(
+                prompt=prompt_formatter.to_data(),
+                policy_response=response_formatter.to_data(),
+                reward_data=reward_terms,
+                extra={"rubric_grades": rubric_grades},
+            ),
         )
 
 

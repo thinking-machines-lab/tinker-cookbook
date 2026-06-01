@@ -24,6 +24,7 @@ from tinker_cookbook.rl.types import (
     EnvGroupBuilder,
     RLDataset,
     RLDatasetBuilder,
+    RolloutTrace,
     StepResult,
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
@@ -121,10 +122,10 @@ class PromptOnlyEnv(ProblemEnv):
             next_observation=tinker.ModelInput.empty(),
             next_stop_condition=self.stop_condition,
             metrics={},
-            trace={
-                "prompt": ConversationFormatter(messages=convo).to_data(),
-                "policy_response": ConversationFormatter(messages=[message]).to_data(),
-            },
+            trace=RolloutTrace(
+                prompt=ConversationFormatter(messages=convo).to_data(),
+                policy_response=ConversationFormatter(messages=[message]).to_data(),
+            ),
         )
 
 

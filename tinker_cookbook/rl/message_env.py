@@ -100,14 +100,18 @@ class EnvFromMessageEnv(types.Env):
         prompt_messages: list[Message],
         assistant_message: Message,
         result: MessageStepResult | None = None,
-    ) -> types.TracePayload:
-        trace: types.TracePayload = {
-            "prompt": ConversationFormatter(messages=prompt_messages).to_data(),
-            "policy_response": ConversationFormatter(messages=[assistant_message]).to_data(),
-        }
-        if result is not None and result.next_messages:
-            trace["next_messages"] = ConversationFormatter(messages=result.next_messages).to_data()
-        return trace
+    ) -> types.RolloutTrace:
+        extra: dict[str, object] | None
+        extra = (
+            {"next_messages": ConversationFormatter(messages=result.next_messages).to_data()}
+            if result is not None and result.next_messages
+            else None
+        )
+        return types.RolloutTrace(
+            prompt=ConversationFormatter(messages=prompt_messages).to_data(),
+            policy_response=ConversationFormatter(messages=[assistant_message]).to_data(),
+            extra=extra,
+        )
 
     async def initial_observation(self) -> tuple[tinker.ModelInput, StopCondition]:
         messages = await self.message_env.initial_observation()

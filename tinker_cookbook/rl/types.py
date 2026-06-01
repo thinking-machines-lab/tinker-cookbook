@@ -15,7 +15,7 @@ Type aliases
 - ``Logprobs`` – ``list[float]`` of per-token log-probabilities.
 - ``Metrics`` – ``dict[str, float | int]`` of numeric values aggregated in logs.
 - ``Logs`` – ``dict[str, str | int | float]`` of diagnostic info for display.
-- ``TracePayload`` – JSON-like structured data for rollout transcript summaries.
+- ``RolloutTrace`` – structured transcript data for rollout summaries.
 """
 
 from abc import ABC, abstractmethod
@@ -35,7 +35,29 @@ Observation: TypeAlias = tinker.ModelInput
 Logprobs: TypeAlias = list[float]
 Metrics: TypeAlias = dict[str, float | int]
 Logs: TypeAlias = dict[str, str | int | float]
-TracePayload: TypeAlias = dict[str, object]
+
+
+@dataclass
+class RolloutTrace:
+    """Structured transcript data attached to one environment step in a rollout.
+
+    Attributes:
+        prompt: Structured prompt/input data, usually
+            ``ConversationFormatter(...).to_data()``.
+        policy_response: Structured policy response data, usually
+            ``ConversationFormatter(...).to_data()``.
+        reward_data: Optional reward breakdown or reward-specific diagnostics.
+        env_state: Optional environment state metadata, such as turn number or
+            game-over status.
+        extra: Optional environment-specific structured data that does not fit
+            the common fields.
+    """
+
+    prompt: dict[str, object] | None = None
+    policy_response: dict[str, object] | None = None
+    reward_data: dict[str, object] | None = None
+    env_state: dict[str, object] | None = None
+    extra: dict[str, object] | None = None
 
 
 @dataclass
@@ -53,7 +75,7 @@ class StepResult:
             logs (e.g., timing, counts).
         logs (Logs): Diagnostic info for display/debugging tools (not
             aggregated like metrics).
-        trace (TracePayload | None): Optional structured transcript data for
+        trace (RolloutTrace | None): Optional structured transcript data for
             durable rollout summaries. This is not aggregated into metrics.
     """
 
@@ -69,7 +91,7 @@ class StepResult:
     """Numeric values aggregated and reported in training logs (e.g., timing, counts)."""
     logs: Logs = field(default_factory=dict)
     """Diagnostic info for display/debugging tools (not aggregated like metrics)."""
-    trace: TracePayload | None = None
+    trace: RolloutTrace | None = None
     """Optional structured transcript data for durable rollout summaries."""
 
 
@@ -87,7 +109,7 @@ class Transition:
             logs.
         logs (Logs): Diagnostic info for display/debugging tools (not
             aggregated like metrics).
-        trace (TracePayload | None): Optional structured transcript data for
+        trace (RolloutTrace | None): Optional structured transcript data for
             durable rollout summaries.
     """
 
@@ -103,7 +125,7 @@ class Transition:
     """Numeric values aggregated and reported in training logs."""
     logs: Logs = field(default_factory=dict)
     """Diagnostic info for display/debugging tools (not aggregated like metrics)."""
-    trace: TracePayload | None = None
+    trace: RolloutTrace | None = None
     """Optional structured transcript data for durable rollout summaries."""
 
 

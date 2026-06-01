@@ -6,7 +6,14 @@ import tinker
 
 from tinker_cookbook.completers import TokensWithLogprobs
 from tinker_cookbook.rl.rollout_logging import serialize_rollout_summaries
-from tinker_cookbook.rl.types import Logs, Metrics, Trajectory, TrajectoryGroup, Transition
+from tinker_cookbook.rl.types import (
+    Logs,
+    Metrics,
+    RolloutTrace,
+    Trajectory,
+    TrajectoryGroup,
+    Transition,
+)
 
 
 def test_serialize_rollout_summaries_handles_numpy_scalars_and_trace():
@@ -17,7 +24,7 @@ def test_serialize_rollout_summaries_handles_numpy_scalars_and_trace():
         episode_done=True,
         metrics=cast(Metrics, {"score": np.float32(1.5)}),
         logs=cast(Logs, {"rank": np.int64(2)}),
-        trace={"prompt": {"messages": [{"role": "user", "content": "2+2?"}]}},
+        trace=RolloutTrace(prompt={"messages": [{"role": "user", "content": "2+2?"}]}),
     )
     trajectory = Trajectory(transitions=[transition], final_ob=tinker.ModelInput.from_ints([1] * 8))
     trajectory_group = TrajectoryGroup(

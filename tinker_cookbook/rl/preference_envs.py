@@ -26,6 +26,7 @@ from tinker_cookbook.rl.types import (
     Observation,
     RLDataset,
     RLDatasetBuilder,
+    RolloutTrace,
     StepResult,
     Trajectory,
 )
@@ -347,11 +348,11 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
             response_messages,
             is_valid_list,
         ):
-            trajectory.transitions[0].trace = {
-                "prompt": prompt_trace,
-                "policy_response": ConversationFormatter(messages=messages).to_data(),
-                "valid_format": bool(is_valid),
-            }
+            trajectory.transitions[0].trace = RolloutTrace(
+                prompt=prompt_trace,
+                policy_response=ConversationFormatter(messages=messages).to_data(),
+                env_state={"valid_format": bool(is_valid)},
+            )
 
         return [
             (
