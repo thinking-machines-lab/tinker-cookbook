@@ -18,6 +18,7 @@ from tinker_cookbook.completers import StopCondition
 from tinker_cookbook.renderers import Renderer
 from tinker_cookbook.renderers.base import Message
 from tinker_cookbook.rl import types
+from tinker_cookbook.utils.logtree_formatters import ConversationFormatter
 
 
 @dataclass
@@ -71,6 +72,7 @@ class EnvFromMessageEnv(types.Env):
         self.max_generation_tokens = max_generation_tokens
         self.context_overflow_reward = context_overflow_reward
         self._base_stop_condition = renderer.get_stop_sequences()
+        self._last_messages: list[Message] | None = None
 
         # Forward example_id from the inner MessageEnv for trajectory storage.
         # This ensures truncated examples (where MessageEnv.step() never runs)
@@ -93,8 +95,27 @@ class EnvFromMessageEnv(types.Env):
         generation_reserve = self.max_generation_tokens or 0
         return observation_length + generation_reserve > self.max_trajectory_tokens
 
+    def _trace_payload(
+        self,
+        prompt_messages: list[Message],
+        assistant_message: Message,
+        result: MessageStepResult | None = None,
+    ) -> types.RolloutTrace:
+        extra: dict[str, object] | None
+        extra = (
+            {"next_messages": ConversationFormatter(messages=result.next_messages).to_data()}
+            if result is not None and result.next_messages
+            else None
+        )
+        return types.RolloutTrace(
+            prompt=ConversationFormatter(messages=prompt_messages).to_data(),
+            policy_response=ConversationFormatter(messages=[assistant_message]).to_data(),
+            extra=extra,
+        )
+
     async def initial_observation(self) -> tuple[tinker.ModelInput, StopCondition]:
         messages = await self.message_env.initial_observation()
+        self._last_messages = messages
         model_input = await self._render_in_thread(messages)
 
         if self._exceeds_context_limit(model_input.length):
@@ -125,6 +146,7 @@ class EnvFromMessageEnv(types.Env):
                 metrics={"max_tokens_reached": 1.0},
             )
 
+        prompt_messages = self._last_messages or await self.message_env.initial_observation()
         assistant_message, termination = self.renderer.parse_response(action)
 
         if not termination.is_clean:
@@ -134,9 +156,11 @@ class EnvFromMessageEnv(types.Env):
                 next_observation=tinker.ModelInput.empty(),
                 next_stop_condition=self._base_stop_condition,
                 metrics={"parse_error": 1.0},
+                trace=self._trace_payload(prompt_messages, assistant_message),
             )
 
         msg_step = await self.message_env.step(assistant_message)
+        self._last_messages = msg_step.next_messages
         next_observation = await self._render_in_thread(msg_step.next_messages)
         next_stop_condition = msg_step.next_stop_condition or self._base_stop_condition
 
@@ -152,6 +176,7 @@ class EnvFromMessageEnv(types.Env):
                 next_stop_condition=self._base_stop_condition,
                 metrics={**msg_step.metrics, "context_overflow": 1.0},
                 logs=msg_step.logs,
+                trace=self._trace_payload(prompt_messages, assistant_message, msg_step),
             )
 
         return types.StepResult(
@@ -161,4 +186,5 @@ class EnvFromMessageEnv(types.Env):
             next_stop_condition=next_stop_condition,
             metrics=msg_step.metrics,
             logs=msg_step.logs,
+            trace=self._trace_payload(prompt_messages, assistant_message, msg_step),
         )

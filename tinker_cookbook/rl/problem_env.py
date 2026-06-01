@@ -14,6 +14,7 @@ from tinker_cookbook.rl.types import (
     EnvGroupBuilder,
     Metrics,
     Observation,
+    RolloutTrace,
     StepResult,
     Trajectory,
 )
@@ -131,20 +132,20 @@ class ProblemEnv(Env):
 
         # Log the attempt in a fixed structure that scales to longer content.
         with logtree.scope_header("Prompt"):
-            logtree.log_formatter(ConversationFormatter(messages=convo))
+            prompt_formatter = ConversationFormatter(messages=convo)
+            logtree.log_formatter(prompt_formatter)
         with logtree.scope_header("Policy Response"):
-            logtree.log_formatter(ConversationFormatter(messages=[message]))
+            response_formatter = ConversationFormatter(messages=[message])
+            logtree.log_formatter(response_formatter)
         with logtree.scope_header("Reward"):
-            logtree.table_from_dict(
-                {
-                    "reference_answer": self.get_reference_answer(),
-                    "format_valid": bool(correct_format),
-                    "correct": bool(correct_answer),
-                    "format_coef": self.format_coef,
-                    "reward": f"{total_reward:.3f}",
-                },
-                caption="Reward components",
-            )
+            reward_table = {
+                "reference_answer": self.get_reference_answer(),
+                "format_valid": bool(correct_format),
+                "correct": bool(correct_answer),
+                "format_coef": self.format_coef,
+                "reward": f"{total_reward:.3f}",
+            }
+            logtree.table_from_dict(reward_table, caption="Reward components")
 
         return StepResult(
             reward=total_reward,
@@ -155,6 +156,11 @@ class ProblemEnv(Env):
                 "format": correct_format,
                 "correct": correct_answer,
             },
+            trace=RolloutTrace(
+                prompt=prompt_formatter.to_data(),
+                policy_response=response_formatter.to_data(),
+                reward_data=reward_table,
+            ),
         )
 
 
