@@ -177,11 +177,10 @@ def _get_logtree_scope(
     iteration: int,
     store: TrainingRunStore | None,
 ) -> Iterator[None]:
-    """Context manager that logs rollout data to logtree.
+    """ontext manager that logs rollout data to HTML and JSON via logtree.
 
-    When ``output_dir`` is local, writes an HTML report to
-    ``output_dir / f"{f_name}.html"``. Regardless of whether local HTML is
-    written, writes the structured logtree JSON through ``store`` when available.
+    Creates ``output_dir/f_name.html`` (direct I/O — visualization artifact)
+    and writes the logtree JSON via ``store.write_logtree()`` when store is available.
     """
     if num_groups_to_log <= 0:
         yield
