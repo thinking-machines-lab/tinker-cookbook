@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 03: Efficient Sampling with Tinker
+    # Tutorial 103: Efficient Sampling with Tinker
 
     Tinker runs on remote GPUs. Every API call involves network latency plus GPU compute time. If you send sampling requests one at a time -- send, wait, send, wait -- you spend most of your time idle while Tinker works.
 
@@ -281,7 +281,7 @@ def _(mo):
 
     This tutorial showed the two key techniques for efficient sampling: **concurrent requests** with `asyncio.gather` (submit all requests before collecting results) and **num_samples** (generate multiple completions per call). Together, they give you high throughput with minimal code changes.
 
-    - **Tutorial 04** (`104_first_rl.py`): Uses this exact pattern -- sample many completions, grade them with a reward function, and train with GRPO.
+    - **Tutorial 104** (`104_first_rl.py`): Uses this exact pattern -- sample many completions, grade them with a reward function, and train with GRPO.
     - **Async docs** (`docs/async.mdx`): Full reference for sync/async APIs, the double-await pattern, and overlapping training requests.
     """)
     return

@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 04: Reinforcement Learning with Verifiable Rewards
+    # Tutorial 104: Reinforcement Learning with Verifiable Rewards
 
     Supervised fine-tuning teaches a model from example outputs. Reinforcement learning (RL) teaches from *rewards* -- the model generates its own outputs, and a reward function scores them. The model learns to produce outputs that score higher.
 
@@ -367,7 +367,7 @@ def _(mo):
     mo.md(r"""
     ## Next steps
 
-    - **Tutorial 05** (`301_cookbook_abstractions.py`): Adapt this pattern to your own task with a custom reward function
+    - **Tutorial 301** (`301_cookbook_abstractions.py`): Adapt this pattern to your own task with a custom reward function
     - **Production recipes**: See `tinker_cookbook/recipes/rl_loop.py` for a minimal script and `tinker_cookbook/recipes/math_rl/` for a full-featured GSM8K/MATH training setup
     - **Scaling up**: The [RL Hyperparameters](https://tinker-docs.thinkingmachines.ai/rl/rl-hyperparams) guide covers batch size, group size, learning rates, and async training for larger runs
     - **Custom environments**: The [RL Environments](https://tinker-docs.thinkingmachines.ai/rl/rl-envs) guide shows how to define multi-step environments using the `Env` / `EnvGroupBuilder` / `RLDataset` abstractions

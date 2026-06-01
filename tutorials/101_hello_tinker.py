@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 01: Hello Tinker
+    # Tutorial 101: Hello Tinker
 
     Tinker is a remote GPU service for LLM training and inference. You write training loops in Python on your local machine; Tinker executes the heavy GPU operations (forward passes, backpropagation, sampling) on remote workers.
 
@@ -206,7 +206,7 @@ def _(mo):
     mo.md(r"""
     ## Next steps
 
-    - **[Tutorial 02: First SFT](./102_first_sft.py)** -- Train a model with supervised fine-tuning
+    - **[Tutorial 102: First SFT](./102_first_sft.py)** -- Train a model with supervised fine-tuning
     - **[Getting Started Guide](https://docs.thinkingmachines.ai/training-sampling)** -- Full walkthrough of training and sampling
     - **[Available Models](https://docs.thinkingmachines.ai/model-lineup)** -- All supported models and their characteristics
     """)

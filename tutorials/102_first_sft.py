@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 02: Your First Supervised Fine-Tuning Run
+    # Tutorial 102: Your First Supervised Fine-Tuning Run
 
     In this tutorial, you will fine-tune a language model using supervised learning (SFT). By the end, you will have:
 
