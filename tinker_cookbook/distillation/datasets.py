@@ -27,6 +27,7 @@ from tinker_cookbook.rl.types import (
     StepResult,
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.utils.logtree_formatters import ConversationFormatter
 
 
 @chz.chz
@@ -112,12 +113,18 @@ class PromptOnlyEnv(ProblemEnv):
 
     async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
         """Return zero reward always."""
+        convo = self.convo_prefix + [{"role": "user", "content": self.get_question()}]
+        message, _termination = self.renderer.parse_response(action)
         return StepResult(
             reward=0.0,
             episode_done=True,
             next_observation=tinker.ModelInput.empty(),
             next_stop_condition=self.stop_condition,
             metrics={},
+            trace={
+                "prompt": ConversationFormatter(messages=convo).to_data(),
+                "policy_response": ConversationFormatter(messages=[message]).to_data(),
+            },
         )
 
 
