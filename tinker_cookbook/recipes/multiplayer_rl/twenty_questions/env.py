@@ -28,6 +28,7 @@ from tinker_cookbook.rl.types import (
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import logtree
+from tinker_cookbook.utils.logtree_formatters import ConversationFormatter
 
 ANSWERER_SYSTEM_PROMPT = """
 You are the answerer in a game of 20 questions. You should only ever respond with 'yes' or 'no'. Your secret word is {answer}. If the other player guesses it with Guess: <answer>, respond with 'yes' only if the answer is precisely your secret word.
@@ -106,6 +107,7 @@ class TwentyQuestionsEnv(Env):
         """
 
         # step 1: accepts the action from the player (policy)
+        player_prompt = self._convo_for_player()
         (action_message, _termination) = self.renderer.parse_response(action)
         self.turns.append({"role": "player", "content": action_message["content"]})
 
@@ -134,6 +136,13 @@ class TwentyQuestionsEnv(Env):
             next_stop_condition=self.stop_condition,
             episode_done=episode_done,
             reward=reward,
+            trace={
+                "prompt": ConversationFormatter(messages=player_prompt).to_data(),
+                "policy_response": ConversationFormatter(messages=[action_message]).to_data(),
+                "answerer_response": ConversationFormatter(messages=[answer_message]).to_data(),
+                "turn": turn_num,
+                "game_over": episode_done,
+            },
         )
 
         return step_result

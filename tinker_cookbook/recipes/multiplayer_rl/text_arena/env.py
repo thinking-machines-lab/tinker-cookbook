@@ -34,6 +34,7 @@ from tinker_cookbook.rl.types import (
     StepResult,
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.utils.logtree_formatters import ConversationFormatter
 
 STOP_CONDITION = ["]\n"]
 ILLEGAL_MOVE_REWARD = -2.0
@@ -149,6 +150,8 @@ class TwoPlayerEnv(Env):
         assert self.coordinator.current_player_id == self.player_id, "Not the current player's turn"
 
         # make a move ...
+        _current_player_id, observation_str = self.coordinator.shared_env.get_observation()
+        prompt_messages: list[Message] = [{"role": "user", "content": observation_str}]
         action_message: Message = self.renderer.parse_response(action)[0]
         action_content = get_text_content(action_message)
         await self.coordinator.make_move(self.player_id, action_content)
@@ -163,6 +166,11 @@ class TwoPlayerEnv(Env):
             next_observation=self.get_observation(),
             next_stop_condition=self.stop_condition,
             metrics={},
+            trace={
+                "prompt": ConversationFormatter(messages=prompt_messages).to_data(),
+                "policy_response": ConversationFormatter(messages=[action_message]).to_data(),
+                "game_done": self.coordinator.game_done,
+            },
         )
 
     def get_done_step(self) -> StepResult:
