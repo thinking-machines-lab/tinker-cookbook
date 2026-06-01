@@ -32,6 +32,10 @@ from tinker_cookbook.rl.data_processing import (
 )
 from tinker_cookbook.rl.metric_util import RLTestSetEvaluator, compute_trajectory_metrics
 from tinker_cookbook.rl.metrics import discounted_future_sum_vectorized
+from tinker_cookbook.rl.rollout_logging import (
+    RolloutSummaryGroup,
+    serialize_rollout_summaries_from_groups,
+)
 from tinker_cookbook.rl.train import (
     compute_full_batch_metrics_and_get_sampling_client,
     do_group_rollout_and_filter_constant_reward,
@@ -166,6 +170,7 @@ class Config:
     eval_every: int = 20
     save_every: int = 20
     load_checkpoint_path: str | None = None
+    rollout_json_export: bool = True
 
     # Maximum number of training steps. If None, train on the full dataset.
     max_steps: int | None = None
@@ -279,6 +284,34 @@ async def do_train_step_and_get_sampling_client(
     return sampling_client, metrics
 
 
+def _maybe_export_rollout_summaries(
+    *,
+    config: Config,
+    iteration: int,
+    env_group_builders_P: Sequence[EnvGroupBuilder],
+    trajectory_groups_P: list[TrajectoryGroup],
+    store: TrainingRunStore | None,
+) -> None:
+    """Write on-policy distillation rollout summaries to the store when enabled."""
+    if not config.rollout_json_export or store is None:
+        return
+    records = serialize_rollout_summaries_from_groups(
+        split="train",
+        iteration=iteration,
+        groups_P=[
+            RolloutSummaryGroup(
+                trajectory_group=trajectory_group,
+                tags=env_group_builder.logging_tags(),
+                sampling_client_step=iteration,
+            )
+            for env_group_builder, trajectory_group in safezip(
+                env_group_builders_P, trajectory_groups_P
+            )
+        ],
+    )
+    store.write_rollouts(iteration, records, base_name="train")
+
+
 @trace.scope
 async def do_sync_training(
     start_batch: int,
@@ -321,7 +354,7 @@ async def do_sync_training(
             # Get batch and sample trajectories
             env_group_builders_P, dataset_indices_P = dataset.get_batch(i_batch)
             async with trace.scope_span("sample"):
-                trajectory_groups_P = await asyncio.gather(
+                results_P = await asyncio.gather(
                     *[
                         asyncio.create_task(
                             do_group_rollout_and_filter_constant_reward(
@@ -336,11 +369,26 @@ async def do_sync_training(
                         for i, builder in enumerate(env_group_builders_P)
                     ],
                 )
-            trajectory_groups_P = [
-                trajectory_group
-                for trajectory_group in trajectory_groups_P
+            successful = [
+                (env_group_builder, dataset_idx, trajectory_group)
+                for env_group_builder, dataset_idx, trajectory_group in safezip(
+                    env_group_builders_P, dataset_indices_P, results_P
+                )
                 if trajectory_group is not None
             ]
+            if not successful:
+                logger.warning(f"Batch {i_batch}: all groups failed or filtered, skipping batch")
+                continue
+            env_group_builders_P = [s[0] for s in successful]
+            dataset_indices_P = [s[1] for s in successful]
+            trajectory_groups_P = [s[2] for s in successful]
+            _maybe_export_rollout_summaries(
+                config=config,
+                iteration=i_batch,
+                env_group_builders_P=env_group_builders_P,
+                trajectory_groups_P=trajectory_groups_P,
+                store=ml_logger.store,
+            )
 
             # Train step
             sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(
