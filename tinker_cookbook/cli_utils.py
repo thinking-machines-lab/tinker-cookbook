@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 from tinker_cookbook.exceptions import ConfigurationError
+from tinker_cookbook.utils.misc_utils import is_uri
 
 logger = logging.getLogger(__name__)
 
@@ -13,8 +14,12 @@ LogdirBehavior = Literal["delete", "resume", "ask", "raise"]
 def check_log_dir(log_dir: str, behavior_if_exists: LogdirBehavior):
     """
     Call this at the beginning of CLI entrypoint to training scripts. This handles
-    cases that occur if we're trying to log to a directory that already exists.
-    The user might want to resume, overwrite, or delete it.
+    cases that occur if we're trying to log to a local directory that already
+    exists. The user might want to resume, overwrite, or delete it.
+
+    If ``log_dir`` is a URI (for example ``gs://...`` or ``s3://...``), this
+    function is a no-op. Cloud paths are handled by the Storage backend rather
+    than local filesystem checks.
 
     Args:
         log_dir: The directory to check.
@@ -28,6 +33,10 @@ def check_log_dir(log_dir: str, behavior_if_exists: LogdirBehavior):
     Returns:
         None
     """
+    if is_uri(log_dir):
+        logger.info("Log path %s is a URI. Skipping local log directory check.", log_dir)
+        return
+
     if Path(log_dir).exists():
         if behavior_if_exists == "delete":
             logger.info(

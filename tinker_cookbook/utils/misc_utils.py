@@ -176,6 +176,33 @@ def not_none(x: T | None) -> T:
     return x
 
 
+def is_uri(path: str | Path) -> bool:
+    """Return whether a path is a URI rather than a local filesystem path.
+
+    Args:
+        path: Path or URI string to check.
+
+    Returns:
+        Whether ``path`` contains a URI scheme.
+    """
+    return "://" in str(path)
+
+
+def expand_path_or_uri(path: str | Path) -> str:
+    """Expand local paths while preserving URI strings unchanged.
+
+    Args:
+        path: Local path or URI string.
+
+    Returns:
+        Expanded local path, or the original URI string.
+    """
+    path_str = str(path)
+    if is_uri(path_str):
+        return path_str
+    return str(Path(path_str).expanduser())
+
+
 def iteration_dir(log_path: str | Path | None, step: int) -> Path | None:
     """Return the per-iteration subdirectory path for one training step.
 
@@ -190,8 +217,10 @@ def iteration_dir(log_path: str | Path | None, step: int) -> Path | None:
 
     Returns:
         Path | None: The iteration subdirectory path, or ``None`` when
-            *log_path* is ``None`` or empty.
+            *log_path* is ``None``, empty, or a URI.
     """
     if not log_path:
+        return None
+    if is_uri(log_path):
         return None
     return Path(log_path) / f"iteration_{step:06d}"

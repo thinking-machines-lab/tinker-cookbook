@@ -71,7 +71,7 @@ from tinker_cookbook.rl.types import (
 )
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
-from tinker_cookbook.utils.misc_utils import split_list
+from tinker_cookbook.utils.misc_utils import expand_path_or_uri, split_list
 
 logger = logging.getLogger(__name__)
 
@@ -779,7 +779,7 @@ class Config:
 
     # Standard infra
     num_substeps: int = 1
-    log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
+    log_path: str = chz.field(munger=lambda _, s: expand_path_or_uri(s))
     wandb_project: str | None = None
     wandb_name: str | None = None
     load_checkpoint_path: str | None = None

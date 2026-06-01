@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from tinker_cookbook.stores.training_store import TrainingRunStore
 
+from tinker_cookbook.utils.misc_utils import is_uri
+
 logger = logging.getLogger(__name__)
 
 
@@ -474,7 +476,12 @@ def trace_init(
     Args:
         flush_interval_sec: How often to flush trace events to disk.
         output_file: Path for Perfetto trace output (JSONL format).
+
+    Raises:
+        ValueError: If ``output_file`` is a URI instead of a local path.
     """
+    if is_uri(output_file):
+        raise ValueError("trace_init output_file must be a local path, not a URI")
     global _trace_collector
     _trace_collector = TraceCollector(flush_interval_sec, output_file)
     _instrument_sdk_clients()

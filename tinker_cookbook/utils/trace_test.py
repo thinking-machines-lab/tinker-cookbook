@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 import tinker
 
 from tinker_cookbook.utils.trace import (
@@ -37,6 +38,11 @@ def trace_session():
             yield f.name
         finally:
             trace_shutdown()
+
+
+def test_trace_init_rejects_uri_output_file():
+    with pytest.raises(ValueError, match="local path"):
+        trace_init(output_file="gs://bucket/run/trace_events.jsonl")
 
 
 # --- Decorated helpers for test_trace (multi-thread integration) ---

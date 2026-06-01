@@ -8,6 +8,22 @@ import pytest
 from tinker_cookbook.cli_utils import check_log_dir
 
 
+def test_check_log_dir_skips_uri_paths():
+    check_log_dir("gs://bucket/path/to/run", behavior_if_exists="delete")
+
+
+def test_check_log_dir_does_not_treat_uri_as_local_path(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    local_uri_like_dir = tmp_path / "gs:" / "bucket" / "path" / "to" / "run"
+    local_uri_like_dir.mkdir(parents=True)
+    marker = local_uri_like_dir / "keep_me.txt"
+    marker.write_text("hello")
+
+    check_log_dir("gs://bucket/path/to/run", behavior_if_exists="delete")
+
+    assert marker.exists()
+
+
 def test_check_log_dir_nonexistent_is_noop():
     """check_log_dir does nothing when the directory doesn't exist."""
     check_log_dir("/tmp/nonexistent_dir_abc123", "raise")

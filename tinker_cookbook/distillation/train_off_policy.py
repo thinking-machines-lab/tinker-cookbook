@@ -56,7 +56,7 @@ from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.supervised.types import SupervisedDataset, SupervisedDatasetBuilder
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
-from tinker_cookbook.utils.misc_utils import safezip
+from tinker_cookbook.utils.misc_utils import expand_path_or_uri, safezip
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ class Config:
     eval_every: int = 20
     max_steps: int | None = None
     load_checkpoint_path: str | None = None
-    log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
+    log_path: str = chz.field(munger=lambda _, s: expand_path_or_uri(s))
     wandb_project: str | None = None
     wandb_name: str | None = None
     base_url: str | None = None

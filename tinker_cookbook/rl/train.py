@@ -65,7 +65,12 @@ from tinker_cookbook.rl.types import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import logtree, ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
-from tinker_cookbook.utils.misc_utils import iteration_dir, safezip, split_list
+from tinker_cookbook.utils.misc_utils import (
+    expand_path_or_uri,
+    iteration_dir,
+    safezip,
+    split_list,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -172,17 +177,23 @@ def _get_logtree_scope(
     iteration: int,
     store: TrainingRunStore | None,
 ) -> Iterator[None]:
-    """Context manager that logs rollout data to HTML and JSON via logtree.
+    """Context manager that logs rollout data to logtree.
 
-    Creates ``output_dir/f_name.html`` (direct I/O — visualization artifact)
-    and writes the logtree JSON via ``store.write_logtree()`` when store is available.
+    When ``output_dir`` is local, writes an HTML report to
+    ``output_dir / f"{f_name}.html"``. Regardless of whether local HTML is
+    written, writes the structured logtree JSON through ``store`` when available.
     """
-    if output_dir is None or num_groups_to_log <= 0:
+    if num_groups_to_log <= 0:
+        yield
+        return
+    if output_dir is None and store is None:
         yield
         return
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    logtree_path = str(output_dir / f"{f_name}.html")
+    logtree_path = None
+    if output_dir is not None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        logtree_path = str(output_dir / f"{f_name}.html")
     logtree_trace = None
     try:
         with logtree.init_trace(scope_name, path=logtree_path) as logtree_trace:
@@ -437,7 +448,7 @@ class Config:
     # Maximum number of generated tokens per rollout trajectory.
     max_tokens: int
     # Directory for checkpoints, logs, and traces.
-    log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
+    log_path: str = chz.field(munger=lambda _, s: expand_path_or_uri(s))
     # Evaluation cadence in training iterations (0 = disabled).
     eval_every: int = 20
     # Checkpoint cadence in training iterations (0 = disabled).
@@ -570,7 +581,7 @@ async def run_single_evaluation(
                     base_name=eval_base_name,
                     sampling_client_step=i_batch,
                 )
-                if config.rollout_json_export and iter_dir is not None
+                if config.rollout_json_export
                 else None
             )
             eval_metrics = await evaluator(

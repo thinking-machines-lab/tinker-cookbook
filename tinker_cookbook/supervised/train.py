@@ -34,7 +34,7 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.lr_scheduling import LRSchedule, compute_schedule_lr_multiplier
-from tinker_cookbook.utils.misc_utils import iteration_dir
+from tinker_cookbook.utils.misc_utils import expand_path_or_uri, iteration_dir
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +109,7 @@ class Config:
     """
 
     # Required parameters
-    log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
+    log_path: str = chz.field(munger=lambda _, s: expand_path_or_uri(s))
     model_name: str
     recipe_name: str
     load_checkpoint_path: str | None = None
@@ -494,7 +494,7 @@ async def main(config: Config):
         if submitted.infrequent_eval_metrics is not None:
             metrics.update(submitted.infrequent_eval_metrics)
 
-    log_path = Path(config.log_path)
+    log_path = config.log_path
 
     async def finish_and_log(submitted: SubmittedBatch, window: trace.IterationWindow) -> None:
         """Finish a batch, merge timing metrics, and log."""

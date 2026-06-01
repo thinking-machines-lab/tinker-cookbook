@@ -45,7 +45,7 @@ from tinker_cookbook.rl.types import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
-from tinker_cookbook.utils.misc_utils import iteration_dir, safezip
+from tinker_cookbook.utils.misc_utils import expand_path_or_uri, iteration_dir, safezip
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +158,7 @@ class Config:
     wandb_project: str | None = None
     wandb_name: str | None = None
 
-    log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
+    log_path: str = chz.field(munger=lambda _, s: expand_path_or_uri(s))
     base_url: str | None = None
     enable_trace: bool = False
     span_chart_every: int = 0
@@ -301,7 +301,7 @@ async def do_sync_training(
         training_client, checkpoint_mgr, start_batch, start_batch
     )
 
-    log_path = Path(config.log_path)
+    log_path = config.log_path
 
     for i_batch in range(start_batch, end_batch):
         metrics = {
