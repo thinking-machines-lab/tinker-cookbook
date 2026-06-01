@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 09: SL Hyperparameters
+    # Tutorial 401: SL Hyperparameters
 
     Finding the right learning rate and LoRA rank for SFT. The cookbook provides a `sweep` module that automates grid search over these parameters.
 

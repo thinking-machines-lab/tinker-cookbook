@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 10: RL Hyperparameters
+    # Tutorial 402: RL Hyperparameters
 
     Tune KL penalty, group size, and advantage normalization.
 

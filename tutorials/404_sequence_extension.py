@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 12: Sequence Extension in Multi-Turn RL
+    # Tutorial 404: Sequence Extension in Multi-Turn RL
 
     Manage conversation history and masks across turns.
 

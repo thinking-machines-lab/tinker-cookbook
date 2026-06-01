@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 14: Prompt Distillation
+    # Tutorial 406: Prompt Distillation
 
     **Prompt distillation** (also called context distillation) transfers knowledge embedded in a system prompt into the model's weights. The idea:
 

@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 14: Full RLHF Pipeline
+    # Tutorial 407: Full RLHF Pipeline
 
     Train a model through the complete 3-stage RLHF pipeline:
 

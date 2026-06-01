@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 13: Multi-Agent Self-Play with MessageEnv
+    # Tutorial 405: Multi-Agent Self-Play with MessageEnv
 
     Two models compete with group-level pairwise rewards.
 
