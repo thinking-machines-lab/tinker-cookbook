@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial: Rendering
+    # Tutorial 201: Rendering
 
     Rendering converts a list of messages into a token sequence that a model can consume. While similar to HuggingFace chat templates, Tinker's rendering system handles the full training lifecycle: supervised learning, reinforcement learning, and deployment.
 
