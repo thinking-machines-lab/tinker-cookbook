@@ -48,6 +48,7 @@ class CLIConfig:
     wandb_project: str | None = None
     wandb_name: str | None = None
     compute_post_kl: bool = False
+    num_groups_to_log: int = 4
 
     # Evals
     eval_every: int = 20
@@ -153,6 +154,7 @@ async def cli_main(cli_config: CLIConfig):
         num_substeps=cli_config.num_substeps,
         eval_every=cli_config.eval_every,
         save_every=cli_config.save_every,
+        num_groups_to_log=cli_config.num_groups_to_log,
         async_config=AsyncConfig(
             max_steps_off_policy=cli_config.max_steps_off_policy,
             groups_per_batch=cli_config.groups_per_batch,
