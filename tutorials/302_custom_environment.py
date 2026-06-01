@@ -484,9 +484,7 @@ async def _(
     tinker,
     training_client,
 ):
-    eval_client = await training_client.save_weights_and_get_sampling_client_async(
-        name="format-env-final"
-    )
+    eval_client = await training_client.save_weights_and_get_sampling_client_async()
 
     for prompt_text, format_type in EVAL_PROBLEMS:
         messages = [{"role": "user", "content": prompt_text}]
