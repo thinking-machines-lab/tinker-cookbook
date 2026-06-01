@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 07: SFT with Config
+    # Tutorial 303: SFT with Config
 
     Configure and run a full SFT pipeline using `train.Config`, `ChatDatasetBuilder`, and evaluator builders -- zero custom loop code.
 

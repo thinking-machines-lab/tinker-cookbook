@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 05: The Cookbook's RL Abstractions
+    # Tutorial 301: The Cookbook's RL Abstractions
 
     In tutorial 04, we wrote a GRPO training loop from scratch: sample completions, grade them, compute advantages, build datums, train. That works, but every new task would repeat the same boilerplate.
 
@@ -480,7 +480,7 @@ def _(mo):
 
     Here is what changed between the raw loop and the abstraction-based loop:
 
-    | Concern | Tutorial 04 (raw) | Tutorial 05 (abstractions) |
+    | Concern | Tutorial 104 (raw) | Tutorial 301 (abstractions) |
     |---|---|---|
     | Task definition | Inline reward function | `ProblemEnv` subclass |
     | Grouping rollouts | Manual `num_samples` loop | `ProblemGroupBuilder` + `do_group_rollout` |
@@ -498,7 +498,7 @@ def _(mo):
     mo.md(r"""
     ## Next steps
 
-    - **Tutorial 06**: Build your own custom `Env` for a new task from scratch.
+    - **Tutorial 302**: Build your own custom `Env` for a new task from scratch.
     - **Production recipes**: See `tinker_cookbook/recipes/math_rl/` and `tinker_cookbook/recipes/code_rl/` for full examples with logging, checkpointing, and evaluation.
     - **Standard training loop**: `tinker_cookbook/rl/train.py` is the production training loop that handles all of the above plus KL penalties, async training, and metric logging.
     - **Docs**: See [RL Environments](https://tinker-docs.thinkingmachines.ai/cookbook/rl/) for the complete environment guide.

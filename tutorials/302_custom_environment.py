@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 06: Build a Custom RL Environment
+    # Tutorial 302: Build a Custom RL Environment
 
     In tutorial 04, you learned the raw GRPO algorithm -- sampling completions, grading them, computing advantages, and training. In tutorial 05, you saw how the cookbook's standard abstractions (`ProblemEnv`, `ProblemGroupBuilder`, `RLDataset`, `compute_advantages`, `assemble_training_data`) handle the boilerplate so you can focus on the task-specific logic.
 

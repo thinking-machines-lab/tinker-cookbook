@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 08: RL with Config
+    # Tutorial 304: RL with Config
 
     Configure and run a full RL pipeline using the cookbook's RL abstractions with `RLDatasetBuilder`.
 
