@@ -15,6 +15,7 @@ Type aliases
 - ``Logprobs`` – ``list[float]`` of per-token log-probabilities.
 - ``Metrics`` – ``dict[str, float | int]`` of numeric values aggregated in logs.
 - ``Logs`` – ``dict[str, str | int | float]`` of diagnostic info for display.
+- ``TracePayload`` – JSON-like structured data for rollout transcript summaries.
 """
 
 from abc import ABC, abstractmethod
@@ -34,6 +35,7 @@ Observation: TypeAlias = tinker.ModelInput
 Logprobs: TypeAlias = list[float]
 Metrics: TypeAlias = dict[str, float | int]
 Logs: TypeAlias = dict[str, str | int | float]
+TracePayload: TypeAlias = dict[str, object]
 
 
 @dataclass
@@ -51,6 +53,8 @@ class StepResult:
             logs (e.g., timing, counts).
         logs (Logs): Diagnostic info for display/debugging tools (not
             aggregated like metrics).
+        trace (TracePayload | None): Optional structured transcript data for
+            durable rollout summaries. This is not aggregated into metrics.
     """
 
     reward: float
@@ -65,6 +69,8 @@ class StepResult:
     """Numeric values aggregated and reported in training logs (e.g., timing, counts)."""
     logs: Logs = field(default_factory=dict)
     """Diagnostic info for display/debugging tools (not aggregated like metrics)."""
+    trace: TracePayload | None = None
+    """Optional structured transcript data for durable rollout summaries."""
 
 
 @dataclass
@@ -81,6 +87,8 @@ class Transition:
             logs.
         logs (Logs): Diagnostic info for display/debugging tools (not
             aggregated like metrics).
+        trace (TracePayload | None): Optional structured transcript data for
+            durable rollout summaries.
     """
 
     ob: Observation
@@ -95,6 +103,8 @@ class Transition:
     """Numeric values aggregated and reported in training logs."""
     logs: Logs = field(default_factory=dict)
     """Diagnostic info for display/debugging tools (not aggregated like metrics)."""
+    trace: TracePayload | None = None
+    """Optional structured transcript data for durable rollout summaries."""
 
 
 class ActionExtra(TypedDict, total=False):

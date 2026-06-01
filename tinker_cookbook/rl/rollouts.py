@@ -191,6 +191,7 @@ async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
             episode_done=step_result.episode_done,
             metrics=step_result.metrics,
             logs=step_result.logs,
+            trace=step_result.trace,
         )
         transitions.append(transition)
         ob = step_result.next_observation
