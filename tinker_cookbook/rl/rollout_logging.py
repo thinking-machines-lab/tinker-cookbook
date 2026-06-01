@@ -3,7 +3,7 @@
 import json
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -57,13 +57,16 @@ def _json_safe(value: Any) -> Any:
     """Convert values to JSON-serializable form."""
     if value is None or isinstance(value, (str, bool, int, float)):
         return value
+    if is_dataclass(value) and not isinstance(value, type):
+        return _json_safe({k: v for k, v in asdict(value).items() if v is not None})
     if isinstance(value, dict):
         return {str(k): _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
-    if hasattr(value, "item"):
+    item = getattr(value, "item", None)
+    if item is not None:
         try:
-            return value.item()
+            return item()
         except Exception:
             logger.debug("Failed to convert %r via .item(), falling back to str()", type(value))
     return str(value)
@@ -90,7 +93,13 @@ def serialize_rollout_summaries(
             "tags": list[str], "sampling_client_step": int | None,
             "total_reward": float, "final_reward": float,
             "trajectory_metrics": dict, "final_ob_len": int,
-            "steps": [{"step_idx", "ob_len", "ac_len", "reward", "episode_done", "metrics", "logs"}, ...]
+            "steps": [
+                {
+                    "step_idx", "ob_len", "ac_len", "reward", "episode_done",
+                    "stop_reason", "metrics", "logs", "trace" (optional)
+                },
+                ...
+            ]
         }
 
     Args:
@@ -113,17 +122,19 @@ def serialize_rollout_summaries(
         for traj_idx, trajectory in enumerate(trajectory_group.trajectories_G):
             steps = []
             for step_idx, transition in enumerate(trajectory.transitions):
-                steps.append(
-                    {
-                        "step_idx": step_idx,
-                        "ob_len": transition.ob.length,
-                        "ac_len": len(transition.ac.tokens),
-                        "reward": transition.reward,
-                        "episode_done": transition.episode_done,
-                        "metrics": transition.metrics,
-                        "logs": transition.logs,
-                    }
-                )
+                step = {
+                    "step_idx": step_idx,
+                    "ob_len": transition.ob.length,
+                    "ac_len": len(transition.ac.tokens),
+                    "reward": transition.reward,
+                    "episode_done": transition.episode_done,
+                    "stop_reason": transition.ac.stop_reason,
+                    "metrics": transition.metrics,
+                    "logs": transition.logs,
+                }
+                if transition.trace is not None:
+                    step["trace"] = transition.trace
+                steps.append(step)
 
             records.append(
                 _json_safe(
