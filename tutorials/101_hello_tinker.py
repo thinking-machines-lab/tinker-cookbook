@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -94,7 +94,7 @@ def _(mo):
     mo.md(r"""
     ## Sampling from a model
 
-    Let's create a **SamplingClient** to generate text. We will use `Qwen/Qwen3-4B-Instruct-2507`, a compact model that keeps costs low.
+    Let's create a **SamplingClient** to generate text. We will use `Qwen/Qwen3.5-9B-Base`, a base (non-chat-tuned) model, so we can feed it raw tokens and get a plain text completion -- no chat template required.
 
     The sampling workflow is:
     1. Create a `SamplingClient` with a base model name
@@ -107,7 +107,7 @@ def _(mo):
 
 @app.cell
 async def _(service_client):
-    MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
+    MODEL_NAME = "Qwen/Qwen3.5-9B-Base"
 
     # Create a sampling client -- this connects to a remote GPU worker
     sampling_client = await service_client.create_sampling_client_async(base_model=MODEL_NAME)
@@ -125,7 +125,7 @@ async def _(sampling_client, tokenizer, types):
     prompt = types.ModelInput.from_ints(tokenizer.encode(prompt_text))
 
     # Sample a completion
-    params = types.SamplingParams(max_tokens=50, temperature=0.7, stop=["\n"])
+    params = types.SamplingParams(max_tokens=50, temperature=0.5)
     result = await sampling_client.sample_async(
         prompt=prompt, sampling_params=params, num_samples=1
     )
@@ -134,7 +134,7 @@ async def _(sampling_client, tokenizer, types):
     completion_tokens = result.sequences[0].tokens
     print("Completion tokens:", completion_tokens)
     print(prompt_text + tokenizer.decode(completion_tokens))
-    return prompt, result
+    return prompt, prompt_text, result
 
 
 @app.cell(hide_code=True)
@@ -169,15 +169,15 @@ def _(mo):
 
 
 @app.cell
-async def _(prompt, sampling_client, tokenizer, types):
+async def _(prompt, prompt_text, sampling_client, tokenizer, types):
     result_1 = await sampling_client.sample_async(
         prompt=prompt,
-        sampling_params=types.SamplingParams(max_tokens=50, temperature=0.9, stop=["\n"]),
+        sampling_params=types.SamplingParams(max_tokens=50, temperature=0.7),
         num_samples=3,
     )
     for i, _seq in enumerate(result_1.sequences):
         text = tokenizer.decode(_seq.tokens)
-        print(f"Sample {i}: {text}")
+        print(f"Sample {i}: {prompt_text}{text}")
     return
 
 
