@@ -53,6 +53,22 @@ def test_load_checkpoints_file_reads_records():
         assert result[1].batch == 10
 
 
+def test_load_checkpoints_file_reads_uri_records():
+    """load_checkpoints_file reads checkpoints through Storage for URI paths."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _write_checkpoints_jsonl(
+            tmpdir,
+            [
+                {"name": "000005", "batch": 5, "state_path": "tinker://state/5"},
+                {"name": "000010", "batch": 10, "state_path": "tinker://state/10"},
+            ],
+        )
+        result = load_checkpoints_file(f"file://{tmpdir}")
+        assert len(result) == 2
+        assert result[0].name == "000005"
+        assert result[1].batch == 10
+
+
 def test_get_last_checkpoint_returns_last():
     """get_last_checkpoint returns the last record with the required key."""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -65,6 +81,22 @@ def test_get_last_checkpoint_returns_last():
             ],
         )
         result = get_last_checkpoint(tmpdir, required_key="state_path")
+        assert result is not None
+        assert result.name == "000015"
+
+
+def test_get_last_checkpoint_reads_uri_records():
+    """get_last_checkpoint reads checkpoints through Storage for URI paths."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _write_checkpoints_jsonl(
+            tmpdir,
+            [
+                {"name": "000005", "batch": 5, "state_path": "tinker://state/5"},
+                {"name": "000010", "batch": 10, "sampler_path": "tinker://sampler/10"},
+                {"name": "000015", "batch": 15, "state_path": "tinker://state/15"},
+            ],
+        )
+        result = get_last_checkpoint(f"file://{tmpdir}", required_key="state_path")
         assert result is not None
         assert result.name == "000015"
 

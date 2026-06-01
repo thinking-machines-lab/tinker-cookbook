@@ -13,8 +13,11 @@ if TYPE_CHECKING:
 import tinker
 
 from tinker_cookbook import model_info
+from tinker_cookbook.stores.storage import storage_from_uri
+from tinker_cookbook.stores.training_store import TrainingRunStore
 from tinker_cookbook.utils import trace
 from tinker_cookbook.utils.file_utils import read_jsonl
+from tinker_cookbook.utils.misc_utils import is_uri
 
 CHECKPOINTS_BASE_NAME = "checkpoints.jsonl"
 
@@ -391,6 +394,11 @@ def load_checkpoints_file(log_dir: str) -> list[CheckpointRecord]:
     Returns:
         A list of CheckpointRecord instances, or an empty list if the file does not exist.
     """
+    if is_uri(log_dir):
+        logger.info("Reading checkpoints from %s", log_dir)
+        store = TrainingRunStore(storage_from_uri(log_dir))
+        return store.read_checkpoint_records()
+
     checkpoint_path = Path(log_dir) / CHECKPOINTS_BASE_NAME
     if not checkpoint_path.exists():
         logger.info(f"No checkpoints found at {checkpoint_path}")

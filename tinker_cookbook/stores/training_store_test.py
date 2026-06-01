@@ -306,6 +306,20 @@ class TestTrainingRunStoreWrites:
         data = store.storage.read("code.diff")
         assert b"file.py" in data
 
+    def test_flush_delegates_to_storage(self, tmp_path: Path) -> None:
+        class FlushCountingStorage(LocalStorage):
+            def __init__(self, root: Path):
+                super().__init__(root)
+                self.flush_count = 0
+
+            def flush(self) -> None:
+                self.flush_count += 1
+
+        storage = FlushCountingStorage(tmp_path)
+        store = TrainingRunStore(storage)
+        store.flush()
+        assert storage.flush_count == 1
+
     def test_roundtrip_write_read(self, tmp_path: Path) -> None:
         """Full roundtrip: write all data types, then read them back."""
         store = TrainingRunStore(LocalStorage(tmp_path))
