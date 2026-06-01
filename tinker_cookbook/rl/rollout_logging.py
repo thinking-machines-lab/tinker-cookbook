@@ -3,7 +3,7 @@
 import json
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -57,13 +57,16 @@ def _json_safe(value: Any) -> Any:
     """Convert values to JSON-serializable form."""
     if value is None or isinstance(value, (str, bool, int, float)):
         return value
+    if is_dataclass(value) and not isinstance(value, type):
+        return _json_safe(asdict(value))
     if isinstance(value, dict):
         return {str(k): _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
-    if hasattr(value, "item"):
+    item = getattr(value, "item", None)
+    if item is not None:
         try:
-            return value.item()
+            return item()
         except Exception:
             logger.debug("Failed to convert %r via .item(), falling back to str()", type(value))
     return str(value)
