@@ -17,6 +17,7 @@ from tinker_cookbook.rl.types import (
     EnvGroupBuilder,
     RLDataset,
     RLDatasetBuilder,
+    RolloutTrace,
     StepResult,
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
@@ -97,10 +98,10 @@ class GuessNumberEnv(Env):
                 "feedback": ensure_text(user_turn["content"]),
                 "target": self.gold_answer,
             },
-            trace={
-                "prompt": ConversationFormatter(messages=convo_for_player).to_data(),
-                "policy_response": ConversationFormatter(messages=[action_message]).to_data(),
-            },
+            trace=RolloutTrace(
+                prompt=ConversationFormatter(messages=convo_for_player).to_data(),
+                policy_response=ConversationFormatter(messages=[action_message]).to_data(),
+            ),
         )
 
         return step_result
