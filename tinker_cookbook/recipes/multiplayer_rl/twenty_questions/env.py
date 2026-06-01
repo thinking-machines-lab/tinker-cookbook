@@ -24,6 +24,7 @@ from tinker_cookbook.rl.types import (
     EnvGroupBuilder,
     RLDataset,
     RLDatasetBuilder,
+    RolloutTrace,
     StepResult,
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
@@ -136,13 +137,14 @@ class TwentyQuestionsEnv(Env):
             next_stop_condition=self.stop_condition,
             episode_done=episode_done,
             reward=reward,
-            trace={
-                "prompt": ConversationFormatter(messages=player_prompt).to_data(),
-                "policy_response": ConversationFormatter(messages=[action_message]).to_data(),
-                "answerer_response": ConversationFormatter(messages=[answer_message]).to_data(),
-                "turn": turn_num,
-                "game_over": episode_done,
-            },
+            trace=RolloutTrace(
+                prompt=ConversationFormatter(messages=player_prompt).to_data(),
+                policy_response=ConversationFormatter(messages=[action_message]).to_data(),
+                env_state={"turn": turn_num, "game_over": episode_done},
+                extra={
+                    "answerer_response": ConversationFormatter(messages=[answer_message]).to_data()
+                },
+            ),
         )
 
         return step_result
