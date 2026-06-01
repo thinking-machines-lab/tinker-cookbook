@@ -334,38 +334,23 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
 
         win_minus_loss_list = [0.0 for _ in range(len(response_messages))]
         matchup_count = [0 for _ in range(len(response_messages))]
-        pairwise_by_response: list[list[dict[str, object]]] = [
-            [] for _ in range(len(response_messages))
-        ]
         for (i, j), j_reward in safezip(comparison_indices_pairs, j_rewards):
             win_minus_loss_list[j] += j_reward
             win_minus_loss_list[i] -= j_reward
             matchup_count[j] += 1
             matchup_count[i] += 1
-            pairwise_by_response[i].append(
-                {"opponent_idx": j, "preference_reward": -float(j_reward)}
-            )
-            pairwise_by_response[j].append(
-                {"opponent_idx": i, "preference_reward": float(j_reward)}
-            )
         format_coef = 1.0
 
         prompt_trace = prompt_formatter.to_data()
-        for idx, (trajectory, messages, is_valid, win_minus_loss, mc) in enumerate(
-            safezip(trajectory_group, response_messages, is_valid_list, win_minus_loss_list, matchup_count)
+        for trajectory, messages, is_valid in safezip(
+            trajectory_group,
+            response_messages,
+            is_valid_list,
         ):
-            avg_win_minus_loss = win_minus_loss / mc if mc > 0 else 0.0
-            format_penalty = format_coef * (float(is_valid) - 1.0)
             trajectory.transitions[0].trace = {
                 "prompt": prompt_trace,
                 "policy_response": ConversationFormatter(messages=messages).to_data(),
                 "valid_format": bool(is_valid),
-                "pairwise_comparisons": pairwise_by_response[idx],
-                "reward_terms": {
-                    "win_minus_loss": avg_win_minus_loss,
-                    "format_penalty": format_penalty,
-                    "total_reward": avg_win_minus_loss + format_penalty,
-                },
             }
 
         return [
