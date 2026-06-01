@@ -24,6 +24,7 @@ from tinker_cookbook.rl.types import (
     EnvGroupBuilder,
     RLDataset,
     RLDatasetBuilder,
+    RolloutTrace,
     StepResult,
 )
 from tinker_cookbook.tokenizer_utils import get_tokenizer
@@ -90,7 +91,8 @@ class RubricGradedEnv(Env):
 
     async def step(self, action: Action, *, extra: ActionExtra | None = None) -> StepResult:
         with logtree.scope_header("Prompt"):
-            logtree.log_formatter(ConversationFormatter(messages=self.convo))
+            prompt_formatter = ConversationFormatter(messages=self.convo)
+            logtree.log_formatter(prompt_formatter)
 
         # obtain the policy action message
         (policy_action_message, termination) = self.renderer.parse_response(action)
@@ -114,7 +116,8 @@ class RubricGradedEnv(Env):
             print(colored(f"Termination: {termination}", "green") + "\n")
 
         with logtree.scope_header("Policy Response"):
-            logtree.log_formatter(ConversationFormatter(messages=[policy_action_message]))
+            response_formatter = ConversationFormatter(messages=[policy_action_message])
+            logtree.log_formatter(response_formatter)
             logtree.log_text(f"Termination: {termination}")
 
         convo = self.convo + [policy_action_message]
@@ -126,6 +129,7 @@ class RubricGradedEnv(Env):
 
         with logtree.scope_header("Rubric Grades"):
             rows = []
+            rubric_grades = []
             for idx, (rubric_item, (score, grader_response)) in enumerate(
                 zip(self.rubric_items, results, strict=True),
                 start=1,
@@ -138,6 +142,13 @@ class RubricGradedEnv(Env):
                         + ("..." if len(rubric_item.rubric_str) > 120 else ""),
                     }
                 )
+                rubric_grades.append(
+                    {
+                        "score": score,
+                        "criterion": rubric_item.rubric_str,
+                        "grader_response": grader_response,
+                    }
+                )
                 with logtree.scope_header(f"Rubric {idx}: score={score:.3f}"):
                     logtree.log_text(f"Criterion: {rubric_item.rubric_str}")
                     logtree.details(grader_response, summary="Model output", pre=True)
@@ -148,15 +159,13 @@ class RubricGradedEnv(Env):
         total_reward = format_penalty + avg_score
 
         with logtree.scope_header("Reward Terms"):
-            logtree.table_from_dict(
-                {
-                    "rubric_score_mean": f"{avg_score:.3f}",
-                    "format_valid": format_valid,
-                    "format_penalty": f"{format_penalty:.3f}",
-                    "total_reward": f"{total_reward:.3f}",
-                },
-                caption="Per-step reward breakdown",
-            )
+            reward_terms = {
+                "rubric_score_mean": f"{avg_score:.3f}",
+                "format_valid": format_valid,
+                "format_penalty": f"{format_penalty:.3f}",
+                "total_reward": f"{total_reward:.3f}",
+            }
+            logtree.table_from_dict(reward_terms, caption="Per-step reward breakdown")
 
         return StepResult(
             reward=total_reward,
@@ -172,6 +181,12 @@ class RubricGradedEnv(Env):
                 "termination": str(termination),
                 "num_rubrics": len(self.rubric_items),
             },
+            trace=RolloutTrace(
+                prompt=prompt_formatter.to_data(),
+                policy_response=response_formatter.to_data(),
+                reward_data=reward_terms,
+                extra={"rubric_grades": rubric_grades},
+            ),
         )
 
 

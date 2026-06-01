@@ -46,6 +46,25 @@ class StubMessageEnv(MessageEnv):
         return self._step_result
 
 
+class MutatingMessageEnv(MessageEnv):
+    """MessageEnv that mutates history in place, like tool-use envs do."""
+
+    def __init__(self, initial_messages: list[Message]):
+        self.history = initial_messages
+
+    async def initial_observation(self) -> list[Message]:
+        return self.history
+
+    async def step(self, message: Message) -> MessageStepResult:
+        self.history.append(message)
+        self.history.append({"role": "tool", "content": "tool result"})
+        return MessageStepResult(
+            reward=1.0,
+            episode_done=True,
+            next_messages=self.history,
+        )
+
+
 def _make_renderer(
     gen_prompt_tokens: list[int] | None = None,
     stop_sequences: list[str] | None = None,
@@ -250,6 +269,22 @@ class TestStepSuccess:
         assert result.next_observation.to_ints() == [10, 20, 30, 40]
         assert result.metrics == {"custom": 1.0}
         assert result.next_stop_condition == ["<stop>"]
+
+    def test_trace_prompt_snapshots_messages_before_step_mutation(self):
+        """Trace prompt should not include messages appended by MessageEnv.step."""
+        assistant_msg: Message = {"role": "assistant", "content": "answer"}
+        initial_msgs: list[Message] = [{"role": "user", "content": "hi"}]
+        renderer = _make_renderer(parse_message=assistant_msg)
+        msg_env = MutatingMessageEnv(initial_msgs)
+        env = EnvFromMessageEnv(renderer=renderer, message_env=msg_env)
+
+        asyncio.run(env.initial_observation())
+        result = asyncio.run(env.step([5, 6, 7]))
+
+        assert result.trace is not None
+        assert result.trace.prompt is not None
+        assert result.trace.prompt["messages"] == [{"role": "user", "content": "hi"}]
+        assert len(msg_env.history) == 3
 
     def test_custom_stop_condition_from_message_env(self):
         """When MessageEnv returns a next_stop_condition, it overrides the base one."""

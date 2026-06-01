@@ -26,6 +26,7 @@ from tinker_cookbook.rl.types import (
     Observation,
     RLDataset,
     RLDatasetBuilder,
+    RolloutTrace,
     StepResult,
     Trajectory,
 )
@@ -287,7 +288,8 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
 
         # Log prompt
         with logtree.scope_header("Prompt"):
-            logtree.log_formatter(ConversationFormatter(messages=self.convo_prefix))
+            prompt_formatter = ConversationFormatter(messages=self.convo_prefix)
+            logtree.log_formatter(prompt_formatter)
 
         # Log trajectories
         for idx, (messages, is_valid) in enumerate(
@@ -339,6 +341,18 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
             matchup_count[j] += 1
             matchup_count[i] += 1
         format_coef = 1.0
+
+        prompt_trace = prompt_formatter.to_data()
+        for trajectory, messages, is_valid in safezip(
+            trajectory_group,
+            response_messages,
+            is_valid_list,
+        ):
+            trajectory.transitions[0].trace = RolloutTrace(
+                prompt=prompt_trace,
+                policy_response=ConversationFormatter(messages=messages).to_data(),
+                env_state={"valid_format": bool(is_valid)},
+            )
 
         return [
             (
