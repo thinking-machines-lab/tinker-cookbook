@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from dataclasses import dataclass, field
 
 import tinker
@@ -146,7 +147,9 @@ class EnvFromMessageEnv(types.Env):
                 metrics={"max_tokens_reached": 1.0},
             )
 
-        prompt_messages = self._last_messages or await self.message_env.initial_observation()
+        if self._last_messages is None:
+            self._last_messages = await self.message_env.initial_observation()
+        prompt_messages = deepcopy(self._last_messages)
         assistant_message, termination = self.renderer.parse_response(action)
 
         if not termination.is_clean:
