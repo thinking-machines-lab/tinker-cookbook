@@ -58,7 +58,7 @@ def _json_safe(value: Any) -> Any:
     if value is None or isinstance(value, (str, bool, int, float)):
         return value
     if is_dataclass(value) and not isinstance(value, type):
-        return _json_safe(asdict(value))
+        return _json_safe({k: v for k, v in asdict(value).items() if v is not None})
     if isinstance(value, dict):
         return {str(k): _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
