@@ -16,7 +16,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 05-2: Convert to PEFT LoRA Adapter
+    # Tutorial 502: Convert to PEFT LoRA Adapter
 
     Instead of merging LoRA weights into the base model, you can export a **standalone PEFT adapter**. This is the preferred approach for serving with vLLM or SGLang, where you keep one base model and hot-swap lightweight adapters.
 

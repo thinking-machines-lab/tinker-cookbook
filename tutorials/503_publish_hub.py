@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial: Publish to HuggingFace Hub
+    # Tutorial 503: Publish to HuggingFace Hub
 
     Once you have a merged model or PEFT adapter on disk, you can upload it to HuggingFace Hub for sharing, deployment, or version control.
 

@@ -16,7 +16,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 05-1: Export a Merged HuggingFace Model
+    # Tutorial 501: Export a Merged HuggingFace Model
 
     After training a LoRA adapter with Tinker, you typically want a **standalone model** you can deploy anywhere. This tutorial shows how to merge your LoRA adapter into the base model, producing a complete HuggingFace model directory.
 
