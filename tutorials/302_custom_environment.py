@@ -16,7 +16,7 @@ def _(mo):
     mo.md(r"""
     # Tutorial 302: Build a Custom RL Environment
 
-    In tutorial 04, you learned the raw GRPO algorithm -- sampling completions, grading them, computing advantages, and training. In tutorial 05, you saw how the cookbook's standard abstractions (`ProblemEnv`, `ProblemGroupBuilder`, `RLDataset`, `compute_advantages`, `assemble_training_data`) handle the boilerplate so you can focus on the task-specific logic.
+    In tutorial 104, you learned the raw GRPO algorithm -- sampling completions, grading them, computing advantages, and training. In tutorial 301, you saw how the cookbook's standard abstractions (`ProblemEnv`, `ProblemGroupBuilder`, `RLDataset`, `compute_advantages`, `assemble_training_data`) handle the boilerplate so you can focus on the task-specific logic.
 
     Now you will implement your own custom task from scratch using those abstractions. The pattern is always the same:
 
@@ -331,7 +331,7 @@ def _(mo):
     mo.md(r"""
     ## Step 4 -- Setup and train
 
-    Create a LoRA training client and run the standard RL training loop. The cookbook provides three functions that replace all the manual datum construction from tutorial 04:
+    Create a LoRA training client and run the standard RL training loop. The cookbook provides three functions that replace all the manual datum construction from tutorial 104:
 
     - **`do_group_rollout_and_filter_constant_reward`** -- runs rollouts for a group, returns `TrajectoryGroup` (or `None` if all rewards are identical)
     - **`compute_advantages`** -- centers rewards within each group (GRPO)

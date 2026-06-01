@@ -18,7 +18,7 @@ def _(mo):
 
     Configure and run a full RL pipeline using the cookbook's RL abstractions with `RLDatasetBuilder`.
 
-    In tutorials 05-06 you wrote RL loops manually. The cookbook also provides `rl.train.Config` + `rl.train.main()` which handles:
+    In tutorials 301-302 you wrote RL loops manually. The cookbook also provides `rl.train.Config` + `rl.train.main()` which handles:
     - Rollout collection (sync or async)
     - Advantage computation and data assembly
     - Pipelined training steps
@@ -269,7 +269,7 @@ def _(mo):
     - Pipelined `forward_backward` + `optim_step`
     - Optional KL penalty, async mode, and streaming minibatches
 
-    For custom RL loops, use the lower-level abstractions from tutorials 04-06.
+    For custom RL loops, use the lower-level abstractions from tutorials 104, 301, and 302.
     """)
     return
 

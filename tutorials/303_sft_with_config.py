@@ -241,7 +241,7 @@ def _(mo):
     - Pluggable evaluator builders
     - Resume from checkpoint
 
-    For custom training logic, drop down to the manual loop shown in tutorial 02.
+    For custom training logic, drop down to the manual loop shown in tutorial 102.
     """)
     return
 

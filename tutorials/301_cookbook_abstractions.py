@@ -16,7 +16,7 @@ def _(mo):
     mo.md(r"""
     # Tutorial 301: The Cookbook's RL Abstractions
 
-    In tutorial 04, we wrote a GRPO training loop from scratch: sample completions, grade them, compute advantages, build datums, train. That works, but every new task would repeat the same boilerplate.
+    In tutorial 104, we wrote a GRPO training loop from scratch: sample completions, grade them, compute advantages, build datums, train. That works, but every new task would repeat the same boilerplate.
 
     The cookbook provides standard types that separate concerns:
     - **`Env`** -- task logic (prompts and rewards)
@@ -24,7 +24,7 @@ def _(mo):
     - **`RLDataset`** -- iterating over problems
     - **`compute_advantages`** / **`assemble_training_data`** -- reusable data processing
 
-    This tutorial shows how the same GSM8K task from tutorial 04 maps onto these types.
+    This tutorial shows how the same GSM8K task from tutorial 104 maps onto these types.
     """)
     return
 
@@ -166,7 +166,7 @@ def _(mo):
     mo.md(r"""
     ## EnvGroupBuilder -- creating groups for GRPO
 
-    In tutorial 04, we sampled `group_size` completions per problem manually. `EnvGroupBuilder` formalizes this pattern:
+    In tutorial 104, we sampled `group_size` completions per problem manually. `EnvGroupBuilder` formalizes this pattern:
     - **`make_envs()`** -- returns a list of fresh `Env` instances (one per rollout in the group)
     - **`compute_group_rewards()`** -- optional group-level reward (default 0.0, added on top of per-step rewards)
     - **`cleanup()`** -- release resources after rollouts complete
@@ -277,12 +277,12 @@ def _(mo):
     mo.md(r"""
     ## Data processing -- advantages and datums
 
-    In tutorial 04, we manually centered rewards and built `Datum` objects with padded logprobs and advantages. The cookbook provides two functions that replace all of that:
+    In tutorial 104, we manually centered rewards and built `Datum` objects with padded logprobs and advantages. The cookbook provides two functions that replace all of that:
 
-    - **`compute_advantages()`** -- centers rewards within each group (same GRPO logic as tutorial 04)
+    - **`compute_advantages()`** -- centers rewards within each group (same GRPO logic as tutorial 104)
     - **`assemble_training_data()`** -- converts `TrajectoryGroup`s + advantages into `Datum` objects ready for `forward_backward`
 
-    This also handles multi-step trajectories correctly, which the manual approach in tutorial 04 did not.
+    This also handles multi-step trajectories correctly, which the manual approach in tutorial 104 did not.
     """)
     return
 
@@ -476,7 +476,7 @@ async def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Comparing tutorial 04 vs tutorial 05
+    ## Comparing tutorial 104 vs tutorial 301
 
     Here is what changed between the raw loop and the abstraction-based loop:
 
