@@ -276,6 +276,12 @@ class TestStorageFromUri:
         assert not s.exists("")
         assert not target.exists()
 
+    def test_accepts_pathlib_path(self, tmp_path: Path) -> None:
+        """storage_from_uri accepts os.PathLike (e.g. pathlib.Path), not just str."""
+        s = storage_from_uri(tmp_path / "run")
+        s.write("a.txt", b"x")
+        assert s.read("a.txt") == b"x"
+
     def test_s3_needs_s3fs(self) -> None:
         """S3 URIs require s3fs (may succeed if installed, may raise ImportError)."""
         try:
