@@ -3,7 +3,10 @@ import shlex
 import sys
 from unittest.mock import patch
 
-from .ml_log import configure_logging_module
+from tinker_cookbook.stores.storage import LocalStorage
+from tinker_cookbook.stores.training_store import TrainingRunStore
+
+from .ml_log import JsonLogger, configure_logging_module, setup_logging
 
 
 def _flush_root_handlers() -> None:
@@ -40,3 +43,34 @@ def test_configure_logging_module_logs_invocation_and_appends(tmp_path):
     assert final_contents.count("Command line invocation:") == 2
     assert final_contents.index("first message") < final_contents.index(second_invocation)
     assert final_contents.index(second_invocation) < final_contents.index("second message")
+
+
+def test_json_logger_sync_and_close_flush_store(tmp_path):
+    """JsonLogger.sync()/close() flush the store so staged cloud writes upload."""
+
+    class _FlushCountingStorage(LocalStorage):
+        flush_count = 0
+
+        def flush(self) -> None:
+            self.flush_count += 1
+
+    storage = _FlushCountingStorage(tmp_path)
+    json_logger = JsonLogger(tmp_path, store=TrainingRunStore(storage))
+
+    json_logger.log_metrics({"loss": 1.0}, step=0)
+    json_logger.sync()
+    json_logger.close()
+
+    assert storage.flush_count == 2
+
+
+def test_setup_logging_registers_atexit_flush(tmp_path, monkeypatch):
+    """setup_logging registers an atexit flush so a non-clean exit still uploads."""
+    import atexit
+
+    registered = []
+    monkeypatch.setattr(atexit, "register", lambda fn, *a, **k: registered.append(fn))
+
+    ml_logger = setup_logging(str(tmp_path), do_configure_logging_module=False)
+
+    assert ml_logger.sync in registered

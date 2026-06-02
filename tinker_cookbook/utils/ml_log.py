@@ -1,5 +1,6 @@
 """Simplified logging utilities for tinker-cookbook."""
 
+import atexit
 import json
 import logging
 import os
@@ -204,6 +205,14 @@ class JsonLogger(Logger):
         """Append metrics to JSONL file."""
         self._store.write_metrics(metrics, step)
         logger.info("Wrote metrics to %s/metrics.jsonl", self.log_dir)
+
+    def sync(self) -> None:
+        """Flush buffered store writes (uploads staged data on cloud backends)."""
+        self._store.flush()
+
+    def close(self) -> None:
+        """Flush buffered store writes before shutdown."""
+        self.sync()
 
 
 class PrettyPrintLogger(Logger):
@@ -607,6 +616,10 @@ def setup_logging(
 
     # Create multiplex logger
     ml_logger = MultiplexLogger(loggers)
+
+    # Flush staged writes on interpreter exit so a non-clean shutdown (before
+    # ml_logger.close()) still uploads metrics/timing/checkpoints on cloud backends.
+    atexit.register(ml_logger.sync)
 
     # Log initial configuration
     if config is not None:
