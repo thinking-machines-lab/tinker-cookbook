@@ -1,46 +1,28 @@
 """Result collection for completed sweep runs."""
 
-import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
+from tinker_cookbook.stores import TrainingRunStore, storage_from_uri
+
 logger = logging.getLogger(__name__)
 
 
-def _read_final_metrics(run_dir: Path) -> dict[str, Any]:
-    """Read the last line of metrics.jsonl to get final training metrics."""
-    metrics_file = run_dir / "metrics.jsonl"
-    if not metrics_file.exists():
-        return {}
-    last_line = None
-    with open(metrics_file) as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                last_line = line
-    if last_line is None:
-        return {}
-    try:
-        return json.loads(last_line)
-    except json.JSONDecodeError:
-        logger.warning(f"Failed to parse last line of {metrics_file}")
-        return {}
+def _read_final_metrics(run_dir: str | Path) -> dict[str, Any]:
+    """Read the last metrics.jsonl record (final training metrics) for a run."""
+    store = TrainingRunStore(storage_from_uri(str(run_dir), mkdir=False))
+    records = store.read_metrics()
+    return records[-1] if records else {}
 
 
-def _read_config(run_dir: Path) -> dict[str, Any]:
+def _read_config(run_dir: str | Path) -> dict[str, Any]:
     """Read config.json from a run directory."""
-    config_file = run_dir / "config.json"
-    if not config_file.exists():
-        return {}
-    try:
-        with open(config_file) as f:
-            return json.load(f)
-    except json.JSONDecodeError:
-        logger.warning(f"Failed to parse {config_file}")
-        return {}
+    store = TrainingRunStore(storage_from_uri(str(run_dir), mkdir=False))
+    return store.read_config() or {}
 
 
 def _extract_config_value(config: dict[str, Any], key: str) -> Any:
@@ -79,29 +61,33 @@ def collect(
     Returns:
         pandas DataFrame with config columns, metric columns, and ``log_path``.
     """
-    sweep_path = Path(sweep_dir)
-    if not sweep_path.is_dir():
+    sweep_uri = str(sweep_dir)
+    sweep_storage = storage_from_uri(sweep_uri, mkdir=False)
+    if not sweep_storage.exists(""):
         raise FileNotFoundError(f"Sweep directory does not exist: {sweep_dir}")
 
     rows: list[dict[str, Any]] = []
-    for run_dir in sorted(sweep_path.iterdir()):
-        if not run_dir.is_dir():
+    for run_name in sweep_storage.list_dir(""):
+        # Join directly (not via url(), which percent-encodes run names like "lr=1e-4").
+        run_path = os.path.join(sweep_uri, run_name)
+        # Skip non-run children (e.g. stray files): a run must have metrics.jsonl.
+        if not storage_from_uri(run_path, mkdir=False).exists("metrics.jsonl"):
             continue
 
-        metrics = _read_final_metrics(run_dir)
+        metrics = _read_final_metrics(run_path)
         if not metrics:
-            logger.warning(f"Skipping {run_dir.name}: no metrics.jsonl or empty")
+            logger.warning(f"Skipping {run_name}: no metrics.jsonl or empty")
             continue
 
         if require_complete:
             progress = metrics.get("progress", 0)
             if isinstance(progress, (int, float)) and progress < 0.98:
-                logger.warning(f"Skipping {run_dir.name}: incomplete (progress={progress:.2f})")
+                logger.warning(f"Skipping {run_name}: incomplete (progress={progress:.2f})")
                 continue
 
-        config = _read_config(run_dir)
+        config = _read_config(run_path)
 
-        row: dict[str, Any] = {"log_path": str(run_dir)}
+        row: dict[str, Any] = {"log_path": run_path}
 
         # Extract config values
         if config_keys is not None:
