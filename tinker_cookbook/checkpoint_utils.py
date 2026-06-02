@@ -1,6 +1,7 @@
 import asyncio
 import dataclasses
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -377,7 +378,7 @@ async def check_renderer_name_for_checkpoint_async(
 
 
 @trace.scope
-def load_checkpoints_file(log_dir: str) -> list[CheckpointRecord]:
+def load_checkpoints_file(log_dir: str | os.PathLike[str]) -> list[CheckpointRecord]:
     """Load checkpoint records from ``checkpoints.jsonl`` via Storage.
 
     Args:
@@ -400,7 +401,9 @@ def load_checkpoints_file(log_dir: str) -> list[CheckpointRecord]:
 
 
 @trace.scope
-def get_last_checkpoint(log_dir: str, required_key: str = "state_path") -> CheckpointRecord | None:
+def get_last_checkpoint(
+    log_dir: str | os.PathLike[str], required_key: str = "state_path"
+) -> CheckpointRecord | None:
     """
     Get the last checkpoint from the checkpoints.jsonl file in the specified log directory.
 
