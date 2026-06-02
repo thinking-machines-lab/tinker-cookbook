@@ -6,7 +6,7 @@ from unittest.mock import patch
 from tinker_cookbook.stores.storage import LocalStorage
 from tinker_cookbook.stores.training_store import TrainingRunStore
 
-from .ml_log import JsonLogger, configure_logging_module
+from .ml_log import JsonLogger, configure_logging_module, setup_logging
 
 
 def _flush_root_handlers() -> None:
@@ -62,3 +62,15 @@ def test_json_logger_sync_and_close_flush_store(tmp_path):
     json_logger.close()
 
     assert storage.flush_count == 2
+
+
+def test_setup_logging_registers_atexit_flush(tmp_path, monkeypatch):
+    """setup_logging registers an atexit flush so a non-clean exit still uploads."""
+    import atexit
+
+    registered = []
+    monkeypatch.setattr(atexit, "register", lambda fn, *a, **k: registered.append(fn))
+
+    ml_logger = setup_logging(str(tmp_path), do_configure_logging_module=False)
+
+    assert ml_logger.sync in registered

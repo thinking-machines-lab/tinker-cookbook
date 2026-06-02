@@ -1,5 +1,6 @@
 """Simplified logging utilities for tinker-cookbook."""
 
+import atexit
 import json
 import logging
 import os
@@ -615,6 +616,10 @@ def setup_logging(
 
     # Create multiplex logger
     ml_logger = MultiplexLogger(loggers)
+
+    # Flush staged writes on interpreter exit so a non-clean shutdown (before
+    # ml_logger.close()) still uploads metrics/timing/checkpoints on cloud backends.
+    atexit.register(ml_logger.sync)
 
     # Log initial configuration
     if config is not None:
