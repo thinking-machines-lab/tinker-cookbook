@@ -1,11 +1,13 @@
 """Tests for cli_utils path handling."""
 
 import tempfile
+import uuid
 from pathlib import Path
 
 import pytest
 
 from tinker_cookbook.cli_utils import check_log_dir
+from tinker_cookbook.stores.storage import storage_from_uri
 
 
 def test_check_log_dir_nonexistent_is_noop():
@@ -37,3 +39,46 @@ def test_check_log_dir_raise_raises():
     with tempfile.TemporaryDirectory() as tmpdir:
         with pytest.raises(ValueError, match="already exists"):
             check_log_dir(tmpdir, "raise")
+
+
+def test_check_log_dir_cloud_nonexistent_is_noop():
+    """A cloud prefix with no objects is treated as nonexistent (no raise)."""
+    base = f"memory://bucket/{uuid.uuid4()}"
+    check_log_dir(f"{base}/run", "raise")
+
+
+def test_check_log_dir_cloud_raise_when_objects_exist():
+    """A cloud prefix with objects (no directory marker) is detected via exists_tree."""
+    base = f"memory://bucket/{uuid.uuid4()}"
+    storage_from_uri(f"{base}/run").write("metrics.jsonl", b"{}\n")
+    with pytest.raises(ValueError, match="already exists"):
+        check_log_dir(f"{base}/run", "raise")
+
+
+def test_check_log_dir_cloud_delete_prefix_safety():
+    """'delete' clears the run prefix but leaves a sibling that shares its name."""
+    base = f"memory://bucket/{uuid.uuid4()}"
+    run = storage_from_uri(f"{base}/run")
+    sibling = storage_from_uri(f"{base}/run-sibling")
+    run.write("subdir/file.txt", b"x")
+    sibling.write("g.txt", b"keep")
+
+    check_log_dir(f"{base}/run", "delete")
+
+    assert not run.exists_tree("")
+    assert sibling.read("g.txt") == b"keep"
+
+
+def test_check_log_dir_delete_symlinked_dir_unlinks_not_target(tmp_path):
+    """'delete' on a symlinked log dir removes the link, not the (shared) target."""
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "keep.txt").write_text("keep")
+    link = tmp_path / "run"
+    link.symlink_to(target, target_is_directory=True)
+
+    check_log_dir(str(link), "delete")
+
+    assert not link.is_symlink()  # link removed
+    assert target.exists()  # target untouched
+    assert (target / "keep.txt").read_text() == "keep"

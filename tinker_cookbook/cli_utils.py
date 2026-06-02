@@ -1,9 +1,8 @@
 import logging
-import shutil
-from pathlib import Path
 from typing import Literal
 
 from tinker_cookbook.exceptions import ConfigurationError
+from tinker_cookbook.stores.storage import storage_from_uri
 
 logger = logging.getLogger(__name__)
 
@@ -28,19 +27,23 @@ def check_log_dir(log_dir: str, behavior_if_exists: LogdirBehavior):
     Returns:
         None
     """
-    if Path(log_dir).exists():
+    # mkdir=False so the existence check itself never creates the directory.
+    storage = storage_from_uri(log_dir, mkdir=False)
+    # exists_tree (not exists) so a cloud prefix with objects but no directory
+    # marker is correctly detected.
+    if storage.exists_tree(""):
         if behavior_if_exists == "delete":
             logger.info(
                 f"Log directory {log_dir} already exists. Will delete it and start logging there."
             )
-            shutil.rmtree(log_dir)
+            storage.remove_tree("")
         elif behavior_if_exists == "ask":
             while True:
                 user_input = input(
                     f"Log directory {log_dir} already exists. What do you want to do? [delete, resume, exit]: "
                 )
                 if user_input == "delete":
-                    shutil.rmtree(log_dir)
+                    storage.remove_tree("")
                     return
                 elif user_input == "resume":
                     return
