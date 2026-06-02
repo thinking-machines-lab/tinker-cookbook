@@ -205,6 +205,14 @@ class JsonLogger(Logger):
         self._store.write_metrics(metrics, step)
         logger.info("Wrote metrics to %s/metrics.jsonl", self.log_dir)
 
+    def sync(self) -> None:
+        """Flush buffered store writes (uploads staged data on cloud backends)."""
+        self._store.flush()
+
+    def close(self) -> None:
+        """Flush buffered store writes before shutdown."""
+        self.sync()
+
 
 class PrettyPrintLogger(Logger):
     """Logger that displays metrics as a Rich-formatted table in the console.

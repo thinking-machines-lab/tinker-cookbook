@@ -1,20 +1,15 @@
 import asyncio
 import dataclasses
-import json
 import logging
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
-
-if TYPE_CHECKING:
-    from tinker_cookbook.stores.training_store import TrainingRunStore
+from typing import Any, Literal
 
 import tinker
 
 from tinker_cookbook import model_info
+from tinker_cookbook.stores import TrainingRunStore, storage_from_uri
 from tinker_cookbook.utils import trace
-from tinker_cookbook.utils.file_utils import read_jsonl
 
 CHECKPOINTS_BASE_NAME = "checkpoints.jsonl"
 
@@ -383,22 +378,25 @@ async def check_renderer_name_for_checkpoint_async(
 
 @trace.scope
 def load_checkpoints_file(log_dir: str) -> list[CheckpointRecord]:
-    """Load checkpoint records from a JSONL file.
+    """Load checkpoint records from ``checkpoints.jsonl`` via Storage.
 
     Args:
-        log_dir: Directory containing the ``checkpoints.jsonl`` file.
+        log_dir: Run log directory or URI — a local path, ``file://``, or a
+            cloud root such as ``gs://`` / ``s3://``.
 
     Returns:
-        A list of CheckpointRecord instances, or an empty list if the file does not exist.
+        A list of CheckpointRecord instances, or an empty list if absent.
     """
-    checkpoint_path = Path(log_dir) / CHECKPOINTS_BASE_NAME
-    if not checkpoint_path.exists():
-        logger.info(f"No checkpoints found at {checkpoint_path}")
-        return []
-
-    logger.info(f"Reading checkpoints from {checkpoint_path}")
-    trace.update_scope_context({"checkpoint_path": str(checkpoint_path)})
-    return [CheckpointRecord.from_dict(d) for d in read_jsonl(str(checkpoint_path))]
+    # mkdir=False: a resume check must not create the directory as a side effect.
+    store = TrainingRunStore(storage_from_uri(log_dir, mkdir=False))
+    checkpoint_uri = store.url(CHECKPOINTS_BASE_NAME)
+    records = store.read_checkpoint_records()
+    if records:
+        logger.info(f"Read {len(records)} checkpoints from {checkpoint_uri}")
+    else:
+        logger.info(f"No checkpoints found at {checkpoint_uri}")
+    trace.update_scope_context({"checkpoint_path": checkpoint_uri})
+    return records
 
 
 @trace.scope
@@ -407,7 +405,8 @@ def get_last_checkpoint(log_dir: str, required_key: str = "state_path") -> Check
     Get the last checkpoint from the checkpoints.jsonl file in the specified log directory.
 
     Args:
-        log_dir: The directory to check.
+        log_dir: Run log directory or URI — a local path, ``file://``, or a
+            cloud root such as ``gs://`` / ``s3://``.
         required_key: The key to check for in the checkpoint.
             We might save partial checkpoints (e.g. sampler) in the same file,
             so we need to filter to the rows that have a fully-resumable checkpoint.
@@ -436,7 +435,7 @@ async def save_checkpoint_async(
     loop_state: dict[str, Any],
     kind: Literal["state", "sampler", "both"] = "state",
     ttl_seconds: int | None = None,
-    store: "TrainingRunStore | None" = None,
+    store: TrainingRunStore | None = None,
 ) -> dict[str, str]:
     """Save model checkpoint and append a record to ``checkpoints.jsonl``.
 
@@ -467,11 +466,9 @@ async def save_checkpoint_async(
     logger.info(f"Saved checkpoints: {paths}")
 
     record = CheckpointRecord.from_dict({"name": name, **loop_state, **paths})
-    if store is not None:
-        store.write_checkpoint(record.to_dict())
-    else:
-        with open(Path(log_path) / "checkpoints.jsonl", "a") as f:
-            f.write(json.dumps(record.to_dict()) + "\n")
+    if store is None:
+        store = TrainingRunStore(storage_from_uri(log_path))
+    store.write_checkpoint(record.to_dict())
 
     return paths
 
@@ -484,7 +481,7 @@ def save_checkpoint(
     loop_state: dict[str, Any],
     kind: Literal["state", "sampler", "both"] = "state",
     ttl_seconds: int | None = None,
-    store: "TrainingRunStore | None" = None,
+    store: TrainingRunStore | None = None,
 ) -> dict[str, str]:
     """Save model checkpoint (synchronous wrapper around save_checkpoint_async).
 
@@ -572,7 +569,7 @@ class CheckpointManager:
         ttl_seconds: int | None = 604800,
         rolling_save_every: int = 0,
         rolling_ttl_seconds: int = 7200,
-        store: "TrainingRunStore | None" = None,
+        store: TrainingRunStore | None = None,
         async_periodic_saves: bool = False,
     ) -> None:
         self._training_client = training_client
