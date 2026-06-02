@@ -45,6 +45,7 @@ import chz
 import tinker
 
 from tinker_cookbook import checkpoint_utils, cli_utils, renderers
+from tinker_cookbook.stores.storage import storage_from_uri
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
@@ -340,22 +341,17 @@ def _save_results(
     config: BenchmarkConfig,
     model_path: str | None,
 ) -> None:
-    Path(log_path).mkdir(parents=True, exist_ok=True)
-    output_path = Path(log_path) / "eval_results.json"
-    with open(output_path, "w") as f:
-        json.dump(
-            {
-                "metrics": metrics,
-                "config": {
-                    "model_name": config.model_name,
-                    "model_path": model_path,
-                    "dataset": config.dataset,
-                },
-            },
-            f,
-            indent=2,
-        )
-    logger.info(f"Saved results to {output_path}")
+    storage = storage_from_uri(log_path)
+    payload = {
+        "metrics": metrics,
+        "config": {
+            "model_name": config.model_name,
+            "model_path": model_path,
+            "dataset": config.dataset,
+        },
+    }
+    storage.write("eval_results.json", json.dumps(payload, indent=2).encode("utf-8"))
+    logger.info("Saved results to %s", storage.url("eval_results.json"))
 
 
 async def cli_main(config: BenchmarkConfig) -> None:
@@ -400,11 +396,10 @@ async def cli_main(config: BenchmarkConfig) -> None:
 
     # Save summary
     log_root = config.log_root or "/tmp/tinker-examples/sdft-benchmark"
-    summary_path = Path(log_root) / f"benchmark_summary_{config.dataset}.json"
-    summary_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(summary_path, "w") as f:
-        json.dump(results, f, indent=2)
-    logger.info(f"Saved summary to {summary_path}")
+    storage = storage_from_uri(log_root)
+    summary_name = f"benchmark_summary_{config.dataset}.json"
+    storage.write(summary_name, json.dumps(results, indent=2).encode("utf-8"))
+    logger.info("Saved summary to %s", storage.url(summary_name))
 
 
 if __name__ == "__main__":
