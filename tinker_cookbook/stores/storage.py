@@ -552,14 +552,20 @@ class FsspecStorage:
         # with no directory marker (where ``exists(full)`` would be False).
         with contextlib.suppress(FileNotFoundError):
             self._fs.rm(full, recursive=True)
-        # Drop any staged files under this prefix.
+        # Drop any staged files under this prefix from the tracking set.
         prefix = path.strip("/")
-        staged = [
+        for p in [
             p for p in self._staged if not prefix or p == prefix or p.startswith(prefix + "/")
-        ]
-        for p in staged:
-            self._stage_path(p).unlink(missing_ok=True)
+        ]:
             self._staged.discard(p)
+        # Remove the staged subtree itself, not just the files: list_dir merges
+        # staged directories, so leftover empty dirs would make exists_tree and
+        # list_dir resurface a prefix we just deleted.
+        stage_target = self._stage_path(prefix) if prefix else self._stage_dir
+        if stage_target.is_dir():
+            shutil.rmtree(stage_target, ignore_errors=True)
+        else:
+            stage_target.unlink(missing_ok=True)
 
     def flush(self) -> None:
         """Upload all locally staged files to cloud.
