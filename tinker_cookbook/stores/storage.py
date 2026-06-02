@@ -231,7 +231,9 @@ class LocalStorage:
     """
 
     def __init__(self, root: str | Path, *, mkdir: bool = True) -> None:
-        self._root = Path(root).expanduser().resolve()
+        # Keep the pre-resolve path so we can detect a symlinked root and unlink the link itself rather than wiping its (resolved) target.
+        self._unresolved_root = Path(root).expanduser()
+        self._root = self._unresolved_root.resolve()
         if mkdir:
             self._root.mkdir(parents=True, exist_ok=True)
 
@@ -312,6 +314,10 @@ class LocalStorage:
 
     def remove_tree(self, path: str = "") -> None:
         """See :meth:`Storage.remove_tree`."""
+        # If it's a symlinked root, unlink the link itself, do not delete the (possibly shared) target directory.
+        if not path and self._unresolved_root.is_symlink():
+            self._unresolved_root.unlink()
+            return
         full = self._resolve(path)
         if full.is_dir():
             shutil.rmtree(full)
