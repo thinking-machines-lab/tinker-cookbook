@@ -382,11 +382,10 @@ class TraceCollector:
             self.storage.append(TRACE_EVENTS_FILENAME, data)
 
     def _flush_worker(self):
-        """Background thread: batch trace events and append them via Storage.
+        """Background thread that batches events and appends them via Storage.
 
-        All Storage access is on this one thread, so no locking is needed.
-        ``append`` grows the file (cloud backends stage locally); the final
-        ``flush`` uploads any staged data on shutdown.
+        Single-threaded Storage access (no locking); the final flush is in
+        :meth:`shutdown`.
         """
         while not self.shutdown_event.is_set():
             events = self.get_all_events_immediately_available()
@@ -398,14 +397,16 @@ class TraceCollector:
                 pass
             self._flush_events(events)
 
-        # Drain remaining events, then upload staged data (cloud) on shutdown.
+    def shutdown(self) -> None:
+        """Stop the flusher thread and finalize the trace.
+
+        The final upload runs here (not on the daemon worker) so a slow cloud
+        flush isn't killed mid-upload at process exit.
+        """
+        self.shutdown_event.set()
+        self.flusher_thread.join()
         self._flush_events(self.get_all_events_immediately_available())
         self.storage.flush()
-
-    def shutdown(self) -> None:
-        """Shutdown the background flusher thread and flush remaining events."""
-        self.shutdown_event.set()
-        self.flusher_thread.join(timeout=5.0)
 
 
 # Global trace collector instance

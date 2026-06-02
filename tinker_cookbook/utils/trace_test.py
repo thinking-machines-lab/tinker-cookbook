@@ -926,6 +926,28 @@ def test_convert_jsonl_to_json_main_cloud(monkeypatch):
     assert json.loads(storage_from_uri(base).read("trace.json")) == [{"name": "a"}, {"name": "b"}]
 
 
+def test_trace_collector_shutdown_flushes_synchronously(tmp_path):
+    """shutdown() runs the final storage.flush() to completion on the caller.
+
+    The upload must not be left to the daemon worker (which can be killed
+    mid-upload at process exit), so it happens synchronously in shutdown().
+    """
+    from tinker_cookbook.stores.storage import LocalStorage
+    from tinker_cookbook.utils.trace import TraceCollector
+
+    class _CountingStorage(LocalStorage):
+        flush_count = 0
+
+        def flush(self) -> None:
+            self.flush_count += 1
+
+    storage = _CountingStorage(tmp_path)
+    collector = TraceCollector(storage=storage, flush_interval_sec=0.05)
+    collector.shutdown()
+
+    assert storage.flush_count == 1
+
+
 if __name__ == "__main__":
     trace_init()
     asyncio.run(example_program())
