@@ -917,7 +917,9 @@ def test_convert_jsonl_to_json_main_cloud(monkeypatch):
 
     base = f"memory://bucket/{uuid.uuid4()}"
     storage_from_uri(base).write("trace_events.jsonl", b'{"name": "a"}\n{"name": "b"}\n')
-    monkeypatch.setattr("sys.argv", ["trace.py", f"{base}/trace_events.jsonl", f"{base}/trace.json"])
+    monkeypatch.setattr(
+        "sys.argv", ["trace.py", f"{base}/trace_events.jsonl", f"{base}/trace.json"]
+    )
 
     convert_jsonl_to_json_main()
 
