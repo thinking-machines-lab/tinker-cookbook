@@ -12,7 +12,6 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass
-from pathlib import Path
 
 import chz
 import tinker
@@ -27,6 +26,7 @@ from tinker_cookbook.eval.evaluators import (
     TrainingClientEvaluator,
 )
 from tinker_cookbook.exceptions import ConfigurationError
+from tinker_cookbook.stores.storage import normalize_log_path
 from tinker_cookbook.supervised.common import compute_mean_nll
 from tinker_cookbook.supervised.nll_evaluator import NLLEvaluator
 from tinker_cookbook.supervised.types import SupervisedDatasetBuilder
@@ -34,7 +34,6 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.lr_scheduling import LRSchedule, compute_schedule_lr_multiplier
-from tinker_cookbook.utils.misc_utils import iteration_dir
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +108,7 @@ class Config:
     """
 
     # Required parameters
-    log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
+    log_path: str = chz.field(munger=lambda _, s: normalize_log_path(s))
     model_name: str
     recipe_name: str
     load_checkpoint_path: str | None = None
@@ -311,12 +310,13 @@ async def main(config: Config):
         current_task = asyncio.current_task()
         if current_task is not None:
             current_task.set_name("main")
-        trace_events_path = str(Path(config.log_path) / "trace_events.jsonl")
-        logger.info(f"Tracing is enabled. Trace events will be saved to {trace_events_path}")
+        assert store is not None, "Tracing requires a TrainingRunStore (provided by setup_logging)"
+        trace_events_uri = store.url(trace.TRACE_EVENTS_FILENAME)
+        logger.info(f"Tracing is enabled. Trace events will be saved to {trace_events_uri}")
         logger.info(
-            f"Run `python tinker_cookbook/utils/trace.py {trace_events_path} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"
+            f"Run `python tinker_cookbook/utils/trace.py {trace_events_uri} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"
         )
-        trace.trace_init(output_file=trace_events_path)
+        trace.trace_init(config.log_path)
 
     service_client = tinker.ServiceClient(
         base_url=config.base_url,
@@ -494,18 +494,12 @@ async def main(config: Config):
         if submitted.infrequent_eval_metrics is not None:
             metrics.update(submitted.infrequent_eval_metrics)
 
-    log_path = Path(config.log_path)
-
     async def finish_and_log(submitted: SubmittedBatch, window: trace.IterationWindow) -> None:
         """Finish a batch, merge timing metrics, and log."""
         await finish_batch(submitted)
         submitted.metrics.update(window.get_timing_metrics())
         window.save_timing(submitted.step, store=store)
-        if config.span_chart_every > 0 and submitted.step % config.span_chart_every == 0:
-            iter_dir = iteration_dir(log_path, submitted.step)
-            if iter_dir is not None:
-                iter_dir.mkdir(parents=True, exist_ok=True)
-                trace.save_gantt_chart_html(window, submitted.step, iter_dir / "timing_gantt.html")
+        trace.maybe_write_gantt_html(window, submitted.step, store, every=config.span_chart_every)
         ml_logger.log_metrics(metrics=submitted.metrics, step=submitted.step)
 
     assert config.submit_ahead >= 0, f"submit_ahead must be >= 0, got {config.submit_ahead}"

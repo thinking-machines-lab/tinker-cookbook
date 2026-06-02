@@ -42,7 +42,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from pathlib import Path
 from typing import Any
 
 import chz
@@ -53,6 +52,7 @@ from tinker_cookbook import checkpoint_utils, model_info
 from tinker_cookbook.distillation.datasets import TeacherConfig
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluatorBuilder
 from tinker_cookbook.exceptions import ConfigurationError
+from tinker_cookbook.stores.storage import normalize_log_path
 from tinker_cookbook.supervised.types import SupervisedDataset, SupervisedDatasetBuilder
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
@@ -119,7 +119,7 @@ class Config:
     eval_every: int = 20
     max_steps: int | None = None
     load_checkpoint_path: str | None = None
-    log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
+    log_path: str = chz.field(munger=lambda _, s: normalize_log_path(s))
     wandb_project: str | None = None
     wandb_name: str | None = None
     base_url: str | None = None
@@ -347,9 +347,10 @@ async def main(config: Config) -> None:
     )
     store = ml_logger.store
     if config.enable_trace:
-        trace_events_path = str(Path(config.log_path) / "trace_events.jsonl")
-        logger.info(f"Tracing enabled. Events saved to {trace_events_path}")
-        trace.trace_init(output_file=trace_events_path)
+        assert store is not None, "Tracing requires a TrainingRunStore (provided by setup_logging)"
+        trace_events_uri = store.url(trace.TRACE_EVENTS_FILENAME)
+        logger.info(f"Tracing enabled. Events saved to {trace_events_uri}")
+        trace.trace_init(config.log_path)
 
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     start_batch = resume_info.batch if resume_info else 0

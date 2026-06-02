@@ -8,14 +8,16 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 import tinker
 
 from tinker_cookbook.utils.trace import (
     IterationWindow,
     SpanRecord,
     _build_gantt_chart,
+    convert_jsonl_to_json_main,
     get_scope_context,
-    save_gantt_chart_html,
+    maybe_write_gantt_html,
     scope,
     scope_span,
     scope_span_sync,
@@ -30,11 +32,11 @@ from tinker_cookbook.utils.trace import (
 
 @contextlib.contextmanager
 def trace_session():
-    """Start a trace session backed by a temporary JSONL file."""
-    with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=True) as f:
-        trace_init(output_file=f.name)
+    """Start a trace session backed by a temporary trace_events.jsonl file."""
+    with tempfile.TemporaryDirectory() as d:
+        trace_init(d)
         try:
-            yield f.name
+            yield str(Path(d) / "trace_events.jsonl")
         finally:
             trace_shutdown()
 
@@ -117,12 +119,12 @@ async def example_program():
 
 
 def test_trace():
-    with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=True) as temp_file:
-        trace_init(output_file=temp_file.name)
+    with tempfile.TemporaryDirectory() as d:
+        trace_init(d)
         asyncio.run(example_program())
         trace_shutdown()
 
-        with open(temp_file.name) as f:
+        with open(Path(d) / "trace_events.jsonl") as f:
             events = [json.loads(line) for line in f]
 
         # There should be 2 process metadata events
@@ -271,45 +273,105 @@ def test_get_timing_metrics_without_total():
     assert "time/total" not in metrics
 
 
-# --- write_spans_jsonl ---
+# --- save_timing ---
 
 
-def test_write_spans_jsonl():
-    """write_spans_jsonl appends one JSON line per call."""
+def test_save_timing_writes_via_store(tmp_path):
+    """save_timing appends one timing_spans.jsonl record per call via the store."""
+    from tinker_cookbook.stores import TrainingRunStore, storage_from_uri
+
+    store = TrainingRunStore(storage_from_uri(str(tmp_path)))
     window = IterationWindow()
     window.record_span("a", 100.0, 101.5)
     window.record_span("b", 100.2, 102.0)
 
-    with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=True, mode="w") as f:
-        path = f.name
+    window.save_timing(0, store=store)
+    window.save_timing(1, store=store)
 
-    window.write_spans_jsonl(path, step=0)
-    window.write_spans_jsonl(path, step=1)
-
-    with open(path) as f:
-        lines = [json.loads(line) for line in f]
-
-    assert len(lines) == 2
-    assert lines[0]["step"] == 0
-    assert lines[1]["step"] == 1
-    assert len(lines[0]["spans"]) == 2
-    assert lines[0]["spans"][0]["name"] == "a"
-    assert lines[0]["spans"][1]["name"] == "b"
-    assert abs(lines[0]["spans"][0]["duration"] - 1.5) < 1e-9
+    records = store.read_timing()
+    assert len(records) == 2
+    assert records[0]["step"] == 0
+    assert records[1]["step"] == 1
+    assert len(records[0]["spans"]) == 2
+    assert records[0]["spans"][0]["name"] == "a"
+    assert records[0]["spans"][1]["name"] == "b"
+    assert abs(records[0]["spans"][0]["duration"] - 1.5) < 1e-9
     # wall_start of first span should be ~0 (relative)
-    assert lines[0]["spans"][0]["wall_start"] < 0.1
-
-    Path(path).unlink(missing_ok=True)
+    assert records[0]["spans"][0]["wall_start"] < 0.1
 
 
-def test_write_spans_jsonl_empty_window():
-    """write_spans_jsonl is a no-op for empty windows."""
+def test_save_timing_empty_window_noop(tmp_path):
+    """save_timing is a no-op for empty windows."""
+    from tinker_cookbook.stores import TrainingRunStore, storage_from_uri
+
+    store = TrainingRunStore(storage_from_uri(str(tmp_path)))
     window = IterationWindow()
-    with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=True, mode="w") as f:
-        path = f.name
+    window.save_timing(0, store=store)
+    assert store.read_timing() == []
 
-    window.write_spans_jsonl(path, step=0)
-    assert not Path(path).exists()
+
+# --- trace_init ---
+
+
+def test_trace_init_writes_trace_events(tmp_path):
+    """trace_init(log_dir) appends trace_events.jsonl under the log dir (cloud-safe)."""
+    trace_init(str(tmp_path))
+    try:
+        with scope_span_sync("unit_span"):
+            pass
+    finally:
+        trace_shutdown()
+
+    trace_file = tmp_path / "trace_events.jsonl"
+    assert trace_file.exists()
+    assert trace_file.read_bytes()
+
+
+def test_trace_init_appends_across_sessions(tmp_path):
+    """A second trace_init appends to trace_events.jsonl (resume-safe)."""
+    trace_file = tmp_path / "trace_events.jsonl"
+
+    trace_init(str(tmp_path))
+    try:
+        with scope_span_sync("first"):
+            pass
+    finally:
+        trace_shutdown()
+    size_after_first = len(trace_file.read_bytes())
+    assert size_after_first > 0
+
+    trace_init(str(tmp_path))
+    try:
+        with scope_span_sync("second"):
+            pass
+    finally:
+        trace_shutdown()
+    size_after_second = len(trace_file.read_bytes())
+    assert size_after_second > size_after_first
+
+
+# --- maybe_write_gantt_html ---
+
+
+def test_maybe_write_gantt_html_writes_via_store(tmp_path):
+    pytest.importorskip("plotly")
+    from tinker_cookbook.stores import TrainingRunStore, storage_from_uri
+
+    store = TrainingRunStore(storage_from_uri(str(tmp_path)))
+    window = IterationWindow()
+    window.record_span("a", 100.0, 101.0)
+    maybe_write_gantt_html(window, 2, store, every=1)
+    assert store.storage.exists("iteration_000002/timing_gantt.html")
+
+
+def test_maybe_write_gantt_html_skips_when_not_due(tmp_path):
+    from tinker_cookbook.stores import TrainingRunStore, storage_from_uri
+
+    store = TrainingRunStore(storage_from_uri(str(tmp_path)))
+    window = IterationWindow()
+    window.record_span("a", 100.0, 101.0)
+    maybe_write_gantt_html(window, 3, store, every=2)  # 3 % 2 != 0 -> skip
+    assert not store.storage.exists("iteration_000003/timing_gantt.html")
 
 
 # --- trace_iteration ---
@@ -503,13 +565,11 @@ def test_scope_span_async():
 def test_scope_span_with_perfetto():
     """scope_span records to both Perfetto and iteration window."""
 
-    with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as tmp:
-        trace_file = tmp.name
-
-    try:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        trace_file = Path(tmpdir) / "trace_events.jsonl"
 
         async def run():
-            trace_init(output_file=trace_file)
+            trace_init(tmpdir)
             try:
                 with trace_iteration(step=0) as window:
                     async with scope_span("traced_span"):
@@ -529,8 +589,6 @@ def test_scope_span_with_perfetto():
             events = [json.loads(line) for line in f]
         span_events = [e for e in events if e.get("name") == "traced_span"]
         assert len(span_events) >= 2  # BEGIN + END
-    finally:
-        Path(trace_file).unlink(missing_ok=True)
 
 
 def test_scope_span_noop():
@@ -642,30 +700,6 @@ def test_build_gantt_chart_no_plotly():
     with patch.dict("sys.modules", {"plotly": None, "plotly.express": None}):
         fig = _build_gantt_chart(span_records, step=0)
     assert fig is None
-
-
-def test_save_gantt_chart_html():
-    """save_gantt_chart_html writes an HTML file when plotly is available."""
-    window = IterationWindow()
-    window.record_span("a", 100.0, 101.0)
-    window.record_span("b", 100.5, 102.0)
-
-    with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
-        path = Path(f.name)
-
-    save_gantt_chart_html(window, step=0, path=path)
-
-    try:
-        import plotly  # noqa: F401
-
-        assert path.exists()
-        content = path.read_text()
-        assert "plotly" in content.lower() or "Plotly" in content
-    except ImportError:
-        # plotly not installed — file should not be created
-        pass
-    finally:
-        path.unlink(missing_ok=True)
 
 
 # --- SDK client instrumentation ---
@@ -862,19 +896,56 @@ def test_gantt_chart_sync_rl_layout():
     assert "time/sampling" in metrics
     assert "time/train_step" in metrics
 
-    # Gantt chart renders without error
-    with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
-        path = Path(f.name)
-    try:
-        save_gantt_chart_html(window, step=0, path=path)
-        try:
-            import plotly  # noqa: F401
 
-            assert path.exists()
-        except ImportError:
-            pass
-    finally:
-        path.unlink(missing_ok=True)
+def test_convert_jsonl_to_json_main_roundtrips(tmp_path, monkeypatch):
+    """The converter reads JSONL and writes a JSON array via Storage."""
+    src = tmp_path / "trace_events.jsonl"
+    src.write_text('{"name": "a"}\n{"name": "b"}\n')
+    out = tmp_path / "trace.json"
+    monkeypatch.setattr("sys.argv", ["trace.py", str(src), str(out)])
+
+    convert_jsonl_to_json_main()
+
+    assert json.loads(out.read_text()) == [{"name": "a"}, {"name": "b"}]
+
+
+def test_convert_jsonl_to_json_main_cloud(monkeypatch):
+    """Converter handles cloud URIs (memory:// stands in for gs:///s3://)."""
+    import uuid
+
+    from tinker_cookbook.stores import storage_from_uri
+
+    base = f"memory://bucket/{uuid.uuid4()}"
+    storage_from_uri(base).write("trace_events.jsonl", b'{"name": "a"}\n{"name": "b"}\n')
+    monkeypatch.setattr(
+        "sys.argv", ["trace.py", f"{base}/trace_events.jsonl", f"{base}/trace.json"]
+    )
+
+    convert_jsonl_to_json_main()
+
+    assert json.loads(storage_from_uri(base).read("trace.json")) == [{"name": "a"}, {"name": "b"}]
+
+
+def test_trace_collector_shutdown_flushes_synchronously(tmp_path):
+    """shutdown() runs the final storage.flush() to completion on the caller.
+
+    The upload must not be left to the daemon worker (which can be killed
+    mid-upload at process exit), so it happens synchronously in shutdown().
+    """
+    from tinker_cookbook.stores.storage import LocalStorage
+    from tinker_cookbook.utils.trace import TraceCollector
+
+    class _CountingStorage(LocalStorage):
+        flush_count = 0
+
+        def flush(self) -> None:
+            self.flush_count += 1
+
+    storage = _CountingStorage(tmp_path)
+    collector = TraceCollector(storage=storage, flush_interval_sec=0.05)
+    collector.shutdown()
+
+    assert storage.flush_count == 1
 
 
 if __name__ == "__main__":

@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
@@ -42,10 +41,11 @@ from tinker_cookbook.rl.types import (
     EnvGroupBuilder,
     TrajectoryGroup,
 )
+from tinker_cookbook.stores.storage import normalize_log_path
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
-from tinker_cookbook.utils.misc_utils import iteration_dir, safezip
+from tinker_cookbook.utils.misc_utils import safezip
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +158,7 @@ class Config:
     wandb_project: str | None = None
     wandb_name: str | None = None
 
-    log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
+    log_path: str = chz.field(munger=lambda _, s: normalize_log_path(s))
     base_url: str | None = None
     enable_trace: bool = False
     span_chart_every: int = 0
@@ -301,8 +301,6 @@ async def do_sync_training(
         training_client, checkpoint_mgr, start_batch, start_batch
     )
 
-    log_path = Path(config.log_path)
-
     for i_batch in range(start_batch, end_batch):
         metrics = {
             "progress/batch": i_batch,
@@ -361,11 +359,9 @@ async def do_sync_training(
         # Log timing metrics from trace_iteration window
         metrics.update(window.get_timing_metrics())
         window.save_timing(i_batch, store=ml_logger.store)
-        if config.span_chart_every > 0 and i_batch % config.span_chart_every == 0:
-            iter_dir = iteration_dir(log_path, i_batch)
-            if iter_dir is not None:
-                iter_dir.mkdir(parents=True, exist_ok=True)
-                trace.save_gantt_chart_html(window, i_batch, iter_dir / "timing_gantt.html")
+        trace.maybe_write_gantt_html(
+            window, i_batch, ml_logger.store, every=config.span_chart_every
+        )
         ml_logger.log_metrics(metrics, step=i_batch)
 
 
@@ -381,17 +377,19 @@ async def main(
         config=config,
         wandb_name=config.wandb_name,
     )
+    store = ml_logger.store
     if config.enable_trace:
         # Get and rename the current (main) task
         current_task = asyncio.current_task()
         if current_task is not None:
             current_task.set_name("main")
-        trace_events_path = str(Path(config.log_path) / "trace_events.jsonl")
-        logger.info(f"Tracing is enabled. Trace events will be saved to {trace_events_path}")
+        assert store is not None, "Tracing requires a TrainingRunStore (provided by setup_logging)"
+        trace_events_uri = store.url(trace.TRACE_EVENTS_FILENAME)
+        logger.info(f"Tracing is enabled. Trace events will be saved to {trace_events_uri}")
         logger.info(
-            f"Run `python tinker_cookbook/utils/trace.py {trace_events_path} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"
+            f"Run `python tinker_cookbook/utils/trace.py {trace_events_uri} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"
         )
-        trace.trace_init(output_file=trace_events_path)
+        trace.trace_init(config.log_path)
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("pylatexenc").setLevel(logging.WARNING)
