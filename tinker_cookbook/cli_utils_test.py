@@ -67,3 +67,18 @@ def test_check_log_dir_cloud_delete_prefix_safety():
 
     assert not run.exists_tree("")
     assert sibling.read("g.txt") == b"keep"
+
+
+def test_check_log_dir_delete_symlinked_dir_unlinks_not_target(tmp_path):
+    """'delete' on a symlinked log dir removes the link, not the (shared) target."""
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "keep.txt").write_text("keep")
+    link = tmp_path / "run"
+    link.symlink_to(target, target_is_directory=True)
+
+    check_log_dir(str(link), "delete")
+
+    assert not link.is_symlink()  # link removed
+    assert target.exists()  # target untouched
+    assert (target / "keep.txt").read_text() == "keep"
