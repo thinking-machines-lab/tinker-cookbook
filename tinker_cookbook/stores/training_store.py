@@ -317,9 +317,32 @@ class TrainingRunStore:
         """Write a logtree JSON file for an iteration (overwrites)."""
         self._write_json(data, self._iter_dir(iteration), f"{base_name}_logtree.json")
 
+    def write_logtree_html(self, iteration: int, html: str, base_name: str = "train") -> None:
+        """Write a logtree HTML report for an iteration (overwrites)."""
+        self.storage.write(
+            self._path(self._iter_dir(iteration), f"{base_name}_logtree.html"),
+            html.encode("utf-8"),
+        )
+
+    def write_gantt_html(self, iteration: int, html: str) -> None:
+        """Write the timing Gantt chart HTML for an iteration (overwrites)."""
+        self.storage.write(
+            self._path(self._iter_dir(iteration), "timing_gantt.html"),
+            html.encode("utf-8"),
+        )
+
     def write_code_diff(self, diff: str) -> None:
         """Write code.diff (overwrites)."""
         self.storage.write(self._path("code.diff"), diff.encode("utf-8"))
+
+    def flush(self) -> None:
+        """Flush buffered writes in the underlying storage backend.
+
+        Required for cloud backends: appended files (``metrics.jsonl``,
+        ``checkpoints.jsonl``, ``timing_spans.jsonl``) are staged locally and
+        only uploaded on flush.
+        """
+        self.storage.flush()
 
     # ── Async variants ────────────────────────────────────────────────
 
@@ -362,3 +385,7 @@ class TrainingRunStore:
     async def awrite_checkpoint(self, record: dict[str, Any]) -> None:
         """Async version of :meth:`write_checkpoint`."""
         await asyncio.to_thread(self.write_checkpoint, record)
+
+    async def aflush(self) -> None:
+        """Async version of :meth:`flush`."""
+        await asyncio.to_thread(self.flush)
