@@ -14,7 +14,7 @@ Our results can be reproduced by running:
 
 ### Supervised fine-tuning
 
-We observe an AIME'24 score of ~60.0% using a rank-128 LoRA after 3000 steps. We use a learning rate of 1e-3 with LoRA and 1e-4 with full fine-tuning.
+We observe an AIME'24 score of ~65.0% using a rank-128 LoRA after 3000 steps. We use a learning rate of 1e-3 with LoRA and 1e-4 with full fine-tuning.
 
 ```bash
 python -m tinker_cookbook.recipes.distillation.off_policy_reasoning \
@@ -27,7 +27,7 @@ python -m tinker_cookbook.recipes.distillation.off_policy_reasoning \
 
 ### On-policy distillation
 
-We observe an AIME'24 score of ~65% using a rank-128 LoRA after 100 steps. For on-policy distillation experiments, we use a learning rate of 1e-4 with LoRA and 5e-5 with full fine-tuning.
+We observe an AIME'24 score of ~70% using a rank-128 LoRA after 80 steps with 16k-token rollouts. For on-policy distillation experiments, we use a learning rate of 1e-4 with LoRA and 5e-5 with full fine-tuning.
 
 ```bash
 python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
@@ -38,6 +38,7 @@ python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
     learning_rate=1e-4 \
     groups_per_batch=512 \
     lora_rank=128 \
+    max_tokens=16384 \
     wandb_project=cookbook_distillation
 ```
 
@@ -50,7 +51,7 @@ The results of running the above scripts with various LoRA ranks can be found he
 | Stage | Rank 8 | Rank 32 | Rank 128 |
 |-------|--------|---------|----------|
 | Supervised fine-tuning (SFT) | `tinker://414d30d0-3b63-5596-919d-647960d156c2:train:0/weights/final` | `tinker://1a32513a-6177-5642-bebd-ecc8e255d4a7:train:0/weights/final` | `tinker://b89f6676-49c4-53ed-9788-2e0c81a9eabf:train:0/weights/final` |
-| On-policy distillation | `rerun in progress` | `rerun in progress` | `tinker://12abc743-21dd-5903-b86e-ac62cc21659a:train:0/sampler_weights/final` |
+| On-policy distillation | `rerun in progress` | `rerun in progress` | `tinker://de58946a-6bfd-5ab2-821f-03b61d237b5b:train:0/sampler_weights/000080` |
 
 See the on-policy distillation launch command above for an example of how to load the checkpoint path.
 
