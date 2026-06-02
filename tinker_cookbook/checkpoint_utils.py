@@ -466,9 +466,13 @@ async def save_checkpoint_async(
     logger.info(f"Saved checkpoints: {paths}")
 
     record = CheckpointRecord.from_dict({"name": name, **loop_state, **paths})
-    if store is None:
+    if store is not None:
+        store.write_checkpoint(record.to_dict())
+    else:
+        # We own this store, so flush it — cloud only uploads checkpoints.jsonl on flush.
         store = TrainingRunStore(storage_from_uri(log_path))
-    store.write_checkpoint(record.to_dict())
+        store.write_checkpoint(record.to_dict())
+        await store.aflush()
 
     return paths
 
