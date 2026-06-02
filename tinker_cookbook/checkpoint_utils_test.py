@@ -87,6 +87,30 @@ def test_get_last_checkpoint_returns_none_when_key_missing():
         assert result is None
 
 
+def test_get_last_checkpoint_reads_store_written(tmp_path):
+    """get_last_checkpoint (path arg) reads checkpoints written via a store."""
+    from tinker_cookbook.stores import TrainingRunStore, storage_from_uri
+
+    store = TrainingRunStore(storage_from_uri(str(tmp_path)))
+    store.write_checkpoint({"name": "000010", "batch": 10, "state_path": "tinker://state/10"})
+
+    result = get_last_checkpoint(str(tmp_path), required_key="state_path")
+    assert result is not None
+    assert result.name == "000010"
+
+
+def test_load_checkpoints_file_via_storage_roundtrip(tmp_path):
+    """Writes via the store are read back by load_checkpoints_file given a path string."""
+    from tinker_cookbook.stores import TrainingRunStore, storage_from_uri
+
+    store = TrainingRunStore(storage_from_uri(str(tmp_path)))
+    store.write_checkpoint({"name": "000005", "batch": 5, "state_path": "tinker://state/5"})
+
+    records = load_checkpoints_file(str(tmp_path))
+    assert len(records) == 1
+    assert records[0].name == "000005"
+
+
 def test_load_checkpoints_file_without_batch():
     """Entries without 'batch' should deserialize without error (backward compat)."""
     with tempfile.TemporaryDirectory() as tmpdir:

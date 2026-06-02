@@ -2,6 +2,7 @@
 
 import asyncio
 import pickle
+import uuid
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from tinker_cookbook.stores.storage import (
     FsspecStorage,
     LocalStorage,
     Storage,
+    normalize_log_path,
     storage_from_uri,
     storage_join,
 )
@@ -89,6 +91,25 @@ class TestLocalStorage:
         assert not (tmp_path / "d").exists()
         # Missing dir: no error
         s.remove_dir("nonexistent")
+
+    def test_rmtree(self, tmp_path: Path) -> None:
+        s = LocalStorage(tmp_path)
+        s.write("d/a.txt", b"a")
+        s.write("d/sub/b.txt", b"b")  # nested
+        s.write("dd/keep.txt", b"keep")  # sibling prefix, must survive
+        s.rmtree("d")
+        assert not s.exists("d/a.txt")
+        assert not s.exists("d/sub/b.txt")
+        assert s.exists("dd/keep.txt")
+        s.rmtree("nonexistent")  # no error
+
+    def test_exists_tree(self, tmp_path: Path) -> None:
+        s = LocalStorage(tmp_path)
+        assert not s.exists_tree("d")
+        s.write("d/a/b.txt", b"x")
+        assert s.exists_tree("d")
+        assert s.exists_tree("d/a/b.txt")
+        assert not s.exists_tree("missing")
 
     def test_path_traversal_blocked(self, tmp_path: Path) -> None:
         s = LocalStorage(tmp_path)
@@ -234,6 +255,13 @@ class TestStorageFromUri:
         s.write("test.txt", b"ok")
         assert s.read("test.txt") == b"ok"
 
+    def test_mkdir_false_no_side_effect(self, tmp_path: Path) -> None:
+        """mkdir=False + exists("") checks a root without creating it."""
+        target = tmp_path / "should_not_be_created"
+        s = storage_from_uri(str(target), mkdir=False)
+        assert not s.exists("")
+        assert not target.exists()
+
     def test_s3_needs_s3fs(self) -> None:
         """S3 URIs require s3fs (may succeed if installed, may raise ImportError)."""
         try:
@@ -249,6 +277,23 @@ class TestStorageFromUri:
             assert isinstance(s, FsspecStorage)
         except ImportError:
             pass
+
+
+class TestNormalizeLogPath:
+    def test_expands_local_tilde(self) -> None:
+        expanded = normalize_log_path("~/logs/run")
+        assert "~" not in expanded
+        assert expanded.endswith("logs/run")
+
+    def test_plain_local_unchanged(self, tmp_path: Path) -> None:
+        assert normalize_log_path(str(tmp_path)) == str(tmp_path)
+
+    def test_cloud_uris_untouched(self) -> None:
+        for uri in ("gs://bucket/run", "s3://bucket/run", "az://container/run"):
+            assert normalize_log_path(uri) == uri
+
+    def test_file_uri_untouched(self) -> None:
+        assert normalize_log_path("file:///abs/run") == "file:///abs/run"
 
 
 class TestFsspecStorage:
@@ -316,6 +361,57 @@ class TestFsspecStorage:
         s.remove("f.txt")
         assert not s.exists("f.txt")
         s.remove("nonexistent")  # no error
+
+    def test_rmtree(self, tmp_path: Path) -> None:
+        s = self._make_storage(tmp_path)
+        s.write("d/a.txt", b"a")
+        s.write("d/sub/b.txt", b"b")  # nested
+        s.write("dd/keep.txt", b"keep")  # sibling prefix, must survive
+        s.rmtree("d")
+        assert not s.exists("d/a.txt")
+        assert not s.exists("d/sub/b.txt")
+        assert s.exists("dd/keep.txt")
+        s.rmtree("nonexistent")  # no error
+
+    def test_memory_exists_tree_and_rmtree_prefix_safety(self) -> None:
+        """exists_tree/rmtree behave on a real (memory://) object store, and
+        rmtree of a prefix leaves a sibling that shares its leading name."""
+        base = f"memory://bucket/{uuid.uuid4()}"
+        run = storage_from_uri(f"{base}/run")
+        sibling = storage_from_uri(f"{base}/run-sibling")
+        run.write("a/b.txt", b"x")
+        sibling.write("c.txt", b"keep")
+
+        assert run.exists_tree("")
+        assert run.exists_tree("a")
+        assert not run.exists_tree("missing")
+
+        run.rmtree("")
+        assert not run.exists_tree("")
+        # Sibling prefix that shares the leading text must survive.
+        assert sibling.exists_tree("")
+        assert sibling.read("c.txt") == b"keep"
+
+    def test_rmtree_clears_staged_appends(self, tmp_path: Path) -> None:
+        """rmtree drops locally-staged (un-flushed) appends under the prefix,
+        including nested ones, while leaving sibling prefixes intact."""
+        s = self._make_storage(tmp_path)
+        s.append("d/log.jsonl", b"line\n")  # staged, direct child
+        s.append("d/sub/deep.jsonl", b"deep\n")  # staged, nested
+        s.append("dd/other.jsonl", b"keep\n")  # staged, sibling prefix (must survive)
+        assert s.exists("d/log.jsonl")
+        assert s.exists("d/sub/deep.jsonl")
+
+        s.rmtree("d")
+        assert not s.exists("d/log.jsonl")
+        assert not s.exists("d/sub/deep.jsonl")
+        # "dd/..." shares the "d" text prefix but is a different directory.
+        assert s.exists("dd/other.jsonl")
+        assert s.read("dd/other.jsonl") == b"keep\n"
+
+        # A fresh append after rmtree starts clean (no leftover staged bytes).
+        s.append("d/log.jsonl", b"new\n")
+        assert s.read("d/log.jsonl") == b"new\n"
 
     def test_url(self, tmp_path: Path) -> None:
         s = self._make_storage(tmp_path)

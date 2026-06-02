@@ -255,6 +255,18 @@ class Trace:
 
         return "\n".join(parts)
 
+    def to_html(self, theme: "Theme | None" = None) -> str:
+        """Render the full standalone HTML document as a string."""
+        return (
+            "<!doctype html>\n"
+            '<html lang="en">\n'
+            "<head>\n"
+            f"{self.head_html(theme=theme)}"
+            "</head>\n"
+            f"{self.body_html(wrap_body=True)}"
+            "</html>\n"
+        )
+
     def to_dict(self) -> dict[str, Any]:
         """Convert the trace to a JSON-serializable dictionary.
 
@@ -498,13 +510,7 @@ def _write_trace(trace: Trace, theme: Theme | None = None) -> None:
     trace.path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(trace.path, "w") as f:
-        f.write("<!doctype html>\n")
-        f.write('<html lang="en">\n')
-        f.write("<head>\n")
-        f.write(trace.head_html(theme=theme))
-        f.write("</head>\n")
-        f.write(trace.body_html(wrap_body=True))
-        f.write("</html>\n")
+        f.write(trace.to_html(theme=theme))
 
 
 # Public API: Trace lifecycle

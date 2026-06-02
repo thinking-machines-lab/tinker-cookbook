@@ -35,6 +35,7 @@ import asyncio
 import contextlib
 import logging
 import posixpath
+import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -138,6 +139,24 @@ class Storage(Protocol):
 
         Cloud backends (S3/GCS) can treat this as a no-op since they
         don't have real directories.
+        """
+        ...
+
+    def exists_tree(self, prefix: str = "") -> bool:
+        """Return ``True`` if a file or any object exists at/under *prefix*.
+
+        Unlike :meth:`exists` (a single-key check), this also returns ``True``
+        for a non-empty directory/prefix. Robust on object stores, where
+        ``exists`` on a bare prefix (no directory marker) is unreliable.
+        """
+        ...
+
+    def rmtree(self, path: str = "") -> None:
+        """Recursively delete a directory/prefix and everything under it.
+
+        No error if missing. ``path=""`` targets the storage root. Unlike
+        :meth:`remove_dir` (which removes only an *empty* directory), this
+        removes all contents.
         """
         ...
 
@@ -286,6 +305,18 @@ class LocalStorage:
         full = self._resolve(path)
         with contextlib.suppress(FileNotFoundError, OSError):
             full.rmdir()
+
+    def exists_tree(self, prefix: str = "") -> bool:
+        """See :meth:`Storage.exists_tree`."""
+        return self._resolve(prefix).exists() or bool(self.list_dir(prefix))
+
+    def rmtree(self, path: str = "") -> None:
+        """See :meth:`Storage.rmtree`."""
+        full = self._resolve(path)
+        if full.is_dir():
+            shutil.rmtree(full)
+        elif full.exists():
+            full.unlink()
 
     def flush(self) -> None:
         """See :meth:`Storage.flush`. No-op for local filesystem."""
@@ -510,6 +541,26 @@ class FsspecStorage:
         with contextlib.suppress(FileNotFoundError, OSError):
             self._fs.rmdir(self._full(path))
 
+    def exists_tree(self, prefix: str = "") -> bool:
+        """See :meth:`Storage.exists_tree`."""
+        return self.exists(prefix) or bool(self.list_dir(prefix))
+
+    def rmtree(self, path: str = "") -> None:
+        """See :meth:`Storage.rmtree`."""
+        full = self._full(path)
+        # fs.rm lists objects under the prefix itself, so this deletes a prefix
+        # with no directory marker (where ``exists(full)`` would be False).
+        with contextlib.suppress(FileNotFoundError):
+            self._fs.rm(full, recursive=True)
+        # Drop any staged files under this prefix.
+        prefix = path.strip("/")
+        staged = [
+            p for p in self._staged if not prefix or p == prefix or p.startswith(prefix + "/")
+        ]
+        for p in staged:
+            self._stage_path(p).unlink(missing_ok=True)
+            self._staged.discard(p)
+
     def flush(self) -> None:
         """Upload all locally staged files to cloud.
 
@@ -614,7 +665,7 @@ class FsspecStorage:
         self._staged = set()
 
 
-def storage_from_uri(uri: str, **kwargs: Any) -> Storage:
+def storage_from_uri(uri: str, *, mkdir: bool = True, **kwargs: Any) -> Storage:
     """Create a Storage backend from a URI string.
 
     Supported schemes::
@@ -628,11 +679,17 @@ def storage_from_uri(uri: str, **kwargs: Any) -> Storage:
     Extra keyword arguments are passed to the fsspec filesystem constructor
     (e.g., ``anon=True`` for public S3 buckets).
 
+    Args:
+        uri: Storage root URI or local path.
+        mkdir: For local backends, create the root directory if missing
+            (default). Pass ``False`` for read-only access so a missing
+            directory is not created as a side effect.
+
     This is the recommended way to create a Storage from user config
     (e.g., ``log_path`` in training scripts).
     """
     if uri.startswith("file://"):
-        return LocalStorage(uri[len("file://") :])
+        return LocalStorage(uri[len("file://") :], mkdir=mkdir)
     if "://" in uri:
         # Cloud URI — delegate to fsspec
         try:
@@ -645,7 +702,18 @@ def storage_from_uri(uri: str, **kwargs: Any) -> Storage:
         fs, path = fsspec.core.url_to_fs(uri, **kwargs)
         return FsspecStorage(fs, path, **kwargs)
     # Default: treat as local path
-    return LocalStorage(uri)
+    return LocalStorage(uri, mkdir=mkdir)
+
+
+def normalize_log_path(log_path: str) -> str:
+    """Expand ``~`` for local paths; leave cloud URIs unchanged.
+
+    ``Path("gs://b/x").expanduser()`` would corrupt ``gs://`` into ``gs:/``, so
+    cloud URIs are returned as-is. Used in chz config mungers for ``log_path``.
+    """
+    if "://" in log_path:
+        return log_path
+    return str(Path(log_path).expanduser())
 
 
 def storage_join(*parts: str) -> str:
