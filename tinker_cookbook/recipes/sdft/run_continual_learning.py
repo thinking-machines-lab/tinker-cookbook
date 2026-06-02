@@ -37,6 +37,7 @@ from tinker_cookbook.recipes.sdft.datasets import (
     load_science_from_arrow,
     load_tooluse_from_arrow,
 )
+from tinker_cookbook.stores.storage import storage_from_uri
 from tinker_cookbook.supervised import train as sl_train
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 from tinker_cookbook.tokenizer_utils import get_tokenizer
@@ -313,9 +314,9 @@ async def run_single(
     }
 
     # Save result
-    Path(log_path).mkdir(parents=True, exist_ok=True)
-    with open(f"{log_path}/run_result.json", "w") as f:
-        json.dump(result, f, indent=2)
+    storage_from_uri(log_path).write(
+        "run_result.json", json.dumps(result, indent=2).encode("utf-8")
+    )
 
     return result
 
@@ -362,20 +363,23 @@ async def cli_main(config: ExperimentConfig) -> None:
                 stage1_checkpoints[key] = result.get("checkpoint_path")
 
         # Save stage 1 checkpoint map
-        Path(config.log_root).mkdir(parents=True, exist_ok=True)
-        with open(f"{config.log_root}/stage1_checkpoints.json", "w") as f:
-            json.dump(stage1_checkpoints, f, indent=2)
+        storage_from_uri(config.log_root).write(
+            "stage1_checkpoints.json", json.dumps(stage1_checkpoints, indent=2).encode("utf-8")
+        )
         logger.info(f"Stage 1 checkpoints: {json.dumps(stage1_checkpoints, indent=2)}")
 
     # Load stage 1 checkpoints if we're only running stage 2
     if 1 not in stages and 2 in stages:
-        ckpt_file = f"{config.log_root}/stage1_checkpoints.json"
-        if Path(ckpt_file).exists():
-            with open(ckpt_file) as f:
-                stage1_checkpoints = json.load(f)
-            logger.info(f"Loaded stage 1 checkpoints from {ckpt_file}")
+        log_root_storage = storage_from_uri(config.log_root, mkdir=False)
+        if log_root_storage.exists("stage1_checkpoints.json"):
+            stage1_checkpoints = json.loads(log_root_storage.read("stage1_checkpoints.json"))
+            logger.info(
+                f"Loaded stage 1 checkpoints from {log_root_storage.url('stage1_checkpoints.json')}"
+            )
         else:
-            logger.error(f"No stage 1 checkpoints found at {ckpt_file}")
+            logger.error(
+                f"No stage 1 checkpoints found at {log_root_storage.url('stage1_checkpoints.json')}"
+            )
             return
 
     # Run stage 2
