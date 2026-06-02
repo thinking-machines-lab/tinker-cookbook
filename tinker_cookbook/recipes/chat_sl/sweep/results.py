@@ -63,7 +63,7 @@ def collect(
     """
     sweep_uri = str(sweep_dir)
     sweep_storage = storage_from_uri(sweep_uri, mkdir=False)
-    if not sweep_storage.exists(""):
+    if not sweep_storage.exists_tree(""):
         raise FileNotFoundError(f"Sweep directory does not exist: {sweep_dir}")
 
     rows: list[dict[str, Any]] = []
