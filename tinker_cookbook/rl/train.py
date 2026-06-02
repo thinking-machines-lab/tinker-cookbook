@@ -201,6 +201,17 @@ def _get_logtree_scope(
     finally:
         if logtree_trace is not None and store is not None:
             store.write_logtree(iteration, logtree_trace.to_dict(), base_name=f_name)
+            store.write_logtree_html(
+                iteration,
+                "<!doctype html>\n"
+                '<html lang="en">\n'
+                "<head>\n"
+                f"{logtree_trace.head_html()}"
+                "</head>\n"
+                f"{logtree_trace.body_html(wrap_body=True)}"
+                "</html>\n",
+                base_name=f_name,
+            )
 
 
 def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]:

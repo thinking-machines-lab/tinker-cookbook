@@ -317,6 +317,12 @@ class TrainingRunStore:
         """Write a logtree JSON file for an iteration (overwrites)."""
         self._write_json(data, self._iter_dir(iteration), f"{base_name}_logtree.json")
 
+    def write_logtree_html(self, iteration: int, html: str, base_name: str = "train") -> None:
+        """Write a logtree HTML file for an iteration (overwrites)."""
+        self.storage.write(
+            self._path(self._iter_dir(iteration), f"{base_name}.html"), html.encode("utf-8")
+        )
+
     def write_code_diff(self, diff: str) -> None:
         """Write code.diff (overwrites)."""
         self.storage.write(self._path("code.diff"), diff.encode("utf-8"))

@@ -300,6 +300,11 @@ class TestTrainingRunStoreWrites:
         assert read is not None
         assert read["title"] == "Step 0"
 
+    def test_write_logtree_html(self, tmp_path: Path) -> None:
+        store = TrainingRunStore(LocalStorage(tmp_path))
+        store.write_logtree_html(iteration=0, html="<html>hi</html>")
+        assert (tmp_path / "iteration_000000" / "train.html").read_text() == "<html>hi</html>"
+
     def test_write_code_diff(self, tmp_path: Path) -> None:
         store = TrainingRunStore(LocalStorage(tmp_path))
         store.write_code_diff("--- a/file.py\n+++ b/file.py\n")

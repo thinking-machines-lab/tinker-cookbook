@@ -177,13 +177,13 @@ def not_none(x: T | None) -> T:
 
 
 def is_uri(path: str | Path) -> bool:
-    """Return whether a path is a URI rather than a local filesystem path.
+    """Return whether a path string has a URI scheme.
 
     Args:
         path: Path or URI string to check.
 
     Returns:
-        Whether ``path`` contains a URI scheme.
+        Whether ``path`` is a URI.
     """
     return "://" in str(path)
 

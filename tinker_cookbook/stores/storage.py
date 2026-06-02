@@ -35,6 +35,7 @@ import asyncio
 import contextlib
 import logging
 import posixpath
+import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -138,6 +139,18 @@ class Storage(Protocol):
 
         Cloud backends (S3/GCS) can treat this as a no-op since they
         don't have real directories.
+        """
+        ...
+
+    def exists_tree(self, prefix: str = "") -> bool:
+        """Return whether a file, directory, or non-empty prefix exists."""
+        ...
+
+    def remove_tree(self, prefix: str = "") -> None:
+        """Recursively delete all files under a prefix.
+
+        For the empty prefix, deletes all contents under the storage root but
+        leaves the root itself in place.
         """
         ...
 
@@ -286,6 +299,28 @@ class LocalStorage:
         full = self._resolve(path)
         with contextlib.suppress(FileNotFoundError, OSError):
             full.rmdir()
+
+    def exists_tree(self, prefix: str = "") -> bool:
+        """See :meth:`Storage.exists_tree`."""
+        full = self._resolve(prefix)
+        return full.exists() or bool(self.list_dir(prefix))
+
+    def remove_tree(self, prefix: str = "") -> None:
+        """See :meth:`Storage.remove_tree`."""
+        full = self._resolve(prefix)
+        if not full.exists():
+            return
+        if full.is_file():
+            full.unlink()
+            return
+        if prefix:
+            shutil.rmtree(full)
+            return
+        for child in full.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
 
     def flush(self) -> None:
         """See :meth:`Storage.flush`. No-op for local filesystem."""
@@ -510,6 +545,21 @@ class FsspecStorage:
         with contextlib.suppress(FileNotFoundError, OSError):
             self._fs.rmdir(self._full(path))
 
+    def exists_tree(self, prefix: str = "") -> bool:
+        """See :meth:`Storage.exists_tree`."""
+        return self.exists(prefix) or bool(self.list_dir(prefix))
+
+    def remove_tree(self, prefix: str = "") -> None:
+        """See :meth:`Storage.remove_tree`."""
+        for name in self.list_dir(prefix):
+            path = storage_join(prefix, name)
+            if self.list_dir(path):
+                self.remove_tree(path)
+            else:
+                self.remove(path)
+        if prefix:
+            self.remove_dir(prefix)
+
     def flush(self) -> None:
         """Upload all locally staged files to cloud.
 
@@ -614,7 +664,7 @@ class FsspecStorage:
         self._staged = set()
 
 
-def storage_from_uri(uri: str, **kwargs: Any) -> Storage:
+def storage_from_uri(uri: str, *, mkdir: bool = True, **kwargs: Any) -> Storage:
     """Create a Storage backend from a URI string.
 
     Supported schemes::
@@ -625,14 +675,16 @@ def storage_from_uri(uri: str, **kwargs: Any) -> Storage:
         gs://bucket/prefix    → FsspecStorage (requires gcsfs)
         az://container/prefix → FsspecStorage (requires adlfs)
 
-    Extra keyword arguments are passed to the fsspec filesystem constructor
-    (e.g., ``anon=True`` for public S3 buckets).
+    For local paths and ``file://`` URIs, ``mkdir`` controls whether the root
+    directory is created immediately. Extra keyword arguments are passed to the
+    fsspec filesystem constructor for cloud URIs (e.g., ``anon=True`` for public
+    S3 buckets).
 
     This is the recommended way to create a Storage from user config
     (e.g., ``log_path`` in training scripts).
     """
     if uri.startswith("file://"):
-        return LocalStorage(uri[len("file://") :])
+        return LocalStorage(uri[len("file://") :], mkdir=mkdir)
     if "://" in uri:
         # Cloud URI — delegate to fsspec
         try:
@@ -645,7 +697,7 @@ def storage_from_uri(uri: str, **kwargs: Any) -> Storage:
         fs, path = fsspec.core.url_to_fs(uri, **kwargs)
         return FsspecStorage(fs, path, **kwargs)
     # Default: treat as local path
-    return LocalStorage(uri)
+    return LocalStorage(uri, mkdir=mkdir)
 
 
 def storage_join(*parts: str) -> str:

@@ -90,6 +90,26 @@ class TestLocalStorage:
         # Missing dir: no error
         s.remove_dir("nonexistent")
 
+    def test_exists_tree(self, tmp_path: Path) -> None:
+        s = LocalStorage(tmp_path / "run", mkdir=False)
+        assert not s.exists_tree()
+        s.write("a/b/c.txt", b"data")
+        assert s.exists_tree()
+        assert s.exists_tree("a")
+        assert s.exists_tree("a/b/c.txt")
+        assert not s.exists_tree("missing")
+
+    def test_remove_tree(self, tmp_path: Path) -> None:
+        s = LocalStorage(tmp_path)
+        s.write("a/b/c.txt", b"data")
+        s.write("a/d.txt", b"data")
+        s.write("root.txt", b"data")
+        s.remove_tree("a")
+        assert not (tmp_path / "a").exists()
+        assert (tmp_path / "root.txt").exists()
+        s.remove_tree()
+        assert list(tmp_path.iterdir()) == []
+
     def test_path_traversal_blocked(self, tmp_path: Path) -> None:
         s = LocalStorage(tmp_path)
         with pytest.raises(ValueError, match="escapes"):
@@ -228,6 +248,12 @@ class TestStorageFromUri:
         s.write("test.txt", b"ok")
         assert s.read("test.txt") == b"ok"
 
+    def test_local_path_mkdir_false(self, tmp_path: Path) -> None:
+        root = tmp_path / "run"
+        s = storage_from_uri(str(root), mkdir=False)
+        assert isinstance(s, LocalStorage)
+        assert not root.exists()
+
     def test_file_uri(self, tmp_path: Path) -> None:
         s = storage_from_uri(f"file://{tmp_path}")
         assert isinstance(s, LocalStorage)
@@ -316,6 +342,27 @@ class TestFsspecStorage:
         s.remove("f.txt")
         assert not s.exists("f.txt")
         s.remove("nonexistent")  # no error
+
+    def test_exists_tree(self, tmp_path: Path) -> None:
+        s = self._make_storage(tmp_path)
+        assert not s.exists_tree("run")
+        s.write("run/a/b/c.txt", b"data")
+        assert s.exists_tree("run")
+        assert s.exists_tree("run/a")
+        assert s.exists_tree("run/a/b/c.txt")
+        assert not s.exists_tree("missing")
+
+    def test_remove_tree(self, tmp_path: Path) -> None:
+        s = self._make_storage(tmp_path)
+        s.write("a/b/c.txt", b"data")
+        s.write("a/d.txt", b"data")
+        s.write("root.txt", b"data")
+        s.remove_tree("a")
+        assert not s.exists("a/b/c.txt")
+        assert not s.exists("a/d.txt")
+        assert s.exists("root.txt")
+        s.remove_tree()
+        assert s.list_dir("") == []
 
     def test_url(self, tmp_path: Path) -> None:
         s = self._make_storage(tmp_path)

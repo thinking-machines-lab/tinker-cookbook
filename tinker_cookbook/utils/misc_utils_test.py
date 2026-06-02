@@ -15,6 +15,15 @@ def test_expand_path_or_uri_preserves_s3_uri():
     assert expand_path_or_uri(uri) == uri
 
 
+def test_is_uri_includes_file_uri():
+    assert is_uri("file:///tmp/run")
+
+
+def test_expand_path_or_uri_preserves_file_uri():
+    uri = "file:///tmp/run"
+    assert expand_path_or_uri(uri) == uri
+
+
 def test_expand_path_or_uri_expands_local_path():
     assert expand_path_or_uri("~/run").startswith(str(Path("~").expanduser()))
 
