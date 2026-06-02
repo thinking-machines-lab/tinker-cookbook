@@ -3,6 +3,7 @@
 import json
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -13,6 +14,7 @@ from tinker_cookbook.checkpoint_utils import (
     CheckpointRecord,
     get_last_checkpoint,
     load_checkpoints_file,
+    save_checkpoint_async,
 )
 
 
@@ -85,6 +87,44 @@ def test_get_last_checkpoint_returns_none_when_key_missing():
         )
         result = get_last_checkpoint(tmpdir, required_key="state_path")
         assert result is None
+
+
+def test_get_last_checkpoint_reads_store_written(tmp_path):
+    """get_last_checkpoint (path arg) reads checkpoints written via a store."""
+    from tinker_cookbook.stores import TrainingRunStore, storage_from_uri
+
+    store = TrainingRunStore(storage_from_uri(str(tmp_path)))
+    store.write_checkpoint({"name": "000010", "batch": 10, "state_path": "tinker://state/10"})
+
+    result = get_last_checkpoint(str(tmp_path), required_key="state_path")
+    assert result is not None
+    assert result.name == "000010"
+
+
+def test_load_checkpoints_file_via_storage_roundtrip(tmp_path):
+    """Writes via the store are read back by load_checkpoints_file given a path string."""
+    from tinker_cookbook.stores import TrainingRunStore, storage_from_uri
+
+    store = TrainingRunStore(storage_from_uri(str(tmp_path)))
+    store.write_checkpoint({"name": "000005", "batch": 5, "state_path": "tinker://state/5"})
+
+    records = load_checkpoints_file(str(tmp_path))
+    assert len(records) == 1
+    assert records[0].name == "000005"
+
+
+def test_checkpoint_readers_accept_pathlib_path(tmp_path):
+    """load_checkpoints_file/get_last_checkpoint accept a pathlib.Path, not just str."""
+    from tinker_cookbook.stores import TrainingRunStore, storage_from_uri
+
+    store = TrainingRunStore(storage_from_uri(str(tmp_path)))
+    store.write_checkpoint({"name": "000007", "batch": 7, "state_path": "tinker://state/7"})
+
+    # Pass the Path object directly (PathLike), exercising the str coercion.
+    assert load_checkpoints_file(tmp_path)[0].name == "000007"
+    result = get_last_checkpoint(tmp_path, required_key="state_path")
+    assert result is not None
+    assert result.name == "000007"
 
 
 def test_load_checkpoints_file_without_batch():
@@ -672,3 +712,59 @@ async def test_sync_periodic_saves_still_work():
         assert result["state_path"] == "tinker://run/state/000005"
         assert result["sampler_path"] == "tinker://run/sampler/000005"
         assert mgr._pending_periodic_task is None
+
+
+@pytest.mark.asyncio
+async def test_save_checkpoint_async_flushes_ephemeral_cloud_store():
+    """With no shared store and a cloud log_path, the record must be flushed.
+
+    Cloud backends stage checkpoints.jsonl locally and only upload on flush.
+    This path has no ml_logger to close the store, so save_checkpoint_async must
+    flush its own ephemeral store — otherwise get_last_checkpoint() (a fresh
+    reader with no local stage) can't resume the run.
+    """
+    log_path = f"memory://bucket/{uuid.uuid4()}/run"
+    mock_training_client = MagicMock()
+    mock_training_client.save_state_async = _make_save_state_mock(["tinker://state/000010"])
+
+    await save_checkpoint_async(
+        training_client=mock_training_client,
+        name="000010",
+        log_path=log_path,
+        loop_state={"batch": 10},
+        kind="state",
+        store=None,
+    )
+
+    record = get_last_checkpoint(log_path, required_key="state_path")
+    assert record is not None
+    assert record.name == "000010"
+
+
+@pytest.mark.asyncio
+async def test_save_checkpoint_async_flushes_shared_cloud_store():
+    """A shared (ml_logger) store's checkpoint record is flushed at save time.
+
+    Otherwise a crash before ml_logger.close() leaves the Tinker checkpoint with
+    no uploaded resume record, so get_last_checkpoint() can't resume on cloud.
+    """
+    from tinker_cookbook.stores import TrainingRunStore, storage_from_uri
+
+    log_path = f"memory://bucket/{uuid.uuid4()}/run"
+    shared_store = TrainingRunStore(storage_from_uri(log_path))
+    mock_training_client = MagicMock()
+    mock_training_client.save_state_async = _make_save_state_mock(["tinker://state/000020"])
+
+    await save_checkpoint_async(
+        training_client=mock_training_client,
+        name="000020",
+        log_path=log_path,
+        loop_state={"batch": 20},
+        kind="state",
+        store=shared_store,
+    )
+
+    # A fresh reader (no local stage) sees it only if the shared store was flushed.
+    record = get_last_checkpoint(log_path, required_key="state_path")
+    assert record is not None
+    assert record.name == "000020"
