@@ -113,6 +113,20 @@ def test_load_checkpoints_file_via_storage_roundtrip(tmp_path):
     assert records[0].name == "000005"
 
 
+def test_checkpoint_readers_accept_pathlib_path(tmp_path):
+    """load_checkpoints_file/get_last_checkpoint accept a pathlib.Path, not just str."""
+    from tinker_cookbook.stores import TrainingRunStore, storage_from_uri
+
+    store = TrainingRunStore(storage_from_uri(str(tmp_path)))
+    store.write_checkpoint({"name": "000007", "batch": 7, "state_path": "tinker://state/7"})
+
+    # Pass the Path object directly (PathLike), exercising the str coercion.
+    assert load_checkpoints_file(tmp_path)[0].name == "000007"
+    result = get_last_checkpoint(tmp_path, required_key="state_path")
+    assert result is not None
+    assert result.name == "000007"
+
+
 def test_load_checkpoints_file_without_batch():
     """Entries without 'batch' should deserialize without error (backward compat)."""
     with tempfile.TemporaryDirectory() as tmpdir:
