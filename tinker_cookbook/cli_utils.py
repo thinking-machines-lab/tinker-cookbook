@@ -36,14 +36,14 @@ def check_log_dir(log_dir: str, behavior_if_exists: LogdirBehavior):
             logger.info(
                 f"Log directory {log_dir} already exists. Will delete it and start logging there."
             )
-            storage.rmtree("")
+            storage.remove_tree("")
         elif behavior_if_exists == "ask":
             while True:
                 user_input = input(
                     f"Log directory {log_dir} already exists. What do you want to do? [delete, resume, exit]: "
                 )
                 if user_input == "delete":
-                    storage.rmtree("")
+                    storage.remove_tree("")
                     return
                 elif user_input == "resume":
                     return

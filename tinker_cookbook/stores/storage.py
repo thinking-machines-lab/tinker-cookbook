@@ -151,7 +151,7 @@ class Storage(Protocol):
         """
         ...
 
-    def rmtree(self, path: str = "") -> None:
+    def remove_tree(self, path: str = "") -> None:
         """Recursively delete a directory/prefix and everything under it.
 
         No error if missing. ``path=""`` targets the storage root. Unlike
@@ -310,8 +310,8 @@ class LocalStorage:
         """See :meth:`Storage.exists_tree`."""
         return self._resolve(prefix).exists() or bool(self.list_dir(prefix))
 
-    def rmtree(self, path: str = "") -> None:
-        """See :meth:`Storage.rmtree`."""
+    def remove_tree(self, path: str = "") -> None:
+        """See :meth:`Storage.remove_tree`."""
         full = self._resolve(path)
         if full.is_dir():
             shutil.rmtree(full)
@@ -545,8 +545,8 @@ class FsspecStorage:
         """See :meth:`Storage.exists_tree`."""
         return self.exists(prefix) or bool(self.list_dir(prefix))
 
-    def rmtree(self, path: str = "") -> None:
-        """See :meth:`Storage.rmtree`."""
+    def remove_tree(self, path: str = "") -> None:
+        """See :meth:`Storage.remove_tree`."""
         full = self._full(path)
         # fs.rm lists objects under the prefix itself, so this deletes a prefix
         # with no directory marker (where ``exists(full)`` would be False).
@@ -558,9 +558,8 @@ class FsspecStorage:
             p for p in self._staged if not prefix or p == prefix or p.startswith(prefix + "/")
         ]:
             self._staged.discard(p)
-        # Remove the staged subtree itself, not just the files: list_dir merges
-        # staged directories, so leftover empty dirs would make exists_tree and
-        # list_dir resurface a prefix we just deleted.
+        # list_dir() merges staged dirs, so remove the whole staged subtree —
+        # leftover empty dirs would resurface a prefix we just deleted.
         stage_target = self._stage_path(prefix) if prefix else self._stage_dir
         if stage_target.is_dir():
             shutil.rmtree(stage_target, ignore_errors=True)
