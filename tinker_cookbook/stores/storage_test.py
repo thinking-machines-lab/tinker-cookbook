@@ -405,9 +405,14 @@ class TestFsspecStorage:
         s.rmtree("d")
         assert not s.exists("d/log.jsonl")
         assert not s.exists("d/sub/deep.jsonl")
+        # Empty staged dirs must not resurface the prefix via list_dir/exists_tree.
+        assert not s.exists_tree("d")
+        assert s.list_dir("d") == []
         # "dd/..." shares the "d" text prefix but is a different directory.
         assert s.exists("dd/other.jsonl")
         assert s.read("dd/other.jsonl") == b"keep\n"
+        assert s.exists_tree("dd")
+        assert "other.jsonl" in s.list_dir("dd")
 
         # A fresh append after rmtree starts clean (no leftover staged bytes).
         s.append("d/log.jsonl", b"new\n")
