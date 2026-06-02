@@ -3,6 +3,7 @@
 import json
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -13,6 +14,7 @@ from tinker_cookbook.checkpoint_utils import (
     CheckpointRecord,
     get_last_checkpoint,
     load_checkpoints_file,
+    save_checkpoint_async,
 )
 
 
@@ -696,3 +698,30 @@ async def test_sync_periodic_saves_still_work():
         assert result["state_path"] == "tinker://run/state/000005"
         assert result["sampler_path"] == "tinker://run/sampler/000005"
         assert mgr._pending_periodic_task is None
+
+
+@pytest.mark.asyncio
+async def test_save_checkpoint_async_flushes_ephemeral_cloud_store():
+    """With no shared store and a cloud log_path, the record must be flushed.
+
+    Cloud backends stage checkpoints.jsonl locally and only upload on flush.
+    This path has no ml_logger to close the store, so save_checkpoint_async must
+    flush its own ephemeral store — otherwise get_last_checkpoint() (a fresh
+    reader with no local stage) can't resume the run.
+    """
+    log_path = f"memory://bucket/{uuid.uuid4()}/run"
+    mock_training_client = MagicMock()
+    mock_training_client.save_state_async = _make_save_state_mock(["tinker://state/000010"])
+
+    await save_checkpoint_async(
+        training_client=mock_training_client,
+        name="000010",
+        log_path=log_path,
+        loop_state={"batch": 10},
+        kind="state",
+        store=None,
+    )
+
+    record = get_last_checkpoint(log_path, required_key="state_path")
+    assert record is not None
+    assert record.name == "000010"

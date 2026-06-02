@@ -15,6 +15,7 @@ from tinker_cookbook.utils.trace import (
     IterationWindow,
     SpanRecord,
     _build_gantt_chart,
+    convert_jsonl_to_json_main,
     get_scope_context,
     maybe_write_gantt_html,
     scope,
@@ -894,6 +895,33 @@ def test_gantt_chart_sync_rl_layout():
     # Phase-level spans are single calls
     assert "time/sampling" in metrics
     assert "time/train_step" in metrics
+
+
+def test_convert_jsonl_to_json_main_roundtrips(tmp_path, monkeypatch):
+    """The converter reads JSONL and writes a JSON array via Storage."""
+    src = tmp_path / "trace_events.jsonl"
+    src.write_text('{"name": "a"}\n{"name": "b"}\n')
+    out = tmp_path / "trace.json"
+    monkeypatch.setattr("sys.argv", ["trace.py", str(src), str(out)])
+
+    convert_jsonl_to_json_main()
+
+    assert json.loads(out.read_text()) == [{"name": "a"}, {"name": "b"}]
+
+
+def test_convert_jsonl_to_json_main_cloud(monkeypatch):
+    """Converter handles cloud URIs (memory:// stands in for gs:///s3://)."""
+    import uuid
+
+    from tinker_cookbook.stores import storage_from_uri
+
+    base = f"memory://bucket/{uuid.uuid4()}"
+    storage_from_uri(base).write("trace_events.jsonl", b'{"name": "a"}\n{"name": "b"}\n')
+    monkeypatch.setattr("sys.argv", ["trace.py", f"{base}/trace_events.jsonl", f"{base}/trace.json"])
+
+    convert_jsonl_to_json_main()
+
+    assert json.loads(storage_from_uri(base).read("trace.json")) == [{"name": "a"}, {"name": "b"}]
 
 
 if __name__ == "__main__":

@@ -997,10 +997,12 @@ def convert_jsonl_to_json_main() -> None:
     parser.add_argument("output_json_file", type=str)
     args = parser.parse_args()
 
-    with open(args.trace_events_jsonl_file) as f:
-        events = [json.loads(line) for line in f]
-    with open(args.output_json_file, "w") as f:
-        json.dump(events, f)
+    # Read input / write output via Storage so cloud trace URIs work, not just local paths.
+    in_dir, _, in_name = args.trace_events_jsonl_file.rpartition("/")
+    raw = storage_from_uri(in_dir or ".", mkdir=False).read(in_name).decode("utf-8")
+    events = [json.loads(line) for line in raw.splitlines() if line]
+    out_dir, _, out_name = args.output_json_file.rpartition("/")
+    storage_from_uri(out_dir or ".").write(out_name, json.dumps(events).encode("utf-8"))
     print(f"""To view the trace:
 1. Navigate to chrome://tracing or https://ui.perfetto.dev/
 2. Load the trace file: {args.output_json_file}""")
