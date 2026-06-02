@@ -739,3 +739,32 @@ async def test_save_checkpoint_async_flushes_ephemeral_cloud_store():
     record = get_last_checkpoint(log_path, required_key="state_path")
     assert record is not None
     assert record.name == "000010"
+
+
+@pytest.mark.asyncio
+async def test_save_checkpoint_async_flushes_shared_cloud_store():
+    """A shared (ml_logger) store's checkpoint record is flushed at save time.
+
+    Otherwise a crash before ml_logger.close() leaves the Tinker checkpoint with
+    no uploaded resume record, so get_last_checkpoint() can't resume on cloud.
+    """
+    from tinker_cookbook.stores import TrainingRunStore, storage_from_uri
+
+    log_path = f"memory://bucket/{uuid.uuid4()}/run"
+    shared_store = TrainingRunStore(storage_from_uri(log_path))
+    mock_training_client = MagicMock()
+    mock_training_client.save_state_async = _make_save_state_mock(["tinker://state/000020"])
+
+    await save_checkpoint_async(
+        training_client=mock_training_client,
+        name="000020",
+        log_path=log_path,
+        loop_state={"batch": 20},
+        kind="state",
+        store=shared_store,
+    )
+
+    # A fresh reader (no local stage) sees it only if the shared store was flushed.
+    record = get_last_checkpoint(log_path, required_key="state_path")
+    assert record is not None
+    assert record.name == "000020"
