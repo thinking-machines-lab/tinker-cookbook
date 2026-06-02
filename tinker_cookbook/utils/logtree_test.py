@@ -32,6 +32,18 @@ def test_basic_trace():
         assert "Content in section 1" in content
 
 
+def test_trace_to_html_returns_full_document():
+    """Trace.to_html renders a standalone document without writing a file."""
+    with logtree.init_trace("My Report", path=None) as trace:
+        logtree.log_text("hello world")
+
+    html = trace.to_html()
+    assert html.startswith("<!doctype html>")
+    assert "<title>My Report</title>" in html
+    assert "hello world" in html
+    assert html.rstrip().endswith("</html>")
+
+
 def test_log_text_renders_inline_text_node():
     """Text-only paragraphs should render inline, without leading newline whitespace."""
     with tempfile.TemporaryDirectory() as tmpdir:
