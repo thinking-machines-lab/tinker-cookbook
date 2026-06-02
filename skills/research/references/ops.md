@@ -306,7 +306,7 @@ for i_batch in range(n_batches):
         await gather_rollouts(...)
         await train_step(...)
     metrics.update(window.get_timing_metrics())
-    window.write_spans_jsonl(log_path / "timing_spans.jsonl", step=i_batch)
+    window.save_timing(i_batch, store=store)
 ```
 
 #### Instrumenting code
