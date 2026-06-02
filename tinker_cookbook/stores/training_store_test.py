@@ -128,6 +128,18 @@ class TestTrainingRunStore:
         c2 = store.read_config()
         assert c1 is c2
 
+    def test_write_logtree_html(self, tmp_path: Path) -> None:
+        store = TrainingRunStore(LocalStorage(tmp_path))
+        store.write_logtree_html(3, "<html><body>hi</body></html>", base_name="eval_gsm8k")
+        raw = store.storage.read("iteration_000003/eval_gsm8k_logtree.html")
+        assert b"<body>hi</body>" in raw
+
+    def test_write_gantt_html(self, tmp_path: Path) -> None:
+        store = TrainingRunStore(LocalStorage(tmp_path))
+        store.write_gantt_html(5, "<html>gantt-chart</html>")
+        raw = store.storage.read("iteration_000005/timing_gantt.html")
+        assert b"gantt-chart" in raw
+
     def test_read_metrics(self, run_dir: Path) -> None:
         store = TrainingRunStore(LocalStorage(run_dir))
         metrics = store.read_metrics()
@@ -216,6 +228,18 @@ class TestTrainingRunStoreWrites:
         config = store.read_config()
         assert config is not None
         assert config["model_name"] == "test-model"
+
+    def test_flush_delegates_to_storage(self, tmp_path: Path) -> None:
+        class _FlushCountingStorage(LocalStorage):
+            flush_count = 0
+
+            def flush(self) -> None:
+                self.flush_count += 1
+
+        storage = _FlushCountingStorage(tmp_path)
+        store = TrainingRunStore(storage)
+        store.flush()
+        assert storage.flush_count == 1
 
     def test_write_config_updates_cache(self, tmp_path: Path) -> None:
         store = TrainingRunStore(LocalStorage(tmp_path))
