@@ -43,7 +43,6 @@ loss functions used, see the `Tinker loss docs <https://tinker-docs.thinkingmach
 import asyncio
 import logging
 from collections.abc import Sequence
-from pathlib import Path
 from typing import Any, Protocol, cast, runtime_checkable
 
 import chz
@@ -69,6 +68,7 @@ from tinker_cookbook.rl.types import (
     RLDataset,
     TrajectoryGroup,
 )
+from tinker_cookbook.stores.storage import normalize_log_path
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.misc_utils import split_list
@@ -779,7 +779,7 @@ class Config:
 
     # Standard infra
     num_substeps: int = 1
-    log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
+    log_path: str = chz.field(munger=lambda _, s: normalize_log_path(s))
     wandb_project: str | None = None
     wandb_name: str | None = None
     load_checkpoint_path: str | None = None
@@ -830,9 +830,10 @@ async def main(
         current_task = asyncio.current_task()
         if current_task is not None:
             current_task.set_name("main")
-        trace_events_path = str(Path(cfg.log_path) / "trace_events.jsonl")
-        logger.info(f"Tracing enabled. Events saved to {trace_events_path}")
-        trace.trace_init(output_file=trace_events_path)
+        assert store is not None, "Tracing requires a TrainingRunStore (provided by setup_logging)"
+        trace_events_uri = store.url(trace.TRACE_EVENTS_FILENAME)
+        logger.info(f"Tracing enabled. Events saved to {trace_events_uri}")
+        trace.trace_init(cfg.log_path)
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("pylatexenc").setLevel(logging.WARNING)
@@ -905,8 +906,6 @@ async def main(
     sampling_client, _ = await save_checkpoint_and_get_sampling_client(
         training_client, checkpoint_mgr, start_batch, start_batch
     )
-
-    log_path = Path(cfg.log_path)
 
     for i_batch in range(start_batch, num_batches):
         metrics: dict[str, Any] = {
@@ -1067,10 +1066,7 @@ async def main(
         # Log timing
         metrics.update(window.get_timing_metrics())
         window.save_timing(i_batch, store=store)
-        if cfg.span_chart_every > 0 and i_batch % cfg.span_chart_every == 0:
-            trace.save_gantt_chart_html(
-                window, i_batch, log_path / f"timing_gantt_{i_batch:06d}.html"
-            )
+        trace.maybe_write_gantt_html(window, i_batch, store, every=cfg.span_chart_every)
         ml_logger.log_metrics(metrics, step=i_batch)
 
     # Final checkpoint

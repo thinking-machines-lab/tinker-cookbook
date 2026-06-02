@@ -15,14 +15,17 @@ from collections.abc import Callable, Generator
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import StrEnum
-from io import TextIOWrapper
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from tinker_cookbook.stores.training_store import TrainingRunStore
+import tinker
+
+from tinker_cookbook.stores.storage import Storage, storage_from_uri
+from tinker_cookbook.stores.training_store import TrainingRunStore
 
 logger = logging.getLogger(__name__)
+
+# Filename of the per-run Perfetto/Chrome trace stream, written under log_dir.
+TRACE_EVENTS_FILENAME = "trace_events.jsonl"
 
 
 class EventType(StrEnum):
@@ -125,12 +128,11 @@ class IterationWindow:
             # Aggregated metrics: time/total, time/run_evals, time/sample_async:total, ...
             metrics.update(window.get_timing_metrics())
 
-            # Persist per-span data for post-hoc analysis
-            window.write_spans_jsonl(log_path / "timing_spans.jsonl", step=i_batch)
+            # Persist per-span data for post-hoc analysis (cloud-safe via the store)
+            window.save_timing(i_batch, store=store)
 
-            # Optional: save a Gantt chart every K steps
-            if i_batch % 10 == 0:
-                save_gantt_chart_html(window, i_batch, log_path / f"gantt_{i_batch}.html")
+            # Optional: save a Gantt chart on a cadence (no-op on other steps)
+            maybe_write_gantt_html(window, i_batch, store, every=10)
 
             ml_logger.log_metrics(metrics, step=i_batch)
     """
@@ -276,27 +278,7 @@ class IterationWindow:
             for s in spans
         ]
 
-    def write_spans_jsonl(self, path: Path | str, step: int) -> None:
-        """Append span records for this iteration as one JSON line to the given file.
-
-        Format: ``{"step": N, "spans": [{"name": ..., "duration": ..., "wall_start": ..., "wall_end": ...}, ...]}``
-
-        .. deprecated::
-            Prefer ``store.write_timing_spans(step, window.get_span_dicts())``
-            which goes through the Storage protocol.
-
-        Args:
-            path (Path | str): File path to append to (created if missing).
-            step (int): Training step number to include in the record.
-        """
-        span_dicts = self.get_span_dicts()
-        if not span_dicts:
-            return
-        line = json.dumps({"step": step, "spans": span_dicts})
-        with open(path, "a") as f:
-            f.write(line + "\n")
-
-    def save_timing(self, step: int, *, store: "TrainingRunStore | None") -> None:
+    def save_timing(self, step: int, *, store: TrainingRunStore | None) -> None:
         """Write timing spans to ``timing_spans.jsonl`` via the store.
 
         Args:
@@ -321,14 +303,18 @@ class TraceCollector:
     flush remaining events and join the thread.
 
     Args:
-        flush_interval_sec (float): Maximum seconds between disk flushes.
-        output_file (str): Path for the JSONL output file.
+        storage (Storage): Backend that ``trace_events.jsonl`` is appended to.
+        flush_interval_sec (float): Maximum seconds between flushes.
     """
 
-    def __init__(self, flush_interval_sec: float = 1.0, output_file: str = "trace_events.jsonl"):
+    def __init__(
+        self,
+        storage: Storage,
+        flush_interval_sec: float = 1.0,
+    ):
         self.event_queue: queue.Queue[TraceEvent] = queue.Queue()
         self.flush_interval_sec = flush_interval_sec
-        self.output_file = output_file
+        self.storage = storage
         self.shutdown_event = threading.Event()
         self.flusher_thread = threading.Thread(target=self._flush_worker, daemon=True)
         self.flusher_thread.start()
@@ -368,7 +354,8 @@ class TraceCollector:
                 break
         return events
 
-    def _write_events(self, events: list[TraceEvent], f: TextIOWrapper) -> None:
+    def _serialize_events(self, events: list[TraceEvent]) -> bytes:
+        lines: list[str] = []
         for event in events:
             # Map the event pids (thread ids) to fake pids. If pid numbers are large,
             # Perfetto has issues rendering these as different groups of tracks
@@ -383,31 +370,37 @@ class TraceCollector:
                     continue
                 self.metadata_events[(event.pid, event.tid)] = event
 
-            json.dump(event.to_dict(), f)
-            f.write("\n")
-        f.flush()
+            lines.append(json.dumps(event.to_dict()))
+        if not lines:
+            return b""
+        return ("\n".join(lines) + "\n").encode("utf-8")
+
+    def _flush_events(self, events: list[TraceEvent]) -> None:
+        """Serialize a batch of events and append it via Storage (no-op if empty)."""
+        data = self._serialize_events(events)
+        if data:
+            self.storage.append(TRACE_EVENTS_FILENAME, data)
 
     def _flush_worker(self):
-        """Background thread worker that periodically flushes events to file."""
-        # Use append mode to avoid overwriting previous events when resuming
-        # from a checkpoint
-        with open(self.output_file, "a") as f:
-            while not self.shutdown_event.is_set():
-                events_to_write = self.get_all_events_immediately_available()
+        """Background thread: batch trace events and append them via Storage.
 
-                # Collect events with a timeout to check shutdown periodically
-                try:
-                    # Get first event with timeout and any additional events that are immediately available
-                    event = self.event_queue.get(timeout=self.flush_interval_sec)
-                    events_to_write.append(event)
-                    events_to_write.extend(self.get_all_events_immediately_available())
-                except queue.Empty:
-                    # No events to flush, continue checking for shutdown
-                    continue
-                self._write_events(events_to_write, f)
+        All Storage access is on this one thread, so no locking is needed.
+        ``append`` grows the file (cloud backends stage locally); the final
+        ``flush`` uploads any staged data on shutdown.
+        """
+        while not self.shutdown_event.is_set():
+            events = self.get_all_events_immediately_available()
+            # Wait briefly for the next event so appends stay batched.
+            try:
+                events.append(self.event_queue.get(timeout=self.flush_interval_sec))
+                events.extend(self.get_all_events_immediately_available())
+            except queue.Empty:
+                pass
+            self._flush_events(events)
 
-            # Flush remaining events on shutdown
-            self._write_events(self.get_all_events_immediately_available(), f)
+        # Drain remaining events, then upload staged data (cloud) on shutdown.
+        self._flush_events(self.get_all_events_immediately_available())
+        self.storage.flush()
 
     def shutdown(self) -> None:
         """Shutdown the background flusher thread and flush remaining events."""
@@ -431,8 +424,6 @@ atexit.register(_atexit_trace_shutdown)
 
 def _instrument_sdk_clients() -> None:
     """Patch Tinker SDK client classes with @scope for automatic tracing."""
-    import tinker
-
     _methods_to_patch = {
         tinker.TrainingClient: [
             "forward_async",
@@ -465,18 +456,18 @@ def _instrument_sdk_clients() -> None:
                     setattr(cls, method_name, wrapped)
 
 
-def trace_init(
-    flush_interval_sec: float = 1.0,
-    output_file: str = "trace_events.jsonl",
-) -> None:
+def trace_init(log_dir: str = ".", flush_interval_sec: float = 1.0) -> None:
     """Initialize the trace collector.
 
     Args:
-        flush_interval_sec: How often to flush trace events to disk.
-        output_file: Path for Perfetto trace output (JSONL format).
+        log_dir: Run log directory or URI to write ``trace_events.jsonl`` into.
+        flush_interval_sec: Maximum seconds between flushes.
     """
     global _trace_collector
-    _trace_collector = TraceCollector(flush_interval_sec, output_file)
+    _trace_collector = TraceCollector(
+        storage=storage_from_uri(log_dir),
+        flush_interval_sec=flush_interval_sec,
+    )
     _instrument_sdk_clients()
 
 
@@ -914,20 +905,40 @@ def _build_gantt_chart(span_records: list[dict[str, Any]], step: int) -> Any:
     return fig
 
 
-def save_gantt_chart_html(window: IterationWindow, step: int, path: Path | str) -> None:
-    """Build a Plotly Gantt chart from the window's spans and save as standalone HTML.
+def gantt_chart_html(window: IterationWindow, step: int) -> str | None:
+    """Return a standalone Plotly Gantt chart as an HTML string, or ``None``.
 
-    No-op if plotly is not installed or the window has no spans.
+    ``None`` when plotly is not installed or the window has no spans. Use this
+    to write the chart through a ``Storage`` backend (cloud-safe).
 
     Args:
         window (IterationWindow): The iteration window containing span data.
         step (int): Training step number, used in the chart title.
-        path (Path | str): Output file path for the HTML chart.
     """
     span_records = window.get_span_records()
     fig = _build_gantt_chart(span_records, step)
-    if fig is not None:
-        fig.write_html(str(path))
+    if fig is None:
+        return None
+    return fig.to_html()
+
+
+def maybe_write_gantt_html(
+    window: IterationWindow,
+    step: int,
+    store: TrainingRunStore | None,
+    *,
+    every: int,
+) -> None:
+    """Render and write the per-iteration Gantt chart via the store when due.
+
+    No-op when *every* <= 0, *step* is not a multiple of *every*, there is no
+    store, or plotly is unavailable.
+    """
+    if every <= 0 or step % every != 0 or store is None:
+        return
+    html = gantt_chart_html(window, step)
+    if html is not None:
+        store.write_gantt_html(step, html)
 
 
 @contextlib.contextmanager
@@ -960,7 +971,7 @@ def trace_iteration(step: int) -> Generator[IterationWindow, None, None]:
                 await gather_rollouts(...)
                 await train_step(...)
             metrics.update(window.get_timing_metrics())
-            window.write_spans_jsonl(log_path / "timing_spans.jsonl", step=i_batch)
+            window.save_timing(i_batch, store=store)
             ml_logger.log_metrics(metrics, step=i_batch)
     """
     window = IterationWindow()

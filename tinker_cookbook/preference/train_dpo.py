@@ -4,7 +4,6 @@ Direct Preference Optimization (DPO) training
 
 import asyncio
 import logging
-from pathlib import Path
 from typing import cast
 
 import chz
@@ -14,6 +13,7 @@ import torch.nn.functional as F
 
 from tinker_cookbook import checkpoint_utils, model_info
 from tinker_cookbook.eval.evaluators import Evaluator, EvaluatorBuilder
+from tinker_cookbook.stores.storage import normalize_log_path
 from tinker_cookbook.supervised.train import run_evals
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDataset
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
@@ -21,7 +21,6 @@ from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.format_colorized import format_colorized
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.lr_scheduling import LRSchedule, compute_schedule_lr_multiplier
-from tinker_cookbook.utils.misc_utils import iteration_dir
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +86,7 @@ class Config:
     """
 
     # Required parameters
-    log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
+    log_path: str = chz.field(munger=lambda _, s: normalize_log_path(s))
     model_name: str
     recipe_name: str
     dataset_builder: ChatDatasetBuilder
@@ -269,7 +268,6 @@ def do_update(
     infrequent_evaluators: list[Evaluator],
     dataset: SupervisedDataset,
     ml_logger: ml_log.Logger,
-    log_path: str,
     tokenizer: Tokenizer,
     checkpoint_mgr: checkpoint_utils.CheckpointManager | None = None,
 ):
@@ -294,7 +292,6 @@ def do_update(
         dataset (SupervisedDataset): Training dataset providing batches of
             interleaved chosen/rejected ``Datum`` pairs.
         ml_logger (ml_log.Logger): Logger for metrics and W&B integration.
-        log_path (str): Directory for checkpoint and log output.
         tokenizer (Tokenizer): Tokenizer used for printing debug examples.
     """
     step = epoch_idx * n_batches + batch_idx
@@ -451,11 +448,7 @@ def do_update(
     # Log timing metrics from trace_iteration window
     metrics.update(window.get_timing_metrics())
     window.save_timing(step, store=ml_logger.store)
-    if config.span_chart_every > 0 and step % config.span_chart_every == 0:
-        iter_dir = iteration_dir(log_path, step)
-        if iter_dir is not None:
-            iter_dir.mkdir(parents=True, exist_ok=True)
-            trace.save_gantt_chart_html(window, step, iter_dir / "timing_gantt.html")
+    trace.maybe_write_gantt_html(window, step, ml_logger.store, every=config.span_chart_every)
     ml_logger.log_metrics(metrics=metrics, step=step)
 
 
@@ -488,12 +481,13 @@ def main(config: Config):
     )
     store = ml_logger.store
     if config.enable_trace:
-        trace_events_path = str(Path(config.log_path) / "trace_events.jsonl")
-        logger.info(f"Tracing is enabled. Trace events will be saved to {trace_events_path}")
+        assert store is not None, "Tracing requires a TrainingRunStore (provided by setup_logging)"
+        trace_events_uri = store.url(trace.TRACE_EVENTS_FILENAME)
+        logger.info(f"Tracing is enabled. Trace events will be saved to {trace_events_uri}")
         logger.info(
-            f"Run `python tinker_cookbook/utils/trace.py {trace_events_path} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"
+            f"Run `python tinker_cookbook/utils/trace.py {trace_events_uri} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"
         )
-        trace.trace_init(output_file=trace_events_path)
+        trace.trace_init(config.log_path)
 
     service_client = tinker.ServiceClient(
         base_url=config.base_url,
@@ -556,7 +550,6 @@ def main(config: Config):
                 infrequent_evaluators=infrequent_evaluators,
                 dataset=dataset,
                 ml_logger=ml_logger,
-                log_path=config.log_path,
                 tokenizer=tokenizer,
                 checkpoint_mgr=checkpoint_mgr,
             )

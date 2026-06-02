@@ -13,7 +13,6 @@ from collections.abc import Callable, Coroutine, Iterable, Iterator, Sequence
 from concurrent.futures import Executor
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
@@ -62,10 +61,11 @@ from tinker_cookbook.rl.types import (
     RLDatasetBuilder,
     TrajectoryGroup,
 )
+from tinker_cookbook.stores.storage import normalize_log_path
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import logtree, ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
-from tinker_cookbook.utils.misc_utils import iteration_dir, safezip, split_list
+from tinker_cookbook.utils.misc_utils import safezip, split_list
 
 logger = logging.getLogger(__name__)
 
@@ -165,32 +165,30 @@ _LOGTREE_EXPLANATION = (
 
 @contextmanager
 def _get_logtree_scope(
-    output_dir: Path | None,
     num_groups_to_log: int,
     f_name: str,
     scope_name: str,
     iteration: int,
     store: TrainingRunStore | None,
 ) -> Iterator[None]:
-    """Context manager that logs rollout data to HTML and JSON via logtree.
+    """Context manager that logs rollout data to HTML and JSON via the store.
 
-    Creates ``output_dir/f_name.html`` (direct I/O — visualization artifact)
-    and writes the logtree JSON via ``store.write_logtree()`` when store is available.
+    Writes ``iteration_NNNNNN/{f_name}_logtree.json`` and ``..._logtree.html``
+    through the store (cloud-safe) when one is available.
     """
-    if output_dir is None or num_groups_to_log <= 0:
+    if store is None or num_groups_to_log <= 0:
         yield
         return
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    logtree_path = str(output_dir / f"{f_name}.html")
     logtree_trace = None
     try:
-        with logtree.init_trace(scope_name, path=logtree_path) as logtree_trace:
+        with logtree.init_trace(scope_name, path=None) as logtree_trace:
             logtree.log_text(_LOGTREE_EXPLANATION)
             yield
     finally:
-        if logtree_trace is not None and store is not None:
+        if logtree_trace is not None:
             store.write_logtree(iteration, logtree_trace.to_dict(), base_name=f_name)
+            store.write_logtree_html(iteration, logtree_trace.to_html(), base_name=f_name)
 
 
 def _select_representative_inds(scores: list[float], num_inds: int) -> list[int]:
@@ -437,7 +435,7 @@ class Config:
     # Maximum number of generated tokens per rollout trajectory.
     max_tokens: int
     # Directory for checkpoints, logs, and traces.
-    log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
+    log_path: str = chz.field(munger=lambda _, s: normalize_log_path(s))
     # Evaluation cadence in training iterations (0 = disabled).
     eval_every: int = 20
     # Checkpoint cadence in training iterations (0 = disabled).
@@ -553,9 +551,7 @@ async def run_single_evaluation(
     """
     ev_name = _get_evaluator_name(evaluator)
     eval_base_name = f"eval_{evaluator_label}"
-    iter_dir = iteration_dir(config.log_path, i_batch)
     with _get_logtree_scope(
-        output_dir=iter_dir,
         num_groups_to_log=config.num_groups_to_log,
         f_name=eval_base_name,
         scope_name=f"Running evaluation {ev_name} {i_batch}",
@@ -570,7 +566,7 @@ async def run_single_evaluation(
                     base_name=eval_base_name,
                     sampling_client_step=i_batch,
                 )
-                if config.rollout_json_export and iter_dir is not None
+                if config.rollout_json_export and store is not None
                 else None
             )
             eval_metrics = await evaluator(
@@ -699,9 +695,7 @@ async def do_sync_training_with_stream_minibatch(
                     )
                     metrics.update(eval_metrics)
 
-            iter_dir = iteration_dir(config.log_path, i_batch)
             with _get_logtree_scope(
-                iter_dir,
                 config.num_groups_to_log,
                 "train",
                 f"RL Iteration {i_batch}",
@@ -805,13 +799,9 @@ async def do_sync_training_with_stream_minibatch(
             metrics.update(error_counter.get_metrics())
         metrics.update(window.get_timing_metrics())
         window.save_timing(i_batch, store=ml_logger.store)
-        if (
-            config.span_chart_every > 0
-            and i_batch % config.span_chart_every == 0
-            and iter_dir is not None
-        ):
-            iter_dir.mkdir(parents=True, exist_ok=True)
-            trace.save_gantt_chart_html(window, i_batch, iter_dir / "timing_gantt.html")
+        trace.maybe_write_gantt_html(
+            window, i_batch, ml_logger.store, every=config.span_chart_every
+        )
         ml_logger.log_metrics(metrics, step=i_batch)
 
 
@@ -1108,7 +1098,6 @@ async def do_async_training(
                     train_step_metrics,
                     full_batch_wrapped_trajectory_groups,
                 ) = streaming_result
-                iter_dir = iteration_dir(config.log_path, i_batch)
                 _maybe_export_rollout_summary_jsonl(
                     config=config,
                     base_name="train",
@@ -1165,7 +1154,6 @@ async def do_async_training(
                         [g.env_group_builder for g in wrapped_trajectory_groups],
                         [g.trajectory_group for g in wrapped_trajectory_groups],
                     )
-                iter_dir = iteration_dir(config.log_path, i_batch)
                 _maybe_export_rollout_summary_jsonl(
                     config=config,
                     base_name="train",
@@ -1196,11 +1184,9 @@ async def do_async_training(
                 metrics.update(error_counter.get_metrics())
             metrics.update(window.get_timing_metrics())
             window.save_timing(i_batch, store=ml_logger.store)
-            if config.span_chart_every > 0 and i_batch % config.span_chart_every == 0:
-                iter_dir = iteration_dir(config.log_path, i_batch)
-                if iter_dir is not None:
-                    iter_dir.mkdir(parents=True, exist_ok=True)
-                    trace.save_gantt_chart_html(window, i_batch, iter_dir / "timing_gantt.html")
+            trace.maybe_write_gantt_html(
+                window, i_batch, ml_logger.store, every=config.span_chart_every
+            )
             ml_logger.log_metrics(metrics, step=i_batch)
             i_batch += 1
             wrapped_trajectory_groups = []
@@ -1705,10 +1691,8 @@ async def do_sync_training(
             env_group_builders_P = dataset.get_batch(i_batch)
 
             # Initialize logtree trace for this iteration if logging is enabled
-            iter_dir = iteration_dir(config.log_path, i_batch)
             async with trace.scope_span("sampling"):
                 with _get_logtree_scope(
-                    output_dir=iter_dir,
                     num_groups_to_log=config.num_groups_to_log,
                     f_name="train",
                     scope_name=f"RL Iteration {i_batch}",
@@ -1796,13 +1780,9 @@ async def do_sync_training(
         if error_counter is not None:
             metrics.update(error_counter.get_metrics())
         window.save_timing(i_batch, store=ml_logger.store)
-        if (
-            config.span_chart_every > 0
-            and i_batch % config.span_chart_every == 0
-            and iter_dir is not None
-        ):
-            iter_dir.mkdir(parents=True, exist_ok=True)
-            trace.save_gantt_chart_html(window, i_batch, iter_dir / "timing_gantt.html")
+        trace.maybe_write_gantt_html(
+            window, i_batch, ml_logger.store, every=config.span_chart_every
+        )
         ml_logger.log_metrics(metrics, step=i_batch)
 
 
@@ -1861,12 +1841,13 @@ async def main(
         current_task = asyncio.current_task()
         if current_task is not None:
             current_task.set_name("main")
-        trace_events_path = str(Path(config.log_path) / "trace_events.jsonl")
-        logger.info(f"Tracing is enabled. Trace events will be saved to {trace_events_path}")
+        assert store is not None, "Tracing requires a TrainingRunStore (provided by setup_logging)"
+        trace_events_uri = store.url(trace.TRACE_EVENTS_FILENAME)
+        logger.info(f"Tracing is enabled. Trace events will be saved to {trace_events_uri}")
         logger.info(
-            f"Run `python tinker_cookbook/utils/trace.py {trace_events_path} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"
+            f"Run `python tinker_cookbook/utils/trace.py {trace_events_uri} trace.json` and visualize in chrome://tracing or https://ui.perfetto.dev/"
         )
-        trace.trace_init(output_file=trace_events_path)
+        trace.trace_init(config.log_path)
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("pylatexenc").setLevel(logging.WARNING)
