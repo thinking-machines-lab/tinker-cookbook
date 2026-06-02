@@ -103,6 +103,20 @@ class TestLocalStorage:
         assert s.exists("dd/keep.txt")
         s.remove_tree("nonexistent")  # no error
 
+    def test_remove_tree_symlinked_root_unlinks_link(self, tmp_path: Path) -> None:
+        """remove_tree('') on a symlinked root removes the link, not the target."""
+        target = tmp_path / "target"
+        target.mkdir()
+        (target / "keep.txt").write_bytes(b"keep")
+        link = tmp_path / "link"
+        link.symlink_to(target, target_is_directory=True)
+
+        LocalStorage(link, mkdir=False).remove_tree("")
+
+        assert not link.is_symlink()  # link removed
+        assert target.exists()  # target untouched
+        assert (target / "keep.txt").read_bytes() == b"keep"
+
     def test_exists_tree(self, tmp_path: Path) -> None:
         s = LocalStorage(tmp_path)
         assert not s.exists_tree("d")
