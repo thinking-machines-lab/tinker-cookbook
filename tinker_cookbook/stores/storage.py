@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import posixpath
 import shutil
 from dataclasses import dataclass
@@ -676,7 +677,7 @@ class FsspecStorage:
         self._staged = set()
 
 
-def storage_from_uri(uri: str, *, mkdir: bool = True, **kwargs: Any) -> Storage:
+def storage_from_uri(uri: str | os.PathLike[str], *, mkdir: bool = True, **kwargs: Any) -> Storage:
     """Create a Storage backend from a URI string.
 
     Supported schemes::
@@ -699,6 +700,8 @@ def storage_from_uri(uri: str, *, mkdir: bool = True, **kwargs: Any) -> Storage:
     This is the recommended way to create a Storage from user config
     (e.g., ``log_path`` in training scripts).
     """
+    # Accept pathlib.Path / os.PathLike, not just str (callers pass tmp_path, etc.).
+    uri = os.fspath(uri)
     if uri.startswith("file://"):
         return LocalStorage(uri[len("file://") :], mkdir=mkdir)
     if "://" in uri:
