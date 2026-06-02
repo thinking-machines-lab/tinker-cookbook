@@ -2,6 +2,7 @@
 
 import json
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -253,6 +254,61 @@ class TestCheckpointManagerShouldSavePeriodic:
         assert mgr.should_save_periodic(1)
         assert mgr.should_save_periodic(2)
         assert mgr.should_save_periodic(3)
+
+
+class TestCheckpointManagerCadences:
+    """Tests for token- and seconds-based cadence support in should_save_periodic."""
+
+    def _make_mgr(
+        self,
+        save_every: int = 0,
+        save_every_tokens: int = 0,
+        save_every_seconds: float = 0.0,
+    ) -> CheckpointManager:
+        return CheckpointManager(
+            training_client=MagicMock(),
+            service_client=MagicMock(),
+            log_path="/tmp/unused",
+            save_every=save_every,
+            save_every_tokens=save_every_tokens,
+            save_every_seconds=save_every_seconds,
+        )
+
+    def test_token_cadence_fires_on_threshold_crossing(self):
+        """Token cadence fires when (elapsed_tokens - last_saved_tokens) >= threshold."""
+        mgr = self._make_mgr(save_every_tokens=1_000_000)
+        assert not mgr.should_save_periodic(1, elapsed_tokens=999_999)
+        assert mgr.should_save_periodic(1, elapsed_tokens=1_000_000)
+        assert mgr.should_save_periodic(1, elapsed_tokens=1_500_000)
+
+    def test_token_cadence_resets_after_save(self):
+        """After a save, last_saved_tokens advances → next save needs another full delta."""
+        mgr = self._make_mgr(save_every_tokens=1_000_000)
+        # Token threshold reached → fires.
+        assert mgr.should_save_periodic(1, elapsed_tokens=1_000_000)
+        # Simulate post-save bookkeeping (what maybe_save_async does internally).
+        mgr._last_saved_tokens = 1_000_000
+        # Another 999_999 tokens isn't enough.
+        assert not mgr.should_save_periodic(2, elapsed_tokens=1_999_999)
+        # 1M past last save → fires again.
+        assert mgr.should_save_periodic(2, elapsed_tokens=2_000_000)
+
+    def test_token_cadence_resume_anchor(self):
+        """restore_last_saved_tokens shifts the cadence anchor to match the loaded value."""
+        mgr = self._make_mgr(save_every_tokens=1_000_000)
+        mgr.restore_last_saved_tokens(5_000_000)
+        # delta = 5_000_500 - 5_000_000 = 500 < threshold
+        assert not mgr.should_save_periodic(1, elapsed_tokens=5_000_500)
+        # delta = 6_000_000 - 5_000_000 = 1M ≥ threshold
+        assert mgr.should_save_periodic(1, elapsed_tokens=6_000_000)
+
+    def test_seconds_cadence_fires(self):
+        """Seconds cadence fires when (now - last_saved_wall_time) >= threshold."""
+        mgr = self._make_mgr(save_every_seconds=0.05)
+        # Just constructed; wall_time was set to now → not yet 50ms past.
+        assert not mgr.should_save_periodic(1)
+        time.sleep(0.06)
+        assert mgr.should_save_periodic(1)
 
 
 def _make_save_state_mock(paths: list[str]) -> AsyncMock:

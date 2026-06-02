@@ -25,8 +25,8 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
     [
         ("Qwen/Qwen3-8B", "qwen3"),
         ("Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3_instruct"),
-        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5"),
-        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5_disable_thinking"),
+        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
+        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3_disable_thinking"),
     ],
@@ -73,8 +73,8 @@ def test_qwen3_tool_response_rendering(model_name: str, renderer_name: str):
     [
         ("Qwen/Qwen3-8B", "qwen3"),
         ("Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3_instruct"),
-        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5"),
-        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5_disable_thinking"),
+        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
+        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3_disable_thinking"),
     ],
@@ -116,7 +116,7 @@ weather in NYC
     "model_name,renderer_name",
     [
         ("Qwen/Qwen3-8B", "qwen3"),
-        ("Qwen/Qwen3.5-35B-A3B", "qwen3_5"),
+        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
     ],
 )
