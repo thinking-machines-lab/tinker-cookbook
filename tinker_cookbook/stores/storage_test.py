@@ -92,16 +92,16 @@ class TestLocalStorage:
         # Missing dir: no error
         s.remove_dir("nonexistent")
 
-    def test_rmtree(self, tmp_path: Path) -> None:
+    def test_remove_tree(self, tmp_path: Path) -> None:
         s = LocalStorage(tmp_path)
         s.write("d/a.txt", b"a")
         s.write("d/sub/b.txt", b"b")  # nested
         s.write("dd/keep.txt", b"keep")  # sibling prefix, must survive
-        s.rmtree("d")
+        s.remove_tree("d")
         assert not s.exists("d/a.txt")
         assert not s.exists("d/sub/b.txt")
         assert s.exists("dd/keep.txt")
-        s.rmtree("nonexistent")  # no error
+        s.remove_tree("nonexistent")  # no error
 
     def test_exists_tree(self, tmp_path: Path) -> None:
         s = LocalStorage(tmp_path)
@@ -362,20 +362,20 @@ class TestFsspecStorage:
         assert not s.exists("f.txt")
         s.remove("nonexistent")  # no error
 
-    def test_rmtree(self, tmp_path: Path) -> None:
+    def test_remove_tree(self, tmp_path: Path) -> None:
         s = self._make_storage(tmp_path)
         s.write("d/a.txt", b"a")
         s.write("d/sub/b.txt", b"b")  # nested
         s.write("dd/keep.txt", b"keep")  # sibling prefix, must survive
-        s.rmtree("d")
+        s.remove_tree("d")
         assert not s.exists("d/a.txt")
         assert not s.exists("d/sub/b.txt")
         assert s.exists("dd/keep.txt")
-        s.rmtree("nonexistent")  # no error
+        s.remove_tree("nonexistent")  # no error
 
-    def test_memory_exists_tree_and_rmtree_prefix_safety(self) -> None:
-        """exists_tree/rmtree behave on a real (memory://) object store, and
-        rmtree of a prefix leaves a sibling that shares its leading name."""
+    def test_memory_exists_tree_and_remove_tree_prefix_safety(self) -> None:
+        """exists_tree/remove_tree behave on a real (memory://) object store, and
+        remove_tree of a prefix leaves a sibling that shares its leading name."""
         base = f"memory://bucket/{uuid.uuid4()}"
         run = storage_from_uri(f"{base}/run")
         sibling = storage_from_uri(f"{base}/run-sibling")
@@ -386,14 +386,14 @@ class TestFsspecStorage:
         assert run.exists_tree("a")
         assert not run.exists_tree("missing")
 
-        run.rmtree("")
+        run.remove_tree("")
         assert not run.exists_tree("")
         # Sibling prefix that shares the leading text must survive.
         assert sibling.exists_tree("")
         assert sibling.read("c.txt") == b"keep"
 
-    def test_rmtree_clears_staged_appends(self, tmp_path: Path) -> None:
-        """rmtree drops locally-staged (un-flushed) appends under the prefix,
+    def test_remove_tree_clears_staged_appends(self, tmp_path: Path) -> None:
+        """remove_tree drops locally-staged (un-flushed) appends under the prefix,
         including nested ones, while leaving sibling prefixes intact."""
         s = self._make_storage(tmp_path)
         s.append("d/log.jsonl", b"line\n")  # staged, direct child
@@ -402,7 +402,7 @@ class TestFsspecStorage:
         assert s.exists("d/log.jsonl")
         assert s.exists("d/sub/deep.jsonl")
 
-        s.rmtree("d")
+        s.remove_tree("d")
         assert not s.exists("d/log.jsonl")
         assert not s.exists("d/sub/deep.jsonl")
         # Empty staged dirs must not resurface the prefix via list_dir/exists_tree.
@@ -414,7 +414,7 @@ class TestFsspecStorage:
         assert s.exists_tree("dd")
         assert "other.jsonl" in s.list_dir("dd")
 
-        # A fresh append after rmtree starts clean (no leftover staged bytes).
+        # A fresh append after remove_tree starts clean (no leftover staged bytes).
         s.append("d/log.jsonl", b"new\n")
         assert s.read("d/log.jsonl") == b"new\n"
 
