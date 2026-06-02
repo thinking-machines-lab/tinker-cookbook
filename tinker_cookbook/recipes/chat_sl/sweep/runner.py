@@ -14,6 +14,7 @@ import pandas as pd
 from tinker_cookbook.recipes.chat_sl.sweep.grid import default_run_name
 from tinker_cookbook.recipes.chat_sl.sweep.grid import grid as make_grid
 from tinker_cookbook.recipes.chat_sl.sweep.results import collect
+from tinker_cookbook.stores.storage import storage_from_uri
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +180,7 @@ def _run_sequential(
         run_name = namer(overrides)
         log_path = os.path.join(sweep_dir, run_name)
 
-        if skip_existing and os.path.exists(os.path.join(log_path, "metrics.jsonl")):
+        if skip_existing and storage_from_uri(log_path, mkdir=False).exists("metrics.jsonl"):
             print(f"  [{i + 1}/{len(points)}] Skipping {run_name} (already exists)")
             continue
 
@@ -206,7 +207,7 @@ def _run_parallel(
         run_name = namer(overrides)
         log_path = os.path.join(sweep_dir, run_name)
 
-        if skip_existing and os.path.exists(os.path.join(log_path, "metrics.jsonl")):
+        if skip_existing and storage_from_uri(log_path, mkdir=False).exists("metrics.jsonl"):
             print(f"  Skipping {run_name} (already exists)")
             continue
 

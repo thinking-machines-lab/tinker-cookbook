@@ -17,11 +17,11 @@ Expected behavior:
 import asyncio
 import json
 import logging
-from pathlib import Path
 
 import tinker
 
 from tinker_cookbook.recipes.true_thinking_score.tts import generate_cot_and_compute_tts
+from tinker_cookbook.stores.storage import storage_from_uri
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -56,13 +56,12 @@ MODEL_NAME = "Qwen/Qwen3.5-4B"
 
 
 async def main():
-    log_dir = Path("/tmp/tinker-tts-experiment")
-    log_dir.mkdir(parents=True, exist_ok=True)
+    storage = storage_from_uri("/tmp/tinker-tts-experiment")
 
     logger.info("=== TTS Small-Scale Experiment ===")
     logger.info(f"Model: {MODEL_NAME}")
     logger.info(f"Problems: {len(PROBLEMS)}")
-    logger.info(f"Log dir: {log_dir}")
+    logger.info(f"Log dir: {storage.url()}")
 
     service_client = tinker.ServiceClient(
         user_metadata=recipe_user_metadata("experiment_true_thinking_score"),
@@ -118,32 +117,27 @@ async def main():
         logger.info(f"  Paper high TTS: ~2.3%  |  Ours: {high_tts * 100:.1f}%")
 
     # Save results
-    results_path = log_dir / "tts_results.json"
-    with open(results_path, "w") as f:
-        json.dump(
-            {
-                "model": MODEL_NAME,
-                "problems": results,
-                "aggregate": {
-                    "n_problems": len(results),
-                    "n_steps": len(all_tts_scores),
-                    "mean_tts": sum(all_tts_scores) / len(all_tts_scores) if all_tts_scores else 0,
-                    "frac_high_tts": (
-                        sum(1 for t in all_tts_scores if t >= 0.7) / len(all_tts_scores)
-                        if all_tts_scores
-                        else 0
-                    ),
-                    "frac_decorative": (
-                        sum(1 for t in all_tts_scores if t <= 0.005) / len(all_tts_scores)
-                        if all_tts_scores
-                        else 0
-                    ),
-                },
-            },
-            f,
-            indent=2,
-        )
-    logger.info(f"\nResults saved to {results_path}")
+    payload = {
+        "model": MODEL_NAME,
+        "problems": results,
+        "aggregate": {
+            "n_problems": len(results),
+            "n_steps": len(all_tts_scores),
+            "mean_tts": sum(all_tts_scores) / len(all_tts_scores) if all_tts_scores else 0,
+            "frac_high_tts": (
+                sum(1 for t in all_tts_scores if t >= 0.7) / len(all_tts_scores)
+                if all_tts_scores
+                else 0
+            ),
+            "frac_decorative": (
+                sum(1 for t in all_tts_scores if t <= 0.005) / len(all_tts_scores)
+                if all_tts_scores
+                else 0
+            ),
+        },
+    }
+    storage.write("tts_results.json", json.dumps(payload, indent=2).encode("utf-8"))
+    logger.info("\nResults saved to %s", storage.url("tts_results.json"))
 
 
 if __name__ == "__main__":

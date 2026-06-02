@@ -29,7 +29,6 @@ import logging
 import random
 import sys
 from datetime import datetime
-from pathlib import Path
 from typing import Literal, cast
 
 import chz
@@ -41,6 +40,7 @@ from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed
 from tinker_cookbook.recipes.true_thinking_score.tts import (
     generate_cot_and_compute_tts,
 )
+from tinker_cookbook.stores.storage import storage_from_uri
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -145,7 +145,7 @@ async def analyze_one_problem(
 async def cli_main(config: CLIConfig) -> None:
     # Build log path
     if config.log_path is not None:
-        log_dir = Path(config.log_path)
+        log_uri = config.log_path
     else:
         model_slug = config.model_name.replace("/", "-")
         run_name = (
@@ -153,15 +153,15 @@ async def cli_main(config: CLIConfig) -> None:
             f"{config.n_problems}problems-"
             f"{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
         )
-        log_dir = Path(f"/tmp/tinker-examples/tts/{run_name}")
-    log_dir.mkdir(parents=True, exist_ok=True)
+        log_uri = f"/tmp/tinker-examples/tts/{run_name}"
+    storage = storage_from_uri(log_uri)
 
     logger.info("=== TTS Analysis ===")
     logger.info(f"Model: {config.model_name}")
     logger.info(f"Dataset: {config.dataset}")
     logger.info(f"Problems: {config.n_problems}")
     logger.info(f"Concurrency: {config.concurrency}")
-    logger.info(f"Log dir: {log_dir}")
+    logger.info(f"Log dir: {storage.url()}")
 
     # Load problems
     problems = _load_problems(config.dataset, config.n_problems, config.seed)
@@ -195,11 +195,9 @@ async def cli_main(config: CLIConfig) -> None:
     error_results = [r for r in results if r is not None and "error" in r]
 
     # Save per-problem JSONL
-    jsonl_path = log_dir / "tts_per_problem.jsonl"
-    with open(jsonl_path, "w") as f:
-        for r in results:
-            if r is not None:
-                f.write(json.dumps(r) + "\n")
+    jsonl_data = "".join(json.dumps(r) + "\n" for r in results if r is not None)
+    storage.write("tts_per_problem.jsonl", jsonl_data.encode("utf-8"))
+    jsonl_uri = storage.url("tts_per_problem.jsonl")
 
     # Compute aggregate stats
     all_tts: list[float] = []
@@ -235,9 +233,8 @@ async def cli_main(config: CLIConfig) -> None:
     }
 
     # Save aggregate summary
-    summary_path = log_dir / "tts_summary.json"
-    with open(summary_path, "w") as f:
-        json.dump(aggregate, f, indent=2)
+    storage.write("tts_summary.json", json.dumps(aggregate, indent=2).encode("utf-8"))
+    summary_uri = storage.url("tts_summary.json")
 
     # Print results
     logger.info(f"\n{'=' * 60}")
@@ -262,8 +259,8 @@ async def cli_main(config: CLIConfig) -> None:
     logger.info(f"  Paper SV decorative:  12-21%   | Ours: {aggregate['frac_sv_decorative']:.1%}")
 
     logger.info("\nResults saved to:")
-    logger.info(f"  Per-problem: {jsonl_path}")
-    logger.info(f"  Summary:     {summary_path}")
+    logger.info(f"  Per-problem: {jsonl_uri}")
+    logger.info(f"  Summary:     {summary_uri}")
 
 
 if __name__ == "__main__":
