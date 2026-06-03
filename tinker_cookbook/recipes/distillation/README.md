@@ -51,7 +51,7 @@ The results of running the above scripts with various LoRA ranks can be found he
 | Stage | Rank 8 | Rank 32 | Rank 128 |
 |-------|--------|---------|----------|
 | Supervised fine-tuning (SFT) | `tinker://414d30d0-3b63-5596-919d-647960d156c2:train:0/weights/final` | `tinker://1a32513a-6177-5642-bebd-ecc8e255d4a7:train:0/weights/final` | `tinker://b89f6676-49c4-53ed-9788-2e0c81a9eabf:train:0/weights/final` |
-| On-policy distillation | `rerun in progress` | `rerun in progress` | `tinker://de58946a-6bfd-5ab2-821f-03b61d237b5b:train:0/sampler_weights/000080` |
+| On-policy distillation | `tinker://52f1ee62-da13-547e-a3c0-708d7a680bb0:train:0/sampler_weights/000080` | `tinker://00a05e59-9fc3-5f99-ba72-f28ca69c9894:train:0/sampler_weights/000080` | `tinker://de58946a-6bfd-5ab2-821f-03b61d237b5b:train:0/sampler_weights/000080` |
 
 See the on-policy distillation launch command above for an example of how to load the checkpoint path.
 
