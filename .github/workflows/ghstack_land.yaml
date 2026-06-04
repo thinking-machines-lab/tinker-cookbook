@@ -21,7 +21,15 @@ on:
 
 jobs:
   ghstack_land:
-    if: ${{ github.event.issue.pull_request && startsWith(github.event.comment.body, '/land') }}
+    # `issue_comment` runs in the base repo with access to secrets no matter who
+    # commented, so on a public repo the trigger must be gated to trusted users.
+    # `OWNER`/`MEMBER` means a member of the org that owns this repo
+    # (thinking-machines-lab); `COLLABORATOR` is intentionally excluded so that
+    # outside collaborators cannot land.
+    if: >
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/land') &&
+      contains(fromJSON('["OWNER", "MEMBER"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@v1

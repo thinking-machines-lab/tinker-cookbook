@@ -24,6 +24,10 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+# Only count approvals from people with write access to the repo, so two
+# outside accounts can't approve each other's PRs to clear the gate.
+TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
+
 
 def classify_checks(
     statuses: List[Dict[str, Any]],
@@ -154,8 +158,12 @@ def main():
         print(f"Checking approvals for PR #{n}... ", end="")
         resp = gh.get(f"https://api.github.com/repos/{REPO}/pulls/{n}/reviews")
         must(resp.ok, f"Error getting reviews for PR #{n}!")
-        has_approval = any(review["state"] == "APPROVED" for review in resp.json())
-        must(has_approval, f"PR #{n} has no approvals!")
+        has_approval = any(
+            review["state"] == "APPROVED"
+            and review.get("author_association") in TRUSTED_ASSOCIATIONS
+            for review in resp.json()
+        )
+        must(has_approval, f"PR #{n} has no approval from a user with write access!")
         print("APPROVED!")
 
     def check_pr_status(pr_number: int):
