@@ -12,8 +12,8 @@ name: ghstack land
 # normal push CI, so the default `GITHUB_TOKEN` is not enough. Configure a
 # GitHub App with `contents: write` + `pull_requests: write` that is allowed to
 # bypass branch protection, and store its credentials as repo secrets:
-#   GHSTACK_APP_ID           the App's id
-#   GHSTACK_APP_PRIVATE_KEY  the App's private key (PEM)
+#   BOT_APP_ID           the App's id
+#   BOT_APP_PRIVATE_KEY  the App's private key (PEM)
 
 on:
   issue_comment:
@@ -27,8 +27,8 @@ jobs:
       - uses: actions/create-github-app-token@v1
         id: app-token
         with:
-          app-id: ${{ secrets.GHSTACK_APP_ID }}
-          private-key: ${{ secrets.GHSTACK_APP_PRIVATE_KEY }}
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
 
       - name: Acknowledge the comment
         run: |
