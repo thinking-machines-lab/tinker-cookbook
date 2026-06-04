@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Gate a ghstack `/land` on approvals and green CI.
 
 Given the top PR of a ghstack stack, this:
@@ -18,7 +17,7 @@ import os
 import re
 import subprocess
 import time
-from typing import Any, Dict, List, Literal, Tuple
+from typing import Any, Literal
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -30,12 +29,12 @@ TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 
 
 def classify_checks(
-    statuses: List[Dict[str, Any]],
-    check_runs: List[Dict[str, Any]],
-) -> Tuple[Literal["pending", "failed", "success"], List[str]]:
+    statuses: list[dict[str, Any]],
+    check_runs: list[dict[str, Any]],
+) -> tuple[Literal["pending", "failed", "success"], list[str]]:
     """Classify the head commit's combined checks without hardcoding context names."""
-    failed: List[str] = []
-    pending: List[str] = []
+    failed: list[str] = []
+    pending: list[str] = []
 
     # Legacy commit statuses (e.g. third-party integrations).
     for status in statuses:
@@ -202,8 +201,7 @@ def main():
                 if time.time() - start_time > MAX_WAIT_TIME:
                     must(
                         False,
-                        f"PR #{pr_number} stayed unstable for over "
-                        f"{MAX_WAIT_TIME // 60} minutes!",
+                        f"PR #{pr_number} stayed unstable for over {MAX_WAIT_TIME // 60} minutes!",
                     )
 
                 sha = pr_obj["head"]["sha"]
