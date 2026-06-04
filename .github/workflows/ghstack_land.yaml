@@ -1,6 +1,7 @@
 name: ghstack land
 
-# Land a PR by commenting `/land` on it.
+# Land a PR by commenting `/land` on it. Only members of the org that owns this
+# repo can trigger it; see the author_association gate on the job below.
 #
 #   /land                  Land a ghstack stack bottom-up once every PR is
 #                          approved and CI is green (waits for in-flight CI).
