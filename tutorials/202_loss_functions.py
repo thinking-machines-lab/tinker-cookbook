@@ -209,9 +209,11 @@ def _(ce_result, is_result):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## PPO with custom clipping thresholds
+    ## Custom clipping thresholds (PPO and CISPO)
 
-    PPO and CISPO accept `loss_fn_config` to override the default clip thresholds (0.8 and 1.2). Tighter clipping makes updates more conservative.
+    PPO and CISPO accept `loss_fn_config` to set clip thresholds. PPO defaults to `0.8` and `1.2`; tighter clipping makes its updates more conservative. CISPO's default differs (below).
+
+    For **CISPO specifically**, the clipped ratio is a detached coefficient on `log p_theta`, so it never zeros a token's gradient — it only bounds the coefficient's magnitude. CISPO **defaults to a one-sided** clip — lower bound disabled, only the upper side capped (`{"clip_low_threshold": 0.0, "clip_high_threshold": 4.0}`) — so you get it without passing `loss_fn_config`. This is safe in any setting — with no lower bound the worst case is the coefficient falling back toward the plain importance-sampling weight, which is well-behaved. A positive lower threshold instead keeps applying near-full updates to tokens the policy has already moved away from; on-policy that rarely matters, but off-policy it can make the sampler/trainer KL run away. This follows both CISPO papers: [MiniMax-M1](https://arxiv.org/abs/2506.13585) sets the lower IS-weight bound to a large value and only tunes the upper one, and [ScaleRL](https://arxiv.org/abs/2510.13786) uses `clip(ratio, 0, eps_max)` and finds performance is insensitive to `eps_max` across {4, 5, 8}.
     """)
     return
 
