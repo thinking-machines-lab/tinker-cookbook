@@ -54,10 +54,13 @@ jobs:
         run: |
           if [[ "$COMMENT" == *"--force"* ]]; then
             # Everything after `/land --force` is the (mandatory) reason.
-            REASON=$(echo "$COMMENT" \
+            # Collapse to a single line first: newlines in the reason would
+            # otherwise inject extra `key=value` pairs into $GITHUB_OUTPUT.
+            REASON=$(printf '%s' "$COMMENT" \
+              | tr '\n\r' '  ' \
               | sed -E 's/(^|[[:space:]])--force([[:space:]]|$)/ /g' \
               | sed -E 's/^[[:space:]]*\/land[[:space:]]*//' \
-              | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+              | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
             if [[ -z "$REASON" ]]; then
               echo "::error::--force requires a reason"
               gh pr comment "${{ github.event.issue.html_url }}" \
@@ -146,11 +149,14 @@ jobs:
         if: ${{ steps.get-pr.outputs.is_ghstack == 'true' && steps.parse.outputs.force == 'false' }}
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          # The branch name is attacker-influenced, so pass it via env and quote
+          # it below rather than interpolating into the run block directly.
+          PR_NUMBER: ${{ github.event.issue.number }}
+          PR_BRANCH: ${{ steps.get-pr.outputs.pr_branch }}
+          REPO: ${{ github.repository }}
         run: |
           uvx --with requests python .github/workflows/scripts/ghstack-perm-check.py \
-            ${{ github.event.issue.number }} \
-            ${{ steps.get-pr.outputs.pr_branch }} \
-            ${{ github.repository }}
+            "$PR_NUMBER" "$PR_BRANCH" "$REPO"
 
       - name: Log force landing
         if: ${{ steps.get-pr.outputs.is_ghstack == 'true' && steps.parse.outputs.force == 'true' }}
