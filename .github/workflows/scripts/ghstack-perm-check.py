@@ -152,17 +152,28 @@ def main():
     for n in pr_numbers:
         resp = gh.get(f"https://api.github.com/repos/{REPO}/pulls/{n}")
         must(resp.ok, f"Error checking merge status for PR #{n}!")
-        if resp.json()["merged"]:
+        pr_data = resp.json()
+        if pr_data["merged"]:
             continue
+        head_sha = pr_data["head"]["sha"]
         print(f"Checking approvals for PR #{n}... ", end="")
         resp = gh.get(f"https://api.github.com/repos/{REPO}/pulls/{n}/reviews")
         must(resp.ok, f"Error getting reviews for PR #{n}!")
+        # The approval must be from a user with write access AND on the current
+        # head commit. The repo's ruleset does not dismiss stale reviews on push,
+        # so without the commit_id check an approval of a benign commit would
+        # still clear the gate after the PR is updated with different code.
         has_approval = any(
             review["state"] == "APPROVED"
             and review.get("author_association") in TRUSTED_ASSOCIATIONS
+            and review.get("commit_id") == head_sha
             for review in resp.json()
         )
-        must(has_approval, f"PR #{n} has no approval from a user with write access!")
+        must(
+            has_approval,
+            f"PR #{n} has no current approval from a user with write access "
+            f"(an approval on the latest commit {head_sha[:7]} is required).",
+        )
         print("APPROVED!")
 
     def check_pr_status(pr_number: int):
