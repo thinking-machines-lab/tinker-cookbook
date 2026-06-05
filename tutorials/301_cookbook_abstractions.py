@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -147,8 +147,11 @@ async def _(get_tokenizer, renderers):
 @app.cell
 async def _(env, tokenizer):
     # Simulate calling step() with a correct answer (as token IDs)
-    # In real training, the action comes from the model's sampled tokens.
-    # Here we just encode a string to show the interface.
+    # In real training the action is the model's sampled tokens, which end with
+    # the renderer's stop token. This hand-encoded string omits it, so the
+    # response grades as not well-formed -> format reward 0, i.e., reward 0.9
+    # (correct answer) rather than the full 1.0. A real rollout would include
+    # the stop token and score 1.0.
     fake_response = "The answer is \\boxed{5}"
     fake_action = tokenizer.encode(fake_response)
 
@@ -180,7 +183,8 @@ def _(mo):
 async def _(MathEnv, ProblemGroupBuilder, partial, renderer):
     GROUP_SIZE = 4
     _group_builder = ProblemGroupBuilder(
-        env_thunk=partial(MathEnv, "What is 2 + 3?", "5", renderer), num_envs=GROUP_SIZE
+        env_thunk=partial(MathEnv, "What is 2 + 3?", "5", renderer),
+        num_envs=GROUP_SIZE,
     )
     # ProblemGroupBuilder takes an env factory (a callable that returns a fresh ProblemEnv)
     # and the number of envs to create per group.
@@ -442,7 +446,13 @@ async def _(
     adam_params = tinker.AdamParams(learning_rate=learning_rate, beta1=0.9, beta2=0.95, eps=1e-08)
 
     def _remove_mask(datum: tinker.Datum) -> tinker.Datum:
-        """Remove the 'mask' key from loss_fn_inputs before sending to the server."""
+        """Drop the 'mask' key that assemble_training_data adds.
+
+        assemble_training_data emits target_tokens, logprobs, advantages, and a
+        per-token action mask. The built-in importance_sampling loss accepts only
+        the first three, so the extra 'mask' must be removed before sending. It's
+        redundant here anyway -- advantages are already 0 on non-action tokens.
+        """
         return tinker.Datum(
             model_input=datum.model_input,
             loss_fn_inputs={k: v for k, v in datum.loss_fn_inputs.items() if k != "mask"},

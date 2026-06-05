@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -29,8 +29,6 @@ def _(mo):
 
 @app.cell
 def _():
-    import asyncio
-    import re
     from collections.abc import Sequence
 
     import chz
@@ -47,10 +45,8 @@ def _():
         RLDataset,
         RLDatasetBuilder,
         Sequence,
-        asyncio,
         chz,
         get_tokenizer,
-        re,
         renderers,
     )
 
@@ -66,7 +62,7 @@ def _(mo):
 
 
 @app.cell
-def _(ProblemEnv, renderers):
+def _(ProblemEnv):
     import random
 
     class ArithmeticEnv(ProblemEnv):
@@ -92,7 +88,7 @@ def _(ProblemEnv, renderers):
         def get_reference_answer(self):
             return self.answer
 
-    return (ArithmeticEnv, random)
+    return ArithmeticEnv, random
 
 
 @app.cell(hide_code=True)
@@ -114,9 +110,9 @@ def _(
     RLDatasetBuilder,
     Sequence,
     chz,
+    get_tokenizer,
     random,
     renderers,
-    get_tokenizer,
 ):
     class ArithmeticDataset(RLDataset):
         """Generates batches of arithmetic problems."""
@@ -129,8 +125,8 @@ def _(
             self.rng = random.Random(42)
 
         def _make_env(self):
-            a = self.rng.randint(1, 50)
-            b = self.rng.randint(1, 50)
+            a = self.rng.randint(1, 300)
+            b = self.rng.randint(1, 300)
             op = self.rng.choice(["+", "*"])
             return ArithmeticEnv(self.renderer, a, b, op)
 
@@ -163,7 +159,7 @@ def _(
             )
             return train_ds, None
 
-    return (ArithmeticDataset, ArithmeticDatasetBuilder)
+    return (ArithmeticDatasetBuilder,)
 
 
 @app.cell(hide_code=True)
@@ -185,6 +181,7 @@ def _(ArithmeticDatasetBuilder):
     rl_config = rl_train.Config(
         log_path="~/logs/tutorial-rl-config",
         model_name=MODEL_NAME,
+        recipe_name="tutorial_rl",
         dataset_builder=ArithmeticDatasetBuilder(
             model_name=MODEL_NAME,
             renderer_name="qwen3_5_disable_thinking",
@@ -205,7 +202,7 @@ def _(ArithmeticDatasetBuilder):
     print(f"Learning rate: {rl_config.learning_rate}")
     print(f"Loss function: {rl_config.loss_fn}")
     print(f"Max tokens:    {rl_config.max_tokens}")
-    return MODEL_NAME, rl_config, rl_train
+    return rl_config, rl_train
 
 
 @app.cell
@@ -216,7 +213,7 @@ def _(mo):
 
 
 @app.cell
-def _(api_key, asyncio, mo, rl_config, rl_train):
+async def _(api_key, mo, rl_config, rl_train):
     import os
 
     mo.stop(
@@ -228,7 +225,7 @@ def _(api_key, asyncio, mo, rl_config, rl_train):
         os.environ["TINKER_API_KEY"] = api_key.value
 
     # Run the full RL pipeline
-    asyncio.run(rl_train.main(rl_config))
+    await rl_train.main(rl_config)
     return
 
 
@@ -238,8 +235,8 @@ def _(mo):
     ## Step 4 -- Inspect reward curves
 
     After training, check `log_path` for metrics (logged to console and optionally W&B). Key metrics to watch:
-    - `reward/mean` -- average reward across trajectories
-    - `reward/correct` -- fraction of correct answers
+    - `env/all/reward/total` -- average reward across trajectories
+    - `env/all/correct` -- fraction of correct answers
     - `optim/kl_sample_train_v1` -- KL divergence from the sampling policy
     """)
     return

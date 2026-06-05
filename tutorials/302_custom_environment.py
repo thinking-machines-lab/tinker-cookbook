@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -227,6 +227,10 @@ async def _(FormatEnv, api_key, get_renderer, get_tokenizer, mo, tinker):
     MODEL_NAME = "Qwen/Qwen3.5-4B"
     service_client = tinker.ServiceClient()
     tokenizer = get_tokenizer(MODEL_NAME)
+    # Thinking renderer on purpose: FormatEnv's checks are lenient, so a
+    # non-thinking model satisfies them on every rollout -> constant group
+    # rewards -> GRPO gets no signal ("No usable groups, skipping"). The longer
+    # thinking responses vary enough to keep a usable learning signal.
     renderer = get_renderer("qwen3_5", tokenizer)
 
     # Create a test env and check the observation
@@ -374,7 +378,13 @@ async def _(
     training_client,
 ):
     def _remove_mask(datum: tinker.Datum) -> tinker.Datum:
-        """Remove the 'mask' key from loss_fn_inputs before sending to the server."""
+        """Drop the 'mask' key that assemble_training_data adds.
+
+        assemble_training_data emits target_tokens, logprobs, advantages, and a
+        per-token action mask. The built-in importance_sampling loss accepts only
+        the first three, so the extra 'mask' must be removed before sending. It's
+        redundant here anyway -- advantages are already 0 on non-action tokens.
+        """
         return tinker.Datum(
             model_input=datum.model_input,
             loss_fn_inputs={k: v for k, v in datum.loss_fn_inputs.items() if k != "mask"},
