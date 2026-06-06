@@ -1,16 +1,14 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
 @app.cell
 def _():
-    import os
-
     import marimo as mo
 
-    return mo, os
+    return (mo,)
 
 
 @app.cell(hide_code=True)
@@ -53,7 +51,9 @@ def _(mo):
 
 
 @app.cell
-async def _(api_key, mo, os):
+async def _(api_key, mo):
+    import os
+
     import tinker
 
     from tinker_cookbook import renderers
@@ -94,7 +94,7 @@ async def _(api_key, mo, os):
     sampler_path = _save_result.result().path
     print(f"Base model:  {BASE_MODEL}")
     print(f"Checkpoint:  {sampler_path}")
-    return BASE_MODEL, sampler_path, service_client, training_client
+    return BASE_MODEL, os, sampler_path
 
 
 @app.cell(hide_code=True)
@@ -202,8 +202,8 @@ def _(mo):
     mo.md(r"""
     ## Next steps
 
-    - **[Build a PEFT LoRA Adapter](lora-adapter.md)** -- Convert to PEFT format for vLLM `--lora-modules`
-    - **[Publish to HuggingFace Hub](publish-hub.md)** -- Upload the merged model with a custom model card
+    - **[Build a PEFT LoRA Adapter](./502_lora_adapter.py)** -- Convert to PEFT format for vLLM `--lora-modules`
+    - **[Publish to HuggingFace Hub](./503_publish_hub.py)** -- Upload the merged model with a custom model card
     """)
     return
 

@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -76,7 +76,7 @@ def _():
     print(f"  base_model: {card_config.base_model}")
     print(f"  tags:       {card_config.tags}")
     print(f"  license:    {card_config.license}")
-    return (ModelCardConfig, card_config)
+    return (card_config,)
 
 
 @app.cell(hide_code=True)
@@ -170,8 +170,8 @@ def _(mo):
     mo.md(r"""
     ## Next steps
 
-    - **[Export a Merged HuggingFace Model](export-hf.md)** -- Merge LoRA into a standalone model
-    - **[Build a PEFT LoRA Adapter](lora-adapter.md)** -- Convert to PEFT format for serving
+    - **[Export a Merged HuggingFace Model](./501_export_hf.py)** -- Merge LoRA into a standalone model
+    - **[Build a PEFT LoRA Adapter](./502_lora_adapter.py)** -- Convert to PEFT format for serving
     """)
     return
 

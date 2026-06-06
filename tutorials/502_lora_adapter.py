@@ -1,16 +1,14 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
 @app.cell
 def _():
-    import os
-
     import marimo as mo
 
-    return mo, os
+    return (mo,)
 
 
 @app.cell(hide_code=True)
@@ -50,7 +48,9 @@ def _(mo):
 
 
 @app.cell
-async def _(api_key, mo, os):
+async def _(api_key, mo):
+    import os
+
     import tinker
 
     from tinker_cookbook import renderers
@@ -89,7 +89,7 @@ async def _(api_key, mo, os):
     sampler_path = _save_result.result().path
     print(f"Base model:  {BASE_MODEL}")
     print(f"Checkpoint:  {sampler_path}")
-    return BASE_MODEL, sampler_path, service_client, training_client
+    return BASE_MODEL, os, sampler_path
 
 
 @app.cell(hide_code=True)
@@ -126,7 +126,7 @@ def _(mo):
 
 @app.cell
 def _(BASE_MODEL, adapter_dir, weights):
-    PEFT_OUTPUT = "./peft_adapter"
+    PEFT_OUTPUT = "/tmp/tinker-adapter-tutorial/peft_adapter"
 
     weights.build_lora_adapter(
         base_model=BASE_MODEL,
@@ -201,8 +201,8 @@ def _(mo):
     mo.md(r"""
     ## Next steps
 
-    - **[Export a Merged HuggingFace Model](export-hf.md)** -- Merge LoRA into a standalone model
-    - **[Publish to HuggingFace Hub](publish-hub.md)** -- Upload the adapter with a custom model card
+    - **[Export a Merged HuggingFace Model](./501_export_hf.py)** -- Merge LoRA into a standalone model
+    - **[Publish to HuggingFace Hub](./503_publish_hub.py)** -- Upload the adapter with a custom model card
     """)
     return
 
