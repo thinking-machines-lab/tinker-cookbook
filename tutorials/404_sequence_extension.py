@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -45,7 +45,13 @@ def _():
     from tinker_cookbook.rl.data_processing import trajectory_to_data
     from tinker_cookbook.rl.types import Trajectory, Transition
 
-    return (TokensWithLogprobs, Trajectory, Transition, tinker, trajectory_to_data)
+    return (
+        TokensWithLogprobs,
+        Trajectory,
+        Transition,
+        tinker,
+        trajectory_to_data,
+    )
 
 
 @app.cell(hide_code=True)
@@ -69,7 +75,7 @@ def _(mo):
 
 @app.cell
 def _(TokensWithLogprobs, Trajectory, Transition, tinker, trajectory_to_data):
-    # Simulate a 3-turn conversation
+    # Simulate a 3-turn conversation with fake token IDs
     # Observation tokens (prompt parts)
     o1 = [100, 101, 102, 103]  # "What is 2+3?"
     a1 = [200, 201]  # "5"
@@ -112,7 +118,7 @@ def _(TokensWithLogprobs, Trajectory, Transition, tinker, trajectory_to_data):
     print(f"Advantages:      {advantages}")
     print(f"Action tokens:   {sum(1 for m in mask if m == 1.0)}")
     print(f"Prompt tokens:   {sum(1 for m in mask if m == 0.0)}")
-    return (a1, a2, a3, data, datum, o1, o2, o3, traj, transitions)
+    return
 
 
 @app.cell(hide_code=True)
@@ -149,7 +155,7 @@ def _(TokensWithLogprobs, Trajectory, Transition, tinker, trajectory_to_data):
     print(f"Number of datums: {len(data_split)} (split because observation changed)")
     for i, d in enumerate(data_split):
         print(f"  Datum {i}: {d.model_input.length} tokens, mask={d.loss_fn_inputs['mask'].data}")
-    return (data_split, traj_split, transitions_split)
+    return
 
 
 @app.cell(hide_code=True)

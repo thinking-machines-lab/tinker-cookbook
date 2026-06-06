@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -40,6 +40,8 @@ def _(mo):
     ## Running a sweep
 
     The `sweep.run()` function takes a recipe's `main` function and config, then runs all combinations of the specified hyperparameters. Each run gets its own log directory, and results are collected into a DataFrame.
+
+    *Note: This notebook shows the sweep API and a pre-computed results table — it doesn't launch a live sweep, since that runs every configuration as a full SFT job. Use the CLI below (or sweep.run()) if you want to actually run one.*
     """)
     return
 

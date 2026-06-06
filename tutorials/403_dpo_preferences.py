@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -27,21 +27,11 @@ def _(mo):
 def _():
     from tinker_cookbook.preference.types import (
         Comparison,
-        ComparisonRenderer,
         ComparisonRendererFromChatRenderer,
         LabeledComparison,
-        PreferenceModel,
-        PreferenceModelFromChatRenderer,
     )
 
-    return (
-        Comparison,
-        ComparisonRenderer,
-        ComparisonRendererFromChatRenderer,
-        LabeledComparison,
-        PreferenceModel,
-        PreferenceModelFromChatRenderer,
-    )
+    return Comparison, ComparisonRendererFromChatRenderer, LabeledComparison
 
 
 @app.cell(hide_code=True)
@@ -82,8 +72,9 @@ def _(Comparison, LabeledComparison):
     swapped = labeled.swap()
     print("\nAfter swap:")
     print(f"Completion A: {swapped.comparison.completion_A[0]['content']}")
+    print(f"Completion B: {swapped.comparison.completion_B[0]['content']}")
     print(f"Preferred:    {swapped.label}")
-    return (comparison, labeled, swapped)
+    return (comparison,)
 
 
 @app.cell(hide_code=True)
@@ -116,8 +107,16 @@ def _(ComparisonRendererFromChatRenderer, comparison):
     # Build a generation prompt for preference prediction
     model_input = comparison_renderer.build_generation_prompt(comparison)
     print(f"Prompt tokens: {model_input.length}")
-    print(f"Decoded (last 100 chars): ...{tokenizer.decode(list(model_input.to_ints())[-50:])}")
-    return (MODEL_NAME, comparison_renderer, model_input, renderer, tokenizer)
+    print(f"Decoded:\n{tokenizer.decode(list(model_input.to_ints()))}")
+    return (MODEL_NAME,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    *Note: the empty <think></think> blocks are Qwen3.5's non-thinking markers (part of the chat template, not content) — the judge model reads them as "answer directly," so you can ignore them here.*
+    """)
+    return
 
 
 @app.cell(hide_code=True)
@@ -136,7 +135,6 @@ def _(mo):
 
 @app.cell
 def _(MODEL_NAME):
-    from tinker_cookbook.preference.train_dpo import Config as DPOConfig
     from tinker_cookbook.preference.train_dpo import compute_dpo_loss
 
     # Example config (not running training here)
@@ -146,7 +144,7 @@ def _(MODEL_NAME):
     print("  learning_rate:   1e-5 (default, lower than SFT)")
     print("  lr_schedule:     linear")
     print("  lora_rank:       32")
-    return DPOConfig, compute_dpo_loss
+    return (compute_dpo_loss,)
 
 
 @app.cell(hide_code=True)
@@ -191,7 +189,7 @@ def _(compute_dpo_loss):
             f"beta={beta:.2f}: loss={metrics['dpo_loss']:.4f}, "
             f"accuracy={metrics['accuracy']:.2f}, margin={metrics['margin']:.4f}"
         )
-    return (chosen_logprobs, chosen_ref_logprobs, rejected_logprobs, rejected_ref_logprobs)
+    return
 
 
 @app.cell(hide_code=True)

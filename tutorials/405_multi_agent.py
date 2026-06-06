@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -39,8 +39,6 @@ def _():
     from collections.abc import Sequence
     from dataclasses import dataclass
 
-    import tinker
-
     from tinker_cookbook import renderers
     from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
     from tinker_cookbook.rl.types import (
@@ -52,9 +50,9 @@ def _():
     from tinker_cookbook.tokenizer_utils import get_tokenizer
 
     return (
+        Env,
         EnvFromMessageEnv,
         EnvGroupBuilder,
-        Env,
         MessageEnv,
         MessageStepResult,
         Metrics,
@@ -63,7 +61,6 @@ def _():
         dataclass,
         get_tokenizer,
         renderers,
-        tinker,
     )
 
 
@@ -141,7 +138,7 @@ def _(EnvFromMessageEnv, NamingGameEnv, get_tokenizer, renderers):
     print(f"EnvFromMessageEnv wraps {type(message_env).__name__}")
     print(f"  failed_parse_reward:  {token_env.failed_parse_reward}")
     print(f"  max_trajectory_tokens: {token_env.max_trajectory_tokens}")
-    return (MODEL_NAME, message_env, renderer, token_env, tokenizer)
+    return
 
 
 @app.cell(hide_code=True)
@@ -158,9 +155,9 @@ def _(mo):
 
 @app.cell
 def _(
+    Env,
     EnvFromMessageEnv,
     EnvGroupBuilder,
-    Env,
     Metrics,
     NamingGameEnv,
     Sequence,
@@ -231,7 +228,7 @@ def _(
     print("  - Creates N environments per topic")
     print("  - Computes pairwise rewards after all rollouts complete")
     print("  - Rewards are zero-sum: winners gain, losers lose")
-    return (NamingGameGroupBuilder,)
+    return
 
 
 @app.cell(hide_code=True)
