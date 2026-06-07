@@ -368,8 +368,10 @@ def _(mo):
 
 
 @app.cell
-async def _(BASE_MODEL, checkpoint_utils, rl_log_path, tinker):
+async def _(BASE_MODEL, checkpoint_utils, renderer_name, rl_log_path, tinker):
     from tinker import types
+
+    from tinker_cookbook import renderers
 
     # Create sampling clients for both models
     service = tinker.ServiceClient()
@@ -386,13 +388,18 @@ async def _(BASE_MODEL, checkpoint_utils, rl_log_path, tinker):
     )
 
     tokenizer_eval = base_sampler.get_tokenizer()
+    renderer_eval = renderers.get_renderer(renderer_name, tokenizer_eval)
 
     # Sample from both models on the same prompt
     test_prompt = (
         "What is the most important thing to consider when learning a new programming language?"
     )
-    prompt_tokens = types.ModelInput.from_ints(tokenizer_eval.encode(test_prompt))
-    params = types.SamplingParams(max_tokens=200, temperature=0.7, stop=["\n\n"])
+    prompt_tokens = renderer_eval.build_generation_prompt(
+        [{"role": "user", "content": test_prompt}]
+    )
+    params = types.SamplingParams(
+        max_tokens=200, temperature=0.7, stop=renderer_eval.get_stop_sequences()
+    )
 
     base_result = await base_sampler.sample_async(
         prompt=prompt_tokens, sampling_params=params, num_samples=1
