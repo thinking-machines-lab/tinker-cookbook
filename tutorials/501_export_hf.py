@@ -113,7 +113,7 @@ def _(sampler_path):
 
     adapter_dir = weights.download(
         tinker_path=sampler_path,
-        output_dir="/tmp/tinker-export-tutorial/adapter",
+        output_dir="/tmp/tinker-tutorials/export-hf/adapter",
     )
     print(f"Adapter downloaded to: {adapter_dir}")
     return adapter_dir, weights
@@ -131,7 +131,7 @@ def _(mo):
 
 @app.cell
 def _(BASE_MODEL, adapter_dir, weights):
-    OUTPUT_PATH = "/tmp/tinker-export-tutorial/merged_model"
+    OUTPUT_PATH = "/tmp/tinker-tutorials/export-hf/merged_model"
 
     weights.build_hf_model(
         base_model=BASE_MODEL,

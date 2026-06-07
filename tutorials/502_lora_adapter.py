@@ -108,7 +108,7 @@ def _(sampler_path):
 
     adapter_dir = weights.download(
         tinker_path=sampler_path,
-        output_dir="/tmp/tinker-adapter-tutorial/adapter",
+        output_dir="/tmp/tinker-tutorials/lora-adapter/adapter",
     )
     print(f"Adapter downloaded to: {adapter_dir}")
     return adapter_dir, weights
@@ -126,7 +126,7 @@ def _(mo):
 
 @app.cell
 def _(BASE_MODEL, adapter_dir, weights):
-    PEFT_OUTPUT = "/tmp/tinker-adapter-tutorial/peft_adapter"
+    PEFT_OUTPUT = "/tmp/tinker-tutorials/lora-adapter/peft_adapter"
 
     weights.build_lora_adapter(
         base_model=BASE_MODEL,
