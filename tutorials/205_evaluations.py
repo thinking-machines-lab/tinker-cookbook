@@ -290,7 +290,7 @@ def _(mo):
         return AccuracyEvaluator(test_qa, renderer, tokenizer)
 
     config = train.Config(
-        log_path="~/logs/sft-with-evals",
+        log_path="/tmp/tinker-tutorials/sft-with-evals",
         model_name="Qwen/Qwen3.5-4B",
         dataset_builder=my_dataset_builder,
         learning_rate=1e-4,
@@ -319,7 +319,7 @@ def _(mo):
     from tinker_cookbook.rl import train
 
     config = train.Config(
-        log_path="~/logs/rl-with-evals",
+        log_path="/tmp/tinker-tutorials/rl-with-evals",
         model_name="Qwen/Qwen3.5-9B-Base",
         dataset_builder=my_rl_dataset_builder,
 
