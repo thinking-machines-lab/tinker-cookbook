@@ -182,7 +182,7 @@ def _(ArithmeticDatasetBuilder):
     MODEL_NAME = "Qwen/Qwen3.5-4B"
 
     rl_config = rl_train.Config(
-        log_path="~/logs/tutorial-rl-config",
+        log_path="/tmp/tinker-tutorials/rl-config",
         model_name=MODEL_NAME,
         recipe_name="tutorial_rl",
         dataset_builder=ArithmeticDatasetBuilder(
@@ -249,7 +249,7 @@ def _(mo):
 def _():
     from pathlib import Path
 
-    log_dir = Path("~/logs/tutorial-rl-config").expanduser()
+    log_dir = Path("/tmp/tinker-tutorials/rl-config").expanduser()
     if log_dir.exists():
         for f in sorted(log_dir.iterdir()):
             print(f"  {f.name}")

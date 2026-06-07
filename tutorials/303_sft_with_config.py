@@ -132,7 +132,7 @@ def _(ChatDatasetBuilderCommonConfig, SimpleDatasetBuilder):
     from tinker_cookbook.supervised import train
 
     MODEL_NAME = "Qwen/Qwen3.5-4B"
-    LOG_PATH = "~/logs/tutorial-sft-config"
+    LOG_PATH = "/tmp/tinker-tutorials/sft-config"
 
     dataset_builder = SimpleDatasetBuilder(
         common_config=ChatDatasetBuilderCommonConfig(
