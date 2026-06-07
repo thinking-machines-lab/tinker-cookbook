@@ -57,7 +57,7 @@ def _():
     LORA_RANK = 64
     MAX_LENGTH = 16384
     BATCH_SIZE = 256
-    LOG_ROOT = "/tmp/tinker-examples/rlhf-tutorial"
+    LOG_ROOT = "/tmp/tinker-tutorials/rlhf"
 
     renderer_name = model_info.get_recommended_renderer_name(BASE_MODEL)
     print(f"Base model:  {BASE_MODEL}")

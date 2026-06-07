@@ -328,7 +328,7 @@ async def _(sampler_path):
     adapter_dir = await asyncio.to_thread(
         weights.download,
         tinker_path=sampler_path,
-        output_dir="/tmp/tinker-tutorial-adapter",
+        output_dir="/tmp/tinker-tutorials/weights-adapter",
     )
     print(f"Downloaded adapter to: {adapter_dir}")
     return

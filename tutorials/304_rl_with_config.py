@@ -114,6 +114,8 @@ def _(
     random,
     renderers,
 ):
+    from functools import partial
+
     class ArithmeticDataset(RLDataset):
         """Generates batches of arithmetic problems."""
 
@@ -124,21 +126,22 @@ def _(
             self.group_size = group_size
             self.rng = random.Random(42)
 
-        def _make_env(self):
+        def _make_group_builder(self):
+            # Sample ONE problem per group. ProblemGroupBuilder makes
+            # `group_size` envs from this thunk, all the same problem -- GRPO
+            # centers advantages within a group, so a group must be one problem
+            # sampled group_size times, not a mix of different problems.
             a = self.rng.randint(1, 300)
             b = self.rng.randint(1, 300)
             op = self.rng.choice(["+", "*"])
-            return ArithmeticEnv(self.renderer, a, b, op)
+            return ProblemGroupBuilder(
+                env_thunk=partial(ArithmeticEnv, self.renderer, a, b, op),
+                num_envs=self.group_size,
+                dataset_name="arithmetic",
+            )
 
         def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
-            return [
-                ProblemGroupBuilder(
-                    env_thunk=self._make_env,
-                    num_envs=self.group_size,
-                    dataset_name="arithmetic",
-                )
-                for _ in range(self.batch_size)
-            ]
+            return [self._make_group_builder() for _ in range(self.batch_size)]
 
         def __len__(self) -> int:
             return self.num_batches
@@ -179,7 +182,7 @@ def _(ArithmeticDatasetBuilder):
     MODEL_NAME = "Qwen/Qwen3.5-4B"
 
     rl_config = rl_train.Config(
-        log_path="~/logs/tutorial-rl-config",
+        log_path="/tmp/tinker-tutorials/rl-config",
         model_name=MODEL_NAME,
         recipe_name="tutorial_rl",
         dataset_builder=ArithmeticDatasetBuilder(
@@ -246,7 +249,7 @@ def _(mo):
 def _():
     from pathlib import Path
 
-    log_dir = Path("~/logs/tutorial-rl-config").expanduser()
+    log_dir = Path("/tmp/tinker-tutorials/rl-config").expanduser()
     if log_dir.exists():
         for f in sorted(log_dir.iterdir()):
             print(f"  {f.name}")
