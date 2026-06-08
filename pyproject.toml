@@ -53,6 +53,10 @@ modal = [
 multiplayer-rl = [
     "textarena>=0.7.4",
 ]
+tutorials = [
+    "marimo>=0.23.8",
+    "matplotlib>=3.7.0",
+]
 vector-search = [
     "chromadb>=1.0.0",
     "google-genai>=1.0.0",
