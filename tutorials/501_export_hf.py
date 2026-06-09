@@ -1,22 +1,20 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
 @app.cell
 def _():
-    import os
-
     import marimo as mo
 
-    return mo, os
+    return (mo,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 05-1: Export a Merged HuggingFace Model
+    # Tutorial 501: Export a Merged HuggingFace Model
 
     After training a LoRA adapter with Tinker, you typically want a **standalone model** you can deploy anywhere. This tutorial shows how to merge your LoRA adapter into the base model, producing a complete HuggingFace model directory.
 
@@ -53,7 +51,9 @@ def _(mo):
 
 
 @app.cell
-async def _(api_key, mo, os):
+async def _(api_key, mo):
+    import os
+
     import tinker
 
     from tinker_cookbook import renderers
@@ -77,7 +77,7 @@ async def _(api_key, mo, os):
 
     # Build a minimal training example
     _tokenizer = get_tokenizer(BASE_MODEL)
-    _renderer = renderers.get_renderer("qwen3", _tokenizer)
+    _renderer = renderers.get_renderer("qwen3_5_disable_thinking", _tokenizer)
     _messages = [
         {"role": "user", "content": "What is Tinker?"},
         {"role": "assistant", "content": "Tinker is a cloud training API for LLM fine-tuning."},
@@ -94,7 +94,7 @@ async def _(api_key, mo, os):
     sampler_path = _save_result.result().path
     print(f"Base model:  {BASE_MODEL}")
     print(f"Checkpoint:  {sampler_path}")
-    return BASE_MODEL, sampler_path, service_client, training_client
+    return BASE_MODEL, os, sampler_path
 
 
 @app.cell(hide_code=True)
@@ -113,7 +113,7 @@ def _(sampler_path):
 
     adapter_dir = weights.download(
         tinker_path=sampler_path,
-        output_dir="/tmp/tinker-export-tutorial/adapter",
+        output_dir="/tmp/tinker-tutorials/export-hf/adapter",
     )
     print(f"Adapter downloaded to: {adapter_dir}")
     return adapter_dir, weights
@@ -131,7 +131,7 @@ def _(mo):
 
 @app.cell
 def _(BASE_MODEL, adapter_dir, weights):
-    OUTPUT_PATH = "/tmp/tinker-export-tutorial/merged_model"
+    OUTPUT_PATH = "/tmp/tinker-tutorials/export-hf/merged_model"
 
     weights.build_hf_model(
         base_model=BASE_MODEL,
@@ -202,8 +202,8 @@ def _(mo):
     mo.md(r"""
     ## Next steps
 
-    - **[Build a PEFT LoRA Adapter](lora-adapter.md)** -- Convert to PEFT format for vLLM `--lora-modules`
-    - **[Publish to HuggingFace Hub](publish-hub.md)** -- Upload the merged model with a custom model card
+    - **[Build a PEFT LoRA Adapter](./502_lora_adapter.py)** -- Convert to PEFT format for vLLM `--lora-modules`
+    - **[Publish to HuggingFace Hub](./503_publish_hub.py)** -- Upload the merged model with a custom model card
     """)
     return
 
