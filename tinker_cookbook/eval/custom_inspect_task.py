@@ -6,7 +6,7 @@ python -m tinker_cookbook.eval.run_inspect_evals \
     model_path=tinker://your-model-path \
     tasks=tinker_cookbook.eval.custom_inspect_task:example_lm_as_judge \
     renderer_name=role_colon \
-    model_name=Qwen/Qwen3.5-9B-Base
+    model_name=Qwen/Qwen3-8B-Base
 """
 
 import tinker
@@ -34,11 +34,13 @@ QA_DATASET = MemoryDataset(
 )
 
 service_client = tinker.ServiceClient()
-sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.5-9B")
+sampling_client = service_client.create_sampling_client(
+    base_model="meta-llama/Llama-3.1-8B-Instruct"
+)
 
 api = InspectAPIFromTinkerSampling(
-    renderer_name="qwen3_5_disable_thinking",  # pyright: ignore[reportCallIssue]
-    model_name="Qwen/Qwen3.5-9B",
+    renderer_name="llama3",  # pyright: ignore[reportCallIssue]
+    model_name="meta-llama/Llama-3.1-8B-Instruct",
     sampling_client=sampling_client,  # pyright: ignore[reportCallIssue]
     verbose=False,  # pyright: ignore[reportCallIssue]
 )
