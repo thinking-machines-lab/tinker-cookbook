@@ -102,7 +102,7 @@ def _(mo):
     mo.md(r"""
     The output is a `ModelInput` object containing the tokenized chat template. Notice how each message is wrapped in special tokens like `<|im_start|>` and `<|im_end|>`, and the final `<|im_start|>assistant` is left open for the model to fill in.
 
-    Because `qwen3_5` is a thinking renderer, the prompt also ends with an open `<think>` tag that primes the model to reason before answering. If you'd prefer non-thinking mode instead, the `qwen3_5_disable_thinking` variant instead inserts `<think></think>` instead so the model replies directly.
+    Because `qwen3_5` is a thinking renderer, the prompt also ends with an open `<think>` tag that primes the model to reason before answering. If you'd prefer non-thinking mode instead, the `qwen3_5_disable_thinking` variant inserts a closed `<think></think>` so the model replies directly.
     """)
     return
 
@@ -300,7 +300,7 @@ def _(mo):
     mo.md(r"""
     ## Vision inputs with `ImagePart`
 
-    For vision-language models (Qwen3.5 and Qwen3.6 are all vision-capable), message content can include images alongside text. Use `ImagePart` for images and `TextPart` for text within the same message.
+    For vision-language models (Qwen3.5 and Qwen3.6 models are all vision-capable), message content can include images alongside text. Use `ImagePart` for images and `TextPart` for text within the same message.
     """)
     return
 
