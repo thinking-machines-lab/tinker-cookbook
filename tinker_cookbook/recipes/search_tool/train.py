@@ -18,9 +18,9 @@ from tinker_cookbook.rl import train
 @chz.chz
 class CLIConfig:
     # Model parameters
-    model_name: str = "Qwen/Qwen3.5-4B"
+    model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
     lora_rank: int = 32
-    renderer_name: str | None = "qwen3_5_disable_thinking"
+    renderer_name: str | None = None
 
     # Training parameters
     learning_rate: float = 4e-5

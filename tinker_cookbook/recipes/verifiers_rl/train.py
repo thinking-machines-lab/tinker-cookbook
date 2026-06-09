@@ -27,9 +27,8 @@ logger = logging.getLogger(__name__)
 @chz.chz
 class CLIConfig:
     # model configuration
-    model_name: str = "Qwen/Qwen3.5-4B"
+    model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
     lora_rank: int = 32
-    renderer_name: str | None = "qwen3_5_disable_thinking"
 
     # environment configuration
     vf_env_id: str = "reverse-text"
@@ -85,9 +84,7 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
         if local_tokenizer is None:
             local_tokenizer = get_tokenizer(cli_config.model_name)
         if shared_renderer is None:
-            renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(
-                cli_config.model_name
-            )
+            renderer_name = model_info.get_recommended_renderer_name(cli_config.model_name)
             shared_renderer = renderers.get_renderer(renderer_name, local_tokenizer)
 
         sampling_client = cast(TinkerTokenCompleter, policy).sampling_client
@@ -134,7 +131,6 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
         dataset_builder=dataset_builder,
         model_name=cli_config.model_name,
         recipe_name="recipe_verifiers_rl",
-        renderer_name=cli_config.renderer_name,
         max_tokens=cli_config.max_tokens,
         temperature=cli_config.temperature,
         lora_rank=cli_config.lora_rank,
