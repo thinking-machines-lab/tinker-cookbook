@@ -59,7 +59,10 @@ def _(mo):
 
 @app.cell
 def _():
-    CLASSIFICATION_PROMPT = """You are a precise language classifier.
+    import textwrap
+
+    CLASSIFICATION_PROMPT = textwrap.dedent("""\
+    You are a precise language classifier.
 
     Goal: Classify the language of the provided text into exactly one of these labels:
     ar (Arabic), de (German), el (Greek), en (English), es (Spanish), fr (French),
@@ -96,7 +99,7 @@ def _():
     - Where xx is one of {ar, de, el, en, es, fr, hi, ru, tr, ur, vi, zh, ot} and nothing else.
 
     Text to classify:
-    {text}"""
+    {text}""")
 
     print(f"Classification prompt: {len(CLASSIFICATION_PROMPT)} characters")
     print(f"(This is ~{len(CLASSIFICATION_PROMPT.split())} words the teacher sees per request)")

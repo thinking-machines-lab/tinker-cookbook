@@ -249,7 +249,7 @@ def _(mo):
 def _():
     from pathlib import Path
 
-    log_dir = Path("/tmp/tinker-tutorials/rl-config").expanduser()
+    log_dir = Path("/tmp/tinker-tutorials/rl-config")
     if log_dir.exists():
         for f in sorted(log_dir.iterdir()):
             print(f"  {f.name}")

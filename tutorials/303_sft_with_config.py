@@ -213,7 +213,7 @@ def _(mo):
 def _(LOG_PATH):
     from pathlib import Path
 
-    log_dir = Path(LOG_PATH).expanduser()
+    log_dir = Path(LOG_PATH)
     if log_dir.exists():
         for f in sorted(log_dir.iterdir()):
             print(f"  {f.name}")

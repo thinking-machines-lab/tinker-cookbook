@@ -6,7 +6,7 @@ These tutorials are [marimo](https://marimo.io/) notebooks — reactive Python n
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.11+
 - A Tinker API key ([get one here](https://tinker-console.thinkingmachines.ai))
 
 ## Setup
@@ -38,7 +38,7 @@ Alternatively, you can try notebooks online in [molab](https://molab.marimo.io/n
 |---|----------|-------------------|--------------|
 | 101 | [Hello Tinker](101_hello_tinker.py) | Architecture overview, client hierarchy, sampling from a model | [![Open in molab](https://marimo.io/molab-shield.svg)](https://molab.marimo.io/github/thinking-machines-lab/tinker-cookbook/blob/main/tutorials/101_hello_tinker.py) |
 | 102 | [Your First SFT](102_first_sft.py) | Renderers, datum construction, training loop | [![Open in molab](https://marimo.io/molab-shield.svg)](https://molab.marimo.io/github/thinking-machines-lab/tinker-cookbook/blob/main/tutorials/102_first_sft.py) |
-| 103 | [Async Patterns](103_async_patterns.py) | Concurrent futures, `num_samples`, batch evaluation throughput | [![Open in molab](https://marimo.io/molab-shield.svg)](https://molab.marimo.io/github/thinking-machines-lab/tinker-cookbook/blob/main/tutorials/103_async_patterns.py) |
+| 103 | [Async Patterns](103_async_patterns.py) | Concurrent sampling with `asyncio.gather`, `num_samples`, batch evaluation throughput | [![Open in molab](https://marimo.io/molab-shield.svg)](https://molab.marimo.io/github/thinking-machines-lab/tinker-cookbook/blob/main/tutorials/103_async_patterns.py) |
 | 104 | [First RL](104_first_rl.py) | GRPO on GSM8K: reward functions, group-relative advantages | [![Open in molab](https://marimo.io/molab-shield.svg)](https://molab.marimo.io/github/thinking-machines-lab/tinker-cookbook/blob/main/tutorials/104_first_rl.py) |
 
 ### Core Concepts (2xx)

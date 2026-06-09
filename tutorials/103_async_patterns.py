@@ -25,6 +25,8 @@ def _(mo):
 
 @app.cell
 def _():
+    import asyncio
+    import os
     import time
     import warnings
 
@@ -34,7 +36,7 @@ def _():
 
     from tinker_cookbook.renderers import get_renderer, get_text_content
 
-    return get_renderer, get_text_content, time, tinker
+    return asyncio, get_renderer, get_text_content, os, time, tinker
 
 
 @app.cell(hide_code=True)
@@ -55,9 +57,7 @@ def _(mo):
 
 
 @app.cell
-async def _(api_key, get_renderer, mo, tinker):
-    import os
-
+async def _(api_key, get_renderer, mo, os, tinker):
     mo.stop(
         "TINKER_API_KEY" not in os.environ and not api_key.value,
         "Paste your API key above",
@@ -236,6 +236,7 @@ def _(mo):
 
 @app.cell
 async def _(
+    asyncio,
     get_text_content,
     params,
     prompts,
@@ -243,8 +244,6 @@ async def _(
     sampling_client,
     time,
 ):
-    import asyncio
-
     _GROUP_SIZE = 4
     _start = time.time()
 
@@ -271,7 +270,7 @@ async def _(
     batch_time = time.time() - _start
     print(f"Total: {total_completions} completions in {batch_time:.1f}s")
     print(f"Throughput: {total_completions / batch_time:.1f} completions/second")
-    return (asyncio,)
+    return
 
 
 @app.cell(hide_code=True)
