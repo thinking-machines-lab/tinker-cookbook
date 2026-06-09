@@ -22,7 +22,7 @@ from tinker_cookbook.utils.lr_scheduling import LRSchedule
 
 @chz.chz
 class CLIConfig:
-    model_name: str = "meta-llama/Llama-3.2-1B"
+    model_name: str = "Qwen/Qwen3.5-9B-Base"
     dataset: str = "hhh"  # or path like tinker_cookbook.preference.preference_datasets:HHHBuilder
     load_checkpoint_path: str | None = None
     renderer_name: str | None = None
