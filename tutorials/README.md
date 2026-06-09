@@ -16,7 +16,7 @@ uv pip install tinker "tinker-cookbook[tutorials]"
 export TINKER_API_KEY="your-api-key-here"
 ```
 
-The `[tutorials]` extra installs `marimo` (to open the notebooks) and `matplotlib` (for the loss-curve plots in some tutorials).
+The `[tutorials]` extra installs `marimo` (to open the notebooks), `matplotlib` (for the loss-curve plots in some tutorials), and the `[math-rl]` dependencies (`sympy`, `pylatexenc`, `math-verify`) that a few RL tutorials import.
 
 ## Running a tutorial
 

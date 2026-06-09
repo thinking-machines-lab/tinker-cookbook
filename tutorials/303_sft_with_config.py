@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 07: SFT with Config
+    # Tutorial 303: SFT with Config
 
     Configure and run a full SFT pipeline using `train.Config`, `ChatDatasetBuilder`, and evaluator builders -- zero custom loop code.
 
@@ -40,32 +40,25 @@ def _(mo):
 
 @app.cell
 def _():
-    import asyncio
-
     import chz
     import datasets
-    import tinker
 
-    from tinker_cookbook import renderers
+    from tinker_cookbook.supervised.common import datum_from_model_input_weights
     from tinker_cookbook.supervised.data import SupervisedDatasetFromHFDataset
     from tinker_cookbook.supervised.types import (
         ChatDatasetBuilder,
         ChatDatasetBuilderCommonConfig,
         SupervisedDataset,
     )
-    from tinker_cookbook.tokenizer_utils import get_tokenizer
 
     return (
         ChatDatasetBuilder,
         ChatDatasetBuilderCommonConfig,
         SupervisedDataset,
         SupervisedDatasetFromHFDataset,
-        asyncio,
         chz,
         datasets,
-        get_tokenizer,
-        renderers,
-        tinker,
+        datum_from_model_input_weights,
     )
 
 
@@ -76,7 +69,7 @@ def _(
     SupervisedDatasetFromHFDataset,
     chz,
     datasets,
-    tinker,
+    datum_from_model_input_weights,
 ):
     # Create a simple instruction-following dataset
     EXAMPLES = [
@@ -111,9 +104,8 @@ def _(
             def example_to_data(example):
                 model_input, weights = renderer.build_supervised_example(example["messages"])
                 return [
-                    tinker.Datum(
-                        model_input=model_input,
-                        loss_fn_inputs={"weights": tinker.TensorData.from_list(weights.tolist())},
+                    datum_from_model_input_weights(
+                        model_input, weights, max_length=self.common_config.max_length
                     )
                 ]
 
@@ -122,7 +114,7 @@ def _(
             )
             return train_ds, None
 
-    return (EXAMPLES, SimpleDatasetBuilder)
+    return (SimpleDatasetBuilder,)
 
 
 @app.cell(hide_code=True)
@@ -139,13 +131,13 @@ def _(mo):
 def _(ChatDatasetBuilderCommonConfig, SimpleDatasetBuilder):
     from tinker_cookbook.supervised import train
 
-    MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
-    LOG_PATH = "~/logs/tutorial-sft-config"
+    MODEL_NAME = "Qwen/Qwen3.5-4B"
+    LOG_PATH = "/tmp/tinker-tutorials/sft-config"
 
     dataset_builder = SimpleDatasetBuilder(
         common_config=ChatDatasetBuilderCommonConfig(
             model_name_for_tokenizer=MODEL_NAME,
-            renderer_name="qwen3",
+            renderer_name="qwen3_5_disable_thinking",
             max_length=512,
             batch_size=4,
         ),
@@ -154,6 +146,7 @@ def _(ChatDatasetBuilderCommonConfig, SimpleDatasetBuilder):
     config = train.Config(
         log_path=LOG_PATH,
         model_name=MODEL_NAME,
+        recipe_name="tutorial_sft",
         dataset_builder=dataset_builder,
         learning_rate=1e-4,
         lr_schedule="linear",
@@ -169,7 +162,7 @@ def _(ChatDatasetBuilderCommonConfig, SimpleDatasetBuilder):
     print(f"LR schedule:   {config.lr_schedule}")
     print(f"LoRA rank:     {config.lora_rank}")
     print(f"Log path:      {config.log_path}")
-    return LOG_PATH, MODEL_NAME, config, dataset_builder, train
+    return LOG_PATH, config, train
 
 
 @app.cell(hide_code=True)
@@ -190,7 +183,7 @@ def _(mo):
 
 
 @app.cell
-def _(api_key, asyncio, config, mo, train):
+async def _(api_key, config, mo, train):
     import os
 
     mo.stop(
@@ -202,7 +195,7 @@ def _(api_key, asyncio, config, mo, train):
         os.environ["TINKER_API_KEY"] = api_key.value
 
     # Run the full SFT pipeline
-    asyncio.run(train.main(config))
+    await train.main(config)
     return
 
 
@@ -220,7 +213,7 @@ def _(mo):
 def _(LOG_PATH):
     from pathlib import Path
 
-    log_dir = Path(LOG_PATH).expanduser()
+    log_dir = Path(LOG_PATH)
     if log_dir.exists():
         for f in sorted(log_dir.iterdir()):
             print(f"  {f.name}")
@@ -241,7 +234,7 @@ def _(mo):
     - Pluggable evaluator builders
     - Resume from checkpoint
 
-    For custom training logic, drop down to the manual loop shown in tutorial 02.
+    For custom training logic, drop down to the manual loop shown in tutorial 102.
     """)
     return
 
