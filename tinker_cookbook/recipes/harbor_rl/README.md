@@ -131,7 +131,7 @@ Key parameters in `EvalConfig`: `checkpoint_url`, `max_turns`, `max_tokens`, `te
 
 We evaluated SWE-Bench-Verified-1.0 and Terminal-Bench-2.0 at 32K context length and naive agent harness with no advanced features like context compatification that summarizes the tool calling history.
 
-### Results: Kimi-K2.6 trained checkpoint
+### Results: Kimi-K2.6 (32K context, no compaction)
 
 | Benchmark | Total | PASS | FAIL | ERROR | Pass Rate |
 |-----------|-------|------|------|-------|-----------|
