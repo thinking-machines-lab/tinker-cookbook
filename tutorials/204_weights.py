@@ -125,13 +125,13 @@ def _(mo):
 @app.cell
 async def _(training_client):
     # Save weights for inference (sampler checkpoint)
-    sampler_result = await training_client.save_weights_for_sampler("tutorial-sampler")
-    sampler_path = sampler_result.path
+    sampler_future = training_client.save_weights_for_sampler("tutorial-sampler")
+    sampler_path = (await sampler_future.result_async()).path
     print(f"Sampler weights saved to: {sampler_path}")
 
     # Save full state for resuming training
-    state_result = await training_client.save_state("tutorial-state")
-    state_path = state_result.path
+    state_future = training_client.save_state("tutorial-state")
+    state_path = (await state_future.result_async()).path
     print(f"Training state saved to:  {state_path}")
     return sampler_path, state_path
 
@@ -149,10 +149,11 @@ def _(mo):
 @app.cell
 async def _(training_client):
     # Save with a 1-hour TTL
-    ephemeral_result = await training_client.save_weights_for_sampler(
+    ephemeral_future = training_client.save_weights_for_sampler(
         "tutorial-ephemeral", ttl_seconds=3600
     )
-    print(f"Ephemeral checkpoint (1h TTL): {ephemeral_result.path}")
+    ephemeral_path = (await ephemeral_future.result_async()).path
+    print(f"Ephemeral checkpoint (1h TTL): {ephemeral_path}")
     return
 
 
