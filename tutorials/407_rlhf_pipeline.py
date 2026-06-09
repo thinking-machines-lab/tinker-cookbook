@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 14: Full RLHF Pipeline
+    # Tutorial 407: Full RLHF Pipeline
 
     Train a model through the complete 3-stage RLHF pipeline:
 
@@ -37,14 +37,13 @@ def _(mo):
     mo.md(r"""
     ## Setup
 
-    We use Llama 3.2 3B as the base model. All three stages use LoRA for parameter-efficient training.
+    We use `Qwen3.5-9B-Base` as the base model. All three stages use LoRA for parameter-efficient training.
     """)
     return
 
 
 @app.cell
 def _():
-    import asyncio
     import warnings
 
     warnings.filterwarnings("ignore", message="IProgress not found")
@@ -52,29 +51,26 @@ def _():
     import tinker
 
     from tinker_cookbook import checkpoint_utils, model_info
-    from tinker_cookbook.supervised.types import TrainOnWhat
+    from tinker_cookbook.renderers import TrainOnWhat
 
-    BASE_MODEL = "meta-llama/Llama-3.2-3B"
+    BASE_MODEL = "Qwen/Qwen3.5-9B-Base"
     LORA_RANK = 64
     MAX_LENGTH = 16384
     BATCH_SIZE = 256
-    LOG_ROOT = "/tmp/tinker-examples/rlhf-tutorial"
+    LOG_ROOT = "/tmp/tinker-tutorials/rlhf"
 
     renderer_name = model_info.get_recommended_renderer_name(BASE_MODEL)
     print(f"Base model:  {BASE_MODEL}")
     print(f"Renderer:    {renderer_name}")
     print(f"LoRA rank:   {LORA_RANK}")
-
     return (
         BASE_MODEL,
         BATCH_SIZE,
-        LORA_RANK,
         LOG_ROOT,
+        LORA_RANK,
         MAX_LENGTH,
         TrainOnWhat,
-        asyncio,
         checkpoint_utils,
-        model_info,
         renderer_name,
         tinker,
     )
@@ -105,7 +101,7 @@ def _(mo):
 
 
 @app.cell
-def _(
+async def _(
     BASE_MODEL,
     BATCH_SIZE,
     LOG_ROOT,
@@ -113,7 +109,6 @@ def _(
     MAX_LENGTH,
     TrainOnWhat,
     api_key,
-    asyncio,
     mo,
     renderer_name,
 ):
@@ -146,6 +141,7 @@ def _(
     sft_config = supervised_train.Config(
         log_path=sft_log_path,
         model_name=BASE_MODEL,
+        recipe_name="tutorial_rlhf_sft",
         renderer_name=renderer_name,
         dataset_builder=sft_dataset_builder,
         evaluator_builders=[],
@@ -160,16 +156,9 @@ def _(
         max_steps=None,
     )
 
-    asyncio.run(supervised_train.main(sft_config))
+    await supervised_train.main(sft_config)
     print("Stage 1 (SFT) complete.")
-
-    return (
-        NoRobotsBuilder,
-        sft_config,
-        sft_dataset_builder,
-        sft_log_path,
-        supervised_train,
-    )
+    return sft_log_path, supervised_train
 
 
 @app.cell(hide_code=True)
@@ -196,13 +185,12 @@ def _(mo):
 
 
 @app.cell
-def _(
+async def _(
     BASE_MODEL,
     BATCH_SIZE,
     LOG_ROOT,
     LORA_RANK,
     MAX_LENGTH,
-    asyncio,
     renderer_name,
     supervised_train,
 ):
@@ -234,6 +222,7 @@ def _(
     rm_config = supervised_train.Config(
         log_path=rm_log_path,
         model_name=BASE_MODEL,
+        recipe_name="tutorial_rlhf_rm",
         renderer_name=renderer_name,
         dataset_builder=rm_dataset_builder,
         evaluator_builders=[],
@@ -248,15 +237,9 @@ def _(
         max_steps=None,
     )
 
-    asyncio.run(supervised_train.main(rm_config))
+    await supervised_train.main(rm_config)
     print("Stage 2 (Preference Model) complete.")
-
-    return (
-        HHHComparisonBuilder,
-        comparison_builder,
-        rm_config,
-        rm_log_path,
-    )
+    return HHHComparisonBuilder, rm_log_path
 
 
 @app.cell(hide_code=True)
@@ -285,15 +268,13 @@ def _(mo):
 
 
 @app.cell
-def _(
+async def _(
     BASE_MODEL,
     BATCH_SIZE,
     HHHComparisonBuilder,
     LOG_ROOT,
     LORA_RANK,
-    asyncio,
     checkpoint_utils,
-    model_info,
     renderer_name,
     rm_log_path,
     sft_log_path,
@@ -354,6 +335,7 @@ def _(
     rl_log_path = f"{LOG_ROOT}/rl"
     rl_config = rl_train.Config(
         model_name=BASE_MODEL,
+        recipe_name="tutorial_rlhf_rl",
         renderer_name=renderer_name,
         dataset_builder=rl_dataset_builder,
         load_checkpoint_path=sft_ckpt.state_path,
@@ -370,10 +352,9 @@ def _(
         max_steps=None,
     )
 
-    asyncio.run(rl_train.main(rl_config))
+    await rl_train.main(rl_config)
     print("Stage 3 (RL) complete.")
-
-    return (rl_config, rl_log_path)
+    return (rl_log_path,)
 
 
 @app.cell(hide_code=True)
@@ -387,13 +368,10 @@ def _(mo):
 
 
 @app.cell
-async def _(
-    BASE_MODEL,
-    checkpoint_utils,
-    rl_log_path,
-    tinker,
-):
+async def _(BASE_MODEL, checkpoint_utils, renderer_name, rl_log_path, tinker):
     from tinker import types
+
+    from tinker_cookbook import renderers
 
     # Create sampling clients for both models
     service = tinker.ServiceClient()
@@ -405,18 +383,23 @@ async def _(
     rl_ckpt = checkpoint_utils.get_last_checkpoint(rl_log_path)
     assert rl_ckpt is not None
     rlhf_sampler = await service.create_sampling_client_async(
+        model_path=rl_ckpt.sampler_path,
         base_model=BASE_MODEL,
-        load_path=rl_ckpt.sampler_path,
     )
 
     tokenizer_eval = base_sampler.get_tokenizer()
+    renderer_eval = renderers.get_renderer(renderer_name, tokenizer_eval)
 
     # Sample from both models on the same prompt
     test_prompt = (
         "What is the most important thing to consider when learning a new programming language?"
     )
-    prompt_tokens = types.ModelInput.from_ints(tokenizer_eval.encode(test_prompt))
-    params = types.SamplingParams(max_tokens=200, temperature=0.7, stop=["\n\n"])
+    prompt_tokens = renderer_eval.build_generation_prompt(
+        [{"role": "user", "content": test_prompt}]
+    )
+    params = types.SamplingParams(
+        max_tokens=200, temperature=0.7, stop=renderer_eval.get_stop_sequences()
+    )
 
     base_result = await base_sampler.sample_async(
         prompt=prompt_tokens, sampling_params=params, num_samples=1
@@ -430,7 +413,6 @@ async def _(
     print()
     print("=== RLHF Model ===")
     print(test_prompt + tokenizer_eval.decode(rlhf_result.sequences[0].tokens))
-
     return
 
 
