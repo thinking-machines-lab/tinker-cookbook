@@ -496,7 +496,7 @@ def _(mo):
 
     - **Efficient sampling** shows how to run many inference requests concurrently for maximum throughput. See `tutorials/103_async_patterns.py`.
     - **Real training loops** iterate over a full dataset with proper batching and evaluation. See `tinker_cookbook/recipes/sl_loop.py`.
-    - **Renderers** handle chat templates, vision inputs, and per-token weight assignment. See the [Rendering docs](https://tinker-docs.thinkingmachines.ai/rendering).
+    - **Renderers** handle chat templates, vision inputs, and per-token weight assignment. See the [Rendering docs](https://tinker-docs.thinkingmachines.ai/tutorials/core-concepts/rendering/).
     """)
     return
 
