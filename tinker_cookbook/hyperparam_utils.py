@@ -78,8 +78,8 @@ def get_lora_lr_over_full_finetune_lr(model_name: str, lora_alpha: int = 32) -> 
 
 def _get_hidden_size(model_name: str) -> int:
     # Known hidden sizes for models in the lineup. This avoids network lookups and
-    # works around gated repos (Llama) and configs that nest hidden_size under
-    # text_config (Qwen3-VL, Qwen3.5, Kimi-K2.5).
+    # works around configs that nest hidden_size under text_config (Qwen3.5/3.6,
+    # Kimi-K2.6).
     _KNOWN_HIDDEN_SIZES: dict[str, int] = {
         # Llama-3 (gated — cannot fetch config without HF_TOKEN)
         "meta-llama/Llama-3.2-1B": 2048,
@@ -115,6 +115,9 @@ def _get_hidden_size(model_name: str) -> int:
         "Qwen/Qwen3.5-9B": 4096,
         "Qwen/Qwen3.5-9B-Base": 4096,
         "Qwen/Qwen3.5-4B": 2560,
+        # Qwen/Qwen3.5-9B and Qwen/Qwen3.5-9B-Base intentionally omitted —
+        # the values weren't independently verified. The fallback path fetches
+        # hidden_size from HF AutoConfig, which works for non-gated Qwen repos.
         # Qwen3.6 (same architecture family as Qwen3.5, hidden_size under text_config)
         "Qwen/Qwen3.6-27B": 5120,
         "Qwen/Qwen3.6-35B-A3B": 2048,
@@ -267,11 +270,8 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
         exponent_model = 0.0775
     elif model_name in (
         "deepseek-ai/DeepSeek-V3.1",
-        "deepseek-ai/DeepSeek-V3.1-Base",
         "openai/gpt-oss-20b",
         "openai/gpt-oss-120b",
-        "moonshotai/Kimi-K2-Thinking",
-        "moonshotai/Kimi-K2.5",
         "moonshotai/Kimi-K2.6",
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
         "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",

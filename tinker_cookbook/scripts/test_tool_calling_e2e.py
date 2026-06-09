@@ -75,7 +75,7 @@ MODEL_CONFIGS = [
     },
     {
         "model_name": "moonshotai/Kimi-K2.6",
-        "renderer_name": "kimi_k26",
+        "renderer_name": "kimi_k26_disable_thinking",
     },
     {
         "model_name": "openai/gpt-oss-20b",

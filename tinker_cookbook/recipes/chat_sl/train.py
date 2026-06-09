@@ -21,7 +21,7 @@ from tinker_cookbook.utils.lr_scheduling import LRSchedule
 class CLIConfig:
     # Required parameters
     log_path: str | None = None
-    model_name: str = "meta-llama/Llama-3.1-8B"
+    model_name: str = "Qwen/Qwen3.5-9B-Base"
     load_checkpoint_path: str | None = None
     dataset: str = "no_robots"
 

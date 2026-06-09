@@ -214,7 +214,7 @@ class TestHarborEnvGroupBuilderPickle:
         builder = HarborEnvGroupBuilder(
             task=self._make_task(tmp_path),
             model_name="Qwen/Qwen3.5-9B",
-            renderer_name="qwen3_5",
+            renderer_name="qwen3_5_disable_thinking",
             max_turns=5,
             group_size=2,
         )
@@ -237,7 +237,7 @@ class TestHarborEnvGroupBuilderPickle:
         builder = HarborEnvGroupBuilder(
             task=self._make_task(tmp_path),
             model_name="Qwen/Qwen3.5-9B",
-            renderer_name="qwen3_5",
+            renderer_name="qwen3_5_disable_thinking",
             max_turns=5,
             group_size=2,
             sandbox_timeout=300,
