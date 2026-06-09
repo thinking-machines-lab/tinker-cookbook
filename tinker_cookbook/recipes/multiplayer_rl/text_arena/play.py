@@ -124,8 +124,8 @@ async def eval_model(
 @chz.chz
 class PlayConfig:
     checkpoint_path: str
-    model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
-    renderer_name: str | None = None
+    model_name: str = "Qwen/Qwen3.5-4B"
+    renderer_name: str | None = "qwen3_5_disable_thinking"
     game_name: str = "TicTacToe-v0"
     mode: Literal["human_vs_model", "eval"] = "human_vs_model"
     opponent: OpponentType = "random"
